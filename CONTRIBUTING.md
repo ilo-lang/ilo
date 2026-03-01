@@ -37,6 +37,10 @@ Key source files:
 - `src/codegen/python.rs` — Python transpiler
 - `src/diagnostic/` — error codes and reporting
 
+## Community
+
+Join [r/ilolang](https://www.reddit.com/r/ilolang/) for discussion, feedback, and updates.
+
 ## Language Spec
 
 See [SPEC.md](SPEC.md) for the full language specification. Changes to language syntax or semantics should update the spec.
