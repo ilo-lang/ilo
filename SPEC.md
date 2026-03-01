@@ -138,6 +138,7 @@ Called like functions, compiled to dedicated opcodes.
 | `slc xs a b` | slice list or text from index a to b | same type |
 | `rnd` | random float in [0, 1) | `n` |
 | `rnd a b` | random integer in [a, b] inclusive | `n` |
+| `now` | current Unix timestamp (seconds) | `n` |
 
 `get` returns `Ok(body)` on success, `Err(message)` on failure (connection error, timeout, DNS failure, etc). `$` is a terse alias:
 

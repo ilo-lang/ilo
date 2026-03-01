@@ -287,6 +287,9 @@ fn emit_expr(out: &mut String, level: usize, expr: &Expr) -> String {
                 let call = format!("(lambda s: (\"ok\", float(s)) if s.replace('.','',1).replace('-','',1).isdigit() else (\"err\", s))({})", arg);
                 return if *unwrap { format!("_ilo_unwrap({})", call) } else { call };
             }
+            if function == "now" && args.is_empty() {
+                return "(__import__('time').time())".to_string();
+            }
             if function == "rnd" && args.is_empty() {
                 return "(__import__('random').random())".to_string();
             }

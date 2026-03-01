@@ -583,7 +583,7 @@ Define behaviour shared across record types. Lowest priority — agents generate
 - ~~`spl t sep`~~ ✅
 - `get k m` — get value from map by key (if maps are added)
 - ~~`rnd` / `rnd a b`~~ ✅
-- `now()` — current timestamp
+- ~~`now`~~ ✅
 
 #### Tooling
 - LSP / language server — completions, diagnostics, hover info for editor integration

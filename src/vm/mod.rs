@@ -119,6 +119,7 @@ pub(crate) const OP_SRT: u8 = 54;        // R[A] = srt(R[B])  (sort list or text
 pub(crate) const OP_SLC: u8 = 55;        // R[A] = slc(R[B], R[C], R[C+1])  (slice list or text)
 pub(crate) const OP_RND0: u8 = 57;       // R[A] = random float in [0,1)
 pub(crate) const OP_RND2: u8 = 58;       // R[A] = random int in [R[B], R[C]]
+pub(crate) const OP_NOW: u8 = 59;        // R[A] = current unix timestamp (seconds, float)
 pub(crate) const OP_JMPNN: u8 = 56;     // if R[A] is not nil, jump by signed Bx (ABx mode)
 
 // ABx mode — register + 16-bit operand
@@ -974,6 +975,12 @@ impl RegCompiler {
                 if function == "rnd" && args.is_empty() {
                     let ra = self.alloc_reg();
                     self.emit_abc(OP_RND0, ra, 0, 0);
+                    self.reg_is_num[ra as usize] = true;
+                    return ra;
+                }
+                if function == "now" && args.is_empty() {
+                    let ra = self.alloc_reg();
+                    self.emit_abc(OP_NOW, ra, 0, 0);
                     self.reg_is_num[ra as usize] = true;
                     return ra;
                 }
@@ -2347,6 +2354,14 @@ impl<'a> VM<'a> {
                         return Err(VmError::Type("rnd: lower bound > upper bound"));
                     }
                     reg_set!(a, NanVal::number(fastrand::i64(lo..=hi) as f64));
+                }
+                OP_NOW => {
+                    let a = ((inst >> 16) & 0xFF) as usize + base;
+                    let ts = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap()
+                        .as_secs_f64();
+                    reg_set!(a, NanVal::number(ts));
                 }
                 OP_GET => {
                     let a = ((inst >> 16) & 0xFF) as usize + base;
@@ -4689,5 +4704,17 @@ mod tests {
         let source = "f>n;rnd \"hello\" 5";
         let err = vm_run_err(source, Some("f"), vec![]);
         assert!(err.contains("rnd") || err.contains("number"), "got: {err}");
+    }
+
+    #[test]
+    fn vm_now() {
+        let source = "f>n;now";
+        let result = vm_run(source, Some("f"), vec![]);
+        match result {
+            Value::Number(n) => {
+                assert!(n > 1_000_000_000.0, "now should be a reasonable unix timestamp, got {n}");
+            }
+            other => panic!("expected Number, got {:?}", other),
+        }
     }
 }

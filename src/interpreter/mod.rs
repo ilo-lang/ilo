@@ -221,6 +221,13 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             other => Err(RuntimeError::new("ILO-R009", format!("{} requires a number, got {:?}", name, other))),
         };
     }
+    if name == "now" && args.is_empty() {
+        let ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs_f64();
+        return Ok(Value::Number(ts));
+    }
     if name == "rnd" {
         if args.is_empty() {
             return Ok(Value::Number(fastrand::f64()));
@@ -2326,5 +2333,17 @@ mod tests {
     fn interpret_rnd_same_bounds() {
         let source = "f>n;rnd 5 5";
         assert_eq!(run_str(source, Some("f"), vec![]), Value::Number(5.0));
+    }
+
+    #[test]
+    fn interpret_now() {
+        let source = "f>n;now";
+        let result = run_str(source, Some("f"), vec![]);
+        match result {
+            Value::Number(n) => {
+                assert!(n > 1_000_000_000.0, "now should be a reasonable unix timestamp, got {n}");
+            }
+            other => panic!("expected Number, got {:?}", other),
+        }
     }
 }

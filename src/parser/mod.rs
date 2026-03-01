@@ -1040,8 +1040,8 @@ impl Parser {
                 return self.parse_record(name);
             }
 
-            // Zero-arg builtins: `rnd` with no args → Call with empty args
-            if name == "rnd" && !self.can_start_operand() {
+            // Zero-arg builtins: `rnd`/`now` with no args → Call with empty args
+            if (name == "rnd" || name == "now") && !self.can_start_operand() {
                 return Ok(Expr::Call {
                     function: name,
                     args: vec![],

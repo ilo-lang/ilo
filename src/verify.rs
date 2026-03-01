@@ -161,6 +161,7 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("srt", &["list_or_text"], "list_or_text"),
     ("slc", &["list_or_text", "n", "n"], "list_or_text"),
     ("rnd", &[], "n"),
+    ("now", &[], "n"),
 ];
 
 fn builtin_arity(name: &str) -> Option<usize> {
@@ -2711,5 +2712,20 @@ mod tests {
         assert!(result.is_err());
         let errors = result.unwrap_err();
         assert!(errors.iter().any(|e| e.code == "ILO-T013" && e.message.contains("rnd")));
+    }
+
+    // ---- now builtin ----
+
+    #[test]
+    fn now_zero_args_valid() {
+        assert!(parse_and_verify("f>n;now").is_ok());
+    }
+
+    #[test]
+    fn now_with_args_arity_error() {
+        let result = parse_and_verify("f x:n>n;now x");
+        assert!(result.is_err());
+        let errors = result.unwrap_err();
+        assert!(errors.iter().any(|e| e.message.contains("arity mismatch") && e.message.contains("now")));
     }
 }
