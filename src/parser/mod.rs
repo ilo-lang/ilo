@@ -426,6 +426,20 @@ impl Parser {
                 let value = self.parse_expr()?;
                 Ok(Stmt::Return(value))
             }
+            Some(Token::Ident(name)) if name == "brk" => {
+                self.advance(); // consume "brk"
+                // brk with optional value expression
+                let value = if self.at_body_end() {
+                    None
+                } else {
+                    Some(self.parse_expr()?)
+                };
+                Ok(Stmt::Break(value))
+            }
+            Some(Token::Ident(name)) if name == "cnt" => {
+                self.advance(); // consume "cnt"
+                Ok(Stmt::Continue)
+            }
             Some(Token::Ident(name)) if name == "wh" => {
                 self.advance(); // consume "wh"
                 let condition = self.parse_expr()?;
@@ -3022,6 +3036,48 @@ mod tests {
                     other => panic!("expected guard, got {:?}", other),
                 }
             }
+            _ => panic!("expected function"),
+        }
+    }
+
+    #[test]
+    fn parse_brk_no_value() {
+        let prog = parse_str("f>n;wh true{brk}");
+        match &prog.declarations[0] {
+            Decl::Function { body, .. } => match &body[0].node {
+                Stmt::While { body, .. } => {
+                    assert!(matches!(&body[0].node, Stmt::Break(None)));
+                }
+                other => panic!("expected While, got {:?}", other),
+            },
+            _ => panic!("expected function"),
+        }
+    }
+
+    #[test]
+    fn parse_brk_with_value() {
+        let prog = parse_str("f>n;wh true{brk 42}");
+        match &prog.declarations[0] {
+            Decl::Function { body, .. } => match &body[0].node {
+                Stmt::While { body, .. } => {
+                    assert!(matches!(&body[0].node, Stmt::Break(Some(Expr::Literal(Literal::Number(n)))) if *n == 42.0));
+                }
+                other => panic!("expected While, got {:?}", other),
+            },
+            _ => panic!("expected function"),
+        }
+    }
+
+    #[test]
+    fn parse_cnt() {
+        let prog = parse_str("f>n;wh true{cnt}");
+        match &prog.declarations[0] {
+            Decl::Function { body, .. } => match &body[0].node {
+                Stmt::While { body, .. } => {
+                    assert!(matches!(&body[0].node, Stmt::Continue));
+                }
+                other => panic!("expected While, got {:?}", other),
+            },
             _ => panic!("expected function"),
         }
     }

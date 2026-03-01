@@ -36,6 +36,9 @@ fn stmt_uses_unwrap(stmt: &Stmt) -> bool {
             expr_uses_unwrap(condition) || body.iter().any(|s| stmt_uses_unwrap(&s.node))
         }
         Stmt::Return(e) => expr_uses_unwrap(e),
+        Stmt::Break(Some(e)) => expr_uses_unwrap(e),
+        Stmt::Break(None) => false,
+        Stmt::Continue => false,
         Stmt::Expr(e) => expr_uses_unwrap(e),
     }
 }
@@ -168,6 +171,21 @@ fn emit_stmt(out: &mut String, stmt: &Stmt, level: usize, implicit_return: bool)
             let val = emit_expr(out, level, expr);
             indent(out, level);
             out.push_str(&format!("return {}\n", val));
+        }
+        Stmt::Break(Some(expr)) => {
+            let val = emit_expr(out, level, expr);
+            indent(out, level);
+            out.push_str(&format!("__break_val = {}\n", val));
+            indent(out, level);
+            out.push_str("break\n");
+        }
+        Stmt::Break(None) => {
+            indent(out, level);
+            out.push_str("break\n");
+        }
+        Stmt::Continue => {
+            indent(out, level);
+            out.push_str("continue\n");
         }
         Stmt::Expr(expr) => {
             let val = emit_expr(out, level, expr);

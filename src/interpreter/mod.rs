@@ -118,6 +118,10 @@ enum BodyResult {
     Value(Value),
     /// Early return from guard
     Return(Value),
+    /// Break from loop, with optional value
+    Break(Value),
+    /// Continue to next loop iteration
+    Continue,
 }
 
 pub fn run(program: &Program, func_name: Option<&str>, args: Vec<Value>) -> Result<Value> {
@@ -406,7 +410,8 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             env.call_stack.pop();
             env.pop_scope();
             match result? {
-                BodyResult::Value(v) | BodyResult::Return(v) => Ok(v),
+                BodyResult::Value(v) | BodyResult::Return(v) | BodyResult::Break(v) => Ok(v),
+                BodyResult::Continue => Ok(Value::Nil),
             }
         }
         Decl::Tool { name, .. } => {
@@ -429,6 +434,8 @@ fn eval_body(env: &mut Env, stmts: &[Spanned<Stmt>]) -> Result<BodyResult> {
         let is_last = i == stmts.len() - 1;
         match eval_stmt(env, &spanned.node, is_last) {
             Ok(Some(BodyResult::Return(v))) => return Ok(BodyResult::Return(v)),
+            Ok(Some(BodyResult::Break(v))) => return Ok(BodyResult::Break(v)),
+            Ok(Some(BodyResult::Continue)) => return Ok(BodyResult::Continue),
             Ok(Some(BodyResult::Value(v))) => last = v,
             Ok(None) => {}
             Err(mut e) => {
@@ -464,19 +471,25 @@ fn eval_stmt(env: &mut Env, stmt: &Stmt, is_last: bool) -> Result<Option<BodyRes
                 env.push_scope();
                 let result = eval_body(env, chosen);
                 env.pop_scope();
-                let v = match result? {
-                    BodyResult::Value(v) | BodyResult::Return(v) => v,
-                };
-                Ok(Some(BodyResult::Value(v)))
+                match result? {
+                    BodyResult::Break(v) => Ok(Some(BodyResult::Break(v))),
+                    BodyResult::Continue => Ok(Some(BodyResult::Continue)),
+                    BodyResult::Value(v) | BodyResult::Return(v) => {
+                        Ok(Some(BodyResult::Value(v)))
+                    }
+                }
             } else if should_run {
                 // Guard: cond{body} — early return from function
                 env.push_scope();
                 let result = eval_body(env, body);
                 env.pop_scope();
-                let v = match result? {
-                    BodyResult::Value(v) | BodyResult::Return(v) => v,
-                };
-                Ok(Some(BodyResult::Return(v)))
+                match result? {
+                    BodyResult::Break(v) => Ok(Some(BodyResult::Break(v))),
+                    BodyResult::Continue => Ok(Some(BodyResult::Continue)),
+                    BodyResult::Value(v) | BodyResult::Return(v) => {
+                        Ok(Some(BodyResult::Return(v)))
+                    }
+                }
             } else {
                 Ok(None)
             }
@@ -496,6 +509,8 @@ fn eval_stmt(env: &mut Env, stmt: &Stmt, is_last: bool) -> Result<Option<BodyRes
                     env.pop_scope();
                     match result? {
                         BodyResult::Return(v) => return Ok(Some(BodyResult::Return(v))),
+                        BodyResult::Break(v) => return Ok(Some(BodyResult::Break(v))),
+                        BodyResult::Continue => return Ok(Some(BodyResult::Continue)),
                         BodyResult::Value(v) => {
                             if is_last {
                                 return Ok(Some(BodyResult::Return(v)));
@@ -521,6 +536,11 @@ fn eval_stmt(env: &mut Env, stmt: &Stmt, is_last: bool) -> Result<Option<BodyRes
                             BodyResult::Return(v) => {
                                 return Ok(Some(BodyResult::Return(v)));
                             }
+                            BodyResult::Break(v) => {
+                                last = v;
+                                break;
+                            }
+                            BodyResult::Continue => continue,
                             BodyResult::Value(v) => last = v,
                         }
                     }
@@ -541,6 +561,11 @@ fn eval_stmt(env: &mut Env, stmt: &Stmt, is_last: bool) -> Result<Option<BodyRes
                     BodyResult::Return(v) => {
                         return Ok(Some(BodyResult::Return(v)));
                     }
+                    BodyResult::Break(v) => {
+                        last = v;
+                        break;
+                    }
+                    BodyResult::Continue => continue,
                     BodyResult::Value(v) => last = v,
                 }
             }
@@ -549,6 +574,16 @@ fn eval_stmt(env: &mut Env, stmt: &Stmt, is_last: bool) -> Result<Option<BodyRes
         Stmt::Return(expr) => {
             let val = eval_expr(env, expr)?;
             Ok(Some(BodyResult::Return(val)))
+        }
+        Stmt::Break(expr) => {
+            let val = match expr {
+                Some(e) => eval_expr(env, e)?,
+                None => Value::Nil,
+            };
+            Ok(Some(BodyResult::Break(val)))
+        }
+        Stmt::Continue => {
+            Ok(Some(BodyResult::Continue))
         }
         Stmt::Expr(expr) => {
             let val = eval_expr(env, expr)?;
@@ -671,7 +706,8 @@ fn eval_expr(env: &mut Env, expr: &Expr) -> Result<Value> {
                     let result = eval_body(env, &arm.body);
                     env.pop_scope();
                     return match result? {
-                        BodyResult::Value(v) | BodyResult::Return(v) => Ok(v),
+                        BodyResult::Value(v) | BodyResult::Return(v) | BodyResult::Break(v) => Ok(v),
+                        BodyResult::Continue => Ok(Value::Nil),
                     };
                 }
             }
@@ -2199,5 +2235,47 @@ mod tests {
         // Early return from while loop
         let source = "f>n;i=0;wh true{i=+i 1;>=i 3{ret i}};0";
         assert_eq!(run_str(source, Some("f"), vec![]), Value::Number(3.0));
+    }
+
+    #[test]
+    fn interpret_while_brk() {
+        // brk exits while loop
+        let source = "f>n;i=0;wh true{i=+i 1;>=i 3{brk}};i";
+        assert_eq!(run_str(source, Some("f"), vec![]), Value::Number(3.0));
+    }
+
+    #[test]
+    fn interpret_while_brk_value() {
+        // brk with value — value is discarded, loop exits
+        let source = "f>n;i=0;wh true{i=+i 1;>=i 3{brk 99}};i";
+        assert_eq!(run_str(source, Some("f"), vec![]), Value::Number(3.0));
+    }
+
+    #[test]
+    fn interpret_while_cnt() {
+        // cnt skips rest of body, continues loop
+        let source = "f>n;i=0;s=0;wh <i 5{i=+i 1;>=i 3{cnt};s=+s i};s";
+        // i goes 1,2,3,4,5 — cnt when i>=3 so s += i only for i=1,2 → s=3
+        assert_eq!(run_str(source, Some("f"), vec![]), Value::Number(3.0));
+    }
+
+    #[test]
+    fn interpret_foreach_brk() {
+        // brk with value exits foreach, foreach returns the break value
+        let source = "f>n;@x [1,2,3,4,5]{>=x 3{brk x};x}";
+        // x=1 → value 1, x=2 → value 2, x=3 → brk 3
+        // Break value (3) becomes last, foreach returns 3
+        assert_eq!(run_str(source, Some("f"), vec![]), Value::Number(3.0));
+    }
+
+    #[test]
+    fn interpret_foreach_cnt() {
+        // cnt in foreach skips rest of body for that iteration
+        // Body value: x*2 — but when x>=3, cnt skips it
+        // Last non-skipped value = 2*2 = 4 (from x=2)... but then x=3,4,5 continue with no value
+        // Actually: last = Nil from unfinished iterations? No — continue doesn't update last.
+        // x=1 → value 2, x=2 → value 4, x=3 → cnt (last stays 4), x=4 → cnt, x=5 → cnt
+        let source = "f>n;@x [1,2,3,4,5]{>=x 3{cnt};*x 2}";
+        assert_eq!(run_str(source, Some("f"), vec![]), Value::Number(4.0));
     }
 }

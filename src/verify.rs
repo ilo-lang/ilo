@@ -638,6 +638,14 @@ impl VerifyContext {
                 self.verify_body(func, scope, body)
             }
             Stmt::Return(expr) => self.infer_expr(func, scope, expr, span),
+            Stmt::Break(expr) => {
+                if let Some(e) = expr {
+                    self.infer_expr(func, scope, e, span)
+                } else {
+                    Ty::Nil
+                }
+            }
+            Stmt::Continue => Ty::Nil,
             Stmt::Expr(expr) => self.infer_expr(func, scope, expr, span),
         }
     }

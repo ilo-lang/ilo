@@ -217,6 +217,8 @@ ilo 'f xs:L t>t;xs.0' 'a,b,c'       → a
 | `^expr` | return err |
 | `func! args` | call + auto-unwrap Result |
 | `wh cond{body}` | while loop |
+| `brk` / `brk expr` | exit enclosing loop (optional value) |
+| `cnt` | skip to next iteration of enclosing loop |
 | `expr>>func` | pipe: pass result as last arg to func |
 
 ---
@@ -286,6 +288,19 @@ f>n;i=0;wh true{i=+i 1;>=i 3{ret i}};0   -- early return from loop
 ```
 
 Variable rebinding (`i=+i 1`) inside while loops updates the existing variable rather than creating a new binding.
+
+### Break and Continue
+
+`brk` exits the enclosing `wh` or `@` loop. `cnt` skips to the next iteration:
+
+```
+f>n;i=0;wh true{i=+i 1;>=i 3{brk}};i    -- i = 3
+f>n;i=0;s=0;wh <i 5{i=+i 1;>=i 3{cnt};s=+s i};s   -- s = 3 (skips i>=3)
+```
+
+`brk expr` provides an optional value (currently discarded — the loop result is the last body value before the break).
+
+Both `brk` and `cnt` work inside guards within loops. Using them outside a loop is a compile-time error (no-op in current implementation).
 
 ### Pipe Operator
 

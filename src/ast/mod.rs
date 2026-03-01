@@ -160,6 +160,12 @@ pub enum Stmt {
     /// `ret expr` — early return from function
     Return(Expr),
 
+    /// `brk` or `brk expr` — exit enclosing loop
+    Break(Option<Expr>),
+
+    /// `cnt` — skip to next iteration of enclosing loop
+    Continue,
+
     /// Expression as statement (last expr is return value)
     Expr(Expr),
 }

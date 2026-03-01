@@ -202,6 +202,9 @@ fn fmt_stmt_dense(stmt: &Stmt) -> String {
             format!("wh {}{{{}}}", fmt_expr(condition, FmtMode::Dense), fmt_body_dense(body))
         }
         Stmt::Return(e) => format!("ret {}", fmt_expr(e, FmtMode::Dense)),
+        Stmt::Break(Some(e)) => format!("brk {}", fmt_expr(e, FmtMode::Dense)),
+        Stmt::Break(None) => "brk".to_string(),
+        Stmt::Continue => "cnt".to_string(),
         Stmt::Expr(e) => fmt_expr(e, FmtMode::Dense),
     }
 }
@@ -295,6 +298,20 @@ fn fmt_stmt_expanded(out: &mut String, stmt: &Stmt, indent_level: usize) {
             out.push_str("ret ");
             out.push_str(&fmt_expr(e, FmtMode::Expanded));
             out.push('\n');
+        }
+        Stmt::Break(Some(e)) => {
+            out.push_str(&ind);
+            out.push_str("brk ");
+            out.push_str(&fmt_expr(e, FmtMode::Expanded));
+            out.push('\n');
+        }
+        Stmt::Break(None) => {
+            out.push_str(&ind);
+            out.push_str("brk\n");
+        }
+        Stmt::Continue => {
+            out.push_str(&ind);
+            out.push_str("cnt\n");
         }
         Stmt::Expr(e) => {
             out.push_str(&ind);

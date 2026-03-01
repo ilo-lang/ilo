@@ -228,6 +228,15 @@ impl Drop for CompiledProgram {
 
 // ── Register Compiler ────────────────────────────────────────────────
 
+struct LoopContext {
+    loop_top: usize,
+    /// `None` = use loop_top for continue (while loops).
+    /// `Some(patches)` = foreach: patches to be fixed up to idx increment.
+    continue_patches: Option<Vec<usize>>,
+    break_patches: Vec<usize>,
+    result_reg: u8,
+}
+
 struct RegCompiler {
     chunks: Vec<Chunk>,
     func_names: Vec<String>,
@@ -238,6 +247,7 @@ struct RegCompiler {
     reg_is_num: [bool; 256],  // track which registers are known numeric
     first_error: Option<CompileError>,
     current_span: crate::ast::Span,
+    loop_stack: Vec<LoopContext>,
 }
 
 impl RegCompiler {
@@ -252,6 +262,7 @@ impl RegCompiler {
             reg_is_num: [false; 256],
             first_error: None,
             current_span: crate::ast::Span::UNKNOWN,
+            loop_stack: Vec::new(),
         }
     }
 
@@ -506,6 +517,14 @@ impl RegCompiler {
                 self.emit_abc(OP_LISTGET, bind_reg, coll_reg, idx_reg);
                 let exit_jump = self.emit_jmp_placeholder();
 
+                // Push loop context for break/continue
+                self.loop_stack.push(LoopContext {
+                    loop_top,
+                    continue_patches: Some(Vec::new()), // foreach: patches fixed up below
+                    break_patches: Vec::new(),
+                    result_reg: last_reg,
+                });
+
                 // Compile body
                 let saved_locals = self.locals.len();
                 let body_result = self.compile_body(body);
@@ -516,14 +535,29 @@ impl RegCompiler {
                         self.emit_abc(OP_MOVE, last_reg, br, 0);
                     }
 
+                // Patch continue jumps to idx increment
+                let continue_target = self.current.code.len();
+                if let Some(patches) = &self.loop_stack.last().unwrap().continue_patches {
+                    let patches: Vec<usize> = patches.clone();
+                    for patch in patches {
+                        let offset = continue_target as isize - patch as isize - 1;
+                        let encoded = encode_abx(OP_JMP, 0, offset as i16 as u16);
+                        self.current.code[patch] = encoded;
+                    }
+                }
+
                 // idx += 1
                 self.emit_abc(OP_ADD, idx_reg, idx_reg, one_reg);
 
                 // Jump back to loop top
                 self.emit_jump_to(loop_top);
 
-                // Exit
+                // Exit: patch exit jump and break jumps
                 self.current.patch_jump(exit_jump);
+                let ctx = self.loop_stack.pop().unwrap();
+                for patch in ctx.break_patches {
+                    self.current.patch_jump(patch);
+                }
 
                 Some(last_reg)
             }
@@ -538,6 +572,14 @@ impl RegCompiler {
                 let cond_reg = self.compile_expr(condition);
                 let exit_jump = self.emit_jmpf(cond_reg);
 
+                // Push loop context for break/continue
+                self.loop_stack.push(LoopContext {
+                    loop_top,
+                    continue_patches: None, // while: continue jumps to loop_top
+                    break_patches: Vec::new(),
+                    result_reg: last_reg,
+                });
+
                 // Compile body
                 let saved_locals = self.locals.len();
                 let body_result = self.compile_body(body);
@@ -551,8 +593,12 @@ impl RegCompiler {
                 // Jump back to loop top
                 self.emit_jump_to(loop_top);
 
-                // Exit
+                // Exit: patch condition-false jump and all break jumps
                 self.current.patch_jump(exit_jump);
+                let ctx = self.loop_stack.pop().unwrap();
+                for patch in ctx.break_patches {
+                    self.current.patch_jump(patch);
+                }
 
                 Some(last_reg)
             }
@@ -560,6 +606,38 @@ impl RegCompiler {
             Stmt::Return(expr) => {
                 let reg = self.compile_expr(expr);
                 self.emit_abx(OP_RET, reg, 0);
+                None
+            }
+
+            Stmt::Break(expr) => {
+                if let Some(ctx) = self.loop_stack.last() {
+                    let result_reg = ctx.result_reg;
+                    if let Some(e) = expr {
+                        let reg = self.compile_expr(e);
+                        if reg != result_reg {
+                            self.emit_abc(OP_MOVE, result_reg, reg, 0);
+                        }
+                    }
+                    let jmp = self.emit_jmp_placeholder();
+                    // Re-borrow mutably to push break patch
+                    self.loop_stack.last_mut().unwrap().break_patches.push(jmp);
+                }
+                None
+            }
+
+            Stmt::Continue => {
+                if let Some(ctx) = self.loop_stack.last() {
+                    if ctx.continue_patches.is_some() {
+                        // Foreach: emit placeholder, patch later
+                        let jmp = self.emit_jmp_placeholder();
+                        self.loop_stack.last_mut().unwrap()
+                            .continue_patches.as_mut().unwrap().push(jmp);
+                    } else {
+                        // While: jump back to loop_top (condition re-eval)
+                        let top = ctx.loop_top;
+                        self.emit_jump_to(top);
+                    }
+                }
                 None
             }
 
@@ -4505,5 +4583,37 @@ mod tests {
     fn vm_safe_field_chained() {
         let source = "mk x:n>n;>=x 1{x}\nf>n;v=mk 0;v.?a.?b??77";
         assert_eq!(vm_run(source, Some("f"), vec![]), Value::Number(77.0));
+    }
+
+    #[test]
+    fn vm_while_brk() {
+        let source = "f>n;i=0;wh true{i=+i 1;>=i 3{brk}};i";
+        assert_eq!(vm_run(source, Some("f"), vec![]), Value::Number(3.0));
+    }
+
+    #[test]
+    fn vm_while_brk_value() {
+        let source = "f>n;i=0;wh true{i=+i 1;>=i 3{brk 99}};i";
+        assert_eq!(vm_run(source, Some("f"), vec![]), Value::Number(3.0));
+    }
+
+    #[test]
+    fn vm_while_cnt() {
+        let source = "f>n;i=0;s=0;wh <i 5{i=+i 1;>=i 3{cnt};s=+s i};s";
+        assert_eq!(vm_run(source, Some("f"), vec![]), Value::Number(3.0));
+    }
+
+    #[test]
+    fn vm_foreach_brk() {
+        // brk with value exits foreach, foreach returns the break value
+        let source = "f>n;@x [1,2,3,4,5]{>=x 3{brk x};x}";
+        assert_eq!(vm_run(source, Some("f"), vec![]), Value::Number(3.0));
+    }
+
+    #[test]
+    fn vm_foreach_cnt() {
+        // cnt skips rest of body — last value is from last non-skipped iteration
+        let source = "f>n;@x [1,2,3,4,5]{>=x 3{cnt};*x 2}";
+        assert_eq!(vm_run(source, Some("f"), vec![]), Value::Number(4.0));
     }
 }
