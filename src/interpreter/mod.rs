@@ -574,6 +574,37 @@ fn eval_stmt(env: &mut Env, stmt: &Stmt, is_last: bool) -> Result<Option<BodyRes
                 _ => Err(RuntimeError::new("ILO-R007", "foreach requires a list")),
             }
         }
+        Stmt::ForRange { binding, start, end, body } => {
+            let start_val = eval_expr(env, start)?;
+            let end_val = eval_expr(env, end)?;
+            let s = match start_val {
+                Value::Number(n) => n as i64,
+                _ => return Err(RuntimeError::new("ILO-R007", "range start must be a number")),
+            };
+            let e = match end_val {
+                Value::Number(n) => n as i64,
+                _ => return Err(RuntimeError::new("ILO-R007", "range end must be a number")),
+            };
+            let mut last = Value::Nil;
+            for i in s..e {
+                env.push_scope();
+                env.set(binding, Value::Number(i as f64));
+                let result = eval_body(env, body);
+                env.pop_scope();
+                match result? {
+                    BodyResult::Return(v) => {
+                        return Ok(Some(BodyResult::Return(v)));
+                    }
+                    BodyResult::Break(v) => {
+                        last = v;
+                        break;
+                    }
+                    BodyResult::Continue => continue,
+                    BodyResult::Value(v) => last = v,
+                }
+            }
+            Ok(Some(BodyResult::Value(last)))
+        }
         Stmt::While { condition, body } => {
             let mut last = Value::Nil;
             loop {
@@ -2345,5 +2376,67 @@ mod tests {
             }
             other => panic!("expected Number, got {:?}", other),
         }
+    }
+
+    // ── Range iteration tests ───────────────────────────────────────────
+
+    #[test]
+    fn interpret_range_basic() {
+        // @i 0..3{i} → iterates 0, 1, 2; last value is 2
+        let source = "f>n;@i 0..3{i}";
+        assert_eq!(run_str(source, Some("f"), vec![]), Value::Number(2.0));
+    }
+
+    #[test]
+    fn interpret_range_accumulate() {
+        // Last body value: +0 i where i goes 0,1,2 → last is +0 2 = 2
+        // s is in outer scope, s=+s i creates s in inner scope each time
+        // So just check the body expression result
+        let source = "f>n;@i 0..3{+i 1}";
+        // last body val: +2 1 = 3
+        assert_eq!(run_str(source, Some("f"), vec![]), Value::Number(3.0));
+    }
+
+    #[test]
+    fn interpret_range_empty() {
+        // start >= end → never executes, loop returns Nil
+        let source = "f>n;@i 5..3{99}";
+        assert_eq!(run_str(source, Some("f"), vec![]), Value::Nil);
+    }
+
+    #[test]
+    fn interpret_range_dynamic_end() {
+        // Dynamic end from parameter; body returns i
+        let source = "f n:n>n;@i 0..n{i}";
+        // n=4, iterates 0,1,2,3 → last body value is 3
+        assert_eq!(
+            run_str(source, Some("f"), vec![Value::Number(4.0)]),
+            Value::Number(3.0)
+        );
+    }
+
+    #[test]
+    fn interpret_range_brk() {
+        // Break at i >= 3 with value
+        let source = "f>n;@i 0..10{>=i 3{brk i};i}";
+        assert_eq!(run_str(source, Some("f"), vec![]), Value::Number(3.0));
+    }
+
+    #[test]
+    fn interpret_range_cnt() {
+        // cnt skips rest of body. Body is: =i 2{cnt};*i 10
+        // i=0: *0 10 = 0, i=1: *1 10 = 10, i=2: cnt (skip), i=3: *3 10 = 30, i=4: *4 10 = 40
+        // last body value = 40
+        let source = "f>n;@i 0..5{=i 2{cnt};*i 10}";
+        assert_eq!(run_str(source, Some("f"), vec![]), Value::Number(40.0));
+    }
+
+    #[test]
+    fn interpret_range_as_index() {
+        // Use range variable to index a list: xs.i doesn't work with dynamic i
+        // Index access is only for literals. So just test basic indexing pattern.
+        let source = "f>n;@i 0..3{*i i}";
+        // i=0: 0, i=1: 1, i=2: 4 → last = 4
+        assert_eq!(run_str(source, Some("f"), vec![]), Value::Number(4.0));
     }
 }

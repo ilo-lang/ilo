@@ -702,6 +702,24 @@ impl VerifyContext {
                 scope.pop();
                 body_ty
             }
+            Stmt::ForRange { binding, start, end, body } => {
+                let start_ty = self.infer_expr(func, scope, start, span);
+                let end_ty = self.infer_expr(func, scope, end, span);
+                if !compatible(&start_ty, &Ty::Number) {
+                    self.err("ILO-T014", func, format!("range start must be n, got {start_ty}"), None, Some(span));
+                }
+                if !compatible(&end_ty, &Ty::Number) {
+                    self.err("ILO-T014", func, format!("range end must be n, got {end_ty}"), None, Some(span));
+                }
+                scope.push(HashMap::new());
+                scope_insert(scope, binding.clone(), Ty::Number);
+                let prev = self.in_loop;
+                self.in_loop = true;
+                let body_ty = self.verify_body(func, scope, body);
+                self.in_loop = prev;
+                scope.pop();
+                body_ty
+            }
             Stmt::While { condition, body } => {
                 self.infer_expr(func, scope, condition, span);
                 let prev = self.in_loop;
@@ -2727,5 +2745,40 @@ mod tests {
         assert!(result.is_err());
         let errors = result.unwrap_err();
         assert!(errors.iter().any(|e| e.message.contains("arity mismatch") && e.message.contains("now")));
+    }
+
+    // ── Range iteration verifier tests ──────────────────────────────────
+
+    #[test]
+    fn range_basic_ok() {
+        assert!(parse_and_verify("f>n;@i 0..3{i}").is_ok());
+    }
+
+    #[test]
+    fn range_binding_is_number() {
+        // The range variable should be typed as n; using it as n should work
+        assert!(parse_and_verify("f>n;@i 0..3{+i 1}").is_ok());
+    }
+
+    #[test]
+    fn range_start_must_be_number() {
+        let result = parse_and_verify(r#"f>n;@i "a"..3{i}"#);
+        assert!(result.is_err());
+        let errors = result.unwrap_err();
+        assert!(errors.iter().any(|e| e.message.contains("range start must be n")));
+    }
+
+    #[test]
+    fn range_end_must_be_number() {
+        let result = parse_and_verify(r#"f>n;@i 0.."b"{i}"#);
+        assert!(result.is_err());
+        let errors = result.unwrap_err();
+        assert!(errors.iter().any(|e| e.message.contains("range end must be n")));
+    }
+
+    #[test]
+    fn range_brk_cnt_allowed() {
+        assert!(parse_and_verify("f>n;@i 0..5{>=i 3{brk i};i}").is_ok());
+        assert!(parse_and_verify("f>n;@i 0..5{=i 2{cnt};i}").is_ok());
     }
 }

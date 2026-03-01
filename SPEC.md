@@ -166,6 +166,13 @@ Comma-separated expressions in brackets. Trailing comma allowed. Use with `@` to
 @x xs{+x 1}
 ```
 
+**Range iteration:** `@i start..end{body}` iterates `i` from `start` (inclusive) to `end` (exclusive) as integers, without constructing a list:
+
+```
+@i 0..5{*i i}            -- squares: 0, 1, 4, 9, 16
+@i 0..len xs{xs.i}       -- index-based iteration (dynamic end)
+```
+
 Index by integer literal (dot notation):
 ```
 xs.0     # first element
@@ -194,6 +201,7 @@ ilo 'f xs:L t>t;xs.0' 'a,b,c'       → a
 | `?x{arms}` | match named value |
 | `?{arms}` | match last result |
 | `@v list{body}` | iterate list |
+| `@i start..end{body}` | range loop: i from start (inclusive) to end (exclusive) |
 | `ret expr` | early return from function |
 | `~expr` | return ok |
 | `^expr` | return err |

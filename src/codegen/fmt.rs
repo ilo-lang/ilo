@@ -198,6 +198,9 @@ fn fmt_stmt_dense(stmt: &Stmt) -> String {
         Stmt::ForEach { binding, collection, body } => {
             format!("@{} {}{{{}}}", binding, fmt_expr(collection, FmtMode::Dense), fmt_body_dense(body))
         }
+        Stmt::ForRange { binding, start, end, body } => {
+            format!("@{} {}..{}{{{}}}", binding, fmt_expr(start, FmtMode::Dense), fmt_expr(end, FmtMode::Dense), fmt_body_dense(body))
+        }
         Stmt::While { condition, body } => {
             format!("wh {}{{{}}}", fmt_expr(condition, FmtMode::Dense), fmt_body_dense(body))
         }
@@ -279,6 +282,20 @@ fn fmt_stmt_expanded(out: &mut String, stmt: &Stmt, indent_level: usize) {
             out.push_str(binding);
             out.push(' ');
             out.push_str(&fmt_expr(collection, FmtMode::Expanded));
+            out.push_str(" {\n");
+            fmt_body_expanded(out, body, indent_level + 1);
+            out.push_str(&ind);
+            out.push_str("}\n");
+        }
+        Stmt::ForRange { binding, start, end, body } => {
+            out.push_str(&ind);
+            out.push('@');
+            out.push(' ');
+            out.push_str(binding);
+            out.push(' ');
+            out.push_str(&fmt_expr(start, FmtMode::Expanded));
+            out.push_str("..");
+            out.push_str(&fmt_expr(end, FmtMode::Expanded));
             out.push_str(" {\n");
             fmt_body_expanded(out, body, indent_level + 1);
             out.push_str(&ind);
@@ -910,6 +927,29 @@ mod tests {
     #[test]
     fn round_trip_while() {
         assert_round_trip("f>n;i=0;wh <i 5{i=+i 1};i");
+    }
+
+    #[test]
+    fn dense_range() {
+        let s = dense("f>n;@i 0..3{i}");
+        assert!(s.contains("@i 0..3{i}"), "got: {s}");
+    }
+
+    #[test]
+    fn expanded_range() {
+        let s = expanded("f>n;@i 0..3{i}");
+        assert!(s.contains("  @ i 0..3 {\n"), "got: {s}");
+        assert!(s.contains("    i\n"), "got: {s}");
+    }
+
+    #[test]
+    fn round_trip_range() {
+        assert_round_trip("f>n;@i 0..3{i}");
+    }
+
+    #[test]
+    fn round_trip_range_with_var() {
+        assert_round_trip("f n:n>n;@i 0..n{i}");
     }
 
     #[test]

@@ -660,15 +660,27 @@ impl Parser {
         }
     }
 
-    /// `@binding collection{body}`
+    /// `@binding collection{body}` or `@binding start..end{body}`
     fn parse_foreach(&mut self) -> Result<Stmt> {
         self.expect(&Token::At)?;
         let binding = self.expect_ident()?;
-        let collection = self.parse_atom()?;
+        let start_expr = self.parse_atom()?;
+        // Check for range syntax: start..end
+        if self.peek() == Some(&Token::DotDot) {
+            self.advance(); // consume ..
+            let end_expr = self.parse_atom()?;
+            let body = self.parse_brace_body()?;
+            return Ok(Stmt::ForRange {
+                binding,
+                start: start_expr,
+                end: end_expr,
+                body,
+            });
+        }
         let body = self.parse_brace_body()?;
         Ok(Stmt::ForEach {
             binding,
-            collection,
+            collection: start_expr,
             body,
         })
     }
@@ -1422,6 +1434,42 @@ mod tests {
                 match &body[1].node {
                     Stmt::ForEach { binding, .. } => assert_eq!(binding, "x"),
                     _ => panic!("expected foreach"),
+                }
+            }
+            _ => panic!("expected function"),
+        }
+    }
+
+    #[test]
+    fn parse_for_range() {
+        let prog = parse_str("f>n;@i 0..3{i}");
+        match &prog.declarations[0] {
+            Decl::Function { body, .. } => {
+                match &body[0].node {
+                    Stmt::ForRange { binding, start, end, .. } => {
+                        assert_eq!(binding, "i");
+                        assert_eq!(*start, Expr::Literal(Literal::Number(0.0)));
+                        assert_eq!(*end, Expr::Literal(Literal::Number(3.0)));
+                    }
+                    _ => panic!("expected ForRange"),
+                }
+            }
+            _ => panic!("expected function"),
+        }
+    }
+
+    #[test]
+    fn parse_for_range_with_expr_end() {
+        // Dynamic end: @i 0..n{body}
+        let prog = parse_str("f n:n>n;@i 0..n{i}");
+        match &prog.declarations[0] {
+            Decl::Function { body, .. } => {
+                match &body[0].node {
+                    Stmt::ForRange { binding, end, .. } => {
+                        assert_eq!(binding, "i");
+                        assert_eq!(*end, Expr::Ref("n".to_string()));
+                    }
+                    _ => panic!("expected ForRange"),
                 }
             }
             _ => panic!("expected function"),

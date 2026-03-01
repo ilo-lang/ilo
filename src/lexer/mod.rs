@@ -81,6 +81,8 @@ pub enum Token {
     Colon,
     #[token(";")]
     Semi,
+    #[token("..")]
+    DotDot,
     #[token(".?")]
     DotQuestion,
     #[token(".")]
@@ -288,6 +290,21 @@ mod tests {
     fn lex_dollar_token() {
         let tokens = lex("$").unwrap();
         assert_eq!(tokens[0].0, Token::Dollar);
+    }
+
+    #[test]
+    fn lex_dotdot_token() {
+        let tokens = lex("0..3").unwrap();
+        let types: Vec<_> = tokens.iter().map(|(t, _)| t.clone()).collect();
+        assert_eq!(types, vec![Token::Number(0.0), Token::DotDot, Token::Number(3.0)]);
+    }
+
+    #[test]
+    fn lex_dot_vs_dotdot() {
+        // Make sure single dot still works
+        let tokens = lex("x.y").unwrap();
+        let types: Vec<_> = tokens.iter().map(|(t, _)| t.clone()).collect();
+        assert_eq!(types, vec![Token::Ident("x".to_string()), Token::Dot, Token::Ident("y".to_string())]);
     }
 
     #[test]

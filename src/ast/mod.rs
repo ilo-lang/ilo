@@ -151,6 +151,14 @@ pub enum Stmt {
         body: Vec<Spanned<Stmt>>,
     },
 
+    /// `@binding start..end{body}` — range iteration
+    ForRange {
+        binding: String,
+        start: Expr,
+        end: Expr,
+        body: Vec<Spanned<Stmt>>,
+    },
+
     /// `wh cond{body}` — while loop
     While {
         condition: Expr,

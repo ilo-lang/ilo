@@ -1431,3 +1431,36 @@ fn braceless_guard_equivalent_to_braced() {
         "braced and braceless should produce identical output"
     );
 }
+
+// --- Range iteration ---
+
+#[test]
+fn range_basic() {
+    let out = ilo()
+        .args(["f>n;@i 0..3{i}", "--run", "f"])
+        .output()
+        .expect("failed to run ilo");
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "2");
+}
+
+#[test]
+fn range_with_arg() {
+    let out = ilo()
+        .args(["f n:n>n;@i 0..n{*i i}", "4"])
+        .output()
+        .expect("failed to run ilo");
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    // i goes 0,1,2,3 → last body value is 3*3 = 9
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "9");
+}
+
+#[test]
+fn range_empty() {
+    let out = ilo()
+        .args(["f>n;@i 5..2{99};0", "--run", "f"])
+        .output()
+        .expect("failed to run ilo");
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "0");
+}

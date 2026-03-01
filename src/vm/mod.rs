@@ -565,6 +565,76 @@ impl RegCompiler {
                 Some(last_reg)
             }
 
+            Stmt::ForRange { binding, start, end, body } => {
+                // Evaluate start and end once
+                let start_reg = self.compile_expr(start);
+                let end_reg = self.compile_expr(end);
+
+                let last_reg = self.alloc_reg();
+                let nil_ki = self.current.add_const(Value::Nil);
+                self.emit_abx(OP_LOADK, last_reg, nil_ki);
+                self.add_local("__fr_last", last_reg);
+
+                // Loop counter = start
+                let counter_reg = self.alloc_reg();
+                self.emit_abc(OP_MOVE, counter_reg, start_reg, 0);
+                self.add_local(binding, counter_reg);
+
+                let one_reg = self.alloc_reg();
+                let one_ki = self.current.add_const(Value::Number(1.0));
+                self.emit_abx(OP_LOADK, one_reg, one_ki);
+
+                // Loop top: check counter < end
+                let loop_top = self.current.code.len();
+                let cmp_reg = self.alloc_reg();
+                self.emit_abc(OP_LT, cmp_reg, counter_reg, end_reg);
+                let exit_jump = self.emit_jmpf(cmp_reg);
+
+                // Push loop context for break/continue
+                self.loop_stack.push(LoopContext {
+                    loop_top,
+                    continue_patches: Some(Vec::new()),
+                    break_patches: Vec::new(),
+                    result_reg: last_reg,
+                });
+
+                // Compile body
+                let saved_locals = self.locals.len();
+                let body_result = self.compile_body(body);
+                self.locals.truncate(saved_locals);
+
+                if let Some(br) = body_result
+                    && br != last_reg {
+                        self.emit_abc(OP_MOVE, last_reg, br, 0);
+                    }
+
+                // Patch continue jumps to counter increment
+                let continue_target = self.current.code.len();
+                if let Some(patches) = &self.loop_stack.last().unwrap().continue_patches {
+                    let patches: Vec<usize> = patches.clone();
+                    for patch in patches {
+                        let offset = continue_target as isize - patch as isize - 1;
+                        let encoded = encode_abx(OP_JMP, 0, offset as i16 as u16);
+                        self.current.code[patch] = encoded;
+                    }
+                }
+
+                // counter += 1
+                self.emit_abc(OP_ADD, counter_reg, counter_reg, one_reg);
+
+                // Jump back to loop top
+                self.emit_jump_to(loop_top);
+
+                // Exit: patch exit jump and break jumps
+                self.current.patch_jump(exit_jump);
+                let ctx = self.loop_stack.pop().unwrap();
+                for patch in ctx.break_patches {
+                    self.current.patch_jump(patch);
+                }
+
+                Some(last_reg)
+            }
+
             Stmt::While { condition, body } => {
                 let last_reg = self.alloc_reg();
                 let nil_ki = self.current.add_const(Value::Nil);
@@ -4716,5 +4786,55 @@ mod tests {
             }
             other => panic!("expected Number, got {:?}", other),
         }
+    }
+
+    // ── Range iteration VM tests ────────────────────────────────────────
+
+    #[test]
+    fn vm_range_basic() {
+        // @i 0..3{i} → last value is 2
+        let source = "f>n;@i 0..3{i}";
+        assert_eq!(vm_run(source, Some("f"), vec![]), Value::Number(2.0));
+    }
+
+    #[test]
+    fn vm_range_accumulate() {
+        let source = "f>n;s=0;@i 0..3{s=+s i};s";
+        assert_eq!(vm_run(source, Some("f"), vec![]), Value::Number(3.0));
+    }
+
+    #[test]
+    fn vm_range_empty() {
+        let source = "f>n;s=99;@i 5..3{s=0};s";
+        assert_eq!(vm_run(source, Some("f"), vec![]), Value::Number(99.0));
+    }
+
+    #[test]
+    fn vm_range_dynamic_end() {
+        let source = "f n:n>n;s=0;@i 0..n{s=+s i};s";
+        assert_eq!(
+            vm_run(source, Some("f"), vec![Value::Number(4.0)]),
+            Value::Number(6.0)
+        );
+    }
+
+    #[test]
+    fn vm_range_brk() {
+        let source = "f>n;@i 0..10{>=i 3{brk i};i}";
+        assert_eq!(vm_run(source, Some("f"), vec![]), Value::Number(3.0));
+    }
+
+    #[test]
+    fn vm_range_cnt() {
+        // Skip i=2
+        let source = "f>n;s=0;@i 0..5{=i 2{cnt};s=+s i};s";
+        assert_eq!(vm_run(source, Some("f"), vec![]), Value::Number(8.0));
+    }
+
+    #[test]
+    fn vm_range_nonzero_start() {
+        let source = "f>n;s=0;@i 2..5{s=+s i};s";
+        // 2+3+4 = 9
+        assert_eq!(vm_run(source, Some("f"), vec![]), Value::Number(9.0));
     }
 }

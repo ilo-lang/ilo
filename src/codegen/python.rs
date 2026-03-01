@@ -32,6 +32,9 @@ fn stmt_uses_unwrap(stmt: &Stmt) -> bool {
         Stmt::ForEach { collection, body, .. } => {
             expr_uses_unwrap(collection) || body.iter().any(|s| stmt_uses_unwrap(&s.node))
         }
+        Stmt::ForRange { start, end, body, .. } => {
+            expr_uses_unwrap(start) || expr_uses_unwrap(end) || body.iter().any(|s| stmt_uses_unwrap(&s.node))
+        }
         Stmt::While { condition, body } => {
             expr_uses_unwrap(condition) || body.iter().any(|s| stmt_uses_unwrap(&s.node))
         }
@@ -159,6 +162,13 @@ fn emit_stmt(out: &mut String, stmt: &Stmt, level: usize, implicit_return: bool)
             let coll = emit_expr(out, level, collection);
             indent(out, level);
             out.push_str(&format!("for {} in {}:\n", py_name(binding), coll));
+            emit_body(out, body, level + 1, false);
+        }
+        Stmt::ForRange { binding, start, end, body } => {
+            let s = emit_expr(out, level, start);
+            let e = emit_expr(out, level, end);
+            indent(out, level);
+            out.push_str(&format!("for {} in range(int({}), int({})):\n", py_name(binding), s, e));
             emit_body(out, body, level + 1, false);
         }
         Stmt::While { condition, body } => {

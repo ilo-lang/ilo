@@ -352,18 +352,18 @@ Explicit return from anywhere in function body.
 
 Index-based loops without constructing a list. Avoids list allocation for numeric ranges.
 
-- [ ] Syntax: `@i 0..n{body}` — bind `i` to each integer in `[0, n)`
-- [ ] Parser: recognise `..` between two numeric expressions in `@` collection position
-- [ ] AST: add `Expr::Range { start, end }` or extend `ForEach` with range variant
-- [ ] Interpreter: iterate from start (inclusive) to end (exclusive), bind each integer to loop variable
-- [ ] VM: compile like existing foreach but with integer counter instead of list indexing — no `OP_LISTGET`, just `OP_ADD` + `OP_LT`
-- [ ] Verifier: start and end must be `n`; loop variable is `n`
-- [ ] Dynamic end: `@i 0..len xs{xs.i}` — end expression evaluated once before loop starts
+- [x] Syntax: `@i 0..n{body}` — bind `i` to each integer in `[0, n)`
+- [x] Parser: recognise `..` between two numeric expressions in `@` collection position
+- [x] AST: add `Stmt::ForRange { binding, start, end, body }` variant
+- [x] Interpreter: iterate from start (inclusive) to end (exclusive), bind each integer to loop variable
+- [x] VM: compile like existing foreach but with integer counter instead of list indexing — no `OP_LISTGET`, just `OP_ADD` + `OP_LT`
+- [x] Verifier: start and end must be `n`; loop variable is `n`
+- [x] Dynamic end: `@i 0..len xs{xs.i}` — end expression evaluated once before loop starts
 - [ ] Step variant (deferred): `@i 0..10..2{body}` for step=2 — lower priority
 - [ ] Cranelift JIT: standard counted loop — optimal for JIT
-- [ ] Python codegen: emit as `for i in range(start, end):`
-- [ ] Tests: basic range, range with expressions, range variable in body, empty range (start >= end), range + break
-- [ ] SPEC.md: document range syntax
+- [x] Python codegen: emit as `for i in range(start, end):`
+- [x] Tests: basic range, range with expressions, range variable in body, empty range (start >= end), range + break
+- [x] SPEC.md: document range syntax
 
 ##### F8. Destructuring bind — `{a;b}=expr` (medium priority)
 
