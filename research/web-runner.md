@@ -243,6 +243,8 @@ Total frontend: ~80 lines of HTML/CSS/JS. No build step, no bundler, no dependen
 | Language | Architecture | Notes |
 |----------|-------------|-------|
 | **Gleam** | Rust compiler → WASM, emits JS, runs JS in browser | Compiler compiled to WASM, virtual in-memory filesystem |
+| **Loxcraft** | Rust Lox interpreter → WASM via `wasm-pack` | Closest analogue to what ilo would build. Hosted on GitHub Pages. |
+| **Adventlang** | Go interpreter → WASM, runs in Web Worker pool | Documents the Worker timeout pattern for infinite loops |
 | **Roc** | REPL on roc-lang.org runs via WASM | Early/alpha but functional |
 | **Lua** | C interpreter compiled to WASM | ~150KB, near-instant startup |
 | **SQLite** | C library compiled to WASM | Proves large C codebases work in WASM |
@@ -258,7 +260,11 @@ Total frontend: ~80 lines of HTML/CSS/JS. No build step, no bundler, no dependen
 
 ilo's interpreter is small enough (~8.5K LOC, no heavy dependencies) that client-side is the obvious choice. No server to maintain, no security sandbox to build, no scaling concerns.
 
-### The Gleam model is closest to what ilo needs
+### Loxcraft is the closest analogue
+
+Loxcraft (a Lox interpreter in Rust) is compiled to WASM via `wasm-pack` and hosted on GitHub Pages. It demonstrates the exact pattern ilo would follow: Rust interpreter → WASM → browser. The difference is that ilo's interpreter is larger (2,281 vs ~1,000 LOC) but the architecture is identical.
+
+### The Gleam model for richer features
 
 Gleam compiles its Rust-based compiler to WASM and runs it entirely in the browser. Key lessons:
 - They inject a virtual in-memory filesystem instead of real FS access
@@ -267,6 +273,10 @@ Gleam compiles its Rust-based compiler to WASM and runs it entirely in the brows
 - No server infrastructure needed
 
 ilo is simpler than Gleam because ilo doesn't need a virtual filesystem at all — programs are strings, not files.
+
+### The Adventlang model for infinite loop handling
+
+Adventlang (a Go interpreter compiled to WASM) runs in a Web Worker pool. When a user clicks "Run", an idle Worker is consumed. If execution exceeds a timeout, `worker.terminate()` kills it. Key insight from Adventlang's design: **a running WASM module cannot be paused or stopped mid-execution** — the only option is terminating the Worker. This is why the Web Worker approach is essential, not optional.
 
 ## Features beyond "run"
 
