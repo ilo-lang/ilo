@@ -588,6 +588,24 @@ Use braces when the guard body is a function call.
 "#,
     },
 
+    ErrorEntry {
+        code: "ILO-T028",
+        short: "brk/cnt used outside a loop",
+        long: r#"## ILO-T028: brk/cnt used outside a loop
+
+`brk` (break) and `cnt` (continue) can only be used inside a loop
+body (`@` foreach or `wh` while).
+
+**Wrong:**
+
+    f x:n>n;brk
+
+**Correct:**
+
+    f xs:L n>n;@ xs x{brk x}
+"#,
+    },
+
     // ── Runtime ──────────────────────────────────────────────────────────────
     ErrorEntry {
         code: "ILO-R001",

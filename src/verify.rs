@@ -63,6 +63,7 @@ struct VerifyContext {
     functions: HashMap<String, FuncSig>,
     types: HashMap<String, TypeDef>,
     errors: Vec<VerifyError>,
+    in_loop: bool,
 }
 
 type Scope = Vec<HashMap<String, Ty>>;
@@ -424,6 +425,7 @@ impl VerifyContext {
             functions: HashMap::new(),
             types: HashMap::new(),
             errors: Vec::new(),
+            in_loop: false,
         }
     }
 
@@ -629,23 +631,38 @@ impl VerifyContext {
                 };
                 scope.push(HashMap::new());
                 scope_insert(scope, binding.clone(), elem_ty);
+                let prev = self.in_loop;
+                self.in_loop = true;
                 let body_ty = self.verify_body(func, scope, body);
+                self.in_loop = prev;
                 scope.pop();
                 body_ty
             }
             Stmt::While { condition, body } => {
                 self.infer_expr(func, scope, condition, span);
-                self.verify_body(func, scope, body)
+                let prev = self.in_loop;
+                self.in_loop = true;
+                let body_ty = self.verify_body(func, scope, body);
+                self.in_loop = prev;
+                body_ty
             }
             Stmt::Return(expr) => self.infer_expr(func, scope, expr, span),
             Stmt::Break(expr) => {
+                if !self.in_loop {
+                    self.err("ILO-T028", func, "brk can only be used inside a loop (@/wh)".to_string(), None, Some(span));
+                }
                 if let Some(e) = expr {
                     self.infer_expr(func, scope, e, span)
                 } else {
                     Ty::Nil
                 }
             }
-            Stmt::Continue => Ty::Nil,
+            Stmt::Continue => {
+                if !self.in_loop {
+                    self.err("ILO-T028", func, "cnt can only be used inside a loop (@/wh)".to_string(), None, Some(span));
+                }
+                Ty::Nil
+            }
             Stmt::Expr(expr) => self.infer_expr(func, scope, expr, span),
         }
     }
@@ -2503,5 +2520,39 @@ mod tests {
     #[test]
     fn ret_in_guard() {
         assert!(parse_and_verify(r#"f x:n>t;>x 0{ret "pos"};"neg""#).is_ok());
+    }
+
+    // ---- brk/cnt outside loop (ILO-T028) ----
+
+    #[test]
+    fn brk_outside_loop() {
+        let errors = parse_and_verify("f>n;brk").unwrap_err();
+        assert!(errors.iter().any(|e| e.code == "ILO-T028" && e.message.contains("brk")));
+    }
+
+    #[test]
+    fn cnt_outside_loop() {
+        let errors = parse_and_verify("f>n;cnt").unwrap_err();
+        assert!(errors.iter().any(|e| e.code == "ILO-T028" && e.message.contains("cnt")));
+    }
+
+    #[test]
+    fn brk_inside_foreach() {
+        assert!(parse_and_verify("f xs:L n>_;@x xs{brk}").is_ok());
+    }
+
+    #[test]
+    fn brk_inside_while() {
+        assert!(parse_and_verify("f>_;i=0;wh <i 5{brk}").is_ok());
+    }
+
+    #[test]
+    fn cnt_inside_foreach() {
+        assert!(parse_and_verify("f xs:L n>_;@x xs{cnt}").is_ok());
+    }
+
+    #[test]
+    fn brk_inside_guard_inside_loop() {
+        assert!(parse_and_verify("f>_;i=0;wh <i 5{>i 3{brk};i=+i 1}").is_ok());
     }
 }
