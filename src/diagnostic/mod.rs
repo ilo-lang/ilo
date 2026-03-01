@@ -115,9 +115,13 @@ impl From<&crate::parser::ParseError> for Diagnostic {
 
 impl From<&crate::verify::VerifyError> for Diagnostic {
     fn from(e: &crate::verify::VerifyError) -> Self {
-        let mut d = Diagnostic::error(&e.message)
-            .with_code(e.code)
-            .with_note(format!("in function '{}'", e.function));
+        let mut d = if e.is_warning {
+            Diagnostic::warning(&e.message)
+        } else {
+            Diagnostic::error(&e.message)
+        }
+        .with_code(e.code)
+        .with_note(format!("in function '{}'", e.function));
         if let Some(span) = e.span {
             d = d.with_span(span, "");
         }
@@ -276,12 +280,30 @@ mod tests {
             message: "undefined variable 'x'".to_string(),
             hint: Some("did you mean 'y'?".to_string()),
             span: None,
+            is_warning: false,
         };
         let d = Diagnostic::from(&e);
+        assert_eq!(d.severity, Severity::Error);
         assert!(d.message.contains("undefined variable"));
         assert!(d.notes.iter().any(|n| n.contains("myFunc")));
         assert!(d.suggestion.is_some());
         assert_eq!(d.code, Some("ILO-T004"));
+    }
+
+    #[test]
+    fn from_verify_warning() {
+        let e = crate::verify::VerifyError {
+            code: "ILO-T029",
+            function: "f".to_string(),
+            message: "unreachable code after 'ret'".to_string(),
+            hint: None,
+            span: Some(Span { start: 10, end: 15 }),
+            is_warning: true,
+        };
+        let d = Diagnostic::from(&e);
+        assert_eq!(d.severity, Severity::Warning);
+        assert!(d.message.contains("unreachable"));
+        assert_eq!(d.code, Some("ILO-T029"));
     }
 
     #[test]

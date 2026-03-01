@@ -606,6 +606,22 @@ body (`@` foreach or `wh` while).
 "#,
     },
 
+    ErrorEntry {
+        code: "ILO-T029",
+        short: "unreachable code",
+        long: r#"## ILO-T029: unreachable code
+
+Code after a `ret` (early return) or `brk` (break) statement will
+never be executed.
+
+**Example:**
+
+    f x:n>n;ret x;*x 2   -- '*x 2' is unreachable
+
+**Fix:** remove the unreachable code or move it before the `ret`/`brk`.
+"#,
+    },
+
     // ── Runtime ──────────────────────────────────────────────────────────────
     ErrorEntry {
         code: "ILO-R001",

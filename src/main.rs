@@ -241,8 +241,12 @@ fn main() {
 
     // Always run the verifier — it skips Decl::Error poison nodes and reports
     // problems in any functions that did parse successfully.
-    if let Err(verify_errors) = verify::verify(&program) {
-        for e in &verify_errors {
+    let verify_result = verify::verify(&program);
+    for w in &verify_result.warnings {
+        report_diagnostic(&Diagnostic::from(w).with_source(source.clone()), mode);
+    }
+    if !verify_result.errors.is_empty() {
+        for e in &verify_result.errors {
             report_diagnostic(&Diagnostic::from(e).with_source(source.clone()), mode);
         }
         had_errors = true;

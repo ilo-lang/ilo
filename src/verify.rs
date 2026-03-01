@@ -38,6 +38,7 @@ pub struct VerifyError {
     pub message: String,
     pub hint: Option<String>,
     pub span: Option<Span>,
+    pub is_warning: bool,
 }
 
 impl std::fmt::Display for VerifyError {
@@ -182,6 +183,7 @@ fn builtin_check_args(name: &str, arg_types: &[Ty], func_ctx: &str, span: Option
                         message: format!("'len' expects a list or text, got {other}"),
                         hint: None,
                         span,
+                        is_warning: false,
                     }),
                 }
             }
@@ -197,6 +199,7 @@ fn builtin_check_args(name: &str, arg_types: &[Ty], func_ctx: &str, span: Option
                     message: format!("'str' expects n, got {arg}"),
                     hint: None,
                     span,
+                        is_warning: false,
                 });
             }
             (Ty::Text, errors)
@@ -211,6 +214,7 @@ fn builtin_check_args(name: &str, arg_types: &[Ty], func_ctx: &str, span: Option
                     message: format!("'num' expects t, got {arg}"),
                     hint: None,
                     span,
+                        is_warning: false,
                 });
             }
             (Ty::Result(Box::new(Ty::Number), Box::new(Ty::Text)), errors)
@@ -225,6 +229,7 @@ fn builtin_check_args(name: &str, arg_types: &[Ty], func_ctx: &str, span: Option
                     message: format!("'{name}' expects n, got {arg}"),
                     hint: None,
                     span,
+                        is_warning: false,
                 });
             }
             (Ty::Number, errors)
@@ -238,6 +243,7 @@ fn builtin_check_args(name: &str, arg_types: &[Ty], func_ctx: &str, span: Option
                         message: format!("'{name}' arg {} expects n, got {arg}", i + 1),
                         hint: None,
                         span,
+                        is_warning: false,
                     });
                 }
             }
@@ -252,6 +258,7 @@ fn builtin_check_args(name: &str, arg_types: &[Ty], func_ctx: &str, span: Option
                         message: format!("'spl' arg {} expects t, got {arg}", i + 1),
                         hint: None,
                         span,
+                        is_warning: false,
                     });
                 }
             }
@@ -267,6 +274,7 @@ fn builtin_check_args(name: &str, arg_types: &[Ty], func_ctx: &str, span: Option
                     message: format!("'cat' arg 1 expects L t, got {arg}"),
                     hint: None,
                     span,
+                        is_warning: false,
                 });
             }
             if let Some(arg) = arg_types.get(1)
@@ -278,6 +286,7 @@ fn builtin_check_args(name: &str, arg_types: &[Ty], func_ctx: &str, span: Option
                     message: format!("'cat' arg 2 expects t, got {arg}"),
                     hint: None,
                     span,
+                        is_warning: false,
                 });
             }
             (Ty::Text, errors)
@@ -292,6 +301,7 @@ fn builtin_check_args(name: &str, arg_types: &[Ty], func_ctx: &str, span: Option
                         message: format!("'has' arg 1 expects a list or text, got {other}"),
                         hint: None,
                         span,
+                        is_warning: false,
                     }),
                 }
             }
@@ -309,6 +319,7 @@ fn builtin_check_args(name: &str, arg_types: &[Ty], func_ctx: &str, span: Option
                         message: format!("'hd' expects a list or text, got {other}"),
                         hint: None,
                         span,
+                        is_warning: false,
                     }),
                 }
             }
@@ -326,6 +337,7 @@ fn builtin_check_args(name: &str, arg_types: &[Ty], func_ctx: &str, span: Option
                         message: format!("'tl' expects a list or text, got {other}"),
                         hint: None,
                         span,
+                        is_warning: false,
                     }),
                 }
             }
@@ -341,6 +353,7 @@ fn builtin_check_args(name: &str, arg_types: &[Ty], func_ctx: &str, span: Option
                         message: format!("'rev' expects a list or text, got {other}"),
                         hint: None,
                         span,
+                        is_warning: false,
                     }),
                 }
             }
@@ -363,6 +376,7 @@ fn builtin_check_args(name: &str, arg_types: &[Ty], func_ctx: &str, span: Option
                         message: format!("'srt' expects a list or text, got {other}"),
                         hint: None,
                         span,
+                        is_warning: false,
                     }),
                 }
             }
@@ -378,6 +392,7 @@ fn builtin_check_args(name: &str, arg_types: &[Ty], func_ctx: &str, span: Option
                         message: format!("'slc' expects a list or text, got {other}"),
                         hint: None,
                         span,
+                        is_warning: false,
                     }),
                 }
             }
@@ -391,6 +406,7 @@ fn builtin_check_args(name: &str, arg_types: &[Ty], func_ctx: &str, span: Option
                         message: format!("'slc' arg {} expects n, got {arg}", i + 2),
                         hint: None,
                         span,
+                        is_warning: false,
                     });
                 }
             }
@@ -411,6 +427,7 @@ fn builtin_check_args(name: &str, arg_types: &[Ty], func_ctx: &str, span: Option
                     message: format!("'get' expects t, got {arg}"),
                     hint: None,
                     span,
+                        is_warning: false,
                 });
             }
             (Ty::Result(Box::new(Ty::Text), Box::new(Ty::Text)), errors)
@@ -436,6 +453,18 @@ impl VerifyContext {
             message,
             hint,
             span,
+            is_warning: false,
+        });
+    }
+
+    fn warn(&mut self, code: &'static str, function: &str, message: String, hint: Option<String>, span: Option<Span>) {
+        self.errors.push(VerifyError {
+            code,
+            function: function.to_string(),
+            message,
+            hint,
+            span,
+            is_warning: true,
         });
     }
 
@@ -557,8 +586,26 @@ impl VerifyContext {
 
     fn verify_body(&mut self, func: &str, scope: &mut Scope, stmts: &[Spanned<Stmt>]) -> Ty {
         let mut last_ty = Ty::Nil;
-        for spanned in stmts {
+        for (i, spanned) in stmts.iter().enumerate() {
             last_ty = self.verify_stmt(func, scope, &spanned.node, spanned.span);
+            if matches!(spanned.node, Stmt::Return(_) | Stmt::Break(_)) && i + 1 < stmts.len() {
+                let first_unreachable = stmts[i + 1].span;
+                let last_unreachable = stmts.last().unwrap().span;
+                let span = first_unreachable.merge(last_unreachable);
+                let kind = match &spanned.node {
+                    Stmt::Return(_) => "ret",
+                    Stmt::Break(_) => "brk",
+                    _ => unreachable!(),
+                };
+                self.warn(
+                    "ILO-T029",
+                    func,
+                    format!("unreachable code after '{kind}'"),
+                    None,
+                    Some(span),
+                );
+                break;
+            }
         }
         last_ty
     }
@@ -1188,9 +1235,15 @@ impl VerifyContext {
     }
 }
 
+#[derive(Debug)]
+pub struct VerifyResult {
+    pub errors: Vec<VerifyError>,
+    pub warnings: Vec<VerifyError>,
+}
+
 /// Run static verification on a parsed program.
-/// Returns Ok(()) if valid, Err(errors) if problems found.
-pub fn verify(program: &Program) -> Result<(), Vec<VerifyError>> {
+/// Returns errors and warnings separately.
+pub fn verify(program: &Program) -> VerifyResult {
     let mut ctx = VerifyContext::new();
 
     // Phase 1: collect declarations
@@ -1199,11 +1252,8 @@ pub fn verify(program: &Program) -> Result<(), Vec<VerifyError>> {
     // Phase 2: verify function bodies
     ctx.verify_bodies(program);
 
-    if ctx.errors.is_empty() {
-        Ok(())
-    } else {
-        Err(ctx.errors)
-    }
+    let (warnings, errors) = ctx.errors.into_iter().partition(|e| e.is_warning);
+    VerifyResult { errors, warnings }
 }
 
 #[cfg(test)]
@@ -1211,6 +1261,15 @@ mod tests {
     use super::*;
 
     fn parse_and_verify(code: &str) -> Result<(), Vec<VerifyError>> {
+        let result = parse_and_verify_full(code);
+        if result.errors.is_empty() {
+            Ok(())
+        } else {
+            Err(result.errors)
+        }
+    }
+
+    fn parse_and_verify_full(code: &str) -> VerifyResult {
         let tokens = crate::lexer::lex(code).expect("lex failed");
         let token_spans: Vec<(crate::lexer::Token, crate::ast::Span)> = tokens
             .into_iter()
@@ -1505,6 +1564,7 @@ mod tests {
             message: "undefined variable 'x'".to_string(),
             hint: None,
             span: None,
+            is_warning: false,
         };
         let s = format!("{e}");
         assert!(s.contains("undefined variable 'x'"));
@@ -1520,6 +1580,7 @@ mod tests {
             message: "undefined variable 'x'".to_string(),
             hint: Some("did you mean 'y'?".to_string()),
             span: None,
+            is_warning: false,
         };
         let s = format!("{e}");
         assert!(s.contains("hint: did you mean 'y'?"));
@@ -2240,7 +2301,7 @@ mod tests {
             source: None,
         };
         let result = verify(&prog);
-        assert!(result.is_ok(), "expected valid, got: {:?}", result);
+        assert!(result.errors.is_empty(), "expected valid, got: {:?}", result);
     }
 
     #[test]
@@ -2268,7 +2329,7 @@ mod tests {
             ],
             source: None,
         };
-        let errors = verify(&prog).unwrap_err();
+        let errors = &verify(&prog).errors;
         assert!(errors.iter().any(|e| e.code == "ILO-T025"), "expected T025, got: {:?}", errors);
     }
 
@@ -2298,7 +2359,7 @@ mod tests {
             ],
             source: None,
         };
-        let errors = verify(&prog).unwrap_err();
+        let errors = &verify(&prog).errors;
         assert!(errors.iter().any(|e| e.code == "ILO-T026"), "expected T026, got: {:?}", errors);
     }
 
@@ -2554,5 +2615,47 @@ mod tests {
     #[test]
     fn brk_inside_guard_inside_loop() {
         assert!(parse_and_verify("f>_;i=0;wh <i 5{>i 3{brk};i=+i 1}").is_ok());
+    }
+
+    // ---- Unreachable code warnings (ILO-T029) ----
+
+    #[test]
+    fn unreachable_after_ret() {
+        let result = parse_and_verify_full("f x:n>n;ret x;*x 2");
+        assert!(result.errors.is_empty());
+        assert_eq!(result.warnings.len(), 1);
+        assert_eq!(result.warnings[0].code, "ILO-T029");
+        assert!(result.warnings[0].message.contains("ret"));
+    }
+
+    #[test]
+    fn unreachable_after_brk() {
+        let result = parse_and_verify_full("f x:n>n;wh true{brk 1;x=2;x};x");
+        assert!(result.errors.is_empty());
+        assert_eq!(result.warnings.len(), 1);
+        assert_eq!(result.warnings[0].code, "ILO-T029");
+        assert!(result.warnings[0].message.contains("brk"));
+    }
+
+    #[test]
+    fn ret_as_last_no_warning() {
+        let result = parse_and_verify_full("f x:n>n;y=*x 2;ret y");
+        assert!(result.errors.is_empty());
+        assert!(result.warnings.is_empty());
+    }
+
+    #[test]
+    fn ret_in_guard_body_no_warning_for_outer() {
+        let result = parse_and_verify_full(r#"f x:n>t;>x 0{ret "pos"};"neg""#);
+        assert!(result.errors.is_empty());
+        assert!(result.warnings.is_empty());
+    }
+
+    #[test]
+    fn multiple_stmts_after_ret_one_warning() {
+        let result = parse_and_verify_full("f x:n>n;ret x;y=*x 2;+y 1");
+        assert!(result.errors.is_empty());
+        assert_eq!(result.warnings.len(), 1);
+        assert_eq!(result.warnings[0].code, "ILO-T029");
     }
 }
