@@ -39,7 +39,8 @@ Key source files:
 
 ## Community
 
-Join [r/ilolang](https://www.reddit.com/r/ilolang/) for discussion, feedback, and updates.
+- [r/ilolang](https://www.reddit.com/r/ilolang/) — discussion, feedback, and updates
+- Email: danieljohnmorris@gmail.com
 
 ## Language Spec
 
