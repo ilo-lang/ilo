@@ -1,6 +1,6 @@
 [package]
 name = "ilo"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 description = "ilo — a constructed language for AI agents"
 license = "MIT"
