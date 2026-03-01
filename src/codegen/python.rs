@@ -1139,4 +1139,55 @@ mod tests {
         // Output should contain the function body, not any error artifacts
         assert!(py.contains("return"), "missing return in: {py}");
     }
+
+    // ---- Coverage tests for newer features ----
+
+    #[test]
+    fn emit_for_range() {
+        let py = parse_and_emit("f>n;@i 0..5{i}");
+        assert!(py.contains("for i in range("), "got: {py}");
+    }
+
+    #[test]
+    fn emit_nil_coalesce() {
+        let py = parse_and_emit("f x:n>n;x??42");
+        assert!(py.contains("is not None else"), "got: {py}");
+    }
+
+    #[test]
+    fn emit_break_no_value() {
+        let py = parse_and_emit("f>n;wh true{brk}");
+        assert!(py.contains("break"), "got: {py}");
+    }
+
+    #[test]
+    fn emit_break_with_value() {
+        let py = parse_and_emit("f>n;wh true{brk 99}");
+        assert!(py.contains("__break_val = 99"), "got: {py}");
+        assert!(py.contains("break"), "got: {py}");
+    }
+
+    #[test]
+    fn emit_continue() {
+        let py = parse_and_emit("f>n;wh true{cnt}");
+        assert!(py.contains("continue"), "got: {py}");
+    }
+
+    #[test]
+    fn emit_alias() {
+        let py = parse_and_emit("alias res R n t\nf x:n>res;~x");
+        assert!(py.contains("# alias res"), "got: {py}");
+    }
+
+    #[test]
+    fn emit_safe_field() {
+        let py = parse_and_emit("f x:n>n;x.?name");
+        assert!(py.contains("is not None else None"), "got: {py}");
+    }
+
+    #[test]
+    fn emit_safe_index() {
+        let py = parse_and_emit("f xs:L n>n;xs.?0");
+        assert!(py.contains("is not None else None"), "got: {py}");
+    }
 }

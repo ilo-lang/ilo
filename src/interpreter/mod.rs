@@ -2442,4 +2442,139 @@ mod tests {
         // i=0: 0, i=1: 1, i=2: 4 → last = 4
         assert_eq!(run_str(source, Some("f"), vec![]), Value::Number(4.0));
     }
+
+    // ---- Builtin error-path coverage tests ----
+
+    #[test]
+    fn err_spl_non_text_first() {
+        let err = run_str_err("f x:n y:t>L t;spl x y", Some("f"), vec![Value::Number(1.0), Value::Text("a".into())]);
+        assert!(err.contains("spl requires two text args"), "got: {err}");
+    }
+
+    #[test]
+    fn err_spl_non_text_second() {
+        let err = run_str_err("f x:t y:n>L t;spl x y", Some("f"), vec![Value::Text("a-b".into()), Value::Number(1.0)]);
+        assert!(err.contains("spl requires two text args"), "got: {err}");
+    }
+
+    #[test]
+    fn err_cat_non_text_items() {
+        let err = run_str_err("f>t;cat [1,2,3] \",\"", Some("f"), vec![]);
+        assert!(err.contains("cat: list items must be text"), "got: {err}");
+    }
+
+    #[test]
+    fn err_cat_wrong_arg_types() {
+        let err = run_str_err("f x:n y:n>t;cat x y", Some("f"), vec![Value::Number(1.0), Value::Number(2.0)]);
+        assert!(err.contains("cat requires a list and text separator"), "got: {err}");
+    }
+
+    #[test]
+    fn err_has_text_non_text_needle() {
+        let err = run_str_err("f x:t y:n>b;has x y", Some("f"), vec![Value::Text("hello".into()), Value::Number(1.0)]);
+        assert!(err.contains("text search requires text needle"), "got: {err}");
+    }
+
+    #[test]
+    fn err_has_wrong_first_arg() {
+        let err = run_str_err("f x:n y:n>b;has x y", Some("f"), vec![Value::Number(1.0), Value::Number(2.0)]);
+        assert!(err.contains("has requires a list or text"), "got: {err}");
+    }
+
+    #[test]
+    fn err_hd_empty_list() {
+        let err = run_str_err("f>n;hd []", Some("f"), vec![]);
+        assert!(err.contains("hd: empty list"), "got: {err}");
+    }
+
+    #[test]
+    fn err_hd_empty_text() {
+        let err = run_str_err("f>t;hd \"\"", Some("f"), vec![]);
+        assert!(err.contains("hd: empty text"), "got: {err}");
+    }
+
+    #[test]
+    fn err_hd_wrong_type() {
+        let err = run_str_err("f x:n>n;hd x", Some("f"), vec![Value::Number(1.0)]);
+        assert!(err.contains("hd requires a list or text"), "got: {err}");
+    }
+
+    #[test]
+    fn err_tl_empty_list() {
+        let err = run_str_err("f>L n;tl []", Some("f"), vec![]);
+        assert!(err.contains("tl: empty list"), "got: {err}");
+    }
+
+    #[test]
+    fn err_tl_empty_text() {
+        let err = run_str_err("f>t;tl \"\"", Some("f"), vec![]);
+        assert!(err.contains("tl: empty text"), "got: {err}");
+    }
+
+    #[test]
+    fn err_tl_wrong_type() {
+        let err = run_str_err("f x:n>n;tl x", Some("f"), vec![Value::Number(1.0)]);
+        assert!(err.contains("tl requires a list or text"), "got: {err}");
+    }
+
+    #[test]
+    fn err_rev_wrong_type() {
+        let err = run_str_err("f x:n>n;rev x", Some("f"), vec![Value::Number(1.0)]);
+        assert!(err.contains("rev requires a list or text"), "got: {err}");
+    }
+
+    #[test]
+    fn err_srt_mixed_types() {
+        let err = run_str_err("f>L n;srt [1,\"a\"]", Some("f"), vec![]);
+        assert!(err.contains("srt: list must contain all numbers or all text"), "got: {err}");
+    }
+
+    #[test]
+    fn err_srt_wrong_type() {
+        let err = run_str_err("f x:n>n;srt x", Some("f"), vec![Value::Number(1.0)]);
+        assert!(err.contains("srt requires a list or text"), "got: {err}");
+    }
+
+    #[test]
+    fn err_slc_wrong_first_arg() {
+        let err = run_str_err("f x:n>n;slc x 0 1", Some("f"), vec![Value::Number(1.0)]);
+        assert!(err.contains("slc requires a list or text"), "got: {err}");
+    }
+
+    #[test]
+    fn err_slc_non_number_start() {
+        let err = run_str_err("f x:t y:t>t;slc x y 1", Some("f"), vec![Value::Text("hi".into()), Value::Text("a".into())]);
+        assert!(err.contains("slc: start index must be a number"), "got: {err}");
+    }
+
+    #[test]
+    fn err_slc_non_number_end() {
+        let err = run_str_err("f x:t y:t>t;slc x 0 y", Some("f"), vec![Value::Text("hi".into()), Value::Text("a".into())]);
+        assert!(err.contains("slc: end index must be a number"), "got: {err}");
+    }
+
+    #[test]
+    fn err_rnd_lower_gt_upper() {
+        let err = run_str_err("f>n;rnd 10 1", Some("f"), vec![]);
+        assert!(err.contains("rnd: lower bound"), "got: {err}");
+        assert!(err.contains("upper bound"), "got: {err}");
+    }
+
+    #[test]
+    fn err_rnd_wrong_arg_types() {
+        let err = run_str_err("f x:t y:t>n;rnd x y", Some("f"), vec![Value::Text("a".into()), Value::Text("b".into())]);
+        assert!(err.contains("rnd requires two numbers"), "got: {err}");
+    }
+
+    #[test]
+    fn err_get_non_text_arg() {
+        let err = run_str_err("f x:n>R t t;get x", Some("f"), vec![Value::Number(1.0)]);
+        assert!(err.contains("get requires text"), "got: {err}");
+    }
+
+    #[test]
+    fn ok_srt_empty_list() {
+        let source = "f>L n;srt []";
+        assert_eq!(run_str(source, Some("f"), vec![]), Value::List(vec![]));
+    }
 }

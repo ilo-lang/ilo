@@ -4837,4 +4837,18 @@ mod tests {
         // 2+3+4 = 9
         assert_eq!(vm_run(source, Some("f"), vec![]), Value::Number(9.0));
     }
+
+    #[test]
+    fn vm_safe_index_on_nil() {
+        // .?0 on nil returns nil
+        let source = "mk x:n>n;>=x 1{x}\nf>n;v=mk 0;v.?0??99";
+        assert_eq!(vm_run(source, Some("f"), vec![]), Value::Number(99.0));
+    }
+
+    #[test]
+    fn vm_safe_index_on_value() {
+        // .?0 on a list returns the element
+        let source = "f>n;xs=[10,20,30];xs.?0";
+        assert_eq!(vm_run(source, Some("f"), vec![]), Value::Number(10.0));
+    }
 }

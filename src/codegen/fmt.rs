@@ -1002,4 +1002,52 @@ mod tests {
     fn round_trip_alias_with_function() {
         assert_round_trip("alias res R n t\nf x:n>res;~x");
     }
+
+    // ---- Coverage tests for newer features ----
+
+    #[test]
+    fn dense_brk_value() {
+        let s = dense("f>n;wh true{brk 99}");
+        assert!(s.contains("brk 99"), "got: {s}");
+    }
+
+    #[test]
+    fn expanded_brk_value() {
+        let s = expanded("f>n;wh true{brk 99}");
+        assert!(s.contains("brk 99"), "got: {s}");
+    }
+
+    #[test]
+    fn dense_cnt() {
+        let s = dense("f>n;wh true{cnt}");
+        assert!(s.contains("cnt"), "got: {s}");
+    }
+
+    #[test]
+    fn expanded_cnt() {
+        let s = expanded("f>n;wh true{cnt}");
+        assert!(s.contains("cnt"), "got: {s}");
+    }
+
+    #[test]
+    fn dense_nil_coalesce() {
+        let s = dense("f x:n>n;x??42");
+        assert!(s.contains("??"), "got: {s}");
+    }
+
+    #[test]
+    fn round_trip_nil_coalesce() {
+        assert_round_trip("f x:n>n;x??42");
+    }
+
+    #[test]
+    fn dense_safe_field() {
+        let s = dense("f x:n>n;x.?name");
+        assert!(s.contains(".?name"), "got: {s}");
+    }
+
+    #[test]
+    fn round_trip_safe_field() {
+        assert_round_trip("f x:n>n;x.?name");
+    }
 }

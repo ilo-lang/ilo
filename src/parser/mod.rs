@@ -3152,4 +3152,19 @@ mod tests {
             _ => panic!("expected function"),
         }
     }
+
+    #[test]
+    fn parse_dollar_in_operand() {
+        // $ in operand position (inside a binary op)
+        let prog = parse_str(r#"f url:t>R t t;cat [$url] ",""#);
+        match &prog.declarations[0] {
+            Decl::Function { body, .. } => match &body[0].node {
+                Stmt::Expr(Expr::Call { function, .. }) => {
+                    assert_eq!(function, "cat");
+                }
+                other => panic!("expected Call, got {:?}", other),
+            },
+            _ => panic!("expected function"),
+        }
+    }
 }
