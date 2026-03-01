@@ -785,7 +785,7 @@ impl VerifyContext {
                     // Check arity (rnd accepts 0 or 2 args)
                     let expected_arity = builtin_arity(callee).unwrap();
                     let arity_ok = if callee == "rnd" {
-                        args.len() == 0 || args.len() == 2
+                        args.is_empty() || args.len() == 2
                     } else {
                         args.len() == expected_arity
                     };
