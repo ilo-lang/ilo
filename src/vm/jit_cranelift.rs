@@ -764,10 +764,67 @@ pub(crate) fn compile(chunk: &Chunk, nan_consts: &[NanVal], program: &CompiledPr
             OP_RECFLD => {
                 // R[A] = R[B].fields[C]  — C is now a field index
                 let bv = builder.use_var(vars[b_idx]);
+
+                // Inline fast path for arena records:
+                //   tag = bv & TAG_MASK
+                //   if tag == TAG_ARENA_REC:
+                //     ptr = bv & PTR_MASK
+                //     result = load(ptr + 8 + C*8)  // skip ArenaRecord header
+                //     call jit_move(result) // clone_rc for heap fields (no-op for numbers)
+                //   else:
+                //     result = call jit_recfld(bv, C)
+                let tag_mask_val = builder.ins().iconst(I64, TAG_MASK as i64);
+                let tag = builder.ins().band(bv, tag_mask_val);
+                let arena_tag_val = builder.ins().iconst(I64, TAG_ARENA_REC as i64);
+                let is_arena = builder.ins().icmp(
+                    cranelift_codegen::ir::condcodes::IntCC::Equal, tag, arena_tag_val);
+
+                let arena_block = builder.create_block();
+                let heap_block = builder.create_block();
+                let merge_block = builder.create_block();
+                builder.append_block_param(merge_block, I64);
+
+                builder.ins().brif(is_arena, arena_block, &[], heap_block, &[]);
+
+                // Arena path: inline pointer math + inline clone_rc
+                builder.switch_to_block(arena_block);
+                let ptr_mask_val = builder.ins().iconst(I64, PTR_MASK as i64);
+                let ptr = builder.ins().band(bv, ptr_mask_val);
+                let field_offset = builder.ins().iconst(I64, (8 + c_idx * 8) as i64);
+                let field_addr = builder.ins().iadd(ptr, field_offset);
+                let field_val = builder.ins().load(I64, cranelift_codegen::ir::MemFlags::trusted(), field_addr, 0);
+                // Inline is_heap check: (val & QNAN) == QNAN && val != NIL && val != TRUE && val != FALSE && tag != ARENA_REC
+                // For numbers (the hot path), (val & QNAN) != QNAN → skip clone_rc entirely
+                let qnan_val = builder.ins().iconst(I64, QNAN as i64);
+                let masked = builder.ins().band(field_val, qnan_val);
+                let is_nan_tagged = builder.ins().icmp(
+                    cranelift_codegen::ir::condcodes::IntCC::Equal, masked, qnan_val);
+                let clone_block = builder.create_block();
+                let skip_clone_block = builder.create_block();
+                builder.ins().brif(is_nan_tagged, clone_block, &[], skip_clone_block, &[]);
+
+                // Clone path: call jit_move for heap values
+                builder.switch_to_block(clone_block);
+                let fref_move = get_func_ref(&mut builder, &mut module, helpers.jit_move);
+                let move_inst = builder.ins().call(fref_move, &[field_val]);
+                let _cloned = builder.inst_results(move_inst)[0];
+                builder.ins().jump(skip_clone_block, &[]);
+
+                // Skip clone path: field_val is a number, no RC management needed
+                builder.switch_to_block(skip_clone_block);
+                builder.ins().jump(merge_block, &[field_val]);
+
+                // Heap path: call jit_recfld
+                builder.switch_to_block(heap_block);
                 let field_idx_val = builder.ins().iconst(I64, c_idx as i64);
                 let fref = get_func_ref(&mut builder, &mut module, helpers.recfld);
                 let call_inst = builder.ins().call(fref, &[bv, field_idx_val]);
-                let result = builder.inst_results(call_inst)[0];
+                let heap_result = builder.inst_results(call_inst)[0];
+                builder.ins().jump(merge_block, &[heap_result]);
+
+                // Merge
+                builder.switch_to_block(merge_block);
+                let result = builder.block_params(merge_block)[0];
                 builder.def_var(vars[a_idx], result);
             }
             OP_RECFLD_NAME => {
@@ -790,11 +847,13 @@ pub(crate) fn compile(chunk: &Chunk, nan_consts: &[NanVal], program: &CompiledPr
                     builder.ins().stack_store(v, slot, (i * 8) as i32);
                 }
                 let regs_ptr = builder.ins().stack_addr(I64, slot, 0);
+                // Pack type_id (upper 16 bits) | n_fields (lower 16 bits) into one i64
+                let type_id_and_nfields = ((type_id as u64) << 16) | (n_fields as u64);
+                let arena_ptr_val = builder.ins().iconst(I64, jit_arena_ptr() as i64);
+                let type_id_nfields_val = builder.ins().iconst(I64, type_id_and_nfields as i64);
                 let registry_ptr_val = builder.ins().iconst(I64, &program.type_registry as *const TypeRegistry as i64);
-                let type_id_val = builder.ins().iconst(I64, type_id as i64);
-                let n_fields_val = builder.ins().iconst(I64, n_fields as i64);
                 let fref = get_func_ref(&mut builder, &mut module, helpers.recnew);
-                let call_inst = builder.ins().call(fref, &[registry_ptr_val, type_id_val, regs_ptr, n_fields_val]);
+                let call_inst = builder.ins().call(fref, &[arena_ptr_val, type_id_nfields_val, regs_ptr, registry_ptr_val]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
             }
@@ -984,7 +1043,7 @@ pub(crate) fn compile(chunk: &Chunk, nan_consts: &[NanVal], program: &CompiledPr
 }
 
 /// Call a compiled NanVal JIT function with u64 args, returns u64.
-pub(crate) fn call(func: &JitFunction, args: &[u64]) -> Option<u64> {
+fn call_raw(func: &JitFunction, args: &[u64]) -> Option<u64> {
     if args.len() != func.param_count { return None; }
     Some(match args.len() {
         0 => {
@@ -1027,8 +1086,29 @@ pub(crate) fn call(func: &JitFunction, args: &[u64]) -> Option<u64> {
     })
 }
 
+/// Call a compiled NanVal JIT function with u64 args, returns u64.
+/// Resets the JIT arena after each call (promoting the result if arena-tagged).
+pub(crate) fn call(func: &JitFunction, args: &[u64]) -> Option<u64> {
+    let mut result = call_raw(func, args)?;
+
+    // Promote arena result and reset arena
+    let rv = NanVal(result);
+    if rv.is_arena_record() {
+        let registry_ptr = ACTIVE_REGISTRY.with(|r| r.get());
+        if !registry_ptr.is_null() {
+            let promoted = rv.promote_arena_to_heap(unsafe { &*registry_ptr });
+            result = promoted.0;
+        }
+    }
+    jit_arena_reset();
+
+    Some(result)
+}
+
 /// Compile and call in one shot (convenience wrapper).
 pub(crate) fn compile_and_call(chunk: &Chunk, nan_consts: &[NanVal], args: &[u64], program: &CompiledProgram) -> Option<u64> {
+    // Set active registry for arena record field name resolution
+    ACTIVE_REGISTRY.with(|r| r.set(&program.type_registry as *const TypeRegistry));
     let func = compile(chunk, nan_consts, program)?;
     call(&func, args)
 }
