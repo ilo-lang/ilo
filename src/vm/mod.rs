@@ -3034,20 +3034,29 @@ impl<'a> VM<'a> {
                         continue;
                     }
 
-                    let mut args = Vec::with_capacity(n_args);
+                    // Push args directly onto the stack (no intermediate Vec).
+                    let new_base = self.stack.len();
                     for i in 0..n_args {
                         let v = reg!(base + a as usize + 1 + i);
                         if !v.is_number() { v.clone_rc(); }
-                        args.push(v);
+                        self.stack.push(v);
                     }
 
-                    self.setup_call(func_idx, args, a);
+                    // Pre-allocate remaining register slots for callee.
+                    let reg_count = self.program.chunks[func_idx as usize].reg_count as usize;
+                    self.stack.resize(new_base + reg_count, NanVal::nil());
 
-                    // SAFETY: setup_call just pushed a new frame above.
-                    let f = unsafe { self.frames.last().unwrap_unchecked() };
-                    ci = f.chunk_idx as usize;
-                    ip = f.ip;
-                    base = f.stack_base;
+                    self.frames.push(CallFrame {
+                        chunk_idx: func_idx,
+                        ip: 0,
+                        stack_base: new_base,
+                        result_reg: a,
+                    });
+
+                    // SAFETY: we just pushed a new frame above.
+                    ci = func_idx as usize;
+                    ip = 0;
+                    base = new_base;
                 }
                 OP_RET => {
                     let a = ((inst >> 16) & 0xFF) as usize + base;
