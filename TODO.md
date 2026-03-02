@@ -47,6 +47,9 @@ Manifesto principle: "Verification before execution. All calls resolve, all type
 ## Tooling
 
 - [x] Pretty-printer / formatter — dense wire format for LLM I/O, expanded form for human review (see OPEN.md: "Hybrid approach")
+- [ ] Rename formatter flags: `--dense` / `-d` (default, no flag needed) and `--expanded` / `-e` (human-readable). Keep `--fmt` / `--fmt-expanded` as aliases for backward compat
+- [ ] `--expanded` wraps long comments at ~80 chars, adding `--` prefix on continuation lines
+- [ ] `--dense` strips unnecessary newlines within comments — long comments stay on one line
 
 ## Error messages — Phase B (infrastructure + rendering)
 
@@ -323,7 +326,7 @@ Explicit return from anywhere in function body.
 - [x] Interpreter: return `BodyResult::Return(value)` immediately
 - [x] VM: compile expression → register, emit `OP_RET register`
 - [x] Verifier: return type checked via `infer_expr`
-- [x] Verifier: warn on unreachable code after `ret` (`ILO-T029`)
+- [ ] Verifier: warn on unreachable code after `ret`
 - [ ] Cranelift JIT: straightforward — emit return instruction
 - [x] Python codegen: emit as `return expr`
 - [x] Formatter: emit as `ret expr`
@@ -342,7 +345,7 @@ Explicit return from anywhere in function body.
 - [x] VM fix: `Stmt::Let` re-binding writes to existing register (needed for loop counters)
 - [x] Verifier: condition + body type checked
 - [ ] Cranelift JIT: standard loop with conditional back-edge
-- [x] Interaction with break/continue (F9): `brk` jumps to exit, `cnt` jumps to loop_top
+- [ ] Interaction with break/continue (F9): `brk` jumps to exit, `cnt` jumps to loop_top
 - [x] Python codegen: emit as `while <cond>: <body>`
 - [x] Formatter: emit as `wh cond{body}`
 - [x] Tests: parser, interpreter (basic, zero-iter, ret), VM (basic, zero-iter, ret)
@@ -352,18 +355,18 @@ Explicit return from anywhere in function body.
 
 Index-based loops without constructing a list. Avoids list allocation for numeric ranges.
 
-- [x] Syntax: `@i 0..n{body}` — bind `i` to each integer in `[0, n)`
-- [x] Parser: recognise `..` between two numeric expressions in `@` collection position
-- [x] AST: add `Stmt::ForRange { binding, start, end, body }` variant
-- [x] Interpreter: iterate from start (inclusive) to end (exclusive), bind each integer to loop variable
-- [x] VM: compile like existing foreach but with integer counter instead of list indexing — no `OP_LISTGET`, just `OP_ADD` + `OP_LT`
-- [x] Verifier: start and end must be `n`; loop variable is `n`
-- [x] Dynamic end: `@i 0..len xs{xs.i}` — end expression evaluated once before loop starts
+- [ ] Syntax: `@i 0..n{body}` — bind `i` to each integer in `[0, n)`
+- [ ] Parser: recognise `..` between two numeric expressions in `@` collection position
+- [ ] AST: add `Expr::Range { start, end }` or extend `ForEach` with range variant
+- [ ] Interpreter: iterate from start (inclusive) to end (exclusive), bind each integer to loop variable
+- [ ] VM: compile like existing foreach but with integer counter instead of list indexing — no `OP_LISTGET`, just `OP_ADD` + `OP_LT`
+- [ ] Verifier: start and end must be `n`; loop variable is `n`
+- [ ] Dynamic end: `@i 0..len xs{xs.i}` — end expression evaluated once before loop starts
 - [ ] Step variant (deferred): `@i 0..10..2{body}` for step=2 — lower priority
 - [ ] Cranelift JIT: standard counted loop — optimal for JIT
-- [x] Python codegen: emit as `for i in range(start, end):`
-- [x] Tests: basic range, range with expressions, range variable in body, empty range (start >= end), range + break
-- [x] SPEC.md: document range syntax
+- [ ] Python codegen: emit as `for i in range(start, end):`
+- [ ] Tests: basic range, range with expressions, range variable in body, empty range (start >= end), range + break
+- [ ] SPEC.md: document range syntax
 
 ##### F8. Destructuring bind — `{a;b}=expr` (medium priority)
 
@@ -402,7 +405,7 @@ Exit a loop early or skip to the next iteration.
 - [x] Interpreter: `BodyResult::Break(Value)` / `BodyResult::Continue` propagation through guard, match, foreach, while
 - [x] VM: `LoopContext` with `loop_top`, `continue_patches`, `break_patches`. `brk` → JMP to exit; `cnt` → JMP to loop_top (while) or idx increment (foreach)
 - [x] Verifier: type inference for `brk expr`
-- [x] Verifier: `brk`/`cnt` outside a loop → error (`ILO-T028`)
+- [ ] Verifier: `brk`/`cnt` outside a loop → error (currently no-op)
 - [ ] Cranelift JIT: jump to loop exit / loop header
 - [x] Python codegen: emit as `break` / `continue`
 - [x] Formatter: emit as `brk` / `brk expr` / `cnt`
@@ -457,16 +460,16 @@ Manifesto: "constrained — small vocabulary, closed world, one way to do things
 
 Lets users name complex types without creating records. No new AST nodes at runtime, just resolution at parse/verify time.
 
-- [x] Syntax: `alias name type` as a new `Decl` variant — e.g. `alias res R n t`, `alias ids L n`
-- [x] Parser: recognise `alias` keyword at declaration position, parse name + type
-- [x] AST: add `Decl::Alias { name: String, target: Type, span: Span }`
-- [x] Verifier: resolve aliases during declaration collection — expand `Named("res")` → `Result(Number, Text)` before body verification
-- [x] Cycle detection — `alias foo bar` + `alias bar foo` must error (ILO-T030: circular type alias)
-- [x] Error messages: ILO-T030 (circular), ILO-T031 (shadows builtin), ILO-T001 (duplicate/conflict)
-- [x] Formatter: emit `alias` declarations in both dense and expanded formats
-- [x] Python codegen: emit type alias as comment (`# alias res = R n t`)
-- [x] Tests: alias in function signatures, nested aliases (`alias rlist L res`), cycles, shadowing a builtin type name
-- [x] SPEC.md: document alias syntax
+- [ ] Syntax: `alias name type` as a new `Decl` variant — e.g. `alias res R n t`, `alias ids L n`
+- [ ] Parser: recognise `alias` keyword at declaration position, parse name + type
+- [ ] AST: add `Decl::Alias { name: String, target: Type, span: Span }`
+- [ ] Verifier: resolve aliases during declaration collection — expand `Named("res")` → `Result(Number, Text)` before body verification
+- [ ] Cycle detection — `alias a b` + `alias b a` must error (ILO-T0xx: circular type alias)
+- [ ] Error messages: show alias name in user-facing messages, expanded form in notes
+- [ ] Formatter: emit `alias` declarations in both dense and expanded formats
+- [ ] Python codegen: emit type alias as comment or `TypeAlias` (3.12+)
+- [ ] Tests: alias in function signatures, nested aliases (`alias rlist L res`), cycles, shadowing a builtin type name
+- [ ] SPEC.md: document alias syntax
 
 ##### E2. Optional type (typed nullability)
 
@@ -582,14 +585,424 @@ Define behaviour shared across record types. Lowest priority — agents generate
 - ~~`cat xs sep`~~ ✅
 - ~~`spl t sep`~~ ✅
 - `get k m` — get value from map by key (if maps are added)
-- ~~`rnd` / `rnd a b`~~ ✅
-- ~~`now`~~ ✅
+- `rnd` / `rnd a b` — random number (0–1 or range)
+- `now()` — current timestamp
 
 #### Tooling
 - LSP / language server — completions, diagnostics, hover info for editor integration
 - REPL — interactive evaluation for exploration and debugging
 - Debugger — step through execution, inspect bindings at each statement
 - Playground — web-based editor with live evaluation (WASM target)
+
+#### Networking — Phase G (expand I/O beyond HTTP GET)
+
+Current state: `get`/`$` does synchronous HTTP GET via `minreq`. That's all. The following items expand networking to support richer agent interactions (browser automation, bidirectional communication, full HTTP methods).
+
+##### G1. HTTP methods beyond GET
+
+`get` only does GET. Agents calling APIs need POST/PUT/PATCH/DELETE with bodies and headers.
+
+- [ ] `post url body` — HTTP POST, returns `R t t`. Body is text (JSON serialised by caller or tool)
+- [ ] `put url body` — HTTP PUT, returns `R t t`
+- [ ] `patch url body` — HTTP PATCH, returns `R t t`. Partial updates — the most common mutation method in REST APIs
+- [ ] `del url` — HTTP DELETE, returns `R t t`
+- [ ] Header support: `post url body hdrs` where `hdrs` is a record or `M t t` map (gates on E4 maps)
+- [ ] Consider a unified `req` builtin: `req "POST" url body hdrs` — more tokens but one builtin instead of five
+- [ ] Feature flag: extend `http` feature, still uses `minreq` (supports all methods)
+- [ ] Content-Type defaults to `application/json` for POST/PUT/PATCH
+- [ ] Status code access: currently `get` only returns body text. Consider `R resp t` where `resp` is a record `{status:n;body:t;headers:M t t}` — or keep simple and add `get-status` variant later
+
+##### G1b. GraphQL (the other API protocol agents hit constantly)
+
+Most modern APIs (GitHub, Shopify, Hasura, Contentful) are GraphQL. It's just POST with a JSON body, but the pattern is so common it deserves first-class support or at least a documented pattern.
+
+- [ ] **Minimal approach:** GraphQL is HTTP POST to a single endpoint with `{"query": "...", "variables": {...}}` body. With G1 `post` + I1 `jp`, it already works:
+  ```
+  q="{\"query\":\"{user(id:1){name email}}\"}";r=post! "https://api.example.com/graphql" q;n=jp! r "data.user.name"
+  ```
+- [ ] **Convenience builtin:** `gql url query vars` — wraps the POST + JSON construction. Returns `R t t` (response data or error)
+  ```
+  r=gql! "https://api.example.com/graphql" "{user(id:1){name email}}" "{}";n=jp! r "user.name"
+  ```
+- [ ] **Design question:** is `gql` worth a dedicated builtin? Or is `post` + `jp` sufficient once those land? GraphQL is common enough that a one-liner matters for token efficiency
+- [ ] Variables as ilo records: `gql url query vars` where `vars` is a record → auto-serialised to JSON. Gates on D1e (Value ↔ JSON)
+- [ ] Error handling: GraphQL returns 200 even on errors. `gql` should check `response.errors` and return `Err` if present
+- [ ] Feature flag: same as `http` — it's just a POST wrapper
+
+##### G1c. gRPC (protobuf-based RPC)
+
+gRPC uses HTTP/2 + Protocol Buffers. Common in microservice architectures (Kubernetes, Google Cloud APIs, many internal systems). More complex than REST/GraphQL.
+
+- [ ] **Tool approach (recommended):** gRPC is complex (HTTP/2 framing, protobuf serialisation, streaming). Best handled as a tool server, not a language builtin
+  ```
+  tool grpc-call"Call gRPC method" endpoint:t method:t payload:t>R t t timeout:10
+  ```
+- [ ] **Why not builtin:** gRPC requires `.proto` schema files, code generation, and HTTP/2. This is fundamentally different from HTTP/1.1 text protocols. A gRPC tool server (in Go, Rust, or Python) translates between JSON and protobuf
+- [ ] **grpcurl pattern:** like `curl` for gRPC — the tool server wraps `grpcurl` or equivalent
+- [ ] **Reflection support:** `tool grpc-list"List gRPC services" endpoint:t>R t t` — discover available methods via gRPC reflection
+- [ ] Feature flag: none in ilo — this lives in a tool server
+- [ ] **If native eventually:** would need protobuf parsing (binary format), HTTP/2 support, and streaming. Massive scope. Gates on G5 (TCP), G6 (streams), G7 (binary data)
+
+##### G1d. Server-Sent Events / SSE (streaming responses)
+
+LLM APIs (OpenAI, Anthropic, etc.) use SSE for streaming responses. Agents calling other LLMs need this.
+
+- [ ] SSE is HTTP GET/POST with `text/event-stream` content type — server sends `data: ...\n\n` frames over a long-lived connection
+- [ ] `sse url` — open SSE connection, returns stream handle (like G6)
+- [ ] `sse-recv h` — receive next event, returns `R t t` (event data or connection error)
+- [ ] `sse-close h` — close SSE connection
+- [ ] **Or:** SSE as a special case of G6 streams — `get` with streaming flag returns a stream handle instead of the full body
+- [ ] **Use case:** agent calls OpenAI streaming API, processes tokens as they arrive, takes action before full response is complete
+- [ ] Feature flag: extend `http` feature — SSE is just HTTP with chunked transfer encoding
+- [ ] Gates on: G6 (streams) for the iteration model
+
+##### G2. WebSocket client (bidirectional communication)
+
+Required for browser automation (CDP), real-time APIs, and agent-to-agent communication. This is the big one.
+
+- [ ] `ws url` — open WebSocket connection, returns `R ws t` (connection handle or error)
+- [ ] `ws-send conn msg` — send text message, returns `R _ t`
+- [ ] `ws-recv conn` — receive next message (blocking), returns `R t t`
+- [ ] `ws-close conn` — close connection, returns `R _ t`
+- [ ] Connection handle: new `Value::Handle(u64)` — opaque reference to runtime-managed resource
+- [ ] Runtime resource table: `HashMap<u64, Box<dyn Resource>>` in interpreter/VM, handles get indices
+- [ ] Feature flag: `ws` feature, uses `tungstenite` (sync WebSocket, no tokio needed)
+- [ ] Timeout: `ws-recv conn 5` — optional timeout in seconds, returns `Err("timeout")` if exceeded
+- [ ] Binary frames: `ws-recv` returns text frames as `t`, binary frames as base64-encoded `t` (or a new `bytes` type — deferred)
+- [ ] **Design question:** blocking `ws-recv` means the program stalls waiting for messages. For CDP this is fine (request-response pattern). For event streams, may need callback/event model (deferred to G5)
+
+##### G3. Process spawning
+
+Required for launching browsers, running external tools, shell integration.
+
+- [ ] `spawn cmd args` — launch process, returns `R proc t` (process handle or error)
+- [ ] `proc-wait h` — wait for process to exit, returns `R n t` (exit code or error)
+- [ ] `proc-kill h` — kill process, returns `R _ t`
+- [ ] `proc-out h` — read stdout as text, returns `R t t`
+- [ ] Process handle: reuses `Value::Handle(u64)` from G2
+- [ ] Feature flag: `process` feature (uses `std::process`)
+- [ ] **Security:** sandboxing concern — process spawning is powerful. Consider allowlist of executables, or make it tool-provider-only (not a language builtin)
+- [ ] Environment variables: `spawn cmd args env` where `env` is `M t t` (gates on E4)
+
+##### G4. Async runtime (foundation for concurrent I/O)
+
+Current model is fully synchronous. Async unlocks parallel tool calls, non-blocking WebSocket, and multiplexed CDP communication.
+
+- [ ] Introduce `tokio` behind `async` feature flag
+- [ ] `ToolProvider` trait becomes async (already planned in D1d)
+- [ ] Async builtins: `get`, `post`, `ws-send`, `ws-recv` become non-blocking internally
+- [ ] **Language-level async:** deferred — the runtime handles async internally, ilo programs remain sequential from the agent's perspective
+- [ ] **Parallel tool calls:** `par{call1;call2;call3}` — execute tool calls concurrently, collect results. Sugar for runtime-managed parallelism
+- [ ] **Design question:** should ilo expose async to the language (promises, await) or keep it hidden in the runtime? Hidden is simpler and more constrained (manifesto: "one way to do things")
+
+##### G5. TCP/UDP sockets (raw network I/O)
+
+WebSocket and HTTP are application-level protocols. For lower-level networking — talking to databases, custom protocols, inter-process communication — ilo needs raw sockets.
+
+- [ ] `tcp-conn host port` — open TCP connection, returns `R handle t`
+- [ ] `tcp-send h data` — send text over TCP, returns `R n t` (bytes sent or error)
+- [ ] `tcp-recv h max` — receive up to `max` bytes, returns `R t t` (data or error)
+- [ ] `tcp-close h` — close connection, returns `R _ t`
+- [ ] `tcp-listen port` — bind and listen on port, returns `R handle t` (server socket)
+- [ ] `tcp-accept h` — accept incoming connection, returns `R handle t` (blocking)
+- [ ] `udp-bind port` — create UDP socket bound to port, returns `R handle t`
+- [ ] `udp-send h host port data` — send datagram, returns `R n t`
+- [ ] `udp-recv h max` — receive datagram, returns `R t t`
+- [ ] Connection handles: reuse `Value::Handle(u64)` from G2
+- [ ] Feature flag: `net` feature (uses `std::net`)
+- [ ] **Design question:** should raw sockets be language builtins or tool-provider-only? Raw sockets are powerful but dangerous. Builtins keep ilo self-contained; tool-provider-only keeps the sandbox tighter
+- [ ] **Use cases:** database drivers (Postgres wire protocol, Redis RESP), custom agent-to-agent communication, SMTP, DNS lookups
+
+##### G6. Streams and buffered I/O
+
+Current I/O model is request-response (send, then receive complete response). Streams handle continuous/chunked data — log tailing, large file transfer, SSE, streaming LLM responses.
+
+- [ ] `Value::Stream(u64)` — handle to a readable/writable stream (backed by runtime resource table)
+- [ ] `read s max` — read up to `max` bytes/chars from stream, returns `R t t` (data or error). Returns empty string `""` at EOF
+- [ ] `readln s` — read one line from stream (up to `\n`), returns `R t t`
+- [ ] `write s data` — write text to stream, returns `R n t` (bytes written or error)
+- [ ] `flush s` — flush buffered writes, returns `R _ t`
+- [ ] `close s` — close stream, returns `R _ t`
+- [ ] `eof s` — check if stream is at end, returns `b`
+- [ ] Streams wrap: TCP sockets, process stdin/stdout, file handles, WebSocket connections
+- [ ] Buffering: runtime manages read buffers internally (like `BufReader`), ilo programs don't manage buffer sizes
+- [ ] **Line-based iteration:** `@line stream{process line}` — iterate lines from a stream. Natural fit with `@` loop syntax
+- [ ] **Design question:** should streams be a distinct type or just handles that support read/write? Distinct type gives better verifier errors; handles are simpler
+
+##### G7. Buffers and binary data
+
+ilo currently has no binary data type. Everything is `n` (f64) or `t` (string). Binary data matters for: screenshots (PNG), file uploads, protocol framing, cryptographic operations.
+
+- [ ] New type: `B` (bytes / buffer) — raw byte sequence
+- [ ] `B` literals: deferred (no good syntax for binary literals in a token-minimal language)
+- [ ] `b64enc data` — bytes to base64 text, returns `t`
+- [ ] `b64dec text` — base64 text to bytes, returns `R B t`
+- [ ] `buf-new n` — allocate empty buffer of capacity `n`, returns `B`
+- [ ] `buf-len b` — length in bytes, returns `n`
+- [ ] `buf-slc b start end` — slice bytes, returns `B`
+- [ ] `buf-cat a b` — concatenate buffers, returns `B`
+- [ ] `to-buf t` — encode text as UTF-8 bytes, returns `B`
+- [ ] `to-txt b` — decode UTF-8 bytes as text, returns `R t t` (fails if invalid UTF-8)
+- [ ] Integration with streams: `read`/`write` work on `B` as well as `t`
+- [ ] Integration with WebSocket: binary frames return `B` instead of `t`
+- [ ] Integration with `shot` (screenshot): CDP returns base64 PNG — `b64dec` → `B` → file write
+- [ ] Feature flag: no feature flag needed — core type like `L` and `R`
+- [ ] **Design question:** is `B` worth the complexity? Alternative: everything stays as base64 `t`, tools handle encoding. Simpler but wastes memory (base64 is 33% larger)
+
+##### G8. File I/O
+
+ilo has no file system access. Agents need to read configs, write outputs, save screenshots.
+
+- [ ] `fread path` — read entire file as text, returns `R t t`
+- [ ] `fwrite path data` — write text to file (overwrite), returns `R _ t`
+- [ ] `fappend path data` — append text to file, returns `R _ t`
+- [ ] `fexists path` — check if file exists, returns `b`
+- [ ] `freadbin path` — read file as bytes, returns `R B t` (gates on G7 buffers)
+- [ ] `fwritebin path data` — write bytes to file, returns `R _ t` (gates on G7)
+- [ ] Feature flag: `fs` feature (uses `std::fs`)
+- [ ] **Security:** file system access is a sandbox escape. Options:
+  - Allowlist of directories (e.g. only `/tmp` and working directory)
+  - Read-only by default, write requires `--allow-write` flag
+  - Tool-provider-only (no builtins, file I/O via declared tools)
+- [ ] **Design question:** builtins vs tools? File I/O as builtins keeps ilo self-contained for scripting. As tools, it's more constrained but requires tool provider setup for basic file operations
+
+##### G9. Event/callback model (deferred — needs design)
+
+For WebSocket event streams, browser events, server-sent events. Currently out of scope but noting the design space.
+
+- [ ] Event loop concept: `on conn "event-name" {handler body}`
+- [ ] Or pull-based: `poll conns timeout` — wait on multiple connections, return first message
+- [ ] Or channel-based: `ch=chan();spawn-listener conn ch;msg=recv ch`
+- [ ] **Recommendation:** defer until a concrete use case forces the design. CDP's request-response pattern works with blocking `ws-recv`
+
+##### G10. Resource handles — unified design (foundation for G2-G8)
+
+G2-G8 all introduce "handles" — opaque references to runtime-managed resources (sockets, processes, files, streams). This needs a unified design.
+
+- [ ] `Value::Handle(u64)` — single opaque type for all external resources
+- [ ] Runtime resource table: `HashMap<u64, Box<dyn Resource>>` — indexed by handle ID
+- [ ] `Resource` trait: `close()`, `type_name()` — common interface for cleanup
+- [ ] Auto-cleanup: resources closed when handle goes out of scope (or program exits)
+- [ ] Verifier: handle types are opaque — can't do arithmetic on them, can only pass to handle-accepting builtins
+- [ ] **Typed handles vs untyped:** `ws` vs `tcp` vs `file` — should the verifier distinguish handle types? Typed catches "passing a file handle to ws-send" at verify time. Untyped is simpler
+- [ ] **Type syntax if typed:** `H ws`, `H tcp`, `H file` — or just `ws`, `tcp`, `file` as named types
+
+#### Browser automation — Phase H (Playwright-for-ilo)
+
+See [research/playwright-for-ilo.md](research/playwright-for-ilo.md) for full design exploration.
+
+Two approaches: **tool-server wrapper** (practical, near-term) vs **native CDP client** (ambitious, needs G2+G3+G4).
+
+##### H1. Playwright tool server (recommended first step)
+
+Wrap Playwright (Node.js) as an external tool server. ilo calls it via HTTP or stdio. Gets browser automation without any new language primitives.
+
+- [ ] Tool server: Node.js process running Playwright, exposing actions as HTTP endpoints or stdio JSON-RPC
+- [ ] Tool declarations in ilo:
+  ```
+  tool nav"Navigate to URL" url:t>R _ t timeout:30
+  tool click"Click element" sel:t>R _ t timeout:10
+  tool fill"Fill input" sel:t val:t>R _ t timeout:10
+  tool txt"Get text content" sel:t>R t t timeout:5
+  tool shot"Screenshot" path:t>R t t timeout:10
+  tool eval"Evaluate JS" code:t>R t t timeout:10
+  ```
+- [ ] Session management: tool server maintains browser state between calls
+- [ ] Gates on D1d (ToolProvider infrastructure)
+
+##### H2. Native CDP client (ambitious — needs G2, G3, G4)
+
+Direct Chrome DevTools Protocol communication from ilo. No Node.js dependency.
+
+- [ ] Launch Chromium with `--remote-debugging-port` via G3 process spawning
+- [ ] Connect via WebSocket (G2) to CDP endpoint
+- [ ] CDP message protocol: JSON request/response over WebSocket
+- [ ] Subset of CDP domains: Page, Runtime, DOM, Network, Input
+- [ ] **Massive scope** — CDP has dozens of domains with hundreds of methods. Start with ~10 essential operations
+- [ ] Gates on: G2 (WebSocket), G3 (process spawn), G4 (async for multiplexed CDP), E4 (maps for JSON)
+
+#### Agent essentials — Phase I (what agents actually need daily)
+
+Gap analysis: what do real AI agents do that ilo can't express today? Ordered by how often agents hit the wall without it.
+
+##### I1. JSON parsing (critical — agents live in JSON)
+
+Agents call APIs. APIs return JSON. ilo can fetch JSON (`get url`) but can't do anything with the response except pass it as raw text. This is the #1 gap.
+
+- [ ] `jp text key` — JSON path lookup, returns `R t t`. `jp body "name"` extracts `$.name` as text
+- [ ] `jp text key` on nested paths: `jp body "address.city"` or `jp body "items.0.name"`
+- [ ] `jparse text` — parse JSON text into ilo values (records, lists, numbers, text, bool, nil), returns `R <value> t`
+- [ ] `jdump value` — serialise ilo value to JSON text, returns `t`
+- [ ] **Minimal approach:** `jp` alone covers 80% of cases. Agent gets JSON string from API, picks out fields with `jp`, done. No full parse needed
+- [ ] **Design tension:** manifesto says "format parsing is a tool concern." But JSON is so fundamental to agent work that not having it is like a shell without `grep`. Consider making `jp` a builtin exception, or accept that every agent needs a `json-extract` tool
+- [ ] Feature flag: `json` feature (uses `serde_json` — already a dependency)
+- [ ] **Integration with records:** `jparse text "profile"` could map JSON to a declared record type, verified at parse time — combines D1e (Value ↔ JSON) with a language builtin
+- [ ] **Token comparison:**
+  ```
+  # Python: ~12 tokens
+  data = json.loads(response.text)
+  name = data["user"]["name"]
+
+  # ilo with jp: ~4 tokens
+  n=jp! body "user.name"
+
+  # ilo without (current): impossible without tool
+  ```
+
+##### I2. Shell/command execution (critical — agents shell out constantly)
+
+G3 covers low-level process spawning with handles. But agents need a simple "run this command, give me the output" — like backticks in Perl/Ruby/shell or `subprocess.run` in Python.
+
+**Two forms:** `run` (builtin, verbose) and `` ` `` (backtick syntax, terse). Same relationship as `get url` and `$url`.
+
+- [ ] `run cmd` — run system command, wait for completion, returns `R t t` (stdout or error). Stderr captured in error
+- [ ] `run!` — auto-unwrap variant: `o=run! "ls -la"`
+- [ ] `` `cmd` `` — terse alias for `run "cmd"`. Backtick-delimited string is executed as a shell command, returns `R t t`
+- [ ] `` `!cmd` `` — terse auto-unwrap: `` o=`!ls -la` `` (or `o=run! "ls -la"`)
+- [ ] Exit code: `run` returns `Err` if non-zero exit. Ok body is stdout text
+- [ ] **vs G3 spawn:** `run` is the simple one-shot version. `spawn` is for long-running processes you interact with. `run "ls"` vs `h=spawn "node" "server.js"`
+- [ ] **Cross-platform shell selection:**
+  - macOS/Linux: `/bin/sh -c "..."`
+  - Windows: `cmd.exe /C "..."` (or `powershell -Command "..."` — configurable)
+  - Agent writes `run "git status"` — works everywhere. Platform-specific commands (`ls` vs `dir`) are the agent's problem, not the language's
+- [ ] Feature flag: `shell` feature (uses `std::process::Command`)
+- [ ] **Security:** same concerns as G3. `--allow-shell` flag? Or sandbox to specific commands?
+- [ ] **Lexer changes for backticks:**
+  - New token: `Token::Backtick(String)` — contents between `` ` `` delimiters
+  - Escape: `` \` `` inside backticks for literal backtick (rare)
+  - Parser: desugar `` `cmd` `` to `Call("run", [StringLit("cmd")])` — same AST as `run "cmd"`
+  - `!` position: `` `!cmd` `` — `!` immediately after opening backtick, consistent with `$!url` pattern
+- [ ] **Precedent in ilo:** `$url` is terse alias for `get url`. `` `cmd` `` is terse alias for `run "cmd"`. Both are sigil-based shortcuts for common operations. Pattern: frequent operations get single-character syntax
+- [ ] **Token comparison:**
+  ```
+  # Python: ~8 tokens
+  result = subprocess.run(["ls", "-la"], capture_output=True, text=True)
+  output = result.stdout
+
+  # ilo with run: ~3 tokens
+  o=run! "ls -la"
+
+  # ilo with backticks: ~2 tokens
+  o=`ls -la`
+
+  # terse auto-unwrap: ~2 tokens
+  o=`!ls -la`
+  ```
+
+##### I3. Environment variables (critical — every agent needs config)
+
+API keys, base URLs, secrets, feature flags. Every agent program needs to read env vars. Currently impossible in ilo.
+
+- [ ] `env key` — read environment variable, returns `R t t` (value or "not set")
+- [ ] `env! key` — auto-unwrap: `k=env! "API_KEY"`
+- [ ] **No env-set:** writing env vars is rarely needed and creates side effects. Read-only
+- [ ] Feature flag: none needed — `std::env::var` is stdlib
+- [ ] **Token comparison:**
+  ```
+  # Python: ~4 tokens
+  key = os.environ["API_KEY"]
+
+  # ilo: ~2 tokens
+  k=env! "API_KEY"
+  ```
+
+##### I4. String interpolation / templating
+
+Building URLs, prompts, messages. Currently requires chains of `+` which is verbose and error-prone:
+`+++++"Hello " name ", your order " oid " is " status` — 11 tokens for a simple template.
+
+- [ ] **Option A:** Template syntax in strings: `fmt "Hello {name}, order {oid} is {status}"` — clear but needs lexer changes for `{}`-in-strings
+- [ ] **Option B:** Printf-style: `fmt "Hello %s, order %s is %s" name oid status` — no lexer changes, variadic
+- [ ] **Option C:** Stay with `+` — it works, agents generate it fine, and it's already 10/10 accuracy. Token cost is the tradeoff
+- [ ] **Recommendation:** `fmt` builtin with positional `%s` placeholders. No lexer changes, composes with existing types, `str` handles number→text conversion
+- [ ] `fmt pattern args...` — returns `t`. `%s` substitutes args in order. Type-aware: numbers auto-convert via `str`
+- [ ] **Token comparison:**
+  ```
+  # Current ilo: 11 tokens
+  +++++"Hello " name ", order " oid " is " status
+
+  # With fmt: 5 tokens
+  fmt "Hello %s, order %s is %s" name oid status
+  ```
+
+##### I5. Logging / debug output
+
+Agents need observability — what did it do, what's the current state, where did it fail. Currently ilo has no way to print debug output without it being the return value.
+
+- [ ] `log msg` — write to stderr, returns `_` (nil). Does NOT affect return value or program flow
+- [ ] `log` accepts any type — auto-converts via `str` for numbers, `jdump` for records/lists
+- [ ] Log levels: `log msg` (info), `logw msg` (warn), `loge msg` (error), `logd msg` (debug)
+- [ ] Or simpler: just `log msg` and `dbg expr` (debug-print with expression name + value, like Rust's `dbg!`)
+- [ ] `dbg x` — prints `x = <value>` to stderr, returns the value unchanged (transparent — can insert anywhere in a pipeline)
+- [ ] Feature flag: none — stderr is always available
+- [ ] **Design question:** does logging violate the "pure function" feel? No — it's a side effect on stderr, doesn't affect computation. Same as Haskell's `trace`
+
+##### I6. Time and timestamps
+
+Rate limiting, timeouts, cache expiry, audit logs, scheduling. Agents work in time.
+
+- [ ] `now()` — current Unix timestamp as `n` (seconds since epoch, float for sub-second precision)
+- [ ] `sleep n` — pause execution for `n` seconds, returns `_`. For rate limiting, polling loops
+- [ ] `fmt-time n pattern` — format timestamp as text. Deferred — complex, may be a tool concern
+- [ ] **Design question:** `sleep` is a side effect that breaks pure execution. But agents need rate limiting. Alternative: runtime-level rate limiting on tool calls (automatic backoff in ToolProvider)
+
+##### I7. Encoding/decoding (URL, HTML, base64)
+
+Agents build URLs with parameters, handle HTML content, pass binary data.
+
+- [ ] `urlencode t` — percent-encode text for URL parameters, returns `t`
+- [ ] `urldecode t` — decode percent-encoded text, returns `R t t`
+- [ ] `b64enc t` — encode text as base64, returns `t` (overlaps with G7 but works on text directly)
+- [ ] `b64dec t` — decode base64 to text, returns `R t t`
+- [ ] `htmlesc t` — escape HTML entities (`<>&"'`), returns `t`
+- [ ] `htmlunesc t` — unescape HTML entities, returns `R t t`
+- [ ] **Minimal set:** `urlencode` + `b64enc` + `b64dec` cover 90% of agent encoding needs
+- [ ] Feature flag: none — pure string transformations, no deps
+
+##### I8. Regex / pattern matching on text
+
+Extracting structured data from unstructured text — log parsing, HTML scraping, validation.
+
+- [ ] `match text pattern` — first regex match, returns `R t t` (matched text or no-match error)
+- [ ] `matchall text pattern` — all matches, returns `L t`
+- [ ] `sub text pattern replacement` — regex substitution, returns `t`
+- [ ] `suball text pattern replacement` — global substitution, returns `t`
+- [ ] Capture groups: `match text "(\d+)-(\w+)"` → access groups via `.0`, `.1` on result? Or return list of captures?
+- [ ] Feature flag: `regex` feature (uses `regex` crate)
+- [ ] **Design question:** regex is powerful but complex. Alternative: keep text processing as tool concern (a `regex` tool). But like JSON, it's so fundamental that agents hit the wall without it
+- [ ] **Simpler alternative:** just `has` (already exists) + `spl` (exists) + `slc` (exists) cover basic cases. Regex for the hard stuff
+
+##### I9. Hashing and checksums
+
+Content deduplication, cache keys, API signature verification, integrity checks.
+
+- [ ] `hash t` — SHA-256 hash of text, returns `t` (hex string). Single default algorithm
+- [ ] `hmac key msg` — HMAC-SHA256, returns `t`. For API authentication (AWS, Stripe, etc.)
+- [ ] Feature flag: `crypto` feature (uses `sha2` + `hmac` crates, or ring)
+- [ ] **Scope limit:** hashing only, not encryption. Encryption is a tool concern
+- [ ] **Use case:** many APIs require HMAC signatures: `sig=hmac secret (+method +path +timestamp)`
+
+##### I10. Standard output and program I/O
+
+Currently the only output is the return value of the main function. Agents need to write structured output, stream progress, and read input.
+
+- [ ] `print val` — write value to stdout followed by newline, returns `_`
+- [ ] `eprint val` — write to stderr (alias for `log`)
+- [ ] `input prompt` — read line from stdin, returns `R t t`. For interactive mode
+- [ ] **vs return value:** `print` is for streaming output during execution. Return value is the final result. Both matter for agent integration
+- [ ] **Design question:** does `print` conflict with ilo's "return value is the output" model? In agent mode (D4 `ilo serve`), stdout is the protocol channel. `print` would need to go to stderr or a separate channel
+
+##### I11. Sleep / delay / retry helpers
+
+Agents need to wait between API calls (rate limiting), retry on failure, and implement backoff.
+
+- [ ] `sleep n` — pause `n` seconds (also mentioned in I6)
+- [ ] `retry n f args` — call function `f` up to `n` times with exponential backoff, returns first `~` result or last `^` error
+- [ ] **Or:** retry as a pattern, not a builtin. `wh` loop + `sleep` + counter already works:
+  ```
+  poll url:t n:n>R t t;<=n 0{^"timeout"};r=get url;?r{~v:~v;^e:sleep 1;poll url -n 1}
+  ```
+- [ ] **Recommendation:** `sleep` as builtin, retry as a pattern. Keeps builtins minimal
 
 #### Codegen targets
 - JavaScript / TypeScript emit — like Python codegen but for JS ecosystem

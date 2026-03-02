@@ -20,6 +20,11 @@ Evaluated against the manifesto: **total tokens from intent to working code**. A
 | `func! args` | 1 sigil | Call + auto-unwrap Result |
 | `&a b` | 1 sigil | Short-circuit AND |
 | `\|a b` | 1 sigil | Short-circuit OR |
+| `cond{then}{else}` | 1 sigil | Ternary: value without early return |
+| `wh cond{body}` | 1 keyword | While loop |
+| `ret expr` | 1 keyword | Early return from function |
+| `brk` / `brk expr` | 1 keyword | Exit enclosing loop |
+| `cnt` | 1 keyword | Skip to next loop iteration |
 
 This is already terse. The question is: what common patterns still cost too many tokens?
 
@@ -317,22 +322,22 @@ Token savings: no variable names — values flow through the stack. Combinators 
 
 ## Synthesis: what ilo should add
 
-Ranked by **token savings × frequency of use**:
+Ranked by **token savings × frequency of use**. Features marked *done* are now in the language (see "What ilo has today" table above).
 
-| Priority | Feature | Token savings | Frequency | Source |
+| Priority | Feature | Token savings | Frequency | Status |
 |----------|---------|---------------|-----------|--------|
-| **1** | Ternary expression | 3-5 per use | Very high | Bash, Perl, Ruby, C |
-| **2** | Nil-coalescing `??` | 5-7 per use | High (tool results) | Perl `//`, Ruby `\|\|`, Kotlin `?:` |
-| **3** | Safe navigation `.?` | 5-10 per chain | High (nested records) | Ruby `&.`, Kotlin `?.`, TS `?.` |
-| **4** | Pipe operator | 2-3 per step | Medium | Elixir `\|>`, Bash `\|`, F# |
-| **5** | Early return | 2-4 per use | Medium | Rust, most languages |
-| **6** | While loop | N/A (new capability) | Low-medium | Perl, Ruby, Bash |
-| **7** | Destructuring bind | 2-3 per record | Medium | Rust, JS, Elixir |
-| **8** | Range iteration | 3-5 per range loop | Medium | Ruby `0..n`, Python `range()` |
-| **9** | Break/continue | 2-3 per use | Low | Most languages |
-| **10** | Reduce operator | 5-7 per use | Medium | APL `/`, K, Haskell `fold` |
-| **11** | Guard else | 1-2 per use | Low | Haskell, Elixir |
-| **12** | Type pattern match | N/A (new capability) | Low | Haskell, Scala |
+| **1** | Ternary expression | 3-5 per use | Very high | *done* — `cond{then}{else}` |
+| **2** | Nil-coalescing `??` | 5-7 per use | High (tool results) | *done* |
+| **3** | Safe navigation `.?` | 5-10 per chain | High (nested records) | *done* |
+| **4** | Pipe operator `>>` | 2-3 per step | Medium | *done* |
+| **5** | Early return | 2-4 per use | Medium | *done* — `ret expr` |
+| **6** | While loop | N/A (new capability) | Low-medium | *done* — `wh cond{body}` |
+| **7** | Destructuring bind | 2-3 per record | Medium | open |
+| **8** | Range iteration | 3-5 per range loop | Medium | open |
+| **9** | Break/continue | 2-3 per use | Low | *done* — `brk` / `cnt` |
+| **10** | Reduce operator | 5-7 per use | Medium | open (gates on generics) |
+| **11** | Guard else | 1-2 per use | Low | *done* — `cond{then}{else}` covers this |
+| **12** | Type pattern match | N/A (new capability) | Low | open |
 
 ---
 

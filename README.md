@@ -1,8 +1,5 @@
 # ilo
 
-[![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![CI](https://github.com/danieljohnmorris/ilo-lang/actions/workflows/rust.yml/badge.svg)](https://github.com/danieljohnmorris/ilo-lang/actions/workflows/rust.yml)
-
 *ilo* — Toki Pona for "tool" ([sona.pona.la/wiki/ilo](https://sona.pona.la/wiki/ilo)). A constructed language for AI agents.
 
 Languages were designed for humans — visual parsing, readable syntax, spatial navigation. AI agents are not humans. They generate tokens. Every token costs latency, money, and context window. The only metric that matters is **total tokens from intent to working code**.
@@ -188,9 +185,13 @@ NO_COLOR=1 ilo 'code'       # disable colour
 ```
 
 **Formatter:**
+
+Newlines are for humans — agents don't need them. An entire ilo program can be one line. Dense output is the default — no flag needed. Use `--fmt-expanded` when humans need to review:
+
 ```bash
-ilo 'code' --fmt             # dense wire format (canonical)
-ilo 'code' --fmt-expanded    # expanded human-readable format
+ilo 'code'                   # dense wire format (default)
+ilo 'code' --dense / -d      # same, explicit
+ilo 'code' --expanded / -e   # human-readable format (for review)
 ```
 
 **Other modes:**
@@ -205,7 +206,7 @@ ilo program.ilo --bench tot 10 20 30  # benchmark
 cargo test
 ```
 
-1050 tests: lexer, parser, interpreter, VM, verifier, codegen, diagnostic, formatter, and CLI integration tests.
+818 tests: lexer, parser, interpreter, VM, verifier, codegen, diagnostic, formatter, and CLI integration tests.
 
 ## Documentation
 

@@ -65,8 +65,8 @@ Minimise dependency on English or any natural language.
 
 Early variants used short English-derived keywords (`fn`, `let`, `match`, `for`, `if`). Experiments showed structural tokens outperform keywords entirely — the winning syntax (idea8/idea9) replaced all keywords with single-character sigils:
 
-- `?` conditional, `!` effect/call, `~` transform, `@` dependency, `>` pipe/return
-- No English keywords remain in the core syntax
+- `?` conditional, `!` effect/call, `~` transform, `@` iterate, `>` pipe/return
+- Only ~6 abbreviated keywords remain (`type`, `tool`, `wh`, `ret`, `brk`, `cnt`) — no full English words
 - Agents learned the sigil set from spec + examples with 10/10 accuracy
 
 Structural tokens won because they are unambiguous single tokens that cannot be confused with variable names or hallucinated into natural-language variations.
@@ -107,7 +107,7 @@ ilo does the same for machine programmers. A minimal, verified vocabulary. Compl
 
 **Not a framework for building AI agents.** There are plenty of those. ilo is a language for agents to write programs *in*.
 
-**Not optimised for human readability.** Humans can read it — it's not obfuscated — but no decision is made because it "looks cleaner" or "reads more naturally." If a design is uglier but costs fewer total tokens, it wins.
+**Not optimised for human readability.** Humans can read it — it's not obfuscated — but no decision is made because it "looks cleaner" or "reads more naturally." If a design is uglier but costs fewer total tokens, it wins. Newlines, indentation, and multi-line comments are human concerns — agents don't need them. An entire ilo program can be one line. The formatter provides expanded output (`--expanded` / `-e`) when humans need to review.
 
 **Not theoretical.** Every principle here addresses measured failure modes in AI-generated code: hallucinated APIs, context window exhaustion, wasted retry cycles from vague errors.
 

@@ -1028,3 +1028,10 @@ Given ilo's density, a single function might have 3-5 errors. Reporting all of t
 - [Error Detection and Recovery in Compilers (GeeksforGeeks)](https://www.geeksforgeeks.org/error-detection-recovery-compiler/)
 - [ANSI Escape Codes (Wikipedia)](https://en.wikipedia.org/wiki/ANSI_escape_code)
 - [GCC Diagnostic Message Formatting Options](https://gcc.gnu.org/onlinedocs/gcc/Diagnostic-Message-Formatting-Options.html)
+
+---
+
+## See Also
+
+- [rust-capabilities-research.md](rust-capabilities-research.md) — discusses ILO-T024 exhaustiveness checking and ilo's error code system
+- [CONTROL-FLOW.md](CONTROL-FLOW.md) — braceless guard section includes error hint design for ambiguous parses

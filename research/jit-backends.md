@@ -1,6 +1,6 @@
 # JIT Compilation: From 67ns to 2ns
 
-The ilo register VM runs `tot` at ~67ns/call. LuaJIT does ~1ns, V8 does ~16ns. The remaining gap is dispatch overhead — even with type-specialized opcodes, each instruction still pays for a u32 decode + match branch. JIT compilation eliminates dispatch entirely by emitting native machine code.
+The ilo register VM runs `tot` at ~67ns/call. LuaJIT does ~1ns, V8 does ~18ns. The remaining gap is dispatch overhead — even with type-specialized opcodes, each instruction still pays for a u32 decode + match branch. JIT compilation eliminates dispatch entirely by emitting native machine code.
 
 We built three JIT backends to compare approaches.
 
@@ -120,7 +120,7 @@ All measurements on Apple M4 Pro, `cargo build --release --features cranelift`, 
 
 Total speedup from interpreter to JIT: **~690x**.
 
-The Custom JIT (arm64) and Cranelift backends produce essentially identical performance for this function — both emit the same 4 floating-point instructions. ilo's JIT backends match Go and LuaJIT at ~2ns. Only C and Rust AOT beat them (0.4-0.5ns), where the compiler can eliminate the function call entirely.
+The Custom JIT (arm64) and Cranelift backends produce essentially identical performance for this function — both emit the same 4 floating-point instructions. ilo's JIT backends match Go at ~2ns and are within 2x of LuaJIT (~1ns). Only C and Rust AOT beat them (0.4-0.5ns), where the compiler can eliminate the function call entirely.
 
 ## Usage
 

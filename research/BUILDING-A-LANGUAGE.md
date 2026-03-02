@@ -88,20 +88,23 @@ This is the key question. ilo has a unique position: it's a language for AI agen
 
 ### The Answer: Both (in phases)
 
-**Phase 1: Verifier + Transpiler (interpreted via host)**
-- The verifier is ilo's differentiator — build this first
-- Transpile to Python for immediate execution
-- Agent writes ilo → verifier checks it → transpiler emits Python → Python runs it
-- Fastest path to "I can run programs"
+**Phase 1: Verifier** — *completed*
+- The verifier is ilo's differentiator — built first
+- Originally planned to transpile to Python, but skipped directly to the bytecode VM
 
-**Phase 2: Bytecode VM (compiled to bytecode)**
-- Replace transpiler with a proper runtime
-- Custom bytecode VM gives full control over execution model
-- This matters for tool orchestration, typed-shell semantics
-- Lua's approach: small, embeddable, fast enough
+**Phase 2: Bytecode VM (compiled to bytecode)** — *completed*
+- Register-based bytecode VM with custom opcodes
+- Full control over execution model, tool orchestration, typed-shell semantics
+- See `research/jit-backends.md` for benchmark results (66ns/call interpreted)
 
-**Phase 3: Optional native compilation**
-- LLVM backend if performance matters
+**Phase 3: JIT compilation** — *in progress*
+- Cranelift JIT backend: 2ns/call for numeric functions
+- Custom ARM64 JIT backend: 2ns/call
+- Within 2x of LuaJIT (1ns) for pure-numeric workloads
+- See `research/jit-backends.md` for full benchmark comparison
+
+**Phase 4: Optional native compilation** — *future*
+- LLVM backend if performance matters beyond JIT
 - WASM target for portability
 - Only if the use case demands it
 
@@ -122,19 +125,22 @@ In ilo's model:
 
 The verifier is the product. The runtime is an implementation detail.
 
-## Recommended Path for ilo
+## Path Taken
 
-### Step 1: Lexer + Parser (~500-1000 lines)
-Hand-written recursive descent + Pratt parser. ilo's grammar is small and sigil-based — this is straightforward. Implementation language: Rust (long-term performance, strong ecosystem for language tooling) or TypeScript (faster prototyping). [createlang.rs](https://createlang.rs/) covers building a full compiler in Rust from lexer through LLVM JIT — useful reference for the Rust path.
+### Step 1: Lexer + Parser — *done*
+Hand-written recursive descent + Pratt parser in Rust. ilo's grammar is small and sigil-based. [createlang.rs](https://createlang.rs/) was a useful reference for the Rust path.
 
-### Step 2: Verifier
-Walk the AST. Check: all calls resolve to known functions, all types align, all dependencies exist. Return structured errors. This is ilo's core innovation.
+### Step 2: Verifier — *done*
+Walks the AST. Checks: all calls resolve to known functions, all types align, all dependencies exist. Returns structured errors. This is ilo's core innovation.
 
-### Step 3: Transpiler to Python
-Walk the AST, emit Python. Get execution working in days. This is throwaway code.
+### Step 3: Register VM — *done*
+Bytecode VM with register-based architecture. Skipped the transpiler-to-Python phase entirely.
 
-### Step 4: Ship and Learn
-Get agents writing and running ilo programs. Learn from real usage. Then decide if you need a bytecode VM, LLVM backend, or if the transpiler is good enough.
+### Step 4: JIT backends — *in progress*
+Cranelift and custom ARM64 backends. See `research/jit-backends.md` for benchmarks.
+
+### Step 5: Ship and Learn
+Get agents writing and running ilo programs. Learn from real usage.
 
 ## Key Resources
 

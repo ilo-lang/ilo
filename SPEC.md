@@ -33,15 +33,6 @@ tot p:n q:n r:n>n;s=*p q;t=*s r;+s t
 | `R n t` | result: ok=number, err=text |
 | `order` | named type |
 
-### Type aliases
-
-```
-alias res R n t
-alias ids L n
-```
-
-`alias name type` introduces a type alias — pure sugar resolved at verify time. The alias name can then be used anywhere a type is expected (function signatures, other aliases, type def fields). Aliases cannot be circular.
-
 ---
 
 ## Naming
@@ -59,6 +50,27 @@ Short names everywhere. 1–3 chars.
 | `items` | `its` | first 3 |
 
 Function names follow the same rules. Field names in constructors and external tool names keep their full form — they define the public interface.
+
+---
+
+## Comments
+
+```
+-- full line comment
++a b -- end of line comment
+-- no multi-line comments; use consecutive -- lines
+-- like this
+```
+
+Single-line only. `--` to end of line. No multi-line comment syntax — newlines are a human display concern, not a language concern. An entire ilo program can be one line. Use consecutive `--` lines when humans need multi-line comments. Stripped at the lexer level before parsing — comments produce no AST nodes and cost zero runtime tokens. Generating `--` costs 1 LLM token, so comments are essentially free.
+
+**Gotcha:** `--x 1` is a comment, not "negate (x minus 1)". The lexer matches `--` greedily as a comment and eats the rest of the line. To negate a subtraction, use a space or bind first:
+
+```
+-- DON'T: --x 1        (comment, not negate-subtract)
+-- DO:    - -x 1       (space separates the two minus operators)
+-- DO:    r=-x 1;-r    (bind first)
+```
 
 ---
 
@@ -145,9 +157,6 @@ Called like functions, compiled to dedicated opcodes.
 | `rev xs` | reverse list or text | same type |
 | `srt xs` | sort list (all-number or all-text) or text chars | same type |
 | `slc xs a b` | slice list or text from index a to b | same type |
-| `rnd` | random float in [0, 1) | `n` |
-| `rnd a b` | random integer in [a, b] inclusive | `n` |
-| `now` | current Unix timestamp (seconds) | `n` |
 
 `get` returns `Ok(body)` on success, `Err(message)` on failure (connection error, timeout, DNS failure, etc). `$` is a terse alias:
 
@@ -173,13 +182,6 @@ Comma-separated expressions in brackets. Trailing comma allowed. Use with `@` to
 
 ```
 @x xs{+x 1}
-```
-
-**Range iteration:** `@i start..end{body}` iterates `i` from `start` (inclusive) to `end` (exclusive) as integers, without constructing a list:
-
-```
-@i 0..5{*i i}            -- squares: 0, 1, 4, 9, 16
-@i 0..len xs{xs.i}       -- index-based iteration (dynamic end)
 ```
 
 Index by integer literal (dot notation):
@@ -210,7 +212,6 @@ ilo 'f xs:L t>t;xs.0' 'a,b,c'       → a
 | `?x{arms}` | match named value |
 | `?{arms}` | match last result |
 | `@v list{body}` | iterate list |
-| `@i start..end{body}` | range loop: i from start (inclusive) to end (exclusive) |
 | `ret expr` | early return from function |
 | `~expr` | return ok |
 | `^expr` | return err |
@@ -277,8 +278,6 @@ f xs:L n>n;@x xs{>=x 10{ret x}};0  -- return first element >= 10
 
 Guards already provide early return for simple cases. Use `ret` when you need early return inside a loop or deeply nested block.
 
-Code after `ret` or `brk` in the same block is unreachable and triggers a warning (`ILO-T029`).
-
 ### While Loop
 
 `wh cond{body}` loops while condition is truthy:
@@ -301,7 +300,7 @@ f>n;i=0;s=0;wh <i 5{i=+i 1;>=i 3{cnt};s=+s i};s   -- s = 3 (skips i>=3)
 
 `brk expr` provides an optional value (currently discarded — the loop result is the last body value before the break).
 
-Both `brk` and `cnt` work inside guards within loops. Using them outside a loop is a compile-time error (`ILO-T028`).
+Both `brk` and `cnt` work inside guards within loops. Using them outside a loop is a compile-time error (no-op in current implementation).
 
 ### Pipe Operator
 
@@ -576,11 +575,12 @@ JSON error output follows a structured schema with `severity`, `code`, `message`
 
 ## Formatter
 
-Two output modes for reformatting programs:
+Dense output is the default — newlines are for humans, not agents. No flag needed for dense format:
 
 ```
-ilo 'code' --fmt              Dense wire format (canonical, for LLM I/O)
-ilo 'code' --fmt-expanded     Expanded human format (for code review)
+ilo 'code'                    Dense wire format (default)
+ilo 'code' --dense / -d       Same, explicit
+ilo 'code' --expanded / -e    Expanded human format (for code review)
 ```
 
 ### Dense format
