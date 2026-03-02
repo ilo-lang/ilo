@@ -198,9 +198,9 @@ fn declare_all_helpers(module: &mut JITModule) -> HelperFuncs {
         slc: declare_helper(module, "jit_slc", 3, 1),
         listappend: declare_helper(module, "jit_listappend", 2, 1),
         index: declare_helper(module, "jit_index", 2, 1),
-        recfld: declare_helper(module, "jit_recfld", 3, 1),
+        recfld: declare_helper(module, "jit_recfld", 2, 1),
         recnew: declare_helper(module, "jit_recnew", 4, 1),
-        recwith: declare_helper(module, "jit_recwith", 5, 1),
+        recwith: declare_helper(module, "jit_recwith", 4, 1),
         listnew: declare_helper(module, "jit_listnew", 2, 1),
         listget: declare_helper(module, "jit_listget", 2, 1),
         jpth: declare_helper(module, "jit_jpth", 2, 1),
@@ -762,37 +762,22 @@ pub(crate) fn compile(chunk: &Chunk, nan_consts: &[NanVal], program: &CompiledPr
                 builder.def_var(vars[a_idx], result);
             }
             OP_RECFLD => {
-                // R[A] = R[B].field_name where field name is constants[C]
+                // R[A] = R[B].fields[C]  — C is now a field index
                 let bv = builder.use_var(vars[b_idx]);
-                let field_name = match &chunk.constants[c_idx] {
-                    Value::Text(s) => s.clone(),
-                    _ => return None,
-                };
-                let field_bytes = field_name.as_bytes();
-                let leaked: &'static [u8] = Box::leak(field_bytes.to_vec().into_boxed_slice());
-                let ptr_val = builder.ins().iconst(I64, leaked.as_ptr() as i64);
-                let len_val = builder.ins().iconst(I64, leaked.len() as i64);
+                let field_idx_val = builder.ins().iconst(I64, c_idx as i64);
                 let fref = get_func_ref(&mut builder, &mut module, helpers.recfld);
-                let call_inst = builder.ins().call(fref, &[bv, ptr_val, len_val]);
+                let call_inst = builder.ins().call(fref, &[bv, field_idx_val]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
             }
+            OP_RECFLD_NAME => {
+                // Dynamic field access by name — bail out of JIT
+                return None;
+            }
             OP_RECNEW => {
                 let bx = (inst & 0xFFFF) as usize;
-                let desc_idx = bx >> 8;
+                let type_id = (bx >> 8) as u16;
                 let n_fields = bx & 0xFF;
-
-                // Serialize record descriptor as "TypeName\0field1\0field2\0..."
-                let desc = chunk.constants[desc_idx].clone();
-                let (type_name, field_names) = match unpack_record_desc(desc) {
-                    Ok(v) => v,
-                    Err(_) => return None,
-                };
-                let desc_str = std::iter::once(type_name.as_str())
-                    .chain(field_names.iter().map(|s| s.as_str()))
-                    .collect::<Vec<_>>()
-                    .join("\0");
-                let desc_bytes: &'static [u8] = Box::leak(desc_str.into_bytes().into_boxed_slice());
 
                 // Build array of register values on the stack
                 let slot = builder.create_sized_stack_slot(cranelift_codegen::ir::StackSlotData::new(
@@ -805,25 +790,28 @@ pub(crate) fn compile(chunk: &Chunk, nan_consts: &[NanVal], program: &CompiledPr
                     builder.ins().stack_store(v, slot, (i * 8) as i32);
                 }
                 let regs_ptr = builder.ins().stack_addr(I64, slot, 0);
-                let desc_ptr_val = builder.ins().iconst(I64, desc_bytes.as_ptr() as i64);
-                let desc_len_val = builder.ins().iconst(I64, desc_bytes.len() as i64);
+                let registry_ptr_val = builder.ins().iconst(I64, &program.type_registry as *const TypeRegistry as i64);
+                let type_id_val = builder.ins().iconst(I64, type_id as i64);
                 let n_fields_val = builder.ins().iconst(I64, n_fields as i64);
                 let fref = get_func_ref(&mut builder, &mut module, helpers.recnew);
-                let call_inst = builder.ins().call(fref, &[desc_ptr_val, desc_len_val, regs_ptr, n_fields_val]);
+                let call_inst = builder.ins().call(fref, &[registry_ptr_val, type_id_val, regs_ptr, n_fields_val]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
             }
             OP_RECWITH => {
                 let bx = (inst & 0xFFFF) as usize;
-                let names_idx = bx >> 8;
+                let indices_idx = bx >> 8;
                 let n_updates = bx & 0xFF;
 
-                let field_names = match unpack_string_list(&chunk.constants[names_idx]) {
-                    Ok(v) => v,
-                    Err(_) => return None,
+                // Extract field indices from the constant pool
+                let update_indices: Vec<u8> = match &chunk.constants[indices_idx] {
+                    Value::List(items) => items.iter().map(|v| match v {
+                        Value::Number(n) => *n as u8,
+                        _ => 0,
+                    }).collect(),
+                    _ => return None,
                 };
-                let names_str = field_names.join("\0");
-                let names_bytes: &'static [u8] = Box::leak(names_str.into_bytes().into_boxed_slice());
+                let indices_bytes: &'static [u8] = Box::leak(update_indices.into_boxed_slice());
 
                 let old_rec = builder.use_var(vars[a_idx]);
                 let slot = builder.create_sized_stack_slot(cranelift_codegen::ir::StackSlotData::new(
@@ -836,11 +824,10 @@ pub(crate) fn compile(chunk: &Chunk, nan_consts: &[NanVal], program: &CompiledPr
                     builder.ins().stack_store(v, slot, (i * 8) as i32);
                 }
                 let regs_ptr = builder.ins().stack_addr(I64, slot, 0);
-                let names_ptr_val = builder.ins().iconst(I64, names_bytes.as_ptr() as i64);
-                let names_len_val = builder.ins().iconst(I64, names_bytes.len() as i64);
+                let indices_ptr_val = builder.ins().iconst(I64, indices_bytes.as_ptr() as i64);
                 let n_updates_val = builder.ins().iconst(I64, n_updates as i64);
                 let fref = get_func_ref(&mut builder, &mut module, helpers.recwith);
-                let call_inst = builder.ins().call(fref, &[old_rec, names_ptr_val, names_len_val, regs_ptr, n_updates_val]);
+                let call_inst = builder.ins().call(fref, &[old_rec, indices_ptr_val, n_updates_val, regs_ptr]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
             }

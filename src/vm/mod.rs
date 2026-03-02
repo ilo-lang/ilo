@@ -124,6 +124,7 @@ pub(crate) const OP_ENV: u8 = 60;        // R[A] = env(R[B])  (returns R t t)
 pub(crate) const OP_JPTH: u8 = 61;         // R[A] = jpth(R[B], R[C])  (JSON path lookup → R t t)
 pub(crate) const OP_JDMP: u8 = 62;         // R[A] = jdmp(R[B])  (value to JSON string → t)
 pub(crate) const OP_JPAR: u8 = 63;         // R[A] = jpar(R[B])  (parse JSON string → R ? t)
+pub(crate) const OP_RECFLD_NAME: u8 = 64; // R[A] = R[B].field where C = constant pool index of field name (dynamic/fallback)
 pub(crate) const OP_JMPNN: u8 = 56;     // if R[A] is not nil, jump by signed Bx (ABx mode)
 
 // ABx mode — register + 16-bit operand
@@ -209,12 +210,44 @@ impl Chunk {
     }
 }
 
+// ── Type registry (compile-time field layout for flat records) ───────
+
+#[derive(Debug, Clone)]
+pub(crate) struct TypeInfo {
+    pub name: String,
+    pub fields: Vec<String>,  // ordered field names — index = slot
+}
+
+#[derive(Debug, Clone, Default)]
+pub(crate) struct TypeRegistry {
+    pub types: Vec<Rc<TypeInfo>>,
+    pub name_to_id: HashMap<String, u16>,
+}
+
+impl TypeRegistry {
+    fn register(&mut self, name: String, fields: Vec<String>) -> u16 {
+        if let Some(&id) = self.name_to_id.get(&name) {
+            return id;
+        }
+        let id = self.types.len() as u16;
+        self.name_to_id.insert(name.clone(), id);
+        self.types.push(Rc::new(TypeInfo { name, fields }));
+        id
+    }
+
+    fn field_index(&self, type_id: u16, field: &str) -> Option<usize> {
+        self.types.get(type_id as usize)
+            .and_then(|info| info.fields.iter().position(|f| f == field))
+    }
+}
+
 // ── Compiled program ─────────────────────────────────────────────────
 
 pub struct CompiledProgram {
     pub chunks: Vec<Chunk>,
     pub func_names: Vec<String>,
     pub(crate) nan_constants: Vec<Vec<NanVal>>,
+    pub(crate) type_registry: TypeRegistry,
 }
 
 impl CompiledProgram {
@@ -252,9 +285,12 @@ struct RegCompiler {
     next_reg: u8,
     max_reg: u8,
     reg_is_num: [bool; 256],  // track which registers are known numeric
+    reg_record_type: [u16; 256],  // track record type_id per register (u16::MAX = unknown)
     first_error: Option<CompileError>,
     current_span: crate::ast::Span,
     loop_stack: Vec<LoopContext>,
+    type_registry: TypeRegistry,
+    func_return_types: Vec<Type>,  // parallel to func_names
 }
 
 impl RegCompiler {
@@ -267,9 +303,12 @@ impl RegCompiler {
             next_reg: 0,
             max_reg: 0,
             reg_is_num: [false; 256],
+            reg_record_type: [u16::MAX; 256],
             first_error: None,
             current_span: crate::ast::Span::UNKNOWN,
             loop_stack: Vec::new(),
+            type_registry: TypeRegistry::default(),
+            func_return_types: Vec::new(),
         }
     }
 
@@ -281,6 +320,7 @@ impl RegCompiler {
             self.max_reg = self.next_reg;
         }
         self.reg_is_num[r as usize] = false;
+        self.reg_record_type[r as usize] = u16::MAX;
         r
     }
 
@@ -323,11 +363,49 @@ impl RegCompiler {
         self.emit_abx(OP_JMP, 0, offset_i32 as i16 as u16);
     }
 
+    /// Resolve a Type to a type_id if it's a Named record type.
+    fn resolve_type_id(&self, ty: &Type) -> u16 {
+        match ty {
+            Type::Named(name) => self.type_registry.name_to_id.get(name).copied().unwrap_or(u16::MAX),
+            _ => u16::MAX,
+        }
+    }
+
+    /// Search all types for a field name and return its slot index.
+    /// Returns `Some(index)` if the field exists at the same index in all types that have it.
+    /// Returns `None` if different types place this field at different indices (ambiguous).
+    fn search_field_index(&self, field: &str) -> Option<usize> {
+        let mut found_idx = None;
+        for info in self.type_registry.types.iter() {
+            if let Some(idx) = info.fields.iter().position(|f| f == field) {
+                match found_idx {
+                    None => found_idx = Some(idx),
+                    Some(prev) if prev == idx => {} // same index across types, ok
+                    Some(_) => return None, // ambiguous — different index in different types
+                }
+            }
+        }
+        found_idx
+    }
+
     fn compile_program(mut self, program: &Program) -> Result<CompiledProgram, CompileError> {
+        // Build type registry from TypeDefs
+        for decl in &program.declarations {
+            if let Decl::TypeDef { name, fields, .. } = decl {
+                let field_names: Vec<String> = fields.iter().map(|p| p.name.clone()).collect();
+                self.type_registry.register(name.clone(), field_names);
+            }
+        }
+
         for decl in &program.declarations {
             match decl {
-                Decl::Function { name, .. } | Decl::Tool { name, .. } => {
+                Decl::Function { name, return_type, .. } => {
                     self.func_names.push(name.clone());
+                    self.func_return_types.push(return_type.clone());
+                }
+                Decl::Tool { name, return_type, .. } => {
+                    self.func_names.push(name.clone());
+                    self.func_return_types.push(return_type.clone());
                 }
                 Decl::TypeDef { .. } | Decl::Alias { .. } | Decl::Error { .. } => {}
             }
@@ -346,11 +424,13 @@ impl RegCompiler {
                 self.max_reg = self.next_reg;
 
                 self.reg_is_num = [false; 256];
+                self.reg_record_type = [u16::MAX; 256];
                 for (i, p) in params.iter().enumerate() {
                     self.add_local(&p.name, i as u8);
                     if p.ty == Type::Number {
                         self.reg_is_num[i] = true;
                     }
+                    self.reg_record_type[i] = self.resolve_type_id(&p.ty);
                 }
 
                 let result = self.compile_body(body);
@@ -396,7 +476,7 @@ impl RegCompiler {
         if let Some(e) = self.first_error {
             return Err(e);
         }
-        Ok(CompiledProgram { chunks: self.chunks, func_names: self.func_names, nan_constants: Vec::new() })
+        Ok(CompiledProgram { chunks: self.chunks, func_names: self.func_names, nan_constants: Vec::new(), type_registry: self.type_registry })
     }
 
     fn compile_body(&mut self, stmts: &[crate::ast::Spanned<Stmt>]) -> Option<u8> {
@@ -418,6 +498,7 @@ impl RegCompiler {
                     let reg = self.compile_expr(value);
                     if reg != existing_reg {
                         self.emit_abc(OP_MOVE, existing_reg, reg, 0);
+                        self.reg_record_type[existing_reg as usize] = self.reg_record_type[reg as usize];
                     }
                 } else {
                     let reg = self.compile_expr(value);
@@ -428,15 +509,35 @@ impl RegCompiler {
 
             Stmt::Destructure { bindings, value } => {
                 let record_reg = self.compile_expr(value);
+                let rec_type = self.reg_record_type[record_reg as usize];
                 for binding in bindings {
-                    let ki = self.current.add_const(Value::Text(binding.clone()));
-                    assert!(ki <= 255, "constant pool overflow: field name index {} exceeds 8-bit limit in OP_RECFLD", ki);
-                    if let Some(existing_reg) = self.resolve_local(binding) {
-                        self.emit_abc(OP_RECFLD, existing_reg, record_reg, ki as u8);
+                    let field_idx = if rec_type != u16::MAX {
+                        self.type_registry.field_index(rec_type, binding)
                     } else {
-                        let field_reg = self.alloc_reg();
-                        self.emit_abc(OP_RECFLD, field_reg, record_reg, ki as u8);
-                        self.add_local(binding, field_reg);
+                        self.search_field_index(binding)
+                    };
+                    match field_idx {
+                        Some(idx) => {
+                            let c = idx as u8;
+                            if let Some(existing_reg) = self.resolve_local(binding) {
+                                self.emit_abc(OP_RECFLD, existing_reg, record_reg, c);
+                            } else {
+                                let field_reg = self.alloc_reg();
+                                self.emit_abc(OP_RECFLD, field_reg, record_reg, c);
+                                self.add_local(binding, field_reg);
+                            }
+                        }
+                        None => {
+                            let ki = self.current.add_const(Value::Text(binding.clone()));
+                            assert!(ki <= 255, "constant pool overflow for dynamic destructure field");
+                            if let Some(existing_reg) = self.resolve_local(binding) {
+                                self.emit_abc(OP_RECFLD_NAME, existing_reg, record_reg, ki as u8);
+                            } else {
+                                let field_reg = self.alloc_reg();
+                                self.emit_abc(OP_RECFLD_NAME, field_reg, record_reg, ki as u8);
+                                self.add_local(binding, field_reg);
+                            }
+                        }
                     }
                 }
                 None
@@ -932,18 +1033,45 @@ impl RegCompiler {
 
             Expr::Field { object, field, safe } => {
                 let obj_reg = self.compile_expr(object);
-                let ki = self.current.add_const(Value::Text(field.clone()));
-                assert!(ki <= 255, "constant pool overflow: field name index {} exceeds 8-bit limit in OP_RECFLD", ki);
-                if *safe {
-                    // Safe nav: if nil, skip field access (obj_reg stays nil)
-                    self.emit_abx(OP_JMPNN, obj_reg, 1); // not nil → skip JMP
-                    self.emit_abx(OP_JMP, 0, 1);         // nil → skip RECFLD
-                    self.emit_abc(OP_RECFLD, obj_reg, obj_reg, ki as u8);
-                    obj_reg
+                // Resolve field to an index using compile-time type info
+                let obj_type = self.reg_record_type[obj_reg as usize];
+                let field_idx = if obj_type != u16::MAX {
+                    self.type_registry.field_index(obj_type, field)
                 } else {
-                    let ra = self.alloc_reg();
-                    self.emit_abc(OP_RECFLD, ra, obj_reg, ki as u8);
-                    ra
+                    self.search_field_index(field)
+                };
+                match field_idx {
+                    Some(idx) => {
+                        // Fast path: direct field index
+                        let c = idx as u8;
+                        if *safe {
+                            self.emit_abx(OP_JMPNN, obj_reg, 1);
+                            self.emit_abx(OP_JMP, 0, 1);
+                            self.emit_abc(OP_RECFLD, obj_reg, obj_reg, c);
+                            self.reg_record_type[obj_reg as usize] = u16::MAX;
+                            obj_reg
+                        } else {
+                            let ra = self.alloc_reg();
+                            self.emit_abc(OP_RECFLD, ra, obj_reg, c);
+                            ra
+                        }
+                    }
+                    None => {
+                        // Dynamic path: store field name, runtime linear scan
+                        let ki = self.current.add_const(Value::Text(field.clone()));
+                        assert!(ki <= 255, "constant pool overflow for dynamic field name");
+                        if *safe {
+                            self.emit_abx(OP_JMPNN, obj_reg, 1);
+                            self.emit_abx(OP_JMP, 0, 1);
+                            self.emit_abc(OP_RECFLD_NAME, obj_reg, obj_reg, ki as u8);
+                            self.reg_record_type[obj_reg as usize] = u16::MAX;
+                            obj_reg
+                        } else {
+                            let ra = self.alloc_reg();
+                            self.emit_abc(OP_RECFLD_NAME, ra, obj_reg, ki as u8);
+                            ra
+                        }
+                    }
                 }
             }
 
@@ -1178,6 +1306,11 @@ impl RegCompiler {
                 let bx = ((func_idx as u16) << 8) | args.len() as u16;
                 self.emit_abx(OP_CALL, a, bx);
 
+                // Track return type for record type propagation
+                if func_idx < self.func_return_types.len() {
+                    self.reg_record_type[a as usize] = self.resolve_type_id(&self.func_return_types[func_idx]);
+                }
+
                 // After call, only the result register is live
                 self.next_reg = a + 1;
 
@@ -1339,34 +1472,50 @@ impl RegCompiler {
             }
 
             Expr::Record { type_name, fields } => {
-                let field_regs: Vec<u8> = fields.iter()
-                    .map(|(_, val_expr)| self.compile_expr(val_expr))
-                    .collect();
+                // Look up or auto-register type in registry
+                let type_id = match self.type_registry.name_to_id.get(type_name) {
+                    Some(&id) => id,
+                    None => {
+                        // Auto-register from field order in this expression
+                        let field_names: Vec<String> = fields.iter().map(|(n, _)| n.clone()).collect();
+                        self.type_registry.register(type_name.clone(), field_names)
+                    }
+                };
 
-                let desc = Value::List(vec![
-                    Value::Text(type_name.clone()),
-                    Value::List(fields.iter().map(|(n, _)| Value::Text(n.clone())).collect()),
-                ]);
-                let desc_idx = self.current.add_const_raw(desc);
+                // We need to emit field values in the canonical order defined by the TypeInfo,
+                // not the order they appear in the source. This ensures fields[i] always
+                // corresponds to TypeInfo.fields[i].
+                let canonical_order: Vec<String> = self.type_registry.types[type_id as usize].fields.clone();
+                let source_fields: HashMap<&str, &Expr> = fields.iter()
+                    .map(|(n, e)| (n.as_str(), e))
+                    .collect();
+                let ordered_regs: Vec<u8> = canonical_order.iter()
+                    .map(|fname| {
+                        let expr = source_fields[fname.as_str()];
+                        self.compile_expr(expr)
+                    })
+                    .collect();
 
                 let a = self.alloc_reg(); // result register
                 let fields_base = self.next_reg;
-                assert!((self.next_reg as usize) + fields.len() <= 255, "register overflow: record literal requires too many register slots");
-                self.next_reg += fields.len() as u8;
+                assert!((self.next_reg as usize) + ordered_regs.len() <= 255, "register overflow: record literal requires too many register slots");
+                self.next_reg += ordered_regs.len() as u8;
                 if self.next_reg > self.max_reg {
                     self.max_reg = self.next_reg;
                 }
 
-                for (i, &field_reg) in field_regs.iter().enumerate() {
+                for (i, &field_reg) in ordered_regs.iter().enumerate() {
                     let target = fields_base + i as u8;
                     if field_reg != target {
                         self.emit_abc(OP_MOVE, target, field_reg, 0);
                     }
                 }
 
-                assert!(desc_idx <= 255, "constant pool overflow: record descriptor index {} exceeds 8-bit limit in OP_RECNEW", desc_idx);
-                let bx = ((desc_idx as u16) << 8) | fields.len() as u16;
+                assert!(type_id <= 255, "type_id {} exceeds 8-bit limit in OP_RECNEW", type_id);
+                let bx = (type_id << 8) | ordered_regs.len() as u16;
                 self.emit_abx(OP_RECNEW, a, bx);
+                // Track the type of this register
+                self.reg_record_type[a as usize] = type_id;
                 a
             }
 
@@ -1399,14 +1548,31 @@ impl RegCompiler {
             }
             Expr::With { object, updates } => {
                 let obj_reg = self.compile_expr(object);
+                let obj_type = self.reg_record_type[obj_reg as usize];
+
                 let update_regs: Vec<u8> = updates.iter()
                     .map(|(_, val_expr)| self.compile_expr(val_expr))
                     .collect();
 
-                let names = Value::List(
-                    updates.iter().map(|(n, _)| Value::Text(n.clone())).collect()
-                );
-                let names_idx = self.current.add_const_raw(names);
+                // Resolve update field names to indices
+                let update_indices: Vec<Option<u8>> = updates.iter().map(|(name, _)| {
+                    let idx = if obj_type != u16::MAX {
+                        self.type_registry.field_index(obj_type, name)
+                    } else {
+                        self.search_field_index(name)
+                    };
+                    idx.map(|i| i as u8)
+                }).collect();
+                let all_resolved = update_indices.iter().all(|i| i.is_some());
+
+                // Store as constant: indices (numbers) for resolved, names (strings) for unresolved
+                let const_val = if all_resolved {
+                    Value::List(update_indices.iter().map(|i| Value::Number(i.unwrap() as f64)).collect())
+                } else {
+                    // Fallback: store field names for runtime resolution
+                    Value::List(updates.iter().map(|(n, _)| Value::Text(n.clone())).collect())
+                };
+                let const_idx = self.current.add_const_raw(const_val);
 
                 let a = self.alloc_reg(); // result register
                 let updates_base = self.next_reg;
@@ -1429,9 +1595,11 @@ impl RegCompiler {
                     }
                 }
 
-                assert!(names_idx <= 255, "constant pool overflow: field names index {} exceeds 8-bit limit in OP_RECWITH", names_idx);
-                let bx = (names_idx << 8) | updates.len() as u16;
+                assert!(const_idx <= 255, "constant pool overflow: field data index {} exceeds 8-bit limit in OP_RECWITH", const_idx);
+                let bx = (const_idx << 8) | updates.len() as u16;
                 self.emit_abx(OP_RECWITH, a, bx);
+                // Propagate type (with doesn't change the type)
+                self.reg_record_type[a as usize] = obj_type;
                 a
             }
         }
@@ -1459,7 +1627,7 @@ const TAG_MASK: u64   = 0xFFFF_0000_0000_0000;
 enum HeapObj {
     Str(String),
     List(Vec<NanVal>),
-    Record { type_name: String, fields: HashMap<String, NanVal> },
+    Record { type_info: Rc<TypeInfo>, fields: Box<[NanVal]> },
     OkVal(NanVal),
     ErrVal(NanVal),
 }
@@ -1474,7 +1642,7 @@ impl Drop for HeapObj {
                 }
             }
             HeapObj::Record { fields, .. } => {
-                for val in fields.values() {
+                for val in fields.iter() {
                     val.drop_rc();
                 }
             }
@@ -1518,8 +1686,8 @@ impl NanVal {
         NanVal(TAG_LIST | (ptr & PTR_MASK))
     }
 
-    fn heap_record(type_name: String, fields: HashMap<String, NanVal>) -> Self {
-        let rc = Rc::new(HeapObj::Record { type_name, fields });
+    fn heap_record(type_info: Rc<TypeInfo>, fields: Box<[NanVal]>) -> Self {
+        let rc = Rc::new(HeapObj::Record { type_info, fields });
         let ptr = Rc::into_raw(rc) as u64;
         NanVal(TAG_RECORD | (ptr & PTR_MASK))
     }
@@ -1602,10 +1770,14 @@ impl NanVal {
                 NanVal::heap_list(items.iter().map(NanVal::from_value).collect())
             }
             Value::Record { type_name, fields } => {
-                NanVal::heap_record(
-                    type_name.clone(),
-                    fields.iter().map(|(k, v)| (k.clone(), NanVal::from_value(v))).collect(),
-                )
+                // Build TypeInfo from the Value's field names (preserving order)
+                let field_names: Vec<String> = fields.keys().cloned().collect();
+                let type_info = Rc::new(TypeInfo { name: type_name.clone(), fields: field_names.clone() });
+                let flat: Box<[NanVal]> = field_names.iter()
+                    .map(|k| NanVal::from_value(&fields[k]))
+                    .collect::<Vec<_>>()
+                    .into_boxed_slice();
+                NanVal::heap_record(type_info, flat)
             }
             Value::Ok(inner) => NanVal::heap_ok(NanVal::from_value(inner)),
             Value::Err(inner) => NanVal::heap_err(NanVal::from_value(inner)),
@@ -1630,9 +1802,11 @@ impl NanVal {
                     HeapObj::List(items) => {
                         Value::List(items.iter().map(|v| v.to_value()).collect())
                     }
-                    HeapObj::Record { type_name, fields } => Value::Record {
-                        type_name: type_name.clone(),
-                        fields: fields.iter().map(|(k, v)| (k.clone(), v.to_value())).collect(),
+                    HeapObj::Record { type_info, fields } => Value::Record {
+                        type_name: type_info.name.clone(),
+                        fields: type_info.fields.iter().zip(fields.iter())
+                            .map(|(k, v)| (k.clone(), v.to_value()))
+                            .collect(),
                     },
                     HeapObj::OkVal(inner) => Value::Ok(Box::new(inner.to_value())),
                     HeapObj::ErrVal(inner) => Value::Err(Box::new(inner.to_value())),
@@ -2071,28 +2245,51 @@ impl<'a> VM<'a> {
                 OP_RECFLD => {
                     let a = ((inst >> 16) & 0xFF) as usize + base;
                     let b = ((inst >> 8) & 0xFF) as usize + base;
+                    let field_idx = (inst & 0xFF) as usize;
+                    let record = reg!(b);
+                    // SAFETY: OP_RECFLD is only emitted by the compiler for record
+                    // field accesses on values the type-checker knows are records.
+                    debug_assert!(record.is_heap(), "OP_RECFLD on non-heap value");
+                    let field_val = unsafe {
+                        match record.as_heap_ref() {
+                            HeapObj::Record { fields, type_info } => {
+                                if field_idx < fields.len() {
+                                    let val = fields[field_idx];
+                                    val.clone_rc();
+                                    val
+                                } else {
+                                    let name = type_info.fields.get(field_idx)
+                                        .map(|s| s.as_str()).unwrap_or("?");
+                                    return Err(VmError::FieldNotFound { field: name.to_string() });
+                                }
+                            }
+                            _ => return Err(VmError::Type("field access on non-record")),
+                        }
+                    };
+                    reg_set!(a, field_val);
+                }
+                OP_RECFLD_NAME => {
+                    // Dynamic field access by name (for JSON records, etc.)
+                    let a = ((inst >> 16) & 0xFF) as usize + base;
+                    let b = ((inst >> 8) & 0xFF) as usize + base;
                     let c = (inst & 0xFF) as usize;
-                    // SAFETY: ci is a valid chunk index (same invariant as loop header).
                     let chunk = unsafe { self.program.chunks.get_unchecked(ci) };
                     let field_name = match &chunk.constants[c] {
                         Value::Text(s) => s.as_str(),
                         _ => return Err(VmError::Type("RecordField expects string constant")),
                     };
                     let record = reg!(b);
-                    // SAFETY: OP_RECFLD is only emitted by the compiler for record
-                    // field accesses on values the type-checker knows are records.
-                    // The debug_assert catches compiler bugs; the runtime _ arm
-                    // provides a safe fallback for release builds with malformed bytecode.
-                    debug_assert!(record.is_heap(), "OP_RECFLD on non-heap value");
+                    debug_assert!(record.is_heap(), "OP_RECFLD_NAME on non-heap value");
                     let field_val = unsafe {
                         match record.as_heap_ref() {
-                            HeapObj::Record { fields, .. } => {
-                                match fields.get(field_name) {
-                                    Some(&val) => {
+                            HeapObj::Record { type_info, fields } => {
+                                match type_info.fields.iter().position(|f| f == field_name) {
+                                    Some(idx) if idx < fields.len() => {
+                                        let val = fields[idx];
                                         val.clone_rc();
                                         val
                                     }
-                                    None => return Err(VmError::FieldNotFound { field: field_name.to_string() }),
+                                    _ => return Err(VmError::FieldNotFound { field: field_name.to_string() }),
                                 }
                             }
                             _ => return Err(VmError::Type("field access on non-record")),
@@ -2246,57 +2443,63 @@ impl<'a> VM<'a> {
                 OP_RECNEW => {
                     let a = ((inst >> 16) & 0xFF) as usize + base;
                     let bx = (inst & 0xFFFF) as usize;
-                    let desc_idx = bx >> 8;
-                    // n_fields (bx & 0xFF) is encoded for future validation; field count
-                    // is derived at runtime from field_names returned by unpack_record_desc.
+                    let type_id = (bx >> 8) as u16;
+                    let n_fields = bx & 0xFF;
 
-                    // SAFETY: ci is a valid chunk index (same invariant as loop header).
-                    let chunk = unsafe { self.program.chunks.get_unchecked(ci) };
-                    let desc = chunk.constants[desc_idx].clone();
-                    let (type_name, field_names) = unpack_record_desc(desc)?;
+                    let type_info = Rc::clone(&self.program.type_registry.types[type_id as usize]);
+                    debug_assert_eq!(type_info.fields.len(), n_fields,
+                        "OP_RECNEW: type {} has {} fields but instruction says {}",
+                        type_info.name, type_info.fields.len(), n_fields);
 
-                    let mut fields = HashMap::new();
-                    for (i, name) in field_names.into_iter().enumerate() {
+                    let mut fields = Vec::with_capacity(n_fields);
+                    for i in 0..n_fields {
                         let v = reg!(a + 1 + i);
                         v.clone_rc();
-                        fields.insert(name, v);
+                        fields.push(v);
                     }
 
-                    reg_set!(a, NanVal::heap_record(type_name, fields));
+                    reg_set!(a, NanVal::heap_record(type_info, fields.into_boxed_slice()));
                 }
                 OP_RECWITH => {
                     let a = ((inst >> 16) & 0xFF) as usize + base;
                     let bx = (inst & 0xFFFF) as usize;
-                    let names_idx = bx >> 8;
-                    // n_updates (bx & 0xFF) is encoded for future validation; update count
-                    // is derived at runtime from field_names returned by unpack_string_list.
+                    let const_idx = bx >> 8;
+                    let n_updates = bx & 0xFF;
 
                     // SAFETY: ci is a valid chunk index (same invariant as loop header).
                     let chunk = unsafe { self.program.chunks.get_unchecked(ci) };
-                    let field_names = unpack_string_list(&chunk.constants[names_idx])?;
+                    // The constant is either a list of Numbers (field indices) or
+                    // a list of Texts (field names for dynamic resolution).
+                    let const_val = &chunk.constants[const_idx];
 
                     let old_record = reg!(a);
-                    // SAFETY: OP_RECWITH is only emitted by the compiler for `with`
-                    // expressions on values the type-checker knows are records.
-                    // The debug_assert catches compiler bugs; the runtime _ arm
-                    // provides a safe fallback for release builds with malformed bytecode.
                     debug_assert!(old_record.is_heap(), "OP_RECWITH on non-heap value");
                     let new_record = unsafe {
                         match old_record.as_heap_ref() {
-                            HeapObj::Record { type_name, fields } => {
-                                let mut new_fields = HashMap::new();
-                                for (k, v) in fields {
-                                    v.clone_rc();
-                                    new_fields.insert(k.clone(), *v);
-                                }
-                                for (i, name) in field_names.into_iter().enumerate() {
+                            HeapObj::Record { type_info, fields } => {
+                                // Clone the entire fields array
+                                let mut new_fields: Vec<NanVal> = fields.to_vec();
+                                for v in new_fields.iter() { v.clone_rc(); }
+                                // Resolve update slots
+                                let slots: Vec<usize> = match const_val {
+                                    Value::List(items) => items.iter().map(|v| match v {
+                                        Value::Number(n) => *n as usize,
+                                        Value::Text(name) => type_info.fields.iter()
+                                            .position(|f| f == name).unwrap_or(0),
+                                        _ => 0,
+                                    }).collect(),
+                                    _ => vec![],
+                                };
+                                // Overwrite updated slots
+                                for (i, &slot) in slots.iter().enumerate().take(n_updates) {
                                     let val = reg!(a + 1 + i);
                                     val.clone_rc();
-                                    if let Some(old_val) = new_fields.insert(name, val) {
-                                        old_val.drop_rc();
+                                    if slot < new_fields.len() {
+                                        new_fields[slot].drop_rc();
+                                        new_fields[slot] = val;
                                     }
                                 }
-                                NanVal::heap_record(type_name.clone(), new_fields)
+                                NanVal::heap_record(Rc::clone(type_info), new_fields.into_boxed_slice())
                             }
                             _ => return Err(VmError::Type("'with' requires a record")),
                         }
@@ -2901,8 +3104,9 @@ fn nanval_to_json(v: NanVal) -> serde_json::Value {
                     HeapObj::List(items) => {
                         serde_json::Value::Array(items.iter().map(|i| nanval_to_json(*i)).collect())
                     }
-                    HeapObj::Record { fields, .. } => {
-                        let map: serde_json::Map<String, serde_json::Value> = fields.iter()
+                    HeapObj::Record { type_info, fields } => {
+                        let map: serde_json::Map<String, serde_json::Value> = type_info.fields.iter()
+                            .zip(fields.iter())
                             .map(|(k, v)| (k.clone(), nanval_to_json(*v)))
                             .collect();
                         serde_json::Value::Object(map)
@@ -2919,10 +3123,13 @@ fn nanval_to_json(v: NanVal) -> serde_json::Value {
 fn serde_json_to_nanval(v: serde_json::Value) -> NanVal {
     match v {
         serde_json::Value::Object(map) => {
-            let fields: HashMap<String, NanVal> = map.into_iter()
-                .map(|(k, v)| (k, serde_json_to_nanval(v)))
-                .collect();
-            NanVal::heap_record("json".to_string(), fields)
+            let field_names: Vec<String> = map.keys().cloned().collect();
+            let field_vals: Box<[NanVal]> = map.into_iter()
+                .map(|(_, v)| serde_json_to_nanval(v))
+                .collect::<Vec<_>>()
+                .into_boxed_slice();
+            let type_info = Rc::new(TypeInfo { name: "json".to_string(), fields: field_names });
+            NanVal::heap_record(type_info, field_vals)
         }
         serde_json::Value::Array(arr) => {
             NanVal::heap_list(arr.into_iter().map(serde_json_to_nanval).collect())
@@ -3551,70 +3758,63 @@ pub(crate) extern "C" fn jit_index(a: u64, idx: u64) -> u64 {
 
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn jit_recfld(rec: u64, field_ptr: *const u8, field_len: u64) -> u64 {
+pub(crate) extern "C" fn jit_recfld(rec: u64, field_idx: u64) -> u64 {
     let rv = NanVal(rec);
     if !rv.is_heap() { return TAG_NIL; }
-    // SAFETY: field_ptr/field_len come from JIT-embedded static string constants (Box::leak'd UTF-8)
-    let field_name = unsafe { std::str::from_utf8_unchecked(std::slice::from_raw_parts(field_ptr, field_len as usize)) };
     match unsafe { rv.as_heap_ref() } {
         HeapObj::Record { fields, .. } => {
-            match fields.get(field_name) {
-                Some(&val) => { val.clone_rc(); val.0 }
-                None => TAG_NIL,
+            let idx = field_idx as usize;
+            if idx < fields.len() {
+                let val = fields[idx];
+                val.clone_rc();
+                val.0
+            } else {
+                TAG_NIL
             }
         }
         _ => TAG_NIL,
     }
 }
 
-/// Create a new record. `desc_ptr`/`desc_len` point to the record descriptor constant
-/// (serialised as "TypeName\0field1\0field2\0..."), `regs` is a pointer to n_fields u64 values.
+/// Create a new flat record. `registry_ptr` is a pointer to &TypeRegistry,
+/// `type_id` identifies the type, `regs` has n_fields u64 values.
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn jit_recnew(desc_ptr: *const u8, desc_len: u64, regs: *const u64, n_fields: u64) -> u64 {
-    // SAFETY: desc_ptr/desc_len come from JIT-embedded static constants (Box::leak'd UTF-8).
+pub(crate) extern "C" fn jit_recnew(registry_ptr: u64, type_id: u64, regs: *const u64, n_fields: u64) -> u64 {
+    // SAFETY: registry_ptr is the address of a &TypeRegistry that lives as long as the JIT function.
     // regs points to a Cranelift stack slot containing n_fields u64 register values.
-    let desc_bytes = unsafe { std::slice::from_raw_parts(desc_ptr, desc_len as usize) };
-    let desc_str = unsafe { std::str::from_utf8_unchecked(desc_bytes) };
-    let parts: Vec<&str> = desc_str.split('\0').collect();
-    if parts.is_empty() { return TAG_NIL; }
-    let type_name = parts[0].to_string();
-    let field_names = &parts[1..];
+    let registry = unsafe { &*(registry_ptr as *const TypeRegistry) };
+    let type_info = Rc::clone(&registry.types[type_id as usize]);
     let n = n_fields as usize;
-    let mut fields = HashMap::new();
-    for (i, &name) in field_names.iter().enumerate().take(n) {
+    let mut fields = Vec::with_capacity(n);
+    for i in 0..n {
         let v = NanVal(unsafe { *regs.add(i) });
         v.clone_rc();
-        fields.insert(name.to_string(), v);
+        fields.push(v);
     }
-    NanVal::heap_record(type_name, fields).0
+    NanVal::heap_record(type_info, fields.into_boxed_slice()).0
 }
 
-/// Record-with: copy old record, overwrite specified fields.
-/// `names_ptr`/`names_len` = "field1\0field2\0..." and `regs` has n_fields new values.
+/// Record-with: copy old record, overwrite specified fields by index.
+/// `indices_ptr` points to n_updates u8 field indices, `regs` has n_updates new values.
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn jit_recwith(rec: u64, names_ptr: *const u8, names_len: u64, regs: *const u64, n_fields: u64) -> u64 {
+pub(crate) extern "C" fn jit_recwith(rec: u64, indices_ptr: *const u8, n_updates: u64, regs: *const u64) -> u64 {
     let rv = NanVal(rec);
     if !rv.is_heap() { return TAG_NIL; }
-    // SAFETY: names_ptr/names_len come from JIT-embedded static constants (Box::leak'd UTF-8).
-    // regs points to a Cranelift stack slot containing n_fields u64 register values.
-    let names_bytes = unsafe { std::slice::from_raw_parts(names_ptr, names_len as usize) };
-    let names_str = unsafe { std::str::from_utf8_unchecked(names_bytes) };
-    let field_names: Vec<&str> = names_str.split('\0').collect();
     match unsafe { rv.as_heap_ref() } {
-        HeapObj::Record { type_name, fields } => {
-            let mut new_fields = HashMap::new();
-            for (k, v) in fields { v.clone_rc(); new_fields.insert(k.clone(), *v); }
-            let n = n_fields as usize;
-            for (i, name) in field_names.iter().enumerate().take(n) {
+        HeapObj::Record { type_info, fields } => {
+            let mut new_fields: Vec<NanVal> = fields.to_vec();
+            for v in new_fields.iter() { v.clone_rc(); }
+            let n = n_updates as usize;
+            for i in 0..n {
+                let slot = unsafe { *indices_ptr.add(i) } as usize;
                 let val = NanVal(unsafe { *regs.add(i) });
                 val.clone_rc();
-                if let Some(old) = new_fields.insert(name.to_string(), val) {
-                    old.drop_rc();
-                }
+                new_fields[slot].drop_rc();
+                new_fields[slot] = val;
             }
-            NanVal::heap_record(type_name.clone(), new_fields).0
+            NanVal::heap_record(Rc::clone(type_info), new_fields.into_boxed_slice()).0
         }
         _ => TAG_NIL,
     }
@@ -3769,32 +3969,6 @@ pub(crate) fn find_block_leaders(code: &[u32]) -> Vec<usize> {
         }
     }
     leaders.into_iter().filter(|&l| l <= code.len()).collect()
-}
-
-fn unpack_record_desc(desc: Value) -> VmResult<(String, Vec<String>)> {
-    match desc {
-        Value::List(items) if items.len() == 2 => {
-            let tn = match &items[0] {
-                Value::Text(s) => s.clone(),
-                _ => return Err(VmError::Type("invalid record descriptor")),
-            };
-            let fns = unpack_string_list(&items[1])?;
-            Ok((tn, fns))
-        }
-        _ => Err(VmError::Type("invalid record descriptor")),
-    }
-}
-
-fn unpack_string_list(val: &Value) -> VmResult<Vec<String>> {
-    match val {
-        Value::List(items) => {
-            items.iter().map(|v| match v {
-                Value::Text(s) => Ok(s.clone()),
-                _ => Err(VmError::Type("expected string in list")),
-            }).collect()
-        }
-        _ => Err(VmError::Type("expected list")),
-    }
 }
 
 // ── Tests ────────────────────────────────────────────────────────────
