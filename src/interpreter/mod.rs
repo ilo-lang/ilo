@@ -417,6 +417,50 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             other => Err(RuntimeError::new("ILO-R009", format!("get requires text, got {:?}", other))),
         };
     }
+    if name == "jpth" && args.len() == 2 {
+        return match (&args[0], &args[1]) {
+            (Value::Text(json_str), Value::Text(path)) => {
+                match serde_json::from_str::<serde_json::Value>(json_str) {
+                    Ok(parsed) => {
+                        let mut current = &parsed;
+                        for key in path.split('.') {
+                            if let Ok(idx) = key.parse::<usize>() {
+                                if let Some(v) = current.as_array().and_then(|a| a.get(idx)) {
+                                    current = v;
+                                } else {
+                                    return Ok(Value::Err(Box::new(Value::Text(format!("key not found: {key}")))));
+                                }
+                            } else if let Some(v) = current.get(key) {
+                                current = v;
+                            } else {
+                                return Ok(Value::Err(Box::new(Value::Text(format!("key not found: {key}")))));
+                            }
+                        }
+                        let result_str = match current {
+                            serde_json::Value::String(s) => s.clone(),
+                            other => other.to_string(),
+                        };
+                        Ok(Value::Ok(Box::new(Value::Text(result_str))))
+                    }
+                    Err(e) => Ok(Value::Err(Box::new(Value::Text(e.to_string())))),
+                }
+            }
+            _ => Err(RuntimeError::new("ILO-R009", "jpth requires two text args".to_string())),
+        };
+    }
+    if name == "jdmp" && args.len() == 1 {
+        let json_val = value_to_json(&args[0]);
+        return Ok(Value::Text(json_val.to_string()));
+    }
+    if name == "jpar" && args.len() == 1 {
+        return match &args[0] {
+            Value::Text(s) => match serde_json::from_str::<serde_json::Value>(s) {
+                Ok(v) => Ok(Value::Ok(Box::new(serde_json_to_value(v)))),
+                Err(e) => Ok(Value::Err(Box::new(Value::Text(e.to_string())))),
+            },
+            other => Err(RuntimeError::new("ILO-R009", format!("jpar requires text, got {:?}", other))),
+        };
+    }
     if name == "env" && args.len() == 1 {
         return match &args[0] {
             Value::Text(key) => {
@@ -464,6 +508,48 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         Decl::Error { .. } => {
             Err(RuntimeError::new("ILO-R002", format!("{} failed to parse", name)))
         }
+    }
+}
+
+fn value_to_json(val: &Value) -> serde_json::Value {
+    match val {
+        Value::Number(n) => {
+            if n.fract() == 0.0 && n.abs() < 1e15 {
+                serde_json::Value::Number(serde_json::Number::from(*n as i64))
+            } else {
+                serde_json::Number::from_f64(*n)
+                    .map(serde_json::Value::Number)
+                    .unwrap_or(serde_json::Value::Null)
+            }
+        }
+        Value::Text(s) => serde_json::Value::String(s.clone()),
+        Value::Bool(b) => serde_json::Value::Bool(*b),
+        Value::Nil => serde_json::Value::Null,
+        Value::List(items) => serde_json::Value::Array(items.iter().map(value_to_json).collect()),
+        Value::Record { fields, .. } => {
+            let map: serde_json::Map<String, serde_json::Value> = fields.iter()
+                .map(|(k, v)| (k.clone(), value_to_json(v)))
+                .collect();
+            serde_json::Value::Object(map)
+        }
+        Value::Ok(inner) => value_to_json(inner),
+        Value::Err(inner) => value_to_json(inner),
+    }
+}
+
+fn serde_json_to_value(v: serde_json::Value) -> Value {
+    match v {
+        serde_json::Value::Object(map) => {
+            let fields: HashMap<String, Value> = map.into_iter()
+                .map(|(k, v)| (k, serde_json_to_value(v)))
+                .collect();
+            Value::Record { type_name: "json".to_string(), fields }
+        }
+        serde_json::Value::Array(arr) => Value::List(arr.into_iter().map(serde_json_to_value).collect()),
+        serde_json::Value::String(s) => Value::Text(s),
+        serde_json::Value::Number(n) => Value::Number(n.as_f64().unwrap_or(0.0)),
+        serde_json::Value::Bool(b) => Value::Bool(b),
+        serde_json::Value::Null => Value::Nil,
     }
 }
 
@@ -2677,5 +2763,176 @@ mod tests {
         let source = "type pt{x:n;y:n} f>n;p=pt x:3 y:4;{x;z}=p;x";
         let err = run_str_err(source, Some("f"), vec![]);
         assert!(err.contains("no field 'z'"), "got: {}", err);
+    }
+
+    // ── JSON builtins ───────────────────────────────────────────────────
+
+    #[test]
+    fn interp_jp_object() {
+        let source = r#"f j:t p:t>R t t;jpth j p"#;
+        let result = run_str(source, Some("f"), vec![
+            Value::Text(r#"{"name":"alice"}"#.to_string()),
+            Value::Text("name".to_string()),
+        ]);
+        assert_eq!(result, Value::Ok(Box::new(Value::Text("alice".to_string()))));
+    }
+
+    #[test]
+    fn interp_jp_nested() {
+        let source = r#"f j:t p:t>R t t;jpth j p"#;
+        let result = run_str(source, Some("f"), vec![
+            Value::Text(r#"{"user":{"name":"bob"}}"#.to_string()),
+            Value::Text("user.name".to_string()),
+        ]);
+        assert_eq!(result, Value::Ok(Box::new(Value::Text("bob".to_string()))));
+    }
+
+    #[test]
+    fn interp_jp_array_index() {
+        let source = r#"f j:t p:t>R t t;jpth j p"#;
+        let result = run_str(source, Some("f"), vec![
+            Value::Text(r#"{"items":[10,20,30]}"#.to_string()),
+            Value::Text("items.1".to_string()),
+        ]);
+        assert_eq!(result, Value::Ok(Box::new(Value::Text("20".to_string()))));
+    }
+
+    #[test]
+    fn interp_jp_missing_key() {
+        let source = r#"f j:t p:t>R t t;jpth j p"#;
+        let result = run_str(source, Some("f"), vec![
+            Value::Text(r#"{"a":1}"#.to_string()),
+            Value::Text("b".to_string()),
+        ]);
+        match result {
+            Value::Err(e) => assert!(e.to_string().contains("key not found"), "got: {}", e),
+            other => panic!("expected Err, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn interp_jp_invalid_json() {
+        let source = r#"f j:t p:t>R t t;jpth j p"#;
+        let result = run_str(source, Some("f"), vec![
+            Value::Text("not json".to_string()),
+            Value::Text("x".to_string()),
+        ]);
+        assert!(matches!(result, Value::Err(_)));
+    }
+
+    #[test]
+    fn interp_jp_unwrap() {
+        let source = r#"f j:t p:t>t;jpth! j p"#;
+        let result = run_str(source, Some("f"), vec![
+            Value::Text(r#"{"x":"hello"}"#.to_string()),
+            Value::Text("x".to_string()),
+        ]);
+        assert_eq!(result, Value::Text("hello".to_string()));
+    }
+
+    #[test]
+    fn interp_jd_number() {
+        let source = "f x:n>t;jdmp x";
+        let result = run_str(source, Some("f"), vec![Value::Number(42.0)]);
+        assert_eq!(result, Value::Text("42".to_string()));
+    }
+
+    #[test]
+    fn interp_jd_text() {
+        let source = r#"f x:t>t;jdmp x"#;
+        let result = run_str(source, Some("f"), vec![Value::Text("hello".to_string())]);
+        assert_eq!(result, Value::Text(r#""hello""#.to_string()));
+    }
+
+    #[test]
+    fn interp_jd_list() {
+        let source = "f>t;xs=[1, 2, 3];jdmp xs";
+        let result = run_str(source, Some("f"), vec![]);
+        assert_eq!(result, Value::Text("[1,2,3]".to_string()));
+    }
+
+    #[test]
+    fn interp_jd_record() {
+        let source = "type pt{x:n;y:n} f>t;p=pt x:1 y:2;jdmp p";
+        let result = run_str(source, Some("f"), vec![]);
+        let text = match &result { Value::Text(s) => s.clone(), _ => panic!("expected text") };
+        let parsed: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(parsed["x"], 1);
+        assert_eq!(parsed["y"], 2);
+    }
+
+    #[test]
+    fn interp_jparse_object() {
+        let source = r#"f j:t>R t t;jpar j"#;
+        let result = run_str(source, Some("f"), vec![
+            Value::Text(r#"{"a":1,"b":"two"}"#.to_string()),
+        ]);
+        match result {
+            Value::Ok(inner) => match *inner {
+                Value::Record { type_name, fields } => {
+                    assert_eq!(type_name, "json");
+                    assert_eq!(fields.get("a"), Some(&Value::Number(1.0)));
+                    assert_eq!(fields.get("b"), Some(&Value::Text("two".to_string())));
+                }
+                other => panic!("expected record, got {:?}", other),
+            },
+            other => panic!("expected Ok, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn interp_jparse_array() {
+        let source = r#"f j:t>R t t;jpar j"#;
+        let result = run_str(source, Some("f"), vec![
+            Value::Text("[1,2,3]".to_string()),
+        ]);
+        match result {
+            Value::Ok(inner) => assert_eq!(*inner, Value::List(vec![Value::Number(1.0), Value::Number(2.0), Value::Number(3.0)])),
+            other => panic!("expected Ok, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn interp_jparse_scalar() {
+        let source = r#"f j:t>R t t;jpar j"#;
+        assert_eq!(
+            run_str(source, Some("f"), vec![Value::Text("42".to_string())]),
+            Value::Ok(Box::new(Value::Number(42.0)))
+        );
+        assert_eq!(
+            run_str(source, Some("f"), vec![Value::Text("true".to_string())]),
+            Value::Ok(Box::new(Value::Bool(true)))
+        );
+        assert_eq!(
+            run_str(source, Some("f"), vec![Value::Text("null".to_string())]),
+            Value::Ok(Box::new(Value::Nil))
+        );
+    }
+
+    #[test]
+    fn interp_jparse_invalid() {
+        let source = r#"f j:t>R t t;jpar j"#;
+        let result = run_str(source, Some("f"), vec![Value::Text("not json".to_string())]);
+        assert!(matches!(result, Value::Err(_)));
+    }
+
+    #[test]
+    fn interp_jparse_unwrap() {
+        let source = r#"f j:t>t;jpar! j"#;
+        let result = run_str(source, Some("f"), vec![Value::Text(r#"{"x":1}"#.to_string())]);
+        match result {
+            Value::Record { type_name, fields } => {
+                assert_eq!(type_name, "json");
+                assert_eq!(fields.get("x"), Some(&Value::Number(1.0)));
+            }
+            other => panic!("expected record, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn interp_jparse_then_field_access() {
+        let source = r#"f j:t>n;r=jpar! j;r.x"#;
+        let result = run_str(source, Some("f"), vec![Value::Text(r#"{"x":42}"#.to_string())]);
+        assert_eq!(result, Value::Number(42.0));
     }
 }

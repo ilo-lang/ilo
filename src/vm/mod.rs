@@ -121,6 +121,9 @@ pub(crate) const OP_RND0: u8 = 57;       // R[A] = random float in [0,1)
 pub(crate) const OP_RND2: u8 = 58;       // R[A] = random int in [R[B], R[C]]
 pub(crate) const OP_NOW: u8 = 59;        // R[A] = current unix timestamp (seconds, float)
 pub(crate) const OP_ENV: u8 = 60;        // R[A] = env(R[B])  (returns R t t)
+pub(crate) const OP_JPTH: u8 = 61;         // R[A] = jpth(R[B], R[C])  (JSON path lookup → R t t)
+pub(crate) const OP_JDMP: u8 = 62;         // R[A] = jdmp(R[B])  (value to JSON string → t)
+pub(crate) const OP_JPAR: u8 = 63;         // R[A] = jpar(R[B])  (parse JSON string → R ? t)
 pub(crate) const OP_JMPNN: u8 = 56;     // if R[A] is not nil, jump by signed Bx (ABx mode)
 
 // ABx mode — register + 16-bit operand
@@ -1099,6 +1102,43 @@ impl RegCompiler {
                     let ra = self.alloc_reg();
                     self.emit_abc(OP_GET, ra, rb, 0);
                     // get returns R t t — handle auto-unwrap
+                    if *unwrap {
+                        let check_reg = self.alloc_reg();
+                        self.emit_abc(OP_ISOK, check_reg, ra, 0);
+                        let skip_ret = self.emit_jmpt(check_reg);
+                        self.emit_abx(OP_RET, ra, 0);
+                        self.current.patch_jump(skip_ret);
+                        self.emit_abc(OP_UNWRAP, ra, ra, 0);
+                        self.next_reg = ra + 1;
+                    }
+                    return ra;
+                }
+                if function == "jpth" && args.len() == 2 {
+                    let rb = self.compile_expr(&args[0]);
+                    let rc = self.compile_expr(&args[1]);
+                    let ra = self.alloc_reg();
+                    self.emit_abc(OP_JPTH, ra, rb, rc);
+                    if *unwrap {
+                        let check_reg = self.alloc_reg();
+                        self.emit_abc(OP_ISOK, check_reg, ra, 0);
+                        let skip_ret = self.emit_jmpt(check_reg);
+                        self.emit_abx(OP_RET, ra, 0);
+                        self.current.patch_jump(skip_ret);
+                        self.emit_abc(OP_UNWRAP, ra, ra, 0);
+                        self.next_reg = ra + 1;
+                    }
+                    return ra;
+                }
+                if function == "jdmp" && args.len() == 1 {
+                    let rb = self.compile_expr(&args[0]);
+                    let ra = self.alloc_reg();
+                    self.emit_abc(OP_JDMP, ra, rb, 0);
+                    return ra;
+                }
+                if function == "jpar" && args.len() == 1 {
+                    let rb = self.compile_expr(&args[0]);
+                    let ra = self.alloc_reg();
+                    self.emit_abc(OP_JPAR, ra, rb, 0);
                     if *unwrap {
                         let check_reg = self.alloc_reg();
                         self.emit_abc(OP_ISOK, check_reg, ra, 0);
@@ -2503,6 +2543,76 @@ impl<'a> VM<'a> {
                     let result = NanVal::heap_err(NanVal::heap_string("http feature not enabled".to_string()));
                     reg_set!(a, result);
                 }
+                OP_JPTH => {
+                    let a = ((inst >> 16) & 0xFF) as usize + base;
+                    let b = ((inst >> 8) & 0xFF) as usize + base;
+                    let c = (inst & 0xFF) as usize + base;
+                    let vb = reg!(b);
+                    let vc = reg!(c);
+                    if !vb.is_string() || !vc.is_string() {
+                        return Err(VmError::Type("jpth requires two strings"));
+                    }
+                    // SAFETY: is_string() confirmed heap-tagged string with live RC.
+                    let json_str = unsafe { match vb.as_heap_ref() { HeapObj::Str(s) => s, _ => unreachable!() } };
+                    let path_str = unsafe { match vc.as_heap_ref() { HeapObj::Str(s) => s, _ => unreachable!() } };
+                    let result = match serde_json::from_str::<serde_json::Value>(json_str) {
+                        Ok(parsed) => {
+                            let mut current = &parsed;
+                            let mut found = true;
+                            let mut missing_key = String::new();
+                            for key in path_str.split('.') {
+                                if let Ok(idx) = key.parse::<usize>() {
+                                    if let Some(v) = current.as_array().and_then(|a| a.get(idx)) {
+                                        current = v;
+                                    } else {
+                                        found = false;
+                                        missing_key = key.to_string();
+                                        break;
+                                    }
+                                } else if let Some(v) = current.get(key) {
+                                    current = v;
+                                } else {
+                                    found = false;
+                                    missing_key = key.to_string();
+                                    break;
+                                }
+                            }
+                            if found {
+                                let result_str = match current {
+                                    serde_json::Value::String(s) => s.clone(),
+                                    other => other.to_string(),
+                                };
+                                NanVal::heap_ok(NanVal::heap_string(result_str))
+                            } else {
+                                NanVal::heap_err(NanVal::heap_string(format!("key not found: {missing_key}")))
+                            }
+                        }
+                        Err(e) => NanVal::heap_err(NanVal::heap_string(e.to_string())),
+                    };
+                    reg_set!(a, result);
+                }
+                OP_JDMP => {
+                    let a = ((inst >> 16) & 0xFF) as usize + base;
+                    let b = ((inst >> 8) & 0xFF) as usize + base;
+                    let v = reg!(b);
+                    let json_val = nanval_to_json(v);
+                    reg_set!(a, NanVal::heap_string(json_val.to_string()));
+                }
+                OP_JPAR => {
+                    let a = ((inst >> 16) & 0xFF) as usize + base;
+                    let b = ((inst >> 8) & 0xFF) as usize + base;
+                    let v = reg!(b);
+                    if !v.is_string() {
+                        return Err(VmError::Type("jpar requires a string"));
+                    }
+                    // SAFETY: is_string() confirmed heap-tagged string with live RC.
+                    let text = unsafe { match v.as_heap_ref() { HeapObj::Str(s) => s, _ => unreachable!() } };
+                    let result = match serde_json::from_str::<serde_json::Value>(text) {
+                        Ok(parsed) => NanVal::heap_ok(serde_json_to_nanval(parsed)),
+                        Err(e) => NanVal::heap_err(NanVal::heap_string(e.to_string())),
+                    };
+                    reg_set!(a, result);
+                }
                 OP_SPL => {
                     let a = ((inst >> 16) & 0xFF) as usize + base;
                     let b = ((inst >> 8) & 0xFF) as usize + base;
@@ -2766,6 +2876,61 @@ unsafe fn nanval_str_cmp(a: NanVal, b: NanVal) -> std::cmp::Ordering {
         let sa = match a.as_heap_ref() { HeapObj::Str(s) => s, _ => unreachable!() };
         let sb = match b.as_heap_ref() { HeapObj::Str(s) => s, _ => unreachable!() };
         sa.cmp(sb)
+    }
+}
+
+fn nanval_to_json(v: NanVal) -> serde_json::Value {
+    if v.is_number() {
+        let n = v.as_number();
+        if n.fract() == 0.0 && n.abs() < 1e15 {
+            return serde_json::Value::Number(serde_json::Number::from(n as i64));
+        }
+        return serde_json::Number::from_f64(n)
+            .map(serde_json::Value::Number)
+            .unwrap_or(serde_json::Value::Null);
+    }
+    match v.0 {
+        TAG_NIL => serde_json::Value::Null,
+        TAG_TRUE => serde_json::Value::Bool(true),
+        TAG_FALSE => serde_json::Value::Bool(false),
+        _ if v.is_heap() => {
+            // SAFETY: is_heap() confirmed heap-tagged with live RC.
+            unsafe {
+                match v.as_heap_ref() {
+                    HeapObj::Str(s) => serde_json::Value::String(s.clone()),
+                    HeapObj::List(items) => {
+                        serde_json::Value::Array(items.iter().map(|i| nanval_to_json(*i)).collect())
+                    }
+                    HeapObj::Record { fields, .. } => {
+                        let map: serde_json::Map<String, serde_json::Value> = fields.iter()
+                            .map(|(k, v)| (k.clone(), nanval_to_json(*v)))
+                            .collect();
+                        serde_json::Value::Object(map)
+                    }
+                    HeapObj::OkVal(inner) => nanval_to_json(*inner),
+                    HeapObj::ErrVal(inner) => nanval_to_json(*inner),
+                }
+            }
+        }
+        _ => serde_json::Value::Null,
+    }
+}
+
+fn serde_json_to_nanval(v: serde_json::Value) -> NanVal {
+    match v {
+        serde_json::Value::Object(map) => {
+            let fields: HashMap<String, NanVal> = map.into_iter()
+                .map(|(k, v)| (k, serde_json_to_nanval(v)))
+                .collect();
+            NanVal::heap_record("json".to_string(), fields)
+        }
+        serde_json::Value::Array(arr) => {
+            NanVal::heap_list(arr.into_iter().map(serde_json_to_nanval).collect())
+        }
+        serde_json::Value::String(s) => NanVal::heap_string(s),
+        serde_json::Value::Number(n) => NanVal::number(n.as_f64().unwrap_or(0.0)),
+        serde_json::Value::Bool(b) => NanVal::boolean(b),
+        serde_json::Value::Null => NanVal::nil(),
     }
 }
 
@@ -4953,5 +5118,178 @@ mod tests {
     fn vm_destructure_in_loop() {
         let source = "type pt{x:n;y:n} f>n;ps=[pt x:1 y:2,pt x:3 y:4];@p ps{{x;y}=p;+x y}";
         assert_eq!(vm_run(source, Some("f"), vec![]), Value::Number(7.0));
+    }
+
+    // ── JSON builtins (VM) ──────────────────────────────────────────────
+
+    #[test]
+    fn vm_jp_basic() {
+        let source = r#"f j:t p:t>R t t;jpth j p"#;
+        let result = vm_run(source, Some("f"), vec![
+            Value::Text(r#"{"name":"alice"}"#.to_string()),
+            Value::Text("name".to_string()),
+        ]);
+        assert_eq!(result, Value::Ok(Box::new(Value::Text("alice".to_string()))));
+    }
+
+    #[test]
+    fn vm_jp_nested() {
+        let source = r#"f j:t p:t>R t t;jpth j p"#;
+        let result = vm_run(source, Some("f"), vec![
+            Value::Text(r#"{"user":{"name":"bob"}}"#.to_string()),
+            Value::Text("user.name".to_string()),
+        ]);
+        assert_eq!(result, Value::Ok(Box::new(Value::Text("bob".to_string()))));
+    }
+
+    #[test]
+    fn vm_jp_array_index() {
+        let source = r#"f j:t p:t>R t t;jpth j p"#;
+        let result = vm_run(source, Some("f"), vec![
+            Value::Text(r#"[10,20,30]"#.to_string()),
+            Value::Text("1".to_string()),
+        ]);
+        assert_eq!(result, Value::Ok(Box::new(Value::Text("20".to_string()))));
+    }
+
+    #[test]
+    fn vm_jp_missing_key() {
+        let source = r#"f j:t p:t>R t t;jpth j p"#;
+        let result = vm_run(source, Some("f"), vec![
+            Value::Text(r#"{"a":1}"#.to_string()),
+            Value::Text("b".to_string()),
+        ]);
+        match result {
+            Value::Err(e) => assert!(e.to_string().contains("key not found"), "got: {}", e),
+            other => panic!("expected Err, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn vm_jp_unwrap() {
+        let source = r#"f j:t p:t>t;jpth! j p"#;
+        let result = vm_run(source, Some("f"), vec![
+            Value::Text(r#"{"x":"hello"}"#.to_string()),
+            Value::Text("x".to_string()),
+        ]);
+        assert_eq!(result, Value::Text("hello".to_string()));
+    }
+
+    #[test]
+    fn vm_jp_compiles_to_opcode() {
+        let prog = parse_program(r#"f j:t p:t>R t t;jpth j p"#);
+        let compiled = compile(&prog).unwrap();
+        let chunk = &compiled.chunks[0];
+        let has_jp_op = chunk.code.iter().any(|inst| (inst >> 24) as u8 == OP_JPTH);
+        assert!(has_jp_op, "expected OP_JPTH in bytecode");
+    }
+
+    #[test]
+    fn vm_jd_number() {
+        let source = "f x:n>t;jdmp x";
+        let result = vm_run(source, Some("f"), vec![Value::Number(42.0)]);
+        assert_eq!(result, Value::Text("42".to_string()));
+    }
+
+    #[test]
+    fn vm_jd_text() {
+        let source = r#"f x:t>t;jdmp x"#;
+        let result = vm_run(source, Some("f"), vec![Value::Text("hello".to_string())]);
+        assert_eq!(result, Value::Text(r#""hello""#.to_string()));
+    }
+
+    #[test]
+    fn vm_jd_list() {
+        let source = "f>t;xs=[1, 2, 3];jdmp xs";
+        let result = vm_run(source, Some("f"), vec![]);
+        assert_eq!(result, Value::Text("[1,2,3]".to_string()));
+    }
+
+    #[test]
+    fn vm_jd_record() {
+        let source = "type pt{x:n;y:n} f>t;p=pt x:1 y:2;jdmp p";
+        let result = vm_run(source, Some("f"), vec![]);
+        let text = match &result { Value::Text(s) => s.clone(), _ => panic!("expected text") };
+        let parsed: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(parsed["x"], 1);
+        assert_eq!(parsed["y"], 2);
+    }
+
+    #[test]
+    fn vm_jd_compiles_to_opcode() {
+        let prog = parse_program("f x:n>t;jdmp x");
+        let compiled = compile(&prog).unwrap();
+        let chunk = &compiled.chunks[0];
+        let has_jd_op = chunk.code.iter().any(|inst| (inst >> 24) as u8 == OP_JDMP);
+        assert!(has_jd_op, "expected OP_JDMP in bytecode");
+    }
+
+    #[test]
+    fn vm_jparse_object() {
+        let source = r#"f j:t>R t t;jpar j"#;
+        let result = vm_run(source, Some("f"), vec![
+            Value::Text(r#"{"a":1,"b":"two"}"#.to_string()),
+        ]);
+        match result {
+            Value::Ok(inner) => match *inner {
+                Value::Record { type_name, fields } => {
+                    assert_eq!(type_name, "json");
+                    assert_eq!(fields.get("a"), Some(&Value::Number(1.0)));
+                    assert_eq!(fields.get("b"), Some(&Value::Text("two".to_string())));
+                }
+                other => panic!("expected record, got {:?}", other),
+            },
+            other => panic!("expected Ok, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn vm_jparse_array() {
+        let source = r#"f j:t>R t t;jpar j"#;
+        let result = vm_run(source, Some("f"), vec![
+            Value::Text("[1,2,3]".to_string()),
+        ]);
+        match result {
+            Value::Ok(inner) => assert_eq!(*inner, Value::List(vec![Value::Number(1.0), Value::Number(2.0), Value::Number(3.0)])),
+            other => panic!("expected Ok, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn vm_jparse_invalid() {
+        let source = r#"f j:t>R t t;jpar j"#;
+        let result = vm_run(source, Some("f"), vec![
+            Value::Text("not json".to_string()),
+        ]);
+        assert!(matches!(result, Value::Err(_)));
+    }
+
+    #[test]
+    fn vm_jparse_unwrap() {
+        let source = r#"f j:t>t;jpar! j"#;
+        let result = vm_run(source, Some("f"), vec![Value::Text(r#"{"x":1}"#.to_string())]);
+        match result {
+            Value::Record { type_name, fields } => {
+                assert_eq!(type_name, "json");
+                assert_eq!(fields.get("x"), Some(&Value::Number(1.0)));
+            }
+            other => panic!("expected record, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn vm_jparse_compiles_to_opcode() {
+        let prog = parse_program(r#"f j:t>R t t;jpar j"#);
+        let compiled = compile(&prog).unwrap();
+        let chunk = &compiled.chunks[0];
+        let has_jparse_op = chunk.code.iter().any(|inst| (inst >> 24) as u8 == OP_JPAR);
+        assert!(has_jparse_op, "expected OP_JPAR in bytecode");
+    }
+
+    #[test]
+    fn vm_jparse_then_field_access() {
+        let source = r#"f j:t>n;r=jpar! j;r.x"#;
+        let result = vm_run(source, Some("f"), vec![Value::Text(r#"{"x":42}"#.to_string())]);
+        assert_eq!(result, Value::Number(42.0));
     }
 }

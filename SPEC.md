@@ -158,6 +158,9 @@ Called like functions, compiled to dedicated opcodes.
 | `rev xs` | reverse list or text | same type |
 | `srt xs` | sort list (all-number or all-text) or text chars | same type |
 | `slc xs a b` | slice list or text from index a to b | same type |
+| `jpth json path` | JSON path lookup (dot-separated keys, array indices) | `R t t` |
+| `jdmp value` | serialise ilo value to JSON text | `t` |
+| `jpar text` | parse JSON text into ilo values | `R ? t` |
 
 `get` returns `Ok(body)` on success, `Err(message)` on failure (connection error, timeout, DNS failure, etc). `$` is a terse alias:
 
@@ -175,6 +178,33 @@ Behind the `http` feature flag (on by default). Without the feature, `get` retur
 ```
 env key          -- R t t: Ok=value, Err=not set message
 env! key         -- auto-unwrap: Ok→value, Err→propagate to caller
+```
+
+### JSON builtins
+
+`jpth` extracts a value from a JSON string by dot-separated path. Array elements are accessed by numeric index:
+
+```
+jpth json "name"            -- R t t: Ok=extracted value as text, Err=error
+jpth json "user.name"       -- nested path lookup
+jpth json "items.0.name"    -- array index access
+jpth! json "name"           -- auto-unwrap
+```
+
+`jdmp` serialises any ilo value to a JSON string:
+
+```
+jdmp 42                     -- "42"
+jdmp "hello"                -- "\"hello\""
+jdmp [1, 2, 3]             -- "[1,2,3]"
+jdmp (pt x:1 y:2)          -- "{\"x\":1,\"y\":2}"
+```
+
+`jpar` parses a JSON string into ilo values. JSON objects become records with type name `json`, arrays become lists, strings/numbers/bools/null map directly:
+
+```
+jpar text                   -- R ? t: Ok=parsed value, Err=parse error
+r=jpar! "{\"x\":1}"        -- r is a json record, access with r.x
 ```
 
 ---

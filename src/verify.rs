@@ -198,6 +198,9 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("rnd", &[], "n"),
     ("now", &[], "n"),
     ("env", &["t"], "R t t"),
+    ("jpth", &["t", "t"], "R t t"),
+    ("jdmp", &["any"], "t"),
+    ("jpar", &["t"], "R ? t"),
 ];
 
 fn builtin_arity(name: &str) -> Option<usize> {
@@ -484,6 +487,40 @@ fn builtin_check_args(name: &str, arg_types: &[Ty], func_ctx: &str, span: Option
                 });
             }
             (Ty::Result(Box::new(Ty::Text), Box::new(Ty::Text)), errors)
+        }
+        "jpth" => {
+            for (i, arg) in arg_types.iter().enumerate() {
+                if !compatible(arg, &Ty::Text) {
+                    errors.push(VerifyError {
+                        code: "ILO-T013",
+                        function: func_ctx.to_string(),
+                        message: format!("'jpth' arg {} expects t, got {arg}", i + 1),
+                        hint: None,
+                        span,
+                        is_warning: false,
+                    });
+                }
+            }
+            (Ty::Result(Box::new(Ty::Text), Box::new(Ty::Text)), errors)
+        }
+        "jdmp" => {
+            // jdmp accepts any value, no type checking needed
+            (Ty::Text, errors)
+        }
+        "jpar" => {
+            if let Some(arg) = arg_types.first()
+                && !compatible(arg, &Ty::Text)
+            {
+                errors.push(VerifyError {
+                    code: "ILO-T013",
+                    function: func_ctx.to_string(),
+                    message: format!("'jpar' expects t, got {arg}"),
+                    hint: None,
+                    span,
+                    is_warning: false,
+                });
+            }
+            (Ty::Result(Box::new(Ty::Unknown), Box::new(Ty::Text)), errors)
         }
         _ => (Ty::Unknown, errors),
     }

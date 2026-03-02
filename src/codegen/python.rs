@@ -312,6 +312,22 @@ fn emit_expr(out: &mut String, level: usize, expr: &Expr) -> String {
             if function == "now" && args.is_empty() {
                 return "(__import__('time').time())".to_string();
             }
+            if function == "jpth" && args.len() == 2 {
+                let json_arg = emit_expr(out, level, &args[0]);
+                let path_arg = emit_expr(out, level, &args[1]);
+                let call = format!("(lambda j, p: (lambda c: (\"ok\", str(c) if not isinstance(c, str) else c))((__import__('functools').reduce(lambda c, k: c[int(k)] if isinstance(c, list) and k.isdigit() else c[k], p.split('.'), __import__('json').loads(j)))) if True else None)({}, {})", json_arg, path_arg);
+                let call = format!("(lambda: {})()", call);
+                return if *unwrap { format!("_ilo_unwrap({})", call) } else { call };
+            }
+            if function == "jdmp" && args.len() == 1 {
+                let arg = emit_expr(out, level, &args[0]);
+                return format!("__import__('json').dumps({})", arg);
+            }
+            if function == "jpar" && args.len() == 1 {
+                let arg = emit_expr(out, level, &args[0]);
+                let call = format!("(lambda s: (\"ok\", __import__('json').loads(s)))({})", arg);
+                return if *unwrap { format!("_ilo_unwrap({})", call) } else { call };
+            }
             if function == "env" && args.len() == 1 {
                 let arg = emit_expr(out, level, &args[0]);
                 let call = format!("(lambda k: (\"ok\", __import__('os').environ[k]) if k in __import__('os').environ else (\"err\", f\"env var '{{k}}' not set\"))({})", arg);
