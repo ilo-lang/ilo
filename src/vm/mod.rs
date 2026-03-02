@@ -215,7 +215,8 @@ impl Chunk {
 #[derive(Debug, Clone)]
 pub(crate) struct TypeInfo {
     pub name: String,
-    pub fields: Vec<String>,  // ordered field names — index = slot
+    pub fields: Vec<String>,      // ordered field names — index = slot
+    pub num_fields: u64,          // bitmask: bit i set if field i is Number type
 }
 
 #[derive(Debug, Clone, Default)]
@@ -225,13 +226,13 @@ pub(crate) struct TypeRegistry {
 }
 
 impl TypeRegistry {
-    fn register(&mut self, name: String, fields: Vec<String>) -> u16 {
+    fn register(&mut self, name: String, fields: Vec<String>, num_fields: u64) -> u16 {
         if let Some(&id) = self.name_to_id.get(&name) {
             return id;
         }
         let id = self.types.len() as u16;
         self.name_to_id.insert(name.clone(), id);
-        self.types.push(Rc::new(TypeInfo { name, fields }));
+        self.types.push(Rc::new(TypeInfo { name, fields, num_fields }));
         id
     }
 
@@ -393,7 +394,13 @@ impl RegCompiler {
         for decl in &program.declarations {
             if let Decl::TypeDef { name, fields, .. } = decl {
                 let field_names: Vec<String> = fields.iter().map(|p| p.name.clone()).collect();
-                self.type_registry.register(name.clone(), field_names);
+                let mut num_fields: u64 = 0;
+                for (i, p) in fields.iter().enumerate() {
+                    if p.ty == crate::ast::Type::Number && i < 64 {
+                        num_fields |= 1 << i;
+                    }
+                }
+                self.type_registry.register(name.clone(), field_names, num_fields);
             }
         }
 
@@ -1044,15 +1051,21 @@ impl RegCompiler {
                     Some(idx) => {
                         // Fast path: direct field index
                         let c = idx as u8;
+                        // Check if this field is known numeric from the type definition
+                        let field_is_num = obj_type != u16::MAX
+                            && idx < 64
+                            && (self.type_registry.types[obj_type as usize].num_fields & (1 << idx)) != 0;
                         if *safe {
                             self.emit_abx(OP_JMPNN, obj_reg, 1);
                             self.emit_abx(OP_JMP, 0, 1);
                             self.emit_abc(OP_RECFLD, obj_reg, obj_reg, c);
                             self.reg_record_type[obj_reg as usize] = u16::MAX;
+                            if field_is_num { self.reg_is_num[obj_reg as usize] = true; }
                             obj_reg
                         } else {
                             let ra = self.alloc_reg();
                             self.emit_abc(OP_RECFLD, ra, obj_reg, c);
+                            if field_is_num { self.reg_is_num[ra as usize] = true; }
                             ra
                         }
                     }
@@ -1478,7 +1491,7 @@ impl RegCompiler {
                     None => {
                         // Auto-register from field order in this expression
                         let field_names: Vec<String> = fields.iter().map(|(n, _)| n.clone()).collect();
-                        self.type_registry.register(type_name.clone(), field_names)
+                        self.type_registry.register(type_name.clone(), field_names, 0)
                     }
                 };
 
@@ -1932,7 +1945,7 @@ impl NanVal {
             Value::Record { type_name, fields } => {
                 // Build TypeInfo from the Value's field names (preserving order)
                 let field_names: Vec<String> = fields.keys().cloned().collect();
-                let type_info = Rc::new(TypeInfo { name: type_name.clone(), fields: field_names.clone() });
+                let type_info = Rc::new(TypeInfo { name: type_name.clone(), fields: field_names.clone(), num_fields: 0 });
                 let flat: Box<[NanVal]> = field_names.iter()
                     .map(|k| NanVal::from_value(&fields[k]))
                     .collect::<Vec<_>>()
@@ -3473,7 +3486,7 @@ fn serde_json_to_nanval(v: serde_json::Value) -> NanVal {
                 .map(|(_, v)| serde_json_to_nanval(v))
                 .collect::<Vec<_>>()
                 .into_boxed_slice();
-            let type_info = Rc::new(TypeInfo { name: "json".to_string(), fields: field_names });
+            let type_info = Rc::new(TypeInfo { name: "json".to_string(), fields: field_names, num_fields: 0 });
             NanVal::heap_record(type_info, field_vals)
         }
         serde_json::Value::Array(arr) => {
