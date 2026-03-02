@@ -504,6 +504,31 @@ fn run_bench(program: &ast::Program, func_name: Option<&str>, args: &[interprete
     println!("  per call:   {}ns", interp_ns);
     println!();
 
+    // -- Rust interpreter (reusable) benchmark --
+    let interp_call_name = func_name.unwrap_or(
+        program.declarations.iter()
+            .find_map(|d| match d { ast::Decl::Function { name, .. } => Some(name.as_str()), _ => None })
+            .unwrap_or("main")
+    );
+    let mut interp_state = interpreter::InterpState::new(program);
+    for _ in 0..100 {
+        let _ = interp_state.call(interp_call_name, args.to_vec());
+    }
+
+    let start = Instant::now();
+    for _ in 0..iterations {
+        result = interp_state.call(interp_call_name, args.to_vec()).expect("interpreter reusable error during benchmark");
+    }
+    let interp_reuse_dur = start.elapsed();
+    let interp_reuse_ns = interp_reuse_dur.as_nanos() / iterations as u128;
+
+    println!("Rust interpreter (reusable)");
+    println!("  result:     {}", result);
+    println!("  iterations: {}", iterations);
+    println!("  total:      {:.2}ms", interp_reuse_dur.as_nanos() as f64 / 1e6);
+    println!("  per call:   {}ns", interp_reuse_ns);
+    println!();
+
     // -- Register VM benchmark --
     let compiled = vm::compile(program).expect("compile error in benchmark");
     // Warmup

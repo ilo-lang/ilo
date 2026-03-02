@@ -68,47 +68,71 @@ impl RuntimeError {
 type Result<T> = std::result::Result<T, RuntimeError>;
 
 struct Env {
-    scopes: Vec<HashMap<String, Value>>,
-    functions: HashMap<String, Decl>,
+    /// Flat variable storage with scope-mark discipline.
+    vars: Vec<(String, Value)>,
+    scope_marks: Vec<usize>,
+    func_list: Vec<Decl>,
+    func_index: HashMap<String, usize>,
     call_stack: Vec<String>,
 }
 
 impl Env {
     fn new() -> Self {
         Env {
-            scopes: vec![HashMap::new()],
-            functions: HashMap::new(),
+            vars: Vec::with_capacity(16),
+            scope_marks: vec![0],
+            func_list: Vec::new(),
+            func_index: HashMap::new(),
             call_stack: Vec::new(),
         }
     }
 
+    #[inline(always)]
     fn push_scope(&mut self) {
-        self.scopes.push(HashMap::new());
+        self.scope_marks.push(self.vars.len());
     }
 
+    #[inline(always)]
     fn pop_scope(&mut self) {
-        self.scopes.pop();
-    }
-
-    fn set(&mut self, name: &str, value: Value) {
-        if let Some(scope) = self.scopes.last_mut() {
-            scope.insert(name.to_string(), value);
+        if let Some(mark) = self.scope_marks.pop() {
+            self.vars.truncate(mark);
         }
     }
 
+    #[inline(always)]
+    fn set(&mut self, name: &str, value: Value) {
+        let scope_start = *self.scope_marks.last().unwrap_or(&0);
+        for entry in self.vars[scope_start..].iter_mut().rev() {
+            if entry.0 == name {
+                entry.1 = value;
+                return;
+            }
+        }
+        self.vars.push((name.to_string(), value));
+    }
+
+    #[inline(always)]
     fn get(&self, name: &str) -> Result<Value> {
-        for scope in self.scopes.iter().rev() {
-            if let Some(val) = scope.get(name) {
-                return Ok(val.clone());
+        for entry in self.vars.iter().rev() {
+            if entry.0 == name {
+                return Ok(entry.1.clone());
             }
         }
         Err(RuntimeError::new("ILO-R001", format!("undefined variable: {}", name)))
     }
 
-    fn function(&self, name: &str) -> Result<Decl> {
-        self.functions.get(name).cloned().ok_or_else(|| {
-            RuntimeError::new("ILO-R002", format!("undefined function: {}", name))
-        })
+    fn register_function(&mut self, name: String, decl: Decl) {
+        let idx = self.func_list.len();
+        self.func_list.push(decl);
+        self.func_index.insert(name, idx);
+    }
+
+    /// Reset variable state for reuse, keeping function registrations.
+    fn reset(&mut self) {
+        self.vars.clear();
+        self.scope_marks.clear();
+        self.scope_marks.push(0);
+        self.call_stack.clear();
     }
 }
 
@@ -131,7 +155,7 @@ pub fn run(program: &Program, func_name: Option<&str>, args: Vec<Value>) -> Resu
     for decl in &program.declarations {
         match decl {
             Decl::Function { name, .. } | Decl::Tool { name, .. } => {
-                env.functions.insert(name.clone(), decl.clone());
+                env.register_function(name.clone(), decl.clone());
             }
             Decl::TypeDef { .. } | Decl::Alias { .. } | Decl::Error { .. } => {}
         }
@@ -152,6 +176,31 @@ pub fn run(program: &Program, func_name: Option<&str>, args: Vec<Value>) -> Resu
     };
 
     call_function(&mut env, &target, args)
+}
+
+/// Reusable interpreter state — avoids re-registering functions on each call.
+pub struct InterpState {
+    env: Env,
+}
+
+impl InterpState {
+    pub fn new(program: &Program) -> Self {
+        let mut env = Env::new();
+        for decl in &program.declarations {
+            match decl {
+                Decl::Function { name, .. } | Decl::Tool { name, .. } => {
+                    env.register_function(name.clone(), decl.clone());
+                }
+                Decl::TypeDef { .. } | Decl::Alias { .. } | Decl::Error { .. } => {}
+            }
+        }
+        InterpState { env }
+    }
+
+    pub fn call(&mut self, func_name: &str, args: Vec<Value>) -> Result<Value> {
+        self.env.reset();
+        call_function(&mut self.env, func_name, args)
+    }
 }
 
 fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
@@ -473,8 +522,14 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         };
     }
 
-    let decl = env.function(name)?;
-    match decl {
+    // Look up by index; use a raw pointer to avoid borrowing env across mutation.
+    // SAFETY: func_list is only populated in run() before any calls and never
+    // reallocated during execution. We only read through this pointer.
+    let func_idx = *env.func_index.get(name).ok_or_else(|| {
+        RuntimeError::new("ILO-R002", format!("undefined function: {}", name))
+    })?;
+    let decl_ptr: *const Decl = &env.func_list[func_idx];
+    match unsafe { &*decl_ptr } {
         Decl::Function { params, body, name: func_name, .. } => {
             if args.len() != params.len() {
                 return Err(RuntimeError::new("ILO-R004", format!(
@@ -483,10 +538,10 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             }
             env.push_scope();
             for (param, arg) in params.iter().zip(args) {
-                env.set(&param.name, arg);
+                env.vars.push((param.name.clone(), arg));
             }
             env.call_stack.push(func_name.clone());
-            let result = eval_body(env, &body);
+            let result = eval_body(env, body);
             env.call_stack.pop();
             env.pop_scope();
             match result? {
@@ -1961,7 +2016,7 @@ mod tests {
     fn call_typedef_as_function() {
         let mut env = Env::new();
         // Manually insert a TypeDef into the env's functions map
-        env.functions.insert("point".to_string(), Decl::TypeDef {
+        env.register_function("point".to_string(), Decl::TypeDef {
             name: "point".to_string(),
             fields: vec![],
             span: Span::UNKNOWN,
@@ -1977,7 +2032,7 @@ mod tests {
     fn call_error_decl_as_function() {
         let mut env = Env::new();
         // Manually insert a Decl::Error into the env's functions map
-        env.functions.insert("broken".to_string(), Decl::Error {
+        env.register_function("broken".to_string(), Decl::Error {
             span: Span::UNKNOWN,
         });
         let result = call_function(&mut env, "broken", vec![]);
