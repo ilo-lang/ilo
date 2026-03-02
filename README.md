@@ -186,18 +186,17 @@ NO_COLOR=1 ilo 'code'       # disable colour
 
 **Formatter:**
 
-Newlines are for humans — agents don't need them. An entire ilo program can be one line. Dense output is the default — no flag needed. Use `--fmt-expanded` when humans need to review:
+Newlines are for humans — agents don't need them. An entire ilo program can be one line. Dense output is the default:
 
 ```bash
-ilo 'code'                   # dense wire format (default)
-ilo 'code' --dense / -d      # same, explicit
-ilo 'code' --expanded / -e   # human-readable format (for review)
+ilo 'code' --fmt              # reformat (dense wire format)
+ilo 'code' --fmt-expanded     # reformat (expanded human format)
 ```
 
 **Other modes:**
 ```bash
 ilo 'code' --emit python     # transpile to Python
-ilo 'code'                    # no args → AST JSON
+ilo 'code'                   # no args/flags → print AST as JSON
 ilo program.ilo --bench tot 10 20 30  # benchmark
 ```
 
@@ -206,7 +205,7 @@ ilo program.ilo --bench tot 10 20 30  # benchmark
 cargo test
 ```
 
-818 tests: lexer, parser, interpreter, VM, verifier, codegen, diagnostic, formatter, and CLI integration tests.
+1091 tests: lexer, parser, interpreter, VM, verifier, codegen, diagnostic, formatter, and CLI integration tests.
 
 ## Documentation
 
