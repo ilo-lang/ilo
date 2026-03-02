@@ -317,6 +317,16 @@ fn emit_expr(out: &mut String, level: usize, expr: &Expr) -> String {
                 let call = format!("(lambda k: (\"ok\", __import__('os').environ[k]) if k in __import__('os').environ else (\"err\", f\"env var '{{k}}' not set\"))({})", arg);
                 return if *unwrap { format!("_ilo_unwrap({})", call) } else { call };
             }
+            if function == "jp" && args.len() == 2 {
+                let json_arg = emit_expr(out, level, &args[0]);
+                let path_arg = emit_expr(out, level, &args[1]);
+                let call = format!("(lambda j, p: (lambda d: (lambda v, *segs: (lambda f: f(f, d, list(segs)))(lambda f, cur, segs: (\"ok\", str(cur) if not isinstance(cur, str) else cur) if not segs else f(f, cur[int(segs[0])] if isinstance(cur, list) else cur[segs[0]], segs[1:])))(v, *p.split('.')))(__import__('json').loads(j)))({}, {})", json_arg, path_arg);
+                return if *unwrap { format!("_ilo_unwrap({})", call) } else { call };
+            }
+            if function == "jd" && args.len() == 1 {
+                let arg = emit_expr(out, level, &args[0]);
+                return format!("__import__('json').dumps({})", arg);
+            }
             if function == "rnd" && args.is_empty() {
                 return "(__import__('random').random())".to_string();
             }
@@ -812,6 +822,19 @@ mod tests {
         let py = parse_and_emit(r#"f k:t>R t t;env k"#);
         assert!(py.contains("os"), "should use os module");
         assert!(py.contains("environ"), "should access environ");
+    }
+
+    #[test]
+    fn emit_jp_builtin() {
+        let py = parse_and_emit(r#"f j:t>R t t;jp j "name""#);
+        assert!(py.contains("json"), "should use json module");
+    }
+
+    #[test]
+    fn emit_jd_builtin() {
+        let py = parse_and_emit("f x:n>t;jd x");
+        assert!(py.contains("json"), "should use json module");
+        assert!(py.contains("dumps"), "should use dumps");
     }
 
     #[test]

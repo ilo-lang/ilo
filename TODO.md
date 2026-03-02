@@ -4,7 +4,7 @@
 
 1. **Tool provider infrastructure** (D1d) — `ToolProvider` trait, HTTP provider, tool config
 2. **Value ↔ JSON** (D1e) — serialise/deserialise ilo values at tool boundary
-3. **JSON parsing** (I1) — `jp` builtin, agents live in JSON
+3. ~~**JSON parsing**~~ ✅ (I1) — `jp` + `jd` builtins (`jparse` deferred)
 4. **Shell execution** (I2) — `run` builtin + backtick syntax
 5. ~~**Env vars**~~ ✅ (I3) — `env` builtin
 6. **Logging** (I5) — `log`/`dbg` to stderr
@@ -855,15 +855,15 @@ Gap analysis: what do real AI agents do that ilo can't express today? Ordered by
 
 Agents call APIs. APIs return JSON. ilo can fetch JSON (`get url`) but can't do anything with the response except pass it as raw text. This is the #1 gap.
 
-- [ ] `jp text key` — JSON path lookup, returns `R t t`. `jp body "name"` extracts `$.name` as text
-- [ ] `jp text key` on nested paths: `jp body "address.city"` or `jp body "items.0.name"`
+- [x] `jp text key` — JSON path lookup, returns `R t t`. `jp body "name"` extracts `$.name` as text
+- [x] `jp text key` on nested paths: `jp body "address.city"` or `jp body "items.0.name"`
 - [ ] `jparse text` — parse JSON text into ilo values (records, lists, numbers, text, bool, nil), returns `R <value> t`
-- [ ] `jdump value` — serialise ilo value to JSON text, returns `t`
-- [ ] **Minimal approach:** `jp` alone covers 80% of cases. Agent gets JSON string from API, picks out fields with `jp`, done. No full parse needed
-- [ ] **Design tension:** manifesto says "format parsing is a tool concern." But JSON is so fundamental to agent work that not having it is like a shell without `grep`. Consider making `jp` a builtin exception, or accept that every agent needs a `json-extract` tool
-- [ ] Feature flag: `json` feature (uses `serde_json` — already a dependency)
+- [x] `jd value` — serialise ilo value to JSON text, returns `t` (renamed from `jdump` for brevity)
+- [x] **Minimal approach:** `jp` alone covers 80% of cases. Agent gets JSON string from API, picks out fields with `jp`, done. No full parse needed
+- [x] **Design tension:** manifesto says "format parsing is a tool concern." But JSON is so fundamental to agent work that not having it is like a shell without `grep`. Consider making `jp` a builtin exception, or accept that every agent needs a `json-extract` tool
+- [x] Feature flag: none — uses `serde_json` which is already a dependency
 - [ ] **Integration with records:** `jparse text "profile"` could map JSON to a declared record type, verified at parse time — combines D1e (Value ↔ JSON) with a language builtin
-- [ ] **Token comparison:**
+- [x] **Token comparison:**
   ```
   # Python: ~12 tokens
   data = json.loads(response.text)

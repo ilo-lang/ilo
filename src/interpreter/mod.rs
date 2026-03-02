@@ -154,6 +154,27 @@ pub fn run(program: &Program, func_name: Option<&str>, args: Vec<Value>) -> Resu
     call_function(&mut env, &target, args)
 }
 
+fn value_to_json(value: &Value) -> serde_json::Value {
+    match value {
+        Value::Number(n) => serde_json::Value::from(*n),
+        Value::Text(s) => serde_json::Value::from(s.as_str()),
+        Value::Bool(b) => serde_json::Value::from(*b),
+        Value::Nil => serde_json::Value::Null,
+        Value::List(items) => {
+            serde_json::Value::Array(items.iter().map(value_to_json).collect())
+        }
+        Value::Record { fields, .. } => {
+            let map: serde_json::Map<String, serde_json::Value> = fields
+                .iter()
+                .map(|(k, v)| (k.clone(), value_to_json(v)))
+                .collect();
+            serde_json::Value::Object(map)
+        }
+        Value::Ok(v) => serde_json::json!({"ok": value_to_json(v)}),
+        Value::Err(v) => serde_json::json!({"err": value_to_json(v)}),
+    }
+}
+
 fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
     // Builtins
     if name == "len" {
@@ -427,6 +448,46 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             }
             other => Err(RuntimeError::new("ILO-R009", format!("env requires text, got {:?}", other))),
         };
+    }
+
+    if name == "jp" && args.len() == 2 {
+        return match (&args[0], &args[1]) {
+            (Value::Text(json_str), Value::Text(path)) => {
+                match serde_json::from_str::<serde_json::Value>(json_str.as_str()) {
+                    Ok(root) => {
+                        let mut current = &root;
+                        for segment in path.split('.') {
+                            if let Ok(idx) = segment.parse::<usize>() {
+                                match current.get(idx) {
+                                    Some(v) => current = v,
+                                    None => return Ok(Value::Err(Box::new(Value::Text(
+                                        format!("index {} out of bounds", idx)
+                                    )))),
+                                }
+                            } else {
+                                match current.get(segment) {
+                                    Some(v) => current = v,
+                                    None => return Ok(Value::Err(Box::new(Value::Text(
+                                        format!("key '{}' not found", segment)
+                                    )))),
+                                }
+                            }
+                        }
+                        let text = match current {
+                            serde_json::Value::String(s) => s.clone(),
+                            serde_json::Value::Null => "nil".to_string(),
+                            other => other.to_string(),
+                        };
+                        Ok(Value::Ok(Box::new(Value::Text(text))))
+                    }
+                    Err(e) => Ok(Value::Err(Box::new(Value::Text(format!("invalid JSON: {e}"))))),
+                }
+            }
+            _ => Err(RuntimeError::new("ILO-R009", format!("jp requires two text args"))),
+        };
+    }
+    if name == "jd" && args.len() == 1 {
+        return Ok(Value::Text(value_to_json(&args[0]).to_string()));
     }
 
     let decl = env.function(name)?;
@@ -2440,6 +2501,106 @@ mod tests {
         let result = run_str(source, Some("f"), vec![Value::Text("ILO_TEST_UNWRAP".into())]);
         assert_eq!(result, Value::Ok(Box::new(Value::Text("world".into()))));
         unsafe { std::env::remove_var("ILO_TEST_UNWRAP"); }
+    }
+
+    // ── jp builtin tests ───────────────────────────────────────────────
+
+    #[test]
+    fn interpret_jp_simple_key() {
+        let source = r#"f j:t>R t t;jp j "name""#;
+        let result = run_str(source, Some("f"), vec![Value::Text(r#"{"name":"alice"}"#.into())]);
+        assert_eq!(result, Value::Ok(Box::new(Value::Text("alice".into()))));
+    }
+
+    #[test]
+    fn interpret_jp_nested_path() {
+        let source = r#"f j:t>R t t;jp j "user.name""#;
+        let result = run_str(source, Some("f"), vec![Value::Text(r#"{"user":{"name":"bob"}}"#.into())]);
+        assert_eq!(result, Value::Ok(Box::new(Value::Text("bob".into()))));
+    }
+
+    #[test]
+    fn interpret_jp_array_index() {
+        let source = r#"f j:t>R t t;jp j "items.1""#;
+        let result = run_str(source, Some("f"), vec![Value::Text(r#"{"items":["a","b","c"]}"#.into())]);
+        assert_eq!(result, Value::Ok(Box::new(Value::Text("b".into()))));
+    }
+
+    #[test]
+    fn interpret_jp_number_value() {
+        let source = r#"f j:t>R t t;jp j "age""#;
+        let result = run_str(source, Some("f"), vec![Value::Text(r#"{"age":30}"#.into())]);
+        assert_eq!(result, Value::Ok(Box::new(Value::Text("30".into()))));
+    }
+
+    #[test]
+    fn interpret_jp_missing_key() {
+        let source = r#"f j:t>R t t;jp j "missing""#;
+        let result = run_str(source, Some("f"), vec![Value::Text(r#"{"name":"alice"}"#.into())]);
+        match result {
+            Value::Err(inner) => match *inner {
+                Value::Text(s) => assert!(s.contains("not found"), "got: {s}"),
+                other => panic!("expected Text, got {:?}", other),
+            },
+            other => panic!("expected Err, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn interpret_jp_invalid_json() {
+        let source = r#"f j:t>R t t;jp j "x""#;
+        let result = run_str(source, Some("f"), vec![Value::Text("not json".into())]);
+        match result {
+            Value::Err(inner) => match *inner {
+                Value::Text(s) => assert!(s.contains("invalid JSON"), "got: {s}"),
+                other => panic!("expected Text, got {:?}", other),
+            },
+            other => panic!("expected Err, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn interpret_jp_unwrap() {
+        let source = r#"f j:t>t;~(jp! j "name")"#;
+        let result = run_str(source, Some("f"), vec![Value::Text(r#"{"name":"alice"}"#.into())]);
+        assert_eq!(result, Value::Ok(Box::new(Value::Text("alice".into()))));
+    }
+
+    #[test]
+    fn interpret_jp_null_value() {
+        let source = r#"f j:t>R t t;jp j "x""#;
+        let result = run_str(source, Some("f"), vec![Value::Text(r#"{"x":null}"#.into())]);
+        assert_eq!(result, Value::Ok(Box::new(Value::Text("nil".into()))));
+    }
+
+    // ── jd builtin tests ─────────────────────────────────────────────
+
+    #[test]
+    fn interpret_jd_number() {
+        let source = "f x:n>t;jd x";
+        let result = run_str(source, Some("f"), vec![Value::Number(42.0)]);
+        assert_eq!(result, Value::Text("42.0".into()));
+    }
+
+    #[test]
+    fn interpret_jd_text() {
+        let source = r#"f x:t>t;jd x"#;
+        let result = run_str(source, Some("f"), vec![Value::Text("hello".into())]);
+        assert_eq!(result, Value::Text(r#""hello""#.into()));
+    }
+
+    #[test]
+    fn interpret_jd_bool() {
+        let source = "f>t;jd true";
+        let result = run_str(source, Some("f"), vec![]);
+        assert_eq!(result, Value::Text("true".into()));
+    }
+
+    #[test]
+    fn interpret_jd_list() {
+        let source = "f xs:L n>t;jd xs";
+        let result = run_str(source, Some("f"), vec![Value::List(vec![Value::Number(1.0), Value::Number(2.0)])]);
+        assert_eq!(result, Value::Text("[1.0,2.0]".into()));
     }
 
     // ── Range iteration tests ───────────────────────────────────────────

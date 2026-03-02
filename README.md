@@ -185,6 +185,15 @@ ilo 'f k:t>R t t;env! k' "HOME"
 # auto-unwrap: Ok→value, Err→propagate
 ```
 
+**JSON** — `jp` extracts values from JSON, `jd` serialises to JSON:
+```bash
+ilo 'f j:t>R t t;jp j "user.name"' '{"user":{"name":"alice"}}'
+# → ~"alice"
+
+ilo 'f j:t>t;jp! j "items.0"' '{"items":["a","b"]}'
+# → a
+```
+
 **Error output formats:**
 ```bash
 ilo 'code' -a               # ANSI colour (default for TTY)
@@ -214,7 +223,7 @@ ilo program.ilo --bench tot 10 20 30  # benchmark
 cargo test
 ```
 
-1119 tests: lexer, parser, interpreter, VM, verifier, codegen, diagnostic, formatter, and CLI integration tests.
+1133 tests: lexer, parser, interpreter, VM, verifier, codegen, diagnostic, formatter, and CLI integration tests.
 
 ## Documentation
 

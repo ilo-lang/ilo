@@ -150,6 +150,8 @@ Called like functions, compiled to dedicated opcodes.
 | `cel n` | ceiling (round toward positive infinity) | `n` |
 | `get url` | HTTP GET | `R t t` |
 | `env key` | read environment variable | `R t t` |
+| `jp text path` | JSON path lookup (dot-separated) | `R t t` |
+| `jd value` | serialize value to JSON text | `t` |
 | `spl t sep` | split text by separator | `L t` |
 | `cat xs sep` | join list of text with separator | `t` |
 | `has xs v` | membership test (list: element, text: substring) | `b` |
@@ -175,6 +177,21 @@ Behind the `http` feature flag (on by default). Without the feature, `get` retur
 ```
 env key          -- R t t: Ok=value, Err=not set message
 env! key         -- auto-unwrap: Ok→value, Err→propagate to caller
+```
+
+`jp` extracts values from JSON text by dot-separated path. Array indices use numeric segments:
+
+```
+jp body "name"       -- R t t: Ok=extracted value as text, Err=error
+jp body "user.name"  -- nested path
+jp body "items.0"    -- array index
+jp! body "name"      -- auto-unwrap
+```
+
+`jd` serialises any ilo value to JSON text:
+
+```
+jd x              -- t: JSON string representation
 ```
 
 ---
