@@ -1656,14 +1656,24 @@ impl ArenaRecord {
     }
 }
 
+/// Bump arena for records. `#[repr(C)]` with known field offsets so JIT can
+/// inline the allocation (load buf_ptr/buf_cap/offset, bump, store).
+///
+/// JIT field offsets: buf_ptr=0, buf_cap=8, offset=16.
+#[repr(C)]
 pub(crate) struct BumpArena {
-    buf: Vec<u8>,
-    offset: usize,
+    pub(crate) buf_ptr: *mut u8,   // offset 0  — raw pointer to buffer
+    pub(crate) buf_cap: usize,     // offset 8  — buffer capacity in bytes
+    pub(crate) offset: usize,      // offset 16 — current bump offset
 }
 
 impl BumpArena {
     pub(crate) fn new() -> Self {
-        BumpArena { buf: vec![0u8; ARENA_DEFAULT_SIZE], offset: 0 }
+        let mut buf = vec![0u8; ARENA_DEFAULT_SIZE];
+        let ptr = buf.as_mut_ptr();
+        let cap = buf.capacity();
+        std::mem::forget(buf); // we manage the memory now
+        BumpArena { buf_ptr: ptr, buf_cap: cap, offset: 0 }
     }
 
     #[inline]
@@ -1671,7 +1681,7 @@ impl BumpArena {
         // Walk all arena records and drop_rc their heap fields before resetting.
         let mut off = 0usize;
         while off + 8 <= self.offset {
-            let ptr = unsafe { self.buf.as_ptr().add(off) } as *const ArenaRecord;
+            let ptr = unsafe { self.buf_ptr.add(off) } as *const ArenaRecord;
             let rec = unsafe { &*ptr };
             let n = rec.n_fields as usize;
             let record_size = 8 + n * 8;
@@ -1692,12 +1702,11 @@ impl BumpArena {
     #[inline]
     pub(crate) fn alloc_record(&mut self, type_id: u16, n_fields: usize) -> Option<*mut ArenaRecord> {
         let size = 8 + n_fields * 8; // header + fields
-        let align = 8;
-        let aligned_offset = (self.offset + align - 1) & !(align - 1);
-        if aligned_offset + size > self.buf.len() {
+        let aligned_offset = (self.offset + 7) & !7;
+        if aligned_offset + size > self.buf_cap {
             return None; // arena full, caller falls back to Rc path
         }
-        let ptr = unsafe { self.buf.as_mut_ptr().add(aligned_offset) } as *mut ArenaRecord;
+        let ptr = unsafe { self.buf_ptr.add(aligned_offset) } as *mut ArenaRecord;
         unsafe {
             (*ptr).type_id = type_id;
             (*ptr).n_fields = n_fields as u16;
@@ -1706,7 +1715,16 @@ impl BumpArena {
         self.offset = aligned_offset + size;
         Some(ptr)
     }
+}
 
+impl Drop for BumpArena {
+    fn drop(&mut self) {
+        self.reset(); // drop_rc all heap fields
+        unsafe {
+            // Reconstruct Vec to free the buffer
+            let _ = Vec::from_raw_parts(self.buf_ptr, 0, self.buf_cap);
+        }
+    }
 }
 
 thread_local! {

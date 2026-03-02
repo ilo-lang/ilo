@@ -835,8 +835,82 @@ pub(crate) fn compile(chunk: &Chunk, nan_consts: &[NanVal], program: &CompiledPr
                 let bx = (inst & 0xFFFF) as usize;
                 let type_id = (bx >> 8) as u16;
                 let n_fields = bx & 0xFF;
+                let record_size = 8 + n_fields * 8; // ArenaRecord header + inline fields
 
-                // Build array of register values on the stack
+                // Inline bump allocation from arena.
+                // BumpArena is #[repr(C)]: buf_ptr(0), buf_cap(8), offset(16).
+                let arena_ptr = jit_arena_ptr();
+                let arena_ptr_val = builder.ins().iconst(I64, arena_ptr as i64);
+
+                // Load arena.offset
+                let cur_offset = builder.ins().load(I64,
+                    cranelift_codegen::ir::MemFlags::trusted(), arena_ptr_val, 16);
+                // aligned_offset = (offset + 7) & !7  (already 8-aligned in practice)
+                let seven = builder.ins().iconst(I64, 7);
+                let off_plus_7 = builder.ins().iadd(cur_offset, seven);
+                let neg8 = builder.ins().iconst(I64, !7i64);
+                let aligned = builder.ins().band(off_plus_7, neg8);
+                // new_offset = aligned + record_size
+                let size_val = builder.ins().iconst(I64, record_size as i64);
+                let new_offset = builder.ins().iadd(aligned, size_val);
+                // Load arena.buf_cap and check space
+                let buf_cap = builder.ins().load(I64,
+                    cranelift_codegen::ir::MemFlags::trusted(), arena_ptr_val, 8);
+                let has_space = builder.ins().icmp(
+                    cranelift_codegen::ir::condcodes::IntCC::UnsignedLessThanOrEqual,
+                    new_offset, buf_cap);
+
+                let alloc_block = builder.create_block();
+                let fallback_block = builder.create_block();
+                let merge_block = builder.create_block();
+                builder.append_block_param(merge_block, I64);
+
+                builder.ins().brif(has_space, alloc_block, &[], fallback_block, &[]);
+
+                // ── Inline alloc path ──
+                builder.switch_to_block(alloc_block);
+                // rec_ptr = arena.buf_ptr + aligned_offset
+                let buf_ptr = builder.ins().load(I64,
+                    cranelift_codegen::ir::MemFlags::trusted(), arena_ptr_val, 0);
+                let rec_ptr = builder.ins().iadd(buf_ptr, aligned);
+                // Write ArenaRecord header: type_id(u16) | n_fields(u16) | pad(u32) as u64
+                let header = ((n_fields as u64) << 16) | (type_id as u64);
+                let header_val = builder.ins().iconst(I64, header as i64);
+                builder.ins().store(cranelift_codegen::ir::MemFlags::trusted(),
+                    header_val, rec_ptr, 0);
+                // Write field values and clone_rc heap fields
+                for i in 0..n_fields {
+                    let field_v = builder.use_var(vars[a_idx + 1 + i]);
+                    let field_off = (8 + i * 8) as i32;
+                    builder.ins().store(cranelift_codegen::ir::MemFlags::trusted(),
+                        field_v, rec_ptr, field_off);
+                    // Inline is_heap check: if (val & QNAN) == QNAN → call jit_move (clone_rc)
+                    // For numbers (hot path), this branch is not taken.
+                    let qnan_val = builder.ins().iconst(I64, QNAN as i64);
+                    let masked = builder.ins().band(field_v, qnan_val);
+                    let is_heap = builder.ins().icmp(
+                        cranelift_codegen::ir::condcodes::IntCC::Equal, masked, qnan_val);
+                    let do_clone = builder.create_block();
+                    let after_clone = builder.create_block();
+                    builder.ins().brif(is_heap, do_clone, &[], after_clone, &[]);
+
+                    builder.switch_to_block(do_clone);
+                    let fref_move = get_func_ref(&mut builder, &mut module, helpers.jit_move);
+                    builder.ins().call(fref_move, &[field_v]);
+                    builder.ins().jump(after_clone, &[]);
+
+                    builder.switch_to_block(after_clone);
+                }
+                // Update arena.offset = new_offset
+                builder.ins().store(cranelift_codegen::ir::MemFlags::trusted(),
+                    new_offset, arena_ptr_val, 16);
+                // Result = TAG_ARENA_REC | rec_ptr
+                let tag_val = builder.ins().iconst(I64, TAG_ARENA_REC as i64);
+                let result_val = builder.ins().bor(rec_ptr, tag_val);
+                builder.ins().jump(merge_block, &[result_val]);
+
+                // ── Fallback path: arena full → call jit_recnew helper ──
+                builder.switch_to_block(fallback_block);
                 let slot = builder.create_sized_stack_slot(cranelift_codegen::ir::StackSlotData::new(
                     cranelift_codegen::ir::StackSlotKind::ExplicitSlot,
                     (n_fields * 8) as u32,
@@ -847,14 +921,17 @@ pub(crate) fn compile(chunk: &Chunk, nan_consts: &[NanVal], program: &CompiledPr
                     builder.ins().stack_store(v, slot, (i * 8) as i32);
                 }
                 let regs_ptr = builder.ins().stack_addr(I64, slot, 0);
-                // Pack type_id (upper 16 bits) | n_fields (lower 16 bits) into one i64
                 let type_id_and_nfields = ((type_id as u64) << 16) | (n_fields as u64);
-                let arena_ptr_val = builder.ins().iconst(I64, jit_arena_ptr() as i64);
                 let type_id_nfields_val = builder.ins().iconst(I64, type_id_and_nfields as i64);
                 let registry_ptr_val = builder.ins().iconst(I64, &program.type_registry as *const TypeRegistry as i64);
                 let fref = get_func_ref(&mut builder, &mut module, helpers.recnew);
                 let call_inst = builder.ins().call(fref, &[arena_ptr_val, type_id_nfields_val, regs_ptr, registry_ptr_val]);
-                let result = builder.inst_results(call_inst)[0];
+                let fb_result = builder.inst_results(call_inst)[0];
+                builder.ins().jump(merge_block, &[fb_result]);
+
+                // ── Merge ──
+                builder.switch_to_block(merge_block);
+                let result = builder.block_params(merge_block)[0];
                 builder.def_var(vars[a_idx], result);
             }
             OP_RECWITH => {
