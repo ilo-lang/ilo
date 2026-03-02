@@ -2472,6 +2472,7 @@ impl<'a> VM<'a> {
                     if !v.is_string() {
                         return Err(VmError::Type("env requires a string"));
                     }
+                    // SAFETY: is_string() confirmed heap-tagged string with live RC.
                     let key = unsafe { match v.as_heap_ref() { HeapObj::Str(s) => s, _ => unreachable!() } };
                     let result = match std::env::var(key.as_str()) {
                         Ok(val) => NanVal::heap_ok(NanVal::heap_string(val)),
