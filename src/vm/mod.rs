@@ -120,6 +120,7 @@ pub(crate) const OP_SLC: u8 = 55;        // R[A] = slc(R[B], R[C], R[C+1])  (sli
 pub(crate) const OP_RND0: u8 = 57;       // R[A] = random float in [0,1)
 pub(crate) const OP_RND2: u8 = 58;       // R[A] = random int in [R[B], R[C]]
 pub(crate) const OP_NOW: u8 = 59;        // R[A] = current unix timestamp (seconds, float)
+pub(crate) const OP_ENV: u8 = 60;        // R[A] = env(R[B])  (returns R t t)
 pub(crate) const OP_JMPNN: u8 = 56;     // if R[A] is not nil, jump by signed Bx (ABx mode)
 
 // ABx mode — register + 16-bit operand
@@ -1075,6 +1076,22 @@ impl RegCompiler {
                     let ra = self.alloc_reg();
                     self.emit_abc(OP_RND2, ra, rb, rc);
                     self.reg_is_num[ra as usize] = true;
+                    return ra;
+                }
+                if function == "env" && args.len() == 1 {
+                    let rb = self.compile_expr(&args[0]);
+                    let ra = self.alloc_reg();
+                    self.emit_abc(OP_ENV, ra, rb, 0);
+                    // env returns R t t — handle auto-unwrap
+                    if *unwrap {
+                        let check_reg = self.alloc_reg();
+                        self.emit_abc(OP_ISOK, check_reg, ra, 0);
+                        let skip_ret = self.emit_jmpt(check_reg);
+                        self.emit_abx(OP_RET, ra, 0);
+                        self.current.patch_jump(skip_ret);
+                        self.emit_abc(OP_UNWRAP, ra, ra, 0);
+                        self.next_reg = ra + 1;
+                    }
                     return ra;
                 }
                 if function == "get" && args.len() == 1 {
@@ -2447,6 +2464,21 @@ impl<'a> VM<'a> {
                         .unwrap()
                         .as_secs_f64();
                     reg_set!(a, NanVal::number(ts));
+                }
+                OP_ENV => {
+                    let a = ((inst >> 16) & 0xFF) as usize + base;
+                    let b = ((inst >> 8) & 0xFF) as usize + base;
+                    let v = reg!(b);
+                    if !v.is_string() {
+                        return Err(VmError::Type("env requires a string"));
+                    }
+                    // SAFETY: is_string() confirmed heap-tagged string with live RC.
+                    let key = unsafe { match v.as_heap_ref() { HeapObj::Str(s) => s, _ => unreachable!() } };
+                    let result = match std::env::var(key.as_str()) {
+                        Ok(val) => NanVal::heap_ok(NanVal::heap_string(val)),
+                        Err(_) => NanVal::heap_err(NanVal::heap_string(format!("env var '{}' not set", key))),
+                    };
+                    reg_set!(a, result);
                 }
                 OP_GET => {
                     let a = ((inst >> 16) & 0xFF) as usize + base;
@@ -4801,6 +4833,42 @@ mod tests {
             }
             other => panic!("expected Number, got {:?}", other),
         }
+    }
+
+    // ── env builtin VM tests ──────────────────────────────────────────
+
+    #[test]
+    fn vm_env_existing_var() {
+        unsafe { std::env::set_var("ILO_VM_TEST", "vmval"); }
+        let source = r#"f k:t>R t t;env k"#;
+        let result = vm_run(source, Some("f"), vec![Value::Text("ILO_VM_TEST".into())]);
+        assert_eq!(result, Value::Ok(Box::new(Value::Text("vmval".into()))));
+        unsafe { std::env::remove_var("ILO_VM_TEST"); }
+    }
+
+    #[test]
+    fn vm_env_missing_var() {
+        let source = r#"f k:t>R t t;env k"#;
+        let result = vm_run(source, Some("f"), vec![Value::Text("ILO_VM_NONEXIST_999".into())]);
+        match result {
+            Value::Err(inner) => {
+                match *inner {
+                    Value::Text(s) => assert!(s.contains("not set"), "got: {s}"),
+                    other => panic!("expected Text, got {:?}", other),
+                }
+            }
+            other => panic!("expected Err, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn vm_env_compiles_to_op_env() {
+        let source = r#"f k:t>R t t;env k"#;
+        let prog = parse_program(source);
+        let compiled = compile(&prog).unwrap();
+        let chunk = &compiled.chunks[0];
+        let has_env_op = chunk.code.iter().any(|inst| (inst >> 24) as u8 == OP_ENV);
+        assert!(has_env_op, "expected OP_ENV in bytecode");
     }
 
     // ── Range iteration VM tests ────────────────────────────────────────

@@ -6,7 +6,7 @@
 2. **Value ↔ JSON** (D1e) — serialise/deserialise ilo values at tool boundary
 3. **JSON parsing** (I1) — `jp` builtin, agents live in JSON
 4. **Shell execution** (I2) — `run` builtin + backtick syntax
-5. **Env vars** (I3) — `env` builtin
+5. ~~**Env vars**~~ ✅ (I3) — `env` builtin
 6. **Logging** (I5) — `log`/`dbg` to stderr
 7. **HTTP methods** (G1) — `post`, `put`, `patch`, `del`
 8. **Cranelift JIT gaps** — nil coalesce, safe nav, while, break/continue, range, early return
@@ -919,11 +919,11 @@ G3 covers low-level process spawning with handles. But agents need a simple "run
 
 API keys, base URLs, secrets, feature flags. Every agent program needs to read env vars. Currently impossible in ilo.
 
-- [ ] `env key` — read environment variable, returns `R t t` (value or "not set")
-- [ ] `env! key` — auto-unwrap: `k=env! "API_KEY"`
-- [ ] **No env-set:** writing env vars is rarely needed and creates side effects. Read-only
-- [ ] Feature flag: none needed — `std::env::var` is stdlib
-- [ ] **Token comparison:**
+- [x] `env key` — read environment variable, returns `R t t` (value or "not set")
+- [x] `env! key` — auto-unwrap: `k=env! "API_KEY"`
+- [x] **No env-set:** writing env vars is rarely needed and creates side effects. Read-only
+- [x] Feature flag: none needed — `std::env::var` is stdlib
+- [x] **Token comparison:**
   ```
   # Python: ~4 tokens
   key = os.environ["API_KEY"]

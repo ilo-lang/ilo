@@ -417,6 +417,17 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             other => Err(RuntimeError::new("ILO-R009", format!("get requires text, got {:?}", other))),
         };
     }
+    if name == "env" && args.len() == 1 {
+        return match &args[0] {
+            Value::Text(key) => {
+                match std::env::var(key.as_str()) {
+                    Ok(val) => Ok(Value::Ok(Box::new(Value::Text(val)))),
+                    Err(_) => Ok(Value::Err(Box::new(Value::Text(format!("env var '{}' not set", key))))),
+                }
+            }
+            other => Err(RuntimeError::new("ILO-R009", format!("env requires text, got {:?}", other))),
+        };
+    }
 
     let decl = env.function(name)?;
     match decl {
@@ -2394,6 +2405,41 @@ mod tests {
             }
             other => panic!("expected Number, got {:?}", other),
         }
+    }
+
+    // ── env builtin tests ─────────────────────────────────────────────
+
+    #[test]
+    fn interpret_env_existing_var() {
+        unsafe { std::env::set_var("ILO_TEST_VAR", "hello"); }
+        let source = r#"f k:t>R t t;env k"#;
+        let result = run_str(source, Some("f"), vec![Value::Text("ILO_TEST_VAR".into())]);
+        assert_eq!(result, Value::Ok(Box::new(Value::Text("hello".into()))));
+        unsafe { std::env::remove_var("ILO_TEST_VAR"); }
+    }
+
+    #[test]
+    fn interpret_env_missing_var() {
+        let source = r#"f k:t>R t t;env k"#;
+        let result = run_str(source, Some("f"), vec![Value::Text("ILO_NONEXISTENT_12345".into())]);
+        match result {
+            Value::Err(inner) => {
+                match *inner {
+                    Value::Text(s) => assert!(s.contains("not set"), "got: {s}"),
+                    other => panic!("expected Text, got {:?}", other),
+                }
+            }
+            other => panic!("expected Err, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn interpret_env_unwrap() {
+        unsafe { std::env::set_var("ILO_TEST_UNWRAP", "world"); }
+        let source = r#"f k:t>R t t;~(env! k)"#;
+        let result = run_str(source, Some("f"), vec![Value::Text("ILO_TEST_UNWRAP".into())]);
+        assert_eq!(result, Value::Ok(Box::new(Value::Text("world".into()))));
+        unsafe { std::env::remove_var("ILO_TEST_UNWRAP"); }
     }
 
     // ── Range iteration tests ───────────────────────────────────────────

@@ -197,6 +197,7 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("slc", &["list_or_text", "n", "n"], "list_or_text"),
     ("rnd", &[], "n"),
     ("now", &[], "n"),
+    ("env", &["t"], "R t t"),
 ];
 
 fn builtin_arity(name: &str) -> Option<usize> {

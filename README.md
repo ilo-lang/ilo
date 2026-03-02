@@ -176,6 +176,15 @@ ilo 'f url:t>R t t;~($!url)' "http://httpbin.org/get"
 # → ~{ ... }
 ```
 
+**Environment variables** — `env key` reads an env var, returns `R t t`:
+```bash
+ilo 'f k:t>R t t;env k' "HOME"
+# → ~"/Users/dan"
+
+ilo 'f k:t>R t t;env! k' "HOME"
+# auto-unwrap: Ok→value, Err→propagate
+```
+
 **Error output formats:**
 ```bash
 ilo 'code' -a               # ANSI colour (default for TTY)
@@ -205,7 +214,7 @@ ilo program.ilo --bench tot 10 20 30  # benchmark
 cargo test
 ```
 
-1112 tests: lexer, parser, interpreter, VM, verifier, codegen, diagnostic, formatter, and CLI integration tests.
+1119 tests: lexer, parser, interpreter, VM, verifier, codegen, diagnostic, formatter, and CLI integration tests.
 
 ## Documentation
 

@@ -312,6 +312,11 @@ fn emit_expr(out: &mut String, level: usize, expr: &Expr) -> String {
             if function == "now" && args.is_empty() {
                 return "(__import__('time').time())".to_string();
             }
+            if function == "env" && args.len() == 1 {
+                let arg = emit_expr(out, level, &args[0]);
+                let call = format!("(lambda k: (\"ok\", __import__('os').environ[k]) if k in __import__('os').environ else (\"err\", f\"env var '{{k}}' not set\"))({})", arg);
+                return if *unwrap { format!("_ilo_unwrap({})", call) } else { call };
+            }
             if function == "rnd" && args.is_empty() {
                 return "(__import__('random').random())".to_string();
             }
@@ -800,6 +805,13 @@ mod tests {
         assert!(py.contains("__import__('math').floor(n)"));
         let py = parse_and_emit("f n:n>n;cel n");
         assert!(py.contains("__import__('math').ceil(n)"));
+    }
+
+    #[test]
+    fn emit_env_builtin() {
+        let py = parse_and_emit(r#"f k:t>R t t;env k"#);
+        assert!(py.contains("os"), "should use os module");
+        assert!(py.contains("environ"), "should access environ");
     }
 
     #[test]

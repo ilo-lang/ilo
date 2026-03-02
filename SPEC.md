@@ -149,6 +149,7 @@ Called like functions, compiled to dedicated opcodes.
 | `flr n` | floor (round toward negative infinity) | `n` |
 | `cel n` | ceiling (round toward positive infinity) | `n` |
 | `get url` | HTTP GET | `R t t` |
+| `env key` | read environment variable | `R t t` |
 | `spl t sep` | split text by separator | `L t` |
 | `cat xs sep` | join list of text with separator | `t` |
 | `has xs v` | membership test (list: element, text: substring) | `b` |
@@ -168,6 +169,13 @@ $!url            -- same as get! url
 ```
 
 Behind the `http` feature flag (on by default). Without the feature, `get` returns `Err("http feature not enabled")`.
+
+`env` reads an environment variable by name, returning `Ok(value)` or `Err("env var 'KEY' not set")`:
+
+```
+env key          -- R t t: Ok=value, Err=not set message
+env! key         -- auto-unwrap: Ok→value, Err→propagate to caller
+```
 
 ---
 
