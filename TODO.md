@@ -1,5 +1,23 @@
 # TODO
 
+## What's next (uncompleted work, priority order)
+
+1. **Tool provider infrastructure** (D1d) — `ToolProvider` trait, HTTP provider, tool config
+2. **Value ↔ JSON** (D1e) — serialise/deserialise ilo values at tool boundary
+3. **JSON parsing** (I1) — `jp` builtin, agents live in JSON
+4. **Shell execution** (I2) — `run` builtin + backtick syntax
+5. **Env vars** (I3) — `env` builtin
+6. **Logging** (I5) — `log`/`dbg` to stderr
+7. **HTTP methods** (G1) — `post`, `put`, `patch`, `del`
+8. **Cranelift JIT gaps** — nil coalesce, safe nav, while, break/continue, range, early return
+9. **Verifier gaps** — unreachable code warning after `ret`, `brk`/`cnt` outside loop error
+10. **Optional type** (E2) — typed nullability with `O n`
+11. **Destructuring bind** (F8) — `{a;b}=expr`
+
+See detailed specs for each below.
+
+---
+
 ## Sigil changes (do first — unblocks other work)
 
 - [x] Decide Err-wrap sigil to replace `!` → chose `^` (caret)
@@ -47,7 +65,7 @@ Manifesto principle: "Verification before execution. All calls resolve, all type
 ## Tooling
 
 - [x] Pretty-printer / formatter — dense wire format for LLM I/O, expanded form for human review (see OPEN.md: "Hybrid approach")
-- [ ] Rename formatter flags: `--dense` / `-d` (default, no flag needed) and `--expanded` / `-e` (human-readable). Keep `--fmt` / `--fmt-expanded` as aliases for backward compat
+- [x] Rename formatter flags: `--dense` / `-d` and `--expanded` / `-e`. `--fmt` / `--fmt-expanded` kept as aliases
 - [ ] `--expanded` wraps long comments at ~80 chars, adding `--` prefix on continuation lines
 - [ ] `--dense` strips unnecessary newlines within comments — long comments stay on one line
 
@@ -351,22 +369,23 @@ Explicit return from anywhere in function body.
 - [x] Tests: parser, interpreter (basic, zero-iter, ret), VM (basic, zero-iter, ret)
 - [x] SPEC.md: documented `wh` syntax
 
-##### F7. Range iteration — `@i 0..n{body}` (medium priority)
+##### F7. Range iteration — `@i 0..n{body}` ✅
 
 Index-based loops without constructing a list. Avoids list allocation for numeric ranges.
 
-- [ ] Syntax: `@i 0..n{body}` — bind `i` to each integer in `[0, n)`
-- [ ] Parser: recognise `..` between two numeric expressions in `@` collection position
-- [ ] AST: add `Expr::Range { start, end }` or extend `ForEach` with range variant
-- [ ] Interpreter: iterate from start (inclusive) to end (exclusive), bind each integer to loop variable
-- [ ] VM: compile like existing foreach but with integer counter instead of list indexing — no `OP_LISTGET`, just `OP_ADD` + `OP_LT`
-- [ ] Verifier: start and end must be `n`; loop variable is `n`
-- [ ] Dynamic end: `@i 0..len xs{xs.i}` — end expression evaluated once before loop starts
+- [x] Syntax: `@i 0..n{body}` — bind `i` to each integer in `[0, n)`
+- [x] Parser: recognise `..` between two numeric expressions in `@` collection position
+- [x] AST: `Stmt::ForRange { binding, start, end, body }`
+- [x] Interpreter: iterate from start (inclusive) to end (exclusive), bind each integer to loop variable
+- [x] VM: integer counter with `OP_ADD` + `OP_LT`, no list allocation
+- [x] Verifier: start and end must be `n`; loop variable is `n`
+- [x] Dynamic end: `@i 0..n{body}` — end expression evaluated once before loop starts
 - [ ] Step variant (deferred): `@i 0..10..2{body}` for step=2 — lower priority
 - [ ] Cranelift JIT: standard counted loop — optimal for JIT
-- [ ] Python codegen: emit as `for i in range(start, end):`
-- [ ] Tests: basic range, range with expressions, range variable in body, empty range (start >= end), range + break
-- [ ] SPEC.md: document range syntax
+- [x] Python codegen: emit as `for i in range(start, end):`
+- [x] Formatter: emit as `@i 0..n{body}` in dense and expanded modes
+- [x] Tests: basic range, range with expressions, range variable in body, empty range (start >= end), range + break/continue
+- [x] SPEC.md: documented range syntax
 
 ##### F8. Destructuring bind — `{a;b}=expr` (medium priority)
 
@@ -456,20 +475,20 @@ fld + 0 xs
 
 Manifesto: "constrained — small vocabulary, closed world, one way to do things." Each addition must justify its token cost.
 
-##### E1. Type aliases (pure sugar — no runtime changes)
+##### E1. Type aliases ✅
 
 Lets users name complex types without creating records. No new AST nodes at runtime, just resolution at parse/verify time.
 
-- [ ] Syntax: `alias name type` as a new `Decl` variant — e.g. `alias res R n t`, `alias ids L n`
-- [ ] Parser: recognise `alias` keyword at declaration position, parse name + type
-- [ ] AST: add `Decl::Alias { name: String, target: Type, span: Span }`
-- [ ] Verifier: resolve aliases during declaration collection — expand `Named("res")` → `Result(Number, Text)` before body verification
-- [ ] Cycle detection — `alias a b` + `alias b a` must error (ILO-T0xx: circular type alias)
-- [ ] Error messages: show alias name in user-facing messages, expanded form in notes
-- [ ] Formatter: emit `alias` declarations in both dense and expanded formats
-- [ ] Python codegen: emit type alias as comment or `TypeAlias` (3.12+)
-- [ ] Tests: alias in function signatures, nested aliases (`alias rlist L res`), cycles, shadowing a builtin type name
-- [ ] SPEC.md: document alias syntax
+- [x] Syntax: `alias name type` as a new `Decl` variant — e.g. `alias res R n t`, `alias ids L n`
+- [x] Parser: recognise `alias` keyword at declaration position, parse name + type
+- [x] AST: `Decl::Alias { name: String, target: Type, span: Span }`
+- [x] Verifier: resolve aliases during declaration collection — expand `Named("res")` → `Result(Number, Text)` before body verification
+- [x] Cycle detection — `alias a b` + `alias b a` errors
+- [x] Error messages: show alias name in user-facing messages, expanded form in notes
+- [x] Formatter: emit `alias` declarations in both dense and expanded formats
+- [x] Python codegen: emit type alias as comment
+- [x] Tests: alias in function signatures, nested aliases, cycles, shadowing
+- [x] SPEC.md: documented alias syntax
 
 ##### E2. Optional type (typed nullability)
 
@@ -585,14 +604,20 @@ Define behaviour shared across record types. Lowest priority — agents generate
 - ~~`cat xs sep`~~ ✅
 - ~~`spl t sep`~~ ✅
 - `get k m` — get value from map by key (if maps are added)
-- `rnd` / `rnd a b` — random number (0–1 or range)
-- `now()` — current timestamp
+- ~~`rnd` / `rnd a b`~~ ✅
+- ~~`now()`~~ ✅
 
 #### Tooling
 - LSP / language server — completions, diagnostics, hover info for editor integration
 - REPL — interactive evaluation for exploration and debugging
 - Debugger — step through execution, inspect bindings at each statement
 - Playground — web-based editor with live evaluation (WASM target)
+
+---
+
+## Future research (designs captured, not yet prioritised)
+
+See `research/` for detailed exploration docs.
 
 #### Networking — Phase G (expand I/O beyond HTTP GET)
 
