@@ -15,21 +15,29 @@ DIR=research/explorations/bench-realistic
 BUILD_DIR="$DIR/.build"
 
 BENCHMARKS=(fib records nested-calls guards sum-loop strings hashmap listproc matmul pattern-match)
-FIB_ARG=25
+FIB_ARG=15
 LOOP_ARG=1000
 
 # Benchmark metadata: func name to call with --bench and data-type tag
-declare -A BENCH_FUNC BENCH_TAG
-BENCH_FUNC[fib]=fib          ; BENCH_TAG[fib]="recursive"
-BENCH_FUNC[records]=run      ; BENCH_TAG[records]="record"
-BENCH_FUNC[nested-calls]=bench ; BENCH_TAG[nested-calls]="call-heavy"
-BENCH_FUNC[guards]=bench     ; BENCH_TAG[guards]="branching"
-BENCH_FUNC[sum-loop]=bench   ; BENCH_TAG[sum-loop]="numeric"
-BENCH_FUNC[strings]=bench    ; BENCH_TAG[strings]="string"
-BENCH_FUNC[hashmap]=bench    ; BENCH_TAG[hashmap]="record"
-BENCH_FUNC[listproc]=bench   ; BENCH_TAG[listproc]="numeric"
-BENCH_FUNC[matmul]=bench     ; BENCH_TAG[matmul]="numeric"
-BENCH_FUNC[pattern-match]=bench ; BENCH_TAG[pattern-match]="branching"
+bench_func() {
+    case "$1" in
+        fib) echo "fib" ;;
+        records) echo "run" ;;
+        *) echo "bench" ;;
+    esac
+}
+
+bench_tag() {
+    case "$1" in
+        fib) echo "recursive" ;;
+        records|hashmap) echo "record" ;;
+        nested-calls) echo "call-heavy" ;;
+        guards|pattern-match) echo "branching" ;;
+        sum-loop|listproc|matmul) echo "numeric" ;;
+        strings) echo "string" ;;
+        *) echo "other" ;;
+    esac
+}
 
 # ── Helpers ─────────────────────────────────────────────────────────
 check_cmd() { command -v "$1" >/dev/null 2>&1; }
@@ -86,52 +94,44 @@ if [[ ! -x "$ILO" ]]; then
     exit 1
 fi
 
-# ── Compile native benchmarks ───────────────────────────────────────
-section "Compiling native benchmarks"
-mkdir -p "$BUILD_DIR"
-
-# Rust
-if check_cmd rustc; then
-    for bench in "${BENCHMARKS[@]}"; do
-        if [[ -f "$DIR/$bench.rs" ]]; then
-            rustc -O -o "$BUILD_DIR/${bench}_rs" "$DIR/$bench.rs" 2>/dev/null && \
-                echo "  rustc: $bench OK" || echo "  rustc: $bench FAIL"
-        fi
-    done
-else
-    echo "  [SKIP] rustc not found"
-fi
-
-# C
-if check_cmd cc; then
-    for bench in "${BENCHMARKS[@]}"; do
-        if [[ -f "$DIR/$bench.c" ]]; then
-            cc -O2 -o "$BUILD_DIR/${bench}_c" "$DIR/$bench.c" 2>/dev/null && \
-                echo "  cc:    $bench OK" || echo "  cc:    $bench FAIL"
-        fi
-    done
-else
-    echo "  [SKIP] cc not found"
-fi
-
-# Go
-if check_cmd go; then
-    for bench in "${BENCHMARKS[@]}"; do
-        if [[ -f "$DIR/$bench.go" ]]; then
-            go build -o "$BUILD_DIR/${bench}_go" "$DIR/$bench.go" 2>/dev/null && \
-                echo "  go:    $bench OK" || echo "  go:    $bench FAIL"
-        fi
-    done
-else
-    echo "  [SKIP] go not found"
-fi
+# # ── Compile native benchmarks ───────────────────────────────────────
+# section "Compiling native benchmarks"
+# mkdir -p "$BUILD_DIR"
+#
+# # Rust
+# if check_cmd rustc; then
+#     for bench in "${BENCHMARKS[@]}"; do
+#         if [[ -f "$DIR/$bench.rs" ]]; then
+#             rustc -O -o "$BUILD_DIR/${bench}_rs" "$DIR/$bench.rs" 2>/dev/null && \
+#                 echo "  rustc: $bench OK" || echo "  rustc: $bench FAIL"
+#         fi
+#     done
+# else echo "  [SKIP] rustc not found"; fi
+# # C
+# if check_cmd cc; then
+#     for bench in "${BENCHMARKS[@]}"; do
+#         if [[ -f "$DIR/$bench.c" ]]; then
+#             cc -O2 -o "$BUILD_DIR/${bench}_c" "$DIR/$bench.c" 2>/dev/null && \
+#                 echo "  cc:    $bench OK" || echo "  cc:    $bench FAIL"
+#         fi
+#     done
+# else echo "  [SKIP] cc not found"; fi
+# # Go
+# if check_cmd go; then
+#     for bench in "${BENCHMARKS[@]}"; do
+#         if [[ -f "$DIR/$bench.go" ]]; then
+#             go build -o "$BUILD_DIR/${bench}_go" "$DIR/$bench.go" 2>/dev/null && \
+#                 echo "  go:    $bench OK" || echo "  go:    $bench FAIL"
+#         fi
+#     done
+# else echo "  [SKIP] go not found"; fi
 
 # ── Verify all ilo programs produce correct results ─────────────────
 section "Verifying ilo programs"
 
 expected_for() {
     case "$1" in
-        fib) echo 75025 ;;
+        fib) echo 610 ;;
         records) echo 3497500 ;;
         nested-calls) echo 334333000 ;;
         guards) echo 17500 ;;
@@ -177,8 +177,8 @@ run_and_record() {
 
 for bench in "${BENCHMARKS[@]}"; do
     arg=$(bench_arg "$bench")
-    func="${BENCH_FUNC[$bench]}"
-    tag="${BENCH_TAG[$bench]}"
+    func="$(bench_func "$bench")"
+    tag="$(bench_tag "$bench")"
 
     section "$bench [$tag] — arg=$arg"
 
@@ -194,32 +194,32 @@ for bench in "${BENCHMARKS[@]}"; do
     [[ -n "$vm_ns" ]] && record_result "$bench" "ilo-vm" "$vm_ns"
     [[ -n "$jit_ns" ]] && record_result "$bench" "ilo-jit" "$jit_ns"
 
-    # Rust (compiled)
-    subsection "Rust (native)"
-    if [[ -x "$BUILD_DIR/${bench}_rs" ]]; then
-        out=$("$BUILD_DIR/${bench}_rs" "$arg" 2>&1 || true)
-        run_and_record "$bench" "Rust" "$out"
-    else
-        skip "rustc binary"
-    fi
+    # # Rust (compiled)
+    # subsection "Rust (native)"
+    # if [[ -x "$BUILD_DIR/${bench}_rs" ]]; then
+    #     out=$("$BUILD_DIR/${bench}_rs" "$arg" 2>&1 || true)
+    #     run_and_record "$bench" "Rust" "$out"
+    # else
+    #     skip "rustc binary"
+    # fi
 
-    # C (compiled)
-    subsection "C (native)"
-    if [[ -x "$BUILD_DIR/${bench}_c" ]]; then
-        out=$("$BUILD_DIR/${bench}_c" "$arg" 2>&1 || true)
-        run_and_record "$bench" "C" "$out"
-    else
-        skip "cc binary"
-    fi
+    # # C (compiled)
+    # subsection "C (native)"
+    # if [[ -x "$BUILD_DIR/${bench}_c" ]]; then
+    #     out=$("$BUILD_DIR/${bench}_c" "$arg" 2>&1 || true)
+    #     run_and_record "$bench" "C" "$out"
+    # else
+    #     skip "cc binary"
+    # fi
 
-    # Go (compiled)
-    subsection "Go (native)"
-    if [[ -x "$BUILD_DIR/${bench}_go" ]]; then
-        out=$("$BUILD_DIR/${bench}_go" "$arg" 2>&1 || true)
-        run_and_record "$bench" "Go" "$out"
-    else
-        skip "go binary"
-    fi
+    # # Go (compiled)
+    # subsection "Go (native)"
+    # if [[ -x "$BUILD_DIR/${bench}_go" ]]; then
+    #     out=$("$BUILD_DIR/${bench}_go" "$arg" 2>&1 || true)
+    #     run_and_record "$bench" "Go" "$out"
+    # else
+    #     skip "go binary"
+    # fi
 
     # Node.js (V8 JIT)
     subsection "Node.js (V8)"
@@ -248,21 +248,21 @@ for bench in "${BENCHMARKS[@]}"; do
         skip "python3"
     fi
 
-    # Ruby
-    subsection "Ruby"
-    if check_cmd ruby && [[ -f "$DIR/$bench.rb" ]]; then
-        out=$(ruby "$DIR/$bench.rb" "$arg" 2>&1 || true)
-        run_and_record "$bench" "Ruby" "$out"
-    else
-        skip "ruby"
-    fi
+    # # Ruby
+    # subsection "Ruby"
+    # if check_cmd ruby && [[ -f "$DIR/$bench.rb" ]]; then
+    #     out=$(ruby "$DIR/$bench.rb" "$arg" 2>&1 || true)
+    #     run_and_record "$bench" "Ruby" "$out"
+    # else
+    #     skip "ruby"
+    # fi
 done
 
 # ── Summary table ───────────────────────────────────────────────────
 section "Summary: per-call time (ns)"
 
 # Column order
-LANGS="Rust C Go Node LuaJIT Python Ruby ilo-interp ilo-vm ilo-jit"
+LANGS="LuaJIT Node Python ilo-interp ilo-vm ilo-jit"
 
 # Print header
 printf "\n%-16s %-6s" "Benchmark" "Type"
@@ -278,7 +278,7 @@ printf "\n"
 
 # Print rows
 for bench in "${BENCHMARKS[@]}"; do
-    tag="${BENCH_TAG[$bench]}"
+    tag="$(bench_tag "$bench")"
     printf "%-16s %-6s" "$bench" "$tag"
     for lang in $LANGS; do
         val=$(awk -F'|' -v b="$bench" -v l="$lang" '$1==b && $2==l {print $3}' "$RESULTS_FILE")
@@ -307,7 +307,7 @@ done
 printf "\n"
 
 for bench in "${BENCHMARKS[@]}"; do
-    tag="${BENCH_TAG[$bench]}"
+    tag="$(bench_tag "$bench")"
     printf "| %-16s | %-10s |" "$bench" "$tag"
     for lang in $LANGS; do
         val=$(awk -F'|' -v b="$bench" -v l="$lang" '$1==b && $2==l {print $3}' "$RESULTS_FILE")
