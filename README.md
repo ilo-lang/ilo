@@ -214,13 +214,14 @@ ilo program.ilo --bench tot 10 20 30  # benchmark
 cargo test
 ```
 
-1169 tests: lexer, parser, interpreter, VM, verifier, codegen, diagnostic, formatter, and CLI integration tests.
+Tests cover: lexer, parser, interpreter, VM, verifier, codegen, diagnostic, formatter, CLI integration, and annotated example programs.
 
 ## Documentation
 
 | Document | Purpose |
 |----------|---------|
 | [SPEC.md](SPEC.md) | Language specification |
+| [examples/](examples/) | Runnable example programs (also `cargo test` regression suite) |
 | [MANIFESTO.md](MANIFESTO.md) | Design rationale |
 | [research/TODO.md](research/TODO.md) | Planned work |
 | [research/OPEN.md](research/OPEN.md) | Open design questions |

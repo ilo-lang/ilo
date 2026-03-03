@@ -18,7 +18,7 @@ fn ilo() -> Command {
 fn find_examples() -> Vec<PathBuf> {
     let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("examples");
     let mut paths: Vec<_> = std::fs::read_dir(&dir)
-        .unwrap_or_else(|_| panic!("examples/ directory not found at {}", dir.display()))
+        .unwrap_or_else(|e| panic!("cannot read examples/ at {}: {e}", dir.display()))
         .filter_map(|e| e.ok())
         .map(|e| e.path())
         .filter(|p| p.extension().map(|e| e == "ilo").unwrap_or(false))
