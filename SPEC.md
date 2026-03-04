@@ -132,6 +132,13 @@ Operator operands are **atoms** (literals, refs, field access) or **nested prefi
 -- DO:    r=fac p;*n r
 ```
 
+**Negative literals vs binary minus**: the lexer greedily includes a leading `-` into number tokens. `-1`, `-7`, `-0` are all number literals. To subtract from zero, use a space: `- 0 v` (Minus token, then `0`, then `v`).
+
+```
+f v:n>n;-0 v   -- WRONG: -0 is Number(-0.0); v is a stray token
+f v:n>n;- 0 v  -- OK: binary subtract: 0 - v = -v
+```
+
 ---
 
 ## Builtins
@@ -288,6 +295,14 @@ cls sp:n>t;>=sp 1000 "gold";>=sp 500 "silver";"bronze"
 Equivalent to `>=sp 1000{"gold"}` — saves 2 tokens per guard. Both forms produce identical AST.
 
 Negated braceless guards also work: `!<=n 0 ^"must be positive"`.
+
+**Comparison operators always start a guard at statement position.** You cannot use `=`, `<`, `>`, `<=`, `>=` etc. as a standalone return expression — the parser treats them as a guard condition and expects a following return value. To return a comparison result, bind it first:
+
+```
+-- WRONG: r=has xs v;=r true   -- =r true is parsed as a guard, not a return expression
+-- OK:    r=has xs v;r          -- return the bool directly (only safe as the last statement)
+-- OK:    has xs v              -- bare call is safe as last statement in last function
+```
 
 ### Ternary (Guard-Else)
 
@@ -540,6 +555,40 @@ Semicolons separate statements. Last expression is the return value.
 
 ```
 f x:n>n;a=*x 2;b=+a 1;*b b    -- (x*2 + 1)^2
+```
+
+### Multi-function files
+
+Functions in a file are separated by **newlines**. The parser strips all newlines, so the token stream is flat. After parsing each function body, the parser uses the next newline-delimited boundary to start the next declaration.
+
+A non-last function body's **final expression must not be a bare variable reference (`Ref`) or a function call**, because the parser greedily reads following tokens as additional call arguments. Safe endings prevent this:
+
+| Ending | Example | Safe? | Why |
+|--------|---------|-------|-----|
+| Binary operator | `+n 0`, `*x 1` | ✓ | fixed arity — no greedy loop |
+| Index access | `xs.0`, `rec.field` | ✓ | returns `Expr::Index`, not `Ref` |
+| Match block | `?v{…}` | ✓ | ends with `}` |
+| ForEach block | `@x xs{…}` | ✓ | ends with `}` |
+| Parenthesised expr | `(x>>f>>g)` | ✓ | ends with `)` |
+| Text/number literal | `"ok"`, `42` | ✓ | literal, not `Ref` |
+| Bare variable (`Ref`) | `n`, `result` | ✗ | greedy loop fires |
+| Bare function call | `len xs`, `f a` | ✗ | greedy loop fires |
+
+The **last function in a file** can end with anything — greedy parsing stops at EOF.
+
+```
+-- Non-last functions: end with a binary expression
+digs n:n>n;t=str n;l=len t;+l 0    -- +l 0 = l (binary, safe)
+clamp n:n lo:n hi:n>n;<n lo lo;>n hi hi;+n 0  -- +n 0 = n (binary, safe)
+
+-- Last function: bare call is fine
+sz xs:L n>n;len xs                  -- EOF — greedy loop stops naturally
+```
+
+To use a pipe chain in a non-last function, wrap it in parentheses:
+```
+dbl-inc x:n>n;(x>>dbl>>inc)   -- parens prevent >> from consuming next function's name
+inc-sq x:n>n;x>>inc>>sq       -- last function — no parens needed
 ```
 
 ### DO / DON'T
