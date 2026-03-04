@@ -44,6 +44,8 @@ Across 25 expression patterns: **22% fewer tokens, 42% fewer characters** vs inf
 4. **Language-agnostic** — structural tokens (`@`, `>`, `?`, `^`, `~`, `!`, `$`) over English words.
 5. **Graph-native** — programs express relationships (calls, depends-on, has-type). Navigable as a graph, not just readable as linear text.
 
+**Guards instead of if/else** — flat statements that return early and chain vertically. No nesting depth, no closing braces to match. **Match instead of switch** — no fall-through, each arm is independent.
+
 See [MANIFESTO.md](MANIFESTO.md) for the full rationale.
 
 ## Syntax Variants

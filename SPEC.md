@@ -245,6 +245,10 @@ ilo 'f xs:L t>t;xs.0' 'a,b,c'       → a
 
 ## Statements
 
+Guards replace `if`/`else if`/`else`. They are flat statements — no nesting, no closing braces to match. Each guard returns early if its condition is true; otherwise execution falls through to the next statement. Multiple guards chain vertically, keeping indentation depth constant regardless of how many conditions there are.
+
+Match replaces `switch`. There is no fall-through — each arm is independent. The `_` arm is the default catch-all.
+
 | Form | Meaning |
 |------|---------|
 | `x=expr` | bind |
