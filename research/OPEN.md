@@ -156,6 +156,20 @@ Cross-language patterns that emerge:
 
 See `research/essential-packages-analysis.md` for the full cross-language analysis.
 
+## Decisions Made
+
+Design questions that have been deliberately decided (not just deferred).
+
+### No mutable variables — immutability is permanent
+
+**Decision:** ilo will not add mutable variables. All bindings are immutable.
+
+**Rationale:** Every real AI agent use case (counters, accumulators, state machines, retry loops) is already expressible with `foreach`, `while`, recursion, and bind chains — often with fewer tokens than the mutable equivalent. Adding mutation would increase verifier complexity (SSA-style type tracking at join points), add a non-zero token cost for marginal benefit, and give LLMs more ways to generate incorrect code. See [research/mutable-variables.md](mutable-variables.md) for the full analysis.
+
+**Follow-up:** Add a verifier warning when a binding shadows an unused earlier binding (e.g. `x=1;x=2` where the first `x` is never used). This catches accidental shadowing without adding mutation.
+
+---
+
 ## Syntax Questions (Resolved by Experiments)
 
 These were open questions that the syntax experiments have now answered:

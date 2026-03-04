@@ -160,6 +160,7 @@ fn main() {
             println!("  ilo <file.ilo> [args...]          Run from file");
             println!("  ilo <code> func [args...]         Run a specific function");
             println!("  ilo <code> --emit python          Transpile to Python");
+            println!("  ilo <code> --explain / -x            Annotate each statement with its role");
             println!("  ilo <code> --dense / -d             Reformat (dense wire format)");
             println!("  ilo <code> --expanded / -e          Reformat (expanded human format)");
             println!("  ilo <code>                        Print AST as JSON (no args)");
@@ -267,6 +268,8 @@ fn main() {
             vec![]
         };
         run_bench(&program, func_name, &run_args);
+    } else if args.len() > m && matches!(args[m].as_str(), "--explain" | "-x") {
+        print!("{}", codegen::explain::explain(&program));
     } else if args.len() > m && args[m] == "--emit" {
         if args.len() > m + 1 && args[m + 1] == "python" {
             println!("{}", codegen::python::emit(&program));
