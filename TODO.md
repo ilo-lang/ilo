@@ -5,14 +5,18 @@
 1. ~~**Tool provider infrastructure**~~ ✅ (D1d) — `ToolProvider` trait, HTTP provider, tool config
 2. ~~**Value ↔ JSON**~~ ✅ (D1e) — serialise/deserialise ilo values at tool boundary
 3. ~~**JSON parsing**~~ ✅ (I1) — `jpth`, `jdmp`, `jpar` builtins (interpreter + VM)
-4. **Shell execution** (I2) — `run` builtin + backtick syntax
-5. ~~**Env vars**~~ ✅ (I3) — `env` builtin
-6. **Logging** (I5) — `log`/`dbg` to stderr
-7. **HTTP methods** (G1) — `post`, `put`, `patch`, `del`
-8. **Cranelift JIT gaps** — nil coalesce, safe nav, while, break/continue, range, early return
-9. ~~**Verifier gaps**~~ ✅ — unreachable code warning (`ILO-T029`) and `brk`/`cnt` outside loop (`ILO-T028`) both implemented
-10. **Optional type** (E2) — typed nullability with `O n`
-11. ~~**Destructuring bind**~~ ✅ (F8) — `{a;b}=expr`
+4. ~~**MCP integration**~~ ✅ (D2) — `--mcp` flag, async stdio client, tool discovery
+5. ~~**Tool discovery**~~ ✅ (D3) — `ilo tools`, `--full`, `--ilo`, `--json`, `--graph` flags
+6. ~~**Agent serve loop**~~ ✅ (D4) — `ilo serv` stdio JSON-RPC loop
+7. ~~**Import system**~~ ✅ — `use "file.ilo"` (all) and `use "file.ilo" [name1 name2]` (scoped)
+8. ~~**Env vars**~~ ✅ (I3) — `env` builtin
+9. ~~**Destructuring bind**~~ ✅ (F8) — `{a;b}=expr`
+10. ~~**Verifier gaps**~~ ✅ — unreachable code warning (`ILO-T029`) and `brk`/`cnt` outside loop (`ILO-T028`)
+11. **Shell execution** (I2) — `run` builtin + backtick syntax
+12. **Logging** (I5) — `log`/`dbg` to stderr
+13. **HTTP methods** (G1) — `post`, `put`, `patch`, `del`
+14. **Cranelift JIT gaps** — nil coalesce, safe nav, while, break/continue, range, early return
+15. **Optional type** (E2) — typed nullability with `O n`
 
 See detailed specs for each below.
 
@@ -178,24 +182,25 @@ Plumbing first — make tool calls actually do things. HTTP-native (tools are AP
 - [x] `StubProvider` for unit tests
 - [x] Test `get`/`$` with real HTTP (httpbin or similar)
 
-### D2. MCP Integration
+### D2. MCP Integration ✅
 
-- [ ] MCP client: connect to MCP servers, discover tools, call them (builds on D1 async infra)
-- [ ] `ilo run program.ilo --mcp server.json` — load tool signatures from MCP server config
-- [ ] Auto-populate tool declarations from MCP server discovery (graph loading option 3: query on demand)
+- [x] MCP client: async tokio stdio client (`src/tools/mcp_client.rs`), `McpClient::connect`, `list_tools`, `call_tool`
+- [x] `--mcp <path>` flag: connects, injects `Decl::Tool` nodes before verify; mutually exclusive with `--tools`
+- [x] `McpConfig` (Claude Desktop format), `json_schema_to_ilo_type`, `McpProvider` impl `ToolProvider`
+- [x] Auto-populate tool declarations from MCP server discovery
 
-### D3. Tool Discovery & Progressive Disclosure
+### D3. Tool Discovery & Progressive Disclosure ✅
 
-- [ ] `ilo tools` — list available tools from configured sources
-- [ ] `ilo tools --mcp server.json` — discover and display tool signatures
-- [ ] Progressive disclosure: tool names first (cheap), full signatures on demand
-- [ ] Tool graph: which tools depend on which types, what produces what
+- [x] `ilo tools` — list available tools from MCP/HTTP sources
+- [x] `--full` — show full signatures; `--ilo` — emit as valid tool declarations; `--json` — JSON array
+- [x] `--graph` — type-level composition graph (which tools can consume each other's output)
+- [x] Progressive disclosure: names only by default, full signatures with `--full`
 
-### D4. Agent Loop
+### D4. Agent Loop ✅
 
-- [ ] `ilo serve` — stdio-based agent loop (read task → generate program → verify → execute → return result)
-- [ ] JSON protocol for agent integration (task in, result out, errors structured)
-- [ ] The "typed shell" mode: interactive tool composition with verification
+- [x] `ilo serv` — stdio-based agent loop (NDJSON in, NDJSON out)
+- [x] JSON protocol: `{"program":"<ilo>","args":[...],"func":"name"}` → `{"ok":value,"ms":n}` or `{"error":{"phase":"..."}}`
+- [x] Errors structured by phase: lex / parse / verify / runtime
 
 ### Not yet (deferred)
 
@@ -1036,8 +1041,7 @@ Agents need to wait between API calls (rate limiting), retry on failure, and imp
 - Shell emit — transpile simple programs to bash (for environments where only shell is available)
 
 #### Program structure
-- Multi-file programs / module system (programs are small by design — may never need this)
-- Imports — `use "other.ilo"` to compose programs from multiple files
-- Namespacing — prevent name collisions when merging declaration graphs from multiple sources
+- ~~Imports — `use "other.ilo"` / `use "other.ilo" [name]`~~ ✅ flat merge, circular import detection
+- Multi-file programs / module system — beyond imports; namespacing to prevent name collisions when merging many declaration graphs (low priority — programs are intentionally small)
 - Compensation as a first-class concept (keep inline error handling for now)
 - Graph query language (build the graph first, query it later)
