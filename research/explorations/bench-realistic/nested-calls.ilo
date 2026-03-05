@@ -1,0 +1,4 @@
+bench n:n>n;s=0;i=0;wh <i n{j=+i 1;c=compute i j;s=+s c;i=+i 1};+s 0
+compute x:n y:n>n;a=muln x y;b=addn a x;+b y
+addn a:n b:n>n;+a b
+muln a:n b:n>n;*a b

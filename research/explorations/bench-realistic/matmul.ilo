@@ -1,0 +1,1 @@
+bench n:n>n;s=0;i=0;wh <i n{j=0;wh <j 10{k=0;wh <k 10{s=+s *+i j +j k;k=+k 1};j=+j 1};i=+i 1};s

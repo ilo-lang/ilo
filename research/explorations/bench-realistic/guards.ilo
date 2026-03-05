@@ -1,0 +1,2 @@
+bench n:n>n;s=0;i=0;wh <i n{c=classify i;s=+s c;i=+i 1};+s 0
+classify x:n>n;>=x 900{30};>=x 700{25};>=x 500{20};>=x 300{15};>=x 100{10};5

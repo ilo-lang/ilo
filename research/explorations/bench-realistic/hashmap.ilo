@@ -1,0 +1,2 @@
+type entry{k:n;v:n;sum:n}
+bench n:n>n;s=0;i=0;wh <i n{e=entry k:i v:(*i 7) sum:0;e2=e with sum:(+e.k e.v);s=+s e2.sum;i=+i 1};s
