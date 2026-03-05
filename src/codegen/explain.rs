@@ -24,7 +24,7 @@ pub fn explain(program: &Program, filename: Option<&str>) -> String {
     let mut first = true;
 
     for decl in &program.declarations {
-        if let Decl::Error { .. } = decl { continue; }
+        if let Decl::Error { .. } | Decl::Use { .. } = decl { continue; }
         if !first { out.push('\n'); }
         first = false;
 
@@ -80,6 +80,7 @@ pub fn explain(program: &Program, filename: Option<&str>) -> String {
                 out.push_str(&annotate_line(&format!("alias {name}={}", fmt_type(target)), "alias", 0));
             }
 
+            Decl::Use { .. } => {} // resolved before codegen — skip
             Decl::Error { .. } => {}
         }
     }

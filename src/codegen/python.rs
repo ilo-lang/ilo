@@ -134,6 +134,7 @@ fn emit_decl(out: &mut String, decl: &Decl, level: usize) {
             indent(out, level);
             out.push_str(&format!("# alias {} = {}\n", name, emit_type(target)));
         }
+        Decl::Use { .. } => {}   // resolved before codegen — skip
         Decl::Error { .. } => {} // poison node — skip
     }
 }

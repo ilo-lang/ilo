@@ -9,6 +9,8 @@ pub enum Token {
     Type,
     #[token("tool")]
     Tool,
+    #[token("use")]
+    Use,
     #[token("with")]
     With,
     #[token("timeout")]

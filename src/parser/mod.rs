@@ -232,6 +232,7 @@ impl Parser {
         match self.peek() {
             Some(Token::Type) => self.parse_type_decl(),
             Some(Token::Tool) => self.parse_tool_decl(),
+            Some(Token::Use) => self.parse_use_decl(),
             Some(Token::Ident(_)) => {
                 // Check for keywords from other languages before attempting fn parse
                 let ident_str = if let Some(Token::Ident(s)) = self.peek() { s.clone() } else { unreachable!() };
@@ -280,6 +281,44 @@ impl Parser {
             }
             None => Err(self.error("ILO-P002", "expected declaration, got EOF".into())),
         }
+    }
+
+    /// `use "path/to/file.ilo"` or `use "path/to/file.ilo" [name1 name2]`
+    fn parse_use_decl(&mut self) -> Result<Decl> {
+        let start = self.peek_span();
+        self.expect(&Token::Use)?;
+        let path = match self.peek().cloned() {
+            Some(Token::Text(p)) => { self.advance(); p }
+            Some(tok) => return Err(self.error(
+                "ILO-P016",
+                format!("expected a string path after `use`, got {:?}", tok),
+            )),
+            None => return Err(self.error("ILO-P016", "expected a string path after `use`, got EOF".into())),
+        };
+
+        // Optional `[name1 name2 ...]` scoped import list
+        let only = if self.peek() == Some(&Token::LBracket) {
+            self.advance(); // consume `[`
+            let mut names = Vec::new();
+            while self.peek() != Some(&Token::RBracket) {
+                match self.peek() {
+                    None => return Err(self.error("ILO-P016", "unclosed `[` in use statement".into())),
+                    _ => names.push(self.expect_ident()?),
+                }
+            }
+            let end = self.peek_span();
+            self.expect(&Token::RBracket)?;
+            if names.is_empty() {
+                return Err(self.error("ILO-P016", "use `[...]` list must not be empty — omit brackets to import all".into()));
+            }
+            let _ = end;
+            Some(names)
+        } else {
+            None
+        };
+
+        let end = self.peek_span();
+        Ok(Decl::Use { path, only, span: start.merge(end) })
     }
 
     /// `type name{field:type;...}`

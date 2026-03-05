@@ -433,7 +433,7 @@ impl RegCompiler {
                     self.func_return_types.push(return_type.clone());
                     is_tool.push(true);
                 }
-                Decl::TypeDef { .. } | Decl::Alias { .. } | Decl::Error { .. } => {}
+                Decl::TypeDef { .. } | Decl::Alias { .. } | Decl::Use { .. } | Decl::Error { .. } => {}
             }
         }
 

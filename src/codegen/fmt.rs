@@ -166,6 +166,7 @@ fn fmt_decl(out: &mut String, decl: &Decl, mode: FmtMode) {
             out.push_str(&fmt_type(target));
         }
 
+        Decl::Use { .. } => {}   // resolved before codegen — skip
         Decl::Error { .. } => {} // poison node — skip
     }
 }

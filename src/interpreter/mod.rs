@@ -207,7 +207,7 @@ fn run_with_env(program: &Program, func_name: Option<&str>, args: Vec<Value>, mu
             Decl::Function { name, .. } | Decl::Tool { name, .. } => {
                 env.functions.insert(name.clone(), decl.clone());
             }
-            Decl::TypeDef { .. } | Decl::Alias { .. } | Decl::Error { .. } => {}
+            Decl::TypeDef { .. } | Decl::Alias { .. } | Decl::Use { .. } | Decl::Error { .. } => {}
         }
     }
 
@@ -717,6 +717,9 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         }
         Decl::Alias { .. } => {
             Err(RuntimeError::new("ILO-R004", format!("{} is a type alias, not callable", name)))
+        }
+        Decl::Use { .. } => {
+            Err(RuntimeError::new("ILO-R002", format!("{} is an unresolved import", name)))
         }
         Decl::Error { .. } => {
             Err(RuntimeError::new("ILO-R002", format!("{} failed to parse", name)))

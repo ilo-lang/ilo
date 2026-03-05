@@ -655,6 +655,136 @@ fn warn_cross_language_syntax(source: &str, mode: OutputMode) {
     report_diagnostic(&d, mode);
 }
 
+/// Return the declared name of a `Decl`, if it has one.
+fn decl_name(decl: &ast::Decl) -> Option<&str> {
+    match decl {
+        ast::Decl::Function { name, .. } => Some(name),
+        ast::Decl::Tool { name, .. } => Some(name),
+        ast::Decl::TypeDef { name, .. } => Some(name),
+        ast::Decl::Alias { name, .. } => Some(name),
+        ast::Decl::Use { .. } | ast::Decl::Error { .. } => None,
+    }
+}
+
+/// Resolve all `Decl::Use` nodes in `decls` recursively, returning a flat
+/// merged list with imported declarations prepended and `Use` nodes stripped.
+///
+/// - `base_dir`: directory of the importing file (used to resolve relative paths).
+///   `None` means inline code — `use` is not supported without a file context.
+/// - `visited`: canonical paths already in the import chain; circular imports are errors.
+/// - `diagnostics`: errors are pushed here (file-not-found, circular, parse failures).
+fn resolve_imports(
+    decls: Vec<ast::Decl>,
+    base_dir: Option<&std::path::Path>,
+    visited: &mut std::collections::HashSet<std::path::PathBuf>,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> Vec<ast::Decl> {
+    let mut result: Vec<ast::Decl> = Vec::new();
+
+    for decl in decls {
+        if let ast::Decl::Use { path, only, span } = decl {
+            let Some(dir) = base_dir else {
+                diagnostics.push(
+                    Diagnostic::error("`use` requires a file path context — not supported in inline code")
+                        .with_code("ILO-P017")
+                        .with_span(span, "here"),
+                );
+                continue;
+            };
+
+            let file_path = dir.join(&path);
+            let canonical = match file_path.canonicalize() {
+                Ok(c) => c,
+                Err(_) => {
+                    diagnostics.push(
+                        Diagnostic::error(format!("use \"{}\": file not found", path))
+                            .with_code("ILO-P017")
+                            .with_span(span, "imported here"),
+                    );
+                    continue;
+                }
+            };
+
+            if visited.contains(&canonical) {
+                diagnostics.push(
+                    Diagnostic::error(format!("use \"{}\": circular import", path))
+                        .with_code("ILO-P018")
+                        .with_span(span, "imported here"),
+                );
+                continue;
+            }
+
+            let source = match std::fs::read_to_string(&canonical) {
+                Ok(s) => s,
+                Err(e) => {
+                    diagnostics.push(
+                        Diagnostic::error(format!("use \"{}\": {}", path, e))
+                            .with_code("ILO-P017")
+                            .with_span(span, "imported here"),
+                    );
+                    continue;
+                }
+            };
+
+            let tokens = match lexer::lex(&source) {
+                Ok(t) => t,
+                Err(e) => {
+                    diagnostics.push(Diagnostic::from(&e));
+                    continue;
+                }
+            };
+
+            let token_spans: Vec<(lexer::Token, ast::Span)> = tokens
+                .into_iter()
+                .map(|(t, r)| (t, ast::Span { start: r.start, end: r.end }))
+                .collect();
+
+            let (imported_prog, parse_errors) = parser::parse(token_spans);
+            for e in &parse_errors {
+                diagnostics.push(Diagnostic::from(e));
+            }
+
+            visited.insert(canonical.clone());
+            let imported_dir = canonical.parent();
+            let imported_decls = resolve_imports(
+                imported_prog.declarations,
+                imported_dir,
+                visited,
+                diagnostics,
+            );
+            visited.remove(&canonical);
+
+            // Apply `only [...]` filter if specified
+            let filtered = if let Some(ref names) = only {
+                // Warn about any requested names that weren't found
+                for name in names {
+                    let found = imported_decls.iter().any(|d| decl_name(d) == Some(name.as_str()));
+                    if !found {
+                        diagnostics.push(
+                            Diagnostic::error(format!("use \"{}\": name '{}' not found in imported file", path, name))
+                                .with_code("ILO-P019")
+                                .with_span(span, "imported here"),
+                        );
+                    }
+                }
+                imported_decls
+                    .into_iter()
+                    .filter(|d| decl_name(d).map(|n| names.iter().any(|s| s == n)).unwrap_or(false))
+                    .collect::<Vec<_>>()
+            } else {
+                imported_decls
+            };
+
+            // Prepend imported declarations (so they appear before the importer's own decls)
+            result.extend(filtered);
+        } else {
+            result.push(decl);
+        }
+    }
+
+    result
+}
+
 fn report_diagnostic(d: &Diagnostic, mode: OutputMode) {
     let s = match mode {
         OutputMode::Ansi => AnsiRenderer { use_color: true }.render(d),
@@ -895,6 +1025,35 @@ fn main() {
     }
 
     let mut had_errors = false;
+
+    // Resolve `use "..."` imports — must happen before verification.
+    // base_dir is the directory of the source file (None for inline code).
+    {
+        let base_dir: Option<std::path::PathBuf> = if std::path::Path::new(&args[1]).is_file() {
+            std::path::Path::new(&args[1])
+                .canonicalize()
+                .ok()
+                .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+        } else {
+            None
+        };
+        let mut import_diagnostics: Vec<Diagnostic> = Vec::new();
+        let mut visited = std::collections::HashSet::new();
+        // Mark the main file as visited to catch direct self-imports
+        if let Some(canonical_file) = std::path::Path::new(&args[1]).canonicalize().ok() {
+            visited.insert(canonical_file);
+        }
+        program.declarations = resolve_imports(
+            program.declarations,
+            base_dir.as_deref(),
+            &mut visited,
+            &mut import_diagnostics,
+        );
+        for d in import_diagnostics {
+            report_diagnostic(&d, mode);
+            had_errors = true;
+        }
+    }
 
     for e in &parse_errors {
         report_diagnostic(&Diagnostic::from(e).with_source(source.clone()), mode);

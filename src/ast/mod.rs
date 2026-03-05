@@ -126,6 +126,18 @@ pub enum Decl {
         span: Span,
     },
 
+    /// `use "path/to/file.ilo"` — import all declarations from another file.
+    /// `use "path/to/file.ilo" [name1 name2]` — import only named declarations.
+    /// Resolved before verification; replaced by the imported declarations in
+    /// the merged program. Stripped by the verifier/codegen as a safety net.
+    Use {
+        path: String,
+        /// `None` = import all; `Some(names)` = import only those names.
+        only: Option<Vec<String>>,
+        #[serde(skip)]
+        span: Span,
+    },
+
     /// Poison node inserted during parser error recovery.
     /// Suppressed by the verifier; omitted from JSON AST output
     /// (filtered by the custom serializer on Program.declarations).
@@ -320,7 +332,7 @@ pub enum UnaryOp {
 fn serialize_decls<S: serde::Serializer>(decls: &[Decl], s: S) -> Result<S::Ok, S::Error> {
     use serde::ser::SerializeSeq;
     let mut seq = s.serialize_seq(None)?;
-    for d in decls.iter().filter(|d| !matches!(d, Decl::Error { .. })) {
+    for d in decls.iter().filter(|d| !matches!(d, Decl::Error { .. } | Decl::Use { .. })) {
         seq.serialize_element(d)?;
     }
     seq.end()
