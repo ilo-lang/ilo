@@ -33,6 +33,13 @@ impl Value {
                 let arr: Result<Vec<_>, _> = items.iter().map(|v| v.to_json()).collect();
                 Ok(serde_json::Value::Array(arr?))
             }
+            Value::Map(m) => {
+                let mut json_map = serde_json::Map::with_capacity(m.len());
+                for (k, v) in m {
+                    json_map.insert(k.clone(), v.to_json()?);
+                }
+                Ok(serde_json::Value::Object(json_map))
+            }
             Value::Record { fields, .. } => {
                 let mut map = serde_json::Map::with_capacity(fields.len());
                 for (k, v) in fields {

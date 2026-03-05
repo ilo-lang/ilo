@@ -130,6 +130,14 @@ pub(crate) const OP_ISNUM: u8 = 65;     // R[A] = R[B] is Number
 pub(crate) const OP_ISTEXT: u8 = 66;    // R[A] = R[B] is Text
 pub(crate) const OP_ISBOOL: u8 = 67;    // R[A] = R[B] is Bool
 pub(crate) const OP_ISLIST: u8 = 68;    // R[A] = R[B] is List
+// Map operations
+pub(crate) const OP_MAPNEW: u8 = 69;    // R[A] = {}  (empty map)
+pub(crate) const OP_MGET: u8 = 70;      // R[A] = R[B][R[C]]  (get key → nil if missing)
+pub(crate) const OP_MSET: u8 = 71;      // R[A] = mset(R[B], R[C], R[C+1])  (key=C, val=C+1)
+pub(crate) const OP_MHAS: u8 = 72;      // R[A] = R[B] has key R[C]
+pub(crate) const OP_MKEYS: u8 = 73;     // R[A] = keys(R[B])  → L t
+pub(crate) const OP_MVALS: u8 = 74;     // R[A] = vals(R[B])  → L v
+pub(crate) const OP_MDEL: u8 = 75;      // R[A] = del(R[B], R[C])
 
 // ABx mode — register + 16-bit operand
 pub(crate) const OP_LOADK: u8 = 20;
@@ -1315,6 +1323,54 @@ impl RegCompiler {
                     }
                     return ra;
                 }
+                // Map builtins
+                if function == "mmap" && args.is_empty() {
+                    let ra = self.alloc_reg();
+                    self.emit_abc(OP_MAPNEW, ra, 0, 0);
+                    return ra;
+                }
+                if function == "mget" && args.len() == 2 {
+                    let rb = self.compile_expr(&args[0]);
+                    let rc = self.compile_expr(&args[1]);
+                    let ra = self.alloc_reg();
+                    self.emit_abc(OP_MGET, ra, rb, rc);
+                    return ra;
+                }
+                if function == "mset" && args.len() == 3 {
+                    let rb = self.compile_expr(&args[0]);
+                    let rc = self.compile_expr(&args[1]);
+                    let rd = self.compile_expr(&args[2]);
+                    debug_assert_eq!(rd, rc + 1, "mset key/val args should be consecutive regs");
+                    let ra = self.alloc_reg();
+                    self.emit_abc(OP_MSET, ra, rb, rc);
+                    return ra;
+                }
+                if function == "mhas" && args.len() == 2 {
+                    let rb = self.compile_expr(&args[0]);
+                    let rc = self.compile_expr(&args[1]);
+                    let ra = self.alloc_reg();
+                    self.emit_abc(OP_MHAS, ra, rb, rc);
+                    return ra;
+                }
+                if function == "mkeys" && args.len() == 1 {
+                    let rb = self.compile_expr(&args[0]);
+                    let ra = self.alloc_reg();
+                    self.emit_abc(OP_MKEYS, ra, rb, 0);
+                    return ra;
+                }
+                if function == "mvals" && args.len() == 1 {
+                    let rb = self.compile_expr(&args[0]);
+                    let ra = self.alloc_reg();
+                    self.emit_abc(OP_MVALS, ra, rb, 0);
+                    return ra;
+                }
+                if function == "mdel" && args.len() == 2 {
+                    let rb = self.compile_expr(&args[0]);
+                    let rc = self.compile_expr(&args[1]);
+                    let ra = self.alloc_reg();
+                    self.emit_abc(OP_MDEL, ra, rb, rc);
+                    return ra;
+                }
 
                 let arg_regs: Vec<u8> = args.iter().map(|a| self.compile_expr(a)).collect();
                 let func_idx = self.func_names.iter().position(|n| n == function)
@@ -1658,12 +1714,14 @@ const TAG_LIST: u64   = 0x7FFE_0000_0000_0000;
 const TAG_RECORD: u64 = 0x7FFF_0000_0000_0000;
 const TAG_OK: u64     = 0xFFFC_0000_0000_0000;
 const TAG_ERR: u64    = 0xFFFD_0000_0000_0000;
+const TAG_MAP: u64    = 0xFFFE_0000_0000_0000;
 const PTR_MASK: u64   = 0x0000_FFFF_FFFF_FFFF;
 const TAG_MASK: u64   = 0xFFFF_0000_0000_0000;
 
 enum HeapObj {
     Str(String),
     List(Vec<NanVal>),
+    Map(HashMap<String, NanVal>),
     Record { type_info: Rc<TypeInfo>, fields: Box<[NanVal]> },
     OkVal(NanVal),
     ErrVal(NanVal),
@@ -1676,6 +1734,11 @@ impl Drop for HeapObj {
             HeapObj::List(items) => {
                 for item in items {
                     item.drop_rc();
+                }
+            }
+            HeapObj::Map(m) => {
+                for val in m.values() {
+                    val.drop_rc();
                 }
             }
             HeapObj::Record { fields, .. } => {
@@ -1739,6 +1802,12 @@ impl NanVal {
         let rc = Rc::new(HeapObj::ErrVal(inner));
         let ptr = Rc::into_raw(rc) as u64;
         NanVal(TAG_ERR | (ptr & PTR_MASK))
+    }
+
+    fn heap_map(m: HashMap<String, NanVal>) -> Self {
+        let rc = Rc::new(HeapObj::Map(m));
+        let ptr = Rc::into_raw(rc) as u64;
+        NanVal(TAG_MAP | (ptr & PTR_MASK))
     }
 
     #[inline]
@@ -1806,6 +1875,12 @@ impl NanVal {
             Value::List(items) => {
                 NanVal::heap_list(items.iter().map(NanVal::from_value).collect())
             }
+            Value::Map(m) => {
+                let nan_map: HashMap<String, NanVal> = m.iter()
+                    .map(|(k, v)| (k.clone(), NanVal::from_value(v)))
+                    .collect();
+                NanVal::heap_map(nan_map)
+            }
             Value::Record { type_name, fields } => {
                 // Build TypeInfo from the Value's field names (preserving order)
                 let field_names: Vec<String> = fields.keys().cloned().collect();
@@ -1839,6 +1914,9 @@ impl NanVal {
                     HeapObj::Str(s) => Value::Text(s.clone()),
                     HeapObj::List(items) => {
                         Value::List(items.iter().map(|v| v.to_value()).collect())
+                    }
+                    HeapObj::Map(m) => {
+                        Value::Map(m.iter().map(|(k, v)| (k.clone(), v.to_value())).collect())
                     }
                     HeapObj::Record { type_info, fields } => Value::Record {
                         type_name: type_info.name.clone(),
@@ -2343,6 +2421,136 @@ impl<'a> VM<'a> {
                     let is_list = (reg!(b).0 & TAG_MASK) == TAG_LIST;
                     reg_set!(a, NanVal::boolean(is_list));
                 }
+                OP_MAPNEW => {
+                    let a = ((inst >> 16) & 0xFF) as usize + base;
+                    reg_set!(a, NanVal::heap_map(HashMap::new()));
+                }
+                OP_MGET => {
+                    let a = ((inst >> 16) & 0xFF) as usize + base;
+                    let b = ((inst >> 8) & 0xFF) as usize + base;
+                    let c = (inst & 0xFF) as usize + base;
+                    let map_v = reg!(b);
+                    let key_v = reg!(c);
+                    let result = unsafe {
+                        match map_v.as_heap_ref() {
+                            HeapObj::Map(m) => {
+                                match key_v.as_heap_ref() {
+                                    HeapObj::Str(k) => m.get(k.as_str())
+                                        .map(|v| { v.clone_rc(); *v })
+                                        .unwrap_or_else(NanVal::nil),
+                                    _ => return Err(VmError::Type("mget: key must be text")),
+                                }
+                            }
+                            _ => return Err(VmError::Type("mget: first arg must be a map")),
+                        }
+                    };
+                    reg_set!(a, result);
+                }
+                OP_MSET => {
+                    let a = ((inst >> 16) & 0xFF) as usize + base;
+                    let b = ((inst >> 8) & 0xFF) as usize + base;
+                    let c = (inst & 0xFF) as usize + base;
+                    let map_v = reg!(b);
+                    let key_v = reg!(c);
+                    let val_v = reg!(c + 1);
+                    let result = unsafe {
+                        match map_v.as_heap_ref() {
+                            HeapObj::Map(m) => {
+                                match key_v.as_heap_ref() {
+                                    HeapObj::Str(k) => {
+                                        let mut new_map = m.clone();
+                                        val_v.clone_rc();
+                                        new_map.insert(k.clone(), val_v);
+                                        NanVal::heap_map(new_map)
+                                    }
+                                    _ => return Err(VmError::Type("mset: key must be text")),
+                                }
+                            }
+                            _ => return Err(VmError::Type("mset: first arg must be a map")),
+                        }
+                    };
+                    reg_set!(a, result);
+                }
+                OP_MHAS => {
+                    let a = ((inst >> 16) & 0xFF) as usize + base;
+                    let b = ((inst >> 8) & 0xFF) as usize + base;
+                    let c = (inst & 0xFF) as usize + base;
+                    let map_v = reg!(b);
+                    let key_v = reg!(c);
+                    let result = unsafe {
+                        match map_v.as_heap_ref() {
+                            HeapObj::Map(m) => {
+                                match key_v.as_heap_ref() {
+                                    HeapObj::Str(k) => NanVal::boolean(m.contains_key(k.as_str())),
+                                    _ => return Err(VmError::Type("mhas: key must be text")),
+                                }
+                            }
+                            _ => return Err(VmError::Type("mhas: first arg must be a map")),
+                        }
+                    };
+                    reg_set!(a, result);
+                }
+                OP_MKEYS => {
+                    let a = ((inst >> 16) & 0xFF) as usize + base;
+                    let b = ((inst >> 8) & 0xFF) as usize + base;
+                    let map_v = reg!(b);
+                    let result = unsafe {
+                        match map_v.as_heap_ref() {
+                            HeapObj::Map(m) => {
+                                let mut keys: Vec<&String> = m.keys().collect();
+                                keys.sort();
+                                let nan_keys: Vec<NanVal> = keys.iter()
+                                    .map(|k| NanVal::heap_string((*k).clone()))
+                                    .collect();
+                                NanVal::heap_list(nan_keys)
+                            }
+                            _ => return Err(VmError::Type("mkeys: expects a map")),
+                        }
+                    };
+                    reg_set!(a, result);
+                }
+                OP_MVALS => {
+                    let a = ((inst >> 16) & 0xFF) as usize + base;
+                    let b = ((inst >> 8) & 0xFF) as usize + base;
+                    let map_v = reg!(b);
+                    let result = unsafe {
+                        match map_v.as_heap_ref() {
+                            HeapObj::Map(m) => {
+                                let mut pairs: Vec<(&String, &NanVal)> = m.iter().collect();
+                                pairs.sort_by_key(|(k, _)| k.as_str());
+                                let nan_vals: Vec<NanVal> = pairs.iter()
+                                    .map(|(_, v)| { v.clone_rc(); **v })
+                                    .collect();
+                                NanVal::heap_list(nan_vals)
+                            }
+                            _ => return Err(VmError::Type("mvals: expects a map")),
+                        }
+                    };
+                    reg_set!(a, result);
+                }
+                OP_MDEL => {
+                    let a = ((inst >> 16) & 0xFF) as usize + base;
+                    let b = ((inst >> 8) & 0xFF) as usize + base;
+                    let c = (inst & 0xFF) as usize + base;
+                    let map_v = reg!(b);
+                    let key_v = reg!(c);
+                    let result = unsafe {
+                        match map_v.as_heap_ref() {
+                            HeapObj::Map(m) => {
+                                match key_v.as_heap_ref() {
+                                    HeapObj::Str(k) => {
+                                        let mut new_map = m.clone();
+                                        new_map.remove(k.as_str());
+                                        NanVal::heap_map(new_map)
+                                    }
+                                    _ => return Err(VmError::Type("mdel: key must be text")),
+                                }
+                            }
+                            _ => return Err(VmError::Type("mdel: first arg must be a map")),
+                        }
+                    };
+                    reg_set!(a, result);
+                }
                 OP_UNWRAP => {
                     let a = ((inst >> 16) & 0xFF) as usize + base;
                     let b = ((inst >> 8) & 0xFF) as usize + base;
@@ -2761,10 +2969,11 @@ impl<'a> VM<'a> {
                         // SAFETY: is_heap() confirmed heap-tagged with live RC.
                         match unsafe { v.as_heap_ref() } {
                             HeapObj::List(items) => items.len() as f64,
-                            _ => return Err(VmError::Type("len requires string or list")),
+                            HeapObj::Map(m) => m.len() as f64,
+                            _ => return Err(VmError::Type("len requires string, list, or map")),
                         }
                     } else {
-                        return Err(VmError::Type("len requires string or list"));
+                        return Err(VmError::Type("len requires string, list, or map"));
                     };
                     reg_set!(a, NanVal::number(length));
                 }
@@ -3268,6 +3477,12 @@ fn nanval_to_json(v: NanVal) -> serde_json::Value {
                     }
                     HeapObj::OkVal(inner) => nanval_to_json(*inner),
                     HeapObj::ErrVal(inner) => nanval_to_json(*inner),
+                    HeapObj::Map(m) => {
+                        let obj: serde_json::Map<String, serde_json::Value> = m.iter()
+                            .map(|(k, v)| (k.clone(), nanval_to_json(*v)))
+                            .collect();
+                        serde_json::Value::Object(obj)
+                    }
                 }
             }
         }

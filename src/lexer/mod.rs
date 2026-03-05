@@ -23,6 +23,28 @@ pub enum Token {
     ResultType,
     #[token("F")]
     FnType,
+    #[token("O")]
+    OptType,
+    #[token("M")]
+    MapType,
+    #[token("S")]
+    SumType,
+
+    // Reserved keywords from other languages — not valid in ilo, emit friendly errors
+    #[token("if")]
+    KwIf,
+    #[token("return")]
+    KwReturn,
+    #[token("let")]
+    KwLet,
+    #[token("fn")]
+    KwFn,
+    #[token("def")]
+    KwDef,
+    #[token("var")]
+    KwVar,
+    #[token("const")]
+    KwConst,
 
     // Boolean literals
     #[token("true")]

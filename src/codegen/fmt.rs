@@ -186,8 +186,15 @@ fn fmt_type(ty: &Type) -> String {
         Type::Text => "t".to_string(),
         Type::Bool => "b".to_string(),
         Type::Nil => "_".to_string(),
+        Type::Optional(inner) => format!("O {}", fmt_type(inner)),
         Type::List(inner) => format!("L {}", fmt_type(inner)),
+        Type::Map(k, v) => format!("M {} {}", fmt_type(k), fmt_type(v)),
         Type::Result(ok, err) => format!("R {} {}", fmt_type(ok), fmt_type(err)),
+        Type::Sum(variants) => {
+            let mut s = "S".to_string();
+            for v in variants { s.push(' '); s.push_str(v); }
+            s
+        }
         Type::Fn(params, ret) => {
             let mut s = "F".to_string();
             for p in params { s.push(' '); s.push_str(&fmt_type(p)); }

@@ -6,6 +6,9 @@ fn type_to_py(ty: &Type) -> &'static str {
         Type::Text => "str",
         Type::Bool => "bool",
         Type::List(_) => "list",
+        Type::Map(_, _) => "dict",
+        Type::Optional(_) => "object | None",
+        Type::Sum(_) => "str",
         _ => "object",
     }
 }
@@ -617,7 +620,10 @@ fn emit_type(ty: &Type) -> String {
         Type::Text => "str".to_string(),
         Type::Bool => "bool".to_string(),
         Type::Nil => "None".to_string(),
+        Type::Optional(inner) => format!("{} | None", emit_type(inner)),
         Type::List(inner) => format!("list[{}]", emit_type(inner)),
+        Type::Map(k, v) => format!("dict[{}, {}]", emit_type(k), emit_type(v)),
+        Type::Sum(_) => "str".to_string(),
         Type::Result(ok, err) => format!("tuple[str, {} | {}]", emit_type(ok), emit_type(err)),
         Type::Fn(params, ret) => {
             let ps: Vec<_> = params.iter().map(emit_type).collect();

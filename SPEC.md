@@ -31,7 +31,71 @@ tot p:n q:n r:n>n;s=*p q;t=*s r;+s t
 | `_` | nil |
 | `L n` | list of number |
 | `R n t` | result: ok=number, err=text |
+| `O n` | optional number (nil or n) |
+| `M t n` | map from text keys to numbers |
+| `S red green blue` | sum type — one of named text variants |
+| `F n t` | function type: takes n, returns t (used in HOF params) |
 | `order` | named type |
+| `a` | type variable — any single lowercase letter except n, t, b |
+
+### Optional (`O T`)
+
+`O T` accepts either `nil` or a value of type `T`.
+
+```
+f x:O n>n;??x 0     -- unwrap optional or default to 0
+g>O n;nil           -- returns nil (valid O n)
+h>O n;42            -- returns 42 (valid O n)
+```
+
+`??x default` — nil-coalesce: returns `x` if non-nil, else `default`. Unwraps `O T` to `T`.
+
+### Sum types (`S a b c`)
+
+Closed set of named text variants. Verifier-enforced; runtime value is always `t`.
+
+```
+color x:S red green blue > t
+  ?x{red:"ff0000";green:"00ff00";blue:"0000ff"}
+```
+
+Sum types are compatible with `t` — a sum value can be passed to any `t` parameter.
+
+### Map type (`M k v`)
+
+Dynamic key-value collection. Keys are always text at runtime.
+
+```
+mmap                      -- empty map
+mset m k v               -- return new map with key k set to v
+mget m k                 -- value at key k, or nil
+mhas m k                 -- b: true if key exists
+mkeys m                  -- L t: sorted list of keys
+mvals m                  -- L v: values sorted by key
+mdel m k                 -- return new map with key k removed
+len m                     -- number of entries
+```
+
+Example:
+
+```
+scores>M t n
+  m=mmap
+  m=mset m "alice" 99
+  m=mset m "bob" 87
+  mget m "alice"        -- 99
+```
+
+### Type variables
+
+A single lowercase letter (other than `n`, `t`, `b`) in type position is a type variable, treated as `unknown` during verification. Used for higher-order function signatures:
+
+```
+identity x:a>a;x
+apply f:F a a x:a>a;f x
+```
+
+Type variables provide weak generics — the verifier accepts any type for `a` without consistency checking across call sites.
 
 ---
 
@@ -50,6 +114,17 @@ Short names everywhere. 1–3 chars.
 | `items` | `its` | first 3 |
 
 Function names follow the same rules. Field names in constructors and external tool names keep their full form — they define the public interface.
+
+### Reserved words
+
+The following identifiers are reserved and cannot be used as names: `if`, `return`, `let`, `fn`, `def`, `var`, `const`. Using them produces a friendly error with the ilo equivalent:
+
+```
+-- ERROR: `if` is a reserved word. Use: ?cond{true:... false:...}
+-- ERROR: `return` is a reserved word. Last expression is the return value.
+-- ERROR: `let` is a reserved word. Use: name = expr
+-- ERROR: `fn`/`def` is a reserved word. Use: name param:type > rettype; body
+```
 
 ---
 
@@ -171,6 +246,13 @@ Called like functions, compiled to dedicated opcodes.
 | `jpth json path` | JSON path lookup (dot-separated keys, array indices) | `R t t` |
 | `jdmp value` | serialise ilo value to JSON text | `t` |
 | `jpar text` | parse JSON text into ilo values | `R ? t` |
+| `mmap` | create empty map | `M t _` |
+| `mget m k` | value at key k (nil if missing) | element or nil |
+| `mset m k v` | new map with key k set to v | `M k v` |
+| `mhas m k` | true if key exists | `b` |
+| `mkeys m` | sorted list of keys | `L t` |
+| `mvals m` | values sorted by key | `L v` |
+| `mdel m k` | new map with key k removed | `M k v` |
 
 `get` returns `Ok(body)` on success, `Err(message)` on failure (connection error, timeout, DNS failure, etc). `$` is a terse alias:
 

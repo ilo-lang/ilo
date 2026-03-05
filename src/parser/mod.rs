@@ -77,6 +77,41 @@ impl Parser {
                 self.advance();
                 Ok(name)
             }
+            Some(Token::KwIf) => Err(self.error_hint(
+                "ILO-P011",
+                "`if` is a reserved word and cannot be used as an identifier".into(),
+                "ilo uses `cond{body}` for conditional branches".into(),
+            )),
+            Some(Token::KwReturn) => Err(self.error_hint(
+                "ILO-P011",
+                "`return` is a reserved word and cannot be used as an identifier".into(),
+                "ilo uses `ret expr` for early returns".into(),
+            )),
+            Some(Token::KwLet) => Err(self.error_hint(
+                "ILO-P011",
+                "`let` is a reserved word and cannot be used as an identifier".into(),
+                "ilo uses `name=expr` for bindings".into(),
+            )),
+            Some(Token::KwFn) => Err(self.error_hint(
+                "ILO-P011",
+                "`fn` is a reserved word and cannot be used as an identifier".into(),
+                "ilo defines functions as `name params>return;body`".into(),
+            )),
+            Some(Token::KwDef) => Err(self.error_hint(
+                "ILO-P011",
+                "`def` is a reserved word and cannot be used as an identifier".into(),
+                "ilo defines functions as `name params>return;body`".into(),
+            )),
+            Some(Token::KwVar) => Err(self.error_hint(
+                "ILO-P011",
+                "`var` is a reserved word and cannot be used as an identifier".into(),
+                "ilo uses `name=expr` for bindings".into(),
+            )),
+            Some(Token::KwConst) => Err(self.error_hint(
+                "ILO-P011",
+                "`const` is a reserved word and cannot be used as an identifier".into(),
+                "ilo uses `name=expr` for bindings".into(),
+            )),
             Some(tok) => Err(self.error("ILO-P005", format!("expected identifier, got {:?}", tok))),
             None => Err(self.error("ILO-P006", "expected identifier, got EOF".into())),
         }
@@ -229,6 +264,14 @@ impl Parser {
                     | Token::Eq | Token::NotEq | Token::Amp | Token::Pipe
                     | Token::Bang | Token::Tilde | Token::Caret =>
                         Some("prefix operators can't start a declaration. Bind call results to variables: r=fac -n 1;*n r".to_string()),
+                    Token::KwFn | Token::KwDef =>
+                        Some("ilo function syntax: name param:type > return-type; body".to_string()),
+                    Token::KwLet | Token::KwVar | Token::KwConst =>
+                        Some("ilo uses assignment syntax: name = expr".to_string()),
+                    Token::KwReturn =>
+                        Some("the last expression in a function body is the return value — no 'return' keyword".to_string()),
+                    Token::KwIf =>
+                        Some("ilo uses match for conditionals: ?expr{true:... false:...}".to_string()),
                     _ => None,
                 };
                 let mut err = self.error("ILO-P001", msg);
@@ -372,16 +415,51 @@ impl Parser {
                 self.advance();
                 Ok(Type::Nil)
             }
+            Some(Token::OptType) => {
+                self.advance();
+                let inner = self.parse_type()?;
+                Ok(Type::Optional(Box::new(inner)))
+            }
             Some(Token::ListType) => {
                 self.advance();
                 let inner = self.parse_type()?;
                 Ok(Type::List(Box::new(inner)))
+            }
+            Some(Token::MapType) => {
+                self.advance();
+                let key_type = self.parse_type()?;
+                let val_type = self.parse_type()?;
+                Ok(Type::Map(Box::new(key_type), Box::new(val_type)))
             }
             Some(Token::ResultType) => {
                 self.advance();
                 let ok_type = self.parse_type()?;
                 let err_type = self.parse_type()?;
                 Ok(Type::Result(Box::new(ok_type), Box::new(err_type)))
+            }
+            Some(Token::SumType) => {
+                self.advance();
+                // Collect variant names: lowercase idents not followed by colon.
+                let mut variants = Vec::new();
+                loop {
+                    match self.peek() {
+                        Some(Token::Ident(_)) => {
+                            // Ident followed by colon = param name, stop.
+                            if self.token_at(self.pos + 1) == Some(&Token::Colon) {
+                                break;
+                            }
+                            if let Some(Token::Ident(name)) = self.peek().cloned() {
+                                variants.push(name);
+                                self.advance();
+                            }
+                        }
+                        _ => break,
+                    }
+                }
+                if variants.is_empty() {
+                    return Err(self.error("ILO-P010", "S type requires at least one variant".into()));
+                }
+                Ok(Type::Sum(variants))
             }
             Some(Token::FnType) => {
                 self.advance();
@@ -422,8 +500,11 @@ impl Parser {
             Some(Token::Ident(s)) => matches!(s.as_str(), "n" | "t" | "b")
                 || self.token_at(self.pos + 1) != Some(&Token::Colon),
             Some(Token::Underscore) => true,
+            Some(Token::OptType) => true,
             Some(Token::ListType) => true,
+            Some(Token::MapType) => true,
             Some(Token::ResultType) => true,
+            Some(Token::SumType) => true,
             Some(Token::FnType) => true,
             _ => false,
         }

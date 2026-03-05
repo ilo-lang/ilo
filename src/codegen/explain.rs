@@ -136,7 +136,10 @@ fn fmt_type_long(ty: &Type) -> String {
         Type::Text            => "text".into(),
         Type::Bool            => "bool".into(),
         Type::Nil             => "nil".into(),
+        Type::Optional(inner) => format!("optional {}", fmt_type_long(inner)),
         Type::List(inner)     => format!("list of {}", fmt_type_long(inner)),
+        Type::Map(k, v)       => format!("map of {} to {}", fmt_type_long(k), fmt_type_long(v)),
+        Type::Sum(vs)         => format!("one of: {}", vs.join(", ")),
         Type::Result(ok, err) => format!("Result ok={} err={}", fmt_type_long(ok), fmt_type_long(err)),
         Type::Fn(params, ret) => {
             let ps: Vec<_> = params.iter().map(fmt_type_long).collect();
@@ -152,7 +155,10 @@ fn fmt_type(ty: &Type) -> String {
         Type::Text            => "t".into(),
         Type::Bool            => "b".into(),
         Type::Nil             => "_".into(),
+        Type::Optional(inner) => format!("O {}", fmt_type(inner)),
         Type::List(inner)     => format!("L {}", fmt_type(inner)),
+        Type::Map(k, v)       => format!("M {} {}", fmt_type(k), fmt_type(v)),
+        Type::Sum(vs)         => format!("S {}", vs.join(" ")),
         Type::Result(ok, err) => format!("R {} {}", fmt_type(ok), fmt_type(err)),
         Type::Fn(params, ret) => {
             let mut s = "F".to_string();

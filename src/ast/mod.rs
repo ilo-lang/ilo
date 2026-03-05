@@ -69,10 +69,13 @@ pub enum Type {
     Text,    // t
     Bool,    // b
     Nil,     // _
+    Optional(Box<Type>),          // O type  — nullable (nil or the inner type)
     List(Box<Type>),              // L type
+    Map(Box<Type>, Box<Type>),    // M key value  — dynamic key-value collection
     Result(Box<Type>, Box<Type>), // R ok err
+    Sum(Vec<String>),             // S a b c  — closed set of named string variants
     Fn(Vec<Type>, Box<Type>),     // F param... return  (last type is return)
-    Named(String),                // user-defined type name
+    Named(String),                // user-defined type name or type variable
 }
 
 /// A parameter: `name:type`

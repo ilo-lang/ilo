@@ -184,16 +184,16 @@ Plumbing first — make tool calls actually do things. HTTP-native (tools are AP
 ### Not yet (deferred)
 
 #### Language hardening
-- Reserve keywords at lexer level — `if`, `return`, `let`, `fn`, `def`, `var`, `const` are currently valid identifiers (only caught as hints at declaration position). Low urgency while user base is small.
+- [x] Reserve keywords at lexer level — `if`, `return`, `let`, `fn`, `def`, `var`, `const` are lexer-level tokens; friendly ILO-P001 errors with ilo equivalents emitted at declaration position
 
 #### Control structures
 - [x] Pattern matching on type — `?x{n v:...; t v:...}` to branch on runtime type (useful when tools return `t` escape hatch)
 
 #### Type system (Phase E)
-- Optional type — `O n` or `n?` for nullable values
-- Sum types / tagged unions — `S a b c` for closed sets of variants beyond ok/err
-- Map type — `M t n` for key-value collections (records are fixed-shape; maps are dynamic)
-- Generic functions — `map f:fn(a>b) xs:L a > L b` for higher-order typed transforms
+- [x] Optional type — `O n` for nullable values; nil compatible with any `O T`; `??` unwraps
+- [x] Sum types / tagged unions — `S a b c` for closed sets of named string variants; verifier-only, runtime is text
+- [x] Map type — `M k v` for key-value collections; builtins: `mmap mget mset mhas mkeys mvals mdel`; `len` extended
+- [x] Generic functions — single lowercase type variable (not n/t/b) resolves to `Ty::Unknown` enabling HOF signatures like `map f:F a b xs:L a > L b`
 
 
 #### Tooling

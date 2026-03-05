@@ -10,6 +10,7 @@ pub enum Value {
     Bool(bool),
     Nil,
     List(Vec<Value>),
+    Map(HashMap<String, Value>),
     Record { type_name: String, fields: HashMap<String, Value> },
     Ok(Box<Value>),
     Err(Box<Value>),
@@ -43,6 +44,16 @@ impl std::fmt::Display for Value {
                 for (i, (k, v)) in fields.iter().enumerate() {
                     if i > 0 { write!(f, ", ")?; }
                     write!(f, "{}: {}", k, v)?;
+                }
+                write!(f, "}}")
+            }
+            Value::Map(m) => {
+                write!(f, "{{")?;
+                let mut keys: Vec<&String> = m.keys().collect();
+                keys.sort();
+                for (i, k) in keys.iter().enumerate() {
+                    if i > 0 { write!(f, "; ")?; }
+                    write!(f, "{}: {}", k, m[*k])?;
                 }
                 write!(f, "}}")
             }
@@ -224,7 +235,67 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         return match &args[0] {
             Value::Text(s) => Ok(Value::Number(s.len() as f64)),
             Value::List(l) => Ok(Value::Number(l.len() as f64)),
-            other => Err(RuntimeError::new("ILO-R009", format!("len requires string or list, got {:?}", other))),
+            Value::Map(m) => Ok(Value::Number(m.len() as f64)),
+            other => Err(RuntimeError::new("ILO-R009", format!("len requires string, list, or map, got {:?}", other))),
+        };
+    }
+    // Map builtins
+    if name == "mmap" && args.is_empty() {
+        return Ok(Value::Map(HashMap::new()));
+    }
+    if name == "mget" && args.len() == 2 {
+        return match (&args[0], &args[1]) {
+            (Value::Map(m), Value::Text(k)) => Ok(m.get(k).cloned().unwrap_or(Value::Nil)),
+            _ => Err(RuntimeError::new("ILO-R009", "mget: expects map and text key".to_string())),
+        };
+    }
+    if name == "mset" && args.len() == 3 {
+        return match (&args[0], &args[1]) {
+            (Value::Map(m), Value::Text(k)) => {
+                let mut new_map = m.clone();
+                new_map.insert(k.clone(), args[2].clone());
+                Ok(Value::Map(new_map))
+            }
+            _ => Err(RuntimeError::new("ILO-R009", "mset: expects map, text key, and value".to_string())),
+        };
+    }
+    if name == "mhas" && args.len() == 2 {
+        return match (&args[0], &args[1]) {
+            (Value::Map(m), Value::Text(k)) => Ok(Value::Bool(m.contains_key(k.as_str()))),
+            _ => Err(RuntimeError::new("ILO-R009", "mhas: expects map and text key".to_string())),
+        };
+    }
+    if name == "mkeys" && args.len() == 1 {
+        return match &args[0] {
+            Value::Map(m) => {
+                let mut keys: Vec<Value> = m.keys().map(|k| Value::Text(k.clone())).collect();
+                keys.sort_by(|a, b| match (a, b) {
+                    (Value::Text(a), Value::Text(b)) => a.cmp(b),
+                    _ => std::cmp::Ordering::Equal,
+                });
+                Ok(Value::List(keys))
+            }
+            _ => Err(RuntimeError::new("ILO-R009", "mkeys: expects a map".to_string())),
+        };
+    }
+    if name == "mvals" && args.len() == 1 {
+        return match &args[0] {
+            Value::Map(m) => {
+                let mut pairs: Vec<(&String, &Value)> = m.iter().collect();
+                pairs.sort_by_key(|(k, _)| k.as_str());
+                Ok(Value::List(pairs.into_iter().map(|(_, v)| v.clone()).collect()))
+            }
+            _ => Err(RuntimeError::new("ILO-R009", "mvals: expects a map".to_string())),
+        };
+    }
+    if name == "mdel" && args.len() == 2 {
+        return match (&args[0], &args[1]) {
+            (Value::Map(m), Value::Text(k)) => {
+                let mut new_map = m.clone();
+                new_map.remove(k.as_str());
+                Ok(Value::Map(new_map))
+            }
+            _ => Err(RuntimeError::new("ILO-R009", "mdel: expects map and text key".to_string())),
         };
     }
     if name == "str" {
@@ -671,6 +742,12 @@ fn value_to_json(val: &Value) -> serde_json::Value {
         Value::List(items) => serde_json::Value::Array(items.iter().map(value_to_json).collect()),
         Value::Record { fields, .. } => {
             let map: serde_json::Map<String, serde_json::Value> = fields.iter()
+                .map(|(k, v)| (k.clone(), value_to_json(v)))
+                .collect();
+            serde_json::Value::Object(map)
+        }
+        Value::Map(m) => {
+            let map: serde_json::Map<String, serde_json::Value> = m.iter()
                 .map(|(k, v)| (k.clone(), value_to_json(v)))
                 .collect();
             serde_json::Value::Object(map)
@@ -1723,7 +1800,7 @@ mod tests {
     #[test]
     fn err_len_wrong_type() {
         let err = run_str_err("f x:n>n;len x", Some("f"), vec![Value::Number(1.0)]);
-        assert!(err.contains("len requires string or list"));
+        assert!(err.contains("len requires string, list, or map"));
     }
 
     #[test]
@@ -3140,8 +3217,8 @@ mod tests {
 
     #[test]
     fn interp_user_hof_fn_type() {
-        // User-defined HOF: apl fn:F n n x:n>n;fn x
-        let source = "sq x:n>n;*x x apl fn:F n n x:n>n;fn x";
+        // User-defined HOF: apl f:F n n x:n>n;f x
+        let source = "sq x:n>n;*x x apl f:F n n x:n>n;f x";
         let result = run_str(source, Some("apl"), vec![
             Value::FnRef("sq".to_string()),
             Value::Number(7.0),

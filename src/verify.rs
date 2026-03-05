@@ -10,8 +10,11 @@ pub enum Ty {
     Text,
     Bool,
     Nil,
+    Optional(Box<Ty>),
     List(Box<Ty>),
+    Map(Box<Ty>, Box<Ty>),
     Result(Box<Ty>, Box<Ty>),
+    Sum(Vec<String>),
     /// Function type: params then return. `F n n` = Fn(vec![Number], Number).
     Fn(Vec<Ty>, Box<Ty>),
     Named(String),
@@ -25,8 +28,15 @@ impl std::fmt::Display for Ty {
             Ty::Text => write!(f, "t"),
             Ty::Bool => write!(f, "b"),
             Ty::Nil => write!(f, "_"),
+            Ty::Optional(inner) => write!(f, "O {inner}"),
             Ty::List(inner) => write!(f, "L {inner}"),
+            Ty::Map(k, v) => write!(f, "M {k} {v}"),
             Ty::Result(ok, err) => write!(f, "R {ok} {err}"),
+            Ty::Sum(variants) => {
+                write!(f, "S")?;
+                for v in variants { write!(f, " {v}")?; }
+                Ok(())
+            }
             Ty::Fn(params, ret) => {
                 write!(f, "F")?;
                 for p in params { write!(f, " {p}")?; }
@@ -103,12 +113,21 @@ fn collect_named_refs(ty: &Type) -> Vec<String> {
 fn collect_named_refs_inner(ty: &Type, refs: &mut Vec<String>) {
     match ty {
         Type::Named(name) => refs.push(name.clone()),
+        Type::Optional(inner) => collect_named_refs_inner(inner, refs),
         Type::List(inner) => collect_named_refs_inner(inner, refs),
+        Type::Map(k, v) => {
+            collect_named_refs_inner(k, refs);
+            collect_named_refs_inner(v, refs);
+        }
         Type::Result(ok, err) => {
             collect_named_refs_inner(ok, refs);
             collect_named_refs_inner(err, refs);
         }
-        _ => {}
+        Type::Fn(params, ret) => {
+            for p in params { collect_named_refs_inner(p, refs); }
+            collect_named_refs_inner(ret, refs);
+        }
+        Type::Sum(_) | Type::Number | Type::Text | Type::Bool | Type::Nil => {}
     }
 }
 
@@ -123,11 +142,17 @@ fn convert_type_with_aliases(ast_ty: &Type, aliases: &HashMap<String, Ty>) -> Ty
         Type::Text => Ty::Text,
         Type::Bool => Ty::Bool,
         Type::Nil => Ty::Nil,
+        Type::Optional(inner) => Ty::Optional(Box::new(convert_type_with_aliases(inner, aliases))),
         Type::List(inner) => Ty::List(Box::new(convert_type_with_aliases(inner, aliases))),
+        Type::Map(k, v) => Ty::Map(
+            Box::new(convert_type_with_aliases(k, aliases)),
+            Box::new(convert_type_with_aliases(v, aliases)),
+        ),
         Type::Result(ok, err) => Ty::Result(
             Box::new(convert_type_with_aliases(ok, aliases)),
             Box::new(convert_type_with_aliases(err, aliases)),
         ),
+        Type::Sum(variants) => Ty::Sum(variants.clone()),
         Type::Fn(params, ret) => Ty::Fn(
             params.iter().map(|p| convert_type_with_aliases(p, aliases)).collect(),
             Box::new(convert_type_with_aliases(ret, aliases)),
@@ -135,6 +160,12 @@ fn convert_type_with_aliases(ast_ty: &Type, aliases: &HashMap<String, Ty>) -> Ty
         Type::Named(name) => {
             if let Some(resolved) = aliases.get(name) {
                 resolved.clone()
+            } else if name.len() == 1
+                && name.chars().next().map_or(false, |c| c.is_lowercase())
+                && !matches!(name.as_str(), "n" | "t" | "b")
+            {
+                // Single lowercase letter not in aliases = type variable → compatible with anything
+                Ty::Unknown
             } else {
                 Ty::Named(name.clone())
             }
@@ -146,11 +177,20 @@ fn convert_type_with_aliases(ast_ty: &Type, aliases: &HashMap<String, Ty>) -> Ty
 fn compatible(a: &Ty, b: &Ty) -> bool {
     match (a, b) {
         (Ty::Unknown, _) | (_, Ty::Unknown) => true,
+        // Optional: nil is always compatible with Optional; inner type is also compatible.
+        (Ty::Nil, Ty::Optional(_)) | (Ty::Optional(_), Ty::Nil) => true,
+        (Ty::Optional(a), Ty::Optional(b)) => compatible(a, b),
+        (inner, Ty::Optional(b)) => compatible(inner, b),
+        (Ty::Optional(a), inner) => compatible(a, inner),
+        // Sum types are interchangeable with text (they're text at runtime).
+        (Ty::Sum(_), Ty::Text) | (Ty::Text, Ty::Sum(_)) => true,
+        (Ty::Sum(a), Ty::Sum(b)) => a == b,
         (Ty::Number, Ty::Number) => true,
         (Ty::Text, Ty::Text) => true,
         (Ty::Bool, Ty::Bool) => true,
         (Ty::Nil, Ty::Nil) => true,
         (Ty::List(a), Ty::List(b)) => compatible(a, b),
+        (Ty::Map(ak, av), Ty::Map(bk, bv)) => compatible(ak, bk) && compatible(av, bv),
         (Ty::Result(ao, ae), Ty::Result(bo, be)) => compatible(ao, bo) && compatible(ae, be),
         (Ty::Fn(ap, ar), Ty::Fn(bp, br)) => {
             ap.len() == bp.len()
@@ -221,6 +261,14 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("map", &["fn", "list"], "list"),
     ("flt", &["fn", "list"], "list"),
     ("fld", &["fn", "list", "any"], "any"),
+    // Map builtins (M k v type)
+    ("mmap", &[], "map"),
+    ("mget", &["map", "t"], "optional"),
+    ("mset", &["map", "t", "any"], "map"),
+    ("mhas", &["map", "t"], "b"),
+    ("mkeys", &["map"], "L t"),
+    ("mvals", &["map"], "list"),
+    ("mdel", &["map", "t"], "map"),
 ];
 
 fn builtin_arity(name: &str) -> Option<usize> {
@@ -237,11 +285,11 @@ fn builtin_check_args(name: &str, arg_types: &[Ty], func_ctx: &str, span: Option
         "len" => {
             if let Some(arg) = arg_types.first() {
                 match arg {
-                    Ty::List(_) | Ty::Text | Ty::Unknown => {}
+                    Ty::List(_) | Ty::Map(_, _) | Ty::Text | Ty::Unknown => {}
                     other => errors.push(VerifyError {
                         code: "ILO-T013",
                         function: func_ctx.to_string(),
-                        message: format!("'len' expects a list or text, got {other}"),
+                        message: format!("'len' expects a list, map, or text, got {other}"),
                         hint: None,
                         span,
                         is_warning: false,
@@ -607,6 +655,82 @@ fn builtin_check_args(name: &str, arg_types: &[Ty], func_ctx: &str, span: Option
                 },
             };
             (ret, errors)
+        }
+        "mmap" => (Ty::Map(Box::new(Ty::Unknown), Box::new(Ty::Unknown)), errors),
+        "mget" => {
+            // mget map key → O value_type
+            let val_ty = match arg_types.first() {
+                Some(Ty::Map(_, v)) => *v.clone(),
+                _ => Ty::Unknown,
+            };
+            if let Some(key_ty) = arg_types.get(1)
+                && !compatible(key_ty, &Ty::Text)
+            {
+                errors.push(VerifyError {
+                    code: "ILO-T013",
+                    function: func_ctx.to_string(),
+                    message: format!("'mget' key must be t, got {key_ty}"),
+                    hint: None,
+                    span,
+                    is_warning: false,
+                });
+            }
+            (Ty::Optional(Box::new(val_ty)), errors)
+        }
+        "mset" => {
+            // mset map key val → map (same type as input map, or inferred)
+            let map_ty = match arg_types.first() {
+                Some(Ty::Map(k, _)) => {
+                    let val_ty = arg_types.get(2).cloned().unwrap_or(Ty::Unknown);
+                    Ty::Map(k.clone(), Box::new(val_ty))
+                }
+                _ => Ty::Map(Box::new(Ty::Unknown), Box::new(Ty::Unknown)),
+            };
+            (map_ty, errors)
+        }
+        "mhas" => {
+            if let Some(first) = arg_types.first()
+                && !matches!(first, Ty::Map(_, _) | Ty::Unknown)
+            {
+                errors.push(VerifyError {
+                    code: "ILO-T013",
+                    function: func_ctx.to_string(),
+                    message: format!("'mhas' expects a map, got {first}"),
+                    hint: None,
+                    span,
+                    is_warning: false,
+                });
+            }
+            (Ty::Bool, errors)
+        }
+        "mkeys" => {
+            if let Some(first) = arg_types.first()
+                && !matches!(first, Ty::Map(_, _) | Ty::Unknown)
+            {
+                errors.push(VerifyError {
+                    code: "ILO-T013",
+                    function: func_ctx.to_string(),
+                    message: format!("'mkeys' expects a map, got {first}"),
+                    hint: None,
+                    span,
+                    is_warning: false,
+                });
+            }
+            (Ty::List(Box::new(Ty::Text)), errors)
+        }
+        "mvals" => {
+            let val_ty = match arg_types.first() {
+                Some(Ty::Map(_, v)) => *v.clone(),
+                _ => Ty::Unknown,
+            };
+            (Ty::List(Box::new(val_ty)), errors)
+        }
+        "mdel" => {
+            let map_ty = match arg_types.first() {
+                Some(ty @ Ty::Map(_, _)) => ty.clone(),
+                _ => Ty::Map(Box::new(Ty::Unknown), Box::new(Ty::Unknown)),
+            };
+            (map_ty, errors)
         }
         _ => (Ty::Unknown, errors),
     }
@@ -1466,7 +1590,11 @@ impl VerifyContext {
             Expr::NilCoalesce { value, default } => {
                 let val_ty = self.infer_expr(func, scope, value, span);
                 let def_ty = self.infer_expr(func, scope, default, span);
-                if val_ty == Ty::Nil { def_ty } else { val_ty }
+                match val_ty {
+                    Ty::Nil => def_ty,
+                    Ty::Optional(inner) => *inner,
+                    other => other,
+                }
             }
             Expr::With { object, updates } => {
                 let obj_ty = self.infer_expr(func, scope, object, span);
@@ -2256,7 +2384,7 @@ mod tests {
         let result = parse_and_verify("f x:n>n;len x");
         assert!(result.is_err());
         let errors = result.unwrap_err();
-        assert!(errors.iter().any(|e| e.message.contains("'len' expects a list or text, got n")));
+        assert!(errors.iter().any(|e| e.message.contains("'len' expects a list, map, or text, got n")));
     }
 
     // ---- builtin abs/flr/cel wrong type ----
