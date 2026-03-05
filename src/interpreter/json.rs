@@ -69,7 +69,13 @@ impl Value {
         }
 
         match json {
-            serde_json::Value::Number(n) => Ok(Value::Number(n.as_f64().unwrap_or(0.0))),
+            serde_json::Value::Number(n) => {
+                // Prefer f64 directly; fall back through i64 for large integers.
+                let f = n.as_f64()
+                    .or_else(|| n.as_i64().map(|i| i as f64))
+                    .unwrap_or(0.0);
+                Ok(Value::Number(f))
+            }
             serde_json::Value::String(s) => Ok(Value::Text(s.clone())),
             serde_json::Value::Bool(b) => Ok(Value::Bool(*b)),
             serde_json::Value::Null => Ok(Value::Nil),
