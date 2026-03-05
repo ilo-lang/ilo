@@ -174,6 +174,9 @@ fn main() {
             println!("  --text / -t   Force plain text output (no colour)");
             println!("  --json / -j   Force JSON output (default when stderr is not a TTY)");
             println!("  NO_COLOR=1    Disable colour (same as --text)\n");
+            println!("Tool providers (requires --features tools build):");
+            println!("  --tools <path>   HTTP tool provider config (JSON)");
+            println!("  --mcp <path>     MCP server config (Claude Desktop format JSON)\n");
             println!("Backends:");
             println!("  (default)        Cranelift JIT → interpreter fallback");
             println!("  --run-interp     Tree-walking interpreter");
@@ -216,10 +219,11 @@ fn main() {
         (code.clone(), 2)
     };
 
-    // Scan for --tools <path>. Remove the flag+value from args so downstream
-    // dispatch doesn't see them.
-    let (tools_config_path, args) = {
+    // Scan for --tools <path> and --mcp <path>.
+    // Remove both flags+values from args so downstream dispatch doesn't see them.
+    let (tools_config_path, mcp_config_path, args) = {
         let mut tools_path: Option<String> = None;
+        let mut mcp_path: Option<String> = None;
         let mut filtered: Vec<String> = Vec::with_capacity(args.len());
         let mut i = 0;
         while i < args.len() {
@@ -231,12 +235,24 @@ fn main() {
                     eprintln!("error: --tools requires a path argument");
                     std::process::exit(1);
                 }
+            } else if args[i] == "--mcp" {
+                if i + 1 < args.len() {
+                    mcp_path = Some(args[i + 1].clone());
+                    i += 2;
+                } else {
+                    eprintln!("error: --mcp requires a path argument");
+                    std::process::exit(1);
+                }
             } else {
                 filtered.push(args[i].clone());
                 i += 1;
             }
         }
-        (tools_path, filtered)
+        if tools_path.is_some() && mcp_path.is_some() {
+            eprintln!("error: --tools and --mcp are mutually exclusive");
+            std::process::exit(1);
+        }
+        (tools_path, mcp_path, filtered)
     };
 
     warn_cross_language_syntax(&source, mode);
@@ -256,6 +272,36 @@ fn main() {
 
     let (mut program, parse_errors) = parser::parse(token_spans);
     program.source = Some(source.clone());
+
+    // If --mcp was provided, connect to the MCP servers and inject synthesized
+    // Decl::Tool nodes into the program before the verifier runs.
+    // This requires the `tools` feature (tokio process + async runtime).
+    #[cfg(not(feature = "tools"))]
+    if mcp_config_path.is_some() {
+        eprintln!("error: --mcp requires the 'tools' feature (build with: cargo build --features tools)");
+        std::process::exit(1);
+    }
+
+    #[cfg(feature = "tools")]
+    let mut mcp_rt: Option<tokio::runtime::Runtime> = None;
+    #[cfg(feature = "tools")]
+    let mut mcp_provider_holder: Option<tools::mcp_provider::McpProvider> = None;
+
+    #[cfg(feature = "tools")]
+    if let Some(ref path) = mcp_config_path {
+        let config = tools::mcp_provider::McpConfig::from_file(path)
+            .unwrap_or_else(|e| { eprintln!("{}", e); std::process::exit(1); });
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().expect("tokio runtime");
+        let provider = rt
+            .block_on(tools::mcp_provider::McpProvider::connect(&config))
+            .unwrap_or_else(|e| { eprintln!("MCP error: {}", e); std::process::exit(1); });
+        // Prepend synthesized Decl::Tool nodes so the verifier sees them
+        let mut decls = provider.tool_decls();
+        decls.append(&mut program.declarations);
+        program.declarations = decls;
+        mcp_rt = Some(rt);
+        mcp_provider_holder = Some(provider);
+    }
 
     let mut had_errors = false;
 
@@ -425,35 +471,18 @@ fn main() {
         };
 
         let compiled = vm::compile(&program).unwrap_or_else(|e| { eprintln!("Compile error: {}", e); std::process::exit(1); });
-        if let Some(ref tools_path) = tools_config_path {
-            let config = tools::http_provider::ToolsConfig::from_file(tools_path)
-                .unwrap_or_else(|e| { eprintln!("{}", e); std::process::exit(1); });
-            let provider = tools::http_provider::HttpProvider::new(config);
+        run_vm_with_provider(
+            &compiled,
+            func_name,
+            run_args,
+            tools_config_path.as_deref(),
             #[cfg(feature = "tools")]
-            let runtime = tokio::runtime::Runtime::new().expect("tokio runtime");
-            match vm::run_with_tools(
-                &compiled,
-                func_name,
-                run_args,
-                &provider,
-                #[cfg(feature = "tools")]
-                &runtime,
-            ) {
-                Ok(val) => println!("{}", val),
-                Err(e) => {
-                    report_diagnostic(&Diagnostic::from(&e).with_source(source.clone()), mode);
-                    std::process::exit(1);
-                }
-            }
-        } else {
-            match vm::run(&compiled, func_name, run_args) {
-                Ok(val) => println!("{}", val),
-                Err(e) => {
-                    report_diagnostic(&Diagnostic::from(&e).with_source(source.clone()), mode);
-                    std::process::exit(1);
-                }
-            }
-        }
+            mcp_provider_holder.as_ref(),
+            #[cfg(feature = "tools")]
+            mcp_rt.as_ref(),
+            &source,
+            mode,
+        );
     } else if args.len() > m && (args[m] == "--run" || args[m] == "--run-interp") {
         // --run / --run-interp [func] [args...]
         let func_name = if args.len() > m + 1 { Some(args[m + 1].as_str()) } else { None };
@@ -463,35 +492,18 @@ fn main() {
             vec![]
         };
 
-        if let Some(ref tools_path) = tools_config_path {
-            let config = tools::http_provider::ToolsConfig::from_file(tools_path)
-                .unwrap_or_else(|e| { eprintln!("{}", e); std::process::exit(1); });
-            let provider = std::sync::Arc::new(tools::http_provider::HttpProvider::new(config));
+        run_interp_with_provider(
+            &program,
+            func_name,
+            run_args,
+            tools_config_path.as_deref(),
             #[cfg(feature = "tools")]
-            let runtime = std::sync::Arc::new(tokio::runtime::Runtime::new().expect("tokio runtime"));
-            match interpreter::run_with_tools(
-                &program,
-                func_name,
-                run_args,
-                provider,
-                #[cfg(feature = "tools")]
-                runtime,
-            ) {
-                Ok(val) => println!("{}", val),
-                Err(e) => {
-                    report_diagnostic(&Diagnostic::from(&e).with_source(source.clone()), mode);
-                    std::process::exit(1);
-                }
-            }
-        } else {
-            match interpreter::run(&program, func_name, run_args) {
-                Ok(val) => println!("{}", val),
-                Err(e) => {
-                    report_diagnostic(&Diagnostic::from(&e).with_source(source.clone()), mode);
-                    std::process::exit(1);
-                }
-            }
-        }
+            mcp_provider_holder,
+            #[cfg(feature = "tools")]
+            mcp_rt,
+            &source,
+            mode,
+        );
     } else if args.len() > m {
         // Bare args: default = Cranelift JIT, fall back to interpreter
         let func_names: Vec<&str> = program.declarations.iter().filter_map(|d| match d {
@@ -515,6 +527,118 @@ fn main() {
                 eprintln!("Serialization error: {}", e);
                 std::process::exit(1);
             }
+        }
+    }
+}
+
+/// Dispatch --run-vm, routing to MCP / HTTP / plain run based on available providers.
+#[allow(clippy::too_many_arguments)]
+fn run_vm_with_provider(
+    compiled: &vm::CompiledProgram,
+    func_name: Option<&str>,
+    args: Vec<interpreter::Value>,
+    tools_config_path: Option<&str>,
+    #[cfg(feature = "tools")] mcp_provider: Option<&tools::mcp_provider::McpProvider>,
+    #[cfg(feature = "tools")] mcp_rt: Option<&tokio::runtime::Runtime>,
+    source: &str,
+    mode: OutputMode,
+) {
+    #[cfg(feature = "tools")]
+    if let Some(provider) = mcp_provider {
+        let rt = mcp_rt.expect("runtime present with mcp_provider");
+        match vm::run_with_tools(compiled, func_name, args, provider, rt) {
+            Ok(val) => { println!("{}", val); return; }
+            Err(e) => {
+                report_diagnostic(&Diagnostic::from(&e).with_source(source.to_string()), mode);
+                std::process::exit(1);
+            }
+        }
+    }
+
+    if let Some(tools_path) = tools_config_path {
+        let config = tools::http_provider::ToolsConfig::from_file(tools_path)
+            .unwrap_or_else(|e| { eprintln!("{}", e); std::process::exit(1); });
+        let provider = tools::http_provider::HttpProvider::new(config);
+        #[cfg(feature = "tools")]
+        let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().expect("tokio runtime");
+        match vm::run_with_tools(
+            compiled,
+            func_name,
+            args,
+            &provider,
+            #[cfg(feature = "tools")]
+            &runtime,
+        ) {
+            Ok(val) => println!("{}", val),
+            Err(e) => {
+                report_diagnostic(&Diagnostic::from(&e).with_source(source.to_string()), mode);
+                std::process::exit(1);
+            }
+        }
+        return;
+    }
+
+    match vm::run(compiled, func_name, args) {
+        Ok(val) => println!("{}", val),
+        Err(e) => {
+            report_diagnostic(&Diagnostic::from(&e).with_source(source.to_string()), mode);
+            std::process::exit(1);
+        }
+    }
+}
+
+/// Dispatch --run-interp, routing to MCP / HTTP / plain run based on available providers.
+#[allow(clippy::too_many_arguments)]
+fn run_interp_with_provider(
+    program: &ast::Program,
+    func_name: Option<&str>,
+    args: Vec<interpreter::Value>,
+    tools_config_path: Option<&str>,
+    #[cfg(feature = "tools")] mcp_provider: Option<tools::mcp_provider::McpProvider>,
+    #[cfg(feature = "tools")] mcp_rt: Option<tokio::runtime::Runtime>,
+    source: &str,
+    mode: OutputMode,
+) {
+    #[cfg(feature = "tools")]
+    if let Some(provider) = mcp_provider {
+        let rt = std::sync::Arc::new(mcp_rt.expect("runtime present with mcp_provider"));
+        match interpreter::run_with_tools(program, func_name, args, std::sync::Arc::new(provider), rt) {
+            Ok(val) => { println!("{}", val); return; }
+            Err(e) => {
+                report_diagnostic(&Diagnostic::from(&e).with_source(source.to_string()), mode);
+                std::process::exit(1);
+            }
+        }
+    }
+
+    if let Some(tools_path) = tools_config_path {
+        let config = tools::http_provider::ToolsConfig::from_file(tools_path)
+            .unwrap_or_else(|e| { eprintln!("{}", e); std::process::exit(1); });
+        let provider = std::sync::Arc::new(tools::http_provider::HttpProvider::new(config));
+        #[cfg(feature = "tools")]
+        let runtime = std::sync::Arc::new(tokio::runtime::Builder::new_current_thread().enable_all().build().expect("tokio runtime"));
+        match interpreter::run_with_tools(
+            program,
+            func_name,
+            args,
+            provider,
+            #[cfg(feature = "tools")]
+            runtime,
+        ) {
+            Ok(val) => println!("{}", val),
+            Err(e) => {
+                report_diagnostic(&Diagnostic::from(&e).with_source(source.to_string()), mode);
+                std::process::exit(1);
+            }
+        }
+        return;
+    }
+
+    match interpreter::run(program, func_name, args) {
+        Ok(val) => println!("{}", val),
+        Err(e) => {
+            report_diagnostic(&Diagnostic::from(&e).with_source(source.to_string()), mode);
+            std::process::exit(1);
         }
     }
 }

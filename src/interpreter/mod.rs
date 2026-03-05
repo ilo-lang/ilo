@@ -626,7 +626,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 #[cfg(feature = "tools")]
                 {
                     if let Some(ref rt) = env.tokio_runtime {
-                        return rt.block_on(_provider.call(name, args))
+                        return rt.block_on(_provider.call(&name, args))
                             .map_err(|e| RuntimeError::new("ILO-R099", e.to_string()));
                     }
                 }

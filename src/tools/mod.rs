@@ -1,4 +1,8 @@
 pub mod http_provider;
+#[cfg(feature = "tools")]
+pub mod mcp_client;
+#[cfg(feature = "tools")]
+pub mod mcp_provider;
 
 use crate::interpreter::Value;
 use std::future::Future;
