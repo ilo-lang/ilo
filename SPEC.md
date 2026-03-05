@@ -245,6 +245,7 @@ Called like functions, compiled to dedicated opcodes.
 | `slc xs a b` | slice list or text from index a to b | same type |
 | `jpth json path` | JSON path lookup (dot-separated keys, array indices) | `R t t` |
 | `jdmp value` | serialise ilo value to JSON text | `t` |
+| `prt value` | print value to stdout, return it unchanged (passthrough) | same type |
 | `jpar text` | parse JSON text into ilo values | `R ? t` |
 | `mmap` | create empty map | `M t _` |
 | `mget m k` | value at key k (nil if missing) | element or nil |

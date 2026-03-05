@@ -138,6 +138,7 @@ pub(crate) const OP_MHAS: u8 = 72;      // R[A] = R[B] has key R[C]
 pub(crate) const OP_MKEYS: u8 = 73;     // R[A] = keys(R[B])  → L t
 pub(crate) const OP_MVALS: u8 = 74;     // R[A] = vals(R[B])  → L v
 pub(crate) const OP_MDEL: u8 = 75;      // R[A] = del(R[B], R[C])
+pub(crate) const OP_PRT: u8 = 76;       // print(R[B]) → stdout; R[A] = nil
 
 // ABx mode — register + 16-bit operand
 pub(crate) const OP_LOADK: u8 = 20;
@@ -1319,6 +1320,12 @@ impl RegCompiler {
                     let rb = self.compile_expr(&args[0]);
                     let ra = self.alloc_reg();
                     self.emit_abc(OP_JDMP, ra, rb, 0);
+                    return ra;
+                }
+                if function == "prt" && args.len() == 1 {
+                    let rb = self.compile_expr(&args[0]);
+                    let ra = self.alloc_reg();
+                    self.emit_abc(OP_PRT, ra, rb, 0);
                     return ra;
                 }
                 if function == "jpar" && args.len() == 1 {
@@ -2797,6 +2804,13 @@ impl<'a> VM<'a> {
                         }
                     };
                     reg_set!(a, result);
+                }
+                OP_PRT => {
+                    let a = ((inst >> 16) & 0xFF) as usize + base;
+                    let b = ((inst >> 8) & 0xFF) as usize + base;
+                    let v = reg!(b);
+                    println!("{}", v.to_value());
+                    reg_set!(a, v); // passthrough — same value returned
                 }
                 OP_UNWRAP => {
                     let a = ((inst >> 16) & 0xFF) as usize + base;

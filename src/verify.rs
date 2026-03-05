@@ -256,6 +256,7 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("env", &["t"], "R t t"),
     ("jpth", &["t", "t"], "R t t"),
     ("jdmp", &["any"], "t"),
+    ("prt", &["any"], "any"),
     ("jpar", &["t"], "R ? t"),
     // Higher-order: map/flt/fld take a function ref as first arg (special-cased in builtin_check_args)
     ("map", &["fn", "list"], "list"),
@@ -575,6 +576,10 @@ fn builtin_check_args(name: &str, arg_types: &[Ty], func_ctx: &str, span: Option
         "jdmp" => {
             // jdmp accepts any value, no type checking needed
             (Ty::Text, errors)
+        }
+        "prt" => {
+            // prt prints to stdout and returns the same value (passthrough, like dbg!)
+            (arg_types.first().cloned().unwrap_or(Ty::Unknown), errors)
         }
         "jpar" => {
             if let Some(arg) = arg_types.first()

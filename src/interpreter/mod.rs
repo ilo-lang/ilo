@@ -579,6 +579,10 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             _ => Err(RuntimeError::new("ILO-R009", "jpth requires two text args".to_string())),
         };
     }
+    if name == "prt" && args.len() == 1 {
+        println!("{}", args[0]);
+        return Ok(args.into_iter().next().unwrap());
+    }
     if name == "jdmp" && args.len() == 1 {
         let json_val = value_to_json(&args[0]);
         return Ok(Value::Text(json_val.to_string()));

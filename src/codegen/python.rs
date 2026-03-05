@@ -344,6 +344,11 @@ fn emit_expr(out: &mut String, level: usize, expr: &Expr) -> String {
                 let call = format!("(lambda: {})()", call);
                 return if *unwrap { format!("_ilo_unwrap({})", call) } else { call };
             }
+            if function == "prt" && args.len() == 1 {
+                let arg = emit_expr(out, level, &args[0]);
+                // passthrough: print and return the value
+                return format!("(lambda _v: (print(_v), _v)[1])({})", arg);
+            }
             if function == "jdmp" && args.len() == 1 {
                 let arg = emit_expr(out, level, &args[0]);
                 return format!("__import__('json').dumps({})", arg);
