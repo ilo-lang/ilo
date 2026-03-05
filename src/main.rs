@@ -36,7 +36,7 @@ fn tools_cmd(args: &[String]) {
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
-            "--mcp" => {
+            "--mcp" | "-m" => {
                 if i + 1 >= args.len() {
                     eprintln!("error: --mcp requires a path");
                     std::process::exit(1);
@@ -44,7 +44,7 @@ fn tools_cmd(args: &[String]) {
                 mcp_path = Some(args[i + 1].clone());
                 i += 2;
             }
-            "--tools" => {
+            "--tools" | "-t" => {
                 if i + 1 >= args.len() {
                     eprintln!("error: --tools requires a path");
                     std::process::exit(1);
@@ -71,7 +71,7 @@ fn tools_cmd(args: &[String]) {
             _ => {
                 eprintln!("unknown flag: {}", args[i]);
                 eprintln!(
-                    "Usage: ilo tools [--mcp <path>] [--tools <path>] \
+                    "Usage: ilo tools [-m <path>] [-t <path>] \
                      [--human|--ilo|--json] [--full]"
                 );
                 std::process::exit(1);
@@ -396,8 +396,8 @@ fn main() {
             println!("  --tools <path>   HTTP tool provider config (JSON)");
             println!("  --mcp <path>     MCP server config (Claude Desktop format JSON)\n");
             println!("Tool discovery:");
-            println!("  ilo tools --mcp <path>          List tools from MCP server");
-            println!("  ilo tools --tools <path>        List tools from HTTP config");
+            println!("  ilo tools -m <path>             List tools from MCP server");
+            println!("  ilo tools -t <path>             List tools from HTTP config");
             println!("  ilo tools ... --full            Show full signatures");
             println!("  ilo tools ... --ilo             Output as valid ilo tool declarations");
             println!("  ilo tools ... --json            Output as JSON array\n");
