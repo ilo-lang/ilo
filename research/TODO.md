@@ -114,8 +114,6 @@ After language features settle.
 
 - [x] Fix lossy match arm codegen — let bindings in match arms are silently dropped when emitted as ternaries
 
----
-
 ## Agent integration — Phase D (make ilo programs do things)
 
 Manifesto: "a minimal, verified action space." The language verifies and executes locally — Phase D connects it to the outside world.
@@ -162,9 +160,9 @@ Plumbing first — make tool calls actually do things. HTTP-native (tools are AP
 
 ### D2. MCP Integration
 
-- [ ] MCP client: connect to MCP servers, discover tools, call them (builds on D1 async infra)
-- [ ] `ilo run program.ilo --mcp server.json` — load tool signatures from MCP server config
-- [ ] Auto-populate tool declarations from MCP server discovery (graph loading option 3: query on demand)
+- [x] MCP client: connect to MCP servers, discover tools, call them (builds on D1 async infra)
+- [x] `ilo run program.ilo --mcp server.json` — load tool signatures from MCP server config
+- [x] Auto-populate tool declarations from MCP server discovery (graph loading option 3: query on demand)
 
 ### D3. Tool Discovery & Progressive Disclosure
 
