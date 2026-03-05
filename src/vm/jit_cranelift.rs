@@ -868,6 +868,11 @@ pub(crate) fn compile(chunk: &Chunk, nan_consts: &[NanVal], program: &CompiledPr
                 let ptr = builder.ins().band(bv, ptr_mask_val);
                 let field_offset = builder.ins().iconst(I64, (8 + c_idx * 8) as i64);
                 let field_addr = builder.ins().iadd(ptr, field_offset);
+                // SAFETY: MemFlags::trusted() is valid because:
+                // (a) `ptr` was produced from a TAG_ARENA_REC NanVal so it points into
+                //     the live bump arena buffer, and
+                // (b) `c_idx` is a compile-time constant encoded by the register compiler
+                //     from a type-checked field access, so it is always < n_fields.
                 let field_val = builder.ins().load(I64, cranelift_codegen::ir::MemFlags::trusted(), field_addr, 0);
                 // Inline is_heap check: (val & QNAN) == QNAN && val != NIL && val != TRUE && val != FALSE && tag != ARENA_REC
                 // For numbers (the hot path), (val & QNAN) != QNAN → skip clone_rc entirely

@@ -1746,8 +1746,14 @@ thread_local! {
 }
 
 /// Set the active TypeRegistry for arena record field name resolution.
-/// Must be called before JIT functions that create records.
-pub fn set_active_registry(program: &CompiledProgram) {
+///
+/// # Safety
+/// The caller must ensure that `program` outlives any JIT invocation that runs
+/// on this thread while the pointer is active. Specifically, `program` must not
+/// be dropped until after all `jit_arena_reset()` calls that dereference
+/// `ACTIVE_REGISTRY` have completed. In practice: call this once before the
+/// bench/run loop and keep `program` alive for the duration of the loop.
+pub unsafe fn set_active_registry(program: &CompiledProgram) {
     ACTIVE_REGISTRY.with(|r| r.set(&program.type_registry as *const TypeRegistry));
 }
 
@@ -1857,7 +1863,15 @@ impl NanVal {
             let mut fields = Vec::with_capacity(n);
             for i in 0..n {
                 let v = NanVal(*rec.field_ptr(i));
-                v.clone_rc(); // clone any heap refs in the fields
+                // Recursively promote nested arena records before the arena is reset.
+                // For heap values, clone_rc increments the reference count so the
+                // newly allocated heap record holds a valid owned reference.
+                let v = if v.is_arena_record() {
+                    v.promote_arena_to_heap(registry)
+                } else {
+                    v.clone_rc();
+                    v
+                };
                 fields.push(v);
             }
             NanVal::heap_record(type_info, fields.into_boxed_slice())
@@ -2169,7 +2183,8 @@ impl<'a> VM<'a> {
     // documentation; allow the lint here.
     #[allow(unused_unsafe)]
     fn execute(&mut self) -> VmResult<Value> {
-        // Set active registry for nanval_to_json arena record support
+        // Set active registry for arena record promotion in nanval_to_json and JIT callbacks.
+        // SAFETY: `self.program` is owned by the VM and outlives `execute()`.
         ACTIVE_REGISTRY.with(|r| r.set(&self.program.type_registry as *const TypeRegistry));
         // SAFETY: execute() is only called from call() after setup_call() has pushed
         // a frame, so frames is non-empty.
