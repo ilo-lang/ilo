@@ -795,7 +795,30 @@ fn report_diagnostic(d: &Diagnostic, mode: OutputMode) {
     eprint!("{}", s);
 }
 
+/// Load a `.env` file into the process environment.
+/// Looks for `.env` in the current working directory.
+/// Lines starting with `#` are comments. Blank lines are skipped.
+/// Format: `KEY=VALUE` — no quoting, no variable expansion.
+/// Does NOT overwrite variables already set in the environment.
+fn load_dotenv() {
+    let path = std::path::Path::new(".env");
+    let Ok(contents) = std::fs::read_to_string(path) else { return };
+    for line in contents.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') { continue; }
+        if let Some((key, val)) = line.split_once('=') {
+            let key = key.trim();
+            let val = val.trim();
+            if !key.is_empty() && std::env::var(key).is_err() {
+                // SAFETY: single-threaded at this point (before any spawning)
+                unsafe { std::env::set_var(key, val); }
+            }
+        }
+    }
+}
+
 fn main() {
+    load_dotenv();
     let raw_args: Vec<String> = std::env::args().collect();
 
     // `ilo tools` is handled before output-mode detection so that --json/--ilo
