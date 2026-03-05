@@ -1,5 +1,15 @@
 use crate::ast::*;
 
+fn type_to_py(ty: &Type) -> &'static str {
+    match ty {
+        Type::Number => "int | float",
+        Type::Text => "str",
+        Type::Bool => "bool",
+        Type::List(_) => "list",
+        _ => "object",
+    }
+}
+
 pub fn emit(program: &Program) -> String {
     let mut out = String::new();
     if uses_unwrap(program) {
@@ -267,16 +277,9 @@ fn emit_match_stmt(out: &mut String, subject: &Option<Expr>, arms: &[MatchArm], 
                 ));
             }
             Pattern::TypeIs { ty, binding } => {
-                let py_type = match ty {
-                    Type::Number => "int | float",
-                    Type::Text => "str",
-                    Type::Bool => "bool",
-                    Type::List(_) => "list",
-                    _ => "object",
-                };
                 out.push_str(&format!(
                     "{} isinstance({}, {}):\n",
-                    keyword, subj_str, py_type
+                    keyword, subj_str, type_to_py(ty)
                 ));
                 if binding != "_" {
                     indent(out, level + 1);
@@ -468,14 +471,7 @@ fn emit_match_expr(out: &mut String, level: usize, subject: &Option<Box<Expr>>, 
                 ));
             }
             Pattern::TypeIs { ty, .. } => {
-                let py_type = match ty {
-                    Type::Number => "int | float",
-                    Type::Text => "str",
-                    Type::Bool => "bool",
-                    Type::List(_) => "list",
-                    _ => "object",
-                };
-                parts.push(format!("{} if isinstance({}, {}) else", arm_val, subj, py_type));
+                parts.push(format!("{} if isinstance({}, {}) else", arm_val, subj, type_to_py(ty)));
             }
         }
     }
@@ -536,16 +532,9 @@ fn emit_match_expr_complex(out: &mut String, level: usize, subject: &Option<Box<
                 ));
             }
             Pattern::TypeIs { ty, binding } => {
-                let py_type = match ty {
-                    Type::Number => "int | float",
-                    Type::Text => "str",
-                    Type::Bool => "bool",
-                    Type::List(_) => "list",
-                    _ => "object",
-                };
                 out.push_str(&format!(
                     "{} isinstance({}, {}):\n",
-                    keyword, subj_str, py_type
+                    keyword, subj_str, type_to_py(ty)
                 ));
                 if binding != "_" {
                     indent(out, level + 1);

@@ -1176,7 +1176,6 @@ fn match_pattern(pattern: &Pattern, value: &Value) -> Option<Vec<(String, Value)
             }
         }
         Pattern::TypeIs { ty, binding } => {
-            use crate::ast::Type;
             let matches = match ty {
                 Type::Number => matches!(value, Value::Number(_)),
                 Type::Text => matches!(value, Value::Text(_)),

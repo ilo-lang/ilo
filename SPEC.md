@@ -284,6 +284,10 @@ Match replaces `switch`. There is no fall-through — each arm is independent. T
 | `42:body` | literal number |
 | `~v:body` | ok — bind inner value to `v` |
 | `^e:body` | err — bind inner value to `e` |
+| `n v:body` | number — branch if value is a number, bind to `v` |
+| `t v:body` | text — branch if value is text, bind to `v` |
+| `b v:body` | bool — branch if value is a bool, bind to `v` |
+| `l v:body` | list — branch if value is a list, bind to `v` |
 | `_:body` | wildcard |
 
 Arms separated by `;`. First match wins.
