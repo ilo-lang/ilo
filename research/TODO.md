@@ -2,7 +2,7 @@
 
 ## Performance
 
-- [ ] Interpreter flat-scope rewrite — `feature/optimize-interpreter` was rejected (unsound unsafe, broke outer-scope mutation, removed FnRef/Map/tools). Needs clean rewrite: flat `Vec<(String, Value)>` with full-range `get`/`set` + scope marks, keeping all existing functionality.
+- [x] Interpreter flat-scope rewrite — `Vec<(String, Value)>` + `scope_marks: Vec<usize>` replaces `Vec<HashMap>`. Full-range `get`/`set`, function call isolation via save/restore.
 
 ## Agent / tool integration
 
