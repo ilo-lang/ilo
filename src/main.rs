@@ -240,6 +240,7 @@ fn process_serv_request(
     line: &str,
     mcp_tool_decls: &[ast::Decl],
     #[cfg(feature = "tools")] provider: Option<std::sync::Arc<dyn tools::ToolProvider>>,
+    #[cfg_attr(not(feature = "tools"), allow(unused_variables))]
     http_config: Option<&tools::http_provider::ToolsConfig>,
     #[cfg(feature = "tools")] rt: std::sync::Arc<tokio::runtime::Runtime>,
 ) -> serde_json::Value {
@@ -1149,10 +1150,10 @@ fn run_default(program: &ast::Program, func_name: Option<&str>, args: Vec<interp
     }
 }
 
-/// Print a program result value. When `json` is true (explicit -j/--json), wraps it as
+/// Print a program result value. When `as_json` is true (explicit -j/--json), wraps it as
 /// `{"ok": ...}` or `{"error": ...}`. Auto-detected JSON mode does not affect result format.
-fn print_value(val: &interpreter::Value, json: bool) {
-    if !json {
+fn print_value(val: &interpreter::Value, as_json: bool) {
+    if !as_json {
         println!("{}", val);
         return;
     }
