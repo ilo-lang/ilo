@@ -322,7 +322,7 @@ fn main() {
 
     // `ilo tools` is handled before output-mode detection so that --json/--ilo
     // can be used as *tool format* flags without conflicting with error format flags.
-    if raw_args.get(1).map(|s| s.as_str()) == Some("tools") {
+    if matches!(raw_args.get(1).map(|s| s.as_str()), Some("tools") | Some("tool")) {
         tools_cmd(&raw_args[2..]);
         std::process::exit(0);
     }
@@ -396,8 +396,8 @@ fn main() {
             println!("  --tools <path>   HTTP tool provider config (JSON)");
             println!("  --mcp <path>     MCP server config (Claude Desktop format JSON)\n");
             println!("Tool discovery:");
-            println!("  ilo tools -m <path>             List tools from MCP server");
-            println!("  ilo tools -t <path>             List tools from HTTP config");
+            println!("  ilo tool -m <path>              List tools from MCP server");
+            println!("  ilo tool -t <path>              List tools from HTTP config");
             println!("  ilo tools ... --full            Show full signatures");
             println!("  ilo tools ... --ilo             Output as valid ilo tool declarations");
             println!("  ilo tools ... --json            Output as JSON array\n");
