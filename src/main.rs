@@ -6,6 +6,7 @@ mod diagnostic;
 mod interpreter;
 mod lexer;
 mod parser;
+mod tools;
 mod verify;
 mod vm;
 
@@ -215,6 +216,29 @@ fn main() {
         (code.clone(), 2)
     };
 
+    // Scan for --tools <path>. Remove the flag+value from args so downstream
+    // dispatch doesn't see them.
+    let (tools_config_path, args) = {
+        let mut tools_path: Option<String> = None;
+        let mut filtered: Vec<String> = Vec::with_capacity(args.len());
+        let mut i = 0;
+        while i < args.len() {
+            if args[i] == "--tools" {
+                if i + 1 < args.len() {
+                    tools_path = Some(args[i + 1].clone());
+                    i += 2;
+                } else {
+                    eprintln!("error: --tools requires a path argument");
+                    std::process::exit(1);
+                }
+            } else {
+                filtered.push(args[i].clone());
+                i += 1;
+            }
+        }
+        (tools_path, filtered)
+    };
+
     warn_cross_language_syntax(&source, mode);
 
     let tokens = match lexer::lex(&source) {
@@ -401,11 +425,33 @@ fn main() {
         };
 
         let compiled = vm::compile(&program).unwrap_or_else(|e| { eprintln!("Compile error: {}", e); std::process::exit(1); });
-        match vm::run(&compiled, func_name, run_args) {
-            Ok(val) => println!("{}", val),
-            Err(e) => {
-                report_diagnostic(&Diagnostic::from(&e).with_source(source.clone()), mode);
-                std::process::exit(1);
+        if let Some(ref tools_path) = tools_config_path {
+            let config = tools::http_provider::ToolsConfig::from_file(tools_path)
+                .unwrap_or_else(|e| { eprintln!("{}", e); std::process::exit(1); });
+            let provider = tools::http_provider::HttpProvider::new(config);
+            #[cfg(feature = "tools")]
+            let runtime = tokio::runtime::Runtime::new().expect("tokio runtime");
+            match vm::run_with_tools(
+                &compiled,
+                func_name,
+                run_args,
+                &provider,
+                #[cfg(feature = "tools")]
+                &runtime,
+            ) {
+                Ok(val) => println!("{}", val),
+                Err(e) => {
+                    report_diagnostic(&Diagnostic::from(&e).with_source(source.clone()), mode);
+                    std::process::exit(1);
+                }
+            }
+        } else {
+            match vm::run(&compiled, func_name, run_args) {
+                Ok(val) => println!("{}", val),
+                Err(e) => {
+                    report_diagnostic(&Diagnostic::from(&e).with_source(source.clone()), mode);
+                    std::process::exit(1);
+                }
             }
         }
     } else if args.len() > m && (args[m] == "--run" || args[m] == "--run-interp") {
@@ -417,11 +463,33 @@ fn main() {
             vec![]
         };
 
-        match interpreter::run(&program, func_name, run_args) {
-            Ok(val) => println!("{}", val),
-            Err(e) => {
-                report_diagnostic(&Diagnostic::from(&e).with_source(source.clone()), mode);
-                std::process::exit(1);
+        if let Some(ref tools_path) = tools_config_path {
+            let config = tools::http_provider::ToolsConfig::from_file(tools_path)
+                .unwrap_or_else(|e| { eprintln!("{}", e); std::process::exit(1); });
+            let provider = std::sync::Arc::new(tools::http_provider::HttpProvider::new(config));
+            #[cfg(feature = "tools")]
+            let runtime = std::sync::Arc::new(tokio::runtime::Runtime::new().expect("tokio runtime"));
+            match interpreter::run_with_tools(
+                &program,
+                func_name,
+                run_args,
+                provider,
+                #[cfg(feature = "tools")]
+                runtime,
+            ) {
+                Ok(val) => println!("{}", val),
+                Err(e) => {
+                    report_diagnostic(&Diagnostic::from(&e).with_source(source.clone()), mode);
+                    std::process::exit(1);
+                }
+            }
+        } else {
+            match interpreter::run(&program, func_name, run_args) {
+                Ok(val) => println!("{}", val),
+                Err(e) => {
+                    report_diagnostic(&Diagnostic::from(&e).with_source(source.clone()), mode);
+                    std::process::exit(1);
+                }
             }
         }
     } else if args.len() > m {

@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 use crate::ast::*;
 
+pub mod json;
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {
     Number(f64),
@@ -74,6 +76,9 @@ struct Env {
     scopes: Vec<HashMap<String, Value>>,
     functions: HashMap<String, Decl>,
     call_stack: Vec<String>,
+    tool_provider: Option<std::sync::Arc<dyn crate::tools::ToolProvider>>,
+    #[cfg(feature = "tools")]
+    tokio_runtime: Option<std::sync::Arc<tokio::runtime::Runtime>>,
 }
 
 impl Env {
@@ -82,6 +87,23 @@ impl Env {
             scopes: vec![HashMap::new()],
             functions: HashMap::new(),
             call_stack: Vec::new(),
+            tool_provider: None,
+            #[cfg(feature = "tools")]
+            tokio_runtime: None,
+        }
+    }
+
+    fn with_tools(
+        provider: std::sync::Arc<dyn crate::tools::ToolProvider>,
+        #[cfg(feature = "tools")] runtime: std::sync::Arc<tokio::runtime::Runtime>,
+    ) -> Self {
+        Env {
+            scopes: vec![HashMap::new()],
+            functions: HashMap::new(),
+            call_stack: Vec::new(),
+            tool_provider: Some(provider),
+            #[cfg(feature = "tools")]
+            tokio_runtime: Some(runtime),
         }
     }
 
@@ -132,8 +154,25 @@ enum BodyResult {
 }
 
 pub fn run(program: &Program, func_name: Option<&str>, args: Vec<Value>) -> Result<Value> {
-    let mut env = Env::new();
+    run_with_env(program, func_name, args, Env::new())
+}
 
+pub fn run_with_tools(
+    program: &Program,
+    func_name: Option<&str>,
+    args: Vec<Value>,
+    provider: std::sync::Arc<dyn crate::tools::ToolProvider>,
+    #[cfg(feature = "tools")] runtime: std::sync::Arc<tokio::runtime::Runtime>,
+) -> Result<Value> {
+    let env = Env::with_tools(
+        provider,
+        #[cfg(feature = "tools")]
+        runtime,
+    );
+    run_with_env(program, func_name, args, env)
+}
+
+fn run_with_env(program: &Program, func_name: Option<&str>, args: Vec<Value>, mut env: Env) -> Result<Value> {
     // Register all functions and tools
     for decl in &program.declarations {
         match decl {
@@ -563,9 +602,25 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             }
         }
         Decl::Tool { name, .. } => {
-            let args_str: Vec<String> = args.iter().map(|a| format!("{}", a)).collect();
-            eprintln!("tool call: {}({})", name, args_str.join(", "));
-            Ok(Value::Ok(Box::new(Value::Nil)))
+            if let Some(ref _provider) = env.tool_provider {
+                #[cfg(feature = "tools")]
+                {
+                    if let Some(ref rt) = env.tokio_runtime {
+                        return rt.block_on(_provider.call(name, args))
+                            .map_err(|e| RuntimeError::new("ILO-R099", e.to_string()));
+                    }
+                }
+                // No async runtime available (or `tools` feature disabled);
+                // fall through to stub.
+                let args_str: Vec<String> = args.iter().map(|a| format!("{a}")).collect();
+                eprintln!("tool call (no runtime): {}({})", name, args_str.join(", "));
+                Ok(Value::Ok(Box::new(Value::Nil)))
+            } else {
+                // No provider: stub behaviour (matches original)
+                let args_str: Vec<String> = args.iter().map(|a| format!("{a}")).collect();
+                eprintln!("tool call: {}({})", name, args_str.join(", "));
+                Ok(Value::Ok(Box::new(Value::Nil)))
+            }
         }
         Decl::TypeDef { .. } => {
             Err(RuntimeError::new("ILO-R004", format!("{} is a type, not callable", name)))

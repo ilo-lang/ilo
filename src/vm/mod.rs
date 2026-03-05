@@ -248,6 +248,8 @@ pub struct CompiledProgram {
     pub func_names: Vec<String>,
     pub(crate) nan_constants: Vec<Vec<NanVal>>,
     pub(crate) type_registry: TypeRegistry,
+    /// Parallel to `func_names`/`chunks`: true if the function slot is a `tool` declaration.
+    pub is_tool: Vec<bool>,
 }
 
 impl CompiledProgram {
@@ -397,15 +399,20 @@ impl RegCompiler {
             }
         }
 
+        // Track which function indices are tool declarations.
+        let mut is_tool: Vec<bool> = Vec::new();
+
         for decl in &program.declarations {
             match decl {
                 Decl::Function { name, return_type, .. } => {
                     self.func_names.push(name.clone());
                     self.func_return_types.push(return_type.clone());
+                    is_tool.push(false);
                 }
                 Decl::Tool { name, return_type, .. } => {
                     self.func_names.push(name.clone());
                     self.func_return_types.push(return_type.clone());
+                    is_tool.push(true);
                 }
                 Decl::TypeDef { .. } | Decl::Alias { .. } | Decl::Error { .. } => {}
             }
@@ -476,7 +483,7 @@ impl RegCompiler {
         if let Some(e) = self.first_error {
             return Err(e);
         }
-        Ok(CompiledProgram { chunks: self.chunks, func_names: self.func_names, nan_constants: Vec::new(), type_registry: self.type_registry })
+        Ok(CompiledProgram { chunks: self.chunks, func_names: self.func_names, nan_constants: Vec::new(), type_registry: self.type_registry, is_tool })
     }
 
     fn compile_body(&mut self, stmts: &[crate::ast::Spanned<Stmt>]) -> Option<u8> {
@@ -1845,6 +1852,35 @@ pub fn run(compiled: &CompiledProgram, func_name: Option<&str>, args: Vec<Value>
     VM::new(compiled).call(func_idx, args)
 }
 
+pub fn run_with_tools(
+    compiled: &CompiledProgram,
+    func_name: Option<&str>,
+    args: Vec<Value>,
+    provider: &dyn crate::tools::ToolProvider,
+    #[cfg(feature = "tools")] runtime: &tokio::runtime::Runtime,
+) -> Result<Value, VmRuntimeError> {
+    let target = match func_name {
+        Some(name) => name.to_string(),
+        None => compiled.func_names.first().ok_or_else(|| VmRuntimeError {
+            error: VmError::NoFunctionsDefined,
+            span: None,
+            call_stack: Vec::new(),
+        })?.clone(),
+    };
+    let func_idx = compiled.func_index(&target)
+        .ok_or_else(|| VmRuntimeError {
+            error: VmError::UndefinedFunction { name: target.clone() },
+            span: None,
+            call_stack: Vec::new(),
+        })?;
+    VM::new_with_tools(
+        compiled,
+        provider,
+        #[cfg(feature = "tools")]
+        runtime,
+    ).call(func_idx, args)
+}
+
 #[cfg(test)]
 pub fn compile_and_run(program: &Program, func_name: Option<&str>, args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     let compiled = compile(program)?;
@@ -1889,6 +1925,9 @@ struct VM<'a> {
     /// Last dispatched instruction position — for error span capture.
     last_ci: usize,
     last_ip: usize,
+    tool_provider: Option<&'a dyn crate::tools::ToolProvider>,
+    #[cfg(feature = "tools")]
+    tokio_runtime: Option<&'a tokio::runtime::Runtime>,
 }
 
 impl<'a> Drop for VM<'a> {
@@ -1901,7 +1940,33 @@ impl<'a> Drop for VM<'a> {
 
 impl<'a> VM<'a> {
     fn new(program: &'a CompiledProgram) -> Self {
-        VM { program, stack: Vec::with_capacity(256), frames: Vec::with_capacity(64), last_ci: 0, last_ip: 0 }
+        VM {
+            program,
+            stack: Vec::with_capacity(256),
+            frames: Vec::with_capacity(64),
+            last_ci: 0,
+            last_ip: 0,
+            tool_provider: None,
+            #[cfg(feature = "tools")]
+            tokio_runtime: None,
+        }
+    }
+
+    fn new_with_tools(
+        program: &'a CompiledProgram,
+        provider: &'a dyn crate::tools::ToolProvider,
+        #[cfg(feature = "tools")] runtime: &'a tokio::runtime::Runtime,
+    ) -> Self {
+        VM {
+            program,
+            stack: Vec::with_capacity(256),
+            frames: Vec::with_capacity(64),
+            last_ci: 0,
+            last_ip: 0,
+            tool_provider: Some(provider),
+            #[cfg(feature = "tools")]
+            tokio_runtime: Some(runtime),
+        }
     }
 
     fn setup_call(&mut self, func_idx: u16, args: Vec<NanVal>, result_reg: u8) {
@@ -2395,6 +2460,40 @@ impl<'a> VM<'a> {
 
                     // SAFETY: frames is non-empty while execute() is running.
                     unsafe { self.frames.last_mut().unwrap_unchecked() }.ip = ip;
+
+                    // If this is a tool call and we have a provider, dispatch
+                    // through the provider instead of the stub chunk.
+                    let is_tool_call = self.program.is_tool.get(func_idx as usize).copied().unwrap_or(false);
+                    if let (true, Some(_provider)) = (is_tool_call, self.tool_provider) {
+                        let _tool_name = &self.program.func_names[func_idx as usize];
+                        let mut value_args = Vec::with_capacity(n_args);
+                        for i in 0..n_args {
+                            value_args.push(reg!(base + a as usize + 1 + i).to_value());
+                        }
+
+                        let result: Value = {
+                            #[cfg(feature = "tools")]
+                            {
+                                if let Some(rt) = self.tokio_runtime {
+                                    rt.block_on(_provider.call(_tool_name, value_args))
+                                        .unwrap_or_else(|e| Value::Err(Box::new(Value::Text(e.to_string()))))
+                                } else {
+                                    let _ = value_args;
+                                    Value::Ok(Box::new(Value::Nil))
+                                }
+                            }
+                            #[cfg(not(feature = "tools"))]
+                            {
+                                let _ = value_args;
+                                Value::Ok(Box::new(Value::Nil))
+                            }
+                        };
+
+                        let nan_result = NanVal::from_value(&result);
+                        reg_set!(base + a as usize, nan_result);
+                        // ip was already saved above; continue to next instruction
+                        continue;
+                    }
 
                     let mut args = Vec::with_capacity(n_args);
                     for i in 0..n_args {

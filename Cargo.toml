@@ -16,6 +16,7 @@ default = ["cranelift", "http"]
 http = ["dep:minreq"]
 cranelift = ["dep:cranelift-codegen", "dep:cranelift-frontend", "dep:cranelift-jit", "dep:cranelift-module", "dep:cranelift-native", "dep:target-lexicon"]
 llvm = ["dep:inkwell"]
+tools = ["dep:tokio", "dep:reqwest"]
 
 [dependencies]
 logos = "0.16.1"
@@ -31,7 +32,13 @@ cranelift-native = { version = "0.116", optional = true }
 target-lexicon = { version = "0.12", optional = true }
 inkwell = { version = "0.5", features = ["llvm18-0"], optional = true }
 minreq = { version = "2.14", default-features = false, optional = true }
+tokio = { version = "1", features = ["rt", "macros"], optional = true }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"], optional = true }
 fastrand = "2"
+
+[dev-dependencies]
+wiremock = "0.6"
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 
 [profile.release]
 strip = true
