@@ -545,8 +545,8 @@ fn builtin_check_args(name: &str, arg_types: &[Ty], func_ctx: &str, span: Option
         "map" => {
             // map fn:F a b xs:L a → L b
             // First arg must be a function type; second must be a list.
-            if let Some(fn_ty) = arg_types.first() {
-                if !matches!(fn_ty, Ty::Fn(_, _) | Ty::Unknown) {
+            if let Some(fn_ty) = arg_types.first()
+                && !matches!(fn_ty, Ty::Fn(_, _) | Ty::Unknown) {
                     errors.push(VerifyError {
                         code: "ILO-T013",
                         function: func_ctx.to_string(),
@@ -556,7 +556,6 @@ fn builtin_check_args(name: &str, arg_types: &[Ty], func_ctx: &str, span: Option
                         is_warning: false,
                     });
                 }
-            }
             // Return type: L of the function's return type, or L Unknown
             let ret_elem = match arg_types.first() {
                 Some(Ty::Fn(_, ret)) => *ret.clone(),
@@ -567,8 +566,8 @@ fn builtin_check_args(name: &str, arg_types: &[Ty], func_ctx: &str, span: Option
         "flt" => {
             // flt fn:F a b xs:L a → L a
             // First arg: function returning bool; second: list.
-            if let Some(fn_ty) = arg_types.first() {
-                if !matches!(fn_ty, Ty::Fn(_, _) | Ty::Unknown) {
+            if let Some(fn_ty) = arg_types.first()
+                && !matches!(fn_ty, Ty::Fn(_, _) | Ty::Unknown) {
                     errors.push(VerifyError {
                         code: "ILO-T013",
                         function: func_ctx.to_string(),
@@ -578,7 +577,6 @@ fn builtin_check_args(name: &str, arg_types: &[Ty], func_ctx: &str, span: Option
                         is_warning: false,
                     });
                 }
-            }
             // Return type: same list type as input
             let ret = match arg_types.get(1) {
                 Some(ty @ Ty::List(_)) => ty.clone(),
@@ -589,8 +587,8 @@ fn builtin_check_args(name: &str, arg_types: &[Ty], func_ctx: &str, span: Option
         "fld" => {
             // fld fn:F a b b xs:L a init:b → b
             // First arg: function; second: list; third: initial accumulator.
-            if let Some(fn_ty) = arg_types.first() {
-                if !matches!(fn_ty, Ty::Fn(_, _) | Ty::Unknown) {
+            if let Some(fn_ty) = arg_types.first()
+                && !matches!(fn_ty, Ty::Fn(_, _) | Ty::Unknown) {
                     errors.push(VerifyError {
                         code: "ILO-T013",
                         function: func_ctx.to_string(),
@@ -600,7 +598,6 @@ fn builtin_check_args(name: &str, arg_types: &[Ty], func_ctx: &str, span: Option
                         is_warning: false,
                     });
                 }
-            }
             // Return type: accumulator type (third arg) or function return type
             let ret = match arg_types.get(2) {
                 Some(ty) if !matches!(ty, Ty::Unknown) => ty.clone(),

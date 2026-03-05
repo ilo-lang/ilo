@@ -106,9 +106,7 @@ fn role_of(stmt: &Stmt, is_last: bool) -> String {
         Stmt::Guard { negated, else_body, .. } => {
             if else_body.is_some() {
                 if *negated { "ternary !".into() } else { "ternary".into() }
-            } else {
-                if *negated { "guard !".into() } else { "guard".into() }
-            }
+            } else if *negated { "guard !".into() } else { "guard".into() }
         }
         Stmt::Match { .. }            => "match".into(),
         Stmt::ForEach { binding, .. } => format!("foreach → {binding}"),

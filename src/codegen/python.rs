@@ -26,7 +26,7 @@ fn stmt_uses_unwrap(stmt: &Stmt) -> bool {
             expr_uses_unwrap(condition) || body.iter().any(|s| stmt_uses_unwrap(&s.node))
         }
         Stmt::Match { subject, arms } => {
-            subject.as_ref().is_some_and(|s| expr_uses_unwrap(s))
+            subject.as_ref().is_some_and(expr_uses_unwrap)
                 || arms.iter().any(|a| a.body.iter().any(|s| stmt_uses_unwrap(&s.node)))
         }
         Stmt::ForEach { collection, body, .. } => {

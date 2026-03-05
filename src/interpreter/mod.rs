@@ -61,7 +61,7 @@ pub struct RuntimeError {
     pub span: Option<crate::ast::Span>,
     pub call_stack: Vec<String>,
     /// When set, the `!` operator is propagating an Err value — not a real error.
-    pub propagate_value: Option<Value>,
+    pub propagate_value: Option<Box<Value>>,
 }
 
 impl RuntimeError {
@@ -710,7 +710,7 @@ fn eval_body(env: &mut Env, stmts: &[Spanned<Stmt>]) -> Result<BodyResult> {
             Err(mut e) => {
                 // Auto-unwrap propagation: convert to early return
                 if let Some(val) = e.propagate_value.take() {
-                    return Ok(BodyResult::Return(val));
+                    return Ok(BodyResult::Return(*val));
                 }
                 if e.span.is_none() { e.span = Some(spanned.span); }
                 if e.call_stack.is_empty() {
@@ -959,7 +959,7 @@ fn eval_expr(env: &mut Env, expr: &Expr) -> Result<Value> {
                 match result {
                     Value::Ok(v) => Ok(*v),
                     Value::Err(e) => Err(RuntimeError {
-                        propagate_value: Some(Value::Err(e)),
+                        propagate_value: Some(Box::new(Value::Err(e))),
                         ..RuntimeError::new("ILO-R014", "auto-unwrap propagating Err")
                     }),
                     other => Ok(other), // non-Result values pass through
