@@ -44,7 +44,7 @@ Everything through Phase E is complete. This file tracks remaining work.
 | D3: Discovery | `ilo tools`, progressive disclosure, `--human`/`--ilo`/`--json` output |
 | D4: Agent loop | `ilo serv` / `ilo repl -j`, JSON protocol, phase-structured errors |
 | E: Types | `O T` optional, `S a b c` sum, `M k v` map + 7 builtins, type variables |
-| Hardening | Reserved keywords: `if` `return` `let` `fn` `def` `var` `const` |
+| Hardening | Reserved keywords: `if` `return` `let` `fn` `def` `var` `const` (lexer-level) |
 | Control flow | Type pattern matching `?x{n v:...; t v:...}` |
 | Codegen | Python emit, formatter (`--explain`), dense wire format |
 | VM perf | Bump arena for records, JIT inlining (arithmetic, branching, field access, alloc), no-Vec OP_CALL |
