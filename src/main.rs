@@ -1416,6 +1416,8 @@ fn run_bench(program: &ast::Program, func_name: Option<&str>, args: &[interprete
         let chunk = &compiled.chunks[fi];
         let nan_consts = &compiled.nan_constants[fi];
         let nan_args: Vec<u64> = args.iter().map(|v| vm::NanVal::from_value(v).0).collect();
+        // SAFETY: `compiled` outlives the entire bench loop below.
+        unsafe { vm::set_active_registry(&compiled); }
         if let Some(jit_func) = vm::jit_cranelift::compile(chunk, nan_consts, &compiled) {
             for _ in 0..100 {
                 let _ = vm::jit_cranelift::call(&jit_func, &nan_args);

@@ -227,7 +227,8 @@ impl Chunk {
 #[derive(Debug, Clone)]
 pub(crate) struct TypeInfo {
     pub name: String,
-    pub fields: Vec<String>,  // ordered field names — index = slot
+    pub fields: Vec<String>,      // ordered field names — index = slot
+    pub num_fields: u64,          // bitmask: bit i set if field i is Number type
 }
 
 #[derive(Debug, Clone, Default)]
@@ -237,13 +238,13 @@ pub(crate) struct TypeRegistry {
 }
 
 impl TypeRegistry {
-    fn register(&mut self, name: String, fields: Vec<String>) -> u16 {
+    fn register(&mut self, name: String, fields: Vec<String>, num_fields: u64) -> u16 {
         if let Some(&id) = self.name_to_id.get(&name) {
             return id;
         }
         let id = self.types.len() as u16;
         self.name_to_id.insert(name.clone(), id);
-        self.types.push(Rc::new(TypeInfo { name, fields }));
+        self.types.push(Rc::new(TypeInfo { name, fields, num_fields }));
         id
     }
 
@@ -407,7 +408,13 @@ impl RegCompiler {
         for decl in &program.declarations {
             if let Decl::TypeDef { name, fields, .. } = decl {
                 let field_names: Vec<String> = fields.iter().map(|p| p.name.clone()).collect();
-                self.type_registry.register(name.clone(), field_names);
+                let mut num_fields: u64 = 0;
+                for (i, p) in fields.iter().enumerate() {
+                    if p.ty == crate::ast::Type::Number && i < 64 {
+                        num_fields |= 1 << i;
+                    }
+                }
+                self.type_registry.register(name.clone(), field_names, num_fields);
             }
         }
 
@@ -1089,15 +1096,21 @@ impl RegCompiler {
                     Some(idx) => {
                         // Fast path: direct field index
                         let c = idx as u8;
+                        // Check if this field is known numeric from the type definition
+                        let field_is_num = obj_type != u16::MAX
+                            && idx < 64
+                            && (self.type_registry.types[obj_type as usize].num_fields & (1 << idx)) != 0;
                         if *safe {
                             self.emit_abx(OP_JMPNN, obj_reg, 1);
                             self.emit_abx(OP_JMP, 0, 1);
                             self.emit_abc(OP_RECFLD, obj_reg, obj_reg, c);
                             self.reg_record_type[obj_reg as usize] = u16::MAX;
+                            if field_is_num { self.reg_is_num[obj_reg as usize] = true; }
                             obj_reg
                         } else {
                             let ra = self.alloc_reg();
                             self.emit_abc(OP_RECFLD, ra, obj_reg, c);
+                            if field_is_num { self.reg_is_num[ra as usize] = true; }
                             ra
                         }
                     }
@@ -1571,7 +1584,7 @@ impl RegCompiler {
                     None => {
                         // Auto-register from field order in this expression
                         let field_names: Vec<String> = fields.iter().map(|(n, _)| n.clone()).collect();
-                        self.type_registry.register(type_name.clone(), field_names)
+                        self.type_registry.register(type_name.clone(), field_names, 0)
                     }
                 };
 
@@ -1714,9 +1727,140 @@ const TAG_LIST: u64   = 0x7FFE_0000_0000_0000;
 const TAG_RECORD: u64 = 0x7FFF_0000_0000_0000;
 const TAG_OK: u64     = 0xFFFC_0000_0000_0000;
 const TAG_ERR: u64    = 0xFFFD_0000_0000_0000;
-const TAG_MAP: u64    = 0xFFFE_0000_0000_0000;
+const TAG_MAP: u64          = 0xFFFF_0000_0000_0000;
+pub(crate) const TAG_ARENA_REC: u64 = 0xFFFE_0000_0000_0000;
 const PTR_MASK: u64   = 0x0000_FFFF_FFFF_FFFF;
 const TAG_MASK: u64   = 0xFFFF_0000_0000_0000;
+
+// ── Bump Arena for Records ──────────────────────────────────────────
+//
+// ArenaRecord layout (repr(C), 8-byte header + inline NanVal fields):
+//   [type_id: u16 | n_fields: u16 | _pad: u32 | fields: [u64; n_fields]]
+//
+// Records allocated from BumpArena use TAG_ARENA_REC. They are never
+// individually freed — the entire arena is reset in bulk (e.g. after OP_RET
+// returns to top-level, or after each JIT call).
+
+const ARENA_DEFAULT_SIZE: usize = 64 * 1024; // 64 KB
+
+#[repr(C)]
+pub(crate) struct ArenaRecord {
+    pub type_id: u16,
+    pub n_fields: u16,
+    _pad: u32,
+    // Followed by n_fields × u64 (NanVal) inline
+}
+
+impl ArenaRecord {
+    #[inline]
+    pub(crate) unsafe fn field_ptr(&self, idx: usize) -> *const u64 {
+        unsafe { (self as *const Self as *const u8).add(8).cast::<u64>().add(idx) }
+    }
+
+    #[inline]
+    pub(crate) unsafe fn field_ptr_mut(&self, idx: usize) -> *mut u64 {
+        unsafe { (self as *const Self as *mut u8).add(8).cast::<u64>().add(idx) }
+    }
+}
+
+/// Bump arena for records. `#[repr(C)]` with known field offsets so JIT can
+/// inline the allocation (load buf_ptr/buf_cap/offset, bump, store).
+///
+/// JIT field offsets: buf_ptr=0, buf_cap=8, offset=16.
+#[repr(C)]
+pub(crate) struct BumpArena {
+    pub(crate) buf_ptr: *mut u8,   // offset 0  — raw pointer to buffer
+    pub(crate) buf_cap: usize,     // offset 8  — buffer capacity in bytes
+    pub(crate) offset: usize,      // offset 16 — current bump offset
+}
+
+impl BumpArena {
+    pub(crate) fn new() -> Self {
+        let mut buf = vec![0u8; ARENA_DEFAULT_SIZE];
+        let ptr = buf.as_mut_ptr();
+        let cap = buf.capacity();
+        std::mem::forget(buf); // we manage the memory now
+        BumpArena { buf_ptr: ptr, buf_cap: cap, offset: 0 }
+    }
+
+    #[inline]
+    pub(crate) fn reset(&mut self) {
+        // Walk all arena records and drop_rc their heap fields before resetting.
+        let mut off = 0usize;
+        while off + 8 <= self.offset {
+            let ptr = unsafe { self.buf_ptr.add(off) } as *const ArenaRecord;
+            let rec = unsafe { &*ptr };
+            let n = rec.n_fields as usize;
+            let record_size = 8 + n * 8;
+            if off + record_size > self.offset { break; }
+            for i in 0..n {
+                let v = NanVal(unsafe { *rec.field_ptr(i) });
+                v.drop_rc(); // no-op for numbers/bools/nil/arena-records; frees heap refs
+            }
+            off += record_size;
+            // Align to 8 bytes
+            off = (off + 7) & !7;
+        }
+        self.offset = 0;
+    }
+
+    /// Bump-allocate space for a record with `n_fields` fields.
+    /// Returns a pointer to the ArenaRecord header, or None if full.
+    #[inline]
+    pub(crate) fn alloc_record(&mut self, type_id: u16, n_fields: usize) -> Option<*mut ArenaRecord> {
+        let size = 8 + n_fields * 8; // header + fields
+        let aligned_offset = (self.offset + 7) & !7;
+        if aligned_offset + size > self.buf_cap {
+            return None; // arena full, caller falls back to Rc path
+        }
+        let ptr = unsafe { self.buf_ptr.add(aligned_offset) } as *mut ArenaRecord;
+        unsafe {
+            (*ptr).type_id = type_id;
+            (*ptr).n_fields = n_fields as u16;
+            (*ptr)._pad = 0;
+        }
+        self.offset = aligned_offset + size;
+        Some(ptr)
+    }
+}
+
+impl Drop for BumpArena {
+    fn drop(&mut self) {
+        self.reset(); // drop_rc all heap fields
+        unsafe {
+            // Reconstruct Vec to free the buffer
+            let _ = Vec::from_raw_parts(self.buf_ptr, 0, self.buf_cap);
+        }
+    }
+}
+
+thread_local! {
+    pub(crate) static JIT_ARENA: std::cell::RefCell<BumpArena> = std::cell::RefCell::new(BumpArena::new());
+    static ACTIVE_REGISTRY: std::cell::Cell<*const TypeRegistry> = const { std::cell::Cell::new(std::ptr::null()) };
+}
+
+/// Set the active TypeRegistry for arena record field name resolution.
+///
+/// # Safety
+/// The caller must ensure that `program` outlives any JIT invocation that runs
+/// on this thread while the pointer is active. Specifically, `program` must not
+/// be dropped until after all `jit_arena_reset()` calls that dereference
+/// `ACTIVE_REGISTRY` have completed. In practice: call this once before the
+/// bench/run loop and keep `program` alive for the duration of the loop.
+pub unsafe fn set_active_registry(program: &CompiledProgram) {
+    ACTIVE_REGISTRY.with(|r| r.set(&program.type_registry as *const TypeRegistry));
+}
+
+/// Get a raw pointer to the JIT arena (for passing to jit_recnew).
+/// The pointer is valid as long as the thread-local isn't dropped.
+pub(crate) fn jit_arena_ptr() -> *mut BumpArena {
+    JIT_ARENA.with(|cell| cell.as_ptr())
+}
+
+/// Reset the JIT arena (called after each JIT function invocation).
+pub(crate) fn jit_arena_reset() {
+    JIT_ARENA.with(|cell| cell.borrow_mut().reset());
+}
 
 enum HeapObj {
     Str(String),
@@ -1792,6 +1936,48 @@ impl NanVal {
         NanVal(TAG_RECORD | (ptr & PTR_MASK))
     }
 
+    /// Create a NanVal pointing to an arena-allocated record.
+    #[inline]
+    fn arena_record(ptr: *const ArenaRecord) -> Self {
+        NanVal(TAG_ARENA_REC | (ptr as u64 & PTR_MASK))
+    }
+
+    #[inline]
+    pub(crate) fn is_arena_record(self) -> bool {
+        (self.0 & TAG_MASK) == TAG_ARENA_REC
+    }
+
+    /// Get pointer to ArenaRecord from an arena-tagged NanVal.
+    #[inline]
+    pub(crate) unsafe fn as_arena_record(&self) -> &ArenaRecord {
+        unsafe { &*((self.0 & PTR_MASK) as *const ArenaRecord) }
+    }
+
+    /// Promote an arena record to a heap-allocated Rc record.
+    fn promote_arena_to_heap(self, registry: &TypeRegistry) -> Self {
+        debug_assert!(self.is_arena_record());
+        unsafe {
+            let rec = self.as_arena_record();
+            let type_info = Rc::clone(&registry.types[rec.type_id as usize]);
+            let n = rec.n_fields as usize;
+            let mut fields = Vec::with_capacity(n);
+            for i in 0..n {
+                let v = NanVal(*rec.field_ptr(i));
+                // Recursively promote nested arena records before the arena is reset.
+                // For heap values, clone_rc increments the reference count so the
+                // newly allocated heap record holds a valid owned reference.
+                let v = if v.is_arena_record() {
+                    v.promote_arena_to_heap(registry)
+                } else {
+                    v.clone_rc();
+                    v
+                };
+                fields.push(v);
+            }
+            NanVal::heap_record(type_info, fields.into_boxed_slice())
+        }
+    }
+
     fn heap_ok(inner: NanVal) -> Self {
         let rc = Rc::new(HeapObj::OkVal(inner));
         let ptr = Rc::into_raw(rc) as u64;
@@ -1823,6 +2009,7 @@ impl NanVal {
     #[inline]
     fn is_heap(self) -> bool {
         (self.0 & QNAN) == QNAN && self.0 != TAG_NIL && self.0 != TAG_TRUE && self.0 != TAG_FALSE
+            && (self.0 & TAG_MASK) != TAG_ARENA_REC
     }
 
     #[inline]
@@ -1884,7 +2071,7 @@ impl NanVal {
             Value::Record { type_name, fields } => {
                 // Build TypeInfo from the Value's field names (preserving order)
                 let field_names: Vec<String> = fields.keys().cloned().collect();
-                let type_info = Rc::new(TypeInfo { name: type_name.clone(), fields: field_names.clone() });
+                let type_info = Rc::new(TypeInfo { name: type_name.clone(), fields: field_names.clone(), num_fields: 0 });
                 let flat: Box<[NanVal]> = field_names.iter()
                     .map(|k| NanVal::from_value(&fields[k]))
                     .collect::<Vec<_>>()
@@ -1900,6 +2087,31 @@ impl NanVal {
     pub fn to_value(self) -> Value {
         if self.is_number() {
             return Value::Number(self.as_number());
+        }
+        if self.is_arena_record() {
+            return unsafe {
+                let rec = self.as_arena_record();
+                let n = rec.n_fields as usize;
+                let mut field_map = HashMap::new();
+                let registry_ptr = ACTIVE_REGISTRY.with(|r| r.get());
+                let (type_name, field_names) = if !registry_ptr.is_null() {
+                    let registry = &*registry_ptr;
+                    match registry.types.get(rec.type_id as usize) {
+                        Some(ti) => (ti.name.clone(), Some(&ti.fields)),
+                        None => (String::new(), None),
+                    }
+                } else {
+                    (String::new(), None)
+                };
+                for i in 0..n {
+                    let v = NanVal(*rec.field_ptr(i));
+                    let name = field_names
+                        .and_then(|f| f.get(i).cloned())
+                        .unwrap_or_else(|| format!("_{}", i));
+                    field_map.insert(name, v.to_value());
+                }
+                Value::Record { type_name, fields: field_map }
+            };
         }
         match self.0 {
             TAG_NIL => Value::Nil,
@@ -1929,6 +2141,29 @@ impl NanVal {
                 }
             }
         }
+    }
+
+    /// Convert to Value, properly resolving arena record field names via registry.
+    #[allow(dead_code)]
+    pub(crate) fn to_value_with_registry(self, registry: &TypeRegistry) -> Value {
+        if self.is_arena_record() {
+            return unsafe {
+                let rec = self.as_arena_record();
+                let type_info = &registry.types[rec.type_id as usize];
+                let n = rec.n_fields as usize;
+                let mut field_map = HashMap::new();
+                for i in 0..n {
+                    let v = NanVal(*rec.field_ptr(i));
+                    let name = type_info.fields.get(i).cloned().unwrap_or_else(|| format!("_{}", i));
+                    field_map.insert(name, v.to_value_with_registry(registry));
+                }
+                Value::Record {
+                    type_name: type_info.name.clone(),
+                    fields: field_map,
+                }
+            };
+        }
+        self.to_value()
     }
 }
 
@@ -2030,6 +2265,7 @@ struct VM<'a> {
     program: &'a CompiledProgram,
     stack: Vec<NanVal>,
     frames: Vec<CallFrame>,
+    arena: BumpArena,
     /// Last dispatched instruction position — for error span capture.
     last_ci: usize,
     last_ip: usize,
@@ -2052,6 +2288,7 @@ impl<'a> VM<'a> {
             program,
             stack: Vec::with_capacity(256),
             frames: Vec::with_capacity(64),
+            arena: BumpArena::new(),
             last_ci: 0,
             last_ip: 0,
             tool_provider: None,
@@ -2069,6 +2306,7 @@ impl<'a> VM<'a> {
             program,
             stack: Vec::with_capacity(256),
             frames: Vec::with_capacity(64),
+            arena: BumpArena::new(),
             last_ci: 0,
             last_ip: 0,
             tool_provider: Some(provider),
@@ -2121,6 +2359,9 @@ impl<'a> VM<'a> {
     // documentation; allow the lint here.
     #[allow(unused_unsafe)]
     fn execute(&mut self) -> VmResult<Value> {
+        // Set active registry for arena record promotion in nanval_to_json and JIT callbacks.
+        // SAFETY: `self.program` is owned by the VM and outlives `execute()`.
+        ACTIVE_REGISTRY.with(|r| r.set(&self.program.type_registry as *const TypeRegistry));
         // SAFETY: execute() is only called from call() after setup_call() has pushed
         // a frame, so frames is non-empty.
         let frame = unsafe { self.frames.last().unwrap_unchecked() };
@@ -2373,15 +2614,19 @@ impl<'a> VM<'a> {
                 OP_WRAPOK => {
                     let a = ((inst >> 16) & 0xFF) as usize + base;
                     let b = ((inst >> 8) & 0xFF) as usize + base;
-                    let v = reg!(b);
-                    if !v.is_number() { v.clone_rc(); }
+                    let mut v = reg!(b);
+                    if v.is_arena_record() {
+                        v = v.promote_arena_to_heap(&self.program.type_registry);
+                    } else if !v.is_number() { v.clone_rc(); }
                     reg_set!(a, NanVal::heap_ok(v));
                 }
                 OP_WRAPERR => {
                     let a = ((inst >> 16) & 0xFF) as usize + base;
                     let b = ((inst >> 8) & 0xFF) as usize + base;
-                    let v = reg!(b);
-                    if !v.is_number() { v.clone_rc(); }
+                    let mut v = reg!(b);
+                    if v.is_arena_record() {
+                        v = v.promote_arena_to_heap(&self.program.type_registry);
+                    } else if !v.is_number() { v.clone_rc(); }
                     reg_set!(a, NanVal::heap_err(v));
                 }
                 OP_ISOK => {
@@ -2576,6 +2821,20 @@ impl<'a> VM<'a> {
                     let b = ((inst >> 8) & 0xFF) as usize + base;
                     let field_idx = (inst & 0xFF) as usize;
                     let record = reg!(b);
+                    // Fast path: arena record — inline field access
+                    if record.is_arena_record() {
+                        let field_val = unsafe {
+                            let rec = record.as_arena_record();
+                            if field_idx < rec.n_fields as usize {
+                                let v = NanVal(*rec.field_ptr(field_idx));
+                                v.clone_rc(); // no-op for numbers; needed for heap strings
+                                v
+                            } else {
+                                return Err(VmError::FieldNotFound { field: format!("index {}", field_idx) });
+                            }
+                        };
+                        reg_set!(a, field_val);
+                    } else {
                     // SAFETY: OP_RECFLD is only emitted by the compiler for record
                     // field accesses on values the type-checker knows are records.
                     debug_assert!(record.is_heap(), "OP_RECFLD on non-heap value");
@@ -2596,6 +2855,7 @@ impl<'a> VM<'a> {
                         }
                     };
                     reg_set!(a, field_val);
+                    } // end else (heap record path)
                 }
                 OP_RECFLD_NAME => {
                     // Dynamic field access by name (for JSON records, etc.)
@@ -2608,6 +2868,21 @@ impl<'a> VM<'a> {
                         _ => return Err(VmError::Type("RecordField expects string constant")),
                     };
                     let record = reg!(b);
+                    if record.is_arena_record() {
+                        let field_val = unsafe {
+                            let rec = record.as_arena_record();
+                            let type_info = &self.program.type_registry.types[rec.type_id as usize];
+                            match type_info.fields.iter().position(|f| f == field_name) {
+                                Some(idx) if idx < rec.n_fields as usize => {
+                                    let v = NanVal(*rec.field_ptr(idx));
+                                    v.clone_rc();
+                                    v
+                                }
+                                _ => return Err(VmError::FieldNotFound { field: field_name.to_string() }),
+                            }
+                        };
+                        reg_set!(a, field_val);
+                    } else {
                     debug_assert!(record.is_heap(), "OP_RECFLD_NAME on non-heap value");
                     let field_val = unsafe {
                         match record.as_heap_ref() {
@@ -2625,6 +2900,7 @@ impl<'a> VM<'a> {
                         }
                     };
                     reg_set!(a, field_val);
+                    } // end else (heap record path)
                 }
                 OP_INDEX => {
                     let a = ((inst >> 16) & 0xFF) as usize + base;
@@ -2775,8 +3051,8 @@ impl<'a> VM<'a> {
                 }
                 OP_RET => {
                     let a = ((inst >> 16) & 0xFF) as usize + base;
-                    let result = reg!(a);
-                    if !result.is_number() { result.clone_rc(); }
+                    let mut result = reg!(a);
+                    if !result.is_number() && !result.is_arena_record() { result.clone_rc(); }
 
                     // SAFETY: frames is non-empty while execute() is running.
                     let result_reg = unsafe { self.frames.last().unwrap_unchecked() }.result_reg;
@@ -2789,6 +3065,11 @@ impl<'a> VM<'a> {
                     self.frames.pop();
 
                     if self.frames.is_empty() {
+                        // Promote arena records before resetting arena
+                        if result.is_arena_record() {
+                            result = result.promote_arena_to_heap(&self.program.type_registry);
+                        }
+                        self.arena.reset();
                         let val = result.to_value();
                         result.drop_rc();
                         return Ok(val);
@@ -2809,19 +3090,28 @@ impl<'a> VM<'a> {
                     let type_id = (bx >> 8) as u16;
                     let n_fields = bx & 0xFF;
 
-                    let type_info = Rc::clone(&self.program.type_registry.types[type_id as usize]);
-                    debug_assert_eq!(type_info.fields.len(), n_fields,
-                        "OP_RECNEW: type {} has {} fields but instruction says {}",
-                        type_info.name, type_info.fields.len(), n_fields);
-
-                    let mut fields = Vec::with_capacity(n_fields);
-                    for i in 0..n_fields {
-                        let v = reg!(a + 1 + i);
-                        v.clone_rc();
-                        fields.push(v);
+                    // Try arena allocation first (fast path)
+                    if let Some(rec_ptr) = self.arena.alloc_record(type_id, n_fields) {
+                        unsafe {
+                            let rec = &*rec_ptr;
+                            for i in 0..n_fields {
+                                let v = reg!(a + 1 + i);
+                                v.clone_rc(); // no-op for numbers; needed for heap strings etc.
+                                *rec.field_ptr_mut(i) = v.0;
+                            }
+                        }
+                        reg_set!(a, NanVal::arena_record(rec_ptr));
+                    } else {
+                        // Arena full — fall back to Rc path
+                        let type_info = Rc::clone(&self.program.type_registry.types[type_id as usize]);
+                        let mut fields = Vec::with_capacity(n_fields);
+                        for i in 0..n_fields {
+                            let v = reg!(a + 1 + i);
+                            v.clone_rc();
+                            fields.push(v);
+                        }
+                        reg_set!(a, NanVal::heap_record(type_info, fields.into_boxed_slice()));
                     }
-
-                    reg_set!(a, NanVal::heap_record(type_info, fields.into_boxed_slice()));
                 }
                 OP_RECWITH => {
                     let a = ((inst >> 16) & 0xFF) as usize + base;
@@ -2831,11 +3121,68 @@ impl<'a> VM<'a> {
 
                     // SAFETY: ci is a valid chunk index (same invariant as loop header).
                     let chunk = unsafe { self.program.chunks.get_unchecked(ci) };
-                    // The constant is either a list of Numbers (field indices) or
-                    // a list of Texts (field names for dynamic resolution).
                     let const_val = &chunk.constants[const_idx];
 
                     let old_record = reg!(a);
+
+                    if old_record.is_arena_record() {
+                        // Arena record with: allocate new arena record, copy fields, overwrite updates
+                        let (type_id, old_n) = unsafe {
+                            let rec = old_record.as_arena_record();
+                            (rec.type_id, rec.n_fields as usize)
+                        };
+                        let slots: Vec<usize> = match const_val {
+                            Value::List(items) => items.iter().map(|v| match v {
+                                Value::Number(n) => *n as usize,
+                                _ => 0,
+                            }).collect(),
+                            _ => vec![],
+                        };
+                        if let Some(new_ptr) = self.arena.alloc_record(type_id, old_n) {
+                            unsafe {
+                                let old_rec = old_record.as_arena_record();
+                                let new_rec = &*new_ptr;
+                                // Copy all fields from old record (clone_rc for heap refs)
+                                for i in 0..old_n {
+                                    let v = NanVal(*old_rec.field_ptr(i));
+                                    v.clone_rc();
+                                    *new_rec.field_ptr_mut(i) = v.0;
+                                }
+                                // Overwrite updated slots
+                                for (i, &slot) in slots.iter().enumerate().take(n_updates) {
+                                    if slot < old_n {
+                                        // Drop the copied value and store the new one
+                                        NanVal(*new_rec.field_ptr(slot)).drop_rc();
+                                        let val = reg!(a + 1 + i);
+                                        val.clone_rc();
+                                        *new_rec.field_ptr_mut(slot) = val.0;
+                                    }
+                                }
+                            }
+                            reg_set!(a, NanVal::arena_record(new_ptr));
+                        } else {
+                            // Arena full — fall back to heap
+                            let type_info = Rc::clone(&self.program.type_registry.types[type_id as usize]);
+                            unsafe {
+                                let old_rec = old_record.as_arena_record();
+                                let mut new_fields = Vec::with_capacity(old_n);
+                                for i in 0..old_n {
+                                    let v = NanVal(*old_rec.field_ptr(i));
+                                    v.clone_rc();
+                                    new_fields.push(v);
+                                }
+                                for (i, &slot) in slots.iter().enumerate().take(n_updates) {
+                                    let val = reg!(a + 1 + i);
+                                    val.clone_rc();
+                                    if slot < new_fields.len() {
+                                        new_fields[slot].drop_rc();
+                                        new_fields[slot] = val;
+                                    }
+                                }
+                                reg_set!(a, NanVal::heap_record(type_info, new_fields.into_boxed_slice()));
+                            }
+                        }
+                    } else {
                     debug_assert!(old_record.is_heap(), "OP_RECWITH on non-heap value");
                     let new_record = unsafe {
                         match old_record.as_heap_ref() {
@@ -2868,6 +3215,7 @@ impl<'a> VM<'a> {
                         }
                     };
                     reg_set!(a, new_record);
+                    } // end else (heap record path)
                 }
                 OP_LISTNEW => {
                     let a = ((inst >> 16) & 0xFF) as usize + base;
@@ -3408,6 +3756,11 @@ impl<'a> VM<'a> {
                     let a = ((inst >> 16) & 0xFF) as usize + base;
                     let b = ((inst >> 8) & 0xFF) as usize + base;
                     let c = (inst & 0xFF) as usize + base;
+                    // Promote arena records escaping into heap list
+                    if reg!(c).is_arena_record() {
+                        let promoted = reg!(c).promote_arena_to_heap(&self.program.type_registry);
+                        reg_set!(c, promoted);
+                    }
                     let list_val = reg!(b);
                     let item_val = reg!(c);
                     if !list_val.is_heap() {
@@ -3456,6 +3809,28 @@ fn nanval_to_json(v: NanVal) -> serde_json::Value {
             .map(serde_json::Value::Number)
             .unwrap_or(serde_json::Value::Null);
     }
+    if v.is_arena_record() {
+        unsafe {
+            let rec = v.as_arena_record();
+            let n = rec.n_fields as usize;
+            let mut map = serde_json::Map::new();
+            // Try to get field names from active registry
+            let registry_ptr = ACTIVE_REGISTRY.with(|r| r.get());
+            for i in 0..n {
+                let fv = NanVal(*rec.field_ptr(i));
+                let name = if !registry_ptr.is_null() {
+                    let registry = &*registry_ptr;
+                    registry.types.get(rec.type_id as usize)
+                        .and_then(|ti| ti.fields.get(i).cloned())
+                        .unwrap_or_else(|| format!("_{}", i))
+                } else {
+                    format!("_{}", i)
+                };
+                map.insert(name, nanval_to_json(fv));
+            }
+            return serde_json::Value::Object(map);
+        }
+    }
     match v.0 {
         TAG_NIL => serde_json::Value::Null,
         TAG_TRUE => serde_json::Value::Bool(true),
@@ -3498,7 +3873,7 @@ fn serde_json_to_nanval(v: serde_json::Value) -> NanVal {
                 .map(|(_, v)| serde_json_to_nanval(v))
                 .collect::<Vec<_>>()
                 .into_boxed_slice();
-            let type_info = Rc::new(TypeInfo { name: "json".to_string(), fields: field_names });
+            let type_info = Rc::new(TypeInfo { name: "json".to_string(), fields: field_names, num_fields: 0 });
             NanVal::heap_record(type_info, field_vals)
         }
         serde_json::Value::Array(arr) => {
@@ -4101,8 +4476,20 @@ pub(crate) extern "C" fn jit_listappend(a: u64, b: u64) -> u64 {
         HeapObj::List(items) => {
             let mut new_items = Vec::with_capacity(items.len() + 1);
             for v in items { v.clone_rc(); new_items.push(*v); }
-            item_val.clone_rc();
-            new_items.push(item_val);
+            // Promote arena records escaping into heap list
+            if item_val.is_arena_record() {
+                let registry_ptr = ACTIVE_REGISTRY.with(|r| r.get());
+                if !registry_ptr.is_null() {
+                    let promoted = item_val.promote_arena_to_heap(unsafe { &*registry_ptr });
+                    // promote creates RC=1, which is exactly what the list needs
+                    new_items.push(promoted);
+                } else {
+                    return TAG_NIL;
+                }
+            } else {
+                item_val.clone_rc();
+                new_items.push(item_val);
+            }
             NanVal::heap_list(new_items).0
         }
         _ => TAG_NIL,
@@ -4130,10 +4517,24 @@ pub(crate) extern "C" fn jit_index(a: u64, idx: u64) -> u64 {
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn jit_recfld(rec: u64, field_idx: u64) -> u64 {
     let rv = NanVal(rec);
+    let idx = field_idx as usize;
+
+    // Fast path: arena record
+    if rv.is_arena_record() {
+        unsafe {
+            let r = rv.as_arena_record();
+            if idx < r.n_fields as usize {
+                let v = NanVal(*r.field_ptr(idx));
+                v.clone_rc();
+                return v.0;
+            }
+        }
+        return TAG_NIL;
+    }
+
     if !rv.is_heap() { return TAG_NIL; }
     match unsafe { rv.as_heap_ref() } {
         HeapObj::Record { fields, .. } => {
-            let idx = field_idx as usize;
             if idx < fields.len() {
                 let val = fields[idx];
                 val.clone_rc();
@@ -4146,16 +4547,32 @@ pub(crate) extern "C" fn jit_recfld(rec: u64, field_idx: u64) -> u64 {
     }
 }
 
-/// Create a new flat record. `registry_ptr` is a pointer to &TypeRegistry,
+/// Create a new flat record. `arena_ptr` is a pointer to a BumpArena,
+/// `registry_ptr` is a pointer to &TypeRegistry,
 /// `type_id` identifies the type, `regs` has n_fields u64 values.
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn jit_recnew(registry_ptr: u64, type_id: u64, regs: *const u64, n_fields: u64) -> u64 {
-    // SAFETY: registry_ptr is the address of a &TypeRegistry that lives as long as the JIT function.
-    // regs points to a Cranelift stack slot containing n_fields u64 register values.
+pub(crate) extern "C" fn jit_recnew(arena_ptr: u64, type_id_and_nfields: u64, regs: *const u64, registry_ptr: u64) -> u64 {
+    let tid = (type_id_and_nfields >> 16) as u16;
+    let n = (type_id_and_nfields & 0xFFFF) as usize;
+    let arena = unsafe { &mut *(arena_ptr as *mut BumpArena) };
+
+    // Try arena allocation first (fast path)
+    if let Some(rec_ptr) = arena.alloc_record(tid, n) {
+        unsafe {
+            let rec = &*rec_ptr;
+            for i in 0..n {
+                let v = NanVal(*regs.add(i));
+                v.clone_rc();
+                *rec.field_ptr_mut(i) = v.0;
+            }
+        }
+        return NanVal::arena_record(rec_ptr).0;
+    }
+
+    // Arena full — fall back to Rc path
     let registry = unsafe { &*(registry_ptr as *const TypeRegistry) };
-    let type_info = Rc::clone(&registry.types[type_id as usize]);
-    let n = n_fields as usize;
+    let type_info = Rc::clone(&registry.types[tid as usize]);
     let mut fields = Vec::with_capacity(n);
     for i in 0..n {
         let v = NanVal(unsafe { *regs.add(i) });
@@ -4171,12 +4588,79 @@ pub(crate) extern "C" fn jit_recnew(registry_ptr: u64, type_id: u64, regs: *cons
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn jit_recwith(rec: u64, indices_ptr: *const u8, n_updates: u64, regs: *const u64) -> u64 {
     let rv = NanVal(rec);
-    if !rv.is_heap() { return TAG_NIL; }
+    let n = n_updates as usize;
+
+    // Fast path: arena record → arena record
+    if rv.is_arena_record() {
+        unsafe {
+            let old_rec = rv.as_arena_record();
+            let old_n = old_rec.n_fields as usize;
+            let tid = old_rec.type_id;
+
+            let arena_result = JIT_ARENA.with(|cell| {
+                let mut arena = cell.borrow_mut();
+                arena.alloc_record(tid, old_n)
+            });
+
+            if let Some(new_ptr) = arena_result {
+                let new_rec = &*new_ptr;
+                // Copy all fields
+                for i in 0..old_n {
+                    let v = NanVal(*old_rec.field_ptr(i));
+                    v.clone_rc();
+                    *new_rec.field_ptr_mut(i) = v.0;
+                }
+                // Overwrite updated slots
+                for i in 0..n {
+                    let slot = *indices_ptr.add(i) as usize;
+                    if slot < old_n {
+                        NanVal(*new_rec.field_ptr(slot)).drop_rc();
+                        let val = NanVal(*regs.add(i));
+                        val.clone_rc();
+                        *new_rec.field_ptr_mut(slot) = val.0;
+                    }
+                }
+                return NanVal::arena_record(new_ptr).0;
+            }
+            // Arena full — fall back to heap below
+        }
+    }
+
+    if !rv.is_heap() && !rv.is_arena_record() { return TAG_NIL; }
+
+    // Heap record path (or arena fallback when arena full)
+    if rv.is_arena_record() {
+        // Arena record but arena full — promote to heap
+        unsafe {
+            let old_rec = rv.as_arena_record();
+            let old_n = old_rec.n_fields as usize;
+            let registry_ptr = ACTIVE_REGISTRY.with(|r| r.get());
+            if registry_ptr.is_null() { return TAG_NIL; }
+            let registry = &*registry_ptr;
+            let type_info = Rc::clone(&registry.types[old_rec.type_id as usize]);
+            let mut new_fields = Vec::with_capacity(old_n);
+            for i in 0..old_n {
+                let v = NanVal(*old_rec.field_ptr(i));
+                v.clone_rc();
+                new_fields.push(v);
+            }
+            for i in 0..n {
+                let slot = *indices_ptr.add(i) as usize;
+                if slot < new_fields.len() {
+                    let val = NanVal(*regs.add(i));
+                    val.clone_rc();
+                    new_fields[slot].drop_rc();
+                    new_fields[slot] = val;
+                }
+            }
+            return NanVal::heap_record(type_info, new_fields.into_boxed_slice()).0;
+        }
+    }
+
     match unsafe { rv.as_heap_ref() } {
         HeapObj::Record { type_info, fields } => {
             let mut new_fields: Vec<NanVal> = fields.to_vec();
             for v in new_fields.iter() { v.clone_rc(); }
-            let n = n_updates as usize;
             for i in 0..n {
                 let slot = unsafe { *indices_ptr.add(i) } as usize;
                 let val = NanVal(unsafe { *regs.add(i) });

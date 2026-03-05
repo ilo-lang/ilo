@@ -385,93 +385,139 @@ pub(crate) fn compile(chunk: &Chunk, nan_consts: &[NanVal], program: &CompiledPr
                 let result = builder.ins().bitcast(I64, cranelift_codegen::ir::MemFlags::new(), result_f);
                 builder.def_var(vars[a_idx], result);
             }
-            OP_ADD => {
+            OP_ADD | OP_SUB | OP_MUL | OP_DIV => {
+                // Inline numeric fast path: check both are numbers, do float op,
+                // fall back to helper for non-numeric (e.g. string concat for ADD).
                 let bv = builder.use_var(vars[b_idx]);
                 let cv = builder.use_var(vars[c_idx]);
-                let fref = get_func_ref(&mut builder, &mut module, helpers.add);
+
+                let qnan_val = builder.ins().iconst(I64, QNAN as i64);
+                let b_masked = builder.ins().band(bv, qnan_val);
+                let c_masked = builder.ins().band(cv, qnan_val);
+                let b_or_c = builder.ins().bor(b_masked, c_masked);
+                // If either has QNAN bits set, it's not a number
+                let both_num = builder.ins().icmp(
+                    cranelift_codegen::ir::condcodes::IntCC::NotEqual, b_or_c, qnan_val);
+
+                let num_block = builder.create_block();
+                let slow_block = builder.create_block();
+                let merge_block = builder.create_block();
+                builder.append_block_param(merge_block, I64);
+
+                builder.ins().brif(both_num, num_block, &[], slow_block, &[]);
+
+                // Fast path: inline float arithmetic
+                builder.switch_to_block(num_block);
+                let mf = cranelift_codegen::ir::MemFlags::new();
+                let bf = builder.ins().bitcast(F64, mf, bv);
+                let cf = builder.ins().bitcast(F64, mf, cv);
+                let result_f = match op {
+                    OP_ADD => builder.ins().fadd(bf, cf),
+                    OP_SUB => builder.ins().fsub(bf, cf),
+                    OP_MUL => builder.ins().fmul(bf, cf),
+                    OP_DIV => builder.ins().fdiv(bf, cf),
+                    _ => unreachable!(),
+                };
+                let fast_result = builder.ins().bitcast(I64, mf, result_f);
+                builder.ins().jump(merge_block, &[fast_result]);
+
+                // Slow path: call helper (handles string concat, etc.)
+                builder.switch_to_block(slow_block);
+                let helper = match op {
+                    OP_ADD => helpers.add,
+                    OP_SUB => helpers.sub,
+                    OP_MUL => helpers.mul,
+                    OP_DIV => helpers.div,
+                    _ => unreachable!(),
+                };
+                let fref = get_func_ref(&mut builder, &mut module, helper);
                 let call_inst = builder.ins().call(fref, &[bv, cv]);
-                let result = builder.inst_results(call_inst)[0];
+                let slow_result = builder.inst_results(call_inst)[0];
+                builder.ins().jump(merge_block, &[slow_result]);
+
+                builder.switch_to_block(merge_block);
+                let result = builder.block_params(merge_block)[0];
                 builder.def_var(vars[a_idx], result);
             }
-            OP_SUB => {
+            OP_LT | OP_GT | OP_LE | OP_GE | OP_EQ | OP_NE => {
+                // Inline numeric fast path for comparisons.
                 let bv = builder.use_var(vars[b_idx]);
                 let cv = builder.use_var(vars[c_idx]);
-                let fref = get_func_ref(&mut builder, &mut module, helpers.sub);
+
+                let qnan_val = builder.ins().iconst(I64, QNAN as i64);
+                let b_masked = builder.ins().band(bv, qnan_val);
+                let c_masked = builder.ins().band(cv, qnan_val);
+                let b_or_c = builder.ins().bor(b_masked, c_masked);
+                let both_num = builder.ins().icmp(
+                    cranelift_codegen::ir::condcodes::IntCC::NotEqual, b_or_c, qnan_val);
+
+                let num_block = builder.create_block();
+                let slow_block = builder.create_block();
+                let merge_block = builder.create_block();
+                builder.append_block_param(merge_block, I64);
+
+                builder.ins().brif(both_num, num_block, &[], slow_block, &[]);
+
+                // Fast path: inline float comparison → TAG_TRUE/TAG_FALSE
+                builder.switch_to_block(num_block);
+                let mf = cranelift_codegen::ir::MemFlags::new();
+                let bf = builder.ins().bitcast(F64, mf, bv);
+                let cf = builder.ins().bitcast(F64, mf, cv);
+                use cranelift_codegen::ir::condcodes::FloatCC;
+                let cc = match op {
+                    OP_LT => FloatCC::LessThan,
+                    OP_GT => FloatCC::GreaterThan,
+                    OP_LE => FloatCC::LessThanOrEqual,
+                    OP_GE => FloatCC::GreaterThanOrEqual,
+                    OP_EQ => FloatCC::Equal,
+                    OP_NE => FloatCC::NotEqual,
+                    _ => unreachable!(),
+                };
+                let cmp = builder.ins().fcmp(cc, bf, cf);
+                let true_val = builder.ins().iconst(I64, TAG_TRUE as i64);
+                let false_val = builder.ins().iconst(I64, TAG_FALSE as i64);
+                let fast_result = builder.ins().select(cmp, true_val, false_val);
+                builder.ins().jump(merge_block, &[fast_result]);
+
+                // Slow path: call helper
+                builder.switch_to_block(slow_block);
+                let helper = match op {
+                    OP_LT => helpers.lt,
+                    OP_GT => helpers.gt,
+                    OP_LE => helpers.le,
+                    OP_GE => helpers.ge,
+                    OP_EQ => helpers.eq,
+                    OP_NE => helpers.ne,
+                    _ => unreachable!(),
+                };
+                let fref = get_func_ref(&mut builder, &mut module, helper);
                 let call_inst = builder.ins().call(fref, &[bv, cv]);
-                let result = builder.inst_results(call_inst)[0];
-                builder.def_var(vars[a_idx], result);
-            }
-            OP_MUL => {
-                let bv = builder.use_var(vars[b_idx]);
-                let cv = builder.use_var(vars[c_idx]);
-                let fref = get_func_ref(&mut builder, &mut module, helpers.mul);
-                let call_inst = builder.ins().call(fref, &[bv, cv]);
-                let result = builder.inst_results(call_inst)[0];
-                builder.def_var(vars[a_idx], result);
-            }
-            OP_DIV => {
-                let bv = builder.use_var(vars[b_idx]);
-                let cv = builder.use_var(vars[c_idx]);
-                let fref = get_func_ref(&mut builder, &mut module, helpers.div);
-                let call_inst = builder.ins().call(fref, &[bv, cv]);
-                let result = builder.inst_results(call_inst)[0];
-                builder.def_var(vars[a_idx], result);
-            }
-            OP_EQ => {
-                let bv = builder.use_var(vars[b_idx]);
-                let cv = builder.use_var(vars[c_idx]);
-                let fref = get_func_ref(&mut builder, &mut module, helpers.eq);
-                let call_inst = builder.ins().call(fref, &[bv, cv]);
-                let result = builder.inst_results(call_inst)[0];
-                builder.def_var(vars[a_idx], result);
-            }
-            OP_NE => {
-                let bv = builder.use_var(vars[b_idx]);
-                let cv = builder.use_var(vars[c_idx]);
-                let fref = get_func_ref(&mut builder, &mut module, helpers.ne);
-                let call_inst = builder.ins().call(fref, &[bv, cv]);
-                let result = builder.inst_results(call_inst)[0];
-                builder.def_var(vars[a_idx], result);
-            }
-            OP_GT => {
-                let bv = builder.use_var(vars[b_idx]);
-                let cv = builder.use_var(vars[c_idx]);
-                let fref = get_func_ref(&mut builder, &mut module, helpers.gt);
-                let call_inst = builder.ins().call(fref, &[bv, cv]);
-                let result = builder.inst_results(call_inst)[0];
-                builder.def_var(vars[a_idx], result);
-            }
-            OP_LT => {
-                let bv = builder.use_var(vars[b_idx]);
-                let cv = builder.use_var(vars[c_idx]);
-                let fref = get_func_ref(&mut builder, &mut module, helpers.lt);
-                let call_inst = builder.ins().call(fref, &[bv, cv]);
-                let result = builder.inst_results(call_inst)[0];
-                builder.def_var(vars[a_idx], result);
-            }
-            OP_GE => {
-                let bv = builder.use_var(vars[b_idx]);
-                let cv = builder.use_var(vars[c_idx]);
-                let fref = get_func_ref(&mut builder, &mut module, helpers.ge);
-                let call_inst = builder.ins().call(fref, &[bv, cv]);
-                let result = builder.inst_results(call_inst)[0];
-                builder.def_var(vars[a_idx], result);
-            }
-            OP_LE => {
-                let bv = builder.use_var(vars[b_idx]);
-                let cv = builder.use_var(vars[c_idx]);
-                let fref = get_func_ref(&mut builder, &mut module, helpers.le);
-                let call_inst = builder.ins().call(fref, &[bv, cv]);
-                let result = builder.inst_results(call_inst)[0];
+                let slow_result = builder.inst_results(call_inst)[0];
+                builder.ins().jump(merge_block, &[slow_result]);
+
+                builder.switch_to_block(merge_block);
+                let result = builder.block_params(merge_block)[0];
                 builder.def_var(vars[a_idx], result);
             }
             OP_MOVE => {
                 if a_idx != b_idx {
                     let bv = builder.use_var(vars[b_idx]);
+                    // Inline is_heap check: skip clone_rc for numbers (hot path)
+                    let qnan_val = builder.ins().iconst(I64, QNAN as i64);
+                    let masked = builder.ins().band(bv, qnan_val);
+                    let is_heap = builder.ins().icmp(
+                        cranelift_codegen::ir::condcodes::IntCC::Equal, masked, qnan_val);
+                    let clone_block = builder.create_block();
+                    let after_block = builder.create_block();
+                    builder.ins().brif(is_heap, clone_block, &[], after_block, &[]);
+
+                    builder.switch_to_block(clone_block);
                     let fref = get_func_ref(&mut builder, &mut module, helpers.jit_move);
-                    let call_inst = builder.ins().call(fref, &[bv]);
-                    let result = builder.inst_results(call_inst)[0];
-                    builder.def_var(vars[a_idx], result);
+                    builder.ins().call(fref, &[bv]);
+                    builder.ins().jump(after_block, &[]);
+
+                    builder.switch_to_block(after_block);
+                    builder.def_var(vars[a_idx], bv);
                 }
             }
             OP_NOT => {
@@ -546,29 +592,59 @@ pub(crate) fn compile(chunk: &Chunk, nan_consts: &[NanVal], program: &CompiledPr
                     block_terminated = true;
                 }
             }
-            OP_JMPF => {
+            OP_JMPF | OP_JMPT => {
                 let sbx = (inst & 0xFFFF) as i16;
                 let target = (ip as isize + 1 + sbx as isize) as usize;
                 let fallthrough = ip + 1;
                 let av = builder.use_var(vars[a_idx]);
-                let fref = get_func_ref(&mut builder, &mut module, helpers.truthy);
-                let call_inst = builder.ins().call(fref, &[av]);
-                let truthy_val = builder.inst_results(call_inst)[0];
+
+                // Inline truthy: false if val==TAG_NIL or val==TAG_FALSE, true otherwise.
+                // This covers numbers (truthy when != 0.0, but 0.0 bits != TAG_NIL/TAG_FALSE),
+                // booleans, and all heap values. For number 0.0 (bits=0), it's truthy=true here
+                // but should be falsy — so we need a number check too.
+                // Full inline: is_number ? (f64 != 0.0) : (val != TAG_NIL && val != TAG_FALSE)
+                let qnan_val = builder.ins().iconst(I64, QNAN as i64);
+                let masked = builder.ins().band(av, qnan_val);
+                let is_num = builder.ins().icmp(
+                    cranelift_codegen::ir::condcodes::IntCC::NotEqual, masked, qnan_val);
+
+                let num_truthy_block = builder.create_block();
+                let tag_truthy_block = builder.create_block();
+                let merge_truthy = builder.create_block();
+                builder.append_block_param(merge_truthy, I64);
+
+                builder.ins().brif(is_num, num_truthy_block, &[], tag_truthy_block, &[]);
+
+                // Number path: truthy if f64 != 0.0
+                builder.switch_to_block(num_truthy_block);
+                let mf = cranelift_codegen::ir::MemFlags::new();
+                let af = builder.ins().bitcast(F64, mf, av);
+                let zero = builder.ins().f64const(0.0);
+                let cmp = builder.ins().fcmp(cranelift_codegen::ir::condcodes::FloatCC::NotEqual, af, zero);
+                let num_result = builder.ins().uextend(I64, cmp);
+                builder.ins().jump(merge_truthy, &[num_result]);
+
+                // Tag path: truthy if val != TAG_NIL && val != TAG_FALSE
+                builder.switch_to_block(tag_truthy_block);
+                let nil_val = builder.ins().iconst(I64, TAG_NIL as i64);
+                let false_val = builder.ins().iconst(I64, TAG_FALSE as i64);
+                let not_nil = builder.ins().icmp(
+                    cranelift_codegen::ir::condcodes::IntCC::NotEqual, av, nil_val);
+                let not_false = builder.ins().icmp(
+                    cranelift_codegen::ir::condcodes::IntCC::NotEqual, av, false_val);
+                let tag_truthy = builder.ins().band(not_nil, not_false);
+                let tag_result = builder.ins().uextend(I64, tag_truthy);
+                builder.ins().jump(merge_truthy, &[tag_result]);
+
+                builder.switch_to_block(merge_truthy);
+                let truthy_val = builder.block_params(merge_truthy)[0];
+
                 if let (Some(&target_block), Some(&fall_block)) = (block_map.get(&target), block_map.get(&fallthrough)) {
-                    builder.ins().brif(truthy_val, fall_block, &[], target_block, &[]);
-                    block_terminated = true;
-                }
-            }
-            OP_JMPT => {
-                let sbx = (inst & 0xFFFF) as i16;
-                let target = (ip as isize + 1 + sbx as isize) as usize;
-                let fallthrough = ip + 1;
-                let av = builder.use_var(vars[a_idx]);
-                let fref = get_func_ref(&mut builder, &mut module, helpers.truthy);
-                let call_inst = builder.ins().call(fref, &[av]);
-                let truthy_val = builder.inst_results(call_inst)[0];
-                if let (Some(&target_block), Some(&fall_block)) = (block_map.get(&target), block_map.get(&fallthrough)) {
-                    builder.ins().brif(truthy_val, target_block, &[], fall_block, &[]);
+                    if op == OP_JMPF {
+                        builder.ins().brif(truthy_val, fall_block, &[], target_block, &[]);
+                    } else {
+                        builder.ins().brif(truthy_val, target_block, &[], fall_block, &[]);
+                    }
                     block_terminated = true;
                 }
             }
@@ -764,10 +840,72 @@ pub(crate) fn compile(chunk: &Chunk, nan_consts: &[NanVal], program: &CompiledPr
             OP_RECFLD => {
                 // R[A] = R[B].fields[C]  — C is now a field index
                 let bv = builder.use_var(vars[b_idx]);
+
+                // Inline fast path for arena records:
+                //   tag = bv & TAG_MASK
+                //   if tag == TAG_ARENA_REC:
+                //     ptr = bv & PTR_MASK
+                //     result = load(ptr + 8 + C*8)  // skip ArenaRecord header
+                //     call jit_move(result) // clone_rc for heap fields (no-op for numbers)
+                //   else:
+                //     result = call jit_recfld(bv, C)
+                let tag_mask_val = builder.ins().iconst(I64, TAG_MASK as i64);
+                let tag = builder.ins().band(bv, tag_mask_val);
+                let arena_tag_val = builder.ins().iconst(I64, TAG_ARENA_REC as i64);
+                let is_arena = builder.ins().icmp(
+                    cranelift_codegen::ir::condcodes::IntCC::Equal, tag, arena_tag_val);
+
+                let arena_block = builder.create_block();
+                let heap_block = builder.create_block();
+                let merge_block = builder.create_block();
+                builder.append_block_param(merge_block, I64);
+
+                builder.ins().brif(is_arena, arena_block, &[], heap_block, &[]);
+
+                // Arena path: inline pointer math + inline clone_rc
+                builder.switch_to_block(arena_block);
+                let ptr_mask_val = builder.ins().iconst(I64, PTR_MASK as i64);
+                let ptr = builder.ins().band(bv, ptr_mask_val);
+                let field_offset = builder.ins().iconst(I64, (8 + c_idx * 8) as i64);
+                let field_addr = builder.ins().iadd(ptr, field_offset);
+                // SAFETY: MemFlags::trusted() is valid because:
+                // (a) `ptr` was produced from a TAG_ARENA_REC NanVal so it points into
+                //     the live bump arena buffer, and
+                // (b) `c_idx` is a compile-time constant encoded by the register compiler
+                //     from a type-checked field access, so it is always < n_fields.
+                let field_val = builder.ins().load(I64, cranelift_codegen::ir::MemFlags::trusted(), field_addr, 0);
+                // Inline is_heap check: (val & QNAN) == QNAN && val != NIL && val != TRUE && val != FALSE && tag != ARENA_REC
+                // For numbers (the hot path), (val & QNAN) != QNAN → skip clone_rc entirely
+                let qnan_val = builder.ins().iconst(I64, QNAN as i64);
+                let masked = builder.ins().band(field_val, qnan_val);
+                let is_nan_tagged = builder.ins().icmp(
+                    cranelift_codegen::ir::condcodes::IntCC::Equal, masked, qnan_val);
+                let clone_block = builder.create_block();
+                let skip_clone_block = builder.create_block();
+                builder.ins().brif(is_nan_tagged, clone_block, &[], skip_clone_block, &[]);
+
+                // Clone path: call jit_move for heap values
+                builder.switch_to_block(clone_block);
+                let fref_move = get_func_ref(&mut builder, &mut module, helpers.jit_move);
+                let move_inst = builder.ins().call(fref_move, &[field_val]);
+                let _cloned = builder.inst_results(move_inst)[0];
+                builder.ins().jump(skip_clone_block, &[]);
+
+                // Skip clone path: field_val is a number, no RC management needed
+                builder.switch_to_block(skip_clone_block);
+                builder.ins().jump(merge_block, &[field_val]);
+
+                // Heap path: call jit_recfld
+                builder.switch_to_block(heap_block);
                 let field_idx_val = builder.ins().iconst(I64, c_idx as i64);
                 let fref = get_func_ref(&mut builder, &mut module, helpers.recfld);
                 let call_inst = builder.ins().call(fref, &[bv, field_idx_val]);
-                let result = builder.inst_results(call_inst)[0];
+                let heap_result = builder.inst_results(call_inst)[0];
+                builder.ins().jump(merge_block, &[heap_result]);
+
+                // Merge
+                builder.switch_to_block(merge_block);
+                let result = builder.block_params(merge_block)[0];
                 builder.def_var(vars[a_idx], result);
             }
             OP_RECFLD_NAME => {
@@ -778,8 +916,82 @@ pub(crate) fn compile(chunk: &Chunk, nan_consts: &[NanVal], program: &CompiledPr
                 let bx = (inst & 0xFFFF) as usize;
                 let type_id = (bx >> 8) as u16;
                 let n_fields = bx & 0xFF;
+                let record_size = 8 + n_fields * 8; // ArenaRecord header + inline fields
 
-                // Build array of register values on the stack
+                // Inline bump allocation from arena.
+                // BumpArena is #[repr(C)]: buf_ptr(0), buf_cap(8), offset(16).
+                let arena_ptr = jit_arena_ptr();
+                let arena_ptr_val = builder.ins().iconst(I64, arena_ptr as i64);
+
+                // Load arena.offset
+                let cur_offset = builder.ins().load(I64,
+                    cranelift_codegen::ir::MemFlags::trusted(), arena_ptr_val, 16);
+                // aligned_offset = (offset + 7) & !7  (already 8-aligned in practice)
+                let seven = builder.ins().iconst(I64, 7);
+                let off_plus_7 = builder.ins().iadd(cur_offset, seven);
+                let neg8 = builder.ins().iconst(I64, !7i64);
+                let aligned = builder.ins().band(off_plus_7, neg8);
+                // new_offset = aligned + record_size
+                let size_val = builder.ins().iconst(I64, record_size as i64);
+                let new_offset = builder.ins().iadd(aligned, size_val);
+                // Load arena.buf_cap and check space
+                let buf_cap = builder.ins().load(I64,
+                    cranelift_codegen::ir::MemFlags::trusted(), arena_ptr_val, 8);
+                let has_space = builder.ins().icmp(
+                    cranelift_codegen::ir::condcodes::IntCC::UnsignedLessThanOrEqual,
+                    new_offset, buf_cap);
+
+                let alloc_block = builder.create_block();
+                let fallback_block = builder.create_block();
+                let merge_block = builder.create_block();
+                builder.append_block_param(merge_block, I64);
+
+                builder.ins().brif(has_space, alloc_block, &[], fallback_block, &[]);
+
+                // ── Inline alloc path ──
+                builder.switch_to_block(alloc_block);
+                // rec_ptr = arena.buf_ptr + aligned_offset
+                let buf_ptr = builder.ins().load(I64,
+                    cranelift_codegen::ir::MemFlags::trusted(), arena_ptr_val, 0);
+                let rec_ptr = builder.ins().iadd(buf_ptr, aligned);
+                // Write ArenaRecord header: type_id(u16) | n_fields(u16) | pad(u32) as u64
+                let header = ((n_fields as u64) << 16) | (type_id as u64);
+                let header_val = builder.ins().iconst(I64, header as i64);
+                builder.ins().store(cranelift_codegen::ir::MemFlags::trusted(),
+                    header_val, rec_ptr, 0);
+                // Write field values and clone_rc heap fields
+                for i in 0..n_fields {
+                    let field_v = builder.use_var(vars[a_idx + 1 + i]);
+                    let field_off = (8 + i * 8) as i32;
+                    builder.ins().store(cranelift_codegen::ir::MemFlags::trusted(),
+                        field_v, rec_ptr, field_off);
+                    // Inline is_heap check: if (val & QNAN) == QNAN → call jit_move (clone_rc)
+                    // For numbers (hot path), this branch is not taken.
+                    let qnan_val = builder.ins().iconst(I64, QNAN as i64);
+                    let masked = builder.ins().band(field_v, qnan_val);
+                    let is_heap = builder.ins().icmp(
+                        cranelift_codegen::ir::condcodes::IntCC::Equal, masked, qnan_val);
+                    let do_clone = builder.create_block();
+                    let after_clone = builder.create_block();
+                    builder.ins().brif(is_heap, do_clone, &[], after_clone, &[]);
+
+                    builder.switch_to_block(do_clone);
+                    let fref_move = get_func_ref(&mut builder, &mut module, helpers.jit_move);
+                    builder.ins().call(fref_move, &[field_v]);
+                    builder.ins().jump(after_clone, &[]);
+
+                    builder.switch_to_block(after_clone);
+                }
+                // Update arena.offset = new_offset
+                builder.ins().store(cranelift_codegen::ir::MemFlags::trusted(),
+                    new_offset, arena_ptr_val, 16);
+                // Result = TAG_ARENA_REC | rec_ptr
+                let tag_val = builder.ins().iconst(I64, TAG_ARENA_REC as i64);
+                let result_val = builder.ins().bor(rec_ptr, tag_val);
+                builder.ins().jump(merge_block, &[result_val]);
+
+                // ── Fallback path: arena full → call jit_recnew helper ──
+                builder.switch_to_block(fallback_block);
                 let slot = builder.create_sized_stack_slot(cranelift_codegen::ir::StackSlotData::new(
                     cranelift_codegen::ir::StackSlotKind::ExplicitSlot,
                     (n_fields * 8) as u32,
@@ -790,12 +1002,17 @@ pub(crate) fn compile(chunk: &Chunk, nan_consts: &[NanVal], program: &CompiledPr
                     builder.ins().stack_store(v, slot, (i * 8) as i32);
                 }
                 let regs_ptr = builder.ins().stack_addr(I64, slot, 0);
+                let type_id_and_nfields = ((type_id as u64) << 16) | (n_fields as u64);
+                let type_id_nfields_val = builder.ins().iconst(I64, type_id_and_nfields as i64);
                 let registry_ptr_val = builder.ins().iconst(I64, &program.type_registry as *const TypeRegistry as i64);
-                let type_id_val = builder.ins().iconst(I64, type_id as i64);
-                let n_fields_val = builder.ins().iconst(I64, n_fields as i64);
                 let fref = get_func_ref(&mut builder, &mut module, helpers.recnew);
-                let call_inst = builder.ins().call(fref, &[registry_ptr_val, type_id_val, regs_ptr, n_fields_val]);
-                let result = builder.inst_results(call_inst)[0];
+                let call_inst = builder.ins().call(fref, &[arena_ptr_val, type_id_nfields_val, regs_ptr, registry_ptr_val]);
+                let fb_result = builder.inst_results(call_inst)[0];
+                builder.ins().jump(merge_block, &[fb_result]);
+
+                // ── Merge ──
+                builder.switch_to_block(merge_block);
+                let result = builder.block_params(merge_block)[0];
                 builder.def_var(vars[a_idx], result);
             }
             OP_RECWITH => {
@@ -984,7 +1201,7 @@ pub(crate) fn compile(chunk: &Chunk, nan_consts: &[NanVal], program: &CompiledPr
 }
 
 /// Call a compiled NanVal JIT function with u64 args, returns u64.
-pub(crate) fn call(func: &JitFunction, args: &[u64]) -> Option<u64> {
+fn call_raw(func: &JitFunction, args: &[u64]) -> Option<u64> {
     if args.len() != func.param_count { return None; }
     Some(match args.len() {
         0 => {
@@ -1027,8 +1244,29 @@ pub(crate) fn call(func: &JitFunction, args: &[u64]) -> Option<u64> {
     })
 }
 
+/// Call a compiled NanVal JIT function with u64 args, returns u64.
+/// Resets the JIT arena after each call (promoting the result if arena-tagged).
+pub(crate) fn call(func: &JitFunction, args: &[u64]) -> Option<u64> {
+    let mut result = call_raw(func, args)?;
+
+    // Promote arena result and reset arena
+    let rv = NanVal(result);
+    if rv.is_arena_record() {
+        let registry_ptr = ACTIVE_REGISTRY.with(|r| r.get());
+        if !registry_ptr.is_null() {
+            let promoted = rv.promote_arena_to_heap(unsafe { &*registry_ptr });
+            result = promoted.0;
+        }
+    }
+    jit_arena_reset();
+
+    Some(result)
+}
+
 /// Compile and call in one shot (convenience wrapper).
 pub(crate) fn compile_and_call(chunk: &Chunk, nan_consts: &[NanVal], args: &[u64], program: &CompiledProgram) -> Option<u64> {
+    // Set active registry for arena record field name resolution
+    ACTIVE_REGISTRY.with(|r| r.set(&program.type_registry as *const TypeRegistry));
     let func = compile(chunk, nan_consts, program)?;
     call(&func, args)
 }
