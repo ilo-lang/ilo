@@ -306,12 +306,10 @@ impl Parser {
                     _ => names.push(self.expect_ident()?),
                 }
             }
-            let end = self.peek_span();
             self.expect(&Token::RBracket)?;
             if names.is_empty() {
                 return Err(self.error("ILO-P016", "use `[...]` list must not be empty — omit brackets to import all".into()));
             }
-            let _ = end;
             Some(names)
         } else {
             None

@@ -1068,7 +1068,7 @@ fn main() {
         let mut import_diagnostics: Vec<Diagnostic> = Vec::new();
         let mut visited = std::collections::HashSet::new();
         // Mark the main file as visited to catch direct self-imports
-        if let Some(canonical_file) = std::path::Path::new(&args[1]).canonicalize().ok() {
+        if let Ok(canonical_file) = std::path::Path::new(&args[1]).canonicalize() {
             visited.insert(canonical_file);
         }
         program.declarations = resolve_imports(
