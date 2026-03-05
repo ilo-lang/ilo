@@ -126,6 +126,10 @@ pub(crate) const OP_JDMP: u8 = 62;         // R[A] = jdmp(R[B])  (value to JSON 
 pub(crate) const OP_JPAR: u8 = 63;         // R[A] = jpar(R[B])  (parse JSON string → R ? t)
 pub(crate) const OP_RECFLD_NAME: u8 = 64; // R[A] = R[B].field where C = constant pool index of field name (dynamic/fallback)
 pub(crate) const OP_JMPNN: u8 = 56;     // if R[A] is not nil, jump by signed Bx (ABx mode)
+pub(crate) const OP_ISNUM: u8 = 65;     // R[A] = R[B] is Number
+pub(crate) const OP_ISTEXT: u8 = 66;    // R[A] = R[B] is Text
+pub(crate) const OP_ISBOOL: u8 = 67;    // R[A] = R[B] is Bool
+pub(crate) const OP_ISLIST: u8 = 68;    // R[A] = R[B] is List
 
 // ABx mode — register + 16-bit operand
 pub(crate) const OP_LOADK: u8 = 20;
@@ -923,6 +927,32 @@ impl RegCompiler {
                     self.emit_abc(OP_EQ, eq_reg, sub_reg, const_reg);
                     let skip = self.emit_jmpf(eq_reg);
 
+                    let body_result = self.compile_body(&arm.body);
+                    if let Some(br) = body_result
+                        && br != result_reg {
+                            self.emit_abc(OP_MOVE, result_reg, br, 0);
+                        }
+                    end_jumps.push(self.emit_jmp_placeholder());
+                    self.current.patch_jump(skip);
+                }
+
+                Pattern::TypeIs { ty, binding } => {
+                    let opcode = match ty {
+                        Type::Number => OP_ISNUM,
+                        Type::Text => OP_ISTEXT,
+                        Type::Bool => OP_ISBOOL,
+                        Type::List(_) => OP_ISLIST,
+                        _ => OP_ISNUM, // unreachable for valid programs
+                    };
+                    let test_reg = self.alloc_reg();
+                    self.emit_abc(opcode, test_reg, sub_reg, 0);
+                    let skip = self.emit_jmpf(test_reg);
+
+                    if binding != "_" {
+                        let bind_reg = self.alloc_reg();
+                        self.emit_abc(OP_MOVE, bind_reg, sub_reg, 0);
+                        self.locals.push((binding.clone(), bind_reg));
+                    }
                     let body_result = self.compile_body(&arm.body);
                     if let Some(br) = body_result
                         && br != result_reg {
@@ -2287,6 +2317,31 @@ impl<'a> VM<'a> {
                     let b = ((inst >> 8) & 0xFF) as usize + base;
                     let is_err = (reg!(b).0 & TAG_MASK) == TAG_ERR;
                     reg_set!(a, NanVal::boolean(is_err));
+                }
+                OP_ISNUM => {
+                    let a = ((inst >> 16) & 0xFF) as usize + base;
+                    let b = ((inst >> 8) & 0xFF) as usize + base;
+                    let is_num = reg!(b).is_number();
+                    reg_set!(a, NanVal::boolean(is_num));
+                }
+                OP_ISTEXT => {
+                    let a = ((inst >> 16) & 0xFF) as usize + base;
+                    let b = ((inst >> 8) & 0xFF) as usize + base;
+                    let is_text = reg!(b).is_string();
+                    reg_set!(a, NanVal::boolean(is_text));
+                }
+                OP_ISBOOL => {
+                    let a = ((inst >> 16) & 0xFF) as usize + base;
+                    let b = ((inst >> 8) & 0xFF) as usize + base;
+                    let v = reg!(b).0;
+                    let is_bool = v == TAG_TRUE || v == TAG_FALSE;
+                    reg_set!(a, NanVal::boolean(is_bool));
+                }
+                OP_ISLIST => {
+                    let a = ((inst >> 16) & 0xFF) as usize + base;
+                    let b = ((inst >> 8) & 0xFF) as usize + base;
+                    let is_list = (reg!(b).0 & TAG_MASK) == TAG_LIST;
+                    reg_set!(a, NanVal::boolean(is_list));
                 }
                 OP_UNWRAP => {
                     let a = ((inst >> 16) & 0xFF) as usize + base;

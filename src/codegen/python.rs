@@ -266,6 +266,23 @@ fn emit_match_stmt(out: &mut String, subject: &Option<Expr>, arms: &[MatchArm], 
                     keyword, subj_str, emit_literal(lit)
                 ));
             }
+            Pattern::TypeIs { ty, binding } => {
+                let py_type = match ty {
+                    Type::Number => "int | float",
+                    Type::Text => "str",
+                    Type::Bool => "bool",
+                    Type::List(_) => "list",
+                    _ => "object",
+                };
+                out.push_str(&format!(
+                    "{} isinstance({}, {}):\n",
+                    keyword, subj_str, py_type
+                ));
+                if binding != "_" {
+                    indent(out, level + 1);
+                    out.push_str(&format!("{} = {}\n", py_name(binding), subj_str));
+                }
+            }
         }
         emit_body(out, &arm.body, level + 1, true);
     }
@@ -275,6 +292,7 @@ fn emit_match_stmt(out: &mut String, subject: &Option<Expr>, arms: &[MatchArm], 
 fn arm_needs_statements(arm: &MatchArm) -> bool {
     match &arm.pattern {
         Pattern::Ok(binding) | Pattern::Err(binding) if binding != "_" => return true,
+        Pattern::TypeIs { binding, .. } if binding != "_" => return true,
         _ => {}
     }
     arm.body.len() > 1
@@ -449,6 +467,16 @@ fn emit_match_expr(out: &mut String, level: usize, subject: &Option<Box<Expr>>, 
                     arm_val, subj, subj
                 ));
             }
+            Pattern::TypeIs { ty, .. } => {
+                let py_type = match ty {
+                    Type::Number => "int | float",
+                    Type::Text => "str",
+                    Type::Bool => "bool",
+                    Type::List(_) => "list",
+                    _ => "object",
+                };
+                parts.push(format!("{} if isinstance({}, {}) else", arm_val, subj, py_type));
+            }
         }
     }
 
@@ -506,6 +534,23 @@ fn emit_match_expr_complex(out: &mut String, level: usize, subject: &Option<Box<
                     "{} {} == {}:\n",
                     keyword, subj_str, emit_literal(lit)
                 ));
+            }
+            Pattern::TypeIs { ty, binding } => {
+                let py_type = match ty {
+                    Type::Number => "int | float",
+                    Type::Text => "str",
+                    Type::Bool => "bool",
+                    Type::List(_) => "list",
+                    _ => "object",
+                };
+                out.push_str(&format!(
+                    "{} isinstance({}, {}):\n",
+                    keyword, subj_str, py_type
+                ));
+                if binding != "_" {
+                    indent(out, level + 1);
+                    out.push_str(&format!("{} = {}\n", py_name(binding), subj_str));
+                }
             }
         }
         emit_match_arm_body_to_tmp(out, &arm.body, level + 1, &tmp);

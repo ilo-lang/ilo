@@ -209,6 +209,8 @@ pub enum Pattern {
     Literal(Literal),
     /// `_:` — wildcard / catch-all
     Wildcard,
+    /// `n v:`, `t v:`, `b v:`, `l v:` — branch on runtime type, bind value
+    TypeIs { ty: Type, binding: String },
 }
 
 /// Expressions

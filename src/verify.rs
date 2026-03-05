@@ -1090,6 +1090,18 @@ impl VerifyContext {
                 }
             }
             Pattern::Literal(_) | Pattern::Wildcard => {}
+            Pattern::TypeIs { ty, binding } => {
+                if binding != "_" {
+                    let bound_ty = match ty {
+                        Type::Number => Ty::Number,
+                        Type::Text => Ty::Text,
+                        Type::Bool => Ty::Bool,
+                        Type::List(_) => Ty::List(Box::new(Ty::Unknown)),
+                        _ => Ty::Unknown,
+                    };
+                    scope_insert(scope, binding.clone(), bound_ty);
+                }
+            }
         }
     }
 
@@ -1561,7 +1573,7 @@ impl VerifyContext {
     }
 
     fn check_match_exhaustiveness(&mut self, func: &str, subject_ty: &Ty, arms: &[MatchArm], span: Span) {
-        let has_wildcard = arms.iter().any(|a| matches!(a.pattern, Pattern::Wildcard));
+        let has_wildcard = arms.iter().any(|a| matches!(a.pattern, Pattern::Wildcard | Pattern::TypeIs { .. }));
         if has_wildcard {
             return;
         }

@@ -1175,6 +1175,25 @@ fn match_pattern(pattern: &Pattern, value: &Value) -> Option<Vec<(String, Value)
                 None
             }
         }
+        Pattern::TypeIs { ty, binding } => {
+            use crate::ast::Type;
+            let matches = match ty {
+                Type::Number => matches!(value, Value::Number(_)),
+                Type::Text => matches!(value, Value::Text(_)),
+                Type::Bool => matches!(value, Value::Bool(_)),
+                Type::List(_) => matches!(value, Value::List(_)),
+                _ => false,
+            };
+            if matches {
+                let mut bindings = vec![];
+                if binding != "_" {
+                    bindings.push((binding.clone(), value.clone()));
+                }
+                Some(bindings)
+            } else {
+                None
+            }
+        }
     }
 }
 

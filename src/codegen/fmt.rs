@@ -468,6 +468,7 @@ fn fmt_pattern(pat: &Pattern) -> String {
         Pattern::Ok(binding) => format!("~{}", binding),
         Pattern::Err(binding) => format!("^{}", binding),
         Pattern::Literal(lit) => fmt_literal(lit),
+        Pattern::TypeIs { ty, binding } => format!("{} {}", fmt_type(ty), binding),
     }
 }
 

@@ -187,7 +187,7 @@ Plumbing first — make tool calls actually do things. HTTP-native (tools are AP
 - Reserve keywords at lexer level — `if`, `return`, `let`, `fn`, `def`, `var`, `const` are currently valid identifiers (only caught as hints at declaration position). Low urgency while user base is small.
 
 #### Control structures
-- Pattern matching on type — `?x{n v:...; t v:...}` to branch on runtime type (useful when tools return `t` escape hatch)
+- [x] Pattern matching on type — `?x{n v:...; t v:...}` to branch on runtime type (useful when tools return `t` escape hatch)
 
 #### Type system (Phase E)
 - Optional type — `O n` or `n?` for nullable values

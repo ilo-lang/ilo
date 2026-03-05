@@ -685,6 +685,19 @@ impl Parser {
                 after_semi + 1 < self.tokens.len()
                     && self.token_at(after_semi + 1) == Some(&Token::Colon)
             }
+            // n/t/b/l ident: or n/t/b/l _: → TypeIs pattern
+            Some(Token::Ident(ty_name))
+                if matches!(ty_name.as_str(), "n" | "t" | "b" | "l") =>
+            {
+                if after_semi + 2 < self.tokens.len() {
+                    matches!(
+                        (self.token_at(after_semi + 1), self.token_at(after_semi + 2)),
+                        (Some(Token::Ident(_) | Token::Underscore), Some(Token::Colon))
+                    )
+                } else {
+                    false
+                }
+            }
             _ => false,
         }
     }
@@ -742,6 +755,22 @@ impl Parser {
             Some(Token::False) => {
                 self.advance();
                 Ok(Pattern::Literal(Literal::Bool(false)))
+            }
+            Some(Token::Ident(name)) if matches!(name.as_str(), "n" | "t" | "b" | "l") => {
+                let ty_str = name.clone();
+                self.advance();
+                let binding = match self.peek() {
+                    Some(Token::Underscore) => { self.advance(); "_".to_string() }
+                    _ => self.expect_ident()?,
+                };
+                let ty = match ty_str.as_str() {
+                    "n" => Type::Number,
+                    "t" => Type::Text,
+                    "b" => Type::Bool,
+                    "l" => Type::List(Box::new(Type::Text)),
+                    _ => unreachable!(),
+                };
+                Ok(Pattern::TypeIs { ty, binding })
             }
             Some(tok) => Err(self.error("ILO-P011", format!("expected pattern, got {:?}", tok))),
             None => Err(self.error("ILO-P012", "expected pattern, got EOF".into())),
@@ -3393,6 +3422,25 @@ mod tests {
                         assert_eq!(args.len(), 3);
                     }
                     other => panic!("expected Call(tot, [1,2,3]), got {:?}", other),
+                }
+            }
+            _ => panic!("expected function"),
+        }
+    }
+
+    #[test]
+    fn parse_type_is_pattern_in_match() {
+        let prog = parse_str(r#"f x:t>t;?x{n v:"num";t v:v;_:"other"}"#);
+        match &prog.declarations[0] {
+            Decl::Function { body, .. } => {
+                match &body[0].node {
+                    Stmt::Match { arms, .. } => {
+                        assert_eq!(arms.len(), 3);
+                        assert!(matches!(&arms[0].pattern, Pattern::TypeIs { ty: Type::Number, binding } if binding == "v"), "arm0: {:?}", arms[0].pattern);
+                        assert!(matches!(&arms[1].pattern, Pattern::TypeIs { ty: Type::Text, binding } if binding == "v"), "arm1: {:?}", arms[1].pattern);
+                        assert!(matches!(&arms[2].pattern, Pattern::Wildcard), "arm2: {:?}", arms[2].pattern);
+                    }
+                    other => panic!("expected match: {:?}", other),
                 }
             }
             _ => panic!("expected function"),
