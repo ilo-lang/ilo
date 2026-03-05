@@ -212,6 +212,20 @@ ilo 'f k:t>R t t;env! k' "HOME"
 # auto-unwrap: Ok→value, Err→propagate
 ```
 
+**Imports** — split programs across files:
+```bash
+# math.ilo: dbl n:n>n;*n 2
+# main.ilo: use "math.ilo"  run n:n>n;dbl n
+ilo main.ilo run 5           # → 10
+ilo main.ilo run 5           # scoped: use "math.ilo" [dbl]
+```
+
+**Environment files** — `.env` and `.env.local` are loaded automatically at startup. `KEY=VALUE` format, `#` comments supported. `.env.local` takes priority. Variables are not overwritten if already set in the process environment:
+```bash
+echo 'ANTHROPIC_API_KEY=sk-...' > .env
+ilo 'f k:t>R t t;env! k' ANTHROPIC_API_KEY   # reads from .env
+```
+
 **Error output formats:**
 ```bash
 ilo 'code' -a               # ANSI colour (default for TTY)

@@ -1,0 +1,5 @@
+-- math-lib.ilo — reusable math utilities, imported by imports.ilo
+dbl n:n>n;*n 2
+half n:n>n;/n 2
+sq n:n>n;*n n
+abs-val n:n>n;>=n 0 n;- 0 n

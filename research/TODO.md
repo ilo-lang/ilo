@@ -7,7 +7,6 @@
 ## Agent / tool integration
 
 - [x] Tool graph — `ilo tools --graph`: type-level composition map showing which tools can feed each other
-- [ ] "Typed shell" mode — interactive tool composition with type-guided completion
 
 ## Tooling
 

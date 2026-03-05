@@ -611,6 +611,45 @@ Tool return type `>t` is the escape hatch — any JSON response is coerced to a 
 
 ---
 
+## Imports
+
+Split programs across files with `use`:
+
+```
+use "path/to/file.ilo"         -- import all declarations
+use "path/to/file.ilo" [name1 name2]  -- import only named declarations
+```
+
+All imported declarations merge into a flat shared namespace — no qualification, no `mod::fn` syntax. The verifier catches name collisions.
+
+```
+-- math.ilo
+dbl n:n>n; *n 2
+half n:n>n; /n 2
+
+-- main.ilo
+use "math.ilo"
+run n:n>n; dbl! half n
+```
+
+### Rules
+
+- Path is relative to the importing file's directory
+- Transitive: if `a.ilo` uses `b.ilo`, `b.ilo`'s declarations are visible to `main.ilo` when it uses `a.ilo`
+- Circular imports are an error (`ILO-P018`)
+- Scoped import with unknown name: `ILO-P019`
+- `use` in inline code (no file context): `ILO-P017`
+
+### Error codes
+
+| Code | Condition |
+|------|-----------|
+| `ILO-P017` | File not found or `use` in inline mode |
+| `ILO-P018` | Circular import detected |
+| `ILO-P019` | Name in `[...]` list not declared in the imported file |
+
+---
+
 ## Error Handling
 
 `R ok err` return type. Call then match:
