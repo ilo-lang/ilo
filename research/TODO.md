@@ -35,6 +35,9 @@ Note: all builtin names are single tokens (no hyphens — manifesto: "every hyph
 - [x] `max a b` — maximum of two numbers
 - [x] `flr n` — floor
 - [x] `cel n` — ceil
+- [x] `rnd` / `rnd a b` — random float [0,1) or random int in [a,b]
+- [x] `now` — Unix timestamp (seconds)
+- [x] `@i a..b{body}` — range iteration (interpreter scope bug fixed 2026-03-05)
 
 ## Verification
 
@@ -180,10 +183,8 @@ Plumbing first — make tool calls actually do things. HTTP-native (tools are AP
 
 #### Language hardening
 - Reserve keywords at lexer level — `if`, `return`, `let`, `fn`, `def`, `var`, `const` are currently valid identifiers (only caught as hints at declaration position). Low urgency while user base is small.
-- Parser body boundary — bare `Ref` or comparison at end of a non-last function greedily consumes the next declaration's name. Workaround: wrap in parens or end with a binary op. A proper fix uses newlines as declaration separators in file mode.
 
 #### Control structures
-- Range iteration — `@i 0..n{body}` for index-based loops without constructing a list
 - Pattern matching on type — `?x{n v:...; t v:...}` to branch on runtime type (useful when tools return `t` escape hatch)
 
 #### Type system (Phase E)
@@ -192,9 +193,6 @@ Plumbing first — make tool calls actually do things. HTTP-native (tools are AP
 - Map type — `M t n` for key-value collections (records are fixed-shape; maps are dynamic)
 - Generic functions — `map f:fn(a>b) xs:L a > L b` for higher-order typed transforms
 
-#### Builtins
-- `rnd` / `rnd a b` — random number (0–1 or range)
-- `now()` — current timestamp
 
 #### Tooling
 - LSP / language server — completions, diagnostics, hover info for editor integration

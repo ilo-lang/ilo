@@ -23,7 +23,7 @@ printf 'type pt{x:n;y:n}\nf n:n>n;s=0;i=0;wh < i n{yv=* i 2;p=pt x:i y:yv;s=+ s 
 cat > "$TMP/string.ilo" <<< 'f n:n>t;s="";i=0;wh < i n{s=+ s "x";i=+i 1};s'
 printf 'type item{name:t;val:n}\nf n:n>t;items=[];i=0;wh < i n{nm=str i;vl=* i 3;it=item name:nm val:vl;items=+=items it;i=+ i 1};jdmp items\n' > "$TMP/mixed.ilo"
 # HOF pipeline: build list [-n..n], filter positives, square, sum
-printf 'sq x:n>n;*x x\npos x:n>b;>x 0{true}{false}\nadd a:n b:n>n;+a b\nf n:n>n;xs=[];i=-n;wh <= i n{xs=+=xs i;i=+i 1};fld add (xs >> flt pos >> map sq) 0\n' > "$TMP/hof.ilo"
+printf 'sq x:n>n;*x x\npos x:n>b;>x 0\nadd a:n b:n>n;+a b\nf n:n>n;xs=[];i=-n;wh <= i n{xs=+=xs i;i=+i 1};fld add (xs >> flt pos >> map sq) 0\n' > "$TMP/hof.ilo"
 # Recursive fibonacci (doubles each level — exercises JIT call overhead)
 cat > "$TMP/recurse.ilo" <<< 'fib n:n>n;<=n 1 n;a=fib -n 1;b=fib -n 2;+a b'
 

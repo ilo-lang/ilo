@@ -155,6 +155,9 @@ Called like functions, compiled to dedicated opcodes.
 | `max a b` | maximum of two numbers | `n` |
 | `flr n` | floor (round toward negative infinity) | `n` |
 | `cel n` | ceiling (round toward positive infinity) | `n` |
+| `rnd` | random float in [0, 1) | `n` |
+| `rnd a b` | random integer in [a, b] (inclusive) | `n` |
+| `now` | current Unix timestamp (seconds) | `n` |
 | `get url` | HTTP GET | `R t t` |
 | `env key` | read environment variable | `R t t` |
 | `spl t sep` | split text by separator | `L t` |
@@ -261,6 +264,7 @@ Match replaces `switch`. There is no fall-through — each arm is independent. T
 | `?x{arms}` | match named value |
 | `?{arms}` | match last result |
 | `@v list{body}` | iterate list |
+| `@i a..b{body}` | range iteration: i from a (inclusive) to b (exclusive) |
 | `ret expr` | early return from function |
 | `~expr` | return ok |
 | `^expr` | return err |
@@ -335,6 +339,15 @@ f xs:L n>n;@x xs{>=x 10{ret x}};0  -- return first element >= 10
 
 Guards already provide early return for simple cases. Use `ret` when you need early return inside a loop or deeply nested block.
 
+### Range Iteration
+
+`@i a..b{body}` iterates `i` from `a` (inclusive) to `b` (exclusive). The index variable is a fresh binding per iteration; other variables in the body update the enclosing scope:
+
+```
+f>n;s=0;@i 0..5{s=+s i};s      -- sum 0+1+2+3+4 = 10
+f>n;xs=[];@i 0..3{xs=+=xs i};xs -- [0, 1, 2]
+```
+
 ### While Loop
 
 `wh cond{body}` loops while condition is truthy:
@@ -344,7 +357,7 @@ f>n;i=0;s=0;wh <i 5{i=+i 1;s=+s i};s    -- sum 1..5 = 15
 f>n;i=0;wh true{i=+i 1;>=i 3{ret i}};0   -- early return from loop
 ```
 
-Variable rebinding (`i=+i 1`) inside while loops updates the existing variable rather than creating a new binding.
+Variable rebinding inside loops updates the existing variable rather than creating a new binding.
 
 ### Break and Continue
 

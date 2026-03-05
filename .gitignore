@@ -10,3 +10,4 @@ ilo
 *.png
 .playwright-mcp/
 .worktrees
+research/explorations/bench-realistic/.build/

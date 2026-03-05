@@ -116,6 +116,21 @@ impl Env {
     }
 
     fn set(&mut self, name: &str, value: Value) {
+        // Update an existing binding in the nearest enclosing scope
+        for scope in self.scopes.iter_mut().rev() {
+            if scope.contains_key(name) {
+                scope.insert(name.to_string(), value);
+                return;
+            }
+        }
+        // No existing binding — create in innermost scope
+        if let Some(scope) = self.scopes.last_mut() {
+            scope.insert(name.to_string(), value);
+        }
+    }
+
+    /// Always create a fresh binding in the innermost scope (used for function parameters).
+    fn define(&mut self, name: &str, value: Value) {
         if let Some(scope) = self.scopes.last_mut() {
             scope.insert(name.to_string(), value);
         }
@@ -588,14 +603,19 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                     "{}: expected {} args, got {}", name, params.len(), args.len()
                 )));
             }
-            env.push_scope();
+            // Use a fresh scope stack for the function call to prevent
+            // recursive calls from accidentally mutating outer frame variables.
+            let saved_scopes = std::mem::replace(
+                &mut env.scopes,
+                vec![std::collections::HashMap::new()],
+            );
             for (param, arg) in params.iter().zip(args) {
-                env.set(&param.name, arg);
+                env.define(&param.name, arg);
             }
             env.call_stack.push(func_name.clone());
             let result = eval_body(env, &body);
             env.call_stack.pop();
-            env.pop_scope();
+            env.scopes = saved_scopes;
             match result? {
                 BodyResult::Value(v) | BodyResult::Return(v) | BodyResult::Break(v) => Ok(v),
                 BodyResult::Continue => Ok(Value::Nil),
@@ -767,7 +787,7 @@ fn eval_stmt(env: &mut Env, stmt: &Stmt, is_last: bool) -> Result<Option<BodyRes
                 if let Some(bindings) = match_pattern(&arm.pattern, &subj) {
                     env.push_scope();
                     for (name, val) in bindings {
-                        env.set(&name, val);
+                        env.define(&name, val);
                     }
                     let result = eval_body(env, &arm.body);
                     env.pop_scope();
@@ -793,7 +813,7 @@ fn eval_stmt(env: &mut Env, stmt: &Stmt, is_last: bool) -> Result<Option<BodyRes
                     let mut last = Value::Nil;
                     for item in items {
                         env.push_scope();
-                        env.set(binding, item);
+                        env.define(binding, item);
                         let result = eval_body(env, body);
                         env.pop_scope();
                         match result? {
@@ -827,7 +847,7 @@ fn eval_stmt(env: &mut Env, stmt: &Stmt, is_last: bool) -> Result<Option<BodyRes
             let mut last = Value::Nil;
             for i in s..e {
                 env.push_scope();
-                env.set(binding, Value::Number(i as f64));
+                env.define(binding, Value::Number(i as f64));
                 let result = eval_body(env, body);
                 env.pop_scope();
                 match result? {
@@ -1006,7 +1026,7 @@ fn eval_expr(env: &mut Env, expr: &Expr) -> Result<Value> {
                 if let Some(bindings) = match_pattern(&arm.pattern, &subj) {
                     env.push_scope();
                     for (name, val) in bindings {
-                        env.set(&name, val);
+                        env.define(&name, val);
                     }
                     let result = eval_body(env, &arm.body);
                     env.pop_scope();
