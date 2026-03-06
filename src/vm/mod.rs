@@ -146,6 +146,8 @@ pub(crate) const OP_WRL: u8 = 80;       // R[A] = wrl(R[B], R[C]) — write line
 pub(crate) const OP_TRM: u8 = 81;       // R[A] = trim(R[B])  — trim whitespace → t
 pub(crate) const OP_UNQ: u8 = 82;       // R[A] = unq(R[B])   — deduplicate list or text
 pub(crate) const OP_POST: u8 = 83;      // R[A] = http_post(R[B], R[C])  (returns R t t)
+pub(crate) const OP_GETH: u8 = 84;      // R[A] = http_get(R[B], headers=R[C])  (returns R t t)
+pub(crate) const OP_POSTH: u8 = 85;     // ABx: R[A] = http_post(R[B], body=R[bx>>8], headers=R[bx&0xFF])
 
 // ABx mode — register + 16-bit operand
 pub(crate) const OP_LOADK: u8 = 20;
@@ -1313,6 +1315,45 @@ impl RegCompiler {
                     let ra = self.alloc_reg();
                     self.emit_abc(OP_POST, ra, rb, rc);
                     // post returns R t t — handle auto-unwrap
+                    if *unwrap {
+                        let check_reg = self.alloc_reg();
+                        self.emit_abc(OP_ISOK, check_reg, ra, 0);
+                        let skip_ret = self.emit_jmpt(check_reg);
+                        self.emit_abx(OP_RET, ra, 0);
+                        self.current.patch_jump(skip_ret);
+                        self.emit_abc(OP_UNWRAP, ra, ra, 0);
+                        self.next_reg = ra + 1;
+                    }
+                    return ra;
+                }
+                if function == "get" && args.len() == 2 {
+                    // get url headers — OP_GETH (ABC: result=A, url=B, headers=C)
+                    let rb = self.compile_expr(&args[0]);
+                    let rc = self.compile_expr(&args[1]);
+                    let ra = self.alloc_reg();
+                    self.emit_abc(OP_GETH, ra, rb, rc);
+                    if *unwrap {
+                        let check_reg = self.alloc_reg();
+                        self.emit_abc(OP_ISOK, check_reg, ra, 0);
+                        let skip_ret = self.emit_jmpt(check_reg);
+                        self.emit_abx(OP_RET, ra, 0);
+                        self.current.patch_jump(skip_ret);
+                        self.emit_abc(OP_UNWRAP, ra, ra, 0);
+                        self.next_reg = ra + 1;
+                    }
+                    return ra;
+                }
+                if function == "post" && args.len() == 3 {
+                    // post url body headers — two-instruction sequence:
+                    //   OP_POSTH  A=result  B=url  C=body
+                    //   data word: A=headers_reg (consumed by OP_POSTH dispatch; ip advances past it)
+                    let rb = self.compile_expr(&args[0]);
+                    let r_body = self.compile_expr(&args[1]);
+                    let r_hdrs = self.compile_expr(&args[2]);
+                    let ra = self.alloc_reg();
+                    self.emit_abc(OP_POSTH, ra, rb, r_body);
+                    // data word carries headers reg in the A field; dispatch reads and skips it
+                    self.emit_abc(0, r_hdrs, 0, 0);
                     if *unwrap {
                         let check_reg = self.alloc_reg();
                         self.emit_abc(OP_ISOK, check_reg, ra, 0);
@@ -3698,6 +3739,84 @@ impl<'a> VM<'a> {
                         let url = unsafe { match vb.as_heap_ref() { HeapObj::Str(s) => s, _ => unreachable!() } };
                         let body = unsafe { match vc.as_heap_ref() { HeapObj::Str(s) => s, _ => unreachable!() } };
                         match minreq::post(url.as_str()).with_body(body.as_str()).send() {
+                            Ok(resp) => match resp.as_str() {
+                                Ok(b) => NanVal::heap_ok(NanVal::heap_string(b.to_string())),
+                                Err(e) => NanVal::heap_err(NanVal::heap_string(format!("response is not valid UTF-8: {e}"))),
+                            },
+                            Err(e) => NanVal::heap_err(NanVal::heap_string(e.to_string())),
+                        }
+                    };
+                    #[cfg(not(feature = "http"))]
+                    let result = NanVal::heap_err(NanVal::heap_string("http feature not enabled".to_string()));
+                    reg_set!(a, result);
+                }
+                OP_GETH => {
+                    // ABC: A=result, B=url, C=headers_map (M t t)
+                    let a = ((inst >> 16) & 0xFF) as usize + base;
+                    let b = ((inst >> 8) & 0xFF) as usize + base;
+                    let c = (inst & 0xFF) as usize + base;
+                    let vb = reg!(b);
+                    let vc = reg!(c);
+                    if !vb.is_string() {
+                        return Err(VmError::Type("get requires a string url"));
+                    }
+                    #[cfg(feature = "http")]
+                    let result = {
+                        let url = unsafe { match vb.as_heap_ref() { HeapObj::Str(s) => s.as_str().to_owned(), _ => unreachable!() } };
+                        let mut req = minreq::get(url.as_str());
+                        if vc.is_heap() {
+                            if let HeapObj::Map(m) = unsafe { vc.as_heap_ref() } {
+                                for (k, v) in m.iter() {
+                                    if v.is_string() {
+                                        let vs = unsafe { match v.as_heap_ref() { HeapObj::Str(s) => s.as_str().to_owned(), _ => unreachable!() } };
+                                        req = req.with_header(k.as_str(), &vs);
+                                    }
+                                }
+                            }
+                        }
+                        match req.send() {
+                            Ok(resp) => match resp.as_str() {
+                                Ok(body) => NanVal::heap_ok(NanVal::heap_string(body.to_string())),
+                                Err(e) => NanVal::heap_err(NanVal::heap_string(format!("response is not valid UTF-8: {e}"))),
+                            },
+                            Err(e) => NanVal::heap_err(NanVal::heap_string(e.to_string())),
+                        }
+                    };
+                    #[cfg(not(feature = "http"))]
+                    let result = NanVal::heap_err(NanVal::heap_string("http feature not enabled".to_string()));
+                    reg_set!(a, result);
+                }
+                OP_POSTH => {
+                    // Two-instruction sequence: OP_POSTH A=result B=url C=body; data word A=headers_reg
+                    let a = ((inst >> 16) & 0xFF) as usize + base;
+                    let b = ((inst >> 8) & 0xFF) as usize + base;
+                    let c = (inst & 0xFF) as usize + base;
+                    // SAFETY: compiler always emits the data word immediately after OP_POSTH
+                    let data_inst = unsafe { *code.get_unchecked(ip) };
+                    ip += 1;
+                    let d = ((data_inst >> 16) & 0xFF) as usize + base;
+                    let vb = reg!(b);
+                    let vc = reg!(c);
+                    let vd = reg!(d);
+                    if !vb.is_string() || !vc.is_string() {
+                        return Err(VmError::Type("post requires string url and body"));
+                    }
+                    #[cfg(feature = "http")]
+                    let result = {
+                        let url = unsafe { match vb.as_heap_ref() { HeapObj::Str(s) => s.as_str().to_owned(), _ => unreachable!() } };
+                        let body_str = unsafe { match vc.as_heap_ref() { HeapObj::Str(s) => s.as_str().to_owned(), _ => unreachable!() } };
+                        let mut req = minreq::post(url.as_str()).with_body(body_str.as_str());
+                        if vd.is_heap() {
+                            if let HeapObj::Map(m) = unsafe { vd.as_heap_ref() } {
+                                for (k, v) in m.iter() {
+                                    if v.is_string() {
+                                        let vs = unsafe { match v.as_heap_ref() { HeapObj::Str(s) => s.as_str().to_owned(), _ => unreachable!() } };
+                                        req = req.with_header(k.as_str(), &vs);
+                                    }
+                                }
+                            }
+                        }
+                        match req.send() {
                             Ok(resp) => match resp.as_str() {
                                 Ok(b) => NanVal::heap_ok(NanVal::heap_string(b.to_string())),
                                 Err(e) => NanVal::heap_err(NanVal::heap_string(format!("response is not valid UTF-8: {e}"))),
@@ -6783,6 +6902,57 @@ mod tests {
         let chunk = &compiled.chunks[0];
         let has_post_op = chunk.code.iter().any(|inst| (inst >> 24) as u8 == OP_POST);
         assert!(has_post_op, "expected OP_POST in bytecode for post!");
+    }
+
+    #[test]
+    fn vm_get_with_headers_compiles_to_op_geth() {
+        let prog = parse_program(r#"f url:t hdrs:M t t>R t t;get url hdrs"#);
+        let compiled = compile(&prog).unwrap();
+        let chunk = &compiled.chunks[0];
+        let has_geth = chunk.code.iter().any(|inst| (inst >> 24) as u8 == OP_GETH);
+        assert!(has_geth, "expected OP_GETH in bytecode");
+    }
+
+    #[test]
+    fn vm_post_with_headers_compiles_to_op_posth() {
+        let prog = parse_program(r#"f url:t body:t hdrs:M t t>R t t;post url body hdrs"#);
+        let compiled = compile(&prog).unwrap();
+        let chunk = &compiled.chunks[0];
+        let has_posth = chunk.code.iter().any(|inst| (inst >> 24) as u8 == OP_POSTH);
+        assert!(has_posth, "expected OP_POSTH in bytecode");
+    }
+
+    #[test]
+    fn vm_get_with_headers_bad_host_returns_err() {
+        // bad host → Err value, even with headers passed as parameter
+        let src = r#"f url:t hdrs:M t t>R t t;get url hdrs"#;
+        let mut headers = std::collections::HashMap::new();
+        headers.insert("x-api-key".to_string(), Value::Text("tok".to_string()));
+        let result = vm_run(src, Some("f"), vec![
+            Value::Text("http://127.0.0.1:1".to_string()),
+            Value::Map(headers),
+        ]);
+        match result {
+            Value::Err(_) => {}
+            other => panic!("expected Err, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn vm_post_with_headers_bad_host_returns_err() {
+        // bad host → Err value, even with headers passed as parameter
+        let src = r#"f url:t body:t hdrs:M t t>R t t;post url body hdrs"#;
+        let mut headers = std::collections::HashMap::new();
+        headers.insert("x-api-key".to_string(), Value::Text("tok".to_string()));
+        let result = vm_run(src, Some("f"), vec![
+            Value::Text("http://127.0.0.1:1".to_string()),
+            Value::Text("body".to_string()),
+            Value::Map(headers),
+        ]);
+        match result {
+            Value::Err(_) => {}
+            other => panic!("expected Err, got {other:?}"),
+        }
     }
 
     // ---- Braceless guards ----

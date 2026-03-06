@@ -608,48 +608,72 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             other => Err(RuntimeError::new("ILO-R009", format!("slc requires a list or text, got {:?}", other))),
         };
     }
-    if name == "get" && args.len() == 1 {
-        return match &args[0] {
-            Value::Text(url) => {
-                #[cfg(feature = "http")]
-                {
-                    match minreq::get(url.as_str()).send() {
-                        Ok(resp) => match resp.as_str() {
-                            Ok(body) => Ok(Value::Ok(Box::new(Value::Text(body.to_string())))),
-                            Err(e) => Ok(Value::Err(Box::new(Value::Text(format!("response is not valid UTF-8: {e}"))))),
-                        },
-                        Err(e) => Ok(Value::Err(Box::new(Value::Text(e.to_string())))),
-                    }
-                }
-                #[cfg(not(feature = "http"))]
-                {
-                    let _ = url;
-                    Ok(Value::Err(Box::new(Value::Text("http feature not enabled".to_string()))))
+    if name == "get" && (args.len() == 1 || args.len() == 2) {
+        let url = match &args[0] {
+            Value::Text(u) => u.clone(),
+            other => return Err(RuntimeError::new("ILO-R009", format!("get requires text (url), got {:?}", other))),
+        };
+        let headers = if args.len() == 2 {
+            match &args[1] {
+                Value::Map(m) => m.iter().map(|(k, v)| {
+                    let vs = match v { Value::Text(s) => s.clone(), other => format!("{other:?}") };
+                    (k.clone(), vs)
+                }).collect::<Vec<_>>(),
+                other => return Err(RuntimeError::new("ILO-R009", format!("get headers must be M t t, got {:?}", other))),
+            }
+        } else { vec![] };
+        return {
+            #[cfg(feature = "http")]
+            {
+                let mut req = minreq::get(url.as_str());
+                for (k, v) in &headers { req = req.with_header(k.as_str(), v.as_str()); }
+                match req.send() {
+                    Ok(resp) => match resp.as_str() {
+                        Ok(body) => Ok(Value::Ok(Box::new(Value::Text(body.to_string())))),
+                        Err(e) => Ok(Value::Err(Box::new(Value::Text(format!("response is not valid UTF-8: {e}"))))),
+                    },
+                    Err(e) => Ok(Value::Err(Box::new(Value::Text(e.to_string())))),
                 }
             }
-            other => Err(RuntimeError::new("ILO-R009", format!("get requires text, got {:?}", other))),
+            #[cfg(not(feature = "http"))]
+            {
+                let _ = (url, headers);
+                Ok(Value::Err(Box::new(Value::Text("http feature not enabled".to_string()))))
+            }
         };
     }
-    if name == "post" && args.len() == 2 {
-        return match (&args[0], &args[1]) {
-            (Value::Text(url), Value::Text(body)) => {
-                #[cfg(feature = "http")]
-                {
-                    match minreq::post(url.as_str()).with_body(body.as_str()).send() {
-                        Ok(resp) => match resp.as_str() {
-                            Ok(b) => Ok(Value::Ok(Box::new(Value::Text(b.to_string())))),
-                            Err(e) => Ok(Value::Err(Box::new(Value::Text(format!("response is not valid UTF-8: {e}"))))),
-                        },
-                        Err(e) => Ok(Value::Err(Box::new(Value::Text(e.to_string())))),
-                    }
-                }
-                #[cfg(not(feature = "http"))]
-                {
-                    let _ = (url, body);
-                    Ok(Value::Err(Box::new(Value::Text("http feature not enabled".to_string()))))
+    if name == "post" && (args.len() == 2 || args.len() == 3) {
+        let (url, body) = match (&args[0], &args[1]) {
+            (Value::Text(u), Value::Text(b)) => (u.clone(), b.clone()),
+            _ => return Err(RuntimeError::new("ILO-R009", format!("post requires (t, t), got ({:?}, {:?})", args[0], args[1]))),
+        };
+        let headers = if args.len() == 3 {
+            match &args[2] {
+                Value::Map(m) => m.iter().map(|(k, v)| {
+                    let vs = match v { Value::Text(s) => s.clone(), other => format!("{other:?}") };
+                    (k.clone(), vs)
+                }).collect::<Vec<_>>(),
+                other => return Err(RuntimeError::new("ILO-R009", format!("post headers must be M t t, got {:?}", other))),
+            }
+        } else { vec![] };
+        return {
+            #[cfg(feature = "http")]
+            {
+                let mut req = minreq::post(url.as_str()).with_body(body.as_str());
+                for (k, v) in &headers { req = req.with_header(k.as_str(), v.as_str()); }
+                match req.send() {
+                    Ok(resp) => match resp.as_str() {
+                        Ok(b) => Ok(Value::Ok(Box::new(Value::Text(b.to_string())))),
+                        Err(e) => Ok(Value::Err(Box::new(Value::Text(format!("response is not valid UTF-8: {e}"))))),
+                    },
+                    Err(e) => Ok(Value::Err(Box::new(Value::Text(e.to_string())))),
                 }
             }
-            _ => Err(RuntimeError::new("ILO-R009", format!("post requires (t, t), got ({:?}, {:?})", args[0], args[1]))),
+            #[cfg(not(feature = "http"))]
+            {
+                let _ = (url, body, headers);
+                Ok(Value::Err(Box::new(Value::Text("http feature not enabled".to_string()))))
+            }
         };
     }
     if name == "trm" && args.len() == 1 {

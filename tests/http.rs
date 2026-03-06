@@ -2,7 +2,7 @@
 /// These start a real local server so the runtime path (minreq) is exercised.
 use std::process::Command;
 
-use wiremock::matchers::{body_string, method, path};
+use wiremock::matchers::{body_string, header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 fn ilo() -> Command {
@@ -139,4 +139,50 @@ async fn post_bad_host_returns_err() {
         stdout.contains("Err") || stdout.contains("err"),
         "expected Err in output, got: {stdout}"
     );
+}
+
+// ── headers ───────────────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn get_with_header_sent() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/auth"))
+        .and(header("x-api-key", "secret"))
+        .respond_with(ResponseTemplate::new(200).set_body_string("authorized"))
+        .mount(&server)
+        .await;
+
+    let url = format!("{}/auth", server.uri());
+    // Pass headers as an ilo map literal via mmap + mset
+    let code = r#"f url:t>R t t;h=mmap;h=mset h "x-api-key" "secret";get url h"#;
+    let out = ilo()
+        .args([code, &url])
+        .output()
+        .expect("failed to run ilo");
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("authorized"), "expected 'authorized' in output, got: {stdout}");
+}
+
+#[tokio::test]
+async fn post_with_header_sent() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/submit"))
+        .and(header("x-api-key", "tok"))
+        .and(body_string("payload"))
+        .respond_with(ResponseTemplate::new(200).set_body_string("accepted"))
+        .mount(&server)
+        .await;
+
+    let url = format!("{}/submit", server.uri());
+    let code = r#"f url:t>R t t;h=mmap;h=mset h "x-api-key" "tok";post url "payload" h"#;
+    let out = ilo()
+        .args([code, &url])
+        .output()
+        .expect("failed to run ilo");
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("accepted"), "expected 'accepted' in output, got: {stdout}");
 }

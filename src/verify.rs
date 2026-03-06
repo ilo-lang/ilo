@@ -243,7 +243,9 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("min", &["n", "n"], "n"),
     ("max", &["n", "n"], "n"),
     ("get", &["t"], "R t t"),
+    ("get", &["t", "M t t"], "R t t"),
     ("post", &["t", "t"], "R t t"),
+    ("post", &["t", "t", "M t t"], "R t t"),
     ("rd", &["t"], "R ? t"),
     ("rd", &["t", "t"], "R ? t"),
     ("rdl", &["t"], "R (L t) t"),
@@ -627,6 +629,8 @@ fn builtin_check_args(name: &str, arg_types: &[Ty], func_ctx: &str, span: Option
             (ret, errors)
         }
         "get" => {
+            // get url          — 1-arg
+            // get url headers  — 2-arg: headers is M t t
             if let Some(arg) = arg_types.first()
                 && !compatible(arg, &Ty::Text)
             {
@@ -639,16 +643,44 @@ fn builtin_check_args(name: &str, arg_types: &[Ty], func_ctx: &str, span: Option
                     is_warning: false,
                 });
             }
+            if let Some(arg) = arg_types.get(1) {
+                let map_ty = Ty::Map(Box::new(Ty::Text), Box::new(Ty::Text));
+                if !compatible(arg, &map_ty) {
+                    errors.push(VerifyError {
+                        code: "ILO-T013",
+                        function: func_ctx.to_string(),
+                        message: format!("'get' headers arg expects M t t, got {arg}"),
+                        hint: None,
+                        span,
+                        is_warning: false,
+                    });
+                }
+            }
             (Ty::Result(Box::new(Ty::Text), Box::new(Ty::Text)), errors)
         }
         "post" => {
-            for (i, arg) in arg_types.iter().enumerate() {
+            // post url body          — 2-arg
+            // post url body headers  — 3-arg: headers is M t t
+            for (i, arg) in arg_types.iter().enumerate().take(2) {
                 if !compatible(arg, &Ty::Text) {
                     let label = if i == 0 { "url" } else { "body" };
                     errors.push(VerifyError {
                         code: "ILO-T013",
                         function: func_ctx.to_string(),
                         message: format!("'post' expects t ({label}), got {arg}"),
+                        hint: None,
+                        span,
+                        is_warning: false,
+                    });
+                }
+            }
+            if let Some(arg) = arg_types.get(2) {
+                let map_ty = Ty::Map(Box::new(Ty::Text), Box::new(Ty::Text));
+                if !compatible(arg, &map_ty) {
+                    errors.push(VerifyError {
+                        code: "ILO-T013",
+                        function: func_ctx.to_string(),
+                        message: format!("'post' headers arg expects M t t, got {arg}"),
                         hint: None,
                         span,
                         is_warning: false,
@@ -1447,6 +1479,10 @@ impl VerifyContext {
                         args.is_empty() || args.len() == 2
                     } else if callee == "srt" || callee == "rd" {
                         args.len() == 1 || args.len() == 2
+                    } else if callee == "get" {
+                        args.len() == 1 || args.len() == 2
+                    } else if callee == "post" {
+                        args.len() == 2 || args.len() == 3
                     } else if callee == "fmt" {
                         !args.is_empty()  // variadic: template + 0 or more args
                     } else {
@@ -1457,6 +1493,10 @@ impl VerifyContext {
                             "0 or 2".to_string()
                         } else if callee == "srt" || callee == "rd" {
                             "1 or 2".to_string()
+                        } else if callee == "get" {
+                            "1 or 2".to_string()
+                        } else if callee == "post" {
+                            "2 or 3".to_string()
                         } else {
                             expected_arity.to_string()
                         };
@@ -3096,10 +3136,23 @@ mod tests {
 
     #[test]
     fn builtin_get_wrong_arity() {
-        let result = parse_and_verify(r#"f x:t y:t>R t t;get x y"#);
+        // 3 args is invalid for get (max 2)
+        let result = parse_and_verify(r#"f x:t y:M t t z:t>R t t;get x y z"#);
         assert!(result.is_err());
         let errors = result.unwrap_err();
         assert!(errors.iter().any(|e| e.message.contains("arity")));
+    }
+
+    #[test]
+    fn builtin_get_with_headers_ok() {
+        // 2-arg get with M t t headers is valid
+        assert!(parse_and_verify(r#"f url:t hdrs:M t t>R t t;get url hdrs"#).is_ok());
+    }
+
+    #[test]
+    fn builtin_post_with_headers_ok() {
+        // 3-arg post with M t t headers is valid
+        assert!(parse_and_verify(r#"f url:t body:t hdrs:M t t>R t t;post url body hdrs"#).is_ok());
     }
 
     #[test]
