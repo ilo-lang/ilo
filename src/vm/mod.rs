@@ -9041,4 +9041,278 @@ mod tests {
             other => panic!("expected Text, got {other:?}"),
         }
     }
+
+    // ── JIT helper functions (cranelift feature) ───────────────────────────────
+
+    #[cfg(feature = "cranelift")]
+    mod jit_helpers {
+        use super::super::*;
+
+        fn num(v: f64) -> u64 { NanVal::number(v).0 }
+        fn is_num(v: u64) -> bool { NanVal(v).is_number() }
+        fn as_num(v: u64) -> f64 { NanVal(v).as_number() }
+        fn is_bool(v: u64) -> bool { v == TAG_TRUE || v == TAG_FALSE }
+        fn as_bool(v: u64) -> bool { v == TAG_TRUE }
+        fn is_nil(v: u64) -> bool { v == TAG_NIL }
+
+        #[test]
+        fn jit_sub_numbers() {
+            let r = jit_sub(num(10.0), num(3.0));
+            assert!(is_num(r));
+            assert_eq!(as_num(r), 7.0);
+        }
+
+        #[test]
+        fn jit_sub_non_numbers_returns_nil() {
+            let s = NanVal::heap_string("hello".into());
+            let r = jit_sub(s.0, num(1.0));
+            assert!(is_nil(r));
+        }
+
+        #[test]
+        fn jit_mul_numbers() {
+            let r = jit_mul(num(4.0), num(5.0));
+            assert!(is_num(r));
+            assert_eq!(as_num(r), 20.0);
+        }
+
+        #[test]
+        fn jit_div_numbers() {
+            let r = jit_div(num(10.0), num(4.0));
+            assert!(is_num(r));
+            assert_eq!(as_num(r), 2.5);
+        }
+
+        #[test]
+        fn jit_div_by_zero_returns_nil() {
+            let r = jit_div(num(5.0), num(0.0));
+            assert!(is_nil(r));
+        }
+
+        #[test]
+        fn jit_eq_equal_numbers() {
+            let r = jit_eq(num(3.0), num(3.0));
+            assert!(is_bool(r));
+            assert!(as_bool(r));
+        }
+
+        #[test]
+        fn jit_eq_unequal_numbers() {
+            let r = jit_eq(num(3.0), num(4.0));
+            assert!(is_bool(r));
+            assert!(!as_bool(r));
+        }
+
+        #[test]
+        fn jit_ne_numbers() {
+            assert!(as_bool(jit_ne(num(1.0), num(2.0))));
+            assert!(!as_bool(jit_ne(num(2.0), num(2.0))));
+        }
+
+        #[test]
+        fn jit_gt_numbers() {
+            assert!(as_bool(jit_gt(num(5.0), num(3.0))));
+            assert!(!as_bool(jit_gt(num(3.0), num(5.0))));
+        }
+
+        #[test]
+        fn jit_lt_numbers() {
+            assert!(as_bool(jit_lt(num(2.0), num(7.0))));
+            assert!(!as_bool(jit_lt(num(7.0), num(2.0))));
+        }
+
+        #[test]
+        fn jit_ge_numbers() {
+            assert!(as_bool(jit_ge(num(5.0), num(5.0))));
+            assert!(as_bool(jit_ge(num(6.0), num(5.0))));
+            assert!(!as_bool(jit_ge(num(4.0), num(5.0))));
+        }
+
+        #[test]
+        fn jit_le_numbers() {
+            assert!(as_bool(jit_le(num(3.0), num(3.0))));
+            assert!(as_bool(jit_le(num(2.0), num(3.0))));
+            assert!(!as_bool(jit_le(num(4.0), num(3.0))));
+        }
+
+        #[test]
+        fn jit_not_true_returns_false() {
+            let r = jit_not(NanVal::boolean(true).0);
+            assert!(is_bool(r));
+            assert!(!as_bool(r));
+        }
+
+        #[test]
+        fn jit_not_false_returns_true() {
+            let r = jit_not(NanVal::boolean(false).0);
+            assert!(is_bool(r));
+            assert!(as_bool(r));
+        }
+
+        #[test]
+        fn jit_neg_number() {
+            let r = jit_neg(num(5.0));
+            assert!(is_num(r));
+            assert_eq!(as_num(r), -5.0);
+        }
+
+        #[test]
+        fn jit_neg_non_number_returns_nil() {
+            let s = NanVal::heap_string("x".into());
+            let r = jit_neg(s.0);
+            assert!(is_nil(r));
+        }
+
+        #[test]
+        fn jit_truthy_number_nonzero() {
+            // jit_truthy returns 1 for truthy, 0 for falsy (raw integer, not TAG_TRUE)
+            let r = jit_truthy(num(42.0));
+            assert_eq!(r, 1);
+        }
+
+        #[test]
+        fn jit_truthy_number_zero() {
+            let r = jit_truthy(num(0.0));
+            assert_eq!(r, 0);
+        }
+
+        #[test]
+        fn jit_truthy_bool_true() {
+            let r = jit_truthy(NanVal::boolean(true).0);
+            assert_eq!(r, 1);
+        }
+
+        #[test]
+        fn jit_truthy_nil_false() {
+            let r = jit_truthy(TAG_NIL);
+            assert_eq!(r, 0);
+        }
+
+        #[test]
+        fn jit_wrapok_wraps_value() {
+            let r = jit_wrapok(num(7.0));
+            let v = NanVal(r).to_value();
+            assert!(matches!(v, Value::Ok(_)));
+        }
+
+        #[test]
+        fn jit_wraperr_wraps_value() {
+            let r = jit_wraperr(num(7.0));
+            let v = NanVal(r).to_value();
+            assert!(matches!(v, Value::Err(_)));
+        }
+
+        #[test]
+        fn jit_isok_on_ok_value() {
+            let ok_val = NanVal::from_value(&Value::Ok(Box::new(Value::Number(1.0))));
+            let r = jit_isok(ok_val.0);
+            assert!(as_bool(r));
+        }
+
+        #[test]
+        fn jit_isok_on_non_ok() {
+            let r = jit_isok(num(42.0));
+            assert!(!as_bool(r));
+        }
+
+        #[test]
+        fn jit_iserr_on_err_value() {
+            let err_val = NanVal::from_value(&Value::Err(Box::new(Value::Text("oops".into()))));
+            let r = jit_iserr(err_val.0);
+            assert!(as_bool(r));
+        }
+
+        #[test]
+        fn jit_iserr_on_non_err() {
+            let r = jit_iserr(num(1.0));
+            assert!(!as_bool(r));
+        }
+
+        #[test]
+        fn jit_unwrap_ok_value() {
+            let ok_val = NanVal::from_value(&Value::Ok(Box::new(Value::Number(3.14))));
+            let r = jit_unwrap(ok_val.0);
+            assert!(is_num(r));
+            assert!((as_num(r) - 3.14).abs() < 1e-9);
+        }
+
+        #[test]
+        fn jit_move_clones_value() {
+            let v = num(99.0);
+            let r = jit_move(v);
+            assert_eq!(r, v);
+        }
+
+        #[test]
+        fn jit_gt_non_numbers_returns_false() {
+            // Non-number, non-string → returns TAG_FALSE
+            let r = jit_gt(TAG_NIL, TAG_NIL);
+            assert!(!as_bool(r));
+        }
+
+        #[test]
+        fn jit_lt_non_numbers_returns_false() {
+            let r = jit_lt(TAG_NIL, num(1.0));
+            assert!(!as_bool(r));
+        }
+
+        #[test]
+        fn jit_ge_non_numbers_returns_false() {
+            let r = jit_ge(TAG_NIL, num(1.0));
+            assert!(!as_bool(r));
+        }
+
+        #[test]
+        fn jit_le_non_numbers_returns_false() {
+            let r = jit_le(TAG_NIL, num(1.0));
+            assert!(!as_bool(r));
+        }
+    }
+
+    // ── VM opcodes: record/destructure with ambiguous field index ─────────────
+
+    #[test]
+    fn vm_destructure_ambiguous_field_uses_name_lookup() {
+        // Two types with field "x" at different positions force dynamic name lookup
+        // type A has {x, y}, type B has {z, x} — "x" is at different indices
+        // Destructuring from a known type still works correctly.
+        let result = vm_run(
+            "type a{x:n;y:n} type b{z:n;x:n} f>n;v=a x:10 y:20;{x}=v;x",
+            Some("f"), vec![],
+        );
+        assert_eq!(result, Value::Number(10.0));
+    }
+
+    #[test]
+    fn vm_guard_with_else_body_false_branch() {
+        // Guard with else as last stmt: when condition false, else branch is return value
+        // f x:n>n; >x 10 { 1 }{ -1 }  — with x=5 → condition false → else body → -1
+        let result = vm_run("f x:n>n;>x 10{1}{-1}", Some("f"), vec![Value::Number(5.0)]);
+        assert_eq!(result, Value::Number(-1.0));
+    }
+
+    #[test]
+    fn vm_match_type_is_bool_pattern() {
+        // Match with `b v:` pattern — exercises OP_ISBOOL
+        let result = vm_run(r#"f x:b>t;?x{b v:"bool";_:"other"}"#, Some("f"), vec![Value::Bool(true)]);
+        assert_eq!(result, Value::Text("bool".into()));
+    }
+
+    #[test]
+    fn vm_match_type_is_list_pattern() {
+        // Match with `l v:` pattern — exercises OP_ISLIST
+        let result = vm_run(r#"f xs:L n>t;?xs{l v:"list";_:"other"}"#, Some("f"), vec![Value::List(vec![])]);
+        assert_eq!(result, Value::Text("list".into()));
+    }
+
+    #[test]
+    fn vm_search_field_index_ambiguous_returns_none() {
+        // Two types where same field has different indices → search_field_index returns None
+        // This causes the compiler to use OP_RECFLD_NAME instead of OP_RECFLD.
+        let result = vm_run(
+            "type p{x:n;y:n} type q{y:n;x:n} f>n;v=p x:5 y:3;{x}=v;x",
+            Some("f"), vec![],
+        );
+        assert_eq!(result, Value::Number(5.0));
+    }
 }
