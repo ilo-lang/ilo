@@ -554,7 +554,13 @@ fn serv_cmd(args_slice: &[String]) {
     use std::io::BufRead;
     let stdin = std::io::stdin();
     for line in stdin.lock().lines() {
-        let line = line.expect("stdin read error");
+        let line = match line {
+            Ok(l) => l,
+            Err(e) => {
+                eprintln!("stdin read error: {}", e);
+                break;
+            }
+        };
         if line.trim().is_empty() {
             continue;
         }
