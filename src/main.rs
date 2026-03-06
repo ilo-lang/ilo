@@ -820,7 +820,8 @@ fn load_env_file(path: &str) {
             let key = key.trim();
             let val = val.trim();
             if !key.is_empty() && std::env::var(key).is_err() {
-                std::env::set_var(key, val);
+                // SAFETY: single-threaded at startup, no concurrent env access
+                unsafe { std::env::set_var(key, val) };
             }
         }
     }
@@ -1818,5 +1819,511 @@ fn parse_cli_arg(s: &str) -> interpreter::Value {
         interpreter::Value::Bool(false)
     } else {
         interpreter::Value::Text(s.to_string())
+    }
+}
+
+// ── Unit tests ────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Helper: call process_serv_request portably across feature configs.
+    fn run_serv(line: &str) -> serde_json::Value {
+        #[cfg(not(feature = "tools"))]
+        return process_serv_request(line, &[], None);
+
+        #[cfg(feature = "tools")]
+        {
+            let rt = std::sync::Arc::new(
+                tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .unwrap(),
+            );
+            process_serv_request(line, &[], None, None, rt)
+        }
+    }
+
+    // ── parse_cli_arg ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn cli_arg_integer() {
+        assert_eq!(parse_cli_arg("42"), interpreter::Value::Number(42.0));
+    }
+
+    #[test]
+    fn cli_arg_float() {
+        assert_eq!(parse_cli_arg("3.14"), interpreter::Value::Number(3.14));
+    }
+
+    #[test]
+    fn cli_arg_bool_true() {
+        assert_eq!(parse_cli_arg("true"), interpreter::Value::Bool(true));
+    }
+
+    #[test]
+    fn cli_arg_bool_false() {
+        assert_eq!(parse_cli_arg("false"), interpreter::Value::Bool(false));
+    }
+
+    #[test]
+    fn cli_arg_text() {
+        assert_eq!(parse_cli_arg("hello"), interpreter::Value::Text("hello".into()));
+    }
+
+    #[test]
+    fn cli_arg_bracketed_list() {
+        assert_eq!(
+            parse_cli_arg("[1,2,3]"),
+            interpreter::Value::List(vec![
+                interpreter::Value::Number(1.0),
+                interpreter::Value::Number(2.0),
+                interpreter::Value::Number(3.0),
+            ])
+        );
+    }
+
+    #[test]
+    fn cli_arg_empty_bracketed_list() {
+        assert_eq!(parse_cli_arg("[]"), interpreter::Value::List(vec![]));
+    }
+
+    #[test]
+    fn cli_arg_comma_list() {
+        assert_eq!(
+            parse_cli_arg("1,2,3"),
+            interpreter::Value::List(vec![
+                interpreter::Value::Number(1.0),
+                interpreter::Value::Number(2.0),
+                interpreter::Value::Number(3.0),
+            ])
+        );
+    }
+
+    #[test]
+    fn cli_arg_mixed_comma_list() {
+        assert_eq!(
+            parse_cli_arg("1,hello,true"),
+            interpreter::Value::List(vec![
+                interpreter::Value::Number(1.0),
+                interpreter::Value::Text("hello".into()),
+                interpreter::Value::Bool(true),
+            ])
+        );
+    }
+
+    #[test]
+    fn cli_arg_infinity_is_text() {
+        // inf is not finite so it should fall through to text
+        assert_eq!(parse_cli_arg("inf"), interpreter::Value::Text("inf".into()));
+    }
+
+    // ── detect_output_mode ────────────────────────────────────────────────────
+
+    #[test]
+    fn detect_mode_json_long_flag() {
+        let (mode, explicit, remaining) =
+            detect_output_mode(vec!["--json".into(), "foo".into()]);
+        assert!(matches!(mode, OutputMode::Json));
+        assert!(explicit);
+        assert_eq!(remaining, vec!["foo".to_string()]);
+    }
+
+    #[test]
+    fn detect_mode_json_short_flag() {
+        let (mode, explicit, _) = detect_output_mode(vec!["-j".into()]);
+        assert!(matches!(mode, OutputMode::Json));
+        assert!(explicit);
+    }
+
+    #[test]
+    fn detect_mode_text_long_flag() {
+        let (mode, explicit, _) = detect_output_mode(vec!["--text".into()]);
+        assert!(matches!(mode, OutputMode::Text));
+        assert!(!explicit);
+    }
+
+    #[test]
+    fn detect_mode_text_short_flag() {
+        let (mode, _, _) = detect_output_mode(vec!["-t".into()]);
+        assert!(matches!(mode, OutputMode::Text));
+    }
+
+    #[test]
+    fn detect_mode_ansi_long_flag() {
+        let (mode, explicit, _) = detect_output_mode(vec!["--ansi".into()]);
+        assert!(matches!(mode, OutputMode::Ansi));
+        assert!(!explicit);
+    }
+
+    #[test]
+    fn detect_mode_ansi_short_flag() {
+        let (mode, _, _) = detect_output_mode(vec!["-a".into()]);
+        assert!(matches!(mode, OutputMode::Ansi));
+    }
+
+    #[test]
+    fn detect_mode_non_flag_args_pass_through() {
+        let (_, _, remaining) =
+            detect_output_mode(vec!["ilo".into(), "f>n;1".into(), "42".into()]);
+        assert_eq!(remaining, vec!["ilo", "f>n;1", "42"]);
+    }
+
+    #[test]
+    fn detect_mode_format_flag_stripped_from_remaining() {
+        let (_, _, remaining) =
+            detect_output_mode(vec!["--json".into(), "code".into(), "arg".into()]);
+        assert_eq!(remaining, vec!["code", "arg"]);
+    }
+
+    // ── process_serv_request ─────────────────────────────────────────────────
+
+    #[test]
+    fn serv_invalid_json_returns_request_phase() {
+        let resp = run_serv("not valid json");
+        assert_eq!(resp["error"]["phase"], "request");
+    }
+
+    #[test]
+    fn serv_parse_error_returns_parse_phase() {
+        let resp = run_serv(r#"{"program": "f>n;??invalid"}"#);
+        assert_eq!(resp["error"]["phase"], "parse");
+    }
+
+    #[test]
+    fn serv_verify_error_returns_verify_phase() {
+        // x:n>t — returns a number where text is expected → ILO-T005
+        let resp = run_serv(r#"{"program": "f x:n>t;x"}"#);
+        assert_eq!(resp["error"]["phase"], "verify");
+    }
+
+    #[test]
+    fn serv_success_simple_number() {
+        let resp = run_serv(r#"{"program": "f>n;99"}"#);
+        assert!(resp.get("ok").is_some(), "expected ok, got: {resp}");
+        assert_eq!(resp["ok"].as_f64(), Some(99.0));
+        assert!(resp["ms"].is_number());
+    }
+
+    #[test]
+    fn serv_success_with_args() {
+        let resp = run_serv(r#"{"program": "f x:n>n;*x 2", "args": ["5"], "func": "f"}"#);
+        assert!(resp.get("ok").is_some(), "expected ok, got: {resp}");
+        assert_eq!(resp["ok"].as_f64(), Some(10.0));
+    }
+
+    #[test]
+    fn serv_result_err_value_returns_program_phase() {
+        // Function returns Err value (not a runtime crash — interpreter returns Ok(Value::Err))
+        let resp = run_serv(r#"{"program": "f>R n t;^\"oops\""}"#);
+        assert_eq!(resp["error"]["phase"], "program",
+            "expected program phase for Err value, got: {resp}");
+    }
+
+    #[test]
+    fn serv_result_ok_value_unwrapped() {
+        let resp = run_serv(r#"{"program": "f>R n t;~42"}"#);
+        assert!(resp.get("ok").is_some(), "expected ok, got: {resp}");
+        assert_eq!(resp["ok"].as_f64(), Some(42.0));
+    }
+
+    #[test]
+    fn serv_text_result() {
+        let resp = run_serv(r#"{"program": "f>t;\"hello\""}"#);
+        assert_eq!(resp["ok"].as_str(), Some("hello"));
+    }
+
+    #[test]
+    fn serv_with_func_field_selects_function() {
+        // Two functions; func field picks second one
+        let prog = "{\"program\": \"a>n;1\\nb>n;2\", \"func\": \"b\"}";
+        let resp = run_serv(prog);
+        assert_eq!(resp["ok"].as_f64(), Some(2.0));
+    }
+
+    #[test]
+    fn serv_mcp_decls_prepended() {
+        // mcp_tool_decls are prepended before verify; an empty slice should still work
+        let resp = run_serv(r#"{"program": "f>n;1"}"#);
+        assert_eq!(resp["ok"].as_f64(), Some(1.0));
+    }
+
+    // ── tool_ok_type ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn tool_ok_type_extracts_ok_branch() {
+        let ty = ast::Type::Result(
+            Box::new(ast::Type::Number),
+            Box::new(ast::Type::Text),
+        );
+        assert!(matches!(tool_ok_type(&ty), ast::Type::Number));
+    }
+
+    #[test]
+    fn tool_ok_type_passthrough_non_result() {
+        assert!(matches!(tool_ok_type(&ast::Type::Text), ast::Type::Text));
+        assert!(matches!(tool_ok_type(&ast::Type::Number), ast::Type::Number));
+        assert!(matches!(tool_ok_type(&ast::Type::Bool), ast::Type::Bool));
+    }
+
+    // ── types_pipe_compatible ─────────────────────────────────────────────────
+
+    #[test]
+    fn pipe_compat_same_primitives() {
+        assert!(types_pipe_compatible(&ast::Type::Number, &ast::Type::Number));
+        assert!(types_pipe_compatible(&ast::Type::Text, &ast::Type::Text));
+        assert!(types_pipe_compatible(&ast::Type::Bool, &ast::Type::Bool));
+        assert!(types_pipe_compatible(&ast::Type::Nil, &ast::Type::Nil));
+    }
+
+    #[test]
+    fn pipe_compat_different_primitives_incompatible() {
+        assert!(!types_pipe_compatible(&ast::Type::Number, &ast::Type::Text));
+        assert!(!types_pipe_compatible(&ast::Type::Bool, &ast::Type::Number));
+    }
+
+    #[test]
+    fn pipe_compat_named_type_is_wildcard() {
+        assert!(types_pipe_compatible(&ast::Type::Named("foo".into()), &ast::Type::Text));
+        assert!(types_pipe_compatible(&ast::Type::Text, &ast::Type::Named("bar".into())));
+    }
+
+    #[test]
+    fn pipe_compat_optional_param_accepts_inner_type() {
+        let opt = ast::Type::Optional(Box::new(ast::Type::Number));
+        assert!(types_pipe_compatible(&ast::Type::Number, &opt));
+    }
+
+    #[test]
+    fn pipe_compat_list_checks_element_type() {
+        let list_n = ast::Type::List(Box::new(ast::Type::Number));
+        let list_t = ast::Type::List(Box::new(ast::Type::Text));
+        assert!(types_pipe_compatible(&list_n, &list_n.clone()));
+        assert!(!types_pipe_compatible(&list_n, &list_t));
+    }
+
+    #[test]
+    fn pipe_compat_sum_is_text_compatible() {
+        let sum = ast::Type::Sum(vec!["a".into(), "b".into()]);
+        assert!(types_pipe_compatible(&sum, &ast::Type::Text));
+        assert!(types_pipe_compatible(&ast::Type::Text, &sum));
+        assert!(types_pipe_compatible(&sum, &sum.clone()));
+    }
+
+    #[test]
+    fn pipe_compat_map_checks_key_and_value() {
+        let map_nn = ast::Type::Map(Box::new(ast::Type::Text), Box::new(ast::Type::Number));
+        let map_nt = ast::Type::Map(Box::new(ast::Type::Text), Box::new(ast::Type::Text));
+        assert!(types_pipe_compatible(&map_nn, &map_nn.clone()));
+        assert!(!types_pipe_compatible(&map_nn, &map_nt));
+    }
+
+    // ── tool_sig_str ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn tool_sig_str_no_params() {
+        assert_eq!(tool_sig_str(&[], &ast::Type::Number), "> n");
+    }
+
+    #[test]
+    fn tool_sig_str_one_param() {
+        let params = vec![ast::Param { name: "x".into(), ty: ast::Type::Number }];
+        assert_eq!(tool_sig_str(&params, &ast::Type::Text), "x:n > t");
+    }
+
+    #[test]
+    fn tool_sig_str_two_params() {
+        let params = vec![
+            ast::Param { name: "a".into(), ty: ast::Type::Number },
+            ast::Param { name: "b".into(), ty: ast::Type::Text },
+        ];
+        assert_eq!(tool_sig_str(&params, &ast::Type::Bool), "a:n b:t > b");
+    }
+
+    // ── load_env_file ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn load_env_file_sets_new_var() {
+        use std::io::Write;
+        let path = "/tmp/ilo_test_env_load_A7B3.env";
+        let key = "ILO_TEST_LOAD_VAR_A7B3";
+        // SAFETY: test-only, no concurrent env access
+        unsafe { std::env::remove_var(key) };
+        std::fs::remove_file(path).ok();
+
+        let mut f = std::fs::File::create(path).unwrap();
+        writeln!(f, "# comment line").unwrap();
+        writeln!(f).unwrap(); // blank line
+        writeln!(f, "{key}=hello_world").unwrap();
+        writeln!(f, "  KEY_WITH_SPACES = trimmed  ").unwrap();
+        drop(f);
+
+        load_env_file(path);
+        assert_eq!(std::env::var(key).unwrap(), "hello_world");
+
+        // SAFETY: test-only, no concurrent env access
+        unsafe { std::env::remove_var(key) };
+        std::fs::remove_file(path).ok();
+    }
+
+    #[test]
+    fn load_env_file_does_not_overwrite_existing_var() {
+        use std::io::Write;
+        let path = "/tmp/ilo_test_env_no_overwrite_C5D1.env";
+        let key = "ILO_TEST_NO_OVERWRITE_C5D1";
+        // SAFETY: test-only, no concurrent env access
+        unsafe { std::env::remove_var(key) };
+        unsafe { std::env::set_var(key, "original") };
+
+        let mut f = std::fs::File::create(path).unwrap();
+        writeln!(f, "{key}=new_value").unwrap();
+        drop(f);
+
+        load_env_file(path);
+        assert_eq!(std::env::var(key).unwrap(), "original");
+
+        // SAFETY: test-only, no concurrent env access
+        unsafe { std::env::remove_var(key) };
+        std::fs::remove_file(path).ok();
+    }
+
+    #[test]
+    fn load_env_file_missing_file_is_noop() {
+        // Should not panic when file doesn't exist
+        load_env_file("/tmp/ilo_nonexistent_env_file_X9Z2.env");
+    }
+
+    // ── warn_cross_language_syntax ────────────────────────────────────────────
+
+    #[test]
+    fn warn_cross_lang_clean_source_no_panic() {
+        warn_cross_language_syntax("f x:n>n;*x 2", OutputMode::Text);
+    }
+
+    #[test]
+    fn warn_cross_lang_detects_double_ampersand() {
+        // Should not panic; warning goes to stderr
+        warn_cross_language_syntax("f a:b>b;&& a true", OutputMode::Text);
+    }
+
+    #[test]
+    fn warn_cross_lang_detects_double_pipe() {
+        warn_cross_language_syntax("f a:b>b;|| a false", OutputMode::Text);
+    }
+
+    #[test]
+    fn warn_cross_lang_detects_arrow() {
+        warn_cross_language_syntax("f x:n->n;x", OutputMode::Text);
+    }
+
+    #[test]
+    fn warn_cross_lang_detects_equality() {
+        warn_cross_language_syntax("f x:n>b;== x 1", OutputMode::Text);
+    }
+
+    // ── decl_name ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn decl_name_function_returns_name() {
+        let d = ast::Decl::Function {
+            name: "myfunc".into(),
+            params: vec![],
+            return_type: ast::Type::Number,
+            body: vec![],
+            span: ast::Span { start: 0, end: 0 },
+        };
+        assert_eq!(decl_name(&d), Some("myfunc"));
+    }
+
+    #[test]
+    fn decl_name_use_returns_none() {
+        let d = ast::Decl::Use {
+            path: "lib.ilo".into(),
+            only: None,
+            span: ast::Span { start: 0, end: 0 },
+        };
+        assert_eq!(decl_name(&d), None);
+    }
+
+    #[test]
+    fn decl_name_alias_returns_name() {
+        let d = ast::Decl::Alias {
+            name: "mytype".into(),
+            target: ast::Type::Number,
+            span: ast::Span { start: 0, end: 0 },
+        };
+        assert_eq!(decl_name(&d), Some("mytype"));
+    }
+
+    #[test]
+    fn decl_name_error_returns_none() {
+        let d = ast::Decl::Error {
+            span: ast::Span { start: 0, end: 0 },
+        };
+        assert_eq!(decl_name(&d), None);
+    }
+
+    // ── resolve_imports: `only` filter path ───────────────────────────────────
+
+    #[test]
+    fn resolve_imports_only_filter_keeps_named_decl() {
+        use std::io::Write;
+        let lib_path = "/tmp/ilo_test_resolve_only_F2G7.ilo";
+        let mut f = std::fs::File::create(lib_path).unwrap();
+        writeln!(f, "dbl n:n>n;*n 2").unwrap();
+        writeln!(f, "half n:n>n;/n 2").unwrap();
+        drop(f);
+
+        let use_decl = ast::Decl::Use {
+            path: "ilo_test_resolve_only_F2G7.ilo".into(),
+            only: Some(vec!["dbl".into()]),
+            span: ast::Span { start: 0, end: 0 },
+        };
+        let mut diags = Vec::new();
+        let mut visited = std::collections::HashSet::new();
+        let result = resolve_imports(
+            vec![use_decl],
+            Some(std::path::Path::new("/tmp")),
+            &mut visited,
+            &mut diags,
+        );
+
+        let names: Vec<&str> = result.iter().filter_map(|d| decl_name(d)).collect();
+        assert!(names.contains(&"dbl"), "expected dbl: {names:?}");
+        assert!(!names.contains(&"half"), "half should be filtered: {names:?}");
+        assert!(diags.is_empty(), "no errors expected: {diags:?}");
+
+        std::fs::remove_file(lib_path).ok();
+    }
+
+    #[test]
+    fn resolve_imports_only_filter_warns_missing_name() {
+        use std::io::Write;
+        let lib_path = "/tmp/ilo_test_resolve_missing_H4K9.ilo";
+        let mut f = std::fs::File::create(lib_path).unwrap();
+        writeln!(f, "dbl n:n>n;*n 2").unwrap();
+        drop(f);
+
+        let use_decl = ast::Decl::Use {
+            path: "ilo_test_resolve_missing_H4K9.ilo".into(),
+            only: Some(vec!["dbl".into(), "nonexistent".into()]),
+            span: ast::Span { start: 0, end: 0 },
+        };
+        let mut diags = Vec::new();
+        let mut visited = std::collections::HashSet::new();
+        let _ = resolve_imports(
+            vec![use_decl],
+            Some(std::path::Path::new("/tmp")),
+            &mut visited,
+            &mut diags,
+        );
+
+        assert!(
+            diags.iter().any(|d| d.code.as_deref() == Some("ILO-P019")),
+            "expected ILO-P019 for missing name, got: {diags:?}"
+        );
+
+        std::fs::remove_file(lib_path).ok();
     }
 }

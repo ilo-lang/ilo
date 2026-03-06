@@ -317,4 +317,90 @@ mod tests {
         assert!(out.contains("-- expr"), "expected '-- expr' for non-last stmt: {out}");
         assert!(out.contains("-- return"), "expected '-- return' for last stmt: {out}");
     }
+
+    #[test]
+    fn explain_negated_guard_annotation() {
+        let prog = parse_prog("f x:n>n;!>x 0{x};+x 1");
+        let out = explain(&prog, None);
+        assert!(out.contains("guard !"), "missing 'guard !': {out}");
+    }
+
+    #[test]
+    fn explain_break_no_value() {
+        // brk as top-level stmt (explain only parses, doesn't verify)
+        let prog = parse_prog("f>n;brk");
+        let out = explain(&prog, None);
+        assert!(out.contains("break"), "missing 'break': {out}");
+    }
+
+    #[test]
+    fn explain_break_with_value() {
+        // brk with value as top-level stmt
+        let prog = parse_prog("f x:n>n;brk x");
+        let out = explain(&prog, None);
+        assert!(out.contains("break (value)"), "missing 'break (value)': {out}");
+    }
+
+    #[test]
+    fn explain_continue_annotation() {
+        // cnt as top-level stmt (explain only parses)
+        let prog = parse_prog("f>n;cnt;0");
+        let out = explain(&prog, None);
+        assert!(out.contains("continue"), "missing 'continue': {out}");
+    }
+
+    #[test]
+    fn explain_destructure_annotation() {
+        let prog = parse_prog("type pt{x:n;y:n} f p:pt>n;{x;y}=p;+x y");
+        let out = explain(&prog, None);
+        assert!(out.contains("destructure →"), "missing 'destructure →': {out}");
+    }
+
+    #[test]
+    fn explain_tool_annotation() {
+        let prog = parse_prog(r#"tool fetch"Fetch a URL" url:t>R t t"#);
+        let out = explain(&prog, None);
+        assert!(out.contains("tool"), "missing 'tool': {out}");
+        assert!(out.contains("@fetch"), "missing '@fetch': {out}");
+    }
+
+    #[test]
+    fn explain_ternary_guard_annotation() {
+        // Guard with else body is a ternary
+        let prog = parse_prog("f x:n>n;<=x 0{1}{x}");
+        let out = explain(&prog, None);
+        assert!(out.contains("ternary"), "missing 'ternary': {out}");
+    }
+
+    #[test]
+    fn explain_fmt_type_optional() {
+        let prog = parse_prog("f x:O n>O n;x");
+        let out = explain(&prog, None);
+        assert!(out.contains("O n"), "expected 'O n' in output: {out}");
+        assert!(out.contains("optional number"), "expected 'optional number' in output: {out}");
+    }
+
+    #[test]
+    fn explain_fmt_type_result() {
+        let prog = parse_prog("f x:R t t>R t t;x");
+        let out = explain(&prog, None);
+        assert!(out.contains("R t t"), "expected 'R t t' in output: {out}");
+        assert!(out.contains("Result ok=text err=text"), "expected 'Result ok=text err=text': {out}");
+    }
+
+    #[test]
+    fn explain_fmt_type_map() {
+        let prog = parse_prog("f m:M t n>M t n;m");
+        let out = explain(&prog, None);
+        assert!(out.contains("M t n"), "expected 'M t n' in output: {out}");
+        assert!(out.contains("map of text to number"), "expected 'map of text to number': {out}");
+    }
+
+    #[test]
+    fn explain_fmt_type_sum() {
+        let prog = parse_prog("f x:S a b>S a b;x");
+        let out = explain(&prog, None);
+        assert!(out.contains("S a b"), "expected 'S a b' in output: {out}");
+        assert!(out.contains("one of: a, b"), "expected 'one of: a, b': {out}");
+    }
 }

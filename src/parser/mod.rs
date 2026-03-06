@@ -3563,4 +3563,119 @@ mod tests {
             _ => panic!("expected function"),
         }
     }
+
+    // --- use declaration ---
+
+    #[test]
+    fn parse_use_basic() {
+        let prog = parse_str(r#"use "lib.ilo""#);
+        match &prog.declarations[0] {
+            Decl::Use { path, only, .. } => {
+                assert_eq!(path, "lib.ilo");
+                assert!(only.is_none());
+            }
+            other => panic!("expected Use, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parse_use_with_scoped_imports() {
+        let prog = parse_str(r#"use "lib.ilo" [foo bar]"#);
+        match &prog.declarations[0] {
+            Decl::Use { path, only, .. } => {
+                assert_eq!(path, "lib.ilo");
+                let names = only.as_ref().unwrap();
+                assert_eq!(names, &["foo", "bar"]);
+            }
+            other => panic!("expected Use, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parse_use_missing_path_error() {
+        let (_, errors) = parse_str_errors("use 42");
+        assert!(!errors.is_empty());
+        assert!(errors.iter().any(|e| e.code == "ILO-P016"), "got: {:?}", errors);
+    }
+
+    #[test]
+    fn parse_use_empty_bracket_list_error() {
+        let (_, errors) = parse_str_errors(r#"use "lib.ilo" []"#);
+        assert!(!errors.is_empty());
+        assert!(errors.iter().any(|e| e.code == "ILO-P016" && e.message.contains("must not be empty")), "got: {:?}", errors);
+    }
+
+    // --- alias declaration ---
+
+    #[test]
+    fn parse_alias_basic() {
+        let prog = parse_str("alias mynum n");
+        match &prog.declarations[0] {
+            Decl::Alias { name, target, .. } => {
+                assert_eq!(name, "mynum");
+                assert!(matches!(target, Type::Number));
+            }
+            other => panic!("expected Alias, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parse_alias_complex_type() {
+        let prog = parse_str("alias res R n t");
+        match &prog.declarations[0] {
+            Decl::Alias { name, target, .. } => {
+                assert_eq!(name, "res");
+                assert!(matches!(target, Type::Result(_, _)));
+            }
+            other => panic!("expected Alias, got {:?}", other),
+        }
+    }
+
+    // --- tool retry option ---
+
+    #[test]
+    fn parse_tool_retry_option() {
+        let prog = parse_str(r#"tool fetch"Get a URL" url:t>R t t retry:3"#);
+        match &prog.declarations[0] {
+            Decl::Tool { name, retry, timeout, .. } => {
+                assert_eq!(name, "fetch");
+                assert_eq!(*retry, Some(3.0));
+                assert!(timeout.is_none());
+            }
+            other => panic!("expected Tool, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parse_tool_timeout_and_retry() {
+        let prog = parse_str(r#"tool fetch"Get a URL" url:t>R t t timeout:5,retry:3"#);
+        match &prog.declarations[0] {
+            Decl::Tool { timeout, retry, .. } => {
+                assert_eq!(*timeout, Some(5.0));
+                assert_eq!(*retry, Some(3.0));
+            }
+            other => panic!("expected Tool, got {:?}", other),
+        }
+    }
+
+    // --- nil coalesce ---
+
+    #[test]
+    fn parse_nil_coalesce_basic() {
+        let prog = parse_str("f x:n>n;x??99");
+        match &prog.declarations[0] {
+            Decl::Function { body, .. } => {
+                match &body[0].node {
+                    Stmt::Expr(Expr::NilCoalesce { default, .. }) => {
+                        match default.as_ref() {
+                            Expr::Literal(Literal::Number(n)) => assert_eq!(*n, 99.0),
+                            other => panic!("expected 99, got {:?}", other),
+                        }
+                    }
+                    other => panic!("expected NilCoalesce, got {:?}", other),
+                }
+            }
+            _ => panic!("expected function"),
+        }
+    }
 }

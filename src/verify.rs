@@ -3529,4 +3529,58 @@ mod tests {
         let errs = parse_and_verify("f x:t>n;{a}=x;a").unwrap_err();
         assert!(errs.iter().any(|e| e.message.contains("destructure requires a record")));
     }
+
+    // --- mkeys / mvals type errors ---
+
+    #[test]
+    fn mkeys_non_map_arg_error() {
+        // mkeys expects a map; passing a number produces ILO-T013
+        let errs = parse_and_verify("f x:n>L t;mkeys x").unwrap_err();
+        assert!(errs.iter().any(|e| e.code == "ILO-T013" && e.message.contains("mkeys")));
+    }
+
+    // --- match exhaustiveness ---
+
+    #[test]
+    fn match_exhaustive_on_number_no_wildcard_error() {
+        // Matching on a Number without a wildcard → ILO-T024 (falls into _ => branch)
+        let errs = parse_and_verify("f x:n>t;?x{1:\"one\";2:\"two\"}").unwrap_err();
+        assert!(errs.iter().any(|e| e.code == "ILO-T024"));
+    }
+
+    #[test]
+    fn match_exhaustive_on_text_no_wildcard_error() {
+        // Matching on a Text without a wildcard → ILO-T024
+        let errs = parse_and_verify(r#"f x:t>n;?x{"a":1;"b":2}"#).unwrap_err();
+        assert!(errs.iter().any(|e| e.code == "ILO-T024"));
+    }
+
+    #[test]
+    fn match_result_missing_err_arm() {
+        // Matching on Result but only ~ok arm — missing ^err arm
+        let errs = parse_and_verify("f x:R n t>n;?x{~v:v}").unwrap_err();
+        assert!(errs.iter().any(|e| e.code == "ILO-T024" && e.message.contains("missing") && e.message.contains("^")));
+    }
+
+    #[test]
+    fn match_result_missing_ok_arm() {
+        // Matching on Result but only ^err arm — missing ~ok arm
+        let errs = parse_and_verify("f x:R n t>t;?x{^e:e}").unwrap_err();
+        assert!(errs.iter().any(|e| e.code == "ILO-T024" && e.message.contains("missing") && e.message.contains("~")));
+    }
+
+    #[test]
+    fn match_bool_missing_false_arm() {
+        // Bool match missing false arm
+        let errs = parse_and_verify("f x:b>n;?x{true:1}").unwrap_err();
+        assert!(errs.iter().any(|e| e.code == "ILO-T024" && e.message.contains("false")));
+    }
+
+    #[test]
+    fn match_bool_missing_true_arm() {
+        // Bool match missing true arm
+        let errs = parse_and_verify("f x:b>n;?x{false:0}").unwrap_err();
+        assert!(errs.iter().any(|e| e.code == "ILO-T024" && e.message.contains("true")));
+    }
+
 }

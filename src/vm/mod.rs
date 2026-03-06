@@ -7767,4 +7767,499 @@ mod tests {
         }
         let _ = std::fs::remove_file(path);
     }
+
+    // --- TypeIs opcodes (OP_ISNUM/ISTEXT/ISBOOL/ISLIST) ---
+
+    #[test]
+    fn vm_type_check_isnum_match() {
+        let src = r#"f x:t>b;?x{n _:true;_:false}"#;
+        assert_eq!(vm_run(src, Some("f"), vec![Value::Number(42.0)]), Value::Bool(true));
+        assert_eq!(vm_run(src, Some("f"), vec![Value::Text("hi".into())]), Value::Bool(false));
+    }
+
+    #[test]
+    fn vm_type_check_istext_match() {
+        let src = r#"f x:n>b;?x{t _:true;_:false}"#;
+        assert_eq!(vm_run(src, Some("f"), vec![Value::Text("hello".into())]), Value::Bool(true));
+        assert_eq!(vm_run(src, Some("f"), vec![Value::Number(5.0)]), Value::Bool(false));
+    }
+
+    #[test]
+    fn vm_type_check_isbool_match() {
+        let src = r#"f x:n>b;?x{b _:true;_:false}"#;
+        assert_eq!(vm_run(src, Some("f"), vec![Value::Bool(true)]), Value::Bool(true));
+        assert_eq!(vm_run(src, Some("f"), vec![Value::Number(1.0)]), Value::Bool(false));
+    }
+
+    #[test]
+    fn vm_type_check_islist_match() {
+        let src = r#"f x:n>b;?x{l _:true;_:false}"#;
+        assert_eq!(
+            vm_run(src, Some("f"), vec![Value::List(vec![Value::Number(1.0)])]),
+            Value::Bool(true)
+        );
+        assert_eq!(vm_run(src, Some("f"), vec![Value::Number(5.0)]), Value::Bool(false));
+    }
+
+    #[test]
+    fn vm_type_check_isnum_with_binding() {
+        // n v: binds the value if it's a number
+        let src = r#"f x:t>n;?x{n v:v;_:0}"#;
+        assert_eq!(vm_run(src, Some("f"), vec![Value::Number(99.0)]), Value::Number(99.0));
+        assert_eq!(vm_run(src, Some("f"), vec![Value::Text("x".into())]), Value::Number(0.0));
+    }
+
+    #[test]
+    fn vm_type_check_istext_with_binding() {
+        // t v: binds the value if it's text
+        let src = r#"f x:n>t;?x{t v:v;_:"nope"}"#;
+        assert_eq!(vm_run(src, Some("f"), vec![Value::Text("yes".into())]), Value::Text("yes".into()));
+        assert_eq!(vm_run(src, Some("f"), vec![Value::Number(1.0)]), Value::Text("nope".into()));
+    }
+
+    #[test]
+    fn vm_type_check_isbool_with_binding() {
+        // b v: binds the value if it's bool
+        let src = r#"f x:n>b;?x{b v:v;_:false}"#;
+        assert_eq!(vm_run(src, Some("f"), vec![Value::Bool(true)]), Value::Bool(true));
+        assert_eq!(vm_run(src, Some("f"), vec![Value::Number(0.0)]), Value::Bool(false));
+    }
+
+    #[test]
+    fn vm_type_check_compiles_to_opcode() {
+        let prog = parse_program(r#"f x:t>b;?x{n _:true;_:false}"#);
+        let compiled = compile(&prog).unwrap();
+        let idx = compiled.func_index("f").unwrap() as usize;
+        let chunk = &compiled.chunks[idx];
+        let has_isnum = chunk.code.iter().any(|&inst| (inst >> 24) as u8 == OP_ISNUM);
+        assert!(has_isnum, "expected OP_ISNUM in compiled chunk");
+    }
+
+    // --- Error paths for VM builtins ---
+
+    #[test]
+    fn vm_env_non_string_error() {
+        let err = vm_run_err("f x:n>R t t;env x", Some("f"), vec![Value::Number(42.0)]);
+        assert!(err.contains("env") || err.contains("text"), "got: {err}");
+    }
+
+    #[test]
+    fn vm_jpar_non_string_error() {
+        let err = vm_run_err("f x:n>R t t;jpar x", Some("f"), vec![Value::Number(42.0)]);
+        assert!(err.contains("jpar") || err.contains("string"), "got: {err}");
+    }
+
+    #[test]
+    fn vm_jpth_non_string_json_error() {
+        let err = vm_run_err(
+            "f j:n p:t>R t t;jpth j p",
+            Some("f"),
+            vec![Value::Number(42.0), Value::Text("key".into())],
+        );
+        assert!(err.contains("jpth") || err.contains("string"), "got: {err}");
+    }
+
+    #[test]
+    fn vm_jpth_non_string_path_error() {
+        let err = vm_run_err(
+            r#"f j:t p:n>R t t;jpth j p"#,
+            Some("f"),
+            vec![Value::Text("{}".into()), Value::Number(1.0)],
+        );
+        assert!(err.contains("jpth") || err.contains("string"), "got: {err}");
+    }
+
+    #[test]
+    fn vm_trm_non_string_error() {
+        let err = vm_run_err("f x:n>t;trm x", Some("f"), vec![Value::Number(42.0)]);
+        assert!(err.contains("trm") || err.contains("text"), "got: {err}");
+    }
+
+    #[test]
+    fn vm_unq_non_string_non_list_error() {
+        let err = vm_run_err("f x:n>t;unq x", Some("f"), vec![Value::Number(42.0)]);
+        assert!(err.contains("unq") || err.contains("list") || err.contains("text"), "got: {err}");
+    }
+
+    #[test]
+    fn vm_rd_non_string_path_error() {
+        let err = vm_run_err("f x:n>R t t;rd x", Some("f"), vec![Value::Number(42.0)]);
+        assert!(err.contains("rd") || err.contains("text") || err.contains("string"), "got: {err}");
+    }
+
+    #[test]
+    fn vm_rdl_non_string_error() {
+        let err = vm_run_err("f x:n>R t t;rdl x", Some("f"), vec![Value::Number(42.0)]);
+        assert!(err.contains("rdl") || err.contains("text") || err.contains("string"), "got: {err}");
+    }
+
+    #[test]
+    fn vm_wr_non_string_path_error() {
+        let err = vm_run_err(
+            "f x:n c:t>R t t;wr x c",
+            Some("f"),
+            vec![Value::Number(42.0), Value::Text("content".into())],
+        );
+        assert!(err.contains("wr") || err.contains("text") || err.contains("string"), "got: {err}");
+    }
+
+    #[test]
+    fn vm_wr_non_string_content_error() {
+        let err = vm_run_err(
+            "f p:t x:n>R t t;wr p x",
+            Some("f"),
+            vec![Value::Text("/tmp/test".into()), Value::Number(42.0)],
+        );
+        assert!(err.contains("wr") || err.contains("text") || err.contains("string"), "got: {err}");
+    }
+
+    #[test]
+    fn vm_wrl_non_string_path_error() {
+        let err = vm_run_err(
+            "f x:n xs:L t>R t t;wrl x xs",
+            Some("f"),
+            vec![Value::Number(42.0), Value::List(vec![Value::Text("a".into())])],
+        );
+        assert!(err.contains("wrl") || err.contains("text") || err.contains("string"), "got: {err}");
+    }
+
+    #[test]
+    fn vm_wr_creates_file() {
+        let path = "/tmp/ilo_vm_wr_test.txt";
+        let result = vm_run(
+            "f p:t c:t>R t t;wr p c",
+            Some("f"),
+            vec![Value::Text(path.into()), Value::Text("hello from ilo".into())],
+        );
+        assert!(matches!(result, Value::Ok(_)), "wr should succeed, got {result:?}");
+        let content = std::fs::read_to_string(path).unwrap();
+        assert_eq!(content, "hello from ilo");
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn vm_wrl_creates_file() {
+        let path = "/tmp/ilo_vm_wrl_test.txt";
+        let result = vm_run(
+            "f p:t xs:L t>R t t;wrl p xs",
+            Some("f"),
+            vec![
+                Value::Text(path.into()),
+                Value::List(vec![Value::Text("line1".into()), Value::Text("line2".into())]),
+            ],
+        );
+        assert!(matches!(result, Value::Ok(_)), "wrl should succeed, got {result:?}");
+        let content = std::fs::read_to_string(path).unwrap();
+        assert!(content.contains("line1"), "got: {content}");
+        let _ = std::fs::remove_file(path);
+    }
+
+    // --- RECWITH (with expression) edge cases ---
+
+    #[test]
+    fn vm_recwith_multiple_fields() {
+        let src = "type pt{x:n;y:n;z:n} f>n;p=pt x:1 y:2 z:3;q=p with x:10;q.x";
+        let result = vm_run(src, Some("f"), vec![]);
+        assert_eq!(result, Value::Number(10.0));
+    }
+
+    #[test]
+    fn vm_recwith_preserves_other_fields() {
+        let src = "type pt{x:n;y:n} f>n;p=pt x:1 y:2;q=p with x:99;q.y";
+        let result = vm_run(src, Some("f"), vec![]);
+        assert_eq!(result, Value::Number(2.0), "y should be unchanged");
+    }
+
+    #[test]
+    fn vm_recwith_original_unchanged() {
+        // `with` creates a new record; orig should be unchanged
+        let src = "type pt{x:n;y:n} f>n;orig=pt x:1 y:2;upd=orig with x:99;orig.x";
+        let result = vm_run(src, Some("f"), vec![]);
+        assert_eq!(result, Value::Number(1.0), "original should be unchanged");
+    }
+
+    // --- OP_RD with JSON parsing ---
+
+    #[test]
+    fn vm_rd_json_file() {
+        let path = "/tmp/ilo_vm_rd_json.json";
+        std::fs::write(path, r#"{"key":"value"}"#).unwrap();
+        let result = vm_run("f p:t>R t t;rd p", Some("f"), vec![Value::Text(path.into())]);
+        assert!(matches!(result, Value::Ok(_)), "rd json should succeed, got {result:?}");
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn vm_rd_csv_file() {
+        let path = "/tmp/ilo_vm_rd_csv.csv";
+        std::fs::write(path, "a,b,c\n1,2,3\n").unwrap();
+        let result = vm_run("f p:t>R t t;rd p", Some("f"), vec![Value::Text(path.into())]);
+        assert!(matches!(result, Value::Ok(_)), "rd csv should succeed, got {result:?}");
+        let _ = std::fs::remove_file(path);
+    }
+
+    // --- JMPNN opcode via nil coalesce ---
+
+    #[test]
+    fn vm_nil_coalesce_on_nil_uses_default() {
+        // mget on missing key returns nil; ?? applies default
+        let src = "f>n;m=mmap;v=mget m \"x\";v??99";
+        let result = vm_run(src, Some("f"), vec![]);
+        assert_eq!(result, Value::Number(99.0));
+    }
+
+    #[test]
+    fn vm_nil_coalesce_on_non_nil_skips_default() {
+        // mget on present key returns value; ?? skips default
+        let src = "f>n;m=mset mmap \"x\" 5;mget m \"x\"??99";
+        let result = vm_run(src, Some("f"), vec![]);
+        assert_eq!(result, Value::Number(5.0));
+    }
+
+    // --- Text comparison operators ---
+
+    #[test]
+    fn vm_text_greater_than() {
+        let result = vm_run("f a:t b:t>b;>a b", Some("f"), vec![
+            Value::Text("b".into()), Value::Text("a".into()),
+        ]);
+        assert_eq!(result, Value::Bool(true));
+    }
+
+    #[test]
+    fn vm_text_less_than() {
+        let result = vm_run("f a:t b:t>b;<a b", Some("f"), vec![
+            Value::Text("a".into()), Value::Text("b".into()),
+        ]);
+        assert_eq!(result, Value::Bool(true));
+    }
+
+    #[test]
+    fn vm_text_greater_or_equal() {
+        let result = vm_run("f a:t b:t>b;>=a b", Some("f"), vec![
+            Value::Text("a".into()), Value::Text("a".into()),
+        ]);
+        assert_eq!(result, Value::Bool(true));
+    }
+
+    #[test]
+    fn vm_text_less_or_equal() {
+        let result = vm_run("f a:t b:t>b;<=a b", Some("f"), vec![
+            Value::Text("a".into()), Value::Text("b".into()),
+        ]);
+        assert_eq!(result, Value::Bool(true));
+    }
+
+    // --- Misc missing coverage ---
+
+    #[test]
+    fn vm_rnd_two_args_range() {
+        // OP_RND2 with a:n b:n
+        let result = vm_run("f a:n b:n>n;rnd a b", Some("f"), vec![
+            Value::Number(5.0), Value::Number(5.0),
+        ]);
+        assert_eq!(result, Value::Number(5.0)); // rnd 5 5 must be 5
+    }
+
+    #[test]
+    fn vm_slc_basic() {
+        // slc xs start end returns a slice
+        let result = vm_run(
+            "f xs:L n>L n;slc xs 1 3",
+            Some("f"),
+            vec![Value::List(vec![
+                Value::Number(10.0), Value::Number(20.0),
+                Value::Number(30.0), Value::Number(40.0),
+            ])],
+        );
+        assert_eq!(result, Value::List(vec![Value::Number(20.0), Value::Number(30.0)]));
+    }
+
+    #[test]
+    fn vm_cat_non_string_list_error() {
+        // cat where list items are not text should error
+        let err = vm_run_err(
+            "f xs:L n sep:t>t;cat xs sep",
+            Some("f"),
+            vec![
+                Value::List(vec![Value::Number(1.0)]),
+                Value::Text(",".into()),
+            ],
+        );
+        assert!(err.contains("cat") || err.contains("text"), "got: {err}");
+    }
+
+    #[test]
+    fn vm_spl_non_string_error() {
+        let err = vm_run_err(
+            "f x:n sep:t>L t;spl x sep",
+            Some("f"),
+            vec![Value::Number(42.0), Value::Text(",".into())],
+        );
+        assert!(err.contains("spl") || err.contains("text"), "got: {err}");
+    }
+
+    // --- OP_HD error paths ---
+
+    #[test]
+    fn vm_hd_on_number_error() {
+        let err = vm_run_err("f x:n>n;hd x", Some("f"), vec![Value::Number(42.0)]);
+        assert!(err.contains("hd") || err.contains("list") || err.contains("text"), "got: {err}");
+    }
+
+    // --- OP_TL error paths ---
+
+    #[test]
+    fn vm_tl_on_number_error() {
+        let err = vm_run_err("f x:n>n;tl x", Some("f"), vec![Value::Number(42.0)]);
+        assert!(err.contains("tl") || err.contains("list") || err.contains("text"), "got: {err}");
+    }
+
+    // --- OP_REV error paths ---
+
+    #[test]
+    fn vm_rev_on_number_error() {
+        let err = vm_run_err("f x:n>n;rev x", Some("f"), vec![Value::Number(42.0)]);
+        assert!(err.contains("rev") || err.contains("list") || err.contains("text"), "got: {err}");
+    }
+
+    // --- OP_HAS error paths ---
+
+    #[test]
+    fn vm_has_text_non_text_needle_error() {
+        // has "hello" 42 → "has: text search requires text needle"
+        let err = vm_run_err(
+            "f s:t x:n>b;has s x",
+            Some("f"),
+            vec![Value::Text("hello".into()), Value::Number(42.0)],
+        );
+        assert!(err.contains("has") || err.contains("text"), "got: {err}");
+    }
+
+    #[test]
+    fn vm_has_non_collection_error() {
+        // has 42 10 → "has requires a list or text"
+        let err = vm_run_err(
+            "f x:n y:n>b;has x y",
+            Some("f"),
+            vec![Value::Number(42.0), Value::Number(10.0)],
+        );
+        assert!(err.contains("has") || err.contains("list") || err.contains("text"), "got: {err}");
+    }
+
+    // --- OP_SLC error paths ---
+
+    #[test]
+    fn vm_slc_on_number_error() {
+        let err = vm_run_err("f x:n>n;slc x 0 1", Some("f"), vec![Value::Number(42.0)]);
+        assert!(err.contains("slc") || err.contains("list") || err.contains("text"), "got: {err}");
+    }
+
+    // --- OP_SRT on non-list/non-text ---
+
+    #[test]
+    fn vm_srt_single_element() {
+        // Single-element list: returns as-is
+        let result = vm_run("f>L n;srt [42]", Some("f"), vec![]);
+        assert_eq!(result, Value::List(vec![Value::Number(42.0)]));
+    }
+
+    // --- OP_CAT where first arg is heap but not list (string) ---
+
+    #[test]
+    fn vm_cat_string_first_arg_error() {
+        // cat "hello" "," → cat requires a list
+        let err = vm_run_err(
+            r#"f s:t sep:t>t;cat s sep"#,
+            Some("f"),
+            vec![Value::Text("hello".into()), Value::Text(",".into())],
+        );
+        assert!(err.contains("cat") || err.contains("list"), "got: {err}");
+    }
+
+    // --- OP_NOT on non-bool (truthiness path) ---
+
+    #[test]
+    fn vm_not_on_non_empty_text_is_false() {
+        // !"hello" → truthy, so !truthy = false
+        let result = vm_run(r#"f s:t>b;!s"#, Some("f"), vec![Value::Text("hi".into())]);
+        assert_eq!(result, Value::Bool(false));
+    }
+
+    #[test]
+    fn vm_not_on_empty_list_is_true() {
+        // ![] → falsy, so !falsy = true
+        let result = vm_run("f xs:L n>b;!xs", Some("f"), vec![Value::List(vec![])]);
+        assert_eq!(result, Value::Bool(true));
+    }
+
+    // --- OP_NEG on non-number ---
+
+    #[test]
+    fn vm_neg_on_text_error() {
+        let err = vm_run_err(r#"f x:t>n;neg x"#, Some("f"), vec![Value::Text("hi".into())]);
+        assert!(err.contains("neg") || err.contains("number") || err.contains("n"), "got: {err}");
+    }
+
+    // --- Let re-binding (same variable reassigned) ---
+
+    #[test]
+    fn vm_let_rebind_accumulates() {
+        // x=1;x=+x 1;x=+x 1;x → 3 (re-binding to same register)
+        let result = vm_run("f>n;x=1;x=+x 1;x=+x 1;x", Some("f"), vec![]);
+        assert_eq!(result, Value::Number(3.0));
+    }
+
+    // --- Subjectless match (None subject) ---
+
+    #[test]
+    fn vm_match_no_subject_wildcard() {
+        // Subjectless match — subject is implicit Nil, wildcard arm catches it
+        let result = vm_run(r#"f x:n>t;?{_:"default"}"#, Some("f"), vec![Value::Number(5.0)]);
+        assert_eq!(result, Value::Text("default".into()));
+    }
+
+    // --- OP_ABS error path ---
+
+    #[test]
+    fn vm_abs_on_text_error() {
+        let err = vm_run_err(r#"f x:t>n;abs x"#, Some("f"), vec![Value::Text("hi".into())]);
+        assert!(err.contains("abs") || err.contains("number"), "got: {err}");
+    }
+
+    // --- OP_FLR / OP_CEL error paths ---
+
+    #[test]
+    fn vm_flr_on_text_error() {
+        let err = vm_run_err(r#"f x:t>n;flr x"#, Some("f"), vec![Value::Text("hi".into())]);
+        assert!(err.contains("flr") || err.contains("number"), "got: {err}");
+    }
+
+    #[test]
+    fn vm_cel_on_text_error() {
+        let err = vm_run_err(r#"f x:t>n;cel x"#, Some("f"), vec![Value::Text("hi".into())]);
+        assert!(err.contains("cel") || err.contains("number"), "got: {err}");
+    }
+
+    // --- OP_MIN / OP_MAX error paths ---
+
+    #[test]
+    fn vm_min_on_text_error() {
+        let err = vm_run_err(r#"f x:t y:t>n;min x y"#, Some("f"), vec![
+            Value::Text("a".into()), Value::Text("b".into()),
+        ]);
+        assert!(err.contains("min") || err.contains("number"), "got: {err}");
+    }
+
+    // --- OP_RND2 with lo > hi error ---
+
+    #[test]
+    fn vm_rnd2_lo_greater_than_hi_error() {
+        let err = vm_run_err(
+            "f a:n b:n>n;rnd a b",
+            Some("f"),
+            vec![Value::Number(10.0), Value::Number(5.0)],
+        );
+        assert!(err.contains("rnd") || err.contains("bound") || err.contains("lower"), "got: {err}");
+    }
 }

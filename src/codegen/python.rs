@@ -1426,4 +1426,124 @@ mod tests {
         assert!(py.contains("[\"x\"]"), "got: {py}");
         assert!(py.contains("[\"y\"]"), "got: {py}");
     }
+
+    #[test]
+    fn emit_now_builtin() {
+        let py = parse_and_emit("f>n;now");
+        assert!(py.contains("time"), "got: {py}");
+    }
+
+    #[test]
+    fn emit_jdmp_builtin() {
+        let py = parse_and_emit(r#"f x:n>t;jdmp x"#);
+        assert!(py.contains("json"), "got: {py}");
+        assert!(py.contains("dumps"), "got: {py}");
+    }
+
+    #[test]
+    fn emit_jpar_builtin() {
+        let py = parse_and_emit(r#"f s:t>R t t;jpar s"#);
+        assert!(py.contains("json"), "got: {py}");
+        assert!(py.contains("loads"), "got: {py}");
+    }
+
+    #[test]
+    fn emit_jpth_builtin() {
+        let py = parse_and_emit(r#"f s:t>R t t;jpth s "a.b""#);
+        assert!(py.contains("reduce"), "got: {py}");
+    }
+
+    #[test]
+    fn emit_rdl_builtin() {
+        let py = parse_and_emit(r#"f p:t>R t t;rdl p"#);
+        assert!(py.contains("splitlines"), "got: {py}");
+    }
+
+    #[test]
+    fn emit_wr_builtin() {
+        let py = parse_and_emit(r#"f p:t c:t>R t t;wr p c"#);
+        assert!(py.contains("open("), "got: {py}");
+        assert!(py.contains("write"), "got: {py}");
+    }
+
+    #[test]
+    fn emit_wrl_builtin() {
+        let py = parse_and_emit(r#"f p:t xs:L t>R t t;wrl p xs"#);
+        assert!(py.contains("join"), "got: {py}");
+        assert!(py.contains("write"), "got: {py}");
+    }
+
+    #[test]
+    fn emit_rdb_builtin() {
+        let py = parse_and_emit(r#"f s:t>R t t;rdb s "json""#);
+        assert!(py.contains("_ilo_rdb"), "got: {py}");
+    }
+
+    #[test]
+    fn emit_rnd_zero_args() {
+        let py = parse_and_emit("f>n;rnd");
+        assert!(py.contains("random"), "got: {py}");
+    }
+
+    #[test]
+    fn emit_rnd_two_args() {
+        let py = parse_and_emit("f a:n b:n>n;rnd a b");
+        assert!(py.contains("randint"), "got: {py}");
+    }
+
+    #[test]
+    fn emit_srt_two_args() {
+        let py = parse_and_emit("f key:n xs:L n>L n;srt key xs");
+        assert!(py.contains("sorted"), "got: {py}");
+        assert!(py.contains("key="), "got: {py}");
+    }
+
+    #[test]
+    fn emit_trm_builtin() {
+        let py = parse_and_emit("f s:t>t;trm s");
+        assert!(py.contains("strip()"), "got: {py}");
+    }
+
+    #[test]
+    fn emit_unq_builtin() {
+        let py = parse_and_emit("f xs:L n>L n;unq xs");
+        assert!(py.contains("dict.fromkeys"), "got: {py}");
+    }
+
+    #[test]
+    fn emit_fmt_builtin() {
+        let py = parse_and_emit(r#"f a:n b:n>t;fmt "{}:{}" a b"#);
+        assert!(py.contains("format("), "got: {py}");
+    }
+
+    #[test]
+    fn emit_fmt_one_arg() {
+        // fmt with only template (no substitution args) → returns template as-is
+        let py = parse_and_emit(r#"f s:t>t;fmt s"#);
+        assert!(py.contains("return s"), "got: {py}");
+    }
+
+    #[test]
+    fn emit_type_optional() {
+        let py = parse_and_emit("f x:O n>O n;x");
+        assert!(py.contains("float | None"), "got: {py}");
+    }
+
+    #[test]
+    fn emit_type_map() {
+        let py = parse_and_emit("f m:M t n>M t n;m");
+        assert!(py.contains("dict[str, float]"), "got: {py}");
+    }
+
+    #[test]
+    fn emit_type_sum() {
+        let py = parse_and_emit("f x:S a b>S a b;x");
+        assert!(py.contains("str"), "got: {py}");
+    }
+
+    #[test]
+    fn emit_rd_two_args() {
+        let py = parse_and_emit(r#"f p:t>R t t;rd p "json""#);
+        assert!(py.contains("_ilo_rd"), "got: {py}");
+    }
 }

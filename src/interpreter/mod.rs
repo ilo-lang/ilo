@@ -3667,4 +3667,129 @@ mod tests {
         );
         assert!(matches!(result, Value::Err(_)), "expected Err, got {:?}", result);
     }
+
+    // --- TypeIs pattern ---
+
+    #[test]
+    fn interpret_type_is_number_match() {
+        // n v: pattern matches a number value
+        let result = run_str(
+            r#"f x:n>t;?x{n v:"num";_:"other"}"#,
+            Some("f"),
+            vec![Value::Number(42.0)],
+        );
+        assert_eq!(result, Value::Text("num".into()));
+    }
+
+    #[test]
+    fn interpret_type_is_text_match() {
+        // t v: pattern matches a text value
+        let result = run_str(
+            r#"f x:t>t;?x{t v:v;_:"other"}"#,
+            Some("f"),
+            vec![Value::Text("hello".into())],
+        );
+        assert_eq!(result, Value::Text("hello".into()));
+    }
+
+    #[test]
+    fn interpret_type_is_bool_match() {
+        // b v: pattern matches a bool value
+        let result = run_str(
+            r#"f x:b>t;?x{b v:"bool";_:"other"}"#,
+            Some("f"),
+            vec![Value::Bool(true)],
+        );
+        assert_eq!(result, Value::Text("bool".into()));
+    }
+
+    #[test]
+    fn interpret_type_is_no_match_falls_through() {
+        // TypeIs with wrong type → falls through to wildcard
+        let result = run_str(
+            r#"f x:n>t;?x{t v:"text";_:"other"}"#,
+            Some("f"),
+            vec![Value::Number(1.0)],
+        );
+        assert_eq!(result, Value::Text("other".into()));
+    }
+
+    #[test]
+    fn interpret_type_is_wildcard_binding() {
+        // TypeIs with _ binding (no binding created)
+        let result = run_str(
+            r#"f x:n>t;?x{n _:"matched";_:"other"}"#,
+            Some("f"),
+            vec![Value::Number(5.0)],
+        );
+        assert_eq!(result, Value::Text("matched".into()));
+    }
+
+    // --- Text comparison operators ---
+
+    #[test]
+    fn interpret_text_greater_than() {
+        let result = run_str("f a:t b:t>b;>a b", Some("f"), vec![
+            Value::Text("b".into()), Value::Text("a".into()),
+        ]);
+        assert_eq!(result, Value::Bool(true));
+    }
+
+    #[test]
+    fn interpret_text_less_than() {
+        let result = run_str("f a:t b:t>b;<a b", Some("f"), vec![
+            Value::Text("a".into()), Value::Text("b".into()),
+        ]);
+        assert_eq!(result, Value::Bool(true));
+    }
+
+    #[test]
+    fn interpret_text_greater_or_equal() {
+        let result = run_str("f a:t b:t>b;>=a b", Some("f"), vec![
+            Value::Text("a".into()), Value::Text("a".into()),
+        ]);
+        assert_eq!(result, Value::Bool(true));
+    }
+
+    #[test]
+    fn interpret_text_less_or_equal() {
+        let result = run_str("f a:t b:t>b;<=a b", Some("f"), vec![
+            Value::Text("a".into()), Value::Text("b".into()),
+        ]);
+        assert_eq!(result, Value::Bool(true));
+    }
+
+    // --- Destructure error path ---
+
+    #[test]
+    fn interpret_destructure_non_record_error() {
+        let prog = parse_program("type pt{x:n;y:n} f p:pt>n;{x;y}=p;+x y");
+        // Pass a non-record at runtime (bypass type checking)
+        let result = run(&prog, Some("f"), vec![Value::Number(42.0)]);
+        assert!(result.is_err(), "expected error for destructure on non-record");
+    }
+
+    // --- Safe field/index on nil ---
+
+    #[test]
+    fn interpret_safe_field_on_nil_returns_nil() {
+        // mget on missing key returns nil; safe field access on nil short-circuits to nil
+        let result = run_str("f>n;x=mget mmap \"key\";x.?field", Some("f"), vec![]);
+        assert_eq!(result, Value::Nil);
+    }
+
+    #[test]
+    fn interpret_safe_index_on_nil_returns_nil() {
+        // mget on missing key returns nil; safe index access on nil short-circuits to nil
+        let result = run_str("f>n;xs=mget mmap \"key\";xs.?0", Some("f"), vec![]);
+        assert_eq!(result, Value::Nil);
+    }
+
+    // --- values_equal for texts ---
+
+    #[test]
+    fn values_equal_texts() {
+        assert!(values_equal(&Value::Text("a".into()), &Value::Text("a".into())));
+        assert!(!values_equal(&Value::Text("a".into()), &Value::Text("b".into())));
+    }
 }

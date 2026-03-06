@@ -1553,3 +1553,70 @@ fn alias_in_param_run() {
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
     assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "6");
 }
+
+// --- Import system (use "file.ilo") ---
+
+#[test]
+fn use_imports_function_from_file() {
+    let lib = "/tmp/ilo_test_math.ilo";
+    let main_file = "/tmp/ilo_test_main.ilo";
+    std::fs::write(lib, "dbl n:n>n;*n 2\n").unwrap();
+    std::fs::write(main_file, "use \"ilo_test_math.ilo\"\nrun x:n>n;dbl x\n").unwrap();
+
+    let out = ilo()
+        .args([main_file, "--run", "run", "5"])
+        .output()
+        .expect("failed to run ilo");
+    let _ = std::fs::remove_file(lib);
+    let _ = std::fs::remove_file(main_file);
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "10");
+}
+
+#[test]
+fn use_file_not_found_error() {
+    let main_file = "/tmp/ilo_test_missing_import.ilo";
+    std::fs::write(main_file, "use \"nonexistent_xyz.ilo\"\nf>n;1\n").unwrap();
+
+    let out = ilo()
+        .args([main_file])
+        .output()
+        .expect("failed to run ilo");
+    let _ = std::fs::remove_file(main_file);
+    assert!(!out.status.success());
+    let err = String::from_utf8_lossy(&out.stderr);
+    let combined = format!("{err}{}", String::from_utf8_lossy(&out.stdout));
+    assert!(combined.contains("ILO-P017") || combined.contains("not found") || combined.contains("nonexistent"), "got: {combined}");
+}
+
+#[test]
+fn use_circular_import_error() {
+    let a = "/tmp/ilo_test_circ_a.ilo";
+    let b = "/tmp/ilo_test_circ_b.ilo";
+    std::fs::write(a, "use \"ilo_test_circ_b.ilo\"\nfa>n;1\n").unwrap();
+    std::fs::write(b, "use \"ilo_test_circ_a.ilo\"\nfb>n;2\n").unwrap();
+
+    let out = ilo()
+        .args([a])
+        .output()
+        .expect("failed to run ilo");
+    let _ = std::fs::remove_file(a);
+    let _ = std::fs::remove_file(b);
+    assert!(!out.status.success());
+    let err = String::from_utf8_lossy(&out.stderr);
+    let combined = format!("{err}{}", String::from_utf8_lossy(&out.stdout));
+    assert!(combined.contains("ILO-P018") || combined.contains("circular"), "got: {combined}");
+}
+
+#[test]
+fn use_in_inline_code_error() {
+    // use in inline code (no file context) should error with ILO-P017
+    let out = ilo()
+        .args(["-e", "use \"foo.ilo\"\nf>n;1", "--run", "f"])
+        .output()
+        .expect("failed to run ilo");
+    assert!(!out.status.success());
+    let err = String::from_utf8_lossy(&out.stderr);
+    let combined = format!("{err}{}", String::from_utf8_lossy(&out.stdout));
+    assert!(combined.contains("ILO-P017") || combined.contains("inline") || combined.contains("context"), "got: {combined}");
+}
