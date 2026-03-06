@@ -13,16 +13,104 @@ fn type_to_py(ty: &Type) -> &'static str {
     }
 }
 
+const RD_HELPER: &str = r#"def _ilo_rd(path, fmt=None):
+    import os, json, csv, io
+    if not os.path.exists(path):
+        return ("err", f"{path}: no such file")
+    try:
+        raw = open(path).read()
+        if fmt is None:
+            ext = os.path.splitext(path)[1].lstrip('.').lower()
+        else:
+            ext = fmt
+        return ("ok", _ilo_parse_fmt(raw, ext))
+    except Exception as e:
+        return ("err", str(e))
+
+def _ilo_rdb(s, fmt):
+    try:
+        return ("ok", _ilo_parse_fmt(s, fmt))
+    except Exception as e:
+        return ("err", str(e))
+
+def _ilo_parse_fmt(s, fmt):
+    import json, csv, io
+    if fmt in ("csv", "tsv"):
+        sep = '\t' if fmt == "tsv" else ','
+        return [row for row in csv.reader(io.StringIO(s), delimiter=sep)]
+    if fmt == "json":
+        return json.loads(s)
+    return s
+
+"#;
+
 pub fn emit(program: &Program) -> String {
     let mut out = String::new();
     if uses_unwrap(program) {
         out.push_str("def _ilo_unwrap(r):\n    if r[0] == \"ok\":\n        return r[1]\n    raise RuntimeError(r[1])\n\n");
+    }
+    if uses_rd(program) {
+        out.push_str(RD_HELPER);
     }
     for decl in &program.declarations {
         emit_decl(&mut out, decl, 0);
         out.push('\n');
     }
     out.trim_end().to_string()
+}
+
+fn uses_rd(program: &Program) -> bool {
+    program.declarations.iter().any(|d| match d {
+        Decl::Function { body, .. } => body.iter().any(|s| stmt_uses_rd(&s.node)),
+        _ => false,
+    })
+}
+
+fn stmt_uses_rd(stmt: &Stmt) -> bool {
+    match stmt {
+        Stmt::Let { value, .. } => expr_uses_rd(value),
+        Stmt::Guard { condition, body, .. } => {
+            expr_uses_rd(condition) || body.iter().any(|s| stmt_uses_rd(&s.node))
+        }
+        Stmt::Match { subject, arms } => {
+            subject.as_ref().is_some_and(expr_uses_rd)
+                || arms.iter().any(|a| a.body.iter().any(|s| stmt_uses_rd(&s.node)))
+        }
+        Stmt::ForEach { collection, body, .. } => {
+            expr_uses_rd(collection) || body.iter().any(|s| stmt_uses_rd(&s.node))
+        }
+        Stmt::ForRange { start, end, body, .. } => {
+            expr_uses_rd(start) || expr_uses_rd(end) || body.iter().any(|s| stmt_uses_rd(&s.node))
+        }
+        Stmt::While { condition, body } => {
+            expr_uses_rd(condition) || body.iter().any(|s| stmt_uses_rd(&s.node))
+        }
+        Stmt::Return(e) => expr_uses_rd(e),
+        Stmt::Break(Some(e)) => expr_uses_rd(e),
+        Stmt::Break(None) | Stmt::Continue => false,
+        Stmt::Destructure { value, .. } => expr_uses_rd(value),
+        Stmt::Expr(e) => expr_uses_rd(e),
+    }
+}
+
+fn expr_uses_rd(expr: &Expr) -> bool {
+    match expr {
+        Expr::Call { function, args, .. } => {
+            matches!(function.as_str(), "rd" | "rdb") || args.iter().any(expr_uses_rd)
+        }
+        Expr::BinOp { left, right, .. } => expr_uses_rd(left) || expr_uses_rd(right),
+        Expr::UnaryOp { operand, .. } => expr_uses_rd(operand),
+        Expr::Ok(e) | Expr::Err(e) => expr_uses_rd(e),
+        Expr::Field { object, .. } | Expr::Index { object, .. } => expr_uses_rd(object),
+        Expr::List(items) => items.iter().any(expr_uses_rd),
+        Expr::Record { fields, .. } => fields.iter().any(|(_, e)| expr_uses_rd(e)),
+        Expr::Match { subject, arms } => {
+            subject.as_ref().is_some_and(|s| expr_uses_rd(s))
+                || arms.iter().any(|a| a.body.iter().any(|s| stmt_uses_rd(&s.node)))
+        }
+        Expr::NilCoalesce { value, default } => expr_uses_rd(value) || expr_uses_rd(default),
+        _ => false,
+    }
 }
 
 fn uses_unwrap(program: &Program) -> bool {
@@ -351,7 +439,19 @@ fn emit_expr(out: &mut String, level: usize, expr: &Expr) -> String {
             }
             if function == "rd" && args.len() == 1 {
                 let arg = emit_expr(out, level, &args[0]);
-                let call = format!("(lambda p: (\"ok\", open(p).read()) if __import__('os.path', fromlist=['']).exists(p) else (\"err\", f\"{{p}}: no such file\"))({})", arg);
+                let call = format!("_ilo_rd({})", arg);
+                return if *unwrap { format!("_ilo_unwrap({})", call) } else { call };
+            }
+            if function == "rd" && args.len() == 2 {
+                let path = emit_expr(out, level, &args[0]);
+                let fmt = emit_expr(out, level, &args[1]);
+                let call = format!("_ilo_rd({}, {})", path, fmt);
+                return if *unwrap { format!("_ilo_unwrap({})", call) } else { call };
+            }
+            if function == "rdb" && args.len() == 2 {
+                let s = emit_expr(out, level, &args[0]);
+                let fmt = emit_expr(out, level, &args[1]);
+                let call = format!("_ilo_rdb({}, {})", s, fmt);
                 return if *unwrap { format!("_ilo_unwrap({})", call) } else { call };
             }
             if function == "rdl" && args.len() == 1 {

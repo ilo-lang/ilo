@@ -255,8 +255,10 @@ Called like functions, compiled to dedicated opcodes.
 | `now` | current Unix timestamp (seconds) | `n` |
 | `get url` | HTTP GET | `R t t` |
 | `env key` | read environment variable | `R t t` |
-| `rd path` | read file as text | `R t t` |
+| `rd path` | read file; format auto-detected from extension (`.csv`/`.tsv`→grid, `.json`→graph, else text) | `R ? t` |
+| `rd path fmt` | read file with explicit format override (`"csv"`, `"tsv"`, `"json"`, `"raw"`) | `R ? t` |
 | `rdl path` | read file as list of lines | `R (L t) t` |
+| `rdb s fmt` | parse string/buffer in given format — for data from HTTP, env vars, etc. | `R ? t` |
 | `wr path s` | write text to file (overwrite) | `R t t` |
 | `wrl path xs` | write list of lines to file (joins with `\n`) | `R t t` |
 | `spl t sep` | split text by separator | `L t` |
