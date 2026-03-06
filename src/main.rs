@@ -177,7 +177,13 @@ fn tools_cmd(args: &[String]) {
                     }));
                 }
             }
-            println!("{}", serde_json::to_string_pretty(&items).unwrap());
+            match serde_json::to_string_pretty(&items) {
+                Ok(s) => println!("{}", s),
+                Err(e) => {
+                    eprintln!("failed to render JSON: {}", e);
+                    std::process::exit(1);
+                }
+            }
         }
     }
 
