@@ -177,7 +177,13 @@ fn tools_cmd(args: &[String]) {
                     }));
                 }
             }
-            println!("{}", serde_json::to_string_pretty(&items).unwrap());
+            match serde_json::to_string_pretty(&items) {
+                Ok(s) => println!("{}", s),
+                Err(e) => {
+                    eprintln!("failed to render JSON: {}", e);
+                    std::process::exit(1);
+                }
+            }
         }
     }
 
@@ -554,7 +560,13 @@ fn serv_cmd(args_slice: &[String]) {
     use std::io::BufRead;
     let stdin = std::io::stdin();
     for line in stdin.lock().lines() {
-        let line = line.expect("stdin read error");
+        let line = match line {
+            Ok(l) => l,
+            Err(e) => {
+                eprintln!("stdin read error: {}", e);
+                break;
+            }
+        };
         if line.trim().is_empty() {
             continue;
         }
@@ -808,8 +820,9 @@ fn load_env_file(path: &str) {
             let key = key.trim();
             let val = val.trim();
             if !key.is_empty() && std::env::var(key).is_err() {
-                // SAFETY: single-threaded at this point (before any spawning)
-                unsafe { std::env::set_var(key, val); }
+                // Set only when not already present in the process environment
+                // SAFETY: single-threaded at startup before any threads are spawned
+                unsafe { std::env::set_var(key, val) };
             }
         }
     }

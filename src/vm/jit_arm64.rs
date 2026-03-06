@@ -280,8 +280,11 @@ impl Arm64Emitter {
             // Switch to execute-only
             pthread_jit_write_protect_np(1);
 
-            // Make executable
-            libc::mprotect(ptr, alloc_size, libc::PROT_READ | libc::PROT_EXEC);
+            // Make executable; if this fails, clean up and bail
+            if libc::mprotect(ptr, alloc_size, libc::PROT_READ | libc::PROT_EXEC) != 0 {
+                libc::munmap(ptr, alloc_size);
+                return None;
+            }
 
             // Flush instruction cache
             sys_icache_invalidate(ptr, alloc_size);

@@ -11,3 +11,4 @@ ilo
 .playwright-mcp/
 .worktrees
 research/explorations/bench-realistic/.build/
+AGENTS.md

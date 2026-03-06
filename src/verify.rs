@@ -3529,4 +3529,195 @@ mod tests {
         let errs = parse_and_verify("f x:t>n;{a}=x;a").unwrap_err();
         assert!(errs.iter().any(|e| e.message.contains("destructure requires a record")));
     }
+
+    // ── ILO-T002: duplicate definitions ──
+
+    #[test]
+    fn duplicate_function_definition() {
+        let errs = parse_and_verify("f x:n>n;x f x:n>n;*x 2").unwrap_err();
+        assert!(errs.iter().any(|e| e.code == "ILO-T002" && e.message.contains("duplicate")));
+    }
+
+    // ── ILO-T003: undefined named type ──
+
+    #[test]
+    fn undefined_named_type_in_param() {
+        let errs = parse_and_verify("f x:Blorp>n;42").unwrap_err();
+        assert!(errs.iter().any(|e| e.code == "ILO-T003" && e.message.contains("Blorp")));
+    }
+
+    #[test]
+    fn undefined_named_type_in_record_construction() {
+        // Record construction with unknown type name
+        let errs = parse_and_verify("f>Ghost;Ghost a:1").unwrap_err();
+        assert!(errs.iter().any(|e| e.code == "ILO-T003" && e.message.contains("Ghost")));
+    }
+
+    // ── ILO-T004: undefined variable (basic, not through a call) ──
+
+    #[test]
+    fn undefined_variable_in_let_rhs() {
+        let errs = parse_and_verify("f x:n>n;y=*z 2;y").unwrap_err();
+        assert!(errs.iter().any(|e| e.code == "ILO-T004" && e.message.contains("'z'")));
+    }
+
+    // ── ILO-T005: undefined function (called with args, distinct from T004) ──
+
+    #[test]
+    fn undefined_function_with_args() {
+        let errs = parse_and_verify("f x:n>n;nope x 1").unwrap_err();
+        assert!(errs.iter().any(|e| e.code == "ILO-T005" && e.message.contains("nope")));
+    }
+
+    // ── ILO-T010: comparison type mismatch ──
+
+    #[test]
+    fn comparison_num_vs_text() {
+        let errs = parse_and_verify(r#"f x:n s:t>b;>x s"#).unwrap_err();
+        assert!(errs.iter().any(|e| e.code == "ILO-T010"), "expected T010, got: {errs:?}");
+    }
+
+    // ── ILO-T011: += type mismatches ──
+
+    #[test]
+    fn append_element_type_mismatch() {
+        // L n += t  → T011
+        let errs = parse_and_verify(r#"f xs:L n>L n;xs=xs+="hello";xs"#).unwrap_err();
+        assert!(errs.iter().any(|e| e.code == "ILO-T011"), "expected T011, got: {errs:?}");
+    }
+
+    #[test]
+    fn append_non_list_lhs() {
+        // n += n  → T011 (left side must be a list)
+        let errs = parse_and_verify("f x:n>n;x=x+=1;x").unwrap_err();
+        assert!(errs.iter().any(|e| e.code == "ILO-T011"), "expected T011, got: {errs:?}");
+    }
+
+    // ── ILO-T012: negate non-number ──
+
+    #[test]
+    fn negate_text() {
+        let errs = parse_and_verify(r#"f s:t>n;-s"#).unwrap_err();
+        assert!(errs.iter().any(|e| e.code == "ILO-T012" && e.message.contains("negate expects n")));
+    }
+
+    #[test]
+    fn negate_bool() {
+        let errs = parse_and_verify("f b:b>n;-b").unwrap_err();
+        assert!(errs.iter().any(|e| e.code == "ILO-T012"));
+    }
+
+    // ── ILO-T014: foreach / range type errors ──
+
+    #[test]
+    fn foreach_on_number() {
+        let errs = parse_and_verify("f x:n>n;s=0;@i x{s=+s i};s").unwrap_err();
+        assert!(errs.iter().any(|e| e.code == "ILO-T014" && e.message.contains("foreach expects a list")));
+    }
+
+    #[test]
+    fn foreach_on_text() {
+        let errs = parse_and_verify(r#"f s:t>n;@c s{0};0"#).unwrap_err();
+        assert!(errs.iter().any(|e| e.code == "ILO-T014" && e.message.contains("foreach expects a list")));
+    }
+
+    #[test]
+    fn range_start_non_number() {
+        let errs = parse_and_verify(r#"f s:t>n;@i s..5{i};0"#).unwrap_err();
+        assert!(errs.iter().any(|e| e.code == "ILO-T014" && e.message.contains("range start")));
+    }
+
+    #[test]
+    fn range_end_non_number() {
+        let errs = parse_and_verify(r#"f s:t>n;@i 0..s{i};0"#).unwrap_err();
+        assert!(errs.iter().any(|e| e.code == "ILO-T014" && e.message.contains("range end")));
+    }
+
+    // ── ILO-T015: missing record field ──
+
+    #[test]
+    fn missing_field_in_record_construction() {
+        let errs = parse_and_verify("type pt{x:n;y:n}\nf>pt;pt x:1").unwrap_err();
+        assert!(errs.iter().any(|e| e.code == "ILO-T015" && e.message.contains("'y'")));
+    }
+
+    // ── ILO-T017: field type mismatch in record construction ──
+
+    #[test]
+    fn wrong_type_field_in_record() {
+        let errs = parse_and_verify(r#"type pt{x:n;y:n} f>pt;pt x:"bad" y:2"#).unwrap_err();
+        assert!(errs.iter().any(|e| e.code == "ILO-T017" && e.message.contains("'x'")));
+    }
+
+    // ── ILO-T018: field access on non-record ──
+
+    #[test]
+    fn field_access_on_number() {
+        let errs = parse_and_verify("f x:n>n;x.field").unwrap_err();
+        assert!(errs.iter().any(|e| e.code == "ILO-T018" && e.message.contains("field access on non-record")));
+    }
+
+    #[test]
+    fn field_access_on_text() {
+        let errs = parse_and_verify("f s:t>t;s.name").unwrap_err();
+        assert!(errs.iter().any(|e| e.code == "ILO-T018"));
+    }
+
+    // ── ILO-T020: 'with' on non-record ──
+
+    #[test]
+    fn with_on_number() {
+        let errs = parse_and_verify("f x:n>n;x:5 with x").unwrap_err();
+        assert!(errs.iter().any(|e| e.code == "ILO-T020" && e.message.contains("'with' on non-record")));
+    }
+
+    // ── ILO-T022: 'with' field type mismatch ──
+
+    #[test]
+    fn with_field_wrong_type() {
+        let errs = parse_and_verify(r#"type pt{x:n;y:n} f p:pt>pt;x:"bad" with p"#).unwrap_err();
+        assert!(errs.iter().any(|e| e.code == "ILO-T022" && e.message.contains("'x'")));
+    }
+
+    // ── ILO-T023: index access on non-list ──
+
+    #[test]
+    fn index_on_number() {
+        let errs = parse_and_verify("f x:n>n;x.0").unwrap_err();
+        assert!(errs.iter().any(|e| e.code == "ILO-T023" && e.message.contains("index access on non-list")));
+    }
+
+    #[test]
+    fn index_on_text() {
+        let errs = parse_and_verify("f s:t>t;s.0").unwrap_err();
+        assert!(errs.iter().any(|e| e.code == "ILO-T023"));
+    }
+
+    // ── Valid map operations verified ──
+
+    #[test]
+    fn mmap_mset_mget_valid() {
+        assert!(parse_and_verify(r#"f>O n;m=mmap;m=mset m "k" 1;mget m "k""#).is_ok());
+    }
+
+    #[test]
+    fn mhas_mkeys_mvals_mdel_valid() {
+        assert!(parse_and_verify(
+            r#"f>b;m=mset mmap "a" 1;m=mset m "b" 2;k=mkeys m;v=mvals m;m=mdel m "a";mhas m "b""#
+        ).is_ok());
+    }
+
+    // ── Valid `with` record update ──
+
+    #[test]
+    fn with_valid_record_update() {
+        assert!(parse_and_verify("type pt{x:n;y:n} f p:pt>pt;x:99 with p").is_ok());
+    }
+
+    // ── ForEach on list of lists / nested ──
+
+    #[test]
+    fn foreach_on_list_valid() {
+        assert!(parse_and_verify("f xs:L n>n;s=0;@x xs{s=+s x};s").is_ok());
+    }
 }
