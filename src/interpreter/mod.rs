@@ -654,8 +654,9 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         };
     }
     if name == "prnt" && args.len() == 1 {
-        println!("{}", args[0]);
-        return Ok(args.into_iter().next().unwrap());
+        let v = args.into_iter().next().expect("prnt: arity=1 guaranteed by caller");
+        println!("{v}");
+        return Ok(v);
     }
     if name == "jdmp" && args.len() == 1 {
         let json_val = value_to_json(&args[0]);
