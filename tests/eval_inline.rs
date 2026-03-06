@@ -233,25 +233,13 @@ fn inline_bench_mode() {
 // --- Help ---
 
 #[test]
-fn help_flag_shows_usage() {
-    let out = ilo()
-        .args(["--help"])
-        .output()
-        .expect("failed to run ilo");
-    assert!(out.status.success());
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.contains("Backends:"), "expected backends section, got: {}", stdout);
-}
-
-#[test]
-fn help_short_flag_shows_usage() {
-    let out = ilo()
-        .args(["-h"])
-        .output()
-        .expect("failed to run ilo");
-    assert!(out.status.success());
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.contains("Backends:"), "expected backends section, got: {}", stdout);
+fn help_variants_show_usage() {
+    for flag in ["--help", "-h", "help"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("Backends:"), "expected backends section, got: {}", stdout);
+    }
 }
 
 // --- List arguments ---
@@ -592,29 +580,13 @@ fn help_ai_and_ai_flag_produce_same_output() {
 }
 
 #[test]
-fn help_ai_contains_no_blank_lines() {
+fn help_ai_hygiene_checks() {
     let out = ilo().args(["help", "ai"]).output().expect("failed to run ilo");
     let stdout = String::from_utf8_lossy(&out.stdout);
     for line in stdout.lines() {
         assert!(!line.trim().is_empty(), "unexpected blank line in compact spec");
-    }
-}
-
-#[test]
-fn help_ai_strips_code_fences() {
-    let out = ilo().args(["help", "ai"]).output().expect("failed to run ilo");
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    for line in stdout.lines() {
         assert!(!line.trim_start().starts_with("```"), "code fence found in compact spec: {}", line);
-    }
-}
-
-#[test]
-fn help_ai_strips_horizontal_rules() {
-    let out = ilo().args(["help", "ai"]).output().expect("failed to run ilo");
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    for line in stdout.lines() {
-        assert!(line.trim() != "---", "horizontal rule found in compact spec");
+        assert_ne!(line.trim(), "---", "horizontal rule found in compact spec");
     }
 }
 
@@ -643,19 +615,13 @@ fn help_ai_is_smaller_than_full_spec() {
 // --- --version / -V flag ---
 
 #[test]
-fn version_flag() {
-    let out = ilo().args(["--version"]).output().expect("failed to run ilo");
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
-}
-
-#[test]
-fn version_flag_short() {
-    let out = ilo().args(["-V"]).output().expect("failed to run ilo");
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+fn version_flags_show_version() {
+    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
 }
 
 // --- --explain flag ---
@@ -1208,42 +1174,18 @@ fn bench_simple_function() {
 
 // main.rs L525 (_ => None in filter_map) + L638 (Text(s) in call_args map)
 #[test]
-fn bench_with_text_arg() {
-    // bench mode with a text arg → filter_map hits `_ => None` (L525), all_numeric=false,
-    // and the Python call_args builder hits the Text(s) branch (L638)
-    let out = ilo()
-        .args(["f x:t>t;x", "--bench", "f", "hello"])
-        .output()
-        .expect("failed to run ilo");
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.contains("Rust interpreter"), "expected bench output, got: {stdout}");
-}
-
-// main.rs L639 (Bool(b) in call_args map)
-#[test]
-fn bench_with_bool_arg() {
-    // bench mode with a bool arg → Python call_args builder hits Bool(b) branch (L639)
-    let out = ilo()
-        .args(["f x:b>b;x", "--bench", "f", "true"])
-        .output()
-        .expect("failed to run ilo");
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.contains("Rust interpreter"), "expected bench output, got: {stdout}");
-}
-
-// main.rs L640 (_ => "None" in call_args map for non-standard values like lists)
-#[test]
-fn bench_with_list_arg() {
-    // bench mode with a list arg → Python call_args builder hits _ => "None" branch (L640)
-    let out = ilo()
-        .args(["f xs:L n>n;+xs.0 1", "--bench", "f", "[1,2,3]"])
-        .output()
-        .expect("failed to run ilo");
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.contains("Rust interpreter"), "expected bench output, got: {stdout}");
+fn bench_with_various_arg_types() {
+    let cases = [
+        ("f x:t>t;x", "f", "hello"),
+        ("f x:b>b;x", "f", "true"),
+        ("f xs:L n>n;+xs.0 1", "f", "[1,2,3]"),
+    ];
+    for (prog, func, arg) in cases { 
+        let out = ilo().args([prog, "--bench", func, arg]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("Rust interpreter"), "expected bench output, got: {stdout}");
+    }
 }
 
 // main.rs L554-555 (arm64 JIT bench float result) + L587-588 (Cranelift bench float result)
