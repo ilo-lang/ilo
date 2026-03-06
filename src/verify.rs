@@ -3949,4 +3949,446 @@ mod tests {
         assert!(parse_and_verify("f s:t>t;slc s 0 2").is_ok());
     }
 
+    // ── collect_named_refs_inner: Optional, Map, Fn via aliases ──────────────
+
+    #[test]
+    fn collect_named_refs_inner_optional_type() {
+        // Directly call collect_named_refs_inner with Optional(Named) — exercises line 116
+        use crate::ast::Type;
+        let mut refs = Vec::new();
+        collect_named_refs_inner(
+            &Type::Optional(Box::new(Type::Named("mytype".to_string()))),
+            &mut refs,
+        );
+        assert_eq!(refs, vec!["mytype".to_string()]);
+    }
+
+    #[test]
+    fn collect_named_refs_inner_map_type() {
+        // Directly call collect_named_refs_inner with Map(Named, Named) — exercises lines 118-121
+        use crate::ast::Type;
+        let mut refs = Vec::new();
+        collect_named_refs_inner(
+            &Type::Map(
+                Box::new(Type::Named("keytype".to_string())),
+                Box::new(Type::Named("valtype".to_string())),
+            ),
+            &mut refs,
+        );
+        assert!(refs.contains(&"keytype".to_string()));
+        assert!(refs.contains(&"valtype".to_string()));
+    }
+
+    #[test]
+    fn collect_named_refs_inner_fn_type() {
+        // Directly call collect_named_refs_inner with a Fn type containing Named types
+        // exercises the Fn branch (lines 126-128)
+        use crate::ast::Type;
+        let mut refs = Vec::new();
+        collect_named_refs_inner(
+            &Type::Fn(
+                vec![Type::Named("myarg".to_string())],
+                Box::new(Type::Named("myret".to_string())),
+            ),
+            &mut refs,
+        );
+        assert!(refs.contains(&"myarg".to_string()));
+        assert!(refs.contains(&"myret".to_string()));
+    }
+
+    // ── convert_type direct call (lines 135-137) ─────────────────────────────
+
+    #[test]
+    fn convert_type_number() {
+        use crate::ast::Type;
+        let ty = convert_type(&Type::Number);
+        assert_eq!(ty, Ty::Number);
+    }
+
+    #[test]
+    fn convert_type_fn_type() {
+        use crate::ast::Type;
+        let ty = convert_type(&Type::Fn(vec![Type::Number], Box::new(Type::Text)));
+        assert_eq!(ty, Ty::Fn(vec![Ty::Number], Box::new(Ty::Text)));
+    }
+
+    // ── compatible(): Optional arms (lines 181-184) ───────────────────────────
+
+    #[test]
+    fn compat_nil_to_optional_via_assign_body() {
+        // Body: x=0 (assign, returns Nil); expected return: O n
+        // compatible(Nil, Optional(n)) → true (line 181)
+        assert!(parse_and_verify("f>O n;x=0").is_ok());
+    }
+
+    #[test]
+    fn compat_optional_to_optional_return() {
+        // Body returns O n; expected O n → compatible(O n, O n) (line 182)
+        assert!(parse_and_verify("f x:O n>O n;x").is_ok());
+    }
+
+    #[test]
+    fn compat_inner_to_optional_return() {
+        // Body returns n; expected O n → compatible(n, O n) (line 183)
+        assert!(parse_and_verify("f x:n>O n;x").is_ok());
+    }
+
+    #[test]
+    fn compat_optional_to_inner_return() {
+        // Body returns O n; expected n → compatible(O n, n) (line 184)
+        assert!(parse_and_verify("f x:O n>n;x").is_ok());
+    }
+
+    // ── compatible(): Sum+Text, Fn+Fn (lines 186-198) ────────────────────────
+
+    #[test]
+    fn compat_sum_to_text_return() {
+        // Sum type returned where t expected → compatible(Sum, Text) (line 186)
+        assert!(parse_and_verify(r#"f x:S a b>t;x"#).is_ok());
+    }
+
+    #[test]
+    fn compat_text_to_sum_param() {
+        // Passing text to Sum param → compatible(Text, Sum) (line 186)
+        assert!(parse_and_verify(r#"f x:S a b>n;0   g y:S a b>n;g "hello""#).is_ok());
+    }
+
+    #[test]
+    fn compat_fn_to_fn_param() {
+        // Passing function ref to Fn param → compatible(Fn, Fn) (lines 195-198)
+        assert!(parse_and_verify("double x:n>n;*x 2   apply cb:F n n x:n>n;cb x   h>n;apply double 5").is_ok());
+    }
+
+    // ── Unknown-typed args in hd/tl/srt (lines 454, 472, 583) ───────────────
+
+    #[test]
+    fn hd_with_unknown_type_arg() {
+        // z is a type variable → Ty::Unknown; hd(Unknown) → Ty::Unknown (line 454)
+        assert!(parse_and_verify("f x:z>n;hd x").is_ok());
+    }
+
+    #[test]
+    fn tl_with_unknown_type_arg() {
+        // tl(Unknown) → Ty::Unknown (line 472)
+        assert!(parse_and_verify("f x:z>n;tl x").is_ok());
+    }
+
+    #[test]
+    fn srt_single_unknown_type_arg() {
+        // srt(Unknown) → Ty::Unknown (line 583)
+        assert!(parse_and_verify("f x:z>n;srt x").is_ok());
+    }
+
+    // ── srt 2-arg: second arg not a list (line 575) ──────────────────────────
+
+    #[test]
+    fn srt_two_arg_second_not_list_returns_unknown() {
+        // srt fn n — second arg is n, not L; returns Unknown compatible with n
+        assert!(parse_and_verify("double x:n>n;*x 2   f x:n>n;srt double x").is_ok());
+    }
+
+    // ── get/post wrong headers type (lines 649-656, 680-687) ─────────────────
+
+    #[test]
+    fn get_wrong_headers_type_error() {
+        // get url n (headers not M t t) → ILO-T013 (lines 649-656)
+        let errs = parse_and_verify("f url:t hdrs:n>R t t;get url hdrs").unwrap_err();
+        assert!(errs.iter().any(|e| e.code == "ILO-T013" && e.message.contains("get") && e.message.contains("headers")));
+    }
+
+    #[test]
+    fn post_wrong_headers_type_error() {
+        // post url body n (headers not M t t) → ILO-T013 (lines 680-687)
+        let errs = parse_and_verify("f url:t body:t hdrs:n>R t t;post url body hdrs").unwrap_err();
+        assert!(errs.iter().any(|e| e.code == "ILO-T013" && e.message.contains("post") && e.message.contains("headers")));
+    }
+
+    // ── rd format arg wrong type, rdl/wr wrong path (lines 709-749) ──────────
+
+    #[test]
+    fn rd_wrong_format_arg_type() {
+        // rd path n (format not t) → ILO-T013 (lines 709-719)
+        let errs = parse_and_verify("f p:t fmt:n>R n t;rd p fmt").unwrap_err();
+        assert!(errs.iter().any(|e| e.code == "ILO-T013" && e.message.contains("rd")));
+    }
+
+    #[test]
+    fn rdl_wrong_path_type() {
+        // rdl expects t path; passing n → ILO-T013 (lines 724-736)
+        let errs = parse_and_verify("f x:n>R L t t;rdl x").unwrap_err();
+        assert!(errs.iter().any(|e| e.code == "ILO-T013" && e.message.contains("rdl")));
+    }
+
+    #[test]
+    fn wr_wrong_path_type() {
+        // wr expects t path as arg 1; passing n → ILO-T013 (lines 741-749)
+        let errs = parse_and_verify(r#"f x:n>R t t;wr x "content""#).unwrap_err();
+        assert!(errs.iter().any(|e| e.code == "ILO-T013" && e.message.contains("wr") && e.message.contains("arg 1")));
+    }
+
+    // ── map/flt/fld return type inference (lines 820, 842, 863-865) ──────────
+
+    #[test]
+    fn map_infers_fn_return_type() {
+        // map fn xs → L of fn's return type (line 820: Some(Ty::Fn(_, ret)) => *ret.clone())
+        assert!(parse_and_verify("double x:n>n;*x 2   f xs:L n>L n;map double xs").is_ok());
+    }
+
+    #[test]
+    fn flt_infers_list_type_from_second_arg() {
+        // flt fn xs → same list type (line 842: Some(ty @ List(_)) => ty.clone())
+        assert!(parse_and_verify("gt x:n>b;>x 0   f xs:L n>L n;flt gt xs").is_ok());
+    }
+
+    #[test]
+    fn fld_infers_fn_return_type_when_third_unknown() {
+        // fld fn xs 0 — third arg is Unknown? No, 0 is n. Use type variable for third.
+        // fld fn xs z_arg — third is Unknown → falls back to fn return type (lines 863-865)
+        assert!(parse_and_verify("add x:n y:n>n;+x y   f xs:L n init:z>n;fld add xs init").is_ok());
+    }
+
+    // ── mvals/mdel with non-map first arg (lines 935, 942) ───────────────────
+
+    #[test]
+    fn mvals_non_map_returns_unknown_list() {
+        // mvals n → L Unknown; compatible with L n (line 935: _ => Ty::Unknown)
+        assert!(parse_and_verify("f x:n>L n;mvals x").is_ok());
+    }
+
+    #[test]
+    fn mdel_non_map_returns_generic_map() {
+        // mdel n "k" → M Unknown Unknown; compatible with M t n (line 942)
+        assert!(parse_and_verify(r#"f x:n>M t n;mdel x "k""#).is_ok());
+    }
+
+    // ── Decl::Use skip in verify (line 1055) ─────────────────────────────────
+
+    #[test]
+    fn decl_use_skipped_in_verify() {
+        use crate::ast::{Decl, Span};
+        // Build a program with a Use node and verify it — should be silently skipped
+        let tokens = crate::lexer::lex("f>n;1").expect("lex failed");
+        let token_spans: Vec<(crate::lexer::Token, crate::ast::Span)> = tokens
+            .into_iter()
+            .map(|(t, r)| (t, crate::ast::Span { start: r.start, end: r.end }))
+            .collect();
+        let (mut program, _) = crate::parser::parse(token_spans);
+        program.declarations.push(Decl::Use { path: "x.ilo".into(), only: None, span: Span::UNKNOWN });
+        let result = verify(&program);
+        assert!(result.errors.is_empty());
+    }
+
+    // ── has_cycle false via visited set (line 1122) ───────────────────────────
+
+    #[test]
+    fn alias_diamond_dep_exercises_has_cycle_false() {
+        // alias a R inner inner — inner appears twice; second visit hits line 1122
+        assert!(parse_and_verify("alias inner n\nalias a R inner inner\nf>n;1").is_ok());
+    }
+
+    // ── resolve_alias_recursive already-resolved (lines 1139-1153) ───────────
+
+    #[test]
+    fn alias_shared_dep_resolved_once() {
+        // a and b both depend on shared; shared resolved first time, skipped second
+        let result = parse_and_verify_full("alias shared n\nalias a L shared\nalias b L shared\nf x:a y:b>n;0");
+        // May have errors if "shared" / "a" / "b" aren't usable as param types; just assert no panics
+        let _ = result;
+    }
+
+    // ── Destructure with Unknown type (lines 1267-1275) ──────────────────────
+
+    #[test]
+    fn destructure_with_unknown_type_binds_unknown() {
+        // x:z is Unknown type; destructuring Unknown inserts Unknown bindings
+        assert!(parse_and_verify("f x:z>n;{a}=x;0").is_ok());
+    }
+
+    // ── Guard Stmt with else_body (lines 1315-1317) ───────────────────────────
+
+    #[test]
+    fn guard_stmt_with_else_body_verified() {
+        // >x 0{x}{0} as statement with else body exercises lines 1315-1317
+        assert!(parse_and_verify("f x:n>n;>x 0{x}{0}").is_ok());
+    }
+
+    // ── rd/srt arity error description (lines 1495, 1499) ────────────────────
+
+    #[test]
+    fn rd_three_args_arity_error_description() {
+        // rd with 3 args → arity error using "1 or 2" description (line 1495)
+        let errs = parse_and_verify("f p:t fmt:t extra:t>R n t;rd p fmt extra").unwrap_err();
+        assert!(errs.iter().any(|e| e.message.contains("arity") && e.message.contains("rd")));
+    }
+
+    #[test]
+    fn post_one_arg_arity_error_description() {
+        // post with 1 arg → arity error using "2 or 3" description (line 1499)
+        let errs = parse_and_verify(r#"f url:t>R t t;post url"#).unwrap_err();
+        assert!(errs.iter().any(|e| e.message.contains("arity") && e.message.contains("post")));
+    }
+
+    // ── Type mismatch no specific hint (line 1546 _ => None) ─────────────────
+
+    #[test]
+    fn type_mismatch_bool_to_number_no_hint() {
+        // Passing Bool to Number param — no specific conversion hint (line 1546)
+        let errs = parse_and_verify("f x:b>n;0   g y:n>n;y   h x:b>n;g x").unwrap_err();
+        assert!(errs.iter().any(|e| e.code == "ILO-T007"));
+    }
+
+    // ── Dynamic dispatch arity/type errors (lines 1566-1582) ─────────────────
+
+    #[test]
+    fn dynamic_dispatch_wrong_arity() {
+        // Call function-ref with wrong number of args → ILO-T006 (lines 1566-1572)
+        let errs = parse_and_verify("f cb:F n n>n;cb 1 2 3").unwrap_err();
+        assert!(errs.iter().any(|e| e.code == "ILO-T006" && e.message.contains("cb")));
+    }
+
+    #[test]
+    fn dynamic_dispatch_wrong_type() {
+        // Call function-ref with wrong arg type → ILO-T007 (lines 1573-1584)
+        let errs = parse_and_verify(r#"f cb:F n n>n;cb "text""#).unwrap_err();
+        assert!(errs.iter().any(|e| e.code == "ILO-T007" && e.message.contains("cb")));
+    }
+
+    // ── Unwrap in non-Result function (lines 1622-1625) ──────────────────────
+
+    #[test]
+    fn unwrap_in_non_result_enclosing_fn() {
+        // get! in a function that returns t (not R) → ILO-T026
+        let errs = parse_and_verify(r#"f url:t>t;x=get! url;x"#).unwrap_err();
+        assert!(errs.iter().any(|e| e.code == "ILO-T026" && e.message.contains("t")));
+    }
+
+    // ── NilCoalesce expression (lines 1816-1822) ──────────────────────────────
+
+    #[test]
+    fn nil_coalesce_optional_to_inner() {
+        // x:O n ?? 0 → inner type n (line 1821)
+        assert!(parse_and_verify("f x:O n>n;y=x??0;y").is_ok());
+    }
+
+    #[test]
+    fn nil_coalesce_non_optional_passthrough() {
+        // x:n ?? 0 → n (line 1822: other => other)
+        assert!(parse_and_verify("f x:n>n;y=x??0;y").is_ok());
+    }
+
+    // ── mget with non-Map first arg (line 875-877) ───────────────────────────
+
+    #[test]
+    fn mget_non_map_first_arg_returns_unknown() {
+        // mget n "k" — first arg not a map → val_ty = Unknown (line 877: _ => Unknown)
+        // Returns O Unknown, compatible with O n
+        assert!(parse_and_verify(r#"f x:n>O n;mget x "k""#).is_ok());
+    }
+
+    // ── mset non-Map first arg (line 898) ────────────────────────────────────
+
+    #[test]
+    fn mset_non_map_first_arg_returns_generic_map() {
+        // mset n "k" "v" — first arg not map → returns M Unknown Unknown (line 898)
+        assert!(parse_and_verify(r#"f x:n>M t t;mset x "k" "v""#).is_ok());
+    }
+
+    // ── rev/unq return Unknown (lines 498, 534) ───────────────────────────────
+
+    #[test]
+    fn rev_unknown_type_returns_unknown() {
+        // rev(Unknown) falls to _ => Ty::Unknown return (line 498/502)
+        assert!(parse_and_verify("f x:z>n;rev x").is_ok());
+    }
+
+    #[test]
+    fn unq_unknown_type_returns_unknown() {
+        // unq(Unknown) falls to _ => Ty::Unknown return (line 534/538)
+        assert!(parse_and_verify("f x:z>n;unq x").is_ok());
+    }
+
+    // ── compatible() Sum+Sum (line 187) ──────────────────────────────────────
+
+    #[test]
+    fn compat_sum_to_sum_same_variants_ok() {
+        // Body returns S a b; expected S a b → compatible(Sum, Sum) (line 187)
+        assert!(parse_and_verify(r#"f x:S a b>S a b;x"#).is_ok());
+    }
+
+    // ── flt second arg not a List (line 842) ─────────────────────────────────
+
+    #[test]
+    fn flt_second_arg_not_list_returns_unknown() {
+        // flt fn n — second arg is n, not L; returns Unknown compat with L n
+        assert!(parse_and_verify("gt x:n>b;>x 0\nf xs:n>L n;flt gt xs").is_ok());
+    }
+
+    // ── fld with Unknown first arg, Unknown third arg (line 865) ─────────────
+
+    #[test]
+    fn fld_unknown_fn_and_unknown_init_returns_unknown() {
+        // fld cb xs init — cb:z (Unknown), init:z (Unknown) → _ => Unknown (line 865)
+        assert!(parse_and_verify("f cb:z xs:L n init:z>n;fld cb xs init").is_ok());
+    }
+
+    // ── Destructure Named type not in types (lines 1267-1269) ────────────────
+
+    #[test]
+    fn destructure_named_type_not_in_types_binds_unknown() {
+        // x:foo where foo is undefined → Ty::Named("foo") not in types → else branch
+        // Produces ILO-T003 for param type but body still verified (lines 1267-1269)
+        let result = parse_and_verify_full("f x:foo>n;{a}=x;a");
+        assert!(result.errors.iter().any(|e| e.code == "ILO-T003"), "expected ILO-T003");
+    }
+
+    // ── TypeIs pattern in Stmt::Match bind_pattern (lines 1429-1439) ─────────
+
+    #[test]
+    fn match_stmt_type_is_pattern_binds_var() {
+        // ?x{n v:"num";_:"other"} — TypeIs with non-underscore binding exercises lines 1429-1438
+        assert!(parse_and_verify(r#"f x:n>t;?x{n v:"num";_:"other"}"#).is_ok());
+    }
+
+    #[test]
+    fn match_stmt_type_is_list_pattern_binds_var() {
+        // Inject TypeIs{List, binding="v"} directly — parser can't produce L t in pattern position
+        // This exercises line 1435: Type::List(_) => Ty::List(Box::new(Ty::Unknown))
+        use crate::ast::{Decl, Expr, MatchArm, Pattern, Program, Span, Spanned, Stmt, Type};
+        let lit_list = Expr::Literal(crate::ast::Literal::Text("list".to_string()));
+        let lit_other = Expr::Literal(crate::ast::Literal::Text("other".to_string()));
+        let arm_list = MatchArm {
+            pattern: Pattern::TypeIs { ty: Type::List(Box::new(Type::Text)), binding: "v".to_string() },
+            body: vec![Spanned::unknown(Stmt::Expr(lit_list))],
+        };
+        let arm_wild = MatchArm {
+            pattern: Pattern::Wildcard,
+            body: vec![Spanned::unknown(Stmt::Expr(lit_other))],
+        };
+        let prog = Program {
+            declarations: vec![Decl::Function {
+                name: "f".to_string(),
+                params: vec![crate::ast::Param { name: "x".to_string(), ty: Type::List(Box::new(Type::Text)) }],
+                return_type: Type::Text,
+                body: vec![Spanned::unknown(Stmt::Match {
+                    subject: Some(Expr::Ref("x".to_string())),
+                    arms: vec![arm_list, arm_wild],
+                })],
+                span: Span::UNKNOWN,
+            }],
+            source: None,
+        };
+        let result = verify(&prog);
+        assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
+    }
+
+    // ── rev/unq/srt with Unknown return from non-arg path ────────────────────
+
+    #[test]
+    fn srt_unknown_type_two_arg_second_unknown() {
+        // srt fn_v xs — fn_v:F n n, xs:z (Unknown) → second arg is Unknown → _ => Unknown (line 575)
+        assert!(parse_and_verify("double x:n>n;*x 2\nf xs:z>n;srt double xs").is_ok());
+    }
+
 }
+
+
