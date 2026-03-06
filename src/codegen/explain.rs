@@ -403,4 +403,32 @@ mod tests {
         assert!(out.contains("S a b"), "expected 'S a b' in output: {out}");
         assert!(out.contains("one of: a, b"), "expected 'one of: a, b': {out}");
     }
+
+    #[test]
+    fn explain_fmt_type_bool_and_nil() {
+        // bool and nil params hit fmt_type "b"/"_" and fmt_type_long "bool"/"nil"
+        let prog = parse_prog("f x:b>_;x");
+        let out = explain(&prog, None);
+        assert!(out.contains("b"), "expected 'b' in output: {out}");
+    }
+
+    #[test]
+    fn explain_fmt_type_fn_param() {
+        // Fn-typed param exercises fmt_type "F ..." and fmt_type_long "fn(...)"
+        let prog = parse_prog("f cb:F n n>n;cb 1");
+        let out = explain(&prog, None);
+        assert!(out.contains("F"), "expected 'F' type in output: {out}");
+    }
+
+    #[test]
+    fn explain_use_and_error_decls_skipped() {
+        // Inject Use and Error decls directly — explain() must skip them silently
+        use crate::ast::{Decl, Span};
+        let mut prog = parse_prog("f>n;42");
+        prog.declarations.push(Decl::Use { path: "x.ilo".into(), only: None, span: Span::UNKNOWN });
+        prog.declarations.push(Decl::Error { span: Span::UNKNOWN });
+        // Should not panic, and shouldn't add any output for those nodes
+        let out = explain(&prog, None);
+        assert!(out.contains("fn start"), "expected function output: {out}");
+    }
 }

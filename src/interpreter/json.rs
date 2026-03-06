@@ -282,6 +282,19 @@ mod tests {
     }
 
     #[test]
+    fn from_json_single_entry_map_not_ok_not_err() {
+        // A map with 1 entry whose key is neither "ok" nor "err" → generic Record
+        let v = Value::from_json(&json!({"x": 99}), None).unwrap();
+        match v {
+            Value::Record { type_name, fields } => {
+                assert_eq!(type_name, "_");
+                assert_eq!(fields["x"], Value::Number(99.0));
+            }
+            other => panic!("expected Record, got {:?}", other),
+        }
+    }
+
+    #[test]
     fn round_trip_list_of_text() {
         let v = Value::List(vec![
             Value::Text("a".to_string()),

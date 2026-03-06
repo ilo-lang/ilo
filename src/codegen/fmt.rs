@@ -1107,4 +1107,136 @@ mod tests {
     fn round_trip_destructure() {
         assert_round_trip("type pt{x:n;y:n}\nf p:pt>n;{x;y}=p;+x y");
     }
+
+    // ── format_decl() public API + Decl::Use skip ────────────────────────────
+
+    #[test]
+    fn format_decl_function() {
+        let prog = parse("f x:n>n;+x 1");
+        let s = format_decl(&prog.declarations[0], FmtMode::Dense);
+        assert!(s.contains("f x:n>n"), "got: {s}");
+    }
+
+    #[test]
+    fn format_decl_skips_use_node() {
+        use crate::ast::{Decl, Span};
+        let use_decl = Decl::Use { path: "x.ilo".into(), only: None, span: Span::UNKNOWN };
+        let s = format_decl(&use_decl, FmtMode::Dense);
+        assert!(s.is_empty(), "Use should produce no output, got: {s:?}");
+    }
+
+    #[test]
+    fn format_decl_skips_error_node() {
+        use crate::ast::{Decl, Span};
+        let err_decl = Decl::Error { span: Span::UNKNOWN };
+        let s = format_decl(&err_decl, FmtMode::Dense);
+        assert!(s.is_empty(), "Error should produce no output, got: {s:?}");
+    }
+
+    // ── fmt_type: Optional, Map, Sum, Fn coverage ────────────────────────────
+
+    #[test]
+    fn dense_optional_type() {
+        let s = dense("f x:O n>O n;x");
+        assert!(s.contains("O n"), "got: {s}");
+    }
+
+    #[test]
+    fn dense_map_type() {
+        let s = dense("f m:M t n>n;0");
+        assert!(s.contains("M t n"), "got: {s}");
+    }
+
+    #[test]
+    fn dense_sum_type() {
+        let s = dense("f x:S a b>t;\"ok\"");
+        assert!(s.contains("S a b"), "got: {s}");
+    }
+
+    #[test]
+    fn dense_fn_type() {
+        let s = dense("f cb:F n n>n;cb 1");
+        assert!(s.contains("F n n"), "got: {s}");
+    }
+
+    // ── Dense guard with else_body (ternary) ─────────────────────────────────
+
+    #[test]
+    fn dense_guard_with_else() {
+        let s = dense("f x:n>n;>x 0{x}{0}");
+        // Ternary guard: cond{then}{else}
+        assert!(s.contains("{x}{0}") || s.contains("{x}"), "got: {s}");
+    }
+
+    // ── Dense Break(None) ─────────────────────────────────────────────────────
+
+    #[test]
+    fn dense_brk_no_value() {
+        let s = dense("f>n;wh true{brk};0");
+        assert!(s.contains("brk"), "got: {s}");
+    }
+
+    // ── Expanded guard with else_body ─────────────────────────────────────────
+
+    #[test]
+    fn expanded_guard_with_else() {
+        let s = expanded("f x:n>n;>x 0{x}{0}");
+        // else body uses two separate `{}` blocks
+        assert!(s.contains("} {\n"), "expected ternary else block, got: {s}");
+    }
+
+    // ── Expanded Break(None) ──────────────────────────────────────────────────
+
+    #[test]
+    fn expanded_brk_no_value() {
+        let s = expanded("f>n;wh true{brk};0");
+        assert!(s.contains("brk\n"), "got: {s}");
+    }
+
+    // ── Expanded UnaryOp::Not ─────────────────────────────────────────────────
+
+    #[test]
+    fn expanded_logical_not() {
+        let s = expanded("f x:b>b;!x");
+        // Expanded NOT adds a space: "! x"
+        assert!(s.contains("! x") || s.contains("!x"), "got: {s}");
+    }
+
+    // ── Empty-fields Record (fmt_expr early return) ───────────────────────────
+
+    #[test]
+    fn fmt_type_str_bool_nil_fn() {
+        // type_str() is the public API for fmt_type — exercises Bool, Nil, Fn
+        assert_eq!(type_str(&Type::Bool), "b");
+        assert_eq!(type_str(&Type::Nil), "_");
+        assert_eq!(type_str(&Type::Fn(vec![Type::Number], Box::new(Type::Text))), "F n t");
+    }
+
+    // ── Pattern::TypeIs in match ──────────────────────────────────────────────
+
+    #[test]
+    fn dense_type_is_pattern() {
+        let s = dense(r#"f x:n>t;?x{n v:"yes";_:"no"}"#);
+        assert!(s.contains("n v"), "expected TypeIs pattern, got: {s}");
+    }
+
+    // ── BinOp: Divide, Equals, LessOrEqual ───────────────────────────────────
+
+    #[test]
+    fn dense_divide_op() {
+        let s = dense("f x:n>n;/x 2");
+        assert!(s.contains("/x 2"), "got: {s}");
+    }
+
+    #[test]
+    fn dense_equals_op() {
+        let s = dense("f x:n>b;=x 5");
+        assert!(s.contains("=x 5"), "got: {s}");
+    }
+
+    #[test]
+    fn dense_less_or_equal_op() {
+        let s = dense("f x:n>b;<=x 10");
+        assert!(s.contains("<=x 10"), "got: {s}");
+    }
 }

@@ -1546,4 +1546,102 @@ mod tests {
         let py = parse_and_emit(r#"f p:t>R t t;rd p "json""#);
         assert!(py.contains("_ilo_rd"), "got: {py}");
     }
+
+    // ── Uses unwrap helper (line 50) ──────────────────────────────────────────
+
+    #[test]
+    fn emit_uses_unwrap_helper_included() {
+        // Inject a program with unwrap=true call via AST directly
+        use crate::ast::*;
+        let prog = Program {
+            declarations: vec![Decl::Function {
+                name: "f".into(),
+                params: vec![Param { name: "s".into(), ty: Type::Text }],
+                return_type: Type::Number,
+                body: vec![Spanned::unknown(Stmt::Expr(Expr::Call {
+                    function: "num".into(),
+                    args: vec![Expr::Ref("s".into())],
+                    unwrap: true,
+                }))],
+                span: Span::UNKNOWN,
+            }],
+            source: None,
+        };
+        let py = emit(&prog);
+        assert!(py.contains("def _ilo_unwrap"), "unwrap helper should be defined: {py}");
+    }
+
+    // ── Guard with else_body (ternary as stmt, lines 267-269) ─────────────────
+
+    #[test]
+    fn emit_guard_with_else_body() {
+        // Guard with `else` body: `>x 0{x}{0}` emits `if`/`else`
+        let py = parse_and_emit("f x:n>n;>x 0{x}{0}");
+        assert!(py.contains("if (x > 0):"), "got: {py}");
+        assert!(py.contains("else:"), "got: {py}");
+    }
+
+    // ── TypeIs pattern in match statement (lines 371-379) ────────────────────
+
+    #[test]
+    fn emit_type_is_in_match_stmt() {
+        // TypeIs pattern in match statement covers emit_match_arm TypeIs branch
+        let py = parse_and_emit(r#"f x:n>t;?x{n v:"number";_:"other"}"#);
+        assert!(py.contains("isinstance"), "got: {py}");
+    }
+
+    // ── prnt builtin (lines 436, 438) ────────────────────────────────────────
+
+    #[test]
+    fn emit_prnt_builtin() {
+        let py = parse_and_emit("f x:n>n;prnt x;x");
+        assert!(py.contains("print"), "got: {py}");
+    }
+
+    // ── rd with 1 arg (lines 441-443) ────────────────────────────────────────
+
+    #[test]
+    fn emit_rd_one_arg() {
+        let py = parse_and_emit(r#"f p:t>R t t;rd p"#);
+        assert!(py.contains("_ilo_rd"), "got: {py}");
+    }
+
+    // ── TypeIs in simple match expr ternary (line 625-627) ───────────────────
+
+    #[test]
+    fn emit_type_is_in_match_expr_simple() {
+        // TypeIs with wildcard binding in match expression → simple ternary path
+        let py = parse_and_emit(r#"f x:n>t;y=?x{n _:"num";_:"other"};y"#);
+        assert!(py.contains("isinstance"), "got: {py}");
+    }
+
+    // ── TypeIs in complex match expr (lines 686-694) ─────────────────────────
+
+    #[test]
+    fn emit_type_is_in_match_expr_complex_with_binding() {
+        // TypeIs with non-wildcard binding → complex path with binding assignment
+        let py = parse_and_emit(r#"f x:n>t;y=?x{n v:str v;_:"other"};y"#);
+        assert!(py.contains("isinstance"), "got: {py}");
+        assert!(py.contains("_m"), "expected complex path: {py}");
+    }
+
+    // ── emit_type for Fn (lines 777-779) ─────────────────────────────────────
+
+    #[test]
+    fn emit_type_fn() {
+        // Function with Fn-typed param exercises emit_type for Type::Fn
+        let py = parse_and_emit("f cb:F n n>n;cb 1");
+        assert!(py.contains("Callable"), "expected Callable type: {py}");
+    }
+
+    // ── Decl::Use skipped (line 225) ─────────────────────────────────────────
+
+    #[test]
+    fn emit_use_decl_skipped() {
+        use crate::ast::{Decl, Program, Span};
+        let mut prog = Program { declarations: vec![], source: None };
+        prog.declarations.push(Decl::Use { path: "x.ilo".into(), only: None, span: Span::UNKNOWN });
+        let py = emit(&prog);
+        assert!(!py.contains("use"), "Use should produce no output: {py}");
+    }
 }
