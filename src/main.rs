@@ -808,8 +808,7 @@ fn load_env_file(path: &str) {
             let key = key.trim();
             let val = val.trim();
             if !key.is_empty() && std::env::var(key).is_err() {
-                // SAFETY: single-threaded at this point (before any spawning)
-                unsafe { std::env::set_var(key, val); }
+                std::env::set_var(key, val);
             }
         }
     }
