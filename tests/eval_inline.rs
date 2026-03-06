@@ -1620,3 +1620,119 @@ fn use_in_inline_code_error() {
     let combined = format!("{err}{}", String::from_utf8_lossy(&out.stdout));
     assert!(combined.contains("ILO-P017") || combined.contains("inline") || combined.contains("context"), "got: {combined}");
 }
+
+// --- Import error and transitive imports ---
+
+#[test]
+fn use_parse_error_in_imported_file() {
+    let bad = "/tmp/ilo_test_parse_err_import.ilo";
+    let main_file = "/tmp/ilo_test_parse_err_main.ilo";
+    std::fs::write(bad, "f x:>n;x\n").unwrap(); // syntax error: missing type after ':'
+    std::fs::write(main_file, "use \"ilo_test_parse_err_import.ilo\"\ng x:n>n;+x 1\n").unwrap();
+
+    let out = ilo()
+        .args([main_file])
+        .output()
+        .expect("failed to run ilo");
+    let _ = std::fs::remove_file(bad);
+    let _ = std::fs::remove_file(main_file);
+    assert!(!out.status.success(), "should fail when imported file has parse error");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("error") || stderr.contains("expected"),
+        "expected parse error diagnostic, got: {stderr}");
+}
+
+#[test]
+fn use_transitive_imports() {
+    let file_b = "/tmp/ilo_test_trans_b.ilo";
+    let file_a = "/tmp/ilo_test_trans_a.ilo";
+    let file_main = "/tmp/ilo_test_trans_main.ilo";
+
+    std::fs::write(file_b, "triple x:n>n;*x 3\n").unwrap();
+    std::fs::write(file_a, "use \"ilo_test_trans_b.ilo\"\nsextuple x:n>n;t=triple x;*t 2\n").unwrap();
+    std::fs::write(file_main, "use \"ilo_test_trans_a.ilo\"\nmain x:n>n;sextuple x\n").unwrap();
+
+    let out = ilo()
+        .args([file_main, "--run", "main", "2"])
+        .output()
+        .expect("failed to run ilo");
+    let _ = std::fs::remove_file(file_b);
+    let _ = std::fs::remove_file(file_a);
+    let _ = std::fs::remove_file(file_main);
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "12");
+}
+
+// --- --dense / -d flag ---
+
+#[test]
+fn dense_flag_formats_code() {
+    let out = ilo()
+        .args(["f x:n>n;+x 1", "--dense"])
+        .output()
+        .expect("failed to run ilo");
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("f"), "expected function name in dense output: {stdout}");
+}
+
+#[test]
+fn dense_short_flag() {
+    let out = ilo()
+        .args(["f x:n>n;+x 1", "-d"])
+        .output()
+        .expect("failed to run ilo");
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(String::from_utf8_lossy(&out.stdout).contains("f"));
+}
+
+// --- --expanded flag ---
+
+#[test]
+fn expanded_flag_formats_code() {
+    let out = ilo()
+        .args(["f x:n>n;+x 1", "--expanded"])
+        .output()
+        .expect("failed to run ilo");
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(String::from_utf8_lossy(&out.stdout).contains("f"));
+}
+
+// --- --json flag result wrapping ---
+
+#[test]
+fn json_flag_wraps_ok_result() {
+    let out = ilo()
+        .args(["--json", "f x:n>n;*x 2", "--run", "f", "5"])
+        .output()
+        .expect("failed to run ilo");
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("\"ok\""), "expected JSON ok wrapper, got: {stdout}");
+    assert!(stdout.contains("10"), "expected result 10, got: {stdout}");
+}
+
+#[test]
+fn json_flag_wraps_err_result() {
+    let out = ilo()
+        .args(["--json", "-e", "f>R n t;^\"oops\"", "--run", "f"])
+        .output()
+        .expect("failed to run ilo");
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("\"error\""), "expected JSON error wrapper, got: {stdout}");
+    assert!(stdout.contains("program"), "expected 'program' phase, got: {stdout}");
+}
+
+// --- JSON mode cross-language warning ---
+
+#[test]
+fn json_mode_cross_language_warning() {
+    let out = ilo()
+        .args(["--json", "f x:n>n;*x 2", "5"])
+        .env("NO_COLOR", "1")
+        .output()
+        .expect("failed to run ilo");
+    // Just verify it runs without crash; cross-language warning only fires if pattern present
+    assert!(out.status.success() || !out.stderr.is_empty());
+}

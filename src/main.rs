@@ -2586,4 +2586,114 @@ mod tests {
         assert_eq!(result.len(), 1);
         assert!(diags.is_empty());
     }
+
+    // ── print_value ───────────────────────────────────────────────────────────
+
+    #[test]
+    fn print_value_plain_number_no_json() {
+        print_value(&interpreter::Value::Number(42.0), false);
+    }
+
+    #[test]
+    fn print_value_ok_as_json() {
+        let val = interpreter::Value::Ok(Box::new(interpreter::Value::Number(42.0)));
+        print_value(&val, true);
+    }
+
+    #[test]
+    fn print_value_err_as_json() {
+        let val = interpreter::Value::Err(Box::new(interpreter::Value::Text("oops".into())));
+        print_value(&val, true);
+    }
+
+    #[test]
+    fn print_value_err_no_json() {
+        let val = interpreter::Value::Err(Box::new(interpreter::Value::Text("fail".into())));
+        print_value(&val, false);
+    }
+
+    #[test]
+    fn print_value_text_as_json() {
+        print_value(&interpreter::Value::Text("hello".into()), true);
+    }
+
+    #[test]
+    fn print_value_bool_as_json() {
+        print_value(&interpreter::Value::Bool(true), true);
+    }
+
+    #[test]
+    fn print_value_nil_as_json() {
+        print_value(&interpreter::Value::Nil, true);
+    }
+
+    #[test]
+    fn print_value_list_as_json() {
+        let val = interpreter::Value::List(vec![
+            interpreter::Value::Number(1.0),
+            interpreter::Value::Number(2.0),
+        ]);
+        print_value(&val, true);
+    }
+
+    // ── warn_cross_language_syntax: Json mode ─────────────────────────────────
+
+    #[test]
+    fn warn_cross_lang_json_mode() {
+        warn_cross_language_syntax("f x:b y:b>b;&& x y", OutputMode::Json);
+    }
+
+    #[test]
+    fn warn_cross_lang_multiple_patterns_json_mode() {
+        warn_cross_language_syntax("f x:n->n;== x 1 // check", OutputMode::Json);
+    }
+
+    // ── resolve_imports: parse error propagation ──────────────────────────────
+
+    #[test]
+    fn resolve_imports_parse_error_in_imported_file() {
+        let bad_path = "/tmp/ilo_unit_bad_parse_imports.ilo";
+        std::fs::write(bad_path, "f x:>n;x").expect("write bad file");
+
+        let decls = vec![ast::Decl::Use {
+            path: "ilo_unit_bad_parse_imports.ilo".into(),
+            only: None,
+            span: ast::Span { start: 0, end: 0 },
+        }];
+        let mut visited = std::collections::HashSet::new();
+        let mut diags = Vec::new();
+        let _ = resolve_imports(decls, Some(std::path::Path::new("/tmp")), &mut visited, &mut diags);
+
+        assert!(!diags.is_empty(), "expected parse error diagnostic from imported file");
+        std::fs::remove_file(bad_path).ok();
+    }
+
+    // ── resolve_imports: transitive imports ───────────────────────────────────
+
+    #[test]
+    fn resolve_imports_transitive() {
+        let file_b = "/tmp/ilo_unit_trans_b_Q3R8.ilo";
+        let file_a = "/tmp/ilo_unit_trans_a_Q3R8.ilo";
+
+        std::fs::write(file_b, "triple x:n>n;*x 3").expect("write B");
+        std::fs::write(file_a, "use \"ilo_unit_trans_b_Q3R8.ilo\"\nsextuple x:n>n;t=triple x;*t 2")
+            .expect("write A");
+
+        let decls = vec![ast::Decl::Use {
+            path: "ilo_unit_trans_a_Q3R8.ilo".into(),
+            only: None,
+            span: ast::Span { start: 0, end: 0 },
+        }];
+        let mut visited = std::collections::HashSet::new();
+        let mut diags = Vec::new();
+        let result = resolve_imports(decls, Some(std::path::Path::new("/tmp")), &mut visited, &mut diags);
+
+        assert!(diags.is_empty(), "unexpected diagnostics: {diags:?}");
+        let names: Vec<_> = result.iter().filter_map(|d| decl_name(d)).collect();
+        assert!(names.contains(&"triple"), "expected triple: {names:?}");
+        assert!(names.contains(&"sextuple"), "expected sextuple: {names:?}");
+
+        std::fs::remove_file(file_b).ok();
+        std::fs::remove_file(file_a).ok();
+    }
 }
