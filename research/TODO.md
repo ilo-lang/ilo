@@ -23,15 +23,6 @@ See [DATA-MANIPULATION.md](DATA-MANIPULATION.md) for full gap analysis.
 - [ ] `uniq xs` — deduplicate list, preserve order
 - [ ] `fmt "template {}" args…` — string interpolation (reduce str+cat boilerplate)
 
-### Format-aware I/O (P2)
-
-Grid formats (CSV, TSV) return `L (L t)`. Graph formats (JSON, XML, HTML) return `?`.
-Format is auto-detected from file extension for `rd`; explicit for `rdb`.
-
-- [x] `rd path` — auto-detect format from extension (`.csv`→grid, `.json`→graph, else raw `t`); return type `R ? t`
-- [x] `rd path fmt` — 2-arg override: `"csv"`, `"tsv"`, `"json"` for structured; `"raw"` to force plain string
-- [x] `rdb s fmt` — parse string/buffer in explicit format; return type `R ? t`
-
 ---
 
 ## Completed
@@ -77,6 +68,8 @@ Format is auto-detected from file extension for `rd`; explicit for `rdb`.
 - [x] `env` — read environment variables (`env "PATH"` → `R t t`)
 - [x] `get`/`$` — HTTP GET returning `R t t`
 - [x] `rd`, `rdl`, `wr`, `wrl` — file I/O (read/write, string and lines variants)
+- [x] `rd path fmt` — format override (`"csv"`, `"tsv"`, `"json"`, `"raw"`); auto-detects from extension when 1-arg
+- [x] `rdb s fmt` — parse string/buffer in given format (for HTTP responses, env vars, etc.)
 - [x] String escape sequences — `\n`, `\t`, `\r`, `\"`, `\\` in string literals
 - [x] `prnt` — print + passthrough (like Rust `dbg!`)
 - [x] `len`, `str`, `num`, `abs`, `min`, `max`, `flr`, `cel`, `rnd`, `now`
