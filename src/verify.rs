@@ -243,8 +243,10 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("min", &["n", "n"], "n"),
     ("max", &["n", "n"], "n"),
     ("get", &["t"], "R t t"),
-    ("rd", &["t"], "R t t"),
+    ("rd", &["t"], "R ? t"),
+    ("rd", &["t", "t"], "R ? t"),
     ("rdl", &["t"], "R (L t) t"),
+    ("rdb", &["t", "t"], "R ? t"),
     ("wr", &["t", "t"], "R t t"),
     ("wrl", &["t", "L t"], "R t t"),
     ("spl", &["t", "t"], "L t"),
@@ -568,25 +570,67 @@ fn builtin_check_args(name: &str, arg_types: &[Ty], func_ctx: &str, span: Option
             };
             (ret, errors)
         }
-        "get" | "rd" | "rdl" => {
+        "get" => {
             if let Some(arg) = arg_types.first()
                 && !compatible(arg, &Ty::Text)
             {
                 errors.push(VerifyError {
                     code: "ILO-T013",
                     function: func_ctx.to_string(),
-                    message: format!("'{name}' expects t (path/url), got {arg}"),
+                    message: format!("'get' expects t (url), got {arg}"),
                     hint: None,
                     span,
                     is_warning: false,
                 });
             }
-            let inner = if name == "rdl" {
-                Ty::List(Box::new(Ty::Text))
-            } else {
-                Ty::Text
-            };
-            (Ty::Result(Box::new(inner), Box::new(Ty::Text)), errors)
+            (Ty::Result(Box::new(Ty::Text), Box::new(Ty::Text)), errors)
+        }
+        "rd" | "rdb" => {
+            // rd path         — 1-arg: auto-detect format from extension → R ? t
+            // rd path fmt     — 2-arg: explicit format override → R ? t
+            // rdb s fmt       — 2-arg: parse string/buffer in given format → R ? t
+            if let Some(arg) = arg_types.first()
+                && !compatible(arg, &Ty::Text)
+            {
+                errors.push(VerifyError {
+                    code: "ILO-T013",
+                    function: func_ctx.to_string(),
+                    message: format!("'{name}' expects t (path/string), got {arg}"),
+                    hint: None,
+                    span,
+                    is_warning: false,
+                });
+            }
+            if arg_types.len() == 2 {
+                if let Some(fmt) = arg_types.get(1)
+                    && !compatible(fmt, &Ty::Text)
+                {
+                    errors.push(VerifyError {
+                        code: "ILO-T013",
+                        function: func_ctx.to_string(),
+                        message: format!("'{name}' format arg expects t (\"csv\", \"json\", \"raw\"…), got {fmt}"),
+                        hint: None,
+                        span,
+                        is_warning: false,
+                    });
+                }
+            }
+            (Ty::Result(Box::new(Ty::Unknown), Box::new(Ty::Text)), errors)
+        }
+        "rdl" => {
+            if let Some(arg) = arg_types.first()
+                && !compatible(arg, &Ty::Text)
+            {
+                errors.push(VerifyError {
+                    code: "ILO-T013",
+                    function: func_ctx.to_string(),
+                    message: format!("'rdl' expects t (path), got {arg}"),
+                    hint: None,
+                    span,
+                    is_warning: false,
+                });
+            }
+            (Ty::Result(Box::new(Ty::List(Box::new(Ty::Text))), Box::new(Ty::Text)), errors)
         }
         "wr" | "wrl" => {
             if let Some(arg) = arg_types.first()
@@ -1330,7 +1374,7 @@ impl VerifyContext {
                     let expected_arity = builtin_arity(callee).unwrap();
                     let arity_ok = if callee == "rnd" {
                         args.is_empty() || args.len() == 2
-                    } else if callee == "srt" {
+                    } else if callee == "srt" || callee == "rd" {
                         args.len() == 1 || args.len() == 2
                     } else {
                         args.len() == expected_arity
@@ -1338,7 +1382,7 @@ impl VerifyContext {
                     if !arity_ok {
                         let arity_desc = if callee == "rnd" {
                             "0 or 2".to_string()
-                        } else if callee == "srt" {
+                        } else if callee == "srt" || callee == "rd" {
                             "1 or 2".to_string()
                         } else {
                             expected_arity.to_string()

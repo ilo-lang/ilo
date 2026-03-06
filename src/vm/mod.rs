@@ -1332,10 +1332,10 @@ impl RegCompiler {
                     self.emit_abc(OP_PRT, ra, rb, 0);
                     return ra;
                 }
-                if (function == "rd" || function == "rdl") && args.len() == 1 {
+                if (function == "rd" && args.len() == 1) || (function == "rdl" && args.len() == 1) {
                     let rb = self.compile_expr(&args[0]);
                     let ra = self.alloc_reg();
-                    let op = if function == "rd" { OP_RD } else { OP_RDL };
+                    let op = if function == "rdl" { OP_RDL } else { OP_RD };
                     self.emit_abc(op, ra, rb, 0);
                     if *unwrap {
                         let check_reg = self.alloc_reg();
@@ -1348,6 +1348,7 @@ impl RegCompiler {
                     }
                     return ra;
                 }
+                // rd path fmt (2-arg) and rdb s fmt fall through to OP_CALL → interpreter
                 if (function == "wr" || function == "wrl") && args.len() == 2 {
                     let rb = self.compile_expr(&args[0]);
                     let rc = self.compile_expr(&args[1]);
@@ -2858,8 +2859,13 @@ impl<'a> VM<'a> {
                     }
                     // SAFETY: is_string() confirmed heap-tagged string with live RC.
                     let path = unsafe { match v.as_heap_ref() { HeapObj::Str(s) => s.as_str().to_owned(), _ => unreachable!() } };
+                    let fmt = std::path::Path::new(&path)
+                        .extension()
+                        .and_then(|e| e.to_str())
+                        .unwrap_or("raw")
+                        .to_lowercase();
                     let result = match std::fs::read_to_string(&path) {
-                        Ok(content) => NanVal::heap_ok(NanVal::heap_string(content)),
+                        Ok(content) => NanVal::heap_ok(vm_parse_format(&fmt, &content)),
                         Err(e) => NanVal::heap_err(NanVal::heap_string(e.to_string())),
                     };
                     reg_set!(a, result);
@@ -4032,6 +4038,65 @@ fn serde_json_to_nanval(v: serde_json::Value) -> NanVal {
         serde_json::Value::Bool(b) => NanVal::boolean(b),
         serde_json::Value::Null => NanVal::nil(),
     }
+}
+
+/// Parse string content into a NanVal according to format name.
+/// Grid ("csv", "tsv") → list of rows (each a list of strings).
+/// Graph ("json")      → parsed JSON.
+/// Raw/unknown         → plain string.
+fn vm_parse_format(fmt: &str, content: &str) -> NanVal {
+    match fmt {
+        "csv" | "tsv" => {
+            let sep = if fmt == "tsv" { '\t' } else { ',' };
+            let rows: Vec<NanVal> = content
+                .lines()
+                .map(|line| {
+                    let fields: Vec<NanVal> = vm_parse_csv_row(line, sep)
+                        .into_iter()
+                        .map(|f| NanVal::heap_string(f))
+                        .collect();
+                    NanVal::heap_list(fields)
+                })
+                .collect();
+            NanVal::heap_list(rows)
+        }
+        "json" => {
+            match serde_json::from_str::<serde_json::Value>(content) {
+                Ok(v) => serde_json_to_nanval(v),
+                Err(_) => NanVal::heap_string(content.to_string()),
+            }
+        }
+        _ => NanVal::heap_string(content.to_string()),
+    }
+}
+
+fn vm_parse_csv_row(line: &str, sep: char) -> Vec<String> {
+    let mut fields = Vec::new();
+    let mut field = String::new();
+    let mut in_quotes = false;
+    let mut chars = line.chars().peekable();
+    while let Some(c) = chars.next() {
+        if in_quotes {
+            if c == '"' {
+                if chars.peek() == Some(&'"') {
+                    chars.next();
+                    field.push('"');
+                } else {
+                    in_quotes = false;
+                }
+            } else {
+                field.push(c);
+            }
+        } else if c == '"' {
+            in_quotes = true;
+        } else if c == sep {
+            fields.push(std::mem::take(&mut field));
+        } else {
+            field.push(c);
+        }
+    }
+    fields.push(field);
+    fields
 }
 
 fn nanval_equal(a: NanVal, b: NanVal) -> bool {

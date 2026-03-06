@@ -228,6 +228,65 @@ fn run_with_env(program: &Program, func_name: Option<&str>, args: Vec<Value>, mu
     call_function(&mut env, &target, args)
 }
 
+/// Parse a string into a structured Value given a format name.
+/// Grid formats ("csv", "tsv") → List of rows (each row a List of text fields).
+/// Graph formats ("json")      → parsed JSON value.
+/// Raw/unknown                 → plain Text.
+fn parse_format(fmt: &str, content: &str) -> Value {
+    match fmt {
+        "csv" | "tsv" => {
+            let sep = if fmt == "tsv" { '\t' } else { ',' };
+            let rows: Vec<Value> = content
+                .lines()
+                .map(|line| {
+                    let fields: Vec<Value> = parse_csv_row(line, sep)
+                        .into_iter()
+                        .map(Value::Text)
+                        .collect();
+                    Value::List(fields)
+                })
+                .collect();
+            Value::List(rows)
+        }
+        "json" => {
+            let json: serde_json::Value = serde_json::from_str(content)
+                .unwrap_or(serde_json::Value::Null);
+            serde_json_to_value(json)
+        }
+        _ => Value::Text(content.to_string()),
+    }
+}
+
+/// Parse one CSV/TSV row respecting double-quoted fields.
+fn parse_csv_row(line: &str, sep: char) -> Vec<String> {
+    let mut fields = Vec::new();
+    let mut field = String::new();
+    let mut in_quotes = false;
+    let mut chars = line.chars().peekable();
+    while let Some(c) = chars.next() {
+        if in_quotes {
+            if c == '"' {
+                if chars.peek() == Some(&'"') {
+                    chars.next();
+                    field.push('"');
+                } else {
+                    in_quotes = false;
+                }
+            } else {
+                field.push(c);
+            }
+        } else if c == '"' {
+            in_quotes = true;
+        } else if c == sep {
+            fields.push(std::mem::take(&mut field));
+        } else {
+            field.push(c);
+        }
+    }
+    fields.push(field);
+    fields
+}
+
 fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
     // Builtins
     if name == "len" {
@@ -571,14 +630,39 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             other => Err(RuntimeError::new("ILO-R009", format!("get requires text, got {:?}", other))),
         };
     }
-    if name == "rd" && args.len() == 1 {
-        return match &args[0] {
-            Value::Text(path) => match std::fs::read_to_string(path) {
-                Ok(content) => Ok(Value::Ok(Box::new(Value::Text(content)))),
-                Err(e) => Ok(Value::Err(Box::new(Value::Text(e.to_string())))),
-            },
-            other => Err(RuntimeError::new("ILO-R009", format!("rd requires text path, got {:?}", other))),
+    if name == "rd" && (args.len() == 1 || args.len() == 2) {
+        let path = match &args[0] {
+            Value::Text(s) => s.clone(),
+            other => return Err(RuntimeError::new("ILO-R009", format!("rd requires text path, got {:?}", other))),
         };
+        let fmt = if args.len() == 2 {
+            match &args[1] {
+                Value::Text(s) => s.as_str().to_owned(),
+                other => return Err(RuntimeError::new("ILO-R009", format!("rd format must be text, got {:?}", other))),
+            }
+        } else {
+            // auto-detect from extension
+            std::path::Path::new(&path)
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("raw")
+                .to_lowercase()
+        };
+        return match std::fs::read_to_string(&path) {
+            Err(e) => Ok(Value::Err(Box::new(Value::Text(e.to_string())))),
+            Ok(content) => Ok(Value::Ok(Box::new(parse_format(&fmt, &content)))),
+        };
+    }
+    if name == "rdb" && args.len() == 2 {
+        let s = match &args[0] {
+            Value::Text(s) => s.clone(),
+            other => return Err(RuntimeError::new("ILO-R009", format!("rdb requires text string, got {:?}", other))),
+        };
+        let fmt = match &args[1] {
+            Value::Text(f) => f.clone(),
+            other => return Err(RuntimeError::new("ILO-R009", format!("rdb format must be text, got {:?}", other))),
+        };
+        return Ok(Value::Ok(Box::new(parse_format(&fmt, &s))));
     }
     if name == "rdl" && args.len() == 1 {
         return match &args[0] {

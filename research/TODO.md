@@ -28,9 +28,9 @@ See [DATA-MANIPULATION.md](DATA-MANIPULATION.md) for full gap analysis.
 Grid formats (CSV, TSV) return `L (L t)`. Graph formats (JSON, XML, HTML) return `?`.
 Format is auto-detected from file extension for `rd`; explicit for `rdb`.
 
-- [ ] `rd path` — extend to auto-detect format from extension (`.csv`→grid, `.json`→graph, else raw `t`); return type `R ? t`
-- [ ] `rd path fmt` — 2-arg override: `"csv"`, `"tsv"`, `"json"` for structured; `"raw"` to force plain string regardless of extension
-- [ ] `rdb s fmt` — parse string/buffer in explicit format (`"csv"`, `"tsv"`, `"json"`); return type `R ? t`
+- [x] `rd path` — auto-detect format from extension (`.csv`→grid, `.json`→graph, else raw `t`); return type `R ? t`
+- [x] `rd path fmt` — 2-arg override: `"csv"`, `"tsv"`, `"json"` for structured; `"raw"` to force plain string
+- [x] `rdb s fmt` — parse string/buffer in explicit format; return type `R ? t`
 
 ---
 
