@@ -28,7 +28,7 @@
 
 See [DATA-MANIPULATION.md](DATA-MANIPULATION.md) for full gap analysis.
 
-- [ ] `srtby fn xs` — sort list by key function (essential for data work)
+- [x] `srt fn xs` — sort list by key function (2-arg form of `srt`)
 - [ ] `trm s` — trim whitespace from string ends (needed when parsing file/CSV data)
 - [ ] `uniq xs` — deduplicate list, preserve order
 - [ ] `csv s` — parse CSV string → `L (L t)` (handles quoted fields)

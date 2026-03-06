@@ -266,6 +266,7 @@ Called like functions, compiled to dedicated opcodes.
 | `tl xs` | tail (all but first) of list or text | `L` / `t` |
 | `rev xs` | reverse list or text | same type |
 | `srt xs` | sort list (all-number or all-text) or text chars | same type |
+| `srt fn xs` | sort list by key function (returns number or text key) | `L` |
 | `slc xs a b` | slice list or text from index a to b | same type |
 | `jpth json path` | JSON path lookup (dot-separated keys, array indices) | `R t t` |
 | `jdmp value` | serialise ilo value to JSON text | `t` |
