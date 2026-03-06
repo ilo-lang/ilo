@@ -136,6 +136,7 @@ impl ToolProvider for HttpProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tools::ToolProvider;
 
     #[test]
     fn from_file_missing_file() {
@@ -160,11 +161,49 @@ mod tests {
     }
 
     #[test]
+    fn from_file_valid_json() {
+        let mut path = std::env::temp_dir();
+        path.push("ilo_test_http_provider_valid.json");
+        std::fs::write(
+            &path,
+            r#"{"tools":{"ping":{"url":"http://example.com"}}}"#,
+        )
+        .unwrap();
+
+        let result = ToolsConfig::from_file(path.to_str().unwrap());
+        std::fs::remove_file(&path).ok();
+
+        assert!(result.is_ok(), "expected Ok, got: {:?}", result.err());
+        let config = result.unwrap();
+        assert!(config.tools.contains_key("ping"));
+    }
+
+    #[test]
     fn http_provider_new_constructs() {
         let config = ToolsConfig {
             tools: HashMap::new(),
         };
         let _provider = HttpProvider::new(config);
-        // Just verify construction doesn't panic
+    }
+
+    #[tokio::test]
+    async fn call_without_tools_feature_returns_ok_nil() {
+        // Without the `tools` feature the call stub returns Ok(Nil)
+        let provider = HttpProvider::new(ToolsConfig {
+            tools: HashMap::new(),
+        });
+        let result = provider.call("any_tool", vec![]).await;
+        assert!(result.is_ok(), "expected Ok, got: {result:?}");
+        assert_eq!(result.unwrap(), Value::Ok(Box::new(Value::Nil)));
+    }
+
+    #[tokio::test]
+    async fn call_ignores_args_without_tools_feature() {
+        let provider = HttpProvider::new(ToolsConfig {
+            tools: HashMap::new(),
+        });
+        let args = vec![Value::Text("ignored".into()), Value::Number(42.0)];
+        let result = provider.call("tool", args).await;
+        assert_eq!(result.unwrap(), Value::Ok(Box::new(Value::Nil)));
     }
 }
