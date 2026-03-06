@@ -1,13 +1,5 @@
 # TODO
 
-## Performance
-
-- [x] Interpreter flat-scope rewrite — `Vec<(String, Value)>` + `scope_marks: Vec<usize>` replaces `Vec<HashMap>`. Full-range `get`/`set`, function call isolation via save/restore.
-
-## Agent / tool integration
-
-- [x] Tool graph — `ilo tools --graph`: type-level composition map showing which tools can feed each other
-
 ## Tooling
 
 - [ ] LSP / language server — completions, diagnostics, hover for editor integration
@@ -21,14 +13,12 @@
 
 ## Program structure
 
-- [x] Imports — `use "other.ilo"` (all) and `use "other.ilo" [name1 name2]` (scoped) ✅
 - [ ] Namespacing — prevent name collisions when merging many declaration graphs (low priority)
 
 ## Data scripting (P1)
 
 See [DATA-MANIPULATION.md](DATA-MANIPULATION.md) for full gap analysis.
 
-- [x] `srt fn xs` — sort list by key function (2-arg form of `srt`)
 - [ ] `trm s` — trim whitespace from string ends (needed when parsing file/CSV data)
 - [ ] `uniq xs` — deduplicate list, preserve order
 - [ ] `csv s` — parse CSV string → `L (L t)` (handles quoted fields)
@@ -38,10 +28,23 @@ See [DATA-MANIPULATION.md](DATA-MANIPULATION.md) for full gap analysis.
 
 ## Completed
 
-### Language hardening
-- [x] Reserve keywords at lexer level — `if`, `return`, `let`, `fn`, `def`, `var`, `const` now lex as dedicated tokens (KwIf, KwReturn, etc.)
+### Performance
+- [x] Interpreter flat-scope rewrite — `Vec<(String, Value)>` + `scope_marks: Vec<usize>` replaces `Vec<HashMap>`
 
-### Type system (Phase E)
+### Agent / tool integration
+- [x] Tool graph — `ilo tools --graph`: type-level composition map showing which tools can feed each other
+- [x] D1: ToolProvider, HttpProvider, StubProvider, Value↔JSON
+- [x] D2: MCP stdio client, auto-discover tools, inject into AST
+- [x] D3: `ilo tools` — list/discover with `--human`/`--ilo`/`--json` output
+- [x] D4: `ilo serv` — JSON stdio agent loop with phase-structured errors
+
+### Program structure
+- [x] Imports — `use "other.ilo"` (all) and `use "other.ilo" [name1 name2]` (scoped)
+
+### Language hardening
+- [x] Reserve keywords at lexer level — `if`, `return`, `let`, `fn`, `def`, `var`, `const`
+
+### Type system
 - [x] Optional type — `O T` nullable values
 - [x] Sum types — `S a b c` closed sets of variants
 - [x] Map type — `M k v` key-value collections + 7 builtins (mmap, mget, mset, mhas, mkeys, mvals, mdel)
@@ -69,22 +72,16 @@ See [DATA-MANIPULATION.md](DATA-MANIPULATION.md) for full gap analysis.
 - [x] String escape sequences — `\n`, `\t`, `\r`, `\"`, `\\` in string literals
 - [x] `prnt` — print + passthrough (like Rust `dbg!`)
 - [x] `len`, `str`, `num`, `abs`, `min`, `max`, `flr`, `cel`, `rnd`, `now`
-- [x] `cat`, `has`, `hd`, `tl`, `rev`, `srt`, `slc`, `spl`
+- [x] `cat`, `has`, `hd`, `tl`, `rev`, `srt`, `srt fn xs`, `slc`, `spl`
 - [x] `map`, `flt`, `fld` — higher-order functions
 - [x] `jpth`, `jdmp`, `jpar` — JSON path/dump/parse
 
-### Agent integration (Phase D)
-- [x] D1: ToolProvider, HttpProvider, StubProvider, Value↔JSON
-- [x] D2: MCP stdio client, auto-discover tools, inject into AST
-- [x] D3: `ilo tools` — list/discover with `--human`/`--ilo`/`--json` output
-- [x] D4: `ilo serv` — JSON stdio agent loop with phase-structured errors
-
-### Error infrastructure (Phases B/C)
-- [x] B: Spans, Diagnostic model, ANSI/JSON renderers, error codes (ILO-L/P/T/R)
-- [x] C1: Error recovery — multiple errors per file, poison nodes
-- [x] C2: Error codes + `--explain ILO-T001`
-- [x] C3: Suggestions/fix-its — did-you-mean, type coercion hints, cross-language syntax detection
-- [x] C4: Runtime source mapping — spans and call stacks on runtime errors
+### Error infrastructure
+- [x] Spans, Diagnostic model, ANSI/JSON renderers, error codes (ILO-L/P/T/R)
+- [x] Error recovery — multiple errors per file, poison nodes
+- [x] Error codes + `--explain ILO-T001`
+- [x] Suggestions/fix-its — did-you-mean, type coercion hints, cross-language syntax detection
+- [x] Runtime source mapping — spans and call stacks on runtime errors
 
 ### Basics
 - [x] List literals, unary ops, logical AND/OR/NOT, string comparison
