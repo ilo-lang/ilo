@@ -8854,4 +8854,191 @@ mod tests {
         let result = vm_run("f x:n>n;flr x", Some("f"), vec![Value::Number(-2.3)]);
         assert_eq!(result, Value::Number(-3.0));
     }
+
+    // ── VmRuntimeError Display / Error traits ────────────────────────────────
+
+    #[test]
+    fn vm_runtime_error_display_formats_message() {
+        let err = VmRuntimeError {
+            error: VmError::Type("test error message"),
+            span: None,
+            call_stack: vec!["f".to_string()],
+        };
+        let s = format!("{err}");
+        assert!(s.contains("test error message"), "got: {s}");
+    }
+
+    #[test]
+    fn vm_runtime_error_source_is_some() {
+        use std::error::Error;
+        let err = VmRuntimeError {
+            error: VmError::Type("inner"),
+            span: None,
+            call_stack: vec![],
+        };
+        // `source()` must return Some — exercises the Error impl
+        assert!(err.source().is_some());
+    }
+
+    // ── Builtin auto-unwrap sequences (env!, get!, post!, rd!, wr!) ──────────
+
+    #[test]
+    fn vm_env_bang_compiles_unwrap_sequence() {
+        // env! compiles OP_ENV + ISOK + JMPT + RET + UNWRAP
+        let prog = parse_program(r#"f k:t>t;env! k"#);
+        let compiled = compile(&prog).unwrap();
+        let chunk = &compiled.chunks[0];
+        let has_env = chunk.code.iter().any(|inst| (inst >> 24) as u8 == OP_ENV);
+        let has_unwrap = chunk.code.iter().any(|inst| (inst >> 24) as u8 == OP_UNWRAP);
+        assert!(has_env, "expected OP_ENV");
+        assert!(has_unwrap, "expected OP_UNWRAP for env!");
+    }
+
+    #[test]
+    fn vm_get_bang_compiles_unwrap_sequence() {
+        let prog = parse_program(r#"f url:t>t;get! url"#);
+        let compiled = compile(&prog).unwrap();
+        let chunk = &compiled.chunks[0];
+        let has_get = chunk.code.iter().any(|inst| (inst >> 24) as u8 == OP_GET);
+        let has_unwrap = chunk.code.iter().any(|inst| (inst >> 24) as u8 == OP_UNWRAP);
+        assert!(has_get, "expected OP_GET");
+        assert!(has_unwrap, "expected OP_UNWRAP for get!");
+    }
+
+    #[test]
+    fn vm_get_with_headers_bang_compiles_unwrap_sequence() {
+        let prog = parse_program(r#"f url:t hdrs:M t t>t;get! url hdrs"#);
+        let compiled = compile(&prog).unwrap();
+        let chunk = &compiled.chunks[0];
+        let has_geth = chunk.code.iter().any(|inst| (inst >> 24) as u8 == OP_GETH);
+        let has_unwrap = chunk.code.iter().any(|inst| (inst >> 24) as u8 == OP_UNWRAP);
+        assert!(has_geth, "expected OP_GETH");
+        assert!(has_unwrap, "expected OP_UNWRAP for get! with headers");
+    }
+
+    #[test]
+    fn vm_post_with_headers_bang_compiles_unwrap_sequence() {
+        let prog = parse_program(r#"f url:t body:t hdrs:M t t>t;post! url body hdrs"#);
+        let compiled = compile(&prog).unwrap();
+        let chunk = &compiled.chunks[0];
+        let has_posth = chunk.code.iter().any(|inst| (inst >> 24) as u8 == OP_POSTH);
+        let has_unwrap = chunk.code.iter().any(|inst| (inst >> 24) as u8 == OP_UNWRAP);
+        assert!(has_posth, "expected OP_POSTH");
+        assert!(has_unwrap, "expected OP_UNWRAP for post! with headers");
+    }
+
+    #[test]
+    fn vm_rd_bang_compiles_unwrap_sequence() {
+        let prog = parse_program(r#"f path:t>t;rd! path"#);
+        let compiled = compile(&prog).unwrap();
+        let chunk = &compiled.chunks[0];
+        let has_rd = chunk.code.iter().any(|inst| (inst >> 24) as u8 == OP_RD);
+        let has_unwrap = chunk.code.iter().any(|inst| (inst >> 24) as u8 == OP_UNWRAP);
+        assert!(has_rd, "expected OP_RD");
+        assert!(has_unwrap, "expected OP_UNWRAP for rd!");
+    }
+
+    #[test]
+    fn vm_rdl_bang_compiles_unwrap_sequence() {
+        let prog = parse_program(r#"f path:t>L t;rdl! path"#);
+        let compiled = compile(&prog).unwrap();
+        let chunk = &compiled.chunks[0];
+        let has_rdl = chunk.code.iter().any(|inst| (inst >> 24) as u8 == OP_RDL);
+        let has_unwrap = chunk.code.iter().any(|inst| (inst >> 24) as u8 == OP_UNWRAP);
+        assert!(has_rdl, "expected OP_RDL");
+        assert!(has_unwrap, "expected OP_UNWRAP for rdl!");
+    }
+
+    #[test]
+    fn vm_wr_bang_compiles_unwrap_sequence() {
+        let prog = parse_program(r#"f path:t data:t>t;wr! path data"#);
+        let compiled = compile(&prog).unwrap();
+        let chunk = &compiled.chunks[0];
+        let has_wr = chunk.code.iter().any(|inst| (inst >> 24) as u8 == OP_WR);
+        let has_unwrap = chunk.code.iter().any(|inst| (inst >> 24) as u8 == OP_UNWRAP);
+        assert!(has_wr, "expected OP_WR");
+        assert!(has_unwrap, "expected OP_UNWRAP for wr!");
+    }
+
+    #[test]
+    fn vm_wrl_bang_compiles_unwrap_sequence() {
+        let prog = parse_program(r#"f path:t data:t>t;wrl! path data"#);
+        let compiled = compile(&prog).unwrap();
+        let chunk = &compiled.chunks[0];
+        let has_wrl = chunk.code.iter().any(|inst| (inst >> 24) as u8 == OP_WRL);
+        let has_unwrap = chunk.code.iter().any(|inst| (inst >> 24) as u8 == OP_UNWRAP);
+        assert!(has_wrl, "expected OP_WRL");
+        assert!(has_unwrap, "expected OP_UNWRAP for wrl!");
+    }
+
+    #[test]
+    fn vm_jpar_bang_compiles_unwrap_sequence() {
+        let prog = parse_program(r#"f s:t>t;jpar! s"#);
+        let compiled = compile(&prog).unwrap();
+        let chunk = &compiled.chunks[0];
+        let has_jpar = chunk.code.iter().any(|inst| (inst >> 24) as u8 == OP_JPAR);
+        let has_unwrap = chunk.code.iter().any(|inst| (inst >> 24) as u8 == OP_UNWRAP);
+        assert!(has_jpar, "expected OP_JPAR");
+        assert!(has_unwrap, "expected OP_UNWRAP for jpar!");
+    }
+
+    // ── Guard ternary else-nil path ───────────────────────────────────────────
+
+    #[test]
+    fn vm_ternary_then_empty_body_yields_nil() {
+        // When the taken branch has an empty body, it loads Nil
+        let result = vm_run("f x:n>n;>x 0{}{99}", Some("f"), vec![Value::Number(5.0)]);
+        assert_eq!(result, Value::Nil);
+    }
+
+    #[test]
+    fn vm_ternary_else_empty_body_yields_nil() {
+        // When the else branch has an empty body, it loads Nil
+        let result = vm_run("f x:n>n;>x 0{99}{}", Some("f"), vec![Value::Number(-1.0)]);
+        assert_eq!(result, Value::Nil);
+    }
+
+    // ── Destructure: re-assign into existing local ────────────────────────────
+
+    #[test]
+    fn vm_destructure_into_existing_local() {
+        // Binding `x` already in scope — exercises the existing_reg path in destructure
+        let src = "type pt{x:n;y:n} f>n;x=0;p=pt x:10 y:20;{x}=p;x";
+        let result = vm_run(src, Some("f"), vec![]);
+        assert_eq!(result, Value::Number(10.0));
+    }
+
+    // ── Continue inside foreach / for-range ───────────────────────────────────
+
+    #[test]
+    fn vm_foreach_cnt_skips_iteration() {
+        // cnt (continue) inside @x xs{} — exercises the FOREACH continue patch path
+        // >x 3{cnt} means: if x>3, skip (so 4 and 5 are skipped; sum 1+2+3=6)
+        let src = "f>n;s=0;@x [1,2,3,4,5]{>x 3{cnt};s=+s x};s";
+        let result = vm_run(src, Some("f"), vec![]);
+        assert_eq!(result, Value::Number(6.0));
+    }
+
+    #[test]
+    fn vm_forrange_cnt_skips_iteration() {
+        // cnt inside @i lo..hi{} — exercises the FOR-RANGE continue patch path
+        // >i 3{cnt} means: if i>3, skip; range 0..6 → sums 0+1+2+3=6
+        let src = "f>n;s=0;@i 0..6{>i 3{cnt};s=+s i};s";
+        let result = vm_run(src, Some("f"), vec![]);
+        assert_eq!(result, Value::Number(6.0));
+    }
+
+    // ── NanVal::from_value FnRef path ─────────────────────────────────────────
+
+    #[test]
+    fn vm_nanval_from_fnref() {
+        let val = Value::FnRef("my_fn".to_string());
+        let nv = NanVal::from_value(&val);
+        // FnRef converts to a heap string like "<fn:my_fn>"
+        let back = nv.to_value();
+        match back {
+            Value::Text(s) => assert!(s.contains("my_fn"), "got: {s}"),
+            other => panic!("expected Text, got {other:?}"),
+        }
+    }
 }
