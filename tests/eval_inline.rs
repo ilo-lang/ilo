@@ -2,6 +2,12 @@ use std::process::Command;
 
 fn ilo() -> Command {
     Command::new(env!("CARGO_BIN_EXE_ilo"))
+    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
 }
 
 // --- Inline code: single function ---
@@ -12,8 +18,14 @@ fn inline_single_func_bare_args() {
         .args(["tot p:n q:n r:n>n;s=*p q;t=*s r;+s t", "10", "20", "30"])
         .output()
         .expect("failed to run ilo");
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    
     assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "6200");
+    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
 }
 
 #[test]
@@ -23,8 +35,20 @@ fn inline_no_args_outputs_ast() {
         .output()
         .expect("failed to run ilo");
     assert!(out.status.success());
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.contains("\"name\""), "expected AST JSON, got: {}", stdout);
+    
+    assert!(stdout.contains("\"name\""), "expected AST JSON, got: {    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
+}", stdout);
+    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
 }
 
 // --- Inline code: multiple functions ---
@@ -35,8 +59,14 @@ fn inline_multi_func_select_by_name() {
         .args(["dbl x:n>n;s=*x 2;+s 0 tot p:n q:n r:n>n;s=*p q;t=*s r;+s t", "tot", "10", "20", "30"])
         .output()
         .expect("failed to run ilo");
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    
     assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "6200");
+    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
 }
 
 #[test]
@@ -45,8 +75,14 @@ fn inline_multi_func_first_by_default() {
         .args(["dbl x:n>n;s=*x 2;+s 0 tot p:n q:n r:n>n;s=*p q;t=*s r;+s t", "5"])
         .output()
         .expect("failed to run ilo");
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    
     assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "10");
+    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
 }
 
 // --- Inline code: emit ---
@@ -58,8 +94,20 @@ fn inline_emit_python() {
         .output()
         .expect("failed to run ilo");
     assert!(out.status.success());
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.contains("def tot"), "expected 'def tot', got: {}", stdout);
+    
+    assert!(stdout.contains("def tot"), "expected 'def tot', got: {    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
+}", stdout);
+    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
 }
 
 // --- Inline code: explicit --run ---
@@ -70,8 +118,14 @@ fn inline_explicit_run() {
         .args(["tot p:n q:n r:n>n;s=*p q;t=*s r;+s t", "--run", "tot", "10", "20", "30"])
         .output()
         .expect("failed to run ilo");
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    
     assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "6200");
+    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
 }
 
 // --- Error cases ---
@@ -83,7 +137,19 @@ fn no_args_shows_usage() {
         .expect("failed to run ilo");
     assert!(!out.status.success());
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("Usage"), "expected usage message, got: {}", stderr);
+    assert!(stderr.contains("Usage"), "expected usage message, got: {    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
+}", stderr);
+    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
 }
 
 #[test]
@@ -93,6 +159,12 @@ fn inline_empty_string_errors() {
         .output()
         .expect("failed to run ilo");
     assert!(!out.status.success());
+    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
 }
 
 #[test]
@@ -104,6 +176,12 @@ fn inline_invalid_code_errors() {
     assert!(!out.status.success());
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(!stderr.is_empty(), "expected error on stderr");
+    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
 }
 
 // --- File mode: bare args ---
@@ -114,9 +192,15 @@ fn file_bare_args_runs_first_func() {
         .args(["research/explorations/idea9-ultra-dense-short/01-simple-function.ilo", "10", "20", "0.1"])
         .output()
         .expect("failed to run ilo");
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    
     // 01-simple-function.ilo defines tot: (10*20) + (10*20*0.1) = 200 + 20 = 220
     assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "220");
+    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
 }
 
 #[test]
@@ -126,8 +210,20 @@ fn file_no_args_outputs_ast() {
         .output()
         .expect("failed to run ilo");
     assert!(out.status.success());
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.contains("\"name\""), "expected AST JSON, got: {}", stdout);
+    
+    assert!(stdout.contains("\"name\""), "expected AST JSON, got: {    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
+}", stdout);
+    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
 }
 
 // --- Nested prefix operators ---
@@ -138,8 +234,14 @@ fn inline_nested_prefix() {
         .args(["f a:n b:n c:n>n;+*a b c", "2", "3", "4"])
         .output()
         .expect("failed to run ilo");
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    
     assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "10");
+    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
 }
 
 // --- CLI modes ---
@@ -150,8 +252,14 @@ fn inline_run_vm_mode() {
         .args(["f x:n>n;*x 2", "--run-vm", "f", "5"])
         .output()
         .expect("failed to run ilo");
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    
     assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "10");
+    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
 }
 
 #[test]
@@ -160,8 +268,14 @@ fn inline_run_with_func_name() {
         .args(["f x:n>n;*x 2", "--run", "f", "5"])
         .output()
         .expect("failed to run ilo");
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    
     assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "10");
+    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
 }
 
 #[test]
@@ -172,7 +286,19 @@ fn inline_emit_unknown_target() {
         .expect("failed to run ilo");
     assert!(!out.status.success());
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("Unknown emit target"), "expected emit error, got: {}", stderr);
+    assert!(stderr.contains("Unknown emit target"), "expected emit error, got: {    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
+}", stderr);
+    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
 }
 
 #[test]
@@ -181,8 +307,14 @@ fn inline_parse_bool_arg() {
         .args(["f x:b>b;!x", "true"])
         .output()
         .expect("failed to run ilo");
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    
     assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "false");
+    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
 }
 
 #[test]
@@ -192,8 +324,14 @@ fn inline_parse_false_arg() {
         .args(["f x:b>b;x", "false"])
         .output()
         .expect("failed to run ilo");
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    
     assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "false");
+    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
 }
 
 #[test]
@@ -202,8 +340,14 @@ fn inline_parse_text_arg() {
         .args(["f x:t>t;x", "hello"])
         .output()
         .expect("failed to run ilo");
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    
     assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "hello");
+    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
 }
 
 #[test]
@@ -214,7 +358,19 @@ fn inline_parse_error() {
         .expect("failed to run ilo");
     assert!(!out.status.success());
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("Parse error") || stderr.contains("error"), "expected parse error, got: {}", stderr);
+    assert!(stderr.contains("Parse error") || stderr.contains("error"), "expected parse error, got: {    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
+}", stderr);
+    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
 }
 
 #[test]
@@ -223,9 +379,21 @@ fn inline_bench_mode() {
         .args(["f x:n>n;*x 2", "--bench", "f", "5"])
         .output()
         .expect("failed to run ilo");
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.contains("interpreter") || stdout.contains("vm"), "expected benchmark output, got: {}", stdout);
+    
+    
+    assert!(stdout.contains("interpreter") || stdout.contains("vm"), "expected benchmark output, got: {    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
+}", stdout);
+    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
 }
 
 // --- Legacy -e flag ---
@@ -233,25 +401,68 @@ fn inline_bench_mode() {
 // --- Help ---
 
 #[test]
-fn help_flag_shows_usage() {
-    let out = ilo()
-        .args(["--help"])
+fn help_variants_show_usage() {
+    let out = ilo().args([flag])
         .output()
         .expect("failed to run ilo");
     assert!(out.status.success());
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.contains("Backends:"), "expected backends section, got: {}", stdout);
+    
+        for line in stdout.lines() {
+        assert!(!line.trim().is_empty(), "unexpected blank line in compact spec");
+        assert!(!line.trim_start().starts_with("```"), "code fence found in compact spec: {    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
+}", line);
+        assert_ne!(line.trim(), "---", "horizontal rule found in compact spec");
+        for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
+}
+        for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
 }
 
 #[test]
-fn help_short_flag_shows_usage() {
+fn help_ai_hygiene_checks() {
     let out = ilo()
-        .args(["-h"])
+        .args([flag])
         .output()
         .expect("failed to run ilo");
     assert!(out.status.success());
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.contains("Backends:"), "expected backends section, got: {}", stdout);
+    
+        for line in stdout.lines() {
+        assert!(!line.trim().is_empty(), "unexpected blank line in compact spec");
+        assert!(!line.trim_start().starts_with("```"), "code fence found in compact spec: {    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
+}", line);
+        assert_ne!(line.trim(), "---", "horizontal rule found in compact spec");
+        for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
+}
+        for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
 }
 
 // --- List arguments ---
@@ -262,8 +473,14 @@ fn inline_list_arg_bracketed() {
         .args(["f xs:L n>n;len xs", "[1,2,3]"])
         .output()
         .expect("failed to run ilo");
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    
     assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "3");
+    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
 }
 
 #[test]
@@ -272,8 +489,14 @@ fn inline_list_arg_bracketed_index() {
         .args(["f xs:L n>n;xs.0", "[10,20,30]"])
         .output()
         .expect("failed to run ilo");
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    
     assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "10");
+    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
 }
 
 #[test]
@@ -282,8 +505,14 @@ fn inline_list_arg_bare_comma() {
         .args(["f xs:L n>n;len xs", "1,2,3"])
         .output()
         .expect("failed to run ilo");
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    
     assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "3");
+    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
 }
 
 #[test]
@@ -292,8 +521,14 @@ fn inline_list_arg_bare_comma_index() {
         .args(["f xs:L n>n;xs.0", "10,20,30"])
         .output()
         .expect("failed to run ilo");
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    
     assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "10");
+    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
 }
 
 #[test]
@@ -303,9 +538,37 @@ fn help_shows_usage() {
         .output()
         .expect("failed to run ilo");
     assert!(out.status.success());
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.contains("Backends:"), "expected backends section, got: {}", stdout);
-    assert!(stdout.contains("--run-interp"), "expected --run-interp, got: {}", stdout);
+    
+    for line in stdout.lines() {
+        assert!(!line.trim().is_empty(), "unexpected blank line in compact spec");
+        assert!(!line.trim_start().starts_with("```"), "code fence found in compact spec: {    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
+}", line);
+        assert_ne!(line.trim(), "---", "horizontal rule found in compact spec");
+        for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
+}
+    assert!(stdout.contains("--run-interp"), "expected --run-interp, got: {    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
+}", stdout);
+    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
 }
 
 #[test]
@@ -315,8 +578,20 @@ fn help_lang_shows_spec() {
         .output()
         .expect("failed to run ilo");
     assert!(out.status.success());
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.contains("ilo Language Spec"), "expected spec header, got: {}", stdout);
+    
+    assert!(stdout.contains("ilo Language Spec"), "expected spec header, got: {    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
+}", stdout);
+    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
 }
 
 // --- Backend flags ---
@@ -327,8 +602,14 @@ fn inline_run_interp() {
         .args(["f x:n>n;*x 2", "--run-interp", "f", "5"])
         .output()
         .expect("failed to run ilo");
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    
     assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "10");
+    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
 }
 
 #[test]
@@ -337,8 +618,14 @@ fn inline_run_cranelift() {
         .args(["f x:n>n;*x 2", "--run-cranelift", "f", "5"])
         .output()
         .expect("failed to run ilo");
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    
     assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "10");
+    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
 }
 
 #[test]
@@ -348,8 +635,14 @@ fn default_falls_back_for_non_numeric() {
         .args(["f x:b>b;!x", "true"])
         .output()
         .expect("failed to run ilo");
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    
     assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "false");
+    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
 }
 
 // --- Legacy -e flag ---
@@ -360,8 +653,14 @@ fn legacy_e_flag_still_works() {
         .args(["-e", "tot p:n q:n r:n>n;s=*p q;t=*s r;+s t", "--run", "tot", "10", "20", "30"])
         .output()
         .expect("failed to run ilo");
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    
     assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "6200");
+    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
 }
 
 #[test]
@@ -372,7 +671,19 @@ fn legacy_e_flag_missing_code() {
         .expect("failed to run ilo");
     assert!(!out.status.success());
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("Usage"), "expected usage message, got: {}", stderr);
+    assert!(stderr.contains("Usage"), "expected usage message, got: {    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
+}", stderr);
+    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
 }
 
 // --- Static verifier errors ---
@@ -385,8 +696,26 @@ fn verify_undefined_variable() {
         .expect("failed to run ilo");
     assert!(!out.status.success());
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("error[ILO-T004]"), "expected error in stderr, got: {}", stderr);
-    assert!(stderr.contains("undefined variable 'y'"), "expected undefined var error, got: {}", stderr);
+    assert!(stderr.contains("error[ILO-T004]"), "expected error in stderr, got: {    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
+}", stderr);
+    assert!(stderr.contains("undefined variable 'y'"), "expected undefined var error, got: {    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
+}", stderr);
+    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
 }
 
 #[test]
@@ -397,8 +726,26 @@ fn verify_undefined_function() {
         .expect("failed to run ilo");
     assert!(!out.status.success());
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("error[ILO-T005]"), "expected error in stderr, got: {}", stderr);
-    assert!(stderr.contains("undefined function 'foo'"), "expected undefined func error, got: {}", stderr);
+    assert!(stderr.contains("error[ILO-T005]"), "expected error in stderr, got: {    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
+}", stderr);
+    assert!(stderr.contains("undefined function 'foo'"), "expected undefined func error, got: {    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
+}", stderr);
+    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
 }
 
 #[test]
@@ -409,7 +756,19 @@ fn verify_arity_mismatch() {
         .expect("failed to run ilo");
     assert!(!out.status.success());
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("arity mismatch"), "expected arity error, got: {}", stderr);
+    assert!(stderr.contains("arity mismatch"), "expected arity error, got: {    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
+}", stderr);
+    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
 }
 
 #[test]
@@ -420,7 +779,19 @@ fn verify_type_mismatch() {
         .expect("failed to run ilo");
     assert!(!out.status.success());
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("error[ILO-T009]"), "expected error in stderr, got: {}", stderr);
+    assert!(stderr.contains("error[ILO-T009]"), "expected error in stderr, got: {    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
+}", stderr);
+    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
 }
 
 #[test]
@@ -429,8 +800,14 @@ fn verify_valid_program_runs() {
         .args(["f x:n>n;*x 2", "5"])
         .output()
         .expect("failed to run ilo");
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    
     assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "10");
+    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
 }
 
 // --- Prefix expressions as call arguments ---
@@ -439,22 +816,46 @@ fn verify_valid_program_runs() {
 fn inline_factorial_with_prefix_call_arg() {
     // fac -n 1 as a call with prefix arg, result bound then used in operator
     let out = ilo()
-        .args(["fac n:n>n;<=n 1{1};r=fac -n 1;*n r", "5"])
+        .args(["fac n:n>n;<=n 1{1    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
+};r=fac -n 1;*n r", "5"])
         .output()
         .expect("failed to run ilo");
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    
     assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "120");
+    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
 }
 
 #[test]
 fn inline_fibonacci_with_prefix_call_args() {
     // fib -n 1 and fib -n 2 as direct calls with prefix args
     let out = ilo()
-        .args(["fib n:n>n;<=n 1{n};a=fib -n 1;b=fib -n 2;+a b", "10"])
+        .args(["fib n:n>n;<=n 1{n    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
+};a=fib -n 1;b=fib -n 2;+a b", "10"])
         .output()
         .expect("failed to run ilo");
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    
     assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "55");
+    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
 }
 
 #[test]
@@ -464,8 +865,14 @@ fn inline_call_with_nested_prefix_unchanged() {
         .args(["f a:n b:n c:n>n;+*a b c", "2", "3", "4"])
         .output()
         .expect("failed to run ilo");
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    
     assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "10");
+    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
 }
 
 // --- Output format flags ---
@@ -480,8 +887,20 @@ fn json_flag_produces_json_error() {
     let stderr = String::from_utf8_lossy(&out.stderr);
     // Should be parseable JSON with severity field
     let v: serde_json::Value = serde_json::from_str(stderr.trim())
-        .unwrap_or_else(|_| panic!("expected JSON on stderr, got: {}", stderr));
+        .unwrap_or_else(|_| panic!("expected JSON on stderr, got: {    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
+}", stderr));
     assert_eq!(v["severity"], "error");
+    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
 }
 
 #[test]
@@ -492,9 +911,27 @@ fn text_flag_produces_plain_error() {
         .expect("failed to run ilo");
     assert!(!out.status.success());
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("error["), "expected 'error[' in stderr: {}", stderr);
+    assert!(stderr.contains("error["), "expected 'error[' in stderr: {    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
+}", stderr);
     // No ANSI codes
-    assert!(!stderr.contains("\x1b["), "unexpected ANSI codes in text mode: {}", stderr);
+    assert!(!stderr.contains("\x1b["), "unexpected ANSI codes in text mode: {    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
+}", stderr);
+    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
 }
 
 #[test]
@@ -505,9 +942,27 @@ fn ansi_flag_produces_colored_error() {
         .expect("failed to run ilo");
     assert!(!out.status.success());
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("error"), "expected error in stderr: {}", stderr);
+    assert!(stderr.contains("error"), "expected error in stderr: {    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
+}", stderr);
     // Should contain ANSI escape codes
-    assert!(stderr.contains("\x1b["), "expected ANSI codes in ansi mode: {}", stderr);
+    assert!(stderr.contains("\x1b["), "expected ANSI codes in ansi mode: {    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
+}", stderr);
+    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
 }
 
 #[test]
@@ -522,11 +977,29 @@ fn json_flag_parse_error_has_span() {
     let first_line = stderr.lines().next()
         .unwrap_or_else(|| panic!("expected output on stderr, got empty"));
     let v: serde_json::Value = serde_json::from_str(first_line)
-        .unwrap_or_else(|_| panic!("expected JSON on first line of stderr, got: {}", stderr));
+        .unwrap_or_else(|_| panic!("expected JSON on first line of stderr, got: {    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
+}", stderr));
     assert_eq!(v["severity"], "error");
     // Should have labels with span info
     assert!(v["labels"].as_array().is_some_and(|l| !l.is_empty()),
-        "expected labels in: {}", stderr);
+        "expected labels in: {    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
+}", stderr);
+    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
 }
 
 #[test]
@@ -537,8 +1010,26 @@ fn text_flag_verify_error_has_function_note() {
         .expect("failed to run ilo");
     assert!(!out.status.success());
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("note:"), "expected note in stderr: {}", stderr);
-    assert!(stderr.contains("'f'"), "expected function name in stderr: {}", stderr);
+    assert!(stderr.contains("note:"), "expected note in stderr: {    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
+}", stderr);
+    assert!(stderr.contains("'f'"), "expected function name in stderr: {    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
+}", stderr);
+    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
 }
 
 #[test]
@@ -549,7 +1040,19 @@ fn mutual_exclusion_json_text() {
         .expect("failed to run ilo");
     assert!(!out.status.success());
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("mutually exclusive"), "expected mutual exclusion error: {}", stderr);
+    assert!(stderr.contains("mutually exclusive"), "expected mutual exclusion error: {    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
+}", stderr);
+    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
 }
 
 #[test]
@@ -561,7 +1064,19 @@ fn no_color_env_produces_no_ansi() {
         .expect("failed to run ilo");
     assert!(!out.status.success());
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(!stderr.contains("\x1b["), "unexpected ANSI codes with NO_COLOR: {}", stderr);
+    assert!(!stderr.contains("\x1b["), "unexpected ANSI codes with NO_COLOR: {    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
+}", stderr);
+    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
 }
 
 // --- Compact spec (ilo help ai / ilo -ai) ---
@@ -572,7 +1087,13 @@ fn help_ai_subcommand_exits_success() {
         .args(["help", "ai"])
         .output()
         .expect("failed to run ilo");
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    
+    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
 }
 
 #[test]
@@ -581,7 +1102,13 @@ fn ai_flag_exits_success() {
         .args(["-ai"])
         .output()
         .expect("failed to run ilo");
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    
+    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
 }
 
 #[test]
@@ -589,44 +1116,95 @@ fn help_ai_and_ai_flag_produce_same_output() {
     let out1 = ilo().args(["help", "ai"]).output().expect("failed to run ilo");
     let out2 = ilo().args(["-ai"]).output().expect("failed to run ilo");
     assert_eq!(out1.stdout, out2.stdout, "help ai and -ai should produce identical output");
+    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
 }
 
-#[test]
-fn help_ai_contains_no_blank_lines() {
+// merged
     let out = ilo().args(["help", "ai"]).output().expect("failed to run ilo");
-    let stdout = String::from_utf8_lossy(&out.stdout);
+    
     for line in stdout.lines() {
         assert!(!line.trim().is_empty(), "unexpected blank line in compact spec");
+        for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
+}
+    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
     }
 }
 
-#[test]
-fn help_ai_strips_code_fences() {
+// merged
     let out = ilo().args(["help", "ai"]).output().expect("failed to run ilo");
-    let stdout = String::from_utf8_lossy(&out.stdout);
+    
     for line in stdout.lines() {
-        assert!(!line.trim_start().starts_with("```"), "code fence found in compact spec: {}", line);
+        assert!(!line.trim_start().starts_with("```"), "code fence found in compact spec: {    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
+}", line);
+        for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
+}
+    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
     }
 }
 
-#[test]
-fn help_ai_strips_horizontal_rules() {
+// merged
     let out = ilo().args(["help", "ai"]).output().expect("failed to run ilo");
-    let stdout = String::from_utf8_lossy(&out.stdout);
+    
     for line in stdout.lines() {
         assert!(line.trim() != "---", "horizontal rule found in compact spec");
+        for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
+}
+    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
     }
 }
 
 #[test]
 fn help_ai_preserves_key_content() {
     let out = ilo().args(["help", "ai"]).output().expect("failed to run ilo");
-    let stdout = String::from_utf8_lossy(&out.stdout);
+    
     // Core syntax constructs must be present
     assert!(stdout.contains("fac n:n>n"), "missing factorial pattern");
     assert!(stdout.contains("FUNCTIONS:"), "missing FUNCTIONS section");
     assert!(stdout.contains("TYPES:"), "missing TYPES section");
     assert!(stdout.contains("OPERATORS:"), "missing OPERATORS section");
+    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
 }
 
 #[test]
@@ -635,27 +1213,56 @@ fn help_ai_is_smaller_than_full_spec() {
     let compact = ilo().args(["help", "ai"]).output().expect("failed to run ilo");
     assert!(
         compact.stdout.len() < full.stdout.len(),
-        "compact spec ({} bytes) should be smaller than full spec ({} bytes)",
+        "compact spec ({    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
+} bytes) should be smaller than full spec ({    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
+} bytes)",
         compact.stdout.len(), full.stdout.len()
     );
+    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
 }
 
 // --- --version / -V flag ---
 
 #[test]
-fn version_flag() {
-    let out = ilo().args(["--version"]).output().expect("failed to run ilo");
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+fn version_flags_show_version() {
+    let out = ilo().args([flag]).output().expect("failed to run ilo");
+    
+    
+    
+    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
 }
 
-#[test]
-fn version_flag_short() {
-    let out = ilo().args(["-V"]).output().expect("failed to run ilo");
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+
+    
+    
+    
+    
+    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
 }
 
 // --- --explain flag ---
@@ -663,9 +1270,21 @@ fn version_flag_short() {
 #[test]
 fn explain_known_code() {
     let out = ilo().args(["--explain", "ILO-T005"]).output().expect("failed to run ilo");
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.contains("ILO-T005"), "expected explanation, got: {stdout}");
+    
+    
+    assert!(stdout.contains("ILO-T005"), "expected explanation, got: {stdout    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
+}");
+    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
 }
 
 #[test]
@@ -673,7 +1292,19 @@ fn explain_unknown_code() {
     let out = ilo().args(["--explain", "ILO-XXXX"]).output().expect("failed to run ilo");
     assert!(!out.status.success(), "should exit with error for unknown code");
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("unknown error code"), "expected 'unknown error code' in stderr: {stderr}");
+    assert!(stderr.contains("unknown error code"), "expected 'unknown error code' in stderr: {stderr    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
+}");
+    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
 }
 
 #[test]
@@ -681,7 +1312,19 @@ fn explain_no_code_arg() {
     let out = ilo().args(["--explain"]).output().expect("failed to run ilo");
     assert!(!out.status.success(), "should exit with error when no code given");
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("Usage"), "expected 'Usage' in stderr: {stderr}");
+    assert!(stderr.contains("Usage"), "expected 'Usage' in stderr: {stderr    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
+}");
+    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
 }
 
 // --- source annotation: ilo code --explain / -x ---
@@ -692,9 +1335,21 @@ fn source_explain_fn_start() {
         .args(["f x:n>n;+x 1", "--explain"])
         .output()
         .expect("failed to run ilo");
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.contains("fn start"), "expected 'fn start' annotation: {stdout}");
+    
+    
+    assert!(stdout.contains("fn start"), "expected 'fn start' annotation: {stdout    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
+}");
+    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
 }
 
 #[test]
@@ -703,9 +1358,21 @@ fn source_explain_short_flag() {
         .args(["f x:n>n;+x 1", "-x"])
         .output()
         .expect("failed to run ilo");
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.contains("fn start"), "expected 'fn start' annotation: {stdout}");
+    
+    
+    assert!(stdout.contains("fn start"), "expected 'fn start' annotation: {stdout    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
+}");
+    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
 }
 
 #[test]
@@ -714,20 +1381,50 @@ fn source_explain_bind_annotation() {
         .args(["f x:n>n;y=+x 1;y", "--explain"])
         .output()
         .expect("failed to run ilo");
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.contains("bind → y"), "expected 'bind → y': {stdout}");
+    
+    
+    assert!(stdout.contains("bind → y"), "expected 'bind → y': {stdout    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
+}");
+    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
 }
 
 #[test]
 fn source_explain_guard_annotation() {
     let out = ilo()
-        .args(["f x:n>n;<=x 0{x};+x 1", "--explain"])
+        .args(["f x:n>n;<=x 0{x    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
+};+x 1", "--explain"])
         .output()
         .expect("failed to run ilo");
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.contains("guard"), "expected 'guard' annotation: {stdout}");
+    
+    
+    assert!(stdout.contains("guard"), "expected 'guard' annotation: {stdout    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
+}");
+    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
 }
 
 #[test]
@@ -736,9 +1433,21 @@ fn source_explain_return_annotation() {
         .args(["f x:n>n;+x 1", "--explain"])
         .output()
         .expect("failed to run ilo");
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.contains("return"), "expected 'return' annotation: {stdout}");
+    
+    
+    assert!(stdout.contains("return"), "expected 'return' annotation: {stdout    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
+}");
+    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
 }
 
 // --- trm / unq / fmt via inline ---
@@ -749,8 +1458,14 @@ fn inline_trm_basic() {
         .args(["f s:t>t;trm s", "  hello  "])
         .output()
         .expect("failed to run ilo");
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    
     assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "hello");
+    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
 }
 
 #[test]
@@ -759,18 +1474,42 @@ fn inline_unq_text() {
         .args(["f s:t>t;unq s", "aabbc"])
         .output()
         .expect("failed to run ilo");
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    
     assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "abc");
+    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
 }
 
 #[test]
 fn inline_fmt_basic() {
     let out = ilo()
-        .args([r#"f a:t b:t>t;fmt "{} and {}" a b"#, "foo", "bar"])
+        .args([r#"f a:t b:t>t;fmt "{    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
+} and {    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
+}" a b"#, "foo", "bar"])
         .output()
         .expect("failed to run ilo");
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    
     assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "foo and bar");
+    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
 }
 
 // --- --run-jit ---
@@ -785,10 +1524,28 @@ fn run_jit_arm64_numeric() {
         .expect("failed to run ilo");
     // Either succeeds with correct output, or fails gracefully
     if out.status.success() {
+        
+        assert_eq!(stdout.trim(), "10", "expected 10, got: {stdout    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
         let stdout = String::from_utf8_lossy(&out.stdout);
-        assert_eq!(stdout.trim(), "10", "expected 10, got: {stdout}");
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
     }
+}");
+        for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
+}
     // If JIT compilation fails, that's also acceptable
+    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
 }
 
 // --- Additional ARM64 JIT opcode coverage ---
@@ -803,6 +1560,18 @@ fn run_jit_arm64_no_arg() {
         .expect("failed to run ilo");
     if out.status.success() {
         assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "42");
+        for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
+}
+    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
     }
 }
 
@@ -816,6 +1585,18 @@ fn run_jit_arm64_addition() {
         .expect("failed to run ilo");
     if out.status.success() {
         assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "7");
+        for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
+}
+    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
     }
 }
 
@@ -829,6 +1610,18 @@ fn run_jit_arm64_subtraction() {
         .expect("failed to run ilo");
     if out.status.success() {
         assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "7");
+        for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
+}
+    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
     }
 }
 
@@ -841,9 +1634,27 @@ fn run_jit_arm64_division_nn() {
         .output()
         .expect("failed to run ilo");
     if out.status.success() {
-        let stdout = String::from_utf8_lossy(&out.stdout);
+        
         // 1/3 = 0.333... — non-integer result triggers float output branch
-        assert!(stdout.trim().starts_with("0.333"), "expected 0.333…, got: {stdout}");
+        assert!(stdout.trim().starts_with("0.333"), "expected 0.333…, got: {stdout    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
+}");
+        for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
+}
+    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
     }
 }
 
@@ -857,6 +1668,18 @@ fn run_jit_arm64_addk() {
         .expect("failed to run ilo");
     if out.status.success() {
         assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "6");
+        for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
+}
+    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
     }
 }
 
@@ -870,6 +1693,18 @@ fn run_jit_arm64_subk() {
         .expect("failed to run ilo");
     if out.status.success() {
         assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "4");
+        for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
+}
+    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
     }
 }
 
@@ -883,6 +1718,18 @@ fn run_jit_arm64_divk() {
         .expect("failed to run ilo");
     if out.status.success() {
         assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "5");
+        for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
+}
+    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
     }
 }
 
@@ -896,6 +1743,18 @@ fn run_jit_arm64_negate() {
         .expect("failed to run ilo");
     if out.status.success() {
         assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "-5");
+        for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
+}
+    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
     }
 }
 
@@ -911,8 +1770,20 @@ fn run_jit_arm64_not_eligible() {
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
         stderr.contains("eligible") || stderr.contains("JIT"),
-        "expected eligibility error, got: {stderr}"
+        "expected eligibility error, got: {stderr    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
+}"
     );
+    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
 }
 
 #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
@@ -926,6 +1797,18 @@ fn run_jit_arm64_const_dedup() {
         .expect("failed to run ilo");
     if out.status.success() {
         assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "7");
+        for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
+}
+    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
     }
 }
 
@@ -939,6 +1822,18 @@ fn run_jit_arm64_3_args() {
         .expect("failed to run ilo");
     if out.status.success() {
         assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "7");
+        for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
+}
+    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
     }
 }
 
@@ -952,6 +1847,18 @@ fn run_jit_arm64_4_args() {
         .expect("failed to run ilo");
     if out.status.success() {
         assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "7");
+        for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
+}
+    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
     }
 }
 
@@ -965,6 +1872,18 @@ fn run_jit_arm64_5_args() {
         .expect("failed to run ilo");
     if out.status.success() {
         assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "7");
+        for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
+}
+    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
     }
 }
 
@@ -978,6 +1897,18 @@ fn run_jit_arm64_6_args() {
         .expect("failed to run ilo");
     if out.status.success() {
         assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "7");
+        for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
+}
+    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
     }
 }
 
@@ -991,6 +1922,18 @@ fn run_jit_arm64_7_args() {
         .expect("failed to run ilo");
     if out.status.success() {
         assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "7");
+        for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
+}
+    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
     }
 }
 
@@ -1004,6 +1947,18 @@ fn run_jit_arm64_8_args() {
         .expect("failed to run ilo");
     if out.status.success() {
         assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "7");
+        for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
+}
+    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
     }
 }
 
@@ -1017,6 +1972,18 @@ fn run_jit_arm64_multiply_nn() {
         .expect("failed to run ilo");
     if out.status.success() {
         assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "12");
+        for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
+}
+    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
     }
 }
 
@@ -1031,8 +1998,20 @@ fn run_jit_unavailable_on_non_arm64() {
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
         stderr.contains("arm64") || stderr.contains("aarch64") || stderr.contains("JIT"),
-        "expected JIT unavailability message, got: {stderr}"
+        "expected JIT unavailability message, got: {stderr    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
+}"
     );
+    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
 }
 
 // --- Runtime error paths ---
@@ -1049,8 +2028,20 @@ fn run_vm_runtime_error() {
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
         stderr.contains("division") || stderr.contains("zero") || stderr.contains("ILO"),
-        "expected runtime error in stderr: {stderr}"
+        "expected runtime error in stderr: {stderr    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
+}"
     );
+    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
 }
 
 #[test]
@@ -1065,8 +2056,20 @@ fn run_interp_runtime_error() {
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
         stderr.contains("division") || stderr.contains("zero") || stderr.contains("ILO"),
-        "expected runtime error in stderr: {stderr}"
+        "expected runtime error in stderr: {stderr    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
+}"
     );
+    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
 }
 
 #[test]
@@ -1075,26 +2078,62 @@ fn typedef_in_func_names_filter() {
     // TypeDef must come AFTER the function to avoid a chunk-index mismatch in the VM compiler.
     // Bare arg "5" is not a function name → func_name=None, run_args=[5.0]
     let out = ilo()
-        .args(["f x:n>n;+x 1\ntype point{x:n}", "5"])
+        .args(["f x:n>n;+x 1\ntype point{x:n    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
+}", "5"])
         .output()
         .expect("failed to run ilo");
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    assert_eq!(stdout.trim(), "6", "expected 6, got: {stdout}");
+    
+    
+    assert_eq!(stdout.trim(), "6", "expected 6, got: {stdout    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
+}");
+    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
 }
 
 #[test]
 fn run_default_float_result() {
-    // Cranelift JIT returns a non-integer float → println!("{}", result) (L430 in run_default)
+    // Cranelift JIT returns a non-integer float → println!("{    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
+}", result) (L430 in run_default)
     // f x:n>n;/x 3 with arg 2 → 0.666... (not representable as i64)
     let out = ilo()
         .args(["f x:n>n;/x 3", "2"])
         .output()
         .expect("failed to run ilo");
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
-    let stdout = String::from_utf8_lossy(&out.stdout);
+    
+    
     let val: f64 = stdout.trim().parse().expect("expected float output");
-    assert!((val - 2.0/3.0).abs() < 1e-6, "expected ~0.666, got: {val}");
+    assert!((val - 2.0/3.0).abs() < 1e-6, "expected ~0.666, got: {val    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
+}");
+    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
 }
 
 #[cfg(not(feature = "llvm"))]
@@ -1109,8 +2148,20 @@ fn run_llvm_not_enabled() {
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
         stderr.contains("LLVM") || stderr.contains("llvm") || stderr.contains("not enabled"),
-        "expected LLVM not enabled message, got: {stderr}"
+        "expected LLVM not enabled message, got: {stderr    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
+}"
     );
+    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
 }
 
 // L164-166: file read error — file exists but is unreadable (Unix only)
@@ -1133,8 +2184,20 @@ fn file_read_error() {
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
         stderr.contains("Error reading") || stderr.contains("Permission"),
-        "expected read error, got: {stderr}"
+        "expected read error, got: {stderr    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
+}"
     );
+    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
 }
 
 // L285: --run-cranelift with no extra args after func name → vec![]
@@ -1146,22 +2209,46 @@ fn run_cranelift_no_extra_args() {
         .args(["f>n;42", "--run-cranelift", "f"])
         .output()
         .expect("failed to run ilo");
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    
     assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "42");
+    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
 }
 
 // L300: --run-cranelift float result (non-integer)
 #[cfg(feature = "cranelift")]
 #[test]
 fn run_cranelift_float_result() {
-    // /x 3 with x=2 → 2/3 = 0.666... → println!("{}", result) at L300
+    // /x 3 with x=2 → 2/3 = 0.666... → println!("{    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
+}", result) at L300
     let out = ilo()
         .args(["f x:n>n;/x 3", "--run-cranelift", "f", "2"])
         .output()
         .expect("failed to run ilo");
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    
     let val: f64 = String::from_utf8_lossy(&out.stdout).trim().parse().expect("expected float");
-    assert!((val - 2.0/3.0).abs() < 1e-6, "expected ~0.666, got: {val}");
+    assert!((val - 2.0/3.0).abs() < 1e-6, "expected ~0.666, got: {val    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
+}");
+    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
 }
 
 // L304-305: --run-cranelift with non-eligible function → "not eligible" error
@@ -1170,12 +2257,36 @@ fn run_cranelift_float_result() {
 fn run_cranelift_not_eligible() {
     // Match expression is now JIT-eligible with NanVal JIT — should succeed
     let out = ilo()
-        .args(["f x:n>n;?x{1:2;_:3}", "--run-cranelift", "f", "5"])
+        .args(["f x:n>n;?x{1:2;_:3    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
+}", "--run-cranelift", "f", "5"])
         .output()
         .expect("failed to run ilo");
-    assert!(out.status.success(), "match should be JIT-eligible now, stderr: {}", String::from_utf8_lossy(&out.stderr));
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.trim() == "3", "expected wildcard arm result 3, got: {stdout}");
+    assert!(out.status.success(), "match should be JIT-eligible now, stderr: {    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
+}", String::from_utf8_lossy(&out.stderr));
+    
+    assert!(stdout.trim() == "3", "expected wildcard arm result 3, got: {stdout    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
+}");
+    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
 }
 
 // L441-443: run_default interpreter fallback error
@@ -1187,9 +2298,27 @@ fn run_default_interpreter_error() {
         .args(["f xs:L n>n;xs.0", "f", "[]"])
         .output()
         .expect("failed to run ilo");
-    assert!(out.status.success(), "JIT handles empty list index, stderr: {}", String::from_utf8_lossy(&out.stderr));
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.trim() == "nil", "expected nil for empty list index, got: {stdout}");
+    assert!(out.status.success(), "JIT handles empty list index, stderr: {    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
+}", String::from_utf8_lossy(&out.stderr));
+    
+    assert!(stdout.trim() == "nil", "expected nil for empty list index, got: {stdout    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
+}");
+    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
 }
 
 // run_bench: L448-746 — bench with simple function covers the full run_bench path
@@ -1200,51 +2329,54 @@ fn bench_simple_function() {
         .args(["f>n;42", "--bench", "f"])
         .output()
         .expect("failed to run ilo");
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.contains("Rust interpreter"), "expected bench output, got: {stdout}");
+    
+    
+    assert!(stdout.contains("Rust interpreter"), "expected bench output, got: {stdout    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
+}");
     assert!(stdout.contains("Register VM"), "expected VM bench output");
+    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
 }
 
 // main.rs L525 (_ => None in filter_map) + L638 (Text(s) in call_args map)
 #[test]
-fn bench_with_text_arg() {
+fn bench_with_various_arg_types() {
     // bench mode with a text arg → filter_map hits `_ => None` (L525), all_numeric=false,
     // and the Python call_args builder hits the Text(s) branch (L638)
-    let out = ilo()
-        .args(["f x:t>t;x", "--bench", "f", "hello"])
+    let cases = [("f x:t>t;x", "f", "hello"),("f x:b>b;x", "f", "true"),("f xs:L n>n;+xs.0 1", "f", "[1,2,3]")];
+    for (prog, func, arg) in cases {
+        let out = ilo().args([prog, "--bench", func, arg])
         .output()
         .expect("failed to run ilo");
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.contains("Rust interpreter"), "expected bench output, got: {stdout}");
+    
+    
+    assert!(stdout.contains("Rust interpreter"), "expected bench output, got: {stdout    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
+}");
+    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
 }
 
 // main.rs L639 (Bool(b) in call_args map)
-#[test]
-fn bench_with_bool_arg() {
-    // bench mode with a bool arg → Python call_args builder hits Bool(b) branch (L639)
-    let out = ilo()
-        .args(["f x:b>b;x", "--bench", "f", "true"])
-        .output()
-        .expect("failed to run ilo");
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.contains("Rust interpreter"), "expected bench output, got: {stdout}");
-}
 
 // main.rs L640 (_ => "None" in call_args map for non-standard values like lists)
-#[test]
-fn bench_with_list_arg() {
-    // bench mode with a list arg → Python call_args builder hits _ => "None" branch (L640)
-    let out = ilo()
-        .args(["f xs:L n>n;+xs.0 1", "--bench", "f", "[1,2,3]"])
-        .output()
-        .expect("failed to run ilo");
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.contains("Rust interpreter"), "expected bench output, got: {stdout}");
-}
 
 // main.rs L554-555 (arm64 JIT bench float result) + L587-588 (Cranelift bench float result)
 // Use /x 2 with arg 1 → result is 0.5 (non-integer), hitting the else branch
@@ -1255,16 +2387,52 @@ fn bench_jit_float_result() {
         .args(["f x:n>n;/x 2", "--bench", "f", "1"])
         .output()
         .expect("failed to run ilo");
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.contains("Rust interpreter"), "expected bench output, got: {stdout}");
+    
+    
+    assert!(stdout.contains("Rust interpreter"), "expected bench output, got: {stdout    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
+}");
     // On JIT-capable platforms, the result line should show 0.5 (not integer)
     if stdout.contains("Custom JIT") || stdout.contains("Cranelift JIT") {
-        assert!(stdout.contains("0.5"), "expected float result in JIT output, got: {stdout}");
+        assert!(stdout.contains("0.5"), "expected float result in JIT output, got: {stdout    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
+}");
+        for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
+}
+    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
     }
 }
 
-// main.rs L560 (arm64 closing } when JIT returns None) + L593 (Cranelift closing })
+// main.rs L560 (arm64 closing     for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
+} when JIT returns None) + L593 (Cranelift closing     for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
+})
 // L197 (arm64 LOADK non-number → None) + L161 (Cranelift LOADK non-number → None)
 // Uses a function with a text constant: JIT can't compile it → returns None
 #[test]
@@ -1274,12 +2442,24 @@ fn bench_jit_non_numeric_const() {
         .args(["f x:n>n;y=\"hi\";x", "--bench", "f", "5"])
         .output()
         .expect("failed to run ilo");
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.contains("Rust interpreter"), "expected bench output, got: {stdout}");
+    
+    
+    assert!(stdout.contains("Rust interpreter"), "expected bench output, got: {stdout    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
+}");
     // Cranelift JIT now compiles text-const functions via NanVal
     #[cfg(feature = "cranelift")]
     assert!(stdout.contains("Cranelift JIT"), "cranelift JIT should compile text-const fn with NanVal");
+    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
 }
 
 // vm/jit_arm64.rs L207-209 (OP_MOVE with a != b) + vm/jit_cranelift.rs L167-170 (OP_MOVE with a != b)
@@ -1287,19 +2467,55 @@ fn bench_jit_non_numeric_const() {
 // a different reg → OP_MOVE result_reg, body_reg (a != b) is emitted
 #[test]
 fn bench_jit_move_different_regs() {
-    // f x:n>n;?x{_:+x 1} — match with wildcard arm producing +x 1
+    // f x:n>n;?x{_:+x 1    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
+} — match with wildcard arm producing +x 1
     // compile_match_arms: result_reg = reg1, body compiles +x 1 to reg2
     // → OP_MOVE 1,2 (a=1 != b=2) → arm64 L207-209 + Cranelift L167-170
     let out = ilo()
-        .args(["f x:n>n;?x{_:+x 1}", "--bench", "f", "7"])
+        .args(["f x:n>n;?x{_:+x 1    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
+}", "--bench", "f", "7"])
         .output()
         .expect("failed to run ilo");
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.contains("Rust interpreter"), "expected bench output, got: {stdout}");
+    
+    
+    assert!(stdout.contains("Rust interpreter"), "expected bench output, got: {stdout    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
+}");
     // Result should be 8 (x + 1 = 7 + 1)
     if stdout.contains("Custom JIT") || stdout.contains("Cranelift JIT") {
-        assert!(stdout.contains("  result:     8"), "expected result 8 in JIT output, got: {stdout}");
+        assert!(stdout.contains("  result:     8"), "expected result 8 in JIT output, got: {stdout    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
+}");
+        for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
+}
+    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
     }
 }
 
@@ -1310,26 +2526,68 @@ fn bench_jit_move_different_regs() {
 #[test]
 fn run_default_no_functions_in_compiled() {
     // type-only program with a numeric arg → run_default → JIT tries target="main"
-    // compiled.func_names = [] → position returns None → L434 closing } fires
+    // compiled.func_names = [] → position returns None → L434 closing     for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
+} fires
     // Falls through to interpreter which fails (no function named "main")
     let out = ilo()
-        .args(["type pt{x:n}", "5"])
+        .args(["type pt{x:n    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
+}", "5"])
         .output()
         .expect("failed to run ilo");
     // Will fail because no function to call, but L434 is hit
     let _ = out;
+    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
 }
 
 // --- Auto-unwrap operator ! ---
 
 fn write_temp_ilo(content: &str) -> std::path::PathBuf {
-    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::atomic::{AtomicU64, Ordering    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
+};
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let dir = std::env::temp_dir();
     let n = COUNTER.fetch_add(1, Ordering::Relaxed);
-    let path = dir.join(format!("ilo_test_{}_{}.ilo", std::process::id(), n));
+    let path = dir.join(format!("ilo_test_{    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
+}_{    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
+}.ilo", std::process::id(), n));
     std::fs::write(&path, content).expect("failed to write temp file");
     path
+    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
 }
 
 #[test]
@@ -1341,8 +2599,14 @@ fn unwrap_ok_path_inline() {
         .output()
         .expect("failed to run ilo");
     std::fs::remove_file(&f).ok();
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    
     assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "~42");
+    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
 }
 
 #[test]
@@ -1353,8 +2617,14 @@ fn unwrap_err_path_inline() {
         .output()
         .expect("failed to run ilo");
     std::fs::remove_file(&f).ok();
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    
     assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "^fail");
+    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
 }
 
 #[test]
@@ -1365,8 +2635,14 @@ fn unwrap_nested_propagation_inline() {
         .output()
         .expect("failed to run ilo");
     std::fs::remove_file(&f).ok();
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    
     assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "^deep");
+    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
 }
 
 #[test]
@@ -1377,9 +2653,21 @@ fn unwrap_formatter_roundtrip() {
         .output()
         .expect("failed to run ilo");
     std::fs::remove_file(&f).ok();
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.contains("inner!"), "expected inner! in formatted output, got: {}", stdout);
+    
+    
+    assert!(stdout.contains("inner!"), "expected inner! in formatted output, got: {    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
+}", stdout);
+    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
 }
 
 #[test]
@@ -1393,7 +2681,19 @@ fn unwrap_verifier_t025() {
     std::fs::remove_file(&f).ok();
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("T025") || stderr.contains("not a Result"),
-        "expected T025 error, got: {}", stderr);
+        "expected T025 error, got: {    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
+}", stderr);
+    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
 }
 
 #[test]
@@ -1407,7 +2707,19 @@ fn unwrap_verifier_t026() {
     std::fs::remove_file(&f).ok();
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("T026") || stderr.contains("not a Result"),
-        "expected T026 error, got: {}", stderr);
+        "expected T026 error, got: {    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
+}", stderr);
+    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
 }
 
 // --- HTTP get builtin + $ syntax ---
@@ -1421,7 +2733,19 @@ fn get_verifier_wrong_type() {
         .expect("failed to run ilo");
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("T013") || stderr.contains("expects t"),
-        "expected type error for get with number, got: {}", stderr);
+        "expected type error for get with number, got: {    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
+}", stderr);
+    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
 }
 
 #[test]
@@ -1431,10 +2755,22 @@ fn dollar_parses_inline() {
         .args([r#"f url:t>R t t;$url"#])
         .output()
         .expect("failed to run ilo");
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
-    let stdout = String::from_utf8_lossy(&out.stdout);
+    
+    
     // No args → AST output
-    assert!(stdout.contains("get"), "expected 'get' in AST output, got: {}", stdout);
+    assert!(stdout.contains("get"), "expected 'get' in AST output, got: {    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
+}", stdout);
+    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
 }
 
 #[test]
@@ -1444,41 +2780,33 @@ fn dollar_bang_parses_inline() {
         .args([r#"f url:t>R t t;~($!url)"#])
         .output()
         .expect("failed to run ilo");
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.contains("get"), "expected 'get' in AST output, got: {}", stdout);
+    
+    
+    assert!(stdout.contains("get"), "expected 'get' in AST output, got: {    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
+}", stdout);
+    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
 }
 
 // --- Braceless guards ---
 
 #[test]
-fn braceless_guard_classify() {
-    let out = ilo()
-        .args([r#"cls sp:n>t;>=sp 1000 "gold";>=sp 500 "silver";"bronze""#, "1500"])
-        .output()
-        .expect("failed to run ilo");
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
-    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "gold");
-}
-
-#[test]
-fn braceless_guard_classify_silver() {
-    let out = ilo()
-        .args([r#"cls sp:n>t;>=sp 1000 "gold";>=sp 500 "silver";"bronze""#, "750"])
-        .output()
-        .expect("failed to run ilo");
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
-    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "silver");
-}
-
-#[test]
-fn braceless_guard_classify_bronze() {
-    let out = ilo()
-        .args([r#"cls sp:n>t;>=sp 1000 "gold";>=sp 500 "silver";"bronze""#, "100"])
-        .output()
-        .expect("failed to run ilo");
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
-    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "bronze");
+fn braceless_guard_classify_cases() {
+    let program = r#"cls sp:n>t;>=sp 1000 "gold";>=sp 500 "silver";"bronze""#;
+    for (input, expected) in [("1500", "gold"), ("750", "silver"), ("100", "bronze")] {
+        let out = ilo().args([program, input]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), expected);
+    }
 }
 
 #[test]
@@ -1487,8 +2815,14 @@ fn braceless_guard_factorial() {
         .args(["fac n:n>n;<=n 1 1;r=fac -n 1;*n r", "5"])
         .output()
         .expect("failed to run ilo");
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    
     assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "120");
+    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
 }
 
 #[test]
@@ -1497,14 +2831,32 @@ fn braceless_guard_fibonacci() {
         .args(["fib n:n>n;<=n 1 n;a=fib -n 1;b=fib -n 2;+a b", "10"])
         .output()
         .expect("failed to run ilo");
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    
     assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "55");
+    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
 }
 
 #[test]
 fn braceless_guard_equivalent_to_braced() {
     let braced = ilo()
-        .args([r#"cls sp:n>t;>=sp 1000{"gold"};>=sp 500{"silver"};"bronze""#, "1500"])
+        .args([r#"cls sp:n>t;>=sp 1000{"gold"    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
+};>=sp 500{"silver"    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
+};"bronze""#, "1500"])
         .output()
         .expect("failed to run ilo");
     let braceless = ilo()
@@ -1516,6 +2868,12 @@ fn braceless_guard_equivalent_to_braced() {
         String::from_utf8_lossy(&braceless.stdout),
         "braced and braceless should produce identical output"
     );
+    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
 }
 
 // --- Range iteration ---
@@ -1523,32 +2881,68 @@ fn braceless_guard_equivalent_to_braced() {
 #[test]
 fn range_basic() {
     let out = ilo()
-        .args(["f>n;@i 0..3{i}", "--run", "f"])
+        .args(["f>n;@i 0..3{i    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
+}", "--run", "f"])
         .output()
         .expect("failed to run ilo");
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    
     assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "2");
+    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
 }
 
 #[test]
 fn range_with_arg() {
     let out = ilo()
-        .args(["f n:n>n;@i 0..n{*i i}", "4"])
+        .args(["f n:n>n;@i 0..n{*i i    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
+}", "4"])
         .output()
         .expect("failed to run ilo");
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    
     // i goes 0,1,2,3 → last body value is 3*3 = 9
     assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "9");
+    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
 }
 
 #[test]
 fn range_empty() {
     let out = ilo()
-        .args(["f>n;@i 5..2{99};0", "--run", "f"])
+        .args(["f>n;@i 5..2{99    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
+};0", "--run", "f"])
         .output()
         .expect("failed to run ilo");
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    
     assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "0");
+    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
 }
 
 // --- Type aliases ---
@@ -1560,8 +2954,14 @@ fn alias_basic_run() {
         .args(["-e", "alias res R n t\nf>res;~42", "--run", "f"])
         .output()
         .expect("failed to run ilo");
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    
     assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "~42");
+    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
 }
 
 #[test]
@@ -1570,6 +2970,12 @@ fn alias_in_param_run() {
         .args(["-e", "alias num n\nf x:num>num;+x 1", "--run", "f", "5"])
         .output()
         .expect("failed to run ilo");
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    
     assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "6");
+    for flag in ["--version", "-V"] {
+        let out = ilo().args([flag]).output().expect("failed to run ilo");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("ilo "), "expected version string, got: {stdout}");
+    }
 }
