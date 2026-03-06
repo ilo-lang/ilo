@@ -62,6 +62,7 @@ type-coercion, and iteration implicitly.
 | `tl xs` | rest of list |
 | `rev xs` | reverse |
 | `srt xs` | sort (natural order) |
+| `srt fn xs` | sort by key function |
 | `slc xs i j` | slice from i to j |
 | `cat xs ys` | concatenate two lists |
 | `zip xs ys` | pair elements → `L L any` |
@@ -205,26 +206,30 @@ For data summaries, agents commonly need:
 | count | `len xs` ✓ | — |
 | mean | `sum/len` (2 lines) | no `mean` builtin |
 | min/max | `fld min xs inf` or `min` on list? | `min`/`max` only take 2 args |
-| sort by key | `sorted(xs, key=fn)` | `srt` is natural order only |
+| sort by key | `sorted(xs, key=fn)` | ✅ `srt fn xs` |
 | group by | manual fold | no `grp` builtin |
 
-`srt` should accept an optional key function (or `srtby fn xs`).
 `min`/`max` with a list arg would eliminate the `fld` pattern for simple cases.
 
-### 6. Sort by key
+### 6. Sort by key — ✅ implemented
 
 ```python
 sorted(rows, key=lambda r: r["amount"])
 ```
 
-ilo: `srt` sorts by natural/lexicographic order. For records, you need sort by field:
+ilo: `srt fn xs` — sort by key function. Same name as `srt xs`, 2-arg form:
 
 ```
-srtby fn xs     -- sort xs using fn as key extractor
+-- sort words by length
+ln s:t>n;len s
+srt ln words
+
+-- sort records by numeric field
+get-val r:L t>n;num r.1
+srt get-val rows
 ```
 
-or equivalently pass a comparator. This unlocks: "sort users by age", "sort
-transactions by amount" — core data ops.
+Unlocks: "sort users by age", "sort transactions by amount" — core data ops.
 
 ### 7. String methods
 
@@ -263,7 +268,7 @@ Based on what agents actually need, in priority order:
 | ✅ done | `rdl path → R (L t) t` | small | lines = data rows |
 | ✅ done | `wr path s → R t t` | small | complete the I/O loop |
 | ✅ done | `wrl path xs → R t t` | small | complete the I/O loop |
-| 🟠 P1 | `srtby fn xs` | medium | sort-by-key is essential |
+| ✅ done | `srt fn xs` — sort by key | medium | sort-by-key is essential |
 | 🟠 P1 | `trm s` | tiny | needed for parsing real data |
 | 🟡 P2 | `csv s` | medium | proper CSV with quoting |
 | 🟡 P2 | `fmt template args…` | medium | removes str+cat boilerplate |
@@ -280,27 +285,26 @@ Based on what agents actually need, in priority order:
 ```
 -- count non-empty lines in a CSV
 wc path:t>R n t
-  lines=readl! path
+  lines=rdl! path
   flt (fn l:t>b;>len trm l 0) lines >> len
 
 -- sum a column (CSV, col index 2)
 sum-col path:t col:n>R n t
-  lines=readl! path
+  lines=rdl! path
   rows=map (fn l:t>L t;spl "," l) lines
   vals=map (fn r:L t>n;num mget r col) rows
   ~fld (fn a:n b:n>n;+a b) vals 0
 
 -- top-N by column
 top path:t n:n>R L L t t
-  lines=readl! path
+  lines=rdl! path
   rows=map (fn l:t>L t;spl "," l) lines
-  sorted=srtby (fn r:L t>n;num r.1) rows
+  sorted=srt (fn r:L t>n;num r.1) rows
   ~slc sorted 0 n
 ```
 
 That's real data work — filtering, splitting, mapping, folding, sorting — in
-compact ilo syntax. The only thing missing from today's ilo is `readl`, `trm`,
-`\n`, and `srtby`.
+compact ilo syntax. The only thing missing from today's ilo is `trm`.
 
 ---
 
@@ -314,7 +318,7 @@ CSV/JSON data. Won't replace pandas for analytical work, but for agent pipelines
 (read → filter → transform → emit), it's competitive with Python stdlib.
 
 **Comparison to Python stdlib (no pandas):** Python without pandas is 5-6 lines
-for the same work, but 2x the tokens. ilo with `readl`+`srtby`+`trm`+`\n` matches
+for the same work, but 2x the tokens. ilo with `rdl`+`srt fn xs`+`trm`+`\n` matches
 Python's token density for data glue work.
 
 **Not the goal:** replacing pandas for analytical/ML workloads. ilo targets agent

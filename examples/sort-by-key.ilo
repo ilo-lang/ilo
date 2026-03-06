@@ -1,0 +1,21 @@
+-- srt fn xs: sort a list by a key function.
+-- Same name as srt xs (1-arg), selected by arity.
+
+-- Sort numbers by distance from zero
+dist x:n>n;abs x
+by-dist xs:L n>L n;srt dist xs
+
+-- Sort words by length
+wlen s:t>n;len s
+by-len ws:L t>L t;srt wlen ws
+
+-- Sort words alphabetically (descending) using a negating trick:
+-- there's no built-in reverse-sort, but srt + rev does it
+by-len-desc ws:L t>L t;rev (srt wlen ws)
+
+-- run: by-dist [-3,1,-5,2]
+-- out: [1, 2, -3, -5]
+-- run: by-len ["banana","fig","apple","kiwi"]
+-- out: ["fig", "kiwi", "apple", "banana"]
+-- run: by-len-desc ["banana","fig","apple","kiwi"]
+-- out: ["banana", "apple", "kiwi", "fig"]
