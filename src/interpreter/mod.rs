@@ -630,6 +630,28 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             other => Err(RuntimeError::new("ILO-R009", format!("get requires text, got {:?}", other))),
         };
     }
+    if name == "post" && args.len() == 2 {
+        return match (&args[0], &args[1]) {
+            (Value::Text(url), Value::Text(body)) => {
+                #[cfg(feature = "http")]
+                {
+                    match minreq::post(url.as_str()).with_body(body.as_str()).send() {
+                        Ok(resp) => match resp.as_str() {
+                            Ok(b) => Ok(Value::Ok(Box::new(Value::Text(b.to_string())))),
+                            Err(e) => Ok(Value::Err(Box::new(Value::Text(format!("response is not valid UTF-8: {e}"))))),
+                        },
+                        Err(e) => Ok(Value::Err(Box::new(Value::Text(e.to_string())))),
+                    }
+                }
+                #[cfg(not(feature = "http"))]
+                {
+                    let _ = (url, body);
+                    Ok(Value::Err(Box::new(Value::Text("http feature not enabled".to_string()))))
+                }
+            }
+            _ => Err(RuntimeError::new("ILO-R009", format!("post requires (t, t), got ({:?}, {:?})", args[0], args[1]))),
+        };
+    }
     if name == "trm" && args.len() == 1 {
         return match &args[0] {
             Value::Text(s) => Ok(Value::Text(s.trim().to_string())),

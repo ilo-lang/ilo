@@ -1449,6 +1449,59 @@ fn dollar_bang_parses_inline() {
     assert!(stdout.contains("get"), "expected 'get' in AST output, got: {}", stdout);
 }
 
+// --- HTTP post builtin ---
+
+#[test]
+fn post_verifier_wrong_type_url() {
+    // first arg (url) must be t
+    let out = ilo()
+        .args(["f x:n body:t>R t t;post x body"])
+        .output()
+        .expect("failed to run ilo");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("T013") || stderr.contains("expects t"),
+        "expected type error for post with number url, got: {stderr}"
+    );
+}
+
+#[test]
+fn post_verifier_wrong_type_body() {
+    // second arg (body) must be t
+    let out = ilo()
+        .args(["f url:t x:n>R t t;post url x"])
+        .output()
+        .expect("failed to run ilo");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("T013") || stderr.contains("expects t"),
+        "expected type error for post with number body, got: {stderr}"
+    );
+}
+
+#[test]
+fn post_returns_result_type() {
+    // post url body should type-check as R t t
+    let out = ilo()
+        .args([r#"f url:t body:t>R t t;post url body"#])
+        .output()
+        .expect("failed to run ilo");
+    // No args → AST output; should succeed verification
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+}
+
+#[test]
+fn post_appears_in_ast() {
+    // post url body — no runtime args → AST output; verify succeeds
+    let out = ilo()
+        .args([r#"f url:t body:t>R t t;post url body"#])
+        .output()
+        .expect("failed to run ilo");
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("post"), "expected 'post' in AST output, got: {stdout}");
+}
+
 // --- Braceless guards ---
 
 #[test]

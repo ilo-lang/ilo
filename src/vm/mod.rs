@@ -145,6 +145,7 @@ pub(crate) const OP_WR: u8 = 79;        // R[A] = wr(R[B], R[C])  — write stri
 pub(crate) const OP_WRL: u8 = 80;       // R[A] = wrl(R[B], R[C]) — write lines to file → R t t
 pub(crate) const OP_TRM: u8 = 81;       // R[A] = trim(R[B])  — trim whitespace → t
 pub(crate) const OP_UNQ: u8 = 82;       // R[A] = unq(R[B])   — deduplicate list or text
+pub(crate) const OP_POST: u8 = 83;      // R[A] = http_post(R[B], R[C])  (returns R t t)
 
 // ABx mode — register + 16-bit operand
 pub(crate) const OP_LOADK: u8 = 20;
@@ -1295,6 +1296,23 @@ impl RegCompiler {
                     let ra = self.alloc_reg();
                     self.emit_abc(OP_GET, ra, rb, 0);
                     // get returns R t t — handle auto-unwrap
+                    if *unwrap {
+                        let check_reg = self.alloc_reg();
+                        self.emit_abc(OP_ISOK, check_reg, ra, 0);
+                        let skip_ret = self.emit_jmpt(check_reg);
+                        self.emit_abx(OP_RET, ra, 0);
+                        self.current.patch_jump(skip_ret);
+                        self.emit_abc(OP_UNWRAP, ra, ra, 0);
+                        self.next_reg = ra + 1;
+                    }
+                    return ra;
+                }
+                if function == "post" && args.len() == 2 {
+                    let rb = self.compile_expr(&args[0]);
+                    let rc = self.compile_expr(&args[1]);
+                    let ra = self.alloc_reg();
+                    self.emit_abc(OP_POST, ra, rb, rc);
+                    // post returns R t t — handle auto-unwrap
                     if *unwrap {
                         let check_reg = self.alloc_reg();
                         self.emit_abc(OP_ISOK, check_reg, ra, 0);
@@ -3656,6 +3674,32 @@ impl<'a> VM<'a> {
                         match minreq::get(url.as_str()).send() {
                             Ok(resp) => match resp.as_str() {
                                 Ok(body) => NanVal::heap_ok(NanVal::heap_string(body.to_string())),
+                                Err(e) => NanVal::heap_err(NanVal::heap_string(format!("response is not valid UTF-8: {e}"))),
+                            },
+                            Err(e) => NanVal::heap_err(NanVal::heap_string(e.to_string())),
+                        }
+                    };
+                    #[cfg(not(feature = "http"))]
+                    let result = NanVal::heap_err(NanVal::heap_string("http feature not enabled".to_string()));
+                    reg_set!(a, result);
+                }
+                OP_POST => {
+                    let a = ((inst >> 16) & 0xFF) as usize + base;
+                    let b = ((inst >> 8) & 0xFF) as usize + base;
+                    let c = (inst & 0xFF) as usize + base;
+                    let vb = reg!(b);
+                    let vc = reg!(c);
+                    if !vb.is_string() || !vc.is_string() {
+                        return Err(VmError::Type("post requires two strings (url, body)"));
+                    }
+                    #[cfg(feature = "http")]
+                    let result = {
+                        // SAFETY: is_string() confirmed heap-tagged string with live RC.
+                        let url = unsafe { match vb.as_heap_ref() { HeapObj::Str(s) => s, _ => unreachable!() } };
+                        let body = unsafe { match vc.as_heap_ref() { HeapObj::Str(s) => s, _ => unreachable!() } };
+                        match minreq::post(url.as_str()).with_body(body.as_str()).send() {
+                            Ok(resp) => match resp.as_str() {
+                                Ok(b) => NanVal::heap_ok(NanVal::heap_string(b.to_string())),
                                 Err(e) => NanVal::heap_err(NanVal::heap_string(format!("response is not valid UTF-8: {e}"))),
                             },
                             Err(e) => NanVal::heap_err(NanVal::heap_string(e.to_string())),
@@ -6721,6 +6765,24 @@ mod tests {
         let chunk = &compiled.chunks[0];
         let has_get_op = chunk.code.iter().any(|inst| (inst >> 24) as u8 == OP_GET);
         assert!(has_get_op, "expected OP_GET in bytecode from $ syntax");
+    }
+
+    #[test]
+    fn vm_post_compiles_to_op_post() {
+        let prog = parse_program(r#"f url:t body:t>R t t;post url body"#);
+        let compiled = compile(&prog).unwrap();
+        let chunk = &compiled.chunks[0];
+        let has_post_op = chunk.code.iter().any(|inst| (inst >> 24) as u8 == OP_POST);
+        assert!(has_post_op, "expected OP_POST in bytecode");
+    }
+
+    #[test]
+    fn vm_post_unwrap_compiles_to_op_post() {
+        let prog = parse_program(r#"f url:t body:t>t;post! url body"#);
+        let compiled = compile(&prog).unwrap();
+        let chunk = &compiled.chunks[0];
+        let has_post_op = chunk.code.iter().any(|inst| (inst >> 24) as u8 == OP_POST);
+        assert!(has_post_op, "expected OP_POST in bytecode for post!");
     }
 
     // ---- Braceless guards ----
