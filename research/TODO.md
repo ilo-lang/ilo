@@ -21,8 +21,15 @@ See [DATA-MANIPULATION.md](DATA-MANIPULATION.md) for full gap analysis.
 
 - [ ] `trm s` — trim whitespace from string ends (needed when parsing file/CSV data)
 - [ ] `uniq xs` — deduplicate list, preserve order
-- [ ] `csv s` — parse CSV string → `L (L t)` (handles quoted fields)
 - [ ] `fmt "template {}" args…` — string interpolation (reduce str+cat boilerplate)
+
+### Format-aware I/O (P2)
+
+Grid formats (CSV, TSV) return `L (L t)`. Graph formats (JSON, XML, HTML) return `?`.
+Format is auto-detected from file extension for `rd`; explicit for `rdb`.
+
+- [ ] `rd path` — extend to auto-detect format from extension (`.csv`→grid, `.json`→graph, else raw string); return type `R ? t`
+- [ ] `rdb s fmt` — parse string/buffer in explicit format (`"csv"`, `"tsv"`, `"json"`); return type `R ? t`
 
 ---
 
