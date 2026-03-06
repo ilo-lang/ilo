@@ -48,6 +48,25 @@ Across 25 expression patterns: **22% fewer tokens, 42% fewer characters** vs inf
 
 See [MANIFESTO.md](MANIFESTO.md) for the full rationale.
 
+## Teaching a model to write ilo
+
+Three paths, in order of friction:
+
+**1. Context loading** — paste the spec into the system prompt. The compact form fits comfortably in any context window:
+
+```bash
+ilo help ai          # ~16-line ultra-compact spec for LLM consumption
+ilo help lang        # full spec
+```
+
+Lowest friction. Works with any model today. Good for one-off agents and short sessions.
+
+**2. Fine-tuning** — train on ilo programs and error feedback loops. Best for production agents that write a lot of ilo. Not yet available as a hosted service.
+
+**3. Foundation model training** — ilo is public and MIT licensed. As usage grows, frontier models will encounter it in training data and learn it natively — the same path Python, SQL, and JSON took.
+
+The compact spec (`ilo help ai`) is designed specifically for path 1: small enough to fit in a system prompt, dense enough to fully constrain generation.
+
 ## Syntax Variants
 
 Each idea explores a different syntax. Every folder has a SPEC and 5 example programs.
