@@ -261,7 +261,9 @@ Called like functions, compiled to dedicated opcodes.
 | `rdb s fmt` | parse string/buffer in given format — for data from HTTP, env vars, etc. | `R ? t` |
 | `wr path s` | write text to file (overwrite) | `R t t` |
 | `wrl path xs` | write list of lines to file (joins with `\n`) | `R t t` |
+| `trm s` | trim leading and trailing whitespace | `t` |
 | `spl t sep` | split text by separator | `L t` |
+| `fmt tmpl args…` | format string — `{}` placeholders filled left-to-right | `t` |
 | `cat xs sep` | join list of text with separator | `t` |
 | `has xs v` | membership test (list: element, text: substring) | `b` |
 | `hd xs` | head (first element/char) of list or text | element / `t` |
@@ -269,6 +271,7 @@ Called like functions, compiled to dedicated opcodes.
 | `rev xs` | reverse list or text | same type |
 | `srt xs` | sort list (all-number or all-text) or text chars | same type |
 | `srt fn xs` | sort list by key function (returns number or text key) | `L` |
+| `unq xs` | remove duplicates, preserve order (list or text chars) | same type |
 | `slc xs a b` | slice list or text from index a to b | same type |
 | `jpth json path` | JSON path lookup (dot-separated keys, array indices) | `R t t` |
 | `jdmp value` | serialise ilo value to JSON text | `t` |

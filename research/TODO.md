@@ -19,9 +19,9 @@
 
 See [DATA-MANIPULATION.md](DATA-MANIPULATION.md) for full gap analysis.
 
-- [ ] `trm s` — trim whitespace from string ends (needed when parsing file/CSV data)
-- [ ] `uniq xs` — deduplicate list, preserve order
-- [ ] `fmt "template {}" args…` — string interpolation (reduce str+cat boilerplate)
+- [x] `trm s` — trim whitespace from string ends
+- [x] `unq xs` — deduplicate list or text chars, preserve order
+- [x] `fmt "template {}" args…` — `{}` positional interpolation
 
 ---
 

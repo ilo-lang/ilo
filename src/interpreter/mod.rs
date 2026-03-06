@@ -630,6 +630,56 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             other => Err(RuntimeError::new("ILO-R009", format!("get requires text, got {:?}", other))),
         };
     }
+    if name == "trm" && args.len() == 1 {
+        return match &args[0] {
+            Value::Text(s) => Ok(Value::Text(s.trim().to_string())),
+            other => Err(RuntimeError::new("ILO-R009", format!("trm requires text, got {:?}", other))),
+        };
+    }
+    if name == "unq" && args.len() == 1 {
+        return match &args[0] {
+            Value::List(xs) => {
+                let mut seen = std::collections::HashSet::new();
+                let mut out = Vec::new();
+                for v in xs {
+                    let key = format!("{v:?}");
+                    if seen.insert(key) {
+                        out.push(v.clone());
+                    }
+                }
+                Ok(Value::List(out))
+            }
+            Value::Text(s) => {
+                let mut seen = std::collections::HashSet::new();
+                let deduped: String = s.chars().filter(|c| seen.insert(*c)).collect();
+                Ok(Value::Text(deduped))
+            }
+            other => Err(RuntimeError::new("ILO-R009", format!("unq requires a list or text, got {:?}", other))),
+        };
+    }
+    if name == "fmt" && !args.is_empty() {
+        let template = match &args[0] {
+            Value::Text(s) => s.clone(),
+            other => return Err(RuntimeError::new("ILO-R009", format!("fmt first arg must be text template, got {:?}", other))),
+        };
+        let mut result = String::new();
+        let mut arg_idx = 1;
+        let mut chars = template.chars().peekable();
+        while let Some(c) = chars.next() {
+            if c == '{' && chars.peek() == Some(&'}') {
+                chars.next();
+                if arg_idx < args.len() {
+                    result.push_str(&format!("{}", args[arg_idx]));
+                    arg_idx += 1;
+                } else {
+                    result.push_str("{}");
+                }
+            } else {
+                result.push(c);
+            }
+        }
+        return Ok(Value::Text(result));
+    }
     if name == "rd" && (args.len() == 1 || args.len() == 2) {
         let path = match &args[0] {
             Value::Text(s) => s.clone(),

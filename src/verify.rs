@@ -249,6 +249,7 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("rdb", &["t", "t"], "R ? t"),
     ("wr", &["t", "t"], "R t t"),
     ("wrl", &["t", "L t"], "R t t"),
+    ("trm", &["t"], "t"),
     ("spl", &["t", "t"], "L t"),
     ("cat", &["L t", "t"], "t"),
     ("has", &["list_or_text", "any"], "b"),
@@ -257,6 +258,7 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("rev", &["list_or_text"], "list_or_text"),
     ("srt", &["list_or_text"], "list_or_text"),
     ("srt", &["fn", "list"], "list"),
+    ("unq", &["list_or_text"], "list_or_text"),
     ("slc", &["list_or_text", "n", "n"], "list_or_text"),
     ("rnd", &[], "n"),
     ("now", &[], "n"),
@@ -264,6 +266,7 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("jpth", &["t", "t"], "R t t"),
     ("jdmp", &["any"], "t"),
     ("prnt", &["any"], "any"),
+    ("fmt", &["t"], "t"),  // variadic: fmt template arg1 arg2 … — checked specially
     ("jpar", &["t"], "R ? t"),
     // Higher-order: map/flt/fld take a function ref as first arg (special-cased in builtin_check_args)
     ("map", &["fn", "list"], "list"),
@@ -496,6 +499,58 @@ fn builtin_check_args(name: &str, arg_types: &[Ty], func_ctx: &str, span: Option
                 _ => Ty::Unknown,
             };
             (ret, errors)
+        }
+        "trm" => {
+            if let Some(arg) = arg_types.first()
+                && !compatible(arg, &Ty::Text)
+            {
+                errors.push(VerifyError {
+                    code: "ILO-T013",
+                    function: func_ctx.to_string(),
+                    message: format!("'trm' expects t, got {arg}"),
+                    hint: None,
+                    span,
+                    is_warning: false,
+                });
+            }
+            (Ty::Text, errors)
+        }
+        "unq" => {
+            if let Some(arg) = arg_types.first() {
+                match arg {
+                    Ty::List(_) | Ty::Text | Ty::Unknown => {}
+                    other => errors.push(VerifyError {
+                        code: "ILO-T013",
+                        function: func_ctx.to_string(),
+                        message: format!("'unq' expects a list or text, got {other}"),
+                        hint: None,
+                        span,
+                        is_warning: false,
+                    }),
+                }
+            }
+            let ret = match arg_types.first() {
+                Some(Ty::List(inner)) => Ty::List(inner.clone()),
+                Some(Ty::Text) => Ty::Text,
+                _ => Ty::Unknown,
+            };
+            (ret, errors)
+        }
+        "fmt" => {
+            // fmt template arg1 arg2 … — at least 1 arg (the template)
+            if let Some(arg) = arg_types.first()
+                && !compatible(arg, &Ty::Text)
+            {
+                errors.push(VerifyError {
+                    code: "ILO-T013",
+                    function: func_ctx.to_string(),
+                    message: format!("'fmt' first arg must be a text template, got {arg}"),
+                    hint: None,
+                    span,
+                    is_warning: false,
+                });
+            }
+            (Ty::Text, errors)
         }
         "srt" => {
             if arg_types.len() == 2 {
@@ -1375,6 +1430,8 @@ impl VerifyContext {
                         args.is_empty() || args.len() == 2
                     } else if callee == "srt" || callee == "rd" {
                         args.len() == 1 || args.len() == 2
+                    } else if callee == "fmt" {
+                        !args.is_empty()  // variadic: template + 0 or more args
                     } else {
                         args.len() == expected_arity
                     };

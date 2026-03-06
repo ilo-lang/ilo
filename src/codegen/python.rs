@@ -503,6 +503,21 @@ fn emit_expr(out: &mut String, level: usize, expr: &Expr) -> String {
                 let xs = emit_expr(out, level, &args[1]);
                 return format!("sorted({}, key={})", xs, key_fn);
             }
+            if function == "trm" && args.len() == 1 {
+                return format!("{}.strip()", emit_expr(out, level, &args[0]));
+            }
+            if function == "unq" && args.len() == 1 {
+                let xs = emit_expr(out, level, &args[0]);
+                return format!("list(dict.fromkeys({}))", xs);
+            }
+            if function == "fmt" && !args.is_empty() {
+                let tmpl = emit_expr(out, level, &args[0]);
+                let rest: Vec<String> = args[1..].iter().map(|a| emit_expr(out, level, a)).collect();
+                if rest.is_empty() {
+                    return tmpl;
+                }
+                return format!("({}).format({})", tmpl, rest.join(", "));
+            }
             let args_str: Vec<String> = args.iter().map(|a| emit_expr(out, level, a)).collect();
             let call = format!("{}({})", py_name(function), args_str.join(", "));
             if *unwrap { format!("_ilo_unwrap({})", call) } else { call }

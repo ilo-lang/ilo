@@ -143,6 +143,8 @@ pub(crate) const OP_RD: u8 = 77;        // R[A] = rd(R[B])   — read file → R
 pub(crate) const OP_RDL: u8 = 78;       // R[A] = rdl(R[B])  — read file as lines → R (L t) t
 pub(crate) const OP_WR: u8 = 79;        // R[A] = wr(R[B], R[C])  — write string to file → R t t
 pub(crate) const OP_WRL: u8 = 80;       // R[A] = wrl(R[B], R[C]) — write lines to file → R t t
+pub(crate) const OP_TRM: u8 = 81;       // R[A] = trim(R[B])  — trim whitespace → t
+pub(crate) const OP_UNQ: u8 = 82;       // R[A] = unq(R[B])   — deduplicate list or text
 
 // ABx mode — register + 16-bit operand
 pub(crate) const OP_LOADK: u8 = 20;
@@ -1326,6 +1328,14 @@ impl RegCompiler {
                     self.emit_abc(OP_JDMP, ra, rb, 0);
                     return ra;
                 }
+                if (function == "trm" || function == "unq") && args.len() == 1 {
+                    let rb = self.compile_expr(&args[0]);
+                    let ra = self.alloc_reg();
+                    let op = if function == "trm" { OP_TRM } else { OP_UNQ };
+                    self.emit_abc(op, ra, rb, 0);
+                    return ra;
+                }
+                // fmt is variadic — falls through to OP_CALL → interpreter
                 if function == "prnt" && args.len() == 1 {
                     let rb = self.compile_expr(&args[0]);
                     let ra = self.alloc_reg();
@@ -2942,6 +2952,41 @@ impl<'a> VM<'a> {
                         return Err(VmError::Type("wrl arg 2 must be a list"));
                     };
                     reg_set!(a, result);
+                }
+                OP_TRM => {
+                    let a = ((inst >> 16) & 0xFF) as usize + base;
+                    let b = ((inst >> 8) & 0xFF) as usize + base;
+                    let v = reg!(b);
+                    if !v.is_string() {
+                        return Err(VmError::Type("trm requires a string"));
+                    }
+                    // SAFETY: is_string() confirmed heap-tagged string with live RC.
+                    let s = unsafe { match v.as_heap_ref() { HeapObj::Str(s) => s.as_str().trim().to_owned(), _ => unreachable!() } };
+                    reg_set!(a, NanVal::heap_string(s));
+                }
+                OP_UNQ => {
+                    let a = ((inst >> 16) & 0xFF) as usize + base;
+                    let b = ((inst >> 8) & 0xFF) as usize + base;
+                    let v = reg!(b);
+                    if v.is_string() {
+                        // SAFETY: is_string() confirmed.
+                        let s = unsafe { match v.as_heap_ref() { HeapObj::Str(s) => s.as_str().to_owned(), _ => unreachable!() } };
+                        let mut seen = std::collections::HashSet::new();
+                        let deduped: String = s.chars().filter(|c| seen.insert(*c)).collect();
+                        reg_set!(a, NanVal::heap_string(deduped));
+                    } else if (v.0 & TAG_MASK) == TAG_LIST {
+                        // SAFETY: TAG_LIST confirmed.
+                        let items = unsafe { match v.as_heap_ref() { HeapObj::List(l) => l.clone(), _ => unreachable!() } };
+                        let mut seen = std::collections::HashSet::new();
+                        let out: Vec<NanVal> = items.into_iter().filter(|item| {
+                            // Use debug representation as equality key (Value doesn't impl Hash)
+                            let key = format!("{:?}", item.0);
+                            seen.insert(key)
+                        }).collect();
+                        reg_set!(a, NanVal::heap_list(out));
+                    } else {
+                        return Err(VmError::Type("unq requires a list or string"));
+                    }
                 }
                 OP_UNWRAP => {
                     let a = ((inst >> 16) & 0xFF) as usize + base;
