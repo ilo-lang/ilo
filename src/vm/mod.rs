@@ -10583,4 +10583,403 @@ mod tests {
         let result = vm_run(src, Some("f"), vec![]);
         assert_eq!(result, Value::Number(5.0));
     }
+
+    // ── Group A: Map operation error paths ──────────────────────────────────────
+
+    // mget with non-text key (line 2802)
+    // The key must be heap-tagged but not a string (e.g. a list) to reach the `_` arm safely.
+    // Use z for both params to bypass the verifier type check entirely.
+    #[test]
+    fn vm_mget_non_text_key_error() {
+        let err = vm_run_err(
+            "f m:z k:z>n;mget m k",
+            Some("f"),
+            vec![
+                Value::Map(std::collections::HashMap::new()),
+                Value::List(vec![Value::Number(1.0)]),
+            ],
+        );
+        assert!(err.contains("mget") || err.contains("key") || err.contains("text"), "got: {err}");
+    }
+
+    // mget with non-map first arg (line 2805)
+    #[test]
+    fn vm_mget_non_map_first_arg_error() {
+        // x:z k:t — pass a list as first arg at runtime (must be heap-tagged but not a map)
+        let err = vm_run_err(
+            "f x:z k:t>n;mget x k",
+            Some("f"),
+            vec![
+                Value::List(vec![Value::Number(1.0)]),
+                Value::Text("key".into()),
+            ],
+        );
+        assert!(err.contains("mget") || err.contains("map"), "got: {err}");
+    }
+
+    // mset with non-text key (line 2827) — key must be heap-tagged non-string
+    #[test]
+    fn vm_mset_non_text_key_error() {
+        let err = vm_run_err(
+            "f m:z k:z v:t>n;mset m k v",
+            Some("f"),
+            vec![
+                Value::Map(std::collections::HashMap::new()),
+                Value::List(vec![Value::Number(1.0)]),
+                Value::Text("val".into()),
+            ],
+        );
+        assert!(err.contains("mset") || err.contains("key") || err.contains("text"), "got: {err}");
+    }
+
+    // mset with non-map first arg (line 2830)
+    #[test]
+    fn vm_mset_non_map_first_arg_error() {
+        // x must be a heap-tagged non-map (Text is heap-tagged)
+        let err = vm_run_err(
+            "f x:z k:t v:t>n;mset x k v",
+            Some("f"),
+            vec![
+                Value::Text("not-a-map".into()),
+                Value::Text("key".into()),
+                Value::Text("val".into()),
+            ],
+        );
+        assert!(err.contains("mset") || err.contains("map"), "got: {err}");
+    }
+
+    // mhas with non-text key (line 2846) — key must be heap-tagged non-string
+    #[test]
+    fn vm_mhas_non_text_key_error() {
+        let err = vm_run_err(
+            "f m:z k:z>n;mhas m k",
+            Some("f"),
+            vec![
+                Value::Map(std::collections::HashMap::new()),
+                Value::List(vec![Value::Number(1.0)]),
+            ],
+        );
+        assert!(err.contains("mhas") || err.contains("key") || err.contains("text"), "got: {err}");
+    }
+
+    // mhas with non-map first arg (line 2849)
+    #[test]
+    fn vm_mhas_non_map_first_arg_error() {
+        // Must be heap-tagged but not a map — use a list
+        let err = vm_run_err(
+            "f x:z k:t>n;mhas x k",
+            Some("f"),
+            vec![
+                Value::List(vec![Value::Number(1.0)]),
+                Value::Text("k".into()),
+            ],
+        );
+        assert!(err.contains("mhas") || err.contains("map"), "got: {err}");
+    }
+
+    // mkeys with non-map arg (line 2868) — must be heap-tagged non-map
+    #[test]
+    fn vm_mkeys_non_map_arg_error() {
+        let err = vm_run_err(
+            "f x:z>n;mkeys x",
+            Some("f"),
+            vec![Value::List(vec![Value::Text("a".into())])],
+        );
+        assert!(err.contains("mkeys") || err.contains("map"), "got: {err}");
+    }
+
+    // mvals with non-map arg (line 2887) — must be heap-tagged non-map
+    #[test]
+    fn vm_mvals_non_map_arg_error() {
+        let err = vm_run_err(
+            "f x:z>n;mvals x",
+            Some("f"),
+            vec![Value::Text("not-a-map".into())],
+        );
+        assert!(err.contains("mvals") || err.contains("map"), "got: {err}");
+    }
+
+    // mdel with non-text key (line 2907) — key must be heap-tagged non-string
+    #[test]
+    fn vm_mdel_non_text_key_error() {
+        let err = vm_run_err(
+            "f m:z k:z>n;mdel m k",
+            Some("f"),
+            vec![
+                Value::Map(std::collections::HashMap::new()),
+                Value::List(vec![Value::Number(7.0)]),
+            ],
+        );
+        assert!(err.contains("mdel") || err.contains("key") || err.contains("text"), "got: {err}");
+    }
+
+    // mdel with non-map first arg (line 2910) — must be heap-tagged non-map
+    #[test]
+    fn vm_mdel_non_map_first_arg_error() {
+        let err = vm_run_err(
+            "f x:z k:t>n;mdel x k",
+            Some("f"),
+            vec![
+                Value::List(vec![Value::Number(1.0)]),
+                Value::Text("k".into()),
+            ],
+        );
+        assert!(err.contains("mdel") || err.contains("map"), "got: {err}");
+    }
+
+    // ── Group B: File I/O error paths ────────────────────────────────────────────
+
+    // rd with bad JSON content — triggers Err return (line 2939)
+    #[test]
+    fn vm_rd_bad_json_returns_err() {
+        let path = "/tmp/ilo_vm_rd_badjson.json";
+        std::fs::write(path, "{ this is not valid json }").unwrap();
+        let result = vm_run("f p:t>R t t;rd p", Some("f"), vec![Value::Text(path.into())]);
+        assert!(matches!(result, Value::Err(_)), "expected Err from bad JSON, got {result:?}");
+        let _ = std::fs::remove_file(path);
+    }
+
+    // wr with an invalid path returns Err (line 2982)
+    #[test]
+    fn vm_wr_bad_path_returns_err() {
+        // Write to a path inside a non-existent directory
+        let result = vm_run(
+            "f p:t c:t>R t t;wr p c",
+            Some("f"),
+            vec![
+                Value::Text("/nonexistent_dir_ilo/output.txt".into()),
+                Value::Text("hello".into()),
+            ],
+        );
+        assert!(matches!(result, Value::Err(_)), "expected Err from bad path, got {result:?}");
+    }
+
+    // wrl with bad path returns Err (line 3008)
+    #[test]
+    fn vm_wrl_bad_path_returns_err() {
+        let result = vm_run(
+            "f p:t xs:L t>R t t;wrl p xs",
+            Some("f"),
+            vec![
+                Value::Text("/nonexistent_dir_ilo/lines.txt".into()),
+                Value::List(vec![Value::Text("line1".into())]),
+            ],
+        );
+        assert!(matches!(result, Value::Err(_)), "expected Err from bad wrl path, got {result:?}");
+    }
+
+    // wrl with non-list second arg triggers VmError (line 3011)
+    #[test]
+    fn vm_wrl_non_list_second_arg_error() {
+        let err = vm_run_err(
+            "f p:t x:z>R t t;wrl p x",
+            Some("f"),
+            vec![
+                Value::Text("/tmp/ilo_wrl_nonlist.txt".into()),
+                Value::Text("not-a-list".into()),
+            ],
+        );
+        assert!(err.contains("wrl") || err.contains("list"), "got: {err}");
+    }
+
+    // ── Group C: OP_UNWRAP on non-Ok/Err (line 3070) ────────────────────────────
+
+    // unwrap on a non-Ok/Err value — line 3070 is a defensive path that fires when
+    // OP_UNWRAP encounters a heap-tagged value that is not OkVal or ErrVal.
+    // The compiler only emits OP_UNWRAP inside Result match arms (after ISOK/ISERR guards),
+    // so this path is unreachable via normal compilation. We test the adjacent happy path:
+    // wrapok+unwrap roundtrip via a Result match using ilo's `~v`/`^e` match syntax.
+    #[test]
+    fn vm_wrapok_unwrap_roundtrip_via_match() {
+        // Result match with Ok (~v) arm uses OP_WRAPOK then OP_UNWRAP internally
+        let src = "wrap x:n>R n n;~x\nf>n;r=wrap 42;?r{^_:0;~v:v}";
+        let result = vm_run(src, Some("f"), vec![]);
+        assert_eq!(result, Value::Number(42.0));
+    }
+
+    // ── Group D: OP_RECFLD errors ───────────────────────────────────────────────
+
+    // Arena record field out of bounds (line 3089) — access field index beyond n_fields
+    // We trigger this by passing a record with fewer fields than the type declares.
+    #[test]
+    fn vm_recfld_arena_out_of_bounds() {
+        // type pt{x:n;y:n;z:n} — access .z but pass record with only x,y
+        let err = vm_run_err(
+            "type pt{x:n;y:n;z:n} f r:pt>n;r.z",
+            Some("f"),
+            vec![Value::Record {
+                type_name: "pt".to_string(),
+                fields: {
+                    let mut m = std::collections::HashMap::new();
+                    m.insert("x".to_string(), Value::Number(1.0));
+                    m.insert("y".to_string(), Value::Number(2.0));
+                    // z is missing
+                    m
+                },
+            }],
+        );
+        assert!(
+            err.contains("z") || err.contains("field") || err.contains("not found") || err.contains("index"),
+            "got: {err}"
+        );
+    }
+
+    // OP_RECFLD on a non-record heap value (line 3110) — heap record path non-record arm
+    // Pass a text value as a parameter typed to a record type — at runtime heap obj is a string.
+    #[test]
+    fn vm_recfld_non_record_heap_value_error() {
+        // We pass a Value::Record so it converts to heap record — but we need a non-record heap.
+        // The `z` type trick: pass a text when record expected via type z param.
+        let err = vm_run_err(
+            "type pt{x:n} f r:z>n;r.x",
+            Some("f"),
+            vec![Value::Text("not-a-record".into())],
+        );
+        assert!(
+            err.contains("field") || err.contains("record") || err.contains("not found") || err.contains("x"),
+            "got: {err}"
+        );
+    }
+
+    // ── Group E: OP_WRAPOK / OP_WRAPERR with arena record input ────────────────
+
+    // OP_WRAPOK promotes an arena record before wrapping (line 2735)
+    #[test]
+    fn vm_wrapok_arena_record_promotes_to_heap() {
+        // A function that returns Ok(record) — the record is arena-allocated, must be promoted.
+        // wrap takes a dummy n arg; ~(pt x:a y:7) wraps arena record in Ok.
+        // The match extracts the record via ~p and reads field .x.
+        let src = "type pt{x:n;y:n} wrap a:n>R pt n;~pt x:a y:7\nf>n;r=wrap 3;?r{^_:0;~p:p.x}";
+        let result = vm_run(src, Some("f"), vec![]);
+        assert_eq!(result, Value::Number(3.0));
+    }
+
+    // OP_WRAPERR promotes an arena record before wrapping (line 2744)
+    #[test]
+    fn vm_wraperr_arena_record_promotes_to_heap() {
+        // A function that returns Err(record) — the record is arena-allocated, must be promoted.
+        // wrap takes a dummy n arg; ^(info code:a) wraps arena record in Err.
+        // The match extracts the record via ^e and reads field .code.
+        let src = "type info{code:n} wrap a:n>R n info;^info code:a\nf>n;r=wrap 99;?r{^e:e.code;~_:0}";
+        let result = vm_run(src, Some("f"), vec![]);
+        assert_eq!(result, Value::Number(99.0));
+    }
+
+    // ── Group F: OP_LISTGET error paths (lines 3189-3213) ──────────────────────
+
+    // OP_LISTGET: list index must be a number — non-number index arg (line 3213)
+    // This is emitted by ForEach; the internal counter is always a number so this path
+    // is only reachable with a compiler bug. We test ForEach on a non-list (line 3190).
+    #[test]
+    fn vm_foreach_on_non_list_error() {
+        // Pass a text value to a foreach loop via a z-typed parameter
+        let err = vm_run_err(
+            "f xs:z>n;@x xs{x};0",
+            Some("f"),
+            vec![Value::Text("not-a-list".into())],
+        );
+        assert!(
+            err.contains("list") || err.contains("foreach"),
+            "got: {err}"
+        );
+    }
+
+    // OP_LEN on a heap non-list/non-map/non-string (line 3586) — e.g. Ok value
+    #[test]
+    fn vm_len_on_heap_ok_value_error() {
+        // Pass an Ok-wrapped value where len is called; Ok is heap but not list/map/string
+        let err = vm_run_err(
+            "f x:z>n;len x",
+            Some("f"),
+            vec![Value::Ok(Box::new(Value::Number(5.0)))],
+        );
+        assert!(
+            err.contains("len") || err.contains("string") || err.contains("list") || err.contains("map"),
+            "got: {err}"
+        );
+    }
+
+    // OP_LEN on a non-heap, non-string value (line 3589) — e.g. a bool or number
+    #[test]
+    fn vm_len_on_number_error() {
+        let err = vm_run_err(
+            "f x:z>n;len x",
+            Some("f"),
+            vec![Value::Number(42.0)],
+        );
+        assert!(
+            err.contains("len") || err.contains("string") || err.contains("list"),
+            "got: {err}"
+        );
+    }
+
+    // OP_INDEX on a non-list heap value (line 3178)
+    #[test]
+    fn vm_index_on_non_list_heap_value_error() {
+        // xs.0 on a map — OP_INDEX expects list but gets map
+        let err = vm_run_err(
+            "f x:z>n;x.0",
+            Some("f"),
+            vec![Value::Map(std::collections::HashMap::new())],
+        );
+        assert!(
+            err.contains("list") || err.contains("index"),
+            "got: {err}"
+        );
+    }
+
+    // ── Group G: Additional coverage for lines in 6270+ test section ────────────
+
+    // OP_DIVK_N with zero constant triggers division by zero (line 3531)
+    #[test]
+    fn vm_divk_n_div_by_zero() {
+        let src = "f x:n>n;/x 0";
+        let err = vm_run_err(src, Some("f"), vec![Value::Number(10.0)]);
+        assert!(err.contains("division by zero"), "got: {err}");
+    }
+
+    // OP_DIV_NN with zero denominator triggers division by zero (line 3567)
+    #[test]
+    fn vm_div_nn_div_by_zero() {
+        let src = "f a:n b:n>n;/a b";
+        let err = vm_run_err(src, Some("f"), vec![Value::Number(5.0), Value::Number(0.0)]);
+        assert!(err.contains("division by zero"), "got: {err}");
+    }
+
+    // wrl with list element that is not a string triggers VmError (line 3000)
+    #[test]
+    fn vm_wrl_non_string_list_element_error() {
+        let err = vm_run_err(
+            "f p:t xs:L n>R t t;wrl p xs",
+            Some("f"),
+            vec![
+                Value::Text("/tmp/ilo_wrl_elem.txt".into()),
+                Value::List(vec![Value::Number(42.0)]),
+            ],
+        );
+        assert!(err.contains("wrl") || err.contains("string") || err.contains("list"), "got: {err}");
+    }
+
+    // Map len (OP_LEN on a map) — happy path exercises the map branch (line 3585)
+    #[test]
+    fn vm_len_map() {
+        let src = "f>n;m=mset mmap \"a\" 1;len m";
+        let result = vm_run(src, Some("f"), vec![]);
+        assert_eq!(result, Value::Number(1.0));
+    }
+
+    // OP_RECWITH heap-record arm's non-record error (line 3479)
+    #[test]
+    fn vm_recwith_on_non_record_heap_error() {
+        // Pass a non-record where `with` expects a record (z-typed param)
+        let err = vm_run_err(
+            "type pt{x:n;y:n} f r:z>n;q=r with x:5;q.x",
+            Some("f"),
+            vec![Value::Text("not-a-record".into())],
+        );
+        assert!(
+            err.contains("record") || err.contains("with") || err.contains("field"),
+            "got: {err}"
+        );
+    }
 }
