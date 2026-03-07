@@ -1518,6 +1518,8 @@ impl VerifyContext {
                         args.is_empty() || args.len() == 2
                     } else if callee == "srt" || callee == "rd" {
                         args.len() == 1 || args.len() == 2
+                    } else if callee == "wr" {
+                        args.len() == 2 || args.len() == 3
                     } else if callee == "get" {
                         args.len() == 1 || args.len() == 2
                     } else if callee == "post" {

@@ -781,13 +781,81 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             other => Err(RuntimeError::new("ILO-R009", format!("rdl requires text path, got {:?}", other))),
         };
     }
-    if name == "wr" && args.len() == 2 {
-        return match (&args[0], &args[1]) {
-            (Value::Text(path), Value::Text(content)) => match std::fs::write(path, content) {
-                Ok(()) => Ok(Value::Ok(Box::new(Value::Text(path.clone())))),
-                Err(e) => Ok(Value::Err(Box::new(Value::Text(e.to_string())))),
-            },
-            other => Err(RuntimeError::new("ILO-R009", format!("wr requires text path and text content, got {:?}", other))),
+    if name == "wr" && (args.len() == 2 || args.len() == 3) {
+        let path = match &args[0] {
+            Value::Text(s) => s.clone(),
+            other => return Err(RuntimeError::new("ILO-R009", format!("wr: first arg must be a text path, got {:?}", other))),
+        };
+        let content = if args.len() == 3 {
+            let fmt = match &args[2] {
+                Value::Text(s) => s.clone(),
+                other => return Err(RuntimeError::new("ILO-R009", format!("wr: format arg must be text, got {:?}", other))),
+            };
+            match fmt.as_str() {
+                "csv" | "tsv" => {
+                    let sep = if fmt == "csv" { ',' } else { '\t' };
+                    let rows = match &args[1] {
+                        Value::List(l) => l,
+                        other => return Err(RuntimeError::new("ILO-R009", format!("wr: data for {fmt} must be a list of rows, got {:?}", other))),
+                    };
+                    let mut out = String::new();
+                    for row in rows {
+                        match row {
+                            Value::List(fields) => {
+                                for (i, f) in fields.iter().enumerate() {
+                                    if i > 0 { out.push(sep); }
+                                    let s = match f {
+                                        Value::Text(s) => {
+                                            if s.contains(sep) || s.contains('"') || s.contains('\n') {
+                                                format!("\"{}\"", s.replace('"', "\"\""))
+                                            } else {
+                                                s.clone()
+                                            }
+                                        }
+                                        Value::Number(n) => {
+                                            if *n == (*n as i64) as f64 { format!("{}", *n as i64) } else { format!("{n}") }
+                                        }
+                                        Value::Bool(b) => format!("{b}"),
+                                        other => format!("{other}"),
+                                    };
+                                    out.push_str(&s);
+                                }
+                                out.push('\n');
+                            }
+                            other => return Err(RuntimeError::new("ILO-R009", format!("wr: each row must be a list, got {:?}", other))),
+                        }
+                    }
+                    out
+                }
+                "json" => {
+                    fn value_to_json(v: &Value) -> serde_json::Value {
+                        match v {
+                            Value::Number(n) => serde_json::Value::from(*n),
+                            Value::Text(s) => serde_json::Value::from(s.as_str()),
+                            Value::Bool(b) => serde_json::Value::from(*b),
+                            Value::List(l) => serde_json::Value::Array(l.iter().map(value_to_json).collect()),
+                            Value::Map(m) => {
+                                let obj: serde_json::Map<String, serde_json::Value> = m.iter().map(|(k, v)| (k.clone(), value_to_json(v))).collect();
+                                serde_json::Value::Object(obj)
+                            }
+                            Value::Nil => serde_json::Value::Null,
+                            other => serde_json::Value::from(format!("{other}")),
+                        }
+                    }
+                    serde_json::to_string_pretty(&value_to_json(&args[1]))
+                        .unwrap_or_else(|e| format!("json error: {e}"))
+                }
+                other => return Err(RuntimeError::new("ILO-R009", format!("wr: unknown format '{other}', expected csv, tsv, or json"))),
+            }
+        } else {
+            match &args[1] {
+                Value::Text(s) => s.clone(),
+                other => return Err(RuntimeError::new("ILO-R009", format!("wr: second arg must be text content, got {:?}", other))),
+            }
+        };
+        return match std::fs::write(&path, &content) {
+            Ok(()) => Ok(Value::Ok(Box::new(Value::Text(path)))),
+            Err(e) => Ok(Value::Err(Box::new(Value::Text(e.to_string())))),
         };
     }
     if name == "wrl" && args.len() == 2 {
@@ -3689,6 +3757,61 @@ mod tests {
     fn interp_avg_wrong_arg() {
         let err = run_str_err("f>n;avg 42", Some("f"), vec![]);
         assert!(err.contains("avg"), "got: {err}");
+    }
+
+    #[test]
+    fn interp_wr_csv_output() {
+        let dir = std::env::temp_dir();
+        let path = dir.join("ilo_test_wr_csv.csv");
+        let path_str = path.to_str().unwrap();
+        let source = format!(
+            r#"f>R t t;wr "{}" [["name", "age"], ["alice", 30], ["bob", 25]] "csv""#,
+            path_str.replace('\\', "\\\\")
+        );
+        let result = run_str(&source, Some("f"), vec![]);
+        assert!(matches!(result, Value::Ok(_)));
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(content, "name,age\nalice,30\nbob,25\n");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn interp_wr_csv_quoted_fields() {
+        let dir = std::env::temp_dir();
+        let path = dir.join("ilo_test_wr_csv_quoted.csv");
+        let path_str = path.to_str().unwrap();
+        let source = format!(
+            r#"f>R t t;wr "{}" [["a,b", "c\"d"]] "csv""#,
+            path_str.replace('\\', "\\\\")
+        );
+        let result = run_str(&source, Some("f"), vec![]);
+        assert!(matches!(result, Value::Ok(_)));
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(content, "\"a,b\",\"c\"\"d\"\n");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn interp_wr_json_output() {
+        let dir = std::env::temp_dir();
+        let path = dir.join("ilo_test_wr_json.json");
+        let path_str = path.to_str().unwrap();
+        let source = format!(
+            r#"f>R t t;wr "{}" [1, 2, 3] "json""#,
+            path_str.replace('\\', "\\\\")
+        );
+        let result = run_str(&source, Some("f"), vec![]);
+        assert!(matches!(result, Value::Ok(_)));
+        let content = std::fs::read_to_string(&path).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
+        assert_eq!(parsed, serde_json::json!([1.0, 2.0, 3.0]));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn interp_wr_unknown_format() {
+        let err = run_str_err(r#"f>R t t;wr "/tmp/x" "data" "xml""#, Some("f"), vec![]);
+        assert!(err.contains("unknown format"), "got: {err}");
     }
 
     #[test]
