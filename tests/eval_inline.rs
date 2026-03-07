@@ -1816,6 +1816,30 @@ fn run_cmd_mcp_flag_missing_path() {
     assert!(stderr.contains("--mcp"), "expected --mcp error, got: {stderr}");
 }
 
+/// `ilo <code> --mcp <path>` with a valid path triggers the no-tools-feature error.
+/// Covers: main.rs L1041-1043 (cfg(not(tools)) mcp_config_path check).
+#[test]
+fn run_cmd_mcp_with_path_no_tools_feature() {
+    use std::io::Write;
+
+    let mut path = std::env::temp_dir();
+    path.push("ilo_run_mcp_test.json");
+    let mut f = std::fs::File::create(&path).expect("create temp file");
+    writeln!(f, r#"{{"mcpServers": {{}}}}"#).unwrap();
+    drop(f);
+
+    let out = ilo()
+        .args(["f>n;1", "--mcp", path.to_str().unwrap()])
+        .output()
+        .expect("failed to run ilo");
+    // With tools feature: succeeds; without: exits with "tools feature" error
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    // Either way, no panic
+    assert!(!stderr.contains("thread 'main' panicked"), "unexpected panic: {stderr}");
+
+    std::fs::remove_file(&path).ok();
+}
+
 // ── verify warnings (ILO-T029) reported in run_cmd (main.rs L1107-1108) ───
 
 /// A program with unreachable code after `ret` produces an ILO-T029 warning.
@@ -1918,6 +1942,165 @@ fn serv_cmd_with_tools_config_loads_http() {
 
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains("ready"), "expected ready signal with tools config");
+
+    std::fs::remove_file(&path).ok();
+}
+
+/// `ilo serv --mcp <empty_mcp.json>` parses the mcp path arg successfully.
+/// Covers: main.rs L482-483 (serv_cmd --mcp path present → mcp_path = Some).
+#[test]
+fn serv_cmd_mcp_with_empty_config_exits_cleanly() {
+    use std::io::Write;
+    use std::process::Stdio;
+
+    let mut path = std::env::temp_dir();
+    path.push("ilo_serv_mcp_empty.json");
+    let mut f = std::fs::File::create(&path).expect("create temp file");
+    writeln!(f, r#"{{"mcpServers": {{}}}}"#).unwrap();
+    drop(f);
+
+    let out = ilo()
+        .args(["serv", "--mcp", path.to_str().unwrap()])
+        .stdin(Stdio::null())
+        .output()
+        .expect("failed to run ilo serv --mcp");
+
+    // The --mcp arg was parsed (lines 482-483 covered). With tools feature: prints ready;
+    // without tools feature: exits with "tools feature" error. Either is acceptable.
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stdout.contains("ready") || stderr.contains("tools"),
+        "expected ready or tools error, got stdout={stdout} stderr={stderr}"
+    );
+
+    std::fs::remove_file(&path).ok();
+}
+
+/// `ilo serv --mcp` (no path) → exit(1) with error message.
+/// Covers: main.rs L478-481 (serv_cmd --mcp missing path).
+#[test]
+fn serv_cmd_mcp_missing_path_exits_with_error() {
+    use std::process::Stdio;
+    let out = ilo()
+        .args(["serv", "--mcp"])
+        .stdin(Stdio::null())
+        .output()
+        .expect("failed to run ilo serv --mcp");
+    assert!(!out.status.success(), "expected non-zero exit");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("--mcp"), "expected --mcp error, got: {stderr}");
+}
+
+/// `ilo serv --tools` (no path) → exit(1) with error message.
+/// Covers: main.rs L487-488 (serv_cmd --tools missing path).
+#[test]
+fn serv_cmd_tools_missing_path_exits_with_error() {
+    use std::process::Stdio;
+    let out = ilo()
+        .args(["serv", "--tools"])
+        .stdin(Stdio::null())
+        .output()
+        .expect("failed to run ilo serv --tools");
+    assert!(!out.status.success(), "expected non-zero exit");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("--tools"), "expected --tools error, got: {stderr}");
+}
+
+/// `ilo serv --tools <invalid.json>` → exit(1) when config fails to load.
+/// Covers: main.rs L508-510 (serv_cmd http_config error path).
+#[test]
+fn serv_cmd_tools_invalid_config_exits_with_error() {
+    use std::io::Write;
+    use std::process::Stdio;
+
+    let mut path = std::env::temp_dir();
+    path.push("ilo_serv_test_invalid_tools.json");
+    let mut f = std::fs::File::create(&path).expect("create temp file");
+    writeln!(f, "not valid json at all!!!").unwrap();
+    drop(f);
+
+    let out = ilo()
+        .args(["serv", "--tools", path.to_str().unwrap()])
+        .stdin(Stdio::null())
+        .output()
+        .expect("failed to run ilo serv --tools invalid");
+    assert!(!out.status.success(), "expected non-zero exit");
+
+    std::fs::remove_file(&path).ok();
+}
+
+/// `ilo serv` with empty lines in stdin — empty lines are skipped (L571 continue).
+/// Covers: main.rs L570-572 (empty line trimmed → continue).
+#[test]
+fn serv_cmd_skips_empty_stdin_lines() {
+    use std::io::Write;
+    use std::process::Stdio;
+
+    let mut child = ilo()
+        .args(["serv"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("failed to spawn ilo serv");
+
+    if let Some(mut stdin) = child.stdin.take() {
+        // Send empty lines followed by a valid request
+        writeln!(stdin, "").unwrap();
+        writeln!(stdin, "   ").unwrap();
+        writeln!(stdin, r#"{{"program":"f>n;42","args":[],"func":"f"}}"#).unwrap();
+        // drop stdin → EOF
+    }
+
+    let out = child.wait_with_output().expect("ilo serv failed");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("ready"), "expected ready signal");
+    assert!(stdout.contains("ok") || stdout.contains("42"), "expected result, got: {stdout}");
+}
+
+/// `ilo tools --tools <invalid.json>` → exit(1) when ToolsConfig::from_file fails.
+/// Covers: main.rs L108-109 (tools_cmd http error path).
+#[test]
+fn tools_cmd_invalid_tools_config_exits_with_error() {
+    use std::io::Write;
+
+    let mut path = std::env::temp_dir();
+    path.push("ilo_tools_test_invalid.json");
+    let mut f = std::fs::File::create(&path).expect("create temp file");
+    writeln!(f, "{{bad json").unwrap();
+    drop(f);
+
+    let out = ilo()
+        .args(["tools", "--tools", path.to_str().unwrap()])
+        .output()
+        .expect("failed to run ilo tools --tools invalid");
+    assert!(!out.status.success(), "expected non-zero exit");
+
+    std::fs::remove_file(&path).ok();
+}
+
+/// `ilo <prog> --run-vm f --tools <config>` runs via VM with HTTP tools config loaded.
+/// Covers: main.rs L1351-1371 (run_vm_with_provider http tools path).
+#[test]
+fn run_vm_with_tools_config() {
+    use std::io::Write;
+
+    let mut path = std::env::temp_dir();
+    path.push("ilo_vm_tools_test.json");
+    let mut f = std::fs::File::create(&path).expect("create temp file");
+    writeln!(f, r#"{{"tools": {{"echo": {{"url": "http://127.0.0.1:19999/echo"}}}}}}"#).unwrap();
+    drop(f);
+
+    // Program doesn't call the tool, so no network needed; just loads config and runs normally
+    let out = ilo()
+        .args(["f>n;99", "--run-vm", "f", "--tools", path.to_str().unwrap()])
+        .output()
+        .expect("failed to run ilo --run-vm --tools");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    // Should succeed and print 99
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(stdout.trim() == "99", "expected 99, got: {stdout}");
 
     std::fs::remove_file(&path).ok();
 }
