@@ -171,6 +171,7 @@ Define functions, evaluate expressions, accumulate state. nvim-style commands: `
 ilo help                     # usage and examples
 ilo help lang                # full language specification
 ilo -ai                      # compact spec for LLM consumption
+ilo repl                     # interactive REPL
 ```
 
 **Static verification**: all programs verified before execution. Reports all errors at once with stable codes:
