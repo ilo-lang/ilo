@@ -591,13 +591,15 @@ enum OutputMode {
     Json,
 }
 
-/// Scan args for --json/-j, --text/-t, --ansi/-a. Return (mode, explicit_json, remaining_args).
+/// Scan args for --json/-j, --text/-t, --ansi/-a, --no-hints/-nh.
+/// Return (mode, explicit_json, no_hints, remaining_args).
 /// Multiple format flags → error + exit(1).
 /// `explicit_json` is true only when the user passed --json/-j; auto-detection never sets it.
-fn detect_output_mode(args: Vec<String>) -> (OutputMode, bool, Vec<String>) {
+fn detect_output_mode(args: Vec<String>) -> (OutputMode, bool, bool, Vec<String>) {
     let mut mode: Option<OutputMode> = None;
     let mut remaining = Vec::with_capacity(args.len());
     let mut conflict = false;
+    let mut no_hints = false;
 
     for arg in args {
         match arg.as_str() {
@@ -609,6 +611,9 @@ fn detect_output_mode(args: Vec<String>) -> (OutputMode, bool, Vec<String>) {
             }
             "--ansi" | "-a" => {
                 if mode.is_some() { conflict = true; } else { mode = Some(OutputMode::Ansi); }
+            }
+            "--no-hints" | "-nh" => {
+                no_hints = true;
             }
             _ => remaining.push(arg),
         }
@@ -635,7 +640,7 @@ fn detect_output_mode(args: Vec<String>) -> (OutputMode, bool, Vec<String>) {
         }
     });
 
-    (resolved, explicit_json, remaining)
+    (resolved, explicit_json, no_hints, remaining)
 }
 
 /// Replace the contents of string literals with spaces, preserving length.
@@ -667,6 +672,45 @@ fn strip_string_contents(source: &str) -> String {
         }
     }
     result
+}
+
+/// Collect idiomatic hints by scanning source text for non-canonical forms.
+/// Returns a list of human-readable hint strings.
+fn collect_hints(source: &str) -> Vec<String> {
+    let mut hints = Vec::new();
+    // Hint: == → = saves 1 character
+    // Scan for `==` outside string literals (reuse strip_string_contents)
+    let stripped = strip_string_contents(source);
+    let mut pos = 0;
+    let bytes = stripped.as_bytes();
+    while pos + 1 < bytes.len() {
+        if bytes[pos] == b'=' && bytes[pos + 1] == b'=' {
+            hints.push("hint: `==` → `=` saves 1 char (both mean equality in ilo)".to_string());
+            break; // one hint per pattern type is enough
+        }
+        pos += 1;
+    }
+    hints
+}
+
+/// Emit hints to the appropriate output channel.
+/// TTY → stderr, JSON → adds to JSON output (caller handles), pipe → nothing.
+fn emit_hints(hints: &[String], mode: OutputMode) {
+    if hints.is_empty() {
+        return;
+    }
+    match mode {
+        OutputMode::Ansi | OutputMode::Text => {
+            for hint in hints {
+                eprintln!("{hint}");
+            }
+        }
+        OutputMode::Json => {
+            // JSON mode: hints go to stderr as JSON array
+            let json = serde_json::json!({ "hints": hints });
+            eprintln!("{}", json);
+        }
+    }
 }
 
 /// Scan source for common cross-language patterns and emit a single warning if found.
@@ -893,7 +937,7 @@ fn main() {
         std::process::exit(0);
     }
 
-    let (mode, explicit_json, args) = detect_output_mode(raw_args);
+    let (mode, explicit_json, no_hints, args) = detect_output_mode(raw_args);
 
     if args.len() < 2 {
         eprintln!("Usage: ilo <file-or-code> [args... | --run func args... | --bench func args... | --emit python]");
@@ -1354,6 +1398,12 @@ fn main() {
                 std::process::exit(1);
             }
         }
+    }
+
+    // Emit idiomatic hints after successful execution
+    if !no_hints {
+        let hints = collect_hints(&source);
+        emit_hints(&hints, mode);
     }
 }
 
@@ -1980,7 +2030,7 @@ mod tests {
 
     #[test]
     fn detect_mode_json_long_flag() {
-        let (mode, explicit, remaining) =
+        let (mode, explicit, _, remaining) =
             detect_output_mode(vec!["--json".into(), "foo".into()]);
         assert!(matches!(mode, OutputMode::Json));
         assert!(explicit);
@@ -1989,49 +2039,96 @@ mod tests {
 
     #[test]
     fn detect_mode_json_short_flag() {
-        let (mode, explicit, _) = detect_output_mode(vec!["-j".into()]);
+        let (mode, explicit, _, _) = detect_output_mode(vec!["-j".into()]);
         assert!(matches!(mode, OutputMode::Json));
         assert!(explicit);
     }
 
     #[test]
     fn detect_mode_text_long_flag() {
-        let (mode, explicit, _) = detect_output_mode(vec!["--text".into()]);
+        let (mode, explicit, _, _) = detect_output_mode(vec!["--text".into()]);
         assert!(matches!(mode, OutputMode::Text));
         assert!(!explicit);
     }
 
     #[test]
     fn detect_mode_text_short_flag() {
-        let (mode, _, _) = detect_output_mode(vec!["-t".into()]);
+        let (mode, _, _, _) = detect_output_mode(vec!["-t".into()]);
         assert!(matches!(mode, OutputMode::Text));
     }
 
     #[test]
     fn detect_mode_ansi_long_flag() {
-        let (mode, explicit, _) = detect_output_mode(vec!["--ansi".into()]);
+        let (mode, explicit, _, _) = detect_output_mode(vec!["--ansi".into()]);
         assert!(matches!(mode, OutputMode::Ansi));
         assert!(!explicit);
     }
 
     #[test]
     fn detect_mode_ansi_short_flag() {
-        let (mode, _, _) = detect_output_mode(vec!["-a".into()]);
+        let (mode, _, _, _) = detect_output_mode(vec!["-a".into()]);
         assert!(matches!(mode, OutputMode::Ansi));
     }
 
     #[test]
     fn detect_mode_non_flag_args_pass_through() {
-        let (_, _, remaining) =
+        let (_, _, _, remaining) =
             detect_output_mode(vec!["ilo".into(), "f>n;1".into(), "42".into()]);
         assert_eq!(remaining, vec!["ilo", "f>n;1", "42"]);
     }
 
     #[test]
     fn detect_mode_format_flag_stripped_from_remaining() {
-        let (_, _, remaining) =
+        let (_, _, _, remaining) =
             detect_output_mode(vec!["--json".into(), "code".into(), "arg".into()]);
         assert_eq!(remaining, vec!["code", "arg"]);
+    }
+
+    #[test]
+    fn detect_mode_no_hints_flag() {
+        let (_, _, no_hints, _) = detect_output_mode(vec!["--no-hints".into(), "code".into()]);
+        assert!(no_hints);
+    }
+
+    #[test]
+    fn detect_mode_no_hints_short_flag() {
+        let (_, _, no_hints, _) = detect_output_mode(vec!["-nh".into(), "code".into()]);
+        assert!(no_hints);
+    }
+
+    #[test]
+    fn detect_mode_no_hints_not_stripped() {
+        let (_, _, no_hints, remaining) =
+            detect_output_mode(vec!["--no-hints".into(), "code".into()]);
+        assert!(no_hints);
+        assert_eq!(remaining, vec!["code"]);
+    }
+
+    // ── collect_hints ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn collect_hints_double_equals() {
+        let hints = collect_hints("f x:n y:n>b;==x y");
+        assert_eq!(hints.len(), 1);
+        assert!(hints[0].contains("=="));
+    }
+
+    #[test]
+    fn collect_hints_single_equals_no_hint() {
+        let hints = collect_hints("f x:n y:n>b;=x y");
+        assert!(hints.is_empty());
+    }
+
+    #[test]
+    fn collect_hints_double_equals_inside_string_no_hint() {
+        let hints = collect_hints(r#"f x:s>s;"hello==world""#);
+        assert!(hints.is_empty());
+    }
+
+    #[test]
+    fn collect_hints_no_source_no_hint() {
+        let hints = collect_hints("f x:n>n;+x 1");
+        assert!(hints.is_empty());
     }
 
     // ── process_serv_request ─────────────────────────────────────────────────
