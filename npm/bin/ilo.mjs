@@ -15,7 +15,6 @@ const wasi = new WASI({
   env: process.env,
   preopens: {
     "/": "/",
-    ".": process.cwd(),
   },
 });
 

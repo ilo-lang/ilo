@@ -10,7 +10,8 @@
   "homepage": "https://github.com/ilo-lang/ilo",
   "keywords": ["language", "ai", "interpreter", "compiler", "programming-language"],
   "bin": {
-    "ilo": "bin/ilo.mjs"
+    "ilo": "bin/ilo.mjs",
+    "ilo-lang": "bin/ilo.mjs"
   },
   "files": [
     "bin/",
