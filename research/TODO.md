@@ -27,7 +27,7 @@ Discovered during a Claude Code session using ilo as a bash/python replacement. 
 - [ ] **Full infix support** — support `a + b` alongside `+a b` everywhere. Desugars to prefix AST. Prefix stays canonical, formatter emits prefix in `--dense`. Hints suggest prefix form with token savings. Lets LLMs write familiar infix on first try, learn prefix over time via hints. Parsing: use Pratt parsing / precedence climbing. Function application (space) binds tighter than operators (`f a + b` = `(f a) + b`). Parens override precedence as usual. Design challenge: disambiguating prefix vs infix when operator follows an atom — solve during implementation.
 
 ### Diagnostics
-- [ ] **`//` warning inside string literals** — `"https://example.com"` triggers the cross-language `//` comment warning. Lexer should suppress the warning when `//` appears inside a string literal.
+- [x] **`//` warning inside string literals** — cross-language warning now strips string contents before pattern matching. URLs in strings no longer trigger false positives.
 - [ ] **Multi-function boundary diagnostic** — non-last functions ending with bare refs or function calls silently produce wrong results due to greedy parsing. Emit an error (ILO-P020) pointing at the ambiguous ending with a suggestion to wrap in parens or end with a binary op.
 - [ ] **Guard-in-loop lint** — guards inside `@`/`wh` loops cause early function return, not loop-iteration skip. Emit a warning (ILO-W001) suggesting ternary `{then}{else}` when a guard appears inside a loop body.
 

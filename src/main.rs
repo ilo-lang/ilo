@@ -638,6 +638,38 @@ fn detect_output_mode(args: Vec<String>) -> (OutputMode, bool, Vec<String>) {
     (resolved, explicit_json, remaining)
 }
 
+/// Replace the contents of string literals with spaces, preserving length.
+/// `"https://x.com"` → `"               "`. This prevents cross-language pattern
+/// detection from matching inside strings (e.g. `//` in URLs).
+fn strip_string_contents(source: &str) -> String {
+    let mut result = String::with_capacity(source.len());
+    let mut in_string = false;
+    let mut chars = source.chars().peekable();
+    while let Some(c) = chars.next() {
+        if in_string {
+            if c == '\\' {
+                // Escaped character — skip both backslash and next char
+                result.push(' ');
+                if let Some(next) = chars.next() {
+                    result.push(' ');
+                    let _ = next;
+                }
+            } else if c == '"' {
+                result.push('"');
+                in_string = false;
+            } else {
+                result.push(' ');
+            }
+        } else if c == '"' {
+            result.push('"');
+            in_string = true;
+        } else {
+            result.push(c);
+        }
+    }
+    result
+}
+
 /// Scan source for common cross-language patterns and emit a single warning if found.
 /// Non-fatal — program still attempts to run.
 fn warn_cross_language_syntax(source: &str, mode: OutputMode) {
@@ -648,9 +680,13 @@ fn warn_cross_language_syntax(source: &str, mode: OutputMode) {
         ("//", "'//' — ilo uses '--' for comments"),
     ];
 
+    // Strip string literal contents so patterns inside "..." don't trigger warnings.
+    // This avoids false positives for URLs like "https://example.com".
+    let stripped = strip_string_contents(source);
+
     let details: Vec<&str> = patterns
         .iter()
-        .filter(|(pat, _)| source.contains(*pat))
+        .filter(|(pat, _)| stripped.contains(*pat))
         .map(|(_, desc)| *desc)
         .collect();
 
@@ -2758,8 +2794,34 @@ mod tests {
 
     #[test]
     fn warn_cross_lang_detects_double_slash_comment() {
-        // '//' is a foreign-syntax comment; ilo uses '--'
+        // '//' outside strings is a foreign-syntax comment; ilo uses '--'
         warn_cross_language_syntax("f x:n>n;// this is a comment", OutputMode::Text);
+    }
+
+    #[test]
+    fn warn_cross_lang_ignores_slash_in_strings() {
+        // '//' inside string literals should NOT trigger the warning
+        // (common case: URLs like "https://example.com")
+        warn_cross_language_syntax(r#"f>t;"https://example.com""#, OutputMode::Text);
+        // No warning emitted — this just verifies no panic and no false positive.
+    }
+
+    #[test]
+    fn strip_string_contents_preserves_outside() {
+        let result = strip_string_contents(r#"abc "hello" def"#);
+        assert_eq!(result, r#"abc "     " def"#);
+    }
+
+    #[test]
+    fn strip_string_contents_handles_escapes() {
+        let result = strip_string_contents(r#""a\"b""#);
+        assert_eq!(result, r#""    ""#);
+    }
+
+    #[test]
+    fn strip_string_contents_url() {
+        let result = strip_string_contents(r#"get "https://api.com/users""#);
+        assert!(!result.contains("//"));
     }
 
     #[test]
