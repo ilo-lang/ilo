@@ -4,7 +4,7 @@
 
 - GitHub: https://github.com/danieljohnmorris/ilo-lang
 - Language spec: [SPEC.md](SPEC.md)
-- Current version: **0.7.0** (installed at `~/.cargo/bin/ilo` via `cargo install`)
+- Current version: **0.8.0** (installed at `~/.cargo/bin/ilo` via `cargo install`)
 
 ## What ilo is
 
