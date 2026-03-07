@@ -1,2 +1,0 @@
-type vec3{x:n;y:n;z:n}
-run n:n>n;s=0;i=0;wh <i n{v=vec3 x:i y:(*i 2) z:(*i 3);d=+v.x +v.y v.z;v2=v with x:(+v.x 1);s=+s +d v2.x;i=+i 1};s

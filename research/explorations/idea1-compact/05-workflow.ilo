@@ -1,6 +1,0 @@
-tool charge"Charge a payment method"(payment-id:text,amount:number)->result text,text timeout:30,retry:0
-tool reserve"Reserve items in warehouse"(items:list item)->result text,text timeout:10,retry:1
-tool release"Release reserved inventory"(reservation-id:text)->result nil,text timeout:10,retry:2
-type item{sku:text;quantity:number}
-type receipt{order-id:text;charge-id:text;reservation-id:text}
-fn checkout(@charge from tools,@reserve from tools,@release from tools,@make-id from orders)(payment-id:text,amount:number,items:list item)->result receipt,text;reserved=reserve items:items;match reserved{err e:err concat"Inventory unavailable: "e};rid=unwrap reserved;charged=charge payment-id:payment-id,amount:amount;match charged{err e:release reservation-id:rid;err concat"Payment failed: "e};cid=unwrap charged;oid=make-id;ok receipt order-id:oid,charge-id:cid,reservation-id:rid

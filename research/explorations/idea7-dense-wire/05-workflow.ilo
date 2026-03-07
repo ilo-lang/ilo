@@ -1,1 +1,0 @@
-checkout(pid:text amount:number items:list item)->result receipt text;reserved=reserve(items:items);match reserved{err e:err concat"Inventory unavailable: "e;ok rid:charged=charge(pid:pid amount:amount);match charged{err e:release(rid:rid);err concat"Payment failed: "e;ok cid:oid=make-id();ok receipt oid:oid cid:cid rid:rid}}

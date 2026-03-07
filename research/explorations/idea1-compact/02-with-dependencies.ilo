@@ -1,1 +1,0 @@
-fn process(@validate from address,@shipping from rates,@discount from pricing)(order:order)->result order,text;valid=validate address:order.addr;match valid{false:err"Invalid shipping address";true:ship=shipping weight:order.weight,dest:order.addr.country;disc=discount subtotal:order.subtotal,code:order.code;final=+(- order.subtotal disc)ship;ok order with total:final,cost:ship}

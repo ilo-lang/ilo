@@ -1,1 +1,0 @@
-notify uid:t msg:t>R _ t;get-user uid;?{^e:^+"Lookup failed: "e;~data:!data.verified{^"Email not verified"};send-email data.email "Notification" msg;?{^e:^+"Send failed: "e;~_:~_}}

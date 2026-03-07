@@ -1,9 +1,0 @@
--- 01: Simple function (terse syntax)
-
-fn total
-	price: number, quantity: number, rate: number -> number
-	? price: 10, quantity: 2, rate: 0.2 == 24
-	? price: 100, quantity: 1, rate: 0 == 100
-	let sub = * price quantity
-	let tax = * sub rate
-	+ sub tax

@@ -1,4 +1,0 @@
-tool get-user"Retrieve user by ID"(user-id:text)->result profile,text timeout:5,retry:2
-tool send-email"Send an email"(to:text,subject:text,body:text)->result nil,text timeout:10,retry:1
-type profile{id:text;name:text;email:text;verified:bool}
-fn notify(@get-user from tools,@send-email from tools)(user-id:text,message:text)->result nil,text;user=get-user user-id:user-id;match user{err e:log error concat"Failed to fetch user: "e;err concat"User lookup failed: "e;ok data:if not data.verified{err"Email not verified"};sent=send-email to:data.email,subject:"Notification",body:message;match sent{err e:log error concat"Email failed: "e;err concat"Send failed: "e;ok _:log info concat"Notified user "user-id;ok nil}}

@@ -1,1 +1,0 @@
-notify(uid:text msg:text)->result nil text;user=get-user(uid:uid);match user{err e:err concat"Lookup failed: "e;ok data:if not data.verified{err"Email not verified"};sent=send-email(to:data.email subject:"Notification" body:msg);match sent{err e:err concat"Send failed: "e;ok _:ok nil}}

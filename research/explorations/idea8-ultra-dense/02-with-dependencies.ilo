@@ -1,1 +1,0 @@
-process order:order>R order t;validate order.addr;?{^_:^"Invalid shipping address"};ship=shipping order.weight order.addr.country;disc=discount order.subtotal order.code;final=+(-order.subtotal disc)ship;~order with total:final cost:ship

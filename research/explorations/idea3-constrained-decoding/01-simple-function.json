@@ -1,1 +1,0 @@
-{"fn":"total","in":{"price":"num","quantity":"num","rate":"num"},"out":"num","body":[{"let":"sub","op":"*","a":"price","b":"quantity"},{"let":"tax","op":"*","a":"sub","b":"rate"},{"ret":{"op":"+","a":"sub","b":"tax"}}]}

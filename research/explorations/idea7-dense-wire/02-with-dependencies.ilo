@@ -1,1 +1,0 @@
-process(order:order)->result order text;valid=validate(addr:order.addr);if not valid{err"Invalid shipping address"};ship=shipping(weight:order.weight dest:order.addr.country);disc=discount(subtotal:order.subtotal code:order.code);final=+(-order.subtotal disc)ship;ok order with total:final cost:ship

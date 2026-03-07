@@ -1,1 +1,0 @@
-bench n:n>n;s=0;i=0;wh <i n{si=str i;t=+"item-" si;parts=spl t "-";j=cat parts "_";l=len j;s=+s l;i=+i 1};+s 0

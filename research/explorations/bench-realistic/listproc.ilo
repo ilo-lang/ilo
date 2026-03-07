@@ -1,2 +1,0 @@
-bench n:n>n;s=0;i=0;wh <i n{a=*i 3;b=+a 1;c=*b 2;d=lev c;s=+s d;i=+i 1};+s 0
-lev x:n>n;>=x 5000{5};>=x 3000{4};>=x 1000{3};>=x 500{2};1

@@ -1,1 +1,0 @@
-{"meta":{"input":{"price":"number","quantity":"number","rate":"number"},"output":"number"},"steps":[{"let":"sub","expr":{"*":["$.price","$.quantity"]}},{"let":"tax","expr":{"*":["$sub","$.rate"]}},{"ok":{"+":[" $sub","$tax"]}}]}

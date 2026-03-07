@@ -1,6 +1,0 @@
-; fn total(price:number, quantity:number, rate:number) -> number
-; Registry: Vars: 0=price 1=quantity 2=rate 3=sub 4=tax
-
-LET 3 MUL REF 0 REF 1
-LET 4 MUL REF 3 REF 2
-RET ADD REF 3 REF 4

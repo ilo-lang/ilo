@@ -1,2 +1,0 @@
-{"fn":"classify","in":{"spent":"num"},"out":"text","body":[{"if":{">=":["spent",1000]},"ret":"gold"},{"if":{">=":["spent",500]},"ret":"silver"},{"ret":"bronze"}]}
-{"fn":"summaries","in":{"customers":"list customer"},"out":"list summary","deps":["classify"],"body":[{"for":"c","in":"customers","yield":[{"let":"level","call":"classify","args":{"spent":"c.spent"}},{"let":"disc","match":"level","cases":{"gold":20,"silver":10,"bronze":5}},{"obj":{"name":"c.name","level":"level","discount":"disc"}}]}]}

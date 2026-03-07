@@ -181,7 +181,7 @@ See [MANIFESTO.md](MANIFESTO.md) for full rationale.
 
 ## Design journey
 
-See [research/JOURNEY.md](research/JOURNEY.md) — 9 syntax variants, key findings, all research documents.
+See the [[Design Journey|https://github.com/ilo-lang/ilo/wiki/Design-Journey]] wiki page — 9 syntax variants, key findings, benchmarks.
 
 ## Community
 
@@ -195,10 +195,9 @@ See [research/JOURNEY.md](research/JOURNEY.md) — 9 syntax variants, key findin
 | [SPEC.md](SPEC.md) | Language specification |
 | [examples/](examples/) | Runnable example programs (also `cargo test` regression suite) |
 | [MANIFESTO.md](MANIFESTO.md) | Design rationale |
-| [research/JOURNEY.md](research/JOURNEY.md) | Design journey: syntax variants, benchmarks, research index |
+| [Design Journey](https://github.com/ilo-lang/ilo/wiki/Design-Journey) | 9 syntax variants, key findings, benchmarks |
+| [Open Questions](https://github.com/ilo-lang/ilo/wiki/Open-Questions) | Unresolved design questions |
 | [skills/ilo/](skills/ilo/) | Agent Skill (for AI agents) |
-| [research/TODO.md](research/TODO.md) | Planned work |
-| [research/OPEN.md](research/OPEN.md) | Open design questions |
 
 ```
   _  _          _

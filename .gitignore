@@ -2,13 +2,8 @@
 npm/ilo.wasm
 .env
 __pycache__/
-research/explorations/test-output.txt
-research/explorations/comprehension-results.json
-research/explorations/rules-results.json
-research/explorations/test-results.json
-research/explorations/full-results.json
 /ilo
 *.png
 .playwright-mcp/
 .worktrees
-research/explorations/bench-realistic/.build/
+research/

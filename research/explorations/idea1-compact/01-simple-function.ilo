@@ -1,1 +1,0 @@
-fn total(price:number,quantity:number,rate:number)->number ?10,2,0.2==24;sub=*price quantity;tax=*sub rate;+sub tax

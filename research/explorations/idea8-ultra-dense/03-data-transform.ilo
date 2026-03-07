@@ -1,2 +1,0 @@
-classify spent:n>t;>=spent 1000{"gold"};>=spent 500{"silver"};"bronze"
-summaries customers:L customer>L summary;@c customers{level=classify c.spent;disc=?level{"gold":20;"silver":10;"bronze":5};summary name:c.name level:level discount:disc}

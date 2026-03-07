@@ -1,2 +1,0 @@
-classify(spent:number)->text;if >=spent 1000{"gold"};if >=spent 500{"silver"};"bronze"
-summaries(customers:list customer)->list summary;for c in customers{level=classify(spent:c.spent);disc=match level{"gold":20;"silver":10;"bronze":5};summary name:c.name level:level discount:disc}
