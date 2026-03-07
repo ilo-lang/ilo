@@ -575,9 +575,8 @@ fn repl_cmd() {
         }
 
         // Try to parse input as function definition(s) first
-        let source = input.to_string();
         let def_program = {
-            let tokens = lexer::lex(&source);
+            let tokens = lexer::lex(input);
             if let Ok(tokens) = tokens {
                 let token_spans: Vec<_> = tokens
                     .into_iter()
