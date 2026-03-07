@@ -79,9 +79,7 @@ mod tests {
             .build()
             .unwrap()
             .block_on(fut);
-        assert!(matches!(result, Ok(Value::Ok(_))));
-        if let Ok(Value::Ok(inner)) = result {
-            assert_eq!(*inner, Value::Nil);
-        }
+        let Ok(Value::Ok(inner)) = result else { panic!("expected Ok(Ok(_))") };
+        assert_eq!(*inner, Value::Nil);
     }
 }

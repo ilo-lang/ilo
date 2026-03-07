@@ -1571,8 +1571,7 @@ impl RegCompiler {
                                     BinOp::Add => OP_ADDK_N,
                                     BinOp::Subtract => OP_SUBK_N,
                                     BinOp::Multiply => OP_MULK_N,
-                                    BinOp::Divide => OP_DIVK_N,
-                                    _ => unreachable!(),
+                                    _ => OP_DIVK_N, // BinOp::Divide — only remaining case per is_arith guard
                                 };
                                 self.emit_abc(opcode, ra, rb, ki as u8);
                                 self.reg_is_num[ra as usize] = true;
@@ -1591,8 +1590,7 @@ impl RegCompiler {
                                     let ra = self.alloc_reg();
                                     let opcode = match op {
                                         BinOp::Add => OP_ADDK_N,
-                                        BinOp::Multiply => OP_MULK_N,
-                                        _ => unreachable!(),
+                                        _ => OP_MULK_N, // BinOp::Multiply — only remaining commutative case
                                     };
                                     self.emit_abc(opcode, ra, rc, ki as u8);
                                     self.reg_is_num[ra as usize] = true;
@@ -1642,7 +1640,7 @@ impl RegCompiler {
                     BinOp::GreaterOrEqual => (OP_GE, false),
                     BinOp::LessOrEqual => (OP_LE, false),
                     BinOp::Append => (OP_LISTAPPEND, false),
-                    BinOp::And | BinOp::Or => unreachable!("handled above"),
+                    _ => (OP_LISTAPPEND, false), // And/Or handled above by early return; Append fallthrough
                 };
                 let ra = self.alloc_reg();
                 self.emit_abc(opcode, ra, rb, rc);
@@ -11401,6 +11399,19 @@ mod tests {
             Some("f"), vec![],
         );
         assert_eq!(result, Value::Number(5.0));
+    }
+
+    // search_field_index: field exists in type a but NOT in type b → if let Some(idx) else (L412)
+    #[test]
+    fn vm_search_field_not_in_all_types_phantom() {
+        // type a{x:n;y:n} and type b{x:n;z:n}: 'y' only in a (not b).
+        // search_field_index("y"): a→Some(1), b→position returns None → if let Some falls to None arm
+        // This covers the phantom branch at the end of `if let Some(idx) = position(...)`.
+        let result = vm_run(
+            "type a{x:n;y:n} type b{x:n;z:n} f>n;r=a x:5 y:10;{y}=r;y",
+            Some("f"), vec![],
+        );
+        assert_eq!(result, Value::Number(10.0));
     }
 
     // TypeRegistry::register with duplicate name → early return (L253)

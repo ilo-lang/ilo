@@ -24,11 +24,11 @@ pub fn explain(program: &Program, filename: Option<&str>) -> String {
     let mut first = true;
 
     for decl in &program.declarations {
-        if let Decl::Error { .. } | Decl::Use { .. } = decl { continue; }
-        if !first { out.push('\n'); }
-        first = false;
+        // Compute the snippet to append for this declaration, or None to skip it.
+        let snippet: Option<String> = match decl {
+            // Resolved before codegen / poison nodes — skip silently
+            Decl::Use { .. } | Decl::Error { .. } => None,
 
-        match decl {
             Decl::Function { name, params, return_type, body, .. } => {
                 let sig = if params.is_empty() {
                     format!("{}>{}", name, fmt_type(return_type))
@@ -58,9 +58,11 @@ pub fn explain(program: &Program, filename: Option<&str>) -> String {
                     .unwrap_or(0)
                     .max(20) + 2;
 
+                let mut s = String::new();
                 for (code, role, indent) in &lines {
-                    out.push_str(&annotate_line_col(code, role, *indent, col));
+                    s.push_str(&annotate_line_col(code, role, *indent, col));
                 }
+                Some(s)
             }
 
             Decl::TypeDef { name, fields, .. } => {
@@ -68,20 +70,23 @@ pub fn explain(program: &Program, filename: Option<&str>) -> String {
                     .map(|f| format!("{}:{}", f.name, fmt_type(&f.ty)))
                     .collect::<Vec<_>>()
                     .join("; ");
-                out.push_str(&annotate_line(&format!("type {name} {{{fields_str}}}"), "type def", 0));
+                Some(annotate_line(&format!("type {name} {{{fields_str}}}"), "type def", 0))
             }
 
             Decl::Tool { name, params, return_type, .. } => {
                 let sig = format!("@{} {}>{}", name, fmt_params_sig(params), fmt_type(return_type));
-                out.push_str(&annotate_line(&sig, "tool", 0));
+                Some(annotate_line(&sig, "tool", 0))
             }
 
             Decl::Alias { name, target, .. } => {
-                out.push_str(&annotate_line(&format!("alias {name}={}", fmt_type(target)), "alias", 0));
+                Some(annotate_line(&format!("alias {name}={}", fmt_type(target)), "alias", 0))
             }
+        };
 
-            Decl::Use { .. } => {} // resolved before codegen — skip
-            Decl::Error { .. } => {}
+        for s in snippet {
+            if !first { out.push('\n'); }
+            first = false;
+            out.push_str(&s);
         }
     }
 

@@ -4513,10 +4513,8 @@ mod tests {
         let source = "sq x:n>n;*x x f>t;r=sq;jdmp r";
         let result = run_str(source, Some("f"), vec![]);
         // FnRef displays as "<fn:sq>"
-        assert!(matches!(result, Value::Text(_)));
-        if let Value::Text(s) = result {
-            assert!(s.contains("fn:sq") || s.contains("sq"), "got: {s}");
-        }
+        let Value::Text(s) = result else { panic!("expected Text") };
+        assert!(s.contains("fn:sq") || s.contains("sq"), "got: {s}");
     }
 
     // L879-880: jpar wrong arg type
@@ -5028,13 +5026,9 @@ mod tests {
         let path = "/tmp/ilo_test_wr_nil.csv";
         let source = format!(r#"f x:z>R t t;wr "{path}" [[x,1]] "csv""#);
         let result = run_str(&source, Some("f"), vec![Value::Nil]);
-        match result {
-            Value::Ok(_) => {
-                let content = std::fs::read_to_string(path).unwrap();
-                assert!(content.len() > 0);
-            }
-            other => panic!("expected Ok, got {:?}", other),
-        }
+        let Value::Ok(_) = result else { panic!("expected Ok, got {:?}", result) };
+        let content = std::fs::read_to_string(path).unwrap();
+        assert!(!content.is_empty());
     }
 
     // ── wr json with Ok value (line 843) ─────────────────────────────────────
@@ -5048,10 +5042,7 @@ mod tests {
         let result = run_str(&source, Some("f"), vec![
             Value::Ok(Box::new(Value::Number(1.0))),
         ]);
-        match result {
-            Value::Ok(_) => {}
-            other => panic!("expected Ok, got {:?}", other),
-        }
+        let Value::Ok(_) = result else { panic!("expected Ok, got {:?}", result) };
     }
 
     // ── wr 2-arg non-text content (line 854) ─────────────────────────────────
@@ -5073,10 +5064,7 @@ mod tests {
         // Write to a non-existent directory → fs::write Err → Value::Err (line 859)
         let source = r#"f>R t t;wr "/no/such/dir/ilo_test.txt" "hello""#;
         let result = run_str(source, Some("f"), vec![]);
-        match result {
-            Value::Err(_) => {}
-            other => panic!("expected Err for bad path, got {:?}", other),
-        }
+        let Value::Err(_) = result else { panic!("expected Err for bad path, got {:?}", result) };
     }
 
     // ── wrl fs::write failure (line 874) ─────────────────────────────────────
@@ -5086,10 +5074,7 @@ mod tests {
         // Write to a non-existent directory → fs::write Err → Value::Err (line 874)
         let source = r#"f>R t t;wrl "/no/such/dir/ilo_test.txt" ["a","b"]"#;
         let result = run_str(source, Some("f"), vec![]);
-        match result {
-            Value::Err(_) => {}
-            other => panic!("expected Err for bad path, got {:?}", other),
-        }
+        let Value::Err(_) = result else { panic!("expected Err for bad path, got {:?}", result) };
     }
 
     // ── jpth array index out of bounds (line 891) ────────────────────────────
@@ -5099,13 +5084,9 @@ mod tests {
         // jpth where numeric key is out of bounds in array → Err (line 891)
         let source = r#"f>R t t;jpth "[1,2,3]" "5""#;
         let result = run_str(source, Some("f"), vec![]);
-        match result {
-            Value::Err(inner) => {
-                let s = inner.to_string();
-                assert!(s.contains("not found") || s.contains("5"), "got: {s}");
-            }
-            other => panic!("expected Err, got {:?}", other),
-        }
+        let Value::Err(inner) = result else { panic!("expected Err, got {:?}", result) };
+        let s = inner.to_string();
+        assert!(s.contains("not found") || s.contains("5"), "got: {s}");
     }
 
     // ── grp key returns non-basic type (line 1020) ───────────────────────────
@@ -5206,10 +5187,8 @@ mod tests {
         let source = "pos x:n>b;> x 0 f>L n;srt pos [3,-1,2,-2]";
         let result = run_str(source, Some("f"), vec![]);
         // All elements are compared as Bool keys → Equal ordering → list unchanged
-        match result {
-            Value::List(items) => assert_eq!(items.len(), 4),
-            other => panic!("expected List, got {:?}", other),
-        }
+        let Value::List(items) = result else { panic!("expected List, got {:?}", result) };
+        assert_eq!(items.len(), 4);
     }
 
     // ── brk inside guard body propagates Break (line 1287) ───────────────────

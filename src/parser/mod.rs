@@ -3978,4 +3978,16 @@ mod tests {
         let Expr::Call { function: inner_fn, .. } = &args[0] else { panic!("expected get call as arg") };
         assert_eq!(inner_fn, "get");
     }
+
+    // ── Coverage: L798 — literal pattern lookahead when literal is last token ──
+
+    #[test]
+    fn match_literal_pattern_at_end_of_tokens() {
+        // Incomplete match where literal pattern appears as the last token after `;`.
+        // Exercises the Number/Text/True/False arm of is_match_arm_pattern_lookahead
+        // when `after_semi + 1 >= self.tokens.len()` → condition at L798 is false.
+        // parse_str_errors is used since the input is intentionally incomplete.
+        let (prog, _errors) = parse_str_errors(r#"f x:n>t;?x{1:"one";2"#);
+        let _ = prog; // just ensure no panic; parser recovers from incomplete input
+    }
 }

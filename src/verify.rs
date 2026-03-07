@@ -1659,9 +1659,11 @@ impl VerifyContext {
                 if *unwrap {
                     match &call_ty {
                         Ty::Result(ok_ty, _err_ty) => {
-                            // Check enclosing function returns a Result
-                            if let Some(enc_sig) = self.functions.get(func) {
-                                match &enc_sig.return_type {
+                            // Check enclosing function returns a Result.
+                            // Clone the return type to release the &self borrow before calling self.err.
+                            let enc_rt = self.functions.get(func).map(|sig| sig.return_type.clone());
+                            for rt in enc_rt {
+                                match rt {
                                     Ty::Result(_, _) => {}
                                     other => {
                                         self.err(
