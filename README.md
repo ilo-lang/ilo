@@ -36,6 +36,12 @@ npm i -g ilo-lang
 
 > **Note:** Cowork uses the npm/WASM build. HTTP builtins (`get`, `$`, `post`) are not yet supported; use the native binary for network access.
 
+### Other agents (Codex, Opencode, Kilocode, etc.)
+Copy `skills/ilo/` into your agent's skills directory, or install via npm:
+```bash
+npm i -g ilo-lang
+```
+
 ### npm / npx (any platform with Node 20+)
 ```bash
 npx ilo-lang 'dbl x:n>n;*x 2' 5   # run on-demand (no install needed)
