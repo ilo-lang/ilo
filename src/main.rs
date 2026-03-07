@@ -1849,6 +1849,7 @@ fn run_bench(program: &ast::Program, func_name: Option<&str>, args: &[interprete
         interpreter::Value::Number(n) => Some(*n),
         _ => None,
     }).collect();
+    #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
     let all_numeric = jit_args.len() == args.len();
 
     let mut jit_arm64_ns: Option<u128> = None;
