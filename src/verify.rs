@@ -276,6 +276,7 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("flt", &["fn", "list"], "list"),
     ("fld", &["fn", "list", "any"], "any"),
     ("grp", &["fn", "list"], "map"),
+    ("flat", &["list"], "list"),
     // Map builtins (M k v type)
     ("mmap", &[], "map"),
     ("mget", &["map", "t"], "optional"),
@@ -890,6 +891,17 @@ fn builtin_check_args(name: &str, arg_types: &[Ty], func_ctx: &str, span: Option
                 _ => Ty::Unknown,
             };
             (Ty::Map(Box::new(key_ty), Box::new(Ty::List(Box::new(elem_ty)))), errors)
+        }
+        "flat" => {
+            // flat xs:L (L a) → L a — flatten one level
+            let inner = match arg_types.first() {
+                Some(Ty::List(inner)) => match inner.as_ref() {
+                    Ty::List(elem) => *elem.clone(),
+                    _ => Ty::Unknown,
+                },
+                _ => Ty::Unknown,
+            };
+            (Ty::List(Box::new(inner)), errors)
         }
         "mmap" => (Ty::Map(Box::new(Ty::Unknown), Box::new(Ty::Unknown)), errors),
         "mget" => {

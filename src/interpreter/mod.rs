@@ -955,6 +955,20 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         let map = groups.into_iter().map(|(k, v)| (k, Value::List(v))).collect();
         return Ok(Value::Map(map));
     }
+    if name == "flat" && args.len() == 1 {
+        let items = match &args[0] {
+            Value::List(l) => l.clone(),
+            other => return Err(RuntimeError::new("ILO-R009", format!("flat: arg must be a list, got {:?}", other))),
+        };
+        let mut result = Vec::new();
+        for item in items {
+            match item {
+                Value::List(inner) => result.extend(inner),
+                other => result.push(other),
+            }
+        }
+        return Ok(Value::List(result));
+    }
 
     // Dynamic dispatch: callee resolved to a FnRef at runtime
     // (e.g. calling a function passed as a parameter: `fn x` where fn:F n n)
@@ -3566,6 +3580,35 @@ mod tests {
     fn interp_grp_wrong_list_arg() {
         let err = run_str_err("id x:n>n;x f>t;grp id 42", Some("f"), vec![]);
         assert!(err.contains("grp"), "got: {err}");
+    }
+
+    #[test]
+    fn interp_flat_nested() {
+        // flat [[1,2],[3],[4,5]] → [1,2,3,4,5]
+        let source = "f>L n;flat [[1, 2], [3], [4, 5]]";
+        let result = run_str(source, Some("f"), vec![]);
+        assert_eq!(result, Value::List(vec![1.0, 2.0, 3.0, 4.0, 5.0].into_iter().map(Value::Number).collect()));
+    }
+
+    #[test]
+    fn interp_flat_mixed() {
+        // flat [[1, 2], 3] — non-list elements pass through
+        let source = "f>L n;flat [[1, 2], 3]";
+        let result = run_str(source, Some("f"), vec![]);
+        assert_eq!(result, Value::List(vec![1.0, 2.0, 3.0].into_iter().map(Value::Number).collect()));
+    }
+
+    #[test]
+    fn interp_flat_empty() {
+        let source = "f>L n;flat []";
+        let result = run_str(source, Some("f"), vec![]);
+        assert_eq!(result, Value::List(vec![]));
+    }
+
+    #[test]
+    fn interp_flat_wrong_arg() {
+        let err = run_str_err("f>L n;flat 42", Some("f"), vec![]);
+        assert!(err.contains("flat"), "got: {err}");
     }
 
     #[test]
