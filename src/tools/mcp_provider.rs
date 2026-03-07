@@ -88,10 +88,10 @@ fn parse_tool_def(server_name: &str, tool_json: &serde_json::Value) -> Option<Mc
         .unwrap_or_default();
 
     // Then append any optional properties not already in `required`.
-    let mut param_names: Vec<String> = required.clone();
+    let mut param_names: Vec<String> = required;
     if let Some(props) = properties {
         for key in props.keys() {
-            if !required.contains(key) {
+            if !param_names.contains(key) {
                 param_names.push(key.clone());
             }
         }
