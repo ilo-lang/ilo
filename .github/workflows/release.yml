@@ -128,7 +128,11 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Publish to crates.io
-        run: cargo publish || true
+        run: |
+          output=$(cargo publish 2>&1) && echo "$output" || {
+            echo "$output"
+            echo "$output" | grep -q "already exists" || exit 1
+          }
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
@@ -164,6 +168,10 @@ jobs:
 
       - name: Publish to npm
         working-directory: npm
-        run: npm publish --access public || true
+        run: |
+          output=$(npm publish --access public 2>&1) && echo "$output" || {
+            echo "$output"
+            echo "$output" | grep -q "previously published" || exit 1
+          }
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
