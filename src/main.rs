@@ -650,9 +650,8 @@ fn strip_string_contents(source: &str) -> String {
             if c == '\\' {
                 // Escaped character — skip both backslash and next char
                 result.push(' ');
-                if let Some(next) = chars.next() {
+                if chars.next().is_some() {
                     result.push(' ');
-                    let _ = next;
                 }
             } else if c == '"' {
                 result.push('"');
