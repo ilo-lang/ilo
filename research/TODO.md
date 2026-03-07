@@ -29,7 +29,7 @@ Discovered during a Claude Code session using ilo as a bash/python replacement. 
 ### Diagnostics
 - [x] **`//` warning inside string literals** — cross-language warning now strips string contents before pattern matching. URLs in strings no longer trigger false positives.
 - [x] **Multi-function boundary diagnostic** — already fixed by `is_fn_decl_start()` in `can_start_operand()` (commit 2b9ff66). Parser detects `Ident >` (zero-param) and `Ident Ident :` (parameterized) boundaries, preventing greedy arg consumption. All valid multi-function programs parse correctly; no additional diagnostic needed.
-- [ ] **Guard-in-loop lint** — guards inside `@`/`wh` loops cause early function return, not loop-iteration skip. Emit a warning (ILO-W001) suggesting ternary `{then}{else}` when a guard appears inside a loop body.
+- [x] **Guard-in-loop lint** — verifier emits ILO-W001 when a guard without else appears inside `@`/`wh`/range loops. Suggests ternary `{then}{else}` or `brk`/`cnt` for loop control.
 
 ### DX
 - [ ] **Idiomatic hints on successful runs** — walk the AST after execution and suggest canonical forms. E.g. `(a + b)` → `hint: +a b saves 2 tokens`, `==a b` → `hint: =a b saves 1 token`. Teaches idiomatic ilo as you go. Output channels: **TTY** → stderr (human sees it), **JSON/serv mode** → `"hints"` field in response (LLM sees it), **plain pipe** → nothing. Disable with `-nh` / `--no-hints`.

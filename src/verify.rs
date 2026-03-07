@@ -1331,6 +1331,18 @@ impl VerifyContext {
             Stmt::Guard { condition, body, else_body, .. } => {
                 let _ = self.infer_expr(func, scope, condition, span);
 
+                // Warn if a guard without else appears inside a loop — it causes early
+                // function return, not iteration skip. Suggest ternary {then}{else} instead.
+                if self.in_loop && else_body.is_none() {
+                    self.warn(
+                        "ILO-W001",
+                        func,
+                        "guard without else inside loop causes early function return, not iteration skip".to_string(),
+                        Some("use ternary form: cond{then}{else} or brk/cnt for loop control".to_string()),
+                        Some(span),
+                    );
+                }
+
                 // Warn if braceless guard body is a single identifier matching a function name.
                 if body.len() == 1
                     && let Stmt::Expr(Expr::Ref(ref name)) = body[0].node
@@ -3427,6 +3439,49 @@ mod tests {
     #[test]
     fn brk_inside_guard_inside_loop() {
         assert!(parse_and_verify("f>_;i=0;wh <i 5{>i 3{brk};i=+i 1}").is_ok());
+    }
+
+    // ---- Guard-in-loop warning (ILO-W001) ----
+
+    #[test]
+    fn guard_in_foreach_warns() {
+        let result = parse_and_verify_full("f xs:L n>n;r=0;@x xs{>=x 10{r= +r x}};r");
+        assert!(result.errors.is_empty());
+        let w001: Vec<_> = result.warnings.iter().filter(|w| w.code == "ILO-W001").collect();
+        assert_eq!(w001.len(), 1);
+        assert!(w001[0].message.contains("guard without else inside loop"));
+    }
+
+    #[test]
+    fn guard_in_while_warns() {
+        let result = parse_and_verify_full("f>n;i=0;wh <i 10{>i 5{ret i};i= +i 1};i");
+        assert!(result.errors.is_empty());
+        let w001: Vec<_> = result.warnings.iter().filter(|w| w.code == "ILO-W001").collect();
+        assert_eq!(w001.len(), 1);
+    }
+
+    #[test]
+    fn guard_in_range_warns() {
+        let result = parse_and_verify_full("f>n;r=0;@i 0..10{>=i 5{r= +r i}};r");
+        assert!(result.errors.is_empty());
+        let w001: Vec<_> = result.warnings.iter().filter(|w| w.code == "ILO-W001").collect();
+        assert_eq!(w001.len(), 1);
+    }
+
+    #[test]
+    fn guard_with_else_in_loop_no_warning() {
+        // Ternary form {then}{else} is fine — no early return
+        let result = parse_and_verify_full("f xs:L n>n;r=0;@x xs{>=x 10{r= +r x}{r}};r");
+        let w001: Vec<_> = result.warnings.iter().filter(|w| w.code == "ILO-W001").collect();
+        assert_eq!(w001.len(), 0);
+    }
+
+    #[test]
+    fn guard_outside_loop_no_warning() {
+        // Guard at function level is normal — no warning
+        let result = parse_and_verify_full("f x:n>n;>=x 0{x};-x");
+        let w001: Vec<_> = result.warnings.iter().filter(|w| w.code == "ILO-W001").collect();
+        assert_eq!(w001.len(), 0);
     }
 
     // ---- Unreachable code warnings (ILO-T029) ----
