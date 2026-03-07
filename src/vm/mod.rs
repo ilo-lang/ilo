@@ -11143,4 +11143,76 @@ mod tests {
             other => panic!("expected Text, got {:?}", other),
         }
     }
+
+    // ── nanval_to_json Bool (lines 4206-4207) ────────────────────────────────
+
+    // line 4206: jdmp on Bool true → "true"
+    #[test]
+    fn vm_jdmp_bool_true() {
+        let result = vm_run("f>t;jdmp true", Some("f"), vec![]);
+        assert_eq!(result, Value::Text("true".into()));
+    }
+
+    // line 4207: jdmp on Bool false → "false"
+    #[test]
+    fn vm_jdmp_bool_false() {
+        let result = vm_run("f>t;jdmp false", Some("f"), vec![]);
+        assert_eq!(result, Value::Text("false".into()));
+    }
+
+    // ── nanval_to_json ErrVal (line 4224) ────────────────────────────────────
+
+    // line 4224: jdmp on an Err value → inner value
+    #[test]
+    fn vm_jdmp_err_value() {
+        // jpar on invalid JSON returns Err(text). jdmp on that Err hits line 4224.
+        let result = vm_run(r#"f s:t>t;e=jpar s;jdmp e"#, Some("f"),
+            vec![Value::Text("not json".into())]);
+        match result {
+            Value::Text(_) => {} // ErrVal inner serialized
+            other => panic!("expected Text, got {:?}", other),
+        }
+    }
+
+    // ── slc on heap non-list (line 4119) ─────────────────────────────────────
+
+    // line 4119: slc on a Map (heap non-list, non-string)
+    #[test]
+    fn vm_slc_on_map_heap_error() {
+        let err = vm_run_err(r#"f m:_ i:n j:n>L t;slc m i j"#, Some("f"),
+            vec![
+                Value::Map(std::collections::HashMap::new()),
+                Value::Number(0.0),
+                Value::Number(1.0),
+            ]);
+        assert!(err.contains("slc") || err.contains("list"), "got: {err}");
+    }
+
+    // ── vm_parse_format raw/unknown path (line 4284) ─────────────────────────
+
+    // line 4284: OP_RD auto-detects format from extension; .txt → "raw" → line 4284
+    #[test]
+    fn vm_rd_txt_extension_raw_format() {
+        let path = "/tmp/ilo_vm_test_raw.txt";
+        std::fs::write(path, "hello raw").unwrap();
+        let source = format!(r#"f>R t t;rd "{path}""#);
+        let result = vm_run(&source, Some("f"), vec![]);
+        match result {
+            Value::Ok(inner) => assert_eq!(*inner, Value::Text("hello raw".into())),
+            other => panic!("expected Ok, got {:?}", other),
+        }
+    }
+
+    // ── vm_parse_csv_row quoted fields (lines 4295-4306) ─────────────────────
+
+    // lines 4295-4306: OP_RD on .csv file with quoted fields (double-quote escaping)
+    #[test]
+    fn vm_rd_csv_quoted_fields() {
+        let path = "/tmp/ilo_vm_test_quoted.csv";
+        // CSV with a quoted field containing a comma, and an escaped double-quote
+        std::fs::write(path, "\"hello, world\",\"say \"\"hi\"\"\"").unwrap();
+        let source = format!(r#"f>n;rows=rd! "{path}";len rows"#);
+        let result = vm_run(&source, Some("f"), vec![]);
+        assert_eq!(result, Value::Number(1.0)); // one row
+    }
 }
