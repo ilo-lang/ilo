@@ -1,0 +1,32 @@
+-- Infix operators: write familiar math alongside prefix form.
+-- Both produce the same AST. Prefix is canonical (denser).
+
+-- Infix: readable, familiar
+add a:n b:n>n;a + b
+
+-- Precedence: * / bind tighter than + -
+expr a:n b:n c:n>n;a + b * c
+
+-- Parens override precedence
+grouped a:n b:n c:n>n;(a + b) * c
+
+-- Function application binds tighter than infix:
+-- double x + 1  →  (double x) + 1
+double x:n>n;x * 2
+shifted x:n>n;double x + 1
+
+-- Comparisons and logic
+in-range x:n lo:n hi:n>b;x >= lo & x <= hi
+
+-- run: add 10 20
+-- out: 30
+-- run: expr 2 3 4
+-- out: 14
+-- run: grouped 2 3 4
+-- out: 20
+-- run: shifted 5
+-- out: 11
+-- run: in-range 5 1 10
+-- out: true
+-- run: in-range 15 1 10
+-- out: false

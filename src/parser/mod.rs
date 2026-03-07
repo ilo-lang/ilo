@@ -1100,7 +1100,52 @@ impl Parser {
         Ok(expr)
     }
 
-    /// Core expression parsing — handles prefix ops, match expr, calls, atoms
+    /// Return the infix binding power (left, right) for a token, or None if not infix.
+    /// Higher numbers bind tighter. Right bp > left bp for left-associativity.
+    fn infix_binding_power(token: &Token) -> Option<(u8, u8, BinOp)> {
+        match token {
+            Token::Pipe => Some((1, 2, BinOp::Or)),
+            Token::Amp => Some((3, 4, BinOp::And)),
+            Token::Eq => Some((5, 6, BinOp::Equals)),
+            Token::NotEq => Some((5, 6, BinOp::NotEquals)),
+            Token::Less => Some((7, 8, BinOp::LessThan)),
+            Token::Greater => Some((7, 8, BinOp::GreaterThan)),
+            Token::LessEq => Some((7, 8, BinOp::LessOrEqual)),
+            Token::GreaterEq => Some((7, 8, BinOp::GreaterOrEqual)),
+            Token::PlusEq => Some((9, 10, BinOp::Append)),
+            Token::Plus => Some((9, 10, BinOp::Add)),
+            Token::Minus => Some((9, 10, BinOp::Subtract)),
+            Token::Star => Some((11, 12, BinOp::Multiply)),
+            Token::Slash => Some((11, 12, BinOp::Divide)),
+            _ => None,
+        }
+    }
+
+    /// Pratt parser: given a left-hand expression, consume infix operators
+    /// with binding power >= min_bp and build the tree.
+    fn parse_infix(&mut self, mut left: Expr, min_bp: u8) -> Result<Expr> {
+        loop {
+            let Some(token) = self.peek() else { break };
+            let Some((l_bp, r_bp, op)) = Self::infix_binding_power(token) else { break };
+            if l_bp < min_bp {
+                break;
+            }
+            self.advance(); // consume operator
+            // Parse right-hand side: an operand (atom or prefix op), then recurse for infix
+            let right = self.parse_operand()?;
+            let right = self.parse_infix(right, r_bp)?;
+            left = Expr::BinOp {
+                op,
+                left: Box::new(left),
+                right: Box::new(right),
+            };
+        }
+        Ok(left)
+    }
+
+    /// Core expression parsing — handles prefix ops, match expr, calls, atoms.
+    /// Infix operators are only applied after atoms/calls, not after prefix operators
+    /// (prefix forms like `+a b` are self-contained).
     fn parse_expr_inner(&mut self) -> Result<Expr> {
         match self.peek() {
             // Minus is special: could be unary negation (-x) or binary subtract (-a b)
@@ -1116,7 +1161,7 @@ impl Parser {
             }
             // Dollar prefix: $expr → get expr
             Some(Token::Dollar) => self.parse_dollar(),
-            // Prefix binary operators: +a b, *a b, etc.
+            // Prefix binary operators: +a b, *a b, etc. — self-contained, no infix after
             Some(Token::Plus) | Some(Token::Star) | Some(Token::Slash)
             | Some(Token::Greater) | Some(Token::Less) | Some(Token::GreaterEq)
             | Some(Token::LessEq) | Some(Token::Eq) | Some(Token::NotEq)
@@ -1126,7 +1171,11 @@ impl Parser {
             }
             // Match expression: ?expr{...} or ?{...}
             Some(Token::Question) => self.parse_match_expr(),
-            _ => self.parse_call_or_atom(),
+            // Atoms and calls — infix operators can follow these
+            _ => {
+                let primary = self.parse_call_or_atom()?;
+                self.parse_infix(primary, 0)
+            }
         }
     }
 
@@ -1292,12 +1341,29 @@ impl Parser {
             }
 
             // Check for function call: name followed by args
-            // Use can_start_operand/parse_operand so prefix expressions work as args:
-            //   fac -n 1  →  Call(fac, [Subtract(n, 1)])
+            //
+            // Infix interaction: when the first token after the name is an
+            // operator, use lookahead to decide prefix-as-call-arg vs infix:
+            //   `fac -n 1` → fac(-(n,1))  (operator + 2 atoms = prefix binary)
+            //   `x - 3`   → x - 3         (operator + 1 atom = infix)
+            //   `f a + b` → f(a) + b      (atom then operator = infix on call)
             if self.can_start_operand() {
+                // If the first token is an infix-eligible operator, check if it
+                // looks like a prefix binary op (followed by 2+ atoms) or infix
+                if let Some(tok) = self.peek() {
+                    if Self::infix_binding_power(tok).is_some() && !self.looks_like_prefix_binary(self.pos) {
+                        return Ok(atom);
+                    }
+                }
                 let mut args = Vec::new();
                 while self.can_start_operand() {
                     args.push(self.parse_operand()?);
+                    // After each arg, if next is infix, stop
+                    if let Some(tok) = self.peek() {
+                        if Self::infix_binding_power(tok).is_some() {
+                            break;
+                        }
+                    }
                 }
                 return Ok(Expr::Call {
                     function: name,
@@ -1330,6 +1396,50 @@ impl Parser {
             fields.push((fname, value));
         }
         Ok(Expr::Record { type_name, fields })
+    }
+
+    /// Lookahead: does the token at `pos` start a prefix binary operator
+    /// (operator followed by 2+ simple atoms before the next operator/terminator)?
+    ///
+    /// Used to disambiguate: `fac -n 1` (prefix: `-` + 2 atoms) vs `x - 3` (infix: `-` + 1 atom).
+    /// Only counts consecutive simple atoms — stops at operators, `;`, `}`, fn boundaries.
+    fn looks_like_prefix_binary(&self, pos: usize) -> bool {
+        if pos >= self.tokens.len() {
+            return false;
+        }
+        // Count consecutive simple atoms after the operator at pos
+        let mut count = 0;
+        let mut look = pos + 1;
+        while look < self.tokens.len() {
+            // Stop at function declaration boundaries
+            if self.is_fn_decl_start(look) {
+                break;
+            }
+            let t = &self.tokens[look].0;
+            match t {
+                Token::Ident(_) | Token::Number(_) | Token::Text(_)
+                | Token::True | Token::False | Token::Underscore => {
+                    count += 1;
+                    look += 1;
+                }
+                Token::LParen | Token::LBracket => {
+                    // Paren/bracket group counts as one atom
+                    count += 1;
+                    let close = if *t == Token::LParen { Token::RParen } else { Token::RBracket };
+                    let mut depth = 1;
+                    look += 1;
+                    while look < self.tokens.len() && depth > 0 {
+                        let inner = &self.tokens[look].0;
+                        if *inner == *t { depth += 1; }
+                        if *inner == close { depth -= 1; }
+                        look += 1;
+                    }
+                }
+                // Stop at operators, terminators, etc.
+                _ => break,
+            }
+        }
+        count >= 2
     }
 
     /// Can the current token start an atom?
@@ -1770,6 +1880,108 @@ mod tests {
         assert_eq!(args.len(), 1);
         assert!(matches!(&args[0], Expr::BinOp { op: BinOp::Subtract, .. }));
     }
+
+    // ── Infix operator tests ────────────────────────────────────────────────
+
+    #[test]
+    fn infix_add() {
+        let prog = parse_str("f x:n>n;x + 1");
+        let Decl::Function { body, .. } = &prog.declarations[0] else { panic!() };
+        let Stmt::Expr(Expr::BinOp { op: BinOp::Add, .. }) = &body[0].node else { panic!("expected infix add") };
+    }
+
+    #[test]
+    fn infix_subtract() {
+        let prog = parse_str("f x:n>n;x - 3");
+        let Decl::Function { body, .. } = &prog.declarations[0] else { panic!() };
+        let Stmt::Expr(Expr::BinOp { op: BinOp::Subtract, .. }) = &body[0].node else { panic!("expected infix subtract") };
+    }
+
+    #[test]
+    fn infix_multiply() {
+        let prog = parse_str("f x:n>n;x * 2");
+        let Decl::Function { body, .. } = &prog.declarations[0] else { panic!() };
+        let Stmt::Expr(Expr::BinOp { op: BinOp::Multiply, .. }) = &body[0].node else { panic!("expected infix multiply") };
+    }
+
+    #[test]
+    fn infix_divide() {
+        let prog = parse_str("f x:n>n;x / 2");
+        let Decl::Function { body, .. } = &prog.declarations[0] else { panic!() };
+        let Stmt::Expr(Expr::BinOp { op: BinOp::Divide, .. }) = &body[0].node else { panic!("expected infix divide") };
+    }
+
+    #[test]
+    fn infix_precedence_mul_over_add() {
+        // x + y * 2 → +(x, *(y, 2))
+        let prog = parse_str("f x:n y:n>n;x + y * 2");
+        let Decl::Function { body, .. } = &prog.declarations[0] else { panic!() };
+        let Stmt::Expr(Expr::BinOp { op: BinOp::Add, left, right }) = &body[0].node else { panic!("expected add") };
+        assert!(matches!(left.as_ref(), Expr::Ref(_)));
+        assert!(matches!(right.as_ref(), Expr::BinOp { op: BinOp::Multiply, .. }));
+    }
+
+    #[test]
+    fn infix_parens_override_precedence() {
+        // (x + y) * 2 → *( +(x,y), 2 )
+        let prog = parse_str("f x:n y:n>n;(x + y) * 2");
+        let Decl::Function { body, .. } = &prog.declarations[0] else { panic!() };
+        let Stmt::Expr(Expr::BinOp { op: BinOp::Multiply, left, .. }) = &body[0].node else { panic!("expected multiply") };
+        assert!(matches!(left.as_ref(), Expr::BinOp { op: BinOp::Add, .. }));
+    }
+
+    #[test]
+    fn infix_call_binds_tighter() {
+        // f a + b → (f a) + b
+        let prog = parse_str("f x:n>n;x g x:n>n;f x + 1");
+        let Decl::Function { body, .. } = &prog.declarations[1] else { panic!() };
+        let Stmt::Expr(Expr::BinOp { op: BinOp::Add, left, .. }) = &body[0].node else { panic!("expected infix add") };
+        assert!(matches!(left.as_ref(), Expr::Call { .. }));
+    }
+
+    #[test]
+    fn infix_comparison() {
+        let prog = parse_str("f x:n y:n>b;x > y");
+        let Decl::Function { body, .. } = &prog.declarations[0] else { panic!() };
+        let Stmt::Expr(Expr::BinOp { op: BinOp::GreaterThan, .. }) = &body[0].node else { panic!("expected gt") };
+    }
+
+    #[test]
+    fn infix_and_or() {
+        let prog = parse_str("f a:b b:b>b;a & b");
+        let Decl::Function { body, .. } = &prog.declarations[0] else { panic!() };
+        let Stmt::Expr(Expr::BinOp { op: BinOp::And, .. }) = &body[0].node else { panic!("expected and") };
+    }
+
+    #[test]
+    fn infix_left_associative() {
+        // a - b - c → (a - b) - c
+        let prog = parse_str("f a:n b:n c:n>n;a - b - c");
+        let Decl::Function { body, .. } = &prog.declarations[0] else { panic!() };
+        let Stmt::Expr(Expr::BinOp { op: BinOp::Subtract, left, .. }) = &body[0].node else { panic!("expected sub") };
+        assert!(matches!(left.as_ref(), Expr::BinOp { op: BinOp::Subtract, .. }));
+    }
+
+    #[test]
+    fn prefix_still_works_alongside_infix() {
+        // +x 1 should still work as prefix
+        let prog = parse_str("f x:n>n;+x 1");
+        let Decl::Function { body, .. } = &prog.declarations[0] else { panic!() };
+        let Stmt::Expr(Expr::BinOp { op: BinOp::Add, .. }) = &body[0].node else { panic!("expected prefix add") };
+    }
+
+    #[test]
+    fn prefix_call_arg_still_works() {
+        // fac -n 1 should still parse as Call(fac, [-(n,1)])
+        let prog = parse_str("fac n:n>n;r=fac -n 1;*n r");
+        let Decl::Function { body, .. } = &prog.declarations[0] else { panic!() };
+        let Stmt::Let { value: Expr::Call { function, args, .. }, .. } = &body[0].node else { panic!("expected call") };
+        assert_eq!(function, "fac");
+        assert_eq!(args.len(), 1);
+        assert!(matches!(&args[0], Expr::BinOp { op: BinOp::Subtract, .. }));
+    }
+
+    // ── End infix tests ───────────────────────────────────────────────────────
 
     #[test]
     fn parse_zero_arg_call() {
