@@ -283,9 +283,11 @@ ilo program.ilo --bench tot 10 20 30  # benchmark
 cargo test
 ```
 
-## For integrators
+## Integrations
 
-**Tool declarations**: external calls wired to HTTP endpoints via a JSON config:
+### Tool declarations
+
+External calls wired to HTTP endpoints via a JSON config:
 
 ```bash
 ilo program.ilo --tools tools.json args...
@@ -307,7 +309,9 @@ ilo program.ilo --tools tools.json args...
 
 ilo serialises call args as `{"args": [...]}` and deserialises the JSON response back to ilo values.
 
-**MCP servers**: connect any MCP server to give ilo access to its tools:
+### MCP servers
+
+Connect any MCP server to give ilo access to its tools:
 
 ```bash
 ilo program.ilo --mcp mcp.json args...
