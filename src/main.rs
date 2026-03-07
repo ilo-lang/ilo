@@ -477,7 +477,7 @@ fn type_to_ilo(ty: &ast::Type) -> String {
         ast::Type::Result(ok, err) => format!("R {} {}", type_to_ilo(ok), type_to_ilo(err)),
         ast::Type::Sum(variants) => format!("S {}", variants.join(" ")),
         ast::Type::Fn(params, ret) => {
-            let ps: Vec<_> = params.iter().map(|p| type_to_ilo(p)).collect();
+            let ps: Vec<_> = params.iter().map(type_to_ilo).collect();
             format!("F {} {}", ps.join(" "), type_to_ilo(ret))
         }
         ast::Type::Named(name) => name.clone(),
@@ -517,7 +517,7 @@ fn repl_cmd() {
         // Meta-commands (nvim-style)
         if input.starts_with(':') {
             match input {
-                ":q" | ":q!" | ":x" | ":quit" | ":exit" | "exit" => break,
+                ":q" | ":q!" | ":x" | ":quit" | ":exit" => break,
                 ":wq" => {
                     if defs.is_empty() {
                         eprintln!("no definitions to save");
@@ -526,8 +526,9 @@ fn repl_cmd() {
                     }
                     continue;
                 }
-                _ if input.starts_with(":wq ") => {
-                    let path = input.strip_prefix(":wq ").unwrap().trim();
+                _ if input.starts_with(":wq ") || input.starts_with(":w ") => {
+                    let is_wq = input.starts_with(":wq");
+                    let path = input.split_once(' ').unwrap().1.trim();
                     if defs.is_empty() {
                         eprintln!("no definitions to save");
                     } else if let Err(e) = std::fs::write(path, defs.join(" ") + "\n") {
@@ -535,18 +536,7 @@ fn repl_cmd() {
                     } else {
                         println!("saved {} definition(s) to {path}", defs.len());
                     }
-                    break;
-                }
-                _ if input.starts_with(":w ") => {
-                    let path = input.strip_prefix(":w ").unwrap().trim();
-                    if defs.is_empty() {
-                        eprintln!("no definitions to save");
-                    } else if let Err(e) = std::fs::write(path, defs.join(" ") + "\n") {
-                        eprintln!("error: {e}");
-                    } else {
-                        println!("saved {} definition(s) to {path}", defs.len());
-                    }
-                    continue;
+                    if is_wq { break; } else { continue; }
                 }
                 ":defs" => {
                     if defs.is_empty() {
@@ -586,7 +576,7 @@ fn repl_cmd() {
 
         // Try to parse input as function definition(s) first
         let source = input.to_string();
-        let is_def = {
+        let def_program = {
             let tokens = lexer::lex(&source);
             if let Ok(tokens) = tokens {
                 let token_spans: Vec<_> = tokens
@@ -594,23 +584,20 @@ fn repl_cmd() {
                     .map(|(t, r)| (t, ast::Span { start: r.start, end: r.end }))
                     .collect();
                 let (program, errors) = parser::parse(token_spans);
-                errors.is_empty()
+                if errors.is_empty()
                     && !program.declarations.is_empty()
                     && program.declarations.iter().all(|d| matches!(d, ast::Decl::Function { .. }))
+                {
+                    Some(program)
+                } else {
+                    None
+                }
             } else {
-                false
+                None
             }
         };
 
-        if is_def {
-            // Parse again to extract definition info for display
-            let tokens = lexer::lex(&source).unwrap();
-            let token_spans: Vec<_> = tokens
-                .into_iter()
-                .map(|(t, r)| (t, ast::Span { start: r.start, end: r.end }))
-                .collect();
-            let (program, _) = parser::parse(token_spans);
-
+        if let Some(program) = def_program {
             defs.push(input.to_string());
 
             for d in &program.declarations {
