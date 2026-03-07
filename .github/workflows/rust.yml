@@ -23,17 +23,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
-    - name: Install LLVM
-      id: llvm
-      uses: KyleMayes/install-llvm-action@v2
-      with:
-        version: "18"
+    - name: Install LLVM 18
+      run: |
+        sudo apt-get install -y llvm-18-dev
+        echo "LLVM_SYS_180_PREFIX=/usr/lib/llvm-18" >> $GITHUB_ENV
     - name: Install cargo-llvm-cov
       uses: taiki-e/install-action@cargo-llvm-cov
     - name: Generate coverage
       run: cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info
-      env:
-        LLVM_SYS_180_PREFIX: ${{ steps.llvm.outputs.prefix }}
     - name: Upload to Codecov
       uses: codecov/codecov-action@v4
       with:
