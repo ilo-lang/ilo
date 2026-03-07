@@ -809,7 +809,8 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                                             if s.contains(sep) || s.contains('"') || s.contains('\n') {
                                                 format!("\"{}\"", s.replace('"', "\"\""))
                                             } else {
-                                                s.clone()
+                                                out.push_str(s);
+                                                continue;
                                             }
                                         }
                                         Value::Number(n) => {
@@ -1068,7 +1069,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         })?;
         let result: Vec<Value> = if re.captures_len() > 1 {
             // Has capture groups — return list of captured group strings
-            re.captures(&input)
+            re.captures(input)
                 .map(|caps| {
                     (1..caps.len())
                         .filter_map(|i| caps.get(i).map(|m| Value::Text(m.as_str().to_string())))
@@ -1077,7 +1078,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 .unwrap_or_default()
         } else {
             // No capture groups — return list of all matches
-            re.find_iter(&input)
+            re.find_iter(input)
                 .map(|m| Value::Text(m.as_str().to_string()))
                 .collect()
         };
