@@ -148,6 +148,7 @@ pub(crate) const OP_UNQ: u8 = 82;       // R[A] = unq(R[B])   — deduplicate li
 pub(crate) const OP_POST: u8 = 83;      // R[A] = http_post(R[B], R[C])  (returns R t t)
 pub(crate) const OP_GETH: u8 = 84;      // R[A] = http_get(R[B], headers=R[C])  (returns R t t)
 pub(crate) const OP_POSTH: u8 = 85;     // ABx: R[A] = http_post(R[B], body=R[bx>>8], headers=R[bx&0xFF])
+pub(crate) const OP_MOD: u8 = 86;       // R[A] = R[B] % R[C]  (modulo / remainder)
 
 // ABx mode — register + 16-bit operand
 pub(crate) const OP_LOADK: u8 = 20;
@@ -1192,6 +1193,14 @@ impl RegCompiler {
                     let ra = self.alloc_reg();
                     let op = if function == "min" { OP_MIN } else { OP_MAX };
                     self.emit_abc(op, ra, rb, rc);
+                    self.reg_is_num[ra as usize] = true;
+                    return ra;
+                }
+                if function == "mod" && args.len() == 2 {
+                    let rb = self.compile_expr(&args[0]);
+                    let rc = self.compile_expr(&args[1]);
+                    let ra = self.alloc_reg();
+                    self.emit_abc(OP_MOD, ra, rb, rc);
                     self.reg_is_num[ra as usize] = true;
                     return ra;
                 }
@@ -3647,6 +3656,21 @@ impl<'a> VM<'a> {
                     let result = if op == OP_MIN { nb.min(nc) } else { nb.max(nc) };
                     reg_set!(a, NanVal::number(result));
                 }
+                OP_MOD => {
+                    let a = ((inst >> 16) & 0xFF) as usize + base;
+                    let b = ((inst >> 8) & 0xFF) as usize + base;
+                    let c = (inst & 0xFF) as usize + base;
+                    let vb = reg!(b);
+                    let vc = reg!(c);
+                    if !vb.is_number() || !vc.is_number() {
+                        return Err(VmError::Type("mod requires numbers"));
+                    }
+                    let nc = vc.as_number();
+                    if nc == 0.0 {
+                        return Err(VmError::Type("modulo by zero"));
+                    }
+                    reg_set!(a, NanVal::number(vb.as_number() % nc));
+                }
                 OP_FLR | OP_CEL => {
                     let a = ((inst >> 16) & 0xFF) as usize + base;
                     let b = ((inst >> 8) & 0xFF) as usize + base;
@@ -5801,6 +5825,21 @@ mod tests {
     fn vm_min_negative() {
         let source = "f>n;min -5 2";
         assert_eq!(vm_run(source, Some("f"), vec![]), Value::Number(-5.0));
+    }
+
+    #[test]
+    fn vm_mod() {
+        assert_eq!(vm_run("f>n;mod 10 3", Some("f"), vec![]), Value::Number(1.0));
+    }
+
+    #[test]
+    fn vm_mod_negative() {
+        assert_eq!(vm_run("f>n;mod -7 3", Some("f"), vec![]), Value::Number(-1.0));
+    }
+
+    #[test]
+    fn vm_mod_float() {
+        assert_eq!(vm_run("f>n;mod 5.5 2.0", Some("f"), vec![]), Value::Number(1.5));
     }
 
     #[test]

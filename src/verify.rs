@@ -242,6 +242,7 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("cel", &["n"], "n"),
     ("min", &["n", "n"], "n"),
     ("max", &["n", "n"], "n"),
+    ("mod", &["n", "n"], "n"),
     ("get", &["t"], "R t t"),
     ("get", &["t", "M t t"], "R t t"),
     ("post", &["t", "t"], "R t t"),
@@ -363,7 +364,7 @@ fn builtin_check_args(name: &str, arg_types: &[Ty], func_ctx: &str, span: Option
             }
             (Ty::Number, errors)
         }
-        "min" | "max" => {
+        "min" | "max" | "mod" => {
             for (i, arg) in arg_types.iter().enumerate() {
                 if !compatible(arg, &Ty::Number) {
                     errors.push(VerifyError {
