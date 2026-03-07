@@ -193,7 +193,7 @@ ilo 'f x:n>n;*x 2' --explain       # explain what the code does
 
 ## Language features
 
-**Prefix and infix notation:**
+**Prefix and infix notation** — the core token-saving device:
 ```
 +*a b c            # (a * b) + c      saves 4 chars, 1 token
 >=*+a b c 100      # ((a + b) * c) >= 100   saves 7 chars, 3 tokens
@@ -211,77 +211,7 @@ ilo 'inner x:n>R n t;~x outer x:n>R n t;~(inner! x)' 42
 # → 42
 ```
 
-**HTTP GET**: `get url` or `$url` (terse alias), returns `R t t`:
-```bash
-ilo 'f url:t>R t t;$url' "http://httpbin.org/get"       # → ~{ ... }
-ilo 'f url:t>R t t;~($!url)' "http://httpbin.org/get"   # auto-unwrap
-```
-
-**Environment variables**: `env key` returns `R t t`:
-```bash
-ilo 'f k:t>R t t;env k' "HOME"    # → ~"/Users/dan"
-ilo 'f k:t>R t t;env! k' "HOME"   # auto-unwrap
-```
-
-**File I/O**: format auto-detected from extension:
-```bash
-ilo 'f p:t>R ? t;rd p' data.csv    # → Ok([[row1col1 …] …])
-ilo 'f p:t>R ? t;rd p' data.json   # → Ok(parsed JSON)
-ilo 'f p:t>R ? t;rd p' notes.txt   # → Ok("raw text")
-ilo 'f p:t>R ? t;rd p "json"' data.csv   # force format
-ilo 'f s:t>R ? t;rdb s "csv"' "a,b\n1,2" # parse buffer
-```
-
-**Data scripting:**
-```bash
-ilo 'f s:t>t;trm s' "  hello  "        # → "hello"
-ilo 'f xs:L t>L t;unq xs' a,b,a,c,b   # → ["a" "b" "c"]
-ilo 'f>t;fmt "{} + {} = {}" 1 2 3'     # → "1 + 2 = 3"
-```
-
-**Aggregation & reshape:**
-```bash
-ilo 'f xs:L n>n;sum xs' 1,2,3,4,5      # → 15
-ilo 'f xs:L n>n;avg xs' 2,4,6          # → 4
-ilo 'f s:t>L t;rgx "\d+" s' "abc 123"  # → ["123"]
-```
-
-**Imports:**
-```bash
-# math.ilo: dbl n:n>n;*n 2
-# main.ilo: use "math.ilo"  run n:n>n;dbl n
-ilo main.ilo run 5           # → 10
-```
-
-**Environment files**: `.env` and `.env.local` loaded automatically. `.env.local` takes priority; existing env vars are not overwritten:
-```bash
-echo 'ANTHROPIC_API_KEY=sk-...' > .env
-ilo 'f k:t>R t t;env! k' ANTHROPIC_API_KEY
-```
-
-**Output formats:**
-```bash
-ilo 'code' -a               # ANSI colour (default for TTY)
-ilo 'code' -t               # plain text
-ilo 'code' -j               # JSON (default for piped output)
-```
-
-**Formatter:**
-```bash
-ilo 'code' --dense / -d     # dense wire format (agents)
-ilo 'code' --expanded / -e  # expanded human format
-```
-
-**Other modes:**
-```bash
-ilo 'code' --emit python     # transpile to Python
-ilo program.ilo --bench tot 10 20 30  # benchmark
-```
-
-**Run tests:**
-```bash
-cargo test
-```
+For built-ins (HTTP, env, file I/O, data ops, imports) and CLI flags, see the [Tutorial](https://github.com/ilo-lang/ilo/wiki) and [SPEC.md](SPEC.md).
 
 ## Integrations
 
