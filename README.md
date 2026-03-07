@@ -2,7 +2,7 @@
 
 *Token-minimal language for AI coding agents.*
 
-[![CI](https://github.com/ilo-lang/ilo/actions/workflows/rust.yml/badge.svg)](https://github.com/ilo-lang/ilo/actions/workflows/rust.yml)  [![npm](https://img.shields.io/npm/v/ilo-lang)](https://www.npmjs.com/package/ilo-lang)  [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![CI](https://github.com/ilo-lang/ilo/actions/workflows/rust.yml/badge.svg)](https://github.com/ilo-lang/ilo/actions/workflows/rust.yml)  [![crates.io](https://img.shields.io/crates/v/ilo)](https://crates.io/crates/ilo)  [![npm](https://img.shields.io/npm/v/ilo-lang)](https://www.npmjs.com/package/ilo-lang)  [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 AI agents pay three costs per program: generation tokens, error feedback, retries. ilo cuts all three — 0.33× the tokens of Python, type-verified before execution.
 
@@ -46,8 +46,10 @@ curl -fsSL https://raw.githubusercontent.com/ilo-lang/ilo/main/install.sh | sh
 curl -fsSL https://github.com/ilo-lang/ilo/releases/latest/download/ilo-aarch64-apple-darwin -o /usr/local/bin/ilo && chmod +x /usr/local/bin/ilo
 ```
 
-**From source:**
+**From crates.io / source:**
 ```bash
+cargo install ilo
+# or from git:
 cargo install --git https://github.com/ilo-lang/ilo
 ```
 
