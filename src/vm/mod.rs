@@ -850,7 +850,9 @@ impl RegCompiler {
                     }
                     let jmp = self.emit_jmp_placeholder();
                     // Re-borrow mutably to push break patch
-                    self.loop_stack.last_mut().unwrap().break_patches.push(jmp);
+                    if let Some(ctx) = self.loop_stack.last_mut() {
+                        ctx.break_patches.push(jmp);
+                    }
                 }
                 None
             }
@@ -860,8 +862,10 @@ impl RegCompiler {
                     if ctx.continue_patches.is_some() {
                         // Foreach: emit placeholder, patch later
                         let jmp = self.emit_jmp_placeholder();
-                        self.loop_stack.last_mut().unwrap()
-                            .continue_patches.as_mut().unwrap().push(jmp);
+                        if let Some(ctx) = self.loop_stack.last_mut()
+                            && let Some(patches) = ctx.continue_patches.as_mut() {
+                                patches.push(jmp);
+                        }
                     } else {
                         // While: jump back to loop_top (condition re-eval)
                         let top = ctx.loop_top;

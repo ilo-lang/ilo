@@ -1432,7 +1432,10 @@ fn main() {
         {
             let func_name = if args.len() > m + 1 { Some(args[m + 1].as_str()) } else { None };
             let run_args: Vec<f64> = if args.len() > m + 2 {
-                args[m + 2..].iter().map(|a| a.parse::<f64>().expect("JIT args must be numbers")).collect()
+                args[m + 2..].iter().map(|a| a.parse::<f64>().unwrap_or_else(|_| {
+                    eprintln!("error: JIT argument '{}' is not a valid number", a);
+                    std::process::exit(1);
+                })).collect()
             } else {
                 vec![]
             };
@@ -1504,7 +1507,10 @@ fn main() {
         {
             let func_name = if args.len() > m + 1 { Some(args[m + 1].as_str()) } else { None };
             let run_args: Vec<f64> = if args.len() > m + 2 {
-                args[m + 2..].iter().map(|a| a.parse::<f64>().expect("JIT args must be numbers")).collect()
+                args[m + 2..].iter().map(|a| a.parse::<f64>().unwrap_or_else(|_| {
+                    eprintln!("error: JIT argument '{}' is not a valid number", a);
+                    std::process::exit(1);
+                })).collect()
             } else {
                 vec![]
             };
