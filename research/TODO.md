@@ -38,7 +38,7 @@ Discovered during a Claude Code session using ilo as a bash/python replacement. 
 - [x] **Modulo builtin** — `mod a b` returns remainder. Implemented across verifier, interpreter, and VM with division-by-zero check.
 
 ### Testing
-- [ ] **Parser coverage 85% → 90%+** — lowest coverage module. The multi-function boundary and `==` lexing issues suggest more edge case tests are needed.
+- [x] **100% LLVM line coverage** — achieved across all source files (2294 tests). Phantom branches eliminated via `for x in option`, `let-else`, and single-match-returning-Option patterns. Dead `unreachable!()` arms replaced with concrete values.
 
 ---
 
