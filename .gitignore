@@ -6,7 +6,7 @@ research/explorations/comprehension-results.json
 research/explorations/rules-results.json
 research/explorations/test-results.json
 research/explorations/full-results.json
-ilo
+/ilo
 *.png
 .playwright-mcp/
 .worktrees
