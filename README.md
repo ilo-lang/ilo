@@ -70,6 +70,8 @@ ilo ships as an [Agent Skill](https://agentskills.io) — install the plugin and
 
 Copy `skills/ilo/` into your agent's skills directory (e.g. `~/.agents/skills/`, `.cursor/skills/`). Any tool supporting the [Agent Skills standard](https://agentskills.io) will pick it up.
 
+> **Note:** Codex and similar sandboxed environments may not grant agents full filesystem or network access, so the skill's auto-install script and I/O builtins (`rd`, `get`, etc.) may not work. In those environments, pre-install ilo in the container image and use context loading instead.
+
 ### Context loading
 
 For agents without plugin support, paste the spec into the system prompt:
