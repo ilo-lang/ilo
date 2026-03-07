@@ -279,6 +279,7 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("flat", &["list"], "list"),
     ("sum", &["list"], "n"),
     ("avg", &["list"], "n"),
+    ("rgx", &["t", "t"], "L t"),
     // Map builtins (M k v type)
     ("mmap", &[], "map"),
     ("mget", &["map", "t"], "optional"),

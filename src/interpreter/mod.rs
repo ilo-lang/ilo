@@ -986,6 +986,35 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         }
         return Ok(Value::Number(total / items.len() as f64));
     }
+    if name == "rgx" && args.len() == 2 {
+        let pattern = match &args[0] {
+            Value::Text(s) => s.clone(),
+            other => return Err(RuntimeError::new("ILO-R009", format!("rgx: first arg must be a string pattern, got {:?}", other))),
+        };
+        let input = match &args[1] {
+            Value::Text(s) => s.clone(),
+            other => return Err(RuntimeError::new("ILO-R009", format!("rgx: second arg must be a string, got {:?}", other))),
+        };
+        let re = regex::Regex::new(&pattern).map_err(|e| {
+            RuntimeError::new("ILO-R009", format!("rgx: invalid regex pattern: {e}"))
+        })?;
+        let result: Vec<Value> = if re.captures_len() > 1 {
+            // Has capture groups — return list of captured group strings
+            re.captures(&input)
+                .map(|caps| {
+                    (1..caps.len())
+                        .filter_map(|i| caps.get(i).map(|m| Value::Text(m.as_str().to_string())))
+                        .collect()
+                })
+                .unwrap_or_default()
+        } else {
+            // No capture groups — return list of all matches
+            re.find_iter(&input)
+                .map(|m| Value::Text(m.as_str().to_string()))
+                .collect()
+        };
+        return Ok(Value::List(result));
+    }
     if name == "flat" && args.len() == 1 {
         let items = match &args[0] {
             Value::List(l) => l.clone(),
@@ -3660,6 +3689,48 @@ mod tests {
     fn interp_avg_wrong_arg() {
         let err = run_str_err("f>n;avg 42", Some("f"), vec![]);
         assert!(err.contains("avg"), "got: {err}");
+    }
+
+    #[test]
+    fn interp_rgx_find_all() {
+        // find all numbers in a string
+        let source = r#"f s:t>L t;rgx "\d+" s"#;
+        let result = run_str(source, Some("f"), vec![Value::Text("abc 123 def 456".into())]);
+        assert_eq!(result, Value::List(vec![
+            Value::Text("123".into()),
+            Value::Text("456".into()),
+        ]));
+    }
+
+    #[test]
+    fn interp_rgx_capture_groups() {
+        // extract key=value pairs
+        let source = r#"f s:t>L t;rgx "(\w+)=(\w+)" s"#;
+        let result = run_str(source, Some("f"), vec![Value::Text("name=alice age=30".into())]);
+        // Returns first match's groups
+        assert_eq!(result, Value::List(vec![
+            Value::Text("name".into()),
+            Value::Text("alice".into()),
+        ]));
+    }
+
+    #[test]
+    fn interp_rgx_no_match() {
+        let source = r#"f s:t>L t;rgx "\d+" s"#;
+        let result = run_str(source, Some("f"), vec![Value::Text("no numbers here".into())]);
+        assert_eq!(result, Value::List(vec![]));
+    }
+
+    #[test]
+    fn interp_rgx_invalid_pattern() {
+        let err = run_str_err(r#"f>L t;rgx "[invalid" "test""#, Some("f"), vec![]);
+        assert!(err.contains("rgx"), "got: {err}");
+    }
+
+    #[test]
+    fn interp_rgx_wrong_arg_types() {
+        let err = run_str_err(r#"f>L t;rgx 42 "test""#, Some("f"), vec![]);
+        assert!(err.contains("rgx"), "got: {err}");
     }
 
     #[test]
