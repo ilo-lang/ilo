@@ -1908,9 +1908,9 @@ fn serv_cmd_processes_one_request() {
     assert!(stdout.contains("ok") || stdout.contains("1"), "expected ok result, got: {stdout}");
 }
 
-/// `ilo repl <args>` uses the repl alias path (main.rs L856: is_serv=false branch).
+/// `ilo repl` launches interactive REPL, exits on EOF (stdin closed).
 #[test]
-fn repl_cmd_alias_exits_cleanly() {
+fn repl_exits_on_eof() {
     use std::process::Stdio;
     let out = ilo()
         .args(["repl"])
@@ -1918,7 +1918,45 @@ fn repl_cmd_alias_exits_cleanly() {
         .output()
         .expect("failed to run ilo repl");
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.contains("ready"), "expected ready signal from repl alias");
+    assert!(stdout.contains("ilo"), "expected banner from repl");
+    assert!(out.status.success(), "repl should exit cleanly on EOF");
+}
+
+/// `ilo repl -j` falls through to JSON serv mode.
+#[test]
+fn repl_json_mode_is_serv() {
+    use std::process::Stdio;
+    let out = ilo()
+        .args(["repl", "-j"])
+        .stdin(Stdio::null())
+        .output()
+        .expect("failed to run ilo repl -j");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("ready"), "expected ready signal from repl -j");
+}
+
+/// `ilo repl` can define functions and run expressions.
+#[test]
+fn repl_define_and_run() {
+    use std::io::Write;
+    use std::process::Stdio;
+    let mut child = ilo()
+        .args(["repl"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("failed to spawn ilo repl");
+    {
+        let stdin = child.stdin.as_mut().unwrap();
+        writeln!(stdin, "dbl x:n>n;*x 2").unwrap();
+        writeln!(stdin, "dbl 21").unwrap();
+        writeln!(stdin, ":q").unwrap();
+    }
+    let out = child.wait_with_output().unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("defined: dbl"), "should show definition: {stdout}");
+    assert!(stdout.contains("42"), "should compute dbl 21 = 42: {stdout}");
 }
 
 /// `ilo serv --tools <config>` loads the HTTP config before the serve loop.

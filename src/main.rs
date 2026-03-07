@@ -465,6 +465,208 @@ fn process_serv_request(
     }
 }
 
+fn type_to_ilo(ty: &ast::Type) -> String {
+    match ty {
+        ast::Type::Number => "n".to_string(),
+        ast::Type::Text => "t".to_string(),
+        ast::Type::Bool => "b".to_string(),
+        ast::Type::Nil => "_".to_string(),
+        ast::Type::Optional(inner) => format!("O {}", type_to_ilo(inner)),
+        ast::Type::List(inner) => format!("L {}", type_to_ilo(inner)),
+        ast::Type::Map(k, v) => format!("M {} {}", type_to_ilo(k), type_to_ilo(v)),
+        ast::Type::Result(ok, err) => format!("R {} {}", type_to_ilo(ok), type_to_ilo(err)),
+        ast::Type::Sum(variants) => format!("S {}", variants.join(" ")),
+        ast::Type::Fn(params, ret) => {
+            let ps: Vec<_> = params.iter().map(|p| type_to_ilo(p)).collect();
+            format!("F {} {}", ps.join(" "), type_to_ilo(ret))
+        }
+        ast::Type::Named(name) => name.clone(),
+    }
+}
+
+/// Interactive REPL — define functions, evaluate expressions, accumulate state.
+fn repl_cmd() {
+    use std::io::{BufRead, Write};
+
+    let version = env!("CARGO_PKG_VERSION");
+    let renderer = AnsiRenderer { use_color: true };
+    println!("ilo {version} — type :help for commands, :q to quit\n");
+
+    // Accumulated function definitions across the session
+    let mut defs: Vec<String> = Vec::new();
+
+    let stdin = std::io::stdin();
+    let mut reader = stdin.lock();
+
+    loop {
+        print!("> ");
+        std::io::stdout().flush().ok();
+
+        let mut line = String::new();
+        match reader.read_line(&mut line) {
+            Ok(0) => break, // Ctrl+D / EOF
+            Ok(_) => {}
+            Err(_) => break,
+        }
+
+        let input = line.trim();
+        if input.is_empty() {
+            continue;
+        }
+
+        // Meta-commands (nvim-style)
+        if input.starts_with(':') {
+            match input {
+                ":q" | ":q!" | ":x" | ":quit" | ":exit" | "exit" => break,
+                ":wq" => {
+                    if defs.is_empty() {
+                        eprintln!("no definitions to save");
+                    } else {
+                        eprintln!("usage: :w <file.ilo>");
+                    }
+                    continue;
+                }
+                _ if input.starts_with(":wq ") => {
+                    let path = input.strip_prefix(":wq ").unwrap().trim();
+                    if defs.is_empty() {
+                        eprintln!("no definitions to save");
+                    } else if let Err(e) = std::fs::write(path, defs.join(" ") + "\n") {
+                        eprintln!("error: {e}");
+                    } else {
+                        println!("saved {} definition(s) to {path}", defs.len());
+                    }
+                    break;
+                }
+                _ if input.starts_with(":w ") => {
+                    let path = input.strip_prefix(":w ").unwrap().trim();
+                    if defs.is_empty() {
+                        eprintln!("no definitions to save");
+                    } else if let Err(e) = std::fs::write(path, defs.join(" ") + "\n") {
+                        eprintln!("error: {e}");
+                    } else {
+                        println!("saved {} definition(s) to {path}", defs.len());
+                    }
+                    continue;
+                }
+                ":defs" => {
+                    if defs.is_empty() {
+                        println!("(no definitions)");
+                    } else {
+                        for d in &defs {
+                            println!("  {d}");
+                        }
+                    }
+                    continue;
+                }
+                ":clear" => {
+                    defs.clear();
+                    println!("cleared all definitions");
+                    continue;
+                }
+                ":help" => {
+                    println!(":q :q! :x :quit :exit   quit");
+                    println!(":w <file>               save definitions to file");
+                    println!(":wq <file>              save and quit");
+                    println!(":defs                   list defined functions");
+                    println!(":clear                  clear all definitions");
+                    println!(":help                   show this help");
+                    continue;
+                }
+                _ => {
+                    eprintln!("unknown command: {input}  (type :help)");
+                    continue;
+                }
+            }
+        }
+
+        // Also support bare "exit"
+        if input == "exit" || input == "quit" {
+            break;
+        }
+
+        // Try to parse input as function definition(s) first
+        let source = input.to_string();
+        let is_def = {
+            let tokens = lexer::lex(&source);
+            if let Ok(tokens) = tokens {
+                let token_spans: Vec<_> = tokens
+                    .into_iter()
+                    .map(|(t, r)| (t, ast::Span { start: r.start, end: r.end }))
+                    .collect();
+                let (program, errors) = parser::parse(token_spans);
+                errors.is_empty()
+                    && !program.declarations.is_empty()
+                    && program.declarations.iter().all(|d| matches!(d, ast::Decl::Function { .. }))
+            } else {
+                false
+            }
+        };
+
+        if is_def {
+            // Parse again to extract definition info for display
+            let tokens = lexer::lex(&source).unwrap();
+            let token_spans: Vec<_> = tokens
+                .into_iter()
+                .map(|(t, r)| (t, ast::Span { start: r.start, end: r.end }))
+                .collect();
+            let (program, _) = parser::parse(token_spans);
+
+            defs.push(input.to_string());
+
+            for d in &program.declarations {
+                if let ast::Decl::Function { name, params, return_type, .. } = d {
+                    let params_str: Vec<_> = params.iter().map(|p| format!("{}:{}", p.name, type_to_ilo(&p.ty))).collect();
+                    println!("defined: {}({}) -> {}", name, params_str.join(", "), type_to_ilo(return_type));
+                }
+            }
+            continue;
+        }
+
+        // Expression or function call — wrap in a repl function with all accumulated defs
+        // Use `repleval` as name (starts with letter, won't collide)
+        let full_source = if defs.is_empty() {
+            format!("repleval>n;{input}")
+        } else {
+            format!("{} repleval>n;{input}", defs.join(" "))
+        };
+
+        let tokens = match lexer::lex(&full_source) {
+            Ok(t) => t,
+            Err(e) => {
+                let d = Diagnostic::from(&e);
+                eprintln!("{}", renderer.render(&d));
+                continue;
+            }
+        };
+
+        let token_spans: Vec<_> = tokens
+            .into_iter()
+            .map(|(t, r)| (t, ast::Span { start: r.start, end: r.end }))
+            .collect();
+        let (mut full_program, parse_errors) = parser::parse(token_spans);
+        full_program.source = Some(full_source.clone());
+
+        if !parse_errors.is_empty() {
+            // Show errors relative to user input, not the wrapper
+            for e in &parse_errors {
+                let d = Diagnostic::from(e);
+                eprintln!("{}", renderer.render(&d));
+            }
+            continue;
+        }
+
+        // Skip type checking for the repl wrapper — just run it
+        // This allows expressions of any type to be evaluated
+        match interpreter::run(&full_program, Some("repleval"), vec![]) {
+            Ok(value) => println!("{value}"),
+            Err(e) => {
+                let d = Diagnostic::from(&e).with_source(full_source);
+                eprintln!("{}", renderer.render(&d));
+            }
+        }
+    }
+}
+
 /// Stdio-based agent serve loop.
 /// Reads one JSON request per line from stdin, writes one JSON response per line to stdout.
 fn serv_cmd(args_slice: &[String]) {
@@ -924,16 +1126,16 @@ fn main() {
     }
 
     if matches!(raw_args.get(1).map(|s| s.as_str()), Some("serv") | Some("repl")) {
-        let is_serv = raw_args.get(1).map(|s| s.as_str()) == Some("serv");
-        let rest: Vec<String> = if is_serv {
-            // `ilo serv [args]` is an alias for `ilo repl -j [args]`
-            let mut v = vec!["-j".to_string()];
-            v.extend_from_slice(&raw_args[2..]);
-            v
+        let rest: Vec<String> = raw_args[2..].to_vec();
+        let is_json = raw_args.get(1).map(|s| s.as_str()) == Some("serv")
+            || rest.iter().any(|a| a == "-j" || a == "--json");
+        if is_json {
+            let mut serv_args = vec!["-j".to_string()];
+            serv_args.extend(rest.iter().filter(|a| *a != "-j" && *a != "--json").cloned());
+            serv_cmd(&serv_args);
         } else {
-            raw_args[2..].to_vec()
-        };
-        serv_cmd(&rest);
+            repl_cmd();
+        }
         std::process::exit(0);
     }
 
@@ -941,6 +1143,7 @@ fn main() {
 
     if args.len() < 2 {
         eprintln!("Usage: ilo <file-or-code> [args... | --run func args... | --bench func args... | --emit python]");
+        eprintln!("       ilo repl                                  Interactive REPL");
         eprintln!("       ilo serv [--mcp <path>] [--tools <path>]  Stdio agent loop");
         eprintln!("       ilo help | -h     Show usage and examples");
         eprintln!("       ilo help lang     Show language specification");
