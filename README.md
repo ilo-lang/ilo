@@ -120,7 +120,7 @@ ilo ships as an [Agent Skill](https://agentskills.io). Install the plugin and th
 ### Context loading
 
 ```bash
-ilo help ai          # ~16-line ultra-compact spec for LLM consumption
+ilo help ai          # compact spec for LLM consumption
 ilo help lang        # full spec
 ```
 
@@ -170,7 +170,7 @@ Define functions, evaluate expressions, accumulate state. nvim-style commands: `
 ```bash
 ilo help                     # usage and examples
 ilo help lang                # full language specification
-ilo help ai                  # compact spec for LLM consumption (~16 lines)
+ilo help ai                  # compact spec for LLM consumption
 ```
 
 **Static verification**: all programs verified before execution. Reports all errors at once with stable codes:
