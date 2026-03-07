@@ -365,6 +365,7 @@ We explored 9 syntax variants before settling on the current design. See [resear
 
 | Document | Purpose |
 |----------|---------|
+| [Tutorial](https://github.com/ilo-lang/ilo/wiki) | Step-by-step guide (10 lessons) |
 | [SPEC.md](SPEC.md) | Language specification |
 | [examples/](examples/) | Runnable example programs (also `cargo test` regression suite) |
 | [MANIFESTO.md](MANIFESTO.md) | Design rationale |
