@@ -3144,25 +3144,17 @@ mod tests {
     fn interpret_rnd_no_args() {
         let source = "f>n;rnd";
         let result = run_str(source, Some("f"), vec![]);
-        match result {
-            Value::Number(n) => {
-                assert!(n >= 0.0 && n < 1.0, "rnd should be in [0,1), got {n}");
-            }
-            other => panic!("expected Number, got {:?}", other),
-        }
+        let Value::Number(n) = result else { panic!("expected Number") };
+        assert!(n >= 0.0 && n < 1.0, "rnd should be in [0,1), got {n}");
     }
 
     #[test]
     fn interpret_rnd_two_args() {
         let source = "f>n;rnd 1 10";
         let result = run_str(source, Some("f"), vec![]);
-        match result {
-            Value::Number(n) => {
-                assert!(n >= 1.0 && n <= 10.0, "rnd 1 10 should be in [1,10], got {n}");
-                assert_eq!(n, n.floor(), "rnd with two args should return integer");
-            }
-            other => panic!("expected Number, got {:?}", other),
-        }
+        let Value::Number(n) = result else { panic!("expected Number") };
+        assert!(n >= 1.0 && n <= 10.0, "rnd 1 10 should be in [1,10], got {n}");
+        assert_eq!(n, n.floor(), "rnd with two args should return integer");
     }
 
     #[test]
@@ -3175,12 +3167,8 @@ mod tests {
     fn interpret_now() {
         let source = "f>n;now";
         let result = run_str(source, Some("f"), vec![]);
-        match result {
-            Value::Number(n) => {
-                assert!(n > 1_000_000_000.0, "now should be a reasonable unix timestamp, got {n}");
-            }
-            other => panic!("expected Number, got {:?}", other),
-        }
+        let Value::Number(n) = result else { panic!("expected Number") };
+        assert!(n > 1_000_000_000.0, "now should be a reasonable unix timestamp, got {n}");
     }
 
     // ── env builtin tests ─────────────────────────────────────────────
@@ -3200,15 +3188,9 @@ mod tests {
         let _guard = ENV_TEST_MUTEX.lock().unwrap();
         let source = r#"f k:t>R t t;env k"#;
         let result = run_str(source, Some("f"), vec![Value::Text("ILO_NONEXISTENT_12345".into())]);
-        match result {
-            Value::Err(inner) => {
-                match *inner {
-                    Value::Text(s) => assert!(s.contains("not set"), "got: {s}"),
-                    other => panic!("expected Text, got {:?}", other),
-                }
-            }
-            other => panic!("expected Err, got {:?}", other),
-        }
+        let Value::Err(inner) = result else { panic!("expected Err") };
+        let Value::Text(s) = *inner else { panic!("expected Text") };
+        assert!(s.contains("not set"), "got: {s}");
     }
 
     #[test]
@@ -3497,10 +3479,8 @@ mod tests {
             Value::Text(r#"{"a":1}"#.to_string()),
             Value::Text("b".to_string()),
         ]);
-        match result {
-            Value::Err(e) => assert!(e.to_string().contains("key not found"), "got: {}", e),
-            other => panic!("expected Err, got {:?}", other),
-        }
+        let Value::Err(e) = result else { panic!("expected Err") };
+        assert!(e.to_string().contains("key not found"), "got: {}", e);
     }
 
     #[test]
@@ -3548,7 +3528,8 @@ mod tests {
     fn interp_jd_record() {
         let source = "type pt{x:n;y:n} f>t;p=pt x:1 y:2;jdmp p";
         let result = run_str(source, Some("f"), vec![]);
-        let text = match &result { Value::Text(s) => s.clone(), _ => panic!("expected text") };
+        let Value::Text(ref s) = result else { panic!("expected text") };
+        let text = s.clone();
         let parsed: serde_json::Value = serde_json::from_str(&text).unwrap();
         assert_eq!(parsed["x"], 1);
         assert_eq!(parsed["y"], 2);
@@ -3560,17 +3541,11 @@ mod tests {
         let result = run_str(source, Some("f"), vec![
             Value::Text(r#"{"a":1,"b":"two"}"#.to_string()),
         ]);
-        match result {
-            Value::Ok(inner) => match *inner {
-                Value::Record { type_name, fields } => {
-                    assert_eq!(type_name, "json");
-                    assert_eq!(fields.get("a"), Some(&Value::Number(1.0)));
-                    assert_eq!(fields.get("b"), Some(&Value::Text("two".to_string())));
-                }
-                other => panic!("expected record, got {:?}", other),
-            },
-            other => panic!("expected Ok, got {:?}", other),
-        }
+        let Value::Ok(inner) = result else { panic!("expected Ok") };
+        let Value::Record { type_name, fields } = *inner else { panic!("expected record") };
+        assert_eq!(type_name, "json");
+        assert_eq!(fields.get("a"), Some(&Value::Number(1.0)));
+        assert_eq!(fields.get("b"), Some(&Value::Text("two".to_string())));
     }
 
     #[test]
@@ -3579,10 +3554,8 @@ mod tests {
         let result = run_str(source, Some("f"), vec![
             Value::Text("[1,2,3]".to_string()),
         ]);
-        match result {
-            Value::Ok(inner) => assert_eq!(*inner, Value::List(vec![Value::Number(1.0), Value::Number(2.0), Value::Number(3.0)])),
-            other => panic!("expected Ok, got {:?}", other),
-        }
+        let Value::Ok(inner) = result else { panic!("expected Ok") };
+        assert_eq!(*inner, Value::List(vec![Value::Number(1.0), Value::Number(2.0), Value::Number(3.0)]));
     }
 
     #[test]
@@ -3613,13 +3586,9 @@ mod tests {
     fn interp_jparse_unwrap() {
         let source = r#"f j:t>t;jpar! j"#;
         let result = run_str(source, Some("f"), vec![Value::Text(r#"{"x":1}"#.to_string())]);
-        match result {
-            Value::Record { type_name, fields } => {
-                assert_eq!(type_name, "json");
-                assert_eq!(fields.get("x"), Some(&Value::Number(1.0)));
-            }
-            other => panic!("expected record, got {:?}", other),
-        }
+        let Value::Record { type_name, fields } = result else { panic!("expected record") };
+        assert_eq!(type_name, "json");
+        assert_eq!(fields.get("x"), Some(&Value::Number(1.0)));
     }
 
     #[test]
@@ -3666,13 +3635,9 @@ mod tests {
         let result = run_str(source, Some("main"), vec![
             Value::List(vec![1.0, 8.0, 3.0, 9.0, 2.0].into_iter().map(Value::Number).collect())
         ]);
-        match result {
-            Value::Map(m) => {
-                assert_eq!(m.get("small").unwrap(), &Value::List(vec![1.0, 3.0, 2.0].into_iter().map(Value::Number).collect()));
-                assert_eq!(m.get("big").unwrap(), &Value::List(vec![8.0, 9.0].into_iter().map(Value::Number).collect()));
-            }
-            other => panic!("expected Map, got {:?}", other),
-        }
+        let Value::Map(m) = result else { panic!("expected Map") };
+        assert_eq!(m.get("small").unwrap(), &Value::List(vec![1.0, 3.0, 2.0].into_iter().map(Value::Number).collect()));
+        assert_eq!(m.get("big").unwrap(), &Value::List(vec![8.0, 9.0].into_iter().map(Value::Number).collect()));
     }
 
     #[test]
@@ -3682,14 +3647,10 @@ mod tests {
         let result = run_str(source, Some("main"), vec![
             Value::List(vec![1.0, 2.0, 1.0, 3.0, 2.0].into_iter().map(Value::Number).collect())
         ]);
-        match result {
-            Value::Map(m) => {
-                assert_eq!(m.get("1").unwrap(), &Value::List(vec![1.0, 1.0].into_iter().map(Value::Number).collect()));
-                assert_eq!(m.get("2").unwrap(), &Value::List(vec![2.0, 2.0].into_iter().map(Value::Number).collect()));
-                assert_eq!(m.get("3").unwrap(), &Value::List(vec![3.0].into_iter().map(Value::Number).collect()));
-            }
-            other => panic!("expected Map, got {:?}", other),
-        }
+        let Value::Map(m) = result else { panic!("expected Map") };
+        assert_eq!(m.get("1").unwrap(), &Value::List(vec![1.0, 1.0].into_iter().map(Value::Number).collect()));
+        assert_eq!(m.get("2").unwrap(), &Value::List(vec![2.0, 2.0].into_iter().map(Value::Number).collect()));
+        assert_eq!(m.get("3").unwrap(), &Value::List(vec![3.0].into_iter().map(Value::Number).collect()));
     }
 
     #[test]
@@ -4059,16 +4020,10 @@ mod tests {
             Some("f"),
             vec![Value::Text("a,b\n1,2".into())],
         );
-        match result {
-            Value::Ok(inner) => match *inner {
-                Value::List(rows) => {
-                    assert_eq!(rows.len(), 2);
-                    assert!(matches!(&rows[0], Value::List(_)));
-                }
-                other => panic!("expected list, got {:?}", other),
-            },
-            other => panic!("expected Ok, got {:?}", other),
-        }
+        let Value::Ok(inner) = result else { panic!("expected Ok") };
+        let Value::List(rows) = *inner else { panic!("expected list") };
+        assert_eq!(rows.len(), 2);
+        assert!(matches!(&rows[0], Value::List(_)));
     }
 
     #[test]
@@ -4426,16 +4381,10 @@ mod tests {
             vec![Value::Text(path_str)],
         );
         std::fs::remove_file(&path).ok();
-        match result {
-            Value::Ok(inner) => match *inner {
-                Value::List(lines) => {
-                    assert_eq!(lines.len(), 3);
-                    assert_eq!(lines[0], Value::Text("line1".into()));
-                }
-                other => panic!("expected list, got {:?}", other),
-            },
-            other => panic!("expected Ok, got {:?}", other),
-        }
+        let Value::Ok(inner) = result else { panic!("expected Ok") };
+        let Value::List(lines) = *inner else { panic!("expected list") };
+        assert_eq!(lines.len(), 3);
+        assert_eq!(lines[0], Value::Text("line1".into()));
     }
 
     // L779: rdl file not found
@@ -4739,11 +4688,8 @@ mod tests {
     #[test]
     fn interp_jdmp_map_value() {
         let result = run_str(r#"f>t;m=mset mmap "k" 1;jdmp m"#, Some("f"), vec![]);
-        if let Value::Text(s) = result {
-            assert!(s.contains("k"), "got: {s}");
-        } else {
-            panic!("expected text");
-        }
+        let Value::Text(s) = result else { panic!("expected text") };
+        assert!(s.contains("k"), "got: {s}");
     }
 
     // L1527-1528: TypeIs List pattern (uses `l` token for list)
@@ -4767,13 +4713,9 @@ mod tests {
             Some("f"),
             vec![Value::Text("a,b,c".into())],
         );
-        match result {
-            Value::Ok(inner) => match *inner {
-                Value::List(rows) => assert_eq!(rows.len(), 1),
-                other => panic!("expected list, got {:?}", other),
-            },
-            other => panic!("expected Ok, got {:?}", other),
-        }
+        let Value::Ok(inner) = result else { panic!("expected Ok") };
+        let Value::List(rows) = *inner else { panic!("expected list") };
+        assert_eq!(rows.len(), 1);
     }
 
     // ── mhas/mkeys/mvals/mdel happy paths ─────────────────────────────────
@@ -4853,10 +4795,8 @@ mod tests {
         std::fs::write(path, "hello").unwrap();
         let source = format!(r#"f>R t t;rd "{path}" "raw""#);
         let result = run_str(&source, Some("f"), vec![]);
-        match result {
-            Value::Ok(inner) => assert_eq!(*inner, Value::Text("hello".into())),
-            other => panic!("expected Ok, got {:?}", other),
-        }
+        let Value::Ok(inner) = result else { panic!("expected Ok") };
+        assert_eq!(*inner, Value::Text("hello".into()));
     }
 
     #[test]
@@ -4866,10 +4806,8 @@ mod tests {
         std::fs::write(path, "not json at all!!!").unwrap();
         let source = format!(r#"f>R t t;rd "{path}" "json""#);
         let result = run_str(&source, Some("f"), vec![]);
-        match result {
-            Value::Err(_) => {} // parse_format returns Err → line 750-751
-            other => panic!("expected Err, got {:?}", other),
-        }
+        let Value::Err(_) = result else { panic!("expected Err") };
+        // parse_format returns Err → line 750-751
     }
 
     // ── wr 3-arg csv/json (lines 792, 799, 819-820, 835-843) ───────────────
@@ -4880,13 +4818,9 @@ mod tests {
         let path = "/tmp/ilo_test_wr.csv";
         let source = format!(r#"f>R t t;wr "{path}" [[1,2],[3,4]] "csv""#);
         let result = run_str(&source, Some("f"), vec![]);
-        match result {
-            Value::Ok(_) => {
-                let content = std::fs::read_to_string(path).unwrap();
-                assert!(content.contains("1,2"));
-            }
-            other => panic!("expected Ok, got {:?}", other),
-        }
+        let Value::Ok(_) = result else { panic!("expected Ok") };
+        let content = std::fs::read_to_string(path).unwrap();
+        assert!(content.contains("1,2"));
     }
 
     #[test]
@@ -4895,13 +4829,9 @@ mod tests {
         let path = "/tmp/ilo_test_wr_bool.csv";
         let source = format!(r#"f>R t t;wr "{path}" [[true,false]] "csv""#);
         let result = run_str(&source, Some("f"), vec![]);
-        match result {
-            Value::Ok(_) => {
-                let content = std::fs::read_to_string(path).unwrap();
-                assert!(content.contains("true"));
-            }
-            other => panic!("expected Ok, got {:?}", other),
-        }
+        let Value::Ok(_) = result else { panic!("expected Ok") };
+        let content = std::fs::read_to_string(path).unwrap();
+        assert!(content.contains("true"));
     }
 
     #[test]
@@ -4910,13 +4840,9 @@ mod tests {
         let path = "/tmp/ilo_test_wr.json";
         let source = format!(r#"f>R t t;wr "{path}" [1,2,3] "json""#);
         let result = run_str(&source, Some("f"), vec![]);
-        match result {
-            Value::Ok(_) => {
-                let content = std::fs::read_to_string(path).unwrap();
-                assert!(content.contains("1"));
-            }
-            other => panic!("expected Ok, got {:?}", other),
-        }
+        let Value::Ok(_) = result else { panic!("expected Ok") };
+        let content = std::fs::read_to_string(path).unwrap();
+        assert!(content.contains("1"));
     }
 
     // ── grp Number/Bool key (lines 1012-1016, 1019-1020) ───────────────────
@@ -4928,10 +4854,8 @@ mod tests {
         let result = run_str(source, Some("g"), vec![
             Value::List(vec![Value::Number(1.0), Value::Number(2.0), Value::Number(1.0)]),
         ]);
-        match result {
-            Value::Map(m) => assert_eq!(m.len(), 2),
-            other => panic!("expected map, got {:?}", other),
-        }
+        let Value::Map(m) = result else { panic!("expected map") };
+        assert_eq!(m.len(), 2);
     }
 
     #[test]
@@ -4941,13 +4865,9 @@ mod tests {
         let result = run_str(source, Some("g"), vec![
             Value::List(vec![Value::Number(-1.0), Value::Number(1.0), Value::Number(2.0)]),
         ]);
-        match result {
-            Value::Map(m) => {
-                assert!(m.contains_key("true"));
-                assert!(m.contains_key("false"));
-            }
-            other => panic!("expected map, got {:?}", other),
-        }
+        let Value::Map(m) = result else { panic!("expected map") };
+        assert!(m.contains_key("true"));
+        assert!(m.contains_key("false"));
     }
 
     // ── avg non-number element (line 1053) ──────────────────────────────────
@@ -4991,13 +4911,9 @@ mod tests {
         let path = "/tmp/ilo_test_wr_json_text.json";
         let source = format!(r#"f>R t t;wr "{path}" "hello world" "json""#);
         let result = run_str(&source, Some("f"), vec![]);
-        match result {
-            Value::Ok(_) => {
-                let content = std::fs::read_to_string(path).unwrap();
-                assert!(content.contains("hello world"));
-            }
-            other => panic!("expected Ok, got {:?}", other),
-        }
+        let Value::Ok(_) = result else { panic!("expected Ok") };
+        let content = std::fs::read_to_string(path).unwrap();
+        assert!(content.contains("hello world"));
     }
 
     #[test]
@@ -5006,13 +4922,9 @@ mod tests {
         let path = "/tmp/ilo_test_wr_json_bool.json";
         let source = format!(r#"f>R t t;wr "{path}" true "json""#);
         let result = run_str(&source, Some("f"), vec![]);
-        match result {
-            Value::Ok(_) => {
-                let content = std::fs::read_to_string(path).unwrap();
-                assert!(content.contains("true"));
-            }
-            other => panic!("expected Ok, got {:?}", other),
-        }
+        let Value::Ok(_) = result else { panic!("expected Ok") };
+        let content = std::fs::read_to_string(path).unwrap();
+        assert!(content.contains("true"));
     }
 
     #[test]
@@ -5021,14 +4933,10 @@ mod tests {
         let path = "/tmp/ilo_test_wr_json_map.json";
         let source = format!(r#"f>R t t;m=mset mmap "k" 42;wr "{path}" m "json""#);
         let result = run_str(&source, Some("f"), vec![]);
-        match result {
-            Value::Ok(_) => {
-                let content = std::fs::read_to_string(path).unwrap();
-                assert!(content.contains("\"k\""));
-                assert!(content.contains("42"));
-            }
-            other => panic!("expected Ok, got {:?}", other),
-        }
+        let Value::Ok(_) = result else { panic!("expected Ok") };
+        let content = std::fs::read_to_string(path).unwrap();
+        assert!(content.contains("\"k\""));
+        assert!(content.contains("42"));
     }
 
     #[test]
@@ -5037,13 +4945,9 @@ mod tests {
         let path = "/tmp/ilo_test_wr_json_nil.json";
         let source = format!(r#"f>R t t;v=mget mmap "x";wr "{path}" v "json""#);
         let result = run_str(&source, Some("f"), vec![]);
-        match result {
-            Value::Ok(_) => {
-                let content = std::fs::read_to_string(path).unwrap();
-                assert_eq!(content.trim(), "null");
-            }
-            other => panic!("expected Ok, got {:?}", other),
-        }
+        let Value::Ok(_) = result else { panic!("expected Ok") };
+        let content = std::fs::read_to_string(path).unwrap();
+        assert_eq!(content.trim(), "null");
     }
 
     // ── wr — error paths (lines 792, 799, 826) ────────────────────────────────
@@ -5086,14 +4990,10 @@ mod tests {
         let result = run_str(source, Some("g"), vec![
             Value::List(vec![Value::Number(1.0), Value::Number(2.0), Value::Number(3.0)]),
         ]);
-        match result {
-            Value::Map(m) => {
-                // 1/2=0.5, 2/2=1, 3/2=1.5 → 3 groups
-                assert!(m.contains_key("0.5") || m.contains_key("1.5"),
-                    "expected float key, got: {:?}", m.keys().collect::<Vec<_>>());
-            }
-            other => panic!("expected Map, got {:?}", other),
-        }
+        let Value::Map(m) = result else { panic!("expected Map") };
+        // 1/2=0.5, 2/2=1, 3/2=1.5 → 3 groups
+        assert!(m.contains_key("0.5") || m.contains_key("1.5"),
+            "expected float key, got: {:?}", m.keys().collect::<Vec<_>>());
     }
 
     // ── ForRange early return (lines 1370-1371) ───────────────────────────────
@@ -5105,5 +5005,265 @@ mod tests {
         // Syntax: @binding start..end{body}
         let result = run_str("f>n;@i 0..5{>=i 3{i};i}", Some("f"), vec![]);
         assert_eq!(result, Value::Number(3.0));
+    }
+
+    // ── wr csv with Nil field (line 820) ─────────────────────────────────────
+
+    #[test]
+    fn interpret_wr_csv_nil_field() {
+        // Nil in a csv row → `other => format!("{other}")` path (line 820)
+        // Pass Nil as a z-typed arg to bypass the verifier
+        let path = "/tmp/ilo_test_wr_nil.csv";
+        let source = format!(r#"f x:z>R t t;wr "{path}" [[x,1]] "csv""#);
+        let result = run_str(&source, Some("f"), vec![Value::Nil]);
+        match result {
+            Value::Ok(_) => {
+                let content = std::fs::read_to_string(path).unwrap();
+                assert!(content.len() > 0);
+            }
+            other => panic!("expected Ok, got {:?}", other),
+        }
+    }
+
+    // ── wr json with Ok value (line 843) ─────────────────────────────────────
+
+    #[test]
+    fn interpret_wr_json_with_ok_value() {
+        // `other => Value::from(format!("{other}"))` path in json value_to_json (line 843)
+        // Pass Value::Ok as a z-typed arg to bypass the verifier
+        let path = "/tmp/ilo_test_wr_ok.json";
+        let source = format!(r#"f x:z>R t t;wr "{path}" x "json""#);
+        let result = run_str(&source, Some("f"), vec![
+            Value::Ok(Box::new(Value::Number(1.0))),
+        ]);
+        match result {
+            Value::Ok(_) => {}
+            other => panic!("expected Ok, got {:?}", other),
+        }
+    }
+
+    // ── wr 2-arg non-text content (line 854) ─────────────────────────────────
+
+    #[test]
+    fn interpret_wr_two_arg_non_text_content_error() {
+        // wr path 42 — second arg is a number, not text (line 854 other => Err)
+        let err = run_str_err(
+            r#"f>R t t;wr "/tmp/ilo_test_bad_wr.txt" 42"#,
+            Some("f"), vec![],
+        );
+        assert!(err.contains("wr") || err.contains("text") || err.contains("content"), "got: {err}");
+    }
+
+    // ── wr fs::write failure (line 859) ──────────────────────────────────────
+
+    #[test]
+    fn interpret_wr_write_failure_returns_err() {
+        // Write to a non-existent directory → fs::write Err → Value::Err (line 859)
+        let source = r#"f>R t t;wr "/no/such/dir/ilo_test.txt" "hello""#;
+        let result = run_str(source, Some("f"), vec![]);
+        match result {
+            Value::Err(_) => {}
+            other => panic!("expected Err for bad path, got {:?}", other),
+        }
+    }
+
+    // ── wrl fs::write failure (line 874) ─────────────────────────────────────
+
+    #[test]
+    fn interpret_wrl_write_failure_returns_err() {
+        // Write to a non-existent directory → fs::write Err → Value::Err (line 874)
+        let source = r#"f>R t t;wrl "/no/such/dir/ilo_test.txt" ["a","b"]"#;
+        let result = run_str(source, Some("f"), vec![]);
+        match result {
+            Value::Err(_) => {}
+            other => panic!("expected Err for bad path, got {:?}", other),
+        }
+    }
+
+    // ── jpth array index out of bounds (line 891) ────────────────────────────
+
+    #[test]
+    fn interpret_jpth_array_index_out_of_bounds() {
+        // jpth where numeric key is out of bounds in array → Err (line 891)
+        let source = r#"f>R t t;jpth "[1,2,3]" "5""#;
+        let result = run_str(source, Some("f"), vec![]);
+        match result {
+            Value::Err(inner) => {
+                let s = inner.to_string();
+                assert!(s.contains("not found") || s.contains("5"), "got: {s}");
+            }
+            other => panic!("expected Err, got {:?}", other),
+        }
+    }
+
+    // ── grp key returns non-basic type (line 1020) ───────────────────────────
+
+    #[test]
+    fn interpret_grp_key_returns_list_error() {
+        // Key function returns a List → grp errors at line 1020
+        let source = "mk x:n>L n;[x] g xs:L n>_;grp mk xs";
+        let err = run_str_err(source, Some("g"), vec![
+            Value::List(vec![Value::Number(1.0), Value::Number(2.0)]),
+        ]);
+        assert!(err.contains("grp") || err.contains("key") || err.contains("string"), "got: {err}");
+    }
+
+    // ── ForRange non-number start/end (lines 1357, 1361) ─────────────────────
+
+    #[test]
+    fn interpret_for_range_non_number_start_error() {
+        // @i "a"..3{i} — start is text → error at line 1357
+        let err = run_str_err("f s:t>n;@i s..3{i}", Some("f"), vec![
+            Value::Text("a".into()),
+        ]);
+        assert!(err.contains("range") || err.contains("number") || err.contains("start"), "got: {err}");
+    }
+
+    #[test]
+    fn interpret_for_range_non_number_end_error() {
+        // @i 0..z{i} — end is text → error at line 1361
+        let err = run_str_err("f e:t>n;@i 0..e{i}", Some("f"), vec![
+            Value::Text("b".into()),
+        ]);
+        assert!(err.contains("range") || err.contains("number") || err.contains("end"), "got: {err}");
+    }
+
+    // ── FnRef callee from scope (line 1470) ──────────────────────────────────
+
+    #[test]
+    fn interpret_fnref_callee_from_scope() {
+        // A FnRef stored in a variable is used as a callee (line 1470)
+        let source = "sq x:n>n;*x x f cb:z>n;cb 3";
+        let result = run_str(source, Some("f"), vec![Value::FnRef("sq".into())]);
+        assert_eq!(result, Value::Number(9.0));
+    }
+
+    // ── bang on non-Result value passes through (line 1481) ──────────────────
+
+    #[test]
+    fn interpret_bang_on_non_result_passes_through() {
+        // id! where id returns a Number (not Result) → `other => Ok(other)` (line 1481)
+        // id has z return type so verifier doesn't reject !, result passes through
+        let source = "id x:n>z;x f>z;id! 42";
+        let result = run_str(source, Some("f"), vec![]);
+        // id returns Number(42), bang passes it through via the `other` arm
+        assert_eq!(result, Value::Number(42.0));
+    }
+
+    // ── TypeIs pattern _ => false (line 1700) ────────────────────────────────
+
+    #[test]
+    fn interpret_typeis_pattern_non_basic_type_no_match() {
+        // TypeIs with a type other than n/t/b/l → `_ => false` (line 1700)
+        // Pattern `?x{n _:true;_:false}` for a Record value
+        let source = "f x:z>b;?x{n _:true;_:false}";
+        let result = run_str(source, Some("f"), vec![
+            Value::Record { type_name: "pt".into(), fields: std::collections::HashMap::new() },
+        ]);
+        assert_eq!(result, Value::Bool(false));
+    }
+
+    // ── brk inside match arm propagates Break (line 1312) ────────────────────
+
+    #[test]
+    fn interpret_brk_inside_match_arm_propagates() {
+        // ?x { 2: brk x; _ : x } — when x==2 break propagates out of match arm (L1312)
+        // The match must NOT be the last stmt in the foreach body; otherwise the _:x arm
+        // converts Value(1.0) → Return(1.0) on the first iteration, exiting the function
+        // before x=2 is ever reached. Adding ;x as a trailing stmt keeps match non-last.
+        let src = "f>n;@x [1,2,3]{?x{2:brk x;_:x};x}";
+        let result = run_str(src, Some("f"), vec![]);
+        assert_eq!(result, Value::Number(2.0));
+    }
+
+    // ── text variable used as callee (line 1470) ─────────────────────────────
+
+    #[test]
+    fn interpret_text_callee_from_scope() {
+        // When a variable holds a Text naming a known function, it is used as the callee (L1470)
+        let source = "sq x:n>n;*x x f cb:z>n;cb 3";
+        let result = run_str(source, Some("f"), vec![Value::Text("sq".into())]);
+        assert_eq!(result, Value::Number(9.0));
+    }
+
+    // ── srt with bool key hits _ => Equal arm (line 583) ─────────────────────
+
+    #[test]
+    fn interpret_srt_bool_key_equal_ordering() {
+        // Key fn returns Bool → neither Number nor Text arm matches in sort_by → L583 _ => Equal
+        let source = "pos x:n>b;> x 0 f>L n;srt pos [3,-1,2,-2]";
+        let result = run_str(source, Some("f"), vec![]);
+        // All elements are compared as Bool keys → Equal ordering → list unchanged
+        match result {
+            Value::List(items) => assert_eq!(items.len(), 4),
+            other => panic!("expected List, got {:?}", other),
+        }
+    }
+
+    // ── brk inside guard body propagates Break (line 1287) ───────────────────
+
+    #[test]
+    fn interpret_brk_inside_guard_body_propagates() {
+        // Guard body containing brk: when x>2, break with x → ForEach exits early (L1287)
+        let src = "f>n;@x [1,2,3,4]{>x 2{brk x};x}";
+        let result = run_str(src, Some("f"), vec![]);
+        assert_eq!(result, Value::Number(3.0));
+    }
+
+    // ── cnt inside guard body propagates Continue (line 1288) ────────────────
+
+    #[test]
+    fn interpret_cnt_inside_guard_body_propagates() {
+        // Guard body containing cnt: when x==1, skip iteration → ForEach gets last=3 (L1288)
+        let src = "f>n;@x [1,2,3]{=x 1{cnt};x}";
+        let result = run_str(src, Some("f"), vec![]);
+        assert_eq!(result, Value::Number(3.0));
+    }
+
+    // ── brk inside ternary then-body propagates Break (line 1275) ─────────────
+
+    #[test]
+    fn interpret_brk_inside_ternary_body_propagates() {
+        // Ternary cond{then}{else}: then-body contains brk → Break propagates (L1275)
+        // When x==2: ternary true → brk x → Break(2.0) exits ForEach early
+        let src = "f>n;@x [1,2,3]{=x 2{brk x}{0};0}";
+        let result = run_str(src, Some("f"), vec![]);
+        assert_eq!(result, Value::Number(2.0));
+    }
+
+    // ── cnt inside ternary then-body propagates Continue (line 1276) ──────────
+
+    #[test]
+    fn interpret_cnt_inside_ternary_body_propagates() {
+        // Ternary cond{then}{else}: then-body contains cnt → Continue propagates (L1276)
+        // When x==1: ternary true → cnt → Continue skips that iteration
+        let src = "f>n;@x [1,2,3]{=x 1{cnt}{0};x}";
+        let result = run_str(src, Some("f"), vec![]);
+        assert_eq!(result, Value::Number(3.0));
+    }
+
+    // ── cnt inside match-expression arm returns Nil (line 1551) ──────────────
+
+    #[test]
+    fn interpret_cnt_in_match_expr_arm_returns_nil() {
+        // Expr::Match arm body returns Continue → match expr yields Nil (L1551)
+        // cnt inside match arm is "consumed" — the match expression returns Nil for that arm
+        let src = "f>n;@x [1,2,3]{r=?x{1:cnt;_:x};r}";
+        let result = run_str(src, Some("f"), vec![]);
+        // x=1: match arm 1 runs cnt → Continue consumed → Nil, r=Nil
+        // x=2: match arm _ matches → 2, r=2
+        // x=3: match arm _ matches → 3, r=3 → foreach last=3
+        assert_eq!(result, Value::Number(3.0));
+    }
+
+    // ── BodyResult::Continue in eval_call → Ok(Nil) (line 1128) ─────────────
+
+    #[test]
+    fn interpret_continue_in_function_body_returns_nil() {
+        // cnt at top level of function body → eval_body returns BodyResult::Continue
+        // eval_call L1128: BodyResult::Continue => Ok(Value::Nil)
+        // Verifier rejects this pattern (ILO-T028), but run_str bypasses the verifier
+        let result = run_str("f>_;cnt", Some("f"), vec![]);
+        assert_eq!(result, Value::Nil);
     }
 }

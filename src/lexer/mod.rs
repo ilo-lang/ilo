@@ -82,6 +82,7 @@ pub enum Token {
     #[token("<")]
     Less,
     #[token("=")]
+    #[token("==")]
     Eq,
     #[token("&")]
     Amp,
@@ -334,6 +335,32 @@ mod tests {
     fn lex_dollar_token() {
         let tokens = lex("$").unwrap();
         assert_eq!(tokens[0].0, Token::Dollar);
+    }
+
+    #[test]
+    fn lex_double_equals_is_eq() {
+        // == is sugar for = — both lex as Token::Eq
+        let single = lex("=a b").unwrap();
+        let double = lex("==a b").unwrap();
+        assert_eq!(single[0].0, Token::Eq);
+        assert_eq!(double[0].0, Token::Eq);
+        // Both followed by the same Ident
+        assert_eq!(single[1].0, double[1].0);
+    }
+
+    #[test]
+    fn lex_assign_then_equality_with_double_eq() {
+        // e==c n should lex as: Ident("e"), Eq, Ident("c"), Ident("n")
+        // (assignment e = then equality == c n won't work because == is one token)
+        // Actually: e==c → Ident("e"), Eq(==), Ident("c"), Ident("n")
+        let tokens = lex("e==c n").unwrap();
+        let types: Vec<_> = tokens.iter().map(|(t, _)| t.clone()).collect();
+        assert_eq!(types, vec![
+            Token::Ident("e".to_string()),
+            Token::Eq,
+            Token::Ident("c".to_string()),
+            Token::Ident("n".to_string()),
+        ]);
     }
 
     #[test]

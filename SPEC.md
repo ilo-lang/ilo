@@ -162,7 +162,7 @@ Prefix notation.
 | `-a b` | subtract | `n` |
 | `*a b` | multiply | `n` |
 | `/a b` | divide | `n` |
-| `=a b` | equal | any |
+| `=a b` | equal (`==a b` also accepted) | any |
 | `!=a b` | not equal | any |
 | `>a b` | greater than | `n`, `t` |
 | `<a b` | less than | `n`, `t` |

@@ -23,7 +23,7 @@ Discovered during a Claude Code session using ilo as a bash/python replacement. 
 - [x] **Bool-variable guard elision** — And/Or short-circuit was clobbering left operand register. Fixed by allocating a fresh result register. (#92)
 
 ### Syntax (accept familiar forms, hint toward canonical)
-- [ ] **`==` as sugar for `=`** — accept `==` as an alias for equality `=` in operator position. Desugars to `=` in the AST. Fixes the `e==c n` footgun (now lexes as assignment `e =` then equality `== c n`). Every LLM reflexively generates `==`; accepting it avoids retries. `=` stays canonical, formatter still emits `=`. Hints suggest `=`. Zero breaking changes.
+- [x] **`==` as sugar for `=`** — `==` lexes as `Eq` token, same as `=`. `==a b` works as equality. Removed from cross-language warnings. Note: `e==c n` parses as assignment `e = c(n)` — use `e= ==c n` for assign+equality.
 - [ ] **Full infix support** — support `a + b` alongside `+a b` everywhere. Desugars to prefix AST. Prefix stays canonical, formatter emits prefix in `--dense`. Hints suggest prefix form with token savings. Lets LLMs write familiar infix on first try, learn prefix over time via hints. Parsing: use Pratt parsing / precedence climbing. Function application (space) binds tighter than operators (`f a + b` = `(f a) + b`). Parens override precedence as usual. Design challenge: disambiguating prefix vs infix when operator follows an atom — solve during implementation.
 
 ### Diagnostics

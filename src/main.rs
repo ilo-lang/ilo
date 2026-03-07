@@ -645,7 +645,6 @@ fn warn_cross_language_syntax(source: &str, mode: OutputMode) {
         ("&&", "'&&' — ilo uses '&' for AND"),
         ("||", "'||' — ilo uses '|' for OR"),
         ("->", "'->' — ilo uses '>' for return type separator"),
-        ("==", "'==' — ilo uses '=' for equality comparison"),
         ("//", "'//' — ilo uses '--' for comments"),
     ];
 
@@ -2241,8 +2240,11 @@ mod tests {
     }
 
     #[test]
-    fn warn_cross_lang_detects_equality() {
+    fn warn_cross_lang_equality_no_longer_warns() {
+        // == is now sugar for =, so no cross-language warning
         warn_cross_language_syntax("f x:n>b;== x 1", OutputMode::Text);
+        // This should not produce any warning — just a no-op call.
+        // (Previously this warned about ==.)
     }
 
     // ── decl_name ─────────────────────────────────────────────────────────────
@@ -2645,6 +2647,7 @@ mod tests {
 
     #[test]
     fn warn_cross_lang_multiple_patterns_json_mode() {
+        // == no longer warns, but -> and // still do
         warn_cross_language_syntax("f x:n->n;== x 1 // check", OutputMode::Json);
     }
 
