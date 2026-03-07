@@ -1,120 +1,40 @@
 # ilo
 
-*ilo* — Toki Pona for "tool" ([sona.pona.la/wiki/ilo](https://sona.pona.la/wiki/ilo)). A programming language for AI agents.
+*Token-minimal language for AI coding agents.*
 
-Languages were designed for humans — visual parsing, readable syntax, spatial navigation. AI agents are not humans. They generate tokens. Every token costs latency, money, and context window. The only metric that matters is **total tokens from intent to working code**.
+[![CI](https://github.com/ilo-lang/ilo/actions/workflows/rust.yml/badge.svg)](https://github.com/ilo-lang/ilo/actions/workflows/rust.yml)  [![crates.io](https://img.shields.io/crates/v/ilo)](https://crates.io/crates/ilo)  [![npm](https://img.shields.io/npm/v/ilo-lang)](https://www.npmjs.com/package/ilo-lang)  [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-```
-Total cost = spec loading + generation + context loading + error feedback + retries
-```
+AI agents pay three costs per program: generation tokens, error feedback, retries. ilo cuts all three: 0.33× the tokens and 0.22× the characters of Python, type-verified before execution.
 
-## What It Looks Like
+## Why ilo makes agents more efficient
 
-Python:
-```python
-def total(price: float, quantity: int, rate: float) -> float:
-    sub = price * quantity
-    tax = sub * rate
-    return sub + tax
-```
+| | Python | ilo | saving |
+|---|---|---|---|
+| Token count | ~30 | ~10 | 67% |
+| Characters | ~90 | ~20 | 78% |
 
-ilo (idea9 — ultra-dense-short):
-```
-tot p:n q:n r:n>n;s=*p q;t=*s r;+s t
-```
-
-0.33x the tokens, 0.22x the characters. Same semantics.
-
-### Prefix and infix notation
-
-ilo supports both prefix (`+a b`) and infix (`a + b`) notation. Prefix is the **token-optimal** form — it eliminates parentheses and is preferred for AI agents:
-
-```
-(a * b) + c       →  +*a b c        -- saves 4 chars, 1 token
-((a + b) * c) >= 100  →  >=*+a b c 100  -- saves 7 chars, 3 tokens
-```
-
-Infix is available for readability when needed: `a + b`, `x * y + 1`, `(x + y) * 2`. Standard mathematical precedence applies.
-
-Across 25 expression patterns: **22% fewer tokens, 42% fewer characters** with prefix vs infix. See the [prefix-vs-infix benchmark](research/explorations/prefix-vs-infix/).
-
-Equality: `=a b` (prefix, token-optimal) and `a == b` (infix) are equivalent. `==a b` is also accepted as prefix.
-
-## Principles
-
-1. **Token-conservative** — every choice evaluated against total token cost across the full loop: generation, retries, error feedback, context loading.
-2. **Constrained** — small vocabulary, closed world, one way to do things. Fewer valid next-tokens = fewer wrong choices = fewer retries.
-3. **Self-contained** — each unit carries its own context: deps, types, rules. The spec travels with the program.
-4. **Language-agnostic** — structural tokens (`@`, `>`, `?`, `^`, `~`, `!`, `$`) over English words.
-5. **Graph-native** — programs express relationships (calls, depends-on, has-type). Navigable as a graph, not just readable as linear text.
-
-**Guards instead of if/else** — flat statements that return early and chain vertically. No nesting depth, no closing braces to match. **Match instead of switch** — no fall-through, each arm is independent.
-
-See [MANIFESTO.md](MANIFESTO.md) for the full rationale.
-
-## Teaching a model to write ilo
-
-### Agent Skills (zero friction)
-
-ilo ships as an [Agent Skill](https://agentskills.io) — install the plugin and the agent learns ilo automatically. No manual context loading needed.
-
-**Claude** — works across all three surfaces:
-
-| Surface | How to use ilo |
-|---------|---------------|
-| **Claude Code** (CLI) | Add marketplace then install (see [Install](#install)) |
-| **Claude Cowork** (web) | Install plugin from Browse Plugins — binary auto-installs via npm (WASM, no GitHub needed) |
-| **Claude API / Console** | Run `ilo help ai` locally, paste the output into your system prompt |
-
-**Other agents** (Codex, Cursor, GitHub Copilot, etc.):
-
-Copy `skills/ilo/` into your agent's skills directory (e.g. `~/.agents/skills/`, `.cursor/skills/`). Any tool supporting the [Agent Skills standard](https://agentskills.io) will pick it up.
-
-> **Note:** Codex and similar sandboxed environments may not grant agents full filesystem or network access, so the skill's auto-install script and I/O builtins (`rd`, `get`, etc.) may not work. In those environments, pre-install ilo in the container image and use context loading instead.
-
-### Context loading
-
-For agents without plugin support, paste the spec into the system prompt:
-
-```bash
-ilo help ai          # ~16-line ultra-compact spec for LLM consumption
-ilo help lang        # full spec
-```
-
-Works with any model. Good for one-off agents and short sessions.
-
-### Fine-tuning
-
-Train on ilo programs and error feedback loops. Best for production agents that write a lot of ilo. Not yet available as a hosted service.
-
-### Foundation model training
-
-ilo is public and MIT licensed. As usage grows, frontier models will encounter it in training data and learn it natively — the same path Python, SQL, and JSON took.
-
-## Design Journey
-
-We explored 9 syntax variants before settling on the current design. The final syntax achieves 0.33x the tokens and 0.22x the characters of equivalent Python — with high LLM generation accuracy.
-
-See [research/JOURNEY.md](research/JOURNEY.md) for the full comparison table, key findings, and links to all research documents.
+- **Shorter programs** — 0.33× tokens, 0.22× characters vs Python
+- **Verified first** — type errors caught before execution; agent gets `ILO-T004` not a stack trace
+- **Compact error codes** — one token, not a paragraph; agents correct faster, fewer retries
+- **Prefix notation** — eliminates parentheses; token-optimal form for AI generation
 
 ## Install
 
-**Claude Code** (CLI):
+**Claude Code** (CLI, recommended):
 ```bash
 /plugin marketplace add ilo-lang/ilo   # add the marketplace (once)
-/plugin install ilo-lang/ilo           # install the plugin
+/plugin install ilo-lang/ilo           # install the plugin + teach the agent ilo
 ```
-Installs the ilo binary automatically and teaches the agent to write ilo. See [Teaching a model to write ilo](#teaching-a-model-to-write-ilo) for other agents.
 
-**Cowork** (web): Browse Plugins → Add marketplace from GitHub → `ilo-lang/ilo` → install the ilo plugin. The skill auto-installs the binary via npm since Cowork can't access GitHub directly.
+**Cowork** (web): Browse Plugins → Add marketplace from GitHub → `ilo-lang/ilo` → install. Binary auto-installs via npm.
 
-**npm (works everywhere Node 20+ is available):**
+**npm (Node 20+):**
 ```bash
 npx ilo-lang 'dbl x:n>n;*x 2' 5
 # or install globally:
 npm i -g ilo-lang
 ```
-> **Note:** The npm package runs ilo via WebAssembly (interpreter mode). HTTP builtins (`get`, `$`, `post`) are not available — use the native binary for programs that need network access.
+> **Note:** npm/WASM runs interpreter mode only. HTTP builtins (`get`, `$`, `post`) are not available — use the native binary for network access.
 
 **One-liner (macOS / Linux):**
 ```bash
@@ -126,20 +46,74 @@ curl -fsSL https://raw.githubusercontent.com/ilo-lang/ilo/main/install.sh | sh
 curl -fsSL https://github.com/ilo-lang/ilo/releases/latest/download/ilo-aarch64-apple-darwin -o /usr/local/bin/ilo && chmod +x /usr/local/bin/ilo
 ```
 
-**From source (developers):**
+**From crates.io / source:**
 ```bash
+cargo install ilo
+# or from git:
 cargo install --git https://github.com/ilo-lang/ilo
 ```
 
-## Running
+## What it looks like
 
-**Run inline code:**
-```bash
-ilo 'tot p:n q:n r:n>n;s=*p q;t=*s r;+s t' 10 20 30
-# → 6200
+Python:
+```python
+def total(price: float, quantity: int, rate: float) -> float:
+    sub = price * quantity
+    tax = sub * rate
+    return sub + tax
 ```
 
-No flags needed. The first arg is code (or a file path — auto-detected). Remaining args are passed to the first function. To select a specific function in multi-function programs, name it:
+ilo:
+```
+tot p:n q:n r:n>n;s=*p q;t=*s r;+s t
+```
+
+0.33× the tokens, 0.22× the characters. Same semantics.
+
+Real-world data pipeline — fetch JSON, parse, filter, sum:
+```
+fetch url:t>R ? t;r=($!url);rdb! r "json"
+proc rows:L ?>n;clean=flt pos rows;sum clean
+pos x:?>b;>x 0
+```
+
+Three functions, no boilerplate. `$!` auto-unwraps HTTP. `rdb!` auto-unwraps parse. `>>` chains transforms.
+
+## Teaching agents
+
+### Agent Skills (zero friction)
+
+ilo ships as an [Agent Skill](https://agentskills.io) — install the plugin and the agent learns ilo automatically. No manual context loading.
+
+| Surface | How to use ilo |
+|---------|---------------|
+| **Claude Code** (CLI) | Add marketplace then install (see [Install](#install)) |
+| **Claude Cowork** (web) | Browse Plugins → install ilo — binary auto-installs via npm |
+| **Claude API / Console** | Run `ilo help ai` locally, paste output into system prompt |
+
+**Other agents** (Codex, Cursor, Copilot, etc.): copy `skills/ilo/` into your agent's skills directory. Any tool supporting the [Agent Skills standard](https://agentskills.io) will pick it up.
+
+> **Note:** Sandboxed agents (Codex etc.) may lack filesystem/network access. Pre-install ilo in the container and use context loading instead.
+
+### Context loading
+
+```bash
+ilo help ai          # ~16-line ultra-compact spec for LLM consumption
+ilo help lang        # full spec
+```
+
+### Fine-tuning
+
+Train on ilo programs and error feedback loops. Best for production agents writing a lot of ilo. Not yet available as a hosted service.
+
+## Running ilo
+
+```bash
+ilo 'tot p:n q:n r:n>n;s=*p q;t=*s r;+s t' 10 20 30   # → 6200
+ilo program.ilo 10 20 30                                 # from file
+```
+
+First arg is code or a file path (auto-detected). Remaining args are passed to the first function. Name a function to select it in multi-function programs:
 
 ```bash
 ilo 'dbl x:n>n;s=*x 2;+s 0 tot p:n q:n r:n>n;s=*p q;t=*s r;+s t' tot 10 20 30
@@ -147,27 +121,15 @@ ilo 'dbl x:n>n;s=*x 2;+s 0 tot p:n q:n r:n>n;s=*p q;t=*s r;+s t' tot 10 20 30
 
 **Higher-order functions** — `map`, `flt`, `fld` take a function name as first arg:
 ```bash
-# map: apply function to each element
-ilo 'sq x:n>n;*x x main xs:L n>L n;map sq xs' main 1,2,3,4,5
-# → [1, 4, 9, 16, 25]
-
-# flt: filter list by predicate
-ilo 'pos x:n>b;>x 0 main xs:L n>L n;flt pos xs' main -3,-1,0,2,4
-# → [2, 4]
-
-# fld: fold/reduce with accumulator
-ilo 'add a:n b:n>n;+a b main xs:L n>n;fld add xs 0' main 1,2,3,4,5
-# → 15
+ilo 'sq x:n>n;*x x main xs:L n>L n;map sq xs' main 1,2,3,4,5   # → [1, 4, 9, 16, 25]
+ilo 'pos x:n>b;>x 0 main xs:L n>L n;flt pos xs' main -3,-1,0,2,4  # → [2, 4]
+ilo 'add a:n b:n>n;+a b main xs:L n>n;fld add xs 0' main 1,2,3,4,5  # → 15
 ```
 
-**Pipe `>>`** — pass result of left as last arg to right. Chains transforms without intermediate names:
+**Pipe `>>`** — pass result of left as last arg to right:
 ```bash
-# xs >> flt pos >> map sq  =  map sq (flt pos xs)
 ilo 'sq x:n>n;*x x pos x:n>b;>x 0 main xs:L n>L n;xs >> flt pos >> map sq' main -3,-1,0,2,4
 # → [4, 16]
-
-# binding the result of a pipe chain:
-# clean=xs >> flt pos >> map dbl
 ```
 
 **Pass list arguments** with commas:
@@ -176,41 +138,21 @@ ilo 'f xs:L n>n;len xs' 1,2,3         # → 3
 ilo 'f xs:L t>t;xs.0' 'a,b,c'         # → a
 ```
 
-**Run from a file:**
-```bash
-ilo program.ilo 10 20 30
-```
-
 **Interactive REPL:**
 ```bash
 ilo repl                     # start interactive session
 ```
 Define functions, evaluate expressions, accumulate state. nvim-style commands: `:q` `:w file.ilo` `:defs` `:clear` `:help`.
 
+
 **Help & language spec:**
 ```bash
 ilo help                     # usage and examples
-ilo -h                       # same as ilo help
-ilo help lang                # print the full language specification
+ilo help lang                # full language specification
 ilo help ai                  # compact spec for LLM consumption (~16 lines)
-ilo -ai                      # same as ilo help ai
 ```
 
-**Backends:**
-
-ilo programs can run interpreted or compiled. The default is JIT compilation via Cranelift — every program is verified before execution (all calls resolve, all types align), so the compiler can trust the code and generate efficient native machine code. Falls back to the interpreter for functions using strings, lists, or records (not yet JIT-eligible).
-
-```bash
-ilo 'code' args              # default: Cranelift JIT → interpreter fallback
-ilo 'code' --run-interp ...  # tree-walking interpreter
-ilo 'code' --run-vm ...      # register VM (bytecode compiled)
-ilo 'code' --run-cranelift . # Cranelift JIT (compiled to native code)
-ilo 'code' --run-jit ...     # custom ARM64 JIT (macOS Apple Silicon only)
-```
-
-**Static verification:**
-
-All programs are verified before execution. The verifier checks function existence, arity, variable scope, type compatibility, record fields, and more — reporting all errors at once with stable error codes:
+**Static verification** — all programs verified before execution. Reports all errors at once with stable codes:
 
 ```bash
 ilo 'f x:n>n;*y 2' 5
@@ -222,14 +164,20 @@ ilo 'f x:t>n;*x 2' hello
 #   = note: in function 'f'
 ```
 
-Use `--explain` to get a detailed explanation of any error code, or to explain what a program does:
-
 ```bash
 ilo --explain ILO-T004              # explain an error code
-ilo 'f x:n>n;*x 2' --explain       # explain what the code does line-by-line
+ilo 'f x:n>n;*x 2' --explain       # explain what the code does
 ```
 
-This matches the manifesto: "verification before execution — all calls resolve, all types align, all dependencies exist."
+## Language features
+
+**Prefix and infix notation:**
+```
++*a b c            # (a * b) + c   — saves 4 chars, 1 token
+>=*+a b c 100      # ((a + b) * c) >= 100   — saves 7 chars, 3 tokens
+```
+
+Infix also works: `a + b`, `x * y + 1`. Across 25 expression patterns: **22% fewer tokens, 42% fewer characters** with prefix vs infix. See the [prefix-vs-infix benchmark](research/explorations/prefix-vs-infix/).
 
 **Auto-unwrap `!`** eliminates Result matching boilerplate:
 ```bash
@@ -241,116 +189,87 @@ ilo 'inner x:n>R n t;~x outer x:n>R n t;~(inner! x)' 42
 # → 42
 ```
 
-**HTTP GET** — `get url` or `$url` (terse alias). Returns `R t t` (Ok=body, Err=error message):
+**HTTP GET** — `get url` or `$url` (terse alias), returns `R t t`:
 ```bash
-# fetch a URL, get Ok/Err result
-ilo 'f url:t>R t t;get url' "http://httpbin.org/get"
-# → ~{ ... }
-
-# $ is shorthand for get
-ilo 'f url:t>R t t;$url' "http://httpbin.org/get"
-# → ~{ ... }
-
-# auto-unwrap with $! — 18 chars for a verified, error-handled HTTP call
-ilo 'f url:t>R t t;~($!url)' "http://httpbin.org/get"
-# → ~{ ... }
+ilo 'f url:t>R t t;$url' "http://httpbin.org/get"       # → ~{ ... }
+ilo 'f url:t>R t t;~($!url)' "http://httpbin.org/get"   # auto-unwrap
 ```
 
-**Environment variables** — `env key` reads an env var, returns `R t t`:
+**Environment variables** — `env key` returns `R t t`:
 ```bash
-ilo 'f k:t>R t t;env k' "HOME"
-# → ~"/Users/dan"
-
-ilo 'f k:t>R t t;env! k' "HOME"
-# auto-unwrap: Ok→value, Err→propagate
+ilo 'f k:t>R t t;env k' "HOME"    # → ~"/Users/dan"
+ilo 'f k:t>R t t;env! k' "HOME"   # auto-unwrap
 ```
 
-**File I/O** — `rd`, `rdl`, `wr`, `wrl` read and write files; format is auto-detected from extension:
+**File I/O** — format auto-detected from extension:
 ```bash
-# rd: read file — auto-detects format from extension
-ilo 'f p:t>R ? t;rd p' data.csv      # → Ok([[row1col1 row1col2 …] …])
-ilo 'f p:t>R ? t;rd p' data.json     # → Ok(parsed JSON)
-ilo 'f p:t>R ? t;rd p' notes.txt     # → Ok("raw text")
-
-# rd with explicit format override
-ilo 'f p:t>R ? t;rd p "json"' data.csv   # force JSON parse regardless of extension
-
-# rdb: parse a string/buffer with explicit format (for HTTP responses, env vars, etc.)
-ilo 'f s:t>R ? t;rdb s "csv"' "a,b\n1,2"   # → Ok([["a" "b"] ["1" "2"]])
-
-# rdl: read as lines → L t
-# wr / wrl: write string / write lines to file → R t t
+ilo 'f p:t>R ? t;rd p' data.csv    # → Ok([[row1col1 …] …])
+ilo 'f p:t>R ? t;rd p' data.json   # → Ok(parsed JSON)
+ilo 'f p:t>R ? t;rd p' notes.txt   # → Ok("raw text")
+ilo 'f p:t>R ? t;rd p "json"' data.csv   # force format
+ilo 'f s:t>R ? t;rdb s "csv"' "a,b\n1,2" # parse buffer
 ```
 
-**Data scripting** — string/list utilities:
+**Data scripting:**
 ```bash
 ilo 'f s:t>t;trm s' "  hello  "        # → "hello"
 ilo 'f xs:L t>L t;unq xs' a,b,a,c,b   # → ["a" "b" "c"]
 ilo 'f>t;fmt "{} + {} = {}" 1 2 3'     # → "1 + 2 = 3"
 ```
 
-**Aggregation & reshape** — `grp`, `flat`, `sum`, `avg`, `rgx` for data pipelines:
+**Aggregation & reshape:**
 ```bash
-# grp: group list by key function → M t (L a)
-ilo 'cl x:n>t;>x 5{"big"}{"small"} f xs:L n>M t L n;grp cl xs' f 1,8,3,9
-# → {"small": [1, 3], "big": [8, 9]}
-
-# sum / avg: numeric aggregation
 ilo 'f xs:L n>n;sum xs' 1,2,3,4,5      # → 15
 ilo 'f xs:L n>n;avg xs' 2,4,6          # → 4
-
-# flat: flatten nested lists one level
-# rgx: regex match/extract
-ilo 'f s:t>L t;rgx "\d+" s' "abc 123 def 456"   # → ["123", "456"]
+ilo 'f s:t>L t;rgx "\d+" s' "abc 123"  # → ["123"]
 ```
 
-**Structured output** — `wr` with format arg writes CSV, TSV, or JSON:
-```bash
-# wr path data "csv" — writes list-of-lists as CSV with proper quoting
-# wr path data "json" — writes any value as pretty JSON
-```
-
-**Imports** — split programs across files:
+**Imports:**
 ```bash
 # math.ilo: dbl n:n>n;*n 2
 # main.ilo: use "math.ilo"  run n:n>n;dbl n
 ilo main.ilo run 5           # → 10
-ilo main.ilo run 5           # scoped: use "math.ilo" [dbl]
 ```
 
-**Environment files** — `.env` and `.env.local` are loaded automatically at startup. `KEY=VALUE` format, `#` comments supported. `.env.local` takes priority. Variables are not overwritten if already set in the process environment:
+**Environment files** — `.env` and `.env.local` loaded automatically. `.env.local` takes priority; existing env vars are not overwritten:
 ```bash
 echo 'ANTHROPIC_API_KEY=sk-...' > .env
-ilo 'f k:t>R t t;env! k' ANTHROPIC_API_KEY   # reads from .env
+ilo 'f k:t>R t t;env! k' ANTHROPIC_API_KEY
 ```
 
-**Error output formats:**
+**Output formats:**
 ```bash
 ilo 'code' -a               # ANSI colour (default for TTY)
-ilo 'code' -t               # plain text (no colour)
+ilo 'code' -t               # plain text
 ilo 'code' -j               # JSON (default for piped output)
-NO_COLOR=1 ilo 'code'       # disable colour
 ```
 
 **Formatter:**
-
-Newlines are for humans — agents don't need them. An entire ilo program can be one line:
-
 ```bash
-ilo 'code' --dense / -d       # reformat (dense wire format)
-ilo 'code' --expanded / -e    # reformat (expanded human format)
+ilo 'code' --dense / -d     # dense wire format (agents)
+ilo 'code' --expanded / -e  # expanded human format
 ```
 
-**Tool execution:**
+**Other modes:**
+```bash
+ilo 'code' --emit python     # transpile to Python
+ilo program.ilo --bench tot 10 20 30  # benchmark
+```
 
-Tool declarations (`tool get-user"..." uid:t>R profile t`) are external calls. Wire them to HTTP endpoints with a JSON config:
+**Run tests:**
+```bash
+cargo test
+```
+
+## For integrators
+
+**Tool declarations** — external calls wired to HTTP endpoints via a JSON config:
 
 ```bash
 ilo program.ilo --tools tools.json args...
 ```
 
-`tools.json` maps tool names to endpoints:
-
+`tools.json`:
 ```json
 {
   "tools": {
@@ -364,21 +283,37 @@ ilo program.ilo --tools tools.json args...
 }
 ```
 
-ilo serialises call args as `{"args": [...]}`, deserialises the JSON response back to ilo values.
+ilo serialises call args as `{"args": [...]}` and deserialises the JSON response back to ilo values.
 
-**Other modes:**
+**MCP servers** — connect any MCP server to give ilo access to its tools:
+
 ```bash
-ilo 'code' --emit python     # transpile to Python
-ilo 'code'                   # no args/flags → print AST as JSON
-ilo program.ilo --bench tot 10 20 30  # benchmark
+ilo program.ilo --mcp mcp.json args...
 ```
 
-**Run tests:**
-```bash
-cargo test
+`mcp.json` uses Claude Desktop format. MCP tools are injected as `tool` declarations before verification, so types are checked end-to-end.
+
+```json
+{
+  "mcpServers": {
+    "filesystem": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
+    }
+  }
+}
 ```
 
-Tests cover: lexer, parser, interpreter, VM, verifier, codegen, diagnostic, formatter, CLI integration, and annotated example programs.
+See `examples/mcp.json` for a working example.
+
+**Backends:**
+```bash
+ilo 'code' args              # default: Cranelift JIT → interpreter fallback
+ilo 'code' --run-interp ...  # tree-walking interpreter
+ilo 'code' --run-vm ...      # register VM (bytecode compiled)
+ilo 'code' --run-cranelift . # Cranelift JIT
+ilo 'code' --run-jit ...     # custom ARM64 JIT (macOS Apple Silicon only)
+```
 
 ## Documentation
 
@@ -392,9 +327,25 @@ Tests cover: lexer, parser, interpreter, VM, verifier, codegen, diagnostic, form
 | [research/TODO.md](research/TODO.md) | Planned work |
 | [research/OPEN.md](research/OPEN.md) | Open design questions |
 
+## Principles
+
+1. **Token-conservative** — every choice evaluated against total token cost: generation, retries, error feedback, context loading.
+2. **Constrained** — small vocabulary, closed world, one way to do things. Fewer valid next-tokens = fewer wrong choices = fewer retries.
+3. **Self-contained** — each unit carries its own context: deps, types, rules.
+4. **Language-agnostic** — structural tokens (`@`, `>`, `?`, `^`, `~`, `!`, `$`) over English words.
+5. **Graph-native** — programs express relationships navigable as a graph, not just linear text.
+
+**Guards instead of if/else** — flat statements that return early and chain vertically. No nesting depth, no closing braces. **Match instead of switch** — no fall-through.
+
+See [MANIFESTO.md](MANIFESTO.md) for full rationale.
+
+## Design journey
+
+We explored 9 syntax variants before settling on the current design. See [research/JOURNEY.md](research/JOURNEY.md) for the full comparison table, key findings, and all research documents.
+
 ## Community
 
-- [r/ilolang](https://www.reddit.com/r/ilolang/) — discussion, feedback, and updates on Reddit
+- [r/ilolang](https://www.reddit.com/r/ilolang/) — discussion, feedback, and updates
 
 ```
   _  _          _
