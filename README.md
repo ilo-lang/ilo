@@ -186,6 +186,7 @@ See the [[Design Journey|https://github.com/ilo-lang/ilo/wiki/Design-Journey]] w
 ## Community
 
 - [r/ilolang](https://www.reddit.com/r/ilolang/) — discussion, feedback, and updates
+- [hello@ilo-lang.ai](mailto:hello@ilo-lang.ai) — get in touch
 
 ## Documentation
 
