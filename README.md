@@ -26,8 +26,15 @@ AI agents pay three costs per program: generation tokens, error feedback, retrie
 /plugin install ilo-lang/ilo           # install the plugin + teach the agent ilo
 ```
 
-### Cowork (web)
+### Cowork
 Browse Plugins → Add marketplace from GitHub → `ilo-lang/ilo` → install. Binary auto-installs via npm.
+
+Can also be installed by telling Claude to run:
+```bash
+npm i -g ilo-lang
+```
+
+> **Note:** Cowork uses the npm/WASM build. HTTP builtins (`get`, `$`, `post`) are not yet supported; use the native binary for network access.
 
 ### npm / npx (any platform with Node 20+)
 ```bash
