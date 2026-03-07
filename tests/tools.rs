@@ -206,6 +206,125 @@ fn get_builtin_real_http() {
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
 }
 
+// ── `ilo tools --mcp` with empty config (no servers) ─────────────────────
+
+/// `ilo tools --mcp <empty_config>` with no mcpServers: exercises the mcp_path
+/// code path without connecting to any MCP servers. Covers main.rs L44-46 (mcp_path
+/// set in tools_cmd arg parsing) and L114 (implicit else of http_path=None branch).
+#[test]
+fn tools_cmd_mcp_empty_servers() {
+    use std::io::Write;
+    let (path, mut file) = tempfile_in_tmp("tools_mcp_empty.json");
+    writeln!(file, r#"{{"mcpServers": {{}}}}"#).unwrap();
+    drop(file);
+
+    let out = ilo()
+        .args(["tools", "--mcp", &path])
+        .output()
+        .expect("ilo failed to start");
+
+    // No servers to connect → exits cleanly with empty output or success
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        !stderr.contains("thread 'main' panicked"),
+        "unexpected panic: {stderr}"
+    );
+
+    std::fs::remove_file(&path).ok();
+}
+
+// ── `ilo tools` subcommand output formats ─────────────────────────────────
+
+/// Create a minimal HTTP tools config and verify `ilo tools --tools <path>` (Human format).
+/// Covers: main.rs L114 (http_names loaded), L122-127 (Human render loop).
+#[test]
+fn tools_cmd_http_human_format() {
+    use std::io::Write;
+    let (path, mut file) = tempfile_in_tmp("tools_cmd_human.json");
+    writeln!(file, r#"{{"tools": {{"mytool": {{"url": "http://127.0.0.1:19999/mytool"}}}}}}"#).unwrap();
+    drop(file);
+
+    let out = ilo()
+        .args(["tools", "--tools", &path])
+        .output()
+        .expect("ilo failed to start");
+
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("mytool"), "expected tool name in output, got: {stdout}");
+
+    std::fs::remove_file(&path).ok();
+}
+
+/// `ilo tools --tools <path> --full` renders extra type info for HTTP tools.
+/// Covers: main.rs L123-124 (full=true branch for http tools).
+#[test]
+fn tools_cmd_http_human_full() {
+    use std::io::Write;
+    let (path, mut file) = tempfile_in_tmp("tools_cmd_human_full.json");
+    writeln!(file, r#"{{"tools": {{"bigtool": {{"url": "http://127.0.0.1:19999/bigtool"}}}}}}"#).unwrap();
+    drop(file);
+
+    let out = ilo()
+        .args(["tools", "--tools", &path, "--full"])
+        .output()
+        .expect("ilo failed to start");
+
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("bigtool"), "expected tool name in full output, got: {stdout}");
+
+    std::fs::remove_file(&path).ok();
+}
+
+/// `ilo tools --tools <path> --ilo` emits ilo tool declarations.
+/// Covers: main.rs L140-143 (Ilo format HTTP render).
+#[test]
+fn tools_cmd_http_ilo_format() {
+    use std::io::Write;
+    let (path, mut file) = tempfile_in_tmp("tools_cmd_ilo.json");
+    writeln!(file, r#"{{"tools": {{"hello": {{"url": "http://127.0.0.1:19999/hello"}}}}}}"#).unwrap();
+    drop(file);
+
+    let out = ilo()
+        .args(["tools", "--tools", &path, "--ilo"])
+        .output()
+        .expect("ilo failed to start");
+
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("hello"), "expected tool in ilo output, got: {stdout}");
+    assert!(stdout.contains("tool"), "expected 'tool' keyword in ilo output, got: {stdout}");
+
+    std::fs::remove_file(&path).ok();
+}
+
+/// `ilo tools --tools <path> --json` emits JSON array of tool metadata.
+/// Covers: main.rs L149-181 (Json format HTTP render + serde_json::to_string_pretty).
+#[test]
+fn tools_cmd_http_json_format() {
+    use std::io::Write;
+    let (path, mut file) = tempfile_in_tmp("tools_cmd_json.json");
+    writeln!(file, r#"{{"tools": {{"greet": {{"url": "http://127.0.0.1:19999/greet"}}}}}}"#).unwrap();
+    drop(file);
+
+    let out = ilo()
+        .args(["tools", "--tools", &path, "--json"])
+        .output()
+        .expect("ilo failed to start");
+
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    // Should be valid JSON array
+    let parsed: serde_json::Value = serde_json::from_str(stdout.trim())
+        .expect("expected valid JSON output");
+    assert!(parsed.is_array(), "expected JSON array, got: {parsed}");
+    let arr = parsed.as_array().unwrap();
+    assert!(arr.iter().any(|t| t["name"] == "greet"), "expected greet tool in JSON output");
+
+    std::fs::remove_file(&path).ok();
+}
+
 // ── Helper ────────────────────────────────────────────────────────────────
 
 /// Create a named temp file in the system temp directory.

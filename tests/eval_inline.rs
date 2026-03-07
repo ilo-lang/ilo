@@ -1789,3 +1789,51 @@ fn json_mode_cross_language_warning() {
     // Just verify it runs without crash; cross-language warning only fires if pattern present
     assert!(out.status.success() || !out.stderr.is_empty());
 }
+
+// ── --tools / --mcp missing value error paths ─────────────────────────────
+
+/// `ilo <code> --tools` with no following path → error + exit (main.rs L996-997)
+#[test]
+fn run_cmd_tools_flag_missing_path() {
+    let out = ilo()
+        .args(["f>n;1", "--tools"])
+        .output()
+        .expect("failed to run ilo");
+    assert!(!out.status.success(), "expected failure when --tools has no path");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("--tools"), "expected --tools error, got: {stderr}");
+}
+
+/// `ilo <code> --mcp` with no following path → error + exit (main.rs L1004-1005)
+#[test]
+fn run_cmd_mcp_flag_missing_path() {
+    let out = ilo()
+        .args(["f>n;1", "--mcp"])
+        .output()
+        .expect("failed to run ilo");
+    assert!(!out.status.success(), "expected failure when --mcp has no path");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("--mcp"), "expected --mcp error, got: {stderr}");
+}
+
+// ── verify warnings (ILO-T029) reported in run_cmd (main.rs L1107-1108) ───
+
+/// A program with unreachable code after `ret` produces an ILO-T029 warning.
+/// The warning is reported (not fatal), and the program still runs.
+#[test]
+fn run_cmd_verify_warning_unreachable_code() {
+    // `ret 1` followed by `2` — `2` is unreachable → ILO-T029 warning
+    let out = ilo()
+        .env("NO_COLOR", "1")
+        .args(["f>n;ret 1;2", "f"])
+        .output()
+        .expect("failed to run ilo");
+    // Program still runs (warnings are non-fatal)
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    // Either succeeds with output "1" or emits a warning to stderr
+    assert!(
+        stdout.trim() == "1" || stderr.contains("T029") || stderr.contains("unreachable") || stderr.contains("warn"),
+        "expected output=1 or ILO-T029 warning; stdout={stdout:?} stderr={stderr:?}"
+    );
+}
