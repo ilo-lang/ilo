@@ -71,9 +71,14 @@ Invoke-WebRequest -Uri https://github.com/ilo-lang/ilo/releases/latest/download/
 ```
 
 ### From source
+
+**crates.io:**
 ```bash
 cargo install ilo
-# or from git:
+```
+
+**Git:**
+```bash
 cargo install --git https://github.com/ilo-lang/ilo
 ```
 
