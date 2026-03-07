@@ -179,10 +179,6 @@ Guards instead of if/else: flat statements that return early and chain verticall
 
 See [MANIFESTO.md](MANIFESTO.md) for full rationale.
 
-## Design journey
-
-See [MANIFESTO.md](MANIFESTO.md) for the full design rationale.
-
 ## Community
 
 - [r/ilolang](https://www.reddit.com/r/ilolang/) — discussion, feedback, and updates
