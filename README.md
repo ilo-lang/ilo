@@ -135,61 +135,7 @@ ilo 'tot p:n q:n r:n>n;s=*p q;t=*s r;+s t' 10 20 30  # → 6200
 ilo program.ilo 10 20 30                               # from file
 ```
 
-First arg is code or a file path (auto-detected). Remaining args are passed to the first function. Name a function to select it in multi-function programs:
-
-```bash
-ilo 'dbl x:n>n;s=*x 2;+s 0 tot p:n q:n r:n>n;s=*p q;t=*s r;+s t' tot 10 20 30
-```
-
-**Higher-order functions**: `map`, `flt`, `fld` take a function name as first arg:
-```bash
-ilo 'sq x:n>n;*x x main xs:L n>L n;map sq xs' main 1,2,3,4,5   # → [1, 4, 9, 16, 25]
-ilo 'pos x:n>b;>x 0 main xs:L n>L n;flt pos xs' main -3,-1,0,2,4  # → [2, 4]
-ilo 'add a:n b:n>n;+a b main xs:L n>n;fld add xs 0' main 1,2,3,4,5  # → 15
-```
-
-**Pipe `>>`**: pass result of left as last arg to right:
-```bash
-ilo 'sq x:n>n;*x x pos x:n>b;>x 0 main xs:L n>L n;xs >> flt pos >> map sq' main -3,-1,0,2,4
-# → [4, 16]
-```
-
-**Pass list arguments** with commas:
-```bash
-ilo 'f xs:L n>n;len xs' 1,2,3         # → 3
-ilo 'f xs:L t>t;xs.0' 'a,b,c'         # → a
-```
-
-**Interactive REPL:**
-```bash
-ilo repl                     # start interactive session
-```
-Define functions, evaluate expressions, accumulate state. nvim-style commands: `:q` `:w file.ilo` `:defs` `:clear` `:help`.
-
-**Help & language spec:**
-```bash
-ilo help                     # usage and examples
-ilo help lang                # full language specification
-ilo -ai                      # compact spec for LLM consumption
-ilo repl                     # interactive REPL
-```
-
-**Static verification**: all programs verified before execution. Reports all errors at once with stable codes:
-
-```bash
-ilo 'f x:n>n;*y 2' 5
-# error[ILO-T004]: undefined variable 'y'
-#   = note: in function 'f'
-
-ilo 'f x:t>n;*x 2' hello
-# error[ILO-T009]: '*' expects n and n, got t and n
-#   = note: in function 'f'
-```
-
-```bash
-ilo --explain ILO-T004              # explain an error code
-ilo 'f x:n>n;*x 2' --explain       # explain what the code does
-```
+All programs are type-verified before execution. See the [CLI Reference](https://github.com/ilo-lang/ilo/wiki/CLI-Reference) for HOFs, pipes, REPL, output flags, and more.
 
 ## Language features
 
@@ -215,61 +161,11 @@ For built-ins (HTTP, env, file I/O, data ops, imports) and CLI flags, see the [T
 
 ## Integrations
 
-### Tool declarations
+**Tool declarations** (`--tools tools.json`) — wire external HTTP endpoints as typed ilo functions.
 
-External calls wired to HTTP endpoints via a JSON config:
+**MCP servers** (`--mcp mcp.json`) — connect any MCP server; tools are type-checked end-to-end before execution.
 
-```bash
-ilo program.ilo --tools tools.json args...
-```
-
-`tools.json`:
-```json
-{
-  "tools": {
-    "get-user": {
-      "url": "https://api.example.com/get-user",
-      "method": "POST",
-      "timeout_secs": 5,
-      "retries": 2
-    }
-  }
-}
-```
-
-ilo serialises call args as `{"args": [...]}` and deserialises the JSON response back to ilo values.
-
-### MCP servers
-
-Connect any MCP server to give ilo access to its tools:
-
-```bash
-ilo program.ilo --mcp mcp.json args...
-```
-
-`mcp.json` uses Claude Desktop format. MCP tools are injected as `tool` declarations before verification, so types are checked end-to-end.
-
-```json
-{
-  "mcpServers": {
-    "filesystem": {
-      "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
-    }
-  }
-}
-```
-
-See `examples/mcp.json` for a working example.
-
-**Backends:**
-```bash
-ilo 'code' args              # default: Cranelift JIT → interpreter fallback
-ilo 'code' --run-interp ...  # tree-walking interpreter
-ilo 'code' --run-vm ...      # register VM (bytecode compiled)
-ilo 'code' --run-cranelift . # Cranelift JIT
-ilo 'code' --run-jit ...     # custom ARM64 JIT (macOS Apple Silicon only)
-```
+See the [Integrations wiki page](https://github.com/ilo-lang/ilo/wiki/Integrations) for full config examples and backend options.
 
 ## Principles
 
@@ -285,7 +181,7 @@ See [MANIFESTO.md](MANIFESTO.md) for full rationale.
 
 ## Design journey
 
-We explored 9 syntax variants before settling on the current design. See [research/JOURNEY.md](research/JOURNEY.md) for the full comparison table, key findings, and all research documents.
+See [research/JOURNEY.md](research/JOURNEY.md) — 9 syntax variants, key findings, all research documents.
 
 ## Community
 
