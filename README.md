@@ -26,7 +26,7 @@ AI agents pay three costs per program: generation tokens, error feedback, retrie
 /plugin install ilo-lang/ilo           # install the plugin + teach the agent ilo
 ```
 
-### Cowork
+### Claude Cowork
 Browse Plugins → Add marketplace from GitHub → `ilo-lang/ilo` → install. Binary auto-installs via npm.
 
 Can also be installed by telling Claude to run:
