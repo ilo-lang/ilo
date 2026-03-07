@@ -1124,8 +1124,7 @@ impl Parser {
     /// Pratt parser: given a left-hand expression, consume infix operators
     /// with binding power >= min_bp and build the tree.
     fn parse_infix(&mut self, mut left: Expr, min_bp: u8) -> Result<Expr> {
-        loop {
-            let Some(token) = self.peek() else { break };
+        while let Some(token) = self.peek() {
             let Some((l_bp, r_bp, op)) = Self::infix_binding_power(token) else { break };
             if l_bp < min_bp {
                 break;
@@ -1350,19 +1349,20 @@ impl Parser {
             if self.can_start_operand() {
                 // If the first token is an infix-eligible operator, check if it
                 // looks like a prefix binary op (followed by 2+ atoms) or infix
-                if let Some(tok) = self.peek() {
-                    if Self::infix_binding_power(tok).is_some() && !self.looks_like_prefix_binary(self.pos) {
-                        return Ok(atom);
-                    }
+                if let Some(tok) = self.peek()
+                    && Self::infix_binding_power(tok).is_some()
+                    && !self.looks_like_prefix_binary(self.pos)
+                {
+                    return Ok(atom);
                 }
                 let mut args = Vec::new();
                 while self.can_start_operand() {
                     args.push(self.parse_operand()?);
                     // After each arg, if next is infix, stop
-                    if let Some(tok) = self.peek() {
-                        if Self::infix_binding_power(tok).is_some() {
-                            break;
-                        }
+                    if let Some(tok) = self.peek()
+                        && Self::infix_binding_power(tok).is_some()
+                    {
+                        break;
                     }
                 }
                 return Ok(Expr::Call {
