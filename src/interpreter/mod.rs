@@ -5006,4 +5006,160 @@ mod tests {
         let result = run_str("f>n;@i 0..5{>=i 3{i};i}", Some("f"), vec![]);
         assert_eq!(result, Value::Number(3.0));
     }
+
+    // ── wr csv with Nil field (line 820) ─────────────────────────────────────
+
+    #[test]
+    fn interpret_wr_csv_nil_field() {
+        // Nil in a csv row → `other => format!("{other}")` path (line 820)
+        // Pass Nil as a z-typed arg to bypass the verifier
+        let path = "/tmp/ilo_test_wr_nil.csv";
+        let source = format!(r#"f x:z>R t t;wr "{path}" [[x,1]] "csv""#);
+        let result = run_str(&source, Some("f"), vec![Value::Nil]);
+        match result {
+            Value::Ok(_) => {
+                let content = std::fs::read_to_string(path).unwrap();
+                assert!(content.len() > 0);
+            }
+            other => panic!("expected Ok, got {:?}", other),
+        }
+    }
+
+    // ── wr json with Ok value (line 843) ─────────────────────────────────────
+
+    #[test]
+    fn interpret_wr_json_with_ok_value() {
+        // `other => Value::from(format!("{other}"))` path in json value_to_json (line 843)
+        // Pass Value::Ok as a z-typed arg to bypass the verifier
+        let path = "/tmp/ilo_test_wr_ok.json";
+        let source = format!(r#"f x:z>R t t;wr "{path}" x "json""#);
+        let result = run_str(&source, Some("f"), vec![
+            Value::Ok(Box::new(Value::Number(1.0))),
+        ]);
+        match result {
+            Value::Ok(_) => {}
+            other => panic!("expected Ok, got {:?}", other),
+        }
+    }
+
+    // ── wr 2-arg non-text content (line 854) ─────────────────────────────────
+
+    #[test]
+    fn interpret_wr_two_arg_non_text_content_error() {
+        // wr path 42 — second arg is a number, not text (line 854 other => Err)
+        let err = run_str_err(
+            r#"f>R t t;wr "/tmp/ilo_test_bad_wr.txt" 42"#,
+            Some("f"), vec![],
+        );
+        assert!(err.contains("wr") || err.contains("text") || err.contains("content"), "got: {err}");
+    }
+
+    // ── wr fs::write failure (line 859) ──────────────────────────────────────
+
+    #[test]
+    fn interpret_wr_write_failure_returns_err() {
+        // Write to a non-existent directory → fs::write Err → Value::Err (line 859)
+        let source = r#"f>R t t;wr "/no/such/dir/ilo_test.txt" "hello""#;
+        let result = run_str(source, Some("f"), vec![]);
+        match result {
+            Value::Err(_) => {}
+            other => panic!("expected Err for bad path, got {:?}", other),
+        }
+    }
+
+    // ── wrl fs::write failure (line 874) ─────────────────────────────────────
+
+    #[test]
+    fn interpret_wrl_write_failure_returns_err() {
+        // Write to a non-existent directory → fs::write Err → Value::Err (line 874)
+        let source = r#"f>R t t;wrl "/no/such/dir/ilo_test.txt" ["a","b"]"#;
+        let result = run_str(source, Some("f"), vec![]);
+        match result {
+            Value::Err(_) => {}
+            other => panic!("expected Err for bad path, got {:?}", other),
+        }
+    }
+
+    // ── jpth array index out of bounds (line 891) ────────────────────────────
+
+    #[test]
+    fn interpret_jpth_array_index_out_of_bounds() {
+        // jpth where numeric key is out of bounds in array → Err (line 891)
+        let source = r#"f>R t t;jpth "[1,2,3]" "5""#;
+        let result = run_str(source, Some("f"), vec![]);
+        match result {
+            Value::Err(inner) => {
+                let s = inner.to_string();
+                assert!(s.contains("not found") || s.contains("5"), "got: {s}");
+            }
+            other => panic!("expected Err, got {:?}", other),
+        }
+    }
+
+    // ── grp key returns non-basic type (line 1020) ───────────────────────────
+
+    #[test]
+    fn interpret_grp_key_returns_list_error() {
+        // Key function returns a List → grp errors at line 1020
+        let source = "mk x:n>L n;[x] g xs:L n>_;grp mk xs";
+        let err = run_str_err(source, Some("g"), vec![
+            Value::List(vec![Value::Number(1.0), Value::Number(2.0)]),
+        ]);
+        assert!(err.contains("grp") || err.contains("key") || err.contains("string"), "got: {err}");
+    }
+
+    // ── ForRange non-number start/end (lines 1357, 1361) ─────────────────────
+
+    #[test]
+    fn interpret_for_range_non_number_start_error() {
+        // @i "a"..3{i} — start is text → error at line 1357
+        let err = run_str_err("f s:t>n;@i s..3{i}", Some("f"), vec![
+            Value::Text("a".into()),
+        ]);
+        assert!(err.contains("range") || err.contains("number") || err.contains("start"), "got: {err}");
+    }
+
+    #[test]
+    fn interpret_for_range_non_number_end_error() {
+        // @i 0..z{i} — end is text → error at line 1361
+        let err = run_str_err("f e:t>n;@i 0..e{i}", Some("f"), vec![
+            Value::Text("b".into()),
+        ]);
+        assert!(err.contains("range") || err.contains("number") || err.contains("end"), "got: {err}");
+    }
+
+    // ── FnRef callee from scope (line 1470) ──────────────────────────────────
+
+    #[test]
+    fn interpret_fnref_callee_from_scope() {
+        // A FnRef stored in a variable is used as a callee (line 1470)
+        let source = "sq x:n>n;*x x f cb:z>n;cb 3";
+        let result = run_str(source, Some("f"), vec![Value::FnRef("sq".into())]);
+        assert_eq!(result, Value::Number(9.0));
+    }
+
+    // ── bang on non-Result value passes through (line 1481) ──────────────────
+
+    #[test]
+    fn interpret_bang_on_non_result_passes_through() {
+        // id! where id returns a Number (not Result) → `other => Ok(other)` (line 1481)
+        // id has z return type so verifier doesn't reject !, result passes through
+        let source = "id x:n>z;x f>z;id! 42";
+        let result = run_str(source, Some("f"), vec![]);
+        // id returns Number(42), bang passes it through via the `other` arm
+        assert_eq!(result, Value::Number(42.0));
+    }
+
+    // ── TypeIs pattern _ => false (line 1700) ────────────────────────────────
+
+    #[test]
+    fn interpret_typeis_pattern_non_basic_type_no_match() {
+        // TypeIs with a type other than n/t/b/l → `_ => false` (line 1700)
+        // Pattern `?x{n _:true;_:false}` for a Record value
+        let source = "f x:z>b;?x{n _:true;_:false}";
+        let result = run_str(source, Some("f"), vec![
+            Value::Record { type_name: "pt".into(), fields: std::collections::HashMap::new() },
+        ]);
+        assert_eq!(result, Value::Bool(false));
+    }
 }

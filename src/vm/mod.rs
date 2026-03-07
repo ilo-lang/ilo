@@ -11233,4 +11233,79 @@ mod tests {
         let g_pos = err.call_stack.iter().position(|n| n == "g").unwrap();
         assert!(f_pos < g_pos, "expected f before g in call stack: {:?}", err.call_stack);
     }
+
+    // ForEach with cnt (continue) — exercises continue_patches patching (L699-706)
+    #[test]
+    fn vm_foreach_cnt_skips_elements() {
+        // Skip x==3, sum the rest: 1+2+4+5 = 12
+        let src = "f>n;s=0;@x [1,2,3,4,5]{=x 3{cnt};s=+s x};s";
+        assert_eq!(vm_run(src, Some("f"), vec![]), Value::Number(12.0));
+    }
+
+    // ForRange with cnt (continue) — exercises continue_patches patching for range (L767-776)
+    #[test]
+    fn vm_range_cnt_patches_applied() {
+        // Already tested in vm_range_cnt; this confirms continue_patch loop runs at L771-775
+        // Skip i==2: sum 0+1+3+4 = 8
+        let src = "f>n;s=0;@i 0..5{=i 2{cnt};s=+s i};s";
+        assert_eq!(vm_run(src, Some("f"), vec![]), Value::Number(8.0));
+    }
+
+    // brk with expression inside ForEach (L841-853)
+    #[test]
+    fn vm_foreach_brk_with_expr() {
+        // brk 99 when x==3 → result is 99
+        let src = "f>n;@x [1,2,3,4,5]{=x 3{brk 99};x}";
+        assert_eq!(vm_run(src, Some("f"), vec![]), Value::Number(99.0));
+    }
+
+    // OP_GET type error: non-string arg (L3705-3710)
+    // get requires a string url; passing a non-string triggers type error
+    #[test]
+    fn vm_get_non_string_url_error() {
+        let err = vm_run_err("f u:z>R t t;get u", Some("f"), vec![Value::Number(42.0)]);
+        assert!(err.contains("get") || err.contains("string") || err.contains("type"), "got: {err}");
+    }
+
+    // OP_POST type error: non-string args (L3727-3734)
+    #[test]
+    fn vm_post_non_string_args_error() {
+        let err = vm_run_err(
+            "f u:z b:z>R t t;post u b",
+            Some("f"),
+            vec![Value::Number(1.0), Value::Text("body".into())],
+        );
+        assert!(err.contains("post") || err.contains("string") || err.contains("type"), "got: {err}");
+    }
+
+    // OP_GETH type error: non-string url (L3753-3761)
+    #[test]
+    fn vm_geth_non_string_url_error() {
+        let err = vm_run_err(
+            "f u:z h:M t t>R t t;get u h",
+            Some("f"),
+            vec![Value::Number(42.0), Value::Map(std::collections::HashMap::new())],
+        );
+        assert!(err.contains("get") || err.contains("string") || err.contains("type"), "got: {err}");
+    }
+
+    // OP_POSTH type error: non-string url (L3789-3802)
+    #[test]
+    fn vm_posth_non_string_url_error() {
+        let err = vm_run_err(
+            "f u:z b:z h:M t t>R t t;post u b h",
+            Some("f"),
+            vec![Value::Number(1.0), Value::Text("body".into()), Value::Map(std::collections::HashMap::new())],
+        );
+        assert!(err.contains("post") || err.contains("string") || err.contains("type"), "got: {err}");
+    }
+
+    // Destructure existing binding with ambiguous field index → OP_RECFLD_NAME (L570)
+    // Two types with y at different indices; destructure y twice (second into existing binding)
+    #[test]
+    fn vm_destructure_existing_binding_ambiguous_field() {
+        // First {y}=r creates the y binding, second {y}=r2 reuses it (existing_reg path, L570)
+        let src = "type a{x:n;y:n} type b{y:n;x:n} f>n;r=a x:1 y:2;{y}=r;r2=a x:3 y:4;{y}=r2;y";
+        assert_eq!(vm_run(src, Some("f"), vec![]), Value::Number(4.0));
+    }
 }
