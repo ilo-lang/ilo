@@ -485,6 +485,32 @@ fn type_to_ilo(ty: &ast::Type) -> String {
     }
 }
 
+/// Count brace depth: returns >0 if there are unclosed `{` braces.
+/// Ignores braces inside string literals and comments.
+fn brace_depth(s: &str) -> i32 {
+    let mut depth: i32 = 0;
+    let mut in_string = false;
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '-' && chars.peek() == Some(&'-') && !in_string {
+            break; // `--` comment runs to end of input
+        }
+        if c == '"' {
+            in_string = !in_string;
+            continue;
+        }
+        if in_string {
+            continue;
+        }
+        if c == '{' {
+            depth += 1;
+        } else if c == '}' {
+            depth -= 1;
+        }
+    }
+    depth
+}
+
 /// Interactive REPL — define functions, evaluate expressions, accumulate state.
 fn repl_cmd() {
     use std::io::{BufRead, Write};
@@ -510,7 +536,34 @@ fn repl_cmd() {
             Err(_) => break,
         }
 
-        let input = line.trim();
+        let mut input_buf = line.trim().to_string();
+        if input_buf.is_empty() {
+            continue;
+        }
+
+        // Multi-line: keep reading if braces are unbalanced or line ends with `;`
+        while brace_depth(&input_buf) > 0 || input_buf.ends_with(';') {
+            print!(".. ");
+            std::io::stdout().flush().ok();
+            let mut cont = String::new();
+            match reader.read_line(&mut cont) {
+                Ok(0) => break, // Ctrl+D
+                Ok(_) => {}
+                Err(_) => break,
+            }
+            let trimmed = cont.trim();
+            if trimmed.is_empty() {
+                break; // blank line submits what we have
+            }
+            // Join with `;` so multi-line fields/statements parse correctly,
+            // but not when: buffer already ends with `;`, after `{`, or before `}`
+            if !input_buf.ends_with('{') && !input_buf.ends_with(';') && !trimmed.starts_with('}') {
+                input_buf.push(';');
+            }
+            input_buf.push_str(trimmed);
+        }
+
+        let input = input_buf.trim();
         if input.is_empty() {
             continue;
         }
@@ -586,7 +639,7 @@ fn repl_cmd() {
                 let (program, errors) = parser::parse(token_spans);
                 if errors.is_empty()
                     && !program.declarations.is_empty()
-                    && program.declarations.iter().all(|d| matches!(d, ast::Decl::Function { .. }))
+                    && program.declarations.iter().all(|d| matches!(d, ast::Decl::Function { .. } | ast::Decl::TypeDef { .. } | ast::Decl::Alias { .. }))
                 {
                     Some(program)
                 } else {
@@ -601,9 +654,19 @@ fn repl_cmd() {
             defs.push(input.to_string());
 
             for d in &program.declarations {
-                if let ast::Decl::Function { name, params, return_type, .. } = d {
-                    let params_str: Vec<_> = params.iter().map(|p| format!("{}:{}", p.name, type_to_ilo(&p.ty))).collect();
-                    println!("defined: {}({}) -> {}", name, params_str.join(", "), type_to_ilo(return_type));
+                match d {
+                    ast::Decl::Function { name, params, return_type, .. } => {
+                        let params_str: Vec<_> = params.iter().map(|p| format!("{}:{}", p.name, type_to_ilo(&p.ty))).collect();
+                        println!("defined: {}({}) -> {}", name, params_str.join(", "), type_to_ilo(return_type));
+                    }
+                    ast::Decl::TypeDef { name, fields, .. } => {
+                        let fields_str: Vec<_> = fields.iter().map(|f| format!("{}:{}", f.name, type_to_ilo(&f.ty))).collect();
+                        println!("defined type: {}{{{}}}", name, fields_str.join(";"));
+                    }
+                    ast::Decl::Alias { name, target, .. } => {
+                        println!("defined alias: {} = {}", name, type_to_ilo(target));
+                    }
+                    _ => {}
                 }
             }
             continue;
