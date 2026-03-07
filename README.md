@@ -49,17 +49,24 @@ curl -fsSL https://raw.githubusercontent.com/ilo-lang/ilo/main/install.sh | sh
 ```
 
 ### Direct download
+
+**macOS Apple Silicon:**
 ```bash
-# macOS Apple Silicon
 curl -fsSL https://github.com/ilo-lang/ilo/releases/latest/download/ilo-aarch64-apple-darwin -o /usr/local/bin/ilo && chmod +x /usr/local/bin/ilo
+```
 
-# macOS Intel
+**macOS Intel:**
+```bash
 curl -fsSL https://github.com/ilo-lang/ilo/releases/latest/download/ilo-x86_64-apple-darwin -o /usr/local/bin/ilo && chmod +x /usr/local/bin/ilo
+```
 
-# Linux x86_64
+**Linux x86_64:**
+```bash
 curl -fsSL https://github.com/ilo-lang/ilo/releases/latest/download/ilo-x86_64-unknown-linux-gnu -o /usr/local/bin/ilo && chmod +x /usr/local/bin/ilo
+```
 
-# Windows (PowerShell)
+**Windows (PowerShell):**
+```powershell
 Invoke-WebRequest -Uri https://github.com/ilo-lang/ilo/releases/latest/download/ilo-x86_64-pc-windows-msvc.exe -OutFile ilo.exe
 ```
 
