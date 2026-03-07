@@ -62,9 +62,9 @@ ilo ships as an [Agent Skill](https://agentskills.io) — install the plugin and
 
 | Surface | How to use ilo |
 |---------|---------------|
-| **Claude Code** (CLI) | `/plugin install ilo-lang/ilo` — the skill loads automatically |
-| **Claude Cowork** (web) | Install the ilo plugin from Browse Plugins → the agent can write and run ilo |
-| **Claude API / Console** | Paste `ilo help ai` into the system prompt (see context loading below) |
+| **Claude Code** (CLI) | Add marketplace then install (see [Install](#install)) |
+| **Claude Cowork** (web) | Coming soon |
+| **Claude API / Console** | Run `ilo help ai` locally, paste the output into your system prompt |
 
 **Other agents** (Codex, Cursor, GitHub Copilot, etc.):
 
@@ -101,9 +101,10 @@ See [research/JOURNEY.md](research/JOURNEY.md) for the full comparison table, ke
 
 **Agent Skill (Claude Code / Cowork):**
 ```bash
-/plugin install ilo-lang/ilo
+/plugin marketplace add ilo-lang/ilo   # add the marketplace (once)
+/plugin install ilo-lang/ilo           # install the plugin
 ```
-Installs the ilo binary automatically and teaches the agent to write ilo. See [Teaching a model to write ilo](#teaching-a-model-to-write-ilo) for other agents.
+Installs the ilo binary automatically and teaches the agent to write ilo. In Cowork, use Browse Plugins → Add marketplace from GitHub → `ilo-lang/ilo`. See [Teaching a model to write ilo](#teaching-a-model-to-write-ilo) for other agents.
 
 **One-liner (macOS / Linux):**
 ```bash
