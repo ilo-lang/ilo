@@ -393,6 +393,18 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             other => Err(RuntimeError::new("ILO-R009", format!("abs requires a number, got {:?}", other))),
         };
     }
+    if name == "mod" && args.len() == 2 {
+        return match (&args[0], &args[1]) {
+            (Value::Number(a), Value::Number(b)) => {
+                if *b == 0.0 {
+                    Err(RuntimeError::new("ILO-R003", "modulo by zero".to_string()))
+                } else {
+                    Ok(Value::Number(a % b))
+                }
+            }
+            _ => Err(RuntimeError::new("ILO-R009", "mod requires two numbers".to_string())),
+        };
+    }
     if (name == "min" || name == "max") && args.len() == 2 {
         return match (&args[0], &args[1]) {
             (Value::Number(a), Value::Number(b)) => {

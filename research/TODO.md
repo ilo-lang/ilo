@@ -35,7 +35,7 @@ Discovered during a Claude Code session using ilo as a bash/python replacement. 
 - [ ] **Idiomatic hints on successful runs** — walk the AST after execution and suggest canonical forms. E.g. `(a + b)` → `hint: +a b saves 2 tokens`, `==a b` → `hint: =a b saves 1 token`. Teaches idiomatic ilo as you go. Output channels: **TTY** → stderr (human sees it), **JSON/serv mode** → `"hints"` field in response (LLM sees it), **plain pipe** → nothing. Disable with `-nh` / `--no-hints`.
 
 ### Nice-to-have
-- [ ] **Modulo builtin** — `mod a b` or `%a b`. Currently requires `flr /a b` then `*` then compare. Common enough (FizzBuzz, even/odd checks) to justify a builtin.
+- [x] **Modulo builtin** — `mod a b` returns remainder. Implemented across verifier, interpreter, and VM with division-by-zero check.
 
 ### Testing
 - [ ] **Parser coverage 85% → 90%+** — lowest coverage module. The multi-function boundary and `==` lexing issues suggest more edge case tests are needed.
