@@ -13,10 +13,10 @@ AI agents pay three costs per program: generation tokens, error feedback, retrie
 | Token count | ~30 | ~10 | 67% |
 | Characters | ~90 | ~20 | 78% |
 
-- **Shorter programs** — 0.33× tokens, 0.22× characters vs Python
-- **Verified first** — type errors caught before execution; agent gets `ILO-T004` not a stack trace
-- **Compact error codes** — one token, not a paragraph; agents correct faster, fewer retries
-- **Prefix notation** — eliminates parentheses; token-optimal form for AI generation
+- **Shorter programs**: 0.33× tokens, 0.22× characters vs Python
+- **Verified first**: type errors caught before execution; agent gets `ILO-T004` not a stack trace
+- **Compact error codes**: one token, not a paragraph; agents correct faster, fewer retries
+- **Prefix notation**: eliminates parentheses; token-optimal form for AI generation
 
 ## Install
 
@@ -34,7 +34,7 @@ npx ilo-lang 'dbl x:n>n;*x 2' 5
 # or install globally:
 npm i -g ilo-lang
 ```
-> **Note:** npm/WASM runs interpreter mode only. HTTP builtins (`get`, `$`, `post`) are not available — use the native binary for network access.
+> **Note:** npm/WASM runs interpreter mode only. HTTP builtins (`get`, `$`, `post`) are not available; use the native binary for network access.
 
 **One-liner (macOS / Linux):**
 ```bash
@@ -70,7 +70,7 @@ tot p:n q:n r:n>n;s=*p q;t=*s r;+s t
 
 0.33× the tokens, 0.22× the characters. Same semantics.
 
-Real-world data pipeline — fetch JSON, parse, filter, sum:
+Real-world data pipeline: fetch JSON, parse, filter, sum:
 ```
 fetch url:t>R ? t;r=($!url);rdb! r "json"
 proc rows:L ?>n;clean=flt pos rows;sum clean
@@ -83,12 +83,12 @@ Three functions, no boilerplate. `$!` auto-unwraps HTTP. `rdb!` auto-unwraps par
 
 ### Agent Skills (zero friction)
 
-ilo ships as an [Agent Skill](https://agentskills.io) — install the plugin and the agent learns ilo automatically. No manual context loading.
+ilo ships as an [Agent Skill](https://agentskills.io). Install the plugin and the agent learns ilo automatically; no manual context loading needed.
 
 | Surface | How to use ilo |
 |---------|---------------|
 | **Claude Code** (CLI) | Add marketplace then install (see [Install](#install)) |
-| **Claude Cowork** (web) | Browse Plugins → install ilo — binary auto-installs via npm |
+| **Claude Cowork** (web) | Browse Plugins → install ilo (binary auto-installs via npm) |
 | **Claude API / Console** | Run `ilo help ai` locally, paste output into system prompt |
 
 **Other agents** (Codex, Cursor, Copilot, etc.): copy `skills/ilo/` into your agent's skills directory. Any tool supporting the [Agent Skills standard](https://agentskills.io) will pick it up.
@@ -119,14 +119,14 @@ First arg is code or a file path (auto-detected). Remaining args are passed to t
 ilo 'dbl x:n>n;s=*x 2;+s 0 tot p:n q:n r:n>n;s=*p q;t=*s r;+s t' tot 10 20 30
 ```
 
-**Higher-order functions** — `map`, `flt`, `fld` take a function name as first arg:
+**Higher-order functions**: `map`, `flt`, `fld` take a function name as first arg:
 ```bash
 ilo 'sq x:n>n;*x x main xs:L n>L n;map sq xs' main 1,2,3,4,5   # → [1, 4, 9, 16, 25]
 ilo 'pos x:n>b;>x 0 main xs:L n>L n;flt pos xs' main -3,-1,0,2,4  # → [2, 4]
 ilo 'add a:n b:n>n;+a b main xs:L n>n;fld add xs 0' main 1,2,3,4,5  # → 15
 ```
 
-**Pipe `>>`** — pass result of left as last arg to right:
+**Pipe `>>`**: pass result of left as last arg to right:
 ```bash
 ilo 'sq x:n>n;*x x pos x:n>b;>x 0 main xs:L n>L n;xs >> flt pos >> map sq' main -3,-1,0,2,4
 # → [4, 16]
@@ -144,7 +144,6 @@ ilo repl                     # start interactive session
 ```
 Define functions, evaluate expressions, accumulate state. nvim-style commands: `:q` `:w file.ilo` `:defs` `:clear` `:help`.
 
-
 **Help & language spec:**
 ```bash
 ilo help                     # usage and examples
@@ -152,7 +151,7 @@ ilo help lang                # full language specification
 ilo help ai                  # compact spec for LLM consumption (~16 lines)
 ```
 
-**Static verification** — all programs verified before execution. Reports all errors at once with stable codes:
+**Static verification**: all programs verified before execution. Reports all errors at once with stable codes:
 
 ```bash
 ilo 'f x:n>n;*y 2' 5
@@ -173,8 +172,8 @@ ilo 'f x:n>n;*x 2' --explain       # explain what the code does
 
 **Prefix and infix notation:**
 ```
-+*a b c            # (a * b) + c   — saves 4 chars, 1 token
->=*+a b c 100      # ((a + b) * c) >= 100   — saves 7 chars, 3 tokens
++*a b c            # (a * b) + c      saves 4 chars, 1 token
+>=*+a b c 100      # ((a + b) * c) >= 100   saves 7 chars, 3 tokens
 ```
 
 Infix also works: `a + b`, `x * y + 1`. Across 25 expression patterns: **22% fewer tokens, 42% fewer characters** with prefix vs infix. See the [prefix-vs-infix benchmark](research/explorations/prefix-vs-infix/).
@@ -189,19 +188,19 @@ ilo 'inner x:n>R n t;~x outer x:n>R n t;~(inner! x)' 42
 # → 42
 ```
 
-**HTTP GET** — `get url` or `$url` (terse alias), returns `R t t`:
+**HTTP GET**: `get url` or `$url` (terse alias), returns `R t t`:
 ```bash
 ilo 'f url:t>R t t;$url' "http://httpbin.org/get"       # → ~{ ... }
 ilo 'f url:t>R t t;~($!url)' "http://httpbin.org/get"   # auto-unwrap
 ```
 
-**Environment variables** — `env key` returns `R t t`:
+**Environment variables**: `env key` returns `R t t`:
 ```bash
 ilo 'f k:t>R t t;env k' "HOME"    # → ~"/Users/dan"
 ilo 'f k:t>R t t;env! k' "HOME"   # auto-unwrap
 ```
 
-**File I/O** — format auto-detected from extension:
+**File I/O**: format auto-detected from extension:
 ```bash
 ilo 'f p:t>R ? t;rd p' data.csv    # → Ok([[row1col1 …] …])
 ilo 'f p:t>R ? t;rd p' data.json   # → Ok(parsed JSON)
@@ -231,7 +230,7 @@ ilo 'f s:t>L t;rgx "\d+" s' "abc 123"  # → ["123"]
 ilo main.ilo run 5           # → 10
 ```
 
-**Environment files** — `.env` and `.env.local` loaded automatically. `.env.local` takes priority; existing env vars are not overwritten:
+**Environment files**: `.env` and `.env.local` loaded automatically. `.env.local` takes priority; existing env vars are not overwritten:
 ```bash
 echo 'ANTHROPIC_API_KEY=sk-...' > .env
 ilo 'f k:t>R t t;env! k' ANTHROPIC_API_KEY
@@ -263,7 +262,7 @@ cargo test
 
 ## For integrators
 
-**Tool declarations** — external calls wired to HTTP endpoints via a JSON config:
+**Tool declarations**: external calls wired to HTTP endpoints via a JSON config:
 
 ```bash
 ilo program.ilo --tools tools.json args...
@@ -285,7 +284,7 @@ ilo program.ilo --tools tools.json args...
 
 ilo serialises call args as `{"args": [...]}` and deserialises the JSON response back to ilo values.
 
-**MCP servers** — connect any MCP server to give ilo access to its tools:
+**MCP servers**: connect any MCP server to give ilo access to its tools:
 
 ```bash
 ilo program.ilo --mcp mcp.json args...
@@ -322,20 +321,20 @@ ilo 'code' --run-jit ...     # custom ARM64 JIT (macOS Apple Silicon only)
 | [SPEC.md](SPEC.md) | Language specification |
 | [examples/](examples/) | Runnable example programs (also `cargo test` regression suite) |
 | [MANIFESTO.md](MANIFESTO.md) | Design rationale |
-| [research/JOURNEY.md](research/JOURNEY.md) | Design journey — syntax variants, benchmarks, research index |
+| [research/JOURNEY.md](research/JOURNEY.md) | Design journey: syntax variants, benchmarks, research index |
 | [skills/ilo/](skills/ilo/) | Agent Skill (for AI coding agents) |
 | [research/TODO.md](research/TODO.md) | Planned work |
 | [research/OPEN.md](research/OPEN.md) | Open design questions |
 
 ## Principles
 
-1. **Token-conservative** — every choice evaluated against total token cost: generation, retries, error feedback, context loading.
-2. **Constrained** — small vocabulary, closed world, one way to do things. Fewer valid next-tokens = fewer wrong choices = fewer retries.
-3. **Self-contained** — each unit carries its own context: deps, types, rules.
-4. **Language-agnostic** — structural tokens (`@`, `>`, `?`, `^`, `~`, `!`, `$`) over English words.
-5. **Graph-native** — programs express relationships navigable as a graph, not just linear text.
+1. **Token-conservative**: every choice evaluated against total token cost: generation, retries, error feedback, context loading.
+2. **Constrained**: small vocabulary, closed world, one way to do things. Fewer valid next-tokens = fewer wrong choices = fewer retries.
+3. **Self-contained**: each unit carries its own context: deps, types, rules.
+4. **Language-agnostic**: structural tokens (`@`, `>`, `?`, `^`, `~`, `!`, `$`) over English words.
+5. **Graph-native**: programs express relationships navigable as a graph, not just linear text.
 
-**Guards instead of if/else** — flat statements that return early and chain vertically. No nesting depth, no closing braces. **Match instead of switch** — no fall-through.
+Guards instead of if/else: flat statements that return early and chain vertically. No nesting depth, no closing braces. Match instead of switch: no fall-through.
 
 See [MANIFESTO.md](MANIFESTO.md) for full rationale.
 
