@@ -151,7 +151,7 @@ Single-line only. `--` to end of line. No multi-line comment syntax — newlines
 
 ## Operators
 
-Both prefix and infix notation supported. Prefix is canonical (denser).
+Both prefix and infix notation are supported. **Prefix is preferred** — it is the token-optimal form that eliminates parentheses and produces denser code. Infix is available for readability when needed.
 
 ### Binary
 
@@ -162,7 +162,7 @@ Both prefix and infix notation supported. Prefix is canonical (denser).
 | `-a b` | `a - b` | subtract | `n` |
 | `*a b` | `a * b` | multiply | `n` |
 | `/a b` | `a / b` | divide | `n` |
-| `=a b` | `a == b` | equal (`==a b` also accepted) | any |
+| `=a b` | `a == b` | equal (prefix `=` is preferred; `==a b` also accepted) | any |
 | `!=a b` | `a != b` | not equal | any |
 | `>a b` | `a > b` | greater than | `n`, `t` |
 | `<a b` | `a < b` | less than | `n`, `t` |

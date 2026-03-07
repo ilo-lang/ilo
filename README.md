@@ -25,16 +25,20 @@ tot p:n q:n r:n>n;s=*p q;t=*s r;+s t
 
 0.33x the tokens, 0.22x the characters. Same semantics.
 
-### Why prefix notation?
+### Prefix and infix notation
 
-ilo uses prefix notation (`+a b` instead of `a + b`). Nesting eliminates parentheses entirely:
+ilo supports both prefix (`+a b`) and infix (`a + b`) notation. Prefix is the **token-optimal** form — it eliminates parentheses and is preferred for AI agents:
 
 ```
 (a * b) + c       →  +*a b c        -- saves 4 chars, 1 token
 ((a + b) * c) >= 100  →  >=*+a b c 100  -- saves 7 chars, 3 tokens
 ```
 
-Across 25 expression patterns: **22% fewer tokens, 42% fewer characters** vs infix. See the [prefix-vs-infix benchmark](research/explorations/prefix-vs-infix/).
+Infix is available for readability when needed: `a + b`, `x * y + 1`, `(x + y) * 2`. Standard mathematical precedence applies.
+
+Across 25 expression patterns: **22% fewer tokens, 42% fewer characters** with prefix vs infix. See the [prefix-vs-infix benchmark](research/explorations/prefix-vs-infix/).
+
+Equality: `=a b` (prefix, token-optimal) and `a == b` (infix) are equivalent. `==a b` is also accepted as prefix.
 
 ## Principles
 
