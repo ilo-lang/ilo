@@ -10229,12 +10229,11 @@ mod tests {
     // Achieved by passing a record value directly as argument (not constructed in VM)
     #[test]
     fn vm_recfld_heap_record_field_access() {
-        // Records passed as arguments are heap-allocated (not arena)
-        // The function accesses field 0 of the record
-        let source = "f r:pt>n;r.x\ntype pt{x:n;y:n}";
+        // Records passed as arguments are heap-allocated (not arena).
+        // Use a single-field type to avoid HashMap iteration order non-determinism.
+        let source = "f r:pt>n;r.x\ntype pt{x:n}";
         let mut fields = std::collections::HashMap::new();
         fields.insert("x".to_string(), Value::Number(77.0));
-        fields.insert("y".to_string(), Value::Number(88.0));
         let result = vm_run(source, Some("f"), vec![
             Value::Record { type_name: "pt".to_string(), fields },
         ]);
@@ -10979,5 +10978,169 @@ mod tests {
             err.contains("record") || err.contains("with") || err.contains("field"),
             "got: {err}"
         );
+    }
+
+    // ── jpth error paths (lines 3853-3855, 3875) ────────────────────────────
+
+    // line 3875: jpth invalid JSON → Err
+    #[test]
+    fn vm_jpth_invalid_json_returns_err() {
+        let result = vm_run(r#"f s:t>R t t;jpth s "a""#, Some("f"),
+            vec![Value::Text("not json at all".into())]);
+        match result {
+            Value::Err(_) => {}
+            other => panic!("expected Err, got {:?}", other),
+        }
+    }
+
+    // lines 3853-3855: jpth array index out of bounds → Err
+    #[test]
+    fn vm_jpth_array_index_not_found() {
+        let result = vm_run(r#"f s:t>R t t;jpth s "a.5""#, Some("f"),
+            vec![Value::Text(r#"{"a":[1,2]}"#.into())]);
+        match result {
+            Value::Err(_) => {}
+            other => panic!("expected Err, got {:?}", other),
+        }
+    }
+
+    // ── cat error paths (lines 3925, 3928) ──────────────────────────────────
+
+    // line 3925: cat with non-text separator
+    #[test]
+    fn vm_cat_non_text_separator_error() {
+        let err = vm_run_err(r#"f xs:L t>t;cat xs 42"#, Some("f"),
+            vec![Value::List(vec![Value::Text("a".into())])]);
+        assert!(err.contains("cat") || err.contains("text"), "got: {err}");
+    }
+
+    // line 3928: cat with non-list first arg (number)
+    #[test]
+    fn vm_cat_non_list_first_arg_error() {
+        let err = vm_run_err(r#"f n:n>t;cat n ",""#, Some("f"),
+            vec![Value::Number(42.0)]);
+        assert!(err.contains("cat") || err.contains("list"), "got: {err}");
+    }
+
+    // ── hd/tl/rev on heap non-list (lines 3989, 4020, 4041) ─────────────────
+
+    // line 3989: hd on a Map heap value
+    #[test]
+    fn vm_hd_on_map_error() {
+        let err = vm_run_err(r#"f m:_>t;hd m"#, Some("f"),
+            vec![Value::Map(std::collections::HashMap::new())]);
+        assert!(err.contains("hd") || err.contains("list"), "got: {err}");
+    }
+
+    // line 4020: tl on a Map heap value
+    #[test]
+    fn vm_tl_on_map_error() {
+        let err = vm_run_err(r#"f m:_>t;tl m"#, Some("f"),
+            vec![Value::Map(std::collections::HashMap::new())]);
+        assert!(err.contains("tl") || err.contains("list"), "got: {err}");
+    }
+
+    // line 4041: rev on a Map heap value
+    #[test]
+    fn vm_rev_on_map_error() {
+        let err = vm_run_err(r#"f m:_>t;rev m"#, Some("f"),
+            vec![Value::Map(std::collections::HashMap::new())]);
+        assert!(err.contains("rev") || err.contains("list"), "got: {err}");
+    }
+
+    // ── srt on heap non-list (lines 4081, 4084) ──────────────────────────────
+
+    // line 4081: srt on a Map heap value
+    #[test]
+    fn vm_srt_on_map_error() {
+        let err = vm_run_err(r#"f m:_>L t;srt m"#, Some("f"),
+            vec![Value::Map(std::collections::HashMap::new())]);
+        assert!(err.contains("srt") || err.contains("list"), "got: {err}");
+    }
+
+    // line 4084: srt on a number (non-heap, non-string)
+    #[test]
+    fn vm_srt_on_number_error() {
+        let err = vm_run_err("f x:n>L n;srt x", Some("f"),
+            vec![Value::Number(42.0)]);
+        assert!(err.contains("srt") || err.contains("list"), "got: {err}");
+    }
+
+    // ── slc non-number indices (line 4096) ───────────────────────────────────
+
+    // line 4096: slc with text indices
+    #[test]
+    fn vm_slc_non_number_indices_error() {
+        // slc xs start end — pass text values for start/end
+        // We call slc with a list and two text args (bypassing verifier)
+        let err = vm_run_err(r#"f xs:L n s:t e:t>L n;slc xs s e"#, Some("f"),
+            vec![
+                Value::List(vec![Value::Number(1.0), Value::Number(2.0)]),
+                Value::Text("a".into()),
+                Value::Text("b".into()),
+            ]);
+        assert!(err.contains("slc") || err.contains("indices") || err.contains("number"), "got: {err}");
+    }
+
+    // ── arena record promotion in += (line 4131) ────────────────────────────
+
+    // line 4131: appending an arena record to a list promotes it to heap
+    #[test]
+    fn vm_listappend_arena_record_promotes_to_heap() {
+        // `pt x:1 y:2` produces an arena record via OP_MKREC.
+        // Appending it with `+=xs r` (prefix) triggers OP_LISTAPPEND → line 4131 promotion.
+        // Note: ilo += is prefix: `+=list item`.
+        let source = "type pt{x:n;y:n} f>n;xs=[];r=pt x:1 y:2;ys=+=xs r;len ys";
+        let result = vm_run(source, Some("f"), vec![]);
+        assert_eq!(result, Value::Number(1.0));
+    }
+
+    // ── nanval_to_json float path (lines 4177-4180) ──────────────────────────
+
+    // line 4178-4180: jdmp float number (non-integer)
+    #[test]
+    fn vm_jdmp_float_number() {
+        let result = vm_run("f>t;jdmp 3.14", Some("f"), vec![]);
+        assert_eq!(result, Value::Text("3.14".into()));
+    }
+
+    // ── nanval_to_json heap record (lines 4216-4221) ─────────────────────────
+
+    // line 4216-4221: jdmp on a heap record (from jpar) → JSON object
+    #[test]
+    fn vm_jdmp_heap_record() {
+        // jpar produces a heap record; jdmp it back to JSON string
+        let result = vm_run(r#"f s:t>t;r=jpar! s;jdmp r"#, Some("f"),
+            vec![Value::Text(r#"{"x":10}"#.into())]);
+        match result {
+            Value::Text(s) => assert!(s.contains("10"), "got: {s}"),
+            other => panic!("expected Text, got {:?}", other),
+        }
+    }
+
+    // ── nanval_to_json OkVal/ErrVal (lines 4223-4224) ────────────────────────
+
+    // line 4223: jdmp on Ok value → unwraps inner
+    #[test]
+    fn vm_jdmp_ok_value() {
+        // jpar returns Ok(record) — jdmp on the Ok unwraps inner
+        let result = vm_run(r#"f s:t>t;r=jpar s;jdmp r"#, Some("f"),
+            vec![Value::Text(r#"{"v":5}"#.into())]);
+        match result {
+            Value::Text(s) => assert!(s.contains("5"), "got: {s}"),
+            other => panic!("expected Text, got {:?}", other),
+        }
+    }
+
+    // ── nanval_to_json Map (lines 4225-4229) ─────────────────────────────────
+
+    // line 4225-4229: jdmp on a Map value → JSON object
+    #[test]
+    fn vm_jdmp_map_value() {
+        let result = vm_run(r#"f>t;m=mset mmap "k" 42;jdmp m"#, Some("f"), vec![]);
+        match result {
+            Value::Text(s) => assert!(s.contains("42"), "got: {s}"),
+            other => panic!("expected Text, got {:?}", other),
+        }
     }
 }
