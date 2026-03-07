@@ -1837,3 +1837,87 @@ fn run_cmd_verify_warning_unreachable_code() {
         "expected output=1 or ILO-T029 warning; stdout={stdout:?} stderr={stderr:?}"
     );
 }
+
+// ── ilo serv / ilo repl subcommand basic paths ─────────────────────────────
+
+/// `ilo serv` with empty stdin (immediate EOF) exercises the serve loop startup.
+/// Covers: main.rs L506-512 (http_config=None), L515-521 (rt create), L524-543 (mcp=None),
+/// L558 (ready signal), L560-585 (stdin loop, exits on EOF).
+#[test]
+fn serv_cmd_empty_stdin_exits_cleanly() {
+    use std::process::Stdio;
+    let out = ilo()
+        .args(["serv"])
+        .stdin(Stdio::null())  // immediate EOF
+        .output()
+        .expect("failed to run ilo serv");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    // serv_cmd prints {"ready":true} before reading stdin
+    assert!(stdout.contains("ready"), "expected ready signal, got: {stdout}");
+}
+
+/// `ilo serv` processing a valid JSON request covers the full serve request path.
+/// Covers: main.rs L562-583 (read line, process, print response).
+#[test]
+fn serv_cmd_processes_one_request() {
+    use std::io::Write;
+    use std::process::Stdio;
+
+    let mut child = ilo()
+        .args(["serv"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("failed to spawn ilo serv");
+
+    // Send one valid request then close stdin (EOF)
+    if let Some(mut stdin) = child.stdin.take() {
+        writeln!(stdin, r#"{{"program":"f>n;1","args":[],"func":"f"}}"#).unwrap();
+        // stdin drops here → EOF
+    }
+
+    let out = child.wait_with_output().expect("ilo serv failed");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    // First line: ready; second line: result with "ok"
+    assert!(stdout.contains("ready"), "expected ready signal");
+    assert!(stdout.contains("ok") || stdout.contains("1"), "expected ok result, got: {stdout}");
+}
+
+/// `ilo repl <args>` uses the repl alias path (main.rs L856: is_serv=false branch).
+#[test]
+fn repl_cmd_alias_exits_cleanly() {
+    use std::process::Stdio;
+    let out = ilo()
+        .args(["repl"])
+        .stdin(Stdio::null())
+        .output()
+        .expect("failed to run ilo repl");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("ready"), "expected ready signal from repl alias");
+}
+
+/// `ilo serv --tools <config>` loads the HTTP config before the serve loop.
+/// Covers: main.rs L506-512 (http_path=Some → http_config loaded).
+#[test]
+fn serv_cmd_with_tools_config_loads_http() {
+    use std::io::Write;
+    use std::process::Stdio;
+
+    let mut path = std::env::temp_dir();
+    path.push("ilo_serv_test_tools.json");
+    let mut f = std::fs::File::create(&path).expect("create temp file");
+    writeln!(f, r#"{{"tools": {{"echo": {{"url": "http://127.0.0.1:19999/echo"}}}}}}"#).unwrap();
+    drop(f);
+
+    let out = ilo()
+        .args(["serv", "--tools", path.to_str().unwrap()])
+        .stdin(Stdio::null())
+        .output()
+        .expect("failed to run ilo serv --tools");
+
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("ready"), "expected ready signal with tools config");
+
+    std::fs::remove_file(&path).ok();
+}
