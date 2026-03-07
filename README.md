@@ -126,7 +126,7 @@ ilo help lang        # full spec
 
 ### Fine-tuning
 
-Train on ilo programs and error feedback loops. Best for production agents writing a lot of ilo. Not yet available as a hosted service.
+Future exploration: training on ilo programs and error feedback loops may improve agent performance. Not yet tested or available.
 
 ## Running ilo
 
