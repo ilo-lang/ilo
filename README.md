@@ -145,7 +145,7 @@ All programs are type-verified before execution. See the [CLI Reference](https:/
 >=*+a b c 100      # ((a + b) * c) >= 100   saves 7 chars, 3 tokens
 ```
 
-Infix also works: `a + b`, `x * y + 1`. Across 25 expression patterns: **22% fewer tokens, 42% fewer characters** with prefix vs infix. See the [prefix-vs-infix benchmark](research/explorations/prefix-vs-infix/).
+Infix also works: `a + b`, `x * y + 1`. Across 25 expression patterns: **22% fewer tokens, 42% fewer characters** with prefix vs infix. See the [prefix-vs-infix benchmark](https://github.com/ilo-lang/ilo/wiki/Prefix-vs-Infix-Benchmark).
 
 **Auto-unwrap `!`** eliminates Result matching boilerplate:
 ```bash
