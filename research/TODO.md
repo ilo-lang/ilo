@@ -28,7 +28,7 @@ Discovered during a Claude Code session using ilo as a bash/python replacement. 
 
 ### Diagnostics
 - [x] **`//` warning inside string literals** — cross-language warning now strips string contents before pattern matching. URLs in strings no longer trigger false positives.
-- [ ] **Multi-function boundary diagnostic** — non-last functions ending with bare refs or function calls silently produce wrong results due to greedy parsing. Emit an error (ILO-P020) pointing at the ambiguous ending with a suggestion to wrap in parens or end with a binary op.
+- [x] **Multi-function boundary diagnostic** — already fixed by `is_fn_decl_start()` in `can_start_operand()` (commit 2b9ff66). Parser detects `Ident >` (zero-param) and `Ident Ident :` (parameterized) boundaries, preventing greedy arg consumption. All valid multi-function programs parse correctly; no additional diagnostic needed.
 - [ ] **Guard-in-loop lint** — guards inside `@`/`wh` loops cause early function return, not loop-iteration skip. Emit a warning (ILO-W001) suggesting ternary `{then}{else}` when a guard appears inside a loop body.
 
 ### DX
