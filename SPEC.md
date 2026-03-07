@@ -151,25 +151,25 @@ Single-line only. `--` to end of line. No multi-line comment syntax — newlines
 
 ## Operators
 
-Prefix notation.
+Both prefix and infix notation supported. Prefix is canonical (denser).
 
 ### Binary
 
-| Op | Meaning | Types |
-|----|---------|-------|
-| `+a b` | add / concat / list concat | `n`, `t`, `L` |
-| `+=a v` | append to list | `L` |
-| `-a b` | subtract | `n` |
-| `*a b` | multiply | `n` |
-| `/a b` | divide | `n` |
-| `=a b` | equal (`==a b` also accepted) | any |
-| `!=a b` | not equal | any |
-| `>a b` | greater than | `n`, `t` |
-| `<a b` | less than | `n`, `t` |
-| `>=a b` | greater or equal | `n`, `t` |
-| `<=a b` | less or equal | `n`, `t` |
-| `&a b` | logical AND (short-circuit) | any (truthy) |
-| `\|a b` | logical OR (short-circuit) | any (truthy) |
+| Prefix | Infix | Meaning | Types |
+|--------|-------|---------|-------|
+| `+a b` | `a + b` | add / concat / list concat | `n`, `t`, `L` |
+| `+=a v` | | append to list | `L` |
+| `-a b` | `a - b` | subtract | `n` |
+| `*a b` | `a * b` | multiply | `n` |
+| `/a b` | `a / b` | divide | `n` |
+| `=a b` | `a == b` | equal (`==a b` also accepted) | any |
+| `!=a b` | `a != b` | not equal | any |
+| `>a b` | `a > b` | greater than | `n`, `t` |
+| `<a b` | `a < b` | less than | `n`, `t` |
+| `>=a b` | `a >= b` | greater or equal | `n`, `t` |
+| `<=a b` | `a <= b` | less or equal | `n`, `t` |
+| `&a b` | `a & b` | logical AND (short-circuit) | any (truthy) |
+| `\|a b` | `a \| b` | logical OR (short-circuit) | any (truthy) |
 
 ### Unary
 
@@ -178,14 +178,14 @@ Prefix notation.
 | `-x` | negate | `n` |
 | `!x` | logical NOT | any (truthy) |
 
-### Infix
+### Special infix
 
 | Op | Meaning | Types |
 |----|---------|-------|
 | `a??b` | nil-coalesce (if a is nil, return b) | any |
 | `a>>f` | pipe (desugar to `f(a)`) | any |
 
-Nesting is unambiguous — no parentheses needed:
+### Prefix nesting (no parens needed)
 
 ```
 +*a b c     -- (a * b) + c
@@ -194,7 +194,28 @@ Nesting is unambiguous — no parentheses needed:
 -*a b *c d  -- (a * b) - (c * d)
 ```
 
-Each nested operator saves 2 tokens (no `(` `)` needed). Flat expressions like `+a b` save 1 char vs `a + b`. Across 25 expression patterns, prefix notation saves **22% tokens** and **42% characters** vs infix. See [research/explorations/prefix-vs-infix/](research/explorations/prefix-vs-infix/) for the full benchmark.
+### Infix precedence
+
+Standard mathematical precedence (higher binds tighter):
+
+| Level | Operators |
+|-------|-----------|
+| 6 | `*` `/` |
+| 5 | `+` `-` `+=` |
+| 4 | `>` `<` `>=` `<=` |
+| 3 | `=` `!=` |
+| 2 | `&` |
+| 1 | `\|` |
+
+Function application binds tighter than all infix operators:
+
+```
+f a + b     -- (f a) + b, NOT f(a + b)
+x * y + 1   -- (x * y) + 1
+(x + y) * 2 -- parens override precedence
+```
+
+Each nested prefix operator saves 2 tokens (no `(` `)` needed). Flat prefix like `+a b` saves 1 char vs `a + b`. Across 25 expression patterns, prefix notation saves **22% tokens** and **42% characters** vs infix. See [research/explorations/prefix-vs-infix/](research/explorations/prefix-vs-infix/) for the full benchmark.
 
 Disambiguation: `-` followed by one atom is unary negate, followed by two atoms is binary subtract.
 
