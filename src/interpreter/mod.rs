@@ -5162,4 +5162,97 @@ mod tests {
         ]);
         assert_eq!(result, Value::Bool(false));
     }
+
+    // ── brk inside match arm propagates Break (line 1312) ────────────────────
+
+    #[test]
+    fn interpret_brk_inside_match_arm_propagates() {
+        // ?x { 2: brk x; _ : x } — when x==2 break propagates out of match arm (L1312)
+        // The match must NOT be the last stmt in the foreach body; otherwise the _:x arm
+        // converts Value(1.0) → Return(1.0) on the first iteration, exiting the function
+        // before x=2 is ever reached. Adding ;x as a trailing stmt keeps match non-last.
+        let src = "f>n;@x [1,2,3]{?x{2:brk x;_:x};x}";
+        let result = run_str(src, Some("f"), vec![]);
+        assert_eq!(result, Value::Number(2.0));
+    }
+
+    // ── text variable used as callee (line 1470) ─────────────────────────────
+
+    #[test]
+    fn interpret_text_callee_from_scope() {
+        // When a variable holds a Text naming a known function, it is used as the callee (L1470)
+        let source = "sq x:n>n;*x x f cb:z>n;cb 3";
+        let result = run_str(source, Some("f"), vec![Value::Text("sq".into())]);
+        assert_eq!(result, Value::Number(9.0));
+    }
+
+    // ── srt with bool key hits _ => Equal arm (line 583) ─────────────────────
+
+    #[test]
+    fn interpret_srt_bool_key_equal_ordering() {
+        // Key fn returns Bool → neither Number nor Text arm matches in sort_by → L583 _ => Equal
+        let source = "pos x:n>b;> x 0 f>L n;srt pos [3,-1,2,-2]";
+        let result = run_str(source, Some("f"), vec![]);
+        // All elements are compared as Bool keys → Equal ordering → list unchanged
+        match result {
+            Value::List(items) => assert_eq!(items.len(), 4),
+            other => panic!("expected List, got {:?}", other),
+        }
+    }
+
+    // ── brk inside guard body propagates Break (line 1287) ───────────────────
+
+    #[test]
+    fn interpret_brk_inside_guard_body_propagates() {
+        // Guard body containing brk: when x>2, break with x → ForEach exits early (L1287)
+        let src = "f>n;@x [1,2,3,4]{>x 2{brk x};x}";
+        let result = run_str(src, Some("f"), vec![]);
+        assert_eq!(result, Value::Number(3.0));
+    }
+
+    // ── cnt inside guard body propagates Continue (line 1288) ────────────────
+
+    #[test]
+    fn interpret_cnt_inside_guard_body_propagates() {
+        // Guard body containing cnt: when x==1, skip iteration → ForEach gets last=3 (L1288)
+        let src = "f>n;@x [1,2,3]{=x 1{cnt};x}";
+        let result = run_str(src, Some("f"), vec![]);
+        assert_eq!(result, Value::Number(3.0));
+    }
+
+    // ── brk inside ternary then-body propagates Break (line 1275) ─────────────
+
+    #[test]
+    fn interpret_brk_inside_ternary_body_propagates() {
+        // Ternary cond{then}{else}: then-body contains brk → Break propagates (L1275)
+        // When x==2: ternary true → brk x → Break(2.0) exits ForEach early
+        let src = "f>n;@x [1,2,3]{=x 2{brk x}{0};0}";
+        let result = run_str(src, Some("f"), vec![]);
+        assert_eq!(result, Value::Number(2.0));
+    }
+
+    // ── cnt inside ternary then-body propagates Continue (line 1276) ──────────
+
+    #[test]
+    fn interpret_cnt_inside_ternary_body_propagates() {
+        // Ternary cond{then}{else}: then-body contains cnt → Continue propagates (L1276)
+        // When x==1: ternary true → cnt → Continue skips that iteration
+        let src = "f>n;@x [1,2,3]{=x 1{cnt}{0};x}";
+        let result = run_str(src, Some("f"), vec![]);
+        assert_eq!(result, Value::Number(3.0));
+    }
+
+    // ── cnt inside match-expression arm returns Nil (line 1551) ──────────────
+
+    #[test]
+    fn interpret_cnt_in_match_expr_arm_returns_nil() {
+        // Expr::Match arm body returns Continue → match expr yields Nil (L1551)
+        // cnt inside match arm is "consumed" — the match expression returns Nil for that arm
+        let src = "f>n;@x [1,2,3]{r=?x{1:cnt;_:x};r}";
+        let result = run_str(src, Some("f"), vec![]);
+        // x=1: match arm 1 runs cnt → Continue consumed → Nil, r=Nil
+        // x=2: match arm _ matches → 2, r=2
+        // x=3: match arm _ matches → 3, r=3 → foreach last=3
+        assert_eq!(result, Value::Number(3.0));
+    }
 }
