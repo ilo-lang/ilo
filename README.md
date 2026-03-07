@@ -341,18 +341,6 @@ ilo 'code' --run-cranelift . # Cranelift JIT
 ilo 'code' --run-jit ...     # custom ARM64 JIT (macOS Apple Silicon only)
 ```
 
-## Documentation
-
-| Document | Purpose |
-|----------|---------|
-| [SPEC.md](SPEC.md) | Language specification |
-| [examples/](examples/) | Runnable example programs (also `cargo test` regression suite) |
-| [MANIFESTO.md](MANIFESTO.md) | Design rationale |
-| [research/JOURNEY.md](research/JOURNEY.md) | Design journey: syntax variants, benchmarks, research index |
-| [skills/ilo/](skills/ilo/) | Agent Skill (for AI coding agents) |
-| [research/TODO.md](research/TODO.md) | Planned work |
-| [research/OPEN.md](research/OPEN.md) | Open design questions |
-
 ## Principles
 
 1. **Token-conservative**: every choice evaluated against total token cost: generation, retries, error feedback, context loading.
@@ -372,6 +360,18 @@ We explored 9 syntax variants before settling on the current design. See [resear
 ## Community
 
 - [r/ilolang](https://www.reddit.com/r/ilolang/) — discussion, feedback, and updates
+
+## Documentation
+
+| Document | Purpose |
+|----------|---------|
+| [SPEC.md](SPEC.md) | Language specification |
+| [examples/](examples/) | Runnable example programs (also `cargo test` regression suite) |
+| [MANIFESTO.md](MANIFESTO.md) | Design rationale |
+| [research/JOURNEY.md](research/JOURNEY.md) | Design journey: syntax variants, benchmarks, research index |
+| [skills/ilo/](skills/ilo/) | Agent Skill (for AI agents) |
+| [research/TODO.md](research/TODO.md) | Planned work |
+| [research/OPEN.md](research/OPEN.md) | Open design questions |
 
 ```
   _  _          _
