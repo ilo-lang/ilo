@@ -54,22 +54,40 @@ See [MANIFESTO.md](MANIFESTO.md) for the full rationale.
 
 ## Teaching a model to write ilo
 
-Three paths, in order of friction:
+### Agent Skills (zero friction)
 
-**1. Context loading** — paste the spec into the system prompt. The compact form fits comfortably in any context window:
+ilo ships as an [Agent Skill](https://agentskills.io) — install the plugin and the agent learns ilo automatically. No manual context loading needed.
+
+**Claude** — works across all three surfaces:
+
+| Surface | How to use ilo |
+|---------|---------------|
+| **Claude Code** (CLI) | `/plugin install ilo-lang/ilo` — the skill loads automatically |
+| **Claude Cowork** (web) | Install the ilo plugin from Browse Plugins → the agent can write and run ilo |
+| **Claude API / Console** | Paste `ilo help ai` into the system prompt (see context loading below) |
+
+**Other agents** (Codex, Cursor, GitHub Copilot, etc.):
+
+Copy `skills/ilo/` into your agent's skills directory (e.g. `~/.agents/skills/`, `.cursor/skills/`). Any tool supporting the [Agent Skills standard](https://agentskills.io) will pick it up.
+
+### Context loading
+
+For agents without plugin support, paste the spec into the system prompt:
 
 ```bash
 ilo help ai          # ~16-line ultra-compact spec for LLM consumption
 ilo help lang        # full spec
 ```
 
-Lowest friction. Works with any model today. Good for one-off agents and short sessions.
+Works with any model. Good for one-off agents and short sessions.
 
-**2. Fine-tuning** — train on ilo programs and error feedback loops. Best for production agents that write a lot of ilo. Not yet available as a hosted service.
+### Fine-tuning
 
-**3. Foundation model training** — ilo is public and MIT licensed. As usage grows, frontier models will encounter it in training data and learn it natively — the same path Python, SQL, and JSON took.
+Train on ilo programs and error feedback loops. Best for production agents that write a lot of ilo. Not yet available as a hosted service.
 
-The compact spec (`ilo help ai`) is designed specifically for path 1: small enough to fit in a system prompt, dense enough to fully constrain generation.
+### Foundation model training
+
+ilo is public and MIT licensed. As usage grows, frontier models will encounter it in training data and learn it natively — the same path Python, SQL, and JSON took.
 
 ## Design Journey
 
@@ -335,19 +353,6 @@ cargo test
 ```
 
 Tests cover: lexer, parser, interpreter, VM, verifier, codegen, diagnostic, formatter, CLI integration, and annotated example programs.
-
-## Agent Skill
-
-ilo ships as an [Agent Skill](https://agentskills.io) — a portable skill that teaches AI agents to write, run, and debug ilo programs. Works with Claude Code, Codex, Cursor, GitHub Copilot, and any tool that supports the Agent Skills standard.
-
-**Claude Code plugin:**
-```bash
-/plugin install ilo-lang/ilo
-```
-
-**Manual:** copy `skills/ilo/` into your agent's skills directory (e.g. `~/.claude/skills/`, `~/.agents/skills/`, `.cursor/skills/`).
-
-The skill auto-installs the ilo binary if it's not already present.
 
 ## Documentation
 
