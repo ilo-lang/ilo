@@ -4,7 +4,7 @@
 
 [![CI](https://github.com/ilo-lang/ilo/actions/workflows/rust.yml/badge.svg)](https://github.com/ilo-lang/ilo/actions/workflows/rust.yml)  [![crates.io](https://img.shields.io/crates/v/ilo)](https://crates.io/crates/ilo)  [![npm](https://img.shields.io/npm/v/ilo-lang)](https://www.npmjs.com/package/ilo-lang)  [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-AI agents pay three costs per program: generation tokens, error feedback, retries. ilo cuts all three — 0.33× the tokens of Python, type-verified before execution.
+AI agents pay three costs per program: generation tokens, error feedback, retries. ilo cuts all three — 0.33× the tokens and 0.22× the characters of Python, type-verified before execution.
 
 ## Why ilo makes agents more efficient
 
