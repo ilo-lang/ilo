@@ -63,8 +63,8 @@ ilo ships as an [Agent Skill](https://agentskills.io) — install the plugin and
 | Surface | How to use ilo |
 |---------|---------------|
 | **Claude Code** (CLI) | Add marketplace then install (see [Install](#install)) |
-| **Claude Cowork** (web) | Install the ilo plugin from Browse Plugins → the agent can write and run ilo |
-| **Claude API / Console** | Paste `ilo help ai` into the system prompt (see context loading below) |
+| **Claude Cowork** (web) | Coming soon |
+| **Claude API / Console** | Run `ilo help ai` locally, paste the output into your system prompt |
 
 **Other agents** (Codex, Cursor, GitHub Copilot, etc.):
 
