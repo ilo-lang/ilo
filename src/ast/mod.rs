@@ -394,7 +394,6 @@ pub fn resolve_alias(name: &str) -> Option<&'static str> {
         .map(|(_, short)| *short)
 }
 
-
 /// Resolve aliases in all Call expressions throughout a program.
 /// Mutates function names in-place so downstream passes see only canonical names.
 pub fn resolve_aliases(program: &mut Program) {

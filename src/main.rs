@@ -884,11 +884,11 @@ fn collect_hints(source: &str) -> Vec<String> {
     // Scan for word boundaries matching known aliases
     let mut seen_alias = false;
     for word in stripped.split(|c: char| !c.is_alphanumeric() && c != '_' && c != '-') {
-        if !seen_alias {
-            if let Some(short) = ast::resolve_alias(word) {
-                hints.push(format!("hint: `{word}` → `{short}` (canonical short form)"));
-                seen_alias = true; // one hint per run is enough
-            }
+        if !seen_alias
+            && let Some(short) = ast::resolve_alias(word)
+        {
+            hints.push(format!("hint: `{word}` → `{short}` (canonical short form)"));
+            seen_alias = true; // one hint per run is enough
         }
     }
     hints
