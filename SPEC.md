@@ -318,6 +318,47 @@ Called like functions, compiled to dedicated opcodes.
 | `mvals m` | values sorted by key | `L v` |
 | `mdel m k` | new map with key k removed | `M k v` |
 
+### Builtin aliases
+
+All builtins accept long-form names that resolve to the canonical short form after parsing. Using a long form triggers a hint suggesting the short form. This lets newcomers write readable code while learning the canonical names.
+
+| Long form | → | Short |
+|-----------|---|-------|
+| `floor` | → | `flr` |
+| `ceil` | → | `cel` |
+| `round`, `random` | → | `rnd` |
+| `string` | → | `str` |
+| `number` | → | `num` |
+| `length` | → | `len` |
+| `head` | → | `hd` |
+| `tail` | → | `tl` |
+| `reverse` | → | `rev` |
+| `sort` | → | `srt` |
+| `slice` | → | `slc` |
+| `unique` | → | `unq` |
+| `filter` | → | `flt` |
+| `fold` | → | `fld` |
+| `flatten` | → | `flat` |
+| `concat` | → | `cat` |
+| `contains` | → | `has` |
+| `group` | → | `grp` |
+| `average` | → | `avg` |
+| `print` | → | `prnt` |
+| `trim` | → | `trm` |
+| `split` | → | `spl` |
+| `format` | → | `fmt` |
+| `regex` | → | `rgx` |
+| `read` | → | `rd` |
+| `readlines` | → | `rdl` |
+| `readbuf` | → | `rdb` |
+| `write` | → | `wr` |
+| `writelines` | → | `wrl` |
+
+```
+length xs   -- works, but emits: hint: `length` → `len` (canonical short form)
+len xs      -- canonical — no hint
+```
+
 `get` and `post` return `Ok(body)` on success, `Err(message)` on failure (connection error, timeout, DNS failure, etc). `$` is a terse alias for `get`:
 
 ```
@@ -919,9 +960,10 @@ After successful execution, ilo scans the source for non-canonical forms and emi
 
 ```
 hint: `==` → `=` saves 1 char (both mean equality in ilo)
+hint: `length` → `len` (canonical short form)
 ```
 
-In JSON mode, hints appear as `{"hints":["..."]}` on stderr. Suppress with `--no-hints` / `-nh`.
+Builtin alias hints appear at most once per program (the first long-form name found). In JSON mode, hints appear as `{"hints":["..."]}` on stderr. Suppress with `--no-hints` / `-nh`.
 
 ---
 

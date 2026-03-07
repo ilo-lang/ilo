@@ -393,6 +393,7 @@ fn process_serv_request(
         .map(|(t, r)| (t, ast::Span { start: r.start, end: r.end }))
         .collect();
     let (mut program, parse_errors) = parser::parse(token_spans);
+    ast::resolve_aliases(&mut program);
     program.source = Some(source.clone());
 
     if !parse_errors.is_empty() {
@@ -630,6 +631,7 @@ fn repl_cmd() {
             .map(|(t, r)| (t, ast::Span { start: r.start, end: r.end }))
             .collect();
         let (mut full_program, parse_errors) = parser::parse(token_spans);
+        ast::resolve_aliases(&mut full_program);
         full_program.source = Some(full_source.clone());
 
         if !parse_errors.is_empty() {
@@ -878,6 +880,17 @@ fn collect_hints(source: &str) -> Vec<String> {
         }
         pos += 1;
     }
+    // Hint: long-form builtin aliases → canonical short form
+    // Scan for word boundaries matching known aliases
+    let mut seen_alias = false;
+    for word in stripped.split(|c: char| !c.is_alphanumeric() && c != '_' && c != '-') {
+        if !seen_alias
+            && let Some(short) = ast::resolve_alias(word)
+        {
+            hints.push(format!("hint: `{word}` → `{short}` (canonical short form)"));
+            seen_alias = true; // one hint per run is enough
+        }
+    }
     hints
 }
 
@@ -1017,7 +1030,8 @@ fn resolve_imports(
                 .map(|(t, r)| (t, ast::Span { start: r.start, end: r.end }))
                 .collect();
 
-            let (imported_prog, parse_errors) = parser::parse(token_spans);
+            let (mut imported_prog, parse_errors) = parser::parse(token_spans);
+            ast::resolve_aliases(&mut imported_prog);
             for e in &parse_errors {
                 diagnostics.push(Diagnostic::from(e));
             }
@@ -1301,6 +1315,7 @@ fn main() {
         .collect();
 
     let (mut program, parse_errors) = parser::parse(token_spans);
+    ast::resolve_aliases(&mut program);
     program.source = Some(source.clone());
 
     // If --mcp was provided, connect to the MCP servers and inject synthesized

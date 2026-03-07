@@ -347,6 +347,137 @@ pub struct Program {
     pub source: Option<String>,
 }
 
+// Long-form aliases for builtins. Each maps (long_name, canonical_short_name).
+// Programs using long forms work identically but emit a hint toward the short form.
+const BUILTIN_ALIASES: &[(&str, &str)] = &[
+    // Math
+    ("floor", "flr"),
+    ("ceil", "cel"),
+    ("round", "rnd"),
+    ("random", "rnd"),
+    // Conversion
+    ("string", "str"),
+    ("number", "num"),
+    // Collections
+    ("length", "len"),
+    ("head", "hd"),
+    ("tail", "tl"),
+    ("reverse", "rev"),
+    ("sort", "srt"),
+    ("slice", "slc"),
+    ("unique", "unq"),
+    ("filter", "flt"),
+    ("fold", "fld"),
+    ("flatten", "flat"),
+    ("concat", "cat"),
+    ("contains", "has"),
+    ("group", "grp"),
+    ("average", "avg"),
+    ("print", "prnt"),
+    ("trim", "trm"),
+    ("split", "spl"),
+    ("format", "fmt"),
+    ("regex", "rgx"),
+    ("read", "rd"),
+    ("readlines", "rdl"),
+    ("readbuf", "rdb"),
+    ("write", "wr"),
+    ("writelines", "wrl"),
+];
+
+/// If `name` is a long-form alias, return the canonical short form.
+/// Otherwise return None.
+pub fn resolve_alias(name: &str) -> Option<&'static str> {
+    BUILTIN_ALIASES
+        .iter()
+        .find(|(long, _)| *long == name)
+        .map(|(_, short)| *short)
+}
+
+/// Resolve aliases in all Call expressions throughout a program.
+/// Mutates function names in-place so downstream passes see only canonical names.
+pub fn resolve_aliases(program: &mut Program) {
+    for decl in &mut program.declarations {
+        if let Decl::Function { body, .. } = decl {
+            for stmt in body {
+                resolve_aliases_stmt(&mut stmt.node);
+            }
+        }
+    }
+}
+
+fn resolve_aliases_stmt(stmt: &mut Stmt) {
+    match stmt {
+        Stmt::Expr(expr) | Stmt::Let { value: expr, .. } => resolve_aliases_expr(expr),
+        Stmt::Guard { condition, body, else_body, .. } => {
+            resolve_aliases_expr(condition);
+            for s in body { resolve_aliases_stmt(&mut s.node); }
+            if let Some(eb) = else_body { for s in eb { resolve_aliases_stmt(&mut s.node); } }
+        }
+        Stmt::Match { subject, arms } => {
+            if let Some(expr) = subject { resolve_aliases_expr(expr); }
+            for arm in arms {
+                for s in &mut arm.body { resolve_aliases_stmt(&mut s.node); }
+            }
+        }
+        Stmt::ForEach { collection, body, .. } => {
+            resolve_aliases_expr(collection);
+            for s in body { resolve_aliases_stmt(&mut s.node); }
+        }
+        Stmt::ForRange { start, end, body, .. } => {
+            resolve_aliases_expr(start);
+            resolve_aliases_expr(end);
+            for s in body { resolve_aliases_stmt(&mut s.node); }
+        }
+        Stmt::While { condition, body } => {
+            resolve_aliases_expr(condition);
+            for s in body { resolve_aliases_stmt(&mut s.node); }
+        }
+        Stmt::Return(expr) => resolve_aliases_expr(expr),
+        Stmt::Destructure { value, .. } => resolve_aliases_expr(value),
+        Stmt::Break(Some(expr)) => resolve_aliases_expr(expr),
+        Stmt::Break(None) | Stmt::Continue => {}
+    }
+}
+
+fn resolve_aliases_expr(expr: &mut Expr) {
+    match expr {
+        Expr::Call { function, args, .. } => {
+            if let Some(canonical) = resolve_alias(function) {
+                *function = canonical.to_string();
+            }
+            for arg in args { resolve_aliases_expr(arg); }
+        }
+        Expr::BinOp { left, right, .. } => {
+            resolve_aliases_expr(left);
+            resolve_aliases_expr(right);
+        }
+        Expr::UnaryOp { operand, .. } => resolve_aliases_expr(operand),
+        Expr::Ok(inner) | Expr::Err(inner) => resolve_aliases_expr(inner),
+        Expr::NilCoalesce { value, default } => {
+            resolve_aliases_expr(value);
+            resolve_aliases_expr(default);
+        }
+        Expr::List(items) => {
+            for item in items { resolve_aliases_expr(item); }
+        }
+        Expr::Record { fields, .. } => {
+            for (_, val) in fields { resolve_aliases_expr(val); }
+        }
+        Expr::Match { subject, arms } => {
+            if let Some(s) = subject { resolve_aliases_expr(s); }
+            for arm in arms {
+                for s in &mut arm.body { resolve_aliases_stmt(&mut s.node); }
+            }
+        }
+        Expr::With { object, updates } => {
+            resolve_aliases_expr(object);
+            for (_, val) in updates { resolve_aliases_expr(val); }
+        }
+        Expr::Literal(_) | Expr::Ref(_) | Expr::Field { .. } | Expr::Index { .. } => {}
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

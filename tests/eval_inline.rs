@@ -2142,3 +2142,113 @@ fn run_vm_with_tools_config() {
 
     std::fs::remove_file(&path).ok();
 }
+
+// ── Builtin long-form aliases ───────────────────────────────────────────────
+
+#[test]
+fn builtin_alias_length() {
+    let out = ilo()
+        .args(["f xs:L n>n;length xs", "1,2,3"])
+        .output()
+        .expect("failed to run ilo");
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "3");
+}
+
+#[test]
+fn builtin_alias_filter() {
+    let out = ilo()
+        .args(["pos x:n>b;>x 0 main xs:L n>L n;filter pos xs", "main", "-3,0,2,4"])
+        .output()
+        .expect("failed to run ilo");
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "[2, 4]");
+}
+
+#[test]
+fn builtin_alias_sort() {
+    let out = ilo()
+        .args(["f xs:L n>L n;sort xs", "3,1,2"])
+        .output()
+        .expect("failed to run ilo");
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "[1, 2, 3]");
+}
+
+#[test]
+fn builtin_alias_reverse() {
+    let out = ilo()
+        .args(["f xs:L n>L n;reverse xs", "1,2,3"])
+        .output()
+        .expect("failed to run ilo");
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "[3, 2, 1]");
+}
+
+#[test]
+fn builtin_alias_trim() {
+    let out = ilo()
+        .args(["f s:t>t;trim s", "  hello  "])
+        .output()
+        .expect("failed to run ilo");
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "hello");
+}
+
+#[test]
+fn builtin_alias_average() {
+    let out = ilo()
+        .args(["f xs:L n>n;average xs", "2,4,6"])
+        .output()
+        .expect("failed to run ilo");
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "4");
+}
+
+#[test]
+fn builtin_alias_hint_emitted() {
+    let out = ilo()
+        .args(["f xs:L n>n;length xs", "1,2,3"])
+        .output()
+        .expect("failed to run ilo");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("hint") && stderr.contains("length") && stderr.contains("len"),
+        "expected alias hint, got: {stderr}");
+}
+
+#[test]
+fn builtin_alias_floor_and_ceil() {
+    let out = ilo()
+        .args(["f x:n>n;floor x", "3.7"])
+        .output()
+        .expect("failed to run ilo");
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "3");
+
+    let out = ilo()
+        .args(["f x:n>n;ceil x", "3.2"])
+        .output()
+        .expect("failed to run ilo");
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "4");
+}
+
+#[test]
+fn builtin_alias_format() {
+    let out = ilo()
+        .args(["f>t;format \"{} + {} = {}\" 1 2 3", "f"])
+        .output()
+        .expect("failed to run ilo");
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "1 + 2 = 3");
+}
+
+#[test]
+fn builtin_alias_no_hint_suppressed() {
+    let out = ilo()
+        .args(["f xs:L n>n;length xs", "--no-hints", "1,2,3"])
+        .output()
+        .expect("failed to run ilo");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!stderr.contains("hint"), "hints should be suppressed: {stderr}");
+}
