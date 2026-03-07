@@ -1,0 +1,1 @@
+chk pid:t amt:n its:L item>R receipt t;reserve its;?{^e:^+"Inventory unavailable: "e;~rid:charge pid amt;?{^e:release rid;^+"Payment failed: "e;~cid:oid=make-id();~receipt oid:oid cid:cid rid:rid}}

@@ -2168,7 +2168,7 @@ mod tests {
 
     #[test]
     fn parse_example_01_simple_function() {
-        let prog = parse_file("research/explorations/idea9-ultra-dense-short/01-simple-function.ilo");
+        let prog = parse_file("examples/01-simple-function.ilo");
         assert_eq!(prog.declarations.len(), 1);
         let Decl::Function { name, params, return_type, body, .. } = &prog.declarations[0] else { panic!("expected function") };
         assert_eq!(name, "tot");
@@ -2179,7 +2179,7 @@ mod tests {
 
     #[test]
     fn parse_example_02_with_dependencies() {
-        let prog = parse_file("research/explorations/idea9-ultra-dense-short/02-with-dependencies.ilo");
+        let prog = parse_file("examples/02-with-dependencies.ilo");
         assert_eq!(prog.declarations.len(), 1);
         let Decl::Function { name, return_type, .. } = &prog.declarations[0] else { panic!("expected function") };
         assert_eq!(name, "prc");

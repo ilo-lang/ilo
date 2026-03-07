@@ -754,7 +754,7 @@ mod tests {
     fn round_trip_example_01() {
         assert_round_trip(
             &std::fs::read_to_string(
-                "research/explorations/idea9-ultra-dense-short/01-simple-function.ilo",
+                "examples/01-simple-function.ilo",
             )
             .unwrap(),
         );
@@ -764,7 +764,7 @@ mod tests {
     fn round_trip_example_02() {
         assert_round_trip(
             &std::fs::read_to_string(
-                "research/explorations/idea9-ultra-dense-short/02-with-dependencies.ilo",
+                "examples/02-with-dependencies.ilo",
             )
             .unwrap(),
         );
@@ -774,7 +774,7 @@ mod tests {
     fn round_trip_example_03() {
         assert_round_trip(
             &std::fs::read_to_string(
-                "research/explorations/idea9-ultra-dense-short/03-data-transform.ilo",
+                "examples/03-data-transform.ilo",
             )
             .unwrap(),
         );
@@ -784,7 +784,7 @@ mod tests {
     fn round_trip_example_04() {
         assert_round_trip(
             &std::fs::read_to_string(
-                "research/explorations/idea9-ultra-dense-short/04-tool-interaction.ilo",
+                "examples/04-tool-interaction.ilo",
             )
             .unwrap(),
         );
@@ -794,7 +794,7 @@ mod tests {
     fn round_trip_example_05() {
         assert_round_trip(
             &std::fs::read_to_string(
-                "research/explorations/idea9-ultra-dense-short/05-workflow.ilo",
+                "examples/05-workflow.ilo",
             )
             .unwrap(),
         );
@@ -816,7 +816,7 @@ mod tests {
     fn idempotent_example_04() {
         assert_idempotent(
             &std::fs::read_to_string(
-                "research/explorations/idea9-ultra-dense-short/04-tool-interaction.ilo",
+                "examples/04-tool-interaction.ilo",
             )
             .unwrap(),
         );
@@ -826,7 +826,7 @@ mod tests {
     fn idempotent_example_05() {
         assert_idempotent(
             &std::fs::read_to_string(
-                "research/explorations/idea9-ultra-dense-short/05-workflow.ilo",
+                "examples/05-workflow.ilo",
             )
             .unwrap(),
         );
@@ -888,7 +888,7 @@ mod tests {
     fn expanded_multiple_decls_separated_by_blank_line() {
         let s = expanded(
             &std::fs::read_to_string(
-                "research/explorations/idea9-ultra-dense-short/03-data-transform.ilo",
+                "examples/03-data-transform.ilo",
             )
             .unwrap(),
         );
@@ -906,7 +906,7 @@ mod tests {
     fn expanded_workflow() {
         let s = expanded(
             &std::fs::read_to_string(
-                "research/explorations/idea9-ultra-dense-short/05-workflow.ilo",
+                "examples/05-workflow.ilo",
             )
             .unwrap(),
         );

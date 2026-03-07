@@ -5306,7 +5306,7 @@ mod tests {
 
     #[test]
     fn vm_tot() {
-        let source = std::fs::read_to_string("research/explorations/idea9-ultra-dense-short/01-simple-function.ilo").unwrap();
+        let source = std::fs::read_to_string("examples/01-simple-function.ilo").unwrap();
         let result = vm_run(
             &source,
             Some("tot"),

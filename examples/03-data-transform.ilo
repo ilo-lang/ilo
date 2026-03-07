@@ -1,0 +1,2 @@
+cls sp:n>t;>=sp 1000{"gold"};>=sp 500{"silver"};"bronze"
+sms cs:L customer>L summary;@c cs{lv=cls c.spent;dc=?lv{"gold":20;"silver":10;"bronze":5};summary name:c.name level:lv discount:dc}

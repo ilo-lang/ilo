@@ -1751,7 +1751,7 @@ mod tests {
     #[test]
     fn interpret_tot() {
         // tot p:n q:n r:n>n;s=*p q;t=*s r;+s t
-        let source = std::fs::read_to_string("research/explorations/idea9-ultra-dense-short/01-simple-function.ilo").unwrap();
+        let source = std::fs::read_to_string("examples/01-simple-function.ilo").unwrap();
         let result = run_str(
             &source,
             Some("tot"),

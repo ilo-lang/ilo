@@ -1,0 +1,1 @@
+prc ord:order>R order t;vld ord.addr;?{^_:^"Invalid shipping address"};sh=shipping ord.weight ord.addr.country;dc=discount ord.subtotal ord.code;fin=+(-ord.subtotal dc)sh;~ord with total:fin cost:sh
