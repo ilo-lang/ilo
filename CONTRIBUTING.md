@@ -5,7 +5,7 @@ Thanks for your interest in contributing to ilo!
 ## Getting Started
 
 ```bash
-git clone https://github.com/danieljohnmorris/ilo-lang
+git clone https://github.com/ilo-lang/ilo
 cd ilo-lang
 cargo test
 ```

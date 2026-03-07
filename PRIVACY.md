@@ -31,4 +31,4 @@ ilo shares no data with third parties. Pre-built binaries are hosted on GitHub R
 
 ## Contact
 
-For privacy questions, open an issue at [github.com/danieljohnmorris/ilo-lang](https://github.com/danieljohnmorris/ilo-lang).
+For privacy questions, open an issue at [github.com/ilo-lang/ilo](https://github.com/ilo-lang/ilo).

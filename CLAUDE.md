@@ -2,7 +2,7 @@
 
 **ilo** is a token-minimal programming language for AI agents.
 
-- GitHub: https://github.com/danieljohnmorris/ilo-lang
+- GitHub: https://github.com/ilo-lang/ilo
 - Language spec: [SPEC.md](SPEC.md)
 - Current version: **0.8.0** (installed at `~/.cargo/bin/ilo` via `cargo install`)
 

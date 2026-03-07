@@ -192,7 +192,7 @@ Safe endings: binary/unary operators, index access, match blocks, text/number li
 ## Install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/danieljohnmorris/ilo-lang/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/ilo-lang/ilo/main/install.sh | sh
 ```
 
 ## Examples

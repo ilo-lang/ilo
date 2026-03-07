@@ -2,7 +2,7 @@
 # Ensure ilo is installed and up to date (macOS, Linux, Windows/Git Bash).
 set -eu
 
-REPO="danieljohnmorris/ilo-lang"
+REPO="ilo-lang/ilo"
 
 # Detect platform
 OS=$(uname -s)

@@ -15,7 +15,7 @@
       "author": {
         "name": "Daniel Morris"
       },
-      "homepage": "https://github.com/danieljohnmorris/ilo-lang",
+      "homepage": "https://github.com/ilo-lang/ilo",
       "license": "MIT",
       "keywords": ["ilo", "programming-language", "token-minimal", "ai-agents"]
     }

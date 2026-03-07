@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-REPO="danieljohnmorris/ilo-lang"
+REPO="ilo-lang/ilo"
 
 OS=$(uname -s)
 ARCH=$(uname -m)
