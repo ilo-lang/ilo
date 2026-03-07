@@ -1,6 +1,6 @@
 {
   "name": "ilo",
-  "description": "Write, run, debug, and explain programs in ilo — a token-minimal programming language for AI agents",
+  "description": "Write, run, debug, and explain programs in ilo — a token-optimised programming language for AI agents",
   "version": "0.8.0",
   "author": {
     "name": "Daniel Morris"
@@ -8,5 +8,5 @@
   "homepage": "https://github.com/ilo-lang/ilo",
   "repository": "https://github.com/ilo-lang/ilo",
   "license": "MIT",
-  "keywords": ["ilo", "programming-language", "token-minimal", "ai-agents", "prefix-notation"]
+  "keywords": ["ilo", "programming-language", "token-optimised", "ai-agents", "prefix-notation"]
 }

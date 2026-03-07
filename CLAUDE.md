@@ -1,6 +1,6 @@
 # ilo-lang — Claude context
 
-**ilo** is a token-minimal programming language for AI agents.
+**ilo** is a token-optimised programming language for AI agents.
 
 - GitHub: https://github.com/ilo-lang/ilo
 - Language spec: [SPEC.md](SPEC.md)

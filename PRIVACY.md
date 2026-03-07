@@ -1,6 +1,6 @@
 # Privacy Policy
 
-**ilo** — a token-minimal programming language for AI agents
+**ilo** — a token-optimised programming language for AI agents
 
 *Last updated: 2026-03-07*
 

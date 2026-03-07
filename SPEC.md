@@ -1,6 +1,6 @@
 # ilo Language Spec
 
-ilo is a token-minimal language for AI agents. Every design choice is evaluated against total token cost: generation + retries + context loading.
+ilo is a token-optimised programming language for AI agents. Every design choice is evaluated against total token cost: generation + retries + context loading.
 
 ---
 

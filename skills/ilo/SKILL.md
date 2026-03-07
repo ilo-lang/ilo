@@ -1,6 +1,6 @@
 ---
 name: ilo
-description: "Write, run, debug, and explain programs in ilo — a token-minimal programming language for AI agents. Use when the user asks to write ilo code, mentions .ilo files, asks about ilo syntax, wants to create token-minimal programs, or wants to convert code from other languages to ilo."
+description: "Write, run, debug, and explain programs in ilo — a token-optimised programming language for AI agents. Use when the user asks to write ilo code, mentions .ilo files, asks about ilo syntax, wants to create token-optimised programs, or wants to convert code from other languages to ilo."
 argument-hint: "[task or code description]"
 allowed-tools:
   - Bash
@@ -33,7 +33,7 @@ This outputs the full spec optimised for LLM consumption. Read it before writing
 
 ## Overview
 
-ilo is a token-minimal programming language for AI agents. Prefix-notation, strongly-typed, verified before execution.
+ilo is a token-optimised programming language for AI agents. Prefix-notation, strongly-typed, verified before execution.
 
 For the full specification, read [SPEC.md](../../SPEC.md). For the compact AI spec, run `ilo help ai`.
 
