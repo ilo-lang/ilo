@@ -5878,7 +5878,8 @@ mod tests {
         let nv = NanVal::from_value(&v);
         assert!(nv.is_number());
         let rt = nv.to_value();
-        match rt { Value::Number(n) => assert!(n.to_bits() == (-0.0f64).to_bits()), _ => panic!() }
+        let Value::Number(n) = rt else { panic!("expected Number") };
+        assert!(n.to_bits() == (-0.0f64).to_bits());
         nv.drop_rc();
 
         // Infinity
@@ -6293,14 +6294,10 @@ mod tests {
     fn vm_nanval_record_return() {
         let source = "f>point;r=point x:1 y:2;r";
         let result = vm_run(source, Some("f"), vec![]);
-        match result {
-            Value::Record { type_name, fields } => {
-                assert_eq!(type_name, "point");
-                assert_eq!(fields.get("x"), Some(&Value::Number(1.0)));
-                assert_eq!(fields.get("y"), Some(&Value::Number(2.0)));
-            }
-            _ => panic!("expected record, got {:?}", result),
-        }
+        let Value::Record { type_name, fields } = result else { panic!("expected record") };
+        assert_eq!(type_name, "point");
+        assert_eq!(fields.get("x"), Some(&Value::Number(1.0)));
+        assert_eq!(fields.get("y"), Some(&Value::Number(2.0)));
     }
 
     // ── Error tests ──────────────────────────────────────────────────
@@ -6549,13 +6546,9 @@ mod tests {
         };
         let nv = NanVal::from_value(&rec);
         let roundtrip = nv.to_value();
-        match roundtrip {
-            Value::Record { type_name, fields } => {
-                assert_eq!(type_name, "point");
-                assert_eq!(fields.get("x"), Some(&Value::Number(42.0)));
-            }
-            other => panic!("expected Record, got {:?}", other),
-        }
+        let Value::Record { type_name, fields } = roundtrip else { panic!("expected Record") };
+        assert_eq!(type_name, "point");
+        assert_eq!(fields.get("x"), Some(&Value::Number(42.0)));
         // Also verify the state can be used normally
         let r = state.call("f", vec![Value::Number(1.0)]).unwrap();
         assert_eq!(r, Value::Number(1.0));
@@ -6968,10 +6961,7 @@ mod tests {
             Value::Text("http://127.0.0.1:1".to_string()),
             Value::Map(headers),
         ]);
-        match result {
-            Value::Err(_) => {}
-            other => panic!("expected Err, got {other:?}"),
-        }
+        let Value::Err(_) = result else { panic!("expected Err") };
     }
 
     #[test]
@@ -6985,10 +6975,7 @@ mod tests {
             Value::Text("body".to_string()),
             Value::Map(headers),
         ]);
-        match result {
-            Value::Err(_) => {}
-            other => panic!("expected Err, got {other:?}"),
-        }
+        let Value::Err(_) = result else { panic!("expected Err") };
     }
 
     // ---- Braceless guards ----
@@ -7313,25 +7300,17 @@ mod tests {
     fn vm_rnd_no_args() {
         let source = "f>n;rnd";
         let result = vm_run(source, Some("f"), vec![]);
-        match result {
-            Value::Number(n) => {
-                assert!(n >= 0.0 && n < 1.0, "rnd should be in [0,1), got {n}");
-            }
-            other => panic!("expected Number, got {:?}", other),
-        }
+        let Value::Number(n) = result else { panic!("expected Number") };
+        assert!(n >= 0.0 && n < 1.0, "rnd should be in [0,1), got {n}");
     }
 
     #[test]
     fn vm_rnd_two_args() {
         let source = "f>n;rnd 1 10";
         let result = vm_run(source, Some("f"), vec![]);
-        match result {
-            Value::Number(n) => {
-                assert!(n >= 1.0 && n <= 10.0, "rnd 1 10 should be in [1,10], got {n}");
-                assert_eq!(n, n.floor(), "rnd with two args should return integer");
-            }
-            other => panic!("expected Number, got {:?}", other),
-        }
+        let Value::Number(n) = result else { panic!("expected Number") };
+        assert!(n >= 1.0 && n <= 10.0, "rnd 1 10 should be in [1,10], got {n}");
+        assert_eq!(n, n.floor(), "rnd with two args should return integer");
     }
 
     #[test]
@@ -7351,12 +7330,8 @@ mod tests {
     fn vm_now() {
         let source = "f>n;now";
         let result = vm_run(source, Some("f"), vec![]);
-        match result {
-            Value::Number(n) => {
-                assert!(n > 1_000_000_000.0, "now should be a reasonable unix timestamp, got {n}");
-            }
-            other => panic!("expected Number, got {:?}", other),
-        }
+        let Value::Number(n) = result else { panic!("expected Number") };
+        assert!(n > 1_000_000_000.0, "now should be a reasonable unix timestamp, got {n}");
     }
 
     // ── env builtin VM tests ──────────────────────────────────────────
@@ -7376,15 +7351,9 @@ mod tests {
         let _guard = ENV_TEST_MUTEX.lock().unwrap();
         let source = r#"f k:t>R t t;env k"#;
         let result = vm_run(source, Some("f"), vec![Value::Text("ILO_VM_NONEXIST_999".into())]);
-        match result {
-            Value::Err(inner) => {
-                match *inner {
-                    Value::Text(s) => assert!(s.contains("not set"), "got: {s}"),
-                    other => panic!("expected Text, got {:?}", other),
-                }
-            }
-            other => panic!("expected Err, got {:?}", other),
-        }
+        let Value::Err(inner) = result else { panic!("expected Err") };
+        let Value::Text(s) = *inner else { panic!("expected Text") };
+        assert!(s.contains("not set"), "got: {s}");
     }
 
     #[test]
@@ -7520,10 +7489,8 @@ mod tests {
             Value::Text(r#"{"a":1}"#.to_string()),
             Value::Text("b".to_string()),
         ]);
-        match result {
-            Value::Err(e) => assert!(e.to_string().contains("key not found"), "got: {}", e),
-            other => panic!("expected Err, got {:?}", other),
-        }
+        let Value::Err(e) = result else { panic!("expected Err") };
+        assert!(e.to_string().contains("key not found"), "got: {}", e);
     }
 
     #[test]
@@ -7570,7 +7537,8 @@ mod tests {
     fn vm_jd_record() {
         let source = "type pt{x:n;y:n} f>t;p=pt x:1 y:2;jdmp p";
         let result = vm_run(source, Some("f"), vec![]);
-        let text = match &result { Value::Text(s) => s.clone(), _ => panic!("expected text") };
+        let Value::Text(ref s) = result else { panic!("expected text") };
+        let text = s.clone();
         let parsed: serde_json::Value = serde_json::from_str(&text).unwrap();
         assert_eq!(parsed["x"], 1);
         assert_eq!(parsed["y"], 2);
@@ -7591,17 +7559,11 @@ mod tests {
         let result = vm_run(source, Some("f"), vec![
             Value::Text(r#"{"a":1,"b":"two"}"#.to_string()),
         ]);
-        match result {
-            Value::Ok(inner) => match *inner {
-                Value::Record { type_name, fields } => {
-                    assert_eq!(type_name, "json");
-                    assert_eq!(fields.get("a"), Some(&Value::Number(1.0)));
-                    assert_eq!(fields.get("b"), Some(&Value::Text("two".to_string())));
-                }
-                other => panic!("expected record, got {:?}", other),
-            },
-            other => panic!("expected Ok, got {:?}", other),
-        }
+        let Value::Ok(inner) = result else { panic!("expected Ok") };
+        let Value::Record { type_name, fields } = *inner else { panic!("expected record") };
+        assert_eq!(type_name, "json");
+        assert_eq!(fields.get("a"), Some(&Value::Number(1.0)));
+        assert_eq!(fields.get("b"), Some(&Value::Text("two".to_string())));
     }
 
     #[test]
@@ -7610,10 +7572,8 @@ mod tests {
         let result = vm_run(source, Some("f"), vec![
             Value::Text("[1,2,3]".to_string()),
         ]);
-        match result {
-            Value::Ok(inner) => assert_eq!(*inner, Value::List(vec![Value::Number(1.0), Value::Number(2.0), Value::Number(3.0)])),
-            other => panic!("expected Ok, got {:?}", other),
-        }
+        let Value::Ok(inner) = result else { panic!("expected Ok") };
+        assert_eq!(*inner, Value::List(vec![Value::Number(1.0), Value::Number(2.0), Value::Number(3.0)]));
     }
 
     #[test]
@@ -7629,13 +7589,9 @@ mod tests {
     fn vm_jparse_unwrap() {
         let source = r#"f j:t>t;jpar! j"#;
         let result = vm_run(source, Some("f"), vec![Value::Text(r#"{"x":1}"#.to_string())]);
-        match result {
-            Value::Record { type_name, fields } => {
-                assert_eq!(type_name, "json");
-                assert_eq!(fields.get("x"), Some(&Value::Number(1.0)));
-            }
-            other => panic!("expected record, got {:?}", other),
-        }
+        let Value::Record { type_name, fields } = result else { panic!("expected record") };
+        assert_eq!(type_name, "json");
+        assert_eq!(fields.get("x"), Some(&Value::Number(1.0)));
     }
 
     #[test]
@@ -8024,15 +7980,10 @@ mod tests {
             "f p:t>t;rdl p", Some("f"),
             vec![Value::Text(path.into())],
         );
-        assert!(matches!(result, Value::Ok(_)), "expected Ok, got {result:?}");
-        if let Value::Ok(inner) = result {
-            if let Value::List(lines) = *inner {
-                assert_eq!(lines.len(), 2);
-                assert_eq!(lines[0], Value::Text("line1".into()));
-            } else {
-                panic!("expected List inside Ok");
-            }
-        }
+        let Value::Ok(inner) = result else { panic!("expected Ok") };
+        let Value::List(lines) = *inner else { panic!("expected List inside Ok") };
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0], Value::Text("line1".into()));
         let _ = std::fs::remove_file(path);
     }
 
@@ -9072,10 +9023,8 @@ mod tests {
         let nv = NanVal::from_value(&val);
         // FnRef converts to a heap string like "<fn:my_fn>"
         let back = nv.to_value();
-        match back {
-            Value::Text(s) => assert!(s.contains("my_fn"), "got: {s}"),
-            other => panic!("expected Text, got {other:?}"),
-        }
+        let Value::Text(s) = back else { panic!("expected Text") };
+        assert!(s.contains("my_fn"), "got: {s}");
     }
 
     // ── JIT helper functions (cranelift feature) ───────────────────────────────
@@ -9345,7 +9294,8 @@ mod tests {
             let r = jit_add(str_val("hello "), str_val("world"));
             let rv = NanVal(r);
             assert!(rv.is_string());
-            let s = unsafe { match rv.as_heap_ref() { HeapObj::Str(s) => s.clone(), _ => panic!("not str") } };
+            let HeapObj::Str(s) = (unsafe { rv.as_heap_ref() }) else { panic!("expected Str") };
+            let s = s.clone();
             assert_eq!(s, "hello world");
         }
 
@@ -9386,7 +9336,8 @@ mod tests {
             let r = jit_str(num(42.0));
             let rv = NanVal(r);
             assert!(rv.is_string());
-            let s = unsafe { match rv.as_heap_ref() { HeapObj::Str(s) => s.clone(), _ => panic!() } };
+            let HeapObj::Str(s) = (unsafe { rv.as_heap_ref() }) else { panic!("expected Str") };
+            let s = s.clone();
             assert_eq!(s, "42");
         }
 
@@ -9410,7 +9361,8 @@ mod tests {
             let r = jit_hd(str_val("hello"));
             let rv = NanVal(r);
             assert!(rv.is_string());
-            let s = unsafe { match rv.as_heap_ref() { HeapObj::Str(s) => s.clone(), _ => panic!() } };
+            let HeapObj::Str(s) = (unsafe { rv.as_heap_ref() }) else { panic!("expected Str") };
+            let s = s.clone();
             assert_eq!(s, "h");
         }
 
@@ -9449,7 +9401,8 @@ mod tests {
             let r = jit_tl(str_val("hello"));
             let rv = NanVal(r);
             assert!(rv.is_string());
-            let s = unsafe { match rv.as_heap_ref() { HeapObj::Str(s) => s.clone(), _ => panic!() } };
+            let HeapObj::Str(s) = (unsafe { rv.as_heap_ref() }) else { panic!("expected Str") };
+            let s = s.clone();
             assert_eq!(s, "ello");
         }
 
@@ -9482,7 +9435,8 @@ mod tests {
             let r = jit_rev(str_val("hello"));
             let rv = NanVal(r);
             assert!(rv.is_string());
-            let s = unsafe { match rv.as_heap_ref() { HeapObj::Str(s) => s.clone(), _ => panic!() } };
+            let HeapObj::Str(s) = (unsafe { rv.as_heap_ref() }) else { panic!("expected Str") };
+            let s = s.clone();
             assert_eq!(s, "olleh");
         }
 
@@ -9508,7 +9462,8 @@ mod tests {
             let r = jit_srt(str_val("cab"));
             let rv = NanVal(r);
             assert!(rv.is_string());
-            let s = unsafe { match rv.as_heap_ref() { HeapObj::Str(s) => s.clone(), _ => panic!() } };
+            let HeapObj::Str(s) = (unsafe { rv.as_heap_ref() }) else { panic!("expected Str") };
+            let s = s.clone();
             assert_eq!(s, "abc");
         }
 
@@ -9555,7 +9510,8 @@ mod tests {
             let r = jit_slc(str_val("hello"), num(1.0), num(3.0));
             let rv = NanVal(r);
             assert!(rv.is_string());
-            let s = unsafe { match rv.as_heap_ref() { HeapObj::Str(s) => s.clone(), _ => panic!() } };
+            let HeapObj::Str(s) = (unsafe { rv.as_heap_ref() }) else { panic!("expected Str") };
+            let s = s.clone();
             assert_eq!(s, "el");
         }
 
@@ -9630,10 +9586,8 @@ mod tests {
             let r = jit_spl(str_val("a,b,c"), str_val(","));
             let rv = NanVal(r);
             assert!(rv.is_heap());
-            match unsafe { rv.as_heap_ref() } {
-                HeapObj::List(items) => assert_eq!(items.len(), 3),
-                _ => panic!("expected list"),
-            }
+            let HeapObj::List(items) = (unsafe { rv.as_heap_ref() }) else { panic!("expected list") };
+            assert_eq!(items.len(), 3);
         }
 
         #[test]
@@ -9655,7 +9609,8 @@ mod tests {
             let r = jit_cat(list.0, str_val(","));
             let rv = NanVal(r);
             assert!(rv.is_string());
-            let s = unsafe { match rv.as_heap_ref() { HeapObj::Str(s) => s.clone(), _ => panic!() } };
+            let HeapObj::Str(s) = (unsafe { rv.as_heap_ref() }) else { panic!("expected Str") };
+            let s = s.clone();
             assert_eq!(s, "a,b,c");
         }
 
@@ -9674,10 +9629,8 @@ mod tests {
             let r = jit_listappend(list.0, num(3.0));
             let rv = NanVal(r);
             assert!(rv.is_heap());
-            match unsafe { rv.as_heap_ref() } {
-                HeapObj::List(items) => assert_eq!(items.len(), 3),
-                _ => panic!("expected list"),
-            }
+            let HeapObj::List(items) = (unsafe { rv.as_heap_ref() }) else { panic!("expected list") };
+            assert_eq!(items.len(), 3);
         }
 
         #[test]
@@ -9733,10 +9686,7 @@ mod tests {
             let r = jit_jpar(str_val("not json"));
             let rv = NanVal(r);
             assert!(rv.is_heap());
-            match unsafe { rv.as_heap_ref() } {
-                HeapObj::ErrVal(_) => {},
-                _ => panic!("expected ErrVal"),
-            }
+            let HeapObj::ErrVal(_) = (unsafe { rv.as_heap_ref() }) else { panic!("expected ErrVal") };
         }
 
         #[test]
@@ -9752,32 +9702,22 @@ mod tests {
             let r = jit_jpth(str_val(r#"{"x":"hello"}"#), str_val("x"));
             let rv = NanVal(r);
             assert!(rv.is_heap());
-            match unsafe { rv.as_heap_ref() } {
-                HeapObj::OkVal(inner) => {
-                    assert!(inner.is_string());
-                }
-                _ => panic!("expected OkVal"),
-            }
+            let HeapObj::OkVal(inner) = (unsafe { rv.as_heap_ref() }) else { panic!("expected OkVal") };
+            assert!(inner.is_string());
         }
 
         #[test]
         fn jit_jpth_missing_key() {
             let r = jit_jpth(str_val(r#"{"a":1}"#), str_val("b"));
             let rv = NanVal(r);
-            match unsafe { rv.as_heap_ref() } {
-                HeapObj::ErrVal(_) => {},
-                _ => panic!("expected ErrVal"),
-            }
+            let HeapObj::ErrVal(_) = (unsafe { rv.as_heap_ref() }) else { panic!("expected ErrVal") };
         }
 
         #[test]
         fn jit_jpth_invalid_json() {
             let r = jit_jpth(str_val("not json"), str_val("x"));
             let rv = NanVal(r);
-            match unsafe { rv.as_heap_ref() } {
-                HeapObj::ErrVal(_) => {},
-                _ => panic!("expected ErrVal"),
-            }
+            let HeapObj::ErrVal(_) = (unsafe { rv.as_heap_ref() }) else { panic!("expected ErrVal") };
         }
 
         #[test]
@@ -9803,10 +9743,8 @@ mod tests {
             let list = NanVal::heap_list(items);
             let r = jit_listget(list.0, num(0.0));
             let rv = NanVal(r);
-            match unsafe { rv.as_heap_ref() } {
-                HeapObj::OkVal(inner) => assert_eq!(inner.as_number(), 10.0),
-                _ => panic!("expected OkVal"),
-            }
+            let HeapObj::OkVal(inner) = (unsafe { rv.as_heap_ref() }) else { panic!("expected OkVal") };
+            assert_eq!(inner.as_number(), 10.0);
         }
 
         #[test]
@@ -10536,13 +10474,9 @@ mod tests {
         let src = "type pt{x:n;y:n} f>n;xs=[pt x:1 y:2,pt x:10 y:20];xs.1";
         let result = vm_run(src, Some("f"), vec![]);
         // xs.1 accesses the second element (index 1) — a promoted pt record
-        match result {
-            Value::Record { type_name, fields } => {
-                assert_eq!(type_name, "pt");
-                assert_eq!(fields.get("x"), Some(&Value::Number(10.0)));
-            }
-            other => panic!("expected Record, got {other:?}"),
-        }
+        let Value::Record { type_name, fields } = result else { panic!("expected Record") };
+        assert_eq!(type_name, "pt");
+        assert_eq!(fields.get("x"), Some(&Value::Number(10.0)));
     }
 
     // Check that run_with_tools correctly invokes VM::new_with_tools (exercises L2416-2432)
@@ -11023,10 +10957,7 @@ mod tests {
     fn vm_jpth_invalid_json_returns_err() {
         let result = vm_run(r#"f s:t>R t t;jpth s "a""#, Some("f"),
             vec![Value::Text("not json at all".into())]);
-        match result {
-            Value::Err(_) => {}
-            other => panic!("expected Err, got {:?}", other),
-        }
+        let Value::Err(_) = result else { panic!("expected Err") };
     }
 
     // lines 3853-3855: jpth array index out of bounds → Err
@@ -11034,10 +10965,7 @@ mod tests {
     fn vm_jpth_array_index_not_found() {
         let result = vm_run(r#"f s:t>R t t;jpth s "a.5""#, Some("f"),
             vec![Value::Text(r#"{"a":[1,2]}"#.into())]);
-        match result {
-            Value::Err(_) => {}
-            other => panic!("expected Err, got {:?}", other),
-        }
+        let Value::Err(_) = result else { panic!("expected Err") };
     }
 
     // ── cat error paths (lines 3925, 3928) ──────────────────────────────────
@@ -11148,10 +11076,8 @@ mod tests {
         // jpar produces a heap record; jdmp it back to JSON string
         let result = vm_run(r#"f s:t>t;r=jpar! s;jdmp r"#, Some("f"),
             vec![Value::Text(r#"{"x":10}"#.into())]);
-        match result {
-            Value::Text(s) => assert!(s.contains("10"), "got: {s}"),
-            other => panic!("expected Text, got {:?}", other),
-        }
+        let Value::Text(s) = result else { panic!("expected Text") };
+        assert!(s.contains("10"), "got: {s}");
     }
 
     // ── nanval_to_json OkVal/ErrVal (lines 4223-4224) ────────────────────────
@@ -11162,10 +11088,8 @@ mod tests {
         // jpar returns Ok(record) — jdmp on the Ok unwraps inner
         let result = vm_run(r#"f s:t>t;r=jpar s;jdmp r"#, Some("f"),
             vec![Value::Text(r#"{"v":5}"#.into())]);
-        match result {
-            Value::Text(s) => assert!(s.contains("5"), "got: {s}"),
-            other => panic!("expected Text, got {:?}", other),
-        }
+        let Value::Text(s) = result else { panic!("expected Text") };
+        assert!(s.contains("5"), "got: {s}");
     }
 
     // ── nanval_to_json Map (lines 4225-4229) ─────────────────────────────────
@@ -11174,10 +11098,8 @@ mod tests {
     #[test]
     fn vm_jdmp_map_value() {
         let result = vm_run(r#"f>t;m=mset mmap "k" 42;jdmp m"#, Some("f"), vec![]);
-        match result {
-            Value::Text(s) => assert!(s.contains("42"), "got: {s}"),
-            other => panic!("expected Text, got {:?}", other),
-        }
+        let Value::Text(s) = result else { panic!("expected Text") };
+        assert!(s.contains("42"), "got: {s}");
     }
 
     // ── nanval_to_json Bool (lines 4206-4207) ────────────────────────────────
@@ -11204,10 +11126,8 @@ mod tests {
         // jpar on invalid JSON returns Err(text). jdmp on that Err hits line 4224.
         let result = vm_run(r#"f s:t>t;e=jpar s;jdmp e"#, Some("f"),
             vec![Value::Text("not json".into())]);
-        match result {
-            Value::Text(_) => {} // ErrVal inner serialized
-            other => panic!("expected Text, got {:?}", other),
-        }
+        let Value::Text(_) = result else { panic!("expected Text") };
+        // ErrVal inner serialized
     }
 
     // ── slc on heap non-list (line 4119) ─────────────────────────────────────
@@ -11233,10 +11153,8 @@ mod tests {
         std::fs::write(path, "hello raw").unwrap();
         let source = format!(r#"f>R t t;rd "{path}""#);
         let result = vm_run(&source, Some("f"), vec![]);
-        match result {
-            Value::Ok(inner) => assert_eq!(*inner, Value::Text("hello raw".into())),
-            other => panic!("expected Ok, got {:?}", other),
-        }
+        let Value::Ok(inner) = result else { panic!("expected Ok") };
+        assert_eq!(*inner, Value::Text("hello raw".into()));
     }
 
     // ── vm_parse_csv_row quoted fields (lines 4295-4306) ─────────────────────
@@ -11250,5 +11168,69 @@ mod tests {
         let source = format!(r#"f>n;rows=rd! "{path}";len rows"#);
         let result = vm_run(&source, Some("f"), vec![]);
         assert_eq!(result, Value::Number(1.0)); // one row
+    }
+
+    // ── VM interpreter edge cases (fallthrough/unknown opcode) ───────────────
+
+    #[test]
+    fn vm_execute_fallthrough_returns_nil() {
+        // Manually construct a program with an empty chunk (no RET).
+        // execute() should hit the ip >= code.len() path and return Nil.
+        let chunk = Chunk {
+            code: vec![],
+            constants: vec![],
+            param_count: 0,
+            reg_count: 0,
+            spans: vec![],
+        };
+        let program = CompiledProgram {
+            chunks: vec![chunk],
+            func_names: vec!["f".to_string()],
+            nan_constants: vec![vec![]],
+            type_registry: TypeRegistry::default(),
+            is_tool: vec![false],
+        };
+        let result = run(&program, Some("f"), vec![]).expect("fallthrough should succeed");
+        assert_eq!(result, Value::Nil);
+    }
+
+    #[test]
+    fn vm_unknown_opcode_error_has_span_and_stack() {
+        // Create a bogus instruction with an unknown opcode (0xFE)
+        let inst = (0xFEu32) << 24;
+        let chunk = Chunk {
+            code: vec![inst],
+            constants: vec![],
+            param_count: 0,
+            reg_count: 0,
+            spans: vec![crate::ast::Span { start: 1, end: 2 }],
+        };
+        let program = CompiledProgram {
+            chunks: vec![chunk],
+            func_names: vec!["f".to_string()],
+            nan_constants: vec![vec![]],
+            type_registry: TypeRegistry::default(),
+            is_tool: vec![false],
+        };
+        let err = run(&program, Some("f"), vec![]).unwrap_err();
+        // Error kind should be UnknownOpcode and span should be captured.
+        let msg = err.to_string();
+        assert!(msg.contains("unknown opcode") || msg.contains("opcode"), "got: {msg}");
+        assert!(err.span.is_some(), "expected span to be captured");
+        assert_eq!(err.call_stack, vec!["f".to_string()]);
+    }
+
+    #[test]
+    fn vm_error_call_stack_includes_caller_and_callee() {
+        // f calls g, g divides by zero → ensure call_stack lists [f, g]
+        let prog = parse_program("g x:n>n;/x 0 f>n;g 1");
+        let compiled = compile(&prog).unwrap();
+        let err = run(&compiled, Some("f"), vec![]).unwrap_err();
+        assert!(err.call_stack.contains(&"f".to_string()));
+        assert!(err.call_stack.contains(&"g".to_string()));
+        // Order should be outermost to innermost.
+        let f_pos = err.call_stack.iter().position(|n| n == "f").unwrap();
+        let g_pos = err.call_stack.iter().position(|n| n == "g").unwrap();
+        assert!(f_pos < g_pos, "expected f before g in call stack: {:?}", err.call_stack);
     }
 }
