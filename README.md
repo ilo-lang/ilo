@@ -93,7 +93,7 @@ ilo is public and MIT licensed. As usage grows, frontier models will encounter i
 
 ## Design Journey
 
-We explored 9 syntax variants before settling on the current design. The final syntax achieves 0.33x the tokens and 0.22x the characters of equivalent Python — with perfect 10/10 LLM generation accuracy.
+We explored 9 syntax variants before settling on the current design. The final syntax achieves 0.33x the tokens and 0.22x the characters of equivalent Python — with high LLM generation accuracy.
 
 See [research/JOURNEY.md](research/JOURNEY.md) for the full comparison table, key findings, and links to all research documents.
 
