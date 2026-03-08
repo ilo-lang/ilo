@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use crate::ast::*;
+use crate::builtins::Builtin;
 
 pub mod json;
 
@@ -288,8 +289,9 @@ fn parse_csv_row(line: &str, sep: char) -> Vec<String> {
 }
 
 fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
-    // Builtins
-    if name == "len" {
+    // Builtins — resolve name to enum once, then dispatch via match
+    let builtin = Builtin::from_name(name);
+    if builtin == Some(Builtin::Len) {
         if args.len() != 1 {
             return Err(RuntimeError::new("ILO-R009", format!("len: expected 1 arg, got {}", args.len())));
         }
@@ -301,16 +303,16 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         };
     }
     // Map builtins
-    if name == "mmap" && args.is_empty() {
+    if builtin == Some(Builtin::Mmap) && args.is_empty() {
         return Ok(Value::Map(HashMap::new()));
     }
-    if name == "mget" && args.len() == 2 {
+    if builtin == Some(Builtin::Mget) && args.len() == 2 {
         return match (&args[0], &args[1]) {
             (Value::Map(m), Value::Text(k)) => Ok(m.get(k).cloned().unwrap_or(Value::Nil)),
             _ => Err(RuntimeError::new("ILO-R009", "mget: expects map and text key".to_string())),
         };
     }
-    if name == "mset" && args.len() == 3 {
+    if builtin == Some(Builtin::Mset) && args.len() == 3 {
         return match (&args[0], &args[1]) {
             (Value::Map(m), Value::Text(k)) => {
                 let mut new_map = m.clone();
@@ -320,13 +322,13 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             _ => Err(RuntimeError::new("ILO-R009", "mset: expects map, text key, and value".to_string())),
         };
     }
-    if name == "mhas" && args.len() == 2 {
+    if builtin == Some(Builtin::Mhas) && args.len() == 2 {
         return match (&args[0], &args[1]) {
             (Value::Map(m), Value::Text(k)) => Ok(Value::Bool(m.contains_key(k.as_str()))),
             _ => Err(RuntimeError::new("ILO-R009", "mhas: expects map and text key".to_string())),
         };
     }
-    if name == "mkeys" && args.len() == 1 {
+    if builtin == Some(Builtin::Mkeys) && args.len() == 1 {
         return match &args[0] {
             Value::Map(m) => {
                 let mut keys: Vec<&String> = m.keys().collect();
@@ -336,7 +338,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             _ => Err(RuntimeError::new("ILO-R009", "mkeys: expects a map".to_string())),
         };
     }
-    if name == "mvals" && args.len() == 1 {
+    if builtin == Some(Builtin::Mvals) && args.len() == 1 {
         return match &args[0] {
             Value::Map(m) => {
                 let mut pairs: Vec<(&String, &Value)> = m.iter().collect();
@@ -346,7 +348,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             _ => Err(RuntimeError::new("ILO-R009", "mvals: expects a map".to_string())),
         };
     }
-    if name == "mdel" && args.len() == 2 {
+    if builtin == Some(Builtin::Mdel) && args.len() == 2 {
         return match (&args[0], &args[1]) {
             (Value::Map(m), Value::Text(k)) => {
                 let mut new_map = m.clone();
@@ -356,7 +358,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             _ => Err(RuntimeError::new("ILO-R009", "mdel: expects map and text key".to_string())),
         };
     }
-    if name == "str" {
+    if builtin == Some(Builtin::Str) {
         if args.len() != 1 {
             return Err(RuntimeError::new("ILO-R009", format!("str: expected 1 arg, got {}", args.len())));
         }
@@ -372,7 +374,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             other => Err(RuntimeError::new("ILO-R009", format!("str requires a number, got {:?}", other))),
         };
     }
-    if name == "num" {
+    if builtin == Some(Builtin::Num) {
         if args.len() != 1 {
             return Err(RuntimeError::new("ILO-R009", format!("num: expected 1 arg, got {}", args.len())));
         }
@@ -384,7 +386,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             other => Err(RuntimeError::new("ILO-R009", format!("num requires text, got {:?}", other))),
         };
     }
-    if name == "abs" {
+    if builtin == Some(Builtin::Abs) {
         if args.len() != 1 {
             return Err(RuntimeError::new("ILO-R009", format!("abs: expected 1 arg, got {}", args.len())));
         }
@@ -393,7 +395,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             other => Err(RuntimeError::new("ILO-R009", format!("abs requires a number, got {:?}", other))),
         };
     }
-    if name == "mod" && args.len() == 2 {
+    if builtin == Some(Builtin::Mod) && args.len() == 2 {
         return match (&args[0], &args[1]) {
             (Value::Number(a), Value::Number(b)) => {
                 if *b == 0.0 {
@@ -405,32 +407,36 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             _ => Err(RuntimeError::new("ILO-R009", "mod requires two numbers".to_string())),
         };
     }
-    if (name == "min" || name == "max") && args.len() == 2 {
+    if matches!(builtin, Some(Builtin::Min | Builtin::Max)) && args.len() == 2 {
         return match (&args[0], &args[1]) {
             (Value::Number(a), Value::Number(b)) => {
-                let result = if name == "min" { a.min(*b) } else { a.max(*b) };
+                let result = if builtin == Some(Builtin::Min) { a.min(*b) } else { a.max(*b) };
                 Ok(Value::Number(result))
             }
             _ => Err(RuntimeError::new("ILO-R009", format!("{} requires two numbers", name))),
         };
     }
-    if (name == "flr" || name == "cel" || name == "rou") && args.len() == 1 {
+    if matches!(builtin, Some(Builtin::Flr | Builtin::Cel | Builtin::Rou)) && args.len() == 1 {
         return match &args[0] {
             Value::Number(n) => {
-                let result = if name == "flr" { n.floor() } else if name == "cel" { n.ceil() } else { n.round() };
+                let result = match builtin {
+                    Some(Builtin::Flr) => n.floor(),
+                    Some(Builtin::Cel) => n.ceil(),
+                    _ => n.round(),
+                };
                 Ok(Value::Number(result))
             }
             other => Err(RuntimeError::new("ILO-R009", format!("{} requires a number, got {:?}", name, other))),
         };
     }
-    if name == "now" && args.is_empty() {
+    if builtin == Some(Builtin::Now) && args.is_empty() {
         let ts = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_secs_f64();
         return Ok(Value::Number(ts));
     }
-    if name == "rnd" {
+    if builtin == Some(Builtin::Rnd) {
         if args.is_empty() {
             return Ok(Value::Number(fastrand::f64()));
         }
@@ -448,7 +454,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             };
         }
     }
-    if name == "spl" && args.len() == 2 {
+    if builtin == Some(Builtin::Spl) && args.len() == 2 {
         return match (&args[0], &args[1]) {
             (Value::Text(s), Value::Text(sep)) => {
                 let parts: Vec<Value> = s.split(sep.as_str()).map(|p| Value::Text(p.to_string())).collect();
@@ -457,7 +463,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             _ => Err(RuntimeError::new("ILO-R009", "spl requires two text args".to_string())),
         };
     }
-    if name == "cat" && args.len() == 2 {
+    if builtin == Some(Builtin::Cat) && args.len() == 2 {
         return match (&args[0], &args[1]) {
             (Value::List(items), Value::Text(sep)) => {
                 let mut parts = Vec::new();
@@ -472,7 +478,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             _ => Err(RuntimeError::new("ILO-R009", "cat requires a list and text separator".to_string())),
         };
     }
-    if name == "has" && args.len() == 2 {
+    if builtin == Some(Builtin::Has) && args.len() == 2 {
         return match &args[0] {
             Value::List(items) => Ok(Value::Bool(items.contains(&args[1]))),
             Value::Text(s) => match &args[1] {
@@ -482,7 +488,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             other => Err(RuntimeError::new("ILO-R009", format!("has requires a list or text, got {:?}", other))),
         };
     }
-    if name == "hd" && args.len() == 1 {
+    if builtin == Some(Builtin::Hd) && args.len() == 1 {
         return match &args[0] {
             Value::List(items) => {
                 if items.is_empty() {
@@ -501,7 +507,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             other => Err(RuntimeError::new("ILO-R009", format!("hd requires a list or text, got {:?}", other))),
         };
     }
-    if name == "tl" && args.len() == 1 {
+    if builtin == Some(Builtin::Tl) && args.len() == 1 {
         return match &args[0] {
             Value::List(items) => {
                 if items.is_empty() {
@@ -522,7 +528,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             other => Err(RuntimeError::new("ILO-R009", format!("tl requires a list or text, got {:?}", other))),
         };
     }
-    if name == "rev" && args.len() == 1 {
+    if builtin == Some(Builtin::Rev) && args.len() == 1 {
         return match &args[0] {
             Value::List(items) => {
                 let mut reversed = items.clone();
@@ -533,7 +539,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             other => Err(RuntimeError::new("ILO-R009", format!("rev requires a list or text, got {:?}", other))),
         };
     }
-    if name == "srt" && args.len() == 1 {
+    if builtin == Some(Builtin::Srt) && args.len() == 1 {
         return match &args[0] {
             Value::List(items) => {
                 if items.is_empty() {
@@ -573,7 +579,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             other => Err(RuntimeError::new("ILO-R009", format!("srt requires a list or text, got {:?}", other))),
         };
     }
-    if name == "srt" && args.len() == 2 {
+    if builtin == Some(Builtin::Srt) && args.len() == 2 {
         let fn_name = resolve_fn_ref(&args[0]).ok_or_else(|| {
             RuntimeError::new("ILO-R009", format!("srt: key arg must be a function reference, got {:?}", args[0]))
         })?;
@@ -596,7 +602,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         });
         return Ok(Value::List(keyed.into_iter().map(|(_, v)| v).collect()));
     }
-    if name == "slc" && args.len() == 3 {
+    if builtin == Some(Builtin::Slc) && args.len() == 3 {
         let start = match &args[1] {
             Value::Number(n) => *n as usize,
             other => return Err(RuntimeError::new("ILO-R009", format!("slc: start index must be a number, got {:?}", other))),
@@ -620,7 +626,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             other => Err(RuntimeError::new("ILO-R009", format!("slc requires a list or text, got {:?}", other))),
         };
     }
-    if name == "get" && (args.len() == 1 || args.len() == 2) {
+    if builtin == Some(Builtin::Get) && (args.len() == 1 || args.len() == 2) {
         let url = match &args[0] {
             Value::Text(u) => u.clone(),
             other => return Err(RuntimeError::new("ILO-R009", format!("get requires text (url), got {:?}", other))),
@@ -654,7 +660,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             }
         };
     }
-    if name == "post" && (args.len() == 2 || args.len() == 3) {
+    if builtin == Some(Builtin::Post) && (args.len() == 2 || args.len() == 3) {
         let (url, body) = match (&args[0], &args[1]) {
             (Value::Text(u), Value::Text(b)) => (u.clone(), b.clone()),
             _ => return Err(RuntimeError::new("ILO-R009", format!("post requires (t, t), got ({:?}, {:?})", args[0], args[1]))),
@@ -688,13 +694,13 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             }
         };
     }
-    if name == "trm" && args.len() == 1 {
+    if builtin == Some(Builtin::Trm) && args.len() == 1 {
         return match &args[0] {
             Value::Text(s) => Ok(Value::Text(s.trim().to_string())),
             other => Err(RuntimeError::new("ILO-R009", format!("trm requires text, got {:?}", other))),
         };
     }
-    if name == "unq" && args.len() == 1 {
+    if builtin == Some(Builtin::Unq) && args.len() == 1 {
         return match &args[0] {
             Value::List(xs) => {
                 let mut seen = std::collections::HashSet::new();
@@ -715,7 +721,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             other => Err(RuntimeError::new("ILO-R009", format!("unq requires a list or text, got {:?}", other))),
         };
     }
-    if name == "fmt" && !args.is_empty() {
+    if builtin == Some(Builtin::Fmt) && !args.is_empty() {
         let template = match &args[0] {
             Value::Text(s) => s.clone(),
             other => return Err(RuntimeError::new("ILO-R009", format!("fmt first arg must be text template, got {:?}", other))),
@@ -738,7 +744,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         }
         return Ok(Value::Text(result));
     }
-    if name == "rd" && (args.len() == 1 || args.len() == 2) {
+    if builtin == Some(Builtin::Rd) && (args.len() == 1 || args.len() == 2) {
         let path = match &args[0] {
             Value::Text(s) => s.clone(),
             other => return Err(RuntimeError::new("ILO-R009", format!("rd requires text path, got {:?}", other))),
@@ -764,7 +770,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             },
         };
     }
-    if name == "rdb" && args.len() == 2 {
+    if builtin == Some(Builtin::Rdb) && args.len() == 2 {
         let s = match &args[0] {
             Value::Text(s) => s.clone(),
             other => return Err(RuntimeError::new("ILO-R009", format!("rdb requires text string, got {:?}", other))),
@@ -778,7 +784,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             Err(e) => Ok(Value::Err(Box::new(Value::Text(e)))),
         };
     }
-    if name == "rdl" && args.len() == 1 {
+    if builtin == Some(Builtin::Rdl) && args.len() == 1 {
         return match &args[0] {
             Value::Text(path) => match std::fs::read_to_string(path) {
                 Ok(content) => {
@@ -793,7 +799,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             other => Err(RuntimeError::new("ILO-R009", format!("rdl requires text path, got {:?}", other))),
         };
     }
-    if name == "wr" && (args.len() == 2 || args.len() == 3) {
+    if builtin == Some(Builtin::Wr) && (args.len() == 2 || args.len() == 3) {
         let path = match &args[0] {
             Value::Text(s) => s.clone(),
             other => return Err(RuntimeError::new("ILO-R009", format!("wr: first arg must be a text path, got {:?}", other))),
@@ -871,7 +877,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             Err(e) => Ok(Value::Err(Box::new(Value::Text(e.to_string())))),
         };
     }
-    if name == "wrl" && args.len() == 2 {
+    if builtin == Some(Builtin::Wrl) && args.len() == 2 {
         return match (&args[0], &args[1]) {
             (Value::Text(path), Value::List(lines)) => {
                 let mut content = String::new();
@@ -889,7 +895,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             other => Err(RuntimeError::new("ILO-R009", format!("wrl requires text path and list of text, got {:?}", other))),
         };
     }
-    if name == "jpth" && args.len() == 2 {
+    if builtin == Some(Builtin::Jpth) && args.len() == 2 {
         return match (&args[0], &args[1]) {
             (Value::Text(json_str), Value::Text(path)) => {
                 match serde_json::from_str::<serde_json::Value>(json_str) {
@@ -920,16 +926,16 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             _ => Err(RuntimeError::new("ILO-R009", "jpth requires two text args".to_string())),
         };
     }
-    if name == "prnt" && args.len() == 1 {
+    if builtin == Some(Builtin::Prnt) && args.len() == 1 {
         let v = args.into_iter().next().expect("prnt: arity=1 guaranteed by caller");
         println!("{v}");
         return Ok(v);
     }
-    if name == "jdmp" && args.len() == 1 {
+    if builtin == Some(Builtin::Jdmp) && args.len() == 1 {
         let json_val = value_to_json(&args[0]);
         return Ok(Value::Text(json_val.to_string()));
     }
-    if name == "jpar" && args.len() == 1 {
+    if builtin == Some(Builtin::Jpar) && args.len() == 1 {
         return match &args[0] {
             Value::Text(s) => match serde_json::from_str::<serde_json::Value>(s) {
                 Ok(v) => Ok(Value::Ok(Box::new(serde_json_to_value(v)))),
@@ -939,7 +945,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         };
     }
 
-    if name == "env" && args.len() == 1 {
+    if builtin == Some(Builtin::Env) && args.len() == 1 {
         return match &args[0] {
             Value::Text(key) => {
                 match std::env::var(key.as_str()) {
@@ -961,7 +967,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             _ => None,
         }
     }
-    if name == "map" && args.len() == 2 {
+    if builtin == Some(Builtin::Map) && args.len() == 2 {
         let fn_name = resolve_fn_ref(&args[0]).ok_or_else(|| {
             RuntimeError::new("ILO-R009", format!("map: first arg must be a function reference, got {:?}", args[0]))
         })?;
@@ -975,7 +981,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         }
         return Ok(Value::List(result));
     }
-    if name == "flt" && args.len() == 2 {
+    if builtin == Some(Builtin::Flt) && args.len() == 2 {
         let fn_name = resolve_fn_ref(&args[0]).ok_or_else(|| {
             RuntimeError::new("ILO-R009", format!("flt: first arg must be a function reference, got {:?}", args[0]))
         })?;
@@ -993,7 +999,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         }
         return Ok(Value::List(result));
     }
-    if name == "fld" && args.len() == 3 {
+    if builtin == Some(Builtin::Fld) && args.len() == 3 {
         let fn_name = resolve_fn_ref(&args[0]).ok_or_else(|| {
             RuntimeError::new("ILO-R009", format!("fld: first arg must be a function reference, got {:?}", args[0]))
         })?;
@@ -1008,7 +1014,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         return Ok(acc);
     }
 
-    if name == "grp" && args.len() == 2 {
+    if builtin == Some(Builtin::Grp) && args.len() == 2 {
         let fn_name = resolve_fn_ref(&args[0]).ok_or_else(|| {
             RuntimeError::new("ILO-R009", format!("grp: first arg must be a function reference, got {:?}", args[0]))
         })?;
@@ -1036,7 +1042,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         let map = groups.into_iter().map(|(k, v)| (k, Value::List(v))).collect();
         return Ok(Value::Map(map));
     }
-    if name == "sum" && args.len() == 1 {
+    if builtin == Some(Builtin::Sum) && args.len() == 1 {
         let items = match &args[0] {
             Value::List(l) => l,
             other => return Err(RuntimeError::new("ILO-R009", format!("sum: arg must be a list, got {:?}", other))),
@@ -1050,7 +1056,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         }
         return Ok(Value::Number(total));
     }
-    if name == "avg" && args.len() == 1 {
+    if builtin == Some(Builtin::Avg) && args.len() == 1 {
         let items = match &args[0] {
             Value::List(l) => l,
             other => return Err(RuntimeError::new("ILO-R009", format!("avg: arg must be a list, got {:?}", other))),
@@ -1067,7 +1073,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         }
         return Ok(Value::Number(total / items.len() as f64));
     }
-    if name == "rgx" && args.len() == 2 {
+    if builtin == Some(Builtin::Rgx) && args.len() == 2 {
         let pattern = match &args[0] {
             Value::Text(s) => s.as_str(),
             other => return Err(RuntimeError::new("ILO-R009", format!("rgx: first arg must be a string pattern, got {:?}", other))),
@@ -1096,7 +1102,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         };
         return Ok(Value::List(result));
     }
-    if name == "flat" && args.len() == 1 {
+    if builtin == Some(Builtin::Flat) && args.len() == 1 {
         let items = match &args[0] {
             Value::List(l) => l.clone(),
             other => return Err(RuntimeError::new("ILO-R009", format!("flat: arg must be a list, got {:?}", other))),

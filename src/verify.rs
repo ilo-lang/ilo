@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use crate::ast::*;
+use crate::builtins::Builtin;
 
 /// Verifier's internal type representation.
 /// Adds `Unknown` for cases where we can't infer — compatible with anything.
@@ -298,7 +299,7 @@ fn builtin_arity(name: &str) -> Option<usize> {
 }
 
 fn is_builtin(name: &str) -> bool {
-    BUILTINS.iter().any(|(n, _, _)| *n == name)
+    Builtin::is_builtin(name)
 }
 
 fn builtin_check_args(name: &str, arg_types: &[Ty], func_ctx: &str, span: Option<Span>) -> (Ty, Vec<VerifyError>) {

@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::rc::Rc;
 use crate::ast::*;
+use crate::builtins::Builtin;
 use crate::interpreter::Value;
 
 #[derive(Debug, thiserror::Error)]
@@ -1168,352 +1169,370 @@ impl RegCompiler {
             }
 
             Expr::Call { function, args, unwrap } => {
-                // Builtins — compile to dedicated opcodes
-                if function == "len" && args.len() == 1 {
-                    let rb = self.compile_expr(&args[0]);
-                    let ra = self.alloc_reg();
-                    self.emit_abc(OP_LEN, ra, rb, 0);
-                    self.reg_is_num[ra as usize] = true;
-                    return ra;
-                }
-                if function == "str" && args.len() == 1 {
-                    let rb = self.compile_expr(&args[0]);
-                    let ra = self.alloc_reg();
-                    self.emit_abc(OP_STR, ra, rb, 0);
-                    return ra;
-                }
-                if function == "num" && args.len() == 1 {
-                    let rb = self.compile_expr(&args[0]);
-                    let ra = self.alloc_reg();
-                    self.emit_abc(OP_NUM, ra, rb, 0);
-                    return ra;
-                }
-                if function == "abs" && args.len() == 1 {
-                    let rb = self.compile_expr(&args[0]);
-                    let ra = self.alloc_reg();
-                    self.emit_abc(OP_ABS, ra, rb, 0);
-                    self.reg_is_num[ra as usize] = true;
-                    return ra;
-                }
-                if (function == "min" || function == "max") && args.len() == 2 {
-                    let rb = self.compile_expr(&args[0]);
-                    let rc = self.compile_expr(&args[1]);
-                    let ra = self.alloc_reg();
-                    let op = if function == "min" { OP_MIN } else { OP_MAX };
-                    self.emit_abc(op, ra, rb, rc);
-                    self.reg_is_num[ra as usize] = true;
-                    return ra;
-                }
-                if function == "mod" && args.len() == 2 {
-                    let rb = self.compile_expr(&args[0]);
-                    let rc = self.compile_expr(&args[1]);
-                    let ra = self.alloc_reg();
-                    self.emit_abc(OP_MOD, ra, rb, rc);
-                    self.reg_is_num[ra as usize] = true;
-                    return ra;
-                }
-                if (function == "flr" || function == "cel" || function == "rou") && args.len() == 1 {
-                    let rb = self.compile_expr(&args[0]);
-                    let ra = self.alloc_reg();
-                    let op = if function == "flr" { OP_FLR } else if function == "cel" { OP_CEL } else { OP_ROU };
-                    self.emit_abc(op, ra, rb, 0);
-                    self.reg_is_num[ra as usize] = true;
-                    return ra;
-                }
-                if function == "spl" && args.len() == 2 {
-                    let rb = self.compile_expr(&args[0]);
-                    let rc = self.compile_expr(&args[1]);
-                    let ra = self.alloc_reg();
-                    self.emit_abc(OP_SPL, ra, rb, rc);
-                    return ra;
-                }
-                if function == "cat" && args.len() == 2 {
-                    let rb = self.compile_expr(&args[0]);
-                    let rc = self.compile_expr(&args[1]);
-                    let ra = self.alloc_reg();
-                    self.emit_abc(OP_CAT, ra, rb, rc);
-                    return ra;
-                }
-                if function == "has" && args.len() == 2 {
-                    let rb = self.compile_expr(&args[0]);
-                    let rc = self.compile_expr(&args[1]);
-                    let ra = self.alloc_reg();
-                    self.emit_abc(OP_HAS, ra, rb, rc);
-                    return ra;
-                }
-                if function == "hd" && args.len() == 1 {
-                    let rb = self.compile_expr(&args[0]);
-                    let ra = self.alloc_reg();
-                    self.emit_abc(OP_HD, ra, rb, 0);
-                    return ra;
-                }
-                if function == "tl" && args.len() == 1 {
-                    let rb = self.compile_expr(&args[0]);
-                    let ra = self.alloc_reg();
-                    self.emit_abc(OP_TL, ra, rb, 0);
-                    return ra;
-                }
-                if function == "rev" && args.len() == 1 {
-                    let rb = self.compile_expr(&args[0]);
-                    let ra = self.alloc_reg();
-                    self.emit_abc(OP_REV, ra, rb, 0);
-                    return ra;
-                }
-                if function == "srt" && args.len() == 1 {
-                    let rb = self.compile_expr(&args[0]);
-                    let ra = self.alloc_reg();
-                    self.emit_abc(OP_SRT, ra, rb, 0);
-                    return ra;
-                }
-                if function == "slc" && args.len() == 3 {
-                    let rb = self.compile_expr(&args[0]);
-                    let rc = self.compile_expr(&args[1]);
-                    let rd = self.compile_expr(&args[2]);
-                    debug_assert_eq!(rd, rc + 1, "slc args should be consecutive regs");
-                    let ra = self.alloc_reg();
-                    self.emit_abc(OP_SLC, ra, rb, rc);
-                    return ra;
-                }
-                if function == "rnd" && args.is_empty() {
-                    let ra = self.alloc_reg();
-                    self.emit_abc(OP_RND0, ra, 0, 0);
-                    self.reg_is_num[ra as usize] = true;
-                    return ra;
-                }
-                if function == "now" && args.is_empty() {
-                    let ra = self.alloc_reg();
-                    self.emit_abc(OP_NOW, ra, 0, 0);
-                    self.reg_is_num[ra as usize] = true;
-                    return ra;
-                }
-                if function == "rnd" && args.len() == 2 {
-                    let rb = self.compile_expr(&args[0]);
-                    let rc = self.compile_expr(&args[1]);
-                    let ra = self.alloc_reg();
-                    self.emit_abc(OP_RND2, ra, rb, rc);
-                    self.reg_is_num[ra as usize] = true;
-                    return ra;
-                }
-                if function == "env" && args.len() == 1 {
-                    let rb = self.compile_expr(&args[0]);
-                    let ra = self.alloc_reg();
-                    self.emit_abc(OP_ENV, ra, rb, 0);
-                    // env returns R t t — handle auto-unwrap
-                    if *unwrap {
-                        let check_reg = self.alloc_reg();
-                        self.emit_abc(OP_ISOK, check_reg, ra, 0);
-                        let skip_ret = self.emit_jmpt(check_reg);
-                        self.emit_abx(OP_RET, ra, 0);
-                        self.current.patch_jump(skip_ret);
-                        self.emit_abc(OP_UNWRAP, ra, ra, 0);
-                        self.next_reg = ra + 1;
+                // Builtins — resolve at compile time to enum, then emit dedicated opcodes
+                if let Some(builtin) = Builtin::from_name(function) {
+                    let nargs = args.len();
+                    match (builtin, nargs) {
+                        (Builtin::Len, 1) => {
+                            let rb = self.compile_expr(&args[0]);
+                            let ra = self.alloc_reg();
+                            self.emit_abc(OP_LEN, ra, rb, 0);
+                            self.reg_is_num[ra as usize] = true;
+                            return ra;
+                        }
+                        (Builtin::Str, 1) => {
+                            let rb = self.compile_expr(&args[0]);
+                            let ra = self.alloc_reg();
+                            self.emit_abc(OP_STR, ra, rb, 0);
+                            return ra;
+                        }
+                        (Builtin::Num, 1) => {
+                            let rb = self.compile_expr(&args[0]);
+                            let ra = self.alloc_reg();
+                            self.emit_abc(OP_NUM, ra, rb, 0);
+                            return ra;
+                        }
+                        (Builtin::Abs, 1) => {
+                            let rb = self.compile_expr(&args[0]);
+                            let ra = self.alloc_reg();
+                            self.emit_abc(OP_ABS, ra, rb, 0);
+                            self.reg_is_num[ra as usize] = true;
+                            return ra;
+                        }
+                        (Builtin::Min | Builtin::Max, 2) => {
+                            let rb = self.compile_expr(&args[0]);
+                            let rc = self.compile_expr(&args[1]);
+                            let ra = self.alloc_reg();
+                            let op = if builtin == Builtin::Min { OP_MIN } else { OP_MAX };
+                            self.emit_abc(op, ra, rb, rc);
+                            self.reg_is_num[ra as usize] = true;
+                            return ra;
+                        }
+                        (Builtin::Mod, 2) => {
+                            let rb = self.compile_expr(&args[0]);
+                            let rc = self.compile_expr(&args[1]);
+                            let ra = self.alloc_reg();
+                            self.emit_abc(OP_MOD, ra, rb, rc);
+                            self.reg_is_num[ra as usize] = true;
+                            return ra;
+                        }
+                        (Builtin::Flr | Builtin::Cel | Builtin::Rou, 1) => {
+                            let rb = self.compile_expr(&args[0]);
+                            let ra = self.alloc_reg();
+                            let op = match builtin {
+                                Builtin::Flr => OP_FLR,
+                                Builtin::Cel => OP_CEL,
+                                _ => OP_ROU,
+                            };
+                            self.emit_abc(op, ra, rb, 0);
+                            self.reg_is_num[ra as usize] = true;
+                            return ra;
+                        }
+                        (Builtin::Spl, 2) => {
+                            let rb = self.compile_expr(&args[0]);
+                            let rc = self.compile_expr(&args[1]);
+                            let ra = self.alloc_reg();
+                            self.emit_abc(OP_SPL, ra, rb, rc);
+                            return ra;
+                        }
+                        (Builtin::Cat, 2) => {
+                            let rb = self.compile_expr(&args[0]);
+                            let rc = self.compile_expr(&args[1]);
+                            let ra = self.alloc_reg();
+                            self.emit_abc(OP_CAT, ra, rb, rc);
+                            return ra;
+                        }
+                        (Builtin::Has, 2) => {
+                            let rb = self.compile_expr(&args[0]);
+                            let rc = self.compile_expr(&args[1]);
+                            let ra = self.alloc_reg();
+                            self.emit_abc(OP_HAS, ra, rb, rc);
+                            return ra;
+                        }
+                        (Builtin::Hd, 1) => {
+                            let rb = self.compile_expr(&args[0]);
+                            let ra = self.alloc_reg();
+                            self.emit_abc(OP_HD, ra, rb, 0);
+                            return ra;
+                        }
+                        (Builtin::Tl, 1) => {
+                            let rb = self.compile_expr(&args[0]);
+                            let ra = self.alloc_reg();
+                            self.emit_abc(OP_TL, ra, rb, 0);
+                            return ra;
+                        }
+                        (Builtin::Rev, 1) => {
+                            let rb = self.compile_expr(&args[0]);
+                            let ra = self.alloc_reg();
+                            self.emit_abc(OP_REV, ra, rb, 0);
+                            return ra;
+                        }
+                        (Builtin::Srt, 1) => {
+                            let rb = self.compile_expr(&args[0]);
+                            let ra = self.alloc_reg();
+                            self.emit_abc(OP_SRT, ra, rb, 0);
+                            return ra;
+                        }
+                        (Builtin::Slc, 3) => {
+                            let rb = self.compile_expr(&args[0]);
+                            let rc = self.compile_expr(&args[1]);
+                            let rd = self.compile_expr(&args[2]);
+                            debug_assert_eq!(rd, rc + 1, "slc args should be consecutive regs");
+                            let ra = self.alloc_reg();
+                            self.emit_abc(OP_SLC, ra, rb, rc);
+                            return ra;
+                        }
+                        (Builtin::Rnd, 0) => {
+                            let ra = self.alloc_reg();
+                            self.emit_abc(OP_RND0, ra, 0, 0);
+                            self.reg_is_num[ra as usize] = true;
+                            return ra;
+                        }
+                        (Builtin::Now, 0) => {
+                            let ra = self.alloc_reg();
+                            self.emit_abc(OP_NOW, ra, 0, 0);
+                            self.reg_is_num[ra as usize] = true;
+                            return ra;
+                        }
+                        (Builtin::Rnd, 2) => {
+                            let rb = self.compile_expr(&args[0]);
+                            let rc = self.compile_expr(&args[1]);
+                            let ra = self.alloc_reg();
+                            self.emit_abc(OP_RND2, ra, rb, rc);
+                            self.reg_is_num[ra as usize] = true;
+                            return ra;
+                        }
+                        (Builtin::Env, 1) => {
+                            let rb = self.compile_expr(&args[0]);
+                            let ra = self.alloc_reg();
+                            self.emit_abc(OP_ENV, ra, rb, 0);
+                            // env returns R t t — handle auto-unwrap
+                            if *unwrap {
+                                let check_reg = self.alloc_reg();
+                                self.emit_abc(OP_ISOK, check_reg, ra, 0);
+                                let skip_ret = self.emit_jmpt(check_reg);
+                                self.emit_abx(OP_RET, ra, 0);
+                                self.current.patch_jump(skip_ret);
+                                self.emit_abc(OP_UNWRAP, ra, ra, 0);
+                                self.next_reg = ra + 1;
+                            }
+                            return ra;
+                        }
+                        (Builtin::Get, 1) => {
+                            let rb = self.compile_expr(&args[0]);
+                            let ra = self.alloc_reg();
+                            self.emit_abc(OP_GET, ra, rb, 0);
+                            // get returns R t t — handle auto-unwrap
+                            if *unwrap {
+                                let check_reg = self.alloc_reg();
+                                self.emit_abc(OP_ISOK, check_reg, ra, 0);
+                                let skip_ret = self.emit_jmpt(check_reg);
+                                self.emit_abx(OP_RET, ra, 0);
+                                self.current.patch_jump(skip_ret);
+                                self.emit_abc(OP_UNWRAP, ra, ra, 0);
+                                self.next_reg = ra + 1;
+                            }
+                            return ra;
+                        }
+                        (Builtin::Post, 2) => {
+                            let rb = self.compile_expr(&args[0]);
+                            let rc = self.compile_expr(&args[1]);
+                            let ra = self.alloc_reg();
+                            self.emit_abc(OP_POST, ra, rb, rc);
+                            // post returns R t t — handle auto-unwrap
+                            if *unwrap {
+                                let check_reg = self.alloc_reg();
+                                self.emit_abc(OP_ISOK, check_reg, ra, 0);
+                                let skip_ret = self.emit_jmpt(check_reg);
+                                self.emit_abx(OP_RET, ra, 0);
+                                self.current.patch_jump(skip_ret);
+                                self.emit_abc(OP_UNWRAP, ra, ra, 0);
+                                self.next_reg = ra + 1;
+                            }
+                            return ra;
+                        }
+                        (Builtin::Get, 2) => {
+                            // get url headers — OP_GETH (ABC: result=A, url=B, headers=C)
+                            let rb = self.compile_expr(&args[0]);
+                            let rc = self.compile_expr(&args[1]);
+                            let ra = self.alloc_reg();
+                            self.emit_abc(OP_GETH, ra, rb, rc);
+                            if *unwrap {
+                                let check_reg = self.alloc_reg();
+                                self.emit_abc(OP_ISOK, check_reg, ra, 0);
+                                let skip_ret = self.emit_jmpt(check_reg);
+                                self.emit_abx(OP_RET, ra, 0);
+                                self.current.patch_jump(skip_ret);
+                                self.emit_abc(OP_UNWRAP, ra, ra, 0);
+                                self.next_reg = ra + 1;
+                            }
+                            return ra;
+                        }
+                        (Builtin::Post, 3) => {
+                            // post url body headers — two-instruction sequence:
+                            //   OP_POSTH  A=result  B=url  C=body
+                            //   data word: A=headers_reg (consumed by OP_POSTH dispatch; ip advances past it)
+                            let rb = self.compile_expr(&args[0]);
+                            let r_body = self.compile_expr(&args[1]);
+                            let r_hdrs = self.compile_expr(&args[2]);
+                            let ra = self.alloc_reg();
+                            self.emit_abc(OP_POSTH, ra, rb, r_body);
+                            // data word carries headers reg in the A field; dispatch reads and skips it
+                            self.emit_abc(0, r_hdrs, 0, 0);
+                            if *unwrap {
+                                let check_reg = self.alloc_reg();
+                                self.emit_abc(OP_ISOK, check_reg, ra, 0);
+                                let skip_ret = self.emit_jmpt(check_reg);
+                                self.emit_abx(OP_RET, ra, 0);
+                                self.current.patch_jump(skip_ret);
+                                self.emit_abc(OP_UNWRAP, ra, ra, 0);
+                                self.next_reg = ra + 1;
+                            }
+                            return ra;
+                        }
+                        (Builtin::Jpth, 2) => {
+                            let rb = self.compile_expr(&args[0]);
+                            let rc = self.compile_expr(&args[1]);
+                            let ra = self.alloc_reg();
+                            self.emit_abc(OP_JPTH, ra, rb, rc);
+                            if *unwrap {
+                                let check_reg = self.alloc_reg();
+                                self.emit_abc(OP_ISOK, check_reg, ra, 0);
+                                let skip_ret = self.emit_jmpt(check_reg);
+                                self.emit_abx(OP_RET, ra, 0);
+                                self.current.patch_jump(skip_ret);
+                                self.emit_abc(OP_UNWRAP, ra, ra, 0);
+                                self.next_reg = ra + 1;
+                            }
+                            return ra;
+                        }
+                        (Builtin::Jdmp, 1) => {
+                            let rb = self.compile_expr(&args[0]);
+                            let ra = self.alloc_reg();
+                            self.emit_abc(OP_JDMP, ra, rb, 0);
+                            return ra;
+                        }
+                        (Builtin::Trm, 1) => {
+                            let rb = self.compile_expr(&args[0]);
+                            let ra = self.alloc_reg();
+                            self.emit_abc(OP_TRM, ra, rb, 0);
+                            return ra;
+                        }
+                        (Builtin::Unq, 1) => {
+                            let rb = self.compile_expr(&args[0]);
+                            let ra = self.alloc_reg();
+                            self.emit_abc(OP_UNQ, ra, rb, 0);
+                            return ra;
+                        }
+                        // fmt is variadic — falls through to OP_CALL -> interpreter
+                        (Builtin::Prnt, 1) => {
+                            let rb = self.compile_expr(&args[0]);
+                            let ra = self.alloc_reg();
+                            self.emit_abc(OP_PRT, ra, rb, 0);
+                            return ra;
+                        }
+                        (Builtin::Rd | Builtin::Rdl, 1) => {
+                            let rb = self.compile_expr(&args[0]);
+                            let ra = self.alloc_reg();
+                            let op = if builtin == Builtin::Rdl { OP_RDL } else { OP_RD };
+                            self.emit_abc(op, ra, rb, 0);
+                            if *unwrap {
+                                let check_reg = self.alloc_reg();
+                                self.emit_abc(OP_ISOK, check_reg, ra, 0);
+                                let skip_ret = self.emit_jmpt(check_reg);
+                                self.emit_abx(OP_RET, ra, 0);
+                                self.current.patch_jump(skip_ret);
+                                self.emit_abc(OP_UNWRAP, ra, ra, 0);
+                                self.next_reg = ra + 1;
+                            }
+                            return ra;
+                        }
+                        // rd path fmt (2-arg) and rdb s fmt fall through to OP_CALL -> interpreter
+                        (Builtin::Wr | Builtin::Wrl, 2) => {
+                            let rb = self.compile_expr(&args[0]);
+                            let rc = self.compile_expr(&args[1]);
+                            let ra = self.alloc_reg();
+                            let op = if builtin == Builtin::Wr { OP_WR } else { OP_WRL };
+                            self.emit_abc(op, ra, rb, rc);
+                            if *unwrap {
+                                let check_reg = self.alloc_reg();
+                                self.emit_abc(OP_ISOK, check_reg, ra, 0);
+                                let skip_ret = self.emit_jmpt(check_reg);
+                                self.emit_abx(OP_RET, ra, 0);
+                                self.current.patch_jump(skip_ret);
+                                self.emit_abc(OP_UNWRAP, ra, ra, 0);
+                                self.next_reg = ra + 1;
+                            }
+                            return ra;
+                        }
+                        (Builtin::Jpar, 1) => {
+                            let rb = self.compile_expr(&args[0]);
+                            let ra = self.alloc_reg();
+                            self.emit_abc(OP_JPAR, ra, rb, 0);
+                            if *unwrap {
+                                let check_reg = self.alloc_reg();
+                                self.emit_abc(OP_ISOK, check_reg, ra, 0);
+                                let skip_ret = self.emit_jmpt(check_reg);
+                                self.emit_abx(OP_RET, ra, 0);
+                                self.current.patch_jump(skip_ret);
+                                self.emit_abc(OP_UNWRAP, ra, ra, 0);
+                                self.next_reg = ra + 1;
+                            }
+                            return ra;
+                        }
+                        // Map builtins
+                        (Builtin::Mmap, 0) => {
+                            let ra = self.alloc_reg();
+                            self.emit_abc(OP_MAPNEW, ra, 0, 0);
+                            return ra;
+                        }
+                        (Builtin::Mget, 2) => {
+                            let rb = self.compile_expr(&args[0]);
+                            let rc = self.compile_expr(&args[1]);
+                            let ra = self.alloc_reg();
+                            self.emit_abc(OP_MGET, ra, rb, rc);
+                            return ra;
+                        }
+                        (Builtin::Mset, 3) => {
+                            let rb = self.compile_expr(&args[0]);
+                            let rc = self.compile_expr(&args[1]);
+                            let rd = self.compile_expr(&args[2]);
+                            debug_assert_eq!(rd, rc + 1, "mset key/val args should be consecutive regs");
+                            let ra = self.alloc_reg();
+                            self.emit_abc(OP_MSET, ra, rb, rc);
+                            return ra;
+                        }
+                        (Builtin::Mhas, 2) => {
+                            let rb = self.compile_expr(&args[0]);
+                            let rc = self.compile_expr(&args[1]);
+                            let ra = self.alloc_reg();
+                            self.emit_abc(OP_MHAS, ra, rb, rc);
+                            return ra;
+                        }
+                        (Builtin::Mkeys, 1) => {
+                            let rb = self.compile_expr(&args[0]);
+                            let ra = self.alloc_reg();
+                            self.emit_abc(OP_MKEYS, ra, rb, 0);
+                            return ra;
+                        }
+                        (Builtin::Mvals, 1) => {
+                            let rb = self.compile_expr(&args[0]);
+                            let ra = self.alloc_reg();
+                            self.emit_abc(OP_MVALS, ra, rb, 0);
+                            return ra;
+                        }
+                        (Builtin::Mdel, 2) => {
+                            let rb = self.compile_expr(&args[0]);
+                            let rc = self.compile_expr(&args[1]);
+                            let ra = self.alloc_reg();
+                            self.emit_abc(OP_MDEL, ra, rb, rc);
+                            return ra;
+                        }
+                        // Builtins that fall through to OP_CALL (interpreter handles them):
+                        // fmt (variadic), map/flt/fld/grp (higher-order), sum/avg/rgx/flat,
+                        // rd 2-arg, rdb, wr 3-arg, srt 2-arg, etc.
+                        _ => {}
                     }
-                    return ra;
-                }
-                if function == "get" && args.len() == 1 {
-                    let rb = self.compile_expr(&args[0]);
-                    let ra = self.alloc_reg();
-                    self.emit_abc(OP_GET, ra, rb, 0);
-                    // get returns R t t — handle auto-unwrap
-                    if *unwrap {
-                        let check_reg = self.alloc_reg();
-                        self.emit_abc(OP_ISOK, check_reg, ra, 0);
-                        let skip_ret = self.emit_jmpt(check_reg);
-                        self.emit_abx(OP_RET, ra, 0);
-                        self.current.patch_jump(skip_ret);
-                        self.emit_abc(OP_UNWRAP, ra, ra, 0);
-                        self.next_reg = ra + 1;
-                    }
-                    return ra;
-                }
-                if function == "post" && args.len() == 2 {
-                    let rb = self.compile_expr(&args[0]);
-                    let rc = self.compile_expr(&args[1]);
-                    let ra = self.alloc_reg();
-                    self.emit_abc(OP_POST, ra, rb, rc);
-                    // post returns R t t — handle auto-unwrap
-                    if *unwrap {
-                        let check_reg = self.alloc_reg();
-                        self.emit_abc(OP_ISOK, check_reg, ra, 0);
-                        let skip_ret = self.emit_jmpt(check_reg);
-                        self.emit_abx(OP_RET, ra, 0);
-                        self.current.patch_jump(skip_ret);
-                        self.emit_abc(OP_UNWRAP, ra, ra, 0);
-                        self.next_reg = ra + 1;
-                    }
-                    return ra;
-                }
-                if function == "get" && args.len() == 2 {
-                    // get url headers — OP_GETH (ABC: result=A, url=B, headers=C)
-                    let rb = self.compile_expr(&args[0]);
-                    let rc = self.compile_expr(&args[1]);
-                    let ra = self.alloc_reg();
-                    self.emit_abc(OP_GETH, ra, rb, rc);
-                    if *unwrap {
-                        let check_reg = self.alloc_reg();
-                        self.emit_abc(OP_ISOK, check_reg, ra, 0);
-                        let skip_ret = self.emit_jmpt(check_reg);
-                        self.emit_abx(OP_RET, ra, 0);
-                        self.current.patch_jump(skip_ret);
-                        self.emit_abc(OP_UNWRAP, ra, ra, 0);
-                        self.next_reg = ra + 1;
-                    }
-                    return ra;
-                }
-                if function == "post" && args.len() == 3 {
-                    // post url body headers — two-instruction sequence:
-                    //   OP_POSTH  A=result  B=url  C=body
-                    //   data word: A=headers_reg (consumed by OP_POSTH dispatch; ip advances past it)
-                    let rb = self.compile_expr(&args[0]);
-                    let r_body = self.compile_expr(&args[1]);
-                    let r_hdrs = self.compile_expr(&args[2]);
-                    let ra = self.alloc_reg();
-                    self.emit_abc(OP_POSTH, ra, rb, r_body);
-                    // data word carries headers reg in the A field; dispatch reads and skips it
-                    self.emit_abc(0, r_hdrs, 0, 0);
-                    if *unwrap {
-                        let check_reg = self.alloc_reg();
-                        self.emit_abc(OP_ISOK, check_reg, ra, 0);
-                        let skip_ret = self.emit_jmpt(check_reg);
-                        self.emit_abx(OP_RET, ra, 0);
-                        self.current.patch_jump(skip_ret);
-                        self.emit_abc(OP_UNWRAP, ra, ra, 0);
-                        self.next_reg = ra + 1;
-                    }
-                    return ra;
-                }
-                if function == "jpth" && args.len() == 2 {
-                    let rb = self.compile_expr(&args[0]);
-                    let rc = self.compile_expr(&args[1]);
-                    let ra = self.alloc_reg();
-                    self.emit_abc(OP_JPTH, ra, rb, rc);
-                    if *unwrap {
-                        let check_reg = self.alloc_reg();
-                        self.emit_abc(OP_ISOK, check_reg, ra, 0);
-                        let skip_ret = self.emit_jmpt(check_reg);
-                        self.emit_abx(OP_RET, ra, 0);
-                        self.current.patch_jump(skip_ret);
-                        self.emit_abc(OP_UNWRAP, ra, ra, 0);
-                        self.next_reg = ra + 1;
-                    }
-                    return ra;
-                }
-                if function == "jdmp" && args.len() == 1 {
-                    let rb = self.compile_expr(&args[0]);
-                    let ra = self.alloc_reg();
-                    self.emit_abc(OP_JDMP, ra, rb, 0);
-                    return ra;
-                }
-                if (function == "trm" || function == "unq") && args.len() == 1 {
-                    let rb = self.compile_expr(&args[0]);
-                    let ra = self.alloc_reg();
-                    let op = if function == "trm" { OP_TRM } else { OP_UNQ };
-                    self.emit_abc(op, ra, rb, 0);
-                    return ra;
-                }
-                // fmt is variadic — falls through to OP_CALL → interpreter
-                if function == "prnt" && args.len() == 1 {
-                    let rb = self.compile_expr(&args[0]);
-                    let ra = self.alloc_reg();
-                    self.emit_abc(OP_PRT, ra, rb, 0);
-                    return ra;
-                }
-                if (function == "rd" && args.len() == 1) || (function == "rdl" && args.len() == 1) {
-                    let rb = self.compile_expr(&args[0]);
-                    let ra = self.alloc_reg();
-                    let op = if function == "rdl" { OP_RDL } else { OP_RD };
-                    self.emit_abc(op, ra, rb, 0);
-                    if *unwrap {
-                        let check_reg = self.alloc_reg();
-                        self.emit_abc(OP_ISOK, check_reg, ra, 0);
-                        let skip_ret = self.emit_jmpt(check_reg);
-                        self.emit_abx(OP_RET, ra, 0);
-                        self.current.patch_jump(skip_ret);
-                        self.emit_abc(OP_UNWRAP, ra, ra, 0);
-                        self.next_reg = ra + 1;
-                    }
-                    return ra;
-                }
-                // rd path fmt (2-arg) and rdb s fmt fall through to OP_CALL → interpreter
-                if (function == "wr" || function == "wrl") && args.len() == 2 {
-                    let rb = self.compile_expr(&args[0]);
-                    let rc = self.compile_expr(&args[1]);
-                    let ra = self.alloc_reg();
-                    let op = if function == "wr" { OP_WR } else { OP_WRL };
-                    self.emit_abc(op, ra, rb, rc);
-                    if *unwrap {
-                        let check_reg = self.alloc_reg();
-                        self.emit_abc(OP_ISOK, check_reg, ra, 0);
-                        let skip_ret = self.emit_jmpt(check_reg);
-                        self.emit_abx(OP_RET, ra, 0);
-                        self.current.patch_jump(skip_ret);
-                        self.emit_abc(OP_UNWRAP, ra, ra, 0);
-                        self.next_reg = ra + 1;
-                    }
-                    return ra;
-                }
-                if function == "jpar" && args.len() == 1 {
-                    let rb = self.compile_expr(&args[0]);
-                    let ra = self.alloc_reg();
-                    self.emit_abc(OP_JPAR, ra, rb, 0);
-                    if *unwrap {
-                        let check_reg = self.alloc_reg();
-                        self.emit_abc(OP_ISOK, check_reg, ra, 0);
-                        let skip_ret = self.emit_jmpt(check_reg);
-                        self.emit_abx(OP_RET, ra, 0);
-                        self.current.patch_jump(skip_ret);
-                        self.emit_abc(OP_UNWRAP, ra, ra, 0);
-                        self.next_reg = ra + 1;
-                    }
-                    return ra;
-                }
-                // Map builtins
-                if function == "mmap" && args.is_empty() {
-                    let ra = self.alloc_reg();
-                    self.emit_abc(OP_MAPNEW, ra, 0, 0);
-                    return ra;
-                }
-                if function == "mget" && args.len() == 2 {
-                    let rb = self.compile_expr(&args[0]);
-                    let rc = self.compile_expr(&args[1]);
-                    let ra = self.alloc_reg();
-                    self.emit_abc(OP_MGET, ra, rb, rc);
-                    return ra;
-                }
-                if function == "mset" && args.len() == 3 {
-                    let rb = self.compile_expr(&args[0]);
-                    let rc = self.compile_expr(&args[1]);
-                    let rd = self.compile_expr(&args[2]);
-                    debug_assert_eq!(rd, rc + 1, "mset key/val args should be consecutive regs");
-                    let ra = self.alloc_reg();
-                    self.emit_abc(OP_MSET, ra, rb, rc);
-                    return ra;
-                }
-                if function == "mhas" && args.len() == 2 {
-                    let rb = self.compile_expr(&args[0]);
-                    let rc = self.compile_expr(&args[1]);
-                    let ra = self.alloc_reg();
-                    self.emit_abc(OP_MHAS, ra, rb, rc);
-                    return ra;
-                }
-                if function == "mkeys" && args.len() == 1 {
-                    let rb = self.compile_expr(&args[0]);
-                    let ra = self.alloc_reg();
-                    self.emit_abc(OP_MKEYS, ra, rb, 0);
-                    return ra;
-                }
-                if function == "mvals" && args.len() == 1 {
-                    let rb = self.compile_expr(&args[0]);
-                    let ra = self.alloc_reg();
-                    self.emit_abc(OP_MVALS, ra, rb, 0);
-                    return ra;
-                }
-                if function == "mdel" && args.len() == 2 {
-                    let rb = self.compile_expr(&args[0]);
-                    let rc = self.compile_expr(&args[1]);
-                    let ra = self.alloc_reg();
-                    self.emit_abc(OP_MDEL, ra, rb, rc);
-                    return ra;
                 }
 
                 let arg_regs: Vec<u8> = args.iter().map(|a| self.compile_expr(a)).collect();

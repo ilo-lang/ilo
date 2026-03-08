@@ -1,6 +1,7 @@
 #![warn(clippy::all)]
 
 mod ast;
+mod builtins;
 mod codegen;
 mod diagnostic;
 mod interpreter;
