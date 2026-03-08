@@ -280,10 +280,10 @@ Called like functions, compiled to dedicated opcodes.
 | `post url body` | HTTP POST with text body | `R t t` |
 | `post url body headers` | HTTP POST with body and custom headers (`M t t` map) | `R t t` |
 | `env key` | read environment variable | `R t t` |
-| `rd path` | read file; format auto-detected from extension (`.csv`/`.tsv`→grid, `.json`→graph, else text) | `R ? t` |
-| `rd path fmt` | read file with explicit format override (`"csv"`, `"tsv"`, `"json"`, `"raw"`) | `R ? t` |
+| `rd path` | read file; format auto-detected from extension (`.csv`/`.tsv`→grid, `.json`→graph, else text) | `R _ t` |
+| `rd path fmt` | read file with explicit format override (`"csv"`, `"tsv"`, `"json"`, `"raw"`) | `R _ t` |
 | `rdl path` | read file as list of lines | `R (L t) t` |
-| `rdb s fmt` | parse string/buffer in given format — for data from HTTP, env vars, etc. | `R ? t` |
+| `rdb s fmt` | parse string/buffer in given format — for data from HTTP, env vars, etc. | `R _ t` |
 | `wr path s` | write text to file (overwrite) | `R t t` |
 | `wr path data "csv"` | write list-of-lists as CSV (with proper quoting) | `R t t` |
 | `wr path data "tsv"` | write list-of-lists as TSV | `R t t` |
@@ -304,7 +304,7 @@ Called like functions, compiled to dedicated opcodes.
 | `jpth json path` | JSON path lookup (dot-separated keys, array indices) | `R t t` |
 | `jdmp value` | serialise ilo value to JSON text | `t` |
 | `prnt value` | print value to stdout, return it unchanged (passthrough) | same type |
-| `jpar text` | parse JSON text into ilo values | `R ? t` |
+| `jpar text` | parse JSON text into ilo values | `R _ t` |
 | `grp fn xs` | group list by key function | `M t (L a)` |
 | `flat xs` | flatten one level of nesting | `L a` |
 | `sum xs` | sum of numeric list (0 for empty) | `n` |
@@ -409,7 +409,7 @@ jdmp (pt x:1 y:2)          -- "{\"x\":1,\"y\":2}"
 `jpar` parses a JSON string into ilo values. JSON objects become records with type name `json`, arrays become lists, strings/numbers/bools/null map directly:
 
 ```
-jpar text                   -- R ? t: Ok=parsed value, Err=parse error
+jpar text                   -- R _ t: Ok=parsed value, Err=parse error
 r=jpar! "{\"x\":1}"        -- r is a json record, access with r.x
 ```
 
@@ -421,11 +421,13 @@ r=jpar! "{\"x\":1}"        -- r is a json record, access with r.x
 ```
 xs=[1 2 3]           -- space-separated (preferred)
 xs=[1, 2, 3]         -- commas also work
-mixed=["search" 10]  -- heterogeneous lists allowed (type: L a)
+mixed=["search" 10]  -- heterogeneous lists allowed (type: L _)
+w="world"
+words=["hi" w]       -- variables work in list literals
 empty=[]
 ```
 
-Elements are expressions in brackets, separated by spaces or commas. Lists may contain mixed types (inferred as `L a`). Use with `@` to iterate:
+Elements are expressions in brackets, separated by spaces or commas. Variables and expressions are allowed as elements. Lists may contain mixed types (inferred as `L _`). Use with `@` to iterate:
 
 ```
 @x xs{+x 1}
