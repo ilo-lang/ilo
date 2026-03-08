@@ -4069,4 +4069,203 @@ mod tests {
         let (prog, _errors) = parse_str_errors(r#"f x:n>t;?x{1:"one";2"#);
         let _ = prog; // just ensure no panic; parser recovers from incomplete input
     }
+
+    // ── Coverage: L246/L248/L250 — Ident("let")/Ident("return")/Ident("if") at decl level ──
+    // The lexer normally produces keyword tokens for these, so we must use raw tokens
+    // to exercise the Ident string-matching hints in parse_decl.
+
+    #[test]
+    fn foreign_ident_let_raw_token_hint() {
+        // Token::Ident("let") triggers the "let"|"var"|"const" arm at L245-246
+        let tokens = vec![
+            (Token::Ident("let".into()), Span::UNKNOWN),
+            (Token::Ident("x".into()), Span::UNKNOWN),
+        ];
+        let (_, errors) = parse(tokens);
+        assert!(!errors.is_empty());
+        let e = errors.iter().find(|e| e.code == "ILO-P001").expect("expected ILO-P001");
+        assert!(e.hint.as_ref().unwrap().contains("assignment syntax"));
+    }
+
+    #[test]
+    fn foreign_ident_var_raw_token_hint() {
+        let tokens = vec![
+            (Token::Ident("var".into()), Span::UNKNOWN),
+            (Token::Ident("x".into()), Span::UNKNOWN),
+        ];
+        let (_, errors) = parse(tokens);
+        assert!(!errors.is_empty());
+        let e = errors.iter().find(|e| e.code == "ILO-P001").expect("expected ILO-P001");
+        assert!(e.hint.as_ref().unwrap().contains("assignment syntax"));
+    }
+
+    #[test]
+    fn foreign_ident_const_raw_token_hint() {
+        let tokens = vec![
+            (Token::Ident("const".into()), Span::UNKNOWN),
+            (Token::Ident("x".into()), Span::UNKNOWN),
+        ];
+        let (_, errors) = parse(tokens);
+        assert!(!errors.is_empty());
+        let e = errors.iter().find(|e| e.code == "ILO-P001").expect("expected ILO-P001");
+        assert!(e.hint.as_ref().unwrap().contains("assignment syntax"));
+    }
+
+    #[test]
+    fn foreign_ident_return_raw_token_hint() {
+        // Token::Ident("return") triggers the "return" arm at L247-248
+        let tokens = vec![
+            (Token::Ident("return".into()), Span::UNKNOWN),
+            (Token::Ident("x".into()), Span::UNKNOWN),
+        ];
+        let (_, errors) = parse(tokens);
+        assert!(!errors.is_empty());
+        let e = errors.iter().find(|e| e.code == "ILO-P001").expect("expected ILO-P001");
+        assert!(e.hint.as_ref().unwrap().contains("return value"));
+    }
+
+    #[test]
+    fn foreign_ident_if_raw_token_hint() {
+        // Token::Ident("if") triggers the "if" arm at L249-250
+        let tokens = vec![
+            (Token::Ident("if".into()), Span::UNKNOWN),
+            (Token::Ident("x".into()), Span::UNKNOWN),
+        ];
+        let (_, errors) = parse(tokens);
+        assert!(!errors.is_empty());
+        let e = errors.iter().find(|e| e.code == "ILO-P001").expect("expected ILO-P001");
+        assert!(e.hint.as_ref().unwrap().contains("match"));
+    }
+
+    // ── Coverage: L880-881 — nil literal pattern in match arm ──────────────────
+
+    #[test]
+    fn parse_match_nil_literal_pattern() {
+        // `?x{nil:0;_:1}` — nil token as a match pattern (Pattern::Literal(Literal::Nil))
+        let prog = parse_str("f x:n>n;?x{nil:0;_:1}");
+        let Decl::Function { body, .. } = &prog.declarations[0] else { panic!("expected function") };
+        let Stmt::Match { arms, .. } = &body[0].node else { panic!("expected match") };
+        assert!(matches!(&arms[0].pattern, Pattern::Literal(Literal::Nil)));
+    }
+
+    // ── Coverage: L975 — parse_expr_or_guard: guard with else body ─────────────
+
+    #[test]
+    fn parse_expr_or_guard_with_else_body() {
+        // Expression followed by {then}{else} triggers L974-975 in parse_expr_or_guard
+        let source = r#"f x:n>n;=x 1{10}{20}"#;
+        let prog = parse_str(source);
+        let Decl::Function { body, .. } = &prog.declarations[0] else { panic!("expected function") };
+        let Stmt::Guard { else_body, .. } = &body[0].node else { panic!("expected guard") };
+        assert!(else_body.is_some(), "expected else body");
+    }
+
+    // ── Coverage: L986 — braceless guard from parse_expr_or_guard ──────────────
+
+    #[test]
+    fn parse_expr_or_guard_braceless() {
+        // A comparison expr followed by an operand that can start (not brace) exercises L985-986
+        // `=x 0 99;x` — equals is guard-eligible, 99 is the braceless body
+        let prog = parse_str("f x:n>n;=x 0 99;x");
+        let Decl::Function { body, .. } = &prog.declarations[0] else { panic!("expected function") };
+        assert!(body.len() >= 2);
+        assert!(matches!(&body[0].node, Stmt::Guard { .. }), "expected braceless guard, got {:?}", body[0]);
+    }
+
+    // ── Coverage: L1118-L1126 — infix operator binding powers ──────────────────
+
+    #[test]
+    fn infix_or_operator() {
+        let prog = parse_str("f a:b b:b>b;a | b");
+        let Decl::Function { body, .. } = &prog.declarations[0] else { panic!() };
+        let Stmt::Expr(Expr::BinOp { op: BinOp::Or, .. }) = &body[0].node else { panic!("expected infix or") };
+    }
+
+    #[test]
+    fn infix_equals_operator() {
+        // `=` at statement level is a let-binding, so wrap in parens to force infix parsing
+        let prog = parse_str("f a:n b:n>b;(a == b)");
+        let Decl::Function { body, .. } = &prog.declarations[0] else { panic!() };
+        let Stmt::Expr(Expr::BinOp { op: BinOp::Equals, .. }) = &body[0].node else { panic!("expected infix equals, got {:?}", body[0]) };
+    }
+
+    #[test]
+    fn infix_not_equals_operator() {
+        let prog = parse_str("f a:n b:n>b;a != b");
+        let Decl::Function { body, .. } = &prog.declarations[0] else { panic!() };
+        let Stmt::Expr(Expr::BinOp { op: BinOp::NotEquals, .. }) = &body[0].node else { panic!("expected infix not-equals") };
+    }
+
+    #[test]
+    fn infix_less_than_operator() {
+        let prog = parse_str("f a:n b:n>b;a < b");
+        let Decl::Function { body, .. } = &prog.declarations[0] else { panic!() };
+        let Stmt::Expr(Expr::BinOp { op: BinOp::LessThan, .. }) = &body[0].node else { panic!("expected infix less-than") };
+    }
+
+    #[test]
+    fn infix_less_or_equal_operator() {
+        let prog = parse_str("f a:n b:n>b;a <= b");
+        let Decl::Function { body, .. } = &prog.declarations[0] else { panic!() };
+        let Stmt::Expr(Expr::BinOp { op: BinOp::LessOrEqual, .. }) = &body[0].node else { panic!("expected infix <=") };
+    }
+
+    #[test]
+    fn infix_greater_or_equal_operator() {
+        let prog = parse_str("f a:n b:n>b;a >= b");
+        let Decl::Function { body, .. } = &prog.declarations[0] else { panic!() };
+        let Stmt::Expr(Expr::BinOp { op: BinOp::GreaterOrEqual, .. }) = &body[0].node else { panic!("expected infix >=") };
+    }
+
+    #[test]
+    fn infix_append_operator() {
+        let prog = parse_str("f xs:L n x:n>L n;xs += x");
+        let Decl::Function { body, .. } = &prog.declarations[0] else { panic!() };
+        let Stmt::Expr(Expr::BinOp { op: BinOp::Append, .. }) = &body[0].node else { panic!("expected infix +=") };
+    }
+
+    // ── Coverage: L1469-1477 — looks_like_prefix_binary with paren/bracket groups ──
+
+    #[test]
+    fn looks_like_prefix_with_paren_group() {
+        // `fac -(n) 1` — the `(n)` counts as one atom via the paren-group branch at L1467-1478
+        let prog = parse_str("fac n:n>n;r=fac -(n) 1;*n r");
+        let Decl::Function { body, .. } = &prog.declarations[0] else { panic!("expected function") };
+        let Stmt::Let { value: Expr::Call { function, args, .. }, .. } = &body[0].node else { panic!("expected call") };
+        assert_eq!(function, "fac");
+        assert_eq!(args.len(), 1);
+    }
+
+    #[test]
+    fn looks_like_prefix_with_bracket_group() {
+        // `foo -[1,2] 3` — the `[1,2]` counts as one atom via the bracket-group branch
+        let prog = parse_str("foo a:L n b:n>n;0 f x:n>n;r=foo -[1, 2] x;r");
+        let Decl::Function { body, .. } = &prog.declarations[1] else { panic!("expected function") };
+        let Stmt::Let { value: Expr::Call { function, args, .. }, .. } = &body[0].node else { panic!("expected call") };
+        assert_eq!(function, "foo");
+        assert_eq!(args.len(), 1);
+    }
+
+    // ── Coverage: L1591-1592 — nil literal in parse_operand ────────────────────
+
+    #[test]
+    fn parse_nil_literal_operand() {
+        // `nil` as an expression operand — exercises Token::Nil in parse_operand
+        let prog = parse_str("f>_;nil");
+        let Decl::Function { body, .. } = &prog.declarations[0] else { panic!("expected function") };
+        assert!(matches!(&body[0].node, Stmt::Expr(Expr::Literal(Literal::Nil))));
+    }
+
+    // ── Coverage: L813 — TypeIs pattern lookahead bounds check ─────────────────
+
+    #[test]
+    fn type_is_pattern_bounds_check_in_semi_starts_new_arm() {
+        // Multi-arm match with TypeIs pattern: `;n v:` — after_semi+2 < tokens.len() is true
+        // and the matches! returns true because the tokens are (Ident("n"), Ident("v"), Colon)
+        let prog = parse_str(r#"f x:n>n;?x{n v:v;_:0}"#);
+        let Decl::Function { body, .. } = &prog.declarations[0] else { panic!("expected function") };
+        let Stmt::Match { arms, .. } = &body[0].node else { panic!("expected match") };
+        assert_eq!(arms.len(), 2);
+        assert!(matches!(&arms[0].pattern, Pattern::TypeIs { ty: Type::Number, .. }));
+    }
 }
