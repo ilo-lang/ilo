@@ -1,0 +1,166 @@
+-- SaaS platform: user management, billing, notifications, analytics
+-- 30 functions, 10 types — realistic multi-domain program
+
+-- === TYPES ===
+
+type user{id:t;email:t;name:t;plan:t;created:n;active:b}
+type team{id:t;name:t;owner:t;members:L t;plan:t}
+type invoice{id:t;user-id:t;amount:n;status:t;due:n;items:L line-item}
+type line-item{desc:t;qty:n;rate:n}
+type payment{id:t;invoice-id:t;amount:n;method:t;ts:n}
+type usage{user-id:t;feature:t;count:n;period:t}
+type plan{name:t;price:n;limits:L limit}
+type limit{feature:t;max:n}
+type notification{to:t;subject:t;body:t;channel:t}
+type event{user-id:t;action:t;ts:n;meta:t}
+
+-- === VALIDATION ===
+
+vld-email e:t>R t t
+  !has e "@" ^"invalid email"
+  ~e
+
+vld-plan p:t>R t t
+  s=S "free" "pro" "enterprise"
+  !has ["free","pro","enterprise"] p ^cat "unknown plan: " p
+  ~p
+
+vld-user u:user>R user t
+  vld-email! u.email
+  vld-plan! u.plan
+  ~u
+
+-- === USER MANAGEMENT ===
+
+create-user email:t name:t plan:t>R user t
+  vld-email! email
+  vld-plan! plan
+  uid=cat "usr-" str now
+  ~user id:uid email:email name:name plan:plan created:now active:true
+
+update-plan u:user new-plan:t>R user t
+  vld-plan! new-plan
+  ~u with plan:new-plan
+
+deactivate u:user>user
+  u with active:false
+
+lookup-active users:L user>L user
+  flt is-active users
+
+is-active u:user>b
+  u.active
+
+-- === TEAM MANAGEMENT ===
+
+create-team name:t owner:user>R team t
+  !is-active owner ^"owner must be active"
+  tid=cat "team-" str now
+  ~team id:tid name:name owner:owner.id members:[owner.id] plan:owner.plan
+
+add-member tm:team u:user>R team t
+  !is-active u ^"member must be active"
+  has tm.members u.id ^"already a member"
+  ms=+tm.members u.id
+  ~tm with members:ms
+
+team-size tm:team>n
+  len tm.members
+
+-- === BILLING ===
+
+line-total li:line-item>n
+  *li.qty li.rate
+
+invoice-total inv:invoice>n
+  sum map line-total inv.items
+
+create-invoice uid:t items:L line-item>R invoice t
+  <=len items 0 ^"no items"
+  iid=cat "inv-" str now
+  tot=sum map line-total items
+  ~invoice id:iid user-id:uid amount:tot status:"pending" due:+now 2592000 items:items
+
+pay-invoice inv:invoice method:t>R payment t
+  !=inv.status "pending" ^cat "cannot pay: " inv.status
+  pid=cat "pay-" str now
+  ~payment id:pid invoice-id:inv.id amount:inv.amount method:method ts:now
+
+is-overdue inv:invoice>b
+  &=inv.status "pending" >now inv.due
+
+overdue-invoices invoices:L invoice>L invoice
+  flt is-overdue invoices
+
+-- === USAGE TRACKING ===
+
+track uid:t feature:t>usage
+  usage user-id:uid feature:feature count:1 period:str now
+
+aggregate usages:L usage>L usage
+  grp by-feature usages
+
+by-feature u:usage>t
+  u.feature
+
+check-limit u:usage p:plan>R b t
+  ls=flt match-feature p.limits
+  =len ls 0{~true}
+  lim=hd ls
+  ~<=u.count lim.max
+
+match-feature l:limit>b
+  =l.feature "api"
+
+-- === NOTIFICATIONS ===
+
+email-notify to:t subject:t body:t>notification
+  notification to:to subject:subject body:body channel:"email"
+
+sms-notify to:t body:t>notification
+  notification to:to subject:"" body:body channel:"sms"
+
+notify-overdue inv:invoice u:user>notification
+  subj=cat "Overdue: " inv.id
+  body=fmt "Invoice {} for ${} is overdue" inv.id str inv.amount
+  email-notify u.email subj body
+
+-- === ANALYTICS ===
+
+log-event uid:t action:t>event
+  event user-id:uid action:action ts:now meta:""
+
+count-events events:L event action:t>n
+  len flt is-action events
+
+is-action e:event>b
+  =e.action "login"
+
+active-users events:L event window:n>L t
+  recent=flt in-window events
+  unq map get-uid recent
+
+in-window e:event>b
+  >e.ts -now 86400
+
+get-uid e:event>t
+  e.user-id
+
+-- === ORCHESTRATION ===
+
+onboard email:t name:t plan:t>R user t
+  u=create-user! email name plan
+  log-event u.id "signup"
+  email-notify u.email "Welcome" cat "Hi " name
+  ~u
+
+process-payment uid:t inv:invoice method:t>R payment t
+  p=pay-invoice! inv method
+  log-event uid "payment"
+  email-notify uid "Payment received" cat "Paid $" str inv.amount
+  ~p
+
+monthly-billing u:user items:L line-item>R invoice t
+  inv=create-invoice! u.id items
+  log-event u.id "invoice-created"
+  ~inv

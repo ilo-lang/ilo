@@ -1,0 +1,55 @@
+-- E-commerce order processing system
+-- 12 functions, 4 types, realistic dependency graph
+
+type addr{line1:t;line2:t;city:t;zip:t;country:t}
+type item{name:t;price:n;qty:n}
+type order{items:L item;addr:addr;subtotal:n;shipping:n;discount:n;total:n;status:t}
+type receipt{order-id:t;total:n;status:t}
+
+-- Validation layer
+vld-addr a:addr>R addr t
+  =a.zip "" ^"missing zip"
+  =a.city "" ^"missing city"
+  ~a
+
+vld-item i:item>R item t
+  <=i.price 0 ^"invalid price"
+  <=i.qty 0 ^"invalid quantity"
+  ~i
+
+vld-items items:L item>R L item t
+  @i items{vld-item! i}
+  ~items
+
+-- Pricing layer
+item-total i:item>n
+  *i.price i.qty
+
+subtotal items:L item>n
+  sum map item-total items
+
+shipping-cost weight:n country:t>n
+  =country "US"{>=weight 50 0;5}
+  =country "UK"{>=weight 30 0;8}
+  15
+
+apply-discount total:n code:t>n
+  =code "HALF" */total 0.5
+  =code "10OFF" -total 10
+  =code "FREE" 0
+  total
+
+-- Order assembly
+build-order items:L item addr:addr code:t>R order t
+  vld-items! items
+  vld-addr! addr
+  st=subtotal items
+  sh=shipping-cost st addr.country
+  d=apply-discount st code
+  fin=+d sh
+  ~order items:items addr:addr subtotal:st shipping:sh discount:d total:fin status:"pending"
+
+-- Checkout
+checkout items:L item addr:addr code:t>R receipt t
+  ord=build-order! items addr code
+  ~receipt order-id:"ORD-001" total:ord.total status:"confirmed"

@@ -8,6 +8,7 @@ mod interpreter;
 mod lexer;
 mod parser;
 mod tools;
+mod graph;
 mod verify;
 mod vm;
 
@@ -298,6 +299,134 @@ fn tool_sig_str(params: &[ast::Param], ret: &ast::Type) -> String {
         format!("> {}", codegen::fmt::type_str(ret))
     } else {
         format!("{} > {}", ps.join(" "), codegen::fmt::type_str(ret))
+    }
+}
+
+// ── `ilo graph` subcommand ────────────────────────────────────────────────
+
+/// Analyze a program's dependency graph and output JSON / DOT.
+fn graph_cmd(args: &[String]) {
+    if args.is_empty() {
+        eprintln!("Usage: ilo graph <file> [--fn NAME] [--reverse] [--subgraph] [--budget N] [--dot]");
+        std::process::exit(1);
+    }
+
+    let file = &args[0];
+    let source = match std::fs::read_to_string(file) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("Error reading {}: {}", file, e);
+            std::process::exit(1);
+        }
+    };
+
+    let tokens = match lexer::lex(&source) {
+        Ok(t) => t,
+        Err(e) => {
+            eprintln!("Lex error: {:?}", e);
+            std::process::exit(1);
+        }
+    };
+    let token_spans: Vec<(lexer::Token, ast::Span)> = tokens
+        .into_iter()
+        .map(|(t, r)| (t, ast::Span { start: r.start, end: r.end }))
+        .collect();
+    let (mut program, _) = parser::parse(token_spans);
+    ast::resolve_aliases(&mut program);
+    program.source = Some(source);
+
+    let pg = graph::build_graph(&program);
+
+    // Parse flags.
+    let mut fn_name: Option<String> = None;
+    let mut reverse = false;
+    let mut subgraph = false;
+    let mut budget: Option<usize> = None;
+    let mut dot = false;
+
+    let mut i = 1;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--fn" => {
+                if i + 1 >= args.len() {
+                    eprintln!("error: --fn requires a function name");
+                    std::process::exit(1);
+                }
+                fn_name = Some(args[i + 1].clone());
+                i += 2;
+            }
+            "--reverse" => {
+                reverse = true;
+                i += 1;
+            }
+            "--subgraph" => {
+                subgraph = true;
+                i += 1;
+            }
+            "--budget" => {
+                if i + 1 >= args.len() {
+                    eprintln!("error: --budget requires a number");
+                    std::process::exit(1);
+                }
+                budget = Some(args[i + 1].parse::<usize>().unwrap_or_else(|_| {
+                    eprintln!("error: --budget value must be a positive integer");
+                    std::process::exit(1);
+                }));
+                i += 2;
+            }
+            "--dot" => {
+                dot = true;
+                i += 1;
+            }
+            _ => {
+                eprintln!("unknown flag: {}", args[i]);
+                std::process::exit(1);
+            }
+        }
+    }
+
+    if dot {
+        print!("{}", graph::to_dot(&pg));
+        return;
+    }
+
+    if let Some(ref name) = fn_name {
+        if reverse {
+            match graph::query_reverse(&program, &pg, name) {
+                Some(r) => println!("{}", serde_json::to_string_pretty(&r).unwrap()),
+                None => {
+                    eprintln!("function '{}' not found", name);
+                    std::process::exit(1);
+                }
+            }
+        } else if let Some(b) = budget {
+            match graph::query_budget(&program, &pg, name, b) {
+                Some(q) => println!("{}", serde_json::to_string_pretty(&q).unwrap()),
+                None => {
+                    eprintln!("function '{}' not found", name);
+                    std::process::exit(1);
+                }
+            }
+        } else if subgraph {
+            match graph::query_subgraph(&program, &pg, name) {
+                Some(q) => println!("{}", serde_json::to_string_pretty(&q).unwrap()),
+                None => {
+                    eprintln!("function '{}' not found", name);
+                    std::process::exit(1);
+                }
+            }
+        } else {
+            match graph::query_fn(&program, &pg, name) {
+                Some(q) => println!("{}", serde_json::to_string_pretty(&q).unwrap()),
+                None => {
+                    eprintln!("function '{}' not found", name);
+                    std::process::exit(1);
+                }
+            }
+        }
+    } else {
+        // Full graph output.
+        println!("{}", serde_json::to_string_pretty(&pg).unwrap());
     }
 }
 
@@ -1189,6 +1318,11 @@ fn main() {
     // can be used as *tool format* flags without conflicting with error format flags.
     if matches!(raw_args.get(1).map(|s| s.as_str()), Some("tools") | Some("tool")) {
         tools_cmd(&raw_args[2..]);
+        std::process::exit(0);
+    }
+
+    if matches!(raw_args.get(1).map(|s| s.as_str()), Some("graph")) {
+        graph_cmd(&raw_args[2..]);
         std::process::exit(0);
     }
 
