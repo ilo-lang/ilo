@@ -13815,4 +13815,147 @@ f>n;r=mk 10 20;+r.x r.y";
             Value::Number(1.0), Value::Number(2.0), Value::Number(3.0),
         ]));
     }
+
+    // ── Coverage round 2 ────────────────────────────────────────────────────
+
+    // ── to_value() for arena records (L2328-2350) ───────────────────────────
+    // Returning a record from VM exercises the arena record → Value::Record path
+    // in NanVal::to_value() where ACTIVE_REGISTRY is set by execute().
+
+    #[test]
+    fn vm_arena_record_to_value_single_field() {
+        // Single-field arena record exercises to_value() arena path (L2328-2350)
+        let src = "type wrapper{val:n} f>wrapper;wrapper val:42";
+        let result = vm_run(src, Some("f"), vec![]);
+        match result {
+            Value::Record { type_name, fields } => {
+                assert_eq!(type_name, "wrapper");
+                assert_eq!(fields.get("val"), Some(&Value::Number(42.0)));
+            }
+            other => panic!("expected Record, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn vm_arena_record_to_value_with_text_field() {
+        // Arena record containing a text field (heap-tagged NanVal) exercises
+        // recursive to_value() inside the arena record loop (L2343-2348)
+        let src = r#"type named{name:t;age:n} f>named;named name:"alice" age:30"#;
+        let result = vm_run(src, Some("f"), vec![]);
+        match result {
+            Value::Record { type_name, fields } => {
+                assert_eq!(type_name, "named");
+                assert_eq!(fields.get("name"), Some(&Value::Text("alice".to_string())));
+                assert_eq!(fields.get("age"), Some(&Value::Number(30.0)));
+            }
+            other => panic!("expected Record, got {:?}", other),
+        }
+    }
+
+    // ── to_value_with_registry() (L2385-2404) ──────────────────────────────
+    // Directly test to_value_with_registry on arena records with nested data.
+
+    #[test]
+    fn vm_to_value_with_registry_three_fields() {
+        // Three-field record exercises to_value_with_registry path (L2385-2404)
+        let src = "type vec3{x:n;y:n;z:n} f>vec3;vec3 x:1 y:2 z:3";
+        let result = vm_run(src, Some("f"), vec![]);
+        match result {
+            Value::Record { type_name, fields } => {
+                assert_eq!(type_name, "vec3");
+                assert_eq!(fields.len(), 3);
+                assert_eq!(fields.get("x"), Some(&Value::Number(1.0)));
+                assert_eq!(fields.get("y"), Some(&Value::Number(2.0)));
+                assert_eq!(fields.get("z"), Some(&Value::Number(3.0)));
+            }
+            other => panic!("expected Record, got {:?}", other),
+        }
+    }
+
+    // ── OP_MOD with non-numbers (L3779) ─────────────────────────────────────
+
+    #[test]
+    fn vm_mod_requires_numbers_error() {
+        // mod with text arguments triggers "mod requires numbers" error (L3779)
+        // Using `a` (any) type to bypass verifier
+        let src = r#"f x:a y:a>a;mod x y"#;
+        let prog = parse_program(src);
+        let err = compile_and_run(&prog, Some("f"),
+            vec![Value::Text("a".into()), Value::Text("b".into())])
+            .unwrap_err();
+        assert!(err.to_string().contains("mod requires numbers"), "got: {err}");
+    }
+
+    #[test]
+    fn vm_mod_normal_operation() {
+        // Normal mod operation for comparison (L3772-3785)
+        let src = "f a:n b:n>n;mod a b";
+        let result = vm_run(src, Some("f"), vec![Value::Number(10.0), Value::Number(3.0)]);
+        assert_eq!(result, Value::Number(1.0));
+    }
+
+    #[test]
+    fn vm_mod_by_zero_error() {
+        // mod by zero triggers "modulo by zero" error (L3782-3783)
+        let src = "f a:n b:n>n;mod a b";
+        let prog = parse_program(src);
+        let err = compile_and_run(&prog, Some("f"),
+            vec![Value::Number(10.0), Value::Number(0.0)])
+            .unwrap_err();
+        assert!(err.to_string().contains("modulo by zero"), "got: {err}");
+    }
+
+    // ── recwith on heap record with text field lookup (L3585-3589) ──────────
+
+    #[test]
+    fn vm_recwith_heap_record_updates() {
+        // Record returned from function call (promoted to heap), then `with` update
+        // exercises the heap OP_RECWITH path (L3573-3600)
+        let src = "type pt{x:n;y:n}\nmk a:n b:n>pt;pt x:a y:b\nf>n;r=mk 1 2;r2=r with y:99;+r2.x r2.y";
+        let result = vm_run(src, Some("f"), vec![]);
+        assert_eq!(result, Value::Number(100.0)); // 1 + 99
+    }
+
+    // ── recwith arena record with multiple updates (L3522-3527) ─────────────
+
+    #[test]
+    fn vm_recwith_arena_two_field_update() {
+        // Update both fields at once on an arena record (L3516-3550)
+        let src = "type pt{x:n;y:n} f>n;r=pt x:1 y:2;r2=r with x:10 y:20;+r2.x r2.y";
+        let result = vm_run(src, Some("f"), vec![]);
+        assert_eq!(result, Value::Number(30.0)); // 10 + 20
+    }
+
+    // ── Multi-frame return with stack cleanup (L2622-2639) ──────────────────
+    // The ip >= code.len() path is a safety fallthrough. Normal code uses OP_RET.
+    // We test multi-frame return via the normal OP_RET path which shares similar
+    // stack cleanup logic.
+
+    #[test]
+    fn vm_multi_frame_return_with_text() {
+        // Multi-frame return where inner function returns text (heap value)
+        // exercises stack cleanup across frames (L2622-2639 area)
+        let src = "inner x:t>t;+x \"!\"\nouter x:t>t;inner x\nf x:t>t;outer x";
+        let result = vm_run(src, Some("f"), vec![Value::Text("hi".to_string())]);
+        assert_eq!(result, Value::Text("hi!".to_string()));
+    }
+
+    #[test]
+    fn vm_multi_frame_return_with_list() {
+        // Multi-frame return where inner function returns a list
+        let src = "inner x:n>L n;[x,+x 1,+x 2]\nouter x:n>L n;inner x\nf x:n>L n;outer x";
+        let result = vm_run(src, Some("f"), vec![Value::Number(1.0)]);
+        assert_eq!(result, Value::List(vec![
+            Value::Number(1.0), Value::Number(2.0), Value::Number(3.0),
+        ]));
+    }
+
+    #[test]
+    fn vm_multi_frame_return_record_chain() {
+        // 3-level deep call returning a record — exercises multi-frame return
+        // with arena record promotion across stack frames
+        let src = "type pt{x:n;y:n}\nc a:n b:n>pt;pt x:a y:b\nb x:n>pt;y=+x 1;c x y\na x:n>n;p=b x;+p.x p.y";
+        let result = vm_run(src, Some("a"), vec![Value::Number(7.0)]);
+        assert_eq!(result, Value::Number(15.0)); // 7 + 8
+    }
 }

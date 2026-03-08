@@ -5384,4 +5384,57 @@ mod tests {
         let result = run_str(r#"f x:b>t;?x{b v:"matched";_:"other"}"#, None, vec![Value::Bool(true)]);
         assert_eq!(result, Value::Text("matched".to_string()));
     }
+
+    // ── Coverage round 2: TypeIs pattern matching for less common types ──────
+
+    // ── TypeIs with List match (L1726) ──────────────────────────────────────
+
+    #[test]
+    fn interp_type_is_list_match_with_binding() {
+        // TypeIs List pattern with binding — exercises L1726 and L1731-1732
+        let source = r#"f x:L n>t;?x{l v:"list";_:"other"}"#;
+        let result = run_str(source, Some("f"), vec![
+            Value::List(vec![Value::Number(1.0), Value::Number(2.0)]),
+        ]);
+        assert_eq!(result, Value::Text("list".to_string()));
+    }
+
+    #[test]
+    fn interp_type_is_list_no_match() {
+        // TypeIs List pattern tested against a non-list value — falls through to wildcard
+        let source = r#"f x:n>t;?x{l _:"list";_:"other"}"#;
+        let result = run_str(source, Some("f"), vec![Value::Number(42.0)]);
+        assert_eq!(result, Value::Text("other".to_string()));
+    }
+
+    // ── TypeIs with Map type → _ => false (L1727) ───────────────────────────
+
+    #[test]
+    fn interp_type_is_map_falls_through() {
+        // Map type in TypeIs pattern hits the _ => false branch (L1727)
+        // since Map is not explicitly matched in the TypeIs arms
+        let source = r#"f x:M t n>t;?x{n _:"num";_:"other"}"#;
+        let result = run_str(source, Some("f"), vec![
+            Value::Map(std::collections::HashMap::from([("a".to_string(), Value::Number(1.0))])),
+        ]);
+        assert_eq!(result, Value::Text("other".to_string()));
+    }
+
+    // ── TypeIs with Nil value → no match on any typed pattern (L1727) ───────
+
+    #[test]
+    fn interp_type_is_nil_falls_through() {
+        // Nil value doesn't match n/t/b/l patterns — exercises _ => false (L1727)
+        let source = r#"f x:O n>t;?x{n _:"num";_:"nil"}"#;
+        let result = run_str(source, Some("f"), vec![Value::Nil]);
+        assert_eq!(result, Value::Text("nil".to_string()));
+    }
+
+    #[test]
+    fn interp_type_is_nil_value_against_text() {
+        // Nil tested against text TypeIs pattern → falls through
+        let source = r#"f x:O t>t;?x{t v:v;_:"none"}"#;
+        let result = run_str(source, Some("f"), vec![Value::Nil]);
+        assert_eq!(result, Value::Text("none".to_string()));
+    }
 }

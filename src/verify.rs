@@ -4965,6 +4965,40 @@ mod tests {
         assert_eq!(ty, Ty::List(Box::new(Ty::Number)));
         assert!(errors.is_empty());
     }
+
+    // ── Coverage round 2: circular type alias detection (L1126-1143) ────────
+
+    #[test]
+    fn verify_circular_alias_self_referencing() {
+        // Single alias referencing itself: alias foo foo → ILO-T030 (L1138-1142)
+        let errs = parse_and_verify("alias foo foo\nf>n;1").unwrap_err();
+        assert!(errs.iter().any(|e| e.code == "ILO-T030" && e.message.contains("circular")),
+            "expected ILO-T030 circular error, got: {:?}", errs);
+    }
+
+    #[test]
+    fn verify_circular_alias_three_way_cycle() {
+        // Three-way circular dependency: xx → yy → zz → xx (L1126-1143)
+        let errs = parse_and_verify("alias xx yy\nalias yy zz\nalias zz xx\nf>n;1").unwrap_err();
+        assert!(errs.iter().any(|e| e.code == "ILO-T030"),
+            "expected ILO-T030 for 3-way cycle, got: {:?}", errs);
+    }
+
+    #[test]
+    fn verify_circular_alias_mixed_with_valid() {
+        // Mix of circular aliases and valid ones — only circular ones error
+        let result = parse_and_verify_full("alias good n\nalias bad1 bad2\nalias bad2 bad1\nf x:good>n;x");
+        let circular_errors: Vec<_> = result.errors.iter()
+            .filter(|e| e.code == "ILO-T030")
+            .collect();
+        assert!(circular_errors.len() >= 2, "expected at least 2 circular errors for bad1/bad2, got: {:?}", circular_errors);
+    }
+
+    #[test]
+    fn verify_non_circular_alias_chain_resolves() {
+        // Long non-circular chain: dd → cc → bb → aa → n (exercises resolve_alias_recursive L1179-1194)
+        assert!(parse_and_verify("alias aa n\nalias bb aa\nalias cc bb\nalias dd cc\nf x:dd>n;x").is_ok());
+    }
 }
 
 
