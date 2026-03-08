@@ -37,6 +37,15 @@ curl -fsSL https://raw.githubusercontent.com/ilo-lang/ilo/main/install.sh | sh
 </details>
 
 <details>
+<summary>Windows (PowerShell)</summary>
+
+```powershell
+Invoke-WebRequest -Uri https://github.com/ilo-lang/ilo/releases/latest/download/ilo-x86_64-pc-windows-msvc.exe -OutFile ilo.exe
+```
+
+</details>
+
+<details>
 <summary>npm (any platform with Node 20+)</summary>
 
 ```bash
@@ -47,15 +56,6 @@ npx ilo-lang 'dbl x:n>n;*x 2' 5
 ```
 
 > WASM mode: interpreter only. HTTP builtins (`get`, `$`, `post`) require the native binary.
-
-</details>
-
-<details>
-<summary>Windows (PowerShell)</summary>
-
-```powershell
-Invoke-WebRequest -Uri https://github.com/ilo-lang/ilo/releases/latest/download/ilo-x86_64-pc-windows-msvc.exe -OutFile ilo.exe
-```
 
 </details>
 
