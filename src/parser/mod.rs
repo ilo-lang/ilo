@@ -1152,6 +1152,24 @@ impl Parser {
         Ok(left)
     }
 
+    /// Parse a single list element — like `parse_expr_inner` but also handles
+    /// `~expr` (Ok) and `^expr` (Err) wrapping that `parse_expr` normally handles.
+    fn parse_list_element(&mut self) -> Result<Expr> {
+        match self.peek() {
+            Some(Token::Tilde) => {
+                self.advance();
+                let inner = self.parse_expr_inner()?;
+                Ok(Expr::Ok(Box::new(inner)))
+            }
+            Some(Token::Caret) => {
+                self.advance();
+                let inner = self.parse_expr_inner()?;
+                Ok(Expr::Err(Box::new(inner)))
+            }
+            _ => self.parse_expr_inner(),
+        }
+    }
+
     /// Core expression parsing — handles prefix ops, match expr, calls, atoms.
     /// Infix operators are only applied after atoms/calls, not after prefix operators
     /// (prefix forms like `+a b` are self-contained).
@@ -1603,14 +1621,11 @@ impl Parser {
             Some(Token::LBracket) => {
                 self.advance();
                 let mut items = Vec::new();
-                if self.peek() != Some(&Token::RBracket) {
-                    items.push(self.parse_expr()?);
-                    while self.peek() == Some(&Token::Comma) {
+                while self.peek() != Some(&Token::RBracket) {
+                    items.push(self.parse_list_element()?);
+                    // Skip optional comma separator
+                    if self.peek() == Some(&Token::Comma) {
                         self.advance();
-                        if self.peek() == Some(&Token::RBracket) {
-                            break; // trailing comma
-                        }
-                        items.push(self.parse_expr()?);
                     }
                 }
                 self.expect(&Token::RBracket)?;
@@ -2100,6 +2115,38 @@ mod tests {
         let Decl::Function { body, .. } = &prog.declarations[0] else { panic!("expected function") };
         let Stmt::Expr(Expr::List(items)) = &body[0].node else { panic!("expected list") };
         assert!(items.is_empty());
+    }
+
+    #[test]
+    fn parse_list_space_separated() {
+        let prog = parse_str("f>L n;[1 2 3]");
+        let Decl::Function { body, .. } = &prog.declarations[0] else { panic!("expected function") };
+        let Stmt::Expr(Expr::List(items)) = &body[0].node else { panic!("expected list") };
+        assert_eq!(items.len(), 3);
+    }
+
+    #[test]
+    fn parse_list_with_variables() {
+        let prog = parse_str(r#"f w:t>L t;["hi" w]"#);
+        let Decl::Function { body, .. } = &prog.declarations[0] else { panic!("expected function") };
+        let Stmt::Expr(Expr::List(items)) = &body[0].node else { panic!("expected list") };
+        assert_eq!(items.len(), 2);
+    }
+
+    #[test]
+    fn parse_list_mixed_types() {
+        let prog = parse_str(r#"f>L a;["search" 10 true]"#);
+        let Decl::Function { body, .. } = &prog.declarations[0] else { panic!("expected function") };
+        let Stmt::Expr(Expr::List(items)) = &body[0].node else { panic!("expected list") };
+        assert_eq!(items.len(), 3);
+    }
+
+    #[test]
+    fn parse_list_ok_err_elements() {
+        let prog = parse_str("f>L R n t;[~1 ~2 ~3]");
+        let Decl::Function { body, .. } = &prog.declarations[0] else { panic!("expected function") };
+        let Stmt::Expr(Expr::List(items)) = &body[0].node else { panic!("expected list") };
+        assert_eq!(items.len(), 3);
     }
 
     #[test]

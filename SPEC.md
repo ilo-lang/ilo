@@ -402,7 +402,7 @@ jpth! json "name"           -- auto-unwrap
 ```
 jdmp 42                     -- "42"
 jdmp "hello"                -- "\"hello\""
-jdmp [1, 2, 3]             -- "[1,2,3]"
+jdmp [1 2 3]               -- "[1,2,3]"
 jdmp (pt x:1 y:2)          -- "{\"x\":1,\"y\":2}"
 ```
 
@@ -419,11 +419,13 @@ r=jpar! "{\"x\":1}"        -- r is a json record, access with r.x
 ## Lists
 
 ```
-xs=[1, 2, 3]
+xs=[1 2 3]           -- space-separated (preferred)
+xs=[1, 2, 3]         -- commas also work
+mixed=["search" 10]  -- heterogeneous lists allowed (type: L a)
 empty=[]
 ```
 
-Comma-separated expressions in brackets. Trailing comma allowed. Use with `@` to iterate:
+Elements are expressions in brackets, separated by spaces or commas. Lists may contain mixed types (inferred as `L a`). Use with `@` to iterate:
 
 ```
 @x xs{+x 1}
