@@ -1736,11 +1736,14 @@ impl VerifyContext {
                     Ty::List(Box::new(Ty::Unknown))
                 } else {
                     let first_ty = self.infer_expr(func, scope, &items[0], span);
-                    // Infer remaining items but don't enforce homogeneity strictly
+                    let mut elem_ty = first_ty;
                     for item in &items[1..] {
-                        let _ = self.infer_expr(func, scope, item, span);
+                        let item_ty = self.infer_expr(func, scope, item, span);
+                        if !compatible(&elem_ty, &item_ty) && !compatible(&item_ty, &elem_ty) {
+                            elem_ty = Ty::Unknown; // heterogeneous list
+                        }
                     }
-                    Ty::List(Box::new(first_ty))
+                    Ty::List(Box::new(elem_ty))
                 }
             }
 

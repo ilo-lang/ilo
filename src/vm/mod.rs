@@ -13780,4 +13780,39 @@ f>n;r=mk 10 20;+r.x r.y";
             Value::Text("matched".to_string())
         );
     }
+
+    // ── Space-separated and heterogeneous list literals ─────────────────────
+
+    #[test]
+    fn vm_list_space_separated() {
+        let src = "f>L n;[1 2 3]";
+        assert_eq!(vm_run(src, Some("f"), vec![]), Value::List(vec![
+            Value::Number(1.0), Value::Number(2.0), Value::Number(3.0),
+        ]));
+    }
+
+    #[test]
+    fn vm_list_with_variable() {
+        let src = r#"f w:t>L t;["hi" w]"#;
+        assert_eq!(
+            vm_run(src, Some("f"), vec![Value::Text("world".to_string())]),
+            Value::List(vec![Value::Text("hi".to_string()), Value::Text("world".to_string())])
+        );
+    }
+
+    #[test]
+    fn vm_list_heterogeneous() {
+        let src = r#"f>L a;["search" 10 true]"#;
+        assert_eq!(vm_run(src, Some("f"), vec![]), Value::List(vec![
+            Value::Text("search".to_string()), Value::Number(10.0), Value::Bool(true),
+        ]));
+    }
+
+    #[test]
+    fn vm_list_mixed_comma_space() {
+        let src = "f>L n;[1, 2 3]";
+        assert_eq!(vm_run(src, Some("f"), vec![]), Value::List(vec![
+            Value::Number(1.0), Value::Number(2.0), Value::Number(3.0),
+        ]));
+    }
 }
