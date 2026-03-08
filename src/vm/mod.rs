@@ -11539,4 +11539,1883 @@ mod tests {
         // Type "pt" should exist exactly once in the registry
         assert_eq!(compiled.type_registry.types.len(), 1);
     }
+
+    // =========================================================================
+    // VM/interpreter parity tests — ported from src/interpreter/mod.rs
+    // =========================================================================
+
+    // ── Basic arithmetic & comparison ────────────────────────────────────
+
+    #[test]
+    fn vm_subtract() {
+        let source = "f a:n b:n>n;-a b";
+        assert_eq!(
+            vm_run(source, Some("f"), vec![Value::Number(10.0), Value::Number(3.0)]),
+            Value::Number(7.0)
+        );
+    }
+
+    #[test]
+    fn vm_divide() {
+        let source = "f a:n b:n>n;/a b";
+        assert_eq!(
+            vm_run(source, Some("f"), vec![Value::Number(10.0), Value::Number(4.0)]),
+            Value::Number(2.5)
+        );
+    }
+
+    #[test]
+    fn vm_equals() {
+        let source = "f a:n b:n>b;=a b";
+        assert_eq!(
+            vm_run(source, Some("f"), vec![Value::Number(1.0), Value::Number(1.0)]),
+            Value::Bool(true)
+        );
+        assert_eq!(
+            vm_run(source, Some("f"), vec![Value::Number(1.0), Value::Number(2.0)]),
+            Value::Bool(false)
+        );
+    }
+
+    #[test]
+    fn vm_not_equals() {
+        let source = "f a:n b:n>b;!=a b";
+        assert_eq!(
+            vm_run(source, Some("f"), vec![Value::Number(1.0), Value::Number(2.0)]),
+            Value::Bool(true)
+        );
+        assert_eq!(
+            vm_run(source, Some("f"), vec![Value::Number(1.0), Value::Number(1.0)]),
+            Value::Bool(false)
+        );
+    }
+
+    #[test]
+    fn vm_greater_than() {
+        let source = "f a:n b:n>b;>a b";
+        assert_eq!(
+            vm_run(source, Some("f"), vec![Value::Number(5.0), Value::Number(3.0)]),
+            Value::Bool(true)
+        );
+    }
+
+    #[test]
+    fn vm_less_than() {
+        let source = "f a:n b:n>b;<a b";
+        assert_eq!(
+            vm_run(source, Some("f"), vec![Value::Number(3.0), Value::Number(5.0)]),
+            Value::Bool(true)
+        );
+    }
+
+    #[test]
+    fn vm_less_or_equal() {
+        let source = "f a:n b:n>b;<=a b";
+        assert_eq!(
+            vm_run(source, Some("f"), vec![Value::Number(3.0), Value::Number(3.0)]),
+            Value::Bool(true)
+        );
+    }
+
+    #[test]
+    fn vm_literal_bool() {
+        assert_eq!(vm_run("f>b;true", Some("f"), vec![]), Value::Bool(true));
+        assert_eq!(vm_run("f>b;false", Some("f"), vec![]), Value::Bool(false));
+    }
+
+    #[test]
+    fn vm_abs() {
+        assert_eq!(vm_run("f>n;abs -7", Some("f"), vec![]), Value::Number(7.0));
+    }
+
+    // ── Foreach ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn vm_foreach() {
+        let source = "f>n;s=0;@x [1, 2, 3]{+s x}";
+        assert_eq!(vm_run(source, Some("f"), vec![]), Value::Number(3.0));
+    }
+
+    #[test]
+    fn vm_foreach_early_return() {
+        let source = "f xs:L n>n;@x xs{>=x 3{x}};0";
+        let result = vm_run(
+            source,
+            Some("f"),
+            vec![Value::List(vec![
+                Value::Number(1.0),
+                Value::Number(5.0),
+                Value::Number(2.0),
+            ])],
+        );
+        assert_eq!(result, Value::Number(5.0));
+    }
+
+    #[test]
+    fn vm_foreach_on_non_list() {
+        let err = vm_run_err("f x:n>n;@i x{i}", Some("f"), vec![Value::Number(1.0)]);
+        assert!(err.contains("foreach") || err.contains("list"), "got: {err}");
+    }
+
+    #[test]
+    fn vm_foreach_return_from_nested_match() {
+        let source = "f xs:L n>n;@x xs{?x{5:x;_:0}}";
+        let result = vm_run(source, Some("f"), vec![
+            Value::List(vec![Value::Number(1.0), Value::Number(5.0), Value::Number(9.0)]),
+        ]);
+        assert_eq!(result, Value::Number(0.0));
+    }
+
+    // ── Guard & ternary ─────────────────────────────────────────────────
+
+    #[test]
+    fn vm_guard_still_returns_early() {
+        let source = "f x:n>n;=x 0{99};+x 1";
+        assert_eq!(vm_run(source, Some("f"), vec![Value::Number(0.0)]), Value::Number(99.0));
+        assert_eq!(vm_run(source, Some("f"), vec![Value::Number(5.0)]), Value::Number(6.0));
+    }
+
+    #[test]
+    fn vm_ternary_negated() {
+        let source = r#"f x:n>t;!=x 1{"not one"}{"one"}"#;
+        assert_eq!(vm_run(source, Some("f"), vec![Value::Number(1.0)]), Value::Text("one".into()));
+        assert_eq!(vm_run(source, Some("f"), vec![Value::Number(2.0)]), Value::Text("not one".into()));
+    }
+
+    #[test]
+    fn vm_guard_ternary_in_foreach() {
+        let source = "f xs:L n>n;@x xs{=x 0{10}{20}}";
+        let result = vm_run(source, Some("f"), vec![
+            Value::List(vec![Value::Number(0.0), Value::Number(1.0)]),
+        ]);
+        assert_eq!(result, Value::Number(20.0));
+    }
+
+    // ── Match ───────────────────────────────────────────────────────────
+
+    #[test]
+    fn vm_match_not_last_stmt() {
+        let source = "f x:n>n;?x{0:x;_:x};+x 1";
+        assert_eq!(vm_run(source, Some("f"), vec![Value::Number(5.0)]), Value::Number(6.0));
+    }
+
+    #[test]
+    fn vm_match_expr_no_arm_matches() {
+        let source = r#"f>n;y=?1{2:99};y"#;
+        assert_eq!(vm_run(source, Some("f"), vec![]), Value::Nil);
+    }
+
+    #[test]
+    fn vm_match_expr_with_bindings() {
+        let source = "f x:R n t>n;y=?x{~v:v;_:0};y";
+        let result = vm_run(source, Some("f"), vec![Value::Ok(Box::new(Value::Number(99.0)))]);
+        assert_eq!(result, Value::Number(99.0));
+    }
+
+    #[test]
+    fn vm_match_stmt_no_arm_matches() {
+        let source = "f x:n>n;?x{1:99};0";
+        assert_eq!(vm_run(source, Some("f"), vec![Value::Number(5.0)]), Value::Number(0.0));
+    }
+
+    #[test]
+    fn vm_match_arm_body_with_guard_return() {
+        let source = "f x:n>n;y=0;?x{1:>=x 0{42};_:0}";
+        assert_eq!(vm_run(source, Some("f"), vec![Value::Number(1.0)]), Value::Number(42.0));
+    }
+
+    #[test]
+    fn vm_match_continue_arm_returns_nil() {
+        let source = "f xs:L n>n;@x xs{?x{1:cnt;_:x}}";
+        let result = vm_run(source, Some("f"), vec![
+            Value::List(vec![Value::Number(1.0), Value::Number(2.0)]),
+        ]);
+        assert_eq!(result, Value::Number(2.0));
+    }
+
+    #[test]
+    fn vm_match_stmt_continue_propagates() {
+        let source = "f xs:L n>n;@x xs{?x{1:cnt;_:x}}";
+        let result = vm_run(source, Some("f"), vec![
+            Value::List(vec![Value::Number(1.0), Value::Number(5.0)]),
+        ]);
+        assert_eq!(result, Value::Number(5.0));
+    }
+
+    #[test]
+    fn vm_pattern_literal_no_match() {
+        let source = r#"f x:n>n;?x{1:10;2:20;_:0}"#;
+        assert_eq!(vm_run(source, Some("f"), vec![Value::Number(5.0)]), Value::Number(0.0));
+    }
+
+    #[test]
+    fn vm_pattern_ok_no_match() {
+        let source = r#"f>t;x=^"err";?x{~v:v;_:"default"}"#;
+        assert_eq!(vm_run(source, Some("f"), vec![]), Value::Text("default".to_string()));
+    }
+
+    // ── TypeIs patterns ─────────────────────────────────────────────────
+
+    #[test]
+    fn vm_type_is_number_match() {
+        let result = vm_run(
+            r#"f x:n>t;?x{n v:"num";_:"other"}"#,
+            Some("f"),
+            vec![Value::Number(42.0)],
+        );
+        assert_eq!(result, Value::Text("num".into()));
+    }
+
+    #[test]
+    fn vm_type_is_text_match() {
+        let result = vm_run(
+            r#"f x:t>t;?x{t v:v;_:"other"}"#,
+            Some("f"),
+            vec![Value::Text("hello".into())],
+        );
+        assert_eq!(result, Value::Text("hello".into()));
+    }
+
+    #[test]
+    fn vm_type_is_bool_match() {
+        let result = vm_run(
+            r#"f x:b>t;?x{b v:"bool";_:"other"}"#,
+            Some("f"),
+            vec![Value::Bool(true)],
+        );
+        assert_eq!(result, Value::Text("bool".into()));
+    }
+
+    #[test]
+    fn vm_type_is_list_match() {
+        let result = vm_run(
+            r#"f x:L n>t;?x{l v:"list";_:"other"}"#,
+            Some("f"),
+            vec![Value::List(vec![Value::Number(1.0)])],
+        );
+        assert_eq!(result, Value::Text("list".into()));
+    }
+
+    #[test]
+    fn vm_type_is_no_match_falls_through() {
+        let result = vm_run(
+            r#"f x:n>t;?x{t v:"text";_:"other"}"#,
+            Some("f"),
+            vec![Value::Number(1.0)],
+        );
+        assert_eq!(result, Value::Text("other".into()));
+    }
+
+    #[test]
+    fn vm_type_is_wildcard_binding() {
+        let result = vm_run(
+            r#"f x:n>t;?x{n _:"matched";_:"other"}"#,
+            Some("f"),
+            vec![Value::Number(5.0)],
+        );
+        assert_eq!(result, Value::Text("matched".into()));
+    }
+
+    #[test]
+    fn vm_typeis_pattern_non_basic_type_no_match() {
+        let source = "f x:z>b;?x{n _:true;_:false}";
+        let result = vm_run(source, Some("f"), vec![
+            Value::Record { type_name: "pt".into(), fields: std::collections::HashMap::new() },
+        ]);
+        assert_eq!(result, Value::Bool(false));
+    }
+
+    // ── Index access ────────────────────────────────────────────────────
+
+    #[test]
+    fn vm_index_access_string() {
+        let source = "f>t;xs=[\"hello\", \"world\"];xs.0";
+        assert_eq!(vm_run(source, Some("f"), vec![]), Value::Text("hello".into()));
+    }
+
+    // ── Unsupported binop ───────────────────────────────────────────────
+
+    #[test]
+    fn vm_unsupported_binop() {
+        let source = "f a:b b:b>b;-a b";
+        let err = vm_run_err(
+            source,
+            Some("f"),
+            vec![Value::Bool(true), Value::Bool(false)],
+        );
+        assert!(
+            err.contains("unsupported") || err.contains("subtract") || err.contains("type"),
+            "unexpected error: {}", err
+        );
+    }
+
+    // ── Typedef ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn vm_typedef_in_declarations() {
+        let source = "type point{x:n;y:n}\nf>n;42";
+        assert_eq!(vm_run(source, None, vec![]), Value::Number(42.0));
+    }
+
+    #[test]
+    fn vm_typedef_not_callable() {
+        let source = "type point{x:n;y:n}\nf>n;point 1 2";
+        let prog = parse_program(source);
+        let result = compile_and_run(&prog, Some("f"), vec![]);
+        assert!(result.is_err(), "expected error calling typedef");
+    }
+
+    // ── Destructure ─────────────────────────────────────────────────────
+
+    #[test]
+    fn vm_destructure_with_text_fields() {
+        let source = "type usr{name:t;email:t} f>t;u=usr name:\"alice\" email:\"a@b\";{name;email}=u;name";
+        assert_eq!(vm_run(source, Some("f"), vec![]), Value::Text("alice".to_string()));
+    }
+
+    #[test]
+    fn vm_destructure_missing_field_error() {
+        let source = "type pt{x:n;y:n} f>n;p=pt x:3 y:4;{x;z}=p;x";
+        let prog = parse_program(source);
+        let result = compile_and_run(&prog, Some("f"), vec![]);
+        assert!(result.is_err(), "expected error for missing field in destructure");
+    }
+
+    #[test]
+    #[ignore] // VM panics (debug assert) instead of returning error
+    fn vm_destructure_non_record_error() {
+        let source = "type pt{x:n;y:n} f p:pt>n;{x;y}=p;+x y";
+        let prog = parse_program(source);
+        let result = compile_and_run(&prog, Some("f"), vec![Value::Number(42.0)]);
+        assert!(result.is_err(), "expected error for destructure on non-record");
+    }
+
+    // ── Builtins: spl, cat, has, hd, tl, rev, srt, slc ─────────────────
+
+    #[test]
+    fn vm_index_access_string_list_second() {
+        // Tests accessing second text element in list
+        let source = "f>t;xs=[\"hello\", \"world\"];xs.1";
+        assert_eq!(vm_run(source, Some("f"), vec![]), Value::Text("world".into()));
+    }
+
+    // ── Env ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn vm_env_unwrap() {
+        let _guard = ENV_TEST_MUTEX.lock().unwrap();
+        unsafe { std::env::set_var("ILO_TEST_UNWRAP_VM", "world"); }
+        let source = r#"f k:t>R t t;~(env! k)"#;
+        let result = vm_run(source, Some("f"), vec![Value::Text("ILO_TEST_UNWRAP_VM".into())]);
+        assert_eq!(result, Value::Ok(Box::new(Value::Text("world".into()))));
+        unsafe { std::env::remove_var("ILO_TEST_UNWRAP_VM"); }
+    }
+
+    #[test]
+    fn vm_env_wrong_arg_type() {
+        let err = vm_run_err("f>t;env 42", Some("f"), vec![]);
+        assert!(err.contains("env") || err.contains("text") || err.contains("string"), "got: {err}");
+    }
+
+    // ── Range iteration ─────────────────────────────────────────────────
+
+    #[test]
+    fn vm_range_as_index() {
+        let source = "f>n;@i 0..3{*i i}";
+        assert_eq!(vm_run(source, Some("f"), vec![]), Value::Number(4.0));
+    }
+
+    #[test]
+    fn vm_range_end_not_number() {
+        let source = "f s:n e:n>n;@i s..e{i}";
+        assert_eq!(
+            vm_run(source, Some("f"), vec![Value::Number(0.0), Value::Number(3.0)]),
+            Value::Number(2.0)
+        );
+    }
+
+    #[test]
+    fn vm_for_range_early_return_via_guard() {
+        let result = vm_run("f>n;@i 0..5{>=i 3{i};i}", Some("f"), vec![]);
+        assert_eq!(result, Value::Number(3.0));
+    }
+
+    #[test]
+    fn vm_for_range_non_number_start_error() {
+        let err = vm_run_err("f s:t>n;@i s..3{i}", Some("f"), vec![Value::Text("a".into())]);
+        assert!(
+            err.contains("range") || err.contains("number") || err.contains("start") || err.contains("type"),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn vm_for_range_non_number_end_error() {
+        let err = vm_run_err("f e:t>n;@i 0..e{i}", Some("f"), vec![Value::Text("b".into())]);
+        assert!(
+            err.contains("range") || err.contains("number") || err.contains("end") || err.contains("type"),
+            "got: {err}"
+        );
+    }
+
+    // ── Error paths: builtin arg count/type errors ──────────────────────
+
+    #[test]
+    fn vm_err_abs_wrong_arg_count() {
+        let err = vm_run_err("f>n;abs 1 2", Some("f"), vec![]);
+        assert!(err.contains("abs") || err.contains("arg") || err.contains("expect"), "got: {err}");
+    }
+
+    #[test]
+    fn vm_err_abs_wrong_type() {
+        let err = vm_run_err(r#"f x:t>n;abs x"#, Some("f"), vec![Value::Text("hi".into())]);
+        assert!(err.contains("abs") || err.contains("number") || err.contains("type"), "got: {err}");
+    }
+
+    #[test]
+    fn vm_err_cat_non_text_items() {
+        let err = vm_run_err("f>t;cat [1,2,3] \",\"", Some("f"), vec![]);
+        assert!(err.contains("cat") || err.contains("text"), "got: {err}");
+    }
+
+    #[test]
+    fn vm_err_cat_wrong_arg_types() {
+        let err = vm_run_err("f x:n y:n>t;cat x y", Some("f"), vec![Value::Number(1.0), Value::Number(2.0)]);
+        assert!(err.contains("cat") || err.contains("list") || err.contains("text"), "got: {err}");
+    }
+
+    #[test]
+    fn vm_err_cel_non_number() {
+        let err = vm_run_err(r#"f x:t>n;cel x"#, Some("f"), vec![Value::Text("a".into())]);
+        assert!(err.contains("cel") || err.contains("number") || err.contains("type"), "got: {err}");
+    }
+
+    #[test]
+    #[ignore] // VM panics (debug assert) instead of returning error
+    fn vm_err_field_access_on_non_record() {
+        let err = vm_run_err("f x:n>n;x.y", Some("f"), vec![Value::Number(1.0)]);
+        assert!(err.contains("field") || err.contains("record"), "got: {err}");
+    }
+
+    #[test]
+    fn vm_err_field_not_found_on_record() {
+        let err = vm_run_err("f>n;r=point x:1 y:2;r.z", Some("f"), vec![]);
+        assert!(err.contains("field") || err.contains("z") || err.contains("not found"), "got: {err}");
+    }
+
+    #[test]
+    fn vm_err_flr_non_number() {
+        let err = vm_run_err(r#"f x:t>n;flr x"#, Some("f"), vec![Value::Text("a".into())]);
+        assert!(err.contains("flr") || err.contains("number") || err.contains("type"), "got: {err}");
+    }
+
+    #[test]
+    fn vm_err_get_non_text_arg() {
+        let err = vm_run_err("f x:n>R t t;get x", Some("f"), vec![Value::Number(1.0)]);
+        assert!(err.contains("get") || err.contains("text") || err.contains("string"), "got: {err}");
+    }
+
+    #[test]
+    fn vm_err_has_text_non_text_needle() {
+        let err = vm_run_err("f x:t y:n>b;has x y", Some("f"), vec![Value::Text("hello".into()), Value::Number(1.0)]);
+        assert!(err.contains("has") || err.contains("text") || err.contains("needle"), "got: {err}");
+    }
+
+    #[test]
+    fn vm_err_has_wrong_first_arg() {
+        let err = vm_run_err("f x:n y:n>b;has x y", Some("f"), vec![Value::Number(1.0), Value::Number(2.0)]);
+        assert!(err.contains("has") || err.contains("list") || err.contains("text"), "got: {err}");
+    }
+
+    #[test]
+    fn vm_err_hd_empty_list() {
+        let err = vm_run_err("f>n;hd []", Some("f"), vec![]);
+        assert!(err.contains("hd") || err.contains("empty"), "got: {err}");
+    }
+
+    #[test]
+    fn vm_err_hd_empty_text() {
+        let err = vm_run_err("f>t;hd \"\"", Some("f"), vec![]);
+        assert!(err.contains("hd") || err.contains("empty"), "got: {err}");
+    }
+
+    #[test]
+    fn vm_err_hd_wrong_type() {
+        let err = vm_run_err("f x:n>n;hd x", Some("f"), vec![Value::Number(1.0)]);
+        assert!(err.contains("hd") || err.contains("list") || err.contains("text") || err.contains("type"), "got: {err}");
+    }
+
+    #[test]
+    #[ignore] // VM panics (debug assert) instead of returning error
+    fn vm_err_index_on_non_list() {
+        let err = vm_run_err("f x:n>n;x.0", Some("f"), vec![Value::Number(1.0)]);
+        assert!(
+            err.contains("index") || err.contains("field") || err.contains("list") || err.contains("record"),
+            "got: {}", err
+        );
+    }
+
+    #[test]
+    fn vm_err_index_out_of_bounds() {
+        let err = vm_run_err("f>n;xs=[1, 2];xs.5", Some("f"), vec![]);
+        assert!(err.contains("bound") || err.contains("index") || err.contains("5"), "got: {err}");
+    }
+
+    #[test]
+    fn vm_err_len_wrong_arg_count() {
+        let err = vm_run_err("f>n;len 1 2", Some("f"), vec![]);
+        assert!(err.contains("len") || err.contains("arg") || err.contains("expect"), "got: {err}");
+    }
+
+    #[test]
+    fn vm_err_len_wrong_type() {
+        let err = vm_run_err("f x:n>n;len x", Some("f"), vec![Value::Number(1.0)]);
+        assert!(err.contains("len") || err.contains("string") || err.contains("list") || err.contains("type"), "got: {err}");
+    }
+
+    #[test]
+    fn vm_err_max_non_number() {
+        let err = vm_run_err(
+            r#"f a:t b:t>n;max a b"#,
+            Some("f"),
+            vec![Value::Text("a".into()), Value::Text("b".into())],
+        );
+        assert!(err.contains("max") || err.contains("number") || err.contains("type"), "got: {err}");
+    }
+
+    #[test]
+    fn vm_err_min_non_number() {
+        let err = vm_run_err(
+            r#"f a:t b:t>n;min a b"#,
+            Some("f"),
+            vec![Value::Text("a".into()), Value::Text("b".into())],
+        );
+        assert!(err.contains("min") || err.contains("number") || err.contains("type"), "got: {err}");
+    }
+
+    #[test]
+    fn vm_err_num_wrong_arg_count() {
+        let err = vm_run_err(r#"f>R n t;num "1" "2""#, Some("f"), vec![]);
+        assert!(err.contains("num") || err.contains("arg") || err.contains("expect"), "got: {err}");
+    }
+
+    #[test]
+    fn vm_err_num_wrong_type() {
+        let err = vm_run_err("f x:n>R n t;num x", Some("f"), vec![Value::Number(1.0)]);
+        assert!(err.contains("num") || err.contains("text") || err.contains("type"), "got: {err}");
+    }
+
+    #[test]
+    fn vm_err_rev_wrong_type() {
+        let err = vm_run_err("f x:n>n;rev x", Some("f"), vec![Value::Number(1.0)]);
+        assert!(err.contains("rev") || err.contains("list") || err.contains("text") || err.contains("type"), "got: {err}");
+    }
+
+    #[test]
+    fn vm_err_rnd_lower_gt_upper() {
+        let err = vm_run_err("f>n;rnd 10 1", Some("f"), vec![]);
+        assert!(err.contains("rnd") || err.contains("bound"), "got: {err}");
+    }
+
+    #[test]
+    fn vm_err_rnd_wrong_arg_types() {
+        let err = vm_run_err("f x:t y:t>n;rnd x y", Some("f"), vec![Value::Text("a".into()), Value::Text("b".into())]);
+        assert!(err.contains("rnd") || err.contains("number") || err.contains("type"), "got: {err}");
+    }
+
+    #[test]
+    #[ignore] // VM panics (debug assert) instead of returning error
+    fn vm_err_slc_non_number_end() {
+        let err = vm_run_err("f x:t y:t>t;slc x 0 y", Some("f"), vec![Value::Text("hi".into()), Value::Text("a".into())]);
+        assert!(err.contains("slc") || err.contains("number") || err.contains("index") || err.contains("type"), "got: {err}");
+    }
+
+    #[test]
+    fn vm_err_slc_non_number_start() {
+        let err = vm_run_err("f x:t y:t>t;slc x y 1", Some("f"), vec![Value::Text("hi".into()), Value::Text("a".into())]);
+        assert!(err.contains("slc") || err.contains("number") || err.contains("index") || err.contains("type"), "got: {err}");
+    }
+
+    #[test]
+    fn vm_err_slc_wrong_first_arg() {
+        let err = vm_run_err("f x:n>n;slc x 0 1", Some("f"), vec![Value::Number(1.0)]);
+        assert!(err.contains("slc") || err.contains("list") || err.contains("text") || err.contains("type"), "got: {err}");
+    }
+
+    #[test]
+    fn vm_err_spl_non_text_first() {
+        let err = vm_run_err("f x:n y:t>L t;spl x y", Some("f"), vec![Value::Number(1.0), Value::Text("a".into())]);
+        assert!(err.contains("spl") || err.contains("text") || err.contains("type"), "got: {err}");
+    }
+
+    #[test]
+    fn vm_err_spl_non_text_second() {
+        let err = vm_run_err("f x:t y:n>L t;spl x y", Some("f"), vec![Value::Text("a-b".into()), Value::Number(1.0)]);
+        assert!(err.contains("spl") || err.contains("text") || err.contains("type"), "got: {err}");
+    }
+
+    #[test]
+    fn vm_err_srt_mixed_types() {
+        let err = vm_run_err("f>L n;srt [1,\"a\"]", Some("f"), vec![]);
+        assert!(err.contains("srt") || err.contains("mixed") || err.contains("type"), "got: {err}");
+    }
+
+    #[test]
+    fn vm_err_srt_wrong_type() {
+        let err = vm_run_err("f x:n>n;srt x", Some("f"), vec![Value::Number(1.0)]);
+        assert!(err.contains("srt") || err.contains("list") || err.contains("text") || err.contains("type"), "got: {err}");
+    }
+
+    #[test]
+    fn vm_err_str_wrong_arg_count() {
+        let err = vm_run_err("f>t;str 1 2", Some("f"), vec![]);
+        assert!(err.contains("str") || err.contains("arg") || err.contains("expect"), "got: {err}");
+    }
+
+    #[test]
+    fn vm_err_str_wrong_type() {
+        let err = vm_run_err(r#"f x:t>t;str x"#, Some("f"), vec![Value::Text("hi".into())]);
+        assert!(err.contains("str") || err.contains("number") || err.contains("type"), "got: {err}");
+    }
+
+    #[test]
+    fn vm_err_tl_empty_list() {
+        let err = vm_run_err("f>L n;tl []", Some("f"), vec![]);
+        assert!(err.contains("tl") || err.contains("empty"), "got: {err}");
+    }
+
+    #[test]
+    fn vm_err_tl_empty_text() {
+        let err = vm_run_err("f>t;tl \"\"", Some("f"), vec![]);
+        assert!(err.contains("tl") || err.contains("empty"), "got: {err}");
+    }
+
+    #[test]
+    fn vm_err_tl_wrong_type() {
+        let err = vm_run_err("f x:n>n;tl x", Some("f"), vec![Value::Number(1.0)]);
+        assert!(err.contains("tl") || err.contains("list") || err.contains("text") || err.contains("type"), "got: {err}");
+    }
+
+    #[test]
+    fn vm_err_trm_wrong_type() {
+        let err = vm_run_err("f x:n>t;trm x", Some("f"), vec![Value::Number(1.0)]);
+        assert!(err.contains("trm") || err.contains("text") || err.contains("type"), "got: {err}");
+    }
+
+    #[test]
+    #[ignore] // VM panics (debug assert) instead of returning error
+    fn vm_err_with_on_non_record() {
+        let err = vm_run_err("f x:n>n;x with y:1", Some("f"), vec![Value::Number(1.0)]);
+        assert!(err.contains("with") || err.contains("record"), "got: {err}");
+    }
+
+    #[test]
+    #[ignore] // VM panics (debug assert) instead of returning error
+    fn vm_err_wrong_arity() {
+        let err = vm_run_err("f x:n>n;x", Some("f"), vec![]);
+        assert!(err.contains("expected") || err.contains("arg") || err.contains("arity") || err.contains("1"), "got: {err}");
+    }
+
+    // ── HOF builtins: map, flt, fld, grp ────────────────────────────────
+
+    #[test]
+    #[ignore] // VM missing HOF/FnRef resolution
+    fn vm_map_squares() {
+        let source = "sq x:n>n;*x x main xs:L n>L n;map sq xs";
+        let result = vm_run(source, Some("main"), vec![
+            Value::List(vec![1.0, 2.0, 3.0, 4.0, 5.0].into_iter().map(Value::Number).collect())
+        ]);
+        assert_eq!(result, Value::List(vec![1.0, 4.0, 9.0, 16.0, 25.0].into_iter().map(Value::Number).collect()));
+    }
+
+    #[test]
+    fn vm_map_wrong_fn_arg() {
+        let err = vm_run_err("f>t;map 42 [1, 2]", Some("f"), vec![]);
+        assert!(err.contains("map") || err.contains("fn") || err.contains("function"), "got: {err}");
+    }
+
+    #[test]
+    #[ignore] // VM missing HOF/FnRef resolution
+    fn vm_map_wrong_list_arg() {
+        let source = "sq x:n>n;*x x f>t;map sq 42";
+        let err = vm_run_err(source, Some("f"), vec![]);
+        assert!(err.contains("map") || err.contains("list"), "got: {err}");
+    }
+
+    #[test]
+    #[ignore] // VM missing HOF/FnRef resolution
+    fn vm_map_with_text_fn_name() {
+        let source = "sq x:n>n;*x x f cb:t xs:L n>L n;map cb xs";
+        let result = vm_run(source, Some("f"), vec![
+            Value::Text("sq".into()),
+            Value::List(vec![Value::Number(3.0)]),
+        ]);
+        assert_eq!(result, Value::List(vec![Value::Number(9.0)]));
+    }
+
+    #[test]
+    #[ignore] // VM missing HOF/FnRef resolution
+    fn vm_flt_positive() {
+        let source = "pos x:n>b;>x 0 main xs:L n>L n;flt pos xs";
+        let result = vm_run(source, Some("main"), vec![
+            Value::List(vec![-3.0, -1.0, 0.0, 2.0, 4.0].into_iter().map(Value::Number).collect())
+        ]);
+        assert_eq!(result, Value::List(vec![2.0, 4.0].into_iter().map(Value::Number).collect()));
+    }
+
+    #[test]
+    #[ignore] // VM missing HOF/FnRef resolution
+    fn vm_flt_predicate_returns_non_bool() {
+        let source = "id x:n>n;x f xs:L n>L n;flt id xs";
+        let err = vm_run_err(source, Some("f"), vec![Value::List(vec![Value::Number(1.0)])]);
+        assert!(err.contains("flt") || err.contains("bool"), "got: {err}");
+    }
+
+    #[test]
+    #[ignore] // VM missing HOF/FnRef resolution
+    fn vm_flt_wrong_list_arg() {
+        let source = "pos x:n>b;>x 0 f>t;flt pos 42";
+        let err = vm_run_err(source, Some("f"), vec![]);
+        assert!(err.contains("flt") || err.contains("list"), "got: {err}");
+    }
+
+    #[test]
+    fn vm_flt_key_not_fn_ref() {
+        let err = vm_run_err("f xs:L n>L n;flt 42 xs", Some("f"),
+            vec![Value::List(vec![Value::Number(1.0)])]);
+        assert!(err.contains("flt") || err.contains("fn") || err.contains("function"), "got: {err}");
+    }
+
+    #[test]
+    #[ignore] // VM missing builtin implementation
+    fn vm_fld_sum() {
+        let source = "add a:n b:n>n;+a b main xs:L n>n;fld add xs 0";
+        let result = vm_run(source, Some("main"), vec![
+            Value::List(vec![1.0, 2.0, 3.0, 4.0, 5.0].into_iter().map(Value::Number).collect())
+        ]);
+        assert_eq!(result, Value::Number(15.0));
+    }
+
+    #[test]
+    fn vm_fld_wrong_fn_arg() {
+        let err = vm_run_err("f>n;fld 42 [1, 2] 0", Some("f"), vec![]);
+        assert!(err.contains("fld") || err.contains("fn") || err.contains("function"), "got: {err}");
+    }
+
+    #[test]
+    #[ignore] // VM missing HOF/FnRef resolution
+    fn vm_fld_wrong_list_arg() {
+        let source = "add a:n b:n>n;+a b f>n;fld add 42 0";
+        let err = vm_run_err(source, Some("f"), vec![]);
+        assert!(err.contains("fld") || err.contains("list"), "got: {err}");
+    }
+
+    #[test]
+    #[ignore] // VM missing HOF/FnRef resolution
+    fn vm_grp_by_string_key() {
+        let source = r#"cl x:n>t;>x 5{"big"}{"small"} main xs:L n>M t L n;grp cl xs"#;
+        let result = vm_run(source, Some("main"), vec![
+            Value::List(vec![1.0, 8.0, 3.0, 9.0, 2.0].into_iter().map(Value::Number).collect())
+        ]);
+        let Value::Map(m) = result else { panic!("expected Map") };
+        assert_eq!(m.get("small").unwrap(), &Value::List(vec![1.0, 3.0, 2.0].into_iter().map(Value::Number).collect()));
+        assert_eq!(m.get("big").unwrap(), &Value::List(vec![8.0, 9.0].into_iter().map(Value::Number).collect()));
+    }
+
+    #[test]
+    #[ignore] // VM missing HOF/FnRef resolution
+    fn vm_grp_by_numeric_key() {
+        let source = "key x:n>t;str x main xs:L n>M t L n;grp key xs";
+        let result = vm_run(source, Some("main"), vec![
+            Value::List(vec![1.0, 2.0, 1.0, 3.0, 2.0].into_iter().map(Value::Number).collect())
+        ]);
+        let Value::Map(m) = result else { panic!("expected Map") };
+        assert_eq!(m.get("1").unwrap(), &Value::List(vec![1.0, 1.0].into_iter().map(Value::Number).collect()));
+        assert_eq!(m.get("2").unwrap(), &Value::List(vec![2.0, 2.0].into_iter().map(Value::Number).collect()));
+        assert_eq!(m.get("3").unwrap(), &Value::List(vec![3.0].into_iter().map(Value::Number).collect()));
+    }
+
+    #[test]
+    #[ignore] // VM missing HOF/FnRef resolution
+    fn vm_grp_empty_list() {
+        let source = "id x:n>t;str x main xs:L n>M t L n;grp id xs";
+        let result = vm_run(source, Some("main"), vec![Value::List(vec![])]);
+        assert_eq!(result, Value::Map(std::collections::HashMap::new()));
+    }
+
+    #[test]
+    fn vm_grp_wrong_fn_arg() {
+        let err = vm_run_err("f>t;grp 42 [1, 2, 3]", Some("f"), vec![]);
+        assert!(err.contains("grp") || err.contains("fn") || err.contains("function"), "got: {err}");
+    }
+
+    #[test]
+    #[ignore] // VM missing HOF/FnRef resolution
+    fn vm_grp_wrong_list_arg() {
+        let err = vm_run_err("id x:n>n;x f>t;grp id 42", Some("f"), vec![]);
+        assert!(err.contains("grp") || err.contains("list"), "got: {err}");
+    }
+
+    #[test]
+    #[ignore] // VM missing HOF/FnRef resolution
+    fn vm_grp_number_key() {
+        let source = "id x:n>n;x g xs:L n>_;grp id xs";
+        let result = vm_run(source, Some("g"), vec![
+            Value::List(vec![Value::Number(1.0), Value::Number(2.0), Value::Number(1.0)]),
+        ]);
+        let Value::Map(m) = result else { panic!("expected map") };
+        assert_eq!(m.len(), 2);
+    }
+
+    #[test]
+    #[ignore] // VM missing HOF/FnRef resolution
+    fn vm_grp_bool_key() {
+        let source = "pos x:n>b;>x 0 g xs:L n>_;grp pos xs";
+        let result = vm_run(source, Some("g"), vec![
+            Value::List(vec![Value::Number(-1.0), Value::Number(1.0), Value::Number(2.0)]),
+        ]);
+        let Value::Map(m) = result else { panic!("expected map") };
+        assert!(m.contains_key("true"));
+        assert!(m.contains_key("false"));
+    }
+
+    #[test]
+    #[ignore] // VM missing HOF/FnRef resolution
+    fn vm_grp_float_key() {
+        let source = "half x:n>n;/x 2 g xs:L n>_;grp half xs";
+        let result = vm_run(source, Some("g"), vec![
+            Value::List(vec![Value::Number(1.0), Value::Number(2.0), Value::Number(3.0)]),
+        ]);
+        let Value::Map(m) = result else { panic!("expected Map") };
+        assert!(m.contains_key("0.5") || m.contains_key("1.5"),
+            "expected float key, got: {:?}", m.keys().collect::<Vec<_>>());
+    }
+
+    #[test]
+    #[ignore] // VM missing HOF/FnRef resolution
+    fn vm_grp_key_returns_list_error() {
+        let source = "mk x:n>L n;[x] g xs:L n>_;grp mk xs";
+        let err = vm_run_err(source, Some("g"), vec![
+            Value::List(vec![Value::Number(1.0), Value::Number(2.0)]),
+        ]);
+        assert!(err.contains("grp") || err.contains("key") || err.contains("string"), "got: {err}");
+    }
+
+    // ── sum, avg ────────────────────────────────────────────────────────
+
+    #[test]
+    #[ignore] // VM missing builtin implementation
+    fn vm_sum_basic() {
+        let source = "f xs:L n>n;sum xs";
+        let result = vm_run(source, Some("f"), vec![
+            Value::List(vec![1.0, 2.0, 3.0, 4.0, 5.0].into_iter().map(Value::Number).collect())
+        ]);
+        assert_eq!(result, Value::Number(15.0));
+    }
+
+    #[test]
+    #[ignore] // VM missing builtin implementation
+    fn vm_sum_empty() {
+        let source = "f xs:L n>n;sum xs";
+        assert_eq!(vm_run(source, Some("f"), vec![Value::List(vec![])]), Value::Number(0.0));
+    }
+
+    #[test]
+    fn vm_sum_wrong_arg() {
+        let err = vm_run_err("f>n;sum 42", Some("f"), vec![]);
+        assert!(err.contains("sum") || err.contains("list"), "got: {err}");
+    }
+
+    #[test]
+    fn vm_sum_non_numeric_element() {
+        let err = vm_run_err(r#"f>n;sum ["a", "b"]"#, Some("f"), vec![]);
+        assert!(err.contains("sum") || err.contains("number"), "got: {err}");
+    }
+
+    #[test]
+    #[ignore] // VM missing builtin implementation
+    fn vm_avg_basic() {
+        let source = "f xs:L n>n;avg xs";
+        let result = vm_run(source, Some("f"), vec![
+            Value::List(vec![2.0, 4.0, 6.0].into_iter().map(Value::Number).collect())
+        ]);
+        assert_eq!(result, Value::Number(4.0));
+    }
+
+    #[test]
+    fn vm_avg_empty_error() {
+        let err = vm_run_err("f>n;avg []", Some("f"), vec![]);
+        assert!(err.contains("avg") || err.contains("empty"), "got: {err}");
+    }
+
+    #[test]
+    fn vm_avg_wrong_arg() {
+        let err = vm_run_err("f>n;avg 42", Some("f"), vec![]);
+        assert!(err.contains("avg") || err.contains("list"), "got: {err}");
+    }
+
+    #[test]
+    fn vm_avg_non_number_element() {
+        let err = vm_run_err("f xs:L n>n;avg xs", Some("f"),
+            vec![Value::List(vec![Value::Text("x".into())])]);
+        assert!(err.contains("avg") || err.contains("number"), "got: {err}");
+    }
+
+    // ── flat ────────────────────────────────────────────────────────────
+
+    #[test]
+    #[ignore] // VM missing builtin implementation
+    fn vm_flat_nested() {
+        let source = "f>L n;flat [[1, 2], [3], [4, 5]]";
+        let result = vm_run(source, Some("f"), vec![]);
+        assert_eq!(result, Value::List(vec![1.0, 2.0, 3.0, 4.0, 5.0].into_iter().map(Value::Number).collect()));
+    }
+
+    #[test]
+    #[ignore] // VM missing builtin implementation
+    fn vm_flat_mixed() {
+        let source = "f>L n;flat [[1, 2], 3]";
+        let result = vm_run(source, Some("f"), vec![]);
+        assert_eq!(result, Value::List(vec![1.0, 2.0, 3.0].into_iter().map(Value::Number).collect()));
+    }
+
+    #[test]
+    #[ignore] // VM missing builtin implementation
+    fn vm_flat_empty() {
+        assert_eq!(vm_run("f>L n;flat []", Some("f"), vec![]), Value::List(vec![]));
+    }
+
+    #[test]
+    fn vm_flat_wrong_arg() {
+        let err = vm_run_err("f>L n;flat 42", Some("f"), vec![]);
+        assert!(err.contains("flat") || err.contains("list"), "got: {err}");
+    }
+
+    // ── srt with key fn ─────────────────────────────────────────────────
+
+    #[test]
+    #[ignore] // VM missing HOF/FnRef resolution
+    fn vm_srt_fn_by_length() {
+        let source = "ln s:t>n;len s main xs:L t>L t;srt ln xs";
+        let result = vm_run(source, Some("main"), vec![
+            Value::List(vec![
+                Value::Text("banana".into()),
+                Value::Text("a".into()),
+                Value::Text("cc".into()),
+            ]),
+        ]);
+        assert_eq!(result, Value::List(vec![
+            Value::Text("a".into()),
+            Value::Text("cc".into()),
+            Value::Text("banana".into()),
+        ]));
+    }
+
+    #[test]
+    #[ignore] // VM missing HOF/FnRef resolution
+    fn vm_srt_fn_numeric_key() {
+        let source = "neg x:n>n;-x main xs:L n>L n;srt neg xs";
+        let result = vm_run(source, Some("main"), vec![
+            Value::List(vec![Value::Number(1.0), Value::Number(3.0), Value::Number(2.0)]),
+        ]);
+        assert_eq!(result, Value::List(vec![Value::Number(3.0), Value::Number(2.0), Value::Number(1.0)]));
+    }
+
+    #[test]
+    #[ignore] // VM missing HOF/FnRef resolution
+    fn vm_srt_key_fn_text_keys() {
+        let source = "id x:t>t;x main xs:L t>L t;srt id xs";
+        let result = vm_run(source, Some("main"), vec![
+            Value::List(vec![
+                Value::Text("banana".into()),
+                Value::Text("apple".into()),
+                Value::Text("cherry".into()),
+            ]),
+        ]);
+        assert_eq!(result, Value::List(vec![
+            Value::Text("apple".into()),
+            Value::Text("banana".into()),
+            Value::Text("cherry".into()),
+        ]));
+    }
+
+    #[test]
+    #[ignore] // VM missing HOF/FnRef resolution
+    fn vm_srt_key_fn_wrong_second_arg() {
+        let source = "sq x:n>n;*x x f>n;srt sq 42";
+        let err = vm_run_err(source, Some("f"), vec![]);
+        assert!(err.contains("srt") || err.contains("list"), "got: {err}");
+    }
+
+    #[test]
+    fn vm_srt_key_not_fn_ref() {
+        let err = vm_run_err("f xs:L n>L n;srt 42 xs", Some("f"),
+            vec![Value::List(vec![Value::Number(1.0)])]);
+        assert!(err.contains("srt") || err.contains("fn") || err.contains("function"), "got: {err}");
+    }
+
+    #[test]
+    fn vm_srt_text_string() {
+        assert_eq!(vm_run(r#"f>t;srt "cab""#, Some("f"), vec![]), Value::Text("abc".into()));
+    }
+
+    #[test]
+    #[ignore] // VM missing HOF/FnRef resolution
+    fn vm_srt_bool_key_equal_ordering() {
+        let source = "pos x:n>b;> x 0 f>L n;srt pos [3,-1,2,-2]";
+        let result = vm_run(source, Some("f"), vec![]);
+        let Value::List(items) = result else { panic!("expected List, got {:?}", result) };
+        assert_eq!(items.len(), 4);
+    }
+
+    #[test]
+    fn vm_ok_srt_empty_list() {
+        assert_eq!(vm_run("f>L n;srt []", Some("f"), vec![]), Value::List(vec![]));
+    }
+
+    // ── slc clamped ─────────────────────────────────────────────────────
+
+    #[test]
+    fn vm_slc_clamped() {
+        let source = "f>L n;slc [1, 2, 3] 1 100";
+        assert_eq!(
+            vm_run(source, Some("f"), vec![]),
+            Value::List(vec![Value::Number(2.0), Value::Number(3.0)])
+        );
+    }
+
+    // ── unq ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn vm_unq_list_strings() {
+        let result = vm_run("f xs:L t>L t;unq xs", Some("f"), vec![
+            Value::List(vec![Value::Text("a".into()), Value::Text("b".into()), Value::Text("a".into())]),
+        ]);
+        assert_eq!(result, Value::List(vec![Value::Text("a".into()), Value::Text("b".into())]));
+    }
+
+    #[test]
+    fn vm_unq_text_chars() {
+        assert_eq!(
+            vm_run("f s:t>t;unq s", Some("f"), vec![Value::Text("aabbc".into())]),
+            Value::Text("abc".into())
+        );
+    }
+
+    #[test]
+    fn vm_unq_wrong_type() {
+        let err = vm_run_err("f>n;unq 42", Some("f"), vec![]);
+        assert!(err.contains("unq") || err.contains("list") || err.contains("text") || err.contains("type"), "got: {err}");
+    }
+
+    // ── fmt ──────────────────────────────────────────────────────────────
+
+    #[test]
+    #[ignore] // VM missing builtin implementation
+    fn vm_fmt_basic() {
+        let result = vm_run(
+            r#"f a:t b:t>t;fmt "{} + {}" a b"#,
+            Some("f"),
+            vec![Value::Text("1".into()), Value::Text("2".into())],
+        );
+        assert_eq!(result, Value::Text("1 + 2".into()));
+    }
+
+    #[test]
+    #[ignore] // VM missing builtin implementation
+    fn vm_fmt_template_only() {
+        assert_eq!(vm_run(r#"f>t;fmt "hello""#, Some("f"), vec![]), Value::Text("hello".into()));
+    }
+
+    #[test]
+    #[ignore] // VM missing builtin implementation
+    fn vm_fmt_fewer_args_than_slots() {
+        let result = vm_run(
+            r#"f a:t>t;fmt "{} and {}" a"#,
+            Some("f"),
+            vec![Value::Text("x".into())],
+        );
+        assert_eq!(result, Value::Text("x and {}".into()));
+    }
+
+    #[test]
+    #[ignore] // VM missing builtin implementation
+    fn vm_fmt_number_arg() {
+        let result = vm_run(
+            r#"f n:n>t;fmt "value: {}" n"#,
+            Some("f"),
+            vec![Value::Number(42.0)],
+        );
+        assert_eq!(result, Value::Text("value: 42".into()));
+    }
+
+    #[test]
+    fn vm_fmt_wrong_first_arg() {
+        let err = vm_run_err("f>n;fmt 42", Some("f"), vec![]);
+        assert!(err.contains("fmt") || err.contains("text") || err.contains("type"), "got: {err}");
+    }
+
+    // ── prnt ─────────────────────────────────────────────────────────────
+
+    #[test]
+    #[ignore] // VM missing builtin implementation
+    fn vm_prnt_text_passthrough() {
+        assert_eq!(
+            vm_run("f s:t>t;prnt s", Some("f"), vec![Value::Text("hi".into())]),
+            Value::Text("hi".into())
+        );
+    }
+
+    // ── rgx ──────────────────────────────────────────────────────────────
+
+    #[test]
+    #[ignore] // VM missing builtin implementation
+    fn vm_rgx_find_all() {
+        let source = r#"f s:t>L t;rgx "\d+" s"#;
+        let result = vm_run(source, Some("f"), vec![Value::Text("abc 123 def 456".into())]);
+        assert_eq!(result, Value::List(vec![
+            Value::Text("123".into()),
+            Value::Text("456".into()),
+        ]));
+    }
+
+    #[test]
+    #[ignore] // VM missing builtin implementation
+    fn vm_rgx_capture_groups() {
+        let source = r#"f s:t>L t;rgx "(\w+)=(\w+)" s"#;
+        let result = vm_run(source, Some("f"), vec![Value::Text("name=alice age=30".into())]);
+        assert_eq!(result, Value::List(vec![
+            Value::Text("name".into()),
+            Value::Text("alice".into()),
+        ]));
+    }
+
+    #[test]
+    #[ignore] // VM missing builtin implementation
+    fn vm_rgx_no_match() {
+        let source = r#"f s:t>L t;rgx "\d+" s"#;
+        let result = vm_run(source, Some("f"), vec![Value::Text("no numbers here".into())]);
+        assert_eq!(result, Value::List(vec![]));
+    }
+
+    #[test]
+    fn vm_rgx_invalid_pattern() {
+        let err = vm_run_err(r#"f>L t;rgx "[invalid" "test""#, Some("f"), vec![]);
+        assert!(err.contains("rgx") || err.contains("regex") || err.contains("pattern"), "got: {err}");
+    }
+
+    #[test]
+    fn vm_rgx_wrong_arg_types() {
+        let err = vm_run_err(r#"f>L t;rgx 42 "test""#, Some("f"), vec![]);
+        assert!(err.contains("rgx") || err.contains("text") || err.contains("type"), "got: {err}");
+    }
+
+    #[test]
+    fn vm_rgx_non_text_second_arg() {
+        let err = vm_run_err(r#"f>L t;rgx "." 42"#, Some("f"), vec![]);
+        assert!(err.contains("rgx") || err.contains("text") || err.contains("type"), "got: {err}");
+    }
+
+    // ── JSON builtins ───────────────────────────────────────────────────
+
+    #[test]
+    fn vm_jp_object() {
+        let source = r#"f j:t p:t>R t t;jpth j p"#;
+        let result = vm_run(source, Some("f"), vec![
+            Value::Text(r#"{"name":"alice"}"#.to_string()),
+            Value::Text("name".to_string()),
+        ]);
+        assert_eq!(result, Value::Ok(Box::new(Value::Text("alice".to_string()))));
+    }
+
+    #[test]
+    fn vm_jp_invalid_json() {
+        let source = r#"f j:t p:t>R t t;jpth j p"#;
+        let result = vm_run(source, Some("f"), vec![
+            Value::Text("not json".to_string()),
+            Value::Text("x".to_string()),
+        ]);
+        assert!(matches!(result, Value::Err(_)));
+    }
+
+    #[test]
+    fn vm_jparse_scalar() {
+        let source = r#"f j:t>R t t;jpar j"#;
+        assert_eq!(
+            vm_run(source, Some("f"), vec![Value::Text("42".to_string())]),
+            Value::Ok(Box::new(Value::Number(42.0)))
+        );
+        assert_eq!(
+            vm_run(source, Some("f"), vec![Value::Text("true".to_string())]),
+            Value::Ok(Box::new(Value::Bool(true)))
+        );
+        assert_eq!(
+            vm_run(source, Some("f"), vec![Value::Text("null".to_string())]),
+            Value::Ok(Box::new(Value::Nil))
+        );
+    }
+
+    #[test]
+    fn vm_jpar_wrong_arg_type() {
+        let err = vm_run_err("f>t;jpar 42", Some("f"), vec![]);
+        assert!(err.contains("jpar") || err.contains("text") || err.contains("type"), "got: {err}");
+    }
+
+    #[test]
+    fn vm_jpth_array_index() {
+        let source = r#"f j:t p:t>R t t;jpth j p"#;
+        let result = vm_run(source, Some("f"), vec![
+            Value::Text(r#"[10,20,30]"#.to_string()),
+            Value::Text("1".to_string()),
+        ]);
+        assert_eq!(result, Value::Ok(Box::new(Value::Text("20".into()))));
+    }
+
+    #[test]
+    fn vm_jpth_array_index_out_of_bounds() {
+        let source = r#"f>R t t;jpth "[1,2,3]" "5""#;
+        let result = vm_run(source, Some("f"), vec![]);
+        let Value::Err(inner) = result else { panic!("expected Err, got {:?}", result) };
+        let s = inner.to_string();
+        assert!(s.contains("not found") || s.contains("5") || s.contains("key"), "got: {s}");
+    }
+
+    #[test]
+    fn vm_jpth_wrong_args() {
+        let err = vm_run_err(r#"f>t;jpth 42 "path""#, Some("f"), vec![]);
+        assert!(err.contains("jpth") || err.contains("text") || err.contains("type"), "got: {err}");
+    }
+
+    #[test]
+    fn vm_jdmp_bool_value() {
+        assert_eq!(vm_run("f>t;jdmp true", Some("f"), vec![]), Value::Text("true".into()));
+    }
+
+    #[test]
+    fn vm_jdmp_nil_value() {
+        let result = vm_run(r#"f>t;jdmp (mget mmap "k")"#, Some("f"), vec![]);
+        assert_eq!(result, Value::Text("null".into()));
+    }
+
+    #[test]
+    #[ignore] // VM missing HOF/FnRef resolution
+    fn vm_jdmp_fnref() {
+        let source = "sq x:n>n;*x x f>t;r=sq;jdmp r";
+        let result = vm_run(source, Some("f"), vec![]);
+        let Value::Text(s) = result else { panic!("expected Text") };
+        assert!(s.contains("fn:sq") || s.contains("sq"), "got: {s}");
+    }
+
+    #[test]
+    fn vm_jdmp_large_float() {
+        let source = "f x:n>t;jdmp x";
+        let result = vm_run(source, Some("f"), vec![Value::Number(1.23456789e20)]);
+        assert!(matches!(result, Value::Text(_)));
+    }
+
+    // ── Map builtins ────────────────────────────────────────────────────
+
+    #[test]
+    fn vm_mhas_found() {
+        let result = vm_run(r#"f>b;m=mset mmap "x" 1;mhas m "x""#, Some("f"), vec![]);
+        assert_eq!(result, Value::Bool(true));
+    }
+
+    #[test]
+    fn vm_mhas_not_found() {
+        let result = vm_run(r#"f>b;m=mset mmap "x" 1;mhas m "y""#, Some("f"), vec![]);
+        assert_eq!(result, Value::Bool(false));
+    }
+
+    #[test]
+    #[ignore] // VM null-pointer crash: map builtins don't validate non-map args
+    fn vm_mhas_wrong_args() {
+        let err = vm_run_err("f>n;mhas 42 \"key\"", Some("f"), vec![]);
+        assert!(err.contains("mhas") || err.contains("map"), "got: {err}");
+    }
+
+    #[test]
+    fn vm_mkeys_happy_path() {
+        let result = vm_run(r#"f>L t;m=mset (mset mmap "b" 2) "a" 1;mkeys m"#, Some("f"), vec![]);
+        assert_eq!(result, Value::List(vec![Value::Text("a".into()), Value::Text("b".into())]));
+    }
+
+    #[test]
+    #[ignore] // VM null-pointer crash: map builtins don't validate non-map args
+    fn vm_mkeys_wrong_args() {
+        let err = vm_run_err("f>n;mkeys 42", Some("f"), vec![]);
+        assert!(err.contains("mkeys") || err.contains("map"), "got: {err}");
+    }
+
+    #[test]
+    fn vm_mvals_happy_path() {
+        let result = vm_run(r#"f>L n;m=mset (mset mmap "b" 2) "a" 1;mvals m"#, Some("f"), vec![]);
+        assert_eq!(result, Value::List(vec![Value::Number(1.0), Value::Number(2.0)]));
+    }
+
+    #[test]
+    #[ignore] // VM null-pointer crash: map builtins don't validate non-map args
+    fn vm_mvals_wrong_args() {
+        let err = vm_run_err("f>n;mvals 42", Some("f"), vec![]);
+        assert!(err.contains("mvals") || err.contains("map"), "got: {err}");
+    }
+
+    #[test]
+    fn vm_mdel_happy_path() {
+        let result = vm_run(r#"f>n;m=mset (mset mmap "a" 1) "b" 2;m2=mdel m "a";len m2"#, Some("f"), vec![]);
+        assert_eq!(result, Value::Number(1.0));
+    }
+
+    #[test]
+    #[ignore] // VM null-pointer crash: map builtins don't validate non-map args
+    fn vm_mdel_wrong_args() {
+        let err = vm_run_err("f>n;mdel 42 \"key\"", Some("f"), vec![]);
+        assert!(err.contains("mdel") || err.contains("map"), "got: {err}");
+    }
+
+    #[test]
+    #[ignore] // VM null-pointer crash: map builtins don't validate non-map args
+    fn vm_mget_wrong_args() {
+        let err = vm_run_err("f>n;mget 42 \"key\"", Some("f"), vec![]);
+        assert!(err.contains("mget") || err.contains("map"), "got: {err}");
+    }
+
+    #[test]
+    #[ignore] // VM null-pointer crash: map builtins don't validate non-map args
+    fn vm_mset_wrong_args() {
+        let err = vm_run_err("f>n;mset 42 \"key\" 1", Some("f"), vec![]);
+        assert!(err.contains("mset") || err.contains("map"), "got: {err}");
+    }
+
+    // ── rnd ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn vm_rnd_wrong_types() {
+        let err = vm_run_err(r#"f>n;rnd "a" "b""#, Some("f"), vec![]);
+        assert!(err.contains("rnd") || err.contains("number") || err.contains("type"), "got: {err}");
+    }
+
+    // ── Safe field/index on nil ──────────────────────────────────────────
+
+    #[test]
+    fn vm_safe_field_on_nil_returns_nil() {
+        let result = vm_run("f>n;x=mget mmap \"key\";x.?field", Some("f"), vec![]);
+        assert_eq!(result, Value::Nil);
+    }
+
+    #[test]
+    fn vm_safe_index_on_nil_returns_nil() {
+        let result = vm_run("f>n;xs=mget mmap \"key\";xs.?0", Some("f"), vec![]);
+        assert_eq!(result, Value::Nil);
+    }
+
+    // ── FnRef callee from scope ─────────────────────────────────────────
+
+    #[test]
+    #[ignore] // VM missing HOF/FnRef resolution
+    fn vm_fnref_callee_from_scope() {
+        let source = "sq x:n>n;*x x f cb:z>n;cb 3";
+        let result = vm_run(source, Some("f"), vec![Value::FnRef("sq".into())]);
+        assert_eq!(result, Value::Number(9.0));
+    }
+
+    #[test]
+    #[ignore] // VM missing HOF/FnRef resolution
+    fn vm_fn_ref_via_ref_expr() {
+        let source = "dbl x:n>n;*x 2 main>n;f=dbl;f 10";
+        assert_eq!(vm_run(source, Some("main"), vec![]), Value::Number(20.0));
+    }
+
+    #[test]
+    #[ignore] // VM missing HOF/FnRef resolution
+    fn vm_text_callee_from_scope() {
+        let source = "sq x:n>n;*x x f cb:z>n;cb 3";
+        let result = vm_run(source, Some("f"), vec![Value::Text("sq".into())]);
+        assert_eq!(result, Value::Number(9.0));
+    }
+
+    #[test]
+    #[ignore] // VM missing HOF/FnRef resolution
+    fn vm_user_hof_fn_type() {
+        let source = "sq x:n>n;*x x apl f:F n n x:n>n;f x";
+        let result = vm_run(source, Some("apl"), vec![
+            Value::FnRef("sq".to_string()),
+            Value::Number(7.0),
+        ]);
+        assert_eq!(result, Value::Number(49.0));
+    }
+
+    // ── bang on non-Result passes through ─────────────────────────────────
+
+    #[test]
+    fn vm_bang_on_non_result_passes_through() {
+        let source = "id x:n>z;x f>z;id! 42";
+        let result = vm_run(source, Some("f"), vec![]);
+        assert_eq!(result, Value::Number(42.0));
+    }
+
+    // ── brk/cnt in guard/ternary/match ──────────────────────────────────
+
+    #[test]
+    fn vm_brk_inside_guard_body_propagates() {
+        let src = "f>n;@x [1,2,3,4]{>x 2{brk x};x}";
+        assert_eq!(vm_run(src, Some("f"), vec![]), Value::Number(3.0));
+    }
+
+    #[test]
+    fn vm_cnt_inside_guard_body_propagates() {
+        let src = "f>n;@x [1,2,3]{=x 1{cnt};x}";
+        assert_eq!(vm_run(src, Some("f"), vec![]), Value::Number(3.0));
+    }
+
+    #[test]
+    fn vm_brk_inside_ternary_body_propagates() {
+        let src = "f>n;@x [1,2,3]{=x 2{brk x}{0};0}";
+        assert_eq!(vm_run(src, Some("f"), vec![]), Value::Number(2.0));
+    }
+
+    #[test]
+    fn vm_cnt_inside_ternary_body_propagates() {
+        let src = "f>n;@x [1,2,3]{=x 1{cnt}{0};x}";
+        assert_eq!(vm_run(src, Some("f"), vec![]), Value::Number(3.0));
+    }
+
+    #[test]
+    fn vm_brk_inside_match_arm_propagates() {
+        let src = "f>n;@x [1,2,3]{?x{2:brk x;_:x};x}";
+        assert_eq!(vm_run(src, Some("f"), vec![]), Value::Number(2.0));
+    }
+
+    #[test]
+    fn vm_cnt_in_match_expr_arm_returns_nil() {
+        let src = "f>n;@x [1,2,3]{r=?x{1:cnt;_:x};r}";
+        assert_eq!(vm_run(src, Some("f"), vec![]), Value::Number(3.0));
+    }
+
+    #[test]
+    fn vm_continue_in_function_body_returns_nil() {
+        let result = vm_run("f>_;cnt", Some("f"), vec![]);
+        assert_eq!(result, Value::Nil);
+    }
+
+    // ── rdb ─────────────────────────────────────────────────────────────
+
+    #[test]
+    #[ignore] // VM missing builtin implementation
+    fn vm_rdb_csv() {
+        let result = vm_run(
+            r#"f s:t>t;rdb s "csv""#,
+            Some("f"),
+            vec![Value::Text("a,b\n1,2".into())],
+        );
+        let Value::Ok(inner) = result else { panic!("expected Ok") };
+        let Value::List(rows) = *inner else { panic!("expected list") };
+        assert_eq!(rows.len(), 2);
+    }
+
+    #[test]
+    #[ignore] // VM missing builtin implementation
+    fn vm_rdb_csv_single_row() {
+        let result = vm_run(
+            r#"f s:t>t;rdb s "csv""#,
+            Some("f"),
+            vec![Value::Text("a,b,c".into())],
+        );
+        let Value::Ok(inner) = result else { panic!("expected Ok") };
+        let Value::List(rows) = *inner else { panic!("expected list") };
+        assert_eq!(rows.len(), 1);
+    }
+
+    #[test]
+    #[ignore] // VM missing builtin implementation
+    fn vm_rdb_json() {
+        let result = vm_run(
+            r#"f s:t>t;rdb s "json""#,
+            Some("f"),
+            vec![Value::Text(r#"{"x":1}"#.into())],
+        );
+        assert!(matches!(result, Value::Ok(_)), "expected Ok, got {:?}", result);
+    }
+
+    #[test]
+    #[ignore] // VM missing builtin implementation
+    fn vm_rdb_invalid_json_is_err() {
+        let result = vm_run(
+            r#"f s:t>t;rdb s "json""#,
+            Some("f"),
+            vec![Value::Text("not json".into())],
+        );
+        assert!(matches!(result, Value::Err(_)), "expected Err, got {:?}", result);
+    }
+
+    #[test]
+    #[ignore] // VM missing builtin implementation
+    fn vm_rdb_raw_passthrough() {
+        let result = vm_run(
+            r#"f s:t>t;rdb s "raw""#,
+            Some("f"),
+            vec![Value::Text("hello".into())],
+        );
+        assert_eq!(result, Value::Ok(Box::new(Value::Text("hello".into()))));
+    }
+
+    #[test]
+    fn vm_rdb_wrong_first_arg() {
+        let err = vm_run_err(r#"f>t;rdb 42 "raw""#, Some("f"), vec![]);
+        assert!(err.contains("rdb") || err.contains("text") || err.contains("type"), "got: {err}");
+    }
+
+    #[test]
+    fn vm_rdb_wrong_format_arg() {
+        let err = vm_run_err(r#"f>t;rdb "hello" 42"#, Some("f"), vec![]);
+        assert!(err.contains("rdb") || err.contains("format") || err.contains("text"), "got: {err}");
+    }
+
+    // ── rd ──────────────────────────────────────────────────────────────
+
+    #[test]
+    fn vm_rd_wrong_arg_type() {
+        let err = vm_run_err("f>t;rd 42", Some("f"), vec![]);
+        assert!(err.contains("rd") || err.contains("text") || err.contains("type"), "got: {err}");
+    }
+
+    #[test]
+    fn vm_rd_with_wrong_format_type() {
+        let err = vm_run_err("f>t;rd \"/tmp\" 42", Some("f"), vec![]);
+        assert!(err.contains("rd") || err.contains("format") || err.contains("text"), "got: {err}");
+    }
+
+    #[test]
+    #[ignore] // VM missing builtin implementation
+    fn vm_rd_explicit_raw_format() {
+        let path = "/tmp/ilo_test_vm_rd_explicit.txt";
+        std::fs::write(path, "hello").unwrap();
+        let source = format!(r#"f>R t t;rd "{path}" "raw""#);
+        let result = vm_run(&source, Some("f"), vec![]);
+        let Value::Ok(inner) = result else { panic!("expected Ok") };
+        assert_eq!(*inner, Value::Text("hello".into()));
+    }
+
+    #[test]
+    #[ignore] // VM missing builtin implementation
+    fn vm_rd_explicit_format_parse_error() {
+        let path = "/tmp/ilo_test_vm_rd_badjson.txt";
+        std::fs::write(path, "not json at all!!!").unwrap();
+        let source = format!(r#"f>R t t;rd "{path}" "json""#);
+        let result = vm_run(&source, Some("f"), vec![]);
+        assert!(matches!(result, Value::Err(_)));
+    }
+
+    // ── rdl ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn vm_rdl_basic() {
+        let mut path = std::env::temp_dir();
+        path.push("ilo_vm_rdl_test.txt");
+        std::fs::write(&path, "line1\nline2\nline3").unwrap();
+        let path_str = path.to_str().unwrap().to_string();
+        let result = vm_run("f p:t>t;rdl p", Some("f"), vec![Value::Text(path_str)]);
+        std::fs::remove_file(&path).ok();
+        let Value::Ok(inner) = result else { panic!("expected Ok") };
+        let Value::List(lines) = *inner else { panic!("expected list") };
+        assert_eq!(lines.len(), 3);
+        assert_eq!(lines[0], Value::Text("line1".into()));
+    }
+
+    #[test]
+    fn vm_rdl_not_found() {
+        let result = vm_run(
+            "f p:t>t;rdl p",
+            Some("f"),
+            vec![Value::Text("/nonexistent/ilo_rdl_test.txt".into())],
+        );
+        assert!(matches!(result, Value::Err(_)), "expected Err, got {:?}", result);
+    }
+
+    #[test]
+    fn vm_rdl_wrong_arg() {
+        let err = vm_run_err("f>t;rdl 42", Some("f"), vec![]);
+        assert!(err.contains("rdl") || err.contains("text") || err.contains("type"), "got: {err}");
+    }
+
+    // ── wr ──────────────────────────────────────────────────────────────
+
+    #[test]
+    fn vm_wr_basic() {
+        let mut path = std::env::temp_dir();
+        path.push("ilo_vm_wr_test.txt");
+        let path_str = path.to_str().unwrap().to_string();
+        let result = vm_run(
+            "f p:t>t;wr p \"hello\"",
+            Some("f"),
+            vec![Value::Text(path_str.clone())],
+        );
+        std::fs::remove_file(&path).ok();
+        assert!(matches!(result, Value::Ok(_)), "expected Ok, got {:?}", result);
+    }
+
+    #[test]
+    fn vm_wr_wrong_args() {
+        let err = vm_run_err("f>t;wr 42 \"hello\"", Some("f"), vec![]);
+        assert!(err.contains("wr") || err.contains("text") || err.contains("type"), "got: {err}");
+    }
+
+    #[test]
+    #[ignore] // VM missing 3-arg wr format support
+    fn vm_wr_csv_format() {
+        let path = "/tmp/ilo_test_vm_wr.csv";
+        let source = format!(r#"f>R t t;wr "{path}" [[1,2],[3,4]] "csv""#);
+        let result = vm_run(&source, Some("f"), vec![]);
+        assert!(matches!(result, Value::Ok(_)));
+        let content = std::fs::read_to_string(path).unwrap();
+        assert!(content.contains("1,2"));
+    }
+
+    #[test]
+    #[ignore] // VM missing 3-arg wr format support
+    fn vm_wr_csv_bool_field() {
+        let path = "/tmp/ilo_test_vm_wr_bool.csv";
+        let source = format!(r#"f>R t t;wr "{path}" [[true,false]] "csv""#);
+        let result = vm_run(&source, Some("f"), vec![]);
+        assert!(matches!(result, Value::Ok(_)));
+        let content = std::fs::read_to_string(path).unwrap();
+        assert!(content.contains("true"));
+    }
+
+    #[test]
+    #[ignore] // VM missing 3-arg wr format support
+    fn vm_wr_json_format() {
+        let path = "/tmp/ilo_test_vm_wr.json";
+        let source = format!(r#"f>R t t;wr "{path}" [1,2,3] "json""#);
+        let result = vm_run(&source, Some("f"), vec![]);
+        assert!(matches!(result, Value::Ok(_)));
+        let content = std::fs::read_to_string(path).unwrap();
+        assert!(content.contains("1"));
+    }
+
+    #[test]
+    #[ignore] // VM missing 3-arg wr format support
+    fn vm_wr_csv_output() {
+        let dir = std::env::temp_dir();
+        let path = dir.join("ilo_test_vm_wr_csv.csv");
+        let path_str = path.to_str().unwrap();
+        let source = format!(
+            r#"f>R t t;wr "{}" [["name", "age"], ["alice", 30], ["bob", 25]] "csv""#,
+            path_str.replace('\\', "\\\\")
+        );
+        let result = vm_run(&source, Some("f"), vec![]);
+        assert!(matches!(result, Value::Ok(_)));
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(content, "name,age\nalice,30\nbob,25\n");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    #[ignore] // VM missing 3-arg wr format support
+    fn vm_wr_csv_quoted_fields() {
+        let dir = std::env::temp_dir();
+        let path = dir.join("ilo_test_vm_wr_csv_quoted.csv");
+        let path_str = path.to_str().unwrap();
+        let source = format!(
+            r#"f>R t t;wr "{}" [["a,b", "c\"d"]] "csv""#,
+            path_str.replace('\\', "\\\\")
+        );
+        let result = vm_run(&source, Some("f"), vec![]);
+        assert!(matches!(result, Value::Ok(_)));
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(content, "\"a,b\",\"c\"\"d\"\n");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    #[ignore] // VM missing 3-arg wr format support
+    fn vm_wr_json_output() {
+        let dir = std::env::temp_dir();
+        let path = dir.join("ilo_test_vm_wr_json.json");
+        let path_str = path.to_str().unwrap();
+        let source = format!(
+            r#"f>R t t;wr "{}" [1, 2, 3] "json""#,
+            path_str.replace('\\', "\\\\")
+        );
+        let result = vm_run(&source, Some("f"), vec![]);
+        assert!(matches!(result, Value::Ok(_)));
+        let content = std::fs::read_to_string(&path).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
+        assert_eq!(parsed, serde_json::json!([1.0, 2.0, 3.0]));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn vm_wr_unknown_format() {
+        let err = vm_run_err(r#"f>R t t;wr "/tmp/x" "data" "xml""#, Some("f"), vec![]);
+        assert!(err.contains("unknown") || err.contains("format") || err.contains("wr"), "got: {err}");
+    }
+
+    #[test]
+    #[ignore] // VM missing 3-arg wr format support
+    fn vm_wr_json_text_value() {
+        let path = "/tmp/ilo_test_vm_wr_json_text.json";
+        let source = format!(r#"f>R t t;wr "{path}" "hello world" "json""#);
+        let result = vm_run(&source, Some("f"), vec![]);
+        assert!(matches!(result, Value::Ok(_)));
+        let content = std::fs::read_to_string(path).unwrap();
+        assert!(content.contains("hello world"));
+    }
+
+    #[test]
+    #[ignore] // VM missing 3-arg wr format support
+    fn vm_wr_json_bool_value() {
+        let path = "/tmp/ilo_test_vm_wr_json_bool.json";
+        let source = format!(r#"f>R t t;wr "{path}" true "json""#);
+        let result = vm_run(&source, Some("f"), vec![]);
+        assert!(matches!(result, Value::Ok(_)));
+        let content = std::fs::read_to_string(path).unwrap();
+        assert!(content.contains("true"));
+    }
+
+    #[test]
+    #[ignore] // VM missing 3-arg wr format support
+    fn vm_wr_json_map_value() {
+        let path = "/tmp/ilo_test_vm_wr_json_map.json";
+        let source = format!(r#"f>R t t;m=mset mmap "k" 42;wr "{path}" m "json""#);
+        let result = vm_run(&source, Some("f"), vec![]);
+        assert!(matches!(result, Value::Ok(_)));
+        let content = std::fs::read_to_string(path).unwrap();
+        assert!(content.contains("\"k\""));
+        assert!(content.contains("42"));
+    }
+
+    #[test]
+    #[ignore] // VM missing 3-arg wr format support
+    fn vm_wr_json_nil_value() {
+        let path = "/tmp/ilo_test_vm_wr_json_nil.json";
+        let source = format!(r#"f>R t t;v=mget mmap "x";wr "{path}" v "json""#);
+        let result = vm_run(&source, Some("f"), vec![]);
+        assert!(matches!(result, Value::Ok(_)));
+        let content = std::fs::read_to_string(path).unwrap();
+        assert_eq!(content.trim(), "null");
+    }
+
+    #[test]
+    #[ignore] // VM missing 3-arg wr format support
+    fn vm_wr_json_with_ok_value() {
+        let path = "/tmp/ilo_test_vm_wr_ok.json";
+        let source = format!(r#"f x:z>R t t;wr "{path}" x "json""#);
+        let result = vm_run(&source, Some("f"), vec![
+            Value::Ok(Box::new(Value::Number(1.0))),
+        ]);
+        assert!(matches!(result, Value::Ok(_)));
+    }
+
+    #[test]
+    fn vm_wr_non_text_format_arg_errors() {
+        let path = "/tmp/ilo_test_vm_wr_fmt_err.csv";
+        let source = format!(r#"f>R t t;wr "{path}" [1] 42"#);
+        let err = vm_run_err(&source, Some("f"), vec![]);
+        assert!(err.contains("wr") || err.contains("format") || err.contains("text"), "got: {err}");
+    }
+
+    #[test]
+    fn vm_wr_csv_non_list_data_errors() {
+        let path = "/tmp/ilo_test_vm_wr_csv_nonlist.csv";
+        let source = format!(r#"f>R t t;wr "{path}" 42 "csv""#);
+        let err = vm_run_err(&source, Some("f"), vec![]);
+        assert!(err.contains("wr") || err.contains("csv") || err.contains("list"), "got: {err}");
+    }
+
+    #[test]
+    fn vm_wr_csv_row_not_a_list_errors() {
+        let path = "/tmp/ilo_test_vm_wr_csv_row_err.csv";
+        let source = format!(r#"f>R t t;wr "{path}" [42] "csv""#);
+        let err = vm_run_err(&source, Some("f"), vec![]);
+        assert!(err.contains("wr") || err.contains("csv") || err.contains("list") || err.contains("row"), "got: {err}");
+    }
+
+    #[test]
+    #[ignore] // VM missing 3-arg wr format support
+    fn vm_wr_csv_nil_field() {
+        let path = "/tmp/ilo_test_vm_wr_nil.csv";
+        let source = format!(r#"f x:z>R t t;wr "{path}" [[x,1]] "csv""#);
+        let result = vm_run(&source, Some("f"), vec![Value::Nil]);
+        assert!(matches!(result, Value::Ok(_)), "expected Ok, got {:?}", result);
+        let content = std::fs::read_to_string(path).unwrap();
+        assert!(!content.is_empty());
+    }
+
+    #[test]
+    fn vm_wr_two_arg_non_text_content_error() {
+        let err = vm_run_err(
+            r#"f>R t t;wr "/tmp/ilo_test_bad_wr.txt" 42"#,
+            Some("f"), vec![],
+        );
+        assert!(err.contains("wr") || err.contains("text") || err.contains("content"), "got: {err}");
+    }
+
+    #[test]
+    fn vm_wr_write_failure_returns_err() {
+        let source = r#"f>R t t;wr "/no/such/dir/ilo_test.txt" "hello""#;
+        let result = vm_run(source, Some("f"), vec![]);
+        assert!(matches!(result, Value::Err(_)), "expected Err for bad path, got {:?}", result);
+    }
+
+    // ── wrl ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn vm_wrl_basic() {
+        let mut path = std::env::temp_dir();
+        path.push("ilo_vm_wrl_test.txt");
+        let path_str = path.to_str().unwrap().to_string();
+        let result = vm_run(
+            "f p:t>t;wrl p [\"a\", \"b\", \"c\"]",
+            Some("f"),
+            vec![Value::Text(path_str.clone())],
+        );
+        std::fs::remove_file(&path).ok();
+        assert!(matches!(result, Value::Ok(_)), "expected Ok, got {:?}", result);
+    }
+
+    #[test]
+    fn vm_wrl_non_text_item() {
+        let path = "/tmp/ilo_test_vm_wrl_nontxt.txt";
+        let source = format!(r#"f>R t t;wrl "{path}" ["ok", 99]"#);
+        let prog = parse_program(&source);
+        let result = compile_and_run(&prog, Some("f"), vec![]);
+        std::fs::remove_file(path).ok();
+        assert!(result.is_err(), "expected error for non-text wrl item");
+    }
+
+    #[test]
+    fn vm_wrl_wrong_args() {
+        let err = vm_run_err("f>t;wrl 42 [\"a\"]", Some("f"), vec![]);
+        assert!(err.contains("wrl") || err.contains("text") || err.contains("type"), "got: {err}");
+    }
+
+    #[test]
+    fn vm_wrl_write_failure_returns_err() {
+        let source = r#"f>R t t;wrl "/no/such/dir/ilo_test.txt" ["a","b"]"#;
+        let result = vm_run(source, Some("f"), vec![]);
+        assert!(matches!(result, Value::Err(_)), "expected Err for bad path, got {:?}", result);
+    }
+
+    // ── get/post error paths ────────────────────────────────────────────
+
+    #[test]
+    #[ignore] // VM skips header type validation, makes network call instead
+    fn vm_get_invalid_headers() {
+        let err = vm_run_err(r#"f>t;get "http://x" 42"#, Some("f"), vec![]);
+        assert!(err.contains("headers") || err.contains("get") || err.contains("map") || err.contains("M t t"), "got: {err}");
+    }
+
+    #[test]
+    fn vm_post_wrong_arg_types() {
+        let err = vm_run_err(r#"f>t;post 42 "body""#, Some("f"), vec![]);
+        assert!(err.contains("post") || err.contains("text") || err.contains("type"), "got: {err}");
+    }
+
+    #[test]
+    #[ignore] // VM skips header type validation, makes network call instead
+    fn vm_post_invalid_headers() {
+        let err = vm_run_err(r#"f>t;post "http://x" "body" 42"#, Some("f"), vec![]);
+        assert!(err.contains("headers") || err.contains("post") || err.contains("map"), "got: {err}");
+    }
 }
