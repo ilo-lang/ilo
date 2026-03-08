@@ -186,7 +186,7 @@ fn fmt_type(ty: &Type) -> String {
         Type::Number => "n".to_string(),
         Type::Text => "t".to_string(),
         Type::Bool => "b".to_string(),
-        Type::Nil => "_".to_string(),
+        Type::Any => "_".to_string(),
         Type::Optional(inner) => format!("O {}", fmt_type(inner)),
         Type::List(inner) => format!("L {}", fmt_type(inner)),
         Type::Map(k, v) => format!("M {} {}", fmt_type(k), fmt_type(v)),
@@ -1212,7 +1212,7 @@ mod tests {
     fn fmt_type_str_bool_nil_fn() {
         // type_str() is the public API for fmt_type — exercises Bool, Nil, Fn
         assert_eq!(type_str(&Type::Bool), "b");
-        assert_eq!(type_str(&Type::Nil), "_");
+        assert_eq!(type_str(&Type::Any), "_");
         assert_eq!(type_str(&Type::Fn(vec![Type::Number], Box::new(Type::Text))), "F n t");
     }
 

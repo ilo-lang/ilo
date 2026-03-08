@@ -781,7 +781,7 @@ fn emit_type(ty: &Type) -> String {
         Type::Number => "float".to_string(),
         Type::Text => "str".to_string(),
         Type::Bool => "bool".to_string(),
-        Type::Nil => "None".to_string(),
+        Type::Any => "Any".to_string(),
         Type::Optional(inner) => format!("{} | None", emit_type(inner)),
         Type::List(inner) => format!("list[{}]", emit_type(inner)),
         Type::Map(k, v) => format!("dict[{}, {}]", emit_type(k), emit_type(v)),

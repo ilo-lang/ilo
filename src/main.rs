@@ -268,10 +268,10 @@ fn types_pipe_compatible(out: &ast::Type, param: &ast::Type) -> bool {
     // Unwrap Optional on the param side — Optional(T) accepts T.
     let param = if let Optional(inner) = param { inner } else { param };
     match (out, param) {
-        // Named / unknown types — treat as wildcard.
-        (Named(_), _) | (_, Named(_)) => true,
+        // Named / unknown / Any types — treat as wildcard.
+        (Named(_), _) | (_, Named(_)) | (Any, _) | (_, Any) => true,
         // Exact matches.
-        (Number, Number) | (Text, Text) | (Bool, Bool) | (Nil, Nil) => true,
+        (Number, Number) | (Text, Text) | (Bool, Bool) => true,
         // List element type must match.
         (List(a), List(b)) => types_pipe_compatible(a, b),
         // Map — key and value types must match.
@@ -472,7 +472,7 @@ fn type_to_ilo(ty: &ast::Type) -> String {
         ast::Type::Number => "n".to_string(),
         ast::Type::Text => "t".to_string(),
         ast::Type::Bool => "b".to_string(),
-        ast::Type::Nil => "_".to_string(),
+        ast::Type::Any => "_".to_string(),
         ast::Type::Optional(inner) => format!("O {}", type_to_ilo(inner)),
         ast::Type::List(inner) => format!("L {}", type_to_ilo(inner)),
         ast::Type::Map(k, v) => format!("M {} {}", type_to_ilo(k), type_to_ilo(v)),
@@ -2508,7 +2508,7 @@ mod tests {
         assert!(types_pipe_compatible(&ast::Type::Number, &ast::Type::Number));
         assert!(types_pipe_compatible(&ast::Type::Text, &ast::Type::Text));
         assert!(types_pipe_compatible(&ast::Type::Bool, &ast::Type::Bool));
-        assert!(types_pipe_compatible(&ast::Type::Nil, &ast::Type::Nil));
+        assert!(types_pipe_compatible(&ast::Type::Any, &ast::Type::Any));
     }
 
     #[test]
@@ -4091,7 +4091,7 @@ mod tests {
 
     #[test]
     fn type_to_ilo_nil() {
-        assert_eq!(type_to_ilo(&ast::Type::Nil), "_");
+        assert_eq!(type_to_ilo(&ast::Type::Any), "_");
     }
 
     #[test]

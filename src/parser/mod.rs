@@ -450,7 +450,7 @@ impl Parser {
             }
             Some(Token::Underscore) => {
                 self.advance();
-                Ok(Type::Nil)
+                Ok(Type::Any)
             }
             Some(Token::OptType) => {
                 self.advance();
@@ -3638,8 +3638,8 @@ mod tests {
         // `_` starts a Nil type
         let prog = parse_str("f x:_>_;x");
         let Decl::Function { params, return_type, .. } = &prog.declarations[0] else { panic!("expected function") };
-        assert_eq!(params[0].ty, Type::Nil);
-        assert_eq!(*return_type, Type::Nil);
+        assert_eq!(params[0].ty, Type::Any);
+        assert_eq!(*return_type, Type::Any);
     }
 
     #[test]
@@ -3827,7 +3827,7 @@ mod tests {
 
     #[test]
     fn parse_underscore_type_in_param() {
-        // `_` as a type token — parse_type returns Type::Nil (underscore = nil type)
+        // `_` as a type token — parse_type returns Type::Any (underscore = any/unknown type)
         // Trigger via `f x:_>n;0`
         let (_, errors) = parse_str_errors("f x:_>n;0");
         // Whether it succeeds or errors, the Underscore branch of can_start_type was hit

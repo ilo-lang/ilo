@@ -28,7 +28,7 @@ tot p:n q:n r:n>n;s=*p q;t=*s r;+s t
 | `n` | number (f64) |
 | `t` | text (string) |
 | `b` | bool |
-| `_` | nil |
+| `_` | any/unknown (wildcard type) |
 | `L n` | list of number |
 | `R n t` | result: ok=number, err=text |
 | `O n` | optional number (nil or n) |

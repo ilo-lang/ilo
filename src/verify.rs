@@ -128,7 +128,7 @@ fn collect_named_refs_inner(ty: &Type, refs: &mut Vec<String>) {
             for p in params { collect_named_refs_inner(p, refs); }
             collect_named_refs_inner(ret, refs);
         }
-        Type::Sum(_) | Type::Number | Type::Text | Type::Bool | Type::Nil => {}
+        Type::Sum(_) | Type::Number | Type::Text | Type::Bool | Type::Any => {}
     }
 }
 
@@ -142,7 +142,7 @@ fn convert_type_with_aliases(ast_ty: &Type, aliases: &HashMap<String, Ty>) -> Ty
         Type::Number => Ty::Number,
         Type::Text => Ty::Text,
         Type::Bool => Ty::Bool,
-        Type::Nil => Ty::Nil,
+        Type::Any => Ty::Unknown,
         Type::Optional(inner) => Ty::Optional(Box::new(convert_type_with_aliases(inner, aliases))),
         Type::List(inner) => Ty::List(Box::new(convert_type_with_aliases(inner, aliases))),
         Type::Map(k, v) => Ty::Map(
@@ -2459,7 +2459,7 @@ mod tests {
 
     #[test]
     fn convert_type_nil_and_named() {
-        // A function with Nil return type exercises convert_type(Type::Nil)
+        // A function with Any return type exercises convert_type(Type::Any)
         // Nil is compatible with Unknown (the verifier uses Unknown for unresolved bodies)
         // so we just verify it doesn't panic
         let _ = parse_and_verify("f x:n>_;x");
@@ -4657,8 +4657,8 @@ mod tests {
 
     #[test]
     fn safe_field_access_on_nil_type_returns_nil() {
-        // r:_ (Nil type in scope) used with safe .? access → line 1791 return Ty::Nil
-        // `f r:_>n; s=r.?x; 0` — r has type Nil (from Type::Nil conversion), r.?x → Nil
+        // r:_ (Any/Unknown type in scope) used with safe .? access
+        // `f r:_>n; s=r.?x; 0` — r has type Unknown (from Type::Any conversion)
         let result = parse_and_verify("type p{x:n} f r:_>n;s=r.?x;0");
         // May error on type mismatch but must reach L1791
         let _ = result;
@@ -4738,7 +4738,7 @@ mod tests {
             declarations: vec![Decl::Function {
                 name: "f".to_string(),
                 params: vec![],
-                return_type: Type::Nil,
+                return_type: Type::Any,
                 body: vec![Spanned::unknown(Stmt::Expr(Expr::Literal(Literal::Nil)))],
                 span: Span::UNKNOWN,
             }],

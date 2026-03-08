@@ -68,7 +68,7 @@ pub enum Type {
     Number,  // n
     Text,    // t
     Bool,    // b
-    Nil,     // _
+    Any,     // _  — "don't care" / unknown type
     Optional(Box<Type>),          // O type  — nullable (nil or the inner type)
     List(Box<Type>),              // L type
     Map(Box<Type>, Box<Type>),    // M key value  — dynamic key-value collection
