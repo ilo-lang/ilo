@@ -87,7 +87,7 @@ Minimise dependency on English or any natural language.
 Early variants used short English-derived keywords (`fn`, `let`, `match`, `for`, `if`). Experiments showed structural tokens outperform keywords entirely — the winning syntax (idea8/idea9) replaced all keywords with single-character sigils:
 
 - `?` conditional, `!` effect/call, `~` transform, `@` iterate, `>` pipe/return
-- Only ~6 abbreviated keywords remain (`type`, `tool`, `wh`, `ret`, `brk`, `cnt`) — no full English words
+- Keywords are abbreviated or single-letter: `type`, `tool`, `wh`, `ret`, `brk`, `cnt`, `with`, `use`, `nil`, `true`, `false`, plus type sigils `L`, `R`, `O`, `M`, `S`, `F`
 - Agents learned the sigil set from spec + examples with 10/10 accuracy
 
 Structural tokens won because they are unambiguous single tokens that cannot be confused with variable names or hallucinated into natural-language variations.
