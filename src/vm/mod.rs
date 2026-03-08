@@ -2166,21 +2166,37 @@ impl NanVal {
         (self.0 & TAG_MASK) == TAG_STRING
     }
 
-    /// # Safety
-    /// Caller must ensure:
-    /// 1. `self` was created via one of the `heap_*` constructors (`is_heap()` is true).
-    /// 2. The underlying `Rc<HeapObj>` is still alive (strong count > 0).
-    /// 3. The returned reference is **not** held across any operation that could
-    ///    decrement this NanVal's RC to zero (including `drop_rc()`, `reg_set!`,
-    ///    or dropping a container that holds this NanVal).
+    /// Dereference the NaN-boxed heap pointer to a `&HeapObj`.
     ///
-    /// The lifetime `'a` is unconstrained because NanVal is `Copy` (no borrow
-    /// tracking). The caller is responsible for ensuring the reference does not
-    /// outlive the RC. In practice, all call sites use the reference within a
-    /// single opcode dispatch before any RC-dropping operation on the same value.
+    /// # Safety
+    ///
+    /// The caller must guarantee **all** of the following:
+    ///
+    /// 1. `self` was created by one of the `heap_*` constructors (i.e.
+    ///    `self.is_heap()` is true).
+    /// 2. The underlying `Rc<HeapObj>` is still alive — its strong count has
+    ///    not reached zero.
+    /// 3. The returned reference must **not** be held across any operation that
+    ///    could decrement the RC to zero (e.g. `drop_rc`, register overwrites,
+    ///    or stack pops that release the last copy of this `NanVal`).
+    ///
+    /// Because `NanVal` is `Copy`, the borrow checker cannot enforce (2) or (3);
+    /// the unconstrained lifetime `'a` is an unavoidable consequence of
+    /// NaN-boxing. Violating these invariants is instant UB (use-after-free).
     #[inline]
     unsafe fn as_heap_ref<'a>(self) -> &'a HeapObj {
+        debug_assert!(self.is_heap(), "as_heap_ref called on non-heap NanVal {:#018x}", self.0);
         let ptr = (self.0 & PTR_MASK) as *const HeapObj;
+        // In debug builds, verify the Rc is still alive by reconstructing it
+        // temporarily. This catches use-after-free during development.
+        #[cfg(debug_assertions)]
+        {
+            let rc = unsafe { Rc::from_raw(ptr) };
+            let count = Rc::strong_count(&rc);
+            // Leak it back — we must not decrement the count.
+            std::mem::forget(rc);
+            debug_assert!(count >= 1, "as_heap_ref: Rc strong count is 0 (use-after-free) for NanVal {:#018x}", self.0);
+        }
         // SAFETY: pointer was produced by Rc::into_raw in a heap_* constructor.
         // Caller guarantees is_heap() and the Rc is still live.
         unsafe { &*ptr }
