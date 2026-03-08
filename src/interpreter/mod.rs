@@ -1582,9 +1582,10 @@ fn eval_expr(env: &mut Env, expr: &Expr) -> Result<Value> {
         }
         Expr::Ternary { condition, then_expr, else_expr } => {
             let cond = eval_expr(env, condition)?;
-            match cond {
-                Value::Bool(true) => eval_expr(env, then_expr),
-                _ => eval_expr(env, else_expr),
+            if is_truthy(&cond) {
+                eval_expr(env, then_expr)
+            } else {
+                eval_expr(env, else_expr)
             }
         }
         Expr::With { object, updates } => {
