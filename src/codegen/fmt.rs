@@ -460,6 +460,9 @@ fn fmt_expr(expr: &Expr, mode: FmtMode) -> String {
         Expr::NilCoalesce { value, default } => {
             format!("{}??{}", fmt_expr(value, mode), fmt_expr(default, mode))
         }
+        Expr::Ternary { condition, then_expr, else_expr } => {
+            format!("?{} {} {}", fmt_expr(condition, mode), fmt_expr(then_expr, mode), fmt_expr(else_expr, mode))
+        }
         Expr::With { object, updates } => {
             let updates_str: Vec<String> =
                 updates.iter().map(|(n, v)| format!("{}:{}", n, fmt_expr(v, mode))).collect();

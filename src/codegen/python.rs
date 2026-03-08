@@ -164,6 +164,9 @@ fn expr_uses_unwrap(expr: &Expr) -> bool {
         Expr::NilCoalesce { value, default } => {
             expr_uses_unwrap(value) || expr_uses_unwrap(default)
         }
+        Expr::Ternary { condition, then_expr, else_expr } => {
+            expr_uses_unwrap(condition) || expr_uses_unwrap(then_expr) || expr_uses_unwrap(else_expr)
+        }
         Expr::With { object, updates } => {
             expr_uses_unwrap(object) || updates.iter().any(|(_, e)| expr_uses_unwrap(e))
         }
@@ -576,6 +579,12 @@ fn emit_expr(out: &mut String, level: usize, expr: &Expr) -> String {
             let v = emit_expr(out, level, value);
             let d = emit_expr(out, level, default);
             format!("({v} if {v} is not None else {d})")
+        }
+        Expr::Ternary { condition, then_expr, else_expr } => {
+            let c = emit_expr(out, level, condition);
+            let t = emit_expr(out, level, then_expr);
+            let e = emit_expr(out, level, else_expr);
+            format!("({t} if {c} else {e})")
         }
         Expr::With { object, updates } => {
             let obj = emit_expr(out, level, object);

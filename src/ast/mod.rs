@@ -297,6 +297,13 @@ pub enum Expr {
         object: Box<Expr>,
         updates: Vec<(String, Expr)>,
     },
+
+    /// Prefix ternary: `?=x 0 10 20` → if x==0 then 10 else 20
+    Ternary {
+        condition: Box<Expr>,
+        then_expr: Box<Expr>,
+        else_expr: Box<Expr>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -474,6 +481,11 @@ fn resolve_aliases_expr(expr: &mut Expr) {
         Expr::With { object, updates } => {
             resolve_aliases_expr(object);
             for (_, val) in updates { resolve_aliases_expr(val); }
+        }
+        Expr::Ternary { condition, then_expr, else_expr } => {
+            resolve_aliases_expr(condition);
+            resolve_aliases_expr(then_expr);
+            resolve_aliases_expr(else_expr);
         }
         Expr::Literal(_) | Expr::Ref(_) | Expr::Field { .. } | Expr::Index { .. } => {}
     }

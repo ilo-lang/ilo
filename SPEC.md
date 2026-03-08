@@ -455,6 +455,7 @@ Match replaces `switch`. There is no fall-through — each arm is independent. T
 | `cond{body}` | guard: return body if cond true |
 | `cond expr` | braceless guard (single-expression body) |
 | `cond{then}{else}` | ternary: evaluate then or else (no early return) |
+| `?cond then else` | prefix ternary: `?=x 0 10 20` (no early return) |
 | `!cond{body}` | guard: return body if cond false |
 | `!cond expr` | braceless negated guard |
 | `!cond{then}{else}` | negated ternary |
@@ -528,6 +529,15 @@ f x:n>n;=x 0{10}{20};+x 1   -- always returns x+1, ternary value is discarded
 ```
 
 Negated ternary: `!=x 1{"not one"}{"one"}`.
+
+**Prefix ternary** uses `?` with a comparison operator for a fully prefix-style conditional:
+
+```
+f x:n>n;?=x 0 10 20       -- if x==0 then 10 else 20
+f x:n>n;v=?>x 100 1 0;v   -- assign result to v
+```
+
+The condition must start with a comparison operator (`=`, `>`, `<`, `>=`, `<=`, `!=`).
 
 ### Early Return
 

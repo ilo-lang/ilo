@@ -583,7 +583,19 @@ impl Parser {
 
     fn parse_stmt(&mut self) -> Result<Stmt> {
         match self.peek() {
-            Some(Token::Question) => self.parse_match_stmt(),
+            Some(Token::Question) => {
+                // Prefix ternary: ?=x 0 10 20 (? followed by comparison op)
+                let is_ternary = matches!(
+                    self.token_at(self.pos + 1),
+                    Some(Token::Eq | Token::Greater | Token::Less | Token::GreaterEq | Token::LessEq | Token::NotEq)
+                );
+                if is_ternary {
+                    let expr = self.parse_prefix_ternary()?;
+                    Ok(Stmt::Expr(expr))
+                } else {
+                    self.parse_match_stmt()
+                }
+            }
             Some(Token::At) => self.parse_foreach(),
             Some(Token::Ident(name)) if name == "ret" => {
                 self.advance(); // consume "ret"
@@ -1172,8 +1184,8 @@ impl Parser {
             | Some(Token::PlusEq) => {
                 self.parse_prefix_binop()
             }
-            // Match expression: ?expr{...} or ?{...}
-            Some(Token::Question) => self.parse_match_expr(),
+            // Match expression: ?expr{...} or ?{...}, or prefix ternary: ?=x 0 10 20
+            Some(Token::Question) => self.parse_question_expr(),
             // Atoms and calls — infix operators can follow these
             _ => {
                 let primary = self.parse_call_or_atom()?;
@@ -1199,6 +1211,36 @@ impl Parser {
             function: "get".to_string(),
             args: vec![arg],
             unwrap,
+        })
+    }
+
+    /// Parse `?` as either match (`?expr{...}`) or prefix ternary (`?=x 0 10 20`).
+    /// Ternary: `?` followed by a comparison op (=, >, <, >=, <=, !=) that is NOT
+    /// followed by `{` after the comparison args — the next two exprs are then/else.
+    fn parse_question_expr(&mut self) -> Result<Expr> {
+        // Peek ahead: `?` then a comparison op means ternary
+        let is_ternary = matches!(
+            self.token_at(self.pos + 1),
+            Some(Token::Eq | Token::Greater | Token::Less | Token::GreaterEq | Token::LessEq | Token::NotEq)
+        );
+        if is_ternary {
+            return self.parse_prefix_ternary();
+        }
+        self.parse_match_expr()
+    }
+
+    /// Parse prefix ternary: `?=x 0 10 20` → Ternary { condition: BinOp(=, x, 0), then: 10, else: 20 }
+    fn parse_prefix_ternary(&mut self) -> Result<Expr> {
+        self.advance(); // consume ?
+        // Parse the condition as a prefix binop (=x 0, >x 5, etc.)
+        let condition = self.parse_prefix_binop()?;
+        // Parse then and else expressions
+        let then_expr = self.parse_operand()?;
+        let else_expr = self.parse_operand()?;
+        Ok(Expr::Ternary {
+            condition: Box::new(condition),
+            then_expr: Box::new(then_expr),
+            else_expr: Box::new(else_expr),
         })
     }
 
@@ -1742,6 +1784,39 @@ mod tests {
         let Stmt::Match { subject, arms } = &body[0].node else { panic!("expected match") };
         assert!(subject.is_none());
         assert_eq!(arms.len(), 3);
+    }
+
+    #[test]
+    fn parse_prefix_ternary() {
+        let prog = parse_str("f x:n>n;?=x 0 10 20");
+        let Decl::Function { body, .. } = &prog.declarations[0] else { panic!("expected function") };
+        let Stmt::Expr(Expr::Ternary { condition, then_expr, else_expr }) = &body[0].node else {
+            panic!("expected ternary, got {:?}", body[0])
+        };
+        assert!(matches!(condition.as_ref(), Expr::BinOp { op: BinOp::Equals, .. }));
+        assert!(matches!(then_expr.as_ref(), Expr::Literal(Literal::Number(n)) if *n == 10.0));
+        assert!(matches!(else_expr.as_ref(), Expr::Literal(Literal::Number(n)) if *n == 20.0));
+    }
+
+    #[test]
+    fn parse_prefix_ternary_gt() {
+        let prog = parse_str("f x:n>n;?>x 3 1 0");
+        let Decl::Function { body, .. } = &prog.declarations[0] else { panic!("expected function") };
+        let Stmt::Expr(Expr::Ternary { condition, .. }) = &body[0].node else {
+            panic!("expected ternary, got {:?}", body[0])
+        };
+        assert!(matches!(condition.as_ref(), Expr::BinOp { op: BinOp::GreaterThan, .. }));
+    }
+
+    #[test]
+    fn parse_prefix_ternary_assignment() {
+        let prog = parse_str("f x:n>n;v=?=x 0 10 20;v");
+        let Decl::Function { body, .. } = &prog.declarations[0] else { panic!("expected function") };
+        let Stmt::Let { name, value, .. } = &body[0].node else {
+            panic!("expected let, got {:?}", body[0])
+        };
+        assert_eq!(name, "v");
+        assert!(matches!(value, Expr::Ternary { .. }));
     }
 
     #[test]

@@ -1882,6 +1882,20 @@ impl VerifyContext {
                     other => other,
                 }
             }
+            Expr::Ternary { condition, then_expr, else_expr } => {
+                self.infer_expr(func, scope, condition, span);
+                let then_ty = self.infer_expr(func, scope, then_expr, span);
+                let else_ty = self.infer_expr(func, scope, else_expr, span);
+                if compatible(&then_ty, &else_ty) {
+                    then_ty
+                } else if compatible(&else_ty, &then_ty) {
+                    else_ty
+                } else {
+                    self.err("ILO-T003", func, format!("ternary branches have different types: {} vs {}", then_ty, else_ty), None, Some(span));
+                    then_ty
+                }
+            }
+
             Expr::With { object, updates } => {
                 let obj_ty = self.infer_expr(func, scope, object, span);
                 match &obj_ty {

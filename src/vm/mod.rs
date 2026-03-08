@@ -1801,6 +1801,27 @@ impl RegCompiler {
                 self.current.patch_jump(skip_jump);
                 val_reg
             }
+            Expr::Ternary { condition, then_expr, else_expr } => {
+                let cond_reg = self.compile_expr(condition);
+                let result_reg = self.alloc_reg();
+                let jump_to_else = self.emit_jmpf(cond_reg);
+                // Then branch
+                let then_reg = self.compile_expr(then_expr);
+                if then_reg != result_reg {
+                    self.emit_abc(OP_MOVE, result_reg, then_reg, 0);
+                }
+                let jump_over_else = self.emit_jmp_placeholder();
+                self.current.patch_jump(jump_to_else);
+                // Else branch
+                self.next_reg = result_reg + 1;
+                let else_reg = self.compile_expr(else_expr);
+                if else_reg != result_reg {
+                    self.emit_abc(OP_MOVE, result_reg, else_reg, 0);
+                }
+                self.current.patch_jump(jump_over_else);
+                self.next_reg = result_reg + 1;
+                result_reg
+            }
             Expr::With { object, updates } => {
                 let obj_reg = self.compile_expr(object);
                 let obj_type = self.reg_record_type[obj_reg as usize];
