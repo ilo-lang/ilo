@@ -13440,4 +13440,169 @@ mod tests {
         let err = vm_run_err(r#"f>t;post "http://x" "body" 42"#, Some("f"), vec![]);
         assert!(err.contains("headers") || err.contains("post") || err.contains("map"), "got: {err}");
     }
+
+    // ── Arena-full fallback tests ────────────────────────────────────────────
+
+    #[test]
+    fn vm_arena_full_recnew_fallback_to_heap() {
+        // Arena is 64KB. Each 2-field record = 24 bytes (8 header + 2*8 fields).
+        // 65536 / 24 = 2730. We need 2731+ allocations to overflow.
+        // Use a while loop to create records until the arena fills, then verify
+        // the last record still works via the Rc heap fallback (L3493-3501).
+        let src = "type pt{x:n;y:n} f>n;i=0;r=pt x:0 y:0;wh <i 3000{j=+i 1;r=pt x:i y:j;i=j};r.x";
+        let result = vm_run(src, Some("f"), vec![]);
+        // Last iteration: i=2999, r=pt x:2999 y:3000
+        assert_eq!(result, Value::Number(2999.0));
+    }
+
+    #[test]
+    fn vm_arena_full_recwith_fallback_to_heap() {
+        // Same arena overflow, but via OP_RECWITH (record update) fallback (L3551-3571).
+        // Create initial record, then update it 3000 times to exhaust arena.
+        let src = "type pt{x:n;y:n} f>n;r=pt x:0 y:0;i=0;wh <i 3000{r=r with x:i;i=+i 1};r.x";
+        let result = vm_run(src, Some("f"), vec![]);
+        assert_eq!(result, Value::Number(2999.0));
+    }
+
+    #[test]
+    fn vm_arena_full_recnew_with_string_field() {
+        // Arena overflow with string fields tests clone_rc in the heap fallback path.
+        let src = r#"type msg{text:t;val:n} f>n;i=0;r=msg text:"a" val:0;wh <i 3000{r=msg text:"hello" val:i;i=+i 1};r.val"#;
+        let result = vm_run(src, Some("f"), vec![]);
+        assert_eq!(result, Value::Number(2999.0));
+    }
+
+    #[test]
+    fn vm_arena_full_recwith_preserves_string_fields() {
+        // Arena overflow during recwith with string field in old record (L3555-3567).
+        let src = r#"type msg{text:t;val:n} f>t;r=msg text:"hello" val:0;i=0;wh <i 3000{r=r with val:i;i=+i 1};r.text"#;
+        let result = vm_run(src, Some("f"), vec![]);
+        assert_eq!(result, Value::Text("hello".into()));
+    }
+
+    #[test]
+    fn vm_arena_full_record_returned_as_value() {
+        // When arena overflows, records promoted to heap. Returning a record
+        // exercises the arena→heap promotion + to_value conversion.
+        let src = "type pt{x:n;y:n} f>pt;i=0;r=pt x:0 y:0;wh <i 3000{j=+i 1;r=pt x:i y:j;i=j};r";
+        let result = vm_run(src, Some("f"), vec![]);
+        match result {
+            Value::Record { type_name, fields } => {
+                assert_eq!(type_name, "pt");
+                assert_eq!(fields.get("x"), Some(&Value::Number(2999.0)));
+                assert_eq!(fields.get("y"), Some(&Value::Number(3000.0)));
+            }
+            other => panic!("expected Record, got {:?}", other),
+        }
+    }
+
+    // ── Arena record → Value conversion (L2328-2350) ─────────────────────────
+
+    #[test]
+    fn vm_arena_record_to_value_returns_record() {
+        // Record created in arena is returned directly; the VM promotes it
+        // and calls to_value, exercising L2328-2350.
+        let src = "type pt{x:n;y:n} f>pt;pt x:42 y:99";
+        let result = vm_run(src, Some("f"), vec![]);
+        match result {
+            Value::Record { type_name, fields } => {
+                assert_eq!(type_name, "pt");
+                assert_eq!(fields.get("x"), Some(&Value::Number(42.0)));
+                assert_eq!(fields.get("y"), Some(&Value::Number(99.0)));
+            }
+            other => panic!("expected Record, got {:?}", other),
+        }
+    }
+
+    // ── to_value_with_registry (L2385-2404) ──────────────────────────────────
+
+    #[test]
+    fn vm_to_value_with_registry_resolves_field_names() {
+        // Directly test to_value_with_registry on an arena record.
+        use crate::vm::compile;
+        let prog = parse_program("type pt{x:n;y:n} f>pt;pt x:7 y:8");
+        let compiled = compile(&prog).unwrap();
+        // Run through VM to get a result and exercise the path
+        let result = crate::vm::run(&compiled, Some("f"), vec![]).unwrap();
+        match result {
+            Value::Record { type_name, fields } => {
+                assert_eq!(type_name, "pt");
+                assert_eq!(fields.get("x"), Some(&Value::Number(7.0)));
+                assert_eq!(fields.get("y"), Some(&Value::Number(8.0)));
+            }
+            other => panic!("expected Record, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn vm_to_value_with_registry_nested_record() {
+        // Nested record: inner record promoted during to_value_with_registry
+        let src = "type inner{v:n} type outer{a:inner;b:n} f>outer;i=inner v:42;outer a:i b:99";
+        let result = vm_run(src, Some("f"), vec![]);
+        match result {
+            Value::Record { type_name, fields } => {
+                assert_eq!(type_name, "outer");
+                assert_eq!(fields.get("b"), Some(&Value::Number(99.0)));
+                match fields.get("a") {
+                    Some(Value::Record { type_name: inner_name, fields: inner_fields }) => {
+                        assert_eq!(inner_name, "inner");
+                        assert_eq!(inner_fields.get("v"), Some(&Value::Number(42.0)));
+                    }
+                    other => panic!("expected inner Record, got {:?}", other),
+                }
+            }
+            other => panic!("expected outer Record, got {:?}", other),
+        }
+    }
+
+    // ── OP_RET multi-frame (L2630-2637) ──────────────────────────────────────
+
+    #[test]
+    fn vm_multi_frame_return_chain() {
+        // Function A calls B which calls C. Tests multi-frame OP_RET path
+        // where returning from C restores B's frame, then B returns to A.
+        let src = "c x:n>n;+x 100\nb x:n>n;c +x 10\na x:n>n;b +x 1";
+        let result = vm_run(src, Some("a"), vec![Value::Number(5.0)]);
+        // a(5) → b(6) → c(16) → 116
+        assert_eq!(result, Value::Number(116.0));
+    }
+
+    #[test]
+    fn vm_multi_frame_return_with_records() {
+        // Multi-frame return where inner function creates a record,
+        // exercises the OP_RET path with arena records across frames.
+        let src = "type pt{x:n;y:n} mk a:n b:n>pt;pt x:a y:b\nwrap x:n>pt;y=+x 1;mk x y\nf>n;p=wrap 10;+p.x p.y";
+        let result = vm_run(src, Some("f"), vec![]);
+        // wrap(10) → y=11, mk(10,11) → pt{x:10,y:11}, f returns 10+11=21
+        assert_eq!(result, Value::Number(21.0));
+    }
+
+    #[test]
+    fn vm_deeply_nested_calls() {
+        // 4-level deep call chain to stress multi-frame return
+        let src = "d x:n>n;*x 2\nc x:n>n;d +x 1\nb x:n>n;c +x 1\na x:n>n;b +x 1";
+        let result = vm_run(src, Some("a"), vec![Value::Number(1.0)]);
+        // a(1) → b(2) → c(3) → d(4) → 8
+        assert_eq!(result, Value::Number(8.0));
+    }
+
+    // ── Arena-full with JIT helper paths (L5206-5240) ────────────────────────
+
+    #[test]
+    fn vm_arena_full_recwith_multiple_updates() {
+        // Arena overflow during recwith with multiple field updates at once.
+        let src = "type pt{x:n;y:n} f>n;r=pt x:0 y:0;i=0;wh <i 3000{j=+i 1;r=r with x:i y:j;i=j};+r.x r.y";
+        let result = vm_run(src, Some("f"), vec![]);
+        // Last: r = pt{x:2999, y:3000}, sum = 5999
+        assert_eq!(result, Value::Number(5999.0));
+    }
+
+    #[test]
+    fn vm_arena_full_large_record() {
+        // 5-field record fills arena faster: 8 + 5*8 = 48 bytes each.
+        // 65536 / 48 = 1365. Need ~1366 allocations.
+        let src = "type big{a:n;b:n;c:n;d:n;e:n} f>n;i=0;r=big a:0 b:0 c:0 d:0 e:0;wh <i 1500{b=+i 1;c=+i 2;d=+i 3;e=+i 4;r=big a:i b:b c:c d:d e:e;i=b};r.a";
+        let result = vm_run(src, Some("f"), vec![]);
+        assert_eq!(result, Value::Number(1499.0));
+    }
 }

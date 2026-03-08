@@ -1844,4 +1844,94 @@ mod tests {
         // -5 < 0 so loop ends, returns -5
         assert_eq!(result, Some(Value::Number(-5.0)));
     }
+
+    // ── OP_ROU — round builtin (JIT L730-735) ───────────────────────────────
+
+    #[test]
+    fn cranelift_rou_builtin() {
+        let result = jit_run("f x:n>n;rou x", "f", &[Value::Number(4.5)]);
+        assert_eq!(result, Some(Value::Number(5.0)));
+    }
+
+    #[test]
+    fn cranelift_rou_down() {
+        let result = jit_run("f x:n>n;rou x", "f", &[Value::Number(4.4)]);
+        assert_eq!(result, Some(Value::Number(4.0)));
+    }
+
+    // ── OP_CALL with zero args (JIT L1153-1160) ─────────────────────────────
+
+    #[test]
+    fn cranelift_call_zero_args_injected() {
+        // Inject OP_CALL with n_args=0 directly into bytecode to exercise the
+        // JIT zero-args OP_CALL path (L1153-1160). This path is hard to reach
+        // from normal source since bare identifiers parse as variable refs.
+        use crate::vm::{compile as vm_compile, OP_CALL, OP_RET};
+        let tokens: Vec<crate::lexer::Token> = crate::lexer::lex(
+            "g>n;42\nf>n;42"
+        ).unwrap().into_iter().map(|(t, _)| t).collect();
+        let prog = crate::parser::parse_tokens(tokens).unwrap();
+        let mut compiled = vm_compile(&prog).unwrap();
+        let f_idx = compiled.func_names.iter().position(|n| n == "f").unwrap();
+        let g_idx = compiled.func_names.iter().position(|n| n == "g").unwrap();
+        // Replace f's code: OP_CALL r0 = g() [func_idx=g_idx, n_args=0], OP_RET r0
+        let call_inst = (OP_CALL as u32) << 24 | ((g_idx as u32) << 8);
+        let ret_inst = (OP_RET as u32) << 24;
+        compiled.chunks[f_idx].code = vec![call_inst, ret_inst];
+        let chunk = &compiled.chunks[f_idx];
+        let nan_consts = &compiled.nan_constants[f_idx];
+        // The JIT should compile this without panicking.
+        let func = compile(chunk, nan_consts, &compiled);
+        // If it compiled, try calling it (should call g() and return 42).
+        if let Some(f) = func {
+            let result = call(&f, &[]);
+            assert_eq!(result, Some(NanVal::number(42.0).0));
+        }
+    }
+
+    // ── JIT record return — arena promotion in call() (JIT L1278-1281) ──────
+
+    #[test]
+    fn cranelift_record_return_promotes_arena() {
+        // Return a record from JIT — exercises the arena record promotion
+        // in call() at L1277-1281.
+        let src = "type pt{x:n;y:n} f a:n b:n>pt;pt x:a y:b";
+        let result = jit_run(src, "f", &[Value::Number(10.0), Value::Number(20.0)]);
+        match result {
+            Some(Value::Record { type_name, fields }) => {
+                assert_eq!(type_name, "pt");
+                assert_eq!(fields.get("x"), Some(&Value::Number(10.0)));
+                assert_eq!(fields.get("y"), Some(&Value::Number(20.0)));
+            }
+            other => panic!("expected Record, got {:?}", other),
+        }
+    }
+
+    // ── OP_RECWITH in JIT (L1037-1039) ──────────────────────────────────────
+
+    #[test]
+    fn cranelift_recwith_update() {
+        // Record update via JIT — exercises the JIT recwith path
+        let src = "type pt{x:n;y:n} f>pt;p=pt x:1 y:2;p with x:99";
+        let result = jit_run(src, "f", &[]);
+        match result {
+            Some(Value::Record { type_name, fields }) => {
+                assert_eq!(type_name, "pt");
+                assert_eq!(fields.get("x"), Some(&Value::Number(99.0)));
+                assert_eq!(fields.get("y"), Some(&Value::Number(2.0)));
+            }
+            other => panic!("expected Record, got {:?}", other),
+        }
+    }
+
+    // ── OP_LISTGET fallback in JIT (L1122-1124) ─────────────────────────────
+
+    #[test]
+    fn cranelift_foreach_loop() {
+        // foreach loop: exercises OP_LISTGET in JIT (L1089-1125)
+        let result = jit_run("f xs:L n>n;s=0;@x xs{s=+s x};s", "f", &[
+            Value::List(vec![Value::Number(1.0), Value::Number(2.0), Value::Number(3.0)]),
+        ]);
+        assert_eq!(result, Some(Value::Number(6.0)));
+    }
 }
