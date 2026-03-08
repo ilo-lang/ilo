@@ -88,10 +88,10 @@ struct VerifyContext {
 
 type Scope = Vec<HashMap<String, Ty>>;
 
-fn scope_lookup(scope: &Scope, name: &str) -> Option<Ty> {
+fn scope_lookup<'a>(scope: &'a Scope, name: &str) -> Option<&'a Ty> {
     for frame in scope.iter().rev() {
         if let Some(ty) = frame.get(name) {
-            return Some(ty.clone());
+            return Some(ty);
         }
     }
     None
@@ -1504,7 +1504,7 @@ impl VerifyContext {
 
             Expr::Ref(name) => {
                 if let Some(ty) = scope_lookup(scope, name) {
-                    ty
+                    ty.clone()
                 } else if let Some(sig) = self.functions.get(name) {
                     // Function name used as a value — resolve to Ty::Fn
                     let params: Vec<Ty> = sig.params.iter().map(|(_, t)| t.clone()).collect();
@@ -1613,7 +1613,7 @@ impl VerifyContext {
                     }
 
                     sig_ret
-                } else if let Some(Ty::Fn(param_types, ret_type)) = scope_lookup(scope, callee) {
+                } else if let Some(Ty::Fn(param_types, ret_type)) = scope_lookup(scope, callee).cloned() {
                     // Dynamic dispatch: calling a function-ref held in a variable.
                     if args.len() != param_types.len() {
                         self.err(
