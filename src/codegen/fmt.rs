@@ -1243,4 +1243,30 @@ mod tests {
         let s = dense("f x:n>b;<=x 10");
         assert!(s.contains("<=x 10"), "got: {s}");
     }
+
+    // ── Record with no fields (L449) ────────────────────────────────────────
+
+    #[test]
+    fn fmt_record_no_fields() {
+        // Directly construct an Expr::Record with no fields to exercise L449
+        let expr = Expr::Record { type_name: "empty".to_string(), fields: vec![] };
+        let s = fmt_expr(&expr, FmtMode::Dense);
+        assert_eq!(s, "empty", "expected bare type name for empty record, got: {s}");
+    }
+
+    // ── Ternary formatting (L463-464) ───────────────────────────────────────
+
+    #[test]
+    fn dense_ternary_prefix() {
+        let s = dense("f x:n>n;?=x 0 10 20");
+        assert!(s.contains("?=x 0 10 20"), "got: {s}");
+    }
+
+    // ── Literal::Nil formatting (L491) ──────────────────────────────────────
+
+    #[test]
+    fn dense_literal_nil() {
+        let s = dense("f>O n;nil");
+        assert!(s.contains("nil"), "got: {s}");
+    }
 }

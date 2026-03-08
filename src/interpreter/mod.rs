@@ -5272,4 +5272,85 @@ mod tests {
         let result = run_str("f>_;cnt", Some("f"), vec![]);
         assert_eq!(result, Value::Nil);
     }
+
+    // ── Builtin::Mod (L399-407) ──────────────────────────────────────────────
+
+    #[test]
+    fn interpret_mod_normal() {
+        let result = run_str("f a:n b:n>n;mod a b", Some("f"), vec![Value::Number(10.0), Value::Number(3.0)]);
+        assert_eq!(result, Value::Number(1.0));
+    }
+
+    #[test]
+    fn interpret_mod_by_zero() {
+        let prog = parse_program("f a:n b:n>n;mod a b");
+        let err = run(&prog, Some("f"), vec![Value::Number(10.0), Value::Number(0.0)]).unwrap_err();
+        assert!(err.to_string().contains("modulo by zero"), "got: {err}");
+    }
+
+    #[test]
+    fn interpret_mod_non_numbers() {
+        let prog = parse_program(r#"f a:t b:t>_;mod a b"#);
+        let err = run(&prog, Some("f"), vec![Value::Text("a".into()), Value::Text("b".into())]).unwrap_err();
+        assert!(err.to_string().contains("mod requires two numbers"), "got: {err}");
+    }
+
+    // ── Builtin::Rou (round, L425) ──────────────────────────────────────────
+
+    #[test]
+    fn interpret_round() {
+        let result = run_str("f x:n>n;rou x", Some("f"), vec![Value::Number(3.7)]);
+        assert_eq!(result, Value::Number(4.0));
+        let result2 = run_str("f x:n>n;rou x", Some("f"), vec![Value::Number(3.2)]);
+        assert_eq!(result2, Value::Number(3.0));
+    }
+
+    // ── Ternary expression (L1583-1588) ─────────────────────────────────────
+
+    #[test]
+    fn interpret_ternary_then() {
+        // Prefix ternary: ?=x 0 10 20 → if x==0 then 10 else 20
+        let result = run_str("f x:n>n;?=x 0 10 20", Some("f"), vec![Value::Number(0.0)]);
+        assert_eq!(result, Value::Number(10.0));
+    }
+
+    #[test]
+    fn interpret_ternary_else() {
+        let result = run_str("f x:n>n;?=x 0 10 20", Some("f"), vec![Value::Number(5.0)]);
+        assert_eq!(result, Value::Number(20.0));
+    }
+
+    // ── Literal::Nil in eval_literal (L1611) ────────────────────────────────
+
+    #[test]
+    fn interpret_literal_nil() {
+        let result = run_str("f>O n;nil", Some("f"), vec![]);
+        assert_eq!(result, Value::Nil);
+    }
+
+    // ── Pattern::TypeIs wildcard fallback (L1727) ───────────────────────────
+
+    #[test]
+    fn interpret_type_is_no_match() {
+        // Match a number against a text TypeIs pattern → falls through to wildcard
+        let result = run_str(r#"f x:n>t;?x{t v:"text";_:"other"}"#, Some("f"), vec![Value::Number(42.0)]);
+        assert_eq!(result, Value::Text("other".to_string()));
+    }
+
+    // ── Tool call with provider but no async runtime (L1160-1162) ───────────
+
+    #[test]
+    fn interpret_tool_call_with_provider_no_runtime() {
+        let source = r#"tool greet"say hello" name:t>R _ t timeout:5"#;
+        let prog = parse_program(source);
+        let provider = std::sync::Arc::new(crate::tools::StubProvider);
+        let result = run_with_tools(
+            &prog,
+            Some("greet"),
+            vec![Value::Text("world".into())],
+            provider,
+        )
+        .unwrap();
+        assert_eq!(result, Value::Ok(Box::new(Value::Nil)));
+    }
 }

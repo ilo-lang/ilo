@@ -1657,4 +1657,83 @@ mod tests {
         let py = emit(&prog);
         assert!(!py.contains("use"), "Use should produce no output: {py}");
     }
+
+    // ── type_to_py coverage (L6-12) ─────────────────────────────────────────
+
+    #[test]
+    fn type_to_py_text() {
+        assert_eq!(type_to_py(&Type::Text), "str");
+    }
+
+    #[test]
+    fn type_to_py_bool() {
+        assert_eq!(type_to_py(&Type::Bool), "bool");
+    }
+
+    #[test]
+    fn type_to_py_list() {
+        assert_eq!(type_to_py(&Type::List(Box::new(Type::Number))), "list");
+    }
+
+    #[test]
+    fn type_to_py_map() {
+        assert_eq!(type_to_py(&Type::Map(Box::new(Type::Text), Box::new(Type::Number))), "dict");
+    }
+
+    #[test]
+    fn type_to_py_optional() {
+        assert_eq!(type_to_py(&Type::Optional(Box::new(Type::Number))), "object | None");
+    }
+
+    #[test]
+    fn type_to_py_sum() {
+        assert_eq!(type_to_py(&Type::Sum(vec!["a".into(), "b".into()])), "str");
+    }
+
+    #[test]
+    fn type_to_py_wildcard() {
+        assert_eq!(type_to_py(&Type::Named("custom".into())), "object");
+    }
+
+    // ── Ternary codegen (L583-587) ──────────────────────────────────────────
+
+    #[test]
+    fn emit_ternary() {
+        let py = parse_and_emit("f x:n>n;?=x 0 10 20");
+        assert!(py.contains("10 if"), "expected ternary: {py}");
+        assert!(py.contains("else 20"), "expected else clause: {py}");
+    }
+
+    // ── expr_uses_unwrap for Ternary (L167-168) ────────────────────────────
+
+    #[test]
+    fn emit_ternary_with_unwrap() {
+        // Directly test expr_uses_unwrap with a synthetic Ternary containing an unwrap call
+        let ternary = Expr::Ternary {
+            condition: Box::new(Expr::Literal(Literal::Bool(true))),
+            then_expr: Box::new(Expr::Call {
+                function: "g".into(),
+                args: vec![],
+                unwrap: true,
+            }),
+            else_expr: Box::new(Expr::Literal(Literal::Number(0.0))),
+        };
+        assert!(expr_uses_unwrap(&ternary), "ternary with unwrap call should be detected");
+    }
+
+    // ── rou codegen (L505) ──────────────────────────────────────────────────
+
+    #[test]
+    fn emit_rou() {
+        let py = parse_and_emit("f x:n>n;rou x");
+        assert!(py.contains("float(round("), "expected round call: {py}");
+    }
+
+    // ── Literal::Nil codegen (L775) ─────────────────────────────────────────
+
+    #[test]
+    fn emit_literal_nil() {
+        let py = parse_and_emit("f>O n;nil");
+        assert!(py.contains("None"), "expected None for nil: {py}");
+    }
 }
