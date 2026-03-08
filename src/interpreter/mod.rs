@@ -5353,4 +5353,35 @@ mod tests {
         .unwrap();
         assert_eq!(result, Value::Ok(Box::new(Value::Nil)));
     }
+
+    // ── Coverage: rnd builtin with valid bounds (L455) ──────────────────────
+
+    #[test]
+    fn interp_rnd_valid_bounds() {
+        let result = run_str("f>n;rnd 1 10", None, vec![]);
+        match result {
+            Value::Number(n) => assert!((1.0..=10.0).contains(&n)),
+            _ => panic!("expected number"),
+        }
+    }
+
+    // ── Coverage: TypeIs pattern with non-primitive type (L1727) ─────────────
+
+    #[test]
+    fn interp_type_is_pattern_number() {
+        let result = run_str(r#"f x:n>t;?x{n v:"num";_:"other"}"#, None, vec![Value::Number(5.0)]);
+        assert_eq!(result, Value::Text("num".to_string()));
+    }
+
+    #[test]
+    fn interp_type_is_pattern_text() {
+        let result = run_str(r#"f x:t>t;?x{t v:v;_:"other"}"#, None, vec![Value::Text("hi".to_string())]);
+        assert_eq!(result, Value::Text("hi".to_string()));
+    }
+
+    #[test]
+    fn interp_type_is_pattern_bool() {
+        let result = run_str(r#"f x:b>t;?x{b v:"matched";_:"other"}"#, None, vec![Value::Bool(true)]);
+        assert_eq!(result, Value::Text("matched".to_string()));
+    }
 }

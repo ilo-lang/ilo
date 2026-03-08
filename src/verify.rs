@@ -4776,6 +4776,192 @@ mod tests {
             "expected ILO-T003 ternary mismatch error, got: {:?}", result.errors
         );
     }
+
+    // ── Coverage: builtin type checking for has/hd/tl/rev/unq/srt ───────────
+
+    #[test]
+    fn verify_has_builtin() {
+        assert!(parse_and_verify(r#"f xs:L n x:n>b;has xs x"#).is_ok());
+    }
+
+    #[test]
+    fn verify_hd_builtin() {
+        assert!(parse_and_verify("f xs:L n>n;hd xs").is_ok());
+    }
+
+    #[test]
+    fn verify_hd_text_builtin() {
+        assert!(parse_and_verify("f s:t>t;hd s").is_ok());
+    }
+
+    #[test]
+    fn verify_tl_builtin() {
+        assert!(parse_and_verify("f xs:L n>L n;tl xs").is_ok());
+    }
+
+    #[test]
+    fn verify_tl_text_builtin() {
+        assert!(parse_and_verify("f s:t>t;tl s").is_ok());
+    }
+
+    #[test]
+    fn verify_rev_builtin() {
+        assert!(parse_and_verify("f xs:L n>L n;rev xs").is_ok());
+    }
+
+    #[test]
+    fn verify_rev_text_builtin() {
+        assert!(parse_and_verify("f s:t>t;rev s").is_ok());
+    }
+
+    #[test]
+    fn verify_unq_builtin() {
+        assert!(parse_and_verify("f xs:L n>L n;unq xs").is_ok());
+    }
+
+    #[test]
+    fn verify_unq_text_builtin() {
+        assert!(parse_and_verify("f s:t>t;unq s").is_ok());
+    }
+
+    #[test]
+    fn verify_srt_builtin() {
+        assert!(parse_and_verify("f xs:L n>L n;srt xs").is_ok());
+    }
+
+    #[test]
+    fn verify_srt_text_builtin() {
+        assert!(parse_and_verify("f s:t>t;srt s").is_ok());
+    }
+
+    #[test]
+    fn verify_slc_builtin() {
+        assert!(parse_and_verify("f xs:L n>L n;slc xs 0 2").is_ok());
+    }
+
+    #[test]
+    fn verify_has_number_arg_error() {
+        let errs = parse_and_verify("f x:n>b;has x 1").unwrap_err();
+        assert!(errs.iter().any(|e| e.message.contains("has")));
+    }
+
+    #[test]
+    fn verify_hd_number_arg_error() {
+        let errs = parse_and_verify("f x:n>n;hd x").unwrap_err();
+        assert!(errs.iter().any(|e| e.message.contains("hd")));
+    }
+
+    #[test]
+    fn verify_tl_number_arg_error() {
+        let errs = parse_and_verify("f x:n>n;tl x").unwrap_err();
+        assert!(errs.iter().any(|e| e.message.contains("tl")));
+    }
+
+    #[test]
+    fn verify_rev_number_arg_error() {
+        let errs = parse_and_verify("f x:n>n;rev x").unwrap_err();
+        assert!(errs.iter().any(|e| e.message.contains("rev")));
+    }
+
+    #[test]
+    fn verify_unq_number_arg_error() {
+        let errs = parse_and_verify("f x:n>n;unq x").unwrap_err();
+        assert!(errs.iter().any(|e| e.message.contains("unq")));
+    }
+
+    #[test]
+    fn verify_srt_number_arg_error() {
+        let errs = parse_and_verify("f x:n>n;srt x").unwrap_err();
+        assert!(errs.iter().any(|e| e.message.contains("srt")));
+    }
+
+    // ── Coverage: direct builtin_check_args calls ───────────────────────────
+
+    #[test]
+    fn builtin_check_args_has_list() {
+        let (ty, errors) = builtin_check_args("has", &[Ty::List(Box::new(Ty::Number)), Ty::Number], "f", None);
+        assert_eq!(ty, Ty::Bool);
+        assert!(errors.is_empty());
+    }
+
+    #[test]
+    fn builtin_check_args_hd_list() {
+        let (ty, errors) = builtin_check_args("hd", &[Ty::List(Box::new(Ty::Number))], "f", None);
+        assert_eq!(ty, Ty::Number);
+        assert!(errors.is_empty());
+    }
+
+    #[test]
+    fn builtin_check_args_hd_text() {
+        let (ty, errors) = builtin_check_args("hd", &[Ty::Text], "f", None);
+        assert_eq!(ty, Ty::Text);
+        assert!(errors.is_empty());
+    }
+
+    #[test]
+    fn builtin_check_args_hd_no_args() {
+        let (ty, _errors) = builtin_check_args("hd", &[], "f", None);
+        assert_eq!(ty, Ty::Unknown);
+    }
+
+    #[test]
+    fn builtin_check_args_tl_list() {
+        let (ty, errors) = builtin_check_args("tl", &[Ty::List(Box::new(Ty::Number))], "f", None);
+        assert_eq!(ty, Ty::List(Box::new(Ty::Number)));
+        assert!(errors.is_empty());
+    }
+
+    #[test]
+    fn builtin_check_args_tl_no_args() {
+        let (ty, _errors) = builtin_check_args("tl", &[], "f", None);
+        assert_eq!(ty, Ty::Unknown);
+    }
+
+    #[test]
+    fn builtin_check_args_rev_list() {
+        let (ty, errors) = builtin_check_args("rev", &[Ty::List(Box::new(Ty::Number))], "f", None);
+        assert_eq!(ty, Ty::List(Box::new(Ty::Number)));
+        assert!(errors.is_empty());
+    }
+
+    #[test]
+    fn builtin_check_args_rev_no_args() {
+        let (ty, _errors) = builtin_check_args("rev", &[], "f", None);
+        assert_eq!(ty, Ty::Unknown);
+    }
+
+    #[test]
+    fn builtin_check_args_unq_list() {
+        let (ty, errors) = builtin_check_args("unq", &[Ty::List(Box::new(Ty::Text))], "f", None);
+        assert_eq!(ty, Ty::List(Box::new(Ty::Text)));
+        assert!(errors.is_empty());
+    }
+
+    #[test]
+    fn builtin_check_args_unq_no_args() {
+        let (ty, _errors) = builtin_check_args("unq", &[], "f", None);
+        assert_eq!(ty, Ty::Unknown);
+    }
+
+    #[test]
+    fn builtin_check_args_srt_list() {
+        let (ty, errors) = builtin_check_args("srt", &[Ty::List(Box::new(Ty::Number))], "f", None);
+        assert_eq!(ty, Ty::List(Box::new(Ty::Number)));
+        assert!(errors.is_empty());
+    }
+
+    #[test]
+    fn builtin_check_args_srt_no_args() {
+        let (ty, _errors) = builtin_check_args("srt", &[], "f", None);
+        assert_eq!(ty, Ty::Unknown);
+    }
+
+    #[test]
+    fn builtin_check_args_slc_list() {
+        let (ty, errors) = builtin_check_args("slc", &[Ty::List(Box::new(Ty::Number)), Ty::Number, Ty::Number], "f", None);
+        assert_eq!(ty, Ty::List(Box::new(Ty::Number)));
+        assert!(errors.is_empty());
+    }
 }
 
 

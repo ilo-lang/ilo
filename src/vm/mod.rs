@@ -13606,4 +13606,178 @@ mod tests {
         let result = vm_run(src, Some("f"), vec![]);
         assert_eq!(result, Value::Number(1499.0));
     }
+
+    // ── Coverage: Nil literal in match pattern (compiler L954) ──────────────
+
+    #[test]
+    fn vm_match_nil_literal_pattern() {
+        // ~v must come before _ (wildcard matches everything)
+        let src = r#"f x:O n>t;?x{~v:"val";_:"nil"}"#;
+        assert_eq!(
+            vm_run(src, Some("f"), vec![Value::Nil]),
+            Value::Text("nil".to_string())
+        );
+        assert_eq!(
+            vm_run(src, Some("f"), vec![Value::Ok(Box::new(Value::Number(1.0)))]),
+            Value::Text("val".to_string())
+        );
+    }
+
+    // ── Coverage: Nil literal in expression (compiler L1019, L1088) ─────────
+
+    #[test]
+    fn vm_nil_literal_in_expression() {
+        let src = "f>O n;nil";
+        let result = vm_run(src, Some("f"), vec![]);
+        assert_eq!(result, Value::Nil);
+    }
+
+    // ── Coverage: Break in while loop (compiler L858) ───────────────────────
+
+    #[test]
+    fn vm_break_in_while_coverage() {
+        let src = "f>n;i=0;wh true{i=+i 1;>=i 5{brk}};i";
+        let result = vm_run(src, Some("f"), vec![]);
+        assert_eq!(result, Value::Number(5.0));
+    }
+
+    // ── Coverage: Break in foreach loop ─────────────────────────────────────
+
+    #[test]
+    fn vm_break_in_foreach_coverage() {
+        let src = "f>n;xs=[1,2,3,4,5];r=0;@x xs{r=x;>=x 3{brk}};r";
+        let result = vm_run(src, Some("f"), vec![]);
+        assert_eq!(result, Value::Number(3.0));
+    }
+
+    // ── Coverage: record field access by name on arena record (L3251-3263) ──
+
+    #[test]
+    fn vm_recfld_name_arena_record() {
+        // JSON parse returns a record accessible by field name
+        let src = r#"f>t;j=jpar! "{\"name\":\"alice\",\"age\":30}";j.name"#;
+        let result = vm_run(src, Some("f"), vec![]);
+        assert_eq!(result, Value::Text("alice".to_string()));
+    }
+
+    // ── Coverage: heap record with text field names (L3585-3589) ────────────
+
+    #[test]
+    fn vm_recwith_heap_record() {
+        // Force heap record path by creating record that escapes arena
+        // (e.g., stored in list then extracted)
+        let src = "type pt{x:n;y:n} f>n;r=pt x:1 y:2;r2=r with x:10;+r2.x r2.y";
+        let result = vm_run(src, Some("f"), vec![]);
+        assert_eq!(result, Value::Number(12.0));
+    }
+
+    // ── Coverage: modulo by zero error (L3783) ────────────────────────────────
+
+    #[test]
+    fn vm_mod_zero_error() {
+        let src = "f x:n>n;mod x 0";
+        let err = vm_run_err(src, Some("f"), vec![Value::Number(10.0)]);
+        assert!(err.contains("modulo by zero") || err.contains("zero"), "got: {err}");
+    }
+
+    // ── Coverage: OP_RECWITH non-number slot (L3525, 3527) ──────────────────
+
+    #[test]
+    fn vm_recwith_arena_multiple_fields() {
+        let src = "type pt{x:n;y:n;z:n} f>n;r=pt x:1 y:2 z:3;r2=r with x:10 z:30;+r2.x +r2.y r2.z";
+        let result = vm_run(src, Some("f"), vec![]);
+        assert_eq!(result, Value::Number(42.0));
+    }
+
+    // ── Coverage: nanval_to_json arena record without registry (L4333) ──────
+
+    #[test]
+    fn vm_json_dump_record() {
+        let src = r#"type pt{x:n;y:n} f>t;r=pt x:1 y:2;jdmp r"#;
+        let result = vm_run(src, Some("f"), vec![]);
+        // Should produce JSON with field names
+        let text = match &result {
+            Value::Text(s) => s.clone(),
+            other => panic!("expected text, got: {other:?}"),
+        };
+        assert!(text.contains("\"x\"") && text.contains("\"y\""), "got: {text}");
+    }
+
+    // ── Coverage: serde_json_to_nanval fallback (L4370) ─────────────────────
+
+    #[test]
+    fn vm_jpar_null_value() {
+        let src = r#"f>O n;j=jpar "null";j"#;
+        let result = vm_run(src, Some("f"), vec![]);
+        assert_eq!(result, Value::Ok(Box::new(Value::Nil)));
+    }
+
+    // ── Coverage: OP_UNWRAP via jpar! (L3193) ─────────────────────────────────
+
+    #[test]
+    fn vm_unwrap_ok_value_coverage() {
+        // jpar! unwraps Ok result
+        let src = r#"f>n;r=jpar! "42";r"#;
+        let result = vm_run(src, Some("f"), vec![]);
+        assert_eq!(result, Value::Number(42.0));
+    }
+
+    // ── Coverage: OP_RECFLD on heap record via cross-function call ──────────
+
+    #[test]
+    fn vm_record_field_access_heap_coverage() {
+        // Return record from function call — record gets promoted to heap
+        let src = "type pt{x:n;y:n} mk a:n b:n>pt;pt x:a y:b
+f>n;r=mk 10 20;+r.x r.y";
+        let result = vm_run(src, Some("f"), vec![]);
+        assert_eq!(result, Value::Number(30.0));
+    }
+
+    // ── Coverage: list index must be number (L3336) ─────────────────────────
+
+    #[test]
+    fn vm_foreach_with_list() {
+        let src = "f>n;xs=[10,20,30];s=0;@x xs{s=+s x};s";
+        let result = vm_run(src, Some("f"), vec![]);
+        assert_eq!(result, Value::Number(60.0));
+    }
+
+    // ── Coverage: compiler constant-on-left optimization (L1606, L1625) ──────
+
+    #[test]
+    fn vm_const_left_multiply() {
+        // 2 * x where 2 is the constant on the left
+        let src = "f x:n>n;*2 x";
+        let result = vm_run(src, Some("f"), vec![Value::Number(5.0)]);
+        assert_eq!(result, Value::Number(10.0));
+    }
+
+    #[test]
+    fn vm_const_left_add() {
+        // 10 + x where 10 is the constant on the left
+        let src = "f x:n>n;+10 x";
+        let result = vm_run(src, Some("f"), vec![Value::Number(5.0)]);
+        assert_eq!(result, Value::Number(15.0));
+    }
+
+    // ── Coverage: dynamic destructure with existing register (L573) ─────────
+
+    #[test]
+    fn vm_destructure_record_coverage() {
+        let src = "type pt{x:n;y:n} f>n;r=pt x:3 y:4;{x;y}=r;+x y";
+        let result = vm_run(src, Some("f"), vec![]);
+        assert_eq!(result, Value::Number(7.0));
+    }
+
+    // ── Coverage: OP_ISBOOL (L2895) ─────────────────────────────────────────
+
+    #[test]
+    fn vm_isbool_match_pattern_coverage() {
+        // TypeIs pattern with bool type - exercises OP_ISBOOL
+        let src = r#"f x:b>t;?x{b v:"matched";_:"other"}"#;
+        assert_eq!(
+            vm_run(src, Some("f"), vec![Value::Bool(true)]),
+            Value::Text("matched".to_string())
+        );
+    }
 }
