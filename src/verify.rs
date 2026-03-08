@@ -4679,6 +4679,103 @@ mod tests {
         // Likely ok: Nil coalesces to Number (0)
         let _ = result;
     }
+
+    // ── Coverage: L1182 — resolve_alias_recursive early return (already resolved) ──
+
+    #[test]
+    fn alias_triple_chain_hits_early_return() {
+        // alias c3 = b3; alias b3 = a3; alias a3 = n
+        // When resolving c3: first resolves b3 (which resolves a3), then b3 is already
+        // in self.aliases. The outer loop iteration for b3 hits L1182 return.
+        let result = parse_and_verify("alias a3 n\nalias b3 a3\nalias c3 b3\nf x:c3>n;x");
+        assert!(result.is_ok(), "expected ok, got: {:?}", result.unwrap_err());
+    }
+
+    // ── Coverage: L1490 — TypeIs pattern with non-standard type (e.g., List) → Ty::Unknown ──
+
+    #[test]
+    fn match_type_is_non_standard_type_binds_unknown() {
+        // Construct AST directly with TypeIs { ty: Type::Named("foo"), binding: "v" }
+        // to hit the _ => Ty::Unknown branch at L1490
+        use crate::ast::{Decl, Expr, Literal, MatchArm, Param, Pattern, Program, Span, Spanned, Stmt, Type};
+        let prog = Program {
+            declarations: vec![Decl::Function {
+                name: "f".to_string(),
+                params: vec![Param { name: "x".to_string(), ty: Type::Number }],
+                return_type: Type::Number,
+                body: vec![Spanned::unknown(Stmt::Match {
+                    subject: Some(Expr::Ref("x".to_string())),
+                    arms: vec![
+                        MatchArm {
+                            pattern: Pattern::TypeIs { ty: Type::Named("foo".to_string()), binding: "v".to_string() },
+                            body: vec![Spanned::unknown(Stmt::Expr(Expr::Literal(Literal::Number(0.0))))],
+                        },
+                        MatchArm {
+                            pattern: Pattern::Wildcard,
+                            body: vec![Spanned::unknown(Stmt::Expr(Expr::Literal(Literal::Number(1.0))))],
+                        },
+                    ],
+                })],
+                span: Span::UNKNOWN,
+            }],
+            source: None,
+        };
+        let result = verify(&prog);
+        // Should not panic; the Unknown binding is just a permissive fallback
+        let _ = result;
+    }
+
+    // ── Coverage: L1504 — Literal::Nil in infer_expr ──────────────────────────
+
+    #[test]
+    fn nil_literal_in_expr_infers_nil_type() {
+        // Construct AST directly with Expr::Literal(Literal::Nil) in function body
+        use crate::ast::{Decl, Expr, Literal, Program, Span, Spanned, Stmt, Type};
+        let prog = Program {
+            declarations: vec![Decl::Function {
+                name: "f".to_string(),
+                params: vec![],
+                return_type: Type::Nil,
+                body: vec![Spanned::unknown(Stmt::Expr(Expr::Literal(Literal::Nil)))],
+                span: Span::UNKNOWN,
+            }],
+            source: None,
+        };
+        let result = verify(&prog);
+        assert!(result.errors.is_empty(), "nil literal should verify ok: {:?}", result.errors);
+    }
+
+    // ── Coverage: L1891-1895 — Ternary branch type mismatch ───────────────────
+
+    #[test]
+    fn ternary_branch_type_mismatch_error() {
+        // ?=x 0 "text" 42 — then_expr is Text, else_expr is Number → incompatible
+        // Exercises L1893-1895 (the error path)
+        use crate::ast::{Decl, Expr, Literal, Param, Program, Span, Spanned, Stmt, Type, BinOp};
+        let prog = Program {
+            declarations: vec![Decl::Function {
+                name: "f".to_string(),
+                params: vec![Param { name: "x".to_string(), ty: Type::Number }],
+                return_type: Type::Text,
+                body: vec![Spanned::unknown(Stmt::Expr(Expr::Ternary {
+                    condition: Box::new(Expr::BinOp {
+                        op: BinOp::Equals,
+                        left: Box::new(Expr::Ref("x".to_string())),
+                        right: Box::new(Expr::Literal(Literal::Number(0.0))),
+                    }),
+                    then_expr: Box::new(Expr::Literal(Literal::Text("text".to_string()))),
+                    else_expr: Box::new(Expr::Literal(Literal::Number(42.0))),
+                }))],
+                span: Span::UNKNOWN,
+            }],
+            source: None,
+        };
+        let result = verify(&prog);
+        assert!(
+            result.errors.iter().any(|e| e.code == "ILO-T003" && e.message.contains("ternary")),
+            "expected ILO-T003 ternary mismatch error, got: {:?}", result.errors
+        );
+    }
 }
 
 

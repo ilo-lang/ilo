@@ -590,6 +590,223 @@ mod tests {
         assert!(!json.contains("f x:n>n;x"));
     }
 
+    // ── Coverage: resolve_aliases_stmt / resolve_aliases_expr paths ──────────
+
+    #[test]
+    fn resolve_aliases_while_stmt() {
+        // L440-442: While variant in resolve_aliases_stmt
+        let mut prog = Program {
+            declarations: vec![Decl::Function {
+                name: "f".to_string(),
+                params: vec![],
+                return_type: Type::Number,
+                body: vec![Spanned::unknown(Stmt::While {
+                    condition: Expr::Call { function: "length".to_string(), args: vec![Expr::Ref("x".to_string())], unwrap: false },
+                    body: vec![Spanned::unknown(Stmt::Expr(Expr::Call { function: "length".to_string(), args: vec![Expr::Ref("y".to_string())], unwrap: false }))],
+                })],
+                span: Span::UNKNOWN,
+            }],
+            source: None,
+        };
+        resolve_aliases(&mut prog);
+        let Decl::Function { body, .. } = &prog.declarations[0] else { panic!() };
+        let Stmt::While { condition, body: wbody } = &body[0].node else { panic!("expected While") };
+        let Expr::Call { function, .. } = condition else { panic!("expected call") };
+        assert_eq!(function, "len");
+        let Stmt::Expr(Expr::Call { function: f2, .. }) = &wbody[0].node else { panic!("expected call") };
+        assert_eq!(f2, "len");
+    }
+
+    #[test]
+    fn resolve_aliases_return_stmt() {
+        // L444: Return variant in resolve_aliases_stmt
+        let mut prog = Program {
+            declarations: vec![Decl::Function {
+                name: "f".to_string(),
+                params: vec![],
+                return_type: Type::Number,
+                body: vec![Spanned::unknown(Stmt::Return(
+                    Expr::Call { function: "length".to_string(), args: vec![Expr::Ref("x".to_string())], unwrap: false },
+                ))],
+                span: Span::UNKNOWN,
+            }],
+            source: None,
+        };
+        resolve_aliases(&mut prog);
+        let Decl::Function { body, .. } = &prog.declarations[0] else { panic!() };
+        let Stmt::Return(Expr::Call { function, .. }) = &body[0].node else { panic!("expected Return(Call)") };
+        assert_eq!(function, "len");
+    }
+
+    #[test]
+    fn resolve_aliases_destructure_stmt() {
+        // L445: Destructure variant in resolve_aliases_stmt
+        let mut prog = Program {
+            declarations: vec![Decl::Function {
+                name: "f".to_string(),
+                params: vec![],
+                return_type: Type::Number,
+                body: vec![Spanned::unknown(Stmt::Destructure {
+                    bindings: vec!["a".to_string(), "b".to_string()],
+                    value: Expr::Call { function: "length".to_string(), args: vec![Expr::Ref("x".to_string())], unwrap: false },
+                })],
+                span: Span::UNKNOWN,
+            }],
+            source: None,
+        };
+        resolve_aliases(&mut prog);
+        let Decl::Function { body, .. } = &prog.declarations[0] else { panic!() };
+        let Stmt::Destructure { value: Expr::Call { function, .. }, .. } = &body[0].node else { panic!("expected Destructure") };
+        assert_eq!(function, "len");
+    }
+
+    #[test]
+    fn resolve_aliases_break_with_value() {
+        // L446: Break(Some(expr)) variant in resolve_aliases_stmt
+        let mut prog = Program {
+            declarations: vec![Decl::Function {
+                name: "f".to_string(),
+                params: vec![],
+                return_type: Type::Number,
+                body: vec![Spanned::unknown(Stmt::Break(Some(
+                    Expr::Call { function: "length".to_string(), args: vec![Expr::Ref("x".to_string())], unwrap: false },
+                )))],
+                span: Span::UNKNOWN,
+            }],
+            source: None,
+        };
+        resolve_aliases(&mut prog);
+        let Decl::Function { body, .. } = &prog.declarations[0] else { panic!() };
+        let Stmt::Break(Some(Expr::Call { function, .. })) = &body[0].node else { panic!("expected Break(Some(Call))") };
+        assert_eq!(function, "len");
+    }
+
+    #[test]
+    fn resolve_aliases_break_none_and_continue() {
+        // L447: Break(None) | Continue — no-op, just ensure no panic
+        let mut prog = Program {
+            declarations: vec![Decl::Function {
+                name: "f".to_string(),
+                params: vec![],
+                return_type: Type::Number,
+                body: vec![
+                    Spanned::unknown(Stmt::Break(None)),
+                    Spanned::unknown(Stmt::Continue),
+                ],
+                span: Span::UNKNOWN,
+            }],
+            source: None,
+        };
+        resolve_aliases(&mut prog);
+        assert!(matches!(&prog.declarations[0], Decl::Function { body, .. } if body.len() == 2));
+    }
+
+    #[test]
+    fn resolve_aliases_nil_coalesce_expr() {
+        // L465-467: NilCoalesce variant in resolve_aliases_expr
+        let mut prog = Program {
+            declarations: vec![Decl::Function {
+                name: "f".to_string(),
+                params: vec![],
+                return_type: Type::Number,
+                body: vec![Spanned::unknown(Stmt::Expr(Expr::NilCoalesce {
+                    value: Box::new(Expr::Call { function: "length".to_string(), args: vec![Expr::Ref("x".to_string())], unwrap: false }),
+                    default: Box::new(Expr::Call { function: "reverse".to_string(), args: vec![Expr::Ref("y".to_string())], unwrap: false }),
+                }))],
+                span: Span::UNKNOWN,
+            }],
+            source: None,
+        };
+        resolve_aliases(&mut prog);
+        let Decl::Function { body, .. } = &prog.declarations[0] else { panic!() };
+        let Stmt::Expr(Expr::NilCoalesce { value, default }) = &body[0].node else { panic!("expected NilCoalesce") };
+        let Expr::Call { function, .. } = value.as_ref() else { panic!("expected call") };
+        assert_eq!(function, "len");
+        let Expr::Call { function: f2, .. } = default.as_ref() else { panic!("expected call") };
+        assert_eq!(f2, "rev");
+    }
+
+    #[test]
+    fn resolve_aliases_record_expr() {
+        // L472-473: Record variant in resolve_aliases_expr
+        let mut prog = Program {
+            declarations: vec![Decl::Function {
+                name: "f".to_string(),
+                params: vec![],
+                return_type: Type::Number,
+                body: vec![Spanned::unknown(Stmt::Expr(Expr::Record {
+                    type_name: "point".to_string(),
+                    fields: vec![
+                        ("x".to_string(), Expr::Call { function: "length".to_string(), args: vec![Expr::Ref("a".to_string())], unwrap: false }),
+                    ],
+                }))],
+                span: Span::UNKNOWN,
+            }],
+            source: None,
+        };
+        resolve_aliases(&mut prog);
+        let Decl::Function { body, .. } = &prog.declarations[0] else { panic!() };
+        let Stmt::Expr(Expr::Record { fields, .. }) = &body[0].node else { panic!("expected Record") };
+        let Expr::Call { function, .. } = &fields[0].1 else { panic!("expected call") };
+        assert_eq!(function, "len");
+    }
+
+    #[test]
+    fn resolve_aliases_match_expr() {
+        // L475-478: Match variant (as expression) in resolve_aliases_expr
+        let mut prog = Program {
+            declarations: vec![Decl::Function {
+                name: "f".to_string(),
+                params: vec![],
+                return_type: Type::Number,
+                body: vec![Spanned::unknown(Stmt::Expr(Expr::Match {
+                    subject: Some(Box::new(Expr::Call { function: "length".to_string(), args: vec![Expr::Ref("x".to_string())], unwrap: false })),
+                    arms: vec![MatchArm {
+                        pattern: Pattern::Wildcard,
+                        body: vec![Spanned::unknown(Stmt::Expr(Expr::Call { function: "reverse".to_string(), args: vec![Expr::Ref("y".to_string())], unwrap: false }))],
+                    }],
+                }))],
+                span: Span::UNKNOWN,
+            }],
+            source: None,
+        };
+        resolve_aliases(&mut prog);
+        let Decl::Function { body, .. } = &prog.declarations[0] else { panic!() };
+        let Stmt::Expr(Expr::Match { subject, arms }) = &body[0].node else { panic!("expected Match") };
+        let Some(s) = subject else { panic!("expected subject") };
+        let Expr::Call { function, .. } = s.as_ref() else { panic!("expected call") };
+        assert_eq!(function, "len");
+        let Stmt::Expr(Expr::Call { function: f2, .. }) = &arms[0].body[0].node else { panic!("expected call") };
+        assert_eq!(f2, "rev");
+    }
+
+    #[test]
+    fn resolve_aliases_with_expr() {
+        // L481-483: With variant in resolve_aliases_expr
+        let mut prog = Program {
+            declarations: vec![Decl::Function {
+                name: "f".to_string(),
+                params: vec![],
+                return_type: Type::Number,
+                body: vec![Spanned::unknown(Stmt::Expr(Expr::With {
+                    object: Box::new(Expr::Call { function: "length".to_string(), args: vec![Expr::Ref("x".to_string())], unwrap: false }),
+                    updates: vec![
+                        ("a".to_string(), Expr::Call { function: "reverse".to_string(), args: vec![Expr::Ref("y".to_string())], unwrap: false }),
+                    ],
+                }))],
+                span: Span::UNKNOWN,
+            }],
+            source: None,
+        };
+        resolve_aliases(&mut prog);
+        let Decl::Function { body, .. } = &prog.declarations[0] else { panic!() };
+        let Stmt::Expr(Expr::With { object, updates }) = &body[0].node else { panic!("expected With") };
+        let Expr::Call { function, .. } = object.as_ref() else { panic!("expected call") };
+        assert_eq!(function, "len");
+        let Expr::Call { function: f2, .. } = &updates[0].1 else { panic!("expected call") };
+        assert_eq!(f2, "rev");
+    }
+
     #[test]
     fn program_json_round_trip() {
         // Ensure existing JSON AST shape is preserved
