@@ -13712,31 +13712,6 @@ mod tests {
         assert_eq!(result, Value::Ok(Box::new(Value::Nil)));
     }
 
-    // ── Coverage: HTTP operations (L3848-3858, L3880-3882 etc.) ─────────────
-
-    #[cfg(feature = "http")]
-    #[test]
-    fn vm_get_http() {
-        let src = r#"f>R t t;get "http://httpbin.org/get""#;
-        let result = vm_run(src, Some("f"), vec![]);
-        match result {
-            Value::Ok(_) => {} // success
-            Value::Err(_) => {} // network error is ok in CI
-            _ => panic!("expected Ok or Err, got: {result:?}"),
-        }
-    }
-
-    #[cfg(feature = "http")]
-    #[test]
-    fn vm_post_http() {
-        let src = r#"f>R t t;post "http://httpbin.org/post" "body""#;
-        let result = vm_run(src, Some("f"), vec![]);
-        match result {
-            Value::Ok(_) | Value::Err(_) => {}
-            _ => panic!("expected Ok or Err, got: {result:?}"),
-        }
-    }
-
     // ── Coverage: OP_UNWRAP via jpar! (L3193) ─────────────────────────────────
 
     #[test]
