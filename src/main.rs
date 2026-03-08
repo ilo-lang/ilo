@@ -4072,6 +4072,150 @@ mod tests {
         std::fs::remove_dir(&dir_path).ok();
     }
 
+    // ── unit: type_to_ilo ─────────────────────────────────────────────────────
+
+    #[test]
+    fn type_to_ilo_number() {
+        assert_eq!(type_to_ilo(&ast::Type::Number), "n");
+    }
+
+    #[test]
+    fn type_to_ilo_text() {
+        assert_eq!(type_to_ilo(&ast::Type::Text), "t");
+    }
+
+    #[test]
+    fn type_to_ilo_bool() {
+        assert_eq!(type_to_ilo(&ast::Type::Bool), "b");
+    }
+
+    #[test]
+    fn type_to_ilo_nil() {
+        assert_eq!(type_to_ilo(&ast::Type::Nil), "_");
+    }
+
+    #[test]
+    fn type_to_ilo_optional() {
+        assert_eq!(
+            type_to_ilo(&ast::Type::Optional(Box::new(ast::Type::Number))),
+            "O n"
+        );
+    }
+
+    #[test]
+    fn type_to_ilo_list() {
+        assert_eq!(
+            type_to_ilo(&ast::Type::List(Box::new(ast::Type::Text))),
+            "L t"
+        );
+    }
+
+    #[test]
+    fn type_to_ilo_map() {
+        assert_eq!(
+            type_to_ilo(&ast::Type::Map(
+                Box::new(ast::Type::Text),
+                Box::new(ast::Type::Number),
+            )),
+            "M t n"
+        );
+    }
+
+    #[test]
+    fn type_to_ilo_result() {
+        assert_eq!(
+            type_to_ilo(&ast::Type::Result(
+                Box::new(ast::Type::Text),
+                Box::new(ast::Type::Number),
+            )),
+            "R t n"
+        );
+    }
+
+    #[test]
+    fn type_to_ilo_sum() {
+        assert_eq!(
+            type_to_ilo(&ast::Type::Sum(vec!["ok".into(), "err".into()])),
+            "S ok err"
+        );
+    }
+
+    #[test]
+    fn type_to_ilo_fn() {
+        assert_eq!(
+            type_to_ilo(&ast::Type::Fn(
+                vec![ast::Type::Number, ast::Type::Text],
+                Box::new(ast::Type::Bool),
+            )),
+            "F n t b"
+        );
+    }
+
+    #[test]
+    fn type_to_ilo_named() {
+        assert_eq!(type_to_ilo(&ast::Type::Named("point".into())), "point");
+    }
+
+    #[test]
+    fn type_to_ilo_nested_optional_list() {
+        assert_eq!(
+            type_to_ilo(&ast::Type::Optional(Box::new(ast::Type::List(
+                Box::new(ast::Type::Number)
+            )))),
+            "O L n"
+        );
+    }
+
+    // ── unit: brace_depth ───────────────────────────────────────────────────────
+
+    #[test]
+    fn brace_depth_empty() {
+        assert_eq!(brace_depth(""), 0);
+    }
+
+    #[test]
+    fn brace_depth_balanced() {
+        assert_eq!(brace_depth("{a;b}"), 0);
+    }
+
+    #[test]
+    fn brace_depth_unclosed() {
+        assert_eq!(brace_depth("{a;b"), 1);
+    }
+
+    #[test]
+    fn brace_depth_nested_unclosed() {
+        assert_eq!(brace_depth("{{a"), 2);
+    }
+
+    #[test]
+    fn brace_depth_extra_close() {
+        assert_eq!(brace_depth("}"), -1);
+    }
+
+    #[test]
+    fn brace_depth_ignores_string() {
+        // Braces inside string literals should be ignored
+        assert_eq!(brace_depth("\"{}\""), 0);
+    }
+
+    #[test]
+    fn brace_depth_ignores_comment() {
+        // Braces after -- comment should be ignored
+        assert_eq!(brace_depth("x -- {unclosed"), 0);
+    }
+
+    #[test]
+    fn brace_depth_mixed_string_and_real() {
+        // Real { outside string, { inside string ignored
+        assert_eq!(brace_depth("{\"}\"}"), 0);
+    }
+
+    #[test]
+    fn brace_depth_no_braces() {
+        assert_eq!(brace_depth("hello world"), 0);
+    }
+
     // ── unit: load_env_file — line without '=' is skipped silently ───────────
 
     #[test]

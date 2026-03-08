@@ -2346,3 +2346,350 @@ fn alias_in_for_range() {
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
     assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "3");
 }
+
+// ── REPL integration tests (piped stdin) ────────────────────────────────────
+
+/// Helper: spawn `ilo repl` with piped stdin, send input, collect output.
+fn run_repl(input: &str) -> std::process::Output {
+    use std::io::Write;
+    use std::process::Stdio;
+    let mut child = ilo()
+        .args(["repl"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("failed to spawn ilo repl");
+    {
+        let stdin = child.stdin.as_mut().unwrap();
+        stdin.write_all(input.as_bytes()).unwrap();
+    }
+    child.wait_with_output().unwrap()
+}
+
+#[test]
+fn repl_quit_q() {
+    let out = run_repl(":q\n");
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+}
+
+#[test]
+fn repl_quit_exit_command() {
+    let out = run_repl(":exit\n");
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+}
+
+#[test]
+fn repl_quit_x_command() {
+    let out = run_repl(":x\n");
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+}
+
+#[test]
+fn repl_quit_word_exit() {
+    let out = run_repl("exit\n");
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+}
+
+#[test]
+fn repl_quit_word_quit() {
+    let out = run_repl("quit\n");
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+}
+
+#[test]
+fn repl_eval_expression() {
+    let out = run_repl("+1 2\n:q\n");
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("3"), "expected 3 in output, got: {stdout}");
+}
+
+#[test]
+fn repl_defs_empty() {
+    let out = run_repl(":defs\n:q\n");
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("(no definitions)"), "expected '(no definitions)', got: {stdout}");
+}
+
+#[test]
+fn repl_defs_lists_functions() {
+    let out = run_repl("f x:n>n;x\n:defs\n:q\n");
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("f x:n>n;x"), "expected definition in :defs output, got: {stdout}");
+}
+
+#[test]
+fn repl_clear_defs() {
+    let out = run_repl("f x:n>n;x\n:clear\n:defs\n:q\n");
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("cleared all definitions"), "expected 'cleared all definitions', got: {stdout}");
+    assert!(stdout.contains("(no definitions)"), "expected empty defs after clear, got: {stdout}");
+}
+
+#[test]
+fn repl_help_command() {
+    let out = run_repl(":help\n:q\n");
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains(":w <file>"), "expected help text, got: {stdout}");
+    assert!(stdout.contains(":defs"), "expected :defs in help, got: {stdout}");
+}
+
+#[test]
+fn repl_unknown_command() {
+    let out = run_repl(":foobar\n:q\n");
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("unknown command"), "expected 'unknown command', got: {stderr}");
+}
+
+#[test]
+fn repl_wq_no_defs() {
+    let out = run_repl(":wq\n:q\n");
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("no definitions to save"), "expected 'no definitions to save', got: {stderr}");
+}
+
+#[test]
+fn repl_wq_with_defs_no_path() {
+    let out = run_repl("f x:n>n;x\n:wq\n:q\n");
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("usage: :w <file.ilo>"), "expected usage hint, got: {stderr}");
+}
+
+#[test]
+fn repl_w_save_file() {
+    let path = "/tmp/ilo_repl_test_save_cov.ilo";
+    let _ = std::fs::remove_file(path);
+    let out = run_repl(&format!("f x:n>n;*x 2\n:w {path}\n:q\n"));
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("saved 1 definition(s)"), "expected save message, got: {stdout}");
+    let contents = std::fs::read_to_string(path).expect("saved file should exist");
+    assert!(contents.contains("f x:n>n;*x 2"), "expected definition in file, got: {contents}");
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn repl_wq_save_and_quit() {
+    let path = "/tmp/ilo_repl_test_wq_cov.ilo";
+    let _ = std::fs::remove_file(path);
+    let out = run_repl(&format!("f x:n>n;+x 1\n:wq {path}\n"));
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("saved 1 definition(s)"), "expected save message, got: {stdout}");
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn repl_w_no_defs_to_save() {
+    let out = run_repl(":w /tmp/ilo_repl_nodefs_cov.ilo\n:q\n");
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("no definitions to save"), "expected 'no definitions to save', got: {stderr}");
+}
+
+#[test]
+fn repl_multiline_braces() {
+    // Multi-line input: unclosed brace continues reading on next line
+    let out = run_repl("f x:n>n;<=x 0{\n0\n};x\nf 5\n:q\n");
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("5"), "expected 5 in output, got: {stdout}");
+}
+
+#[test]
+fn repl_multiline_semicolon() {
+    // Line ending with ; continues reading
+    let out = run_repl("f x:n>n;\n+x 1\nf 5\n:q\n");
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("defined:"), "expected definition, got: {stdout}");
+}
+
+#[test]
+fn repl_empty_lines_ignored() {
+    let out = run_repl("\n\n+1 1\n:q\n");
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("2"), "expected 2 in output, got: {stdout}");
+}
+
+#[test]
+fn repl_eof_exits() {
+    use std::process::Stdio;
+    let out = ilo()
+        .args(["repl"])
+        .stdin(Stdio::null())
+        .output()
+        .expect("failed to run ilo");
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+}
+
+#[test]
+fn repl_define_typedef() {
+    // Covers type_to_ilo for TypeDef fields (L666-668)
+    let out = run_repl("type point{x:n;y:n}\n:defs\n:q\n");
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("defined type: point"), "expected typedef output, got: {stdout}");
+}
+
+#[test]
+fn repl_define_alias() {
+    // Covers type_to_ilo for Alias (L670-671)
+    let out = run_repl("alias num n\n:defs\n:q\n");
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("defined alias: num"), "expected alias output, got: {stdout}");
+}
+
+#[test]
+fn repl_parse_error() {
+    // Invalid expression should show error but not crash
+    let out = run_repl("@@@\n:q\n");
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!stderr.is_empty(), "expected error on stderr, got nothing");
+}
+
+// ── CLI emit format edge cases ──────────────────────────────────────────────
+
+#[test]
+fn emit_dense_format() {
+    let out = ilo()
+        .args(["f x:n>n;y=*x 2;+y 1", "--dense"])
+        .output()
+        .expect("failed to run ilo");
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(!stdout.is_empty(), "expected dense output");
+}
+
+#[test]
+fn emit_dense_short_flag() {
+    let out = ilo()
+        .args(["f x:n>n;*x 2", "-d"])
+        .output()
+        .expect("failed to run ilo");
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+}
+
+#[test]
+fn emit_fmt_alias() {
+    let out = ilo()
+        .args(["f x:n>n;*x 2", "--fmt"])
+        .output()
+        .expect("failed to run ilo");
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+}
+
+#[test]
+fn emit_expanded_format() {
+    let out = ilo()
+        .args(["f x:n>n;y=*x 2;+y 1", "--expanded"])
+        .output()
+        .expect("failed to run ilo");
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(!stdout.is_empty(), "expected expanded output");
+}
+
+#[test]
+fn emit_expanded_short_flag() {
+    let out = ilo()
+        .args(["f x:n>n;*x 2", "-e"])
+        .output()
+        .expect("failed to run ilo");
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+}
+
+#[test]
+fn emit_fmt_expanded_alias() {
+    let out = ilo()
+        .args(["f x:n>n;*x 2", "--fmt-expanded"])
+        .output()
+        .expect("failed to run ilo");
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+}
+
+#[test]
+fn no_hints_flag() {
+    // --no-hints should suppress idiomatic hints
+    let out = ilo()
+        .args(["--no-hints", "f x:n y:n>b;=x y", "1", "1"])
+        .output()
+        .expect("failed to run ilo");
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!stderr.contains("hint:"), "expected no hints with --no-hints, got: {stderr}");
+}
+
+#[test]
+fn no_hints_short_flag() {
+    let out = ilo()
+        .args(["-nh", "f x:n y:n>b;=x y", "1", "1"])
+        .output()
+        .expect("failed to run ilo");
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!stderr.contains("hint:"), "expected no hints with -nh, got: {stderr}");
+}
+
+// ── serv subcommand additional tests ────────────────────────────────────────
+
+#[test]
+fn serv_run_program_with_response() {
+    use std::io::Write;
+    use std::process::Stdio;
+    let mut child = ilo()
+        .args(["serv"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("failed to spawn ilo serv");
+    {
+        let stdin = child.stdin.as_mut().unwrap();
+        writeln!(stdin, r#"{{"program":"f x:n>n;*x 2","args":["5"],"func":"f"}}"#).unwrap();
+    }
+    let out = child.wait_with_output().unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let lines: Vec<&str> = stdout.lines().collect();
+    assert!(lines.len() >= 2, "expected at least 2 lines, got: {stdout}");
+    let resp: serde_json::Value = serde_json::from_str(lines[1])
+        .unwrap_or_else(|_| panic!("expected JSON response, got: {}", lines[1]));
+    assert_eq!(resp["ok"], serde_json::json!(10), "expected ok=10, got: {resp}");
+}
+
+#[test]
+fn serv_invalid_json_request() {
+    use std::io::Write;
+    use std::process::Stdio;
+    let mut child = ilo()
+        .args(["serv"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("failed to spawn ilo serv");
+    {
+        let stdin = child.stdin.as_mut().unwrap();
+        writeln!(stdin, "not json").unwrap();
+    }
+    let out = child.wait_with_output().unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let lines: Vec<&str> = stdout.lines().collect();
+    assert!(lines.len() >= 2, "expected at least 2 lines, got: {stdout}");
+    let resp: serde_json::Value = serde_json::from_str(lines[1])
+        .unwrap_or_else(|_| panic!("expected JSON response, got: {}", lines[1]));
+    assert!(resp["error"].is_object(), "expected error in response, got: {resp}");
+}
