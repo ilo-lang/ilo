@@ -354,6 +354,7 @@ const BUILTIN_ALIASES: &[(&str, &str)] = &[
     // Math
     ("floor", "flr"),
     ("ceil", "cel"),
+    ("round", "rou"),
     ("random", "rnd"),
     // Conversion
     ("string", "str"),

@@ -414,10 +414,10 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             _ => Err(RuntimeError::new("ILO-R009", format!("{} requires two numbers", name))),
         };
     }
-    if (name == "flr" || name == "cel") && args.len() == 1 {
+    if (name == "flr" || name == "cel" || name == "rou") && args.len() == 1 {
         return match &args[0] {
             Value::Number(n) => {
-                let result = if name == "flr" { n.floor() } else { n.ceil() };
+                let result = if name == "flr" { n.floor() } else if name == "cel" { n.ceil() } else { n.round() };
                 Ok(Value::Number(result))
             }
             other => Err(RuntimeError::new("ILO-R009", format!("{} requires a number, got {:?}", name, other))),

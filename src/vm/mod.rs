@@ -149,6 +149,7 @@ pub(crate) const OP_POST: u8 = 83;      // R[A] = http_post(R[B], R[C])  (return
 pub(crate) const OP_GETH: u8 = 84;      // R[A] = http_get(R[B], headers=R[C])  (returns R t t)
 pub(crate) const OP_POSTH: u8 = 85;     // ABx: R[A] = http_post(R[B], body=R[bx>>8], headers=R[bx&0xFF])
 pub(crate) const OP_MOD: u8 = 86;       // R[A] = R[B] % R[C]  (modulo / remainder)
+pub(crate) const OP_ROU: u8 = 87;       // R[A] = round(R[B])
 
 // ABx mode — register + 16-bit operand
 pub(crate) const OP_LOADK: u8 = 20;
@@ -1211,10 +1212,10 @@ impl RegCompiler {
                     self.reg_is_num[ra as usize] = true;
                     return ra;
                 }
-                if (function == "flr" || function == "cel") && args.len() == 1 {
+                if (function == "flr" || function == "cel" || function == "rou") && args.len() == 1 {
                     let rb = self.compile_expr(&args[0]);
                     let ra = self.alloc_reg();
-                    let op = if function == "flr" { OP_FLR } else { OP_CEL };
+                    let op = if function == "flr" { OP_FLR } else if function == "cel" { OP_CEL } else { OP_ROU };
                     self.emit_abc(op, ra, rb, 0);
                     self.reg_is_num[ra as usize] = true;
                     return ra;
@@ -3676,15 +3677,15 @@ impl<'a> VM<'a> {
                     }
                     reg_set!(a, NanVal::number(vb.as_number() % nc));
                 }
-                OP_FLR | OP_CEL => {
+                OP_FLR | OP_CEL | OP_ROU => {
                     let a = ((inst >> 16) & 0xFF) as usize + base;
                     let b = ((inst >> 8) & 0xFF) as usize + base;
                     let v = reg!(b);
                     if !v.is_number() {
-                        return Err(VmError::Type("flr/cel requires a number"));
+                        return Err(VmError::Type("flr/cel/rou requires a number"));
                     }
                     let n = v.as_number();
-                    let result = if op == OP_FLR { n.floor() } else { n.ceil() };
+                    let result = if op == OP_FLR { n.floor() } else if op == OP_CEL { n.ceil() } else { n.round() };
                     reg_set!(a, NanVal::number(result));
                 }
                 OP_RND0 => {
@@ -4692,6 +4693,13 @@ pub(crate) extern "C" fn jit_flr(a: u64) -> u64 {
 pub(crate) extern "C" fn jit_cel(a: u64) -> u64 {
     let v = NanVal(a);
     if v.is_number() { NanVal::number(v.as_number().ceil()).0 } else { TAG_NIL }
+}
+
+#[cfg(feature = "cranelift")]
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn jit_rou(a: u64) -> u64 {
+    let v = NanVal(a);
+    if v.is_number() { NanVal::number(v.as_number().round()).0 } else { TAG_NIL }
 }
 
 #[cfg(feature = "cranelift")]

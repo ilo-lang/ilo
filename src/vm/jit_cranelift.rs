@@ -56,6 +56,7 @@ struct HelperFuncs {
     max: FuncId,
     flr: FuncId,
     cel: FuncId,
+    rou: FuncId,
     rnd0: FuncId,
     rnd2: FuncId,
     now: FuncId,
@@ -123,6 +124,7 @@ fn register_helpers(builder: &mut JITBuilder) {
         ("jit_max", jit_max as *const u8),
         ("jit_flr", jit_flr as *const u8),
         ("jit_cel", jit_cel as *const u8),
+        ("jit_rou", jit_rou as *const u8),
         ("jit_rnd0", jit_rnd0 as *const u8),
         ("jit_rnd2", jit_rnd2 as *const u8),
         ("jit_now", jit_now as *const u8),
@@ -183,6 +185,7 @@ fn declare_all_helpers(module: &mut JITModule) -> HelperFuncs {
         max: declare_helper(module, "jit_max", 2, 1),
         flr: declare_helper(module, "jit_flr", 1, 1),
         cel: declare_helper(module, "jit_cel", 1, 1),
+        rou: declare_helper(module, "jit_rou", 1, 1),
         rnd0: declare_helper(module, "jit_rnd0", 0, 1),
         rnd2: declare_helper(module, "jit_rnd2", 2, 1),
         now: declare_helper(module, "jit_now", 0, 1),
@@ -720,6 +723,13 @@ pub(crate) fn compile(chunk: &Chunk, nan_consts: &[NanVal], program: &CompiledPr
             OP_CEL => {
                 let bv = builder.use_var(vars[b_idx]);
                 let fref = get_func_ref(&mut builder, &mut module, helpers.cel);
+                let call_inst = builder.ins().call(fref, &[bv]);
+                let result = builder.inst_results(call_inst)[0];
+                builder.def_var(vars[a_idx], result);
+            }
+            OP_ROU => {
+                let bv = builder.use_var(vars[b_idx]);
+                let fref = get_func_ref(&mut builder, &mut module, helpers.rou);
                 let call_inst = builder.ins().call(fref, &[bv]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);

@@ -240,6 +240,7 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("abs", &["n"], "n"),
     ("flr", &["n"], "n"),
     ("cel", &["n"], "n"),
+    ("rou", &["n"], "n"),
     ("min", &["n", "n"], "n"),
     ("max", &["n", "n"], "n"),
     ("mod", &["n", "n"], "n"),
@@ -349,7 +350,7 @@ fn builtin_check_args(name: &str, arg_types: &[Ty], func_ctx: &str, span: Option
             }
             (Ty::Result(Box::new(Ty::Number), Box::new(Ty::Text)), errors)
         }
-        "abs" | "flr" | "cel" => {
+        "abs" | "flr" | "cel" | "rou" => {
             if let Some(arg) = arg_types.first()
                 && !compatible(arg, &Ty::Number)
             {
