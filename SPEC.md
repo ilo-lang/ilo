@@ -556,11 +556,12 @@ Guards already provide early return for simple cases. Use `ret` when you need ea
 
 ### Range Iteration
 
-`@i a..b{body}` iterates `i` from `a` (inclusive) to `b` (exclusive). The index variable is a fresh binding per iteration; other variables in the body update the enclosing scope:
+`@i a..b{body}` iterates `i` from `a` (inclusive) to `b` (exclusive). Both bounds can be variables or expressions. The index variable is a fresh binding per iteration; other variables in the body update the enclosing scope:
 
 ```
 f>n;s=0;@i 0..5{s=+s i};s      -- sum 0+1+2+3+4 = 10
 f>n;xs=[];@i 0..3{xs=+=xs i};xs -- [0, 1, 2]
+f n:n>n;s=0;@i 0..n{s=+s i};s  -- dynamic end bound
 ```
 
 ### While Loop
