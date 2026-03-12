@@ -152,23 +152,23 @@ ilo help lang        # full spec
 
 Per-call time (ns) across 7 micro-benchmarks. Lower is better. [Full results →](https://ilo-lang.ai/docs/reference/benchmarks/)
 
-| Language | numeric | string | record | mixed | guards | recurse | html |
+| Language | numeric | string | record | mixed | guards | recurse | api |
 |----------|--------:|--------:|--------:|--------:|--------:|--------:|--------:|
-| Rust (native) | 201ns | 269ns | n/a | 9.3us | 1.7us | 290ns | 15.4us |
-| Go | 289ns | 5.0us | 75ns | 5.5us | 526ns | 431ns | 6.1us |
-| C# (.NET) | 5.4us | 2.0us | 472ns | 30.1us | 6.5us | 307ns | 6.7us |
-| Kotlin (JVM) | 503ns | 2.4us | 296ns | 7.9us | 994ns | 180ns | 3.3us |
-| LuaJIT | 294ns | 772ns | 111ns | 10.0us | 2.8us | 554ns | 7.1us |
-| Node/V8 | 472ns | 440ns | 378ns | 5.4us | 1.0us | 473ns | 1.9us |
-| TypeScript | 438ns | 387ns | 288ns | 5.3us | 1.1us | 394ns | 1.9us |
-| ilo JIT | 4.1us | 3.3us | 644ns | 41.7us | 122.6us | 5.1us | 22.6us |
-| ilo VM | 13.5us | 5.3us | 3.3us | 42.8us | 51.2us | 5.0us | 28.6us |
-| ilo Interpreter | 93.5us | 15.9us | 56.3us | 1.4ms | 981.1us | 132.5us | 85.1us |
-| Lua | 5.9us | 5.2us | 9.3us | 48.0us | 30.8us | 3.1us | 40.6us |
-| Ruby | 20.2us | 5.6us | 8.7us | 18.6us | 36.7us | 3.1us | 30.5us |
-| PHP | 6.6us | 1.3us | 4.1us | 8.2us | 27.3us | 4.3us | 10.5us |
-| Python 3 | 29.8us | 2.3us | 8.8us | 28.2us | 63.7us | 5.9us | 21.1us |
-| PyPy 3 | 806ns | 783ns | 449ns | 20.6us | 4.2us | 1.2us | 4.5us |
+| Rust (native) | 232ns | 208ns | 1ns | 8.7us | 1.4us | 141ns | 10.5us |
+| Go | 550ns | 4.8us | 57ns | 5.9us | 457ns | 169ns | 19.7us |
+| C# (.NET) | 5.6us | 2.3us | 569ns | 30.7us | 7.1us | 244ns | 23.1us |
+| Kotlin (JVM) | 502ns | 2.2us | 283ns | 8.1us | 1.0us | 194ns | n/a |
+| LuaJIT | 557ns | 880ns | 145ns | 9.7us | 1.9us | 249ns | 14.6us |
+| Node/V8 | 504ns | 437ns | 355ns | 5.5us | 1.1us | 414ns | 12.2us |
+| TypeScript | 450ns | 381ns | 231ns | 5.4us | 1.0us | 391ns | 12.6us |
+| ilo JIT | 5.0us | 3.2us | 643ns | 40.8us | 132.8us | 5.1us | n/a |
+| ilo VM | 13.3us | 4.9us | 3.2us | 42.7us | 51.1us | 5.1us | 17.7us |
+| ilo Interpreter | 94.5us | 16.9us | 54.8us | 1.4ms | 967.8us | 136.9us | 34.0us |
+| Lua | 5.9us | 5.0us | 9.5us | 47.6us | 31.2us | 3.2us | 15.9us |
+| Ruby | 21.3us | 5.1us | 8.9us | 19.7us | 38.4us | 3.2us | 19.8us |
+| PHP | 6.5us | 1.3us | 4.1us | 8.5us | 26.2us | 4.5us | 15.7us |
+| Python 3 | 28.5us | 2.2us | 8.6us | 28.8us | 65.1us | 5.9us | 20.9us |
+| PyPy 3 | 813ns | 764ns | 458ns | 21.3us | 4.5us | 1.1us | 26.5us |
 
 *10000 iterations, Darwin arm64, 2026-03-12*
 
