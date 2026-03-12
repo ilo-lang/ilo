@@ -148,6 +148,26 @@ ilo help lang        # full spec
 | **[SPEC.md](SPEC.md)** | Full language specification |
 | **[examples/](examples/)** | Runnable examples (also test suite) |
 
+## Benchmarks
+
+Per-call time (ns) across 6 micro-benchmarks. Lower is better. [Full results →](https://ilo-lang.ai/docs/reference/benchmarks/)
+
+| Language | numeric | string | record | mixed | guards | recurse |
+|----------|--------:|--------:|--------:|--------:|--------:|--------:|
+| Rust (native) | 139ns | 308ns | n/a | 9.5us | 1.5us | 276ns |
+| Go | 473ns | 4.3us | 58ns | 6.2us | 646ns | 366ns |
+| LuaJIT | 430ns | 923ns | 107ns | 10.2us | 2.7us | 764ns |
+| Node/V8 | 477ns | 446ns | 344ns | 5.3us | 1.1us | 462ns |
+| TypeScript | 436ns | 393ns | 231ns | 5.3us | 1.0us | 375ns |
+| ilo JIT | 4.2us | 3.3us | 638ns | 40.8us | 123.0us | 5.0us |
+| ilo VM | 13.5us | 5.0us | 3.2us | 41.4us | 51.4us | 4.9us |
+| Lua | 6.0us | 5.0us | 9.5us | 48.8us | 31.2us | 3.1us |
+| Ruby | 22.5us | 9.0us | 10.7us | n/a | 63.4us | 4.7us |
+| PHP | 6.5us | 1.3us | 4.2us | 8.4us | 26.4us | 4.3us |
+| Python 3 | 42.1us | 2.5us | 15.3us | 43.1us | 88.6us | 9.2us |
+
+*10000 iterations, Darwin arm64, 2026-03-12*
+
 ## Community
 
 - **[ilo-lang.ai](https://ilo-lang.ai)** - docs, playground, and examples
