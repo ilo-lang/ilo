@@ -305,7 +305,7 @@ fn help_shows_usage() {
     assert!(out.status.success());
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains("Backends:"), "expected backends section, got: {}", stdout);
-    assert!(stdout.contains("--run-interp"), "expected --run-interp, got: {}", stdout);
+    assert!(stdout.contains("--run-tree"), "expected --run-tree, got: {}", stdout);
 }
 
 #[test]
@@ -322,9 +322,9 @@ fn help_lang_shows_spec() {
 // --- Backend flags ---
 
 #[test]
-fn inline_run_interp() {
+fn inline_run_tree() {
     let out = ilo()
-        .args(["f x:n>n;*x 2", "--run-interp", "f", "5"])
+        .args(["f x:n>n;*x 2", "--run-tree", "f", "5"])
         .output()
         .expect("failed to run ilo");
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
