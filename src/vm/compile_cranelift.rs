@@ -31,13 +31,13 @@ fn check_aot_eligible(chunk: &Chunk, nan_consts: &[NanVal], func_name: &str) -> 
             OP_JMP | OP_JMPF | OP_JMPT | OP_JMPNN | OP_RET => {}
             OP_LOADK => {
                 let bx = (inst & 0xFFFF) as usize;
-                if let Some(nv) = nan_consts.get(bx) {
-                    if NanVal(nv.0).is_heap() {
-                        return Err(format!(
-                            "function '{}' loads a heap value (string/list) at instruction {}, not yet supported for AOT",
-                            func_name, ip
-                        ));
-                    }
+                if let Some(nv) = nan_consts.get(bx)
+                    && NanVal(nv.0).is_heap()
+                {
+                    return Err(format!(
+                        "function '{}' loads a heap value (string/list) at instruction {}, not yet supported for AOT",
+                        func_name, ip
+                    ));
                 }
             }
             OP_CALL => return Err(format!(
@@ -134,8 +134,15 @@ pub(crate) fn compile_to_binary(
         module.declare_function("ilo_atof", Linkage::Import, &sig).map_err(|e| e.to_string())?
     };
 
+    // Helper to clean up temp files on any error path
+    let cleanup = |obj: &str, rt: &str| {
+        let _ = std::fs::remove_file(obj);
+        let _ = std::fs::remove_file(rt);
+    };
+
     // Compile the entry function
-    let user_func_id = compile_function(&mut module, chunk, nan_consts, &format!("ilo_{}", entry_func))?;
+    let user_func_id = compile_function(&mut module, chunk, nan_consts, &format!("ilo_{}", entry_func))
+        .inspect_err(|_| { cleanup("", &runtime_o_path); })?;
 
     // Generate main()
     generate_main(
@@ -146,15 +153,15 @@ pub(crate) fn compile_to_binary(
         ilo_print_float,
         ilo_print_str,
         ilo_atof,
-    )?;
+    ).inspect_err(|_| { cleanup("", &runtime_o_path); })?;
 
     // Emit object file
     let obj_product = module.finish();
-    let obj_bytes = obj_product.emit().map_err(|e| e.to_string())?;
+    let obj_bytes = obj_product.emit().map_err(|e| { cleanup("", &runtime_o_path); e.to_string() })?;
 
     let obj_path = format!("{}.o", output_path);
     std::fs::write(&obj_path, &obj_bytes)
-        .map_err(|e| format!("failed to write object file: {}", e))?;
+        .map_err(|e| { cleanup("", &runtime_o_path); format!("failed to write object file: {}", e) })?;
 
     // Link both objects with cc
     let status = std::process::Command::new("cc")
@@ -164,10 +171,9 @@ pub(crate) fn compile_to_binary(
         .arg(output_path)
         .arg("-lm")
         .status()
-        .map_err(|e| format!("failed to run cc: {}", e))?;
+        .map_err(|e| { cleanup(&obj_path, &runtime_o_path); format!("failed to run cc: {}", e) })?;
 
-    let _ = std::fs::remove_file(&obj_path);
-    let _ = std::fs::remove_file(&runtime_o_path);
+    cleanup(&obj_path, &runtime_o_path);
 
     if !status.success() {
         return Err(format!("linker failed with exit code: {}", status));
@@ -394,10 +400,10 @@ fn compile_function(
             OP_JMP => {
                 let sbx = (inst & 0xFFFF) as i16;
                 let target = (ip as isize + 1 + sbx as isize) as usize;
-                if let Some(&tb) = block_map.get(&target) {
-                    builder.ins().jump(tb, &[]);
-                    block_terminated = true;
-                }
+                let tb = block_map.get(&target)
+                    .ok_or_else(|| format!("JMP target {} at ip {} has no block leader", target, ip))?;
+                builder.ins().jump(*tb, &[]);
+                block_terminated = true;
             }
             OP_JMPF | OP_JMPT => {
                 let sbx = (inst & 0xFFFF) as i16;
@@ -436,14 +442,16 @@ fn compile_function(
                 builder.switch_to_block(merge_truthy);
                 let truthy_val = builder.block_params(merge_truthy)[0];
 
-                if let (Some(&target_block), Some(&fall_block)) = (block_map.get(&target), block_map.get(&fallthrough)) {
-                    if op == OP_JMPF {
-                        builder.ins().brif(truthy_val, fall_block, &[], target_block, &[]);
-                    } else {
-                        builder.ins().brif(truthy_val, target_block, &[], fall_block, &[]);
-                    }
-                    block_terminated = true;
+                let target_block = block_map.get(&target)
+                    .ok_or_else(|| format!("JMPF/JMPT target {} at ip {} has no block leader", target, ip))?;
+                let fall_block = block_map.get(&fallthrough)
+                    .ok_or_else(|| format!("JMPF/JMPT fallthrough {} at ip {} has no block leader", fallthrough, ip))?;
+                if op == OP_JMPF {
+                    builder.ins().brif(truthy_val, *fall_block, &[], *target_block, &[]);
+                } else {
+                    builder.ins().brif(truthy_val, *target_block, &[], *fall_block, &[]);
                 }
+                block_terminated = true;
             }
             OP_JMPNN => {
                 let sbx = (inst & 0xFFFF) as i16;
@@ -452,10 +460,12 @@ fn compile_function(
                 let av = builder.use_var(vars[a_idx]);
                 let nil_const = builder.ins().iconst(I64, TAG_NIL as i64);
                 let is_nil = builder.ins().icmp(cranelift_codegen::ir::condcodes::IntCC::Equal, av, nil_const);
-                if let (Some(&tb), Some(&fb)) = (block_map.get(&target), block_map.get(&fallthrough)) {
-                    builder.ins().brif(is_nil, fb, &[], tb, &[]);
-                    block_terminated = true;
-                }
+                let tb = block_map.get(&target)
+                    .ok_or_else(|| format!("JMPNN target {} at ip {} has no block leader", target, ip))?;
+                let fb = block_map.get(&fallthrough)
+                    .ok_or_else(|| format!("JMPNN fallthrough {} at ip {} has no block leader", fallthrough, ip))?;
+                builder.ins().brif(is_nil, *fb, &[], *tb, &[]);
+                block_terminated = true;
             }
             OP_RET => {
                 let av = builder.use_var(vars[a_idx]);
