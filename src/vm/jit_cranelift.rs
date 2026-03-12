@@ -73,6 +73,7 @@ struct HelperFuncs {
     listappend: FuncId,
     index: FuncId,
     recfld: FuncId,
+    recfld_name: FuncId,
     recnew: FuncId,
     recwith: FuncId,
     listnew: FuncId,
@@ -167,6 +168,7 @@ fn register_helpers(builder: &mut JITBuilder) {
         ("jit_listappend", jit_listappend as *const u8),
         ("jit_index", jit_index as *const u8),
         ("jit_recfld", jit_recfld as *const u8),
+        ("jit_recfld_name", jit_recfld_name as *const u8),
         ("jit_recnew", jit_recnew as *const u8),
         ("jit_recwith", jit_recwith as *const u8),
         ("jit_listnew", jit_listnew as *const u8),
@@ -254,6 +256,7 @@ fn declare_all_helpers(module: &mut JITModule) -> HelperFuncs {
         listappend: declare_helper(module, "jit_listappend", 2, 1),
         index: declare_helper(module, "jit_index", 2, 1),
         recfld: declare_helper(module, "jit_recfld", 2, 1),
+        recfld_name: declare_helper(module, "jit_recfld_name", 3, 1),
         recnew: declare_helper(module, "jit_recnew", 4, 1),
         recwith: declare_helper(module, "jit_recwith", 4, 1),
         listnew: declare_helper(module, "jit_listnew", 2, 1),
@@ -994,8 +997,25 @@ fn compile_function_body(
                 builder.def_var(vars[a_idx], result);
             }
             OP_RECFLD_NAME => {
-                // Dynamic field access by name — bail out of JIT
-                return None;
+                let b_idx = ((inst >> 8) & 0xFF) as usize;
+                let c_idx = (inst & 0xFF) as usize;
+                let bv = builder.use_var(vars[b_idx]);
+                // Get field name from chunk constants as a null-terminated C string
+                let field_name = match &chunk.constants[c_idx] {
+                    crate::interpreter::Value::Text(s) => s.clone(),
+                    _ => return None,
+                };
+                let cstring = std::ffi::CString::new(field_name).ok()?;
+                let leaked = Box::leak(Box::new(cstring));
+                let field_name_ptr = leaked.as_ptr() as u64;
+                let field_name_val = builder.ins().iconst(I64, field_name_ptr as i64);
+                // Get registry pointer
+                let registry_ptr = ACTIVE_REGISTRY.with(|r| r.get() as u64);
+                let registry_val = builder.ins().iconst(I64, registry_ptr as i64);
+                let fref = get_func_ref(&mut builder, module, helpers.recfld_name);
+                let call_inst = builder.ins().call(fref, &[bv, field_name_val, registry_val]);
+                let result = builder.inst_results(call_inst)[0];
+                builder.def_var(vars[a_idx], result);
             }
             OP_RECNEW => {
                 let bx = (inst & 0xFFFF) as usize;
@@ -2117,22 +2137,29 @@ mod tests {
     // ── OP_RECFLD_NAME — JIT bails out returning None (line 913) ─────────────
 
     #[test]
-    fn cranelift_recfld_name_bails_out() {
-        // Inject OP_RECFLD_NAME directly into a chunk to trigger the JIT bail-out path.
-        // OP_RECFLD_NAME causes compile() to return None immediately.
-        use crate::vm::{compile as vm_compile, OP_RECFLD_NAME};
-        let tokens: Vec<crate::lexer::Token> = crate::lexer::lex(
-            "f x:n>n;x"
-        ).unwrap().into_iter().map(|(t, _)| t).collect();
-        let prog = crate::parser::parse_tokens(tokens).unwrap();
-        let mut compiled = vm_compile(&prog).unwrap();
+    fn cranelift_recfld_name_works() {
+        // OP_RECFLD_NAME is now supported in JIT via jit_recfld_name helper.
+        // Must use parse() with spans (not parse_tokens) so jpar! adjacency check works.
+        let source = r#"f x:t>R t t;r=jpar! x;r.score"#;
+        let tokens: Vec<(crate::lexer::Token, crate::ast::Span)> = lexer::lex(source)
+            .unwrap().into_iter()
+            .map(|(t, r)| (t, crate::ast::Span { start: r.start, end: r.end }))
+            .collect();
+        let (prog, errors) = parser::parse(tokens);
+        assert!(errors.is_empty(), "parse errors: {:?}", errors);
+        let compiled = crate::vm::compile(&prog).unwrap();
         let idx = compiled.func_names.iter().position(|n| n == "f").unwrap();
-        // Inject OP_RECFLD_NAME at position 0 (before any terminators)
-        compiled.chunks[idx].code.insert(0, (OP_RECFLD_NAME as u32) << 24);
         let chunk = &compiled.chunks[idx];
         let nan_consts = &compiled.nan_constants[idx];
-        let result = compile(chunk, nan_consts, &compiled);
-        assert!(result.is_none(), "JIT should bail on OP_RECFLD_NAME");
+        let nan_args: Vec<u64> = [Value::Text(r#"{"score":42}"#.to_string())]
+            .iter().map(|v| NanVal::from_value(v).0).collect();
+        let result = compile_and_call(chunk, nan_consts, &nan_args, &compiled);
+        assert!(result.is_some(), "JIT should handle OP_RECFLD_NAME");
+        let val = NanVal(result.unwrap()).to_value();
+        match val {
+            Value::Number(n) => assert_eq!(n, 42.0),
+            other => panic!("expected Number(42), got {:?}", other),
+        }
     }
 
     // ── !block_terminated at function end (lines 1184-1185) ──────────────────

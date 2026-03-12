@@ -5120,6 +5120,50 @@ pub(crate) extern "C" fn jit_recfld(rec: u64, field_idx: u64) -> u64 {
     }
 }
 
+/// Dynamic field access by name — used by JIT/AOT for OP_RECFLD_NAME.
+/// `rec` is a NanVal-encoded record, `field_name_ptr` is a null-terminated C string pointer,
+/// `registry_ptr` is a pointer to TypeRegistry (for arena record type lookups).
+#[cfg(feature = "cranelift")]
+#[unsafe(no_mangle)]
+pub extern "C" fn jit_recfld_name(rec: u64, field_name_ptr: u64, registry_ptr: u64) -> u64 {
+    let field_name = unsafe {
+        let cstr = std::ffi::CStr::from_ptr(field_name_ptr as *const std::ffi::c_char);
+        cstr.to_str().unwrap_or("")
+    };
+    let rv = NanVal(rec);
+
+    if rv.is_arena_record() {
+        unsafe {
+            let r = rv.as_arena_record();
+            let registry = &*(registry_ptr as *const TypeRegistry);
+            if let Some(type_info) = registry.types.get(r.type_id as usize)
+                && let Some(idx) = type_info.fields.iter().position(|f| f == field_name)
+                && idx < r.n_fields as usize
+            {
+                let v = NanVal(*r.field_ptr(idx));
+                v.clone_rc();
+                return v.0;
+            }
+        }
+        return TAG_NIL;
+    }
+
+    if !rv.is_heap() { return TAG_NIL; }
+    match unsafe { rv.as_heap_ref() } {
+        HeapObj::Record { type_info, fields } => {
+            if let Some(idx) = type_info.fields.iter().position(|f| f == field_name)
+                && idx < fields.len()
+            {
+                let val = fields[idx];
+                val.clone_rc();
+                return val.0;
+            }
+            TAG_NIL
+        }
+        _ => TAG_NIL,
+    }
+}
+
 /// Create a new flat record. `arena_ptr` is a pointer to a BumpArena,
 /// `registry_ptr` is a pointer to &TypeRegistry,
 /// `type_id` identifies the type, `regs` has n_fields u64 values.
