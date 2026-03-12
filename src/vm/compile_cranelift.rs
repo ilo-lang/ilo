@@ -1674,7 +1674,8 @@ pub fn compile_to_bench_binary(
          #include <string.h>\n\
          #include <time.h>\n\n\
          extern void ilo_aot_init(void);\n\
-         extern void ilo_aot_fini(void);\n\n\
+         extern void ilo_aot_fini(void);\n\
+         extern void ilo_aot_arena_reset(void);\n\n\
          static int64_t encode_arg(const char* s) {\n\
          \tdouble d = atof(s);\n\
          \tint64_t r;\n\
@@ -1711,13 +1712,14 @@ pub fn compile_to_bench_binary(
     // Init + warmup
     c_code.push_str("\tilo_aot_init();\n");
     c_code.push_str(&format!("\t{}({});\n", func_name, call_args));
+    c_code.push_str("\tilo_aot_arena_reset();\n");
 
     // Timed loop
     c_code.push_str("\tstruct timespec start, end;\n");
     c_code.push_str("\tclock_gettime(CLOCK_MONOTONIC, &start);\n");
     c_code.push_str("\tvolatile int64_t r;\n");
     c_code.push_str(&format!(
-        "\tfor (int i = 0; i < iters; i++) r = {}({});\n", func_name, call_args
+        "\tfor (int i = 0; i < iters; i++) {{ r = {}({}); ilo_aot_arena_reset(); }}\n", func_name, call_args
     ));
     c_code.push_str("\tclock_gettime(CLOCK_MONOTONIC, &end);\n");
     c_code.push_str("\tlong ns = (end.tv_sec - start.tv_sec) * 1000000000L + (end.tv_nsec - start.tv_nsec);\n");

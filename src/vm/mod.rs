@@ -5755,6 +5755,12 @@ pub extern "C" fn ilo_aot_init() {
 
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
+pub extern "C" fn ilo_aot_arena_reset() {
+    jit_arena_reset();
+}
+
+#[cfg(feature = "cranelift")]
+#[unsafe(no_mangle)]
 pub extern "C" fn ilo_aot_fini() {
     clear_active_registry();
     jit_arena_reset();

@@ -291,26 +291,22 @@ fn declare_all_helpers(module: &mut JITModule) -> HelperFuncs {
     }
 }
 
-/// Compile a chunk into native code via Cranelift (NanVal / I64 mode).
-pub fn compile(chunk: &Chunk, nan_consts: &[NanVal], program: &CompiledProgram) -> Option<JitFunction> {
-    let mut flag_builder = settings::builder();
-    flag_builder.set("opt_level", "speed").ok()?;
-    let isa_builder = cranelift_native::builder().ok()?;
-    let isa = isa_builder.finish(settings::Flags::new(flag_builder)).ok()?;
-
-    let mut jit_builder = JITBuilder::with_isa(isa, default_libcall_names());
-    register_helpers(&mut jit_builder);
-    let mut module = JITModule::new(jit_builder);
-    let helpers = declare_all_helpers(&mut module);
-
+/// Compile a single function body into the JIT module.
+fn compile_function_body(
+    module: &mut JITModule,
+    chunk: &Chunk,
+    nan_consts: &[NanVal],
+    func_id: FuncId,
+    helpers: &HelperFuncs,
+    all_func_ids: &[FuncId],
+    program: &CompiledProgram,
+) -> Option<()> {
     // Build function signature: (i64, i64, ...) -> i64
     let mut sig = module.make_signature();
     for _ in 0..chunk.param_count {
         sig.params.push(AbiParam::new(I64));
     }
     sig.returns.push(AbiParam::new(I64));
-
-    let func_id = module.declare_function("jit_func", Linkage::Local, &sig).ok()?;
 
     let mut ctx = Context::new();
     ctx.func.signature = sig;
@@ -358,13 +354,8 @@ pub fn compile(chunk: &Chunk, nan_consts: &[NanVal], program: &CompiledProgram) 
         *func_refs.entry(id).or_insert_with(|| module.declare_func_in_func(id, builder.func))
     };
 
-    // Store the program pointer as a constant for jit_call
+    // Store the program pointer as a constant for jit_call fallback
     let program_ptr_val = program as *const CompiledProgram as u64;
-
-    // Pre-serialize record descriptors and field names for RECNEW/RECWITH/RECFLD
-    // so we can pass stable pointers to helper functions.
-    // We'll allocate these as leaked &'static [u8] — acceptable since JIT functions
-    // are long-lived (same lifetime as the JitFunction).
 
     // Track whether the current block has been terminated
     let mut block_terminated = false;
@@ -517,7 +508,7 @@ pub fn compile(chunk: &Chunk, nan_consts: &[NanVal], program: &CompiledProgram) 
                     OP_DIV => helpers.div,
                     _ => unreachable!(),
                 };
-                let fref = get_func_ref(&mut builder, &mut module, helper);
+                let fref = get_func_ref(&mut builder, module, helper);
                 let call_inst = builder.ins().call(fref, &[bv, cv]);
                 let slow_result = builder.inst_results(call_inst)[0];
                 builder.ins().jump(merge_block, &[slow_result]);
@@ -577,7 +568,7 @@ pub fn compile(chunk: &Chunk, nan_consts: &[NanVal], program: &CompiledProgram) 
                     OP_NE => helpers.ne,
                     _ => unreachable!(),
                 };
-                let fref = get_func_ref(&mut builder, &mut module, helper);
+                let fref = get_func_ref(&mut builder, module, helper);
                 let call_inst = builder.ins().call(fref, &[bv, cv]);
                 let slow_result = builder.inst_results(call_inst)[0];
                 builder.ins().jump(merge_block, &[slow_result]);
@@ -599,7 +590,7 @@ pub fn compile(chunk: &Chunk, nan_consts: &[NanVal], program: &CompiledProgram) 
                     builder.ins().brif(is_heap, clone_block, &[], after_block, &[]);
 
                     builder.switch_to_block(clone_block);
-                    let fref = get_func_ref(&mut builder, &mut module, helpers.jit_move);
+                    let fref = get_func_ref(&mut builder, module, helpers.jit_move);
                     builder.ins().call(fref, &[bv]);
                     builder.ins().jump(after_block, &[]);
 
@@ -609,49 +600,49 @@ pub fn compile(chunk: &Chunk, nan_consts: &[NanVal], program: &CompiledProgram) 
             }
             OP_NOT => {
                 let bv = builder.use_var(vars[b_idx]);
-                let fref = get_func_ref(&mut builder, &mut module, helpers.not);
+                let fref = get_func_ref(&mut builder, module, helpers.not);
                 let call_inst = builder.ins().call(fref, &[bv]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
             }
             OP_NEG => {
                 let bv = builder.use_var(vars[b_idx]);
-                let fref = get_func_ref(&mut builder, &mut module, helpers.neg);
+                let fref = get_func_ref(&mut builder, module, helpers.neg);
                 let call_inst = builder.ins().call(fref, &[bv]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
             }
             OP_WRAPOK => {
                 let bv = builder.use_var(vars[b_idx]);
-                let fref = get_func_ref(&mut builder, &mut module, helpers.wrapok);
+                let fref = get_func_ref(&mut builder, module, helpers.wrapok);
                 let call_inst = builder.ins().call(fref, &[bv]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
             }
             OP_WRAPERR => {
                 let bv = builder.use_var(vars[b_idx]);
-                let fref = get_func_ref(&mut builder, &mut module, helpers.wraperr);
+                let fref = get_func_ref(&mut builder, module, helpers.wraperr);
                 let call_inst = builder.ins().call(fref, &[bv]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
             }
             OP_ISOK => {
                 let bv = builder.use_var(vars[b_idx]);
-                let fref = get_func_ref(&mut builder, &mut module, helpers.isok);
+                let fref = get_func_ref(&mut builder, module, helpers.isok);
                 let call_inst = builder.ins().call(fref, &[bv]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
             }
             OP_ISERR => {
                 let bv = builder.use_var(vars[b_idx]);
-                let fref = get_func_ref(&mut builder, &mut module, helpers.iserr);
+                let fref = get_func_ref(&mut builder, module, helpers.iserr);
                 let call_inst = builder.ins().call(fref, &[bv]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
             }
             OP_UNWRAP => {
                 let bv = builder.use_var(vars[b_idx]);
-                let fref = get_func_ref(&mut builder, &mut module, helpers.unwrap);
+                let fref = get_func_ref(&mut builder, module, helpers.unwrap);
                 let call_inst = builder.ins().call(fref, &[bv]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
@@ -663,7 +654,7 @@ pub fn compile(chunk: &Chunk, nan_consts: &[NanVal], program: &CompiledProgram) 
                 // Clone RC for heap values
                 let nv = NanVal(bits);
                 if nv.is_heap() {
-                    let fref = get_func_ref(&mut builder, &mut module, helpers.jit_move);
+                    let fref = get_func_ref(&mut builder, module, helpers.jit_move);
                     let call_inst = builder.ins().call(fref, &[kval]);
                     let result = builder.inst_results(call_inst)[0];
                     builder.def_var(vars[a_idx], result);
@@ -755,28 +746,28 @@ pub fn compile(chunk: &Chunk, nan_consts: &[NanVal], program: &CompiledProgram) 
             }
             OP_LEN => {
                 let bv = builder.use_var(vars[b_idx]);
-                let fref = get_func_ref(&mut builder, &mut module, helpers.len);
+                let fref = get_func_ref(&mut builder, module, helpers.len);
                 let call_inst = builder.ins().call(fref, &[bv]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
             }
             OP_STR => {
                 let bv = builder.use_var(vars[b_idx]);
-                let fref = get_func_ref(&mut builder, &mut module, helpers.str_fn);
+                let fref = get_func_ref(&mut builder, module, helpers.str_fn);
                 let call_inst = builder.ins().call(fref, &[bv]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
             }
             OP_NUM => {
                 let bv = builder.use_var(vars[b_idx]);
-                let fref = get_func_ref(&mut builder, &mut module, helpers.num);
+                let fref = get_func_ref(&mut builder, module, helpers.num);
                 let call_inst = builder.ins().call(fref, &[bv]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
             }
             OP_ABS => {
                 let bv = builder.use_var(vars[b_idx]);
-                let fref = get_func_ref(&mut builder, &mut module, helpers.abs);
+                let fref = get_func_ref(&mut builder, module, helpers.abs);
                 let call_inst = builder.ins().call(fref, &[bv]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
@@ -784,7 +775,7 @@ pub fn compile(chunk: &Chunk, nan_consts: &[NanVal], program: &CompiledProgram) 
             OP_MIN => {
                 let bv = builder.use_var(vars[b_idx]);
                 let cv = builder.use_var(vars[c_idx]);
-                let fref = get_func_ref(&mut builder, &mut module, helpers.min);
+                let fref = get_func_ref(&mut builder, module, helpers.min);
                 let call_inst = builder.ins().call(fref, &[bv, cv]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
@@ -792,34 +783,34 @@ pub fn compile(chunk: &Chunk, nan_consts: &[NanVal], program: &CompiledProgram) 
             OP_MAX => {
                 let bv = builder.use_var(vars[b_idx]);
                 let cv = builder.use_var(vars[c_idx]);
-                let fref = get_func_ref(&mut builder, &mut module, helpers.max);
+                let fref = get_func_ref(&mut builder, module, helpers.max);
                 let call_inst = builder.ins().call(fref, &[bv, cv]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
             }
             OP_FLR => {
                 let bv = builder.use_var(vars[b_idx]);
-                let fref = get_func_ref(&mut builder, &mut module, helpers.flr);
+                let fref = get_func_ref(&mut builder, module, helpers.flr);
                 let call_inst = builder.ins().call(fref, &[bv]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
             }
             OP_CEL => {
                 let bv = builder.use_var(vars[b_idx]);
-                let fref = get_func_ref(&mut builder, &mut module, helpers.cel);
+                let fref = get_func_ref(&mut builder, module, helpers.cel);
                 let call_inst = builder.ins().call(fref, &[bv]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
             }
             OP_ROU => {
                 let bv = builder.use_var(vars[b_idx]);
-                let fref = get_func_ref(&mut builder, &mut module, helpers.rou);
+                let fref = get_func_ref(&mut builder, module, helpers.rou);
                 let call_inst = builder.ins().call(fref, &[bv]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
             }
             OP_RND0 => {
-                let fref = get_func_ref(&mut builder, &mut module, helpers.rnd0);
+                let fref = get_func_ref(&mut builder, module, helpers.rnd0);
                 let call_inst = builder.ins().call(fref, &[]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
@@ -827,27 +818,27 @@ pub fn compile(chunk: &Chunk, nan_consts: &[NanVal], program: &CompiledProgram) 
             OP_RND2 => {
                 let bv = builder.use_var(vars[b_idx]);
                 let cv = builder.use_var(vars[c_idx]);
-                let fref = get_func_ref(&mut builder, &mut module, helpers.rnd2);
+                let fref = get_func_ref(&mut builder, module, helpers.rnd2);
                 let call_inst = builder.ins().call(fref, &[bv, cv]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
             }
             OP_NOW => {
-                let fref = get_func_ref(&mut builder, &mut module, helpers.now);
+                let fref = get_func_ref(&mut builder, module, helpers.now);
                 let call_inst = builder.ins().call(fref, &[]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
             }
             OP_ENV => {
                 let bv = builder.use_var(vars[b_idx]);
-                let fref = get_func_ref(&mut builder, &mut module, helpers.env);
+                let fref = get_func_ref(&mut builder, module, helpers.env);
                 let call_inst = builder.ins().call(fref, &[bv]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
             }
             OP_GET => {
                 let bv = builder.use_var(vars[b_idx]);
-                let fref = get_func_ref(&mut builder, &mut module, helpers.get);
+                let fref = get_func_ref(&mut builder, module, helpers.get);
                 let call_inst = builder.ins().call(fref, &[bv]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
@@ -855,7 +846,7 @@ pub fn compile(chunk: &Chunk, nan_consts: &[NanVal], program: &CompiledProgram) 
             OP_SPL => {
                 let bv = builder.use_var(vars[b_idx]);
                 let cv = builder.use_var(vars[c_idx]);
-                let fref = get_func_ref(&mut builder, &mut module, helpers.spl);
+                let fref = get_func_ref(&mut builder, module, helpers.spl);
                 let call_inst = builder.ins().call(fref, &[bv, cv]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
@@ -863,7 +854,7 @@ pub fn compile(chunk: &Chunk, nan_consts: &[NanVal], program: &CompiledProgram) 
             OP_CAT => {
                 let bv = builder.use_var(vars[b_idx]);
                 let cv = builder.use_var(vars[c_idx]);
-                let fref = get_func_ref(&mut builder, &mut module, helpers.cat);
+                let fref = get_func_ref(&mut builder, module, helpers.cat);
                 let call_inst = builder.ins().call(fref, &[bv, cv]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
@@ -871,35 +862,35 @@ pub fn compile(chunk: &Chunk, nan_consts: &[NanVal], program: &CompiledProgram) 
             OP_HAS => {
                 let bv = builder.use_var(vars[b_idx]);
                 let cv = builder.use_var(vars[c_idx]);
-                let fref = get_func_ref(&mut builder, &mut module, helpers.has);
+                let fref = get_func_ref(&mut builder, module, helpers.has);
                 let call_inst = builder.ins().call(fref, &[bv, cv]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
             }
             OP_HD => {
                 let bv = builder.use_var(vars[b_idx]);
-                let fref = get_func_ref(&mut builder, &mut module, helpers.hd);
+                let fref = get_func_ref(&mut builder, module, helpers.hd);
                 let call_inst = builder.ins().call(fref, &[bv]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
             }
             OP_TL => {
                 let bv = builder.use_var(vars[b_idx]);
-                let fref = get_func_ref(&mut builder, &mut module, helpers.tl);
+                let fref = get_func_ref(&mut builder, module, helpers.tl);
                 let call_inst = builder.ins().call(fref, &[bv]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
             }
             OP_REV => {
                 let bv = builder.use_var(vars[b_idx]);
-                let fref = get_func_ref(&mut builder, &mut module, helpers.rev);
+                let fref = get_func_ref(&mut builder, module, helpers.rev);
                 let call_inst = builder.ins().call(fref, &[bv]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
             }
             OP_SRT => {
                 let bv = builder.use_var(vars[b_idx]);
-                let fref = get_func_ref(&mut builder, &mut module, helpers.srt);
+                let fref = get_func_ref(&mut builder, module, helpers.srt);
                 let call_inst = builder.ins().call(fref, &[bv]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
@@ -909,7 +900,7 @@ pub fn compile(chunk: &Chunk, nan_consts: &[NanVal], program: &CompiledProgram) 
                 let bv = builder.use_var(vars[b_idx]);
                 let cv = builder.use_var(vars[c_idx]);
                 let dv = builder.use_var(vars[c_idx + 1]);
-                let fref = get_func_ref(&mut builder, &mut module, helpers.slc);
+                let fref = get_func_ref(&mut builder, module, helpers.slc);
                 let call_inst = builder.ins().call(fref, &[bv, cv, dv]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
@@ -917,7 +908,7 @@ pub fn compile(chunk: &Chunk, nan_consts: &[NanVal], program: &CompiledProgram) 
             OP_LISTAPPEND => {
                 let bv = builder.use_var(vars[b_idx]);
                 let cv = builder.use_var(vars[c_idx]);
-                let fref = get_func_ref(&mut builder, &mut module, helpers.listappend);
+                let fref = get_func_ref(&mut builder, module, helpers.listappend);
                 let call_inst = builder.ins().call(fref, &[bv, cv]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
@@ -926,7 +917,7 @@ pub fn compile(chunk: &Chunk, nan_consts: &[NanVal], program: &CompiledProgram) 
                 // R[A] = R[B][C] where C is a literal index
                 let bv = builder.use_var(vars[b_idx]);
                 let idx_val = builder.ins().iconst(I64, c_idx as i64);
-                let fref = get_func_ref(&mut builder, &mut module, helpers.index);
+                let fref = get_func_ref(&mut builder, module, helpers.index);
                 let call_inst = builder.ins().call(fref, &[bv, idx_val]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
@@ -980,7 +971,7 @@ pub fn compile(chunk: &Chunk, nan_consts: &[NanVal], program: &CompiledProgram) 
 
                 // Clone path: call jit_move for heap values
                 builder.switch_to_block(clone_block);
-                let fref_move = get_func_ref(&mut builder, &mut module, helpers.jit_move);
+                let fref_move = get_func_ref(&mut builder, module, helpers.jit_move);
                 let move_inst = builder.ins().call(fref_move, &[field_val]);
                 let _cloned = builder.inst_results(move_inst)[0];
                 builder.ins().jump(skip_clone_block, &[]);
@@ -992,7 +983,7 @@ pub fn compile(chunk: &Chunk, nan_consts: &[NanVal], program: &CompiledProgram) 
                 // Heap path: call jit_recfld
                 builder.switch_to_block(heap_block);
                 let field_idx_val = builder.ins().iconst(I64, c_idx as i64);
-                let fref = get_func_ref(&mut builder, &mut module, helpers.recfld);
+                let fref = get_func_ref(&mut builder, module, helpers.recfld);
                 let call_inst = builder.ins().call(fref, &[bv, field_idx_val]);
                 let heap_result = builder.inst_results(call_inst)[0];
                 builder.ins().jump(merge_block, &[heap_result]);
@@ -1070,7 +1061,7 @@ pub fn compile(chunk: &Chunk, nan_consts: &[NanVal], program: &CompiledProgram) 
                     builder.ins().brif(is_heap, do_clone, &[], after_clone, &[]);
 
                     builder.switch_to_block(do_clone);
-                    let fref_move = get_func_ref(&mut builder, &mut module, helpers.jit_move);
+                    let fref_move = get_func_ref(&mut builder, module, helpers.jit_move);
                     builder.ins().call(fref_move, &[field_v]);
                     builder.ins().jump(after_clone, &[]);
 
@@ -1099,7 +1090,7 @@ pub fn compile(chunk: &Chunk, nan_consts: &[NanVal], program: &CompiledProgram) 
                 let type_id_and_nfields = ((type_id as u64) << 16) | (n_fields as u64);
                 let type_id_nfields_val = builder.ins().iconst(I64, type_id_and_nfields as i64);
                 let registry_ptr_val = builder.ins().iconst(I64, &program.type_registry as *const TypeRegistry as i64);
-                let fref = get_func_ref(&mut builder, &mut module, helpers.recnew);
+                let fref = get_func_ref(&mut builder, module, helpers.recnew);
                 let call_inst = builder.ins().call(fref, &[arena_ptr_val, type_id_nfields_val, regs_ptr, registry_ptr_val]);
                 let fb_result = builder.inst_results(call_inst)[0];
                 builder.ins().jump(merge_block, &[fb_result]);
@@ -1137,7 +1128,7 @@ pub fn compile(chunk: &Chunk, nan_consts: &[NanVal], program: &CompiledProgram) 
                 let regs_ptr = builder.ins().stack_addr(I64, slot, 0);
                 let indices_ptr_val = builder.ins().iconst(I64, indices_bytes.as_ptr() as i64);
                 let n_updates_val = builder.ins().iconst(I64, n_updates as i64);
-                let fref = get_func_ref(&mut builder, &mut module, helpers.recwith);
+                let fref = get_func_ref(&mut builder, module, helpers.recwith);
                 let call_inst = builder.ins().call(fref, &[old_rec, indices_ptr_val, n_updates_val, regs_ptr]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
@@ -1148,7 +1139,7 @@ pub fn compile(chunk: &Chunk, nan_consts: &[NanVal], program: &CompiledProgram) 
                     // Empty list: still need valid ptr
                     let null_ptr = builder.ins().iconst(I64, 0i64);
                     let n_val = builder.ins().iconst(I64, 0i64);
-                    let fref = get_func_ref(&mut builder, &mut module, helpers.listnew);
+                    let fref = get_func_ref(&mut builder, module, helpers.listnew);
                     let call_inst = builder.ins().call(fref, &[null_ptr, n_val]);
                     let result = builder.inst_results(call_inst)[0];
                     builder.def_var(vars[a_idx], result);
@@ -1164,7 +1155,7 @@ pub fn compile(chunk: &Chunk, nan_consts: &[NanVal], program: &CompiledProgram) 
                     }
                     let regs_ptr = builder.ins().stack_addr(I64, slot, 0);
                     let n_val = builder.ins().iconst(I64, n as i64);
-                    let fref = get_func_ref(&mut builder, &mut module, helpers.listnew);
+                    let fref = get_func_ref(&mut builder, module, helpers.listnew);
                     let call_inst = builder.ins().call(fref, &[regs_ptr, n_val]);
                     let result = builder.inst_results(call_inst)[0];
                     builder.def_var(vars[a_idx], result);
@@ -1176,7 +1167,7 @@ pub fn compile(chunk: &Chunk, nan_consts: &[NanVal], program: &CompiledProgram) 
                 // Call jit_listget which returns Ok(item) if found, Nil if not.
                 let bv = builder.use_var(vars[b_idx]);
                 let cv = builder.use_var(vars[c_idx]);
-                let fref = get_func_ref(&mut builder, &mut module, helpers.listget);
+                let fref = get_func_ref(&mut builder, module, helpers.listget);
                 let call_inst = builder.ins().call(fref, &[bv, cv]);
                 let result = builder.inst_results(call_inst)[0];
 
@@ -1195,10 +1186,10 @@ pub fn compile(chunk: &Chunk, nan_consts: &[NanVal], program: &CompiledProgram) 
                     builder.switch_to_block(unwrap_block);
                     builder.seal_block(unwrap_block);
                     // Unwrap the Ok wrapper, then drop the wrapper itself
-                    let fref2 = get_func_ref(&mut builder, &mut module, helpers.unwrap);
+                    let fref2 = get_func_ref(&mut builder, module, helpers.unwrap);
                     let call_inst2 = builder.ins().call(fref2, &[result]);
                     let item = builder.inst_results(call_inst2)[0];
-                    let fref_drop = get_func_ref(&mut builder, &mut module, helpers.drop_rc);
+                    let fref_drop = get_func_ref(&mut builder, module, helpers.drop_rc);
                     builder.ins().call(fref_drop, &[result]);
                     builder.def_var(vars[a_idx], item);
                     builder.ins().jump(bb, &[]);
@@ -1211,57 +1202,70 @@ pub fn compile(chunk: &Chunk, nan_consts: &[NanVal], program: &CompiledProgram) 
             OP_CALL => {
                 let a = ((inst >> 16) & 0xFF) as u8;
                 let bx = (inst & 0xFFFF) as usize;
-                let func_idx = (bx >> 8) as u16;
+                let func_idx = bx >> 8;
                 let n_args = bx & 0xFF;
 
-                // Build array of args on the stack
-                if n_args > 0 {
-                    let slot = builder.create_sized_stack_slot(cranelift_codegen::ir::StackSlotData::new(
-                        cranelift_codegen::ir::StackSlotKind::ExplicitSlot,
-                        (n_args * 8) as u32,
-                        0,
-                    ));
+                if func_idx < all_func_ids.len() {
+                    // Direct call: the target function is compiled in this module
+                    let target_fid = all_func_ids[func_idx];
+                    let target_fref = get_func_ref(&mut builder, module, target_fid);
+                    let mut call_args = Vec::with_capacity(n_args);
                     for i in 0..n_args {
-                        let v = builder.use_var(vars[a as usize + 1 + i]);
-                        builder.ins().stack_store(v, slot, (i * 8) as i32);
+                        call_args.push(builder.use_var(vars[a as usize + 1 + i]));
                     }
-                    let args_ptr = builder.ins().stack_addr(I64, slot, 0);
-                    let prog_ptr = builder.ins().iconst(I64, program_ptr_val as i64);
-                    let func_idx_val = builder.ins().iconst(I64, func_idx as i64);
-                    let n_args_val = builder.ins().iconst(I64, n_args as i64);
-                    let fref = get_func_ref(&mut builder, &mut module, helpers.call);
-                    let call_inst = builder.ins().call(fref, &[prog_ptr, func_idx_val, args_ptr, n_args_val]);
+                    let call_inst = builder.ins().call(target_fref, &call_args);
                     let result = builder.inst_results(call_inst)[0];
                     builder.def_var(vars[a as usize], result);
                 } else {
-                    let null_ptr = builder.ins().iconst(I64, 0i64);
-                    let prog_ptr = builder.ins().iconst(I64, program_ptr_val as i64);
-                    let func_idx_val = builder.ins().iconst(I64, func_idx as i64);
-                    let n_args_val = builder.ins().iconst(I64, 0i64);
-                    let fref = get_func_ref(&mut builder, &mut module, helpers.call);
-                    let call_inst = builder.ins().call(fref, &[prog_ptr, func_idx_val, null_ptr, n_args_val]);
-                    let result = builder.inst_results(call_inst)[0];
-                    builder.def_var(vars[a as usize], result);
+                    // Fallback: use jit_call helper for out-of-range func indices
+                    if n_args > 0 {
+                        let slot = builder.create_sized_stack_slot(cranelift_codegen::ir::StackSlotData::new(
+                            cranelift_codegen::ir::StackSlotKind::ExplicitSlot,
+                            (n_args * 8) as u32,
+                            0,
+                        ));
+                        for i in 0..n_args {
+                            let v = builder.use_var(vars[a as usize + 1 + i]);
+                            builder.ins().stack_store(v, slot, (i * 8) as i32);
+                        }
+                        let args_ptr = builder.ins().stack_addr(I64, slot, 0);
+                        let prog_ptr = builder.ins().iconst(I64, program_ptr_val as i64);
+                        let func_idx_val = builder.ins().iconst(I64, func_idx as i64);
+                        let n_args_val = builder.ins().iconst(I64, n_args as i64);
+                        let fref = get_func_ref(&mut builder, module, helpers.call);
+                        let call_inst = builder.ins().call(fref, &[prog_ptr, func_idx_val, args_ptr, n_args_val]);
+                        let result = builder.inst_results(call_inst)[0];
+                        builder.def_var(vars[a as usize], result);
+                    } else {
+                        let null_ptr = builder.ins().iconst(I64, 0i64);
+                        let prog_ptr = builder.ins().iconst(I64, program_ptr_val as i64);
+                        let func_idx_val = builder.ins().iconst(I64, func_idx as i64);
+                        let n_args_val = builder.ins().iconst(I64, 0i64);
+                        let fref = get_func_ref(&mut builder, module, helpers.call);
+                        let call_inst = builder.ins().call(fref, &[prog_ptr, func_idx_val, null_ptr, n_args_val]);
+                        let result = builder.inst_results(call_inst)[0];
+                        builder.def_var(vars[a as usize], result);
+                    }
                 }
             }
             OP_JPTH => {
                 let bv = builder.use_var(vars[b_idx]);
                 let cv = builder.use_var(vars[c_idx]);
-                let fref = get_func_ref(&mut builder, &mut module, helpers.jpth);
+                let fref = get_func_ref(&mut builder, module, helpers.jpth);
                 let call_inst = builder.ins().call(fref, &[bv, cv]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
             }
             OP_JDMP => {
                 let bv = builder.use_var(vars[b_idx]);
-                let fref = get_func_ref(&mut builder, &mut module, helpers.jdmp);
+                let fref = get_func_ref(&mut builder, module, helpers.jdmp);
                 let call_inst = builder.ins().call(fref, &[bv]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
             }
             OP_JPAR => {
                 let bv = builder.use_var(vars[b_idx]);
-                let fref = get_func_ref(&mut builder, &mut module, helpers.jpar);
+                let fref = get_func_ref(&mut builder, module, helpers.jpar);
                 let call_inst = builder.ins().call(fref, &[bv]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
@@ -1269,35 +1273,35 @@ pub fn compile(chunk: &Chunk, nan_consts: &[NanVal], program: &CompiledProgram) 
             // ── Type predicates (1-arg → 1 return) ──
             OP_ISNUM => {
                 let bv = builder.use_var(vars[b_idx]);
-                let fref = get_func_ref(&mut builder, &mut module, helpers.isnum);
+                let fref = get_func_ref(&mut builder, module, helpers.isnum);
                 let call_inst = builder.ins().call(fref, &[bv]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
             }
             OP_ISTEXT => {
                 let bv = builder.use_var(vars[b_idx]);
-                let fref = get_func_ref(&mut builder, &mut module, helpers.istext);
+                let fref = get_func_ref(&mut builder, module, helpers.istext);
                 let call_inst = builder.ins().call(fref, &[bv]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
             }
             OP_ISBOOL => {
                 let bv = builder.use_var(vars[b_idx]);
-                let fref = get_func_ref(&mut builder, &mut module, helpers.isbool);
+                let fref = get_func_ref(&mut builder, module, helpers.isbool);
                 let call_inst = builder.ins().call(fref, &[bv]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
             }
             OP_ISLIST => {
                 let bv = builder.use_var(vars[b_idx]);
-                let fref = get_func_ref(&mut builder, &mut module, helpers.islist);
+                let fref = get_func_ref(&mut builder, module, helpers.islist);
                 let call_inst = builder.ins().call(fref, &[bv]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
             }
             // ── Map operations ──
             OP_MAPNEW => {
-                let fref = get_func_ref(&mut builder, &mut module, helpers.mapnew);
+                let fref = get_func_ref(&mut builder, module, helpers.mapnew);
                 let call_inst = builder.ins().call(fref, &[]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
@@ -1305,7 +1309,7 @@ pub fn compile(chunk: &Chunk, nan_consts: &[NanVal], program: &CompiledProgram) 
             OP_MGET => {
                 let bv = builder.use_var(vars[b_idx]);
                 let cv = builder.use_var(vars[c_idx]);
-                let fref = get_func_ref(&mut builder, &mut module, helpers.mget);
+                let fref = get_func_ref(&mut builder, module, helpers.mget);
                 let call_inst = builder.ins().call(fref, &[bv, cv]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
@@ -1314,7 +1318,7 @@ pub fn compile(chunk: &Chunk, nan_consts: &[NanVal], program: &CompiledProgram) 
                 let bv = builder.use_var(vars[b_idx]);
                 let cv = builder.use_var(vars[c_idx]);
                 let cv1 = builder.use_var(vars[c_idx + 1]);
-                let fref = get_func_ref(&mut builder, &mut module, helpers.mset);
+                let fref = get_func_ref(&mut builder, module, helpers.mset);
                 let call_inst = builder.ins().call(fref, &[bv, cv, cv1]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
@@ -1322,21 +1326,21 @@ pub fn compile(chunk: &Chunk, nan_consts: &[NanVal], program: &CompiledProgram) 
             OP_MHAS => {
                 let bv = builder.use_var(vars[b_idx]);
                 let cv = builder.use_var(vars[c_idx]);
-                let fref = get_func_ref(&mut builder, &mut module, helpers.mhas);
+                let fref = get_func_ref(&mut builder, module, helpers.mhas);
                 let call_inst = builder.ins().call(fref, &[bv, cv]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
             }
             OP_MKEYS => {
                 let bv = builder.use_var(vars[b_idx]);
-                let fref = get_func_ref(&mut builder, &mut module, helpers.mkeys);
+                let fref = get_func_ref(&mut builder, module, helpers.mkeys);
                 let call_inst = builder.ins().call(fref, &[bv]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
             }
             OP_MVALS => {
                 let bv = builder.use_var(vars[b_idx]);
-                let fref = get_func_ref(&mut builder, &mut module, helpers.mvals);
+                let fref = get_func_ref(&mut builder, module, helpers.mvals);
                 let call_inst = builder.ins().call(fref, &[bv]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
@@ -1344,7 +1348,7 @@ pub fn compile(chunk: &Chunk, nan_consts: &[NanVal], program: &CompiledProgram) 
             OP_MDEL => {
                 let bv = builder.use_var(vars[b_idx]);
                 let cv = builder.use_var(vars[c_idx]);
-                let fref = get_func_ref(&mut builder, &mut module, helpers.mdel);
+                let fref = get_func_ref(&mut builder, module, helpers.mdel);
                 let call_inst = builder.ins().call(fref, &[bv, cv]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
@@ -1352,21 +1356,21 @@ pub fn compile(chunk: &Chunk, nan_consts: &[NanVal], program: &CompiledProgram) 
             // ── Print, Trim, Uniq ──
             OP_PRT => {
                 let bv = builder.use_var(vars[b_idx]);
-                let fref = get_func_ref(&mut builder, &mut module, helpers.prt);
+                let fref = get_func_ref(&mut builder, module, helpers.prt);
                 let call_inst = builder.ins().call(fref, &[bv]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
             }
             OP_TRM => {
                 let bv = builder.use_var(vars[b_idx]);
-                let fref = get_func_ref(&mut builder, &mut module, helpers.trm);
+                let fref = get_func_ref(&mut builder, module, helpers.trm);
                 let call_inst = builder.ins().call(fref, &[bv]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
             }
             OP_UNQ => {
                 let bv = builder.use_var(vars[b_idx]);
-                let fref = get_func_ref(&mut builder, &mut module, helpers.unq);
+                let fref = get_func_ref(&mut builder, module, helpers.unq);
                 let call_inst = builder.ins().call(fref, &[bv]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
@@ -1374,14 +1378,14 @@ pub fn compile(chunk: &Chunk, nan_consts: &[NanVal], program: &CompiledProgram) 
             // ── File I/O ──
             OP_RD => {
                 let bv = builder.use_var(vars[b_idx]);
-                let fref = get_func_ref(&mut builder, &mut module, helpers.rd);
+                let fref = get_func_ref(&mut builder, module, helpers.rd);
                 let call_inst = builder.ins().call(fref, &[bv]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
             }
             OP_RDL => {
                 let bv = builder.use_var(vars[b_idx]);
-                let fref = get_func_ref(&mut builder, &mut module, helpers.rdl);
+                let fref = get_func_ref(&mut builder, module, helpers.rdl);
                 let call_inst = builder.ins().call(fref, &[bv]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
@@ -1389,7 +1393,7 @@ pub fn compile(chunk: &Chunk, nan_consts: &[NanVal], program: &CompiledProgram) 
             OP_WR => {
                 let bv = builder.use_var(vars[b_idx]);
                 let cv = builder.use_var(vars[c_idx]);
-                let fref = get_func_ref(&mut builder, &mut module, helpers.wr);
+                let fref = get_func_ref(&mut builder, module, helpers.wr);
                 let call_inst = builder.ins().call(fref, &[bv, cv]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
@@ -1397,7 +1401,7 @@ pub fn compile(chunk: &Chunk, nan_consts: &[NanVal], program: &CompiledProgram) 
             OP_WRL => {
                 let bv = builder.use_var(vars[b_idx]);
                 let cv = builder.use_var(vars[c_idx]);
-                let fref = get_func_ref(&mut builder, &mut module, helpers.wrl);
+                let fref = get_func_ref(&mut builder, module, helpers.wrl);
                 let call_inst = builder.ins().call(fref, &[bv, cv]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
@@ -1406,7 +1410,7 @@ pub fn compile(chunk: &Chunk, nan_consts: &[NanVal], program: &CompiledProgram) 
             OP_POST => {
                 let bv = builder.use_var(vars[b_idx]);
                 let cv = builder.use_var(vars[c_idx]);
-                let fref = get_func_ref(&mut builder, &mut module, helpers.post);
+                let fref = get_func_ref(&mut builder, module, helpers.post);
                 let call_inst = builder.ins().call(fref, &[bv, cv]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
@@ -1414,7 +1418,7 @@ pub fn compile(chunk: &Chunk, nan_consts: &[NanVal], program: &CompiledProgram) 
             OP_GETH => {
                 let bv = builder.use_var(vars[b_idx]);
                 let cv = builder.use_var(vars[c_idx]);
-                let fref = get_func_ref(&mut builder, &mut module, helpers.geth);
+                let fref = get_func_ref(&mut builder, module, helpers.geth);
                 let call_inst = builder.ins().call(fref, &[bv, cv]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
@@ -1427,7 +1431,7 @@ pub fn compile(chunk: &Chunk, nan_consts: &[NanVal], program: &CompiledProgram) 
                 skip_next = true;
                 let d_idx = ((data_inst >> 16) & 0xFF) as usize;  // headers register
                 let dv = builder.use_var(vars[d_idx]);
-                let fref = get_func_ref(&mut builder, &mut module, helpers.posth);
+                let fref = get_func_ref(&mut builder, module, helpers.posth);
                 let call_inst = builder.ins().call(fref, &[bv, cv, dv]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
@@ -1449,14 +1453,62 @@ pub fn compile(chunk: &Chunk, nan_consts: &[NanVal], program: &CompiledProgram) 
     builder.finalize();
 
     module.define_function(func_id, &mut ctx).ok()?;
+    Some(())
+}
+
+/// Compile ALL functions in the program into native code via Cranelift (two-pass).
+///
+/// First pass: declare all functions in the JIT module.
+/// Second pass: compile all function bodies with direct cross-function calls.
+/// Returns a JitFunction for the entry function at `entry_idx`.
+pub fn compile(chunk: &Chunk, _nan_consts: &[NanVal], program: &CompiledProgram) -> Option<JitFunction> {
+    // Find the entry function index by matching chunk pointer
+    let entry_idx = program.chunks.iter().position(|c| std::ptr::eq(c, chunk))?;
+    compile_program(program, entry_idx)
+}
+
+/// Compile all functions in the program and return a JitFunction for the entry at `entry_idx`.
+fn compile_program(program: &CompiledProgram, entry_idx: usize) -> Option<JitFunction> {
+    let mut flag_builder = settings::builder();
+    flag_builder.set("opt_level", "speed").ok()?;
+    let isa_builder = cranelift_native::builder().ok()?;
+    let isa = isa_builder.finish(settings::Flags::new(flag_builder)).ok()?;
+
+    let mut jit_builder = JITBuilder::with_isa(isa, default_libcall_names());
+    register_helpers(&mut jit_builder);
+    let mut module = JITModule::new(jit_builder);
+    let helpers = declare_all_helpers(&mut module);
+
+    // First pass: declare ALL functions in the module
+    let mut func_ids = Vec::with_capacity(program.chunks.len());
+    for (i, chunk) in program.chunks.iter().enumerate() {
+        let name = format!("ilo_{}", program.func_names[i]);
+        let mut sig = module.make_signature();
+        for _ in 0..chunk.param_count {
+            sig.params.push(AbiParam::new(I64));
+        }
+        sig.returns.push(AbiParam::new(I64));
+        let fid = module.declare_function(&name, Linkage::Local, &sig).ok()?;
+        func_ids.push(fid);
+    }
+
+    // Second pass: compile ALL function bodies with func_ids available for direct calls
+    for (i, (chunk, nan_consts)) in program.chunks.iter().zip(program.nan_constants.iter()).enumerate() {
+        compile_function_body(
+            &mut module, chunk, nan_consts, func_ids[i], &helpers, &func_ids, program,
+        )?;
+    }
+
     module.finalize_definitions().ok()?;
 
-    let func_ptr = module.get_finalized_function(func_id);
+    let entry_func_id = func_ids[entry_idx];
+    let func_ptr = module.get_finalized_function(entry_func_id);
+    let param_count = program.chunks[entry_idx].param_count as usize;
 
     Some(JitFunction {
         _module: module,
         func_ptr,
-        param_count: chunk.param_count as usize,
+        param_count,
     })
 }
 
