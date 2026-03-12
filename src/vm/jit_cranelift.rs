@@ -16,7 +16,7 @@ use cranelift_module::{default_libcall_names, Module, Linkage, FuncId};
 use std::collections::HashMap;
 
 /// Compiled Cranelift function that can be called repeatedly.
-pub(crate) struct JitFunction {
+pub struct JitFunction {
     _module: JITModule,
     func_ptr: *const u8,
     param_count: usize,
@@ -292,7 +292,7 @@ fn declare_all_helpers(module: &mut JITModule) -> HelperFuncs {
 }
 
 /// Compile a chunk into native code via Cranelift (NanVal / I64 mode).
-pub(crate) fn compile(chunk: &Chunk, nan_consts: &[NanVal], program: &CompiledProgram) -> Option<JitFunction> {
+pub fn compile(chunk: &Chunk, nan_consts: &[NanVal], program: &CompiledProgram) -> Option<JitFunction> {
     let mut flag_builder = settings::builder();
     flag_builder.set("opt_level", "speed").ok()?;
     let isa_builder = cranelift_native::builder().ok()?;
@@ -1519,7 +1519,7 @@ fn call_raw(func: &JitFunction, args: &[u64]) -> Option<u64> {
 
 /// Call a compiled NanVal JIT function with u64 args, returns u64.
 /// Resets the JIT arena after each call (promoting the result if arena-tagged).
-pub(crate) fn call(func: &JitFunction, args: &[u64]) -> Option<u64> {
+pub fn call(func: &JitFunction, args: &[u64]) -> Option<u64> {
     let mut result = call_raw(func, args)?;
 
     // Promote arena result and reset arena
@@ -1537,7 +1537,7 @@ pub(crate) fn call(func: &JitFunction, args: &[u64]) -> Option<u64> {
 }
 
 /// Compile and call in one shot (convenience wrapper).
-pub(crate) fn compile_and_call(chunk: &Chunk, nan_consts: &[NanVal], args: &[u64], program: &CompiledProgram) -> Option<u64> {
+pub fn compile_and_call(chunk: &Chunk, nan_consts: &[NanVal], args: &[u64], program: &CompiledProgram) -> Option<u64> {
     with_active_registry(program, || {
         let func = compile(chunk, nan_consts, program)?;
         call(&func, args)

@@ -28,7 +28,7 @@ pub(crate) fn is_jit_eligible(chunk: &Chunk) -> bool {
 
 /// Compile a numeric chunk into native ARM64 code.
 /// Returns None if the chunk isn't eligible or compilation fails.
-pub(crate) fn compile(chunk: &Chunk, nan_consts: &[NanVal]) -> Option<JitFunction> {
+pub fn compile(chunk: &Chunk, nan_consts: &[NanVal]) -> Option<JitFunction> {
     if !is_jit_eligible(chunk) { return None; }
     let mut emitter = Arm64Emitter::new();
     emitter.compile(chunk, nan_consts)?;
@@ -36,7 +36,7 @@ pub(crate) fn compile(chunk: &Chunk, nan_consts: &[NanVal]) -> Option<JitFunctio
 }
 
 /// Call a JIT-compiled function with the given f64 args.
-pub(crate) fn call(func: &JitFunction, args: &[f64]) -> Option<f64> {
+pub fn call(func: &JitFunction, args: &[f64]) -> Option<f64> {
     if args.len() > 8 { return None; }
     Some(match args.len() {
         0 => func.call_0(),
@@ -53,7 +53,7 @@ pub(crate) fn call(func: &JitFunction, args: &[f64]) -> Option<f64> {
 }
 
 /// Compile and call in one shot (convenience for --run-jit).
-pub(crate) fn compile_and_call(chunk: &Chunk, nan_consts: &[NanVal], args: &[f64]) -> Option<f64> {
+pub fn compile_and_call(chunk: &Chunk, nan_consts: &[NanVal], args: &[f64]) -> Option<f64> {
     let func = compile(chunk, nan_consts)?;
     call(&func, args)
 }
@@ -296,7 +296,7 @@ impl Arm64Emitter {
 
 // ── JIT function wrapper ───────────────────────────────────────────
 
-pub(crate) struct JitFunction {
+pub struct JitFunction {
     ptr: *mut libc::c_void,
     size: usize,
 }

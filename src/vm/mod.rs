@@ -52,13 +52,13 @@ pub enum CompileError {
 }
 
 #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
-pub(crate) mod jit_arm64;
+pub mod jit_arm64;
 #[cfg(feature = "cranelift")]
-pub(crate) mod jit_cranelift;
+pub mod jit_cranelift;
 #[cfg(feature = "cranelift")]
-pub(crate) mod compile_cranelift;
+pub mod compile_cranelift;
 #[cfg(feature = "llvm")]
-pub(crate) mod jit_llvm;
+pub mod jit_llvm;
 
 // ── Register-based opcodes (32-bit packed instructions) ─────────────
 //
@@ -240,14 +240,14 @@ impl Chunk {
 // ── Type registry (compile-time field layout for flat records) ───────
 
 #[derive(Debug, Clone)]
-pub(crate) struct TypeInfo {
+pub struct TypeInfo {
     pub name: String,
     pub fields: Vec<String>,      // ordered field names — index = slot
     pub num_fields: u64,          // bitmask: bit i set if field i is Number type
 }
 
 #[derive(Debug, Clone, Default)]
-pub(crate) struct TypeRegistry {
+pub struct TypeRegistry {
     pub types: Vec<Rc<TypeInfo>>,
     pub name_to_id: HashMap<String, u16>,
 }
@@ -274,8 +274,8 @@ impl TypeRegistry {
 pub struct CompiledProgram {
     pub chunks: Vec<Chunk>,
     pub func_names: Vec<String>,
-    pub(crate) nan_constants: Vec<Vec<NanVal>>,
-    pub(crate) type_registry: TypeRegistry,
+    pub nan_constants: Vec<Vec<NanVal>>,
+    pub type_registry: TypeRegistry,
     /// Parallel to `func_names`/`chunks`: true if the function slot is a `tool` declaration.
     pub is_tool: Vec<bool>,
 }
@@ -5743,6 +5743,42 @@ pub(crate) extern "C" fn jit_posth(url_v: u64, body_v: u64, headers_v: u64) -> u
     {
         NanVal::heap_err(NanVal::heap_string("http feature not enabled".to_string())).0
     }
+}
+
+// ── AOT runtime init/fini and arena/registry pointer helpers ─────────
+
+#[cfg(feature = "cranelift")]
+#[unsafe(no_mangle)]
+pub extern "C" fn ilo_aot_init() {
+    jit_arena_reset();
+}
+
+#[cfg(feature = "cranelift")]
+#[unsafe(no_mangle)]
+pub extern "C" fn ilo_aot_fini() {
+    clear_active_registry();
+    jit_arena_reset();
+}
+
+#[cfg(feature = "cranelift")]
+#[unsafe(no_mangle)]
+pub extern "C" fn jit_get_arena_ptr() -> u64 {
+    jit_arena_ptr() as u64
+}
+
+#[cfg(feature = "cranelift")]
+#[unsafe(no_mangle)]
+pub extern "C" fn jit_get_registry_ptr() -> u64 {
+    ACTIVE_REGISTRY.with(|r| r.get() as u64)
+}
+
+/// Create a NanVal string from a C string pointer (for AOT string constants).
+#[cfg(feature = "cranelift")]
+#[unsafe(no_mangle)]
+pub extern "C" fn jit_string_const(ptr: u64) -> u64 {
+    let cstr = unsafe { std::ffi::CStr::from_ptr(ptr as *const std::ffi::c_char) };
+    let s = cstr.to_str().unwrap_or("").to_string();
+    NanVal::heap_string(s).0
 }
 
 // ── Block leader analysis (shared by JIT backends) ──────────────────

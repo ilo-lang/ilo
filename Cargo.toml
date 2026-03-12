@@ -11,6 +11,10 @@ keywords = ["language", "ai", "interpreter", "compiler", "vm"]
 categories = ["compilers", "command-line-utilities"]
 readme = "README.md"
 
+[lib]
+name = "ilo"
+crate-type = ["staticlib", "rlib"]
+
 [features]
 default = ["cranelift", "http"]
 http = ["dep:minreq"]

@@ -1,16 +1,15 @@
 #![warn(clippy::all)]
 
-mod ast;
-mod builtins;
-mod codegen;
-mod diagnostic;
-mod interpreter;
-mod lexer;
-mod parser;
-mod tools;
-mod graph;
-mod verify;
-mod vm;
+use ilo::ast;
+use ilo::codegen;
+use ilo::diagnostic;
+use ilo::interpreter;
+use ilo::lexer;
+use ilo::parser;
+use ilo::tools;
+use ilo::graph;
+use ilo::verify;
+use ilo::vm;
 
 use diagnostic::{Diagnostic, ansi::AnsiRenderer, json};
 
@@ -862,6 +861,7 @@ fn compile_cmd(args: &[String]) {
     let mut output_path: Option<String> = None;
     let mut source_arg: Option<&str> = None;
     let mut func_name: Option<&str> = None;
+    let mut bench_mode = false;
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
@@ -872,6 +872,9 @@ fn compile_cmd(args: &[String]) {
                     std::process::exit(1);
                 }
                 output_path = Some(args[i].clone());
+            }
+            "--bench" => {
+                bench_mode = true;
             }
             _ if source_arg.is_none() => {
                 source_arg = Some(&args[i]);
@@ -984,7 +987,12 @@ fn compile_cmd(args: &[String]) {
     });
 
     // AOT compile
-    match vm::compile_cranelift::compile_to_binary(&compiled, entry, &output) {
+    let result = if bench_mode {
+        vm::compile_cranelift::compile_to_bench_binary(&compiled, entry, &output)
+    } else {
+        vm::compile_cranelift::compile_to_binary(&compiled, entry, &output)
+    };
+    match result {
         Ok(()) => {
             eprintln!("Compiled: {}", output);
         }
