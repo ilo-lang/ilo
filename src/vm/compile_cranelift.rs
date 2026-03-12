@@ -1081,11 +1081,10 @@ fn compile_function_body(
                 let c_idx = (inst & 0xFF) as usize;
                 let bv = builder.use_var(vars[b_idx]);
                 // Get field name from chunk constants, store as data section
-                let field_name = match &chunk.constants[c_idx] {
-                    crate::interpreter::Value::Text(s) => s.clone(),
+                let mut name_bytes = match &chunk.constants[c_idx] {
+                    crate::interpreter::Value::Text(s) => s.as_bytes().to_vec(),
                     _ => return Err(format!("OP_RECFLD_NAME expects string constant at {}", ip)),
                 };
-                let mut name_bytes = field_name.into_bytes();
                 name_bytes.push(0); // null-terminate
                 data_section_counter += 1;
                 let ds_name = format!("ilo_fldname_{}", data_section_counter);

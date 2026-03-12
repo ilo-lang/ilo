@@ -1001,11 +1001,10 @@ fn compile_function_body(
                 let c_idx = (inst & 0xFF) as usize;
                 let bv = builder.use_var(vars[b_idx]);
                 // Get field name from chunk constants as a null-terminated C string
-                let field_name = match &chunk.constants[c_idx] {
-                    crate::interpreter::Value::Text(s) => s.clone(),
+                let cstring = match &chunk.constants[c_idx] {
+                    crate::interpreter::Value::Text(s) => std::ffi::CString::new(s.as_bytes()).ok()?,
                     _ => return None,
                 };
-                let cstring = std::ffi::CString::new(field_name).ok()?;
                 let leaked = Box::leak(Box::new(cstring));
                 let field_name_ptr = leaked.as_ptr() as u64;
                 let field_name_val = builder.ins().iconst(I64, field_name_ptr as i64);
