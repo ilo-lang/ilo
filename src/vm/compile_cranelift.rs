@@ -68,6 +68,7 @@ struct HelperFuncs {
     listappend: FuncId,
     index: FuncId,
     recfld: FuncId,
+    recfld_name: FuncId,
     recnew: FuncId,
     recwith: FuncId,
     listnew: FuncId,
@@ -168,6 +169,7 @@ fn declare_all_helpers(module: &mut ObjectModule) -> HelperFuncs {
         listappend: declare_helper(module, "jit_listappend", 2, 1),
         index: declare_helper(module, "jit_index", 2, 1),
         recfld: declare_helper(module, "jit_recfld", 2, 1),
+        recfld_name: declare_helper(module, "jit_recfld_name", 3, 1),
         recnew: declare_helper(module, "jit_recnew", 4, 1),
         recwith: declare_helper(module, "jit_recwith", 4, 1),
         listnew: declare_helper(module, "jit_listnew", 2, 1),
@@ -1075,8 +1077,26 @@ fn compile_function_body(
                 builder.def_var(vars[a_idx], result);
             }
             OP_RECFLD_NAME => {
-                // Dynamic field access by name — unsupported in AOT
-                return Err(format!("OP_RECFLD_NAME not supported in AOT at instruction {}", ip));
+                let b_idx = ((inst >> 8) & 0xFF) as usize;
+                let c_idx = (inst & 0xFF) as usize;
+                let bv = builder.use_var(vars[b_idx]);
+                // Get field name from chunk constants, store as data section
+                let mut name_bytes = match &chunk.constants[c_idx] {
+                    crate::interpreter::Value::Text(s) => s.as_bytes().to_vec(),
+                    _ => return Err(format!("OP_RECFLD_NAME expects string constant at {}", ip)),
+                };
+                name_bytes.push(0); // null-terminate
+                data_section_counter += 1;
+                let ds_name = format!("ilo_fldname_{}", data_section_counter);
+                let name_ptr = create_data_section(module, &mut builder, &ds_name, &name_bytes)?;
+                // Get registry pointer at runtime
+                let fref_reg = get_func_ref(&mut builder, module, helpers.get_registry_ptr);
+                let reg_call = builder.ins().call(fref_reg, &[]);
+                let registry_val = builder.inst_results(reg_call)[0];
+                let fref = get_func_ref(&mut builder, module, helpers.recfld_name);
+                let call_inst = builder.ins().call(fref, &[bv, name_ptr, registry_val]);
+                let result = builder.inst_results(call_inst)[0];
+                builder.def_var(vars[a_idx], result);
             }
             // ── Record creation (AOT: call helper with runtime arena pointer) ──
             OP_RECNEW => {
