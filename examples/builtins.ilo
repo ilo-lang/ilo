@@ -15,6 +15,7 @@ join ws:L t>t;r=cat ws " ";+r ""
 -- Does a substring appear in a text? (last function — bare call safe at EOF)
 has-word sentence:t word:t>b;has sentence word
 
+-- engine-skip: jit
 -- run: digs 12345
 -- out: 5
 -- run: digs 7

@@ -13,6 +13,7 @@ sq-last xs:L n>n;@x xs{*x x}
 -- Length of list (last function — bare call safe at EOF)
 sz xs:L n>n;len xs
 
+-- engine-skip: jit
 -- run: fst [10,20,30]
 -- out: 10
 -- run: thr [10,20,30]

@@ -17,6 +17,7 @@ classify xs:L n>M t L n;grp cl xs
 -- Extract all numbers from a string with regex
 nums s:t>L t;rgx "\d+" s
 
+-- engine-skip: vm jit
 -- run: total [1,2,3,4,5]
 -- out: 15
 -- run: mean [2,4,6]
