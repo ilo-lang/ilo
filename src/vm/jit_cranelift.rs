@@ -377,8 +377,8 @@ fn compile_function_body(
         // Function parameters: the VM compiler sets all_regs_numeric when it has
         // proven every param is numeric (e.g. single-param numeric functions).
         if chunk.all_regs_numeric {
-            for i in 0..chunk.param_count as usize {
-                if i < reg_count { num_write[i] = true; }
+            for (i, slot) in num_write.iter_mut().enumerate().take(chunk.param_count as usize) {
+                if i < reg_count { *slot = true; }
             }
         }
 
