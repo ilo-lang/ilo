@@ -662,7 +662,7 @@ fn compile_function_body(
     let mut inline_f64_var_map: HashMap<usize, Vec<Variable>> = HashMap::new();
     {
         let mut next_f64_idx = inline_f64_var_base;
-        for (&ip, _) in &inline_var_map {
+        for &ip in inline_var_map.keys() {
             let bx       = (chunk.code[ip] & 0xFFFF) as usize;
             let func_idx = bx >> 8;
             let callee   = &program.chunks[func_idx];
@@ -743,8 +743,8 @@ fn compile_function_body(
         // Function parameters: the VM compiler sets all_regs_numeric when it has
         // proven every param is numeric (e.g. single-param numeric functions).
         if chunk.all_regs_numeric {
-            for i in 0..chunk.param_count as usize {
-                if i < reg_count { num_write[i] = true; }
+            for slot in num_write.iter_mut().take(chunk.param_count as usize) {
+                *slot = true;
             }
         }
 
