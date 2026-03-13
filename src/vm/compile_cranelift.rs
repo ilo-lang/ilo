@@ -424,7 +424,7 @@ fn compile_function_body(
 
     // Import helper function references (cached)
     let mut func_refs: HashMap<FuncId, cranelift_codegen::ir::FuncRef> = HashMap::new();
-    let mut get_func_ref = |builder: &mut FunctionBuilder, module: &mut ObjectModule, id: FuncId| -> cranelift_codegen::ir::FuncRef {
+    let mut get_func_ref = |builder: &mut FunctionBuilder<'_>, module: &mut ObjectModule, id: FuncId| -> cranelift_codegen::ir::FuncRef {
         *func_refs.entry(id).or_insert_with(|| module.declare_func_in_func(id, builder.func))
     };
 
@@ -1656,7 +1656,7 @@ fn generate_main(
 /// Create a read-only data section and return a pointer to it.
 fn create_data_section(
     module: &mut ObjectModule,
-    builder: &mut FunctionBuilder,
+    builder: &mut FunctionBuilder<'_>,
     name: &str,
     bytes: &[u8],
 ) -> Result<cranelift_codegen::ir::Value, String> {
