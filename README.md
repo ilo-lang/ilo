@@ -154,22 +154,22 @@ Per-call time (ns) across 8 micro-benchmarks. Lower is better. [Full results →
 
 | Language | numeric | string | record | mixed | guards | recurse | foreach | while | pipe | file | api |
 |----------|--------:|--------:|--------:|--------:|--------:|--------:|--------:|--------:|--------:|--------:|--------:|
-| Rust (native) | 241ns | 3.3us | n/a | 9.7us | 843ns | 17.7us | 46ns | n/a | 243ns | 12.2us | 153.2us |
-| Go | 438ns | 15.6us | 68ns | 6.0us | 428ns | 21.2us | 154ns | 67ns | 58ns | 20.5us | 191.7us |
-| C# (.NET) | 5.7us | 14.9us | 560ns | 29.9us | 7.0us | 23.9us | 1.3us | 448ns | 686ns | 24.5us | 214.7us |
-| Kotlin (JVM) | 500ns | 8.8us | 312ns | 7.9us | 1.0us | 17.0us | 1.1us | 160ns | 217ns | 19.0us | 178.6us |
-| LuaJIT | 547ns | 17.4us | 132ns | 10.0us | 2.1us | 30.3us | 683ns | 53ns | 82ns | 15.6us | 49.3us |
-| Node/V8 | 544ns | 1.3us | 342ns | 5.3us | 1.0us | 45.6us | 480ns | 117ns | 210ns | 13.3us | 260.9us |
-| TypeScript | 434ns | 1.2us | 235ns | 6.4us | 1.0us | 44.2us | 412ns | 72ns | 161ns | 13.6us | 263.0us |
-| ilo AOT | 5.8us | 13.0us | 1.5us | 36.1us | 5.6us | 37.9us | n/a | 846ns | 1.0us | n/a | n/a |
-| ilo JIT | 3.5us | 5.3us | 612ns | 29.4us | 3.6us | 36.5us | 2.9us | 354ns | 409ns | 17.4us | 163.2us |
-| ilo VM | 11.5us | 10.4us | 3.0us | 29.0us | 37.9us | 508.1us | 2.4us | 1.2us | 6.7us | 17.8us | 164.6us |
-| ilo Interpreter | 90.7us | 62.5us | 54.8us | 1.3ms | 924.4us | 16.3ms | 78.9us | 10.3us | 146.2us | 32.4us | 177.7us |
-| Lua | 4.0us | 38.8us | 7.5us | 49.2us | 26.9us | 330.0us | 3.7us | 952ns | 4.2us | 16.7us | 55.1us |
-| Ruby | 19.9us | 25.9us | 11.8us | 18.1us | 38.4us | 363.5us | 3.1us | 2.2us | 6.1us | 20.3us | 260.1us |
-| PHP | 6.5us | 4.1us | 4.0us | 8.2us | 25.5us | 534.2us | 985ns | 686ns | 6.5us | 15.8us | 166.3us |
-| Python 3 | 28.8us | 12.4us | 8.5us | 28.0us | 62.7us | 693.4us | 2.0us | 2.6us | 10.8us | 20.2us | 12.9us |
-| PyPy 3 | 1.2us | 2.0us | 442ns | 20.9us | 4.2us | 105.3us | 568ns | 265ns | 462ns | 23.5us | 1.9us |
+| Rust (native) | 122ns | 2.6us | n/a | 8.8us | 865ns | 19.2us | 103ns | 1ns | 487ns | 11.0us | 155.3us |
+| Go | 273ns | 15.4us | 30ns | 5.2us | 291ns | 21.0us | 437ns | 91ns | 140ns | 20.6us | 198.4us |
+| C# (.NET) | 5.4us | 15.5us | 429ns | 31.1us | 6.9us | 23.4us | 1.5us | 555ns | 830ns | 21.7us | 228.3us |
+| Kotlin (JVM) | 543ns | 8.4us | 292ns | 8.1us | 1.1us | 16.9us | 1.2us | 165ns | 208ns | 18.0us | 183.7us |
+| LuaJIT | 328ns | 20.6us | 59ns | 10.7us | 1.4us | 31.6us | 1.6us | 170ns | 206ns | 14.2us | 50.9us |
+| Node/V8 | 472ns | 1.4us | 293ns | 6.0us | 1.1us | 48.2us | 538ns | 107ns | 216ns | 12.1us | 264.0us |
+| TypeScript | 491ns | 1.3us | 305ns | 5.8us | 1.2us | 47.9us | 408ns | 73ns | 162ns | 12.4us | 274.5us |
+| ilo AOT | 4.2us | 11.8us | 822ns | 36.9us | 3.8us | 38.7us | n/a | 915ns | 1.1us | n/a | n/a |
+| ilo JIT | 3.7us | 5.9us | 655ns | 30.9us | 3.8us | 36.4us | 3.0us | 356ns | 416ns | 16.0us | 168.9us |
+| ilo VM | 13.3us | 11.6us | 3.3us | 32.0us | 40.2us | 517.3us | 2.3us | 1.2us | 6.8us | 16.5us | 176.1us |
+| ilo Interpreter | 106.0us | 67.2us | 62.3us | 1.4ms | 1.0ms | 16.3ms | 75.7us | 10.3us | 150.8us | 31.6us | 172.2us |
+| Lua | 4.6us | 42.0us | 8.2us | 53.5us | 29.0us | 330.9us | 3.7us | 905ns | 4.1us | 14.9us | 56.7us |
+| Ruby | 22.7us | 30.1us | 10.1us | 19.5us | 40.4us | 365.6us | 3.1us | 1.9us | 6.1us | 18.0us | 270.7us |
+| PHP | 7.3us | 4.4us | 4.3us | 8.8us | 27.4us | 534.9us | 987ns | 666ns | 6.6us | 14.6us | 168.6us |
+| Python 3 | 32.4us | 13.4us | 9.3us | 29.9us | 66.9us | 696.8us | 2.1us | 2.5us | 10.2us | 19.7us | 13.6us |
+| PyPy 3 | 1.4us | 2.3us | 488ns | 22.6us | 5.0us | 105.6us | 541ns | 263ns | 453ns | 22.9us | 2.0us |
 
 *10000 iterations, Darwin arm64, 2026-03-13*
 
