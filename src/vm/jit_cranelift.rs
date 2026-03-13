@@ -2032,6 +2032,7 @@ pub fn compile_and_call(chunk: &Chunk, nan_consts: &[NanVal], args: &[u64], prog
 }
 
 #[cfg(test)]
+#[allow(clippy::approx_constant)]
 mod tests {
     use super::*;
     use crate::lexer;

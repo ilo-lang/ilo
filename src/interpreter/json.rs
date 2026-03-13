@@ -114,6 +114,7 @@ impl Value {
 }
 
 #[cfg(test)]
+#[allow(clippy::approx_constant)]
 mod tests {
     use super::*;
     use serde_json::json;

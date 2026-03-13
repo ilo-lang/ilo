@@ -492,6 +492,7 @@ fn resolve_aliases_expr(expr: &mut Expr) {
 }
 
 #[cfg(test)]
+#[allow(clippy::approx_constant)]
 mod tests {
     use super::*;
 
