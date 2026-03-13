@@ -5584,10 +5584,10 @@ pub(crate) extern "C" fn jit_listappend(a: u64, b: u64) -> u64 {
 
     let ptr = (list_val.0 & PTR_MASK) as *const HeapObj;
 
-    // RC=1 fast path: mutate the Vec in-place.
-    // We use reserve_exact(1) to ensure cap == len after the push, keeping the
-    // HeapObj+8 (Vec.cap) == HeapObj+24 (Vec.len) invariant that the JIT's inline
-    // FOREACHPREP/FOREACHNEXT relies on when reading bounds at offset +8.
+    // RC=1 fast path: mutate the Vec in-place using standard amortized growth.
+    // The JIT's FOREACHPREP/FOREACHNEXT reads Vec.len at HeapObj+24 (correct), so
+    // there is no requirement for cap == len. Standard push with capacity doubling
+    // gives O(n log n) total allocations instead of O(n²) from the old reserve_exact(1).
     // NOTE: the JIT compiler's OP_LISTAPPEND peephole always emits a==b (the same
     // register for both list operands), so RC is always 1 here in JIT-compiled code.
     let rc_count = {
@@ -5601,8 +5601,7 @@ pub(crate) extern "C" fn jit_listappend(a: u64, b: u64) -> u64 {
         let heap_mut = unsafe { &mut *(ptr as *mut HeapObj) };
         match heap_mut {
             HeapObj::List(items) => {
-                // Use reserve_exact to keep cap == len after push (no doubling).
-                items.reserve_exact(1);
+                // Standard push: amortized O(1), same as the VM's OP_LISTAPPEND path.
                 if !item_already_owned { item_val.clone_rc(); }
                 items.push(item_val);
                 a // return same NanVal (same pointer, RC still 1)

@@ -2232,15 +2232,18 @@ fn compile_function_body(
                 // and the malloc/free of the OkVal wrapper that the old path did.
                 //
                 // HeapObj::List memory layout (ptr = bv & PTR_MASK):
-                //   [ptr + 0]  discriminant = 1 for List variant
-                //   [ptr + 8]  Vec.len  (usize)
-                //   [ptr + 16] Vec.data_ptr  (*mut NanVal, each slot is u64/8 bytes)
-                //   [ptr + 24] Vec.cap  (usize)
-                // This layout was confirmed with a runtime probe of the actual types.
+                //   [ptr +  0]  discriminant = 1 for List variant  (8 bytes)
+                //   [ptr +  8]  Vec.cap  (usize)   — capacity (first Vec field on aarch64)
+                //   [ptr + 16]  Vec.data_ptr  (*mut NanVal, each slot is u64/8 bytes)
+                //   [ptr + 24]  Vec.len  (usize)   — length (last Vec field on aarch64)
+                //
+                // Rust Vec<T> field order on aarch64: [cap, ptr, len] (confirmed via
+                // runtime probing with a multi-variant enum that prevents niche opt).
+                // NOTE: earlier code incorrectly read +8 as "len"; that is actually cap.
                 //
                 // Fast path (bv is TAG_LIST and cv is a number):
                 //   idx_u = fcvt_to_uint_sat(bitcast_f64(cv))  // NaN/neg → 0
-                //   if idx_u < [ptr+8]:
+                //   if idx_u < [ptr+24]:                       // compare vs Vec.len
                 //     elem = load [ptr+16] + idx_u*8
                 //     if (elem & QNAN) == QNAN: call jit_move(elem)  // clone RC
                 //     R[A] = elem; jump → body_block
@@ -2287,9 +2290,10 @@ fn compile_function_body(
                     let ptr_mask_c = builder.ins().iconst(I64, PTR_MASK as i64);
                     let ptr = builder.ins().band(bv, ptr_mask_c);
 
-                    // vec_len = *[ptr + 8]
+                    // vec_len = *[ptr + 24]  (Vec.len — actual element count)
                     // SAFETY: TAG_LIST check guarantees ptr points to a live HeapObj::List.
-                    let vec_len = builder.ins().load(I64, mf_trusted, ptr, 8);
+                    // HeapObj layout: [discriminant(+0), Vec.cap(+8), Vec.data_ptr(+16), Vec.len(+24)]
+                    let vec_len = builder.ins().load(I64, mf_trusted, ptr, 24);
 
                     // idx_u = (u64) cv interpreted as f64, saturating cast
                     // fcvt_to_uint_sat: NaN → 0, negative → 0, overflow → u64::MAX
@@ -2356,11 +2360,14 @@ fn compile_function_body(
                 // Inlined fast path with loop-invariant caching:
                 //   HeapObj::List layout (ptr = bv & PTR_MASK):
                 //     [ptr +  0]  enum discriminant  (8 bytes)
-                //     [ptr +  8]  Vec.len   (usize)  ← bounds check
+                //     [ptr +  8]  Vec.cap  (usize)
                 //     [ptr + 16]  Vec.data_ptr
-                //     [ptr + 24]  Vec.cap   (usize)
-                //   (Runtime-probed on aarch64: Rust Vec<T> word order is [len,ptr,cap].)
-                //   Previous code read +24 as "len" — that was reading cap.
+                //     [ptr + 24]  Vec.len  (usize)   ← bounds check
+                //
+                //   Rust Vec<T> field order on aarch64: [cap, data_ptr, len].
+                //   The multi-variant HeapObj enum places discriminant first,
+                //   then Vec fields in their natural [cap, ptr, len] order.
+                //   We read Vec.len at ptr+24 for the bounds check.
                 //
                 // ptr, data_ptr, vec_len, and int_idx=0 are stored in per-loop
                 // Cranelift vars (see foreach_loop_map) so FOREACHNEXT can reuse them.
@@ -2394,8 +2401,9 @@ fn compile_function_body(
                     builder.seal_block(load_block);
                     let ptr_mask_c = builder.ins().iconst(I64, PTR_MASK as i64);
                     let ptr = builder.ins().band(bv, ptr_mask_c);
-                    // Vec.len at ptr+8.  SAFETY: TAG_LIST guarantees a live HeapObj::List.
-                    let vec_len = builder.ins().load(I64, mf_trusted, ptr, 8);
+                    // Vec.len at ptr+24.  SAFETY: TAG_LIST guarantees a live HeapObj::List.
+                    // HeapObj layout: [discriminant(+0), Vec.cap(+8), Vec.data_ptr(+16), Vec.len(+24)]
+                    let vec_len = builder.ins().load(I64, mf_trusted, ptr, 24);
                     let idx_u = builder.ins().iconst(I64, 0i64);
                     let in_bounds = builder.ins().icmp(ic_ult, idx_u, vec_len);
 
@@ -2515,8 +2523,8 @@ fn compile_function_body(
                         let bv = builder.use_var(vars[b_idx]);
                         let ptr_mask_c = builder.ins().iconst(I64, PTR_MASK as i64);
                         let ptr = builder.ins().band(bv, ptr_mask_c);
-                        // Vec.len at ptr+8 (aarch64: [len, ptr, cap] layout).
-                        let vec_len = builder.ins().load(I64, mf_trusted, ptr, 8);
+                        // Vec.len at ptr+24 (aarch64 HeapObj layout: [discriminant, cap, data_ptr, len]).
+                        let vec_len = builder.ins().load(I64, mf_trusted, ptr, 24);
                         let idx_u = builder.ins().fcvt_to_uint_sat(I64, new_idx_f64);
                         let in_bounds = builder.ins().icmp(ic_ult, idx_u, vec_len);
 
@@ -3803,5 +3811,37 @@ mod tests {
             Value::Number(5.0),
         ]);
         assert_eq!(result, Some(Value::Number(23.0)));
+    }
+
+    #[test]
+    fn cranelift_foreach_listbuild_many_calls() {
+        // Repeated JIT calls that build a list then sum via foreach.
+        // Previously crashed because jit_listappend used reserve_exact(1) (O(n²) allocs)
+        // and the JIT read Vec.cap at HeapObj+8 instead of Vec.len at HeapObj+24.
+        // Now fixed: JIT reads Vec.len at HeapObj+24 and uses standard push (amortized O(1)).
+        let source = "f n:n>n;xs=[];i=0;wh <i n{xs=+=xs i;i=+i 1};s=0;@x xs{s=+s x};s";
+        let prog = {
+            let tokens: Vec<crate::lexer::Token> = crate::lexer::lex(source)
+                .unwrap().into_iter().map(|(t, _)| t).collect();
+            crate::parser::parse_tokens(tokens).unwrap()
+        };
+        let compiled = crate::vm::compile(&prog).unwrap();
+        let idx = compiled.func_names.iter().position(|n| n == "f").unwrap();
+        let chunk = &compiled.chunks[idx];
+        let nan_consts = &compiled.nan_constants[idx];
+        let n_val = crate::vm::NanVal::from_value(&Value::Number(100.0)).0;
+        let nan_args = vec![n_val];
+        crate::vm::with_active_registry(&compiled, || {
+            if let Some(jit_func) = compile(chunk, nan_consts, &compiled) {
+                for i in 0..10_100u32 {
+                    let result = call(&jit_func, &nan_args)
+                        .expect("JIT call failed");
+                    let val = crate::vm::NanVal(result).to_value();
+                    assert_eq!(val, Value::Number(4950.0), "failed on iteration {}", i);
+                }
+            } else {
+                panic!("JIT compilation failed");
+            }
+        });
     }
 }
