@@ -5559,27 +5559,56 @@ pub(crate) extern "C" fn jit_listappend(a: u64, b: u64) -> u64 {
     let list_val = NanVal(a);
     let item_val = NanVal(b);
     if !list_val.is_heap() { return TAG_NIL; }
-    match unsafe { list_val.as_heap_ref() } {
-        HeapObj::List(items) => {
-            let mut new_items = Vec::with_capacity(items.len() + 1);
-            for v in items { v.clone_rc(); new_items.push(*v); }
-            // Promote arena records escaping into heap list
-            if item_val.is_arena_record() {
-                let registry_ptr = ACTIVE_REGISTRY.with(|r| r.get());
-                if !registry_ptr.is_null() {
-                    let promoted = item_val.promote_arena_to_heap(unsafe { &*registry_ptr });
-                    // promote creates RC=1, which is exactly what the list needs
-                    new_items.push(promoted);
-                } else {
-                    return TAG_NIL;
-                }
-            } else {
-                item_val.clone_rc();
-                new_items.push(item_val);
+
+    // Normalise the item: promote arena records to heap before anything else.
+    let (item_val, item_already_owned) = if item_val.is_arena_record() {
+        let registry_ptr = ACTIVE_REGISTRY.with(|r| r.get());
+        if registry_ptr.is_null() { return TAG_NIL; }
+        let promoted = item_val.promote_arena_to_heap(unsafe { &*registry_ptr });
+        (promoted, true) // promote_arena_to_heap gives us RC=1 ownership
+    } else {
+        (item_val, false)
+    };
+
+    let ptr = (list_val.0 & PTR_MASK) as *const HeapObj;
+
+    // RC=1 fast path: mutate the Vec in-place.
+    // We use reserve_exact(1) to ensure cap == len after the push, keeping the
+    // HeapObj+8 (Vec.cap) == HeapObj+24 (Vec.len) invariant that the JIT's inline
+    // FOREACHPREP/FOREACHNEXT relies on when reading bounds at offset +8.
+    // NOTE: the JIT compiler's OP_LISTAPPEND peephole always emits a==b (the same
+    // register for both list operands), so RC is always 1 here in JIT-compiled code.
+    let rc_count = {
+        let rc_peek = unsafe { Rc::from_raw(ptr) };
+        let count = Rc::strong_count(&rc_peek);
+        std::mem::forget(rc_peek);
+        count
+    };
+
+    if rc_count == 1 {
+        let heap_mut = unsafe { &mut *(ptr as *mut HeapObj) };
+        match heap_mut {
+            HeapObj::List(items) => {
+                // Use reserve_exact to keep cap == len after push (no doubling).
+                items.reserve_exact(1);
+                if !item_already_owned { item_val.clone_rc(); }
+                items.push(item_val);
+                a // return same NanVal (same pointer, RC still 1)
             }
-            NanVal::heap_list(new_items).0
+            _ => TAG_NIL,
         }
-        _ => TAG_NIL,
+    } else {
+        // Slow path: copy list
+        match unsafe { list_val.as_heap_ref() } {
+            HeapObj::List(items) => {
+                let mut new_items = Vec::with_capacity(items.len() + 1);
+                for v in items { v.clone_rc(); new_items.push(*v); }
+                if !item_already_owned { item_val.clone_rc(); }
+                new_items.push(item_val);
+                NanVal::heap_list(new_items).0
+            }
+            _ => TAG_NIL,
+        }
     }
 }
 
