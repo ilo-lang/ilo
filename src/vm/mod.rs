@@ -548,41 +548,42 @@ impl RegCompiler {
                     // → emit ADDK_N/SUBK_N/MULK_N/DIVK_N directly into existing_reg (no temp + MOVE)
                     let is_arith = matches!(value, Expr::BinOp { op, .. } if matches!(op, BinOp::Add | BinOp::Subtract | BinOp::Multiply | BinOp::Divide));
                     if is_arith && self.reg_is_num[existing_reg as usize]
-                        && let Expr::BinOp { op, left, right } = value {
-                            let emit_addk = |this: &mut Self, rb: u8, n: f64, swap: bool| -> bool {
-                                let ki = this.current.add_const(Value::Number(n));
-                                if ki <= 255 {
-                                    let opcode = match op {
-                                        BinOp::Add => OP_ADDK_N,
-                                        BinOp::Subtract if !swap => OP_SUBK_N,
-                                        BinOp::Multiply => OP_MULK_N,
-                                        BinOp::Divide if !swap => OP_DIVK_N,
-                                        _ => return false,
-                                    };
-                                    this.emit_abc(opcode, existing_reg, rb, ki as u8);
-                                    this.reg_is_num[existing_reg as usize] = true;
-                                    return true;
-                                }
-                                false
-                            };
-                            // `x = +x n` (right is literal)
-                            let handled = if let Expr::Literal(Literal::Number(n)) = right.as_ref() {
-                                let rb = self.compile_expr(left);
-                                if self.reg_is_num[rb as usize] {
-                                    emit_addk(self, rb, *n, false)
-                                } else { false }
+                        && let Expr::BinOp { op, left, right } = value
+                    {
+                        let emit_addk = |this: &mut Self, rb: u8, n: f64, swap: bool| -> bool {
+                            let ki = this.current.add_const(Value::Number(n));
+                            if ki <= 255 {
+                                let opcode = match op {
+                                    BinOp::Add => OP_ADDK_N,
+                                    BinOp::Subtract if !swap => OP_SUBK_N,
+                                    BinOp::Multiply => OP_MULK_N,
+                                    BinOp::Divide if !swap => OP_DIVK_N,
+                                    _ => return false,
+                                };
+                                this.emit_abc(opcode, existing_reg, rb, ki as u8);
+                                this.reg_is_num[existing_reg as usize] = true;
+                                return true;
                             }
-                            // `x = +n x` (left is literal, commutative ops only)
-                            else if matches!(op, BinOp::Add | BinOp::Multiply) {
-                                if let Expr::Literal(Literal::Number(n)) = left.as_ref() {
-                                    let rc = self.compile_expr(right);
-                                    if self.reg_is_num[rc as usize] {
-                                        emit_addk(self, rc, *n, true)
-                                    } else { false }
-                                } else { false }
-                            } else { false };
-                            if handled { return None; }
+                            false
+                        };
+                        // `x = +x n` (right is literal)
+                        let handled = if let Expr::Literal(Literal::Number(n)) = right.as_ref() {
+                            let rb = self.compile_expr(left);
+                            if self.reg_is_num[rb as usize] {
+                                emit_addk(self, rb, *n, false)
+                            } else { false }
                         }
+                        // `x = +n x` (left is literal, commutative ops only)
+                        else if matches!(op, BinOp::Add | BinOp::Multiply) {
+                            if let Expr::Literal(Literal::Number(n)) = left.as_ref() {
+                                let rc = self.compile_expr(right);
+                                if self.reg_is_num[rc as usize] {
+                                    emit_addk(self, rc, *n, true)
+                                } else { false }
+                            } else { false }
+                        } else { false };
+                        if handled { return None; }
+                    }
                     // Peephole: `name = += name item` → OP_LISTAPPEND(existing, existing, item)
                     // Emitting a=b keeps RC=1 so the runtime fast path mutates in-place,
                     // turning O(n²) list-building into O(n).
