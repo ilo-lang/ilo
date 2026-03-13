@@ -154,6 +154,14 @@ pub(crate) const OP_POSTH: u8 = 85;     // ABx: R[A] = http_post(R[B], body=R[bx
 pub(crate) const OP_MOD: u8 = 86;       // R[A] = R[B] % R[C]  (modulo / remainder)
 pub(crate) const OP_ROU: u8 = 87;       // R[A] = round(R[B])
 
+// Fused foreach opcodes — minimize dispatch overhead for list iteration
+// ABC mode: A = bind_reg, B = coll_reg, C = idx_reg
+// OP_FOREACHPREP: validate list, load item[0] into R[A], skip next JMP if in bounds (idx=0 hardcoded)
+pub(crate) const OP_FOREACHPREP: u8 = 88;
+// OP_FOREACHNEXT: R[C] += 1; if R[C] < len(R[B]) { R[A] = R[B][R[C]]; skip next JMP } else fall-through
+// ABC mode: A = bind_reg, B = coll_reg, C = idx_reg, followed by JMP exit + JMP body_top
+pub(crate) const OP_FOREACHNEXT: u8 = 89;
+
 // ABx mode — register + 16-bit operand
 pub(crate) const OP_LOADK: u8 = 20;
 pub(crate) const OP_JMP: u8 = 21;
@@ -745,14 +753,15 @@ impl RegCompiler {
                 self.emit_abx(OP_LOADK, bind_reg, nil_ki);
                 self.add_local(binding, bind_reg);
 
-                let one_reg = self.alloc_reg();
-                let one_ki = self.current.add_const(Value::Number(1.0));
-                self.emit_abx(OP_LOADK, one_reg, one_ki);
-
-                // Loop top
+                // Fused foreach: FOREACHPREP validates the list and loads item[0].
+                // If in-bounds: bind_reg = items[0], skip the following JMP (stay in loop).
+                // If out-of-bounds (empty list): fall through to JMP exit.
                 let loop_top = self.current.code.len();
-                self.emit_abc(OP_LISTGET, bind_reg, coll_reg, idx_reg);
+                self.emit_abc(OP_FOREACHPREP, bind_reg, coll_reg, idx_reg);
                 let exit_jump = self.emit_jmp_placeholder();
+
+                // body_top is where the loop body begins — FOREACHNEXT jumps back here.
+                let body_top = self.current.code.len();
 
                 // Push loop context for break/continue
                 self.loop_stack.push(LoopContext {
@@ -772,7 +781,7 @@ impl RegCompiler {
                         self.emit_abc(OP_MOVE, last_reg, br, 0);
                     }
 
-                // Patch continue jumps to idx increment
+                // Patch continue jumps to the FOREACHNEXT instruction.
                 let continue_target = self.current.code.len();
                 if let Some(patches) = &self.loop_stack.last().unwrap().continue_patches {
                     let patches: Vec<usize> = patches.clone();
@@ -783,14 +792,17 @@ impl RegCompiler {
                     }
                 }
 
-                // idx += 1
-                self.emit_abc(OP_ADD, idx_reg, idx_reg, one_reg);
+                // Fused FOREACHNEXT: increments idx_reg, loads the next element, and if
+                // in-bounds skips the following JMP (which jumps to exit), leaving the
+                // next executed instruction as the JMP back to body_top.
+                // Out-of-bounds: fall through to JMP exit.
+                self.emit_abc(OP_FOREACHNEXT, bind_reg, coll_reg, idx_reg);
+                let next_exit_jump = self.emit_jmp_placeholder();  // JMP exit (on bounds exceeded)
+                self.emit_jump_to(body_top);                        // JMP body_top (on success)
 
-                // Jump back to loop top
-                self.emit_jump_to(loop_top);
-
-                // Exit: patch exit jump and break jumps
+                // Exit: patch both JMP-exit placeholders and all break jumps.
                 self.current.patch_jump(exit_jump);
+                self.current.patch_jump(next_exit_jump);
                 let ctx = self.loop_stack.pop().unwrap();
                 for patch in ctx.break_patches {
                     self.current.patch_jump(patch);
@@ -3526,6 +3538,73 @@ impl<'a> VM<'a> {
                         vm_err!(VmError::Type("list index must be a number"));
                     }
                 }
+                // ── Fused foreach opcodes ─────────────────────────────────────────
+                // OP_FOREACHPREP: validate collection, load item[0] into bind_reg.
+                // ABC: A = bind_reg, B = coll_reg, C = idx_reg (idx must be 0.0 on entry).
+                // On success (list non-empty): bind_reg = items[0], skip following JMP.
+                // On failure (empty list): fall through to JMP exit.
+                // Errors if collection is not a heap List.
+                OP_FOREACHPREP => {
+                    let a = ((inst >> 16) & 0xFF) as usize + base;
+                    let b = ((inst >> 8) & 0xFF) as usize + base;
+                    let list = reg!(b);
+                    if !list.is_heap() {
+                        vm_err!(VmError::Type("foreach requires a list"));
+                    }
+                    // SAFETY: is_heap() verified above.
+                    debug_assert!(list.is_heap(), "OP_FOREACHPREP on non-heap value");
+                    unsafe {
+                        match list.as_heap_ref() {
+                            HeapObj::List(items) => {
+                                if !items.is_empty() {
+                                    let item = items[0];
+                                    item.clone_rc();
+                                    reg_set!(a, item);
+                                    ip += 1; // skip the following JMP exit (stay in loop)
+                                }
+                                // else: empty list → fall through to JMP exit
+                            }
+                            _ => vm_err!(VmError::Type("foreach requires a list")),
+                        }
+                    }
+                }
+                // OP_FOREACHNEXT: increment idx_reg, load next element.
+                // ABC: A = bind_reg, B = coll_reg, C = idx_reg.
+                // Increments R[C] by 1. If R[C] < len(list): bind_reg = items[R[C]], skip
+                // the following JMP (which would jump to exit). The instruction after the
+                // skipped JMP is always a JMP back to the body start.
+                // If R[C] >= len(list): fall through to JMP exit.
+                OP_FOREACHNEXT => {
+                    let a = ((inst >> 16) & 0xFF) as usize + base;
+                    let b = ((inst >> 8) & 0xFF) as usize + base;
+                    let c = (inst & 0xFF) as usize + base;
+                    let list = reg!(b);
+                    // idx_reg holds the current index (a number); increment it.
+                    // SAFETY: idx_reg is always a number (initialized to 0.0 by compiler,
+                    // only modified here by addition of 1.0).
+                    let new_idx = reg!(c).as_number() + 1.0;
+                    reg_set!(c, NanVal::number(new_idx));
+                    // SAFETY: list is the same heap List validated by FOREACHPREP on entry.
+                    debug_assert!(list.is_heap(), "OP_FOREACHNEXT on non-heap value");
+                    unsafe {
+                        match list.as_heap_ref() {
+                            HeapObj::List(items) => {
+                                let i = new_idx as usize;
+                                if i < items.len() {
+                                    let item = items[i];
+                                    item.clone_rc();
+                                    reg_set!(a, item);
+                                    ip += 1; // skip JMP exit → execute JMP body_top
+                                }
+                                // else: out of bounds → fall through to JMP exit
+                            }
+                            _ => {
+                                // Should never happen: list was validated by FOREACHPREP.
+                                vm_err!(VmError::Type("foreach requires a list"))
+                            }
+                        }
+                    }
+                }
                 OP_LOADK => {
                     let a = ((inst >> 16) & 0xFF) as usize + base;
                     let bx = (inst & 0xFFFF) as usize;
@@ -6198,10 +6277,17 @@ pub(crate) fn find_block_leaders(code: &[u32]) -> Vec<usize> {
                 leaders.insert(target);
                 leaders.insert(i + 1);
             }
-            OP_LISTGET => {
-                // LISTGET may skip the next instruction (JMP), so both i+1 and i+2 are leaders
+            OP_LISTGET | OP_FOREACHPREP => {
+                // These may skip the next instruction (JMP), so both i+1 and i+2 are leaders
                 leaders.insert(i + 1);
                 leaders.insert(i + 2);
+            }
+            OP_FOREACHNEXT => {
+                // FOREACHNEXT may skip the JMP exit (i+1) and the JMP body_top (i+2),
+                // or fall through to JMP exit. All three are leaders.
+                leaders.insert(i + 1);
+                leaders.insert(i + 2);
+                leaders.insert(i + 3);
             }
             _ => {}
         }

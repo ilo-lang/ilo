@@ -1218,6 +1218,79 @@ fn compile_function_body(
                     builder.def_var(vars[a_idx], result);
                 }
             }
+            OP_FOREACHPREP => {
+                // FOREACHPREP: validate list and load item[0] into R[A].
+                // R[C] (idx_reg) is 0.0 on entry (set by preceding LOADK).
+                // Same skip-next-JMP control flow as OP_LISTGET.
+                // ip+1 = JMP exit (empty list), ip+2 = body_top (skip JMP on success).
+                let bv = builder.use_var(vars[b_idx]);
+                let cv = builder.use_var(vars[c_idx]); // idx = 0.0
+                let fref = get_func_ref(&mut builder, module, helpers.listget);
+                let call_inst = builder.ins().call(fref, &[bv, cv]);
+                let result = builder.inst_results(call_inst)[0];
+
+                let nil_const = builder.ins().iconst(I64, TAG_NIL as i64);
+                let is_nil = builder.ins().icmp(cranelift_codegen::ir::condcodes::IntCC::Equal, result, nil_const);
+
+                let jmp_block = block_map.get(&(ip + 1)).copied();
+                let body_block = block_map.get(&(ip + 2)).copied();
+                if let (Some(jb), Some(bb)) = (jmp_block, body_block) {
+                    let unwrap_block = builder.create_block();
+                    builder.ins().brif(is_nil, jb, &[], unwrap_block, &[]);
+                    builder.switch_to_block(unwrap_block);
+                    builder.seal_block(unwrap_block);
+                    let fref2 = get_func_ref(&mut builder, module, helpers.unwrap);
+                    let call_inst2 = builder.ins().call(fref2, &[result]);
+                    let item = builder.inst_results(call_inst2)[0];
+                    let fref_drop = get_func_ref(&mut builder, module, helpers.drop_rc);
+                    builder.ins().call(fref_drop, &[result]);
+                    builder.def_var(vars[a_idx], item);
+                    builder.ins().jump(bb, &[]);
+                    block_terminated = true;
+                } else {
+                    builder.def_var(vars[a_idx], result);
+                }
+            }
+            OP_FOREACHNEXT => {
+                // FOREACHNEXT: R[C] += 1; load R[B][R[C]] into R[A] if in-bounds.
+                // On success: skip ip+1 (JMP exit), execute ip+2 (JMP body_top).
+                // On failure: fall through to ip+1 (JMP exit).
+                // Increment idx_reg: bitcast i64→f64, add 1.0, bitcast f64→i64.
+                let cv = builder.use_var(vars[c_idx]);
+                let cv_f64 = builder.ins().bitcast(F64, cranelift_codegen::ir::MemFlags::new(), cv);
+                let one_f64 = builder.ins().f64const(1.0);
+                let new_idx_f64 = builder.ins().fadd(cv_f64, one_f64);
+                let new_idx = builder.ins().bitcast(I64, cranelift_codegen::ir::MemFlags::new(), new_idx_f64);
+                builder.def_var(vars[c_idx], new_idx);
+
+                let bv = builder.use_var(vars[b_idx]);
+                let fref = get_func_ref(&mut builder, module, helpers.listget);
+                let call_inst = builder.ins().call(fref, &[bv, new_idx]);
+                let result = builder.inst_results(call_inst)[0];
+
+                let nil_const = builder.ins().iconst(I64, TAG_NIL as i64);
+                let is_nil = builder.ins().icmp(cranelift_codegen::ir::condcodes::IntCC::Equal, result, nil_const);
+
+                // ip+1 = JMP exit (nil path), ip+2 = JMP body_top (found path)
+                let jmp_block = block_map.get(&(ip + 1)).copied();
+                let body_block = block_map.get(&(ip + 2)).copied();
+                if let (Some(jb), Some(bb)) = (jmp_block, body_block) {
+                    let unwrap_block = builder.create_block();
+                    builder.ins().brif(is_nil, jb, &[], unwrap_block, &[]);
+                    builder.switch_to_block(unwrap_block);
+                    builder.seal_block(unwrap_block);
+                    let fref2 = get_func_ref(&mut builder, module, helpers.unwrap);
+                    let call_inst2 = builder.ins().call(fref2, &[result]);
+                    let item = builder.inst_results(call_inst2)[0];
+                    let fref_drop = get_func_ref(&mut builder, module, helpers.drop_rc);
+                    builder.ins().call(fref_drop, &[result]);
+                    builder.def_var(vars[a_idx], item);
+                    builder.ins().jump(bb, &[]);
+                    block_terminated = true;
+                } else {
+                    builder.def_var(vars[a_idx], result);
+                }
+            }
             OP_CALL => {
                 let a = ((inst >> 16) & 0xFF) as u8;
                 let bx = (inst & 0xFFFF) as usize;
