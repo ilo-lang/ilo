@@ -229,7 +229,7 @@ impl Arm64Emitter {
 
     fn finalize(mut self) -> Option<JitFunction> {
         // Align code to 8 bytes for const pool (code is 4-byte aligned, add NOP if odd)
-        if !self.code.len().is_multiple_of(2) {
+        if self.code.len() % 2 != 0 {
             self.emit(0xD503201F); // NOP
         }
 
