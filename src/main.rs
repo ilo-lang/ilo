@@ -1509,10 +1509,12 @@ fn main() {
         eprintln!("Usage: ilo <file-or-code> [args... | --run func args... | --bench func args... | --emit python]");
         eprintln!("       ilo repl                                  Interactive REPL");
         eprintln!("       ilo serv [--mcp <path>] [--tools <path>]  Stdio agent loop");
+        eprintln!("       ilo graph <file> [--fn NAME] [--dot]      Dependency graph");
+        eprintln!("       ilo compile <file> [-o out] [func]        AOT compile to binary");
         eprintln!("       ilo help | -h     Show usage and examples");
         eprintln!("       ilo help lang     Show language specification");
         eprintln!("       ilo help ai | -ai Compact spec for LLM consumption");
-        eprintln!("       ilo compile <file> [-o out] [func]  AOT compile to standalone binary");
+        eprintln!("       ilo --version | -V");
         std::process::exit(1);
     }
 
@@ -1564,9 +1566,11 @@ fn main() {
             println!("  ilo <code>                        Print AST as JSON (no args)");
             println!("  ilo <code> --bench func [args...] Benchmark a function");
             println!("  ilo repl                          Interactive REPL");
+            println!("  ilo graph <file> [flags]          Dependency graph (JSON or DOT)");
             println!("  ilo help lang                     Show language specification");
             println!("  ilo help ai | ilo -ai             Compact spec for LLM consumption");
-            println!("  ilo --explain ILO-T005            Explain an error code\n");
+            println!("  ilo --explain ILO-T005            Explain an error code");
+            println!("  ilo --version | -V                Print version\n");
             println!("Output format (errors):");
             println!("  --ansi / -a   Force ANSI colour output (default when stderr is a TTY)");
             println!("  --text / -t   Force plain text output (no colour)");
@@ -1586,6 +1590,13 @@ fn main() {
             println!("  ilo serv [-m <path>] [-t <path>]");
             println!("  Request:  {{\"program\": \"<ilo>\", \"args\": [...], \"func\": \"name\"}}");
             println!("  Response: {{\"ok\": <value>, \"ms\": n}} | {{\"error\": {{\"phase\": \"...\", ...}}}}\n");
+            println!("Dependency graph:");
+            println!("  ilo graph <file>                    Full call graph (JSON)");
+            println!("  ilo graph <file> --fn NAME          Subgraph for one function");
+            println!("  ilo graph <file> --reverse          Reverse callers");
+            println!("  ilo graph <file> --subgraph         Transitive dependencies");
+            println!("  ilo graph <file> --budget N         Limit to N tokens of source");
+            println!("  ilo graph <file> --dot              Output as DOT (Graphviz)\n");
             println!("AOT compilation:");
             println!("  ilo compile <file> [-o out] [func]  Compile to standalone binary\n");
             println!("Backends:");
