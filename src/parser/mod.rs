@@ -2557,7 +2557,7 @@ mod tests {
         let valid: Vec<_> = prog.declarations.iter()
             .filter(|d| matches!(d, Decl::Function { name, .. } if name == "g"))
             .collect();
-        assert!(!valid.is_empty() || prog.declarations.len() >= 1, "should recover at least something");
+        assert!(!valid.is_empty() || !prog.declarations.is_empty(), "should recover at least something");
     }
 
     #[test]
@@ -3657,7 +3657,7 @@ mod tests {
         let prog = parse_str("f x:L n>L n;x");
         let Decl::Function { params, return_type, .. } = &prog.declarations[0] else { panic!("expected function") };
         assert!(matches!(&params[0].ty, Type::List(inner) if **inner == Type::Number));
-        assert!(matches!(&*return_type, Type::List(inner) if **inner == Type::Number));
+        assert!(matches!(return_type, Type::List(inner) if **inner == Type::Number));
     }
 
     #[test]
@@ -3666,7 +3666,7 @@ mod tests {
         let prog = parse_str("f x:M t n>M t n;x");
         let Decl::Function { params, return_type, .. } = &prog.declarations[0] else { panic!("expected function") };
         assert!(matches!(&params[0].ty, Type::Map(_, _)));
-        assert!(matches!(&*return_type, Type::Map(_, _)));
+        assert!(matches!(return_type, Type::Map(_, _)));
     }
 
     #[test]
@@ -3675,7 +3675,7 @@ mod tests {
         let prog = parse_str("f x:R t t>R t t;x");
         let Decl::Function { params, return_type, .. } = &prog.declarations[0] else { panic!("expected function") };
         assert!(matches!(&params[0].ty, Type::Result(_, _)));
-        assert!(matches!(&*return_type, Type::Result(_, _)));
+        assert!(matches!(return_type, Type::Result(_, _)));
     }
 
     #[test]
@@ -3684,7 +3684,7 @@ mod tests {
         let prog = parse_str("f x:S ok err>S ok err;x");
         let Decl::Function { params, return_type, .. } = &prog.declarations[0] else { panic!("expected function") };
         assert!(matches!(&params[0].ty, Type::Sum(variants) if variants.len() == 2));
-        assert!(matches!(&*return_type, Type::Sum(variants) if variants.len() == 2));
+        assert!(matches!(return_type, Type::Sum(variants) if variants.len() == 2));
     }
 
     #[test]
@@ -3694,7 +3694,7 @@ mod tests {
         let Decl::Function { params, return_type, .. } = &prog.declarations[0] else { panic!("expected function") };
         // F n n → Fn([Number], Number)
         assert!(matches!(&params[0].ty, Type::Fn(param_types, _) if param_types.len() == 1));
-        assert!(matches!(&*return_type, Type::Fn(param_types, _) if param_types.len() == 1));
+        assert!(matches!(return_type, Type::Fn(param_types, _) if param_types.len() == 1));
     }
 
     // ---- Match arm with type-annotated (TypeIs) patterns ----

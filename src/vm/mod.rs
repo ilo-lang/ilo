@@ -6472,6 +6472,7 @@ pub(crate) fn find_block_leaders(code: &[u32]) -> Vec<usize> {
 // ── Tests ────────────────────────────────────────────────────────────
 
 #[cfg(test)]
+#[allow(clippy::approx_constant)]
 mod tests {
     use super::*;
     use crate::lexer;
@@ -8617,7 +8618,7 @@ mod tests {
         let source = "f>n;rnd";
         let result = vm_run(source, Some("f"), vec![]);
         let Value::Number(n) = result else { panic!("expected Number") };
-        assert!(n >= 0.0 && n < 1.0, "rnd should be in [0,1), got {n}");
+        assert!((0.0..1.0).contains(&n), "rnd should be in [0,1), got {n}");
     }
 
     #[test]
@@ -8625,7 +8626,7 @@ mod tests {
         let source = "f>n;rnd 1 10";
         let result = vm_run(source, Some("f"), vec![]);
         let Value::Number(n) = result else { panic!("expected Number") };
-        assert!(n >= 1.0 && n <= 10.0, "rnd 1 10 should be in [1,10], got {n}");
+        assert!((1.0..=10.0).contains(&n), "rnd 1 10 should be in [1,10], got {n}");
         assert_eq!(n, n.floor(), "rnd with two args should return integer");
     }
 
