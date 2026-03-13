@@ -2649,7 +2649,7 @@ impl<'a> VM<'a> {
     fn new(program: &'a CompiledProgram) -> Self {
         VM {
             program,
-            stack: Vec::with_capacity(256),
+            stack: Vec::with_capacity(4096),
             frames: Vec::with_capacity(64),
             arena: BumpArena::new(),
             last_ci: 0,
@@ -2667,7 +2667,7 @@ impl<'a> VM<'a> {
     ) -> Self {
         VM {
             program,
-            stack: Vec::with_capacity(256),
+            stack: Vec::with_capacity(4096),
             frames: Vec::with_capacity(64),
             arena: BumpArena::new(),
             last_ci: 0,
@@ -2767,9 +2767,6 @@ impl<'a> VM<'a> {
 
             // SAFETY: ip < code.len() was verified by the bounds check above.
             let inst = unsafe { *code.get_unchecked(ip) };
-            // Track position for error span capture (before incrementing ip).
-            self.last_ci = ci;
-            self.last_ip = ip;
             ip += 1;
             let op = (inst >> 24) as u8;
 
@@ -2794,6 +2791,15 @@ impl<'a> VM<'a> {
                         *slot = $val;
                     }
                 }
+            }
+            // Save position only on error paths. ip was already incremented above,
+            // so subtract 1 to recover the instruction's original index.
+            macro_rules! vm_err {
+                ($e:expr) => {{
+                    self.last_ci = ci;
+                    self.last_ip = ip - 1;
+                    return Err($e);
+                }}
             }
 
             match op {
@@ -3609,8 +3615,26 @@ impl<'a> VM<'a> {
                     }
 
                     // Pre-allocate remaining register slots for callee.
+                    // Use reserve + set_len to avoid zero-filling slots that
+                    // will be overwritten before use.  NanVal is Copy (u64 under
+                    // NaN-boxing), so uninitialised slots are safe as long as
+                    // every live path writes before reading — the bytecode
+                    // compiler guarantees this for all register allocations.
                     let reg_count = self.program.chunks[func_idx as usize].reg_count as usize;
-                    self.stack.resize(new_base + reg_count, NanVal::nil());
+                    let new_len = new_base + reg_count;
+                    let old_len = self.stack.len();
+                    if new_len > old_len {
+                        self.stack.reserve(new_len - old_len);
+                        // SAFETY: NanVal is Copy (plain u64). We initialise every
+                        // newly-visible slot to nil so that drop_rc in OP_RET
+                        // never sees garbage ref-counts on unused registers.
+                        let nil = NanVal::nil();
+                        let ptr = self.stack.as_mut_ptr();
+                        for i in old_len..new_len {
+                            unsafe { ptr.add(i).write(nil); }
+                        }
+                        unsafe { self.stack.set_len(new_len); }
+                    }
 
                     self.frames.push(CallFrame {
                         chunk_idx: func_idx,
