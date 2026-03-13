@@ -4784,12 +4784,33 @@ pub(crate) extern "C" fn jit_add(a: u64, b: u64) -> u64 {
     }
     if av.is_string() && bv.is_string() {
         let result = unsafe {
-            let sa = match av.as_heap_ref() { HeapObj::Str(s) => s, _ => unreachable!() };
-            let sb = match bv.as_heap_ref() { HeapObj::Str(s) => s, _ => unreachable!() };
-            let mut out = String::with_capacity(sa.len() + sb.len());
-            out.push_str(sa);
-            out.push_str(sb);
-            NanVal::heap_string(out)
+            let a_ptr = (av.0 & PTR_MASK) as *const HeapObj;
+            let b_ptr = (bv.0 & PTR_MASK) as *const HeapObj;
+            // Read the right-hand string via raw pointer (does not touch RC count).
+            // SAFETY: b_ptr was produced by Rc::into_raw; the NanVal keeps it alive.
+            let sb: &str = match &*b_ptr { HeapObj::Str(s) => s.as_str(), _ => unreachable!() };
+            // RC=1 fast path: mutate the left string in place via Rc::get_mut,
+            // avoiding a fresh allocation. Matches CPython's str += optimisation.
+            let mut a_rc = Rc::from_raw(a_ptr);
+            if let Some(heap_obj) = Rc::get_mut(&mut a_rc) {
+                // Sole owner — mutate the inner String directly.
+                match heap_obj {
+                    HeapObj::Str(s) => s.push_str(sb),
+                    _ => unreachable!(),
+                }
+                // The Rc is still intact; encode its pointer as the new NanVal.
+                let ptr = Rc::into_raw(a_rc) as u64;
+                NanVal(TAG_STRING | (ptr & PTR_MASK))
+            } else {
+                // Multiple owners — copy path.
+                let sa: &str = match &*a_ptr { HeapObj::Str(s) => s.as_str(), _ => unreachable!() };
+                let mut out = String::with_capacity(sa.len() + sb.len());
+                out.push_str(sa);
+                out.push_str(sb);
+                // Restore the Rc we reconstructed so its count stays correct.
+                std::mem::forget(a_rc);
+                NanVal::heap_string(out)
+            }
         };
         return result.0;
     }
@@ -10296,6 +10317,35 @@ mod tests {
         fn jit_add_non_numeric_non_string_returns_nil() {
             let r = jit_add(TAG_NIL, num(1.0));
             assert!(is_nil(r));
+        }
+
+        // RC=1 fast path: sole-owner left string is mutated in place.
+        #[test]
+        fn jit_add_strings_rc1_fast_path() {
+            // str_val creates a fresh Rc with strong_count == 1.
+            let lhs = str_val("foo");
+            let rhs = str_val("bar");
+            let r = jit_add(lhs, rhs);
+            let rv = NanVal(r);
+            assert!(rv.is_string());
+            let HeapObj::Str(s) = (unsafe { rv.as_heap_ref() }) else { panic!("expected Str") };
+            assert_eq!(s.as_str(), "foobar");
+        }
+
+        // RC>1 fallback: shared left string falls through to copy path.
+        #[test]
+        fn jit_add_strings_rc_gt1_copy_path() {
+            // Clone the NanVal to bump the RC to 2.
+            let lhs_nan = NanVal::heap_string("hello ".to_string());
+            lhs_nan.clone_rc(); // strong_count is now 2
+            let rhs = str_val("world");
+            let r = jit_add(lhs_nan.0, rhs);
+            let rv = NanVal(r);
+            assert!(rv.is_string());
+            let HeapObj::Str(s) = (unsafe { rv.as_heap_ref() }) else { panic!("expected Str") };
+            assert_eq!(s.as_str(), "hello world");
+            // Clean up the extra RC we bumped.
+            lhs_nan.drop_rc();
         }
 
         // ── jit_len ────────────────────────────────────────────────────────
