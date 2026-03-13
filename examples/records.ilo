@@ -1,0 +1,42 @@
+-- Records: named types with fields. Construct with type-name, access with dot.
+-- `with` creates an updated copy (immutable update — original unchanged).
+-- Destructure with {field;...}=record to bind multiple fields at once.
+
+type pt{x:n;y:n}
+type person{name:t;age:n;active:b}
+
+-- Construct and access a field
+make-pt>n;p=pt x:3 y:4;p.x
+
+-- Access a different field
+coords>n;p=pt x:10 y:20;p.y
+
+-- Immutable update: access updated field
+move-x>n;p=pt x:1 y:2;q=p with x:99;q.x
+
+-- Verify unchanged field after update
+move-y>n;p=pt x:1 y:2;q=p with x:99;q.y
+
+-- Update multiple fields
+reset-x>n;p=pt x:5 y:5;q=p with x:0 y:0;q.x
+
+-- Destructure a record
+dest>n;p=pt x:7 y:8;{x;y}=p;+x y
+
+-- Construct a person and check a field
+active-user>b;u=person name:"alice" age:30 active:true;u.active
+
+-- run: make-pt
+-- out: 3
+-- run: coords
+-- out: 20
+-- run: move-x
+-- out: 99
+-- run: move-y
+-- out: 2
+-- run: reset-x
+-- out: 0
+-- run: dest
+-- out: 15
+-- run: active-user
+-- out: true

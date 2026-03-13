@@ -1,0 +1,32 @@
+-- Match type patterns: n v:, t v:, b v:, l v: branch on runtime type.
+-- Also shows literal number/text patterns and wildcard _.
+
+-- Describe the runtime type of any value
+describe x:_>t;?x{n v:"number";t v:"text";b v:"bool";l v:"list";_:"other"}
+
+-- Use bound value in type arm: double a number, upper-case a text via cat
+-- (no upr/lwr builtins — demonstrate using the bound value directly)
+double-num x:_>t;?x{n v:str *v 2;_:"not a number"}
+
+-- Match on literal number values (from match.ilo pattern)
+grade n:n>t;?n{100:"perfect";90:"great";_:"ok"}
+
+-- engine-skip: jit
+-- run: describe 42
+-- out: number
+-- run: describe hello
+-- out: text
+-- run: describe true
+-- out: bool
+-- run: describe [1,2,3]
+-- out: list
+-- run: double-num 7
+-- out: 14
+-- run: double-num abc
+-- out: not a number
+-- run: grade 100
+-- out: perfect
+-- run: grade 90
+-- out: great
+-- run: grade 75
+-- out: ok

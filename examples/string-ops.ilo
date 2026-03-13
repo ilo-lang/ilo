@@ -1,0 +1,34 @@
+-- String operations: hd, tl, slc, rev, srt, trm on text values.
+-- hd/tl/slc/rev/srt work on individual characters; trm strips whitespace.
+
+-- First character of a string
+first-ch s:t>t;hd s
+
+-- All but first character
+rest-ch s:t>t;tl s
+
+-- Slice characters from index 0 to 3
+prefix s:t>t;slc s 0 3
+
+-- Reverse a string
+rev-str s:t>t;rev s
+
+-- Sort characters alphabetically
+sort-chars s:t>t;srt s
+
+-- Trim whitespace (hardcoded so spaces survive CLI parsing)
+trim-demo>t;trm "  hello  "
+
+-- engine-skip: jit
+-- run: first-ch hello
+-- out: h
+-- run: rest-ch hello
+-- out: ello
+-- run: prefix abcdef
+-- out: abc
+-- run: rev-str hello
+-- out: olleh
+-- run: sort-chars dcba
+-- out: abcd
+-- run: trim-demo
+-- out: hello
