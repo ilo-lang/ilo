@@ -15,7 +15,7 @@ trap cleanup EXIT
 export PATH="$HOME/.cargo/bin:$PATH"
 export JAVA_HOME="/opt/homebrew/opt/openjdk"
 export PATH="$JAVA_HOME/bin:$PATH"
-export DOTNET_ROOT="/opt/homebrew/opt/dotnet/libexec"
+export DOTNET_ROOT="$(dirname "$(dirname "$(readlink -f "$(which dotnet)" 2>/dev/null || which dotnet)")")/libexec"
 
 ILO="$(cd "$DIR/../.." && pwd)/target/release/ilo"
 if [[ ! -x "$ILO" ]]; then
@@ -405,6 +405,34 @@ fn main() {
   black_box(bench(black_box(p)));
   let iters=${ITERS}_u128; let start=Instant::now();
   for _ in 0..iters { black_box(bench(black_box(p))); }
+  println!("{}", start.elapsed().as_nanos()/iters);
+}
+RSEOF
+
+cat > "$TMP/api.rs" << RSEOF
+use std::time::Instant; use std::hint::black_box;
+use std::io::{Read,Write}; use std::net::TcpStream;
+fn bench(host: &str, port: u16, path: &str) -> i64 {
+  let mut stream = TcpStream::connect((host, port)).unwrap();
+  let req = format!("GET {} HTTP/1.0\r\nHost: {}:{}\r\n\r\n", path, host, port);
+  stream.write_all(req.as_bytes()).unwrap();
+  let mut buf = String::new(); stream.read_to_string(&mut buf).unwrap();
+  let body = buf.split("\r\n\r\n").nth(1).unwrap_or("");
+  let needle = b"\"score\":"; let bytes = body.as_bytes();
+  let mut s = 0i64; let mut i = 0;
+  while i + needle.len() < bytes.len() {
+    if &bytes[i..i+needle.len()] == needle {
+      i += needle.len(); let start = i;
+      while i < bytes.len() && bytes[i].is_ascii_digit() { i += 1; }
+      s += body[start..i].parse::<i64>().unwrap_or(0);
+    } else { i += 1; }
+  }
+  s
+}
+fn main() {
+  bench("127.0.0.1", $BENCH_PORT, "/api.json");
+  let iters=${ITERS}_u128; let start=Instant::now();
+  for _ in 0..iters { black_box(bench("127.0.0.1", $BENCH_PORT, "/api.json")); }
   println!("{}", start.elapsed().as_nanos()/iters);
 }
 RSEOF
@@ -812,6 +840,22 @@ for _=1,iters do f(p) end
 print(math.floor((os.clock()-t)*1e9/iters))
 LUAEOF
 
+cat > "$TMP/api.lua" << LUAEOF
+package.path=package.path..";/Users/dan/.luarocks/share/lua/5.1/?.lua;/Users/dan/.luarocks/share/lua/5.1/?/init.lua"
+package.cpath=package.cpath..";/Users/dan/.luarocks/lib/lua/5.1/?.so"
+local http=require("socket.http")
+local function f(url)
+  local body=http.request(url)
+  local sum=0
+  for sc in body:gmatch('"score":(%d+)') do sum=sum+tonumber(sc) end
+  return sum
+end
+local u="$API_URL"
+f(u); local iters=$ITERS; local t=os.clock()
+for _=1,iters do f(u) end
+print(math.floor((os.clock()-t)*1e9/iters))
+LUAEOF
+
 # --- Ruby ---
 cat > "$TMP/numeric.rb" << RBEOF
 def f(n);s=0;i=1;while i<=n;s+=i;i+=1;end;s;end
@@ -1166,12 +1210,12 @@ fun main() { f(100); val iters = $ITERS; val t = System.nanoTime(); repeat(iters
 KTEOF
     ;;
     file) cat > "$TMP/$bench.kt" << KTEOF
-fun f(p: String): Long { val d = java.io.File(p).readText(); val re = Regex("\"score\":(\\d+)"); var s = 0L; for (m in re.findAll(d)) s += m.groupValues[1].toLong(); return s }
+fun f(p: String): Long { val d = java.io.File(p).readText(); val re = Regex("\"score\":(\\\\d+)"); var s = 0L; for (m in re.findAll(d)) s += m.groupValues[1].toLong(); return s }
 fun main() { val p = "$TMP/api.json"; f(p); val iters = $ITERS; val t = System.nanoTime(); repeat(iters) { f(p) }; println((System.nanoTime()-t)/iters) }
 KTEOF
     ;;
     api) cat > "$TMP/$bench.kt" << KTEOF
-fun f(u: String): Long { val d = java.net.URL(u).readText(); val re = Regex("\"score\":(\\d+)"); var s = 0L; for (m in re.findAll(d)) s += m.groupValues[1].toLong(); return s }
+fun f(u: String): Long { val d = java.net.URL(u).readText(); val re = Regex("\"score\":(\\\\d+)"); var s = 0L; for (m in re.findAll(d)) s += m.groupValues[1].toLong(); return s }
 fun main() { val u = "$API_URL"; f(u); val iters = $ITERS; val t = System.nanoTime(); repeat(iters) { f(u) }; println((System.nanoTime()-t)/iters) }
 KTEOF
     ;;
