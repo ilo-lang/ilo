@@ -6,6 +6,7 @@ __pycache__/
 *.png
 .playwright-mcp/
 .worktrees
+.claude/worktrees/
 research/
 site/
 .DS_Store
