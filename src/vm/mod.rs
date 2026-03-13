@@ -2891,10 +2891,10 @@ impl<'a> VM<'a> {
                             }
                             reg_set!(a, NanVal::heap_list(new_items));
                         } else {
-                            return Err(VmError::Type("cannot add non-matching types"));
+                            vm_err!(VmError::Type("cannot add non-matching types"));
                         }
                     } else {
-                        return Err(VmError::Type("cannot add non-matching types"));
+                        vm_err!(VmError::Type("cannot add non-matching types"));
                     }
                 }
                 OP_SUB => {
@@ -2906,7 +2906,7 @@ impl<'a> VM<'a> {
                     if bv.is_number() && cv.is_number() {
                         reg_set!(a, NanVal::number(bv.as_number() - cv.as_number()));
                     } else {
-                        return Err(VmError::Type("cannot subtract non-numbers"));
+                        vm_err!(VmError::Type("cannot subtract non-numbers"));
                     }
                 }
                 OP_MUL => {
@@ -2918,7 +2918,7 @@ impl<'a> VM<'a> {
                     if bv.is_number() && cv.is_number() {
                         reg_set!(a, NanVal::number(bv.as_number() * cv.as_number()));
                     } else {
-                        return Err(VmError::Type("cannot multiply non-numbers"));
+                        vm_err!(VmError::Type("cannot multiply non-numbers"));
                     }
                 }
                 OP_DIV => {
@@ -2930,11 +2930,11 @@ impl<'a> VM<'a> {
                     if bv.is_number() && cv.is_number() {
                         let dv = cv.as_number();
                         if dv == 0.0 {
-                            return Err(VmError::DivisionByZero);
+                            vm_err!(VmError::DivisionByZero);
                         }
                         reg_set!(a, NanVal::number(bv.as_number() / dv));
                     } else {
-                        return Err(VmError::Type("cannot divide non-numbers"));
+                        vm_err!(VmError::Type("cannot divide non-numbers"));
                     }
                 }
                 OP_EQ => {
@@ -2963,7 +2963,7 @@ impl<'a> VM<'a> {
                         let result = unsafe { nanval_str_cmp(bv, cv) == std::cmp::Ordering::Greater };
                         reg_set!(a, NanVal::boolean(result));
                     } else {
-                        return Err(VmError::Type("cannot compare > : operands must be same type (n or t)"));
+                        vm_err!(VmError::Type("cannot compare > : operands must be same type (n or t)"));
                     }
                 }
                 OP_LT => {
@@ -2978,7 +2978,7 @@ impl<'a> VM<'a> {
                         let result = unsafe { nanval_str_cmp(bv, cv) == std::cmp::Ordering::Less };
                         reg_set!(a, NanVal::boolean(result));
                     } else {
-                        return Err(VmError::Type("cannot compare < : operands must be same type (n or t)"));
+                        vm_err!(VmError::Type("cannot compare < : operands must be same type (n or t)"));
                     }
                 }
                 OP_GE => {
@@ -2993,7 +2993,7 @@ impl<'a> VM<'a> {
                         let result = unsafe { nanval_str_cmp(bv, cv) != std::cmp::Ordering::Less };
                         reg_set!(a, NanVal::boolean(result));
                     } else {
-                        return Err(VmError::Type("cannot compare >= : operands must be same type (n or t)"));
+                        vm_err!(VmError::Type("cannot compare >= : operands must be same type (n or t)"));
                     }
                 }
                 OP_LE => {
@@ -3008,7 +3008,7 @@ impl<'a> VM<'a> {
                         let result = unsafe { nanval_str_cmp(bv, cv) != std::cmp::Ordering::Greater };
                         reg_set!(a, NanVal::boolean(result));
                     } else {
-                        return Err(VmError::Type("cannot compare <= : operands must be same type (n or t)"));
+                        vm_err!(VmError::Type("cannot compare <= : operands must be same type (n or t)"));
                     }
                 }
                 OP_MOVE => {
@@ -3031,7 +3031,7 @@ impl<'a> VM<'a> {
                     if v.is_number() {
                         reg_set!(a, NanVal::number(-v.as_number()));
                     } else {
-                        return Err(VmError::Type("cannot negate non-number"));
+                        vm_err!(VmError::Type("cannot negate non-number"));
                     }
                 }
                 OP_WRAPOK => {
@@ -3106,10 +3106,10 @@ impl<'a> VM<'a> {
                                     HeapObj::Str(k) => m.get(k.as_str())
                                         .map(|v| { v.clone_rc(); *v })
                                         .unwrap_or_else(NanVal::nil),
-                                    _ => return Err(VmError::Type("mget: key must be text")),
+                                    _ => vm_err!(VmError::Type("mget: key must be text")),
                                 }
                             }
-                            _ => return Err(VmError::Type("mget: first arg must be a map")),
+                            _ => vm_err!(VmError::Type("mget: first arg must be a map")),
                         }
                     };
                     reg_set!(a, result);
@@ -3131,10 +3131,10 @@ impl<'a> VM<'a> {
                                         new_map.insert(k.clone(), val_v);
                                         NanVal::heap_map(new_map)
                                     }
-                                    _ => return Err(VmError::Type("mset: key must be text")),
+                                    _ => vm_err!(VmError::Type("mset: key must be text")),
                                 }
                             }
-                            _ => return Err(VmError::Type("mset: first arg must be a map")),
+                            _ => vm_err!(VmError::Type("mset: first arg must be a map")),
                         }
                     };
                     reg_set!(a, result);
@@ -3150,10 +3150,10 @@ impl<'a> VM<'a> {
                             HeapObj::Map(m) => {
                                 match key_v.as_heap_ref() {
                                     HeapObj::Str(k) => NanVal::boolean(m.contains_key(k.as_str())),
-                                    _ => return Err(VmError::Type("mhas: key must be text")),
+                                    _ => vm_err!(VmError::Type("mhas: key must be text")),
                                 }
                             }
-                            _ => return Err(VmError::Type("mhas: first arg must be a map")),
+                            _ => vm_err!(VmError::Type("mhas: first arg must be a map")),
                         }
                     };
                     reg_set!(a, result);
@@ -3172,7 +3172,7 @@ impl<'a> VM<'a> {
                                     .collect();
                                 NanVal::heap_list(nan_keys)
                             }
-                            _ => return Err(VmError::Type("mkeys: expects a map")),
+                            _ => vm_err!(VmError::Type("mkeys: expects a map")),
                         }
                     };
                     reg_set!(a, result);
@@ -3191,7 +3191,7 @@ impl<'a> VM<'a> {
                                     .collect();
                                 NanVal::heap_list(nan_vals)
                             }
-                            _ => return Err(VmError::Type("mvals: expects a map")),
+                            _ => vm_err!(VmError::Type("mvals: expects a map")),
                         }
                     };
                     reg_set!(a, result);
@@ -3211,10 +3211,10 @@ impl<'a> VM<'a> {
                                         new_map.remove(k.as_str());
                                         NanVal::heap_map(new_map)
                                     }
-                                    _ => return Err(VmError::Type("mdel: key must be text")),
+                                    _ => vm_err!(VmError::Type("mdel: key must be text")),
                                 }
                             }
-                            _ => return Err(VmError::Type("mdel: first arg must be a map")),
+                            _ => vm_err!(VmError::Type("mdel: first arg must be a map")),
                         }
                     };
                     reg_set!(a, result);
@@ -3231,7 +3231,7 @@ impl<'a> VM<'a> {
                     let b = ((inst >> 8) & 0xFF) as usize + base;
                     let v = reg!(b);
                     if !v.is_string() {
-                        return Err(VmError::Type("rd requires a string path"));
+                        vm_err!(VmError::Type("rd requires a string path"));
                     }
                     // SAFETY: is_string() confirmed heap-tagged string with live RC.
                     let path = unsafe { match v.as_heap_ref() { HeapObj::Str(s) => s.as_str().to_owned(), _ => unreachable!() } };
@@ -3254,7 +3254,7 @@ impl<'a> VM<'a> {
                     let b = ((inst >> 8) & 0xFF) as usize + base;
                     let v = reg!(b);
                     if !v.is_string() {
-                        return Err(VmError::Type("rdl requires a string path"));
+                        vm_err!(VmError::Type("rdl requires a string path"));
                     }
                     // SAFETY: is_string() confirmed heap-tagged string with live RC.
                     let path = unsafe { match v.as_heap_ref() { HeapObj::Str(s) => s.as_str().to_owned(), _ => unreachable!() } };
@@ -3276,8 +3276,8 @@ impl<'a> VM<'a> {
                     let c = (inst & 0xFF) as usize + base;
                     let vb = reg!(b);
                     let vc = reg!(c);
-                    if !vb.is_string() { return Err(VmError::Type("wr arg 1 must be a string path")); }
-                    if !vc.is_string() { return Err(VmError::Type("wr arg 2 must be a string")); }
+                    if !vb.is_string() { vm_err!(VmError::Type("wr arg 1 must be a string path")); }
+                    if !vc.is_string() { vm_err!(VmError::Type("wr arg 2 must be a string")); }
                     // SAFETY: is_string() confirmed.
                     let (path, content) = unsafe {
                         let p = match vb.as_heap_ref() { HeapObj::Str(s) => s.as_str().to_owned(), _ => unreachable!() };
@@ -3296,7 +3296,7 @@ impl<'a> VM<'a> {
                     let c = (inst & 0xFF) as usize + base;
                     let vb = reg!(b);
                     let vc = reg!(c);
-                    if !vb.is_string() { return Err(VmError::Type("wrl arg 1 must be a string path")); }
+                    if !vb.is_string() { vm_err!(VmError::Type("wrl arg 1 must be a string path")); }
                     // SAFETY: is_string() confirmed.
                     let path = unsafe { match vb.as_heap_ref() { HeapObj::Str(s) => s.as_str().to_owned(), _ => unreachable!() } };
                     let result = if (vc.0 & TAG_MASK) == TAG_LIST {
@@ -3304,7 +3304,7 @@ impl<'a> VM<'a> {
                         let lines = unsafe { match vc.as_heap_ref() { HeapObj::List(l) => l.clone(), _ => unreachable!() } };
                         let mut buf = String::new();
                         for line in &lines {
-                            if !line.is_string() { return Err(VmError::Type("wrl list elements must be strings")); }
+                            if !line.is_string() { vm_err!(VmError::Type("wrl list elements must be strings")); }
                             // SAFETY: is_string() confirmed.
                             let s = unsafe { match line.as_heap_ref() { HeapObj::Str(s) => s.as_str().to_owned(), _ => unreachable!() } };
                             buf.push_str(&s);
@@ -3315,7 +3315,7 @@ impl<'a> VM<'a> {
                             Err(e) => NanVal::heap_err(NanVal::heap_string(e.to_string())),
                         }
                     } else {
-                        return Err(VmError::Type("wrl arg 2 must be a list"));
+                        vm_err!(VmError::Type("wrl arg 2 must be a list"));
                     };
                     reg_set!(a, result);
                 }
@@ -3324,7 +3324,7 @@ impl<'a> VM<'a> {
                     let b = ((inst >> 8) & 0xFF) as usize + base;
                     let v = reg!(b);
                     if !v.is_string() {
-                        return Err(VmError::Type("trm requires a string"));
+                        vm_err!(VmError::Type("trm requires a string"));
                     }
                     // SAFETY: is_string() confirmed heap-tagged string with live RC.
                     let s = unsafe { match v.as_heap_ref() { HeapObj::Str(s) => s.as_str().trim().to_owned(), _ => unreachable!() } };
@@ -3356,7 +3356,7 @@ impl<'a> VM<'a> {
                         }
                         reg_set!(a, NanVal::heap_list(out));
                     } else {
-                        return Err(VmError::Type("unq requires a list or string"));
+                        vm_err!(VmError::Type("unq requires a list or string"));
                     }
                 }
                 OP_UNWRAP => {
@@ -3374,7 +3374,7 @@ impl<'a> VM<'a> {
                                 inner.clone_rc();
                                 *inner
                             }
-                            _ => return Err(VmError::Type("unwrap on non-Ok/Err")),
+                            _ => vm_err!(VmError::Type("unwrap on non-Ok/Err")),
                         }
                     };
                     reg_set!(a, inner);
@@ -3393,7 +3393,7 @@ impl<'a> VM<'a> {
                                 v.clone_rc(); // no-op for numbers; needed for heap strings
                                 v
                             } else {
-                                return Err(VmError::FieldNotFound { field: format!("index {}", field_idx) });
+                                vm_err!(VmError::FieldNotFound { field: format!("index {}", field_idx) });
                             }
                         };
                         reg_set!(a, field_val);
@@ -3411,10 +3411,10 @@ impl<'a> VM<'a> {
                                 } else {
                                     let name = type_info.fields.get(field_idx)
                                         .map(|s| s.as_str()).unwrap_or("?");
-                                    return Err(VmError::FieldNotFound { field: name.to_string() });
+                                    vm_err!(VmError::FieldNotFound { field: name.to_string() });
                                 }
                             }
-                            _ => return Err(VmError::Type("field access on non-record")),
+                            _ => vm_err!(VmError::Type("field access on non-record")),
                         }
                     };
                     reg_set!(a, field_val);
@@ -3428,7 +3428,7 @@ impl<'a> VM<'a> {
                     let chunk = unsafe { self.program.chunks.get_unchecked(ci) };
                     let field_name = match &chunk.constants[c] {
                         Value::Text(s) => s.as_str(),
-                        _ => return Err(VmError::Type("RecordField expects string constant")),
+                        _ => vm_err!(VmError::Type("RecordField expects string constant")),
                     };
                     let record = reg!(b);
                     if record.is_arena_record() {
@@ -3441,7 +3441,7 @@ impl<'a> VM<'a> {
                                     v.clone_rc();
                                     v
                                 }
-                                _ => return Err(VmError::FieldNotFound { field: field_name.to_string() }),
+                                _ => vm_err!(VmError::FieldNotFound { field: field_name.to_string() }),
                             }
                         };
                         reg_set!(a, field_val);
@@ -3456,10 +3456,10 @@ impl<'a> VM<'a> {
                                         val.clone_rc();
                                         val
                                     }
-                                    _ => return Err(VmError::FieldNotFound { field: field_name.to_string() }),
+                                    _ => vm_err!(VmError::FieldNotFound { field: field_name.to_string() }),
                                 }
                             }
-                            _ => return Err(VmError::Type("field access on non-record")),
+                            _ => vm_err!(VmError::Type("field access on non-record")),
                         }
                     };
                     reg_set!(a, field_val);
@@ -3479,10 +3479,10 @@ impl<'a> VM<'a> {
                                     v.clone_rc();
                                     v
                                 } else {
-                                    return Err(VmError::Type("list index out of bounds"));
+                                    vm_err!(VmError::Type("list index out of bounds"));
                                 }
                             }
-                            _ => return Err(VmError::Type("index access on non-list")),
+                            _ => vm_err!(VmError::Type("index access on non-list")),
                         }
                     };
                     reg_set!(a, item);
@@ -3494,7 +3494,7 @@ impl<'a> VM<'a> {
                     let list = reg!(b);
                     let idx_val = reg!(c);
                     if !list.is_heap() {
-                        return Err(VmError::Type("foreach requires a list"));
+                        vm_err!(VmError::Type("foreach requires a list"));
                     }
                     if idx_val.is_number() {
                         // SAFETY: is_heap() was checked above; list is a live heap pointer
@@ -3513,11 +3513,11 @@ impl<'a> VM<'a> {
                                     }
                                     // else: fall through to JMP exit
                                 }
-                                _ => return Err(VmError::Type("foreach requires a list")),
+                                _ => vm_err!(VmError::Type("foreach requires a list")),
                             }
                         }
                     } else {
-                        return Err(VmError::Type("list index must be a number"));
+                        vm_err!(VmError::Type("list index must be a number"));
                     }
                 }
                 OP_LOADK => {
@@ -3808,7 +3808,7 @@ impl<'a> VM<'a> {
                                 }
                                 NanVal::heap_record(Rc::clone(type_info), new_fields.into_boxed_slice())
                             }
-                            _ => return Err(VmError::Type("'with' requires a record")),
+                            _ => vm_err!(VmError::Type("'with' requires a record")),
                         }
                     };
                     reg_set!(a, new_record);
@@ -3864,7 +3864,7 @@ impl<'a> VM<'a> {
                     let kv = unsafe { *nan_consts.get_unchecked(c) };
                     let dv = kv.as_number();
                     if dv == 0.0 {
-                        return Err(VmError::DivisionByZero);
+                        vm_err!(VmError::DivisionByZero);
                     }
                     let result = NanVal::number(reg!(b).as_number() / dv);
                     unsafe { *self.stack.as_mut_ptr().add(a) = result; }
@@ -3903,7 +3903,7 @@ impl<'a> VM<'a> {
                     // SAFETY: same as OP_SUB_NN.
                     let dv = reg!(c).as_number();
                     if dv == 0.0 {
-                        return Err(VmError::DivisionByZero);
+                        vm_err!(VmError::DivisionByZero);
                     }
                     let result = NanVal::number(reg!(b).as_number() / dv);
                     unsafe { *self.stack.as_mut_ptr().add(a) = result; }
@@ -3921,10 +3921,10 @@ impl<'a> VM<'a> {
                         match unsafe { v.as_heap_ref() } {
                             HeapObj::List(items) => items.len() as f64,
                             HeapObj::Map(m) => m.len() as f64,
-                            _ => return Err(VmError::Type("len requires string, list, or map")),
+                            _ => vm_err!(VmError::Type("len requires string, list, or map")),
                         }
                     } else {
-                        return Err(VmError::Type("len requires string, list, or map"));
+                        vm_err!(VmError::Type("len requires string, list, or map"));
                     };
                     reg_set!(a, NanVal::number(length));
                 }
@@ -3933,7 +3933,7 @@ impl<'a> VM<'a> {
                     let b = ((inst >> 8) & 0xFF) as usize + base;
                     let v = reg!(b);
                     if !v.is_number() {
-                        return Err(VmError::Type("str requires a number"));
+                        vm_err!(VmError::Type("str requires a number"));
                     }
                     let n = v.as_number();
                     let s = if n.fract() == 0.0 && n.abs() < 1e15 {
@@ -3948,7 +3948,7 @@ impl<'a> VM<'a> {
                     let b = ((inst >> 8) & 0xFF) as usize + base;
                     let v = reg!(b);
                     if !v.is_string() {
-                        return Err(VmError::Type("num requires a string"));
+                        vm_err!(VmError::Type("num requires a string"));
                     }
                     // SAFETY: is_string() confirmed heap-tagged string with live RC.
                     let s = unsafe { match v.as_heap_ref() { HeapObj::Str(s) => s, _ => unreachable!() } };
@@ -3966,7 +3966,7 @@ impl<'a> VM<'a> {
                     let b = ((inst >> 8) & 0xFF) as usize + base;
                     let v = reg!(b);
                     if !v.is_number() {
-                        return Err(VmError::Type("abs requires a number"));
+                        vm_err!(VmError::Type("abs requires a number"));
                     }
                     reg_set!(a, NanVal::number(v.as_number().abs()));
                 }
@@ -3977,7 +3977,7 @@ impl<'a> VM<'a> {
                     let vb = reg!(b);
                     let vc = reg!(c);
                     if !vb.is_number() || !vc.is_number() {
-                        return Err(VmError::Type("min/max require numbers"));
+                        vm_err!(VmError::Type("min/max require numbers"));
                     }
                     let nb = vb.as_number();
                     let nc = vc.as_number();
@@ -3991,11 +3991,11 @@ impl<'a> VM<'a> {
                     let vb = reg!(b);
                     let vc = reg!(c);
                     if !vb.is_number() || !vc.is_number() {
-                        return Err(VmError::Type("mod requires numbers"));
+                        vm_err!(VmError::Type("mod requires numbers"));
                     }
                     let nc = vc.as_number();
                     if nc == 0.0 {
-                        return Err(VmError::Type("modulo by zero"));
+                        vm_err!(VmError::Type("modulo by zero"));
                     }
                     reg_set!(a, NanVal::number(vb.as_number() % nc));
                 }
@@ -4004,7 +4004,7 @@ impl<'a> VM<'a> {
                     let b = ((inst >> 8) & 0xFF) as usize + base;
                     let v = reg!(b);
                     if !v.is_number() {
-                        return Err(VmError::Type("flr/cel/rou requires a number"));
+                        vm_err!(VmError::Type("flr/cel/rou requires a number"));
                     }
                     let n = v.as_number();
                     let result = if op == OP_FLR { n.floor() } else if op == OP_CEL { n.ceil() } else { n.round() };
@@ -4021,12 +4021,12 @@ impl<'a> VM<'a> {
                     let vb = reg!(b);
                     let vc = reg!(c);
                     if !vb.is_number() || !vc.is_number() {
-                        return Err(VmError::Type("rnd requires two numbers"));
+                        vm_err!(VmError::Type("rnd requires two numbers"));
                     }
                     let lo = vb.as_number() as i64;
                     let hi = vc.as_number() as i64;
                     if lo > hi {
-                        return Err(VmError::Type("rnd: lower bound > upper bound"));
+                        vm_err!(VmError::Type("rnd: lower bound > upper bound"));
                     }
                     reg_set!(a, NanVal::number(fastrand::i64(lo..=hi) as f64));
                 }
@@ -4043,7 +4043,7 @@ impl<'a> VM<'a> {
                     let b = ((inst >> 8) & 0xFF) as usize + base;
                     let v = reg!(b);
                     if !v.is_string() {
-                        return Err(VmError::Type("env requires a string"));
+                        vm_err!(VmError::Type("env requires a string"));
                     }
                     // SAFETY: is_string() confirmed heap-tagged string with live RC.
                     // Clone key_str before reg_set! to avoid aliasing if a == b.
@@ -4059,7 +4059,7 @@ impl<'a> VM<'a> {
                     let b = ((inst >> 8) & 0xFF) as usize + base;
                     let v = reg!(b);
                     if !v.is_string() {
-                        return Err(VmError::Type("get requires a string"));
+                        vm_err!(VmError::Type("get requires a string"));
                     }
                     #[cfg(feature = "http")]
                     let result = {
@@ -4084,7 +4084,7 @@ impl<'a> VM<'a> {
                     let vb = reg!(b);
                     let vc = reg!(c);
                     if !vb.is_string() || !vc.is_string() {
-                        return Err(VmError::Type("post requires two strings (url, body)"));
+                        vm_err!(VmError::Type("post requires two strings (url, body)"));
                     }
                     #[cfg(feature = "http")]
                     let result = {
@@ -4111,7 +4111,7 @@ impl<'a> VM<'a> {
                     let vb = reg!(b);
                     let vc = reg!(c);
                     if !vb.is_string() {
-                        return Err(VmError::Type("get requires a string url"));
+                        vm_err!(VmError::Type("get requires a string url"));
                     }
                     #[cfg(feature = "http")]
                     let result = {
@@ -4151,7 +4151,7 @@ impl<'a> VM<'a> {
                     let vc = reg!(c);
                     let vd = reg!(d);
                     if !vb.is_string() || !vc.is_string() {
-                        return Err(VmError::Type("post requires string url and body"));
+                        vm_err!(VmError::Type("post requires string url and body"));
                     }
                     #[cfg(feature = "http")]
                     let result = {
@@ -4186,7 +4186,7 @@ impl<'a> VM<'a> {
                     let vb = reg!(b);
                     let vc = reg!(c);
                     if !vb.is_string() || !vc.is_string() {
-                        return Err(VmError::Type("jpth requires two strings"));
+                        vm_err!(VmError::Type("jpth requires two strings"));
                     }
                     // SAFETY: is_string() confirmed heap-tagged string with live RC.
                     let json_str = unsafe { match vb.as_heap_ref() { HeapObj::Str(s) => s, _ => unreachable!() } };
@@ -4239,7 +4239,7 @@ impl<'a> VM<'a> {
                     let b = ((inst >> 8) & 0xFF) as usize + base;
                     let v = reg!(b);
                     if !v.is_string() {
-                        return Err(VmError::Type("jpar requires a string"));
+                        vm_err!(VmError::Type("jpar requires a string"));
                     }
                     // SAFETY: is_string() confirmed heap-tagged string with live RC.
                     let text = unsafe { match v.as_heap_ref() { HeapObj::Str(s) => s, _ => unreachable!() } };
@@ -4256,7 +4256,7 @@ impl<'a> VM<'a> {
                     let vb = reg!(b);
                     let vc = reg!(c);
                     if !vb.is_string() || !vc.is_string() {
-                        return Err(VmError::Type("spl requires two strings"));
+                        vm_err!(VmError::Type("spl requires two strings"));
                     }
                     // SAFETY: is_string() confirmed heap-tagged string with live RC.
                     let text = unsafe { match vb.as_heap_ref() { HeapObj::Str(s) => s, _ => unreachable!() } };
@@ -4273,17 +4273,17 @@ impl<'a> VM<'a> {
                     let vb = reg!(b);
                     let vc = reg!(c);
                     if !vc.is_string() {
-                        return Err(VmError::Type("cat requires a text separator"));
+                        vm_err!(VmError::Type("cat requires a text separator"));
                     }
                     if !vb.is_heap() {
-                        return Err(VmError::Type("cat requires a list"));
+                        vm_err!(VmError::Type("cat requires a list"));
                     }
                     let sep = unsafe { match vc.as_heap_ref() { HeapObj::Str(s) => s, _ => unreachable!() } };
-                    let items = unsafe { match vb.as_heap_ref() { HeapObj::List(l) => l, _ => return Err(VmError::Type("cat requires a list")) } };
+                    let items = unsafe { match vb.as_heap_ref() { HeapObj::List(l) => l, _ => vm_err!(VmError::Type("cat requires a list")) } };
                     let mut parts = Vec::with_capacity(items.len());
                     for item in items {
                         if !item.is_string() {
-                            return Err(VmError::Type("cat: list items must be text"));
+                            vm_err!(VmError::Type("cat: list items must be text"));
                         }
                         let s = unsafe { match item.as_heap_ref() { HeapObj::Str(s) => s, _ => unreachable!() } };
                         parts.push(s.as_str());
@@ -4299,7 +4299,7 @@ impl<'a> VM<'a> {
                     let needle = reg!(c);
                     let found = if collection.is_string() {
                         if !needle.is_string() {
-                            return Err(VmError::Type("has: text search requires text needle"));
+                            vm_err!(VmError::Type("has: text search requires text needle"));
                         }
                         unsafe {
                             let haystack = match collection.as_heap_ref() { HeapObj::Str(s) => s, _ => unreachable!() };
@@ -4311,10 +4311,10 @@ impl<'a> VM<'a> {
                             HeapObj::List(items) => {
                                 items.iter().any(|item| nanval_equal(*item, needle))
                             }
-                            _ => return Err(VmError::Type("has requires a list or text")),
+                            _ => vm_err!(VmError::Type("has requires a list or text")),
                         }
                     } else {
-                        return Err(VmError::Type("has requires a list or text"));
+                        vm_err!(VmError::Type("has requires a list or text"));
                     };
                     reg_set!(a, NanVal::boolean(found));
                 }
@@ -4325,22 +4325,22 @@ impl<'a> VM<'a> {
                     let result = if v.is_string() {
                         let s = unsafe { match v.as_heap_ref() { HeapObj::Str(s) => s, _ => unreachable!() } };
                         if s.is_empty() {
-                            return Err(VmError::Type("hd: empty text"));
+                            vm_err!(VmError::Type("hd: empty text"));
                         }
                         NanVal::heap_string(s.chars().next().expect("non-empty checked above").to_string())
                     } else if v.is_heap() {
                         match unsafe { v.as_heap_ref() } {
                             HeapObj::List(items) => {
                                 if items.is_empty() {
-                                    return Err(VmError::Type("hd: empty list"));
+                                    vm_err!(VmError::Type("hd: empty list"));
                                 }
                                 items[0].clone_rc();
                                 items[0]
                             }
-                            _ => return Err(VmError::Type("hd requires a list or text")),
+                            _ => vm_err!(VmError::Type("hd requires a list or text")),
                         }
                     } else {
-                        return Err(VmError::Type("hd requires a list or text"));
+                        vm_err!(VmError::Type("hd requires a list or text"));
                     };
                     reg_set!(a, result);
                 }
@@ -4351,7 +4351,7 @@ impl<'a> VM<'a> {
                     let result = if v.is_string() {
                         let s = unsafe { match v.as_heap_ref() { HeapObj::Str(s) => s, _ => unreachable!() } };
                         if s.is_empty() {
-                            return Err(VmError::Type("tl: empty text"));
+                            vm_err!(VmError::Type("tl: empty text"));
                         }
                         let mut chars = s.chars();
                         chars.next();
@@ -4360,7 +4360,7 @@ impl<'a> VM<'a> {
                         match unsafe { v.as_heap_ref() } {
                             HeapObj::List(items) => {
                                 if items.is_empty() {
-                                    return Err(VmError::Type("tl: empty list"));
+                                    vm_err!(VmError::Type("tl: empty list"));
                                 }
                                 let tail: Vec<NanVal> = items[1..].iter().map(|item| {
                                     item.clone_rc();
@@ -4368,10 +4368,10 @@ impl<'a> VM<'a> {
                                 }).collect();
                                 NanVal::heap_list(tail)
                             }
-                            _ => return Err(VmError::Type("tl requires a list or text")),
+                            _ => vm_err!(VmError::Type("tl requires a list or text")),
                         }
                     } else {
-                        return Err(VmError::Type("tl requires a list or text"));
+                        vm_err!(VmError::Type("tl requires a list or text"));
                     };
                     reg_set!(a, result);
                 }
@@ -4389,10 +4389,10 @@ impl<'a> VM<'a> {
                                 reversed.reverse();
                                 NanVal::heap_list(reversed)
                             }
-                            _ => return Err(VmError::Type("rev requires a list or text")),
+                            _ => vm_err!(VmError::Type("rev requires a list or text")),
                         }
                     } else {
-                        return Err(VmError::Type("rev requires a list or text"));
+                        vm_err!(VmError::Type("rev requires a list or text"));
                     };
                     reg_set!(a, result);
                 }
@@ -4425,14 +4425,14 @@ impl<'a> VM<'a> {
                                         sorted.sort_by(|a, b| unsafe { nanval_str_cmp(*a, *b) });
                                         reg_set!(a, NanVal::heap_list(sorted));
                                     } else {
-                                        return Err(VmError::Type("srt: list must contain all numbers or all text"));
+                                        vm_err!(VmError::Type("srt: list must contain all numbers or all text"));
                                     }
                                 }
                             }
-                            _ => return Err(VmError::Type("srt requires a list or text")),
+                            _ => vm_err!(VmError::Type("srt requires a list or text")),
                         }
                     } else {
-                        return Err(VmError::Type("srt requires a list or text"));
+                        vm_err!(VmError::Type("srt requires a list or text"));
                     }
                 }
                 OP_SLC => {
@@ -4444,7 +4444,7 @@ impl<'a> VM<'a> {
                     let vc = reg!(c);
                     let vd = reg!(d);
                     if !vc.is_number() || !vd.is_number() {
-                        return Err(VmError::Type("slc: indices must be numbers"));
+                        vm_err!(VmError::Type("slc: indices must be numbers"));
                     }
                     let start = vc.as_number() as usize;
                     let end = vd.as_number() as usize;
@@ -4467,10 +4467,10 @@ impl<'a> VM<'a> {
                                 }
                                 reg_set!(a, NanVal::heap_list(sliced));
                             }
-                            _ => return Err(VmError::Type("slc requires a list or text")),
+                            _ => vm_err!(VmError::Type("slc requires a list or text")),
                         }
                     } else {
-                        return Err(VmError::Type("slc requires a list or text"));
+                        vm_err!(VmError::Type("slc requires a list or text"));
                     }
                 }
                 OP_LISTAPPEND => {
@@ -4485,7 +4485,7 @@ impl<'a> VM<'a> {
                     let list_val = reg!(b);
                     let item_val = reg!(c);
                     if !list_val.is_heap() {
-                        return Err(VmError::Type("+= requires a list"));
+                        vm_err!(VmError::Type("+= requires a list"));
                     }
                     let ptr_b = (list_val.0 & PTR_MASK) as *const HeapObj;
                     // Fast path: if RC=1 (sole owner), mutate Vec in-place.
@@ -4537,11 +4537,11 @@ impl<'a> VM<'a> {
                                 new_items.push(item_val);
                                 reg_set!(a, NanVal::heap_list(new_items));
                             }
-                            _ => return Err(VmError::Type("+= requires a list")),
+                            _ => vm_err!(VmError::Type("+= requires a list")),
                         }
                     }
                 }
-                _ => return Err(VmError::UnknownOpcode { op }),
+                _ => vm_err!(VmError::UnknownOpcode { op }),
             }
         }
     }
