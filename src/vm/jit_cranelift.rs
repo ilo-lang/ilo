@@ -353,7 +353,7 @@ fn compile_function_body(
 
     // Import helper function references
     let mut func_refs: HashMap<FuncId, cranelift_codegen::ir::FuncRef> = HashMap::new();
-    let mut get_func_ref = |builder: &mut FunctionBuilder, module: &mut JITModule, id: FuncId| -> cranelift_codegen::ir::FuncRef {
+    let mut get_func_ref = |builder: &mut FunctionBuilder<'_>, module: &mut JITModule, id: FuncId| -> cranelift_codegen::ir::FuncRef {
         *func_refs.entry(id).or_insert_with(|| module.declare_func_in_func(id, builder.func))
     };
 

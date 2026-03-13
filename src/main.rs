@@ -1,4 +1,5 @@
 #![warn(clippy::all)]
+#![deny(rust_2018_idioms)]
 
 mod cli;
 
