@@ -2493,7 +2493,7 @@ fn run_jit_engine(program: &ast::Program, rest: &[String]) -> i32 {
     }
     #[cfg(not(all(target_arch = "aarch64", target_os = "macos")))]
     {
-        let _ = (func_name, jit_args);
+        let _ = (program, func_name, jit_args);
         eprintln!("Custom JIT (arm64) is only available on aarch64 macOS");
         1
     }
@@ -2918,6 +2918,7 @@ fn print_value(val: &interpreter::Value, as_json: bool) {
     println!("{}", json);
 }
 
+#[allow(unused_variables, unused_mut)]
 fn run_bench(program: &ast::Program, func_name: Option<&str>, args: &[interpreter::Value]) {
     use std::io::Write;
     use std::process::Command;
