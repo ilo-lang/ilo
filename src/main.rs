@@ -409,7 +409,10 @@ fn graph_cmd(args: &[String]) -> i32 {
     if let Some(ref name) = fn_name {
         if reverse {
             match graph::query_reverse(&program, &pg, name) {
-                Some(r) => println!("{}", serde_json::to_string_pretty(&r).unwrap()),
+                Some(r) => match serde_json::to_string_pretty(&r) {
+                    Ok(s) => println!("{}", s),
+                    Err(e) => { eprintln!("error serialising graph: {}", e); return 1; }
+                },
                 None => {
                     eprintln!("function '{}' not found", name);
                     return 1;
@@ -417,7 +420,10 @@ fn graph_cmd(args: &[String]) -> i32 {
             }
         } else if let Some(b) = budget {
             match graph::query_budget(&program, &pg, name, b) {
-                Some(q) => println!("{}", serde_json::to_string_pretty(&q).unwrap()),
+                Some(q) => match serde_json::to_string_pretty(&q) {
+                    Ok(s) => println!("{}", s),
+                    Err(e) => { eprintln!("error serialising graph: {}", e); return 1; }
+                },
                 None => {
                     eprintln!("function '{}' not found", name);
                     return 1;
@@ -425,7 +431,10 @@ fn graph_cmd(args: &[String]) -> i32 {
             }
         } else if subgraph {
             match graph::query_subgraph(&program, &pg, name) {
-                Some(q) => println!("{}", serde_json::to_string_pretty(&q).unwrap()),
+                Some(q) => match serde_json::to_string_pretty(&q) {
+                    Ok(s) => println!("{}", s),
+                    Err(e) => { eprintln!("error serialising graph: {}", e); return 1; }
+                },
                 None => {
                     eprintln!("function '{}' not found", name);
                     return 1;
@@ -433,7 +442,10 @@ fn graph_cmd(args: &[String]) -> i32 {
             }
         } else {
             match graph::query_fn(&program, &pg, name) {
-                Some(q) => println!("{}", serde_json::to_string_pretty(&q).unwrap()),
+                Some(q) => match serde_json::to_string_pretty(&q) {
+                    Ok(s) => println!("{}", s),
+                    Err(e) => { eprintln!("error serialising graph: {}", e); return 1; }
+                },
                 None => {
                     eprintln!("function '{}' not found", name);
                     return 1;
@@ -442,7 +454,10 @@ fn graph_cmd(args: &[String]) -> i32 {
         }
     } else {
         // Full graph output.
-        println!("{}", serde_json::to_string_pretty(&pg).unwrap());
+        match serde_json::to_string_pretty(&pg) {
+            Ok(s) => println!("{}", s),
+            Err(e) => { eprintln!("error serialising graph: {}", e); return 1; }
+        }
     }
     0
 }
