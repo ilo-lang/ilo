@@ -2140,6 +2140,24 @@ impl NanVal {
         }
     }
 
+    /// Create a NanVal from a known-finite f64 without NaN canonicalization.
+    ///
+    /// # Safety
+    /// The caller must guarantee the result is not NaN. This is sound for
+    /// type-specialized add/sub/mul opcodes because: (1) those opcodes are only
+    /// emitted when both operands are `reg_is_num` (known numeric from type
+    /// analysis), (2) the only way to get ±Inf into a `reg_is_num` register is
+    /// via division-by-zero, which ilo catches and returns `VmError::DivisionByZero`,
+    /// so inputs are always finite, and (3) add/sub/mul of finite floats produces
+    /// finite or ±Inf results, never NaN. ±Inf is safe: its bit patterns
+    /// (0x7FF0... / 0xFFF0...) do not collide with our NaN-boxed tag space
+    /// (QNAN = 0x7FF8...) since `(0x7FF0 & 0x7FF8) != 0x7FF8`.
+    #[inline(always)]
+    pub(crate) unsafe fn number_unchecked(n: f64) -> Self {
+        debug_assert!(!n.is_nan(), "number_unchecked called with NaN");
+        NanVal(n.to_bits())
+    }
+
     #[inline]
     fn nil() -> Self { NanVal(TAG_NIL) }
 
@@ -3637,7 +3655,8 @@ impl<'a> VM<'a> {
                     // SAFETY: c is a constant pool index emitted by the compiler (< nan_consts.len()).
                     // a = base + reg, within pre-allocated stack slots.
                     let kv = unsafe { *nan_consts.get_unchecked(c) };
-                    let result = NanVal::number(reg!(b).as_number() + kv.as_number());
+                    // SAFETY: see NanVal::number_unchecked — inputs are finite, add cannot produce NaN.
+                    let result = unsafe { NanVal::number_unchecked(reg!(b).as_number() + kv.as_number()) };
                     unsafe { *self.stack.as_mut_ptr().add(a) = result; }
                 }
                 OP_SUBK_N => {
@@ -3646,7 +3665,8 @@ impl<'a> VM<'a> {
                     let c = (inst & 0xFF) as usize;
                     // SAFETY: same as OP_ADDK_N.
                     let kv = unsafe { *nan_consts.get_unchecked(c) };
-                    let result = NanVal::number(reg!(b).as_number() - kv.as_number());
+                    // SAFETY: see NanVal::number_unchecked — inputs are finite, sub cannot produce NaN.
+                    let result = unsafe { NanVal::number_unchecked(reg!(b).as_number() - kv.as_number()) };
                     unsafe { *self.stack.as_mut_ptr().add(a) = result; }
                 }
                 OP_MULK_N => {
@@ -3655,7 +3675,8 @@ impl<'a> VM<'a> {
                     let c = (inst & 0xFF) as usize;
                     // SAFETY: same as OP_ADDK_N.
                     let kv = unsafe { *nan_consts.get_unchecked(c) };
-                    let result = NanVal::number(reg!(b).as_number() * kv.as_number());
+                    // SAFETY: see NanVal::number_unchecked — inputs are finite, mul cannot produce NaN.
+                    let result = unsafe { NanVal::number_unchecked(reg!(b).as_number() * kv.as_number()) };
                     unsafe { *self.stack.as_mut_ptr().add(a) = result; }
                 }
                 OP_DIVK_N => {
@@ -3676,7 +3697,8 @@ impl<'a> VM<'a> {
                     let b = ((inst >> 8) & 0xFF) as usize + base;
                     let c = (inst & 0xFF) as usize + base;
                     // SAFETY: a, b, c are all base + register offsets within pre-allocated stack slots.
-                    let result = NanVal::number(reg!(b).as_number() + reg!(c).as_number());
+                    // SAFETY: see NanVal::number_unchecked — inputs are finite, add cannot produce NaN.
+                    let result = unsafe { NanVal::number_unchecked(reg!(b).as_number() + reg!(c).as_number()) };
                     unsafe { *self.stack.as_mut_ptr().add(a) = result; }
                 }
                 OP_SUB_NN => {
@@ -3684,7 +3706,8 @@ impl<'a> VM<'a> {
                     let b = ((inst >> 8) & 0xFF) as usize + base;
                     let c = (inst & 0xFF) as usize + base;
                     // SAFETY: a, b, c are base + register offsets within pre-allocated stack slots.
-                    let result = NanVal::number(reg!(b).as_number() - reg!(c).as_number());
+                    // SAFETY: see NanVal::number_unchecked — inputs are finite, sub cannot produce NaN.
+                    let result = unsafe { NanVal::number_unchecked(reg!(b).as_number() - reg!(c).as_number()) };
                     unsafe { *self.stack.as_mut_ptr().add(a) = result; }
                 }
                 OP_MUL_NN => {
@@ -3692,7 +3715,8 @@ impl<'a> VM<'a> {
                     let b = ((inst >> 8) & 0xFF) as usize + base;
                     let c = (inst & 0xFF) as usize + base;
                     // SAFETY: same as OP_SUB_NN.
-                    let result = NanVal::number(reg!(b).as_number() * reg!(c).as_number());
+                    // SAFETY: see NanVal::number_unchecked — inputs are finite, mul cannot produce NaN.
+                    let result = unsafe { NanVal::number_unchecked(reg!(b).as_number() * reg!(c).as_number()) };
                     unsafe { *self.stack.as_mut_ptr().add(a) = result; }
                 }
                 OP_DIV_NN => {
