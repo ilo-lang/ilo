@@ -22,7 +22,7 @@ async fn get_ok_returns_body() {
 
     let url = format!("{}/hello", server.uri());
     let out = ilo()
-        .args([&format!(r#"f url:t>R t t;get url"#), &url])
+        .args([r#"f url:t>R t t;get url"#, &url])
         .output()
         .expect("failed to run ilo");
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
@@ -42,7 +42,7 @@ async fn get_server_error_returns_err_value() {
     let url = format!("{}/fail", server.uri());
     // get returns R t t — a 500 body is still Ok(body); status codes don't become Err
     let out = ilo()
-        .args([&format!(r#"f url:t>R t t;get url"#), &url])
+        .args([r#"f url:t>R t t;get url"#, &url])
         .output()
         .expect("failed to run ilo");
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));

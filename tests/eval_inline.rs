@@ -2089,7 +2089,7 @@ fn serv_cmd_skips_empty_stdin_lines() {
 
     if let Some(mut stdin) = child.stdin.take() {
         // Send empty lines followed by a valid request
-        writeln!(stdin, "").unwrap();
+        writeln!(stdin).unwrap();
         writeln!(stdin, "   ").unwrap();
         writeln!(stdin, r#"{{"program":"f>n;42","args":[],"func":"f"}}"#).unwrap();
         // drop stdin → EOF

@@ -50,10 +50,8 @@ fn parse_cases(src: &str) -> Vec<TestCase> {
         if let Some(rest) = line.strip_prefix("-- run:") {
             let args = rest.split_whitespace().map(str::to_string).collect();
             pending = Some((args, i + 1));
-        } else if let Some(rest) = line.strip_prefix("-- out:") {
-            if let Some((args, ln)) = pending.take() {
-                cases.push(TestCase { run_args: args, expected: rest.trim().to_string(), line: ln });
-            }
+        } else if let (Some(rest), Some((args, ln))) = (line.strip_prefix("-- out:"), pending.take()) {
+            cases.push(TestCase { run_args: args, expected: rest.trim().to_string(), line: ln });
         }
     }
     cases
