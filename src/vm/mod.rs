@@ -187,7 +187,7 @@ fn encode_abx(op: u8, a: u8, bx: u16) -> u32 {
 
 // ── Chunk ────────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct Chunk {
     pub code: Vec<u32>,
     pub constants: Vec<Value>,
@@ -196,38 +196,11 @@ pub struct Chunk {
     pub reg_count: u8,
     pub spans: Vec<crate::ast::Span>,
     pub all_regs_numeric: bool,
-    /// Per-register numeric flags set by the compiler.  `reg_is_num[i]` is true
-    /// when register `i` has been proved to always hold a plain f64 NanVal.
-    /// Used by the JIT to allocate parallel F64 Cranelift variables and avoid
-    /// i64↔f64 bitcast round-trips in numeric-heavy hot loops.
-    pub reg_is_num: Box<[bool; 256]>,
-}
-
-impl Default for Chunk {
-    fn default() -> Self {
-        Chunk {
-            code: Vec::new(),
-            constants: Vec::new(),
-            param_count: 0,
-            reg_count: 0,
-            spans: Vec::new(),
-            all_regs_numeric: false,
-            reg_is_num: Box::new([false; 256]),
-        }
-    }
 }
 
 impl Chunk {
     fn new(param_count: u8) -> Self {
-        Chunk {
-            code: Vec::new(),
-            constants: Vec::new(),
-            param_count,
-            reg_count: param_count,
-            spans: Vec::new(),
-            all_regs_numeric: false,
-            reg_is_num: Box::new([false; 256]),
-        }
+        Chunk { code: Vec::new(), constants: Vec::new(), param_count, reg_count: param_count, spans: Vec::new(), all_regs_numeric: false }
     }
 
     fn add_const(&mut self, val: Value) -> u16 {
@@ -536,9 +509,6 @@ impl RegCompiler {
                 if self.current_all_regs_numeric {
                     self.current.all_regs_numeric = chunk_is_all_numeric(&self.current);
                 }
-                // Snapshot per-register numeric flags so the JIT can allocate
-                // parallel F64 Cranelift variables and skip bitcast round-trips.
-                *self.current.reg_is_num = self.reg_is_num;
                 self.chunks.push(std::mem::take(&mut self.current));
             } else if let Decl::Tool { params, .. } = decl {
                 // Tool stub: emit LOADK Nil → WRAPOK → RET  (returns Ok(Nil))
@@ -12342,7 +12312,6 @@ mod tests {
             reg_count: 0,
             spans: vec![],
             all_regs_numeric: false,
-            ..Default::default()
         };
         let program = CompiledProgram {
             chunks: vec![chunk],
@@ -12366,7 +12335,6 @@ mod tests {
             reg_count: 0,
             spans: vec![crate::ast::Span { start: 1, end: 2 }],
             all_regs_numeric: false,
-            ..Default::default()
         };
         let program = CompiledProgram {
             chunks: vec![chunk],
