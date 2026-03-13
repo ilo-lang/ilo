@@ -535,7 +535,19 @@ impl RegCompiler {
         match stmt {
             Stmt::Let { name, value } => {
                 if let Some(existing_reg) = self.resolve_local(name) {
-                    // Re-binding: compile value and move to existing register
+                    // Peephole: `name = += name item` → OP_LISTAPPEND(existing, existing, item)
+                    // Emitting a=b=existing_reg keeps RC=1 so the runtime fast path mutates
+                    // in-place, turning O(n²) list-building into O(n).
+                    if let Expr::BinOp { op: BinOp::Append, left, right } = value {
+                        if let Expr::Ref(ref_name) = left.as_ref() {
+                            if ref_name == name {
+                                let item_reg = self.compile_expr(right);
+                                self.emit_abc(OP_LISTAPPEND, existing_reg, existing_reg, item_reg);
+                                return None;
+                            }
+                        }
+                    }
+                    // General re-binding: compile value and move to existing register
                     let reg = self.compile_expr(value);
                     if reg != existing_reg {
                         self.emit_abc(OP_MOVE, existing_reg, reg, 0);
@@ -4274,19 +4286,54 @@ impl<'a> VM<'a> {
                     if !list_val.is_heap() {
                         return Err(VmError::Type("+= requires a list"));
                     }
-                    // SAFETY: is_heap() confirmed heap-tagged with live RC.
-                    match unsafe { list_val.as_heap_ref() } {
-                        HeapObj::List(items) => {
-                            let mut new_items = Vec::with_capacity(items.len() + 1);
-                            for v in items {
-                                v.clone_rc();
-                                new_items.push(*v);
+                    let ptr_b = (list_val.0 & PTR_MASK) as *const HeapObj;
+                    // Fast path: if RC=1 (sole owner), mutate Vec in-place.
+                    // When the compiler peephole emits a=b=existing_reg, the list is
+                    // always RC=1 here, turning O(n) copy-per-append into O(1) amortised.
+                    // We peek at the count without reconstructing Rc (which would bump
+                    // it to 2 and cause get_mut to fail).
+                    let rc_count = {
+                        // SAFETY: ptr_b was produced by Rc::into_raw; temporarily reconstruct
+                        // to read the count, then forget to avoid decrement.
+                        let rc_peek = unsafe { Rc::from_raw(ptr_b) };
+                        let count = Rc::strong_count(&rc_peek);
+                        std::mem::forget(rc_peek);
+                        count
+                    };
+                    if rc_count == 1 {
+                        // SAFETY: We are the sole owner (count==1). No other reference
+                        // exists. Cast to *mut to push directly without altering the Rc.
+                        let heap_mut = unsafe { &mut *(ptr_b as *mut HeapObj) };
+                        match heap_mut {
+                            HeapObj::List(items) => {
+                                item_val.clone_rc();
+                                items.push(item_val);
+                                // The NanVal pointer is unchanged; copy to slot a if a != b.
+                                if a != b {
+                                    unsafe { self.stack.get_unchecked(a) }.drop_rc();
+                                    list_val.clone_rc();
+                                    unsafe { *self.stack.as_mut_ptr().add(a) = list_val; }
+                                }
+                                // a == b: list_val already in slot, nothing to do.
                             }
-                            item_val.clone_rc();
-                            new_items.push(item_val);
-                            reg_set!(a, NanVal::heap_list(new_items));
+                            _ => return Err(VmError::Type("+= requires a list")),
                         }
-                        _ => return Err(VmError::Type("+= requires a list")),
+                    } else {
+                        // RC > 1 — must copy to avoid aliasing.
+                        // SAFETY: ptr_b is a live heap pointer; borrow read-only.
+                        match unsafe { &*ptr_b } {
+                            HeapObj::List(items) => {
+                                let mut new_items = Vec::with_capacity(items.len() + 1);
+                                for v in items {
+                                    v.clone_rc();
+                                    new_items.push(*v);
+                                }
+                                item_val.clone_rc();
+                                new_items.push(item_val);
+                                reg_set!(a, NanVal::heap_list(new_items));
+                            }
+                            _ => return Err(VmError::Type("+= requires a list")),
+                        }
                     }
                 }
                 _ => return Err(VmError::UnknownOpcode { op }),
