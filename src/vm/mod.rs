@@ -187,11 +187,12 @@ pub struct Chunk {
     pub param_count: u8,
     pub reg_count: u8,
     pub spans: Vec<crate::ast::Span>,
+    pub all_regs_numeric: bool,
 }
 
 impl Chunk {
     fn new(param_count: u8) -> Self {
-        Chunk { code: Vec::new(), constants: Vec::new(), param_count, reg_count: param_count, spans: Vec::new() }
+        Chunk { code: Vec::new(), constants: Vec::new(), param_count, reg_count: param_count, spans: Vec::new(), all_regs_numeric: false }
     }
 
     fn add_const(&mut self, val: Value) -> u16 {
@@ -321,6 +322,7 @@ struct RegCompiler {
     loop_stack: Vec<LoopContext>,
     type_registry: TypeRegistry,
     func_return_types: Vec<Type>,  // parallel to func_names
+    current_all_regs_numeric: bool,
 }
 
 impl RegCompiler {
@@ -339,6 +341,7 @@ impl RegCompiler {
             loop_stack: Vec::new(),
             type_registry: TypeRegistry::default(),
             func_return_types: Vec::new(),
+            current_all_regs_numeric: true,
         }
     }
 
@@ -466,10 +469,13 @@ impl RegCompiler {
 
                 self.reg_is_num = [false; 256];
                 self.reg_record_type = [u16::MAX; 256];
+                self.current_all_regs_numeric = true;
                 for (i, p) in params.iter().enumerate() {
                     self.add_local(&p.name, i as u8);
                     if p.ty == Type::Number {
                         self.reg_is_num[i] = true;
+                    } else {
+                        self.current_all_regs_numeric = false;
                     }
                     self.reg_record_type[i] = self.resolve_type_id(&p.ty);
                 }
@@ -492,6 +498,9 @@ impl RegCompiler {
                 }
 
                 self.current.reg_count = self.max_reg;
+                if self.current_all_regs_numeric {
+                    self.current.all_regs_numeric = chunk_is_all_numeric(&self.current);
+                }
                 self.chunks.push(std::mem::take(&mut self.current));
             } else if let Decl::Tool { params, .. } = decl {
                 // Tool stub: emit LOADK Nil → WRAPOK → RET  (returns Ok(Nil))
@@ -536,17 +545,27 @@ impl RegCompiler {
             Stmt::Let { name, value } => {
                 if let Some(existing_reg) = self.resolve_local(name) {
                     // Peephole: `name = += name item` → OP_LISTAPPEND(existing, existing, item)
-                    // Emitting a=b=existing_reg keeps RC=1 so the runtime fast path mutates
-                    // in-place, turning O(n²) list-building into O(n).
-                    if let Expr::BinOp { op: BinOp::Append, left, right } = value {
-                        if let Expr::Ref(ref_name) = left.as_ref() {
-                            if ref_name == name {
+                    // Emitting a=b keeps RC=1 so the runtime fast path mutates in-place,
+                    // turning O(n²) list-building into O(n).
+                    if let Expr::BinOp { op: BinOp::Append, left, right } = value
+                        && let Expr::Ref(ref_name) = left.as_ref()
+                            && ref_name == name {
                                 let item_reg = self.compile_expr(right);
                                 self.emit_abc(OP_LISTAPPEND, existing_reg, existing_reg, item_reg);
                                 return None;
                             }
-                        }
-                    }
+                    // Peephole: `name = +name suffix` → OP_ADD(existing, existing, suffix)
+                    // Only when `name` is known to be non-numeric (strings/lists): with a=b,
+                    // the OP_ADD runtime checks RC=1 and appends in place (amortised O(1)),
+                    // turning O(n²) repeated string-building into O(n).
+                    // Skip for numeric vars — they use OP_ADD_NN / OP_ADDK_N specialisations.
+                    if let Expr::BinOp { op: BinOp::Add, left, right } = value
+                        && let Expr::Ref(ref_name) = left.as_ref()
+                            && ref_name == name && !self.reg_is_num[existing_reg as usize] {
+                                let rhs_reg = self.compile_expr(right);
+                                self.emit_abc(OP_ADD, existing_reg, existing_reg, rhs_reg);
+                                return None;
+                            }
                     // General re-binding: compile value and move to existing register
                     let reg = self.compile_expr(value);
                     if reg != existing_reg {
@@ -1578,7 +1597,13 @@ impl RegCompiler {
 
                 // Track return type for record type propagation
                 if func_idx < self.func_return_types.len() {
-                    self.reg_record_type[a as usize] = self.resolve_type_id(&self.func_return_types[func_idx]);
+                    let ret_ty = &self.func_return_types[func_idx];
+                    self.reg_record_type[a as usize] = self.resolve_type_id(ret_ty);
+                    if *ret_ty == Type::Number {
+                        self.reg_is_num[a as usize] = true;
+                    } else {
+                        self.current_all_regs_numeric = false;
+                    }
                 }
 
                 // After call, only the result register is live
@@ -1894,6 +1919,29 @@ impl RegCompiler {
             }
         }
     }
+}
+
+fn chunk_is_all_numeric(chunk: &Chunk) -> bool {
+    for c in &chunk.constants {
+        match c {
+            Value::Number(_) | Value::Bool(_) | Value::Nil => {}
+            _ => return false,
+        }
+    }
+    for &inst in &chunk.code {
+        let op = (inst >> 24) as u8;
+        match op {
+            OP_RECNEW | OP_LISTNEW | OP_RECWITH | OP_WRAPOK | OP_WRAPERR |
+            OP_STR | OP_CAT | OP_SPL | OP_REV | OP_SRT | OP_SLC | OP_UNQ |
+            OP_LISTAPPEND | OP_JPAR | OP_JDMP | OP_ENV | OP_GET | OP_GETH |
+            OP_POST | OP_POSTH | OP_RD | OP_RDL | OP_WR | OP_WRL |
+            OP_MAPNEW | OP_MGET | OP_MSET | OP_MKEYS | OP_MVALS | OP_HD | OP_TL => {
+                return false;
+            }
+            _ => {}
+        }
+    }
+    true
 }
 
 // ── NaN-boxed value ──────────────────────────────────────────────────
@@ -2712,17 +2760,75 @@ impl<'a> VM<'a> {
                     if bv.is_number() && cv.is_number() {
                         reg_set!(a, NanVal::number(bv.as_number() + cv.as_number()));
                     } else if bv.is_string() && cv.is_string() {
-                        let result = unsafe {
-                            // SAFETY: is_string() confirmed both are heap-tagged string
-                            // pointers with live RC counts (loaded from valid registers).
-                            let sb = match bv.as_heap_ref() { HeapObj::Str(s) => s, _ => unreachable!() };
-                            let sc = match cv.as_heap_ref() { HeapObj::Str(s) => s, _ => unreachable!() };
-                            let mut out = String::with_capacity(sb.len() + sc.len());
-                            out.push_str(sb);
-                            out.push_str(sc);
-                            NanVal::heap_string(out)
-                        };
-                        reg_set!(a, result);
+                        // Fast path: if left string has RC=1 (sole owner), take ownership
+                        // via Rc::try_unwrap and push_str in place — O(n) amortized instead
+                        // of O(n²) for repeated `s = +s "x"` patterns.
+                        let ptr_b = (bv.0 & PTR_MASK) as *const HeapObj;
+                        // SAFETY: bv.is_string() guarantees ptr_b was produced by
+                        // Rc::into_raw in heap_string() with strong count >= 1.
+                        let rc_b = unsafe { Rc::from_raw(ptr_b) };
+                        if Rc::strong_count(&rc_b) == 1 {
+                            match Rc::try_unwrap(rc_b) {
+                                Ok(heap_obj) => {
+                                    // HeapObj::Str's Drop impl is a no-op (only non-string
+                                    // variants drop_rc children), so ptr::read of the String
+                                    // out of a ManuallyDrop shell is safe.
+                                    // SAFETY: tag is TAG_STRING → variant is HeapObj::Str.
+                                    let mut owned: String = unsafe {
+                                        let md = std::mem::ManuallyDrop::new(heap_obj);
+                                        std::ptr::read(match &*md {
+                                            HeapObj::Str(s) => s as *const String,
+                                            _ => unreachable!(),
+                                        })
+                                    };
+                                    // rc_b is consumed; the NanVal `bv` is now a dangling
+                                    // pointer. Nullify slot b immediately so that any
+                                    // subsequent OP_MOVE / reg_set! on b won't double-free.
+                                    unsafe { *self.stack.as_mut_ptr().add(b) = NanVal::nil(); }
+                                    // Read the right-hand string BEFORE touching slot a.
+                                    let sc_ptr: *const str = unsafe {
+                                        match cv.as_heap_ref() {
+                                            HeapObj::Str(s) => s.as_str() as *const str,
+                                            _ => unreachable!(),
+                                        }
+                                    };
+                                    // SAFETY: cv still live so sc_ptr is valid.
+                                    owned.push_str(unsafe { &*sc_ptr });
+                                    let new_val = NanVal::heap_string(owned);
+                                    unsafe {
+                                        let slot = self.stack.as_mut_ptr().add(a);
+                                        // a != b: drop old value at slot a (b is nil after above).
+                                        // a == b: slot a == slot b, already nil — just write new_val.
+                                        if a != b { (*slot).drop_rc(); }
+                                        *slot = new_val;
+                                    }
+                                }
+                                Err(rc_back) => {
+                                    // Shouldn't happen (RC was 1), but fall back safely.
+                                    std::mem::forget(rc_back);
+                                    let result = unsafe {
+                                        let sb = match bv.as_heap_ref() { HeapObj::Str(s) => s, _ => unreachable!() };
+                                        let sc = match cv.as_heap_ref() { HeapObj::Str(s) => s, _ => unreachable!() };
+                                        let mut out = String::with_capacity(sb.len() + sc.len());
+                                        out.push_str(sb); out.push_str(sc);
+                                        NanVal::heap_string(out)
+                                    };
+                                    reg_set!(a, result);
+                                }
+                            }
+                        } else {
+                            // RC > 1 — must copy; restore count by forgetting rc_b.
+                            std::mem::forget(rc_b);
+                            let result = unsafe {
+                                // SAFETY: is_string() confirmed heap-tagged with live RC.
+                                let sb = match bv.as_heap_ref() { HeapObj::Str(s) => s, _ => unreachable!() };
+                                let sc = match cv.as_heap_ref() { HeapObj::Str(s) => s, _ => unreachable!() };
+                                let mut out = String::with_capacity(sb.len() + sc.len());
+                                out.push_str(sb); out.push_str(sc);
+                                NanVal::heap_string(out)
+                            };
+                            reg_set!(a, result);
+                        }
                     } else if bv.is_heap() && cv.is_heap() {
                         // SAFETY: is_heap() confirmed both are heap-tagged with live RC.
                         let bref = unsafe { bv.as_heap_ref() };
@@ -3447,9 +3553,12 @@ impl<'a> VM<'a> {
 
                     // Push args directly onto the stack (no intermediate Vec).
                     let new_base = self.stack.len();
+                    let callee_all_numeric = unsafe {
+                        self.program.chunks.get_unchecked(func_idx as usize)
+                    }.all_regs_numeric;
                     for i in 0..n_args {
                         let v = reg!(base + a as usize + 1 + i);
-                        if !v.is_number() { v.clone_rc(); }
+                        if !callee_all_numeric && !v.is_number() { v.clone_rc(); }
                         self.stack.push(v);
                     }
 
@@ -3472,37 +3581,59 @@ impl<'a> VM<'a> {
                 OP_RET => {
                     let a = ((inst >> 16) & 0xFF) as usize + base;
                     let mut result = reg!(a);
-                    if !result.is_number() && !result.is_arena_record() { result.clone_rc(); }
 
                     // SAFETY: frames is non-empty while execute() is running.
-                    let result_reg = unsafe { self.frames.last().unwrap_unchecked() }.result_reg;
+                    let frame = unsafe { self.frames.last().unwrap_unchecked() };
+                    let result_reg = frame.result_reg;
+                    let all_numeric = unsafe {
+                        self.program.chunks.get_unchecked(ci)
+                    }.all_regs_numeric;
 
-                    for i in base..self.stack.len() {
-                        // SAFETY: i is in range base..self.stack.len() by loop bounds.
-                        unsafe { self.stack.get_unchecked(i) }.drop_rc();
-                    }
-                    self.stack.truncate(base);
-                    self.frames.pop();
+                    if all_numeric {
+                        // Fast path: all registers are numeric — no RC ops needed.
+                        self.stack.truncate(base);
+                        self.frames.pop();
 
-                    if self.frames.is_empty() {
-                        // Promote arena records before resetting arena
-                        if result.is_arena_record() {
-                            result = result.promote_arena_to_heap(&self.program.type_registry);
+                        if self.frames.is_empty() {
+                            self.arena.reset();
+                            return Ok(result.to_value());
                         }
-                        self.arena.reset();
-                        let val = result.to_value();
-                        result.drop_rc();
-                        return Ok(val);
+
+                        let f = unsafe { self.frames.last().unwrap_unchecked() };
+                        ci = f.chunk_idx as usize;
+                        ip = f.ip;
+                        base = f.stack_base;
+                        unsafe { *self.stack.as_mut_ptr().add(base + result_reg as usize) = result; }
+                    } else {
+                        if !result.is_number() && !result.is_arena_record() { result.clone_rc(); }
+
+                        for i in base..self.stack.len() {
+                            // SAFETY: i is in range base..self.stack.len() by loop bounds.
+                            unsafe { self.stack.get_unchecked(i) }.drop_rc();
+                        }
+                        self.stack.truncate(base);
+                        self.frames.pop();
+
+                        if self.frames.is_empty() {
+                            // Promote arena records before resetting arena
+                            if result.is_arena_record() {
+                                result = result.promote_arena_to_heap(&self.program.type_registry);
+                            }
+                            self.arena.reset();
+                            let val = result.to_value();
+                            result.drop_rc();
+                            return Ok(val);
+                        }
+
+                        // SAFETY: we just checked !self.frames.is_empty().
+                        let f = unsafe { self.frames.last().unwrap_unchecked() };
+                        ci = f.chunk_idx as usize;
+                        ip = f.ip;
+                        base = f.stack_base;
+
+                        // Store result in caller's register
+                        reg_set!(base + result_reg as usize, result);
                     }
-
-                    // SAFETY: we just checked !self.frames.is_empty().
-                    let f = unsafe { self.frames.last().unwrap_unchecked() };
-                    ci = f.chunk_idx as usize;
-                    ip = f.ip;
-                    base = f.stack_base;
-
-                    // Store result in caller's register
-                    reg_set!(base + result_reg as usize, result);
                 }
                 OP_RECNEW => {
                     let a = ((inst >> 16) & 0xFF) as usize + base;
@@ -4312,10 +4443,13 @@ impl<'a> VM<'a> {
                     }
                     let ptr_b = (list_val.0 & PTR_MASK) as *const HeapObj;
                     // Fast path: if RC=1 (sole owner), mutate Vec in-place.
-                    // When the compiler peephole emits a=b=existing_reg, the list is
-                    // always RC=1 here, turning O(n) copy-per-append into O(1) amortised.
-                    // We peek at the count without reconstructing Rc (which would bump
-                    // it to 2 and cause get_mut to fail).
+                    // Turns O(n) copy-per-append into amortised O(1), fixing the O(n²)
+                    // foreach-build pattern.
+                    //
+                    // We peek at the RC count without reconstructing the Rc (which would
+                    // bump it to 2 and cause get_mut to fail). When count==1 we use an
+                    // unsafe &mut cast: we are the sole logical owner and no other thread
+                    // can alias this pointer (single-threaded Rc).
                     let rc_count = {
                         // SAFETY: ptr_b was produced by Rc::into_raw; temporarily reconstruct
                         // to read the count, then forget to avoid decrement.
@@ -4326,7 +4460,8 @@ impl<'a> VM<'a> {
                     };
                     if rc_count == 1 {
                         // SAFETY: We are the sole owner (count==1). No other reference
-                        // exists. Cast to *mut to push directly without altering the Rc.
+                        // exists. Cast to *mut to push directly into the Vec without
+                        // altering the Rc refcount.
                         let heap_mut = unsafe { &mut *(ptr_b as *mut HeapObj) };
                         match heap_mut {
                             HeapObj::List(items) => {
@@ -4344,7 +4479,7 @@ impl<'a> VM<'a> {
                         }
                     } else {
                         // RC > 1 — must copy to avoid aliasing.
-                        // SAFETY: ptr_b is a live heap pointer; borrow read-only.
+                        // SAFETY: ptr_b is a live heap pointer; we borrow it read-only.
                         match unsafe { &*ptr_b } {
                             HeapObj::List(items) => {
                                 let mut new_items = Vec::with_capacity(items.len() + 1);
@@ -11970,6 +12105,7 @@ mod tests {
             param_count: 0,
             reg_count: 0,
             spans: vec![],
+            all_regs_numeric: false,
         };
         let program = CompiledProgram {
             chunks: vec![chunk],
@@ -11992,6 +12128,7 @@ mod tests {
             param_count: 0,
             reg_count: 0,
             spans: vec![crate::ast::Span { start: 1, end: 2 }],
+            all_regs_numeric: false,
         };
         let program = CompiledProgram {
             chunks: vec![chunk],
