@@ -52,6 +52,7 @@ struct HelperFuncs {
     str_fn: FuncId,
     num: FuncId,
     abs: FuncId,
+    mod_fn: FuncId,
     min: FuncId,
     max: FuncId,
     flr: FuncId,
@@ -147,6 +148,7 @@ fn register_helpers(builder: &mut JITBuilder) {
         ("jit_str", jit_str as *const u8),
         ("jit_num", jit_num as *const u8),
         ("jit_abs", jit_abs as *const u8),
+        ("jit_mod", jit_mod as *const u8),
         ("jit_min", jit_min as *const u8),
         ("jit_max", jit_max as *const u8),
         ("jit_flr", jit_flr as *const u8),
@@ -235,6 +237,7 @@ fn declare_all_helpers(module: &mut JITModule) -> HelperFuncs {
         str_fn: declare_helper(module, "jit_str", 1, 1),
         num: declare_helper(module, "jit_num", 1, 1),
         abs: declare_helper(module, "jit_abs", 1, 1),
+        mod_fn: declare_helper(module, "jit_mod", 2, 1),
         min: declare_helper(module, "jit_min", 2, 1),
         max: declare_helper(module, "jit_max", 2, 1),
         flr: declare_helper(module, "jit_flr", 1, 1),
@@ -326,6 +329,18 @@ fn compile_function_body(
         vars.push(var);
     }
 
+    // Declare extra F64 shadow variables for registers that will be proven always-numeric.
+    // These allow guard chains to reuse a single bitcast across multiple CMPK instructions
+    // without redundant i64→f64 conversions on every comparison.
+    // Variable indices [reg_count .. reg_count*2) are the F64 shadows.
+    let f64_var_offset = reg_count;
+    let mut f64_vars: Vec<Variable> = Vec::with_capacity(reg_count);
+    for i in 0..reg_count {
+        let var = Variable::from_u32((f64_var_offset + i) as u32);
+        builder.declare_var(var, F64);
+        f64_vars.push(var);
+    }
+
     // ── Foreach loop cache variables ─────────────────────────────────────────
     // For each FOREACHPREP instruction we allocate 4 extra I64 Cranelift variables:
     //   [foreach_var_base + loop_idx*4 + 0]  ptr      — HeapObj pointer (bv & PTR_MASK)
@@ -339,9 +354,10 @@ fn compile_function_body(
     // dedicated (coll_reg, idx_reg) pair assigned by the bytecode compiler.
     //
     // Variable layout:
-    //   [0 .. reg_count)  I64  VM register vars
-    //   [reg_count .. )   I64  foreach cache vars (4 per loop)
-    let foreach_var_base = reg_count;
+    //   [0 .. reg_count)            I64  VM register vars
+    //   [reg_count .. 2*reg_count)  F64  shadow vars
+    //   [2*reg_count .. )           I64  foreach cache vars (4 per loop)
+    let foreach_var_base = 2 * reg_count;
 
     // Pre-scan: collect unique (b_idx, c_idx) pairs from FOREACHPREP instructions
     // and assign each a loop index.
@@ -404,28 +420,43 @@ fn compile_function_body(
     // Store the program pointer as a constant for jit_call fallback
     let program_ptr_val = program as *const CompiledProgram as u64;
 
-    // Pre-pass: determine which registers are *always* written with numeric values.
-    // A register is "always numeric" if every instruction that writes it produces a
-    // floating-point number (i.e. can be safely bitcast to f64 without a QNAN check).
+    // Pre-pass: determine which registers are *always* written with numeric values,
+    // and which are *always* written with boolean values (TAG_TRUE / TAG_FALSE).
     //
-    // We track two flags per register:
+    // Numeric analysis (reg_always_num):
     //   num_write[r]     — at least one write to r is definitely numeric
     //   non_num_write[r] — at least one write to r may produce a non-number
+    //   A register is "always numeric" iff num_write && !non_num_write.
     //
-    // A register is "always numeric" iff num_write && !non_num_write.
-    let mut reg_always_num = vec![false; reg_count];
+    //   MOVE is handled with a fixpoint loop: MOVE a, b propagates b's numeric
+    //   status to a.  This is critical for range-loop counters which are
+    //   initialised with MOVE counter, start_const before ADDK_N takes over.
+    //
+    // Boolean analysis (reg_always_bool):
+    //   bool_write[r]     — every write to r produces TAG_TRUE or TAG_FALSE
+    //   non_bool_write[r] — at least one write to r may produce a non-bool
+    //   A register is "always boolean" iff bool_write && !non_bool_write.
+    //
+    //   This lets JMPF/JMPT on comparison results be compiled as a single
+    //   `icmp ne val, TAG_FALSE` + `brif` instead of a 3-block diamond that
+    //   first checks whether the value is a number (it never is for booleans).
+    let mut reg_always_num  = vec![false; reg_count];
+    let mut reg_always_bool = vec![false; reg_count];
     {
-        let mut non_num_write = vec![false; reg_count];
-        let mut num_write     = vec![false; reg_count];
+        let mut non_num_write  = vec![false; reg_count];
+        let mut num_write      = vec![false; reg_count];
+        let mut bool_write     = vec![false; reg_count];
+        let mut non_bool_write = vec![false; reg_count];
 
         // Function parameters: the VM compiler sets all_regs_numeric when it has
         // proven every param is numeric (e.g. single-param numeric functions).
         if chunk.all_regs_numeric {
-            for (i, slot) in num_write.iter_mut().enumerate().take(chunk.param_count as usize) {
-                if i < reg_count { *slot = true; }
+            for i in 0..chunk.param_count as usize {
+                if i < reg_count { num_write[i] = true; }
             }
         }
 
+        // First pass: classify all non-MOVE instructions.
         for &inst in &chunk.code {
             let op = (inst >> 24) as u8;
             let a  = ((inst >> 16) & 0xFF) as usize;
@@ -433,7 +464,10 @@ fn compile_function_body(
             match op {
                 // Guaranteed numeric outputs.
                 OP_ADD_NN | OP_SUB_NN | OP_MUL_NN | OP_DIV_NN
-                | OP_ADDK_N | OP_SUBK_N | OP_MULK_N | OP_DIVK_N => {
+                | OP_ADDK_N | OP_SUBK_N | OP_MULK_N | OP_DIVK_N
+                | OP_LEN | OP_ABS | OP_MIN | OP_MAX
+                | OP_FLR | OP_CEL | OP_ROU | OP_RND0 | OP_RND2 | OP_NOW
+                | OP_MOD => {
                     num_write[a] = true;
                 }
                 // LOADK: numeric only when the constant itself is a number.
@@ -445,15 +479,20 @@ fn compile_function_body(
                         non_num_write[a] = true;
                     }
                 }
-                // Ops that write a non-numeric or unknown type to R[A].
-                // This list is conservative: an op not mentioned here simply leaves
-                // num_write[a] false, so the register won't qualify as always-numeric.
+                // Boolean outputs: comparison and type-test ops.
+                // These always produce TAG_TRUE or TAG_FALSE.
                 OP_LT | OP_GT | OP_LE | OP_GE | OP_EQ | OP_NE
                 | OP_NOT | OP_HAS | OP_ISNUM | OP_ISTEXT | OP_ISBOOL | OP_ISLIST
-                | OP_MHAS
-                | OP_MOVE
-                | OP_ADD | OP_SUB | OP_MUL | OP_DIV  // may be string concat etc.
-                | OP_WRAPOK | OP_WRAPERR | OP_ISOK | OP_ISERR | OP_UNWRAP
+                | OP_MHAS | OP_ISOK | OP_ISERR => {
+                    bool_write[a] = true;
+                    non_num_write[a] = true;
+                }
+                // MOVE: skip here, handled by fixpoint below.
+                OP_MOVE => {}
+                // Ops that write a non-numeric or unknown type to R[A].
+                OP_ADD | OP_SUB | OP_MUL | OP_DIV  // may be string concat etc.
+                | OP_NEG
+                | OP_WRAPOK | OP_WRAPERR | OP_UNWRAP
                 | OP_RECFLD | OP_RECFLD_NAME | OP_LISTGET | OP_INDEX
                 | OP_STR | OP_HD | OP_TL | OP_REV | OP_SRT | OP_SLC
                 | OP_SPL | OP_CAT | OP_GET | OP_POST | OP_GETH | OP_POSTH
@@ -461,17 +500,73 @@ fn compile_function_body(
                 | OP_MAPNEW | OP_MGET | OP_MSET | OP_MDEL | OP_MKEYS | OP_MVALS
                 | OP_LISTNEW | OP_LISTAPPEND
                 | OP_RECNEW | OP_RECWITH
-                | OP_PRT | OP_RD | OP_RDL | OP_WR | OP_WRL | OP_TRM | OP_UNQ => {
+                | OP_PRT | OP_RD | OP_RDL | OP_WR | OP_WRL | OP_TRM | OP_UNQ
+                | OP_NUM => {
                     non_num_write[a] = true;
+                    non_bool_write[a] = true;
                 }
-                // Numeric-output single-register ops left as conservative default
-                // (neither flag set → not always-numeric, which is safe).
+                // Unknown / non-writing ops (JMP, RET, CMPK_*, etc.): leave flags unset.
                 _ => {}
             }
         }
 
+        // Fixpoint: propagate MOVE a, b by copying b's proven type to a.
+        // Typically converges in 1–2 iterations for simple loop counter patterns.
+        loop {
+            let mut changed = false;
+            for &inst in &chunk.code {
+                let op = (inst >> 24) as u8;
+                if op != OP_MOVE { continue; }
+                let a = ((inst >> 16) & 0xFF) as usize;
+                let b = ((inst >> 8)  & 0xFF) as usize;
+                if a >= reg_count || b >= reg_count { continue; }
+
+                let b_always_num  = num_write[b]  && !non_num_write[b];
+                let b_always_bool = bool_write[b] && !non_bool_write[b];
+
+                // Numeric propagation through MOVE.
+                if b_always_num {
+                    if !num_write[a]     { num_write[a]     = true; changed = true; }
+                } else {
+                    if !non_num_write[a] { non_num_write[a] = true; changed = true; }
+                }
+                // Boolean propagation through MOVE.
+                if b_always_bool {
+                    if !bool_write[a]     { bool_write[a]     = true; changed = true; }
+                } else {
+                    if !non_bool_write[a] { non_bool_write[a] = true; changed = true; }
+                }
+            }
+            if !changed { break; }
+        }
+
         for i in 0..reg_count {
-            reg_always_num[i] = num_write[i] && !non_num_write[i];
+            reg_always_num[i]  = num_write[i]  && !non_num_write[i];
+            reg_always_bool[i] = bool_write[i] && !non_bool_write[i];
+        }
+    }
+
+    // Initialise F64 shadow variables for always-numeric registers.
+    // For registers that are never written by non-numeric instructions (e.g. a
+    // numeric-only function parameter), we emit a single bitcast at function
+    // entry and store it in the F64 shadow variable.  All CMPK_*_N guards on
+    // the same register then use that shadow directly instead of re-emitting a
+    // bitcast on each comparison.  This cuts the per-guard overhead to a plain
+    // `fcmp` + `brif` with no extra conversion instructions.
+    //
+    // We only initialise shadows for *parameter* registers here; for registers
+    // that are written inside the function body (e.g. OP_ADD_NN results) the
+    // shadow is written at the point of the assignment (see OP_ADD_NN etc. below).
+    // Non-always-numeric registers leave the shadow at its default (undef) — the
+    // CMPK handler checks `reg_always_num` before using it.
+    {
+        let mf = cranelift_codegen::ir::MemFlags::new();
+        for i in 0..(chunk.param_count as usize) {
+            if i < reg_count && reg_always_num[i] {
+                let iv = builder.use_var(vars[i]);
+                let fv = builder.ins().bitcast(F64, mf, iv);
+                builder.def_var(f64_vars[i], fv);
+            }
         }
     }
 
@@ -509,77 +604,158 @@ fn compile_function_body(
 
         match op {
             OP_ADD_NN => {
-                // Both known numeric — inline bitcast+fadd+bitcast
-                let bv = builder.use_var(vars[b_idx]);
-                let cv = builder.use_var(vars[c_idx]);
-                let bf = builder.ins().bitcast(F64, cranelift_codegen::ir::MemFlags::new(), bv);
-                let cf = builder.ins().bitcast(F64, cranelift_codegen::ir::MemFlags::new(), cv);
+                // Both known numeric — inline fadd.
+                // Use F64 shadow vars for inputs (avoids bitcast when shadow is fresh).
+                let mf = cranelift_codegen::ir::MemFlags::new();
+                let bf = if b_idx < reg_count && reg_always_num[b_idx] {
+                    builder.use_var(f64_vars[b_idx])
+                } else {
+                    let bv = builder.use_var(vars[b_idx]);
+                    builder.ins().bitcast(F64, mf, bv)
+                };
+                let cf = if c_idx < reg_count && reg_always_num[c_idx] {
+                    builder.use_var(f64_vars[c_idx])
+                } else {
+                    let cv = builder.use_var(vars[c_idx]);
+                    builder.ins().bitcast(F64, mf, cv)
+                };
                 let result_f = builder.ins().fadd(bf, cf);
-                let result = builder.ins().bitcast(I64, cranelift_codegen::ir::MemFlags::new(), result_f);
+                let result = builder.ins().bitcast(I64, mf, result_f);
                 builder.def_var(vars[a_idx], result);
+                if a_idx < reg_count && reg_always_num[a_idx] {
+                    builder.def_var(f64_vars[a_idx], result_f);
+                }
             }
             OP_SUB_NN => {
-                let bv = builder.use_var(vars[b_idx]);
-                let cv = builder.use_var(vars[c_idx]);
-                let bf = builder.ins().bitcast(F64, cranelift_codegen::ir::MemFlags::new(), bv);
-                let cf = builder.ins().bitcast(F64, cranelift_codegen::ir::MemFlags::new(), cv);
+                let mf = cranelift_codegen::ir::MemFlags::new();
+                let bf = if b_idx < reg_count && reg_always_num[b_idx] {
+                    builder.use_var(f64_vars[b_idx])
+                } else {
+                    let bv = builder.use_var(vars[b_idx]);
+                    builder.ins().bitcast(F64, mf, bv)
+                };
+                let cf = if c_idx < reg_count && reg_always_num[c_idx] {
+                    builder.use_var(f64_vars[c_idx])
+                } else {
+                    let cv = builder.use_var(vars[c_idx]);
+                    builder.ins().bitcast(F64, mf, cv)
+                };
                 let result_f = builder.ins().fsub(bf, cf);
-                let result = builder.ins().bitcast(I64, cranelift_codegen::ir::MemFlags::new(), result_f);
+                let result = builder.ins().bitcast(I64, mf, result_f);
                 builder.def_var(vars[a_idx], result);
+                if a_idx < reg_count && reg_always_num[a_idx] {
+                    builder.def_var(f64_vars[a_idx], result_f);
+                }
             }
             OP_MUL_NN => {
-                let bv = builder.use_var(vars[b_idx]);
-                let cv = builder.use_var(vars[c_idx]);
-                let bf = builder.ins().bitcast(F64, cranelift_codegen::ir::MemFlags::new(), bv);
-                let cf = builder.ins().bitcast(F64, cranelift_codegen::ir::MemFlags::new(), cv);
+                let mf = cranelift_codegen::ir::MemFlags::new();
+                let bf = if b_idx < reg_count && reg_always_num[b_idx] {
+                    builder.use_var(f64_vars[b_idx])
+                } else {
+                    let bv = builder.use_var(vars[b_idx]);
+                    builder.ins().bitcast(F64, mf, bv)
+                };
+                let cf = if c_idx < reg_count && reg_always_num[c_idx] {
+                    builder.use_var(f64_vars[c_idx])
+                } else {
+                    let cv = builder.use_var(vars[c_idx]);
+                    builder.ins().bitcast(F64, mf, cv)
+                };
                 let result_f = builder.ins().fmul(bf, cf);
-                let result = builder.ins().bitcast(I64, cranelift_codegen::ir::MemFlags::new(), result_f);
+                let result = builder.ins().bitcast(I64, mf, result_f);
                 builder.def_var(vars[a_idx], result);
+                if a_idx < reg_count && reg_always_num[a_idx] {
+                    builder.def_var(f64_vars[a_idx], result_f);
+                }
             }
             OP_DIV_NN => {
-                let bv = builder.use_var(vars[b_idx]);
-                let cv = builder.use_var(vars[c_idx]);
-                let bf = builder.ins().bitcast(F64, cranelift_codegen::ir::MemFlags::new(), bv);
-                let cf = builder.ins().bitcast(F64, cranelift_codegen::ir::MemFlags::new(), cv);
+                let mf = cranelift_codegen::ir::MemFlags::new();
+                let bf = if b_idx < reg_count && reg_always_num[b_idx] {
+                    builder.use_var(f64_vars[b_idx])
+                } else {
+                    let bv = builder.use_var(vars[b_idx]);
+                    builder.ins().bitcast(F64, mf, bv)
+                };
+                let cf = if c_idx < reg_count && reg_always_num[c_idx] {
+                    builder.use_var(f64_vars[c_idx])
+                } else {
+                    let cv = builder.use_var(vars[c_idx]);
+                    builder.ins().bitcast(F64, mf, cv)
+                };
                 let result_f = builder.ins().fdiv(bf, cf);
-                let result = builder.ins().bitcast(I64, cranelift_codegen::ir::MemFlags::new(), result_f);
+                let result = builder.ins().bitcast(I64, mf, result_f);
                 builder.def_var(vars[a_idx], result);
+                if a_idx < reg_count && reg_always_num[a_idx] {
+                    builder.def_var(f64_vars[a_idx], result_f);
+                }
             }
             OP_ADDK_N => {
-                let bv = builder.use_var(vars[b_idx]);
                 let kv = nan_consts.get(c_idx)?.as_number();
-                let bf = builder.ins().bitcast(F64, cranelift_codegen::ir::MemFlags::new(), bv);
+                let mf = cranelift_codegen::ir::MemFlags::new();
+                let bf = if b_idx < reg_count && reg_always_num[b_idx] {
+                    builder.use_var(f64_vars[b_idx])
+                } else {
+                    let bv = builder.use_var(vars[b_idx]);
+                    builder.ins().bitcast(F64, mf, bv)
+                };
                 let kval = builder.ins().f64const(kv);
                 let result_f = builder.ins().fadd(bf, kval);
-                let result = builder.ins().bitcast(I64, cranelift_codegen::ir::MemFlags::new(), result_f);
+                let result = builder.ins().bitcast(I64, mf, result_f);
                 builder.def_var(vars[a_idx], result);
+                if a_idx < reg_count && reg_always_num[a_idx] {
+                    builder.def_var(f64_vars[a_idx], result_f);
+                }
             }
             OP_SUBK_N => {
-                let bv = builder.use_var(vars[b_idx]);
                 let kv = nan_consts.get(c_idx)?.as_number();
-                let bf = builder.ins().bitcast(F64, cranelift_codegen::ir::MemFlags::new(), bv);
+                let mf = cranelift_codegen::ir::MemFlags::new();
+                let bf = if b_idx < reg_count && reg_always_num[b_idx] {
+                    builder.use_var(f64_vars[b_idx])
+                } else {
+                    let bv = builder.use_var(vars[b_idx]);
+                    builder.ins().bitcast(F64, mf, bv)
+                };
                 let kval = builder.ins().f64const(kv);
                 let result_f = builder.ins().fsub(bf, kval);
-                let result = builder.ins().bitcast(I64, cranelift_codegen::ir::MemFlags::new(), result_f);
+                let result = builder.ins().bitcast(I64, mf, result_f);
                 builder.def_var(vars[a_idx], result);
+                if a_idx < reg_count && reg_always_num[a_idx] {
+                    builder.def_var(f64_vars[a_idx], result_f);
+                }
             }
             OP_MULK_N => {
-                let bv = builder.use_var(vars[b_idx]);
                 let kv = nan_consts.get(c_idx)?.as_number();
-                let bf = builder.ins().bitcast(F64, cranelift_codegen::ir::MemFlags::new(), bv);
+                let mf = cranelift_codegen::ir::MemFlags::new();
+                let bf = if b_idx < reg_count && reg_always_num[b_idx] {
+                    builder.use_var(f64_vars[b_idx])
+                } else {
+                    let bv = builder.use_var(vars[b_idx]);
+                    builder.ins().bitcast(F64, mf, bv)
+                };
                 let kval = builder.ins().f64const(kv);
                 let result_f = builder.ins().fmul(bf, kval);
-                let result = builder.ins().bitcast(I64, cranelift_codegen::ir::MemFlags::new(), result_f);
+                let result = builder.ins().bitcast(I64, mf, result_f);
                 builder.def_var(vars[a_idx], result);
+                if a_idx < reg_count && reg_always_num[a_idx] {
+                    builder.def_var(f64_vars[a_idx], result_f);
+                }
             }
             OP_DIVK_N => {
-                let bv = builder.use_var(vars[b_idx]);
                 let kv = nan_consts.get(c_idx)?.as_number();
-                let bf = builder.ins().bitcast(F64, cranelift_codegen::ir::MemFlags::new(), bv);
+                let mf = cranelift_codegen::ir::MemFlags::new();
+                let bf = if b_idx < reg_count && reg_always_num[b_idx] {
+                    builder.use_var(f64_vars[b_idx])
+                } else {
+                    let bv = builder.use_var(vars[b_idx]);
+                    builder.ins().bitcast(F64, mf, bv)
+                };
                 let kval = builder.ins().f64const(kv);
                 let result_f = builder.ins().fdiv(bf, kval);
-                let result = builder.ins().bitcast(I64, cranelift_codegen::ir::MemFlags::new(), result_f);
+                let result = builder.ins().bitcast(I64, mf, result_f);
                 builder.def_var(vars[a_idx], result);
+                if a_idx < reg_count && reg_always_num[a_idx] {
+                    builder.def_var(f64_vars[a_idx], result_f);
+                }
             }
             OP_ADD | OP_SUB | OP_MUL | OP_DIV => {
                 // Inline numeric fast path: check both are numbers, do float op,
@@ -654,6 +830,19 @@ fn compile_function_body(
                     && c_idx < reg_always_num.len() && reg_always_num[c_idx];
 
                 if both_always_num {
+                    // Use F64 shadow vars for inputs to skip bitcasts.
+                    let mf = cranelift_codegen::ir::MemFlags::new();
+                    let bf = if b_idx < reg_count && reg_always_num[b_idx] {
+                        builder.use_var(f64_vars[b_idx])
+                    } else {
+                        builder.ins().bitcast(F64, mf, bv)
+                    };
+                    let cf = if c_idx < reg_count && reg_always_num[c_idx] {
+                        builder.use_var(f64_vars[c_idx])
+                    } else {
+                        builder.ins().bitcast(F64, mf, cv)
+                    };
+
                     // Check if the immediately following instruction is JMPF or JMPT on
                     // the same destination register (a_idx). If so, fuse the comparison
                     // and conditional branch into a single compare-and-branch, eliminating
@@ -676,9 +865,6 @@ fn compile_function_body(
                         let target      = (ip as isize + 2 + sbx as isize) as usize;
                         let fallthrough = ip + 2;
 
-                        let mf = cranelift_codegen::ir::MemFlags::new();
-                        let bf = builder.ins().bitcast(F64, mf, bv);
-                        let cf = builder.ins().bitcast(F64, mf, cv);
                         let cmp = builder.ins().fcmp(cc, bf, cf);
 
                         // For JMPF: jump to target when cmp is FALSE (i.e. condition false → jump).
@@ -707,9 +893,6 @@ fn compile_function_body(
                         }
                     } else {
                         // No fusion opportunity — emit direct float comparison without QNAN check.
-                        let mf = cranelift_codegen::ir::MemFlags::new();
-                        let bf = builder.ins().bitcast(F64, mf, bv);
-                        let cf = builder.ins().bitcast(F64, mf, cv);
                         let cmp = builder.ins().fcmp(cc, bf, cf);
                         let true_val  = builder.ins().iconst(I64, TAG_TRUE  as i64);
                         let false_val = builder.ins().iconst(I64, TAG_FALSE as i64);
@@ -767,22 +950,38 @@ fn compile_function_body(
             OP_MOVE => {
                 if a_idx != b_idx {
                     let bv = builder.use_var(vars[b_idx]);
-                    // Inline is_heap check: skip clone_rc for numbers (hot path)
-                    let qnan_val = builder.ins().iconst(I64, QNAN as i64);
-                    let masked = builder.ins().band(bv, qnan_val);
-                    let is_heap = builder.ins().icmp(
-                        cranelift_codegen::ir::condcodes::IntCC::Equal, masked, qnan_val);
-                    let clone_block = builder.create_block();
-                    let after_block = builder.create_block();
-                    builder.ins().brif(is_heap, clone_block, &[], after_block, &[]);
+                    // Fast path: if source is always numeric or always boolean, no RC
+                    // management is needed (numbers/booleans are not heap-allocated).
+                    let src_always_num  = b_idx < reg_always_num.len()  && reg_always_num[b_idx];
+                    let src_always_bool = b_idx < reg_always_bool.len() && reg_always_bool[b_idx];
+                    if src_always_num || src_always_bool {
+                        // No QNAN check, no clone_rc — just copy the bits.
+                        builder.def_var(vars[a_idx], bv);
+                        // Propagate f64 shadow so that destination can skip bitcasts too.
+                        if src_always_num
+                            && a_idx < reg_always_num.len() && reg_always_num[a_idx]
+                        {
+                            let bf = builder.use_var(f64_vars[b_idx]);
+                            builder.def_var(f64_vars[a_idx], bf);
+                        }
+                    } else {
+                        // General path: inline is_heap check; clone_rc only for heap values.
+                        let qnan_val = builder.ins().iconst(I64, QNAN as i64);
+                        let masked = builder.ins().band(bv, qnan_val);
+                        let is_heap = builder.ins().icmp(
+                            cranelift_codegen::ir::condcodes::IntCC::Equal, masked, qnan_val);
+                        let clone_block = builder.create_block();
+                        let after_block = builder.create_block();
+                        builder.ins().brif(is_heap, clone_block, &[], after_block, &[]);
 
-                    builder.switch_to_block(clone_block);
-                    let fref = get_func_ref(&mut builder, module, helpers.jit_move);
-                    builder.ins().call(fref, &[bv]);
-                    builder.ins().jump(after_block, &[]);
+                        builder.switch_to_block(clone_block);
+                        let fref = get_func_ref(&mut builder, module, helpers.jit_move);
+                        builder.ins().call(fref, &[bv]);
+                        builder.ins().jump(after_block, &[]);
 
-                    builder.switch_to_block(after_block);
-                    builder.def_var(vars[a_idx], bv);
+                        builder.switch_to_block(after_block);
+                        builder.def_var(vars[a_idx], bv);
+                    }
                 }
             }
             OP_NOT => {
@@ -793,11 +992,23 @@ fn compile_function_body(
                 builder.def_var(vars[a_idx], result);
             }
             OP_NEG => {
-                let bv = builder.use_var(vars[b_idx]);
-                let fref = get_func_ref(&mut builder, module, helpers.neg);
-                let call_inst = builder.ins().call(fref, &[bv]);
-                let result = builder.inst_results(call_inst)[0];
-                builder.def_var(vars[a_idx], result);
+                // Inline fneg for always-numeric operands; call helper otherwise.
+                if b_idx < reg_always_num.len() && reg_always_num[b_idx] {
+                    let mf = cranelift_codegen::ir::MemFlags::new();
+                    let bf = builder.use_var(f64_vars[b_idx]);
+                    let result_f = builder.ins().fneg(bf);
+                    let result = builder.ins().bitcast(I64, mf, result_f);
+                    builder.def_var(vars[a_idx], result);
+                    if a_idx < reg_count && reg_always_num[a_idx] {
+                        builder.def_var(f64_vars[a_idx], result_f);
+                    }
+                } else {
+                    let bv = builder.use_var(vars[b_idx]);
+                    let fref = get_func_ref(&mut builder, module, helpers.neg);
+                    let call_inst = builder.ins().call(fref, &[bv]);
+                    let result = builder.inst_results(call_inst)[0];
+                    builder.def_var(vars[a_idx], result);
+                }
             }
             OP_WRAPOK => {
                 let bv = builder.use_var(vars[b_idx]);
@@ -847,6 +1058,13 @@ fn compile_function_body(
                     builder.def_var(vars[a_idx], result);
                 } else {
                     builder.def_var(vars[a_idx], kval);
+                    // Initialise F64 shadow for numeric constants so arithmetic ops
+                    // can skip the bitcast when reading this register.
+                    if nv.is_number() && a_idx < reg_count && reg_always_num[a_idx] {
+                        let mf = cranelift_codegen::ir::MemFlags::new();
+                        let fv = builder.ins().bitcast(F64, mf, kval);
+                        builder.def_var(f64_vars[a_idx], fv);
+                    }
                 }
             }
             OP_JMP => {
@@ -863,54 +1081,70 @@ fn compile_function_body(
                 let fallthrough = ip + 1;
                 let av = builder.use_var(vars[a_idx]);
 
-                // Inline truthy: false if val==TAG_NIL or val==TAG_FALSE, true otherwise.
-                // This covers numbers (truthy when != 0.0, but 0.0 bits != TAG_NIL/TAG_FALSE),
-                // booleans, and all heap values. For number 0.0 (bits=0), it's truthy=true here
-                // but should be falsy — so we need a number check too.
-                // Full inline: is_number ? (f64 != 0.0) : (val != TAG_NIL && val != TAG_FALSE)
-                let qnan_val = builder.ins().iconst(I64, QNAN as i64);
-                let masked = builder.ins().band(av, qnan_val);
-                let is_num = builder.ins().icmp(
-                    cranelift_codegen::ir::condcodes::IntCC::NotEqual, masked, qnan_val);
-
-                let num_truthy_block = builder.create_block();
-                let tag_truthy_block = builder.create_block();
-                let merge_truthy = builder.create_block();
-                builder.append_block_param(merge_truthy, I64);
-
-                builder.ins().brif(is_num, num_truthy_block, &[], tag_truthy_block, &[]);
-
-                // Number path: truthy if f64 != 0.0
-                builder.switch_to_block(num_truthy_block);
-                let mf = cranelift_codegen::ir::MemFlags::new();
-                let af = builder.ins().bitcast(F64, mf, av);
-                let zero = builder.ins().f64const(0.0);
-                let cmp = builder.ins().fcmp(cranelift_codegen::ir::condcodes::FloatCC::NotEqual, af, zero);
-                let num_result = builder.ins().uextend(I64, cmp);
-                builder.ins().jump(merge_truthy, &[num_result]);
-
-                // Tag path: truthy if val != TAG_NIL && val != TAG_FALSE
-                builder.switch_to_block(tag_truthy_block);
-                let nil_val = builder.ins().iconst(I64, TAG_NIL as i64);
-                let false_val = builder.ins().iconst(I64, TAG_FALSE as i64);
-                let not_nil = builder.ins().icmp(
-                    cranelift_codegen::ir::condcodes::IntCC::NotEqual, av, nil_val);
-                let not_false = builder.ins().icmp(
-                    cranelift_codegen::ir::condcodes::IntCC::NotEqual, av, false_val);
-                let tag_truthy = builder.ins().band(not_nil, not_false);
-                let tag_result = builder.ins().uextend(I64, tag_truthy);
-                builder.ins().jump(merge_truthy, &[tag_result]);
-
-                builder.switch_to_block(merge_truthy);
-                let truthy_val = builder.block_params(merge_truthy)[0];
-
                 if let (Some(&target_block), Some(&fall_block)) = (block_map.get(&target), block_map.get(&fallthrough)) {
-                    if op == OP_JMPF {
-                        builder.ins().brif(truthy_val, fall_block, &[], target_block, &[]);
+                    // Fast path: register is always a boolean (TAG_TRUE or TAG_FALSE).
+                    // Comparison results (LT/GT/EQ/...) always fall here, so this is
+                    // the common case for loop conditions and guards.
+                    // TAG_FALSE = QNAN|2, TAG_TRUE = QNAN|1 — just compare to TAG_FALSE.
+                    if a_idx < reg_always_bool.len() && reg_always_bool[a_idx] {
+                        let false_val = builder.ins().iconst(I64, TAG_FALSE as i64);
+                        let is_false = builder.ins().icmp(
+                            cranelift_codegen::ir::condcodes::IntCC::Equal, av, false_val);
+                        // JMPF: jump (to target) when false; else fall through.
+                        // JMPT: jump (to target) when true; else fall through.
+                        if op == OP_JMPF {
+                            builder.ins().brif(is_false, target_block, &[], fall_block, &[]);
+                        } else {
+                            builder.ins().brif(is_false, fall_block, &[], target_block, &[]);
+                        }
+                        block_terminated = true;
                     } else {
-                        builder.ins().brif(truthy_val, target_block, &[], fall_block, &[]);
+                        // General case: full truthy check.
+                        // false if val==TAG_NIL or val==TAG_FALSE, true otherwise.
+                        // Numbers: truthy if f64 != 0.0 (0.0 bits are 0, not TAG_FALSE/NIL).
+                        let qnan_val = builder.ins().iconst(I64, QNAN as i64);
+                        let masked = builder.ins().band(av, qnan_val);
+                        let is_num = builder.ins().icmp(
+                            cranelift_codegen::ir::condcodes::IntCC::NotEqual, masked, qnan_val);
+
+                        let num_truthy_block = builder.create_block();
+                        let tag_truthy_block = builder.create_block();
+                        let merge_truthy = builder.create_block();
+                        builder.append_block_param(merge_truthy, I64);
+
+                        builder.ins().brif(is_num, num_truthy_block, &[], tag_truthy_block, &[]);
+
+                        // Number path: truthy if f64 != 0.0
+                        builder.switch_to_block(num_truthy_block);
+                        let mf = cranelift_codegen::ir::MemFlags::new();
+                        let af = builder.ins().bitcast(F64, mf, av);
+                        let zero = builder.ins().f64const(0.0);
+                        let cmp = builder.ins().fcmp(cranelift_codegen::ir::condcodes::FloatCC::NotEqual, af, zero);
+                        let num_result = builder.ins().uextend(I64, cmp);
+                        builder.ins().jump(merge_truthy, &[num_result]);
+
+                        // Tag path: truthy if val != TAG_NIL && val != TAG_FALSE
+                        builder.switch_to_block(tag_truthy_block);
+                        let nil_val = builder.ins().iconst(I64, TAG_NIL as i64);
+                        let false_val2 = builder.ins().iconst(I64, TAG_FALSE as i64);
+                        let not_nil = builder.ins().icmp(
+                            cranelift_codegen::ir::condcodes::IntCC::NotEqual, av, nil_val);
+                        let not_false = builder.ins().icmp(
+                            cranelift_codegen::ir::condcodes::IntCC::NotEqual, av, false_val2);
+                        let tag_truthy = builder.ins().band(not_nil, not_false);
+                        let tag_result = builder.ins().uextend(I64, tag_truthy);
+                        builder.ins().jump(merge_truthy, &[tag_result]);
+
+                        builder.switch_to_block(merge_truthy);
+                        let truthy_val = builder.block_params(merge_truthy)[0];
+
+                        if op == OP_JMPF {
+                            builder.ins().brif(truthy_val, fall_block, &[], target_block, &[]);
+                        } else {
+                            builder.ins().brif(truthy_val, target_block, &[], fall_block, &[]);
+                        }
+                        block_terminated = true;
                     }
-                    block_terminated = true;
                 }
             }
             OP_JMPNN => {
@@ -937,6 +1171,11 @@ fn compile_function_body(
                 let call_inst = builder.ins().call(fref, &[bv]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
+                if a_idx < reg_count && reg_always_num[a_idx] {
+                    let mf = cranelift_codegen::ir::MemFlags::new();
+                    let rf = builder.ins().bitcast(F64, mf, result);
+                    builder.def_var(f64_vars[a_idx], rf);
+                }
             }
             OP_STR => {
                 let bv = builder.use_var(vars[b_idx]);
@@ -958,6 +1197,11 @@ fn compile_function_body(
                 let call_inst = builder.ins().call(fref, &[bv]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
+                if a_idx < reg_count && reg_always_num[a_idx] {
+                    let mf = cranelift_codegen::ir::MemFlags::new();
+                    let rf = builder.ins().bitcast(F64, mf, result);
+                    builder.def_var(f64_vars[a_idx], rf);
+                }
             }
             OP_MIN => {
                 let bv = builder.use_var(vars[b_idx]);
@@ -966,6 +1210,11 @@ fn compile_function_body(
                 let call_inst = builder.ins().call(fref, &[bv, cv]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
+                if a_idx < reg_count && reg_always_num[a_idx] {
+                    let mf = cranelift_codegen::ir::MemFlags::new();
+                    let rf = builder.ins().bitcast(F64, mf, result);
+                    builder.def_var(f64_vars[a_idx], rf);
+                }
             }
             OP_MAX => {
                 let bv = builder.use_var(vars[b_idx]);
@@ -974,6 +1223,24 @@ fn compile_function_body(
                 let call_inst = builder.ins().call(fref, &[bv, cv]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
+                if a_idx < reg_count && reg_always_num[a_idx] {
+                    let mf = cranelift_codegen::ir::MemFlags::new();
+                    let rf = builder.ins().bitcast(F64, mf, result);
+                    builder.def_var(f64_vars[a_idx], rf);
+                }
+            }
+            OP_MOD => {
+                let bv = builder.use_var(vars[b_idx]);
+                let cv = builder.use_var(vars[c_idx]);
+                let fref = get_func_ref(&mut builder, module, helpers.mod_fn);
+                let call_inst = builder.ins().call(fref, &[bv, cv]);
+                let result = builder.inst_results(call_inst)[0];
+                builder.def_var(vars[a_idx], result);
+                if a_idx < reg_count && reg_always_num[a_idx] {
+                    let mf = cranelift_codegen::ir::MemFlags::new();
+                    let rf = builder.ins().bitcast(F64, mf, result);
+                    builder.def_var(f64_vars[a_idx], rf);
+                }
             }
             OP_FLR => {
                 let bv = builder.use_var(vars[b_idx]);
@@ -981,6 +1248,11 @@ fn compile_function_body(
                 let call_inst = builder.ins().call(fref, &[bv]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
+                if a_idx < reg_count && reg_always_num[a_idx] {
+                    let mf = cranelift_codegen::ir::MemFlags::new();
+                    let rf = builder.ins().bitcast(F64, mf, result);
+                    builder.def_var(f64_vars[a_idx], rf);
+                }
             }
             OP_CEL => {
                 let bv = builder.use_var(vars[b_idx]);
@@ -988,6 +1260,11 @@ fn compile_function_body(
                 let call_inst = builder.ins().call(fref, &[bv]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
+                if a_idx < reg_count && reg_always_num[a_idx] {
+                    let mf = cranelift_codegen::ir::MemFlags::new();
+                    let rf = builder.ins().bitcast(F64, mf, result);
+                    builder.def_var(f64_vars[a_idx], rf);
+                }
             }
             OP_ROU => {
                 let bv = builder.use_var(vars[b_idx]);
@@ -995,12 +1272,22 @@ fn compile_function_body(
                 let call_inst = builder.ins().call(fref, &[bv]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
+                if a_idx < reg_count && reg_always_num[a_idx] {
+                    let mf = cranelift_codegen::ir::MemFlags::new();
+                    let rf = builder.ins().bitcast(F64, mf, result);
+                    builder.def_var(f64_vars[a_idx], rf);
+                }
             }
             OP_RND0 => {
                 let fref = get_func_ref(&mut builder, module, helpers.rnd0);
                 let call_inst = builder.ins().call(fref, &[]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
+                if a_idx < reg_count && reg_always_num[a_idx] {
+                    let mf = cranelift_codegen::ir::MemFlags::new();
+                    let rf = builder.ins().bitcast(F64, mf, result);
+                    builder.def_var(f64_vars[a_idx], rf);
+                }
             }
             OP_RND2 => {
                 let bv = builder.use_var(vars[b_idx]);
@@ -1009,12 +1296,22 @@ fn compile_function_body(
                 let call_inst = builder.ins().call(fref, &[bv, cv]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
+                if a_idx < reg_count && reg_always_num[a_idx] {
+                    let mf = cranelift_codegen::ir::MemFlags::new();
+                    let rf = builder.ins().bitcast(F64, mf, result);
+                    builder.def_var(f64_vars[a_idx], rf);
+                }
             }
             OP_NOW => {
                 let fref = get_func_ref(&mut builder, module, helpers.now);
                 let call_inst = builder.ins().call(fref, &[]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
+                if a_idx < reg_count && reg_always_num[a_idx] {
+                    let mf = cranelift_codegen::ir::MemFlags::new();
+                    let rf = builder.ins().bitcast(F64, mf, result);
+                    builder.def_var(f64_vars[a_idx], rf);
+                }
             }
             OP_ENV => {
                 let bv = builder.use_var(vars[b_idx]);
@@ -1691,11 +1988,10 @@ fn compile_function_body(
                     }
                 } else {
                     let cv = builder.use_var(vars[c_idx]);
-                    let mf = cranelift_codegen::ir::MemFlags::new();
-                    let cv_f64 = builder.ins().bitcast(F64, mf, cv);
+                    let cv_f64 = builder.ins().bitcast(F64, mf_plain, cv);
                     let one_f64 = builder.ins().f64const(1.0);
                     let new_idx_f64 = builder.ins().fadd(cv_f64, one_f64);
-                    let new_idx = builder.ins().bitcast(I64, mf, new_idx_f64);
+                    let new_idx = builder.ins().bitcast(I64, mf_plain, new_idx_f64);
                     builder.def_var(vars[c_idx], new_idx);
                     let bv = builder.use_var(vars[b_idx]);
                     let fref = get_func_ref(&mut builder, module, helpers.listget);
@@ -1708,14 +2004,31 @@ fn compile_function_body(
             // ABC: A = reg, B = unused, C = constant pool index (ki).
             // If condition TRUE → skip next instruction (the OP_JMP), enter body.
             // If condition FALSE → fall through to the OP_JMP that skips the body.
+            //
+            // Two optimisations applied here:
+            //
+            // 1. F64 shadow variables: if R[A] is always numeric we pre-converted it
+            //    to F64 at function entry (or at the write site for non-parameter
+            //    numeric registers).  Reuse that F64 value directly, skipping the
+            //    redundant i64→f64 bitcast that would otherwise appear on every guard.
+            //
+            // 2. Jump threading: ip+1 is always OP_JMP (the body-skip jump). Instead
+            //    of branching to the JMP block and then immediately jumping again, we
+            //    decode the JMP target here and use it directly as the false branch
+            //    destination.  This eliminates one unconditional jump per failed guard.
             op if op == OP_CMPK_GE_N || op == OP_CMPK_GT_N || op == OP_CMPK_LT_N
                 || op == OP_CMPK_LE_N || op == OP_CMPK_EQ_N || op == OP_CMPK_NE_N => {
                 let ki = (inst & 0xFF) as usize;
-                let lhs = builder.use_var(vars[a_idx]);
 
-                // Both operands are guaranteed numeric by the compiler; bitcast to f64.
-                let mf = cranelift_codegen::ir::MemFlags::new();
-                let lhs_f64 = builder.ins().bitcast(F64, mf, lhs);
+                // Optimisation 1: use the pre-converted F64 shadow when available.
+                let lhs_f64 = if a_idx < reg_count && reg_always_num[a_idx] {
+                    builder.use_var(f64_vars[a_idx])
+                } else {
+                    let lhs = builder.use_var(vars[a_idx]);
+                    let mf = cranelift_codegen::ir::MemFlags::new();
+                    builder.ins().bitcast(F64, mf, lhs)
+                };
+
                 let rhs_f64 = if ki < nan_consts.len() {
                     builder.ins().f64const(nan_consts[ki].as_number())
                 } else {
@@ -1723,28 +2036,39 @@ fn compile_function_body(
                 };
 
                 use cranelift_codegen::ir::condcodes::FloatCC;
-                let cc = if op == OP_CMPK_GE_N {
-                    FloatCC::GreaterThanOrEqual
-                } else if op == OP_CMPK_GT_N {
-                    FloatCC::GreaterThan
-                } else if op == OP_CMPK_LT_N {
-                    FloatCC::LessThan
-                } else if op == OP_CMPK_LE_N {
-                    FloatCC::LessThanOrEqual
-                } else if op == OP_CMPK_EQ_N {
-                    FloatCC::Equal
-                } else {
-                    FloatCC::NotEqual  // OP_CMPK_NE_N
+                let cc = match op {
+                    op if op == OP_CMPK_GE_N => FloatCC::GreaterThanOrEqual,
+                    op if op == OP_CMPK_GT_N => FloatCC::GreaterThan,
+                    op if op == OP_CMPK_LT_N => FloatCC::LessThan,
+                    op if op == OP_CMPK_LE_N => FloatCC::LessThanOrEqual,
+                    op if op == OP_CMPK_EQ_N => FloatCC::Equal,
+                    _                        => FloatCC::NotEqual, // OP_CMPK_NE_N
                 };
                 let cmp = builder.ins().fcmp(cc, lhs_f64, rhs_f64);
 
                 // ip + 1 = the OP_JMP that skips the body (taken when condition FALSE)
                 // ip + 2 = first instruction of the guard body (taken when condition TRUE)
-                let jmp_block  = block_map.get(&(ip + 1)).copied();
                 let body_block = block_map.get(&(ip + 2)).copied();
-                if let (Some(jb), Some(bb)) = (jmp_block, body_block) {
-                    // condition TRUE → body (skip the JMP); condition FALSE → JMP block
-                    builder.ins().brif(cmp, bb, &[], jb, &[]);
+
+                // Optimisation 2: jump threading.
+                // The instruction at ip+1 is always OP_JMP.  Decode its target now so
+                // that the false branch goes directly there, skipping the intermediate
+                // JMP block entirely.  If the look-ahead fails for any reason, fall
+                // back to the original behaviour (branch to the JMP block).
+                let false_dest_block = chunk.code.get(ip + 1).and_then(|&jmp_inst| {
+                    let jmp_op = (jmp_inst >> 24) as u8;
+                    if jmp_op == OP_JMP {
+                        let sbx = (jmp_inst & 0xFFFF) as i16;
+                        let jmp_target = (ip as isize + 2 + sbx as isize) as usize;
+                        block_map.get(&jmp_target).copied()
+                    } else {
+                        None
+                    }
+                }).or_else(|| block_map.get(&(ip + 1)).copied());
+
+                if let (Some(false_block), Some(bb)) = (false_dest_block, body_block) {
+                    // condition TRUE → body; condition FALSE → threaded miss target
+                    builder.ins().brif(cmp, bb, &[], false_block, &[]);
                     block_terminated = true;
                 }
                 // else: blocks not found → JIT bails (should not happen in practice)
@@ -1755,17 +2079,19 @@ fn compile_function_body(
                 let func_idx = bx >> 8;
                 let n_args = bx & 0xFF;
 
+                let a_idx_call = a as usize;
+                let call_result: cranelift_codegen::ir::Value;
                 if func_idx < all_func_ids.len() {
                     // Direct call: the target function is compiled in this module
                     let target_fid = all_func_ids[func_idx];
                     let target_fref = get_func_ref(&mut builder, module, target_fid);
                     let mut call_args = Vec::with_capacity(n_args);
                     for i in 0..n_args {
-                        call_args.push(builder.use_var(vars[a as usize + 1 + i]));
+                        call_args.push(builder.use_var(vars[a_idx_call + 1 + i]));
                     }
                     let call_inst = builder.ins().call(target_fref, &call_args);
-                    let result = builder.inst_results(call_inst)[0];
-                    builder.def_var(vars[a as usize], result);
+                    call_result = builder.inst_results(call_inst)[0];
+                    builder.def_var(vars[a_idx_call], call_result);
                 } else {
                     // Fallback: use jit_call helper for out-of-range func indices
                     if n_args > 0 {
@@ -1775,7 +2101,7 @@ fn compile_function_body(
                             0,
                         ));
                         for i in 0..n_args {
-                            let v = builder.use_var(vars[a as usize + 1 + i]);
+                            let v = builder.use_var(vars[a_idx_call + 1 + i]);
                             builder.ins().stack_store(v, slot, (i * 8) as i32);
                         }
                         let args_ptr = builder.ins().stack_addr(I64, slot, 0);
@@ -1784,8 +2110,8 @@ fn compile_function_body(
                         let n_args_val = builder.ins().iconst(I64, n_args as i64);
                         let fref = get_func_ref(&mut builder, module, helpers.call);
                         let call_inst = builder.ins().call(fref, &[prog_ptr, func_idx_val, args_ptr, n_args_val]);
-                        let result = builder.inst_results(call_inst)[0];
-                        builder.def_var(vars[a as usize], result);
+                        call_result = builder.inst_results(call_inst)[0];
+                        builder.def_var(vars[a_idx_call], call_result);
                     } else {
                         let null_ptr = builder.ins().iconst(I64, 0i64);
                         let prog_ptr = builder.ins().iconst(I64, program_ptr_val as i64);
@@ -1793,9 +2119,16 @@ fn compile_function_body(
                         let n_args_val = builder.ins().iconst(I64, 0i64);
                         let fref = get_func_ref(&mut builder, module, helpers.call);
                         let call_inst = builder.ins().call(fref, &[prog_ptr, func_idx_val, null_ptr, n_args_val]);
-                        let result = builder.inst_results(call_inst)[0];
-                        builder.def_var(vars[a as usize], result);
+                        call_result = builder.inst_results(call_inst)[0];
+                        builder.def_var(vars[a_idx_call], call_result);
                     }
+                }
+                // Update F64 shadow so arithmetic ops can skip bitcast when using this
+                // register as input.
+                if a_idx_call < reg_count && reg_always_num[a_idx_call] {
+                    let mf = cranelift_codegen::ir::MemFlags::new();
+                    let rf = builder.ins().bitcast(F64, mf, call_result);
+                    builder.def_var(f64_vars[a_idx_call], rf);
                 }
             }
             OP_JPTH => {
