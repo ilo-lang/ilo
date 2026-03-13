@@ -1228,32 +1228,271 @@ fn compile_function_body(
             }
             // ── List get (foreach iteration) ──
             OP_LISTGET => {
+                // LISTGET: R[A] = R[B][R[C]], skip next instruction if found.
+                // Used for foreach loops. Inlined to eliminate C-ABI call overhead
+                // (jit_listget + jit_unwrap + jit_drop_rc) and the malloc/free of the
+                // OkVal wrapper that the old helper-call path required.
+                //
+                // HeapObj::List memory layout (ptr = bv & PTR_MASK):
+                //   [ptr + 0]  discriminant = 1 for List variant
+                //   [ptr + 8]  Vec.len  (usize)
+                //   [ptr + 16] Vec.data_ptr  (*mut NanVal, each slot is u64/8 bytes)
+                //   [ptr + 24] Vec.cap  (usize)
+                // Layout confirmed with a runtime probe in jit_cranelift.rs.
                 let bv = builder.use_var(vars[b_idx]);
                 let cv = builder.use_var(vars[c_idx]);
-                let fref = get_func_ref(&mut builder, module, helpers.listget);
-                let call_inst = builder.ins().call(fref, &[bv, cv]);
-                let result = builder.inst_results(call_inst)[0];
+                let mf_plain = cranelift_codegen::ir::MemFlags::new();
+                let mf_trusted = cranelift_codegen::ir::MemFlags::trusted();
+                let ic_eq = cranelift_codegen::ir::condcodes::IntCC::Equal;
+                let ic_ult = cranelift_codegen::ir::condcodes::IntCC::UnsignedLessThan;
+                let qnan_c = builder.ins().iconst(I64, QNAN as i64);
 
-                let nil_const = builder.ins().iconst(I64, TAG_NIL as i64);
-                let is_nil = builder.ins().icmp(cranelift_codegen::ir::condcodes::IntCC::Equal, result, nil_const);
+                let jmp_block = block_map.get(&(ip + 1)).copied();
+                let body_block = block_map.get(&(ip + 2)).copied();
+
+                if let (Some(jb), Some(bb)) = (jmp_block, body_block) {
+                    // Guard 1: bv must be a list (tag == TAG_LIST)
+                    let tag_mask_c = builder.ins().iconst(I64, TAG_MASK as i64);
+                    let tag = builder.ins().band(bv, tag_mask_c);
+                    let list_tag_c = builder.ins().iconst(I64, TAG_LIST as i64);
+                    let is_list = builder.ins().icmp(ic_eq, tag, list_tag_c);
+
+                    let check_num_block = builder.create_block();
+                    builder.ins().brif(is_list, check_num_block, &[], jb, &[]);
+
+                    // Guard 2: cv must be a number ((cv & QNAN) != QNAN)
+                    builder.switch_to_block(check_num_block);
+                    builder.seal_block(check_num_block);
+                    let cv_masked = builder.ins().band(cv, qnan_c);
+                    let is_not_num = builder.ins().icmp(ic_eq, cv_masked, qnan_c);
+
+                    let load_block = builder.create_block();
+                    builder.ins().brif(is_not_num, jb, &[], load_block, &[]);
+
+                    // Load Vec metadata and bounds check
+                    builder.switch_to_block(load_block);
+                    builder.seal_block(load_block);
+
+                    // ptr = bv & PTR_MASK  (points to HeapObj::List inner value)
+                    let ptr_mask_c = builder.ins().iconst(I64, PTR_MASK as i64);
+                    let ptr = builder.ins().band(bv, ptr_mask_c);
+
+                    // vec_len = *[ptr + 8]  (Vec.len)
+                    let vec_len = builder.ins().load(I64, mf_trusted, ptr, 8);
+
+                    // idx_u = (u64) cv as f64, saturating cast; NaN/neg → 0
+                    let cv_f = builder.ins().bitcast(F64, mf_plain, cv);
+                    let idx_u = builder.ins().fcvt_to_uint_sat(I64, cv_f);
+
+                    // Bounds check: idx_u < vec_len
+                    let in_bounds = builder.ins().icmp(ic_ult, idx_u, vec_len);
+
+                    let in_bounds_block = builder.create_block();
+                    builder.ins().brif(in_bounds, in_bounds_block, &[], jb, &[]);
+
+                    // In-bounds: load element and optionally clone RC
+                    builder.switch_to_block(in_bounds_block);
+                    builder.seal_block(in_bounds_block);
+
+                    // data_ptr = *[ptr + 16]
+                    let data_ptr = builder.ins().load(I64, mf_trusted, ptr, 16);
+
+                    // elem_addr = data_ptr + idx_u * 8
+                    let eight = builder.ins().iconst(I64, 8i64);
+                    let byte_off = builder.ins().imul(idx_u, eight);
+                    let elem_addr = builder.ins().iadd(data_ptr, byte_off);
+                    let elem = builder.ins().load(I64, mf_trusted, elem_addr, 0);
+
+                    // Increment RC if elem is a heap value: (elem & QNAN) == QNAN.
+                    let elem_masked = builder.ins().band(elem, qnan_c);
+                    let elem_is_heap = builder.ins().icmp(ic_eq, elem_masked, qnan_c);
+
+                    let clone_block = builder.create_block();
+                    let after_clone_block = builder.create_block();
+                    builder.ins().brif(elem_is_heap, clone_block, &[], after_clone_block, &[]);
+
+                    builder.switch_to_block(clone_block);
+                    builder.seal_block(clone_block);
+                    let fref_move = get_func_ref(&mut builder, module, helpers.jit_move);
+                    builder.ins().call(fref_move, &[elem]);
+                    builder.ins().jump(after_clone_block, &[]);
+
+                    builder.switch_to_block(after_clone_block);
+                    builder.seal_block(after_clone_block);
+                    builder.def_var(vars[a_idx], elem);
+                    builder.ins().jump(bb, &[]);
+
+                    block_terminated = true;
+                } else {
+                    // Fallback: call the extern helper when block_map doesn't have the
+                    // expected successor blocks (should not occur in normal foreach).
+                    let fref = get_func_ref(&mut builder, module, helpers.listget);
+                    let call_inst = builder.ins().call(fref, &[bv, cv]);
+                    let result = builder.inst_results(call_inst)[0];
+                    builder.def_var(vars[a_idx], result);
+                }
+            }
+            OP_FOREACHPREP => {
+                // FOREACHPREP: validate list and load item[0] into R[A].
+                // R[C] (idx_reg) is 0.0 on entry (set by preceding LOADK).
+                // Inlined: same direct memory access as OP_LISTGET above.
+                //
+                // Bytecode layout: FOREACHPREP / JMP_exit / body_top...
+                //   ip+1 = JMP exit (taken when empty list)
+                //   ip+2 = first body instruction (taken when list non-empty)
+                let bv = builder.use_var(vars[b_idx]);
+                let cv = builder.use_var(vars[c_idx]);
+                let mf_plain = cranelift_codegen::ir::MemFlags::new();
+                let mf_trusted = cranelift_codegen::ir::MemFlags::trusted();
+                let ic_eq = cranelift_codegen::ir::condcodes::IntCC::Equal;
+                let ic_ult = cranelift_codegen::ir::condcodes::IntCC::UnsignedLessThan;
 
                 let jmp_block = block_map.get(&(ip + 1)).copied();
                 let body_block = block_map.get(&(ip + 2)).copied();
                 if let (Some(jb), Some(bb)) = (jmp_block, body_block) {
-                    let unwrap_block = builder.create_block();
-                    builder.ins().brif(is_nil, jb, &[], unwrap_block, &[]);
+                    let qnan_c = builder.ins().iconst(I64, QNAN as i64);
 
-                    builder.switch_to_block(unwrap_block);
-                    builder.seal_block(unwrap_block);
-                    let fref2 = get_func_ref(&mut builder, module, helpers.unwrap);
-                    let call_inst2 = builder.ins().call(fref2, &[result]);
-                    let item = builder.inst_results(call_inst2)[0];
-                    let fref_drop = get_func_ref(&mut builder, module, helpers.drop_rc);
-                    builder.ins().call(fref_drop, &[result]);
-                    builder.def_var(vars[a_idx], item);
+                    // Guard 1: bv must be a list
+                    let tag_mask_c = builder.ins().iconst(I64, TAG_MASK as i64);
+                    let tag = builder.ins().band(bv, tag_mask_c);
+                    let list_tag_c = builder.ins().iconst(I64, TAG_LIST as i64);
+                    let is_list = builder.ins().icmp(ic_eq, tag, list_tag_c);
+
+                    let check_num_block = builder.create_block();
+                    builder.ins().brif(is_list, check_num_block, &[], jb, &[]);
+
+                    // Guard 2: cv (index=0.0) must be a number
+                    builder.switch_to_block(check_num_block);
+                    builder.seal_block(check_num_block);
+                    let cv_masked = builder.ins().band(cv, qnan_c);
+                    let is_not_num = builder.ins().icmp(ic_eq, cv_masked, qnan_c);
+
+                    let load_block = builder.create_block();
+                    builder.ins().brif(is_not_num, jb, &[], load_block, &[]);
+
+                    builder.switch_to_block(load_block);
+                    builder.seal_block(load_block);
+
+                    // ptr = bv & PTR_MASK
+                    let ptr_mask_c = builder.ins().iconst(I64, PTR_MASK as i64);
+                    let ptr = builder.ins().band(bv, ptr_mask_c);
+
+                    // HeapObj::List layout:
+                    //   ptr+ 0 = discriminant
+                    //   ptr+ 8 = Vec.len   (length — use this for bounds check)
+                    //   ptr+16 = Vec.data_ptr
+                    //   ptr+24 = Vec.cap
+                    let vec_len = builder.ins().load(I64, mf_trusted, ptr, 8);
+                    let cv_f = builder.ins().bitcast(F64, mf_plain, cv);
+                    let idx_u = builder.ins().fcvt_to_uint_sat(I64, cv_f);
+                    let in_bounds = builder.ins().icmp(ic_ult, idx_u, vec_len);
+
+                    let in_bounds_block = builder.create_block();
+                    builder.ins().brif(in_bounds, in_bounds_block, &[], jb, &[]);
+
+                    builder.switch_to_block(in_bounds_block);
+                    builder.seal_block(in_bounds_block);
+                    let data_ptr = builder.ins().load(I64, mf_trusted, ptr, 16);
+                    let eight = builder.ins().iconst(I64, 8i64);
+                    let byte_off = builder.ins().imul(idx_u, eight);
+                    let elem_addr = builder.ins().iadd(data_ptr, byte_off);
+                    let elem = builder.ins().load(I64, mf_trusted, elem_addr, 0);
+
+                    let elem_masked = builder.ins().band(elem, qnan_c);
+                    let elem_is_heap = builder.ins().icmp(ic_eq, elem_masked, qnan_c);
+                    let clone_block = builder.create_block();
+                    let after_clone_block = builder.create_block();
+                    builder.ins().brif(elem_is_heap, clone_block, &[], after_clone_block, &[]);
+
+                    builder.switch_to_block(clone_block);
+                    builder.seal_block(clone_block);
+                    let fref_move = get_func_ref(&mut builder, module, helpers.jit_move);
+                    builder.ins().call(fref_move, &[elem]);
+                    builder.ins().jump(after_clone_block, &[]);
+
+                    builder.switch_to_block(after_clone_block);
+                    builder.seal_block(after_clone_block);
+                    builder.def_var(vars[a_idx], elem);
                     builder.ins().jump(bb, &[]);
                     block_terminated = true;
                 } else {
+                    // Fallback: use listget helper (should not occur in normal foreach)
+                    let fref = get_func_ref(&mut builder, module, helpers.listget);
+                    let call_inst = builder.ins().call(fref, &[bv, cv]);
+                    let result = builder.inst_results(call_inst)[0];
+                    builder.def_var(vars[a_idx], result);
+                }
+            }
+            OP_FOREACHNEXT => {
+                // FOREACHNEXT: R[C] += 1; load R[B][R[C]] into R[A] if in-bounds.
+                // Inlined: increment index as f64, then direct memory access.
+                //
+                // Bytecode layout: FOREACHNEXT / JMP_exit / JMP_body_top
+                //   ip+1 = JMP exit  (taken when out-of-bounds)
+                //   ip+2 = JMP body_top  (taken when in-bounds, after loading element)
+                let cv = builder.use_var(vars[c_idx]);
+                let mf_plain = cranelift_codegen::ir::MemFlags::new();
+                let mf_trusted = cranelift_codegen::ir::MemFlags::trusted();
+                let ic_eq = cranelift_codegen::ir::condcodes::IntCC::Equal;
+                let ic_ult = cranelift_codegen::ir::condcodes::IntCC::UnsignedLessThan;
+
+                // Increment idx: bitcast i64→f64, add 1.0, bitcast f64→i64
+                let cv_f64 = builder.ins().bitcast(F64, mf_plain, cv);
+                let one_f64 = builder.ins().f64const(1.0);
+                let new_idx_f64 = builder.ins().fadd(cv_f64, one_f64);
+                let new_idx = builder.ins().bitcast(I64, mf_plain, new_idx_f64);
+                builder.def_var(vars[c_idx], new_idx);
+
+                let bv = builder.use_var(vars[b_idx]);
+
+                let jmp_block = block_map.get(&(ip + 1)).copied();
+                let body_block = block_map.get(&(ip + 2)).copied();
+                if let (Some(jb), Some(bb)) = (jmp_block, body_block) {
+                    let qnan_c = builder.ins().iconst(I64, QNAN as i64);
+
+                    // Extract ptr from list NanVal (already validated in FOREACHPREP)
+                    let ptr_mask_c = builder.ins().iconst(I64, PTR_MASK as i64);
+                    let ptr = builder.ins().band(bv, ptr_mask_c);
+
+                    // vec_len = *[ptr + 8]  (Vec.len — offset confirmed in OP_LISTGET)
+                    let vec_len = builder.ins().load(I64, mf_trusted, ptr, 8);
+
+                    let idx_u = builder.ins().fcvt_to_uint_sat(I64, new_idx_f64);
+                    let in_bounds = builder.ins().icmp(ic_ult, idx_u, vec_len);
+
+                    let in_bounds_block = builder.create_block();
+                    builder.ins().brif(in_bounds, in_bounds_block, &[], jb, &[]);
+
+                    builder.switch_to_block(in_bounds_block);
+                    builder.seal_block(in_bounds_block);
+                    let data_ptr = builder.ins().load(I64, mf_trusted, ptr, 16);
+                    let eight = builder.ins().iconst(I64, 8i64);
+                    let byte_off = builder.ins().imul(idx_u, eight);
+                    let elem_addr = builder.ins().iadd(data_ptr, byte_off);
+                    let elem = builder.ins().load(I64, mf_trusted, elem_addr, 0);
+
+                    let elem_masked = builder.ins().band(elem, qnan_c);
+                    let elem_is_heap = builder.ins().icmp(ic_eq, elem_masked, qnan_c);
+                    let clone_block = builder.create_block();
+                    let after_clone_block = builder.create_block();
+                    builder.ins().brif(elem_is_heap, clone_block, &[], after_clone_block, &[]);
+
+                    builder.switch_to_block(clone_block);
+                    builder.seal_block(clone_block);
+                    let fref_move = get_func_ref(&mut builder, module, helpers.jit_move);
+                    builder.ins().call(fref_move, &[elem]);
+                    builder.ins().jump(after_clone_block, &[]);
+
+                    builder.switch_to_block(after_clone_block);
+                    builder.seal_block(after_clone_block);
+                    builder.def_var(vars[a_idx], elem);
+                    builder.ins().jump(bb, &[]);
+                    block_terminated = true;
+                } else {
+                    // Fallback: use listget helper with the new index
+                    let fref = get_func_ref(&mut builder, module, helpers.listget);
+                    let call_inst = builder.ins().call(fref, &[bv, new_idx]);
+                    let result = builder.inst_results(call_inst)[0];
                     builder.def_var(vars[a_idx], result);
                 }
             }

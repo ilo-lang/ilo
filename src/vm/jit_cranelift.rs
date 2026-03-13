@@ -1479,11 +1479,12 @@ fn compile_function_body(
                     builder.seal_block(load_block);
                     let ptr_mask_c = builder.ins().iconst(I64, PTR_MASK as i64);
                     let ptr = builder.ins().band(bv, ptr_mask_c);
-                    // HeapObj layout (with 8-byte discriminant prefix):
-                    //   ptr+ 8 = Vec.cap   (capacity)
+                    // HeapObj::List layout (confirmed with runtime probe — see OP_LISTGET):
+                    //   ptr+ 0 = discriminant
+                    //   ptr+ 8 = Vec.len   (length — use this for bounds check)
                     //   ptr+16 = Vec.data_ptr
-                    //   ptr+24 = Vec.len   (length — use this for bounds check)
-                    let vec_len = builder.ins().load(I64, mf_trusted, ptr, 24);
+                    //   ptr+24 = Vec.cap   (capacity)
+                    let vec_len = builder.ins().load(I64, mf_trusted, ptr, 8);
                     let cv_f = builder.ins().bitcast(F64, mf_plain, cv);
                     let idx_u = builder.ins().fcvt_to_uint_sat(I64, cv_f);
                     let in_bounds = builder.ins().icmp(ic_ult, idx_u, vec_len);
@@ -1547,8 +1548,8 @@ fn compile_function_body(
                     // Extract ptr from list NanVal (already validated in FOREACHPREP)
                     let ptr_mask_c = builder.ins().iconst(I64, PTR_MASK as i64);
                     let ptr = builder.ins().band(bv, ptr_mask_c);
-                    // ptr+24 = Vec.len (length); ptr+8 = Vec.cap (capacity)
-                    let vec_len = builder.ins().load(I64, mf_trusted, ptr, 24);
+                    // vec_len = *[ptr + 8]  (Vec.len — confirmed layout, see OP_LISTGET)
+                    let vec_len = builder.ins().load(I64, mf_trusted, ptr, 8);
 
                     let idx_u = builder.ins().fcvt_to_uint_sat(I64, new_idx_f64);
                     let in_bounds = builder.ins().icmp(ic_ult, idx_u, vec_len);
