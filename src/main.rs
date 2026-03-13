@@ -31,8 +31,8 @@ enum ToolsOutputFmt {
     Json,  // JSON array
 }
 
-/// Load and display tool signatures from MCP / HTTP sources.
-fn tools_cmd(args: &[String]) {
+/// Load and display tool signatures from MCP / HTTP sources.  Returns exit code.
+fn tools_cmd(args: &[String]) -> i32 {
     let mut mcp_path: Option<String> = None;
     let mut http_path: Option<String> = None;
     let mut fmt = ToolsOutputFmt::Human;
@@ -45,7 +45,7 @@ fn tools_cmd(args: &[String]) {
             "--mcp" | "-m" => {
                 if i + 1 >= args.len() {
                     eprintln!("error: --mcp requires a path");
-                    std::process::exit(1);
+                    return 1;
                 }
                 mcp_path = Some(args[i + 1].clone());
                 i += 2;
@@ -53,7 +53,7 @@ fn tools_cmd(args: &[String]) {
             "--tools" | "-t" => {
                 if i + 1 >= args.len() {
                     eprintln!("error: --tools requires a path");
-                    std::process::exit(1);
+                    return 1;
                 }
                 http_path = Some(args[i + 1].clone());
                 i += 2;
@@ -84,7 +84,7 @@ fn tools_cmd(args: &[String]) {
                     "Usage: ilo tools [-m <path>] [-t <path>] \
                      [--human|--ilo|--json] [--full] [--graph]"
                 );
-                std::process::exit(1);
+                return 1;
             }
         }
     }
@@ -97,7 +97,7 @@ fn tools_cmd(args: &[String]) {
             "Usage: ilo tools [--mcp <path>] [--tools <path>] \
              [--human|--ilo|--json] [--full] [--graph]"
         );
-        std::process::exit(1);
+        return 1;
     }
 
     // --ilo, --json, and --graph always show full signatures.
@@ -108,18 +108,26 @@ fn tools_cmd(args: &[String]) {
     // ── HTTP tools (sync, no feature gate) ───────────────────────────────────
     let mut http_names: Vec<String> = Vec::new();
     if let Some(ref path) = http_path {
-        let config = tools::http_provider::ToolsConfig::from_file(path)
-            .unwrap_or_else(|e| {
+        let config = match tools::http_provider::ToolsConfig::from_file(path) {
+            Ok(c) => c,
+            Err(e) => {
                 eprintln!("{}", e);
-                std::process::exit(1);
-            });
+                return 1;
+            }
+        };
         let mut names: Vec<String> = config.tools.keys().cloned().collect();
         names.sort();
         http_names = names;
     }
 
     // ── MCP tools (async, feature-gated) ─────────────────────────────────────
-    let mcp_decls = collect_mcp_tool_decls(mcp_path.as_deref());
+    let mcp_decls = match collect_mcp_tool_decls(mcp_path.as_deref()) {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("{}", e);
+            return 1;
+        }
+    };
 
     // ── Render ────────────────────────────────────────────────────────────────
     match fmt {
@@ -186,7 +194,7 @@ fn tools_cmd(args: &[String]) {
                 Ok(s) => println!("{}", s),
                 Err(e) => {
                     eprintln!("failed to render JSON: {}", e);
-                    std::process::exit(1);
+                    return 1;
                 }
             }
         }
@@ -196,6 +204,8 @@ fn tools_cmd(args: &[String]) {
     if graph {
         print_tool_graph(&mcp_decls);
     }
+
+    0
 }
 
 /// Print a type-level composition graph: for each tool, which tools can consume its output.
@@ -307,11 +317,11 @@ fn tool_sig_str(params: &[ast::Param], ret: &ast::Type) -> String {
 
 // ── `ilo graph` subcommand ────────────────────────────────────────────────
 
-/// Analyze a program's dependency graph and output JSON / DOT.
-fn graph_cmd(args: &[String]) {
+/// Analyze a program's dependency graph and output JSON / DOT.  Returns exit code.
+fn graph_cmd(args: &[String]) -> i32 {
     if args.is_empty() {
         eprintln!("Usage: ilo graph <file> [--fn NAME] [--reverse] [--subgraph] [--budget N] [--dot]");
-        std::process::exit(1);
+        return 1;
     }
 
     let file = &args[0];
@@ -319,7 +329,7 @@ fn graph_cmd(args: &[String]) {
         Ok(s) => s,
         Err(e) => {
             eprintln!("Error reading {}: {}", file, e);
-            std::process::exit(1);
+            return 1;
         }
     };
 
@@ -327,7 +337,7 @@ fn graph_cmd(args: &[String]) {
         Ok(t) => t,
         Err(e) => {
             eprintln!("Lex error: {:?}", e);
-            std::process::exit(1);
+            return 1;
         }
     };
     let token_spans: Vec<(lexer::Token, ast::Span)> = tokens
@@ -353,7 +363,7 @@ fn graph_cmd(args: &[String]) {
             "--fn" => {
                 if i + 1 >= args.len() {
                     eprintln!("error: --fn requires a function name");
-                    std::process::exit(1);
+                    return 1;
                 }
                 fn_name = Some(args[i + 1].clone());
                 i += 2;
@@ -369,12 +379,15 @@ fn graph_cmd(args: &[String]) {
             "--budget" => {
                 if i + 1 >= args.len() {
                     eprintln!("error: --budget requires a number");
-                    std::process::exit(1);
+                    return 1;
                 }
-                budget = Some(args[i + 1].parse::<usize>().unwrap_or_else(|_| {
-                    eprintln!("error: --budget value must be a positive integer");
-                    std::process::exit(1);
-                }));
+                match args[i + 1].parse::<usize>() {
+                    Ok(v) => budget = Some(v),
+                    Err(_) => {
+                        eprintln!("error: --budget value must be a positive integer");
+                        return 1;
+                    }
+                }
                 i += 2;
             }
             "--dot" => {
@@ -383,14 +396,14 @@ fn graph_cmd(args: &[String]) {
             }
             _ => {
                 eprintln!("unknown flag: {}", args[i]);
-                std::process::exit(1);
+                return 1;
             }
         }
     }
 
     if dot {
         print!("{}", graph::to_dot(&pg));
-        return;
+        return 0;
     }
 
     if let Some(ref name) = fn_name {
@@ -399,7 +412,7 @@ fn graph_cmd(args: &[String]) {
                 Some(r) => println!("{}", serde_json::to_string_pretty(&r).unwrap()),
                 None => {
                     eprintln!("function '{}' not found", name);
-                    std::process::exit(1);
+                    return 1;
                 }
             }
         } else if let Some(b) = budget {
@@ -407,7 +420,7 @@ fn graph_cmd(args: &[String]) {
                 Some(q) => println!("{}", serde_json::to_string_pretty(&q).unwrap()),
                 None => {
                     eprintln!("function '{}' not found", name);
-                    std::process::exit(1);
+                    return 1;
                 }
             }
         } else if subgraph {
@@ -415,7 +428,7 @@ fn graph_cmd(args: &[String]) {
                 Some(q) => println!("{}", serde_json::to_string_pretty(&q).unwrap()),
                 None => {
                     eprintln!("function '{}' not found", name);
-                    std::process::exit(1);
+                    return 1;
                 }
             }
         } else {
@@ -423,7 +436,7 @@ fn graph_cmd(args: &[String]) {
                 Some(q) => println!("{}", serde_json::to_string_pretty(&q).unwrap()),
                 None => {
                     eprintln!("function '{}' not found", name);
-                    std::process::exit(1);
+                    return 1;
                 }
             }
         }
@@ -431,43 +444,38 @@ fn graph_cmd(args: &[String]) {
         // Full graph output.
         println!("{}", serde_json::to_string_pretty(&pg).unwrap());
     }
+    0
 }
 
 /// Connect to MCP servers and return synthesized `Decl::Tool` nodes.
-/// Exits with error if `tools` feature is not enabled and a path is given.
+/// Returns `Err(message)` on failure.
 #[cfg(feature = "tools")]
-fn collect_mcp_tool_decls(path: Option<&str>) -> Vec<ast::Decl> {
+fn collect_mcp_tool_decls(path: Option<&str>) -> Result<Vec<ast::Decl>, String> {
     let path = match path {
         Some(p) => p,
-        None => return vec![],
+        None => return Ok(vec![]),
     };
-    let config = tools::mcp_provider::McpConfig::from_file(path).unwrap_or_else(|e| {
-        eprintln!("{}", e);
-        std::process::exit(1);
-    });
+    let config = tools::mcp_provider::McpConfig::from_file(path)
+        .map_err(|e| e.to_string())?;
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .expect("tokio runtime");
     let provider = rt
         .block_on(tools::mcp_provider::McpProvider::connect(&config))
-        .unwrap_or_else(|e| {
-            eprintln!("MCP error: {}", e);
-            std::process::exit(1);
-        });
-    provider.tool_decls()
+        .map_err(|e| format!("MCP error: {}", e))?;
+    Ok(provider.tool_decls())
 }
 
 #[cfg(not(feature = "tools"))]
-fn collect_mcp_tool_decls(path: Option<&str>) -> Vec<ast::Decl> {
+fn collect_mcp_tool_decls(path: Option<&str>) -> Result<Vec<ast::Decl>, String> {
     if path.is_some() {
-        eprintln!(
+        return Err(
             "error: --mcp requires the 'tools' feature \
-             (build with: cargo build --features tools)"
+             (build with: cargo build --features tools)".to_string()
         );
-        std::process::exit(1);
     }
-    vec![]
+    Ok(vec![])
 }
 
 // ── `ilo serv` subcommand ──────────────────────────────────────────────────
@@ -864,12 +872,12 @@ fn repl_cmd() {
     }
 }
 
-/// AOT compile an ilo program to a standalone native binary.
+/// AOT compile an ilo program to a standalone native binary.  Returns exit code.
 #[cfg(feature = "cranelift")]
-fn compile_cmd(args: &[String]) {
+fn compile_cmd(args: &[String]) -> i32 {
     if args.is_empty() {
         eprintln!("Usage: ilo compile <file-or-code> [-o output] [func]");
-        std::process::exit(1);
+        return 1;
     }
 
     let mut output_path: Option<String> = None;
@@ -883,7 +891,7 @@ fn compile_cmd(args: &[String]) {
                 i += 1;
                 if i >= args.len() {
                     eprintln!("Error: -o requires a path argument");
-                    std::process::exit(1);
+                    return 1;
                 }
                 output_path = Some(args[i].clone());
             }
@@ -900,17 +908,23 @@ fn compile_cmd(args: &[String]) {
         i += 1;
     }
 
-    let source_arg = source_arg.unwrap_or_else(|| {
-        eprintln!("Error: no source file or code provided");
-        std::process::exit(1);
-    });
+    let source_arg = match source_arg {
+        Some(s) => s,
+        None => {
+            eprintln!("Error: no source file or code provided");
+            return 1;
+        }
+    };
 
     // Read source from file or treat as inline code
     let source = if std::path::Path::new(source_arg).is_file() {
-        std::fs::read_to_string(source_arg).unwrap_or_else(|e| {
-            eprintln!("Error reading {}: {}", source_arg, e);
-            std::process::exit(1);
-        })
+        match std::fs::read_to_string(source_arg) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("Error reading {}: {}", source_arg, e);
+                return 1;
+            }
+        }
     } else {
         source_arg.to_string()
     };
@@ -931,7 +945,7 @@ fn compile_cmd(args: &[String]) {
             eprint!("{}", AnsiRenderer { use_color: true }.render(
                 &Diagnostic::from(&e).with_source(source.clone()),
             ));
-            std::process::exit(1);
+            return 1;
         }
     };
     let token_spans: Vec<(lexer::Token, ast::Span)> = tokens
@@ -946,7 +960,7 @@ fn compile_cmd(args: &[String]) {
             let d = Diagnostic::from(e).with_source(source.clone());
             eprint!("{}", AnsiRenderer { use_color: true }.render(&d));
         }
-        std::process::exit(1);
+        return 1;
     }
 
     // Resolve imports
@@ -970,7 +984,7 @@ fn compile_cmd(args: &[String]) {
         for d in &import_diagnostics {
             eprint!("{}", AnsiRenderer { use_color: true }.render(d));
         }
-        std::process::exit(1);
+        return 1;
     }
 
     // Verify
@@ -986,14 +1000,17 @@ fn compile_cmd(args: &[String]) {
                 &Diagnostic::from(e).with_source(source.clone()),
             ));
         }
-        std::process::exit(1);
+        return 1;
     }
 
     // Compile to bytecode
-    let compiled = vm::compile(&program).unwrap_or_else(|e| {
-        eprintln!("Compile error: {}", e);
-        std::process::exit(1);
-    });
+    let compiled = match vm::compile(&program) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("Compile error: {}", e);
+            return 1;
+        }
+    };
 
     // Determine entry function
     let entry = func_name.unwrap_or_else(|| {
@@ -1009,18 +1026,19 @@ fn compile_cmd(args: &[String]) {
     match result {
         Ok(()) => {
             eprintln!("Compiled: {}", output);
+            0
         }
         Err(e) => {
             eprintln!("AOT compile error: {}", e);
-            std::process::exit(1);
+            1
         }
     }
 }
 
 #[cfg(not(feature = "cranelift"))]
-fn compile_cmd(_args: &[String]) {
+fn compile_cmd(_args: &[String]) -> i32 {
     eprintln!("Error: AOT compilation requires the cranelift feature (--features cranelift)");
-    std::process::exit(1);
+    1
 }
 
 /// Stdio-based agent serve loop.
@@ -1142,12 +1160,10 @@ fn serv_cmd(args_slice: &[String]) {
     }
 }
 
-/// Legacy helper: Scan args for --json/-j, --text/-t, --ansi/-a, --no-hints/-nh.
+/// Scan args for --json/-j, --text/-t, --ansi/-a, --no-hints/-nh.
 /// Return (mode, explicit_json, no_hints, remaining_args).
 /// Multiple format flags -> error + exit(1).
 /// `explicit_json` is true only when the user passed --json/-j; auto-detection never sets it.
-///
-/// Used by the legacy positional-args dispatch path.
 fn detect_output_mode(args: Vec<String>) -> (OutputMode, bool, bool, Vec<String>) {
     let mut mode: Option<OutputMode> = None;
     let mut remaining = Vec::with_capacity(args.len());
@@ -1480,7 +1496,6 @@ fn load_dotenv() {
 fn main() {
     load_dotenv();
 
-    // ── Parse CLI via clap (two-pass: subcommand, then legacy positional) ──
     let raw_args: Vec<String> = std::env::args().collect();
 
     // Special-case: `ilo -ai` (hidden alias for compact spec)
@@ -1489,27 +1504,37 @@ fn main() {
         std::process::exit(0);
     }
 
-    // Special-case: `ilo -e <code>` (legacy eval flag)
-    if raw_args.get(1).map(|s| s.as_str()) == Some("-e") {
-        // Fall through to legacy path below
-        legacy_main(raw_args);
-        return;
-    }
-
-    // Try clap parse. If it fails, fall back to legacy positional-args mode.
-    let cli = match cli::Cli::try_parse_from(&raw_args) {
-        Ok(c) => c,
+    // Try clap parse.  When it fails (e.g. `ilo 'fn x:n>n;*x 2' 5` or
+    // `ilo --help`), reconstruct a Cli with the raw positional args.
+    let (cli, bare_args_have_bin_name) = match cli::Cli::try_parse_from(&raw_args) {
+        Ok(c) => (c, false),
         Err(_) => {
-            // Fall back to legacy mode for everything clap can't parse
-            // (e.g. `ilo 'fn x:n>n;*x 2' 5`, `ilo --help`, `ilo -V`, etc.)
-            legacy_main(raw_args);
-            return;
+            // Build a Cli whose `cmd` is None and `args` carries the raw argv
+            // (including the binary name at position 0).
+            (cli::Cli {
+                cmd: None,
+                global: cli::Global {
+                    ansi: false,
+                    text: false,
+                    json: false,
+                    no_hints: false,
+                },
+                args: raw_args,
+            }, true)
         }
     };
 
+    let code = dispatch_cli(cli, bare_args_have_bin_name);
+    if code != 0 {
+        std::process::exit(code);
+    }
+}
+
+/// Top-level dispatch: returns the process exit code (0 = success).
+/// `bare_has_bin` is true when the `None` arm's args already include argv[0] (binary name).
+fn dispatch_cli(cli: cli::Cli, bare_has_bin: bool) -> i32 {
     match cli.cmd {
         Some(cli::Cmd::Tools(t)) => {
-            // Reconstruct args for tools_cmd
             let mut args: Vec<String> = Vec::new();
             if let Some(ref p) = t.mcp_path { args.push("--mcp".into()); args.push(p.clone()); }
             if let Some(ref p) = t.tools_path { args.push("--tools".into()); args.push(p.clone()); }
@@ -1518,7 +1543,7 @@ fn main() {
             if t.json { args.push("--json".into()); }
             if t.full { args.push("--full".into()); }
             if t.graph { args.push("--graph".into()); }
-            tools_cmd(&args);
+            tools_cmd(&args)
         }
         Some(cli::Cmd::Graph(g)) => {
             let mut args: Vec<String> = vec![g.file];
@@ -1527,39 +1552,40 @@ fn main() {
             if g.subgraph { args.push("--subgraph".into()); }
             if let Some(b) = g.budget { args.push("--budget".into()); args.push(b.to_string()); }
             if g.dot { args.push("--dot".into()); }
-            graph_cmd(&args);
+            graph_cmd(&args)
         }
         Some(cli::Cmd::Repl) => {
             if cli.global.json {
-                // `ilo repl -j` routes to serv mode (JSON protocol)
                 serv_cmd(&["-j".to_string()]);
             } else {
                 repl_cmd();
             }
+            0
         }
         Some(cli::Cmd::Serv(s)) => {
             let mut args: Vec<String> = vec!["-j".into()];
             if let Some(ref p) = s.mcp_path { args.push("--mcp".into()); args.push(p.clone()); }
             if let Some(ref p) = s.tools_path { args.push("--tools".into()); args.push(p.clone()); }
             serv_cmd(&args);
+            0
         }
         Some(cli::Cmd::Compile(c)) => {
             let mut args: Vec<String> = vec![c.source];
             if let Some(ref o) = c.output { args.push("-o".into()); args.push(o.clone()); }
             if c.bench { args.push("--bench".into()); }
             if let Some(ref f) = c.func { args.push(f.clone()); }
-            compile_cmd(&args);
+            compile_cmd(&args)
         }
         Some(cli::Cmd::Explain(e)) => {
             match diagnostic::registry::lookup(&e.code) {
                 Some(entry) => {
                     print!("{}", entry.long);
-                    std::process::exit(0);
+                    0
                 }
                 None => {
                     eprintln!("unknown error code: {}", e.code);
                     eprintln!("Error codes have the form ILO-L001, ILO-P001, ILO-T001, ILO-R001.");
-                    std::process::exit(1);
+                    1
                 }
             }
         }
@@ -1567,36 +1593,290 @@ fn main() {
             match s.topic.as_deref() {
                 Some("lang") => print!("{}", include_str!("../SPEC.md")),
                 Some("ai") => print!("{}", compact_spec()),
-                _ => {
-                    // Default: show full help
-                    print_help();
-                }
+                _ => print_help(),
             }
+            0
         }
         Some(cli::Cmd::Version) => {
             println!("ilo {}", env!("CARGO_PKG_VERSION"));
+            0
         }
         Some(cli::Cmd::Run(r)) => {
             let mode = cli.global.output_mode();
             let explicit_json = cli.global.explicit_json();
             let no_hints = cli.global.no_hints;
-            dispatch_run(r, mode, explicit_json, no_hints);
+            dispatch_run(r, mode, explicit_json, no_hints)
         }
         None => {
-            // No subcommand — legacy positional-args mode
-            // `cli.args` has the raw args captured by clap's trailing_var_arg
-            if cli.args.is_empty() || cli.args.len() < 2 {
-                // If we only have the binary name (or nothing), fall back fully
-                legacy_main(raw_args);
+            // No subcommand — bare positional args (e.g. `ilo 'fn x:n>n;*x 2' 5`)
+            // dispatch_bare_args expects args[0] = binary name.
+            let args = if bare_has_bin {
+                cli.args
             } else {
-                legacy_main(raw_args);
-            }
+                let mut full = vec!["ilo".to_string()];
+                full.extend(cli.args);
+                full
+            };
+            dispatch_bare_args(args, &cli.global)
         }
     }
 }
 
-/// Dispatch the `run` subcommand via parsed RunArgs.
-fn dispatch_run(r: cli::RunArgs, mode: OutputMode, explicit_json: bool, no_hints: bool) {
+/// Handle bare positional args (no subcommand).
+///
+/// Covers: `ilo <code> [func] [args]`, `ilo <file.ilo> [func] [args]`,
+/// `ilo --version`, `ilo --help`, `ilo -e <code>`, `ilo --explain <code>`,
+/// and all `--run-*` / `--emit` / `--bench` / `--dense` / `--expanded` flags.
+fn dispatch_bare_args(raw_args: Vec<String>, global: &cli::Global) -> i32 {
+    // Strip output mode flags from raw_args (--json/-j, --text/-t, --ansi/-a, --no-hints/-n)
+    let (mode, explicit_json, no_hints, args) = detect_output_mode(raw_args);
+
+    // Override with clap-parsed global flags if they were set
+    let mode = if global.ansi { OutputMode::Ansi }
+        else if global.text { OutputMode::Text }
+        else if global.json { OutputMode::Json }
+        else { mode };
+    let explicit_json = explicit_json || global.explicit_json();
+    let no_hints = no_hints || global.no_hints;
+
+    if args.len() < 2 {
+        eprintln!("Usage: ilo <file-or-code> [args... | --run func args... | --bench func args... | --emit python]");
+        eprintln!("       ilo repl                                  Interactive REPL");
+        eprintln!("       ilo serv [--mcp <path>] [--tools <path>]  Stdio agent loop");
+        eprintln!("       ilo graph <file> [--fn NAME] [--dot]      Dependency graph");
+        eprintln!("       ilo compile <file> [-o out] [func]        AOT compile to binary");
+        eprintln!("       ilo help | -h     Show usage and examples");
+        eprintln!("       ilo help lang     Show language specification");
+        eprintln!("       ilo help ai | -ai Compact spec for LLM consumption");
+        eprintln!("       ilo --version | -V");
+        return 1;
+    }
+
+    if args[1] == "--version" || args[1] == "-V" {
+        println!("ilo {}", env!("CARGO_PKG_VERSION"));
+        return 0;
+    }
+
+    if args[1] == "--explain" {
+        return match args.get(2) {
+            Some(code) => match diagnostic::registry::lookup(code) {
+                Some(entry) => { print!("{}", entry.long); 0 }
+                None => {
+                    eprintln!("unknown error code: {code}");
+                    eprintln!("Error codes have the form ILO-L001, ILO-P001, ILO-T001, ILO-R001.");
+                    1
+                }
+            },
+            None => {
+                eprintln!("Usage: ilo --explain <code>  (e.g. ilo --explain ILO-T005)");
+                1
+            }
+        };
+    }
+
+    if args[1] == "-ai" {
+        print!("{}", compact_spec());
+        return 0;
+    }
+
+    if args[1] == "help" || args[1] == "--help" || args[1] == "-h" {
+        if args.len() > 2 && args[2] == "lang" {
+            print!("{}", include_str!("../SPEC.md"));
+        } else if args.len() > 2 && args[2] == "ai" {
+            print!("{}", compact_spec());
+        } else {
+            print_help();
+        }
+        return 0;
+    }
+
+    // Determine source: file path, `-e <code>`, or inline code.
+    // We pass the source *identifier* to RunArgs.source — dispatch_run handles
+    // file-vs-inline detection and reading.
+    let (source, mode_args_start) = if std::path::Path::new(&args[1]).is_file() {
+        // Pass the file path through; dispatch_run will read it.
+        (args[1].clone(), 2)
+    } else if args[1] == "-e" {
+        if args.len() < 3 || args[2].is_empty() {
+            eprintln!("Usage: ilo <file-or-code> [args... | --run func args... | --emit python]");
+            return 1;
+        }
+        (args[2].clone(), 3)
+    } else {
+        if args[1].is_empty() {
+            eprintln!("Error: empty code string");
+            return 1;
+        }
+        (args[1].clone(), 2)
+    };
+
+    // Scan for --tools and --mcp flags
+    let (tools_config_path, mcp_config_path, args) = {
+        let mut tools_path: Option<String> = None;
+        let mut mcp_path: Option<String> = None;
+        let mut filtered: Vec<String> = Vec::with_capacity(args.len());
+        let mut i = 0;
+        while i < args.len() {
+            if args[i] == "--tools" {
+                if i + 1 < args.len() {
+                    tools_path = Some(args[i + 1].clone());
+                    i += 2;
+                } else {
+                    eprintln!("error: --tools requires a path argument");
+                    return 1;
+                }
+            } else if args[i] == "--mcp" {
+                if i + 1 < args.len() {
+                    mcp_path = Some(args[i + 1].clone());
+                    i += 2;
+                } else {
+                    eprintln!("error: --mcp requires a path argument");
+                    return 1;
+                }
+            } else {
+                filtered.push(args[i].clone());
+                i += 1;
+            }
+        }
+        if tools_path.is_some() && mcp_path.is_some() {
+            eprintln!("error: --tools and --mcp are mutually exclusive");
+            return 1;
+        }
+        (tools_path, mcp_path, filtered)
+    };
+
+    // Build RunArgs from positional args
+    // Determine engine, emit, explain, dense, expanded, bench flags from remaining args
+    let m = mode_args_start;
+    let (engine_flag, run_rest_start) = if args.len() > m {
+        match args[m].as_str() {
+            "--run-jit" => (Some(cli::Engine::Jit), m + 1),
+            "--run-cranelift" => (Some(cli::Engine::Cranelift), m + 1),
+            "--run-llvm" => (Some(cli::Engine::Llvm), m + 1),
+            "--run-vm" => (Some(cli::Engine::Vm), m + 1),
+            "--run" | "--run-tree" => (Some(cli::Engine::Tree), m + 1),
+            _ => (None, m),
+        }
+    } else {
+        (None, m)
+    };
+
+    // Check for mode flags at the start of remaining args
+    if args.len() > m {
+        match args[m].as_str() {
+            "--bench" => {
+                let run_args = cli::RunArgs {
+                    source,
+                    engine: cli::Engine::Default,
+                    run_tree: false, run: false, run_vm: false, run_jit: false, run_cranelift: false, run_llvm: false,
+                    bench: true,
+                    emit: None,
+                    explain: false,
+                    dense: false,
+                    expanded: false,
+                    tools_path: tools_config_path,
+                    mcp_path: mcp_config_path,
+                    rest: args[m + 1..].to_vec(),
+                };
+                return dispatch_run(run_args, mode, explicit_json, no_hints);
+            }
+            "--explain" | "-x" if engine_flag.is_none() => {
+                let run_args = cli::RunArgs {
+                    source,
+                    engine: cli::Engine::Default,
+                    run_tree: false, run: false, run_vm: false, run_jit: false, run_cranelift: false, run_llvm: false,
+                    bench: false,
+                    emit: None,
+                    explain: true,
+                    dense: false,
+                    expanded: false,
+                    tools_path: tools_config_path,
+                    mcp_path: mcp_config_path,
+                    rest: vec![],
+                };
+                return dispatch_run(run_args, mode, explicit_json, no_hints);
+            }
+            "--emit" if engine_flag.is_none() => {
+                let target = if args.len() > m + 1 { Some(args[m + 1].clone()) } else { None };
+                let run_args = cli::RunArgs {
+                    source,
+                    engine: cli::Engine::Default,
+                    run_tree: false, run: false, run_vm: false, run_jit: false, run_cranelift: false, run_llvm: false,
+                    bench: false,
+                    emit: target,
+                    explain: false,
+                    dense: false,
+                    expanded: false,
+                    tools_path: tools_config_path,
+                    mcp_path: mcp_config_path,
+                    rest: vec![],
+                };
+                return dispatch_run(run_args, mode, explicit_json, no_hints);
+            }
+            "--dense" | "-d" | "--fmt" if engine_flag.is_none() => {
+                let run_args = cli::RunArgs {
+                    source,
+                    engine: cli::Engine::Default,
+                    run_tree: false, run: false, run_vm: false, run_jit: false, run_cranelift: false, run_llvm: false,
+                    bench: false,
+                    emit: None,
+                    explain: false,
+                    dense: true,
+                    expanded: false,
+                    tools_path: tools_config_path,
+                    mcp_path: mcp_config_path,
+                    rest: vec![],
+                };
+                return dispatch_run(run_args, mode, explicit_json, no_hints);
+            }
+            "--expanded" | "-e" | "--fmt-expanded" if engine_flag.is_none() => {
+                let run_args = cli::RunArgs {
+                    source,
+                    engine: cli::Engine::Default,
+                    run_tree: false, run: false, run_vm: false, run_jit: false, run_cranelift: false, run_llvm: false,
+                    bench: false,
+                    emit: None,
+                    explain: false,
+                    dense: false,
+                    expanded: true,
+                    tools_path: tools_config_path,
+                    mcp_path: mcp_config_path,
+                    rest: vec![],
+                };
+                return dispatch_run(run_args, mode, explicit_json, no_hints);
+            }
+            _ => {}
+        }
+    }
+
+    // Default: build RunArgs with engine and remaining positional args
+    let engine = engine_flag.unwrap_or(cli::Engine::Default);
+    let rest_start = if engine_flag.is_some() { run_rest_start } else { m };
+    let rest: Vec<String> = args[rest_start..].to_vec();
+
+    let run_args = cli::RunArgs {
+        source,
+        engine,
+        run_tree: false,
+        run: false,
+        run_vm: false,
+        run_jit: false,
+        run_cranelift: false,
+        run_llvm: false,
+        bench: false,
+        emit: None,
+        explain: false,
+        dense: false,
+        expanded: false,
+        tools_path: tools_config_path,
+        mcp_path: mcp_config_path,
+        rest,
+    };
+    dispatch_run(run_args, mode, explicit_json, no_hints)
+}
+
+/// Dispatch the `run` subcommand via parsed RunArgs.  Returns exit code.
+fn dispatch_run(r: cli::RunArgs, mode: OutputMode, explicit_json: bool, no_hints: bool) -> i32 {
     let source_arg = &r.source;
 
     // Read source from file or treat as inline code
@@ -1605,14 +1885,14 @@ fn dispatch_run(r: cli::RunArgs, mode: OutputMode, explicit_json: bool, no_hints
             Ok(s) => s,
             Err(e) => {
                 eprintln!("Error reading {}: {}", source_arg, e);
-                std::process::exit(1);
+                return 1;
             }
         };
         (s, true)
     } else {
         if source_arg.is_empty() {
             eprintln!("Error: empty code string");
-            std::process::exit(1);
+            return 1;
         }
         (source_arg.clone(), false)
     };
@@ -1622,7 +1902,7 @@ fn dispatch_run(r: cli::RunArgs, mode: OutputMode, explicit_json: bool, no_hints
 
     if tools_config_path.is_some() && mcp_config_path.is_some() {
         eprintln!("error: --tools and --mcp are mutually exclusive");
-        std::process::exit(1);
+        return 1;
     }
 
     warn_cross_language_syntax(&source, mode);
@@ -1631,7 +1911,7 @@ fn dispatch_run(r: cli::RunArgs, mode: OutputMode, explicit_json: bool, no_hints
         Ok(t) => t,
         Err(e) => {
             report_diagnostic(&Diagnostic::from(&e).with_source(source.clone()), mode);
-            std::process::exit(1);
+            return 1;
         }
     };
 
@@ -1648,7 +1928,7 @@ fn dispatch_run(r: cli::RunArgs, mode: OutputMode, explicit_json: bool, no_hints
     #[cfg(not(feature = "tools"))]
     if mcp_config_path.is_some() {
         eprintln!("error: --mcp requires the 'tools' feature (build with: cargo build --features tools)");
-        std::process::exit(1);
+        return 1;
     }
 
     #[cfg(feature = "tools")]
@@ -1658,12 +1938,15 @@ fn dispatch_run(r: cli::RunArgs, mode: OutputMode, explicit_json: bool, no_hints
 
     #[cfg(feature = "tools")]
     if let Some(ref path) = mcp_config_path {
-        let config = tools::mcp_provider::McpConfig::from_file(path)
-            .unwrap_or_else(|e| { eprintln!("{}", e); std::process::exit(1); });
+        let config = match tools::mcp_provider::McpConfig::from_file(path) {
+            Ok(c) => c,
+            Err(e) => { eprintln!("{}", e); return 1; }
+        };
         let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().expect("tokio runtime");
-        let provider = rt
-            .block_on(tools::mcp_provider::McpProvider::connect(&config))
-            .unwrap_or_else(|e| { eprintln!("MCP error: {}", e); std::process::exit(1); });
+        let provider = match rt.block_on(tools::mcp_provider::McpProvider::connect(&config)) {
+            Ok(p) => p,
+            Err(e) => { eprintln!("MCP error: {}", e); return 1; }
+        };
         let mut decls = provider.tool_decls();
         decls.append(&mut program.declarations);
         program.declarations = decls;
@@ -1717,11 +2000,11 @@ fn dispatch_run(r: cli::RunArgs, mode: OutputMode, explicit_json: bool, no_hints
     }
 
     if had_errors {
-        std::process::exit(1);
+        return 1;
     }
 
     // Dispatch based on mode flags
-    if r.bench {
+    let exit_code = if r.bench {
         let func_name = r.rest.first().map(|s| s.as_str());
         let run_args: Vec<interpreter::Value> = if r.rest.len() > 1 {
             r.rest[1..].iter().map(|a| parse_cli_arg(a)).collect()
@@ -1729,20 +2012,25 @@ fn dispatch_run(r: cli::RunArgs, mode: OutputMode, explicit_json: bool, no_hints
             vec![]
         };
         run_bench(&program, func_name, &run_args);
+        0
     } else if r.explain {
         let filename = if is_file { Some(source_arg.as_str()) } else { None };
         print!("{}", codegen::explain::explain(&program, filename));
+        0
     } else if let Some(ref target) = r.emit {
         if target == "python" {
             println!("{}", codegen::python::emit(&program));
+            0
         } else {
             eprintln!("Unknown emit target. Supported: python");
-            std::process::exit(1);
+            1
         }
     } else if r.dense {
         println!("{}", codegen::fmt::format(&program, codegen::fmt::FmtMode::Dense));
+        0
     } else if r.expanded {
         print!("{}", codegen::fmt::format(&program, codegen::fmt::FmtMode::Expanded));
+        0
     } else {
         // Execution dispatch based on engine
         let engine = r.effective_engine();
@@ -1750,111 +2038,13 @@ fn dispatch_run(r: cli::RunArgs, mode: OutputMode, explicit_json: bool, no_hints
 
         match engine {
             cli::Engine::Jit => {
-                let func_name = rest.first().map(|s| s.as_str());
-                let jit_args: Vec<f64> = if rest.len() > 1 {
-                    rest[1..].iter().map(|a| a.parse::<f64>().unwrap_or_else(|_| {
-                        eprintln!("error: JIT argument '{}' is not a valid number", a);
-                        std::process::exit(1);
-                    })).collect()
-                } else {
-                    vec![]
-                };
-
-                #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
-                {
-                    let compiled = vm::compile(&program).unwrap_or_else(|e| { eprintln!("Compile error: {}", e); std::process::exit(1); });
-                    let target = func_name.unwrap_or(compiled.func_names.first().map(|s| s.as_str()).unwrap_or("main"));
-                    let func_idx = compiled.func_names.iter().position(|n| n == target)
-                        .unwrap_or_else(|| { eprintln!("undefined function: {}", target); std::process::exit(1); });
-                    let chunk = &compiled.chunks[func_idx];
-                    let nan_consts = &compiled.nan_constants[func_idx];
-                    match vm::jit_arm64::compile_and_call(chunk, nan_consts, &jit_args) {
-                        Some(result) => {
-                            if result == (result as i64) as f64 { println!("{}", result as i64); } else { println!("{}", result); }
-                        }
-                        None => {
-                            eprintln!("JIT: function not eligible for compilation (numeric-only required)");
-                            std::process::exit(1);
-                        }
-                    }
-                }
-                #[cfg(not(all(target_arch = "aarch64", target_os = "macos")))]
-                {
-                    let _ = (func_name, jit_args);
-                    eprintln!("Custom JIT (arm64) is only available on aarch64 macOS");
-                    std::process::exit(1);
-                }
+                run_jit_engine(&program, rest)
             }
             cli::Engine::Cranelift => {
-                let func_name = rest.first().map(|s| s.as_str());
-                let run_args: Vec<interpreter::Value> = if rest.len() > 1 {
-                    rest[1..].iter().map(|a| parse_cli_arg(a)).collect()
-                } else {
-                    vec![]
-                };
-
-                #[cfg(feature = "cranelift")]
-                {
-                    let compiled = vm::compile(&program).unwrap_or_else(|e| { eprintln!("Compile error: {}", e); std::process::exit(1); });
-                    let target_name = func_name.unwrap_or(compiled.func_names.first().map(|s| s.as_str()).unwrap_or("main"));
-                    let func_idx = compiled.func_names.iter().position(|n| n == target_name)
-                        .unwrap_or_else(|| { eprintln!("undefined function: {}", target_name); std::process::exit(1); });
-                    let chunk = &compiled.chunks[func_idx];
-                    let nan_consts = &compiled.nan_constants[func_idx];
-                    let nan_args: Vec<u64> = run_args.iter().map(|v| vm::NanVal::from_value(v).0).collect();
-                    match vm::jit_cranelift::compile_and_call(chunk, nan_consts, &nan_args, &compiled) {
-                        Some(result_bits) => {
-                            let result = vm::NanVal(result_bits).to_value();
-                            println!("{}", result);
-                        }
-                        None => {
-                            eprintln!("Cranelift JIT: compilation failed");
-                            std::process::exit(1);
-                        }
-                    }
-                }
-                #[cfg(not(feature = "cranelift"))]
-                {
-                    let _ = (func_name, run_args);
-                    eprintln!("Cranelift JIT not enabled. Build with: cargo build --features cranelift");
-                    std::process::exit(1);
-                }
+                run_cranelift_engine(&program, rest, explicit_json)
             }
             cli::Engine::Llvm => {
-                let func_name = rest.first().map(|s| s.as_str());
-                let jit_args: Vec<f64> = if rest.len() > 1 {
-                    rest[1..].iter().map(|a| a.parse::<f64>().unwrap_or_else(|_| {
-                        eprintln!("error: JIT argument '{}' is not a valid number", a);
-                        std::process::exit(1);
-                    })).collect()
-                } else {
-                    vec![]
-                };
-
-                #[cfg(feature = "llvm")]
-                {
-                    let compiled = vm::compile(&program).unwrap_or_else(|e| { eprintln!("Compile error: {}", e); std::process::exit(1); });
-                    let target_name = func_name.unwrap_or(compiled.func_names.first().map(|s| s.as_str()).unwrap_or("main"));
-                    let func_idx = compiled.func_names.iter().position(|n| n == target_name)
-                        .unwrap_or_else(|| { eprintln!("undefined function: {}", target_name); std::process::exit(1); });
-                    let chunk = &compiled.chunks[func_idx];
-                    let nan_consts = &compiled.nan_constants[func_idx];
-                    match vm::jit_llvm::compile_and_call(chunk, nan_consts, &jit_args) {
-                        Some(result) => {
-                            if result == (result as i64) as f64 { println!("{}", result as i64); } else { println!("{}", result); }
-                        }
-                        None => {
-                            eprintln!("LLVM JIT: function not eligible for compilation");
-                            std::process::exit(1);
-                        }
-                    }
-                }
-                #[cfg(not(feature = "llvm"))]
-                {
-                    let _ = (func_name, jit_args);
-                    eprintln!("LLVM JIT not enabled. Build with: cargo build --features llvm");
-                    std::process::exit(1);
-                }
+                run_llvm_engine(&program, rest)
             }
             cli::Engine::Vm => {
                 let func_name = rest.first().map(|s| s.as_str());
@@ -1863,7 +2053,10 @@ fn dispatch_run(r: cli::RunArgs, mode: OutputMode, explicit_json: bool, no_hints
                 } else {
                     vec![]
                 };
-                let compiled = vm::compile(&program).unwrap_or_else(|e| { eprintln!("Compile error: {}", e); std::process::exit(1); });
+                let compiled = match vm::compile(&program) {
+                    Ok(c) => c,
+                    Err(e) => { eprintln!("Compile error: {}", e); return 1; }
+                };
                 run_vm_with_provider(
                     &compiled,
                     func_name,
@@ -1876,7 +2069,7 @@ fn dispatch_run(r: cli::RunArgs, mode: OutputMode, explicit_json: bool, no_hints
                     &source,
                     mode,
                     explicit_json,
-                );
+                )
             }
             cli::Engine::Tree => {
                 let func_name = rest.first().map(|s| s.as_str());
@@ -1897,7 +2090,7 @@ fn dispatch_run(r: cli::RunArgs, mode: OutputMode, explicit_json: bool, no_hints
                     &source,
                     mode,
                     explicit_json,
-                );
+                )
             }
             cli::Engine::Default => {
                 // Default: func-name heuristic + Cranelift JIT with interpreter fallback
@@ -1915,23 +2108,170 @@ fn dispatch_run(r: cli::RunArgs, mode: OutputMode, explicit_json: bool, no_hints
                 } else {
                     // No args at all: AST JSON
                     match serde_json::to_string_pretty(&program) {
-                        Ok(json) => { println!("{}", json); return; }
+                        Ok(json) => { println!("{}", json); return 0; }
                         Err(e) => {
                             eprintln!("Serialization error: {}", e);
-                            std::process::exit(1);
+                            return 1;
                         }
                     }
                 };
 
-                run_default(&program, func_name, run_args, &source, mode, explicit_json);
+                run_default(&program, func_name, run_args, &source, mode, explicit_json)
+            }
+        }
+    };
+
+    // Emit idiomatic hints after successful execution
+    if exit_code == 0 && !no_hints {
+        let hints = collect_hints(&source);
+        emit_hints(&hints, mode);
+    }
+
+    exit_code
+}
+
+/// JIT (arm64) engine dispatch. Returns exit code.
+fn run_jit_engine(program: &ast::Program, rest: &[String]) -> i32 {
+    let func_name = rest.first().map(|s| s.as_str());
+    let jit_args: Vec<f64> = if rest.len() > 1 {
+        let mut args = Vec::new();
+        for a in &rest[1..] {
+            match a.parse::<f64>() {
+                Ok(v) => args.push(v),
+                Err(_) => {
+                    eprintln!("error: JIT argument '{}' is not a valid number", a);
+                    return 1;
+                }
+            }
+        }
+        args
+    } else {
+        vec![]
+    };
+
+    #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
+    {
+        let compiled = match vm::compile(program) {
+            Ok(c) => c,
+            Err(e) => { eprintln!("Compile error: {}", e); return 1; }
+        };
+        let target = func_name.unwrap_or(compiled.func_names.first().map(|s| s.as_str()).unwrap_or("main"));
+        let func_idx = match compiled.func_names.iter().position(|n| n == target) {
+            Some(i) => i,
+            None => { eprintln!("undefined function: {}", target); return 1; }
+        };
+        let chunk = &compiled.chunks[func_idx];
+        let nan_consts = &compiled.nan_constants[func_idx];
+        match vm::jit_arm64::compile_and_call(chunk, nan_consts, &jit_args) {
+            Some(result) => {
+                if result == (result as i64) as f64 { println!("{}", result as i64); } else { println!("{}", result); }
+                0
+            }
+            None => {
+                eprintln!("JIT: function not eligible for compilation (numeric-only required)");
+                1
             }
         }
     }
+    #[cfg(not(all(target_arch = "aarch64", target_os = "macos")))]
+    {
+        let _ = (func_name, jit_args);
+        eprintln!("Custom JIT (arm64) is only available on aarch64 macOS");
+        1
+    }
+}
 
-    // Emit idiomatic hints after successful execution
-    if !no_hints {
-        let hints = collect_hints(&source);
-        emit_hints(&hints, mode);
+/// Cranelift JIT engine dispatch. Returns exit code.
+fn run_cranelift_engine(program: &ast::Program, rest: &[String], explicit_json: bool) -> i32 {
+    let func_name = rest.first().map(|s| s.as_str());
+    let run_args: Vec<interpreter::Value> = if rest.len() > 1 {
+        rest[1..].iter().map(|a| parse_cli_arg(a)).collect()
+    } else {
+        vec![]
+    };
+
+    #[cfg(feature = "cranelift")]
+    {
+        let compiled = match vm::compile(program) {
+            Ok(c) => c,
+            Err(e) => { eprintln!("Compile error: {}", e); return 1; }
+        };
+        let target_name = func_name.unwrap_or(compiled.func_names.first().map(|s| s.as_str()).unwrap_or("main"));
+        let func_idx = match compiled.func_names.iter().position(|n| n == target_name) {
+            Some(i) => i,
+            None => { eprintln!("undefined function: {}", target_name); return 1; }
+        };
+        let chunk = &compiled.chunks[func_idx];
+        let nan_consts = &compiled.nan_constants[func_idx];
+        let nan_args: Vec<u64> = run_args.iter().map(|v| vm::NanVal::from_value(v).0).collect();
+        match vm::jit_cranelift::compile_and_call(chunk, nan_consts, &nan_args, &compiled) {
+            Some(result_bits) => {
+                let result = vm::NanVal(result_bits).to_value();
+                print_value(&result, explicit_json);
+                0
+            }
+            None => {
+                eprintln!("Cranelift JIT: compilation failed");
+                1
+            }
+        }
+    }
+    #[cfg(not(feature = "cranelift"))]
+    {
+        let _ = (func_name, run_args, explicit_json);
+        eprintln!("Cranelift JIT not enabled. Build with: cargo build --features cranelift");
+        1
+    }
+}
+
+/// LLVM JIT engine dispatch. Returns exit code.
+fn run_llvm_engine(_program: &ast::Program, rest: &[String]) -> i32 {
+    let func_name = rest.first().map(|s| s.as_str());
+    let jit_args: Vec<f64> = if rest.len() > 1 {
+        let mut args = Vec::new();
+        for a in &rest[1..] {
+            match a.parse::<f64>() {
+                Ok(v) => args.push(v),
+                Err(_) => {
+                    eprintln!("error: JIT argument '{}' is not a valid number", a);
+                    return 1;
+                }
+            }
+        }
+        args
+    } else {
+        vec![]
+    };
+
+    #[cfg(feature = "llvm")]
+    {
+        let compiled = match vm::compile(program) {
+            Ok(c) => c,
+            Err(e) => { eprintln!("Compile error: {}", e); return 1; }
+        };
+        let target_name = func_name.unwrap_or(compiled.func_names.first().map(|s| s.as_str()).unwrap_or("main"));
+        let func_idx = match compiled.func_names.iter().position(|n| n == target_name) {
+            Some(i) => i,
+            None => { eprintln!("undefined function: {}", target_name); return 1; }
+        };
+        let chunk = &compiled.chunks[func_idx];
+        let nan_consts = &compiled.nan_constants[func_idx];
+        match vm::jit_llvm::compile_and_call(chunk, nan_consts, &jit_args) {
+            Some(result) => {
+                if result == (result as i64) as f64 { println!("{}", result as i64); } else { println!("{}", result); }
+                0
+            }
+            None => {
+                eprintln!("LLVM JIT: function not eligible for compilation");
+                1
+            }
+        }
+    }
+    #[cfg(not(feature = "llvm"))]
+    {
+        let _ = (func_name, jit_args);
+        eprintln!("LLVM JIT not enabled. Build with: cargo build --features llvm");
+        1
     }
 }
 
@@ -1996,444 +2336,9 @@ fn print_help() {
     println!("  ilo 'f x:n>n;*x 2' --emit python Transpile to Python");
 }
 
-/// Legacy main: the original argument-parsing logic before clap.
-/// Used as fallback when clap can't parse the args (e.g. bare positional code).
-fn legacy_main(raw_args: Vec<String>) {
-    // `ilo tools` is handled before output-mode detection so that --json/--ilo
-    // can be used as *tool format* flags without conflicting with error format flags.
-    if matches!(raw_args.get(1).map(|s| s.as_str()), Some("tools") | Some("tool")) {
-        tools_cmd(&raw_args[2..]);
-        std::process::exit(0);
-    }
-
-    if matches!(raw_args.get(1).map(|s| s.as_str()), Some("graph")) {
-        graph_cmd(&raw_args[2..]);
-        std::process::exit(0);
-    }
-
-    if matches!(raw_args.get(1).map(|s| s.as_str()), Some("serv") | Some("repl")) {
-        let rest: Vec<String> = raw_args[2..].to_vec();
-        let is_json = raw_args.get(1).map(|s| s.as_str()) == Some("serv")
-            || rest.iter().any(|a| a == "-j" || a == "--json");
-        if is_json {
-            let mut serv_args = vec!["-j".to_string()];
-            serv_args.extend(rest.iter().filter(|a| *a != "-j" && *a != "--json").cloned());
-            serv_cmd(&serv_args);
-        } else {
-            repl_cmd();
-        }
-        std::process::exit(0);
-    }
-
-    if raw_args.get(1).map(|s| s.as_str()) == Some("compile") {
-        compile_cmd(&raw_args[2..]);
-        std::process::exit(0);
-    }
-
-    let (mode, explicit_json, no_hints, args) = detect_output_mode(raw_args);
-
-    if args.len() < 2 {
-        eprintln!("Usage: ilo <file-or-code> [args... | --run func args... | --bench func args... | --emit python]");
-        eprintln!("       ilo repl                                  Interactive REPL");
-        eprintln!("       ilo serv [--mcp <path>] [--tools <path>]  Stdio agent loop");
-        eprintln!("       ilo graph <file> [--fn NAME] [--dot]      Dependency graph");
-        eprintln!("       ilo compile <file> [-o out] [func]        AOT compile to binary");
-        eprintln!("       ilo help | -h     Show usage and examples");
-        eprintln!("       ilo help lang     Show language specification");
-        eprintln!("       ilo help ai | -ai Compact spec for LLM consumption");
-        eprintln!("       ilo --version | -V");
-        std::process::exit(1);
-    }
-
-    if args[1] == "--version" || args[1] == "-V" {
-        println!("ilo {}", env!("CARGO_PKG_VERSION"));
-        std::process::exit(0);
-    }
-
-    if args[1] == "--explain" {
-        match args.get(2) {
-            Some(code) => match diagnostic::registry::lookup(code) {
-                Some(entry) => {
-                    print!("{}", entry.long);
-                    std::process::exit(0);
-                }
-                None => {
-                    eprintln!("unknown error code: {code}");
-                    eprintln!("Error codes have the form ILO-L001, ILO-P001, ILO-T001, ILO-R001.");
-                    std::process::exit(1);
-                }
-            },
-            None => {
-                eprintln!("Usage: ilo --explain <code>  (e.g. ilo --explain ILO-T005)");
-                std::process::exit(1);
-            }
-        }
-    }
-
-    if args[1] == "-ai" {
-        print!("{}", compact_spec());
-        std::process::exit(0);
-    }
-
-    if args[1] == "help" || args[1] == "--help" || args[1] == "-h" {
-        if args.len() > 2 && args[2] == "lang" {
-            print!("{}", include_str!("../SPEC.md"));
-        } else if args.len() > 2 && args[2] == "ai" {
-            print!("{}", compact_spec());
-        } else {
-            print_help();
-        }
-        std::process::exit(0);
-    }
-
-    // If args[1] is a file that exists, read it. Otherwise treat it as inline code.
-    let (source, mode_args_start) = if std::path::Path::new(&args[1]).is_file() {
-        let s = match std::fs::read_to_string(&args[1]) {
-            Ok(s) => s,
-            Err(e) => {
-                eprintln!("Error reading {}: {}", args[1], e);
-                std::process::exit(1);
-            }
-        };
-        (s, 2)
-    } else if args[1] == "-e" {
-        // Legacy -e flag: skip it, use args[2] as code
-        if args.len() < 3 || args[2].is_empty() {
-            eprintln!("Usage: ilo <file-or-code> [args... | --run func args... | --emit python]");
-            std::process::exit(1);
-        }
-        (args[2].clone(), 3)
-    } else {
-        let code = &args[1];
-        if code.is_empty() {
-            eprintln!("Error: empty code string");
-            std::process::exit(1);
-        }
-        (code.clone(), 2)
-    };
-
-    // Scan for --tools <path> and --mcp <path>.
-    let (tools_config_path, mcp_config_path, args) = {
-        let mut tools_path: Option<String> = None;
-        let mut mcp_path: Option<String> = None;
-        let mut filtered: Vec<String> = Vec::with_capacity(args.len());
-        let mut i = 0;
-        while i < args.len() {
-            if args[i] == "--tools" {
-                if i + 1 < args.len() {
-                    tools_path = Some(args[i + 1].clone());
-                    i += 2;
-                } else {
-                    eprintln!("error: --tools requires a path argument");
-                    std::process::exit(1);
-                }
-            } else if args[i] == "--mcp" {
-                if i + 1 < args.len() {
-                    mcp_path = Some(args[i + 1].clone());
-                    i += 2;
-                } else {
-                    eprintln!("error: --mcp requires a path argument");
-                    std::process::exit(1);
-                }
-            } else {
-                filtered.push(args[i].clone());
-                i += 1;
-            }
-        }
-        if tools_path.is_some() && mcp_path.is_some() {
-            eprintln!("error: --tools and --mcp are mutually exclusive");
-            std::process::exit(1);
-        }
-        (tools_path, mcp_path, filtered)
-    };
-
-    warn_cross_language_syntax(&source, mode);
-
-    let tokens = match lexer::lex(&source) {
-        Ok(t) => t,
-        Err(e) => {
-            report_diagnostic(&Diagnostic::from(&e).with_source(source.clone()), mode);
-            std::process::exit(1);
-        }
-    };
-
-    let token_spans: Vec<(lexer::Token, ast::Span)> = tokens
-        .into_iter()
-        .map(|(t, r)| (t, ast::Span { start: r.start, end: r.end }))
-        .collect();
-
-    let (mut program, parse_errors) = parser::parse(token_spans);
-    ast::resolve_aliases(&mut program);
-    program.source = Some(source.clone());
-
-    #[cfg(not(feature = "tools"))]
-    if mcp_config_path.is_some() {
-        eprintln!("error: --mcp requires the 'tools' feature (build with: cargo build --features tools)");
-        std::process::exit(1);
-    }
-
-    #[cfg(feature = "tools")]
-    let mut mcp_rt: Option<tokio::runtime::Runtime> = None;
-    #[cfg(feature = "tools")]
-    let mut mcp_provider_holder: Option<tools::mcp_provider::McpProvider> = None;
-
-    #[cfg(feature = "tools")]
-    if let Some(ref path) = mcp_config_path {
-        let config = tools::mcp_provider::McpConfig::from_file(path)
-            .unwrap_or_else(|e| { eprintln!("{}", e); std::process::exit(1); });
-        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().expect("tokio runtime");
-        let provider = rt
-            .block_on(tools::mcp_provider::McpProvider::connect(&config))
-            .unwrap_or_else(|e| { eprintln!("MCP error: {}", e); std::process::exit(1); });
-        let mut decls = provider.tool_decls();
-        decls.append(&mut program.declarations);
-        program.declarations = decls;
-        mcp_rt = Some(rt);
-        mcp_provider_holder = Some(provider);
-    }
-
-    let mut had_errors = false;
-
-    {
-        let base_dir: Option<std::path::PathBuf> = if std::path::Path::new(&args[1]).is_file() {
-            std::path::Path::new(&args[1])
-                .canonicalize()
-                .ok()
-                .and_then(|p| p.parent().map(|d| d.to_path_buf()))
-        } else {
-            None
-        };
-        let mut import_diagnostics: Vec<Diagnostic> = Vec::new();
-        let mut visited = std::collections::HashSet::new();
-        if let Ok(canonical_file) = std::path::Path::new(&args[1]).canonicalize() {
-            visited.insert(canonical_file);
-        }
-        program.declarations = resolve_imports(
-            program.declarations,
-            base_dir.as_deref(),
-            &mut visited,
-            &mut import_diagnostics,
-        );
-        for d in import_diagnostics {
-            report_diagnostic(&d, mode);
-            had_errors = true;
-        }
-    }
-
-    for e in &parse_errors {
-        report_diagnostic(&Diagnostic::from(e).with_source(source.clone()), mode);
-        had_errors = true;
-    }
-
-    let verify_result = verify::verify(&program);
-    for w in &verify_result.warnings {
-        report_diagnostic(&Diagnostic::from(w).with_source(source.clone()), mode);
-    }
-    if !verify_result.errors.is_empty() {
-        for e in &verify_result.errors {
-            report_diagnostic(&Diagnostic::from(e).with_source(source.clone()), mode);
-        }
-        had_errors = true;
-    }
-
-    if had_errors {
-        std::process::exit(1);
-    }
-
-    // Determine mode from args
-    let m = mode_args_start;
-    if args.len() > m && args[m] == "--bench" {
-        let func_name = if args.len() > m + 1 { Some(args[m + 1].as_str()) } else { None };
-        let run_args: Vec<interpreter::Value> = if args.len() > m + 2 {
-            args[m + 2..].iter().map(|a| parse_cli_arg(a)).collect()
-        } else {
-            vec![]
-        };
-        run_bench(&program, func_name, &run_args);
-    } else if args.len() > m && matches!(args[m].as_str(), "--explain" | "-x") {
-        let filename = if std::path::Path::new(&args[1]).is_file() { Some(args[1].as_str()) } else { None };
-        print!("{}", codegen::explain::explain(&program, filename));
-    } else if args.len() > m && args[m] == "--emit" {
-        if args.len() > m + 1 && args[m + 1] == "python" {
-            println!("{}", codegen::python::emit(&program));
-        } else {
-            eprintln!("Unknown emit target. Supported: python");
-            std::process::exit(1);
-        }
-    } else if args.len() > m && matches!(args[m].as_str(), "--dense" | "-d" | "--fmt") {
-        println!("{}", codegen::fmt::format(&program, codegen::fmt::FmtMode::Dense));
-    } else if args.len() > m && matches!(args[m].as_str(), "--expanded" | "-e" | "--fmt-expanded") {
-        print!("{}", codegen::fmt::format(&program, codegen::fmt::FmtMode::Expanded));
-    } else if args.len() > m && args[m] == "--run-jit" {
-        #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
-        {
-            let func_name = if args.len() > m + 1 { Some(args[m + 1].as_str()) } else { None };
-            let run_args: Vec<f64> = if args.len() > m + 2 {
-                args[m + 2..].iter().map(|a| a.parse::<f64>().unwrap_or_else(|_| {
-                    eprintln!("error: JIT argument '{}' is not a valid number", a);
-                    std::process::exit(1);
-                })).collect()
-            } else {
-                vec![]
-            };
-            let compiled = vm::compile(&program).unwrap_or_else(|e| { eprintln!("Compile error: {}", e); std::process::exit(1); });
-            let target = func_name.unwrap_or(compiled.func_names.first().map(|s| s.as_str()).unwrap_or("main"));
-            let func_idx = compiled.func_names.iter().position(|n| n == target)
-                .unwrap_or_else(|| { eprintln!("undefined function: {}", target); std::process::exit(1); });
-            let chunk = &compiled.chunks[func_idx];
-            let nan_consts = &compiled.nan_constants[func_idx];
-            match vm::jit_arm64::compile_and_call(chunk, nan_consts, &run_args) {
-                Some(result) => {
-                    if result == (result as i64) as f64 { println!("{}", result as i64); } else { println!("{}", result); }
-                }
-                None => {
-                    eprintln!("JIT: function not eligible for compilation (numeric-only required)");
-                    std::process::exit(1);
-                }
-            }
-        }
-        #[cfg(not(all(target_arch = "aarch64", target_os = "macos")))]
-        {
-            eprintln!("Custom JIT (arm64) is only available on aarch64 macOS");
-            std::process::exit(1);
-        }
-    } else if args.len() > m && args[m] == "--run-cranelift" {
-        #[cfg(feature = "cranelift")]
-        {
-            let func_name = if args.len() > m + 1 { Some(args[m + 1].as_str()) } else { None };
-            let run_args: Vec<interpreter::Value> = if args.len() > m + 2 {
-                args[m + 2..].iter().map(|a| parse_cli_arg(a)).collect()
-            } else {
-                vec![]
-            };
-            let compiled = vm::compile(&program).unwrap_or_else(|e| { eprintln!("Compile error: {}", e); std::process::exit(1); });
-            let target = func_name.unwrap_or(compiled.func_names.first().map(|s| s.as_str()).unwrap_or("main"));
-            let func_idx = compiled.func_names.iter().position(|n| n == target)
-                .unwrap_or_else(|| { eprintln!("undefined function: {}", target); std::process::exit(1); });
-            let chunk = &compiled.chunks[func_idx];
-            let nan_consts = &compiled.nan_constants[func_idx];
-            let nan_args: Vec<u64> = run_args.iter().map(|v| vm::NanVal::from_value(v).0).collect();
-            match vm::jit_cranelift::compile_and_call(chunk, nan_consts, &nan_args, &compiled) {
-                Some(result_bits) => {
-                    let result = vm::NanVal(result_bits).to_value();
-                    println!("{}", result);
-                }
-                None => {
-                    eprintln!("Cranelift JIT: compilation failed");
-                    std::process::exit(1);
-                }
-            }
-        }
-        #[cfg(not(feature = "cranelift"))]
-        {
-            eprintln!("Cranelift JIT not enabled. Build with: cargo build --features cranelift");
-            std::process::exit(1);
-        }
-    } else if args.len() > m && args[m] == "--run-llvm" {
-        #[cfg(feature = "llvm")]
-        {
-            let func_name = if args.len() > m + 1 { Some(args[m + 1].as_str()) } else { None };
-            let run_args: Vec<f64> = if args.len() > m + 2 {
-                args[m + 2..].iter().map(|a| a.parse::<f64>().unwrap_or_else(|_| {
-                    eprintln!("error: JIT argument '{}' is not a valid number", a);
-                    std::process::exit(1);
-                })).collect()
-            } else {
-                vec![]
-            };
-            let compiled = vm::compile(&program).unwrap_or_else(|e| { eprintln!("Compile error: {}", e); std::process::exit(1); });
-            let target = func_name.unwrap_or(compiled.func_names.first().map(|s| s.as_str()).unwrap_or("main"));
-            let func_idx = compiled.func_names.iter().position(|n| n == target)
-                .unwrap_or_else(|| { eprintln!("undefined function: {}", target); std::process::exit(1); });
-            let chunk = &compiled.chunks[func_idx];
-            let nan_consts = &compiled.nan_constants[func_idx];
-            match vm::jit_llvm::compile_and_call(chunk, nan_consts, &run_args) {
-                Some(result) => {
-                    if result == (result as i64) as f64 { println!("{}", result as i64); } else { println!("{}", result); }
-                }
-                None => {
-                    eprintln!("LLVM JIT: function not eligible for compilation");
-                    std::process::exit(1);
-                }
-            }
-        }
-        #[cfg(not(feature = "llvm"))]
-        {
-            eprintln!("LLVM JIT not enabled. Build with: cargo build --features llvm");
-            std::process::exit(1);
-        }
-    } else if args.len() > m && args[m] == "--run-vm" {
-        let func_name = if args.len() > m + 1 { Some(args[m + 1].as_str()) } else { None };
-        let run_args: Vec<interpreter::Value> = if args.len() > m + 2 {
-            args[m + 2..].iter().map(|a| parse_cli_arg(a)).collect()
-        } else {
-            vec![]
-        };
-        let compiled = vm::compile(&program).unwrap_or_else(|e| { eprintln!("Compile error: {}", e); std::process::exit(1); });
-        run_vm_with_provider(
-            &compiled,
-            func_name,
-            run_args,
-            tools_config_path.as_deref(),
-            #[cfg(feature = "tools")]
-            mcp_provider_holder.as_ref(),
-            #[cfg(feature = "tools")]
-            mcp_rt.as_ref(),
-            &source,
-            mode,
-            explicit_json,
-        );
-    } else if args.len() > m && (args[m] == "--run" || args[m] == "--run-tree") {
-        let func_name = if args.len() > m + 1 { Some(args[m + 1].as_str()) } else { None };
-        let run_args: Vec<interpreter::Value> = if args.len() > m + 2 {
-            args[m + 2..].iter().map(|a| parse_cli_arg(a)).collect()
-        } else {
-            vec![]
-        };
-        run_interp_with_provider(
-            &program,
-            func_name,
-            run_args,
-            tools_config_path.as_deref(),
-            #[cfg(feature = "tools")]
-            mcp_provider_holder,
-            #[cfg(feature = "tools")]
-            mcp_rt,
-            &source,
-            mode,
-            explicit_json,
-        );
-    } else if args.len() > m {
-        let func_names: Vec<&str> = program.declarations.iter().filter_map(|d| match d {
-            ast::Decl::Function { name, .. } => Some(name.as_str()),
-            _ => None,
-        }).collect();
-
-        let (func_name, run_args_start) = if func_names.contains(&args[m].as_str()) {
-            (Some(args[m].as_str()), m + 1)
-        } else {
-            (None, m)
-        };
-
-        let run_args: Vec<interpreter::Value> = args[run_args_start..].iter().map(|a| parse_cli_arg(a)).collect();
-        run_default(&program, func_name, run_args, &source, mode, explicit_json);
-    } else {
-        match serde_json::to_string_pretty(&program) {
-            Ok(json) => println!("{}", json),
-            Err(e) => {
-                eprintln!("Serialization error: {}", e);
-                std::process::exit(1);
-            }
-        }
-    }
-
-    if !no_hints {
-        let hints = collect_hints(&source);
-        emit_hints(&hints, mode);
-    }
-}
 
 /// Dispatch --run-vm, routing to MCP / HTTP / plain run based on available providers.
+/// Returns exit code.
 #[allow(clippy::too_many_arguments)]
 fn run_vm_with_provider(
     compiled: &vm::CompiledProgram,
@@ -2445,26 +2350,28 @@ fn run_vm_with_provider(
     source: &str,
     mode: OutputMode,
     explicit_json: bool,
-) {
+) -> i32 {
     #[cfg(feature = "tools")]
     if let Some(provider) = mcp_provider {
         let rt = mcp_rt.expect("runtime present with mcp_provider");
         match vm::run_with_tools(compiled, func_name, args, provider, rt) {
-            Ok(val) => { print_value(&val, explicit_json); return; }
+            Ok(val) => { print_value(&val, explicit_json); return 0; }
             Err(e) => {
                 report_diagnostic(&Diagnostic::from(&e).with_source(source.to_string()), mode);
-                std::process::exit(1);
+                return 1;
             }
         }
     }
 
     if let Some(tools_path) = tools_config_path {
-        let config = tools::http_provider::ToolsConfig::from_file(tools_path)
-            .unwrap_or_else(|e| { eprintln!("{}", e); std::process::exit(1); });
+        let config = match tools::http_provider::ToolsConfig::from_file(tools_path) {
+            Ok(c) => c,
+            Err(e) => { eprintln!("{}", e); return 1; }
+        };
         let provider = tools::http_provider::HttpProvider::new(config);
         #[cfg(feature = "tools")]
         let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().expect("tokio runtime");
-        match vm::run_with_tools(
+        return match vm::run_with_tools(
             compiled,
             func_name,
             args,
@@ -2472,25 +2379,25 @@ fn run_vm_with_provider(
             #[cfg(feature = "tools")]
             &runtime,
         ) {
-            Ok(val) => print_value(&val, explicit_json),
+            Ok(val) => { print_value(&val, explicit_json); 0 }
             Err(e) => {
                 report_diagnostic(&Diagnostic::from(&e).with_source(source.to_string()), mode);
-                std::process::exit(1);
+                1
             }
-        }
-        return;
+        };
     }
 
     match vm::run(compiled, func_name, args) {
-        Ok(val) => print_value(&val, explicit_json),
+        Ok(val) => { print_value(&val, explicit_json); 0 }
         Err(e) => {
             report_diagnostic(&Diagnostic::from(&e).with_source(source.to_string()), mode);
-            std::process::exit(1);
+            1
         }
     }
 }
 
 /// Dispatch --run-tree, routing to MCP / HTTP / plain run based on available providers.
+/// Returns exit code.
 #[allow(clippy::too_many_arguments)]
 fn run_interp_with_provider(
     program: &ast::Program,
@@ -2502,26 +2409,28 @@ fn run_interp_with_provider(
     source: &str,
     mode: OutputMode,
     explicit_json: bool,
-) {
+) -> i32 {
     #[cfg(feature = "tools")]
     if let Some(provider) = mcp_provider {
         let rt = std::sync::Arc::new(mcp_rt.expect("runtime present with mcp_provider"));
         match interpreter::run_with_tools(program, func_name, args, std::sync::Arc::new(provider), rt) {
-            Ok(val) => { print_value(&val, explicit_json); return; }
+            Ok(val) => { print_value(&val, explicit_json); return 0; }
             Err(e) => {
                 report_diagnostic(&Diagnostic::from(&e).with_source(source.to_string()), mode);
-                std::process::exit(1);
+                return 1;
             }
         }
     }
 
     if let Some(tools_path) = tools_config_path {
-        let config = tools::http_provider::ToolsConfig::from_file(tools_path)
-            .unwrap_or_else(|e| { eprintln!("{}", e); std::process::exit(1); });
+        let config = match tools::http_provider::ToolsConfig::from_file(tools_path) {
+            Ok(c) => c,
+            Err(e) => { eprintln!("{}", e); return 1; }
+        };
         let provider = std::sync::Arc::new(tools::http_provider::HttpProvider::new(config));
         #[cfg(feature = "tools")]
         let runtime = std::sync::Arc::new(tokio::runtime::Builder::new_current_thread().enable_all().build().expect("tokio runtime"));
-        match interpreter::run_with_tools(
+        return match interpreter::run_with_tools(
             program,
             func_name,
             args,
@@ -2529,25 +2438,24 @@ fn run_interp_with_provider(
             #[cfg(feature = "tools")]
             runtime,
         ) {
-            Ok(val) => print_value(&val, explicit_json),
+            Ok(val) => { print_value(&val, explicit_json); 0 }
             Err(e) => {
                 report_diagnostic(&Diagnostic::from(&e).with_source(source.to_string()), mode);
-                std::process::exit(1);
+                1
             }
-        }
-        return;
+        };
     }
 
     match interpreter::run(program, func_name, args) {
-        Ok(val) => print_value(&val, explicit_json),
+        Ok(val) => { print_value(&val, explicit_json); 0 }
         Err(e) => {
             report_diagnostic(&Diagnostic::from(&e).with_source(source.to_string()), mode);
-            std::process::exit(1);
+            1
         }
     }
 }
 
-fn run_default(program: &ast::Program, func_name: Option<&str>, args: Vec<interpreter::Value>, source: &str, mode: OutputMode, explicit_json: bool) {
+fn run_default(program: &ast::Program, func_name: Option<&str>, args: Vec<interpreter::Value>, source: &str, mode: OutputMode, explicit_json: bool) -> i32 {
     // Try Cranelift JIT first — all functions are now eligible
     #[cfg(feature = "cranelift")]
     {
@@ -2560,7 +2468,7 @@ fn run_default(program: &ast::Program, func_name: Option<&str>, args: Vec<interp
                 if let Some(result_bits) = vm::jit_cranelift::compile_and_call(chunk, nan_consts, &nan_args, &compiled) {
                     let result = vm::NanVal(result_bits).to_value();
                     print_value(&result, explicit_json);
-                    return;
+                    return 0;
                 }
             }
         }
@@ -2568,10 +2476,10 @@ fn run_default(program: &ast::Program, func_name: Option<&str>, args: Vec<interp
 
     // Fall back to interpreter
     match interpreter::run(program, func_name, args) {
-        Ok(val) => print_value(&val, explicit_json),
+        Ok(val) => { print_value(&val, explicit_json); 0 }
         Err(e) => {
             report_diagnostic(&Diagnostic::from(&e).with_source(source.to_string()), mode);
-            std::process::exit(1);
+            1
         }
     }
 }
