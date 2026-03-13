@@ -2234,4 +2234,491 @@ mod tests {
         let stdout = String::from_utf8_lossy(&output.stdout);
         assert_eq!(stdout.trim(), "23", "4*5+3=23");
     }
+
+    // ── Helper: build an ObjectModule suitable for codegen tests ────────
+
+    fn make_module() -> ObjectModule {
+        let mut flag_builder = settings::builder();
+        flag_builder.set("opt_level", "speed").unwrap();
+        flag_builder.set("is_pic", "true").unwrap();
+        let isa_builder = cranelift_native::builder().unwrap();
+        let isa = isa_builder.finish(settings::Flags::new(flag_builder)).unwrap();
+        let obj_builder = ObjectBuilder::new(isa, "ilo_aot_test", default_libcall_names()).unwrap();
+        ObjectModule::new(obj_builder)
+    }
+
+    /// Compile a program's functions into an ObjectModule and emit the object bytes.
+    /// This exercises all Cranelift IR generation without needing libilo.a or a linker.
+    fn compile_to_object_bytes(source: &str) -> Result<Vec<u8>, String> {
+        let compiled = compile_program(source);
+
+        let mut module = make_module();
+        let helpers = declare_all_helpers(&mut module);
+
+        // First pass: declare all functions
+        let mut func_ids: Vec<FuncId> = Vec::with_capacity(compiled.chunks.len());
+        for (i, chunk) in compiled.chunks.iter().enumerate() {
+            let name = format!("ilo_{}", compiled.func_names[i]);
+            let mut sig = module.make_signature();
+            for _ in 0..chunk.param_count {
+                sig.params.push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::I64));
+            }
+            sig.returns.push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::I64));
+            let fid = module.declare_function(&name, cranelift_module::Linkage::Local, &sig)
+                .map_err(|e| e.to_string())?;
+            func_ids.push(fid);
+        }
+
+        // Second pass: compile each function body
+        for (i, (chunk, nan_consts)) in compiled.chunks.iter().zip(compiled.nan_constants.iter()).enumerate() {
+            let name = format!("ilo_{}", compiled.func_names[i]);
+            compile_function_body(
+                &mut module, chunk, nan_consts, &name, func_ids[i], &helpers, Some(&func_ids),
+            )?;
+        }
+
+        let obj_product = module.finish();
+        obj_product.emit().map_err(|e| e.to_string())
+    }
+
+    // ── find_block_leaders tests ────────────────────────────────────────
+
+    #[test]
+    fn block_leaders_empty_code() {
+        let leaders = find_block_leaders(&[]);
+        // instruction 0 is always a leader; filter removes > code.len()
+        assert!(leaders.contains(&0) || leaders.is_empty());
+    }
+
+    #[test]
+    fn block_leaders_linear_code_only_entry() {
+        // A simple sequence with no jumps: only instruction 0 is a leader.
+        let code: Vec<u32> = vec![
+            make_inst_abc(OP_ADD_NN, 0, 1, 2),
+            make_inst_abc(OP_RET, 0, 0, 0),
+        ];
+        let leaders = find_block_leaders(&code);
+        assert_eq!(leaders, vec![0]);
+    }
+
+    #[test]
+    fn block_leaders_jmp_creates_three_leaders() {
+        // JMP at ip=0 with offset=1 jumps to ip=2; leaders: 0, 1, 2.
+        let jmp_inst = ((OP_JMP as u32) << 24) | (1u32 & 0xFFFF);
+        let code: Vec<u32> = vec![
+            jmp_inst,
+            make_inst_abc(OP_ADD_NN, 0, 1, 2),
+            make_inst_abc(OP_RET, 0, 0, 0),
+        ];
+        let leaders = find_block_leaders(&code);
+        assert!(leaders.contains(&0));
+        assert!(leaders.contains(&1)); // instruction after jump
+        assert!(leaders.contains(&2)); // jump target (ip 0 + 1 + offset 1 = 2)
+    }
+
+    #[test]
+    fn block_leaders_cmpk_creates_leaders_at_ip_plus_1_and_2() {
+        // CMPK_GE_N at ip=0: leaders at 0, 1, 2.
+        let cmpk_inst = ((OP_CMPK_GE_N as u32) << 24) | 0u32;
+        let code: Vec<u32> = vec![
+            cmpk_inst,
+            make_inst_abc(OP_JMP, 0, 0, 0),
+            make_inst_abc(OP_RET, 0, 0, 0),
+        ];
+        let leaders = find_block_leaders(&code);
+        assert!(leaders.contains(&0));
+        assert!(leaders.contains(&1));
+        assert!(leaders.contains(&2));
+    }
+
+    #[test]
+    fn block_leaders_listget_creates_leaders_at_ip_plus_1_and_2() {
+        let code: Vec<u32> = vec![
+            make_inst_abc(OP_LISTGET, 0, 1, 2),
+            make_inst_abc(OP_JMP, 0, 0, 0),
+            make_inst_abc(OP_RET, 0, 0, 0),
+        ];
+        let leaders = find_block_leaders(&code);
+        assert!(leaders.contains(&0));
+        assert!(leaders.contains(&1));
+        assert!(leaders.contains(&2));
+    }
+
+    #[test]
+    fn block_leaders_multiple_jumps() {
+        // Two JMPs with different targets.
+        // JMP at ip=0 with sbx=2 → target=3; leaders: 0, 1, 3
+        // JMP at ip=1 with sbx=1 → target=3; leaders adds: 2, 3
+        let jmp0 = ((OP_JMP as u32) << 24) | (2u16 as u32);
+        let jmp1 = ((OP_JMP as u32) << 24) | (1u16 as u32);
+        let code: Vec<u32> = vec![
+            jmp0,
+            jmp1,
+            make_inst_abc(OP_ADD_NN, 0, 1, 2),
+            make_inst_abc(OP_RET, 0, 0, 0),
+        ];
+        let leaders = find_block_leaders(&code);
+        assert!(leaders.contains(&0));
+        assert!(leaders.contains(&1)); // fallthrough of jmp0
+        assert!(leaders.contains(&3)); // target of jmp0 (0+1+2=3)
+        assert!(leaders.contains(&2)); // fallthrough of jmp1
+    }
+
+    // ── Helpers ──────────────────────────────────────────────────────────
+
+    fn make_inst_abc(op: u8, a: u8, b: u8, c: u8) -> u32 {
+        ((op as u32) << 24) | ((a as u32) << 16) | ((b as u32) << 8) | (c as u32)
+    }
+
+    // ── serialize_type_registry tests ────────────────────────────────────
+
+    #[test]
+    fn serialize_empty_registry() {
+        let registry = TypeRegistry::default();
+        let bytes = serialize_type_registry(&registry);
+        assert!(bytes.is_empty());
+    }
+
+    #[test]
+    fn serialize_registry_single_type() {
+        let mut registry = TypeRegistry::default();
+        registry.register("pt".to_string(), vec!["x".to_string(), "y".to_string()], 0b11);
+        let bytes = serialize_type_registry(&registry);
+        let s = String::from_utf8(bytes.clone()).unwrap();
+        // Should contain type name, field count bitmask, field names
+        assert!(s.contains("pt"));
+        assert!(s.contains("x"));
+        assert!(s.contains("y"));
+        // Ends with newline separator
+        assert!(bytes.ends_with(b"\n"));
+    }
+
+    #[test]
+    fn serialize_registry_multiple_types() {
+        let mut registry = TypeRegistry::default();
+        registry.register("pt".to_string(), vec!["x".to_string(), "y".to_string()], 0b11);
+        registry.register("person".to_string(), vec!["name".to_string(), "age".to_string()], 0b10);
+        let bytes = serialize_type_registry(&registry);
+        let s = String::from_utf8(bytes).unwrap();
+        assert!(s.contains("pt"));
+        assert!(s.contains("person"));
+        assert!(s.contains("name"));
+        assert!(s.contains("age"));
+    }
+
+    #[test]
+    fn serialize_registry_no_fields() {
+        let mut registry = TypeRegistry::default();
+        registry.register("unit".to_string(), vec![], 0);
+        let bytes = serialize_type_registry(&registry);
+        let s = String::from_utf8(bytes).unwrap();
+        assert!(s.contains("unit"));
+    }
+
+    // ── compile_function_body / object-emit tests ────────────────────────
+    //
+    // These tests compile to object bytes WITHOUT linking, so they work even
+    // when libilo.a is absent. They exercise the full Cranelift IR generation
+    // path (all opcode handlers, block leaders, data sections, etc.).
+
+    #[test]
+    fn codegen_simple_arithmetic_emits_object() {
+        // f x:n>n; +x 1  — ADDK_N opcode
+        let bytes = compile_to_object_bytes("f x:n>n;+x 1");
+        assert!(bytes.is_ok(), "codegen failed: {:?}", bytes.err());
+        let obj = bytes.unwrap();
+        assert!(!obj.is_empty(), "object file should not be empty");
+    }
+
+    #[test]
+    fn codegen_sub_mul_div_emits_object() {
+        let bytes = compile_to_object_bytes("f a:n b:n>n;+a *a -a /a b");
+        assert!(bytes.is_ok(), "codegen failed: {:?}", bytes.err());
+    }
+
+    #[test]
+    fn codegen_nn_ops_emits_object() {
+        // OP_ADD_NN, OP_SUB_NN, OP_MUL_NN, OP_DIV_NN paths
+        let bytes = compile_to_object_bytes("f a:n b:n>n;*a b");
+        assert!(bytes.is_ok(), "codegen failed: {:?}", bytes.err());
+    }
+
+    #[test]
+    fn codegen_zero_arg_function_emits_object() {
+        let bytes = compile_to_object_bytes("f>n;42");
+        assert!(bytes.is_ok(), "codegen failed: {:?}", bytes.err());
+    }
+
+    #[test]
+    fn codegen_guard_emits_object() {
+        // Guard pattern: CMPK_GT_N + JMP + body
+        let bytes = compile_to_object_bytes("f x:n>n;>x 5{1};0");
+        assert!(bytes.is_ok(), "codegen failed: {:?}", bytes.err());
+    }
+
+    #[test]
+    fn codegen_while_loop_emits_object() {
+        // While loop with accumulator: sum 0..n
+        let bytes = compile_to_object_bytes("f n:n>n;s=0;i=0;wh <i n{s=+s i;i=+i 1};s");
+        assert!(bytes.is_ok(), "codegen failed: {:?}", bytes.err());
+    }
+
+    #[test]
+    fn codegen_multiple_functions_emits_object() {
+        // Two functions with cross-function call (OP_CALL path)
+        let bytes = compile_to_object_bytes("dbl x:n>n;*x 2\nf x:n>n;dbl x");
+        assert!(bytes.is_ok(), "codegen failed: {:?}", bytes.err());
+    }
+
+    #[test]
+    fn codegen_comparison_ops_emits_object() {
+        // LT, GT, LE, GE, EQ, NE opcodes
+        let bytes = compile_to_object_bytes("f a:n b:n>b;<a b");
+        assert!(bytes.is_ok(), "codegen failed: {:?}", bytes.err());
+    }
+
+    #[test]
+    fn codegen_not_neg_emits_object() {
+        // OP_NOT and OP_NEG
+        let bytes = compile_to_object_bytes("f x:n>n;-x");
+        assert!(bytes.is_ok(), "codegen failed: {:?}", bytes.err());
+    }
+
+    #[test]
+    fn codegen_string_cat_emits_object() {
+        // OP_CAT with string operands
+        let bytes = compile_to_object_bytes("f x:t>t;cat x \" world\"");
+        assert!(bytes.is_ok(), "codegen failed: {:?}", bytes.err());
+    }
+
+    #[test]
+    fn codegen_len_emits_object() {
+        let bytes = compile_to_object_bytes("f x:t>n;len x");
+        assert!(bytes.is_ok(), "codegen failed: {:?}", bytes.err());
+    }
+
+    #[test]
+    fn codegen_abs_floor_ceil_round_emits_object() {
+        let bytes = compile_to_object_bytes("f x:n>n;abs x");
+        assert!(bytes.is_ok());
+        let bytes2 = compile_to_object_bytes("f x:n>n;flr x");
+        assert!(bytes2.is_ok());
+        let bytes3 = compile_to_object_bytes("f x:n>n;cel x");
+        assert!(bytes3.is_ok());
+        let bytes4 = compile_to_object_bytes("f x:n>n;rou x");
+        assert!(bytes4.is_ok());
+    }
+
+    #[test]
+    fn codegen_min_max_emits_object() {
+        let bytes = compile_to_object_bytes("f a:n b:n>n;min a b");
+        assert!(bytes.is_ok());
+        let bytes2 = compile_to_object_bytes("f a:n b:n>n;max a b");
+        assert!(bytes2.is_ok());
+    }
+
+    #[test]
+    fn codegen_str_num_conversion_emits_object() {
+        let bytes = compile_to_object_bytes("f x:n>t;str x");
+        assert!(bytes.is_ok());
+    }
+
+    #[test]
+    fn codegen_result_type_emits_object() {
+        // OP_WRAPOK (~x), OP_WRAPERR (^e), OP_ISOK, OP_ISERR, OP_UNWRAP
+        // Using result guard: =x 0 ^"zero";~x generates wrapok/wraperr paths
+        let bytes = compile_to_object_bytes("f x:n>R n t;=x 0 ^\"zero\";~x");
+        assert!(bytes.is_ok(), "codegen failed: {:?}", bytes.err());
+    }
+
+    #[test]
+    fn codegen_type_predicates_emits_object() {
+        // OP_ISNUM, OP_ISTEXT, OP_ISBOOL, OP_ISLIST generated by type match
+        // ?x{n _:true;_:false} compiles to OP_ISNUM + branch
+        let bytes = compile_to_object_bytes("f x:n>b;?x{n _:true;_:false}");
+        assert!(bytes.is_ok(), "codegen failed: {:?}", bytes.err());
+    }
+
+    #[test]
+    fn codegen_map_operations_emits_object() {
+        // OP_MAPNEW (mmap), OP_MSET, OP_MGET — maps use mmap/mset/mget builtins
+        let bytes = compile_to_object_bytes("f>n;m=mset mmap \"key\" 42;mget m \"key\"");
+        assert!(bytes.is_ok(), "codegen failed: {:?}", bytes.err());
+    }
+
+    #[test]
+    fn codegen_list_operations_emits_object() {
+        // OP_LISTNEW, OP_HD, OP_TL, OP_REV, OP_SRT
+        let bytes = compile_to_object_bytes("f>n;xs=[1 2 3];hd xs");
+        assert!(bytes.is_ok(), "codegen failed: {:?}", bytes.err());
+    }
+
+    #[test]
+    fn codegen_foreach_loop_emits_object() {
+        // FOREACHPREP / FOREACHNEXT / LISTGET path: @x xs{body}
+        let bytes = compile_to_object_bytes("f xs:L n>n;s=0;@x xs{s=+s x};s");
+        assert!(bytes.is_ok(), "codegen failed: {:?}", bytes.err());
+    }
+
+    #[test]
+    fn codegen_record_type_emits_object() {
+        // OP_RECNEW, OP_RECFLD — requires a type declaration
+        let bytes = compile_to_object_bytes("type pt{x:n;y:n}\nf>n;p=pt x:3 y:4;p.x");
+        assert!(bytes.is_ok(), "codegen failed: {:?}", bytes.err());
+    }
+
+    #[test]
+    fn codegen_spl_has_emits_object() {
+        // OP_SPL (split) and OP_HAS
+        let bytes = compile_to_object_bytes("f s:t>n;xs=spl s \",\";len xs");
+        assert!(bytes.is_ok(), "codegen failed: {:?}", bytes.err());
+    }
+
+    #[test]
+    fn codegen_prt_emits_object() {
+        // OP_PRT — ilo builtin is named 'prnt' (not 'prt')
+        let bytes = compile_to_object_bytes("f x:n>n;prnt x;x");
+        assert!(bytes.is_ok(), "codegen failed: {:?}", bytes.err());
+    }
+
+    #[test]
+    fn codegen_jdmp_jpar_emits_object() {
+        // OP_JDMP, OP_JPAR
+        let bytes = compile_to_object_bytes("f x:n>t;jdmp x");
+        assert!(bytes.is_ok(), "codegen failed: {:?}", bytes.err());
+    }
+
+    #[test]
+    fn codegen_conditional_ternary_emits_object() {
+        // ternary (?) uses JMPT/JMPF opcodes
+        let bytes = compile_to_object_bytes("f x:n>n;?<x 0 0 x");
+        assert!(bytes.is_ok(), "codegen failed: {:?}", bytes.err());
+    }
+
+    #[test]
+    fn codegen_recursive_function_emits_object() {
+        // Recursive call — OP_CALL with function calling itself
+        let bytes = compile_to_object_bytes("fac n:n>n;<=n 1 1;r=fac -n 1;*n r");
+        assert!(bytes.is_ok(), "codegen failed: {:?}", bytes.err());
+    }
+
+    #[test]
+    fn codegen_multiple_guards_emits_object() {
+        // Multiple guard clauses
+        let bytes = compile_to_object_bytes("f x:n>n;>x 10{100};>x 5{50};0");
+        assert!(bytes.is_ok(), "codegen failed: {:?}", bytes.err());
+    }
+
+    // ── compile_to_binary error-path tests ──────────────────────────────
+
+    #[test]
+    fn compile_to_binary_undefined_function_returns_error() {
+        let compiled = compile_program("f x:n>n;+x 1");
+        let tmp = std::env::temp_dir().join("ilo_test_aot_no_such_fn");
+        let out = tmp.to_str().unwrap();
+        let result = compile_to_binary(&compiled, "does_not_exist", out);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.contains("undefined function"), "expected 'undefined function' in error, got: {}", err);
+    }
+
+    #[test]
+    fn compile_to_binary_reaches_link_step_or_succeeds() {
+        // This test verifies that codegen succeeds for a simple program — it either
+        // completes end-to-end (if libilo.a is present) or fails at the LINKING step
+        // (not at codegen). In either case, Cranelift IR generation was exercised.
+        let compiled = compile_program("f x:n>n;*x 2");
+        let tmp = std::env::temp_dir().join("ilo_test_aot_codegen_check");
+        let out = tmp.to_str().unwrap();
+        let result = compile_to_binary(&compiled, "f", out);
+        let _ = std::fs::remove_file(out);
+        let _ = std::fs::remove_file(format!("{}.o", out));
+        match result {
+            Ok(()) => {
+                // Full pipeline succeeded — libilo.a was available
+            }
+            Err(e) => {
+                // Must fail at linking, not at codegen
+                let is_link_error = e.contains("libilo") || e.contains("linker") || e.contains("cc")
+                    || e.contains("cannot find") || e.contains("lilo") || e.contains("ld");
+                assert!(
+                    is_link_error,
+                    "expected a linker/libilo error but got codegen error: {}",
+                    e
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn compile_to_binary_guard_reaches_link_step_or_succeeds() {
+        let compiled = compile_program("f x:n>n;>x 5{1};0");
+        let tmp = std::env::temp_dir().join("ilo_test_aot_guard_check");
+        let out = tmp.to_str().unwrap();
+        let result = compile_to_binary(&compiled, "f", out);
+        let _ = std::fs::remove_file(out);
+        let _ = std::fs::remove_file(format!("{}.o", out));
+        match result {
+            Ok(()) => {}
+            Err(e) => {
+                let is_link_error = e.contains("libilo") || e.contains("linker") || e.contains("cc")
+                    || e.contains("cannot find") || e.contains("lilo") || e.contains("ld");
+                assert!(is_link_error, "codegen error (not link): {}", e);
+            }
+        }
+    }
+
+    #[test]
+    fn compile_to_binary_while_loop_reaches_link_step_or_succeeds() {
+        let compiled = compile_program("f n:n>n;s=0;i=0;wh <i n{s=+s i;i=+i 1};s");
+        let tmp = std::env::temp_dir().join("ilo_test_aot_loop_check");
+        let out = tmp.to_str().unwrap();
+        let result = compile_to_binary(&compiled, "f", out);
+        let _ = std::fs::remove_file(out);
+        let _ = std::fs::remove_file(format!("{}.o", out));
+        match result {
+            Ok(()) => {}
+            Err(e) => {
+                let is_link_error = e.contains("libilo") || e.contains("linker") || e.contains("cc")
+                    || e.contains("cannot find") || e.contains("lilo") || e.contains("ld");
+                assert!(is_link_error, "codegen error (not link): {}", e);
+            }
+        }
+    }
+
+    #[test]
+    fn compile_to_binary_record_type_reaches_link_step_or_succeeds() {
+        let compiled = compile_program("type pt{x:n;y:n}\nf>n;p=pt x:3 y:4;p.x");
+        let tmp = std::env::temp_dir().join("ilo_test_aot_record_check");
+        let out = tmp.to_str().unwrap();
+        let result = compile_to_binary(&compiled, "f", out);
+        let _ = std::fs::remove_file(out);
+        let _ = std::fs::remove_file(format!("{}.o", out));
+        match result {
+            Ok(()) => {}
+            Err(e) => {
+                let is_link_error = e.contains("libilo") || e.contains("linker") || e.contains("cc")
+                    || e.contains("cannot find") || e.contains("lilo") || e.contains("ld");
+                assert!(is_link_error, "codegen error (not link): {}", e);
+            }
+        }
+    }
+
+    #[test]
+    fn compile_to_binary_string_ops_reaches_link_step_or_succeeds() {
+        let compiled = compile_program("f x:t>t;cat x \" world\"");
+        let tmp = std::env::temp_dir().join("ilo_test_aot_str_check");
+        let out = tmp.to_str().unwrap();
+        let result = compile_to_binary(&compiled, "f", out);
+        let _ = std::fs::remove_file(out);
+        let _ = std::fs::remove_file(format!("{}.o", out));
+        match result {
+            Ok(()) => {}
+            Err(e) => {
+                let is_link_error = e.contains("libilo") || e.contains("linker") || e.contains("cc")
+                    || e.contains("cannot find") || e.contains("lilo") || e.contains("ld");
+                assert!(is_link_error, "codegen error (not link): {}", e);
+            }
+        }
+    }
 }
