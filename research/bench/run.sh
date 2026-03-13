@@ -31,8 +31,8 @@ check_cmd() { command -v "$1" >/dev/null 2>&1; }
 # numeric: sum 1..n (pure arithmetic loop)
 cat > "$TMP/numeric.ilo" <<< 'f n:n>n;s=0;i=1;wh <=i n{s=+s i;i=+i 1};s'
 
-# string: build string of n "x" chars
-cat > "$TMP/string.ilo" <<< 'f n:n>t;s="";i=0;wh <i n{s=+s "x";i=+i 1};s'
+# string: build realistic string by concatenating chunks (item-N, CSV-style)
+cat > "$TMP/string.ilo" <<< 'f n:n>n;s="";i=0;wh <i n{s=+s "item-";sv=str i;s=+s sv;s=+s ", ";i=+i 1};len s'
 
 # record: create structs, sum fields
 printf 'type pt{x:n;y:n}\nf n:n>n;s=0;i=0;wh <i n{yv=*i 2;p=pt x:i y:yv;s=+s +p.x p.y;i=+i 1};s\n' > "$TMP/record.ilo"
@@ -133,11 +133,11 @@ GOEOF
 
 cat > "$TMP/string.go" << GOEOF
 package main
-import ("fmt";"time")
-func bench() string { s := ""; for i := 0; i < 100; i++ { s += "x" }; return s }
+import ("fmt";"strconv";"time")
+func bench() int { s := ""; for i := 0; i < 100; i++ { s += "item-"; s += strconv.Itoa(i); s += ", " }; return len(s) }
 func main() {
   bench(); iters := $ITERS; start := time.Now()
-  var r string; for i := 0; i < iters; i++ { r = bench() }
+  var r int; for i := 0; i < iters; i++ { r = bench() }
   e := time.Since(start); fmt.Printf("%d\n", e.Nanoseconds()/int64(iters)); _ = r
 }
 GOEOF
@@ -190,8 +190,8 @@ package main
 import ("fmt";"time")
 func fib(n int) int { if n<=1{return n}; return fib(n-1)+fib(n-2) }
 func main() {
-  fib(10); iters := $ITERS; start := time.Now()
-  var r int; for i := 0; i < iters; i++ { r = fib(10) }
+  fib(20); iters := $ITERS; start := time.Now()
+  var r int; for i := 0; i < iters; i++ { r = fib(20) }
   e := time.Since(start); fmt.Printf("%d\n", e.Nanoseconds()/int64(iters)); _ = r
 }
 GOEOF
@@ -280,7 +280,7 @@ RSEOF
 
 cat > "$TMP/string.rs" << RSEOF
 use std::time::Instant; use std::hint::black_box;
-fn f(n: i64) -> String { let mut s=String::new(); for _ in 0..n { s.push_str("x"); } s }
+fn f(n: i64) -> usize { let mut s=String::new(); for i in 0..n { s.push_str("item-"); s.push_str(&i.to_string()); s.push_str(", "); } s.len() }
 fn main() {
   black_box(f(black_box(100)));
   let iters=${ITERS}_u128; let start=Instant::now();
@@ -338,9 +338,9 @@ cat > "$TMP/recurse.rs" << RSEOF
 use std::time::Instant; use std::hint::black_box;
 fn fib(n: u64) -> u64 { if n<=1{n} else{fib(n-1)+fib(n-2)} }
 fn main() {
-  black_box(fib(black_box(10)));
+  black_box(fib(black_box(20)));
   let iters=${ITERS}_u128; let start=Instant::now();
-  for _ in 0..iters { black_box(fib(black_box(10))); }
+  for _ in 0..iters { black_box(fib(black_box(20))); }
   println!("{}", start.elapsed().as_nanos()/iters);
 }
 RSEOF
@@ -445,7 +445,7 @@ console.log(Math.round((performance.now()-t)*1e6/I));
 JSEOF
 
 cat > "$TMP/string.js" << JSEOF
-function f(n){let s="";for(let i=0;i<n;i++)s+="x";return s}
+function f(n){let s="";for(let i=0;i<n;i++){s+="item-";s+=String(i);s+=", "}return s.length}
 f(100);const I=$ITERS,t=performance.now();let r;for(let i=0;i<I;i++)r=f(100);
 console.log(Math.round((performance.now()-t)*1e6/I));
 JSEOF
@@ -471,7 +471,7 @@ JSEOF
 
 cat > "$TMP/recurse.js" << JSEOF
 function fib(n){return n<=1?n:fib(n-1)+fib(n-2)}
-fib(10);const I=$ITERS,t=performance.now();let r;for(let i=0;i<I;i++)r=fib(10);
+fib(20);const I=$ITERS,t=performance.now();let r;for(let i=0;i<I;i++)r=fib(20);
 console.log(Math.round((performance.now()-t)*1e6/I));
 JSEOF
 
@@ -517,8 +517,8 @@ console.log(Math.round((performance.now() - t) * 1e6 / I));
 TSEOF
 
 cat > "$TMP/string.ts" << TSEOF
-function f(n: number): string { let s = ""; for (let i = 0; i < n; i++) s += "x"; return s; }
-f(100); const I = $ITERS; const t = performance.now(); let r: string = "";
+function f(n: number): number { let s = ""; for (let i = 0; i < n; i++) { s += "item-"; s += String(i); s += ", "; } return s.length; }
+f(100); const I = $ITERS; const t = performance.now(); let r: number = 0;
 for (let i = 0; i < I; i++) r = f(100);
 console.log(Math.round((performance.now() - t) * 1e6 / I));
 TSEOF
@@ -549,8 +549,8 @@ TSEOF
 
 cat > "$TMP/recurse.ts" << TSEOF
 function fib(n: number): number { return n <= 1 ? n : fib(n - 1) + fib(n - 2); }
-fib(10); const I = $ITERS; const t = performance.now(); let r: number = 0;
-for (let i = 0; i < I; i++) r = fib(10);
+fib(20); const I = $ITERS; const t = performance.now(); let r: number = 0;
+for (let i = 0; i < I; i++) r = fib(20);
 console.log(Math.round((performance.now() - t) * 1e6 / I));
 TSEOF
 
@@ -612,8 +612,11 @@ PYEOF
 import time
 def f(n):
     s = ""
-    for _ in range(n): s += "x"
-    return s
+    for i in range(n):
+        s += "item-"
+        s += str(i)
+        s += ", "
+    return len(s)
 f(100)
 iters = $ITERS; start = time.monotonic_ns()
 for _ in range(iters): f(100)
@@ -671,9 +674,9 @@ import time
 def fib(n):
     if n <= 1: return n
     return fib(n-1) + fib(n-2)
-fib(10)
+fib(20)
 iters = $ITERS; start = time.monotonic_ns()
-for _ in range(iters): fib(10)
+for _ in range(iters): fib(20)
 print((time.monotonic_ns() - start) // iters)
 PYEOF
     ;;
@@ -759,7 +762,7 @@ print(math.floor((os.clock()-t)*1e9/iters))
 LUAEOF
 
 cat > "$TMP/string.lua" << LUAEOF
-local function f(n) local s=""; for _=1,n do s=s.."x" end; return s end
+local function f(n) local s=""; for i=0,n-1 do s=s.."item-"; s=s..tostring(i); s=s..", " end; return #s end
 f(100); local iters=$ITERS; local t=os.clock()
 for _=1,iters do f(100) end
 print(math.floor((os.clock()-t)*1e9/iters))
@@ -799,8 +802,8 @@ LUAEOF
 
 cat > "$TMP/recurse.lua" << LUAEOF
 local function fib(n) if n<=1 then return n end; return fib(n-1)+fib(n-2) end
-fib(10); local iters=$ITERS; local t=os.clock()
-for _=1,iters do fib(10) end
+fib(20); local iters=$ITERS; local t=os.clock()
+for _=1,iters do fib(20) end
 print(math.floor((os.clock()-t)*1e9/iters))
 LUAEOF
 
@@ -865,7 +868,7 @@ puts (e*1e9/iters).to_i
 RBEOF
 
 cat > "$TMP/string.rb" << RBEOF
-def f(n);s="";i=0;while i<n;s+="x";i+=1;end;s;end
+def f(n);s="";i=0;while i<n;s+="item-";s+=i.to_s;s+=", ";i+=1;end;s.length;end
 f(100);iters=$ITERS;t=Process.clock_gettime(Process::CLOCK_MONOTONIC)
 iters.times{f(100)};e=Process.clock_gettime(Process::CLOCK_MONOTONIC)-t
 puts (e*1e9/iters).to_i
@@ -897,8 +900,8 @@ RBEOF
 
 cat > "$TMP/recurse.rb" << RBEOF
 def fib(n);n<=1?n:fib(n-1)+fib(n-2);end
-fib(10);iters=$ITERS;t=Process.clock_gettime(Process::CLOCK_MONOTONIC)
-iters.times{fib(10)};e=Process.clock_gettime(Process::CLOCK_MONOTONIC)-t
+fib(20);iters=$ITERS;t=Process.clock_gettime(Process::CLOCK_MONOTONIC)
+iters.times{fib(20)};e=Process.clock_gettime(Process::CLOCK_MONOTONIC)-t
 puts (e*1e9/iters).to_i
 RBEOF
 
@@ -955,7 +958,7 @@ PHPEOF
 
 cat > "$TMP/string.php" << 'PHPEOF'
 <?php
-function f($n) { $s=""; for($i=0;$i<$n;$i++) $s.="x"; return $s; }
+function f($n) { $s=""; for($i=0;$i<$n;$i++) { $s.="item-"; $s.=(string)$i; $s.=", "; } return strlen($s); }
 f(100); $iters=ITERS; $t=hrtime(true);
 for($i=0;$i<$iters;$i++) f(100);
 echo intdiv(hrtime(true)-$t,$iters)."\n";
@@ -989,8 +992,8 @@ PHPEOF
 cat > "$TMP/recurse.php" << 'PHPEOF'
 <?php
 function fib($n) { return $n<=1?$n:fib($n-1)+fib($n-2); }
-fib(10); $iters=ITERS; $t=hrtime(true);
-for($i=0;$i<$iters;$i++) fib(10);
+fib(20); $iters=ITERS; $t=hrtime(true);
+for($i=0;$i<$iters;$i++) fib(20);
 echo intdiv(hrtime(true)-$t,$iters)."\n";
 PHPEOF
 
@@ -1069,7 +1072,7 @@ CSEOF
     ;;
     string) cat > "$TMP/csharp_$bench/Program.cs" << CSEOF
 using System.Diagnostics;
-static string F(int n) { string s = ""; for (int i = 0; i < n; i++) s += "x"; return s; }
+static int F(int n) { string s = ""; for (int i = 0; i < n; i++) { s += "item-"; s += i.ToString(); s += ", "; } return s.Length; }
 F(100); int iters = $ITERS; var sw = Stopwatch.StartNew();
 for (int i = 0; i < iters; i++) F(100);
 sw.Stop(); Console.WriteLine((long)(sw.Elapsed.TotalMilliseconds * 1e6 / iters));
@@ -1103,8 +1106,8 @@ CSEOF
     recurse) cat > "$TMP/csharp_$bench/Program.cs" << CSEOF
 using System.Diagnostics;
 static long Fib(long n) { return n <= 1 ? n : Fib(n-1) + Fib(n-2); }
-Fib(10); int iters = $ITERS; var sw = Stopwatch.StartNew();
-for (int i = 0; i < iters; i++) Fib(10);
+Fib(20); int iters = $ITERS; var sw = Stopwatch.StartNew();
+for (int i = 0; i < iters; i++) Fib(20);
 sw.Stop(); Console.WriteLine((long)(sw.Elapsed.TotalMilliseconds * 1e6 / iters));
 CSEOF
     ;;
@@ -1166,7 +1169,7 @@ fun main() { f(1000); val iters = $ITERS; val t = System.nanoTime(); repeat(iter
 KTEOF
     ;;
     string) cat > "$TMP/$bench.kt" << KTEOF
-fun f(n: Int): String { var s = ""; for (i in 0 until n) s += "x"; return s }
+fun f(n: Int): Int { var s = ""; for (i in 0 until n) { s += "item-"; s += i.toString(); s += ", " }; return s.length }
 fun main() { f(100); val iters = $ITERS; val t = System.nanoTime(); repeat(iters) { f(100) }; println((System.nanoTime()-t)/iters) }
 KTEOF
     ;;
@@ -1189,7 +1192,7 @@ KTEOF
     ;;
     recurse) cat > "$TMP/$bench.kt" << KTEOF
 fun fib(n: Int): Long { return if (n<=1) n.toLong() else fib(n-1)+fib(n-2) }
-fun main() { fib(10); val iters = $ITERS; val t = System.nanoTime(); repeat(iters) { fib(10) }; println((System.nanoTime()-t)/iters) }
+fun main() { fib(20); val iters = $ITERS; val t = System.nanoTime(); repeat(iters) { fib(20) }; println((System.nanoTime()-t)/iters) }
 KTEOF
     ;;
     foreach) cat > "$TMP/$bench.kt" << KTEOF
@@ -1270,7 +1273,7 @@ for pid in "${COMPILE_PIDS[@]}"; do wait "$pid" 2>/dev/null || true; done
 
 # Validate AOT binaries produce correct results — remove bench binary if wrong
 # Skip api (needs HTTP server not yet started)
-for spec in numeric:1000 string:100 record:100 mixed:100 guards:1000 recurse:10 foreach:100 while:100 pipe:100 file:$TMP/api.json; do
+for spec in numeric:1000 string:100 record:100 mixed:100 guards:1000 recurse:20 foreach:100 while:100 pipe:100 file:$TMP/api.json; do
   bench="${spec%%:*}"
   arg="${spec#*:}"
   if [[ -x "$TMP/${bench}_aot_check" ]]; then
@@ -1306,7 +1309,7 @@ try_run() {
   fi
 }
 
-for spec in numeric:1000 string:100 record:100 mixed:100 guards:1000 recurse:10 foreach:100 while:100 pipe:100 file:$TMP/api.json api:$API_URL; do
+for spec in numeric:1000 string:100 record:100 mixed:100 guards:1000 recurse:20 foreach:100 while:100 pipe:100 file:$TMP/api.json api:$API_URL; do
   bench="${spec%%:*}"
   arg="${spec#*:}"   # use single # to strip only the shortest prefix (bench:)
   echo "  $bench..." >&2
@@ -1421,11 +1424,11 @@ lang_label() {
 bench_desc() {
   case $1 in
     numeric) echo "sum 1..1000 (pure arithmetic loop)" ;;
-    string)  echo "build 100-char string via concat" ;;
+    string)  echo "build 100-iteration realistic string (item-N, CSV-style)" ;;
     record)  echo "create 100 structs, sum fields" ;;
     mixed)   echo "build 100 records, JSON-serialise" ;;
     guards)  echo "classify 1000 values via guard chains" ;;
-    recurse) echo "fibonacci(10) — recursive calls" ;;
+    recurse) echo "fibonacci(20) — recursive calls" ;;
     foreach) echo "build list of 100, sum via foreach" ;;
     while)   echo "sum 0..99 via while loop" ;;
     pipe)    echo "chain 4 function calls × 100 (call overhead)" ;;
