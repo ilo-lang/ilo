@@ -5863,6 +5863,14 @@ pub(crate) extern "C" fn jit_recwith_arena(rec: u64, arena_ptr: u64, indices_ptr
 
     // Fast path: arena record → arena record (no thread_local access)
     if rv.is_arena_record() {
+        // SAFETY:
+        //   - `rv.is_arena_record()` guarantees rv was produced by NanVal::arena_record,
+        //     so the pointer is valid and points to a live ArenaRecord in the bump arena.
+        //   - `arena_ptr` is the address of the thread-local BumpArena baked in by the JIT
+        //     at compile time; the JIT always calls this from a single thread.
+        //   - `indices_ptr` points to a `&'static [u8]` slice that was Box::leaked by the
+        //     JIT compiler; it remains valid for the lifetime of the process.
+        //   - `regs` points to a JIT stack slot of length `n_updates`; valid for the call.
         unsafe {
             let old_rec = rv.as_arena_record();
             let old_n = old_rec.n_fields as usize;
