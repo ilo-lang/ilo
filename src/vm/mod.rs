@@ -14428,4 +14428,18 @@ f>n;r=mk 10 20;+r.x r.y";
         let result = vm_run(src, Some("a"), vec![Value::Number(7.0)]);
         assert_eq!(result, Value::Number(15.0)); // 7 + 8
     }
+
+    #[test]
+    fn vm_sequential_cross_function_calls() {
+        // Two sequential calls: a=dbl(n), then triple(a)
+        let source = "dbl x:n>n;*x 2\ntriple x:n>n;*x 3\nf n:n>n;a=dbl n;triple a";
+        assert_eq!(vm_run(source, Some("f"), vec![Value::Number(5.0)]), Value::Number(30.0));
+    }
+
+    #[test]
+    fn vm_long_pipe_chain() {
+        // Pipe chain: i>>dbl>>inc>>dbl>>inc = inc(dbl(inc(dbl(i)))) = 4i+3
+        let source = "dbl x:n>n;*x 2\ninc x:n>n;+x 1\nf n:n>n;n>>dbl>>inc>>dbl>>inc";
+        assert_eq!(vm_run(source, Some("f"), vec![Value::Number(5.0)]), Value::Number(23.0));
+    }
 }

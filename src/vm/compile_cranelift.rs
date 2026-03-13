@@ -1902,4 +1902,40 @@ mod tests {
         let stdout = String::from_utf8_lossy(&output.stdout);
         assert_eq!(stdout.trim(), "42");
     }
+
+    #[test]
+    fn aot_sequential_cross_function_calls() {
+        // Two sequential calls: a=dbl(n), then triple(a)
+        let compiled = compile_program("dbl x:n>n;*x 2\ntriple x:n>n;*x 3\nf n:n>n;a=dbl n;triple a");
+        let tmp = std::env::temp_dir().join("ilo_test_aot_seq_calls");
+        let out = tmp.to_str().unwrap();
+        compile_to_binary(&compiled, "f", out).unwrap();
+
+        let output = std::process::Command::new(out)
+            .arg("5")
+            .output()
+            .expect("failed to run compiled binary");
+        let _ = std::fs::remove_file(out);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert_eq!(stdout.trim(), "30", "dbl(5)=10, triple(10)=30");
+    }
+
+    #[test]
+    fn aot_pipe_chain() {
+        // Pipe chain: i>>dbl>>inc>>dbl>>inc = inc(dbl(inc(dbl(i)))) = 4i+3
+        let compiled = compile_program(
+            "dbl x:n>n;*x 2\ninc x:n>n;+x 1\nf n:n>n;n>>dbl>>inc>>dbl>>inc"
+        );
+        let tmp = std::env::temp_dir().join("ilo_test_aot_pipe");
+        let out = tmp.to_str().unwrap();
+        compile_to_binary(&compiled, "f", out).unwrap();
+
+        let output = std::process::Command::new(out)
+            .arg("5")
+            .output()
+            .expect("failed to run compiled binary");
+        let _ = std::fs::remove_file(out);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert_eq!(stdout.trim(), "23", "4*5+3=23");
+    }
 }

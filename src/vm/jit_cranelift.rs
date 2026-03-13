@@ -2262,4 +2262,23 @@ mod tests {
         ]);
         assert_eq!(result, Some(Value::Number(6.0)));
     }
+
+    #[test]
+    fn cranelift_sequential_cross_function_calls() {
+        // Two sequential calls: a=dbl(n), then triple(a)
+        let result = jit_run("dbl x:n>n;*x 2\ntriple x:n>n;*x 3\nf n:n>n;a=dbl n;triple a", "f", &[
+            Value::Number(5.0),
+        ]);
+        assert_eq!(result, Some(Value::Number(30.0)));
+    }
+
+    #[test]
+    fn cranelift_pipe_chain() {
+        // Pipe chain: inc(dbl(inc(dbl(5)))) = (5*2+1)*2+1 = 23
+        let result = jit_run(
+            "dbl x:n>n;*x 2\ninc x:n>n;+x 1\nf n:n>n;n>>dbl>>inc>>dbl>>inc", "f", &[
+            Value::Number(5.0),
+        ]);
+        assert_eq!(result, Some(Value::Number(23.0)));
+    }
 }
