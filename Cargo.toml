@@ -2,6 +2,7 @@
 name = "ilo"
 version = "0.10.0"
 edition = "2024"
+rust-version = "1.85"
 description = "ilo — a programming language for AI agents"
 license = "MIT"
 repository = "https://github.com/ilo-lang/ilo"
