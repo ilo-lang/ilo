@@ -5286,6 +5286,18 @@ pub(crate) extern "C" fn jit_abs(a: u64) -> u64 {
 
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
+pub(crate) extern "C" fn jit_mod(a: u64, b: u64) -> u64 {
+    let av = NanVal(a);
+    let bv = NanVal(b);
+    if av.is_number() && bv.is_number() {
+        let dv = bv.as_number();
+        if dv == 0.0 { return TAG_NIL; }
+        NanVal::number(av.as_number() % dv).0
+    } else { TAG_NIL }
+}
+
+#[cfg(feature = "cranelift")]
+#[unsafe(no_mangle)]
 pub(crate) extern "C" fn jit_min(a: u64, b: u64) -> u64 {
     let av = NanVal(a);
     let bv = NanVal(b);
@@ -5837,6 +5849,52 @@ pub(crate) extern "C" fn jit_recwith(rec: u64, indices_ptr: *const u8, n_updates
         }
         _ => TAG_NIL,
     }
+}
+
+/// Record-with variant that takes the arena pointer directly, avoiding the
+/// `JIT_ARENA.with(borrow_mut())` thread-local + RefCell overhead on every call.
+/// The arena pointer is baked into JIT code at compile time (same as `jit_recnew`).
+/// Signature: (rec: u64, arena_ptr: u64, indices_ptr: *const u8, n_updates: u64, regs: *const u64) -> u64
+#[cfg(feature = "cranelift")]
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn jit_recwith_arena(rec: u64, arena_ptr: u64, indices_ptr: *const u8, n_updates: u64, regs: *const u64) -> u64 {
+    let rv = NanVal(rec);
+    let n = n_updates as usize;
+
+    // Fast path: arena record → arena record (no thread_local access)
+    if rv.is_arena_record() {
+        unsafe {
+            let old_rec = rv.as_arena_record();
+            let old_n = old_rec.n_fields as usize;
+            let tid = old_rec.type_id;
+            let arena = &mut *(arena_ptr as *mut BumpArena);
+
+            if let Some(new_ptr) = arena.alloc_record(tid, old_n) {
+                let new_rec = &mut *new_ptr;
+                // Copy all fields
+                for i in 0..old_n {
+                    let v = NanVal(*old_rec.field_ptr(i));
+                    v.clone_rc();
+                    *new_rec.field_ptr_mut(i) = v.0;
+                }
+                // Overwrite updated slots
+                for i in 0..n {
+                    let slot = *indices_ptr.add(i) as usize;
+                    if slot < old_n {
+                        NanVal(*new_rec.field_ptr(slot)).drop_rc();
+                        let val = NanVal(*regs.add(i));
+                        val.clone_rc();
+                        *new_rec.field_ptr_mut(slot) = val.0;
+                    }
+                }
+                return NanVal::arena_record(new_ptr).0;
+            }
+            // Arena full — fall back to heap below
+        }
+    }
+
+    // Heap record or arena-full fallback: delegate to the general helper
+    jit_recwith(rec, indices_ptr, n_updates, regs)
 }
 
 /// Create a new list from n items pointed to by `regs`.
