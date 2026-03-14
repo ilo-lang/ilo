@@ -4380,4 +4380,102 @@ mod tests {
             }
         });
     }
+
+    // ── Coverage gap tests ──────────────────────────────────────────────
+
+    // Division and subtraction with constants
+    #[test]
+    fn cranelift_cov_divk_n() {
+        let result = jit_run_numeric("f x:n>n;/x 2", "f", &[10.0]);
+        assert_eq!(result, Some(5.0));
+    }
+
+    // Greater-than comparison (OP_CMPK_GT_N path)
+    #[test]
+    fn cranelift_cov_gt_comparison() {
+        let result = jit_run_numeric("f x:n>n;>x 5{1};0", "f", &[10.0]);
+        assert_eq!(result, Some(1.0));
+    }
+
+    #[test]
+    fn cranelift_cov_gt_comparison_false() {
+        let result = jit_run_numeric("f x:n>n;>x 5{1};0", "f", &[3.0]);
+        assert_eq!(result, Some(0.0));
+    }
+
+    // GTE comparison
+    #[test]
+    fn cranelift_cov_gte() {
+        let result = jit_run_numeric("f x:n>n;>=x 5{1};0", "f", &[5.0]);
+        assert_eq!(result, Some(1.0));
+    }
+
+    // LTE comparison
+    #[test]
+    fn cranelift_cov_lte() {
+        let result = jit_run_numeric("f x:n>n;<=x 5{1};0", "f", &[5.0]);
+        assert_eq!(result, Some(1.0));
+    }
+
+    // Modulo via JIT
+    #[test]
+    fn cranelift_cov_modulo() {
+        let result = jit_run_numeric("f a:n b:n>n;mod a b", "f", &[10.0, 3.0]);
+        assert_eq!(result, Some(1.0));
+    }
+
+    // Record creation and field access via JIT
+    #[test]
+    fn cranelift_cov_record_field() {
+        let result = jit_run_numeric("type pt{x:n;y:n}\nf>n;p=pt x:3 y:4;p.x", "f", &[]);
+        assert_eq!(result, Some(3.0));
+    }
+
+    // Record with update via JIT
+    #[test]
+    fn cranelift_cov_record_with() {
+        let result = jit_run_numeric(
+            "type pt{x:n;y:n}\nf>n;p=pt x:1 y:2;q=p with x:10;+q.x q.y",
+            "f",
+            &[],
+        );
+        assert_eq!(result, Some(12.0));
+    }
+
+    // Equality check
+    #[test]
+    fn cranelift_cov_eq() {
+        let result = jit_run_numeric("f a:n b:n>n;=a b{1};0", "f", &[5.0, 5.0]);
+        assert_eq!(result, Some(1.0));
+    }
+
+    // Not-equal check
+    #[test]
+    fn cranelift_cov_neq() {
+        let result = jit_run_numeric("f a:n b:n>n;!=a b{1};0", "f", &[5.0, 3.0]);
+        assert_eq!(result, Some(1.0));
+    }
+
+    // Deeply nested call chain via JIT
+    #[test]
+    fn cranelift_cov_deep_call() {
+        let result = jit_run_numeric(
+            "a x:n>n;+x 1\nb x:n>n;a x\nf x:n>n;b x",
+            "f",
+            &[10.0],
+        );
+        assert_eq!(result, Some(11.0));
+    }
+
+    // Nil return (optional result)
+    #[test]
+    fn cranelift_cov_nil_guard() {
+        let result = jit_run("f x:n>n;>x 0{x}", "f", &[Value::Number(-1.0)]);
+        // JIT may return None (cannot compile) or Some(Nil)
+        match result {
+            Some(Value::Nil) => {} // expected
+            None => {}             // JIT bailed out, also fine
+            other => panic!("expected Nil or None, got {:?}", other),
+        }
+    }
 }

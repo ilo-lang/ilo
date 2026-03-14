@@ -3824,4 +3824,137 @@ mod tests {
             }
         }
     }
+
+    // ── Coverage gap tests (object-code only) ───────────────────────────
+
+    // OP_SUB_NN, OP_DIV_NN
+    #[test]
+    fn codegen_cov_sub_nn() {
+        let bytes = compile_to_object_bytes("f a:n b:n>n;-a b");
+        assert!(bytes.is_ok(), "SUB_NN codegen failed: {:?}", bytes.err());
+    }
+
+    #[test]
+    fn codegen_cov_div_nn() {
+        let bytes = compile_to_object_bytes("f a:n b:n>n;/a b");
+        assert!(bytes.is_ok(), "DIV_NN codegen failed: {:?}", bytes.err());
+    }
+
+    // OP_SUBK_N, OP_DIVK_N
+    #[test]
+    fn codegen_cov_subk_n() {
+        let bytes = compile_to_object_bytes("f x:n>n;-x 3");
+        assert!(bytes.is_ok(), "SUBK_N codegen failed: {:?}", bytes.err());
+    }
+
+    #[test]
+    fn codegen_cov_divk_n() {
+        let bytes = compile_to_object_bytes("f x:n>n;/x 2");
+        assert!(bytes.is_ok(), "DIVK_N codegen failed: {:?}", bytes.err());
+    }
+
+    // OP_NIL (nil constant loading)
+    #[test]
+    fn codegen_cov_nil() {
+        let bytes = compile_to_object_bytes("f x:n>n;>x 0{x}");
+        assert!(bytes.is_ok(), "NIL codegen failed: {:?}", bytes.err());
+    }
+
+    // Greater-than comparison
+    #[test]
+    fn codegen_cov_gt_comparison() {
+        let bytes = compile_to_object_bytes("f x:n y:n>n;>x y{1};0");
+        assert!(bytes.is_ok(), "GT comparison codegen failed: {:?}", bytes.err());
+    }
+
+    // GTE comparison
+    #[test]
+    fn codegen_cov_gte_comparison() {
+        let bytes = compile_to_object_bytes("f x:n y:n>n;>=x y{1};0");
+        assert!(bytes.is_ok(), "GTE comparison codegen failed: {:?}", bytes.err());
+    }
+
+    // LTE comparison
+    #[test]
+    fn codegen_cov_lte_comparison() {
+        let bytes = compile_to_object_bytes("f x:n y:n>n;<=x y{1};0");
+        assert!(bytes.is_ok(), "LTE comparison codegen failed: {:?}", bytes.err());
+    }
+
+    // Record type
+    #[test]
+    fn codegen_cov_record_type() {
+        let bytes = compile_to_object_bytes("type pt{x:n;y:n}\nf a:n b:n>pt;pt x:a y:b");
+        assert!(bytes.is_ok(), "record type codegen failed: {:?}", bytes.err());
+    }
+
+    // Record field access
+    #[test]
+    fn codegen_cov_record_field() {
+        let bytes = compile_to_object_bytes("type pt{x:n;y:n}\nf>n;p=pt x:1 y:2;p.x");
+        assert!(bytes.is_ok(), "record field codegen failed: {:?}", bytes.err());
+    }
+
+    // Record with update
+    #[test]
+    fn codegen_cov_record_with() {
+        let bytes = compile_to_object_bytes("type pt{x:n;y:n}\nf>n;p=pt x:1 y:2;q=p with x:10;q.x");
+        assert!(bytes.is_ok(), "record with codegen failed: {:?}", bytes.err());
+    }
+
+    // For-range loop
+    #[test]
+    fn codegen_cov_for_range() {
+        let bytes = compile_to_object_bytes("f n:n>n;s=0;@i 0..n{s=+s i};s");
+        assert!(bytes.is_ok(), "for-range codegen failed: {:?}", bytes.err());
+    }
+
+    // Foreach loop
+    #[test]
+    fn codegen_cov_foreach() {
+        let bytes = compile_to_object_bytes("f>n;s=0;@x [1,2,3]{s=+s x};s");
+        assert!(bytes.is_ok(), "foreach codegen failed: {:?}", bytes.err());
+    }
+
+    // Modulo
+    #[test]
+    fn codegen_cov_modulo() {
+        let bytes = compile_to_object_bytes("f a:n b:n>n;mod a b");
+        assert!(bytes.is_ok(), "modulo codegen failed: {:?}", bytes.err());
+    }
+
+    // Equality check
+    #[test]
+    fn codegen_cov_eq() {
+        let bytes = compile_to_object_bytes("f a:n b:n>n;=a b{1};0");
+        assert!(bytes.is_ok(), "EQ codegen failed: {:?}", bytes.err());
+    }
+
+    // Not-equal check
+    #[test]
+    fn codegen_cov_neq() {
+        let bytes = compile_to_object_bytes("f a:n b:n>n;!=a b{1};0");
+        assert!(bytes.is_ok(), "NEQ codegen failed: {:?}", bytes.err());
+    }
+
+    // Map operations
+    #[test]
+    fn codegen_cov_map_ops() {
+        let bytes = compile_to_object_bytes(r#"f>n;m=mset mmap "a" 1;m=mset m "b" 2;k=mkeys m;len k"#);
+        assert!(bytes.is_ok(), "map ops codegen failed: {:?}", bytes.err());
+    }
+
+    // Ok/Err result types
+    #[test]
+    fn codegen_cov_result_types() {
+        let bytes = compile_to_object_bytes(r#"f x:n>R n t;>x 0{~x};^"neg""#);
+        assert!(bytes.is_ok(), "result types codegen failed: {:?}", bytes.err());
+    }
+
+    // Multi-function call chain
+    #[test]
+    fn codegen_cov_multi_func_chain() {
+        let bytes = compile_to_object_bytes("a x:n>n;+x 1\nb x:n>n;a x\nf x:n>n;b x");
+        assert!(bytes.is_ok(), "multi-func chain codegen failed: {:?}", bytes.err());
+    }
 }
