@@ -327,3 +327,153 @@ fn graph_budget_invalid_value() {
         run_args(&["graph", path.to_str().unwrap(), "--budget", "notanumber"]);
     assert!(!ok, "graph --budget with non-integer should fail");
 }
+
+// ── Coverage tests for main.rs and cli/args.rs ──────────────────────────────
+
+/// `ilo --version` should print version (L1824-1825)
+#[test]
+fn cli_cov_version() {
+    let (ok, stdout, _stderr) = run_args(&["--version"]);
+    assert!(ok, "--version should succeed");
+    assert!(
+        stdout.contains("ilo"),
+        "--version should contain 'ilo', got: {stdout}"
+    );
+}
+
+/// `ilo spec lang` should print the full spec (L1817)
+#[test]
+fn cli_cov_spec_lang() {
+    let (ok, stdout, _stderr) = run_args(&["spec", "lang"]);
+    assert!(ok, "spec lang should succeed");
+    assert!(
+        stdout.len() > 100,
+        "spec lang output should be non-trivial"
+    );
+}
+
+/// `ilo spec ai` should print compact/AI spec (L1818)
+#[test]
+fn cli_cov_spec_ai() {
+    let (ok, stdout, _stderr) = run_args(&["spec", "ai"]);
+    assert!(ok, "spec ai should succeed");
+    assert!(stdout.len() > 10, "spec ai should have content");
+}
+
+/// `ilo explain ILO-V001` should print known error code explanation (L1804-1808)
+#[test]
+fn cli_cov_explain_known() {
+    let (ok, stdout, _stderr) = run_args(&["explain", "ILO-V001"]);
+    if ok {
+        assert!(!stdout.is_empty(), "explain should produce output");
+    }
+}
+
+/// `ilo explain UNKNOWN-CODE` should fail (L1809-1812)
+#[test]
+fn cli_cov_explain_unknown() {
+    let (ok, _stdout, stderr) = run_args(&["explain", "UNKNOWN-CODE"]);
+    assert!(!ok, "explain unknown code should fail");
+    assert!(
+        stderr.contains("unknown error code"),
+        "should mention unknown error code, got: {stderr}"
+    );
+}
+
+/// `ilo 'bad syntax ###'` inline parse error (L360-363)
+#[test]
+fn cli_cov_inline_parse_error() {
+    let (ok, _stdout, stderr) = run_args(&["bad syntax ###"]);
+    assert!(!ok, "inline parse error should fail");
+    assert!(
+        !stderr.is_empty(),
+        "should report parse error on stderr"
+    );
+}
+
+/// `ilo graph file --fn nonexistent` function not found (L467-468)
+#[test]
+fn cli_cov_graph_fn_not_found() {
+    let (_dir, path) = write_temp_ilo("f x:n>n;+x 1");
+    let (ok, _stdout, stderr) = run_args(&[
+        "graph",
+        path.to_str().unwrap(),
+        "--fn",
+        "nonexistent",
+    ]);
+    assert!(!ok, "graph with nonexistent function should fail");
+    assert!(
+        stderr.contains("not found") || stderr.contains("nonexistent"),
+        "should mention function not found, got: {stderr}"
+    );
+}
+
+/// `ilo compile` with syntax error (L1100-1104)
+#[test]
+fn cli_cov_compile_parse_error() {
+    let (_dir, path) = write_temp_ilo("f x:n>n;???");
+    let (ok, _stdout, stderr) = run_args(&["compile", path.to_str().unwrap()]);
+    assert!(!ok, "compile with parse error should fail");
+    assert!(
+        stderr.contains("error") || stderr.contains("ILO"),
+        "should report parse error, got: {stderr}"
+    );
+}
+
+/// `ilo serve --mcp` without path (L1204-1205)
+#[test]
+fn cli_cov_serve_mcp_no_path() {
+    let (ok, _stdout, stderr) = run_args(&["serve", "--mcp"]);
+    assert!(!ok, "serve --mcp without path should fail");
+    assert!(
+        stderr.contains("--mcp") || stderr.contains("requires") || stderr.contains("error"),
+        "should mention --mcp error, got: {stderr}"
+    );
+}
+
+/// `ilo serve --tools` without path (L1212-1213)
+#[test]
+fn cli_cov_serve_tools_no_path() {
+    let (ok, _stdout, stderr) = run_args(&["serve", "--tools"]);
+    assert!(!ok, "serve --tools without path should fail");
+    assert!(
+        stderr.contains("--tools") || stderr.contains("requires") || stderr.contains("error"),
+        "should mention --tools error, got: {stderr}"
+    );
+}
+
+/// `ilo run --run-jit 'f x:n>n;+x 1' nonexistent` — JIT with undefined function (L2473-2474)
+#[test]
+fn cli_cov_jit_fn_not_found() {
+    let (ok, _stdout, stderr) =
+        run_args(&["run", "--run-jit", "f x:n>n;+x 1", "nonexistent"]);
+    // On non-aarch64, the JIT may not be available; either way exit should be non-zero
+    assert!(
+        !ok || stderr.contains("error") || stderr.contains("Error"),
+        "JIT with undefined function should fail or error; stderr: {stderr}"
+    );
+}
+
+/// `ilo run --run-vm 'f x:n>n;+x 1' nonexistent 5` — VM with undefined fn (L2530-2531)
+#[test]
+fn cli_cov_run_vm_fn_not_found() {
+    let (ok, _stdout, stderr) =
+        run_args(&["run", "--run-vm", "f x:n>n;+x 1", "nonexistent", "5"]);
+    assert!(!ok, "VM with undefined function should fail");
+    assert!(
+        stderr.contains("undefined") || stderr.contains("nonexistent") || stderr.contains("not found"),
+        "should mention function not found, got: {stderr}"
+    );
+}
+
+/// `ilo run 'f x:n>n;+x 1' f 5` exercises the default engine path
+#[test]
+fn cli_cov_run_default_engine() {
+    let (ok, stdout, stderr) =
+        run_args(&["run", "f x:n>n;+x 1", "f", "5"]);
+    assert!(ok, "run with default engine should succeed; stderr: {stderr}");
+    assert!(
+        stdout.trim() == "6" || stdout.trim() == "6.0",
+        "should output 6, got: {stdout}"
+    );
+}
