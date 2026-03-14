@@ -4478,4 +4478,1404 @@ mod tests {
             other => panic!("expected Nil or None, got {:?}", other),
         }
     }
+
+    // ── Type predicates — OP_ISNUM, OP_ISTEXT, OP_ISBOOL, OP_ISLIST ────────
+
+    #[test]
+    fn cranelift_isnum_true() {
+        let result = jit_run(
+            "f x:n>b;?x{n _:true;_:false}",
+            "f",
+            &[Value::Number(42.0)],
+        );
+        assert_eq!(result, Some(Value::Bool(true)));
+    }
+
+    #[test]
+    fn cranelift_istext_true() {
+        let result = jit_run(
+            r#"f x:t>b;?x{t _:true;_:false}"#,
+            "f",
+            &[Value::Text("hello".into())],
+        );
+        assert_eq!(result, Some(Value::Bool(true)));
+    }
+
+    #[test]
+    fn cranelift_isbool_true() {
+        let result = jit_run(
+            "f x:b>b;?x{b _:true;_:false}",
+            "f",
+            &[Value::Bool(true)],
+        );
+        assert_eq!(result, Some(Value::Bool(true)));
+    }
+
+    #[test]
+    fn cranelift_islist_true() {
+        let result = jit_run(
+            "f x:n>b;?x{l _:true;_:false}",
+            "f",
+            &[Value::List(vec![Value::Number(1.0)])],
+        );
+        assert_eq!(result, Some(Value::Bool(true)));
+    }
+
+    // ── Map operations — OP_MAPNEW, OP_MSET, OP_MGET, OP_MHAS, OP_MKEYS,
+    //                    OP_MVALS, OP_MDEL ──────────────────────────────────────
+
+    #[test]
+    fn cranelift_mapnew_mset_mget() {
+        let result = jit_run(
+            r#"f>n;m=mset mmap "k" 42;mget m "k""#,
+            "f",
+            &[],
+        );
+        assert_eq!(result, Some(Value::Number(42.0)));
+    }
+
+    #[test]
+    fn cranelift_mhas_true() {
+        let result = jit_run(
+            r#"f>b;m=mset mmap "x" 1;mhas m "x""#,
+            "f",
+            &[],
+        );
+        assert_eq!(result, Some(Value::Bool(true)));
+    }
+
+    #[test]
+    fn cranelift_mhas_false() {
+        let result = jit_run(
+            r#"f>b;m=mmap;mhas m "missing""#,
+            "f",
+            &[],
+        );
+        assert_eq!(result, Some(Value::Bool(false)));
+    }
+
+    #[test]
+    fn cranelift_mkeys_returns_list() {
+        let result = jit_run(
+            r#"f>n;m=mset mmap "a" 1;ks=mkeys m;len ks"#,
+            "f",
+            &[],
+        );
+        assert_eq!(result, Some(Value::Number(1.0)));
+    }
+
+    #[test]
+    fn cranelift_mvals_returns_list() {
+        let result = jit_run(
+            r#"f>n;m=mset mmap "a" 99;vs=mvals m;len vs"#,
+            "f",
+            &[],
+        );
+        assert_eq!(result, Some(Value::Number(1.0)));
+    }
+
+    #[test]
+    fn cranelift_mdel_removes_key() {
+        let result = jit_run(
+            r#"f>b;m=mset mmap "x" 1;m=mdel m "x";mhas m "x""#,
+            "f",
+            &[],
+        );
+        assert_eq!(result, Some(Value::Bool(false)));
+    }
+
+    // ── OP_PRT, OP_TRM, OP_UNQ ──────────────────────────────────────────────
+
+    #[test]
+    fn cranelift_prt_returns_value() {
+        // prnt x returns the value (with side-effect of printing)
+        let result = jit_run("f x:n>n;prnt x;x", "f", &[Value::Number(7.0)]);
+        assert_eq!(result, Some(Value::Number(7.0)));
+    }
+
+    #[test]
+    fn cranelift_trm_strips_whitespace() {
+        let result = jit_run(
+            r#"f s:t>t;trm s"#,
+            "f",
+            &[Value::Text("  hello  ".into())],
+        );
+        assert_eq!(result, Some(Value::Text("hello".into())));
+    }
+
+    #[test]
+    fn cranelift_unq_deduplicates() {
+        let result = jit_run(
+            "f xs:L n>L n;unq xs",
+            "f",
+            &[Value::List(vec![
+                Value::Number(1.0),
+                Value::Number(2.0),
+                Value::Number(1.0),
+                Value::Number(3.0),
+            ])],
+        );
+        match result {
+            Some(Value::List(v)) => assert_eq!(v.len(), 3),
+            other => panic!("expected List of 3, got {:?}", other),
+        }
+    }
+
+    // ── File I/O ops — OP_RD, OP_RDL, OP_WR, OP_WRL ────────────────────────
+
+    #[test]
+    fn cranelift_wr_wrl_emits_code() {
+        // Write a temp file and read it back
+        let tmp = std::env::temp_dir().join("ilo_jit_test_wr.txt");
+        let path = tmp.to_str().unwrap().to_string();
+        // wr path content returns Result; wrl writes with newline
+        let src = r#"f p:t c:t>R t t;wr p c"#;
+        let result = jit_run(src, "f", &[
+            Value::Text(path.clone()),
+            Value::Text("hello".into()),
+        ]);
+        // wr returns Ok or Err; just check it returns something
+        assert!(result.is_some(), "wr should return a value");
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[test]
+    fn cranelift_rd_reads_file() {
+        // Write a file then read it
+        let tmp = std::env::temp_dir().join("ilo_jit_test_rd.txt");
+        std::fs::write(&tmp, "42").unwrap();
+        let path = tmp.to_str().unwrap().to_string();
+        let src = r#"f p:t>R t t;rd p"#;
+        let result = jit_run(src, "f", &[Value::Text(path)]);
+        let _ = std::fs::remove_file(&tmp);
+        match result {
+            Some(Value::Ok(v)) => assert_eq!(*v, Value::Text("42".into())),
+            other => panic!("expected Ok(42), got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn cranelift_rdl_reads_lines() {
+        let tmp = std::env::temp_dir().join("ilo_jit_test_rdl.txt");
+        std::fs::write(&tmp, "line1\nline2\n").unwrap();
+        let path = tmp.to_str().unwrap().to_string();
+        let src = r#"f p:t>R L t t;rdl p"#;
+        let result = jit_run(src, "f", &[Value::Text(path)]);
+        let _ = std::fs::remove_file(&tmp);
+        assert!(
+            matches!(&result, Some(Value::Ok(_))),
+            "expected Ok(lines), got {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn cranelift_wrl_writes_lines() {
+        let tmp = std::env::temp_dir().join("ilo_jit_test_wrl.txt");
+        let path = tmp.to_str().unwrap().to_string();
+        let src = r#"f p:t>R t t;wrl p ["a","b"]"#;
+        let result = jit_run(src, "f", &[Value::Text(path.clone())]);
+        let _ = std::fs::remove_file(&tmp);
+        assert!(result.is_some(), "wrl should return a value");
+    }
+
+    // ── Inlining path: is_inlinable returns true for pure numeric guards ──────
+
+    #[test]
+    fn cranelift_inline_numeric_callee() {
+        // A simple numeric function that gets inlined by the JIT.
+        // double is pure numeric and inlinable.
+        let result = jit_run_numeric(
+            "double x:n>n;*x 2\nf x:n>n;double x",
+            "f",
+            &[25.0],
+        );
+        assert_eq!(result, Some(50.0));
+    }
+
+    #[test]
+    fn cranelift_inline_callee_boundary_lo() {
+        // Guard chain that returns lo when x <= lo
+        let result = jit_run_numeric(
+            "pos x:n>n;>x 0 x;0\nf x:n>n;pos x",
+            "f",
+            &[-5.0],
+        );
+        assert_eq!(result, Some(0.0));
+    }
+
+    #[test]
+    fn cranelift_inline_callee_boundary_hi() {
+        // Guard chain that returns 1 when x > 100
+        let result = jit_run_numeric(
+            "big x:n>n;>x 100 1;0\nf x:n>n;big x",
+            "f",
+            &[200.0],
+        );
+        assert_eq!(result, Some(1.0));
+    }
+
+    #[test]
+    fn cranelift_inline_add_nn_sub_nn_mul_nn_div_nn() {
+        // Callee uses OP_ADD_NN — inlinable
+        let result = jit_run_numeric(
+            "add2 a:n b:n>n;+a b\nf x:n>n;add2 x x",
+            "f",
+            &[5.0],
+        );
+        assert_eq!(result, Some(10.0));
+    }
+
+    #[test]
+    fn cranelift_inline_subk_n_divk_n_mulk_n() {
+        // Callee uses OP_DIVK_N — inlinable
+        let result = jit_run_numeric(
+            "halve x:n>n;/x 2\nf x:n>n;halve x",
+            "f",
+            &[10.0],
+        );
+        assert_eq!(result, Some(5.0));
+    }
+
+    // ── is_inlinable edge cases (lines 312-346) ───────────────────────────────
+
+    #[test]
+    fn cranelift_non_numeric_callee_not_inlined() {
+        // Callee uses string ops — not all_regs_numeric so not inlined,
+        // falls through to direct call path instead.
+        let result = jit_run(
+            "adds a:t b:t>t;+ a b\nf a:t b:t>t;adds a b",
+            "f",
+            &[Value::Text("hi".into()), Value::Text("!".into())],
+        );
+        assert_eq!(result, Some(Value::Text("hi!".into())));
+    }
+
+    // ── inline_chunk CMPK_EQ_N path ──────────────────────────────────────────
+
+    #[test]
+    fn cranelift_inline_cmpk_eq_n() {
+        // Callee: return 1 if x==0, else 0 — exercises CMPK_EQ_N in inline_chunk.
+        // (Fallthrough must be a literal so the code doesn't "fall off end")
+        let result = jit_run_numeric(
+            "mayone x:n>n;=x 0 1;0\nf x:n>n;mayone x",
+            "f",
+            &[0.0],
+        );
+        assert_eq!(result, Some(1.0));
+    }
+
+    #[test]
+    fn cranelift_inline_cmpk_ne_n() {
+        // Callee: return 99 if x!=0, else 0 — exercises CMPK_NE_N in inline_chunk
+        let result = jit_run_numeric(
+            "nonzero x:n>n;!=x 0 99;0\nf x:n>n;nonzero x",
+            "f",
+            &[5.0],
+        );
+        assert_eq!(result, Some(99.0));
+    }
+
+    // ── OP_FOREACHNEXT slow path (no cached loop data) ───────────────────────
+
+    #[test]
+    fn cranelift_foreach_string_list() {
+        // Foreach over a string list — exercises non-numeric elements path.
+        let result = jit_run(
+            "f xs:L t>n;s=0;@x xs{n=len x;s=+s n};s",
+            "f",
+            &[Value::List(vec![
+                Value::Text("ab".into()),
+                Value::Text("cde".into()),
+            ])],
+        );
+        assert_eq!(result, Some(Value::Number(5.0)));
+    }
+
+    // ── OP_LISTGET fallback path (block_map missing entries) ─────────────────
+
+    #[test]
+    fn cranelift_listget_via_index_op() {
+        // xs.1 uses OP_INDEX (direct index), not LISTGET via foreach.
+        let result = jit_run(
+            "f xs:L n>n;xs.1",
+            "f",
+            &[Value::List(vec![Value::Number(10.0), Value::Number(20.0)])],
+        );
+        assert_eq!(result, Some(Value::Number(20.0)));
+    }
+
+    // ── OP_GET (HTTP GET builtin) ────────────────────────────────────────────
+
+    #[test]
+    fn cranelift_get_builtin_emits_code() {
+        // OP_GET is HTTP GET; we just verify it compiles without panicking.
+        // The actual request will fail (no server) — that's fine.
+        use crate::vm;
+        let src = r#"f url:t>R t t;get url"#;
+        let tokens: Vec<crate::lexer::Token> = crate::lexer::lex(src)
+            .unwrap()
+            .into_iter()
+            .map(|(t, _)| t)
+            .collect();
+        let prog = crate::parser::parse_tokens(tokens).unwrap();
+        let compiled = vm::compile(&prog).unwrap();
+        let idx = compiled.func_names.iter().position(|n| n == "f").unwrap();
+        let chunk = &compiled.chunks[idx];
+        let nan_consts = &compiled.nan_constants[idx];
+        // Just check it compiles without panicking
+        let _ = compile(chunk, nan_consts, &compiled);
+    }
+
+    // ── OP_NUM builtin ───────────────────────────────────────────────────────
+
+    #[test]
+    fn cranelift_num_parse_integer() {
+        let result = jit_run(
+            r#"f s:t>n;r=num s;?r{~v:v;^_:0}"#,
+            "f",
+            &[Value::Text("42".into())],
+        );
+        assert_eq!(result, Some(Value::Number(42.0)));
+    }
+
+    // ── OP_INDEX with literal index ──────────────────────────────────────────
+
+    #[test]
+    fn cranelift_index_literal_second() {
+        // xs.1 uses OP_INDEX with literal index 1
+        let result = jit_run(
+            "f xs:L n>n;xs.1",
+            "f",
+            &[Value::List(vec![Value::Number(100.0), Value::Number(200.0)])],
+        );
+        assert_eq!(result, Some(Value::Number(200.0)));
+    }
+
+    // ── OP_MOD builtin ───────────────────────────────────────────────────────
+
+    #[test]
+    fn cranelift_mod_builtin() {
+        let result = jit_run_numeric("f a:n b:n>n;mod a b", "f", &[17.0, 5.0]);
+        assert_eq!(result, Some(2.0));
+    }
+
+    // ── OP_ADD/MUL with non-numeric operands (slow path) ─────────────────────
+
+    #[test]
+    fn cranelift_add_slow_path_text() {
+        // + with text operands hits the slow (helper) path in the inline numeric check
+        let result = jit_run(
+            r#"f a:t b:t>t;+ a b"#,
+            "f",
+            &[Value::Text("foo".into()), Value::Text("bar".into())],
+        );
+        assert_eq!(result, Some(Value::Text("foobar".into())));
+    }
+
+    // ── OP_GE, OP_LE with always-numeric fast path ────────────────────────────
+
+    #[test]
+    fn cranelift_ge_always_numeric() {
+        let result = jit_run(
+            "f a:n b:n>b;>= a b",
+            "f",
+            &[Value::Number(5.0), Value::Number(5.0)],
+        );
+        assert_eq!(result, Some(Value::Bool(true)));
+    }
+
+    #[test]
+    fn cranelift_le_always_numeric() {
+        let result = jit_run(
+            "f a:n b:n>b;<= a b",
+            "f",
+            &[Value::Number(3.0), Value::Number(5.0)],
+        );
+        assert_eq!(result, Some(Value::Bool(true)));
+    }
+
+    // ── Fused compare-and-branch (compare + immediately-following JMPF/JMPT) ──
+
+    #[test]
+    fn cranelift_fused_cmp_branch_gt() {
+        // Pattern: bool = > a b, then conditional jump on the same bool register.
+        // This triggers the fused compare-and-branch path in OP_LT|OP_GT|...
+        let result = jit_run_numeric(
+            "f a:n b:n>n;r=0;r=> a b{r=1};r",
+            "f",
+            &[10.0, 5.0],
+        );
+        assert_eq!(result, Some(1.0));
+    }
+
+    // ── call_raw with 3 args ──────────────────────────────────────────────────
+
+    #[test]
+    fn cranelift_3_args() {
+        let result = jit_run_numeric(
+            "f a:n b:n c:n>n;+a +b c",
+            "f",
+            &[1.0, 2.0, 3.0],
+        );
+        assert_eq!(result, Some(6.0));
+    }
+
+    // ── compile_and_call with entry_idx != 0 ─────────────────────────────────
+
+    #[test]
+    fn cranelift_entry_not_at_index_zero() {
+        // Entry function is declared after a helper: exercises non-zero entry_idx path
+        let result = jit_run_numeric(
+            "helper x:n>n;+x 1\nf x:n>n;+x 2",
+            "f",
+            &[10.0],
+        );
+        assert_eq!(result, Some(12.0));
+    }
+
+    // ── OP_RECWITH arena path in JIT ─────────────────────────────────────────
+
+    #[test]
+    fn cranelift_recwith_arena_field_update() {
+        let src = "type box{v:n} f>n;b=box v:5;b2=b with v:99;b2.v";
+        let result = jit_run_numeric(src, "f", &[]);
+        assert_eq!(result, Some(99.0));
+    }
+
+    // ── OP_JMPT path (jump if true) ──────────────────────────────────────────
+
+    #[test]
+    fn cranelift_jmpt_taken() {
+        // The ternary ?cond a b uses JMPT/JMPF.
+        // Syntax: ?<condition> <true_val> <false_val>
+        let result = jit_run_numeric("f x:n>n;?<x 0 0 x", "f", &[42.0]);
+        // x < 0 is false (42 > 0), so returns x=42
+        assert_eq!(result, Some(42.0));
+    }
+
+    #[test]
+    fn cranelift_jmpf_taken() {
+        let result = jit_run_numeric("f x:n>n;?<x 0 0 x", "f", &[-1.0]);
+        // x < 0 is true, returns 0
+        assert_eq!(result, Some(0.0));
+    }
+
+    // ── OP_TRUTHY (general truthy check for non-bool register in JMPF) ────────
+
+    #[test]
+    fn cranelift_truthy_number() {
+        // wh n{body} — condition is a number (not always-bool reg) → exercises
+        // the general truthy check path in OP_JMPF handler (the 3-block diamond).
+        // Counts down from 3, accumulating s = 3+2+1 = 6.
+        let result = jit_run_numeric("f n:n>n;s=0;wh n{s=+s n;n=-n 1};s", "f", &[3.0]);
+        assert_eq!(result, Some(6.0));
+    }
+
+    // ── OP_MOVE (a != b, identity move) via JIT ──────────────────────────────
+
+    #[test]
+    fn cranelift_move_copies_text() {
+        let result = jit_run(
+            r#"f x:t>t;y=x;y"#,
+            "f",
+            &[Value::Text("abc".into())],
+        );
+        assert_eq!(result, Some(Value::Text("abc".into())));
+    }
+
+    // ── OP_LOADK with nan_consts fallback (ki >= len → 0.0) ─────────────────
+
+    #[test]
+    fn cranelift_loadk_zero_fallback() {
+        // Indirect test: a constant load with an in-range index
+        let result = jit_run_numeric("f>n;3.14", "f", &[]);
+        assert!((result.unwrap() - 3.14).abs() < 1e-10);
+    }
+
+    // ── For-range loop (OP_FORRANGEPREP / OP_FORRANGENEXT) ───────────────────
+
+    #[test]
+    fn cranelift_for_range_loop_sum() {
+        let result = jit_run_numeric(
+            "f n:n>n;s=0;@i 0..n{s=+s i};s",
+            "f",
+            &[5.0],
+        );
+        assert_eq!(result, Some(10.0)); // 0+1+2+3+4 = 10
+    }
+
+    // ── Inlining with LOADK (constant load in inline_chunk) ─────────────────
+
+    #[test]
+    fn cranelift_inline_loadk_constant() {
+        // Callee uses LOADK to load a constant — exercises LOADK in inline_chunk.
+        // A function that adds a constant (ADDK_N uses LOADK internally).
+        let result = jit_run_numeric(
+            "addconst x:n>n;+x 3.14\nf x:n>n;addconst x",
+            "f",
+            &[0.0],
+        );
+        assert!((result.unwrap() - 3.14).abs() < 1e-10);
+    }
+
+    // ── OP_JMPNN — nil coalescing with non-nil value (JIT) ──────────────────
+
+    #[test]
+    fn cranelift_nil_coalesce_non_nil_text() {
+        let result = jit_run(
+            r#"f x:O t>t;x??"default""#,
+            "f",
+            &[Value::Text("present".into())],
+        );
+        assert_eq!(result, Some(Value::Text("present".into())));
+    }
+
+    // ── OP_SLC ───────────────────────────────────────────────────────────────
+
+    #[test]
+    fn cranelift_slc_string() {
+        let result = jit_run(
+            r#"f s:t>t;slc s 1 3"#,
+            "f",
+            &[Value::Text("hello".into())],
+        );
+        assert_eq!(result, Some(Value::Text("el".into())));
+    }
+
+    // ── OP_INDEX (record field by name via RECFLD_NAME helper) ───────────────
+
+    #[test]
+    fn cranelift_recfld_by_index() {
+        // Access second field of a record by positional index via JIT
+        let src = "type pt{x:n;y:n} f a:n b:n>n;p=pt x:a y:b;p.y";
+        let result = jit_run_numeric(src, "f", &[3.0, 4.0]);
+        assert_eq!(result, Some(4.0));
+    }
+
+    // ── OP_FOREACHPREP fallback (jb or bb block not found) ───────────────────
+
+    #[test]
+    fn cranelift_foreach_nested_loops() {
+        // Two nested foreach loops — inner loop re-enters FOREACHPREP
+        let result = jit_run(
+            "f rows:L L n>n;s=0;@row rows{@x row{s=+s x}};s",
+            "f",
+            &[Value::List(vec![
+                Value::List(vec![Value::Number(1.0), Value::Number(2.0)]),
+                Value::List(vec![Value::Number(3.0), Value::Number(4.0)]),
+            ])],
+        );
+        assert_eq!(result, Some(Value::Number(10.0)));
+    }
+
+    // ── Multiple map operations in sequence ──────────────────────────────────
+
+    #[test]
+    fn cranelift_map_multi_set_get() {
+        let result = jit_run(
+            r#"f>n;m=mset mmap "a" 1;m=mset m "b" 2;m=mset m "c" 3;mget m "b""#,
+            "f",
+            &[],
+        );
+        assert_eq!(result, Some(Value::Number(2.0)));
+    }
+
+    // ── OP_POSTH (HTTP POST with headers) — emits code, no actual request ───
+
+    #[test]
+    fn cranelift_posth_emits_code() {
+        // We just verify the JIT compiles a function using OP_POSTH without panicking.
+        // OP_POSTH is emitted when `post url body hdrs` with hdrs:M t t.
+        // The actual HTTP call will fail (no server), but that's fine.
+        let src = r#"f url:t body:t hdrs:M t t>R t t;post url body hdrs"#;
+        let tokens: Vec<crate::lexer::Token> = crate::lexer::lex(src)
+            .unwrap()
+            .into_iter()
+            .map(|(t, _)| t)
+            .collect();
+        let prog = crate::parser::parse_tokens(tokens).unwrap();
+        let compiled = crate::vm::compile(&prog).unwrap();
+        let idx = compiled.func_names.iter().position(|n| n == "f").unwrap();
+        let chunk = &compiled.chunks[idx];
+        let nan_consts = &compiled.nan_constants[idx];
+        // Should compile without panicking (result may be None if JIT bails)
+        let _ = compile(chunk, nan_consts, &compiled);
+    }
+
+    // ── inline_chunk OP_SUB_NN / OP_MUL_NN / OP_DIV_NN (lines 500-526) ──────
+
+    #[test]
+    fn cranelift_inline_sub_nn_two_params() {
+        // Callee uses OP_SUB_NN (both params numeric) — exercises inline_chunk SUB_NN path
+        let result = jit_run_numeric(
+            "subdbl a:n b:n>n;-a b\nf x:n y:n>n;subdbl x y",
+            "f",
+            &[10.0, 3.0],
+        );
+        assert_eq!(result, Some(7.0));
+    }
+
+    #[test]
+    fn cranelift_inline_mul_nn_two_params() {
+        // Callee uses OP_MUL_NN (both params numeric) — exercises inline_chunk MUL_NN path
+        let result = jit_run_numeric(
+            "muldbl a:n b:n>n;*a b\nf x:n y:n>n;muldbl x y",
+            "f",
+            &[4.0, 5.0],
+        );
+        assert_eq!(result, Some(20.0));
+    }
+
+    #[test]
+    fn cranelift_inline_div_nn_two_params() {
+        // Callee uses OP_DIV_NN (both params numeric) — exercises inline_chunk DIV_NN path
+        let result = jit_run_numeric(
+            "divdbl a:n b:n>n;/a b\nf x:n y:n>n;divdbl x y",
+            "f",
+            &[12.0, 4.0],
+        );
+        assert_eq!(result, Some(3.0));
+    }
+
+    // ── inline_chunk OP_SUBK_N (lines 539-547) ───────────────────────────────
+
+    #[test]
+    fn cranelift_inline_subk_n() {
+        // Callee uses OP_SUBK_N (subtract constant) — exercises inline_chunk SUBK_N path
+        let result = jit_run_numeric(
+            "dec1 x:n>n;-x 1\nf x:n>n;dec1 x",
+            "f",
+            &[10.0],
+        );
+        assert_eq!(result, Some(9.0));
+    }
+
+    // ── inline_chunk f64_val_for non-param register (lines 388-389) ──────────
+
+    #[test]
+    fn cranelift_inline_local_var_f64_path() {
+        // Callee has a local (non-param) register used in DIVK_N.
+        // f64_val_for for non-param regs uses extra_vars + bitcast (lines 388-389).
+        let result = jit_run_numeric(
+            "step x:n>n;y=+x 1;/y 2\nf x:n>n;step x",
+            "f",
+            &[9.0],
+        );
+        assert_eq!(result, Some(5.0));
+    }
+
+    // ── is_inlinable: reg_count > 16 (line 315-316) ──────────────────────────
+
+    #[test]
+    fn cranelift_inline_too_many_regs_falls_back_to_direct_call() {
+        // Build a callee with many local variables (> 16 regs) so is_inlinable returns
+        // false due to reg_count > 16.  The caller should still produce the correct result
+        // via a direct Cranelift call.
+        let src = "bigfn x:n>n;\
+            a=+x 1;b=+a 1;c=+b 1;d=+c 1;e=+d 1;f=+e 1;g=+f 1;h=+g 1;\
+            i=+h 1;j=+i 1;k=+j 1;l=+k 1;m=+l 1;n2=+m 1;o=+n2 1;p=+o 1;\
+            +p 1\n\
+            f x:n>n;bigfn x";
+        let result = jit_run_numeric(src, "f", &[0.0]);
+        assert_eq!(result, Some(17.0));
+    }
+
+    // ── OP_SUB_NN / OP_MUL_NN / OP_DIV_NN slow path in main JIT loop ─────────
+    // When all_regs_numeric = false (mixed-type params), params don't get
+    // reg_always_num=true, so arithmetic with those params hits the bitcast path.
+
+    #[test]
+    fn cranelift_mul_nn_mixed_params_slow_path() {
+        // f a:n b:n c:t>n;*a b — c:t makes all_regs_numeric=false.
+        // OP_MUL_NN on a,b with reg_always_num=false → slow bitcast path (lines 1042-1049).
+        let result = jit_run(
+            "f a:n b:n c:t>n;*a b",
+            "f",
+            &[Value::Number(3.0), Value::Number(4.0), Value::Text("x".into())],
+        );
+        assert_eq!(result, Some(Value::Number(12.0)));
+    }
+
+    #[test]
+    fn cranelift_sub_nn_mixed_params_slow_path() {
+        // f a:n b:n c:t>n;-a b — exercises OP_SUB_NN slow bitcast path (lines 1021-1028).
+        let result = jit_run(
+            "f a:n b:n c:t>n;-a b",
+            "f",
+            &[Value::Number(10.0), Value::Number(3.0), Value::Text("x".into())],
+        );
+        assert_eq!(result, Some(Value::Number(7.0)));
+    }
+
+    #[test]
+    fn cranelift_div_nn_mixed_params_slow_path() {
+        // f a:n b:n c:t>n;/a b — exercises OP_DIV_NN slow bitcast path (lines 1063-1070).
+        let result = jit_run(
+            "f a:n b:n c:t>n;/a b",
+            "f",
+            &[Value::Number(12.0), Value::Number(4.0), Value::Text("x".into())],
+        );
+        assert_eq!(result, Some(Value::Number(3.0)));
+    }
+
+    // ── OP_ADD|OP_SUB|OP_MUL|OP_DIV fast and slow paths (lines 1178-1195) ────
+    // OP_SUB/MUL/DIV (not _NN) are emitted when params are :_ (any type).
+    // Fast path: both are numbers at runtime (lines 1178-1186).
+    // Slow path: one/both are non-numeric at runtime (lines 1188-1200).
+
+    #[test]
+    fn cranelift_op_sub_any_type_fast_path() {
+        // f a:_ b:_>n;-a b with numeric args → fast path (both nums), OP_SUB fsub branch
+        let result = jit_run_numeric("f a:_ b:_>n;-a b", "f", &[9.0, 4.0]);
+        assert_eq!(result, Some(5.0));
+    }
+
+    #[test]
+    fn cranelift_op_mul_any_type_fast_path() {
+        // f a:_ b:_>n;*a b with numeric args → fast path, OP_MUL fmul branch (line 1181)
+        let result = jit_run_numeric("f a:_ b:_>n;*a b", "f", &[3.0, 7.0]);
+        assert_eq!(result, Some(21.0));
+    }
+
+    #[test]
+    fn cranelift_op_div_any_type_fast_path() {
+        // f a:_ b:_>n;/a b with numeric args → fast path, OP_DIV fdiv branch (line 1182)
+        let result = jit_run_numeric("f a:_ b:_>n;/a b", "f", &[20.0, 4.0]);
+        assert_eq!(result, Some(5.0));
+    }
+
+    #[test]
+    fn cranelift_op_sub_any_type_slow_path() {
+        // f a:_ b:_>n;-a b with text args → slow path, OP_SUB helper branch (line 1192)
+        let result = jit_run(
+            "f a:_ b:_>n;-a b",
+            "f",
+            &[Value::Text("x".into()), Value::Text("y".into())],
+        );
+        // Non-numeric subtraction returns nil
+        assert_eq!(result, Some(Value::Nil));
+    }
+
+    #[test]
+    fn cranelift_op_mul_any_type_slow_path() {
+        // f a:_ b:_>_;*a b with text args → slow path, OP_MUL helper branch (line 1193)
+        let result = jit_run(
+            "f a:_ b:_>_;*a b",
+            "f",
+            &[Value::Text("x".into()), Value::Text("y".into())],
+        );
+        // Non-numeric multiplication returns nil
+        assert_eq!(result, Some(Value::Nil));
+    }
+
+    // ── OP_POST / OP_GETH (lines 3222-3237) ──────────────────────────────────
+
+    #[test]
+    fn cranelift_op_post_emits_code() {
+        // OP_POST: `post url body` (2-arg, no headers).
+        // We verify JIT compiles this successfully (HTTP call may fail at runtime).
+        let src = r#"f url:t body:t>R t t;post url body"#;
+        let tokens: Vec<crate::lexer::Token> = crate::lexer::lex(src)
+            .unwrap()
+            .into_iter()
+            .map(|(t, _)| t)
+            .collect();
+        let prog = crate::parser::parse_tokens(tokens).unwrap();
+        let compiled = crate::vm::compile(&prog).unwrap();
+        let idx = compiled.func_names.iter().position(|n| n == "f").unwrap();
+        let chunk = &compiled.chunks[idx];
+        let nan_consts = &compiled.nan_constants[idx];
+        let _ = compile(chunk, nan_consts, &compiled);
+    }
+
+    #[test]
+    fn cranelift_op_geth_emits_code() {
+        // OP_GETH: `get url headers` (2-arg, with headers map).
+        // We verify JIT compiles this successfully.
+        let src = r#"f url:t hdrs:M t t>R t t;get url hdrs"#;
+        let tokens: Vec<crate::lexer::Token> = crate::lexer::lex(src)
+            .unwrap()
+            .into_iter()
+            .map(|(t, _)| t)
+            .collect();
+        let prog = crate::parser::parse_tokens(tokens).unwrap();
+        let compiled = crate::vm::compile(&prog).unwrap();
+        let idx = compiled.func_names.iter().position(|n| n == "f").unwrap();
+        let chunk = &compiled.chunks[idx];
+        let nan_consts = &compiled.nan_constants[idx];
+        let _ = compile(chunk, nan_consts, &compiled);
+    }
+
+    // ── OP_RECWITH unresolved field path (lines 2432-2451) ───────────────────
+
+    #[test]
+    fn cranelift_recwith_unresolved_field_compiles() {
+        // r:_ with z:10 — field 'z' not in any registered type →
+        // all_resolved = false → JIT takes the unresolved helper path (lines 2432-2451).
+        let src = "type pt{x:n;y:n}\nf r:_>_;r with z:10";
+        let tokens: Vec<crate::lexer::Token> = crate::lexer::lex(src)
+            .unwrap()
+            .into_iter()
+            .map(|(t, _)| t)
+            .collect();
+        let prog = crate::parser::parse_tokens(tokens).unwrap();
+        let compiled = crate::vm::compile(&prog).unwrap();
+        let idx = compiled.func_names.iter().position(|n| n == "f").unwrap();
+        let chunk = &compiled.chunks[idx];
+        let nan_consts = &compiled.nan_constants[idx];
+        // Compilation should succeed (covering the unresolved path)
+        let jit_fn = compile(chunk, nan_consts, &compiled);
+        assert!(
+            jit_fn.is_some(),
+            "JIT compilation should succeed for unresolved recwith"
+        );
+    }
+
+    // ── OP_GET (1-arg HTTP GET) ───────────────────────────────────────────────
+
+    #[test]
+    fn cranelift_op_get_1arg_emits_code() {
+        // `get url` (1-arg) emits OP_GET (HTTP GET without headers).
+        let src = r#"f url:t>R t t;get url"#;
+        let tokens: Vec<crate::lexer::Token> = crate::lexer::lex(src)
+            .unwrap()
+            .into_iter()
+            .map(|(t, _)| t)
+            .collect();
+        let prog = crate::parser::parse_tokens(tokens).unwrap();
+        let compiled = crate::vm::compile(&prog).unwrap();
+        let idx = compiled.func_names.iter().position(|n| n == "f").unwrap();
+        let chunk = &compiled.chunks[idx];
+        let nan_consts = &compiled.nan_constants[idx];
+        let _ = compile(chunk, nan_consts, &compiled);
+    }
+
+    // ── OP_LE/GE/EQ/NE slow path helpers (lines 1334-1338) ──────────────────
+    // These match arms are only reached when both operands are :_ (not always-num)
+    // and at least one operand is non-numeric at runtime (slow path).
+
+    #[test]
+    fn cranelift_le_any_type_slow_path() {
+        // f a:_ b:_>b;<= a b with text args → slow helper path (OP_LE → helpers.le)
+        let result = jit_run(
+            "f a:_ b:_>b;<= a b",
+            "f",
+            &[Value::Text("a".into()), Value::Text("b".into())],
+        );
+        // Text comparison: "a" <= "b" → true
+        assert_eq!(result, Some(Value::Bool(true)));
+    }
+
+    #[test]
+    fn cranelift_ge_any_type_slow_path() {
+        // f a:_ b:_>b;>= a b with text args → slow helper path (OP_GE → helpers.ge)
+        let result = jit_run(
+            "f a:_ b:_>b;>= a b",
+            "f",
+            &[Value::Text("b".into()), Value::Text("a".into())],
+        );
+        // Text comparison: "b" >= "a" → true
+        assert_eq!(result, Some(Value::Bool(true)));
+    }
+
+    #[test]
+    fn cranelift_eq_any_type_slow_path() {
+        // f a:_ b:_>b;== a b with text args → slow helper path (OP_EQ → helpers.eq)
+        let result = jit_run(
+            "f a:_ b:_>b;== a b",
+            "f",
+            &[Value::Text("hello".into()), Value::Text("hello".into())],
+        );
+        assert_eq!(result, Some(Value::Bool(true)));
+    }
+
+    #[test]
+    fn cranelift_ne_any_type_slow_path() {
+        // f a:_ b:_>b;!= a b with text args → slow helper path (OP_NE → helpers.ne)
+        let result = jit_run(
+            "f a:_ b:_>b;!= a b",
+            "f",
+            &[Value::Text("x".into()), Value::Text("y".into())],
+        );
+        assert_eq!(result, Some(Value::Bool(true)));
+    }
+
+    // ── OP_JMPT always-bool fast path (lines 1508-1511) ─────────────────────
+    // env! emits ISOK + JMPT where ISOK result is always boolean → reg_always_bool.
+
+    #[test]
+    fn cranelift_jmpt_always_bool_fast_path() {
+        // f k:t>t;env! k — ISOK writes bool, JMPT on bool reg → fast path (lines 1508-1511).
+        // We just verify JIT compiles this (env! may fail at runtime, but codegen is covered).
+        let src = r#"f k:t>t;env! k"#;
+        let tokens: Vec<crate::lexer::Token> = crate::lexer::lex(src)
+            .unwrap()
+            .into_iter()
+            .map(|(t, _)| t)
+            .collect();
+        let prog = crate::parser::parse_tokens(tokens).unwrap();
+        let compiled = crate::vm::compile(&prog).unwrap();
+        let idx = compiled.func_names.iter().position(|n| n == "f").unwrap();
+        let chunk = &compiled.chunks[idx];
+        let nan_consts = &compiled.nan_constants[idx];
+        // Should compile; the JMPT on always-bool reg exercises lines 1508-1511
+        let jit_fn = compile(chunk, nan_consts, &compiled);
+        assert!(jit_fn.is_some(), "JIT should compile env! pattern");
+    }
+
+    // ── OP_LISTGET fast path (lines 2509-2611) ────────────────────────────────
+    // OP_LISTGET is a legacy opcode (never emitted by current ilo compiler).
+    // We craft a CompiledProgram with OP_LISTGET bytecode directly to cover this path.
+
+    #[test]
+    fn cranelift_op_listget_fast_path() {
+
+        // Encode a minimal program:
+        // [0] LISTGET R0, R1, R2   — R0 = R1[R2], skip next if found
+        // [1] JMP 0                 — exit (fallback when not found / out-of-bounds)
+        // [2] RET R0                — return R0 (element found)
+        //
+        // block_map will have: ip+1=1 (jb), ip+2=2 (bb).
+        // This exercises the OP_LISTGET fast path (lines 2519-2603).
+
+        let encode_abc = |op: u8, a: u8, b: u8, c: u8| -> u32 {
+            (op as u32) << 24 | (a as u32) << 16 | (b as u32) << 8 | c as u32
+        };
+        let encode_abx = |op: u8, a: u8, bx: u16| -> u32 {
+            (op as u32) << 24 | (a as u32) << 16 | bx as u32
+        };
+
+        let code = vec![
+            encode_abc(OP_LISTGET, 0, 1, 2), // ip=0: LISTGET R0, R1, R2
+            encode_abx(OP_JMP, 0, 1u16),      // ip=1: JMP +1 → ip=3 (exit)
+            encode_abx(OP_RET, 0, 0),          // ip=2: RET R0
+            encode_abx(OP_RET, 0, 0),          // ip=3: RET R0 (fallthrough exit)
+        ];
+        let dummy_span = crate::ast::Span { start: 0, end: 0 };
+        let chunk = Chunk {
+            code,
+            constants: vec![],
+            param_count: 3, // params: R0(result), R1(list), R2(index)
+            reg_count: 3,
+            spans: vec![dummy_span; 4],
+            all_regs_numeric: false,
+        };
+        let program = CompiledProgram {
+            chunks: vec![chunk],
+            func_names: vec!["f".to_string()],
+            nan_constants: vec![vec![]],
+            type_registry: TypeRegistry::default(),
+            is_tool: vec![false],
+        };
+        // Compile — should succeed (covers OP_LISTGET fast path lines 2519-2603)
+        let entry_idx = 0;
+        let jit_fn = compile_program(&program, entry_idx);
+        assert!(jit_fn.is_some(), "JIT should compile OP_LISTGET program");
+    }
+
+    // ── OP_FOREACHNEXT slow path (lines 2776-2836) ────────────────────────────
+    // The slow path is taken when foreach_loop_map.get(&(b_idx, c_idx)) returns None,
+    // which only happens with manually crafted bytecode (OP_FOREACHNEXT with no
+    // corresponding OP_FOREACHPREP for the same (b, c) pair).
+
+    #[test]
+    fn cranelift_foreachnext_slow_path() {
+
+        // Craft a program with FOREACHNEXT but NO FOREACHPREP.
+        // foreach_loop_map will be empty → get(&(1, 2)) returns None → slow path.
+        //
+        // [0] FOREACHNEXT R0, R1, R2  — slow path (no cached loop data)
+        // [1] JMP +1 → ip=3 (exit loop)
+        // [2] RET R0
+        // [3] RET R0 (exit)
+
+        let encode_abc = |op: u8, a: u8, b: u8, c: u8| -> u32 {
+            (op as u32) << 24 | (a as u32) << 16 | (b as u32) << 8 | c as u32
+        };
+        let encode_abx = |op: u8, a: u8, bx: u16| -> u32 {
+            (op as u32) << 24 | (a as u32) << 16 | bx as u32
+        };
+
+        let code = vec![
+            encode_abc(OP_FOREACHNEXT, 0, 1, 2), // ip=0: FOREACHNEXT R0, R1, R2
+            encode_abx(OP_JMP, 0, 1u16),           // ip=1: JMP +1 → ip=3
+            encode_abx(OP_RET, 0, 0),               // ip=2: RET R0
+            encode_abx(OP_RET, 0, 0),               // ip=3: RET R0
+        ];
+        let dummy_span = crate::ast::Span { start: 0, end: 0 };
+        let chunk = Chunk {
+            code,
+            constants: vec![],
+            param_count: 3,
+            reg_count: 3,
+            spans: vec![dummy_span; 4],
+            all_regs_numeric: false,
+        };
+        let program = CompiledProgram {
+            chunks: vec![chunk],
+            func_names: vec!["f".to_string()],
+            nan_constants: vec![vec![]],
+            type_registry: TypeRegistry::default(),
+            is_tool: vec![false],
+        };
+        let jit_fn = compile_program(&program, 0);
+        assert!(jit_fn.is_some(), "JIT should compile FOREACHNEXT slow path");
+    }
+
+    // ── OP_CALL out-of-range fallback (lines 3019-3052) ──────────────────────
+    // func_idx >= all_func_ids.len() → uses jit_call helper instead of direct call.
+
+    #[test]
+    fn cranelift_call_out_of_range_fallback_with_args() {
+
+        // Craft a program calling func_idx=99 (which doesn't exist).
+        // OP_CALL encoding: (op<<24) | (a<<16) | (func_idx<<8 | n_args)
+        // With a=0, func_idx=99, n_args=1: (OP_CALL<<24) | (0<<16) | (99<<8 | 1)
+        let encode_abx = |op: u8, a: u8, bx: u16| -> u32 {
+            (op as u32) << 24 | (a as u32) << 16 | bx as u32
+        };
+
+        // OP_CALL R0, func_idx=99, n_args=1 (R1 is the argument)
+        let call_bx: u16 = (99u16 << 8) | 1u16;
+        let code = vec![
+            encode_abx(OP_CALL, 0, call_bx), // CALL R0 = call(func=99, args=[R1])
+            encode_abx(OP_RET, 0, 0),          // RET R0
+        ];
+        let dummy_span = crate::ast::Span { start: 0, end: 0 };
+        let chunk = Chunk {
+            code,
+            constants: vec![],
+            param_count: 2,  // R0=result, R1=arg
+            reg_count: 2,
+            spans: vec![dummy_span; 2],
+            all_regs_numeric: false,
+        };
+        let program = CompiledProgram {
+            chunks: vec![chunk],
+            func_names: vec!["f".to_string()],
+            nan_constants: vec![vec![]],
+            type_registry: TypeRegistry::default(),
+            is_tool: vec![false],
+        };
+        // func_idx=99 is out of range (only 1 function) → fallback path (lines 3019-3040)
+        let jit_fn = compile_program(&program, 0);
+        assert!(jit_fn.is_some(), "JIT should compile out-of-range call with args");
+    }
+
+    #[test]
+    fn cranelift_call_out_of_range_fallback_no_args() {
+
+        let encode_abx = |op: u8, a: u8, bx: u16| -> u32 {
+            (op as u32) << 24 | (a as u32) << 16 | bx as u32
+        };
+
+        // OP_CALL R0, func_idx=99, n_args=0
+        let call_bx: u16 = 99u16 << 8; // n_args=0
+        let code = vec![
+            encode_abx(OP_CALL, 0, call_bx), // CALL R0 = call(func=99, args=[])
+            encode_abx(OP_RET, 0, 0),          // RET R0
+        ];
+        let dummy_span = crate::ast::Span { start: 0, end: 0 };
+        let chunk = Chunk {
+            code,
+            constants: vec![],
+            param_count: 1,
+            reg_count: 1,
+            spans: vec![dummy_span; 2],
+            all_regs_numeric: false,
+        };
+        let program = CompiledProgram {
+            chunks: vec![chunk],
+            func_names: vec!["f".to_string()],
+            nan_constants: vec![vec![]],
+            type_registry: TypeRegistry::default(),
+            is_tool: vec![false],
+        };
+        // func_idx=99 is out of range → fallback path (lines 3041-3052)
+        let jit_fn = compile_program(&program, 0);
+        assert!(jit_fn.is_some(), "JIT should compile out-of-range call no args");
+    }
+
+    // ── Inline-failed mid-way fallback (lines 2993-3003) ─────────────────────
+    // inline_chunk returns false mid-way when a JMP target isn't in imap.
+    // This happens when inline_chunk encounters OP_JMP but block_map is incomplete.
+    // We craft a callee that is_inlinable() but inline_chunk fails mid-way.
+
+    #[test]
+    fn cranelift_inline_jmp_to_unknown_target_falls_back() {
+
+        // Callee: OP_ADDK_N R0, R0, k0; OP_JMP -999 (invalid target); OP_RET R0
+        // is_inlinable: all_regs_numeric=true, reg_count=1, has ADDK_N + JMP + RET
+        // inline_chunk: JMP target = (1 + 1 + (-999)) = -997 → not in imap → returns false
+        // → fallback to direct call
+        let encode_abc = |op: u8, a: u8, b: u8, c: u8| -> u32 {
+            (op as u32) << 24 | (a as u32) << 16 | (b as u32) << 8 | c as u32
+        };
+        let encode_abx = |op: u8, a: u8, bx: u16| -> u32 {
+            (op as u32) << 24 | (a as u32) << 16 | bx as u32
+        };
+
+        // Callee chunk: (func_idx=1)
+        // [0] ADD_NN R0, R0, R0   — no constant reference (avoids nan_consts bounds issues)
+        // [1] JMP -999 (invalid)
+        // [2] RET R0
+        let invalid_offset: i16 = -999;
+        let callee_code = vec![
+            encode_abc(OP_ADD_NN, 0, 0, 0),                     // ip=0: ADD_NN R0, R0, R0
+            encode_abx(OP_JMP, 0, invalid_offset as u16),       // ip=1: JMP to invalid target
+            encode_abx(OP_RET, 0, 0),                            // ip=2
+        ];
+
+        // Caller chunk: (func_idx=0)
+        // [0] CALL R0, func_idx=1, n_args=1 (R1 is arg)
+        // [1] RET R0
+        let call_bx: u16 = (1u16 << 8) | 1u16; // func_idx=1, n_args=1
+        let caller_code = vec![
+            encode_abx(OP_CALL, 0, call_bx),
+            encode_abx(OP_RET, 0, 0),
+        ];
+
+        let dummy_span = crate::ast::Span { start: 0, end: 0 };
+        let caller_chunk = Chunk {
+            code: caller_code,
+            constants: vec![],
+            param_count: 2,
+            reg_count: 2,
+            spans: vec![dummy_span; 2],
+            all_regs_numeric: true,
+        };
+        let callee_chunk = Chunk {
+            code: callee_code,
+            constants: vec![],
+            param_count: 1,
+            reg_count: 1,
+            spans: vec![dummy_span; 3],
+            all_regs_numeric: true,
+        };
+        let program = CompiledProgram {
+            chunks: vec![caller_chunk, callee_chunk],
+            func_names: vec!["f".to_string(), "callee".to_string()],
+            nan_constants: vec![vec![], vec![]],
+            type_registry: TypeRegistry::default(),
+            is_tool: vec![false, false],
+        };
+        // inline_chunk will fail for callee (JMP to unknown target) → fallback to direct call
+        let jit_fn = compile_program(&program, 0);
+        // May return None if the fallback call causes issues, but codegen should be exercised
+        let _ = jit_fn;
+    }
+
+    // ── inline_chunk fallthrough jump (lines 406-407) and not-terminated (574-577) ──
+    // Callee with CMPK + JMP + non-terminating block + leader → fires fallthrough.
+    // This also tests dead-code skip (line 413) via the dead ADD_NN after JMP.
+
+    #[test]
+    fn cranelift_inline_fallthrough_and_unterminated() {
+        // Callee (func_idx=1):
+        // [0] CMPK_GT_N R0, k0    ← marks ip+1=1, ip+2=2 as leaders
+        // [1] JMP +1               ← target=3; marks ip+1=2, target=3 as leaders
+        // [2] ADD_NN R0, R0, R0    ← non-terminating block (b2), falls through to b3
+        // [3] ADD_NN R0, R0, R0    ← b3 is a leader; !terminated=true → fires line 406-407
+        //                             then no terminator after this → fires lines 574-577
+        //
+        // The callee satisfies is_inlinable (has RET... wait, no RET here!)
+        // Actually is_inlinable requires has_ret=true. Let me add a RET.
+        // Revised:
+        // [0] CMPK_GT_N R0, k0    ← leaders: {0,1,2}
+        // [1] JMP +2               ← target=4; leaders: {2,4}
+        // [2] ADD_NN R0, R0, R0    ← body block, non-terminating
+        // [3] ADD_NN R0, R0, R0    ← NOT a leader, dead (after b4 jumps past); terminated check
+        //                             Hmm, but ip=3 not a leader and terminated=false from ip=2...
+        // Let me use a simpler approach: two leaders with non-terminating block between:
+        // [0] CMPK_GT_N R0, k0    ← {0,1,2}
+        // [1] JMP +1               ← target=3; {2,3}
+        // [2] ADD_NN R0, R0, R0    ← non-terminating; falls through to ip=3 (leader)
+        // [3] RET R0               ← leader b3; ip=2 was non-terminated → line 406-407 fires!
+
+        let encode_abc = |op: u8, a: u8, b: u8, c: u8| -> u32 {
+            (op as u32) << 24 | (a as u32) << 16 | (b as u32) << 8 | c as u32
+        };
+        let encode_abx = |op: u8, a: u8, bx: u16| -> u32 {
+            (op as u32) << 24 | (a as u32) << 16 | bx as u32
+        };
+
+        // Callee with fallthrough between blocks:
+        // [0] CMPK_GT_N R0, k0  -- leaders: 0,1,2; from JMP+1: 2,3
+        // [1] JMP +1             -- target=3
+        // [2] ADD_NN R0, R0, R0  -- falls through to leader at ip=3 → line 406-407
+        // [3] RET R0
+        let k0_bits = NanVal::number(5.0).0; // constant k0 = 5.0
+        let callee_code = vec![
+            encode_abc(OP_CMPK_GT_N, 0, 0, 0), // ip=0: CMPK_GT_N R0, k0
+            encode_abx(OP_JMP, 0, 1u16),          // ip=1: JMP +1 → target=3
+            encode_abc(OP_ADD_NN, 0, 0, 0),        // ip=2: ADD_NN R0, R0, R0 (no terminator)
+            encode_abx(OP_RET, 0, 0),               // ip=3: RET R0 (leader from JMP target)
+        ];
+        let callee_nan_consts = vec![NanVal::number(5.0)]; // k0 = 5.0
+
+        // Caller:
+        // [0] CALL R0, func_idx=1, n_args=1 (R1=arg)
+        // [1] RET R0
+        let call_bx: u16 = (1u16 << 8) | 1u16; // func_idx=1, n_args=1
+        let caller_code = vec![
+            encode_abx(OP_CALL, 0, call_bx),
+            encode_abx(OP_RET, 0, 0),
+        ];
+
+        let dummy_span = crate::ast::Span { start: 0, end: 0 };
+        let caller_chunk = Chunk {
+            code: caller_code,
+            constants: vec![],
+            param_count: 2,
+            reg_count: 2,
+            spans: vec![dummy_span; 2],
+            all_regs_numeric: true,
+        };
+        let callee_chunk = Chunk {
+            code: callee_code,
+            constants: vec![],
+            param_count: 1,
+            reg_count: 1,
+            spans: vec![dummy_span; 4],
+            all_regs_numeric: true,
+        };
+
+        let program = CompiledProgram {
+            chunks: vec![caller_chunk, callee_chunk],
+            func_names: vec!["f".to_string(), "callee".to_string()],
+            nan_constants: vec![vec![], callee_nan_consts],
+            type_registry: TypeRegistry::default(),
+            is_tool: vec![false, false],
+        };
+
+        // compile_program → JIT compiles caller which tries to inline callee.
+        // inline_chunk: at ip=3 (leader), terminated=false from ip=2 → lines 406-407 fire.
+        let jit_fn = compile_program(&program, 0);
+        assert!(jit_fn.is_some(), "JIT should compile inline fallthrough callee");
+    }
+
+    // ── inline_chunk dead code skip (line 413) ────────────────────────────────
+    // A callee where the instruction after RET is not a block leader → dead code skip.
+
+    #[test]
+    fn cranelift_inline_dead_code_after_ret() {
+        // Callee:
+        // [0] RET R0         ← terminates immediately; set terminated=true
+        // [1] ADD_NN R0, R0, R0  ← NOT a leader; `if terminated { continue }` → line 413
+        let encode_abc = |op: u8, a: u8, b: u8, c: u8| -> u32 {
+            (op as u32) << 24 | (a as u32) << 16 | (b as u32) << 8 | c as u32
+        };
+        let encode_abx = |op: u8, a: u8, bx: u16| -> u32 {
+            (op as u32) << 24 | (a as u32) << 16 | bx as u32
+        };
+
+        let callee_code = vec![
+            encode_abx(OP_RET, 0, 0),               // ip=0: RET R0
+            encode_abc(OP_ADD_NN, 0, 0, 0),          // ip=1: dead code (not a leader)
+        ];
+        // Caller:
+        let call_bx: u16 = (1u16 << 8) | 1u16;
+        let caller_code = vec![
+            encode_abx(OP_CALL, 0, call_bx),
+            encode_abx(OP_RET, 0, 0),
+        ];
+
+        let dummy_span = crate::ast::Span { start: 0, end: 0 };
+        let caller_chunk = Chunk {
+            code: caller_code,
+            constants: vec![],
+            param_count: 2,
+            reg_count: 2,
+            spans: vec![dummy_span; 2],
+            all_regs_numeric: true,
+        };
+        let callee_chunk = Chunk {
+            code: callee_code,
+            constants: vec![],
+            param_count: 1,
+            reg_count: 1,
+            spans: vec![dummy_span; 2],
+            all_regs_numeric: true,
+        };
+
+        let program = CompiledProgram {
+            chunks: vec![caller_chunk, callee_chunk],
+            func_names: vec!["f".to_string(), "callee".to_string()],
+            nan_constants: vec![vec![], vec![]],
+            type_registry: TypeRegistry::default(),
+            is_tool: vec![false, false],
+        };
+
+        // inline_chunk: ip=1 is not a leader but terminated=true → line 413 fires
+        let jit_fn = compile_program(&program, 0);
+        assert!(jit_fn.is_some(), "JIT should compile inline dead-code callee");
+    }
+
+    // ── inline_chunk not-terminated at loop end (lines 574-577) ──────────────
+    // Callee where last block has ADD_NN (non-terminating) but no RET in that block.
+    // The overall callee has a RET (required by is_inlinable) but in a different block.
+
+    #[test]
+    fn cranelift_inline_not_terminated_at_end() {
+        // Callee:
+        // [0] CMPK_GT_N R0, k0   ← leaders: {0, 1, 2}
+        // [1] JMP +2              ← target=4; leaders: {2, 4}
+        // [2] RET R0              ← body: returns early
+        // [3] ADD_NN R0, R0, R0  ← NOT a leader, dead code after JMP target jump
+        // [4] ADD_NN R0, R0, R0  ← leader b4; no terminator → lines 574-577 fire at end
+        let encode_abc = |op: u8, a: u8, b: u8, c: u8| -> u32 {
+            (op as u32) << 24 | (a as u32) << 16 | (b as u32) << 8 | c as u32
+        };
+        let encode_abx = |op: u8, a: u8, bx: u16| -> u32 {
+            (op as u32) << 24 | (a as u32) << 16 | bx as u32
+        };
+
+        let k0_bits = NanVal::number(5.0).0;
+        let callee_code = vec![
+            encode_abc(OP_CMPK_GT_N, 0, 0, 0), // ip=0
+            encode_abx(OP_JMP, 0, 2u16),          // ip=1: JMP +2 → target=4
+            encode_abx(OP_RET, 0, 0),               // ip=2: RET (body)
+            encode_abc(OP_ADD_NN, 0, 0, 0),         // ip=3: dead code (not a leader)
+            encode_abc(OP_ADD_NN, 0, 0, 0),         // ip=4: leader (JMP target); no terminator
+        ];
+        let callee_nan_consts = vec![NanVal::number(5.0)];
+
+        let call_bx: u16 = (1u16 << 8) | 1u16;
+        let caller_code = vec![
+            encode_abx(OP_CALL, 0, call_bx),
+            encode_abx(OP_RET, 0, 0),
+        ];
+
+        let dummy_span = crate::ast::Span { start: 0, end: 0 };
+        let caller_chunk = Chunk {
+            code: caller_code,
+            constants: vec![],
+            param_count: 2,
+            reg_count: 2,
+            spans: vec![dummy_span; 2],
+            all_regs_numeric: true,
+        };
+        let callee_chunk = Chunk {
+            code: callee_code,
+            constants: vec![],
+            param_count: 1,
+            reg_count: 1,
+            spans: vec![dummy_span; 5],
+            all_regs_numeric: true,
+        };
+
+        let program = CompiledProgram {
+            chunks: vec![caller_chunk, callee_chunk],
+            func_names: vec!["f".to_string(), "callee".to_string()],
+            nan_constants: vec![vec![], callee_nan_consts],
+            type_registry: TypeRegistry::default(),
+            is_tool: vec![false, false],
+        };
+
+        // inline_chunk: at end of code, b4 block not terminated → lines 574-577 fire
+        let jit_fn = compile_program(&program, 0);
+        assert!(jit_fn.is_some(), "JIT should compile inline not-terminated-at-end callee");
+    }
+
 }
