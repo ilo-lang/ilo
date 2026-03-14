@@ -161,8 +161,8 @@ Per-call time (ns) across 8 micro-benchmarks. Lower is better. [Full results →
 | LuaJIT | 276ns | 20.8us | 63ns | 11.0us | 1.7us | 29.2us | 1.3us | 113ns | 187ns | 14.2us | 50.3us |
 | Node/V8 | 455ns | 1.4us | 282ns | 17.5us | 1.0us | 44.2us | 578ns | 110ns | 218ns | 12.2us | 253.7us |
 | TypeScript | 453ns | 1.3us | 238ns | 6.2us | 1.1us | 44.3us | 414ns | 71ns | 161ns | 12.2us | 256.9us |
-| ilo AOT | 4.7us | 11.0us | 741ns | 36.5us | 3.9us | 36.4us | 4.6us | 849ns | 1.1us | n/a | 166.6us |
-| ilo JIT | 1.3us | 5.1us | 566ns | 41.2us | 1.3us | 35.5us | 2.8us | 151ns | 120ns | n/a | n/a |
+| ilo AOT | 4.7us | 11.0us | 741ns | 36.5us | 3.9us | 36.4us | 4.6us | 849ns | 1.1us | 17.9us | 166.6us |
+| ilo JIT | 1.3us | 5.1us | 566ns | 41.2us | 1.3us | 35.5us | 2.8us | 151ns | 120ns | 15.9us | 165.2us |
 | ilo VM | 11.4us | 10.8us | 3.1us | 32.8us | 38.7us | 502.2us | 2.3us | 1.2us | 6.6us | 16.7us | 163.0us |
 | ilo Interpreter | 95.4us | 65.1us | 56.8us | 1.4ms | 985.4us | 16.2ms | 75.7us | 10.4us | 147.3us | 31.5us | 174.8us |
 | Lua | 4.2us | 41.7us | 7.9us | 51.4us | 27.1us | 330.3us | 3.7us | 931ns | 4.2us | 15.0us | 54.9us |
