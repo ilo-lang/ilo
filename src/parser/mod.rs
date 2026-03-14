@@ -5825,4 +5825,115 @@ mod tests {
             }
         ));
     }
+
+    // ── Coverage gap tests ──────────────────────────────────────────────
+
+    // L1048: Guard with else-body braces: `>=x 0{x}{0}` (two brace blocks)
+    #[test]
+    fn cov_guard_with_else_braces() {
+        let prog = parse_str(r#"f x:n>n;>=x 0{x}{0}"#);
+        let Decl::Function { body, .. } = &prog.declarations[0] else {
+            panic!("expected function")
+        };
+        match &body[0].node {
+            Stmt::Guard { else_body, .. } => {
+                assert!(else_body.is_some(), "should have else body");
+            }
+            other => panic!("expected Guard, got {:?}", other),
+        }
+    }
+
+    // L1059: Braceless guard — `>=x 0 x` (comparison as condition, single expression body)
+    #[test]
+    fn cov_braceless_guard() {
+        let prog = parse_str(r#"f x:n>n;>=x 0 x"#);
+        let Decl::Function { body, .. } = &prog.declarations[0] else {
+            panic!("expected function")
+        };
+        assert!(matches!(&body[0].node, Stmt::Guard { .. }));
+    }
+
+    // L1243-1245: Err expression via Caret in list element context
+    #[test]
+    fn cov_err_expression() {
+        let prog = parse_str(r#"f>R n t;^"oops""#);
+        let Decl::Function { body, .. } = &prog.declarations[0] else {
+            panic!("expected function")
+        };
+        match &body[0].node {
+            Stmt::Expr(Expr::Err(_)) => {}
+            other => panic!("expected Err expression, got {:?}", other),
+        }
+    }
+
+    // L1835: parse_tokens returning Err (parse errors)
+    #[test]
+    fn cov_parse_tokens_error() {
+        use crate::lexer::Token;
+        // An incomplete program that should produce parse errors
+        let tokens = vec![Token::Greater]; // just ">" — not a valid program
+        let result = super::parse_tokens(tokens);
+        assert!(result.is_err(), "incomplete tokens should produce parse error");
+    }
+
+    // L881: TypeIs pattern lookahead with 'b' type
+    #[test]
+    fn cov_type_is_bool_pattern() {
+        let prog = parse_str(r#"f x:n>n;?x{b v:1;_:0}"#);
+        let Decl::Function { body, .. } = &prog.declarations[0] else {
+            panic!("expected function")
+        };
+        let Stmt::Match { arms, .. } = &body[0].node else {
+            panic!("expected match")
+        };
+        assert!(matches!(
+            &arms[0].pattern,
+            Pattern::TypeIs {
+                ty: Type::Bool,
+                ..
+            }
+        ));
+    }
+
+    // L881: TypeIs pattern with 'l' (list) type
+    #[test]
+    fn cov_type_is_list_pattern() {
+        let prog = parse_str(r#"f x:n>n;?x{l v:1;_:0}"#);
+        let Decl::Function { body, .. } = &prog.declarations[0] else {
+            panic!("expected function")
+        };
+        let Stmt::Match { arms, .. } = &body[0].node else {
+            panic!("expected match")
+        };
+        assert!(matches!(
+            &arms[0].pattern,
+            Pattern::TypeIs {
+                ty: Type::List(_),
+                ..
+            }
+        ));
+    }
+
+    // Multiple braceless guards (cascading)
+    #[test]
+    fn cov_cascading_braceless_guards() {
+        let prog = parse_str(r#"cls sp:n>t;>=sp 1000 "gold";>=sp 500 "silver";"bronze""#);
+        let Decl::Function { body, .. } = &prog.declarations[0] else {
+            panic!("expected function")
+        };
+        assert!(body.len() >= 2, "should have multiple statements");
+    }
+
+    // Nil literal in match pattern
+    #[test]
+    fn cov_nil_literal_pattern() {
+        let prog = parse_str(r#"f x:n>n;?x{nil:0;_:1}"#);
+        let Decl::Function { body, .. } = &prog.declarations[0] else {
+            panic!("expected function")
+        };
+        let Stmt::Match { arms, .. } = &body[0].node else {
+            panic!("expected match")
+        };
+        assert!(matches!(&arms[0].pattern, Pattern::Literal(Literal::Nil)));
+    }
 }

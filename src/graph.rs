@@ -1047,4 +1047,73 @@ mod tests {
         assert!(query_subgraph(&prog, &graph, "missing").is_none());
         assert!(query_budget(&prog, &graph, "missing", 1000).is_none());
     }
+
+    // ── Coverage gap tests ──────────────────────────────────────────────
+
+    // L132-139: Match expression in call graph — exercises collect_calls for Expr::Match
+    #[test]
+    fn cov_graph_match_expr_calls() {
+        let prog = parse(r#"helper x:n>n;*x 2 f x:n>n;?x{1:helper x;_:0}"#);
+        let graph = build_graph(&prog);
+        assert!(
+            graph.functions["f"].calls.contains("helper"),
+            "f should call helper through match"
+        );
+    }
+
+    // L132: Match with subject expression
+    #[test]
+    fn cov_graph_match_with_subject() {
+        let prog = parse(r#"id x:n>n;x f x:n>n;y=id x;?y{1:10;_:0}"#);
+        let graph = build_graph(&prog);
+        assert!(
+            graph.functions["f"].calls.contains("id"),
+            "f should call id via let"
+        );
+    }
+
+    // L214-218: Fn type in type references
+    #[test]
+    fn cov_graph_fn_type_refs() {
+        // A function that takes a function parameter — exercises Type::Fn path
+        let prog = parse("apply f:F n n x:n>n;f x\ndbl x:n>n;*x 2");
+        let graph = build_graph(&prog);
+        assert!(
+            graph.functions.contains_key("apply"),
+            "should have apply function"
+        );
+    }
+
+    // L394-401: Type info resolution for types used in functions
+    #[test]
+    fn cov_graph_type_info_resolution() {
+        let prog = parse("type pt{x:n;y:n}\nf>pt;pt x:1 y:2");
+        let graph = build_graph(&prog);
+        // The query_fn path resolves type info
+        let q = query_fn(&prog, &graph, "f");
+        assert!(q.is_some());
+        let q = q.unwrap();
+        assert!(
+            q.types.contains_key("pt"),
+            "query should include pt type info"
+        );
+    }
+
+    // L576-577: Type collection for reverse query
+    #[test]
+    fn cov_graph_reverse_query_types() {
+        let prog = parse("type pt{x:n;y:n}\nhelper>pt;pt x:1 y:2\nf>n;p=helper;+p.x p.y");
+        let graph = build_graph(&prog);
+        let q = query_reverse(&prog, &graph, "helper");
+        assert!(q.is_some());
+    }
+
+    // Budget query with type resolution
+    #[test]
+    fn cov_graph_budget_with_types() {
+        let prog = parse("type pt{x:n;y:n}\nmk>pt;pt x:1 y:2\nf>n;p=mk;p.x");
+        let graph = build_graph(&prog);
+        let q = query_budget(&prog, &graph, "f", 1000);
+        assert!(q.is_some());
+    }
 }
