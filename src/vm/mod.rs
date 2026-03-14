@@ -18213,4 +18213,441 @@ f>n;r=mk 10 20;+r.x r.y";
             Value::Number(23.0)
         );
     }
+
+    // ── Coverage gap tests ──────────────────────────────────────────────
+
+    // OP_SUBK_N: subtract constant (L694) — reassignment triggers peephole
+    #[test]
+    fn vm_cov_subk_n() {
+        let result = vm_run("f x:n>n;x=-x 5;x", Some("f"), vec![Value::Number(20.0)]);
+        assert_eq!(result, Value::Number(15.0));
+    }
+
+    // OP_DIVK_N: divide by constant (L696)
+    #[test]
+    fn vm_cov_divk_n() {
+        let result = vm_run("f x:n>n;x=/x 2;x", Some("f"), vec![Value::Number(10.0)]);
+        assert_eq!(result, Value::Number(5.0));
+    }
+
+    // Multiply with left literal (commutative path L715-719)
+    #[test]
+    fn vm_cov_mul_left_literal() {
+        let result = vm_run("f x:n>n;a=*3 x;a", Some("f"), vec![Value::Number(7.0)]);
+        assert_eq!(result, Value::Number(21.0));
+    }
+
+    // Add with left literal (commutative path L715-719)
+    #[test]
+    fn vm_cov_add_left_literal() {
+        let result = vm_run("f x:n>n;a=+10 x;a", Some("f"), vec![Value::Number(5.0)]);
+        assert_eq!(result, Value::Number(15.0));
+    }
+
+    // Record returned from function (exercises NanVal::to_value for arena records L2811-2834)
+    #[test]
+    fn vm_cov_record_return() {
+        let result = vm_run(
+            "type pt{x:n;y:n}\nf>pt;pt x:10 y:20",
+            Some("f"),
+            vec![],
+        );
+        match result {
+            Value::Record { type_name, fields } => {
+                assert_eq!(type_name, "pt");
+                assert_eq!(fields.get("x"), Some(&Value::Number(10.0)));
+                assert_eq!(fields.get("y"), Some(&Value::Number(20.0)));
+            }
+            _ => panic!("expected record, got {:?}", result),
+        }
+    }
+
+    // Record with update
+    #[test]
+    fn vm_cov_record_with_update() {
+        let result = vm_run(
+            "type pt{x:n;y:n}\nf>n;p=pt x:1 y:2;p2=p with x:10;+p2.x p2.y",
+            Some("f"),
+            vec![],
+        );
+        assert_eq!(result, Value::Number(12.0));
+    }
+
+    // Multi-frame return: deeply nested function calls
+    #[test]
+    fn vm_cov_multi_frame_number() {
+        let result = vm_run(
+            "a x:n>n;+x 1\nb x:n>n;a x\nc x:n>n;b x\nf x:n>n;c x",
+            Some("f"),
+            vec![Value::Number(10.0)],
+        );
+        assert_eq!(result, Value::Number(11.0));
+    }
+
+    // String concatenation
+    #[test]
+    fn vm_cov_string_concat() {
+        let result = vm_run(
+            "f a:t b:t>t;+a b",
+            Some("f"),
+            vec![Value::Text("hello ".into()), Value::Text("world".into())],
+        );
+        assert_eq!(result, Value::Text("hello world".into()));
+    }
+
+    // Guard true/false paths
+    #[test]
+    fn vm_cov_guard_true() {
+        let result = vm_run("f x:n>n;>x 0{x}", Some("f"), vec![Value::Number(5.0)]);
+        assert_eq!(result, Value::Number(5.0));
+    }
+
+    // Match with bool pattern (L1230-1251)
+    #[test]
+    fn vm_cov_match_bool() {
+        let result = vm_run(
+            r#"f x:b>t;?x{true:"yes";false:"no"}"#,
+            Some("f"),
+            vec![Value::Bool(true)],
+        );
+        assert_eq!(result, Value::Text("yes".into()));
+    }
+
+    // Match with text pattern (L1230-1251)
+    #[test]
+    fn vm_cov_match_text() {
+        let result = vm_run(
+            r#"f x:t>n;?x{"a":1;"b":2;_:0}"#,
+            Some("f"),
+            vec![Value::Text("b".into())],
+        );
+        assert_eq!(result, Value::Number(2.0));
+    }
+
+    // Match with nil literal pattern (L1235)
+    #[test]
+    fn vm_cov_match_nil() {
+        // Use a function that can return nil, then match on the result
+        let result = vm_run(
+            "mk x:n>n;>x 0{x}\nf>n;v=mk 0;?v{nil:0;_:1}",
+            Some("f"),
+            vec![],
+        );
+        assert_eq!(result, Value::Number(0.0));
+    }
+
+    // Match TypeIs patterns (L1254-1260 — OP_ISNUM, OP_ISTEXT, OP_ISBOOL)
+    #[test]
+    fn vm_cov_match_type_is_num() {
+        let result = vm_run(
+            r#"f x:t>t;?x{n v:"num";t v:v;b v:"bool"}"#,
+            Some("f"),
+            vec![Value::Text("hello".into())],
+        );
+        assert_eq!(result, Value::Text("hello".into()));
+    }
+
+    // Nested record creation and field access
+    #[test]
+    fn vm_cov_nested_record() {
+        let result = vm_run(
+            "type inner{v:n}\ntype outer{i:inner}\nf>n;a=inner v:42;b=outer i:a;b.i.v",
+            Some("f"),
+            vec![],
+        );
+        assert_eq!(result, Value::Number(42.0));
+    }
+
+    // Result Ok
+    #[test]
+    fn vm_cov_result_ok() {
+        let result = vm_run("f>R n t;~42", Some("f"), vec![]);
+        assert_eq!(result, Value::Ok(Box::new(Value::Number(42.0))));
+    }
+
+    // Result Err
+    #[test]
+    fn vm_cov_result_err() {
+        let result = vm_run(r#"f>R n t;^"oops""#, Some("f"), vec![]);
+        assert_eq!(result, Value::Err(Box::new(Value::Text("oops".into()))));
+    }
+
+    // Map set/get
+    #[test]
+    fn vm_cov_map_set_get() {
+        let result = vm_run(
+            r#"f>t;m=mset mmap "key" "val";v=mget m "key";v??"none""#,
+            Some("f"),
+            vec![],
+        );
+        assert_eq!(result, Value::Text("val".into()));
+    }
+
+    // Map has
+    #[test]
+    fn vm_cov_map_has() {
+        let result = vm_run(
+            r#"f>b;m=mset mmap "a" 1;mhas m "a""#,
+            Some("f"),
+            vec![],
+        );
+        assert_eq!(result, Value::Bool(true));
+    }
+
+    // Map del
+    #[test]
+    fn vm_cov_map_del() {
+        let result = vm_run(
+            r#"f>b;m=mset mmap "a" 1;m=mdel m "a";mhas m "a""#,
+            Some("f"),
+            vec![],
+        );
+        assert_eq!(result, Value::Bool(false));
+    }
+
+    // Map keys
+    #[test]
+    fn vm_cov_map_keys() {
+        let result = vm_run(
+            r#"f>n;m=mset mmap "a" 1;m=mset m "b" 2;k=mkeys m;len k"#,
+            Some("f"),
+            vec![],
+        );
+        assert_eq!(result, Value::Number(2.0));
+    }
+
+    // While loop
+    #[test]
+    fn vm_cov_while_loop() {
+        let result = vm_run("f>n;x=0;wh <x 10{x=+x 1};x", Some("f"), vec![]);
+        assert_eq!(result, Value::Number(10.0));
+    }
+
+    // While with break value
+    #[test]
+    fn vm_cov_while_break() {
+        let result = vm_run("f>n;i=0;wh true{i=+i 1;>=i 5{brk i}};i", Some("f"), vec![]);
+        assert_eq!(result, Value::Number(5.0));
+    }
+
+    // For-range basic (L1051-1053)
+    #[test]
+    fn vm_cov_for_range_basic() {
+        let result = vm_run("f>n;s=0;@i 1..4{s=+s i};s", Some("f"), vec![]);
+        assert_eq!(result, Value::Number(6.0)); // 1+2+3
+    }
+
+    // For-range with continue (L1040-1049)
+    #[test]
+    fn vm_cov_for_range_cnt() {
+        // Skip i=2, sum rest: 0+1+3+4 = 8
+        let result = vm_run("f>n;s=0;@i 0..5{=i 2{cnt};s=+s i};s", Some("f"), vec![]);
+        assert_eq!(result, Value::Number(8.0));
+    }
+
+    // Foreach with continue (L963-972)
+    #[test]
+    fn vm_cov_foreach_cnt() {
+        // Skip x>=3, sum rest: 1+2 = 3
+        let result = vm_run("f>n;s=0;@x [1,2,3,4,5]{>=x 3{cnt};s=+s x};s", Some("f"), vec![]);
+        assert_eq!(result, Value::Number(3.0));
+    }
+
+    // Foreach with break
+    #[test]
+    fn vm_cov_foreach_brk() {
+        let result = vm_run("f>n;@x [1,2,3,4,5]{>=x 3{brk x};x}", Some("f"), vec![]);
+        assert_eq!(result, Value::Number(3.0));
+    }
+
+    // List append (L2020)
+    #[test]
+    fn vm_cov_list_append() {
+        let result = vm_run("f>n;xs=[1,2,3];xs=+=xs 4;len xs", Some("f"), vec![]);
+        assert_eq!(result, Value::Number(4.0));
+    }
+
+    // Modulo
+    #[test]
+    fn vm_cov_modulo() {
+        let result = vm_run("f>n;mod 10 3", Some("f"), vec![]);
+        assert_eq!(result, Value::Number(1.0));
+    }
+
+    // Recursive function (factorial)
+    #[test]
+    fn vm_cov_recursion() {
+        let result = vm_run(
+            "fac n:n>n;<=n 1 1;r=fac -n 1;*n r",
+            Some("fac"),
+            vec![Value::Number(5.0)],
+        );
+        assert_eq!(result, Value::Number(120.0));
+    }
+
+    // Nil return from optional
+    #[test]
+    fn vm_cov_nil_return() {
+        let result = vm_run("f x:n>n;>x 0{x}", Some("f"), vec![Value::Number(-1.0)]);
+        assert_eq!(result, Value::Nil);
+    }
+
+    // Slicing
+    #[test]
+    fn vm_cov_slice_list() {
+        let result = vm_run("f>L n;slc [1, 2, 3, 4, 5] 1 3", Some("f"), vec![]);
+        assert_eq!(
+            result,
+            Value::List(vec![Value::Number(2.0), Value::Number(3.0)])
+        );
+    }
+
+    #[test]
+    fn vm_cov_slice_text() {
+        let result = vm_run(r#"f>t;slc "hello" 1 4"#, Some("f"), vec![]);
+        assert_eq!(result, Value::Text("ell".into()));
+    }
+
+    // Multi-guard cascading
+    #[test]
+    fn vm_cov_multi_guard() {
+        let result = vm_run(
+            r#"cls sp:n>t;>=sp 1000 "gold";>=sp 500 "silver";"bronze""#,
+            Some("cls"),
+            vec![Value::Number(750.0)],
+        );
+        assert_eq!(result, Value::Text("silver".into()));
+    }
+
+    // Comparison operators
+    #[test]
+    fn vm_cov_cmp_gt() {
+        let result = vm_run("f x:n y:n>b;>x y", Some("f"), vec![Value::Number(5.0), Value::Number(3.0)]);
+        assert_eq!(result, Value::Bool(true));
+    }
+
+    #[test]
+    fn vm_cov_cmp_gte() {
+        let result = vm_run("f x:n y:n>b;>=x y", Some("f"), vec![Value::Number(5.0), Value::Number(5.0)]);
+        assert_eq!(result, Value::Bool(true));
+    }
+
+    #[test]
+    fn vm_cov_cmp_lte() {
+        let result = vm_run("f x:n y:n>b;<=x y", Some("f"), vec![Value::Number(3.0), Value::Number(5.0)]);
+        assert_eq!(result, Value::Bool(true));
+    }
+
+    // String length
+    #[test]
+    fn vm_cov_str_len() {
+        let result = vm_run(r#"f s:t>n;len s"#, Some("f"), vec![Value::Text("hello".into())]);
+        assert_eq!(result, Value::Number(5.0));
+    }
+
+    // Head and tail
+    #[test]
+    fn vm_cov_list_head() {
+        let result = vm_run("f>n;xs=[10, 20, 30];hd xs", Some("f"), vec![]);
+        assert_eq!(result, Value::Number(10.0));
+    }
+
+    #[test]
+    fn vm_cov_list_tail() {
+        let result = vm_run("f>L n;xs=[10, 20, 30];tl xs", Some("f"), vec![]);
+        assert_eq!(
+            result,
+            Value::List(vec![Value::Number(20.0), Value::Number(30.0)])
+        );
+    }
+
+    // Boolean operations
+    #[test]
+    fn vm_cov_bool_and() {
+        let result = vm_run("f>b;x=&true false;x", Some("f"), vec![]);
+        assert_eq!(result, Value::Bool(false));
+    }
+
+    #[test]
+    fn vm_cov_bool_or() {
+        let result = vm_run("f>b;x=|true false;x", Some("f"), vec![]);
+        assert_eq!(result, Value::Bool(true));
+    }
+
+    // Conditional expression with braces
+    #[test]
+    fn vm_cov_cond_brace() {
+        let result = vm_run(r#"f x:n>t;=x 1{"yes"}{"no"}"#, Some("f"), vec![Value::Number(1.0)]);
+        assert_eq!(result, Value::Text("yes".into()));
+    }
+
+    #[test]
+    fn vm_cov_cond_brace_false() {
+        let result = vm_run(r#"f x:n>t;=x 1{"yes"}{"no"}"#, Some("f"), vec![Value::Number(0.0)]);
+        assert_eq!(result, Value::Text("no".into()));
+    }
+
+    // Fibonacci (exercises deep recursion)
+    #[test]
+    fn vm_cov_fibonacci() {
+        let result = vm_run(
+            "fib n:n>n;<=n 1 n;a=fib -n 1;b=fib -n 2;+a b",
+            Some("fib"),
+            vec![Value::Number(7.0)],
+        );
+        assert_eq!(result, Value::Number(13.0));
+    }
+
+    // Nil coalesce (?? operator)
+    #[test]
+    fn vm_cov_nil_coalesce_nil() {
+        let result = vm_run("mk x:n>n;>=x 1{x}\nf>n;x=mk 0;x??42", Some("f"), vec![]);
+        assert_eq!(result, Value::Number(42.0));
+    }
+
+    #[test]
+    fn vm_cov_nil_coalesce_value() {
+        let result = vm_run("f>n;x=10;x??42", Some("f"), vec![]);
+        assert_eq!(result, Value::Number(10.0));
+    }
+
+    // Record with multiple field updates
+    #[test]
+    fn vm_cov_record_multi_with() {
+        let result = vm_run(
+            "type pt{x:n;y:n;z:n}\nf>n;p=pt x:1 y:2 z:3;p2=p with x:10 y:20;+p2.x +p2.y p2.z",
+            Some("f"),
+            vec![],
+        );
+        assert_eq!(result, Value::Number(33.0)); // 10 + 20 + 3
+    }
+
+    // For-range break
+    #[test]
+    fn vm_cov_for_range_brk() {
+        let result = vm_run("f>n;@i 0..10{>=i 3{brk i};i}", Some("f"), vec![]);
+        assert_eq!(result, Value::Number(3.0));
+    }
+
+    // Deeply nested calls returning records
+    #[test]
+    fn vm_cov_deep_record_return() {
+        let result = vm_run(
+            "type pt{x:n;y:n}\nmk a:n b:n>pt;pt x:a y:b\nwrap a:n b:n>pt;mk a b\nf>n;p=wrap 7 8;+p.x p.y",
+            Some("f"),
+            vec![],
+        );
+        assert_eq!(result, Value::Number(15.0));
+    }
+
+    // Conditional returning different types (text vs text)
+    #[test]
+    fn vm_cov_guard_with_else() {
+        let result = vm_run(
+            r#"f x:n>t;>x 5{"big"};<=x 5{"small"}"#,
+            Some("f"),
+            vec![Value::Number(3.0)],
+        );
+        assert_eq!(result, Value::Text("small".into()));
+    }
 }
