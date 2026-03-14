@@ -1,0 +1,4 @@
+bench n:n>n;s=0;i=0;wh <i n{a=cata i;b=catb i;c=combine a b;s=+s c;i=+i 1};+s 0
+cata x:n>n;>=x 900 9;>=x 800 8;>=x 700 7;>=x 600 6;>=x 500 5;>=x 400 4;>=x 300 3;>=x 200 2;1
+catb x:n>n;>=x 500 *x 3;>=x 200 *x 2;+x 0
+combine a:n b:n>n;>=a 7 +b *a 10;>=a 4 +b *a 5;+b a

@@ -1,0 +1,2 @@
+bench n:n>n;s=0;i=0;wh <i n{m=tier i;s=+s *i m;i=+i 1};+s 0
+tier x:n>n;>=x 500 3;>=x 200 2;1
