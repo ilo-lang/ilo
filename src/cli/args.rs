@@ -340,13 +340,9 @@ mod tests {
     #[test]
     fn parse_run_subcommand() {
         let cli = Cli::try_parse_from(["ilo", "run", "file.ilo", "func", "42"]).unwrap();
-        match cli.cmd {
-            Some(Cmd::Run(r)) => {
-                assert_eq!(r.source, "file.ilo");
-                assert_eq!(r.rest, vec!["func", "42"]);
-            }
-            other => panic!("expected Run, got {other:?}"),
-        }
+        let Some(Cmd::Run(r)) = cli.cmd else { panic!("expected Run") };
+        assert_eq!(r.source, "file.ilo");
+        assert_eq!(r.rest, vec!["func", "42"]);
     }
 
     #[test]
@@ -358,52 +354,38 @@ mod tests {
     #[test]
     fn parse_serv_with_mcp() {
         let cli = Cli::try_parse_from(["ilo", "serv", "--mcp", "cfg.json"]).unwrap();
-        match cli.cmd {
-            Some(Cmd::Serv(s)) => assert_eq!(s.mcp_path.as_deref(), Some("cfg.json")),
-            other => panic!("expected Serv, got {other:?}"),
-        }
+        let Some(Cmd::Serv(s)) = cli.cmd else { panic!("expected Serv") };
+        assert_eq!(s.mcp_path.as_deref(), Some("cfg.json"));
     }
 
     #[test]
     fn parse_tools_with_flags() {
         let cli =
             Cli::try_parse_from(["ilo", "tools", "--mcp", "p.json", "--full", "--graph"]).unwrap();
-        match cli.cmd {
-            Some(Cmd::Tools(t)) => {
-                assert_eq!(t.mcp_path.as_deref(), Some("p.json"));
-                assert!(t.full);
-                assert!(t.graph);
-            }
-            other => panic!("expected Tools, got {other:?}"),
-        }
+        let Some(Cmd::Tools(t)) = cli.cmd else { panic!("expected Tools") };
+        assert_eq!(t.mcp_path.as_deref(), Some("p.json"));
+        assert!(t.full);
+        assert!(t.graph);
     }
 
     #[test]
     fn parse_graph_subcommand() {
         let cli =
             Cli::try_parse_from(["ilo", "graph", "file.ilo", "--fn", "main", "--dot"]).unwrap();
-        match cli.cmd {
-            Some(Cmd::Graph(g)) => {
-                assert_eq!(g.file, "file.ilo");
-                assert_eq!(g.fn_name.as_deref(), Some("main"));
-                assert!(g.dot);
-            }
-            other => panic!("expected Graph, got {other:?}"),
-        }
+        let Some(Cmd::Graph(g)) = cli.cmd else { panic!("expected Graph") };
+        assert_eq!(g.file, "file.ilo");
+        assert_eq!(g.fn_name.as_deref(), Some("main"));
+        assert!(g.dot);
     }
 
     #[test]
     fn parse_compile_subcommand() {
         let cli =
             Cli::try_parse_from(["ilo", "compile", "prog.ilo", "-o", "out", "--bench"]).unwrap();
-        match cli.cmd {
-            Some(Cmd::Compile(c)) => {
-                assert_eq!(c.source, "prog.ilo");
-                assert_eq!(c.output.as_deref(), Some("out"));
-                assert!(c.bench);
-            }
-            other => panic!("expected Compile, got {other:?}"),
-        }
+        let Some(Cmd::Compile(c)) = cli.cmd else { panic!("expected Compile") };
+        assert_eq!(c.source, "prog.ilo");
+        assert_eq!(c.output.as_deref(), Some("out"));
+        assert!(c.bench);
     }
 
     #[test]
@@ -436,10 +418,8 @@ mod tests {
     #[test]
     fn parse_explain_subcommand() {
         let cli = Cli::try_parse_from(["ilo", "explain", "ILO-T005"]).unwrap();
-        match cli.cmd {
-            Some(Cmd::Explain(e)) => assert_eq!(e.code, "ILO-T005"),
-            other => panic!("expected Explain, got {other:?}"),
-        }
+        let Some(Cmd::Explain(e)) = cli.cmd else { panic!("expected Explain") };
+        assert_eq!(e.code, "ILO-T005");
     }
 
     #[test]
@@ -457,35 +437,29 @@ mod tests {
     #[test]
     fn parse_spec_subcommand_lang() {
         let cli = Cli::try_parse_from(["ilo", "spec", "lang"]).unwrap();
-        match cli.cmd {
-            Some(Cmd::Spec(s)) => assert_eq!(s.topic.as_deref(), Some("lang")),
-            other => panic!("expected Spec, got {other:?}"),
-        }
+        let Some(Cmd::Spec(s)) = cli.cmd else { panic!("expected Spec") };
+        assert_eq!(s.topic.as_deref(), Some("lang"));
     }
 
     #[test]
     fn parse_spec_subcommand_ai() {
         let cli = Cli::try_parse_from(["ilo", "spec", "ai"]).unwrap();
-        match cli.cmd {
-            Some(Cmd::Spec(s)) => assert_eq!(s.topic.as_deref(), Some("ai")),
-            other => panic!("expected Spec, got {other:?}"),
-        }
+        let Some(Cmd::Spec(s)) = cli.cmd else { panic!("expected Spec") };
+        assert_eq!(s.topic.as_deref(), Some("ai"));
     }
 
     #[test]
     fn engine_flag_run_tree() {
         let cli = Cli::try_parse_from(["ilo", "run", "--run-tree", "code"]).unwrap();
-        if let Some(Cmd::Run(r)) = cli.cmd {
-            assert_eq!(r.effective_engine(), Engine::Tree);
-        }
+        let Some(Cmd::Run(r)) = cli.cmd else { panic!("expected Run") };
+        assert_eq!(r.effective_engine(), Engine::Tree);
     }
 
     #[test]
     fn engine_flag_run_vm() {
         let cli = Cli::try_parse_from(["ilo", "run", "--run-vm", "code"]).unwrap();
-        if let Some(Cmd::Run(r)) = cli.cmd {
-            assert_eq!(r.effective_engine(), Engine::Vm);
-        }
+        let Some(Cmd::Run(r)) = cli.cmd else { panic!("expected Run") };
+        assert_eq!(r.effective_engine(), Engine::Vm);
     }
 
     #[test]
@@ -499,119 +473,183 @@ mod tests {
     #[test]
     fn tools_json_shorthand() {
         let cli = Cli::try_parse_from(["ilo", "tools", "--mcp", "p.json", "--json"]).unwrap();
-        if let Some(Cmd::Tools(t)) = cli.cmd {
-            assert!(t.json);
-        }
+        let Some(Cmd::Tools(t)) = cli.cmd else { panic!("expected Tools") };
+        assert!(t.json);
     }
 
     #[test]
     fn tools_ilo_shorthand() {
         let cli = Cli::try_parse_from(["ilo", "tools", "--mcp", "p.json", "--ilo"]).unwrap();
-        if let Some(Cmd::Tools(t)) = cli.cmd {
-            assert!(t.ilo);
-        }
+        let Some(Cmd::Tools(t)) = cli.cmd else { panic!("expected Tools") };
+        assert!(t.ilo);
     }
 
     #[test]
     fn tools_human_shorthand() {
         let cli = Cli::try_parse_from(["ilo", "tools", "--mcp", "p.json", "--human"]).unwrap();
-        if let Some(Cmd::Tools(t)) = cli.cmd {
-            assert!(t.human);
-        }
+        let Some(Cmd::Tools(t)) = cli.cmd else { panic!("expected Tools") };
+        assert!(t.human);
     }
 
     #[test]
     fn compile_with_func() {
         let cli = Cli::try_parse_from(["ilo", "compile", "prog.ilo", "entry"]).unwrap();
-        if let Some(Cmd::Compile(c)) = cli.cmd {
-            assert_eq!(c.func.as_deref(), Some("entry"));
-        }
+        let Some(Cmd::Compile(c)) = cli.cmd else { panic!("expected Compile") };
+        assert_eq!(c.func.as_deref(), Some("entry"));
     }
 
     #[test]
     fn graph_with_budget() {
         let cli = Cli::try_parse_from(["ilo", "graph", "f.ilo", "--budget", "100"]).unwrap();
-        if let Some(Cmd::Graph(g)) = cli.cmd {
-            assert_eq!(g.budget, Some(100));
-        }
+        let Some(Cmd::Graph(g)) = cli.cmd else { panic!("expected Graph") };
+        assert_eq!(g.budget, Some(100));
     }
 
     #[test]
     fn graph_with_reverse() {
         let cli = Cli::try_parse_from(["ilo", "graph", "f.ilo", "--reverse"]).unwrap();
-        if let Some(Cmd::Graph(g)) = cli.cmd {
-            assert!(g.reverse);
-        }
+        let Some(Cmd::Graph(g)) = cli.cmd else { panic!("expected Graph") };
+        assert!(g.reverse);
     }
 
     #[test]
     fn graph_with_subgraph() {
         let cli = Cli::try_parse_from(["ilo", "graph", "f.ilo", "--subgraph"]).unwrap();
-        if let Some(Cmd::Graph(g)) = cli.cmd {
-            assert!(g.subgraph);
-        }
+        let Some(Cmd::Graph(g)) = cli.cmd else { panic!("expected Graph") };
+        assert!(g.subgraph);
     }
 
     #[test]
     fn run_with_bench() {
         let cli = Cli::try_parse_from(["ilo", "run", "--bench", "code", "func", "42"]).unwrap();
-        if let Some(Cmd::Run(r)) = cli.cmd {
-            assert!(r.bench);
-            assert_eq!(r.source, "code");
-        }
+        let Some(Cmd::Run(r)) = cli.cmd else { panic!("expected Run") };
+        assert!(r.bench);
+        assert_eq!(r.source, "code");
     }
 
     #[test]
     fn run_with_emit_python() {
         let cli = Cli::try_parse_from(["ilo", "run", "--emit", "python", "code"]).unwrap();
-        if let Some(Cmd::Run(r)) = cli.cmd {
-            assert_eq!(r.emit.as_deref(), Some("python"));
-        }
+        let Some(Cmd::Run(r)) = cli.cmd else { panic!("expected Run") };
+        assert_eq!(r.emit.as_deref(), Some("python"));
     }
 
     #[test]
     fn run_with_explain() {
         let cli = Cli::try_parse_from(["ilo", "run", "--explain", "code"]).unwrap();
-        if let Some(Cmd::Run(r)) = cli.cmd {
-            assert!(r.explain);
-        }
+        let Some(Cmd::Run(r)) = cli.cmd else { panic!("expected Run") };
+        assert!(r.explain);
     }
 
     #[test]
     fn run_with_dense() {
         let cli = Cli::try_parse_from(["ilo", "run", "--dense", "code"]).unwrap();
-        if let Some(Cmd::Run(r)) = cli.cmd {
-            assert!(r.dense);
-        }
+        let Some(Cmd::Run(r)) = cli.cmd else { panic!("expected Run") };
+        assert!(r.dense);
     }
 
     #[test]
     fn run_with_expanded() {
         let cli = Cli::try_parse_from(["ilo", "run", "--expanded", "code"]).unwrap();
-        if let Some(Cmd::Run(r)) = cli.cmd {
-            assert!(r.expanded);
-        }
+        let Some(Cmd::Run(r)) = cli.cmd else { panic!("expected Run") };
+        assert!(r.expanded);
     }
 
     #[test]
     fn serv_with_tools() {
         let cli = Cli::try_parse_from(["ilo", "serv", "--tools", "http.json"]).unwrap();
-        if let Some(Cmd::Serv(s)) = cli.cmd {
-            assert_eq!(s.tools_path.as_deref(), Some("http.json"));
-        }
+        let Some(Cmd::Serv(s)) = cli.cmd else { panic!("expected Serv") };
+        assert_eq!(s.tools_path.as_deref(), Some("http.json"));
     }
 
     #[test]
     fn run_with_tools_and_mcp() {
         let cli = Cli::try_parse_from(["ilo", "run", "--tools", "http.json", "code"]).unwrap();
-        if let Some(Cmd::Run(r)) = cli.cmd {
-            assert_eq!(r.tools_path.as_deref(), Some("http.json"));
-        }
+        let Some(Cmd::Run(r)) = cli.cmd else { panic!("expected Run") };
+        assert_eq!(r.tools_path.as_deref(), Some("http.json"));
     }
 
     #[test]
     fn help_alias_for_spec() {
         let cli = Cli::try_parse_from(["ilo", "help", "ai"]).unwrap();
         assert!(matches!(cli.cmd, Some(Cmd::Spec(_))));
+    }
+
+    #[test]
+    fn engine_flag_run_jit() {
+        let mut r = RunArgs {
+            source: "code".to_string(),
+            engine: Engine::Default,
+            run_tree: false,
+            run: false,
+            run_vm: false,
+            run_jit: true,
+            run_cranelift: false,
+            run_llvm: false,
+            bench: false,
+            emit: None,
+            explain: false,
+            dense: false,
+            expanded: false,
+            tools_path: None,
+            mcp_path: None,
+            rest: vec![],
+        };
+        assert_eq!(r.effective_engine(), Engine::Jit);
+        r.run_jit = false;
+        r.run_cranelift = true;
+        assert_eq!(r.effective_engine(), Engine::Cranelift);
+        r.run_cranelift = false;
+        r.run_llvm = true;
+        assert_eq!(r.effective_engine(), Engine::Llvm);
+        r.run_llvm = false;
+        r.engine = Engine::Vm;
+        assert_eq!(r.effective_engine(), Engine::Vm);
+    }
+
+    #[test]
+    fn explicit_json_true_when_json_flag() {
+        let global = Global { ansi: false, text: false, json: true, no_hints: false };
+        assert!(global.explicit_json());
+    }
+
+    #[test]
+    fn explicit_json_false_when_not_set() {
+        let global = Global { ansi: false, text: false, json: false, no_hints: false };
+        assert!(!global.explicit_json());
+    }
+
+    #[test]
+    fn output_mode_auto_detect_no_tty_returns_json() {
+        // In test environments stderr is not a TTY, so auto-detect should return Json
+        let global = Global { ansi: false, text: false, json: false, no_hints: false };
+        let mode = global.output_mode();
+        // In CI/test (non-TTY), auto-detect always returns Json
+        assert_eq!(mode, OutputMode::Json);
+    }
+
+    #[test]
+    fn tools_format_value_enum_parse() {
+        // Verify ToolsFormat ValueEnum works
+        let human = ToolsFormat::Human;
+        let ilo = ToolsFormat::Ilo;
+        let json = ToolsFormat::Json;
+        assert!(matches!(human, ToolsFormat::Human));
+        assert!(matches!(ilo, ToolsFormat::Ilo));
+        assert!(matches!(json, ToolsFormat::Json));
+    }
+
+    #[test]
+    fn graph_with_fn_name_parse() {
+        let cli = Cli::try_parse_from(["ilo", "graph", "file.ilo", "--fn", "myfunc"]).unwrap();
+        let Some(Cmd::Graph(g)) = cli.cmd else { panic!("expected Graph") };
+        assert_eq!(g.fn_name.as_deref(), Some("myfunc"));
+    }
+
+    #[test]
+    fn run_with_mcp_path_parse() {
+        let cli = Cli::try_parse_from(["ilo", "run", "--mcp", "mcp.json", "code"]).unwrap();
+        let Some(Cmd::Run(r)) = cli.cmd else { panic!("expected Run") };
+        assert_eq!(r.mcp_path.as_deref(), Some("mcp.json"));
     }
 }
