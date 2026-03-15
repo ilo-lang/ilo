@@ -177,6 +177,9 @@ pub(crate) const OP_CMPK_LE_N: u8 = 93; // skip-if R[A] <= K[C]  (f64)
 pub(crate) const OP_CMPK_EQ_N: u8 = 94; // skip-if R[A] == K[C]  (f64)
 pub(crate) const OP_CMPK_NE_N: u8 = 95; // skip-if R[A] != K[C]  (f64)
 
+// ABC mode — type-specialized string concatenation (both operands known text, no type check)
+pub(crate) const OP_ADD_SS: u8 = 96; // R[A] = R[B] ++ R[C]  (both known text)
+
 // ABx mode — register + 16-bit operand
 pub(crate) const OP_LOADK: u8 = 20;
 pub(crate) const OP_JMP: u8 = 21;
@@ -362,6 +365,7 @@ struct RegCompiler {
     next_reg: u8,
     max_reg: u8,
     reg_is_num: [bool; 256],     // track which registers are known numeric
+    reg_is_str: [bool; 256],     // track which registers are known text (string)
     reg_record_type: [u16; 256], // track record type_id per register (u16::MAX = unknown)
     first_error: Option<CompileError>,
     current_span: crate::ast::Span,
@@ -381,6 +385,7 @@ impl RegCompiler {
             next_reg: 0,
             max_reg: 0,
             reg_is_num: [false; 256],
+            reg_is_str: [false; 256],
             reg_record_type: [u16::MAX; 256],
             first_error: None,
             current_span: crate::ast::Span::UNKNOWN,
@@ -402,6 +407,7 @@ impl RegCompiler {
             self.max_reg = self.next_reg;
         }
         self.reg_is_num[r as usize] = false;
+        self.reg_is_str[r as usize] = false;
         self.reg_record_type[r as usize] = u16::MAX;
         r
     }
@@ -594,6 +600,7 @@ impl RegCompiler {
                 self.max_reg = self.next_reg;
 
                 self.reg_is_num = [false; 256];
+                self.reg_is_str = [false; 256];
                 self.reg_record_type = [u16::MAX; 256];
                 self.current_all_regs_numeric = true;
                 for (i, p) in params.iter().enumerate() {
@@ -602,6 +609,9 @@ impl RegCompiler {
                         self.reg_is_num[i] = true;
                     } else {
                         self.current_all_regs_numeric = false;
+                    }
+                    if p.ty == Type::Text {
+                        self.reg_is_str[i] = true;
                     }
                     self.reg_record_type[i] = self.resolve_type_id(&p.ty);
                 }
@@ -745,10 +755,12 @@ impl RegCompiler {
                         self.emit_abc(OP_LISTAPPEND, existing_reg, existing_reg, item_reg);
                         return None;
                     }
-                    // Peephole: `name = +name suffix` → OP_ADD(existing, existing, suffix)
+                    // Peephole: `name = +name suffix` → OP_ADD_SS/OP_ADD(existing, existing, suffix)
                     // Only when `name` is known to be non-numeric (strings/lists): with a=b,
                     // the OP_ADD runtime checks RC=1 and appends in place (amortised O(1)),
                     // turning O(n²) repeated string-building into O(n).
+                    // When `name` is known string and RHS compiles to a string register,
+                    // use OP_ADD_SS to skip all type checks entirely.
                     // Skip for numeric vars — they use OP_ADD_NN / OP_ADDK_N specialisations.
                     if let Expr::BinOp {
                         op: BinOp::Add,
@@ -760,7 +772,14 @@ impl RegCompiler {
                         && !self.reg_is_num[existing_reg as usize]
                     {
                         let rhs_reg = self.compile_expr(right);
-                        self.emit_abc(OP_ADD, existing_reg, existing_reg, rhs_reg);
+                        if self.reg_is_str[existing_reg as usize]
+                            && self.reg_is_str[rhs_reg as usize]
+                        {
+                            // Both known string: use OP_ADD_SS (no type checking at all)
+                            self.emit_abc(OP_ADD_SS, existing_reg, existing_reg, rhs_reg);
+                        } else {
+                            self.emit_abc(OP_ADD, existing_reg, existing_reg, rhs_reg);
+                        }
                         return None;
                     }
                     // General re-binding: compile value and move to existing register
@@ -769,8 +788,9 @@ impl RegCompiler {
                         self.emit_abc(OP_MOVE, existing_reg, reg, 0);
                         self.reg_record_type[existing_reg as usize] =
                             self.reg_record_type[reg as usize];
-                        // Propagate numeric type so next iteration can use specialized opcodes
+                        // Propagate numeric and string type so next iteration can use specialized opcodes
                         self.reg_is_num[existing_reg as usize] = self.reg_is_num[reg as usize];
+                        self.reg_is_str[existing_reg as usize] = self.reg_is_str[reg as usize];
                     }
                 } else {
                     let reg = self.compile_expr(value);
@@ -1384,6 +1404,7 @@ impl RegCompiler {
         match expr {
             Expr::Literal(lit) => {
                 let is_num = matches!(lit, Literal::Number(_));
+                let is_str = matches!(lit, Literal::Text(_));
                 let val = match lit {
                     Literal::Number(n) => Value::Number(*n),
                     Literal::Text(s) => Value::Text(s.clone()),
@@ -1395,6 +1416,9 @@ impl RegCompiler {
                 self.emit_abx(OP_LOADK, reg, ki);
                 if is_num {
                     self.reg_is_num[reg as usize] = true;
+                }
+                if is_str {
+                    self.reg_is_str[reg as usize] = true;
                 }
                 reg
             }
@@ -1512,6 +1536,7 @@ impl RegCompiler {
                             let rb = self.compile_expr(&args[0]);
                             let ra = self.alloc_reg();
                             self.emit_abc(OP_STR, ra, rb, 0);
+                            self.reg_is_str[ra as usize] = true;
                             return ra;
                         }
                         (Builtin::Num, 1) => {
@@ -2016,30 +2041,35 @@ impl RegCompiler {
                 let rb = self.compile_expr(left);
                 let rc = self.compile_expr(right);
                 let both_num = self.reg_is_num[rb as usize] && self.reg_is_num[rc as usize];
+                let both_str = self.reg_is_str[rb as usize] && self.reg_is_str[rc as usize];
 
-                // Use type-specialized opcodes when both operands are known numeric
-                let (opcode, result_is_num) = match op {
-                    BinOp::Add if both_num => (OP_ADD_NN, true),
-                    BinOp::Subtract if both_num => (OP_SUB_NN, true),
-                    BinOp::Multiply if both_num => (OP_MUL_NN, true),
-                    BinOp::Divide if both_num => (OP_DIV_NN, true),
-                    BinOp::Add => (OP_ADD, false),
-                    BinOp::Subtract => (OP_SUB, false),
-                    BinOp::Multiply => (OP_MUL, false),
-                    BinOp::Divide => (OP_DIV, false),
-                    BinOp::Equals => (OP_EQ, false),
-                    BinOp::NotEquals => (OP_NE, false),
-                    BinOp::GreaterThan => (OP_GT, false),
-                    BinOp::LessThan => (OP_LT, false),
-                    BinOp::GreaterOrEqual => (OP_GE, false),
-                    BinOp::LessOrEqual => (OP_LE, false),
-                    BinOp::Append => (OP_LISTAPPEND, false),
-                    _ => (OP_LISTAPPEND, false), // And/Or handled above by early return; Append fallthrough
+                // Use type-specialized opcodes when both operands are known numeric or both string
+                let (opcode, result_is_num, result_is_str) = match op {
+                    BinOp::Add if both_num => (OP_ADD_NN, true, false),
+                    BinOp::Add if both_str => (OP_ADD_SS, false, true),
+                    BinOp::Subtract if both_num => (OP_SUB_NN, true, false),
+                    BinOp::Multiply if both_num => (OP_MUL_NN, true, false),
+                    BinOp::Divide if both_num => (OP_DIV_NN, true, false),
+                    BinOp::Add => (OP_ADD, false, false),
+                    BinOp::Subtract => (OP_SUB, false, false),
+                    BinOp::Multiply => (OP_MUL, false, false),
+                    BinOp::Divide => (OP_DIV, false, false),
+                    BinOp::Equals => (OP_EQ, false, false),
+                    BinOp::NotEquals => (OP_NE, false, false),
+                    BinOp::GreaterThan => (OP_GT, false, false),
+                    BinOp::LessThan => (OP_LT, false, false),
+                    BinOp::GreaterOrEqual => (OP_GE, false, false),
+                    BinOp::LessOrEqual => (OP_LE, false, false),
+                    BinOp::Append => (OP_LISTAPPEND, false, false),
+                    _ => (OP_LISTAPPEND, false, false), // And/Or handled above by early return; Append fallthrough
                 };
                 let ra = self.alloc_reg();
                 self.emit_abc(opcode, ra, rb, rc);
                 if result_is_num {
                     self.reg_is_num[ra as usize] = true;
+                }
+                if result_is_str {
+                    self.reg_is_str[ra as usize] = true;
                 }
                 ra
             }
@@ -4645,6 +4675,98 @@ impl<'a> VM<'a> {
                         *self.stack.as_mut_ptr().add(a) = result;
                     }
                 }
+                OP_ADD_SS => {
+                    // Type-specialized string concatenation: both operands guaranteed to be
+                    // strings by the compiler (type-specialisation). Guard against pathological
+                    // cases (e.g. tests passing wrong-typed args) with an explicit is_string check.
+                    let a = ((inst >> 16) & 0xFF) as usize + base;
+                    let b = ((inst >> 8) & 0xFF) as usize + base;
+                    let c = (inst & 0xFF) as usize + base;
+                    let bv = reg!(b);
+                    let cv = reg!(c);
+                    // Runtime type guard: both operands must actually be heap strings.
+                    // In well-typed programs this is always true; the check prevents
+                    // UB when wrong-typed values reach this opcode through function calls.
+                    if !bv.is_string() || !cv.is_string() {
+                        vm_err!(VmError::Type("cannot add non-matching types"));
+                    }
+                    // SAFETY: compiler guarantees both are strings; bv.is_string() → heap-tagged.
+                    let ptr_b = (bv.0 & PTR_MASK) as *const HeapObj;
+                    let rc_b = unsafe { Rc::from_raw(ptr_b) };
+                    if Rc::strong_count(&rc_b) == 1 {
+                        match Rc::try_unwrap(rc_b) {
+                            Ok(heap_obj) => {
+                                // SAFETY: tag is TAG_STRING → variant is HeapObj::Str.
+                                let mut owned: String = unsafe {
+                                    let md = std::mem::ManuallyDrop::new(heap_obj);
+                                    std::ptr::read(match &*md {
+                                        HeapObj::Str(s) => s as *const String,
+                                        _ => unreachable!(),
+                                    })
+                                };
+                                // Nullify slot b so no double-free.
+                                unsafe {
+                                    *self.stack.as_mut_ptr().add(b) = NanVal::nil();
+                                }
+                                // Read RHS string before touching slot a.
+                                let sc_ptr: *const str = unsafe {
+                                    match cv.as_heap_ref() {
+                                        HeapObj::Str(s) => s.as_str() as *const str,
+                                        _ => unreachable!(),
+                                    }
+                                };
+                                // SAFETY: cv still live so sc_ptr is valid.
+                                owned.push_str(unsafe { &*sc_ptr });
+                                let new_val = NanVal::heap_string(owned);
+                                unsafe {
+                                    let slot = self.stack.as_mut_ptr().add(a);
+                                    if a != b {
+                                        (*slot).drop_rc();
+                                    }
+                                    *slot = new_val;
+                                }
+                            }
+                            Err(rc_back) => {
+                                // Shouldn't happen (RC was 1), fall back safely.
+                                std::mem::forget(rc_back);
+                                let result = unsafe {
+                                    let sb = match bv.as_heap_ref() {
+                                        HeapObj::Str(s) => s,
+                                        _ => unreachable!(),
+                                    };
+                                    let sc = match cv.as_heap_ref() {
+                                        HeapObj::Str(s) => s,
+                                        _ => unreachable!(),
+                                    };
+                                    let mut out =
+                                        String::with_capacity(sb.len() + sc.len());
+                                    out.push_str(sb);
+                                    out.push_str(sc);
+                                    NanVal::heap_string(out)
+                                };
+                                reg_set!(a, result);
+                            }
+                        }
+                    } else {
+                        // RC > 1 — must copy; restore count by forgetting rc_b.
+                        std::mem::forget(rc_b);
+                        let result = unsafe {
+                            let sb = match bv.as_heap_ref() {
+                                HeapObj::Str(s) => s,
+                                _ => unreachable!(),
+                            };
+                            let sc = match cv.as_heap_ref() {
+                                HeapObj::Str(s) => s,
+                                _ => unreachable!(),
+                            };
+                            let mut out = String::with_capacity(sb.len() + sc.len());
+                            out.push_str(sb);
+                            out.push_str(sc);
+                            NanVal::heap_string(out)
+                        };
+                        reg_set!(a, result);
+                    }
+                }
                 OP_LEN => {
                     let a = ((inst >> 16) & 0xFF) as usize + base;
                     let b = ((inst >> 8) & 0xFF) as usize + base;
@@ -5762,6 +5884,46 @@ pub(crate) extern "C" fn jit_add(a: u64, b: u64) -> u64 {
         }
     }
     TAG_NIL // error fallback
+}
+
+/// Fast-path string concatenation — both arguments are guaranteed to be strings.
+/// Called by JIT/AOT OP_ADD_SS handler. Skips numeric and list type checks entirely.
+#[cfg(feature = "cranelift")]
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn jit_concat(a: u64, b: u64) -> u64 {
+    let av = NanVal(a);
+    let bv = NanVal(b);
+    unsafe {
+        let a_ptr = (av.0 & PTR_MASK) as *const HeapObj;
+        let b_ptr = (bv.0 & PTR_MASK) as *const HeapObj;
+        // Read the right-hand string via raw pointer (does not touch RC count).
+        // SAFETY: b_ptr was produced by Rc::into_raw; the NanVal keeps it alive.
+        let sb: &str = match &*b_ptr {
+            HeapObj::Str(s) => s.as_str(),
+            _ => unreachable!(),
+        };
+        // RC=1 fast path: mutate left string in place via Rc::get_mut.
+        let mut a_rc = Rc::from_raw(a_ptr);
+        if let Some(heap_obj) = Rc::get_mut(&mut a_rc) {
+            match heap_obj {
+                HeapObj::Str(s) => s.push_str(sb),
+                _ => unreachable!(),
+            }
+            let ptr = Rc::into_raw(a_rc) as u64;
+            NanVal(TAG_STRING | (ptr & PTR_MASK)).0
+        } else {
+            // Multiple owners — copy path.
+            let sa: &str = match &*a_ptr {
+                HeapObj::Str(s) => s.as_str(),
+                _ => unreachable!(),
+            };
+            let mut out = String::with_capacity(sa.len() + sb.len());
+            out.push_str(sa);
+            out.push_str(sb);
+            std::mem::forget(a_rc);
+            NanVal::heap_string(out).0
+        }
+    }
 }
 
 #[cfg(feature = "cranelift")]
@@ -7901,6 +8063,44 @@ mod tests {
         assert_eq!(result, Value::Number(10.0));
     }
 
+    // ── OP_ADD_SS: type-specialized string concatenation ────────────────────────
+    // Both params typed :t → compiler emits OP_ADD_SS (no type-check branch).
+    #[test]
+    fn vm_add_ss_basic() {
+        // f a:t b:t → OP_ADD_SS (both reg_is_str)
+        let source = r#"f a:t b:t>t;+a b"#;
+        let result = vm_run(
+            source,
+            Some("f"),
+            vec![
+                Value::Text("foo".to_string()),
+                Value::Text("bar".to_string()),
+            ],
+        );
+        assert_eq!(result, Value::Text("foobar".to_string()));
+    }
+
+    #[test]
+    fn vm_add_ss_with_str_builtin() {
+        // str() output is marked reg_is_str; +a (str b) → both string → OP_ADD_SS
+        // Store str(b) in a variable so both sides of + are known-string registers.
+        let source = r#"f a:t b:n>t;s=str b;+a s"#;
+        let result = vm_run(
+            source,
+            Some("f"),
+            vec![Value::Text("val=".to_string()), Value::Number(42.0)],
+        );
+        assert_eq!(result, Value::Text("val=42".to_string()));
+    }
+
+    #[test]
+    fn vm_add_ss_literal_concat() {
+        // Both sides are text literals → OP_ADD_SS
+        let source = r#"f>t;+"hello " "world""#;
+        let result = vm_run(source, Some("f"), vec![]);
+        assert_eq!(result, Value::Text("hello world".to_string()));
+    }
+
     #[test]
     fn vm_string_concat() {
         let source = r#"f a:t b:t>t;+a b"#;
@@ -9517,9 +9717,9 @@ mod tests {
 
     #[test]
     fn vm_add_heap_non_list_type_error() {
-        // OP_ADD: both heap but not both lists (list+ok) → L1374
-        // Declare params as text to avoid NN/superinstruction, pass list+ok at runtime.
-        let source = "f x:t y:t>t;+x y";
+        // OP_ADD: both heap but not both lists (list+ok) → type error
+        // Declare params as list type to avoid NN/SS specialisations, pass list+ok at runtime.
+        let source = "f x:L n y:L n>L n;+x y";
         let list = Value::List(vec![Value::Number(1.0)]);
         let ok_val = Value::Ok(Box::new(Value::Number(1.0)));
         let err = vm_run_err(source, Some("f"), vec![list, ok_val]);

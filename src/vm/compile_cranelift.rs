@@ -24,6 +24,7 @@ use std::collections::HashMap;
 #[allow(dead_code)]
 struct HelperFuncs {
     add: FuncId,
+    concat: FuncId,
     sub: FuncId,
     mul: FuncId,
     div: FuncId,
@@ -134,6 +135,7 @@ fn declare_helper(
 fn declare_all_helpers(module: &mut ObjectModule) -> HelperFuncs {
     HelperFuncs {
         add: declare_helper(module, "jit_add", 2, 1),
+        concat: declare_helper(module, "jit_concat", 2, 1),
         sub: declare_helper(module, "jit_sub", 2, 1),
         mul: declare_helper(module, "jit_mul", 2, 1),
         div: declare_helper(module, "jit_div", 2, 1),
@@ -887,13 +889,13 @@ fn compile_function_body(
                 // MOVE: skip here, handled by fixpoint below.
                 OP_MOVE => {}
                 // Ops that write a non-numeric or unknown type to R[A].
-                OP_ADD | OP_SUB | OP_MUL | OP_DIV | OP_NEG | OP_WRAPOK | OP_WRAPERR | OP_UNWRAP
-                | OP_RECFLD | OP_RECFLD_NAME | OP_LISTGET | OP_INDEX | OP_STR | OP_HD | OP_TL
-                | OP_REV | OP_SRT | OP_SLC | OP_SPL | OP_CAT | OP_GET | OP_POST | OP_GETH
-                | OP_POSTH | OP_ENV | OP_JPTH | OP_JDMP | OP_JPAR | OP_MAPNEW | OP_MGET
-                | OP_MSET | OP_MDEL | OP_MKEYS | OP_MVALS | OP_LISTNEW | OP_LISTAPPEND
-                | OP_RECNEW | OP_RECWITH | OP_PRT | OP_RD | OP_RDL | OP_WR | OP_WRL | OP_TRM
-                | OP_UNQ | OP_NUM => {
+                OP_ADD | OP_SUB | OP_MUL | OP_DIV | OP_ADD_SS | OP_NEG | OP_WRAPOK
+                | OP_WRAPERR | OP_UNWRAP | OP_RECFLD | OP_RECFLD_NAME | OP_LISTGET | OP_INDEX
+                | OP_STR | OP_HD | OP_TL | OP_REV | OP_SRT | OP_SLC | OP_SPL | OP_CAT
+                | OP_GET | OP_POST | OP_GETH | OP_POSTH | OP_ENV | OP_JPTH | OP_JDMP
+                | OP_JPAR | OP_MAPNEW | OP_MGET | OP_MSET | OP_MDEL | OP_MKEYS | OP_MVALS
+                | OP_LISTNEW | OP_LISTAPPEND | OP_RECNEW | OP_RECWITH | OP_PRT | OP_RD
+                | OP_RDL | OP_WR | OP_WRL | OP_TRM | OP_UNQ | OP_NUM => {
                     non_num_write[a] = true;
                     non_bool_write[a] = true;
                 }
@@ -1113,58 +1115,101 @@ fn compile_function_body(
             }
             // ── Generic arithmetic with inline numeric fast path + helper slow path ──
             OP_ADD | OP_SUB | OP_MUL | OP_DIV => {
+                let both_always_num = b_idx < reg_always_num.len()
+                    && reg_always_num[b_idx]
+                    && c_idx < reg_always_num.len()
+                    && reg_always_num[c_idx];
+
+                if both_always_num {
+                    // Pre-pass proved both operands are always numeric: skip QNAN check,
+                    // emit inline float op directly (same as OP_ADD_NN / OP_SUB_NN etc.).
+                    let bf = if b_idx < reg_count && reg_always_num[b_idx] {
+                        builder.use_var(f64_vars[b_idx])
+                    } else {
+                        let bv = builder.use_var(vars[b_idx]);
+                        builder.ins().bitcast(F64, mf, bv)
+                    };
+                    let cf = if c_idx < reg_count && reg_always_num[c_idx] {
+                        builder.use_var(f64_vars[c_idx])
+                    } else {
+                        let cv = builder.use_var(vars[c_idx]);
+                        builder.ins().bitcast(F64, mf, cv)
+                    };
+                    let result_f = match op {
+                        OP_ADD => builder.ins().fadd(bf, cf),
+                        OP_SUB => builder.ins().fsub(bf, cf),
+                        OP_MUL => builder.ins().fmul(bf, cf),
+                        OP_DIV => builder.ins().fdiv(bf, cf),
+                        _ => unreachable!(),
+                    };
+                    let result = builder.ins().bitcast(I64, mf, result_f);
+                    builder.def_var(vars[a_idx], result);
+                    if a_idx < reg_count && reg_always_num[a_idx] {
+                        builder.def_var(f64_vars[a_idx], result_f);
+                    }
+                } else {
+                    let bv = builder.use_var(vars[b_idx]);
+                    let cv = builder.use_var(vars[c_idx]);
+
+                    let qnan_val = builder.ins().iconst(I64, QNAN as i64);
+                    let b_masked = builder.ins().band(bv, qnan_val);
+                    let c_masked = builder.ins().band(cv, qnan_val);
+                    let b_or_c = builder.ins().bor(b_masked, c_masked);
+                    let both_num = builder.ins().icmp(
+                        cranelift_codegen::ir::condcodes::IntCC::NotEqual,
+                        b_or_c,
+                        qnan_val,
+                    );
+
+                    let num_block = builder.create_block();
+                    let slow_block = builder.create_block();
+                    let merge_block = builder.create_block();
+                    builder.append_block_param(merge_block, I64);
+
+                    builder
+                        .ins()
+                        .brif(both_num, num_block, &[], slow_block, &[]);
+
+                    // Fast path: inline float arithmetic
+                    builder.switch_to_block(num_block);
+                    let bf = builder.ins().bitcast(F64, mf, bv);
+                    let cf = builder.ins().bitcast(F64, mf, cv);
+                    let result_f = match op {
+                        OP_ADD => builder.ins().fadd(bf, cf),
+                        OP_SUB => builder.ins().fsub(bf, cf),
+                        OP_MUL => builder.ins().fmul(bf, cf),
+                        OP_DIV => builder.ins().fdiv(bf, cf),
+                        _ => unreachable!(),
+                    };
+                    let fast_result = builder.ins().bitcast(I64, mf, result_f);
+                    builder.ins().jump(merge_block, &[fast_result]);
+
+                    // Slow path: call helper
+                    builder.switch_to_block(slow_block);
+                    let helper = match op {
+                        OP_ADD => helpers.add,
+                        OP_SUB => helpers.sub,
+                        OP_MUL => helpers.mul,
+                        OP_DIV => helpers.div,
+                        _ => unreachable!(),
+                    };
+                    let fref = get_func_ref(&mut builder, module, helper);
+                    let call_inst = builder.ins().call(fref, &[bv, cv]);
+                    let slow_result = builder.inst_results(call_inst)[0];
+                    builder.ins().jump(merge_block, &[slow_result]);
+
+                    builder.switch_to_block(merge_block);
+                    let result = builder.block_params(merge_block)[0];
+                    builder.def_var(vars[a_idx], result);
+                }
+            }
+            // ── String concatenation fast path — both operands guaranteed strings ──
+            OP_ADD_SS => {
                 let bv = builder.use_var(vars[b_idx]);
                 let cv = builder.use_var(vars[c_idx]);
-
-                let qnan_val = builder.ins().iconst(I64, QNAN as i64);
-                let b_masked = builder.ins().band(bv, qnan_val);
-                let c_masked = builder.ins().band(cv, qnan_val);
-                let b_or_c = builder.ins().bor(b_masked, c_masked);
-                let both_num = builder.ins().icmp(
-                    cranelift_codegen::ir::condcodes::IntCC::NotEqual,
-                    b_or_c,
-                    qnan_val,
-                );
-
-                let num_block = builder.create_block();
-                let slow_block = builder.create_block();
-                let merge_block = builder.create_block();
-                builder.append_block_param(merge_block, I64);
-
-                builder
-                    .ins()
-                    .brif(both_num, num_block, &[], slow_block, &[]);
-
-                // Fast path: inline float arithmetic
-                builder.switch_to_block(num_block);
-                let bf = builder.ins().bitcast(F64, mf, bv);
-                let cf = builder.ins().bitcast(F64, mf, cv);
-                let result_f = match op {
-                    OP_ADD => builder.ins().fadd(bf, cf),
-                    OP_SUB => builder.ins().fsub(bf, cf),
-                    OP_MUL => builder.ins().fmul(bf, cf),
-                    OP_DIV => builder.ins().fdiv(bf, cf),
-                    _ => unreachable!(),
-                };
-                let fast_result = builder.ins().bitcast(I64, mf, result_f);
-                builder.ins().jump(merge_block, &[fast_result]);
-
-                // Slow path: call helper
-                builder.switch_to_block(slow_block);
-                let helper = match op {
-                    OP_ADD => helpers.add,
-                    OP_SUB => helpers.sub,
-                    OP_MUL => helpers.mul,
-                    OP_DIV => helpers.div,
-                    _ => unreachable!(),
-                };
-                let fref = get_func_ref(&mut builder, module, helper);
+                let fref = get_func_ref(&mut builder, module, helpers.concat);
                 let call_inst = builder.ins().call(fref, &[bv, cv]);
-                let slow_result = builder.inst_results(call_inst)[0];
-                builder.ins().jump(merge_block, &[slow_result]);
-
-                builder.switch_to_block(merge_block);
-                let result = builder.block_params(merge_block)[0];
+                let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
             }
             // ── Comparisons with inline numeric fast path + fused compare-and-branch ──

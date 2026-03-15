@@ -50,13 +50,19 @@ cargo test                       # full test suite
 
 ## Agent teams
 
-When parallelisable work arises (coverage gaps, multi-file refactors, independent bug fixes), prefer **agent teams** over single subagents:
+When parallelisable work arises (coverage gaps, multi-file refactors, independent bug fixes), use **agent teams**:
 
-- Use `model: "sonnet"` for implementation work, `model: "haiku"` for comprehension/validation
-- Use `isolation: "worktree"` so each agent gets its own copy — no merge conflicts
+1. Create a team with `TeamCreate` (name + description)
+2. Create tasks with `TaskCreate` (one per agent)
+3. Spawn teammates with `Agent` using `team_name`, `name`, `isolation: "worktree"`, `model: "sonnet"`, `run_in_background: true`
+4. Assign tasks via `TaskUpdate` with `owner`
+5. When agents complete, review worktree branches and cherry-pick/merge into main
+6. Shut down teammates with `SendMessage` type `shutdown_request`, then `TeamDelete`
+
+Rules:
+- Use `model: "sonnet"` for implementation, `model: "haiku"` for comprehension/validation
+- Always `isolation: "worktree"` — no merge conflicts
 - One focused task per agent (e.g. "cover vm/mod.rs" not "improve all coverage")
-- Run agents in parallel with `run_in_background: true`, collect and merge results after
-- After agents complete, review their worktree branches and cherry-pick/merge into main
 
 ## Benchmarks
 
