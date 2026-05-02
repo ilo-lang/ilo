@@ -81,8 +81,11 @@ fn compress_section(lines: &[String]) -> String {
     for line in lines {
         let t = line.as_str();
 
-        // Blank lines, horizontal rules, and code-fence markers are noise.
-        if t.is_empty() || t == "---" || t.starts_with("```") {
+        // Blank lines, horizontal rules, code-fence markers, and the document H1 title
+        // are noise. The H1 is the file's title in SPEC.md ("# ilo Language Spec") and
+        // is redundant in the compact output, where the description paragraph already
+        // self-identifies the language.
+        if t.is_empty() || t == "---" || t.starts_with("```") || t.starts_with("# ") {
             continue;
         }
 
