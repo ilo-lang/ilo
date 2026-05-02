@@ -115,7 +115,7 @@ fn compress_section(lines: &[String]) -> String {
                         .map(str::trim)
                         .filter(|s| !s.is_empty())
                         .collect();
-                    items.push(cells.join("="));
+                    items.push(collapse_ws(&cells.join("=")));
                 }
             }
             continue;
@@ -125,11 +125,19 @@ fn compress_section(lines: &[String]) -> String {
         table_state = TableState::NotInTable;
 
         if let Some(bullet) = t.strip_prefix("- ") {
-            items.push(bullet.to_string());
+            items.push(collapse_ws(bullet));
         } else {
-            items.push(t.to_string());
+            items.push(collapse_ws(t));
         }
     }
 
     items.join(" ")
+}
+
+/// Collapse runs of internal whitespace to a single space. Code-fenced blocks in SPEC.md
+/// use alignment padding (e.g. `mmap                      -- empty map`) so dashes line up
+/// for human readers; that alignment wastes tokens in the compact spec without conveying
+/// information to the LLM consumer.
+fn collapse_ws(s: &str) -> String {
+    s.split_whitespace().collect::<Vec<_>>().join(" ")
 }
