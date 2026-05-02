@@ -6087,7 +6087,7 @@ mod tests {
             panic!("expected Guard, got {:?}", body[0].node)
         };
         // The inner let (w=1) should remain — non-Expr last stmt is left as-is
-        assert!(guard_body.len() >= 1);
+        assert!(!guard_body.is_empty());
         assert!(
             matches!(&guard_body[0].node, Stmt::Let { name, .. } if name == "w"),
             "expected inner Let{{w}} untouched, got {:?}",

@@ -6902,21 +6902,6 @@ mod tests {
 
     // ── tools_cmd: with mcp decls (Decl::Tool) for Human/Ilo/Json rendering ──
 
-    fn make_tool_decl(name: &str) -> ast::Decl {
-        ast::Decl::Tool {
-            name: name.to_string(),
-            description: format!("{name} tool"),
-            params: vec![ast::Param {
-                name: "x".to_string(),
-                ty: ast::Type::Text,
-            }],
-            return_type: ast::Type::Result(Box::new(ast::Type::Text), Box::new(ast::Type::Text)),
-            timeout: None,
-            retry: None,
-            span: ast::Span::UNKNOWN,
-        }
-    }
-
     /// Write an empty-tools HTTP config + call tools_cmd to test the code paths
     /// that render Decl::Tool entries (Human full, Ilo, Json modes with typed tools).
     /// Note: tools_cmd calls collect_mcp_tool_decls internally, so we can't inject

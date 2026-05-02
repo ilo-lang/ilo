@@ -19984,9 +19984,6 @@ f>n;r=mk 10 20;+r.x r.y";
         fn make_abc(op: u8, a: u8, b: u8, c: u8) -> u32 {
             ((op as u32) << 24) | ((a as u32) << 16) | ((b as u32) << 8) | (c as u32)
         }
-        fn make_abx(op: u8, a: u8, bx: u16) -> u32 {
-            ((op as u32) << 24) | ((a as u32) << 16) | (bx as u32)
-        }
 
         // OP_CALL: a=result_reg, b=func_idx, c=arg_count
         // OP_RET: a=reg_to_return
