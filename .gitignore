@@ -19,3 +19,6 @@ docs/
 
 # E2E test artefacts (subagent-produced logs; not tracked)
 tests/e2e/
+
+# CLAUDE.md is per-developer Claude Code context; AGENTS.md is the cross-tool tracked equivalent
+CLAUDE.md
