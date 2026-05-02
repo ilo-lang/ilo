@@ -1,12 +1,11 @@
 ---
 name: ilo
 description: "Write, run, debug, and explain programs in ilo — a token-optimised programming language for AI agents. Use when the user asks to write ilo code, mentions .ilo files, asks about ilo syntax, wants to create token-optimised programs, or wants to convert code from other languages to ilo."
-argument-hint: "[task or code description]"
-allowed-tools:
-  - Bash
-  - Read
-  - Write
-  - Edit
+license: MIT
+compatibility: Requires the ilo binary (auto-installed by scripts/ensure-ilo.sh via GitHub releases or npm).
+allowed-tools: Bash Read Write Edit
+metadata:
+  argument-hint: "[task or code description]"
 ---
 
 # ilo Programming Language
@@ -16,7 +15,7 @@ allowed-tools:
 Before writing or running ilo code, ensure ilo is installed and up to date:
 
 ```bash
-${CLAUDE_SKILL_DIR}/scripts/ensure-ilo.sh
+scripts/ensure-ilo.sh
 ```
 
 Run this at the start of every ilo task. It installs ilo if missing, or updates it if a newer version is available.
