@@ -3698,7 +3698,11 @@ fn cli_nil_arg_to_optional_param() {
         .args(["f x:O n>n;x??0", "f", "nil"])
         .output()
         .expect("failed to run ilo");
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "0");
 }
 
@@ -3708,7 +3712,11 @@ fn cli_nil_arg_equality() {
         .args(["f x:O n>b;=x nil", "f", "nil"])
         .output()
         .expect("failed to run ilo");
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "true");
 }
 
@@ -3720,7 +3728,11 @@ fn cli_single_number_coerced_to_list() {
         .args(["f xs:L n>n;sum xs", "f", "10"])
         .output()
         .expect("failed to run ilo");
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "10");
 }
 
@@ -3730,7 +3742,11 @@ fn cli_single_text_coerced_to_list() {
         .args(["f xs:L t>n;len xs", "f", "hello"])
         .output()
         .expect("failed to run ilo");
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "1");
 }
 
@@ -3740,7 +3756,11 @@ fn cli_comma_list_still_works() {
         .args(["f xs:L n>n;sum xs", "f", "1,2,3"])
         .output()
         .expect("failed to run ilo");
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "6");
 }
 
@@ -3756,7 +3776,11 @@ fn sum_type_match_all_variants_runs() {
         ])
         .output()
         .expect("failed to run ilo");
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "r");
 }
 

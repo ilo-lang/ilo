@@ -4535,34 +4535,35 @@ mod tests {
 
     #[test]
     fn sum_match_all_variants_exhaustive() {
-        assert!(parse_and_verify(
-            r#"f x:S red green blue>t;?x{"red":"r";"green":"g";"blue":"b"}"#
-        )
-        .is_ok());
+        assert!(
+            parse_and_verify(r#"f x:S red green blue>t;?x{"red":"r";"green":"g";"blue":"b"}"#)
+                .is_ok()
+        );
     }
 
     #[test]
     fn sum_match_with_wildcard_exhaustive() {
-        assert!(
-            parse_and_verify(r#"f x:S red green blue>t;?x{"red":"r";_:"other"}"#).is_ok()
-        );
+        assert!(parse_and_verify(r#"f x:S red green blue>t;?x{"red":"r";_:"other"}"#).is_ok());
     }
 
     #[test]
     fn sum_match_missing_variant() {
         let errs =
             parse_and_verify(r#"f x:S red green blue>t;?x{"red":"r";"green":"g"}"#).unwrap_err();
-        assert!(errs
-            .iter()
-            .any(|e| e.code == "ILO-T024" && e.message.contains("blue")));
+        assert!(
+            errs.iter()
+                .any(|e| e.code == "ILO-T024" && e.message.contains("blue"))
+        );
     }
 
     #[test]
     fn sum_match_missing_multiple_variants() {
         let errs = parse_and_verify(r#"f x:S a b c>t;?x{"a":"1"}"#).unwrap_err();
-        assert!(errs
-            .iter()
-            .any(|e| e.code == "ILO-T024" && e.message.contains("b") && e.message.contains("c")));
+        assert!(
+            errs.iter().any(|e| e.code == "ILO-T024"
+                && e.message.contains("b")
+                && e.message.contains("c"))
+        );
     }
 
     #[test]

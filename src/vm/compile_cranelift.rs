@@ -889,13 +889,13 @@ fn compile_function_body(
                 // MOVE: skip here, handled by fixpoint below.
                 OP_MOVE => {}
                 // Ops that write a non-numeric or unknown type to R[A].
-                OP_ADD | OP_SUB | OP_MUL | OP_DIV | OP_ADD_SS | OP_NEG | OP_WRAPOK
-                | OP_WRAPERR | OP_UNWRAP | OP_RECFLD | OP_RECFLD_NAME | OP_LISTGET | OP_INDEX
-                | OP_STR | OP_HD | OP_TL | OP_REV | OP_SRT | OP_SLC | OP_SPL | OP_CAT
-                | OP_GET | OP_POST | OP_GETH | OP_POSTH | OP_ENV | OP_JPTH | OP_JDMP
-                | OP_JPAR | OP_MAPNEW | OP_MGET | OP_MSET | OP_MDEL | OP_MKEYS | OP_MVALS
-                | OP_LISTNEW | OP_LISTAPPEND | OP_RECNEW | OP_RECWITH | OP_PRT | OP_RD
-                | OP_RDL | OP_WR | OP_WRL | OP_TRM | OP_UNQ | OP_NUM => {
+                OP_ADD | OP_SUB | OP_MUL | OP_DIV | OP_ADD_SS | OP_NEG | OP_WRAPOK | OP_WRAPERR
+                | OP_UNWRAP | OP_RECFLD | OP_RECFLD_NAME | OP_LISTGET | OP_INDEX | OP_STR
+                | OP_HD | OP_TL | OP_REV | OP_SRT | OP_SLC | OP_SPL | OP_CAT | OP_GET | OP_POST
+                | OP_GETH | OP_POSTH | OP_ENV | OP_JPTH | OP_JDMP | OP_JPAR | OP_MAPNEW
+                | OP_MGET | OP_MSET | OP_MDEL | OP_MKEYS | OP_MVALS | OP_LISTNEW
+                | OP_LISTAPPEND | OP_RECNEW | OP_RECWITH | OP_PRT | OP_RD | OP_RDL | OP_WR
+                | OP_WRL | OP_TRM | OP_UNQ | OP_NUM => {
                     non_num_write[a] = true;
                     non_bool_write[a] = true;
                 }
@@ -3909,42 +3909,66 @@ mod tests {
     #[test]
     fn codegen_cov_gt_comparison() {
         let bytes = compile_to_object_bytes("f x:n y:n>n;>x y{1};0");
-        assert!(bytes.is_ok(), "GT comparison codegen failed: {:?}", bytes.err());
+        assert!(
+            bytes.is_ok(),
+            "GT comparison codegen failed: {:?}",
+            bytes.err()
+        );
     }
 
     // GTE comparison
     #[test]
     fn codegen_cov_gte_comparison() {
         let bytes = compile_to_object_bytes("f x:n y:n>n;>=x y{1};0");
-        assert!(bytes.is_ok(), "GTE comparison codegen failed: {:?}", bytes.err());
+        assert!(
+            bytes.is_ok(),
+            "GTE comparison codegen failed: {:?}",
+            bytes.err()
+        );
     }
 
     // LTE comparison
     #[test]
     fn codegen_cov_lte_comparison() {
         let bytes = compile_to_object_bytes("f x:n y:n>n;<=x y{1};0");
-        assert!(bytes.is_ok(), "LTE comparison codegen failed: {:?}", bytes.err());
+        assert!(
+            bytes.is_ok(),
+            "LTE comparison codegen failed: {:?}",
+            bytes.err()
+        );
     }
 
     // Record type
     #[test]
     fn codegen_cov_record_type() {
         let bytes = compile_to_object_bytes("type pt{x:n;y:n}\nf a:n b:n>pt;pt x:a y:b");
-        assert!(bytes.is_ok(), "record type codegen failed: {:?}", bytes.err());
+        assert!(
+            bytes.is_ok(),
+            "record type codegen failed: {:?}",
+            bytes.err()
+        );
     }
 
     // Record field access
     #[test]
     fn codegen_cov_record_field() {
         let bytes = compile_to_object_bytes("type pt{x:n;y:n}\nf>n;p=pt x:1 y:2;p.x");
-        assert!(bytes.is_ok(), "record field codegen failed: {:?}", bytes.err());
+        assert!(
+            bytes.is_ok(),
+            "record field codegen failed: {:?}",
+            bytes.err()
+        );
     }
 
     // Record with update
     #[test]
     fn codegen_cov_record_with() {
         let bytes = compile_to_object_bytes("type pt{x:n;y:n}\nf>n;p=pt x:1 y:2;q=p with x:10;q.x");
-        assert!(bytes.is_ok(), "record with codegen failed: {:?}", bytes.err());
+        assert!(
+            bytes.is_ok(),
+            "record with codegen failed: {:?}",
+            bytes.err()
+        );
     }
 
     // For-range loop
@@ -3985,7 +4009,8 @@ mod tests {
     // Map operations
     #[test]
     fn codegen_cov_map_ops() {
-        let bytes = compile_to_object_bytes(r#"f>n;m=mset mmap "a" 1;m=mset m "b" 2;k=mkeys m;len k"#);
+        let bytes =
+            compile_to_object_bytes(r#"f>n;m=mset mmap "a" 1;m=mset m "b" 2;k=mkeys m;len k"#);
         assert!(bytes.is_ok(), "map ops codegen failed: {:?}", bytes.err());
     }
 
@@ -3993,14 +4018,22 @@ mod tests {
     #[test]
     fn codegen_cov_result_types() {
         let bytes = compile_to_object_bytes(r#"f x:n>R n t;>x 0{~x};^"neg""#);
-        assert!(bytes.is_ok(), "result types codegen failed: {:?}", bytes.err());
+        assert!(
+            bytes.is_ok(),
+            "result types codegen failed: {:?}",
+            bytes.err()
+        );
     }
 
     // Multi-function call chain
     #[test]
     fn codegen_cov_multi_func_chain() {
         let bytes = compile_to_object_bytes("a x:n>n;+x 1\nb x:n>n;a x\nf x:n>n;b x");
-        assert!(bytes.is_ok(), "multi-func chain codegen failed: {:?}", bytes.err());
+        assert!(
+            bytes.is_ok(),
+            "multi-func chain codegen failed: {:?}",
+            bytes.err()
+        );
     }
 
     // ── Type predicates ──────────────────────────────────────────────────────
@@ -4025,8 +4058,13 @@ mod tests {
     fn codegen_cov_map_has_del_vals() {
         let bytes = compile_to_object_bytes(r#"f>b;m=mset mmap "a" 1;mhas m "a""#);
         assert!(bytes.is_ok(), "mhas codegen failed: {:?}", bytes.err());
-        let bytes2 = compile_to_object_bytes(r#"f>n;m=mset mmap "a" 1;m=mdel m "a";k=mkeys m;len k"#);
-        assert!(bytes2.is_ok(), "mdel/mkeys codegen failed: {:?}", bytes2.err());
+        let bytes2 =
+            compile_to_object_bytes(r#"f>n;m=mset mmap "a" 1;m=mdel m "a";k=mkeys m;len k"#);
+        assert!(
+            bytes2.is_ok(),
+            "mdel/mkeys codegen failed: {:?}",
+            bytes2.err()
+        );
         let bytes3 = compile_to_object_bytes(r#"f>n;m=mset mmap "a" 1;v=mvals m;len v"#);
         assert!(bytes3.is_ok(), "mvals codegen failed: {:?}", bytes3.err());
     }
@@ -4113,7 +4151,11 @@ mod tests {
         let bytes2 = compile_to_object_bytes(r#"f s:t>R n t;num s"#);
         assert!(bytes2.is_ok(), "num codegen failed: {:?}", bytes2.err());
         let bytes3 = compile_to_object_bytes("f xs:L n v:n>L n;r=+=xs v;r");
-        assert!(bytes3.is_ok(), "listappend codegen failed: {:?}", bytes3.err());
+        assert!(
+            bytes3.is_ok(),
+            "listappend codegen failed: {:?}",
+            bytes3.err()
+        );
         let bytes4 = compile_to_object_bytes("f xs:L n>n;xs.0");
         assert!(bytes4.is_ok(), "index codegen failed: {:?}", bytes4.err());
         let bytes5 = compile_to_object_bytes(r#"f j:t p:t>R t t;jpth j p"#);
@@ -4127,7 +4169,11 @@ mod tests {
         // A ternary with a numeric (non-bool) condition forces the JMPF/JMPT
         // general truthy path.  Syntax: `x{1}{0}` (no leading `?`).
         let bytes = compile_to_object_bytes("f x:n>n;x{1}{0}");
-        assert!(bytes.is_ok(), "jmpt/jmpf non-bool codegen failed: {:?}", bytes.err());
+        assert!(
+            bytes.is_ok(),
+            "jmpt/jmpf non-bool codegen failed: {:?}",
+            bytes.err()
+        );
     }
 
     // ── JMPNN codegen ────────────────────────────────────────────────────────
@@ -4154,7 +4200,11 @@ mod tests {
     fn codegen_cov_neg_non_numeric() {
         // NEG on a text-typed param exercises the jit_neg helper call path.
         let bytes = compile_to_object_bytes("f x:t>n;-x");
-        assert!(bytes.is_ok(), "neg non-numeric codegen failed: {:?}", bytes.err());
+        assert!(
+            bytes.is_ok(),
+            "neg non-numeric codegen failed: {:?}",
+            bytes.err()
+        );
     }
 
     // ── LT/GT/GE/LE/EQ/NE on non-numeric args (general slow path) ────────────
@@ -4177,7 +4227,11 @@ mod tests {
         let bytes2 = compile_to_object_bytes(r#"f x:t>R n t;^x"#);
         assert!(bytes2.is_ok(), "wraperr codegen failed: {:?}", bytes2.err());
         let bytes3 = compile_to_object_bytes("f x:R n t>b;?x{~_:true;^_:false}");
-        assert!(bytes3.is_ok(), "isok/iserr/unwrap codegen failed: {:?}", bytes3.err());
+        assert!(
+            bytes3.is_ok(),
+            "isok/iserr/unwrap codegen failed: {:?}",
+            bytes3.err()
+        );
     }
 
     // ── is_inlinable edge cases: non-numeric callee, large reg file ───────────
@@ -4186,9 +4240,15 @@ mod tests {
     fn codegen_cov_non_inlinable_callee_direct_call() {
         // A callee that uses OP_CAT (non-numeric) should NOT be inlined;
         // instead the caller uses a direct function call.
-        let bytes = compile_to_object_bytes(r#"join a:t b:t>t;+ a b
-f a:t b:t>t;join a b"#);
-        assert!(bytes.is_ok(), "non-inlinable callee codegen failed: {:?}", bytes.err());
+        let bytes = compile_to_object_bytes(
+            r#"join a:t b:t>t;+ a b
+f a:t b:t>t;join a b"#,
+        );
+        assert!(
+            bytes.is_ok(),
+            "non-inlinable callee codegen failed: {:?}",
+            bytes.err()
+        );
     }
 
     // ── is_inlinable: reg_count > 16 → return false (line 424) ─────────────
@@ -4202,7 +4262,11 @@ f a:t b:t>t;join a b"#);
              +a +b +c +d +e +f +g +h +i +j +k +l +m +nn +o +p q\n\
              caller>n;sum17 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17",
         );
-        assert!(bytes.is_ok(), "callee too-many-regs codegen failed: {:?}", bytes.err());
+        assert!(
+            bytes.is_ok(),
+            "callee too-many-regs codegen failed: {:?}",
+            bytes.err()
+        );
     }
 
     // ── compile_to_bench_binary smoke-test ───────────────────────────────────
@@ -4260,7 +4324,11 @@ f a:t b:t>t;join a b"#);
     #[test]
     fn codegen_cov_empty_list_literal() {
         let bytes = compile_to_object_bytes("f>L n;[]");
-        assert!(bytes.is_ok(), "empty list codegen failed: {:?}", bytes.err());
+        assert!(
+            bytes.is_ok(),
+            "empty list codegen failed: {:?}",
+            bytes.err()
+        );
     }
 
     // ── LISTGET fallback path (no successor blocks) ───────────────────────────
@@ -4279,11 +4347,23 @@ f a:t b:t>t;join a b"#);
         // Two non-param numeric registers that use bitcast (not shadow) path
         // for ADD_NN / SUB_NN / MUL_NN / DIV_NN.
         let bytes = compile_to_object_bytes("f>n;a=3;b=4;-a b");
-        assert!(bytes.is_ok(), "sub_nn non-shadow codegen failed: {:?}", bytes.err());
+        assert!(
+            bytes.is_ok(),
+            "sub_nn non-shadow codegen failed: {:?}",
+            bytes.err()
+        );
         let bytes2 = compile_to_object_bytes("f>n;a=3;b=4;*a b");
-        assert!(bytes2.is_ok(), "mul_nn non-shadow codegen failed: {:?}", bytes2.err());
+        assert!(
+            bytes2.is_ok(),
+            "mul_nn non-shadow codegen failed: {:?}",
+            bytes2.err()
+        );
         let bytes3 = compile_to_object_bytes("f>n;a=10;b=2;/a b");
-        assert!(bytes3.is_ok(), "div_nn non-shadow codegen failed: {:?}", bytes3.err());
+        assert!(
+            bytes3.is_ok(),
+            "div_nn non-shadow codegen failed: {:?}",
+            bytes3.err()
+        );
     }
 
     // ── OP_ADD / OP_SUB / OP_MUL / OP_DIV generic with fast/slow paths ───────
@@ -4293,7 +4373,11 @@ f a:t b:t>t;join a b"#);
         // Generic OP_ADD/SUB/MUL/DIV with non-numeric registers exercises
         // both the inline numeric fast path and the helper slow path.
         let bytes = compile_to_object_bytes(r#"f x:t y:t>t;+ x y"#);
-        assert!(bytes.is_ok(), "generic add (text) codegen failed: {:?}", bytes.err());
+        assert!(
+            bytes.is_ok(),
+            "generic add (text) codegen failed: {:?}",
+            bytes.err()
+        );
     }
 
     // ── OP_RECFLD_NAME (named field access via registry) ─────────────────────
@@ -4308,7 +4392,15 @@ f a:t b:t>t;join a b"#);
             let tokens = crate::lexer::lex(source).unwrap();
             let token_spans: Vec<(crate::lexer::Token, crate::ast::Span)> = tokens
                 .into_iter()
-                .map(|(t, r)| (t, crate::ast::Span { start: r.start, end: r.end }))
+                .map(|(t, r)| {
+                    (
+                        t,
+                        crate::ast::Span {
+                            start: r.start,
+                            end: r.end,
+                        },
+                    )
+                })
                 .collect();
             let (prog, errors) = crate::parser::parse(token_spans);
             if !errors.is_empty() {
@@ -4363,7 +4455,11 @@ f a:t b:t>t;join a b"#);
                 obj_product.emit().unwrap_or_default()
             })
         };
-        assert!(bytes.is_ok(), "recfld_name codegen failed: {:?}", bytes.err());
+        assert!(
+            bytes.is_ok(),
+            "recfld_name codegen failed: {:?}",
+            bytes.err()
+        );
     }
 
     // ── LOADK with heap (non-string) constant ────────────────────────────────
@@ -4373,9 +4469,17 @@ f a:t b:t>t;join a b"#);
         // Loading a bool constant (not a number, not a string) exercises the
         // plain iconst path in LOADK (the else branch after is_string/is_heap).
         let bytes = compile_to_object_bytes("f>b;true");
-        assert!(bytes.is_ok(), "loadk bool codegen failed: {:?}", bytes.err());
+        assert!(
+            bytes.is_ok(),
+            "loadk bool codegen failed: {:?}",
+            bytes.err()
+        );
         let bytes2 = compile_to_object_bytes("f>b;false");
-        assert!(bytes2.is_ok(), "loadk false codegen failed: {:?}", bytes2.err());
+        assert!(
+            bytes2.is_ok(),
+            "loadk false codegen failed: {:?}",
+            bytes2.err()
+        );
     }
 
     // ── inline_chunk: callee with OP_ADD_NN / OP_SUB_NN / OP_MUL_NN / OP_DIV_NN ─
@@ -4384,28 +4488,44 @@ f a:t b:t>t;join a b"#);
     fn codegen_cov_inline_add_nn_callee() {
         // Callee uses OP_ADD_NN (two register params) — inline_chunk OP_ADD_NN branch.
         let bytes = compile_to_object_bytes("mysum a:n b:n>n;+a b\nf a:n b:n>n;mysum a b");
-        assert!(bytes.is_ok(), "inline add_nn callee codegen failed: {:?}", bytes.err());
+        assert!(
+            bytes.is_ok(),
+            "inline add_nn callee codegen failed: {:?}",
+            bytes.err()
+        );
     }
 
     #[test]
     fn codegen_cov_inline_sub_nn_callee() {
         // Callee uses OP_SUB_NN — inline_chunk OP_SUB_NN branch.
         let bytes = compile_to_object_bytes("diff a:n b:n>n;-a b\nf a:n b:n>n;diff a b");
-        assert!(bytes.is_ok(), "inline sub_nn callee codegen failed: {:?}", bytes.err());
+        assert!(
+            bytes.is_ok(),
+            "inline sub_nn callee codegen failed: {:?}",
+            bytes.err()
+        );
     }
 
     #[test]
     fn codegen_cov_inline_mul_nn_callee() {
         // Callee uses OP_MUL_NN — inline_chunk OP_MUL_NN branch.
         let bytes = compile_to_object_bytes("myprod a:n b:n>n;*a b\nf a:n b:n>n;myprod a b");
-        assert!(bytes.is_ok(), "inline mul_nn callee codegen failed: {:?}", bytes.err());
+        assert!(
+            bytes.is_ok(),
+            "inline mul_nn callee codegen failed: {:?}",
+            bytes.err()
+        );
     }
 
     #[test]
     fn codegen_cov_inline_div_nn_callee() {
         // Callee uses OP_DIV_NN — inline_chunk OP_DIV_NN branch.
         let bytes = compile_to_object_bytes("quot a:n b:n>n;/a b\nf a:n b:n>n;quot a b");
-        assert!(bytes.is_ok(), "inline div_nn callee codegen failed: {:?}", bytes.err());
+        assert!(
+            bytes.is_ok(),
+            "inline div_nn callee codegen failed: {:?}",
+            bytes.err()
+        );
     }
 
     // ── inline_chunk: callee with OP_SUBK_N / OP_DIVK_N ─────────────────────
@@ -4414,14 +4534,22 @@ f a:t b:t>t;join a b"#);
     fn codegen_cov_inline_subk_n_callee() {
         // Callee uses OP_SUBK_N (x - constant) — inline_chunk OP_SUBK_N branch.
         let bytes = compile_to_object_bytes("dec x:n>n;-x 1\nf x:n>n;dec x");
-        assert!(bytes.is_ok(), "inline subk_n callee codegen failed: {:?}", bytes.err());
+        assert!(
+            bytes.is_ok(),
+            "inline subk_n callee codegen failed: {:?}",
+            bytes.err()
+        );
     }
 
     #[test]
     fn codegen_cov_inline_divk_n_callee() {
         // Callee uses OP_DIVK_N (x / constant) — inline_chunk OP_DIVK_N branch.
         let bytes = compile_to_object_bytes("halve x:n>n;/x 2\nf x:n>n;halve x");
-        assert!(bytes.is_ok(), "inline divk_n callee codegen failed: {:?}", bytes.err());
+        assert!(
+            bytes.is_ok(),
+            "inline divk_n callee codegen failed: {:?}",
+            bytes.err()
+        );
     }
 
     // ── inline_chunk: callee with OP_CMPK_* / OP_JMP / OP_LOADK ─────────────
@@ -4432,7 +4560,11 @@ f a:t b:t>t;join a b"#);
         //   `pos x:n>n;>x 0 x;0`
         // This exercises the OP_CMPK_*, OP_JMP, and OP_LOADK branches in inline_chunk.
         let bytes = compile_to_object_bytes("pos x:n>n;>x 0 x;0\nf x:n>n;pos x");
-        assert!(bytes.is_ok(), "inline cmpk guard callee codegen failed: {:?}", bytes.err());
+        assert!(
+            bytes.is_ok(),
+            "inline cmpk guard callee codegen failed: {:?}",
+            bytes.err()
+        );
     }
 
     // ── OP_POSTH compile smoke-test ──────────────────────────────────────────
@@ -4460,7 +4592,11 @@ f a:t b:t>t;join a b"#);
         // A negated braceless guard `!>x 5 10;0` emits OP_JMPT on an always-bool
         // register (the comparison result).
         let bytes = compile_to_object_bytes("f x:n>n;!>x 5 10;0");
-        assert!(bytes.is_ok(), "jmpt always-bool codegen failed: {:?}", bytes.err());
+        assert!(
+            bytes.is_ok(),
+            "jmpt always-bool codegen failed: {:?}",
+            bytes.err()
+        );
     }
 
     // ── inline_chunk: callee with OP_CMPK_LT_N / OP_CMPK_LE_N / OP_CMPK_EQ_N ─
@@ -4472,14 +4608,22 @@ f a:t b:t>t;join a b"#);
         // But `ret` inside braced guard is fine; callee is inlinable.
         // Actually, braceless guard: `<x 0 x;0` = if x<0 return x, else 0.
         let bytes = compile_to_object_bytes("negval x:n>n;<x 0 x;0\nf x:n>n;negval x");
-        assert!(bytes.is_ok(), "inline cmpk_lt callee codegen failed: {:?}", bytes.err());
+        assert!(
+            bytes.is_ok(),
+            "inline cmpk_lt callee codegen failed: {:?}",
+            bytes.err()
+        );
     }
 
     #[test]
     fn codegen_cov_inline_cmpk_le_callee() {
         // Callee uses OP_CMPK_LE_N (guard <=x 0) — inline_chunk OP_CMPK_LE_N branch.
         let bytes = compile_to_object_bytes("nonpos x:n>n;<=x 0 x;0\nf x:n>n;nonpos x");
-        assert!(bytes.is_ok(), "inline cmpk_le callee codegen failed: {:?}", bytes.err());
+        assert!(
+            bytes.is_ok(),
+            "inline cmpk_le callee codegen failed: {:?}",
+            bytes.err()
+        );
     }
 
     // ── inline_chunk: CMPK_EQ_N and CMPK_NE_N (lines 569-570) ──────────────
@@ -4490,7 +4634,11 @@ f a:t b:t>t;join a b"#);
     fn codegen_cov_inline_cmpk_eq_callee() {
         // Callee uses CMPK_EQ_N: `==x 5 1;0` = return 1 if x==5 else 0.
         let bytes = compile_to_object_bytes("exact5 x:n>n;==x 5 1;0\nf x:n>n;exact5 x");
-        assert!(bytes.is_ok(), "inline cmpk_eq callee codegen failed: {:?}", bytes.err());
+        assert!(
+            bytes.is_ok(),
+            "inline cmpk_eq callee codegen failed: {:?}",
+            bytes.err()
+        );
     }
 
     #[test]
@@ -4498,7 +4646,11 @@ f a:t b:t>t;join a b"#);
         // Callee uses CMPK_NE_N: `!=x 5 1;0` = return 1 if x!=5 else 0.
         // This hits the `_ => FloatCC::NotEqual` arm (line 570).
         let bytes = compile_to_object_bytes("noteq5 x:n>n;!=x 5 1;0\nf x:n>n;noteq5 x");
-        assert!(bytes.is_ok(), "inline cmpk_ne callee codegen failed: {:?}", bytes.err());
+        assert!(
+            bytes.is_ok(),
+            "inline cmpk_ne callee codegen failed: {:?}",
+            bytes.err()
+        );
     }
 
     // ── foreach loops (FOREACHPREP / FOREACHNEXT) ────────────────────────────
@@ -4507,14 +4659,22 @@ f a:t b:t>t;join a b"#);
     fn codegen_cov_foreach_numeric_list() {
         // `@x xs{*x x}` exercises OP_FOREACHPREP and OP_FOREACHNEXT codegen.
         let bytes = compile_to_object_bytes("f xs:L n>n;@x xs{*x x}");
-        assert!(bytes.is_ok(), "foreach numeric list codegen failed: {:?}", bytes.err());
+        assert!(
+            bytes.is_ok(),
+            "foreach numeric list codegen failed: {:?}",
+            bytes.err()
+        );
     }
 
     #[test]
     fn codegen_cov_foreach_text_list() {
         // Foreach over a text list to exercise FOREACHPREP/FOREACHNEXT with heap elements.
         let bytes = compile_to_object_bytes("f xs:L t>t;@x xs{x}");
-        assert!(bytes.is_ok(), "foreach text list codegen failed: {:?}", bytes.err());
+        assert!(
+            bytes.is_ok(),
+            "foreach text list codegen failed: {:?}",
+            bytes.err()
+        );
     }
 
     // ── OP_ADD_NN / OP_SUB_NN / OP_MUL_NN / OP_DIV_NN with non-always-num regs ──
@@ -4525,25 +4685,41 @@ f a:t b:t>t;join a b"#);
         // The VM compiler still emits OP_ADD_NN (x is numeric), but Cranelift's
         // pre-pass won't mark x as always-num → the else branches at lines ~1016-1023 fire.
         let bytes = compile_to_object_bytes("f x:n y:t>n;+x x");
-        assert!(bytes.is_ok(), "add_nn non-always-num codegen failed: {:?}", bytes.err());
+        assert!(
+            bytes.is_ok(),
+            "add_nn non-always-num codegen failed: {:?}",
+            bytes.err()
+        );
     }
 
     #[test]
     fn codegen_cov_sub_nn_non_always_num() {
         let bytes = compile_to_object_bytes("f x:n y:t>n;-x x");
-        assert!(bytes.is_ok(), "sub_nn non-always-num codegen failed: {:?}", bytes.err());
+        assert!(
+            bytes.is_ok(),
+            "sub_nn non-always-num codegen failed: {:?}",
+            bytes.err()
+        );
     }
 
     #[test]
     fn codegen_cov_mul_nn_non_always_num() {
         let bytes = compile_to_object_bytes("f x:n y:t>n;*x x");
-        assert!(bytes.is_ok(), "mul_nn non-always-num codegen failed: {:?}", bytes.err());
+        assert!(
+            bytes.is_ok(),
+            "mul_nn non-always-num codegen failed: {:?}",
+            bytes.err()
+        );
     }
 
     #[test]
     fn codegen_cov_div_nn_non_always_num() {
         let bytes = compile_to_object_bytes("f x:n y:t>n;/x x");
-        assert!(bytes.is_ok(), "div_nn non-always-num codegen failed: {:?}", bytes.err());
+        assert!(
+            bytes.is_ok(),
+            "div_nn non-always-num codegen failed: {:?}",
+            bytes.err()
+        );
     }
 
     // ── OP_SUB / OP_MUL / OP_DIV generic (non-NN variants) ──────────────────
@@ -4552,19 +4728,31 @@ f a:t b:t>t;join a b"#);
     fn codegen_cov_generic_sub() {
         // `v` (any) params prevent OP_SUB_NN — emits generic OP_SUB.
         let bytes = compile_to_object_bytes("f x:v y:v>n;-x y");
-        assert!(bytes.is_ok(), "generic sub codegen failed: {:?}", bytes.err());
+        assert!(
+            bytes.is_ok(),
+            "generic sub codegen failed: {:?}",
+            bytes.err()
+        );
     }
 
     #[test]
     fn codegen_cov_generic_mul() {
         let bytes = compile_to_object_bytes("f x:v y:v>n;*x y");
-        assert!(bytes.is_ok(), "generic mul codegen failed: {:?}", bytes.err());
+        assert!(
+            bytes.is_ok(),
+            "generic mul codegen failed: {:?}",
+            bytes.err()
+        );
     }
 
     #[test]
     fn codegen_cov_generic_div() {
         let bytes = compile_to_object_bytes("f x:v y:v>n;/x y");
-        assert!(bytes.is_ok(), "generic div codegen failed: {:?}", bytes.err());
+        assert!(
+            bytes.is_ok(),
+            "generic div codegen failed: {:?}",
+            bytes.err()
+        );
     }
 
     // ── inline_chunk with extra (non-param) registers ────────────────────────
@@ -4575,7 +4763,11 @@ f a:t b:t>t;join a b"#);
         // When inlined in the AOT path, f64_val_for(d) hits the else branch for
         // non-param extra registers.
         let bytes = compile_to_object_bytes("double x:n>n;d=*x 2;+d 1\nf x:n>n;double x");
-        assert!(bytes.is_ok(), "inline callee extra reg codegen failed: {:?}", bytes.err());
+        assert!(
+            bytes.is_ok(),
+            "inline callee extra reg codegen failed: {:?}",
+            bytes.err()
+        );
     }
 
     // ── OP_ADDK_N / OP_SUBK_N / OP_MULK_N / OP_DIVK_N with non-always-num ──────
@@ -4586,25 +4778,41 @@ f a:t b:t>t;join a b"#);
         // `+x 1` compiles to OP_ADDK_N; Cranelift pre-pass sees x as non-always-num
         // → the else branch (bitcast path) at ~line 1097 is exercised.
         let bytes = compile_to_object_bytes("f x:n y:t>n;+x 1");
-        assert!(bytes.is_ok(), "addk_n non-always-num codegen failed: {:?}", bytes.err());
+        assert!(
+            bytes.is_ok(),
+            "addk_n non-always-num codegen failed: {:?}",
+            bytes.err()
+        );
     }
 
     #[test]
     fn codegen_cov_subk_n_non_always_num() {
         let bytes = compile_to_object_bytes("f x:n y:t>n;-x 1");
-        assert!(bytes.is_ok(), "subk_n non-always-num codegen failed: {:?}", bytes.err());
+        assert!(
+            bytes.is_ok(),
+            "subk_n non-always-num codegen failed: {:?}",
+            bytes.err()
+        );
     }
 
     #[test]
     fn codegen_cov_mulk_n_non_always_num() {
         let bytes = compile_to_object_bytes("f x:n y:t>n;*x 2");
-        assert!(bytes.is_ok(), "mulk_n non-always-num codegen failed: {:?}", bytes.err());
+        assert!(
+            bytes.is_ok(),
+            "mulk_n non-always-num codegen failed: {:?}",
+            bytes.err()
+        );
     }
 
     #[test]
     fn codegen_cov_divk_n_non_always_num() {
         let bytes = compile_to_object_bytes("f x:n y:t>n;/x 2");
-        assert!(bytes.is_ok(), "divk_n non-always-num codegen failed: {:?}", bytes.err());
+        assert!(
+            bytes.is_ok(),
+            "divk_n non-always-num codegen failed: {:?}",
+            bytes.err()
+        );
     }
 
     // ── OP_LOADK with heap value (list constant) ─────────────────────────────
@@ -4614,7 +4822,11 @@ f a:t b:t>t;join a b"#);
         // `xs=[1,2,3]` stores a list as a heap constant in the constant pool.
         // LOADK handler checks is_heap() → exercises lines 1449-1455.
         let bytes = compile_to_object_bytes("f>n;xs=[1,2,3];len xs");
-        assert!(bytes.is_ok(), "loadk heap list codegen failed: {:?}", bytes.err());
+        assert!(
+            bytes.is_ok(),
+            "loadk heap list codegen failed: {:?}",
+            bytes.err()
+        );
     }
 
     // ── OP_JMPT on always-bool register (OR short-circuit) ──────────────────
@@ -4625,7 +4837,11 @@ f a:t b:t>t;join a b"#);
         // The JMPT is NOT fused (preceding instruction is MOVE, not comparison),
         // so it reaches the OP_JMPF|OP_JMPT handler. ra is always-bool → lines 1509-1512.
         let bytes = compile_to_object_bytes("f x:n>b;|>x 3 >x 5");
-        assert!(bytes.is_ok(), "jmpt always-bool via OR codegen failed: {:?}", bytes.err());
+        assert!(
+            bytes.is_ok(),
+            "jmpt always-bool via OR codegen failed: {:?}",
+            bytes.err()
+        );
     }
 
     // ── bench_binary with type registry (record type) ────────────────────────
@@ -4667,31 +4883,51 @@ f a:t b:t>t;join a b"#);
     #[test]
     fn codegen_cov_generic_gt() {
         let bytes = compile_to_object_bytes("f x:v y:v>b;>x y");
-        assert!(bytes.is_ok(), "generic OP_GT codegen failed: {:?}", bytes.err());
+        assert!(
+            bytes.is_ok(),
+            "generic OP_GT codegen failed: {:?}",
+            bytes.err()
+        );
     }
 
     #[test]
     fn codegen_cov_generic_le() {
         let bytes = compile_to_object_bytes("f x:v y:v>b;<=x y");
-        assert!(bytes.is_ok(), "generic OP_LE codegen failed: {:?}", bytes.err());
+        assert!(
+            bytes.is_ok(),
+            "generic OP_LE codegen failed: {:?}",
+            bytes.err()
+        );
     }
 
     #[test]
     fn codegen_cov_generic_ge() {
         let bytes = compile_to_object_bytes("f x:v y:v>b;>=x y");
-        assert!(bytes.is_ok(), "generic OP_GE codegen failed: {:?}", bytes.err());
+        assert!(
+            bytes.is_ok(),
+            "generic OP_GE codegen failed: {:?}",
+            bytes.err()
+        );
     }
 
     #[test]
     fn codegen_cov_generic_eq() {
         let bytes = compile_to_object_bytes("f x:v y:v>b;==x y");
-        assert!(bytes.is_ok(), "generic OP_EQ codegen failed: {:?}", bytes.err());
+        assert!(
+            bytes.is_ok(),
+            "generic OP_EQ codegen failed: {:?}",
+            bytes.err()
+        );
     }
 
     #[test]
     fn codegen_cov_generic_ne() {
         let bytes = compile_to_object_bytes("f x:v y:v>b;!=x y");
-        assert!(bytes.is_ok(), "generic OP_NE codegen failed: {:?}", bytes.err());
+        assert!(
+            bytes.is_ok(),
+            "generic OP_NE codegen failed: {:?}",
+            bytes.err()
+        );
     }
 
     // ── CMPK_NE_N guard in mixed-type function ────────────────────────────────
@@ -4701,31 +4937,51 @@ f a:t b:t>t;join a b"#);
     #[test]
     fn codegen_cov_cmpk_ne_n_non_always_num() {
         let bytes = compile_to_object_bytes("f x:n y:t>n;!=x 5 1;0");
-        assert!(bytes.is_ok(), "CMPK_NE_N non-always-num codegen failed: {:?}", bytes.err());
+        assert!(
+            bytes.is_ok(),
+            "CMPK_NE_N non-always-num codegen failed: {:?}",
+            bytes.err()
+        );
     }
 
     #[test]
     fn codegen_cov_cmpk_lt_n_non_always_num() {
         let bytes = compile_to_object_bytes("f x:n y:t>n;<x 5 1;0");
-        assert!(bytes.is_ok(), "CMPK_LT_N non-always-num codegen failed: {:?}", bytes.err());
+        assert!(
+            bytes.is_ok(),
+            "CMPK_LT_N non-always-num codegen failed: {:?}",
+            bytes.err()
+        );
     }
 
     #[test]
     fn codegen_cov_cmpk_le_n_non_always_num() {
         let bytes = compile_to_object_bytes("f x:n y:t>n;<=x 5 1;0");
-        assert!(bytes.is_ok(), "CMPK_LE_N non-always-num codegen failed: {:?}", bytes.err());
+        assert!(
+            bytes.is_ok(),
+            "CMPK_LE_N non-always-num codegen failed: {:?}",
+            bytes.err()
+        );
     }
 
     #[test]
     fn codegen_cov_cmpk_ge_n_non_always_num() {
         let bytes = compile_to_object_bytes("f x:n y:t>n;>=x 5 1;0");
-        assert!(bytes.is_ok(), "CMPK_GE_N non-always-num codegen failed: {:?}", bytes.err());
+        assert!(
+            bytes.is_ok(),
+            "CMPK_GE_N non-always-num codegen failed: {:?}",
+            bytes.err()
+        );
     }
 
     #[test]
     fn codegen_cov_cmpk_eq_n_non_always_num() {
         let bytes = compile_to_object_bytes("f x:n y:t>n;==x 5 1;0");
-        assert!(bytes.is_ok(), "CMPK_EQ_N non-always-num codegen failed: {:?}", bytes.err());
+        assert!(
+            bytes.is_ok(),
+            "CMPK_EQ_N non-always-num codegen failed: {:?}",
+            bytes.err()
+        );
     }
 
     // ── program=None path in pre-pass analysis ────────────────────────────────
@@ -4775,7 +5031,11 @@ f a:t b:t>t;join a b"#);
             Some(&all_func_ids),
             None, // <-- program=None exercises lines 911-914
         );
-        assert!(result.is_ok(), "compile_function_body(program=None) failed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "compile_function_body(program=None) failed: {:?}",
+            result.err()
+        );
     }
 
     // ── all_func_ids=None path (jit_call helper fallback) ──────────────────
@@ -4804,16 +5064,22 @@ f a:t b:t>t;join a b"#);
             cranelift_codegen::ir::types::I64,
         ));
         // Also declare helper so OP_CALL's func_idx lookup via helpers.call works
-        let helper_idx = compiled.func_names.iter().position(|n| n == "helper").unwrap();
+        let helper_idx = compiled
+            .func_names
+            .iter()
+            .position(|n| n == "helper")
+            .unwrap();
         let mut helper_sig = module.make_signature();
         for _ in 0..compiled.chunks[helper_idx].param_count {
             helper_sig.params.push(cranelift_codegen::ir::AbiParam::new(
                 cranelift_codegen::ir::types::I64,
             ));
         }
-        helper_sig.returns.push(cranelift_codegen::ir::AbiParam::new(
-            cranelift_codegen::ir::types::I64,
-        ));
+        helper_sig
+            .returns
+            .push(cranelift_codegen::ir::AbiParam::new(
+                cranelift_codegen::ir::types::I64,
+            ));
 
         let f_id = module
             .declare_function("ilo_f", cranelift_module::Linkage::Local, &sig)
@@ -4830,7 +5096,11 @@ f a:t b:t>t;join a b"#);
             None, // <-- all_func_ids=None exercises lines 2547-2580
             None,
         );
-        assert!(result.is_ok(), "compile_function_body(all_func_ids=None) failed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "compile_function_body(all_func_ids=None) failed: {:?}",
+            result.err()
+        );
     }
 
     // ── all_func_ids=None path with zero-arg callee ──────────────────────────
@@ -4865,7 +5135,11 @@ f a:t b:t>t;join a b"#);
             None, // <-- all_func_ids=None, zero args → exercises lines 2569-2580
             None,
         );
-        assert!(result.is_ok(), "compile_function_body(all_func_ids=None, zero arg) failed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "compile_function_body(all_func_ids=None, zero arg) failed: {:?}",
+            result.err()
+        );
     }
 
     // ── AOT RECWITH with ambiguous field types → string names in constant ────
@@ -4880,6 +5154,10 @@ f a:t b:t>t;join a b"#);
         let bytes = compile_to_object_bytes(
             "type pt{x:n;y:n}\ntype qt{y:n;x:n}\ng p:v>v;p with x:99\nf>v;p=pt x:1 y:2;g p",
         );
-        assert!(bytes.is_ok(), "RECWITH ambiguous codegen failed: {:?}", bytes.err());
+        assert!(
+            bytes.is_ok(),
+            "RECWITH ambiguous codegen failed: {:?}",
+            bytes.err()
+        );
     }
 }

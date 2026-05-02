@@ -749,8 +749,8 @@ mod tests {
 
     #[test]
     fn tools_format_human_parse() {
-        let cli = Cli::try_parse_from(["ilo", "tools", "--mcp", "p.json", "--format", "human"])
-            .unwrap();
+        let cli =
+            Cli::try_parse_from(["ilo", "tools", "--mcp", "p.json", "--format", "human"]).unwrap();
         if let Some(Cmd::Tools(t)) = cli.cmd {
             assert_eq!(t.format, Some(ToolsFormat::Human));
         }
@@ -788,8 +788,7 @@ mod tests {
 
     #[test]
     fn run_with_mcp_path() {
-        let cli =
-            Cli::try_parse_from(["ilo", "run", "--mcp", "cfg.json", "code"]).unwrap();
+        let cli = Cli::try_parse_from(["ilo", "run", "--mcp", "cfg.json", "code"]).unwrap();
         if let Some(Cmd::Run(r)) = cli.cmd {
             assert_eq!(r.mcp_path.as_deref(), Some("cfg.json"));
         }

@@ -2402,8 +2402,7 @@ fn dispatch_run(r: cli::RunArgs, mode: OutputMode, explicit_json: bool, no_hints
 
                 let (func_name, run_args) = if let Some(first) = rest.first() {
                     if func_names.contains(&first.as_str()) {
-                        let args: Vec<_> =
-                            rest[1..].iter().map(|a| parse_cli_arg(a)).collect();
+                        let args: Vec<_> = rest[1..].iter().map(|a| parse_cli_arg(a)).collect();
                         (
                             Some(first.as_str()),
                             coerce_cli_args(&program, Some(first.as_str()), args),
@@ -3369,7 +3368,9 @@ fn coerce_cli_args(
         return args;
     };
     let params: Option<&[ast::Param]> = program.declarations.iter().find_map(|d| match d {
-        ast::Decl::Function { name: n, params, .. } if n == name => Some(params.as_slice()),
+        ast::Decl::Function {
+            name: n, params, ..
+        } if n == name => Some(params.as_slice()),
         _ => None,
     });
     let Some(params) = params else {
@@ -4525,10 +4526,7 @@ mod tests {
     #[test]
     fn cli_arg_nil_not_text() {
         // "nil" should parse as Nil, not Text("nil")
-        assert_ne!(
-            parse_cli_arg("nil"),
-            interpreter::Value::Text("nil".into())
-        );
+        assert_ne!(parse_cli_arg("nil"), interpreter::Value::Text("nil".into()));
     }
 
     // ── coerce_cli_args ──────────────────────────────────────────────────────
@@ -4537,15 +4535,26 @@ mod tests {
     fn coerce_single_number_to_list() {
         let src = "f xs:L n>n;sum xs";
         let tokens = crate::lexer::lex(src).unwrap();
-        let spans: Vec<_> = tokens.into_iter().map(|(t, r)| (t, crate::ast::Span { start: r.start, end: r.end })).collect();
+        let spans: Vec<_> = tokens
+            .into_iter()
+            .map(|(t, r)| {
+                (
+                    t,
+                    crate::ast::Span {
+                        start: r.start,
+                        end: r.end,
+                    },
+                )
+            })
+            .collect();
         let (program, _) = crate::parser::parse(spans);
         let args = vec![interpreter::Value::Number(10.0)];
         let coerced = coerce_cli_args(&program, Some("f"), args);
         assert_eq!(
             coerced,
-            vec![interpreter::Value::List(vec![
-                interpreter::Value::Number(10.0)
-            ])]
+            vec![interpreter::Value::List(vec![interpreter::Value::Number(
+                10.0
+            )])]
         );
     }
 
@@ -4553,7 +4562,18 @@ mod tests {
     fn coerce_list_unchanged() {
         let src = "f xs:L n>n;sum xs";
         let tokens = crate::lexer::lex(src).unwrap();
-        let spans: Vec<_> = tokens.into_iter().map(|(t, r)| (t, crate::ast::Span { start: r.start, end: r.end })).collect();
+        let spans: Vec<_> = tokens
+            .into_iter()
+            .map(|(t, r)| {
+                (
+                    t,
+                    crate::ast::Span {
+                        start: r.start,
+                        end: r.end,
+                    },
+                )
+            })
+            .collect();
         let (program, _) = crate::parser::parse(spans);
         let args = vec![interpreter::Value::List(vec![
             interpreter::Value::Number(1.0),
@@ -4567,7 +4587,18 @@ mod tests {
     fn coerce_non_list_param_unchanged() {
         let src = "f x:n>n;+x 0";
         let tokens = crate::lexer::lex(src).unwrap();
-        let spans: Vec<_> = tokens.into_iter().map(|(t, r)| (t, crate::ast::Span { start: r.start, end: r.end })).collect();
+        let spans: Vec<_> = tokens
+            .into_iter()
+            .map(|(t, r)| {
+                (
+                    t,
+                    crate::ast::Span {
+                        start: r.start,
+                        end: r.end,
+                    },
+                )
+            })
+            .collect();
         let (program, _) = crate::parser::parse(spans);
         let args = vec![interpreter::Value::Number(10.0)];
         let coerced = coerce_cli_args(&program, Some("f"), args.clone());
@@ -4578,7 +4609,18 @@ mod tests {
     fn coerce_mixed_params() {
         let src = "f xs:L n v:n>n;+v 0";
         let tokens = crate::lexer::lex(src).unwrap();
-        let spans: Vec<_> = tokens.into_iter().map(|(t, r)| (t, crate::ast::Span { start: r.start, end: r.end })).collect();
+        let spans: Vec<_> = tokens
+            .into_iter()
+            .map(|(t, r)| {
+                (
+                    t,
+                    crate::ast::Span {
+                        start: r.start,
+                        end: r.end,
+                    },
+                )
+            })
+            .collect();
         let (program, _) = crate::parser::parse(spans);
         let args = vec![
             interpreter::Value::Number(5.0),
@@ -4599,7 +4641,18 @@ mod tests {
     fn coerce_no_func_name_unchanged() {
         let src = "f xs:L n>n;sum xs";
         let tokens = crate::lexer::lex(src).unwrap();
-        let spans: Vec<_> = tokens.into_iter().map(|(t, r)| (t, crate::ast::Span { start: r.start, end: r.end })).collect();
+        let spans: Vec<_> = tokens
+            .into_iter()
+            .map(|(t, r)| {
+                (
+                    t,
+                    crate::ast::Span {
+                        start: r.start,
+                        end: r.end,
+                    },
+                )
+            })
+            .collect();
         let (program, _) = crate::parser::parse(spans);
         let args = vec![interpreter::Value::Number(10.0)];
         let coerced = coerce_cli_args(&program, None, args.clone());
@@ -5763,10 +5816,7 @@ mod tests {
             json: false,
             no_hints: false,
         };
-        let code = dispatch_bare_args(
-            vec!["ilo".to_string(), "-h".to_string()],
-            &global,
-        );
+        let code = dispatch_bare_args(vec!["ilo".to_string(), "-h".to_string()], &global);
         assert_eq!(code, 0);
     }
 
@@ -5782,7 +5832,11 @@ mod tests {
         };
         // ILO-T001 is a known error code
         let code = dispatch_bare_args(
-            vec!["ilo".to_string(), "--explain".to_string(), "ILO-T001".to_string()],
+            vec![
+                "ilo".to_string(),
+                "--explain".to_string(),
+                "ILO-T001".to_string(),
+            ],
             &global,
         );
         assert_eq!(code, 0);
@@ -5797,7 +5851,11 @@ mod tests {
             no_hints: false,
         };
         let code = dispatch_bare_args(
-            vec!["ilo".to_string(), "--explain".to_string(), "NOT-A-CODE".to_string()],
+            vec![
+                "ilo".to_string(),
+                "--explain".to_string(),
+                "NOT-A-CODE".to_string(),
+            ],
             &global,
         );
         assert_eq!(code, 1);
@@ -5812,10 +5870,7 @@ mod tests {
             no_hints: false,
         };
         // --explain without a code argument → error exit
-        let code = dispatch_bare_args(
-            vec!["ilo".to_string(), "--explain".to_string()],
-            &global,
-        );
+        let code = dispatch_bare_args(vec!["ilo".to_string(), "--explain".to_string()], &global);
         assert_eq!(code, 1);
     }
 
@@ -5829,10 +5884,7 @@ mod tests {
             json: false,
             no_hints: false,
         };
-        let code = dispatch_bare_args(
-            vec!["ilo".to_string(), "--version".to_string()],
-            &global,
-        );
+        let code = dispatch_bare_args(vec!["ilo".to_string(), "--version".to_string()], &global);
         assert_eq!(code, 0);
     }
 
@@ -5844,10 +5896,7 @@ mod tests {
             json: false,
             no_hints: false,
         };
-        let code = dispatch_bare_args(
-            vec!["ilo".to_string(), "-V".to_string()],
-            &global,
-        );
+        let code = dispatch_bare_args(vec!["ilo".to_string(), "-V".to_string()], &global);
         assert_eq!(code, 0);
     }
 
@@ -5927,11 +5976,7 @@ mod tests {
         };
         // -e with empty code string should fail
         let code = dispatch_bare_args(
-            vec![
-                "ilo".to_string(),
-                "-e".to_string(),
-                "".to_string(),
-            ],
+            vec!["ilo".to_string(), "-e".to_string(), "".to_string()],
             &global,
         );
         assert_eq!(code, 1);
@@ -6181,13 +6226,7 @@ mod tests {
             no_hints: false,
         };
         // Just runs a simple program; tests that global.ansi overrides detected mode
-        let code = dispatch_bare_args(
-            vec![
-                "ilo".to_string(),
-                "f>n;42".to_string(),
-            ],
-            &global,
-        );
+        let code = dispatch_bare_args(vec!["ilo".to_string(), "f>n;42".to_string()], &global);
         assert_eq!(code, 0);
     }
 
@@ -6199,13 +6238,7 @@ mod tests {
             json: false,
             no_hints: false,
         };
-        let code = dispatch_bare_args(
-            vec![
-                "ilo".to_string(),
-                "f>n;42".to_string(),
-            ],
-            &global,
-        );
+        let code = dispatch_bare_args(vec!["ilo".to_string(), "f>n;42".to_string()], &global);
         assert_eq!(code, 0);
     }
 
@@ -6217,13 +6250,7 @@ mod tests {
             json: true,
             no_hints: false,
         };
-        let code = dispatch_bare_args(
-            vec![
-                "ilo".to_string(),
-                "f>n;42".to_string(),
-            ],
-            &global,
-        );
+        let code = dispatch_bare_args(vec!["ilo".to_string(), "f>n;42".to_string()], &global);
         assert_eq!(code, 0);
     }
 
@@ -6714,11 +6741,7 @@ mod tests {
     fn graph_cmd_fn_success_exits_zero() {
         let path = "/tmp/ilo_graph_fn_success.ilo";
         std::fs::write(path, "f x:n>n;+x 1").unwrap();
-        let code = graph_cmd(&[
-            path.to_string(),
-            "--fn".to_string(),
-            "f".to_string(),
-        ]);
+        let code = graph_cmd(&[path.to_string(), "--fn".to_string(), "f".to_string()]);
         assert_eq!(code, 0);
         std::fs::remove_file(path).ok();
     }
@@ -6866,7 +6889,14 @@ mod tests {
     fn run_default_runtime_error_returns_one() {
         // Use an undefined function call to trigger a runtime error
         let program = make_program("f>n;g 1");
-        let code = run_default(&program, Some("f"), vec![], "f>n;g 1", OutputMode::Text, false);
+        let code = run_default(
+            &program,
+            Some("f"),
+            vec![],
+            "f>n;g 1",
+            OutputMode::Text,
+            false,
+        );
         assert_eq!(code, 1);
     }
 
