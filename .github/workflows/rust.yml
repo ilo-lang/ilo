@@ -19,6 +19,20 @@ jobs:
     - name: Clippy
       run: cargo clippy --workspace --all-targets -- -D warnings
 
+  skill-validate:
+    # Validate skills/ilo/SKILL.md against the agentskills.io reference
+    # validator. This catches regressions in cross-host compatibility
+    # (Claude Code, Claude Desktop, Codex, etc.) before the Rust tests run.
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v5
+    - name: Install skills-ref
+      run: npm install -g skills-ref
+    - name: Validate skill
+      run: skills-ref validate skills/ilo/
+    - name: Print resolved properties (for debug)
+      run: skills-ref read-properties skills/ilo/
+
   build:
     runs-on: ubuntu-latest
     steps:
