@@ -273,7 +273,12 @@ fn fmt_stmt_dense(stmt: &Stmt) -> String {
                 } else {
                     fmt_body_dense(body)
                 };
-                format!("{}{} {}", prefix, fmt_expr(condition, FmtMode::Dense), body_str)
+                format!(
+                    "{}{} {}",
+                    prefix,
+                    fmt_expr(condition, FmtMode::Dense),
+                    body_str
+                )
             } else {
                 let main = format!(
                     "{}{}{{{}}}",

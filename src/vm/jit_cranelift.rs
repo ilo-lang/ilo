@@ -4507,11 +4507,7 @@ mod tests {
     // Deeply nested call chain via JIT
     #[test]
     fn cranelift_cov_deep_call() {
-        let result = jit_run_numeric(
-            "a x:n>n;+x 1\nb x:n>n;a x\nf x:n>n;b x",
-            "f",
-            &[10.0],
-        );
+        let result = jit_run_numeric("a x:n>n;+x 1\nb x:n>n;a x\nf x:n>n;b x", "f", &[10.0]);
         assert_eq!(result, Some(11.0));
     }
 
@@ -4576,7 +4572,11 @@ mod tests {
     #[test]
     fn cranelift_isnum_true() {
         // TypeIs pattern with `n` branch emits OP_ISNUM
-        let result = jit_run(r#"f x:t>b;?x{n _:true;_:false}"#, "f", &[Value::Number(5.0)]);
+        let result = jit_run(
+            r#"f x:t>b;?x{n _:true;_:false}"#,
+            "f",
+            &[Value::Number(5.0)],
+        );
         assert_eq!(result, Some(Value::Bool(true)));
     }
 
@@ -4594,11 +4594,7 @@ mod tests {
     #[test]
     fn cranelift_isbool_true() {
         // TypeIs pattern with `b` branch emits OP_ISBOOL
-        let result = jit_run(
-            "f x:b>b;?x{b _:true;_:false}",
-            "f",
-            &[Value::Bool(true)],
-        );
+        let result = jit_run("f x:b>b;?x{b _:true;_:false}", "f", &[Value::Bool(true)]);
         assert_eq!(result, Some(Value::Bool(true)));
     }
 
@@ -4617,11 +4613,7 @@ mod tests {
 
     #[test]
     fn cranelift_map_new_set_get() {
-        let result = jit_run(
-            r#"f>n;m=mset mmap "k" 42;mget m "k""#,
-            "f",
-            &[],
-        );
+        let result = jit_run(r#"f>n;m=mset mmap "k" 42;mget m "k""#, "f", &[]);
         // mget returns Ok(42) or the value directly depending on type
         match result {
             Some(Value::Number(n)) => assert_eq!(n, 42.0),
@@ -4632,31 +4624,19 @@ mod tests {
 
     #[test]
     fn cranelift_map_has() {
-        let result = jit_run(
-            r#"f>b;m=mset mmap "a" 1;mhas m "a""#,
-            "f",
-            &[],
-        );
+        let result = jit_run(r#"f>b;m=mset mmap "a" 1;mhas m "a""#, "f", &[]);
         assert_eq!(result, Some(Value::Bool(true)));
     }
 
     #[test]
     fn cranelift_map_keys() {
-        let result = jit_run(
-            r#"f>n;m=mset mmap "x" 1;k=mkeys m;len k"#,
-            "f",
-            &[],
-        );
+        let result = jit_run(r#"f>n;m=mset mmap "x" 1;k=mkeys m;len k"#, "f", &[]);
         assert_eq!(result, Some(Value::Number(1.0)));
     }
 
     #[test]
     fn cranelift_map_vals() {
-        let result = jit_run(
-            r#"f>n;m=mset mmap "x" 99;v=mvals m;len v"#,
-            "f",
-            &[],
-        );
+        let result = jit_run(r#"f>n;m=mset mmap "x" 99;v=mvals m;len v"#, "f", &[]);
         assert_eq!(result, Some(Value::Number(1.0)));
     }
 
@@ -4681,11 +4661,7 @@ mod tests {
 
     #[test]
     fn cranelift_trm_builtin() {
-        let result = jit_run(
-            r#"f s:t>t;trm s"#,
-            "f",
-            &[Value::Text("  hello  ".into())],
-        );
+        let result = jit_run(r#"f s:t>t;trm s"#, "f", &[Value::Text("  hello  ".into())]);
         assert_eq!(result, Some(Value::Text("hello".into())));
     }
 
@@ -4801,7 +4777,10 @@ mod tests {
         let chunk = &compiled.chunks[idx];
         let nan_consts = &compiled.nan_constants[idx];
         let compiled_fn = compile(chunk, nan_consts, &compiled);
-        assert!(compiled_fn.is_some(), "OP_GET JIT compilation should succeed");
+        assert!(
+            compiled_fn.is_some(),
+            "OP_GET JIT compilation should succeed"
+        );
     }
 
     // ── inline_chunk paths: SUB_NN, DIV_NN, MULK_N, DIVK_N in inlinable callees ──
@@ -4832,44 +4811,28 @@ mod tests {
     #[test]
     fn cranelift_inline_mulk_n_callee() {
         // Callee uses OP_MULK_N (*x 3) — inlinable with numeric constant.
-        let result = jit_run_numeric(
-            "triple x:n>n;*x 3\nf x:n>n;triple x",
-            "f",
-            &[7.0],
-        );
+        let result = jit_run_numeric("triple x:n>n;*x 3\nf x:n>n;triple x", "f", &[7.0]);
         assert_eq!(result, Some(21.0));
     }
 
     #[test]
     fn cranelift_inline_divk_n_callee() {
         // Callee uses OP_DIVK_N (/x 2) — inlinable.
-        let result = jit_run_numeric(
-            "half x:n>n;/x 2\nf x:n>n;half x",
-            "f",
-            &[14.0],
-        );
+        let result = jit_run_numeric("half x:n>n;/x 2\nf x:n>n;half x", "f", &[14.0]);
         assert_eq!(result, Some(7.0));
     }
 
     #[test]
     fn cranelift_inline_addk_n_callee() {
         // Callee uses OP_ADDK_N (+x 1) — inlinable.
-        let result = jit_run_numeric(
-            "inc x:n>n;+x 1\nf x:n>n;inc x",
-            "f",
-            &[9.0],
-        );
+        let result = jit_run_numeric("inc x:n>n;+x 1\nf x:n>n;inc x", "f", &[9.0]);
         assert_eq!(result, Some(10.0));
     }
 
     #[test]
     fn cranelift_inline_subk_n_callee() {
         // Callee uses OP_SUBK_N (-x 1) — inlinable.
-        let result = jit_run_numeric(
-            "dec x:n>n;-x 1\nf x:n>n;dec x",
-            "f",
-            &[5.0],
-        );
+        let result = jit_run_numeric("dec x:n>n;-x 1\nf x:n>n;dec x", "f", &[5.0]);
         assert_eq!(result, Some(4.0));
     }
 
@@ -4878,11 +4841,7 @@ mod tests {
     #[test]
     fn cranelift_num_text_to_number() {
         // num converts a text to a number (returns Result)
-        let result = jit_run(
-            r#"f s:t>R n t;num s"#,
-            "f",
-            &[Value::Text("3.14".into())],
-        );
+        let result = jit_run(r#"f s:t>R n t;num s"#, "f", &[Value::Text("3.14".into())]);
         assert_eq!(result, Some(Value::Ok(Box::new(Value::Number(3.14)))));
     }
 
@@ -4890,11 +4849,7 @@ mod tests {
 
     #[test]
     fn cranelift_map_set_and_get_string_value() {
-        let result = jit_run(
-            r#"f>t;m=mset mmap "key" "val";mget m "key""#,
-            "f",
-            &[],
-        );
+        let result = jit_run(r#"f>t;m=mset mmap "key" "val";mget m "key""#, "f", &[]);
         match result {
             Some(Value::Text(s)) => assert_eq!(s, "val"),
             Some(Value::Ok(v)) => assert_eq!(*v, Value::Text("val".into())),
@@ -4917,7 +4872,10 @@ mod tests {
         let chunk = &compiled.chunks[idx];
         let nan_consts = &compiled.nan_constants[idx];
         let compiled_fn = compile(chunk, nan_consts, &compiled);
-        assert!(compiled_fn.is_some(), "OP_WRL JIT compilation should succeed");
+        assert!(
+            compiled_fn.is_some(),
+            "OP_WRL JIT compilation should succeed"
+        );
     }
 
     #[test]
@@ -4933,7 +4891,10 @@ mod tests {
         let chunk = &compiled.chunks[idx];
         let nan_consts = &compiled.nan_constants[idx];
         let compiled_fn = compile(chunk, nan_consts, &compiled);
-        assert!(compiled_fn.is_some(), "OP_RDL JIT compilation should succeed");
+        assert!(
+            compiled_fn.is_some(),
+            "OP_RDL JIT compilation should succeed"
+        );
     }
 
     // ── MOVE with non-numeric source (general RC path) ───────────────────────
@@ -4942,11 +4903,7 @@ mod tests {
     fn cranelift_move_string_value() {
         // When the source register holds a string (not proven always-numeric),
         // the MOVE handler takes the general is_heap-check path.
-        let result = jit_run(
-            r#"f s:t>t;t=s;t"#,
-            "f",
-            &[Value::Text("hello".into())],
-        );
+        let result = jit_run(r#"f s:t>t;t=s;t"#, "f", &[Value::Text("hello".into())]);
         assert_eq!(result, Some(Value::Text("hello".into())));
     }
 
@@ -4967,7 +4924,10 @@ mod tests {
         let chunk = &compiled.chunks[idx];
         let nan_consts = &compiled.nan_constants[idx];
         let compiled_fn = compile(chunk, nan_consts, &compiled);
-        assert!(compiled_fn.is_some(), "OP_NEG with text type should compile");
+        assert!(
+            compiled_fn.is_some(),
+            "OP_NEG with text type should compile"
+        );
     }
 
     // ── HTTP POST / GETH compile smoke-tests ─────────────────────────────────
@@ -4985,7 +4945,10 @@ mod tests {
         let idx = compiled.func_names.iter().position(|n| n == "f").unwrap();
         let chunk = &compiled.chunks[idx];
         let nan_consts = &compiled.nan_constants[idx];
-        assert!(compile(chunk, nan_consts, &compiled).is_some(), "OP_POST should compile");
+        assert!(
+            compile(chunk, nan_consts, &compiled).is_some(),
+            "OP_POST should compile"
+        );
     }
 
     #[test]
@@ -5003,7 +4966,10 @@ mod tests {
         let idx = compiled.func_names.iter().position(|n| n == "f").unwrap();
         let chunk = &compiled.chunks[idx];
         let nan_consts = &compiled.nan_constants[idx];
-        assert!(compile(chunk, nan_consts, &compiled).is_some(), "OP_GETH should compile");
+        assert!(
+            compile(chunk, nan_consts, &compiled).is_some(),
+            "OP_GETH should compile"
+        );
     }
 
     // ── OP_MUL_NN / OP_ADD_NN in main compilation path ───────────────────────
@@ -5054,18 +5020,10 @@ mod tests {
         // Callee uses OP_CMPK_GT_N + OP_JMP + OP_LOADK:
         //   `pos x:n>n;>x 0 x;0`  — returns x if x>0, else 0
         // This exercises OP_CMPK, OP_JMP, and OP_LOADK branches in inline_chunk.
-        let result = jit_run_numeric(
-            "pos x:n>n;>x 0 x;0\nf x:n>n;pos x",
-            "f",
-            &[5.0],
-        );
+        let result = jit_run_numeric("pos x:n>n;>x 0 x;0\nf x:n>n;pos x", "f", &[5.0]);
         assert_eq!(result, Some(5.0));
 
-        let result2 = jit_run_numeric(
-            "pos x:n>n;>x 0 x;0\nf x:n>n;pos x",
-            "f",
-            &[-3.0],
-        );
+        let result2 = jit_run_numeric("pos x:n>n;>x 0 x;0\nf x:n>n;pos x", "f", &[-3.0]);
         assert_eq!(result2, Some(0.0));
     }
 
@@ -5101,7 +5059,10 @@ mod tests {
         let chunk = &compiled.chunks[idx];
         let nan_consts = &compiled.nan_constants[idx];
         let compiled_fn = compile(chunk, nan_consts, &compiled);
-        assert!(compiled_fn.is_some(), "foreach text list JIT compilation should succeed");
+        assert!(
+            compiled_fn.is_some(),
+            "foreach text list JIT compilation should succeed"
+        );
     }
 
     // ── OP_SUB_NN / OP_MUL_NN / OP_DIV_NN with non-always-num registers ─────
@@ -5167,11 +5128,7 @@ mod tests {
         // Callee `double x:n>n;d=*x 2;+d 1` has x (param) and d (extra reg).
         // When inlined, f64_val_for(d_idx) hits the else branch (lines 388-389)
         // for non-param registers.
-        let result = jit_run_numeric(
-            "double x:n>n;d=*x 2;+d 1\nf x:n>n;double x",
-            "f",
-            &[4.0],
-        );
+        let result = jit_run_numeric("double x:n>n;d=*x 2;+d 1\nf x:n>n;double x", "f", &[4.0]);
         assert_eq!(result, Some(9.0)); // 4*2+1=9
     }
 
@@ -5226,17 +5183,9 @@ mod tests {
         // `|>x 3 >x 5`: OP_GT writes bool to ra, OP_MOVE copies to result, OP_JMPT on ra.
         // JMPT is not fused (preceding instruction is MOVE, not comparison).
         // ra is always-bool → exercises the JMPT always-bool fast path.
-        let result = jit_run(
-            "f x:n>b;|>x 3 >x 5",
-            "f",
-            &[Value::Number(4.0)],
-        );
+        let result = jit_run("f x:n>b;|>x 3 >x 5", "f", &[Value::Number(4.0)]);
         assert_eq!(result, Some(Value::Bool(true)));
-        let result2 = jit_run(
-            "f x:n>b;|>x 3 >x 5",
-            "f",
-            &[Value::Number(2.0)],
-        );
+        let result2 = jit_run("f x:n>b;|>x 3 >x 5", "f", &[Value::Number(2.0)]);
         assert_eq!(result2, Some(Value::Bool(false)));
     }
 
@@ -5256,7 +5205,10 @@ mod tests {
         let idx = compiled.func_names.iter().position(|n| n == "f").unwrap();
         let chunk = &compiled.chunks[idx];
         let nan_consts = &compiled.nan_constants[idx];
-        assert!(compile(chunk, nan_consts, &compiled).is_some(), "OP_POSTH should compile");
+        assert!(
+            compile(chunk, nan_consts, &compiled).is_some(),
+            "OP_POSTH should compile"
+        );
     }
 
     // ── CMPK_*_N with non-always-num register (mixed-type function) ──────────
@@ -5333,25 +5285,41 @@ mod tests {
         // Let's just check it compiles and runs without panicking
         let _ = result; // result could be bool or num depending on type coercion
         // Use jit_run to check boolean result
-        let r2 = jit_run("f x:v y:v>b;<=x y", "f", &[Value::Number(3.0), Value::Number(5.0)]);
+        let r2 = jit_run(
+            "f x:v y:v>b;<=x y",
+            "f",
+            &[Value::Number(3.0), Value::Number(5.0)],
+        );
         assert_eq!(r2, Some(Value::Bool(true)));
     }
 
     #[test]
     fn cranelift_generic_ge() {
-        let r = jit_run("f x:v y:v>b;>=x y", "f", &[Value::Number(5.0), Value::Number(3.0)]);
+        let r = jit_run(
+            "f x:v y:v>b;>=x y",
+            "f",
+            &[Value::Number(5.0), Value::Number(3.0)],
+        );
         assert_eq!(r, Some(Value::Bool(true)));
     }
 
     #[test]
     fn cranelift_generic_eq() {
-        let r = jit_run("f x:v y:v>b;==x y", "f", &[Value::Number(5.0), Value::Number(5.0)]);
+        let r = jit_run(
+            "f x:v y:v>b;==x y",
+            "f",
+            &[Value::Number(5.0), Value::Number(5.0)],
+        );
         assert_eq!(r, Some(Value::Bool(true)));
     }
 
     #[test]
     fn cranelift_generic_ne() {
-        let r = jit_run("f x:v y:v>b;!=x y", "f", &[Value::Number(3.0), Value::Number(5.0)]);
+        let r = jit_run(
+            "f x:v y:v>b;!=x y",
+            "f",
+            &[Value::Number(3.0), Value::Number(5.0)],
+        );
         assert_eq!(r, Some(Value::Bool(true)));
     }
 
@@ -5361,17 +5329,9 @@ mod tests {
     fn cranelift_inline_cmpk_lt_callee() {
         // Callee uses CMPK_LT_N — covers line 462 in inline_chunk.
         // Both branches have constant fallbacks so JMP stays within code (no past-end issue).
-        let result = jit_run_numeric(
-            "negone x:n>n;<x 0 -1;0\nf x:n>n;negone x",
-            "f",
-            &[-5.0],
-        );
+        let result = jit_run_numeric("negone x:n>n;<x 0 -1;0\nf x:n>n;negone x", "f", &[-5.0]);
         assert_eq!(result, Some(-1.0));
-        let result2 = jit_run_numeric(
-            "negone x:n>n;<x 0 -1;0\nf x:n>n;negone x",
-            "f",
-            &[3.0],
-        );
+        let result2 = jit_run_numeric("negone x:n>n;<x 0 -1;0\nf x:n>n;negone x", "f", &[3.0]);
         assert_eq!(result2, Some(0.0));
     }
 
@@ -5379,51 +5339,27 @@ mod tests {
     fn cranelift_inline_cmpk_le_callee() {
         // Callee uses CMPK_LE_N — covers line 463 in inline_chunk.
         // `atmost5` returns x if x<=5, else 5.
-        let result = jit_run_numeric(
-            "atmost5 x:n>n;<=x 5 x;5\nf x:n>n;atmost5 x",
-            "f",
-            &[3.0],
-        );
+        let result = jit_run_numeric("atmost5 x:n>n;<=x 5 x;5\nf x:n>n;atmost5 x", "f", &[3.0]);
         assert_eq!(result, Some(3.0));
-        let result2 = jit_run_numeric(
-            "atmost5 x:n>n;<=x 5 x;5\nf x:n>n;atmost5 x",
-            "f",
-            &[10.0],
-        );
+        let result2 = jit_run_numeric("atmost5 x:n>n;<=x 5 x;5\nf x:n>n;atmost5 x", "f", &[10.0]);
         assert_eq!(result2, Some(5.0));
     }
 
     #[test]
     fn cranelift_inline_cmpk_eq_callee() {
         // Callee uses CMPK_EQ_N — covers line 464 in inline_chunk.
-        let result = jit_run_numeric(
-            "exact5 x:n>n;==x 5 1;0\nf x:n>n;exact5 x",
-            "f",
-            &[5.0],
-        );
+        let result = jit_run_numeric("exact5 x:n>n;==x 5 1;0\nf x:n>n;exact5 x", "f", &[5.0]);
         assert_eq!(result, Some(1.0));
-        let result2 = jit_run_numeric(
-            "exact5 x:n>n;==x 5 1;0\nf x:n>n;exact5 x",
-            "f",
-            &[3.0],
-        );
+        let result2 = jit_run_numeric("exact5 x:n>n;==x 5 1;0\nf x:n>n;exact5 x", "f", &[3.0]);
         assert_eq!(result2, Some(0.0));
     }
 
     #[test]
     fn cranelift_inline_cmpk_ne_callee() {
         // Callee uses CMPK_NE_N — covers line 465 (_ => FloatCC::NotEqual) in inline_chunk.
-        let result = jit_run_numeric(
-            "noteq5 x:n>n;!=x 5 1;0\nf x:n>n;noteq5 x",
-            "f",
-            &[3.0],
-        );
+        let result = jit_run_numeric("noteq5 x:n>n;!=x 5 1;0\nf x:n>n;noteq5 x", "f", &[3.0]);
         assert_eq!(result, Some(1.0));
-        let result2 = jit_run_numeric(
-            "noteq5 x:n>n;!=x 5 1;0\nf x:n>n;noteq5 x",
-            "f",
-            &[5.0],
-        );
+        let result2 = jit_run_numeric("noteq5 x:n>n;!=x 5 1;0\nf x:n>n;noteq5 x", "f", &[5.0]);
         assert_eq!(result2, Some(0.0));
     }
 

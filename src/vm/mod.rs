@@ -4738,8 +4738,7 @@ impl<'a> VM<'a> {
                                         HeapObj::Str(s) => s,
                                         _ => unreachable!(),
                                     };
-                                    let mut out =
-                                        String::with_capacity(sb.len() + sc.len());
+                                    let mut out = String::with_capacity(sb.len() + sc.len());
                                     out.push_str(sb);
                                     out.push_str(sc);
                                     NanVal::heap_string(out)
@@ -18527,11 +18526,7 @@ f>n;r=mk 10 20;+r.x r.y";
     // Record returned from function (exercises NanVal::to_value for arena records L2811-2834)
     #[test]
     fn vm_cov_record_return() {
-        let result = vm_run(
-            "type pt{x:n;y:n}\nf>pt;pt x:10 y:20",
-            Some("f"),
-            vec![],
-        );
+        let result = vm_run("type pt{x:n;y:n}\nf>pt;pt x:10 y:20", Some("f"), vec![]);
         match result {
             Value::Record { type_name, fields } => {
                 assert_eq!(type_name, "pt");
@@ -18666,11 +18661,7 @@ f>n;r=mk 10 20;+r.x r.y";
     // Map has
     #[test]
     fn vm_cov_map_has() {
-        let result = vm_run(
-            r#"f>b;m=mset mmap "a" 1;mhas m "a""#,
-            Some("f"),
-            vec![],
-        );
+        let result = vm_run(r#"f>b;m=mset mmap "a" 1;mhas m "a""#, Some("f"), vec![]);
         assert_eq!(result, Value::Bool(true));
     }
 
@@ -18729,7 +18720,11 @@ f>n;r=mk 10 20;+r.x r.y";
     #[test]
     fn vm_cov_foreach_cnt() {
         // Skip x>=3, sum rest: 1+2 = 3
-        let result = vm_run("f>n;s=0;@x [1,2,3,4,5]{>=x 3{cnt};s=+s x};s", Some("f"), vec![]);
+        let result = vm_run(
+            "f>n;s=0;@x [1,2,3,4,5]{>=x 3{cnt};s=+s x};s",
+            Some("f"),
+            vec![],
+        );
         assert_eq!(result, Value::Number(3.0));
     }
 
@@ -18802,26 +18797,42 @@ f>n;r=mk 10 20;+r.x r.y";
     // Comparison operators
     #[test]
     fn vm_cov_cmp_gt() {
-        let result = vm_run("f x:n y:n>b;>x y", Some("f"), vec![Value::Number(5.0), Value::Number(3.0)]);
+        let result = vm_run(
+            "f x:n y:n>b;>x y",
+            Some("f"),
+            vec![Value::Number(5.0), Value::Number(3.0)],
+        );
         assert_eq!(result, Value::Bool(true));
     }
 
     #[test]
     fn vm_cov_cmp_gte() {
-        let result = vm_run("f x:n y:n>b;>=x y", Some("f"), vec![Value::Number(5.0), Value::Number(5.0)]);
+        let result = vm_run(
+            "f x:n y:n>b;>=x y",
+            Some("f"),
+            vec![Value::Number(5.0), Value::Number(5.0)],
+        );
         assert_eq!(result, Value::Bool(true));
     }
 
     #[test]
     fn vm_cov_cmp_lte() {
-        let result = vm_run("f x:n y:n>b;<=x y", Some("f"), vec![Value::Number(3.0), Value::Number(5.0)]);
+        let result = vm_run(
+            "f x:n y:n>b;<=x y",
+            Some("f"),
+            vec![Value::Number(3.0), Value::Number(5.0)],
+        );
         assert_eq!(result, Value::Bool(true));
     }
 
     // String length
     #[test]
     fn vm_cov_str_len() {
-        let result = vm_run(r#"f s:t>n;len s"#, Some("f"), vec![Value::Text("hello".into())]);
+        let result = vm_run(
+            r#"f s:t>n;len s"#,
+            Some("f"),
+            vec![Value::Text("hello".into())],
+        );
         assert_eq!(result, Value::Number(5.0));
     }
 
@@ -18857,13 +18868,21 @@ f>n;r=mk 10 20;+r.x r.y";
     // Conditional expression with braces
     #[test]
     fn vm_cov_cond_brace() {
-        let result = vm_run(r#"f x:n>t;=x 1{"yes"}{"no"}"#, Some("f"), vec![Value::Number(1.0)]);
+        let result = vm_run(
+            r#"f x:n>t;=x 1{"yes"}{"no"}"#,
+            Some("f"),
+            vec![Value::Number(1.0)],
+        );
         assert_eq!(result, Value::Text("yes".into()));
     }
 
     #[test]
     fn vm_cov_cond_brace_false() {
-        let result = vm_run(r#"f x:n>t;=x 1{"yes"}{"no"}"#, Some("f"), vec![Value::Number(0.0)]);
+        let result = vm_run(
+            r#"f x:n>t;=x 1{"yes"}{"no"}"#,
+            Some("f"),
+            vec![Value::Number(0.0)],
+        );
         assert_eq!(result, Value::Text("no".into()));
     }
 
@@ -19019,7 +19038,10 @@ f>n;r=mk 10 20;+r.x r.y";
         match result {
             Value::Err(msg) => {
                 let s = msg.to_string();
-                assert!(s.contains("not set") || s.contains("ILO_TEST_MISSING"), "got: {s}");
+                assert!(
+                    s.contains("not set") || s.contains("ILO_TEST_MISSING"),
+                    "got: {s}"
+                );
             }
             other => panic!("expected Err, got {:?}", other),
         }
@@ -19029,11 +19051,7 @@ f>n;r=mk 10 20;+r.x r.y";
     #[test]
     fn vm_cov_jpar_object() {
         // Parse a JSON object; result is Ok
-        let result = vm_run(
-            r#"f>O _;r=jpar "{\"a\":1}";r"#,
-            Some("f"),
-            vec![],
-        );
+        let result = vm_run(r#"f>O _;r=jpar "{\"a\":1}";r"#, Some("f"), vec![]);
         match result {
             Value::Ok(_) => {} // success: parsed to a map or similar
             other => panic!("expected Ok, got {:?}", other),
@@ -19156,7 +19174,11 @@ f>n;r=mk 10 20;+r.x r.y";
     // ── OP_SRT — sort list of strings ─────────────────────────────────────
     #[test]
     fn vm_cov_srt_strings() {
-        let result = vm_run(r#"f>L t;srt ["banana","apple","cherry"]"#, Some("f"), vec![]);
+        let result = vm_run(
+            r#"f>L t;srt ["banana","apple","cherry"]"#,
+            Some("f"),
+            vec![],
+        );
         assert_eq!(
             result,
             Value::List(vec![
@@ -19668,11 +19690,7 @@ f>n;r=mk 10 20;+r.x r.y";
     // ── OP_MGET — map get missing key returns nil ─────────────────────────
     #[test]
     fn vm_cov_mget_missing_key() {
-        let result = vm_run(
-            r#"f>O n;m=mset mmap "a" 1;mget m "z""#,
-            Some("f"),
-            vec![],
-        );
+        let result = vm_run(r#"f>O n;m=mset mmap "a" 1;mget m "z""#, Some("f"), vec![]);
         assert_eq!(result, Value::Nil);
     }
 
@@ -19753,7 +19771,7 @@ f>n;r=mk 10 20;+r.x r.y";
     #[test]
     fn vm_op_listget_in_bounds() {
         use crate::interpreter::Value;
-        use crate::vm::{run, Chunk, CompiledProgram, TypeRegistry, OP_JMP, OP_LISTGET, OP_RET};
+        use crate::vm::{Chunk, CompiledProgram, OP_JMP, OP_LISTGET, OP_RET, TypeRegistry, run};
 
         fn make_abc(op: u8, a: u8, b: u8, c: u8) -> u32 {
             ((op as u32) << 24) | ((a as u32) << 16) | ((b as u32) << 8) | (c as u32)
@@ -19767,12 +19785,12 @@ f>n;r=mk 10 20;+r.x r.y";
         // R[2] = result of OP_LISTGET
         // code: LOADK R[1], K[0] (= 1.0); LISTGET R[2], R[0], R[1]; JMP +1 (skip on miss); JMP to nil ret; RET R[2]
         let code = vec![
-            make_abx(crate::vm::OP_LOADK, 1, 0),         // R[1] = K[0] = 1.0
-            make_abc(OP_LISTGET, 2, 0, 1),                 // R[2] = R[0][R[1]]; skip JMP if in bounds
-            make_abx(OP_JMP, 0, 2u16.wrapping_add(1)),    // JMP +2 (to LOADK nil) if out of bounds — patched offset
-            make_abc(OP_RET, 2, 0, 0),                    // RET R[2] (in-bounds path)
-            make_abx(crate::vm::OP_LOADK, 2, 1),          // R[2] = K[1] = nil
-            make_abc(OP_RET, 2, 0, 0),                    // RET R[2] (out of bounds)
+            make_abx(crate::vm::OP_LOADK, 1, 0),       // R[1] = K[0] = 1.0
+            make_abc(OP_LISTGET, 2, 0, 1),             // R[2] = R[0][R[1]]; skip JMP if in bounds
+            make_abx(OP_JMP, 0, 2u16.wrapping_add(1)), // JMP +2 (to LOADK nil) if out of bounds — patched offset
+            make_abc(OP_RET, 2, 0, 0),                 // RET R[2] (in-bounds path)
+            make_abx(crate::vm::OP_LOADK, 2, 1),       // R[2] = K[1] = nil
+            make_abc(OP_RET, 2, 0, 0),                 // RET R[2] (out of bounds)
         ];
 
         let chunk = Chunk {
@@ -19808,7 +19826,7 @@ f>n;r=mk 10 20;+r.x r.y";
     fn vm_op_listget_out_of_bounds() {
         // OP_LISTGET where index is beyond list length → falls through to JMP exit
         use crate::interpreter::Value;
-        use crate::vm::{run, Chunk, CompiledProgram, TypeRegistry, OP_JMP, OP_LISTGET, OP_RET};
+        use crate::vm::{Chunk, CompiledProgram, OP_JMP, OP_LISTGET, OP_RET, TypeRegistry, run};
 
         fn make_abc(op: u8, a: u8, b: u8, c: u8) -> u32 {
             ((op as u32) << 24) | ((a as u32) << 16) | ((b as u32) << 8) | (c as u32)
@@ -19822,11 +19840,11 @@ f>n;r=mk 10 20;+r.x r.y";
         // JMP encodes offset = 1 (skip the next instruction = RET R[2])
         let jmp_offset = 1i16 as u16;
         let code = vec![
-            make_abx(crate::vm::OP_LOADK, 1, 0),         // R[1] = 99.0
-            make_abc(OP_LISTGET, 2, 0, 1),                 // out-of-bounds → don't skip JMP
-            make_abx(OP_JMP, 0, jmp_offset),               // JMP +1 → skip RET R[2], go to LOADK nil
-            make_abc(OP_RET, 2, 0, 0),                    // skipped in out-of-bounds path
-            make_abx(crate::vm::OP_LOADK, 2, 1),          // R[2] = nil
+            make_abx(crate::vm::OP_LOADK, 1, 0), // R[1] = 99.0
+            make_abc(OP_LISTGET, 2, 0, 1),       // out-of-bounds → don't skip JMP
+            make_abx(OP_JMP, 0, jmp_offset),     // JMP +1 → skip RET R[2], go to LOADK nil
+            make_abc(OP_RET, 2, 0, 0),           // skipped in out-of-bounds path
+            make_abx(crate::vm::OP_LOADK, 2, 1), // R[2] = nil
             make_abc(OP_RET, 2, 0, 0),
         ];
 
@@ -19842,10 +19860,7 @@ f>n;r=mk 10 20;+r.x r.y";
         let program = CompiledProgram {
             chunks: vec![chunk],
             func_names: vec!["f".to_string()],
-            nan_constants: vec![vec![
-                NanVal::number(99.0),
-                NanVal::nil(),
-            ]],
+            nan_constants: vec![vec![NanVal::number(99.0), NanVal::nil()]],
             type_registry: TypeRegistry::default(),
             is_tool: vec![false],
         };
@@ -19863,7 +19878,7 @@ f>n;r=mk 10 20;+r.x r.y";
     fn vm_op_listget_non_list_error() {
         // OP_LISTGET where the collection is not a heap value → vm_err!
         use crate::interpreter::Value;
-        use crate::vm::{run, Chunk, CompiledProgram, TypeRegistry, OP_JMP, OP_LISTGET, OP_RET};
+        use crate::vm::{Chunk, CompiledProgram, OP_JMP, OP_LISTGET, OP_RET, TypeRegistry, run};
 
         fn make_abc(op: u8, a: u8, b: u8, c: u8) -> u32 {
             ((op as u32) << 24) | ((a as u32) << 16) | ((b as u32) << 8) | (c as u32)
@@ -19874,7 +19889,7 @@ f>n;r=mk 10 20;+r.x r.y";
 
         let code = vec![
             make_abx(crate::vm::OP_LOADK, 1, 0), // R[1] = 0.0
-            make_abc(OP_LISTGET, 2, 0, 1),         // R[0] is a number → vm_err!
+            make_abc(OP_LISTGET, 2, 0, 1),       // R[0] is a number → vm_err!
             make_abx(OP_JMP, 0, 1u16),
             make_abc(OP_RET, 2, 0, 0),
             make_abx(crate::vm::OP_LOADK, 2, 1),
@@ -19893,10 +19908,7 @@ f>n;r=mk 10 20;+r.x r.y";
         let program = CompiledProgram {
             chunks: vec![chunk],
             func_names: vec!["f".to_string()],
-            nan_constants: vec![vec![
-                NanVal::number(0.0),
-                NanVal::nil(),
-            ]],
+            nan_constants: vec![vec![NanVal::number(0.0), NanVal::nil()]],
             type_registry: TypeRegistry::default(),
             is_tool: vec![false],
         };
@@ -19905,7 +19917,10 @@ f>n;r=mk 10 20;+r.x r.y";
         let result = run(&program, Some("f"), vec![Value::Number(42.0)]);
         assert!(result.is_err());
         let msg = result.unwrap_err().to_string();
-        assert!(msg.contains("list") || msg.contains("foreach"), "got: {msg}");
+        assert!(
+            msg.contains("list") || msg.contains("foreach"),
+            "got: {msg}"
+        );
     }
 
     // ── run_with_tools with None func_name, functions exist ─────────────────
@@ -19969,9 +19984,6 @@ f>n;r=mk 10 20;+r.x r.y";
         fn make_abc(op: u8, a: u8, b: u8, c: u8) -> u32 {
             ((op as u32) << 24) | ((a as u32) << 16) | ((b as u32) << 8) | (c as u32)
         }
-        fn make_abx(op: u8, a: u8, bx: u16) -> u32 {
-            ((op as u32) << 24) | ((a as u32) << 16) | (bx as u32)
-        }
 
         // OP_CALL: a=result_reg, b=func_idx, c=arg_count
         // OP_RET: a=reg_to_return
@@ -20020,10 +20032,7 @@ f>n;r=mk 10 20;+r.x r.y";
         // >x 0 nil  → braceless guard: if x>0 return nil; else continue to 0
         // This is equivalent to `f x:n>O n; >x 0 nil; 0`
         let src = "f x:n>n;>x 0 nil;-1";
-        assert_eq!(
-            vm_run(src, Some("f"), vec![Value::Number(5.0)]),
-            Value::Nil
-        );
+        assert_eq!(vm_run(src, Some("f"), vec![Value::Number(5.0)]), Value::Nil);
         assert_eq!(
             vm_run(src, Some("f"), vec![Value::Number(-1.0)]),
             Value::Number(-1.0)
@@ -20052,11 +20061,7 @@ f>n;r=mk 10 20;+r.x r.y";
         // → returns false (line 721), falls through to general binding.
         let src = "f xs:L n>L n;xs=+=[] xs;xs";
         // This just tests that the program runs, not the specific opcode path
-        let result = vm_run(
-            src,
-            Some("f"),
-            vec![Value::List(vec![Value::Number(1.0)])],
-        );
+        let result = vm_run(src, Some("f"), vec![Value::List(vec![Value::Number(1.0)])]);
         match result {
             Value::List(items) => assert!(!items.is_empty()),
             other => panic!("expected list, got {:?}", other),
@@ -20109,7 +20114,7 @@ f>n;r=mk 10 20;+r.x r.y";
     #[test]
     fn vm_op_listget_non_number_idx_error() {
         use crate::interpreter::Value;
-        use crate::vm::{run, Chunk, CompiledProgram, TypeRegistry, OP_JMP, OP_LISTGET, OP_RET};
+        use crate::vm::{Chunk, CompiledProgram, OP_JMP, OP_LISTGET, OP_RET, TypeRegistry, run};
 
         fn make_abc(op: u8, a: u8, b: u8, c: u8) -> u32 {
             ((op as u32) << 24) | ((a as u32) << 16) | ((b as u32) << 8) | (c as u32)
@@ -20187,7 +20192,7 @@ f>n;r=mk 10 20;+r.x r.y";
     #[test]
     fn vm_op_listget_heap_non_list_error() {
         use crate::interpreter::Value;
-        use crate::vm::{run, Chunk, CompiledProgram, TypeRegistry, OP_JMP, OP_LISTGET, OP_RET};
+        use crate::vm::{Chunk, CompiledProgram, OP_JMP, OP_LISTGET, OP_RET, TypeRegistry, run};
 
         fn make_abc(op: u8, a: u8, b: u8, c: u8) -> u32 {
             ((op as u32) << 24) | ((a as u32) << 16) | ((b as u32) << 8) | (c as u32)
@@ -20198,7 +20203,7 @@ f>n;r=mk 10 20;+r.x r.y";
 
         let code = vec![
             make_abx(crate::vm::OP_LOADK, 1, 0), // R[1] = 0.0
-            make_abc(OP_LISTGET, 2, 0, 1),         // R[0] is a string (heap but not list) → error
+            make_abc(OP_LISTGET, 2, 0, 1),       // R[0] is a string (heap but not list) → error
             make_abx(OP_JMP, 0, 1u16),
             make_abc(OP_RET, 2, 0, 0),
             make_abx(crate::vm::OP_LOADK, 2, 1),
@@ -20217,10 +20222,7 @@ f>n;r=mk 10 20;+r.x r.y";
         let program = CompiledProgram {
             chunks: vec![chunk],
             func_names: vec!["f".to_string()],
-            nan_constants: vec![vec![
-                NanVal::number(0.0),
-                NanVal::nil(),
-            ]],
+            nan_constants: vec![vec![NanVal::number(0.0), NanVal::nil()]],
             type_registry: TypeRegistry::default(),
             is_tool: vec![false],
         };
@@ -20229,6 +20231,9 @@ f>n;r=mk 10 20;+r.x r.y";
         let result = run(&program, Some("f"), vec![Value::Text("hello".into())]);
         assert!(result.is_err());
         let msg = result.unwrap_err().to_string();
-        assert!(msg.contains("list") || msg.contains("foreach"), "got: {msg}");
+        assert!(
+            msg.contains("list") || msg.contains("foreach"),
+            "got: {msg}"
+        );
     }
 }

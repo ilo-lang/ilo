@@ -5954,7 +5954,10 @@ mod tests {
         // An incomplete program that should produce parse errors
         let tokens = vec![Token::Greater]; // just ">" — not a valid program
         let result = super::parse_tokens(tokens);
-        assert!(result.is_err(), "incomplete tokens should produce parse error");
+        assert!(
+            result.is_err(),
+            "incomplete tokens should produce parse error"
+        );
     }
 
     // L881: TypeIs pattern lookahead with 'b' type
@@ -5969,10 +5972,7 @@ mod tests {
         };
         assert!(matches!(
             &arms[0].pattern,
-            Pattern::TypeIs {
-                ty: Type::Bool,
-                ..
-            }
+            Pattern::TypeIs { ty: Type::Bool, .. }
         ));
     }
 
@@ -6028,8 +6028,17 @@ mod tests {
         };
         // First stmt should be a Guard (desugared from v=cond{body})
         assert!(
-            matches!(&body[0].node, Stmt::Guard { negated: false, else_body: None, braceless: false, .. }),
-            "expected Guard from single-brace let desugar, got {:?}", body[0].node
+            matches!(
+                &body[0].node,
+                Stmt::Guard {
+                    negated: false,
+                    else_body: None,
+                    braceless: false,
+                    ..
+                }
+            ),
+            "expected Guard from single-brace let desugar, got {:?}",
+            body[0].node
         );
     }
 
@@ -6041,14 +6050,24 @@ mod tests {
         let Decl::Function { body, .. } = &prog.declarations[0] else {
             panic!("expected function")
         };
-        let Stmt::Guard { body: guard_body, .. } = &body[0].node else {
+        let Stmt::Guard {
+            body: guard_body, ..
+        } = &body[0].node
+        else {
             panic!("expected Guard, got {:?}", body[0].node)
         };
         // The desugared body should be a single Let with Nil value
         assert_eq!(guard_body.len(), 1);
         assert!(
-            matches!(&guard_body[0].node, Stmt::Let { value: Expr::Literal(Literal::Nil), .. }),
-            "expected Let{{Nil}} in guard body, got {:?}", guard_body[0].node
+            matches!(
+                &guard_body[0].node,
+                Stmt::Let {
+                    value: Expr::Literal(Literal::Nil),
+                    ..
+                }
+            ),
+            "expected Let{{Nil}} in guard body, got {:?}",
+            guard_body[0].node
         );
     }
 
@@ -6061,14 +6080,18 @@ mod tests {
         let Decl::Function { body, .. } = &prog.declarations[0] else {
             panic!("expected function")
         };
-        let Stmt::Guard { body: guard_body, .. } = &body[0].node else {
+        let Stmt::Guard {
+            body: guard_body, ..
+        } = &body[0].node
+        else {
             panic!("expected Guard, got {:?}", body[0].node)
         };
         // The inner let (w=1) should remain — non-Expr last stmt is left as-is
-        assert!(guard_body.len() >= 1);
+        assert!(!guard_body.is_empty());
         assert!(
             matches!(&guard_body[0].node, Stmt::Let { name, .. } if name == "w"),
-            "expected inner Let{{w}} untouched, got {:?}", guard_body[0].node
+            "expected inner Let{{w}} untouched, got {:?}",
+            guard_body[0].node
         );
     }
 
@@ -6086,7 +6109,8 @@ mod tests {
         assert_eq!(elems.len(), 1);
         assert!(
             matches!(&elems[0], Expr::Err(_)),
-            "expected Err element, got {:?}", elems[0]
+            "expected Err element, got {:?}",
+            elems[0]
         );
     }
 
@@ -6108,7 +6132,8 @@ mod tests {
                 if matches!(then_expr.as_ref(), Expr::Literal(Literal::Nil))
                 && matches!(else_expr.as_ref(), Expr::Literal(Literal::Nil))
             ),
-            "expected Ternary{{Nil, Nil}}, got {:?}", value
+            "expected Ternary{{Nil, Nil}}, got {:?}",
+            value
         );
     }
 
@@ -6130,7 +6155,8 @@ mod tests {
                 if matches!(then_expr.as_ref(), Expr::Literal(Literal::Nil))
                 && matches!(else_expr.as_ref(), Expr::Literal(Literal::Nil))
             ),
-            "expected Ternary fallback to Nil for non-Expr branches, got {:?}", value
+            "expected Ternary fallback to Nil for non-Expr branches, got {:?}",
+            value
         );
     }
 
@@ -6149,8 +6175,15 @@ mod tests {
         // Three arms: literal 1, TypeIs n, wildcard
         assert_eq!(arms.len(), 3, "expected 3 match arms");
         assert!(
-            matches!(&arms[1].pattern, Pattern::TypeIs { ty: Type::Number, .. }),
-            "expected TypeIs Number arm, got {:?}", arms[1].pattern
+            matches!(
+                &arms[1].pattern,
+                Pattern::TypeIs {
+                    ty: Type::Number,
+                    ..
+                }
+            ),
+            "expected TypeIs Number arm, got {:?}",
+            arms[1].pattern
         );
     }
 
@@ -6185,8 +6218,12 @@ mod tests {
         };
         // Should parse as BinOp::Add with a paren-grouped first arg
         assert!(
-            matches!(&body[0].node, Stmt::Expr(Expr::BinOp { op: BinOp::Add, .. })),
-            "expected Add BinOp, got {:?}", body[0].node
+            matches!(
+                &body[0].node,
+                Stmt::Expr(Expr::BinOp { op: BinOp::Add, .. })
+            ),
+            "expected Add BinOp, got {:?}",
+            body[0].node
         );
     }
 
@@ -6205,7 +6242,8 @@ mod tests {
         // Should parse as a call to dbl with args [-((y)), 1]... actually as Call{dbl, [BinOp{Sub,Ref(y),Lit(1)}]}
         assert!(
             matches!(&body[0].node, Stmt::Expr(Expr::Call { function, .. }) if function == "dbl"),
-            "expected Call to dbl, got {:?}", body[0].node
+            "expected Call to dbl, got {:?}",
+            body[0].node
         );
     }
 }

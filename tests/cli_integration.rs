@@ -346,10 +346,7 @@ fn cli_cov_version() {
 fn cli_cov_spec_lang() {
     let (ok, stdout, _stderr) = run_args(&["spec", "lang"]);
     assert!(ok, "spec lang should succeed");
-    assert!(
-        stdout.len() > 100,
-        "spec lang output should be non-trivial"
-    );
+    assert!(stdout.len() > 100, "spec lang output should be non-trivial");
 }
 
 /// `ilo spec ai` should print compact/AI spec (L1818)
@@ -385,22 +382,14 @@ fn cli_cov_explain_unknown() {
 fn cli_cov_inline_parse_error() {
     let (ok, _stdout, stderr) = run_args(&["bad syntax ###"]);
     assert!(!ok, "inline parse error should fail");
-    assert!(
-        !stderr.is_empty(),
-        "should report parse error on stderr"
-    );
+    assert!(!stderr.is_empty(), "should report parse error on stderr");
 }
 
 /// `ilo graph file --fn nonexistent` function not found (L467-468)
 #[test]
 fn cli_cov_graph_fn_not_found() {
     let (_dir, path) = write_temp_ilo("f x:n>n;+x 1");
-    let (ok, _stdout, stderr) = run_args(&[
-        "graph",
-        path.to_str().unwrap(),
-        "--fn",
-        "nonexistent",
-    ]);
+    let (ok, _stdout, stderr) = run_args(&["graph", path.to_str().unwrap(), "--fn", "nonexistent"]);
     assert!(!ok, "graph with nonexistent function should fail");
     assert!(
         stderr.contains("not found") || stderr.contains("nonexistent"),
@@ -445,8 +434,7 @@ fn cli_cov_serve_tools_no_path() {
 /// `ilo run --run-jit 'f x:n>n;+x 1' nonexistent` — JIT with undefined function (L2473-2474)
 #[test]
 fn cli_cov_jit_fn_not_found() {
-    let (ok, _stdout, stderr) =
-        run_args(&["run", "--run-jit", "f x:n>n;+x 1", "nonexistent"]);
+    let (ok, _stdout, stderr) = run_args(&["run", "--run-jit", "f x:n>n;+x 1", "nonexistent"]);
     // On non-aarch64, the JIT may not be available; either way exit should be non-zero
     assert!(
         !ok || stderr.contains("error") || stderr.contains("Error"),
@@ -457,11 +445,12 @@ fn cli_cov_jit_fn_not_found() {
 /// `ilo run --run-vm 'f x:n>n;+x 1' nonexistent 5` — VM with undefined fn (L2530-2531)
 #[test]
 fn cli_cov_run_vm_fn_not_found() {
-    let (ok, _stdout, stderr) =
-        run_args(&["run", "--run-vm", "f x:n>n;+x 1", "nonexistent", "5"]);
+    let (ok, _stdout, stderr) = run_args(&["run", "--run-vm", "f x:n>n;+x 1", "nonexistent", "5"]);
     assert!(!ok, "VM with undefined function should fail");
     assert!(
-        stderr.contains("undefined") || stderr.contains("nonexistent") || stderr.contains("not found"),
+        stderr.contains("undefined")
+            || stderr.contains("nonexistent")
+            || stderr.contains("not found"),
         "should mention function not found, got: {stderr}"
     );
 }
@@ -469,9 +458,11 @@ fn cli_cov_run_vm_fn_not_found() {
 /// `ilo run 'f x:n>n;+x 1' f 5` exercises the default engine path
 #[test]
 fn cli_cov_run_default_engine() {
-    let (ok, stdout, stderr) =
-        run_args(&["run", "f x:n>n;+x 1", "f", "5"]);
-    assert!(ok, "run with default engine should succeed; stderr: {stderr}");
+    let (ok, stdout, stderr) = run_args(&["run", "f x:n>n;+x 1", "f", "5"]);
+    assert!(
+        ok,
+        "run with default engine should succeed; stderr: {stderr}"
+    );
     assert!(
         stdout.trim() == "6" || stdout.trim() == "6.0",
         "should output 6, got: {stdout}"
