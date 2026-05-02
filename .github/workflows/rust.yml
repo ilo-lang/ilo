@@ -27,6 +27,10 @@ jobs:
       uses: taiki-e/install-action@nextest
     - name: Build
       run: cargo build --verbose
+    - name: Verify spec-ai.txt is in sync with SPEC.md
+      # build.rs regenerates spec-ai.txt from SPEC.md. If a contributor edited SPEC.md
+      # without committing the regenerated spec-ai.txt, the diff is non-empty and CI fails.
+      run: git diff --exit-code spec-ai.txt
     - name: Run tests (JUnit XML output)
       run: cargo nextest run --profile ci
     - name: Upload test results to Codecov

@@ -1,13 +1,30 @@
 // build.rs — generates a compact, one-line-per-section spec from SPEC.md at compile time.
 // `ilo help ai` / `ilo -ai` embeds this via include_str!(concat!(env!("OUT_DIR"), "/spec_ai.txt")).
+//
+// The compact spec is also written to the source-tree path `spec-ai.txt` so it lives in git
+// and has a stable raw URL on GitHub. CI runs `cargo build` then `git diff --exit-code
+// spec-ai.txt`; if SPEC.md was edited without regenerating, the diff is non-empty and CI fails.
 
 fn main() {
     println!("cargo:rerun-if-changed=SPEC.md");
     let spec = std::fs::read_to_string("SPEC.md").expect("SPEC.md not found");
     let compact = compact_spec(&spec);
+
+    // Embedded into the binary at compile time via include_str!.
     let out_dir = std::env::var("OUT_DIR").expect("OUT_DIR not set by Cargo");
-    std::fs::write(std::path::Path::new(&out_dir).join("spec_ai.txt"), compact)
-        .expect("failed to write spec_ai.txt");
+    std::fs::write(std::path::Path::new(&out_dir).join("spec_ai.txt"), &compact)
+        .expect("failed to write OUT_DIR/spec_ai.txt");
+
+    // Source-tree copy for git tracking and a stable raw URL. Only written when the content
+    // changed, so unchanged builds don't dirty the working tree.
+    let tracked_path = std::path::Path::new("spec-ai.txt");
+    let needs_write = match std::fs::read_to_string(tracked_path) {
+        Ok(existing) => existing != compact,
+        Err(_) => true,
+    };
+    if needs_write {
+        std::fs::write(tracked_path, &compact).expect("failed to write spec-ai.txt");
+    }
 }
 
 /// Compress the spec into one line per `## Section`.
