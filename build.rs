@@ -30,8 +30,9 @@ fn main() {
 /// - Everything within a section is joined with ` ` and emitted as `SECTION: content`.
 fn compact_spec(src: &str) -> String {
     // Split into (heading, content_lines) sections.
-    // The preamble (before first ## heading) gets an empty heading.
-    let mut sections: Vec<(String, Vec<String>)> = vec![("".into(), vec![])];
+    // The preamble (before the first `## heading`) is labelled INTRO so every section
+    // in the compact output has a uniform `LABEL: content` shape.
+    let mut sections: Vec<(String, Vec<String>)> = vec![("INTRO".into(), vec![])];
 
     for line in src.lines() {
         let trimmed = line.trim();
@@ -53,13 +54,9 @@ fn compact_spec(src: &str) -> String {
         if tokens.is_empty() {
             continue;
         }
-        if heading.is_empty() {
-            out.push_str(&tokens);
-        } else {
-            out.push_str(&heading);
-            out.push_str(": ");
-            out.push_str(&tokens);
-        }
+        out.push_str(&heading);
+        out.push_str(": ");
+        out.push_str(&tokens);
         out.push('\n');
     }
 
