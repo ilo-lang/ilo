@@ -18,6 +18,14 @@ jobs:
       run: cargo fmt --all -- --check
     - name: Clippy
       run: cargo clippy --workspace --all-targets -- -D warnings
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+    - name: Install skills-ref (agentskills.io reference validator)
+      run: pip install git+https://github.com/agentskills/agentskills.git#subdirectory=skills-ref
+    - name: Validate Agent Skills spec conformance
+      run: skills-ref validate skills/ilo/
 
   skill-validate:
     # Validate skills/ilo/SKILL.md against the agentskills.io reference
