@@ -13,3 +13,6 @@ site/
 .astro/
 node_modules/
 rust_out
+
+# Research / scratch docs (subagents leave reports here; not tracked)
+docs/
