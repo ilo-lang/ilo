@@ -1,0 +1,37 @@
+-- fmt2 x digits: format a number to N decimal places, returning text.
+-- Half-to-even rounding (Rust's default for format!("{:.N$}")).
+-- Negative digits clamp to 0 (integer formatting). Digits > 20 clamp to 20.
+
+-- Format pi to two decimals
+pi-2>t;fmt2 3.14159265 2
+
+-- Whole number with zero decimals (no fractional part printed)
+one-int>t;fmt2 1.0 0
+
+-- Correlation coefficient, four decimals
+corr>t;fmt2 0.85025037 4
+
+-- Half-to-even (banker's rounding): 1.5 rounds to 2, 2.5 also rounds to 2
+round-up>t;fmt2 1.5 0
+round-down>t;fmt2 2.5 0
+
+-- Negative digits clamp to 0
+neg-digits>t;fmt2 3.7 -1
+
+-- Build a percentile-report line: "p95: 0.99"
+report v:n>t;cat ["p95: " fmt2 v 2] ""
+
+-- run: pi-2
+-- out: 3.14
+-- run: one-int
+-- out: 1
+-- run: corr
+-- out: 0.8503
+-- run: round-up
+-- out: 2
+-- run: round-down
+-- out: 2
+-- run: neg-digits
+-- out: 4
+-- run: report 0.987654
+-- out: p95: 0.99

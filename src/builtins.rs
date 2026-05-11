@@ -68,6 +68,7 @@ pub enum Builtin {
     // String
     Trm,
     Fmt,
+    Fmt2,
     Rgx,
 
     // JSON
@@ -143,6 +144,7 @@ impl Builtin {
             "env" => Some(Builtin::Env),
             "trm" => Some(Builtin::Trm),
             "fmt" => Some(Builtin::Fmt),
+            "fmt2" => Some(Builtin::Fmt2),
             "rgx" => Some(Builtin::Rgx),
             "jpth" => Some(Builtin::Jpth),
             "jdmp" => Some(Builtin::Jdmp),
@@ -213,6 +215,7 @@ impl Builtin {
             Builtin::Env => "env",
             Builtin::Trm => "trm",
             Builtin::Fmt => "fmt",
+            Builtin::Fmt2 => "fmt2",
             Builtin::Rgx => "rgx",
             Builtin::Jpth => "jpth",
             Builtin::Jdmp => "jdmp",
@@ -246,8 +249,8 @@ mod tests {
             "exp", "sin", "cos", "tan", "log10", "log2", "atan2", "sum", "avg", "len", "hd", "at",
             "tl", "rev", "srt", "slc", "lst", "unq", "flat", "has", "spl", "cat", "map", "flt",
             "fld", "grp", "rnd", "now", "rd", "rdl", "rdb", "wr", "wrl", "prnt", "env", "trm",
-            "fmt", "rgx", "jpth", "jdmp", "jpar", "get", "post", "mmap", "mget", "mset", "mhas",
-            "mkeys", "mvals", "mdel",
+            "fmt", "fmt2", "rgx", "jpth", "jdmp", "jpar", "get", "post", "mmap", "mget", "mset",
+            "mhas", "mkeys", "mvals", "mdel",
         ];
         for name in &all {
             let b = Builtin::from_name(name).unwrap_or_else(|| panic!("missing builtin: {name}"));

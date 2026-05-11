@@ -1081,6 +1081,22 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             )),
         };
     }
+    if builtin == Some(Builtin::Fmt2) && args.len() == 2 {
+        return match (&args[0], &args[1]) {
+            (Value::Number(x), Value::Number(d)) => {
+                let digits = if !d.is_finite() || *d <= 0.0 {
+                    0usize
+                } else {
+                    (*d as usize).min(20)
+                };
+                Ok(Value::Text(format!("{:.*}", digits, x)))
+            }
+            _ => Err(RuntimeError::new(
+                "ILO-R009",
+                "fmt2 requires two numbers (x, digits)".to_string(),
+            )),
+        };
+    }
     if builtin == Some(Builtin::Fmt) && !args.is_empty() {
         let template = match &args[0] {
             Value::Text(s) => s.clone(),
