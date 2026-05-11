@@ -64,16 +64,22 @@ function runIlo(args: string[], stdin?: string, signal?: AbortSignal): Promise<{
 			resolve({ stdout, stderr, exitCode });
 		});
 
+		// Swallow EPIPE if the child exits before we finish writing stdin.
+		// Without this, the 'error' event becomes uncaught.
+		child.stdin.on("error", () => {});
+
 		if (signal) {
 			signal.addEventListener("abort", () => {
 				child.kill("SIGTERM");
 			}, { once: true });
 		}
 
-		if (stdin !== undefined) {
-			child.stdin.write(stdin);
+		try {
+			if (stdin !== undefined) child.stdin.write(stdin);
+			child.stdin.end();
+		} catch {
+			// Child already exited; close handler will resolve with its exit code.
 		}
-		child.stdin.end();
 	});
 }
 
@@ -134,10 +140,10 @@ function startRepl(): ReplState {
 		}
 	});
 
-	proc.stdin.on("error", (err) => {
-		const head = state.pending.shift();
-		if (head) head.reject(err);
-	});
+	// Swallow EPIPE on stdin if the child exits. The actual rejection of any
+	// in-flight pendings is handled by the process 'close' / 'error' handlers
+	// below, which see all of them, not just the most recent.
+	proc.stdin.on("error", () => {});
 
 	proc.on("close", () => {
 		for (const pending of state.pending) {
