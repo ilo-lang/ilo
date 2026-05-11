@@ -1,0 +1,22 @@
+-- Extra transcendental builtins: tan, log10, log2, atan2 (radians).
+
+-- Phase angle of a 2D vector (atan2 takes y then x, C/Python convention).
+phase y:n x:n>n;atan2 y x
+
+-- Decibels: 20 * log10(amplitude_ratio).
+db ratio:n>n;l=log10 ratio;*20 l
+
+-- Bit depth needed to represent n distinct values: ceil(log2 n).
+bits n:n>n;l=log2 n;cel l
+
+-- Slope of a line at angle theta (radians).
+slope theta:n>n;tan theta
+
+-- run: phase 1 1
+-- out: 0.7853981633974483
+-- run: db 100
+-- out: 40
+-- run: bits 256
+-- out: 8
+-- run: slope 0
+-- out: 0

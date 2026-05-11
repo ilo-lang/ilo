@@ -264,6 +264,10 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("exp", &["n"], "n"),
     ("sin", &["n"], "n"),
     ("cos", &["n"], "n"),
+    ("tan", &["n"], "n"),
+    ("log10", &["n"], "n"),
+    ("log2", &["n"], "n"),
+    ("atan2", &["n", "n"], "n"),
     ("get", &["t"], "R t t"),
     ("get", &["t", "M t t"], "R t t"),
     ("post", &["t", "t"], "R t t"),
@@ -408,7 +412,8 @@ fn builtin_check_args(
             }
             (Ty::Result(Box::new(Ty::Number), Box::new(Ty::Text)), errors)
         }
-        "abs" | "flr" | "cel" | "rou" | "sqrt" | "log" | "exp" | "sin" | "cos" => {
+        "abs" | "flr" | "cel" | "rou" | "sqrt" | "log" | "exp" | "sin" | "cos" | "tan"
+        | "log10" | "log2" => {
             if let Some(arg) = arg_types.first()
                 && !compatible(arg, &Ty::Number)
             {
@@ -423,7 +428,7 @@ fn builtin_check_args(
             }
             (Ty::Number, errors)
         }
-        "min" | "max" | "mod" | "pow" => {
+        "min" | "max" | "mod" | "pow" | "atan2" => {
             for (i, arg) in arg_types.iter().enumerate() {
                 if !compatible(arg, &Ty::Number) {
                     errors.push(VerifyError {

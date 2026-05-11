@@ -65,6 +65,10 @@ struct HelperFuncs {
     exp: FuncId,
     sin: FuncId,
     cos: FuncId,
+    tan: FuncId,
+    log10: FuncId,
+    log2: FuncId,
+    atan2: FuncId,
     rnd0: FuncId,
     rnd2: FuncId,
     now: FuncId,
@@ -172,6 +176,10 @@ fn register_helpers(builder: &mut JITBuilder) {
         ("jit_exp", jit_exp as *const u8),
         ("jit_sin", jit_sin as *const u8),
         ("jit_cos", jit_cos as *const u8),
+        ("jit_tan", jit_tan as *const u8),
+        ("jit_log10", jit_log10 as *const u8),
+        ("jit_log2", jit_log2 as *const u8),
+        ("jit_atan2", jit_atan2 as *const u8),
         ("jit_rnd0", jit_rnd0 as *const u8),
         ("jit_rnd2", jit_rnd2 as *const u8),
         ("jit_now", jit_now as *const u8),
@@ -270,6 +278,10 @@ fn declare_all_helpers(module: &mut JITModule) -> HelperFuncs {
         exp: declare_helper(module, "jit_exp", 1, 1),
         sin: declare_helper(module, "jit_sin", 1, 1),
         cos: declare_helper(module, "jit_cos", 1, 1),
+        tan: declare_helper(module, "jit_tan", 1, 1),
+        log10: declare_helper(module, "jit_log10", 1, 1),
+        log2: declare_helper(module, "jit_log2", 1, 1),
+        atan2: declare_helper(module, "jit_atan2", 2, 1),
         rnd0: declare_helper(module, "jit_rnd0", 0, 1),
         rnd2: declare_helper(module, "jit_rnd2", 2, 1),
         now: declare_helper(module, "jit_now", 0, 1),
@@ -851,7 +863,8 @@ fn compile_function_body(
                 | OP_ADDK_N | OP_SUBK_N | OP_MULK_N | OP_DIVK_N
                 | OP_LEN | OP_ABS | OP_MIN | OP_MAX
                 | OP_FLR | OP_CEL | OP_ROU | OP_RND0 | OP_RND2 | OP_NOW
-                | OP_MOD | OP_POW | OP_SQRT | OP_LOG | OP_EXP | OP_SIN | OP_COS => {
+                | OP_MOD | OP_POW | OP_SQRT | OP_LOG | OP_EXP | OP_SIN | OP_COS
+                | OP_TAN | OP_LOG10 | OP_LOG2 | OP_ATAN2 => {
                     num_write[a] = true;
                 }
                 // LOADK: numeric only when the constant itself is a number.
@@ -1799,14 +1812,30 @@ fn compile_function_body(
                     builder.def_var(f64_vars[a_idx], rf);
                 }
             }
-            OP_SQRT | OP_LOG | OP_EXP | OP_SIN | OP_COS => {
+            OP_ATAN2 => {
+                let bv = builder.use_var(vars[b_idx]);
+                let cv = builder.use_var(vars[c_idx]);
+                let fref = get_func_ref(&mut builder, module, helpers.atan2);
+                let call_inst = builder.ins().call(fref, &[bv, cv]);
+                let result = builder.inst_results(call_inst)[0];
+                builder.def_var(vars[a_idx], result);
+                if a_idx < reg_count && reg_always_num[a_idx] {
+                    let mf = cranelift_codegen::ir::MemFlags::new();
+                    let rf = builder.ins().bitcast(F64, mf, result);
+                    builder.def_var(f64_vars[a_idx], rf);
+                }
+            }
+            OP_SQRT | OP_LOG | OP_EXP | OP_SIN | OP_COS | OP_TAN | OP_LOG10 | OP_LOG2 => {
                 let bv = builder.use_var(vars[b_idx]);
                 let fref = match op {
                     OP_SQRT => helpers.sqrt,
                     OP_LOG => helpers.log,
                     OP_EXP => helpers.exp,
                     OP_SIN => helpers.sin,
-                    _ => helpers.cos,
+                    OP_COS => helpers.cos,
+                    OP_TAN => helpers.tan,
+                    OP_LOG10 => helpers.log10,
+                    _ => helpers.log2,
                 };
                 let fref = get_func_ref(&mut builder, module, fref);
                 let call_inst = builder.ins().call(fref, &[bv]);

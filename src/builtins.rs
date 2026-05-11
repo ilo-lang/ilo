@@ -24,6 +24,10 @@ pub enum Builtin {
     Exp,
     Sin,
     Cos,
+    Tan,
+    Log10,
+    Log2,
+    Atan2,
     Sum,
     Avg,
 
@@ -104,6 +108,10 @@ impl Builtin {
             "exp" => Some(Builtin::Exp),
             "sin" => Some(Builtin::Sin),
             "cos" => Some(Builtin::Cos),
+            "tan" => Some(Builtin::Tan),
+            "log10" => Some(Builtin::Log10),
+            "log2" => Some(Builtin::Log2),
+            "atan2" => Some(Builtin::Atan2),
             "sum" => Some(Builtin::Sum),
             "avg" => Some(Builtin::Avg),
             "len" => Some(Builtin::Len),
@@ -169,6 +177,10 @@ impl Builtin {
             Builtin::Exp => "exp",
             Builtin::Sin => "sin",
             Builtin::Cos => "cos",
+            Builtin::Tan => "tan",
+            Builtin::Log10 => "log10",
+            Builtin::Log2 => "log2",
+            Builtin::Atan2 => "atan2",
             Builtin::Sum => "sum",
             Builtin::Avg => "avg",
             Builtin::Len => "len",
@@ -228,10 +240,11 @@ mod tests {
     fn round_trip_all_builtins() {
         let all = [
             "str", "num", "abs", "flr", "cel", "rou", "min", "max", "mod", "pow", "sqrt", "log",
-            "exp", "sin", "cos", "sum", "avg", "len", "hd", "at", "tl", "rev", "srt", "slc", "unq",
-            "flat", "has", "spl", "cat", "map", "flt", "fld", "grp", "rnd", "now", "rd", "rdl",
-            "rdb", "wr", "wrl", "prnt", "env", "trm", "fmt", "rgx", "jpth", "jdmp", "jpar", "get",
-            "post", "mmap", "mget", "mset", "mhas", "mkeys", "mvals", "mdel",
+            "exp", "sin", "cos", "tan", "log10", "log2", "atan2", "sum", "avg", "len", "hd", "at",
+            "tl", "rev", "srt", "slc", "unq", "flat", "has", "spl", "cat", "map", "flt", "fld",
+            "grp", "rnd", "now", "rd", "rdl", "rdb", "wr", "wrl", "prnt", "env", "trm", "fmt",
+            "rgx", "jpth", "jdmp", "jpar", "get", "post", "mmap", "mget", "mset", "mhas", "mkeys",
+            "mvals", "mdel",
         ];
         for name in &all {
             let b = Builtin::from_name(name).unwrap_or_else(|| panic!("missing builtin: {name}"));

@@ -186,6 +186,11 @@ pub(crate) const OP_LOG: u8 = 99; // R[A] = ln(R[B])
 pub(crate) const OP_EXP: u8 = 100; // R[A] = exp(R[B])
 pub(crate) const OP_SIN: u8 = 101; // R[A] = sin(R[B])
 pub(crate) const OP_COS: u8 = 102; // R[A] = cos(R[B])
+// Note: OP_FMT2 is reserved at 104 (pending merge of #171).
+pub(crate) const OP_TAN: u8 = 105; // R[A] = tan(R[B])
+pub(crate) const OP_LOG10: u8 = 106; // R[A] = log10(R[B])
+pub(crate) const OP_LOG2: u8 = 107; // R[A] = log2(R[B])
+pub(crate) const OP_ATAN2: u8 = 108; // R[A] = atan2(R[B], R[C])  (y first, x second)
 
 // ABx mode — register + 16-bit operand
 pub(crate) const OP_LOADK: u8 = 20;
@@ -1597,7 +1602,10 @@ impl RegCompiler {
                             | Builtin::Log
                             | Builtin::Exp
                             | Builtin::Sin
-                            | Builtin::Cos,
+                            | Builtin::Cos
+                            | Builtin::Tan
+                            | Builtin::Log10
+                            | Builtin::Log2,
                             1,
                         ) => {
                             let rb = self.compile_expr(&args[0]);
@@ -1607,7 +1615,10 @@ impl RegCompiler {
                                 Builtin::Log => OP_LOG,
                                 Builtin::Exp => OP_EXP,
                                 Builtin::Sin => OP_SIN,
-                                _ => OP_COS,
+                                Builtin::Cos => OP_COS,
+                                Builtin::Tan => OP_TAN,
+                                Builtin::Log10 => OP_LOG10,
+                                _ => OP_LOG2,
                             };
                             self.emit_abc(op, ra, rb, 0);
                             self.reg_is_num[ra as usize] = true;
@@ -1618,6 +1629,14 @@ impl RegCompiler {
                             let rc = self.compile_expr(&args[1]);
                             let ra = self.alloc_reg();
                             self.emit_abc(OP_POW, ra, rb, rc);
+                            self.reg_is_num[ra as usize] = true;
+                            return ra;
+                        }
+                        (Builtin::Atan2, 2) => {
+                            let rb = self.compile_expr(&args[0]);
+                            let rc = self.compile_expr(&args[1]);
+                            let ra = self.alloc_reg();
+                            self.emit_abc(OP_ATAN2, ra, rb, rc);
                             self.reg_is_num[ra as usize] = true;
                             return ra;
                         }
@@ -4979,7 +4998,7 @@ impl<'a> VM<'a> {
                     };
                     reg_set!(a, NanVal::number(result));
                 }
-                OP_SQRT | OP_LOG | OP_EXP | OP_SIN | OP_COS => {
+                OP_SQRT | OP_LOG | OP_EXP | OP_SIN | OP_COS | OP_TAN | OP_LOG10 | OP_LOG2 => {
                     let a = ((inst >> 16) & 0xFF) as usize + base;
                     let b = ((inst >> 8) & 0xFF) as usize + base;
                     let v = reg!(b);
@@ -4990,7 +5009,10 @@ impl<'a> VM<'a> {
                             OP_LOG => n.ln(),
                             OP_EXP => n.exp(),
                             OP_SIN => n.sin(),
-                            _ => n.cos(),
+                            OP_COS => n.cos(),
+                            OP_TAN => n.tan(),
+                            OP_LOG10 => n.log10(),
+                            _ => n.log2(),
                         }
                     } else {
                         f64::NAN
@@ -5005,6 +5027,19 @@ impl<'a> VM<'a> {
                     let vc = reg!(c);
                     let result = if vb.is_number() && vc.is_number() {
                         vb.as_number().powf(vc.as_number())
+                    } else {
+                        f64::NAN
+                    };
+                    reg_set!(a, NanVal::number(result));
+                }
+                OP_ATAN2 => {
+                    let a = ((inst >> 16) & 0xFF) as usize + base;
+                    let b = ((inst >> 8) & 0xFF) as usize + base;
+                    let c = (inst & 0xFF) as usize + base;
+                    let vb = reg!(b);
+                    let vc = reg!(c);
+                    let result = if vb.is_number() && vc.is_number() {
+                        vb.as_number().atan2(vc.as_number())
                     } else {
                         f64::NAN
                     };
@@ -6504,6 +6539,51 @@ pub(crate) extern "C" fn jit_cos(a: u64) -> u64 {
     let v = NanVal(a);
     if v.is_number() {
         NanVal::number(v.as_number().cos()).0
+    } else {
+        NanVal::number(f64::NAN).0
+    }
+}
+
+#[cfg(feature = "cranelift")]
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn jit_tan(a: u64) -> u64 {
+    let v = NanVal(a);
+    if v.is_number() {
+        NanVal::number(v.as_number().tan()).0
+    } else {
+        NanVal::number(f64::NAN).0
+    }
+}
+
+#[cfg(feature = "cranelift")]
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn jit_log10(a: u64) -> u64 {
+    let v = NanVal(a);
+    if v.is_number() {
+        NanVal::number(v.as_number().log10()).0
+    } else {
+        NanVal::number(f64::NAN).0
+    }
+}
+
+#[cfg(feature = "cranelift")]
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn jit_log2(a: u64) -> u64 {
+    let v = NanVal(a);
+    if v.is_number() {
+        NanVal::number(v.as_number().log2()).0
+    } else {
+        NanVal::number(f64::NAN).0
+    }
+}
+
+#[cfg(feature = "cranelift")]
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn jit_atan2(a: u64, b: u64) -> u64 {
+    let av = NanVal(a);
+    let bv = NanVal(b);
+    if av.is_number() && bv.is_number() {
+        NanVal::number(av.as_number().atan2(bv.as_number())).0
     } else {
         NanVal::number(f64::NAN).0
     }
