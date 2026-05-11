@@ -1902,6 +1902,19 @@ impl RegCompiler {
                             let rc = self.compile_expr(&args[1]);
                             let ra = self.alloc_reg();
                             self.emit_abc(OP_MGET, ra, rb, rc);
+                            // mget returns O v — handle auto-unwrap:
+                            //   if result is non-nil, fall through (value is in ra)
+                            //   if nil, RET ra (propagate nil to enclosing fn)
+                            // Trailing OP_MOVE ra, ra acts as a barrier so the
+                            // function-emit check (`last_is_ret`) doesn't treat
+                            // the propagate-RET as the function's tail return.
+                            if *unwrap {
+                                let skip_ret = self.emit_abx(OP_JMPNN, ra, 0);
+                                self.emit_abx(OP_RET, ra, 0);
+                                self.current.patch_jump(skip_ret);
+                                self.emit_abc(OP_MOVE, ra, ra, 0);
+                                self.next_reg = ra + 1;
+                            }
                             return ra;
                         }
                         (Builtin::Mset, 3) => {
@@ -2003,15 +2016,31 @@ impl RegCompiler {
                 // After call, only the result register is live
                 self.next_reg = a + 1;
 
-                // Auto-unwrap: Ok(v)→v, Err(e)→return Err to caller
+                // Auto-unwrap:
+                //   Result: Ok(v)→v, Err(e)→return Err to caller
+                //   Optional: Some(v)→v, Nil→return Nil to caller
                 if *unwrap {
-                    let check_reg = self.alloc_reg();
-                    self.emit_abc(OP_ISOK, check_reg, a, 0);
-                    let skip_ret = self.emit_jmpt(check_reg);
-                    self.emit_abx(OP_RET, a, 0); // propagate Err
-                    self.current.patch_jump(skip_ret);
-                    self.emit_abc(OP_UNWRAP, a, a, 0); // extract Ok inner
-                    self.next_reg = a + 1; // only result register live
+                    let is_optional = func_idx < self.func_return_types.len()
+                        && matches!(self.func_return_types[func_idx], Type::Optional(_));
+                    if is_optional {
+                        // Optional propagation: jump over the RET if non-nil.
+                        // Trailing OP_MOVE a, a is a no-op barrier so the
+                        // function-emit `last_is_ret` check doesn't mistake the
+                        // propagate-RET for the function's tail return.
+                        let skip_ret = self.emit_abx(OP_JMPNN, a, 0);
+                        self.emit_abx(OP_RET, a, 0); // propagate nil
+                        self.current.patch_jump(skip_ret);
+                        self.emit_abc(OP_MOVE, a, a, 0);
+                        self.next_reg = a + 1;
+                    } else {
+                        let check_reg = self.alloc_reg();
+                        self.emit_abc(OP_ISOK, check_reg, a, 0);
+                        let skip_ret = self.emit_jmpt(check_reg);
+                        self.emit_abx(OP_RET, a, 0); // propagate Err
+                        self.current.patch_jump(skip_ret);
+                        self.emit_abc(OP_UNWRAP, a, a, 0); // extract Ok inner
+                        self.next_reg = a + 1; // only result register live
+                    }
                 }
 
                 a
@@ -20773,5 +20802,39 @@ f>n;r=mk 10 20;+r.x r.y";
         let v = NanVal(jit_cos(NanVal::number(0.0).0));
         assert!(v.is_number());
         assert!((v.as_number() - 1.0).abs() < 1e-10);
+    }
+
+    // ── `!` auto-unwrap on Optional in the VM ─────────────────────────────
+
+    #[test]
+    fn vm_mget_bang_missing_propagates_nil() {
+        // mget! on an empty map propagates nil through f.
+        let source = r#"f>O n;m=mmap;v=mget! m "missing";+v 99"#;
+        let result = vm_run(source, Some("f"), vec![]);
+        assert_eq!(result, Value::Nil);
+    }
+
+    #[test]
+    fn vm_mget_bang_present_returns_inner() {
+        let source = r#"f>O n;m=mset mmap "k" 7;v=mget! m "k";v"#;
+        let result = vm_run(source, Some("f"), vec![]);
+        assert_eq!(result, Value::Number(7.0));
+    }
+
+    #[test]
+    fn vm_optional_user_fn_bang_present() {
+        // User-defined Optional-returning fn called with `!`. Exercises the
+        // generic Optional unwrap path at the Call site (not mget special-case).
+        let source = "g x:n>O n;?>x 0 x nil\nf>O n;v=g! 5;+v 1";
+        let result = vm_run(source, Some("f"), vec![]);
+        assert_eq!(result, Value::Number(6.0));
+    }
+
+    #[test]
+    fn vm_optional_user_fn_bang_propagates() {
+        // User fn returns nil — `!` propagates nil out of f.
+        let source = "g x:n>O n;?>x 0 x nil\nf>O n;v=g! -3;+v 1";
+        let result = vm_run(source, Some("f"), vec![]);
+        assert_eq!(result, Value::Nil);
     }
 }

@@ -1950,7 +1950,9 @@ impl VerifyContext {
                     Ty::Unknown
                 };
 
-                // Auto-unwrap: func! args — callee must return Result, enclosing must return Result
+                // Auto-unwrap: func! args — callee must return Result or Optional,
+                // and the enclosing function must return a matching type so the
+                // propagation (Err / nil) can early-return through it.
                 if *unwrap {
                     match &call_ty {
                         Ty::Result(ok_ty, _err_ty) => {
@@ -1977,13 +1979,36 @@ impl VerifyContext {
                             }
                             *ok_ty.clone()
                         }
+                        Ty::Optional(inner_ty) => {
+                            // Optional unwrap propagates nil as the function's return.
+                            // The enclosing function's return type must accept nil:
+                            // Optional, Nil, or Unknown (inferred).
+                            let enc_rt =
+                                self.functions.get(func).map(|sig| sig.return_type.clone());
+                            #[allow(for_loops_over_fallibles)]
+                            for rt in enc_rt {
+                                match rt {
+                                    Ty::Optional(_) | Ty::Nil | Ty::Unknown => {}
+                                    other => {
+                                        self.err(
+                                            "ILO-T026",
+                                            func,
+                                            format!("'!' used in function '{func}' which returns {other}, not an Optional"),
+                                            Some("the enclosing function must return O to propagate nil".to_string()),
+                                            Some(span),
+                                        );
+                                    }
+                                }
+                            }
+                            *inner_ty.clone()
+                        }
                         Ty::Unknown => Ty::Unknown,
                         other => {
                             self.err(
                                 "ILO-T025",
                                 func,
-                                format!("'!' used on call to '{callee}' which returns {other}, not a Result"),
-                                Some("'!' auto-unwraps Result types: Ok(v)→v, Err(e)→propagate".to_string()),
+                                format!("'!' used on call to '{callee}' which returns {other}, not a Result or Optional"),
+                                Some("'!' auto-unwraps R (Ok→v, Err→propagate) or O (Some→v, Nil→propagate)".to_string()),
                                 Some(span),
                             );
                             Ty::Unknown
@@ -6123,5 +6148,41 @@ mod tests {
     fn verify_avg_as_hof_arg_with_named_alias() {
         let code = "alias vec L n\nf xs:L vec>L n;map avg xs";
         assert!(parse_and_verify(code).is_ok());
+    }
+
+    // ── `!` auto-unwrap on Optional (Ty::Optional arm) ────────────────────
+
+    #[test]
+    fn verify_mget_bang_in_optional_returning_fn() {
+        // Enclosing returns Optional — accepts nil propagation.
+        let code = r#"f>O n;m=mmap;v=mget! m "k";v"#;
+        assert!(parse_and_verify(code).is_ok());
+    }
+
+    #[test]
+    fn verify_mget_bang_in_number_returning_fn_errors() {
+        // Enclosing returns plain n — must produce ILO-T026.
+        let code = r#"f>n;m=mmap;v=mget! m "k";v"#;
+        let errs = parse_and_verify(code).unwrap_err();
+        assert!(
+            errs.iter()
+                .any(|e| e.code == "ILO-T026" && e.message.contains("not an Optional")),
+            "expected ILO-T026, got: {:?}",
+            errs
+        );
+    }
+
+    #[test]
+    fn verify_bang_on_non_result_non_optional_errors() {
+        // Calling `!` on a builtin returning plain n triggers ILO-T025
+        // ("not a Result or Optional") — new wording from this PR.
+        let code = "f>n;v=abs! -3;v";
+        let errs = parse_and_verify(code).unwrap_err();
+        assert!(
+            errs.iter()
+                .any(|e| e.code == "ILO-T025" && e.message.contains("not a Result or Optional")),
+            "expected ILO-T025 with new wording, got: {:?}",
+            errs
+        );
     }
 }

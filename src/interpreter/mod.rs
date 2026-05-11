@@ -2060,7 +2060,14 @@ fn eval_expr(env: &mut Env, expr: &Expr) -> Result<Value> {
                         propagate_value: Some(Box::new(Value::Err(e))),
                         ..RuntimeError::new("ILO-R014", "auto-unwrap propagating Err")
                     }),
-                    other => Ok(other), // non-Result values pass through
+                    // Optional auto-unwrap: nil propagates as the function's return.
+                    // Non-nil values pass through (Optional<T> is represented inline,
+                    // so Some(v) is just v at runtime).
+                    Value::Nil => Err(RuntimeError {
+                        propagate_value: Some(Box::new(Value::Nil)),
+                        ..RuntimeError::new("ILO-R014", "auto-unwrap propagating nil")
+                    }),
+                    other => Ok(other), // non-Result/non-nil values pass through
                 }
             } else {
                 Ok(result)
@@ -6968,5 +6975,23 @@ mod tests {
         let source = r#"f x:O t>t;?x{t v:v;_:"none"}"#;
         let result = run_str(source, Some("f"), vec![Value::Nil]);
         assert_eq!(result, Value::Text("none".to_string()));
+    }
+
+    // ── `!` auto-unwrap on Optional: nil propagates as the function's return ──
+
+    #[test]
+    fn interp_mget_bang_missing_propagates_nil() {
+        // mget on an empty map returns nil; `!` propagates nil out of f.
+        let source = r#"f>O n;m=mmap;v=mget! m "missing";+v 99"#;
+        let result = run_str(source, Some("f"), vec![]);
+        assert_eq!(result, Value::Nil);
+    }
+
+    #[test]
+    fn interp_mget_bang_present_returns_inner() {
+        // mget on a present key returns the inner value via `!`.
+        let source = r#"f>O n;m=mset mmap "k" 5;v=mget! m "k";v"#;
+        let result = run_str(source, Some("f"), vec![]);
+        assert_eq!(result, Value::Number(5.0));
     }
 }
