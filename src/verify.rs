@@ -1930,8 +1930,34 @@ impl VerifyContext {
                         }
                     }
                     *ret_type
+                } else if let Some(bound_ty) = scope_lookup(scope, callee).cloned() {
+                    // `callee` resolves as a parameter or local variable, but its type
+                    // is not callable (i.e. not Ty::Fn). Do NOT fuzzy-match against
+                    // builtins — the name is already a valid in-scope binding, just
+                    // not a function. Produce a targeted error instead.
+                    self.err(
+                        "ILO-T005",
+                        func,
+                        format!(
+                            "'{callee}' is a {bound_ty}, not a function (called with {} args)",
+                            args.len()
+                        ),
+                        Some(format!(
+                            "'{callee}' is bound as {bound_ty} in this scope; only functions can be called"
+                        )),
+                        Some(span),
+                    );
+                    Ty::Unknown
                 } else {
-                    let mut candidates: Vec<String> = self.functions.keys().cloned().collect();
+                    // Suggest in-scope variables/params first, then user functions, then
+                    // builtins. closest_match picks the shortest distance, but when the
+                    // name truly is undefined we still want a useful suggestion across
+                    // all categories.
+                    let mut candidates: Vec<String> = scope
+                        .iter()
+                        .flat_map(|frame| frame.keys().cloned())
+                        .collect();
+                    candidates.extend(self.functions.keys().cloned());
                     for (n, _, _) in BUILTINS {
                         candidates.push(n.to_string());
                     }

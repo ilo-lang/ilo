@@ -1,0 +1,23 @@
+-- Short parameter names that share a prefix with builtin aliases.
+-- The verifier must NOT fuzzy-suggest a builtin when the name is
+-- already a valid in-scope parameter.
+--
+-- sm clashes with the `sum` builtin alias (distance 1).
+-- sx clashes with the `str` builtin alias (distance 2).
+-- ga clashes with the `max` builtin alias (distance 2).
+
+-- `sm` is a number param — adds one to it
+inc-sm sm:n>n;+sm 1
+
+-- `sx` is a text param — returns it unchanged
+echo-sx sx:t>t;sx
+
+-- `ga` is a number param — returns it unchanged
+echo-ga ga:n>n;ga
+
+-- run: inc-sm 5
+-- out: 6
+-- run: echo-sx hello
+-- out: hello
+-- run: echo-ga 7
+-- out: 7
