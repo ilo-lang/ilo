@@ -177,6 +177,7 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
   publish-pi:
+    needs: [release]
     runs-on: ubuntu-latest
 
     steps:
@@ -185,7 +186,6 @@ jobs:
           sparse-checkout: |
             pi
             skills/ilo
-            LICENSE
 
       - name: Sync canonical skill into pi package
         run: |
