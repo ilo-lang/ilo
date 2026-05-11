@@ -1,0 +1,48 @@
+{
+  "name": "pi-ilo-lang",
+  "version": "0.0.0",
+  "description": "Pi extension for the ilo programming language: run programs, hold an interactive ilo serv session, and load the ilo skill so the agent knows the syntax.",
+  "type": "module",
+  "license": "MIT",
+  "author": "Daniel Morris",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ilo-lang/ilo.git",
+    "directory": "pi"
+  },
+  "homepage": "https://github.com/ilo-lang/ilo/tree/main/pi#readme",
+  "bugs": {
+    "url": "https://github.com/ilo-lang/ilo/issues"
+  },
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "pi-coding-agent",
+    "ilo",
+    "ilo-lang",
+    "language",
+    "ai-agent"
+  ],
+  "files": [
+    "extensions",
+    "skills",
+    "README.md",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "peerDependencies": {
+    "@mariozechner/pi-coding-agent": "*",
+    "@mariozechner/pi-ai": "*",
+    "typebox": "*"
+  },
+  "pi": {
+    "extensions": [
+      "./extensions/ilo.ts"
+    ],
+    "skills": [
+      "./skills"
+    ]
+  }
+}
