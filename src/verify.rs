@@ -6052,4 +6052,76 @@ mod tests {
                 .is_ok()
         );
     }
+
+    // ── builtin_as_fn_ty branches (Ref-fallback in verifier) ───────────────
+
+    #[test]
+    fn builtin_as_fn_ty_known_pure_builtins() {
+        // Sanity check every branch by name — guards against table drift.
+        for n in ["abs", "flr", "cel", "rou"] {
+            assert!(builtin_as_fn_ty(n).is_some(), "{n} should promote");
+        }
+        for n in ["min", "max", "mod"] {
+            assert!(builtin_as_fn_ty(n).is_some(), "{n} should promote");
+        }
+        for n in ["sum", "avg", "trm", "str", "num", "jdmp", "len"] {
+            assert!(builtin_as_fn_ty(n).is_some(), "{n} should promote");
+        }
+        // IO/HTTP/HOF/polymorphic builtins must NOT promote.
+        for n in [
+            "map", "flt", "fld", "grp", "prnt", "get", "post", "hd", "tl",
+        ] {
+            assert!(
+                builtin_as_fn_ty(n).is_none(),
+                "{n} should not promote to Fn"
+            );
+        }
+    }
+
+    #[test]
+    fn verify_trm_as_hof_arg() {
+        // `trm :: t -> t` — pass as map fn over list of strings.
+        assert!(parse_and_verify("f xs:L t>L t;map trm xs").is_ok());
+    }
+
+    #[test]
+    fn verify_str_as_hof_arg() {
+        // `str :: n -> t` — pass as map fn.
+        assert!(parse_and_verify("f xs:L n>L t;map str xs").is_ok());
+    }
+
+    #[test]
+    fn verify_jdmp_as_hof_arg() {
+        // `jdmp :: any -> t`.
+        assert!(parse_and_verify("f xs:L n>L t;map jdmp xs").is_ok());
+    }
+
+    #[test]
+    fn verify_grp_with_str_key_fn() {
+        // grp accepts a key-fn — pass `str` builtin as the key (n -> t).
+        // Use type alias to avoid nested generics in the return.
+        let code = "alias bucket L n\nf xs:L n>M t bucket;grp str xs";
+        assert!(parse_and_verify(code).is_ok());
+    }
+
+    #[test]
+    fn verify_num_as_hof_arg_via_map() {
+        // `num :: t -> R n t` — return list of results via type alias.
+        let code = "alias res R n t\nf xs:L t>L res;map num xs";
+        assert!(parse_and_verify(code).is_ok());
+    }
+
+    #[test]
+    fn verify_len_as_hof_arg_with_named_alias() {
+        // `len` typed L _ -> n; alias the list type to avoid nested-paren syntax
+        // (which lands separately). Use a named list-of-list via type alias.
+        let code = "alias mat L n\nf xs:L mat>L n;map len xs";
+        assert!(parse_and_verify(code).is_ok());
+    }
+
+    #[test]
+    fn verify_avg_as_hof_arg_with_named_alias() {
+        let code = "alias vec L n\nf xs:L vec>L n;map avg xs";
+        assert!(parse_and_verify(code).is_ok());
+    }
 }
