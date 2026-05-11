@@ -7,7 +7,6 @@ find-ge xs:L n thr:n>n;@x xs{>x thr{ret x}};0
 -- Return early from a while loop when condition met
 first-gte-10>n;i=0;wh <i 20{i=+i 1;>=i 10{ret i}};0
 
--- engine-skip: jit
 -- run: find-ge [1,2,15,3] 10
 -- out: 15
 -- run: find-ge [1,2,3] 10

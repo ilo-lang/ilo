@@ -8,7 +8,6 @@ div a:n b:n>R n t;=b 0 ^"divide by zero";~/a b
 -- Delegate to num builtin: parses text to number or Err (last function — call safe at EOF)
 parse tx:t>R n t;num tx
 
--- engine-skip: jit
 -- run: div 10 2
 -- out: ~5
 -- run: div 10 0

@@ -11,7 +11,6 @@ desc n:n>t;r=str n;+"Value is " r
 -- Number of bytes in a word (last function — bare call is safe at EOF)
 sz w:t>n;len w
 
--- engine-skip: jit
 -- run: greet World
 -- out: Hello, World
 -- run: desc 42

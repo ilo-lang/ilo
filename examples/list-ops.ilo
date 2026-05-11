@@ -18,7 +18,7 @@ flip xs:L n>L n;rev xs
 sorted xs:L n>L n;srt xs
 
 -- vm/jit lack higher-order builtins (flt, map, fld passing function refs); jit also can't bind list args
--- engine-skip: vm jit
+-- engine-skip: vm
 -- run: first [10,20,30]
 -- out: 10
 -- run: rest [10,20,30]
