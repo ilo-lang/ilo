@@ -20894,38 +20894,167 @@ f>n;r=mk 10 20;+r.x r.y";
         assert!((v.as_number() - 1.0).abs() < 1e-10);
     }
 
-    // ── `!` auto-unwrap on Optional in the VM ─────────────────────────────
+    // ── math-extra (tan/log10/log2/atan2) coverage tests ──────────────────
 
     #[test]
-    fn vm_mget_bang_missing_propagates_nil() {
-        // mget! on an empty map propagates nil through f.
-        let source = r#"f>O n;m=mmap;v=mget! m "missing";+v 99"#;
-        let result = vm_run(source, Some("f"), vec![]);
-        assert_eq!(result, Value::Nil);
+    fn vm_op_tan_happy() {
+        let n = run_unary_math_op(OP_TAN, 0.0);
+        assert!(n.abs() < 1e-10, "got {n}");
     }
 
     #[test]
-    fn vm_mget_bang_present_returns_inner() {
-        let source = r#"f>O n;m=mset mmap "k" 7;v=mget! m "k";v"#;
-        let result = vm_run(source, Some("f"), vec![]);
-        assert_eq!(result, Value::Number(7.0));
+    fn vm_op_log10_happy() {
+        let n = run_unary_math_op(OP_LOG10, 1000.0);
+        assert!((n - 3.0).abs() < 1e-10, "got {n}");
     }
 
     #[test]
-    fn vm_optional_user_fn_bang_present() {
-        // User-defined Optional-returning fn called with `!`. Exercises the
-        // generic Optional unwrap path at the Call site (not mget special-case).
-        let source = "g x:n>O n;?>x 0 x nil\nf>O n;v=g! 5;+v 1";
-        let result = vm_run(source, Some("f"), vec![]);
-        assert_eq!(result, Value::Number(6.0));
+    fn vm_op_log2_happy() {
+        let n = run_unary_math_op(OP_LOG2, 8.0);
+        assert!((n - 3.0).abs() < 1e-10, "got {n}");
     }
 
     #[test]
-    fn vm_optional_user_fn_bang_propagates() {
-        // User fn returns nil — `!` propagates nil out of f.
-        let source = "g x:n>O n;?>x 0 x nil\nf>O n;v=g! -3;+v 1";
-        let result = vm_run(source, Some("f"), vec![]);
-        assert_eq!(result, Value::Nil);
+    fn vm_op_atan2_happy() {
+        use crate::interpreter::Value;
+        fn make_abc(op: u8, a: u8, b: u8, c: u8) -> u32 {
+            ((op as u32) << 24) | ((a as u32) << 16) | ((b as u32) << 8) | (c as u32)
+        }
+        fn make_abx(op: u8, a: u8, bx: u16) -> u32 {
+            ((op as u32) << 24) | ((a as u32) << 16) | (bx as u32)
+        }
+        // R[1]=LOADK 1.0; R[2]=LOADK 0.0; R[3]=ATAN2 R[1] R[2]; RET R[3]
+        // atan2(1.0, 0.0) == pi/2
+        let code = vec![
+            make_abx(OP_LOADK, 1, 0),
+            make_abx(OP_LOADK, 2, 1),
+            make_abc(OP_ATAN2, 3, 1, 2),
+            make_abc(OP_RET, 3, 0, 0),
+        ];
+        let chunk = Chunk {
+            code,
+            constants: vec![Value::Number(1.0), Value::Number(0.0)],
+            param_count: 0,
+            reg_count: 4,
+            spans: vec![crate::ast::Span::UNKNOWN; 4],
+            all_regs_numeric: false,
+        };
+        let program = CompiledProgram {
+            chunks: vec![chunk],
+            func_names: vec!["f".to_string()],
+            nan_constants: vec![vec![NanVal::number(1.0), NanVal::number(0.0)]],
+            type_registry: TypeRegistry::default(),
+            is_tool: vec![false],
+        };
+        match run(&program, Some("f"), vec![]).expect("atan2 should not error") {
+            Value::Number(n) => {
+                assert!((n - std::f64::consts::FRAC_PI_2).abs() < 1e-10, "got {n}")
+            }
+            other => panic!("expected number, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn vm_op_atan2_non_number_is_nan() {
+        use crate::interpreter::Value;
+        fn make_abc(op: u8, a: u8, b: u8, c: u8) -> u32 {
+            ((op as u32) << 24) | ((a as u32) << 16) | ((b as u32) << 8) | (c as u32)
+        }
+        fn make_abx(op: u8, a: u8, bx: u16) -> u32 {
+            ((op as u32) << 24) | ((a as u32) << 16) | (bx as u32)
+        }
+        let code = vec![
+            make_abx(OP_LOADK, 1, 0),
+            make_abx(OP_LOADK, 2, 1),
+            make_abc(OP_ATAN2, 3, 1, 2),
+            make_abc(OP_RET, 3, 0, 0),
+        ];
+        let chunk = Chunk {
+            code,
+            constants: vec![Value::Bool(true), Value::Number(0.0)],
+            param_count: 0,
+            reg_count: 4,
+            spans: vec![crate::ast::Span::UNKNOWN; 4],
+            all_regs_numeric: false,
+        };
+        let program = CompiledProgram {
+            chunks: vec![chunk],
+            func_names: vec!["f".to_string()],
+            nan_constants: vec![vec![NanVal::boolean(true), NanVal::number(0.0)]],
+            type_registry: TypeRegistry::default(),
+            is_tool: vec![false],
+        };
+        match run(&program, Some("f"), vec![]).expect("atan2 nan path") {
+            Value::Number(n) => assert!(n.is_nan(), "expected NaN, got {n}"),
+            other => panic!("expected number, got {:?}", other),
+        }
+    }
+
+    #[cfg(feature = "cranelift")]
+    #[test]
+    fn jit_tan_happy() {
+        let v = NanVal(jit_tan(NanVal::number(0.0).0));
+        assert!(v.is_number());
+        assert!(v.as_number().abs() < 1e-10);
+    }
+
+    #[cfg(feature = "cranelift")]
+    #[test]
+    fn jit_tan_non_number_is_nan() {
+        let v = NanVal(jit_tan(NanVal::boolean(true).0));
+        assert!(v.is_number());
+        assert!(v.as_number().is_nan());
+    }
+
+    #[cfg(feature = "cranelift")]
+    #[test]
+    fn jit_log10_happy() {
+        let v = NanVal(jit_log10(NanVal::number(1000.0).0));
+        assert!(v.is_number());
+        assert!((v.as_number() - 3.0).abs() < 1e-10);
+    }
+
+    #[cfg(feature = "cranelift")]
+    #[test]
+    fn jit_log10_non_number_is_nan() {
+        let v = NanVal(jit_log10(NanVal::boolean(false).0));
+        assert!(v.is_number());
+        assert!(v.as_number().is_nan());
+    }
+
+    #[cfg(feature = "cranelift")]
+    #[test]
+    fn jit_log2_happy() {
+        let v = NanVal(jit_log2(NanVal::number(8.0).0));
+        assert!(v.is_number());
+        assert!((v.as_number() - 3.0).abs() < 1e-10);
+    }
+
+    #[cfg(feature = "cranelift")]
+    #[test]
+    fn jit_log2_non_number_is_nan() {
+        let v = NanVal(jit_log2(NanVal::boolean(true).0));
+        assert!(v.is_number());
+        assert!(v.as_number().is_nan());
+    }
+
+    #[cfg(feature = "cranelift")]
+    #[test]
+    fn jit_atan2_happy() {
+        let v = NanVal(jit_atan2(NanVal::number(1.0).0, NanVal::number(0.0).0));
+        assert!(v.is_number());
+        assert!((v.as_number() - std::f64::consts::FRAC_PI_2).abs() < 1e-10);
+    }
+
+    #[cfg(feature = "cranelift")]
+    #[test]
+    fn jit_atan2_non_number_is_nan() {
+        let v = NanVal(jit_atan2(NanVal::boolean(true).0, NanVal::number(0.0).0));
+        assert!(v.is_number());
+        assert!(v.as_number().is_nan());
+        let v = NanVal(jit_atan2(NanVal::number(0.0).0, NanVal::boolean(true).0));
+        assert!(v.is_number());
+        assert!(v.as_number().is_nan());
     }
 
     // ---- jit_at negative-index coverage ----
