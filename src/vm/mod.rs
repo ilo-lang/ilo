@@ -20589,5 +20589,189 @@ f>n;r=mk 10 20;+r.x r.y";
             Value::Number(n) => assert!(n.is_nan(), "expected NaN, got {n}"),
             other => panic!("expected number, got {:?}", other),
         }
+
+        // Unary ops on nil → NaN for LOG, EXP, SIN, COS
+        for op in [OP_LOG, OP_EXP, OP_SIN, OP_COS] {
+            let code = vec![
+                make_abx(OP_LOADK, 1, 0),
+                make_abc(op, 2, 1, 0),
+                make_abc(OP_RET, 2, 0, 0),
+            ];
+            let chunk = Chunk {
+                code,
+                constants: vec![Value::Nil],
+                param_count: 0,
+                reg_count: 3,
+                spans: vec![crate::ast::Span::UNKNOWN; 3],
+                all_regs_numeric: false,
+            };
+            let program = CompiledProgram {
+                chunks: vec![chunk],
+                func_names: vec!["f".to_string()],
+                nan_constants: vec![vec![NanVal::nil()]],
+                type_registry: TypeRegistry::default(),
+                is_tool: vec![false],
+            };
+            let result = run(&program, Some("f"), vec![]).expect("math op on nil should not error");
+            match result {
+                Value::Number(n) => assert!(n.is_nan(), "op {op}: expected NaN, got {n}"),
+                other => panic!("op {op}: expected number, got {:?}", other),
+            }
+        }
+    }
+
+    // ---- Happy-path unit tests for each new math opcode at the VM dispatch level ----
+
+    #[cfg(test)]
+    fn run_unary_math_op(op: u8, input: f64) -> f64 {
+        use crate::interpreter::Value;
+        fn make_abc(op: u8, a: u8, b: u8, c: u8) -> u32 {
+            ((op as u32) << 24) | ((a as u32) << 16) | ((b as u32) << 8) | (c as u32)
+        }
+        fn make_abx(op: u8, a: u8, bx: u16) -> u32 {
+            ((op as u32) << 24) | ((a as u32) << 16) | (bx as u32)
+        }
+        let code = vec![
+            make_abx(OP_LOADK, 1, 0),
+            make_abc(op, 2, 1, 0),
+            make_abc(OP_RET, 2, 0, 0),
+        ];
+        let chunk = Chunk {
+            code,
+            constants: vec![Value::Number(input)],
+            param_count: 0,
+            reg_count: 3,
+            spans: vec![crate::ast::Span::UNKNOWN; 3],
+            all_regs_numeric: false,
+        };
+        let program = CompiledProgram {
+            chunks: vec![chunk],
+            func_names: vec!["f".to_string()],
+            nan_constants: vec![vec![NanVal::number(input)]],
+            type_registry: TypeRegistry::default(),
+            is_tool: vec![false],
+        };
+        match run(&program, Some("f"), vec![]).expect("unary math op should not error") {
+            Value::Number(n) => n,
+            other => panic!("expected number, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn vm_op_pow_happy() {
+        use crate::interpreter::Value;
+        fn make_abc(op: u8, a: u8, b: u8, c: u8) -> u32 {
+            ((op as u32) << 24) | ((a as u32) << 16) | ((b as u32) << 8) | (c as u32)
+        }
+        fn make_abx(op: u8, a: u8, bx: u16) -> u32 {
+            ((op as u32) << 24) | ((a as u32) << 16) | (bx as u32)
+        }
+        // R[1]=LOADK 2; R[2]=LOADK 10; R[3]=POW R[1] R[2]; RET R[3]
+        let code = vec![
+            make_abx(OP_LOADK, 1, 0),
+            make_abx(OP_LOADK, 2, 1),
+            make_abc(OP_POW, 3, 1, 2),
+            make_abc(OP_RET, 3, 0, 0),
+        ];
+        let chunk = Chunk {
+            code,
+            constants: vec![Value::Number(2.0), Value::Number(10.0)],
+            param_count: 0,
+            reg_count: 4,
+            spans: vec![crate::ast::Span::UNKNOWN; 4],
+            all_regs_numeric: false,
+        };
+        let program = CompiledProgram {
+            chunks: vec![chunk],
+            func_names: vec!["f".to_string()],
+            nan_constants: vec![vec![NanVal::number(2.0), NanVal::number(10.0)]],
+            type_registry: TypeRegistry::default(),
+            is_tool: vec![false],
+        };
+        match run(&program, Some("f"), vec![]).expect("pow should not error") {
+            Value::Number(n) => assert!((n - 1024.0).abs() < 1e-10, "got {n}"),
+            other => panic!("expected number, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn vm_op_sqrt_happy() {
+        let n = run_unary_math_op(OP_SQRT, 4.0);
+        assert!((n - 2.0).abs() < 1e-10, "got {n}");
+    }
+
+    #[test]
+    fn vm_op_log_happy() {
+        let n = run_unary_math_op(OP_LOG, 1.0);
+        assert!(n.abs() < 1e-10, "got {n}");
+    }
+
+    #[test]
+    fn vm_op_exp_happy() {
+        let n = run_unary_math_op(OP_EXP, 0.0);
+        assert!((n - 1.0).abs() < 1e-10, "got {n}");
+    }
+
+    #[test]
+    fn vm_op_sin_happy() {
+        let n = run_unary_math_op(OP_SIN, 0.0);
+        assert!(n.abs() < 1e-10, "got {n}");
+    }
+
+    #[test]
+    fn vm_op_cos_happy() {
+        let n = run_unary_math_op(OP_COS, 0.0);
+        assert!((n - 1.0).abs() < 1e-10, "got {n}");
+    }
+
+    // ---- Happy-path unit tests for each jit_* helper ----
+
+    #[cfg(feature = "cranelift")]
+    #[test]
+    fn jit_pow_happy() {
+        let bits = jit_pow(NanVal::number(2.0).0, NanVal::number(10.0).0);
+        let v = NanVal(bits);
+        assert!(v.is_number());
+        assert!((v.as_number() - 1024.0).abs() < 1e-10);
+    }
+
+    #[cfg(feature = "cranelift")]
+    #[test]
+    fn jit_sqrt_happy() {
+        let v = NanVal(jit_sqrt(NanVal::number(4.0).0));
+        assert!(v.is_number());
+        assert!((v.as_number() - 2.0).abs() < 1e-10);
+    }
+
+    #[cfg(feature = "cranelift")]
+    #[test]
+    fn jit_log_happy() {
+        let v = NanVal(jit_log(NanVal::number(1.0).0));
+        assert!(v.is_number());
+        assert!(v.as_number().abs() < 1e-10);
+    }
+
+    #[cfg(feature = "cranelift")]
+    #[test]
+    fn jit_exp_happy() {
+        let v = NanVal(jit_exp(NanVal::number(0.0).0));
+        assert!(v.is_number());
+        assert!((v.as_number() - 1.0).abs() < 1e-10);
+    }
+
+    #[cfg(feature = "cranelift")]
+    #[test]
+    fn jit_sin_happy() {
+        let v = NanVal(jit_sin(NanVal::number(0.0).0));
+        assert!(v.is_number());
+        assert!(v.as_number().abs() < 1e-10);
+    }
+
+    #[cfg(feature = "cranelift")]
+    #[test]
+    fn jit_cos_happy() {
+        let v = NanVal(jit_cos(NanVal::number(0.0).0));
+        assert!(v.is_number());
+        assert!((v.as_number() - 1.0).abs() < 1e-10);
     }
 }
