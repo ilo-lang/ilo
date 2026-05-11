@@ -6976,4 +6976,22 @@ mod tests {
         let result = run_str(source, Some("f"), vec![Value::Nil]);
         assert_eq!(result, Value::Text("none".to_string()));
     }
+
+    // ── `!` auto-unwrap on Optional: nil propagates as the function's return ──
+
+    #[test]
+    fn interp_mget_bang_missing_propagates_nil() {
+        // mget on an empty map returns nil; `!` propagates nil out of f.
+        let source = r#"f>O n;m=mmap;v=mget! m "missing";+v 99"#;
+        let result = run_str(source, Some("f"), vec![]);
+        assert_eq!(result, Value::Nil);
+    }
+
+    #[test]
+    fn interp_mget_bang_present_returns_inner() {
+        // mget on a present key returns the inner value via `!`.
+        let source = r#"f>O n;m=mset mmap "k" 5;v=mget! m "k";v"#;
+        let result = run_str(source, Some("f"), vec![]);
+        assert_eq!(result, Value::Number(5.0));
+    }
 }

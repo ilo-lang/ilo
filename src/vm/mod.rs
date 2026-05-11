@@ -20803,4 +20803,38 @@ f>n;r=mk 10 20;+r.x r.y";
         assert!(v.is_number());
         assert!((v.as_number() - 1.0).abs() < 1e-10);
     }
+
+    // ── `!` auto-unwrap on Optional in the VM ─────────────────────────────
+
+    #[test]
+    fn vm_mget_bang_missing_propagates_nil() {
+        // mget! on an empty map propagates nil through f.
+        let source = r#"f>O n;m=mmap;v=mget! m "missing";+v 99"#;
+        let result = vm_run(source, Some("f"), vec![]);
+        assert_eq!(result, Value::Nil);
+    }
+
+    #[test]
+    fn vm_mget_bang_present_returns_inner() {
+        let source = r#"f>O n;m=mset mmap "k" 7;v=mget! m "k";v"#;
+        let result = vm_run(source, Some("f"), vec![]);
+        assert_eq!(result, Value::Number(7.0));
+    }
+
+    #[test]
+    fn vm_optional_user_fn_bang_present() {
+        // User-defined Optional-returning fn called with `!`. Exercises the
+        // generic Optional unwrap path at the Call site (not mget special-case).
+        let source = "g x:n>O n;?>x 0 x nil\nf>O n;v=g! 5;+v 1";
+        let result = vm_run(source, Some("f"), vec![]);
+        assert_eq!(result, Value::Number(6.0));
+    }
+
+    #[test]
+    fn vm_optional_user_fn_bang_propagates() {
+        // User fn returns nil — `!` propagates nil out of f.
+        let source = "g x:n>O n;?>x 0 x nil\nf>O n;v=g! -3;+v 1";
+        let result = vm_run(source, Some("f"), vec![]);
+        assert_eq!(result, Value::Nil);
+    }
 }

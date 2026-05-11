@@ -6149,4 +6149,40 @@ mod tests {
         let code = "alias vec L n\nf xs:L vec>L n;map avg xs";
         assert!(parse_and_verify(code).is_ok());
     }
+
+    // ── `!` auto-unwrap on Optional (Ty::Optional arm) ────────────────────
+
+    #[test]
+    fn verify_mget_bang_in_optional_returning_fn() {
+        // Enclosing returns Optional — accepts nil propagation.
+        let code = r#"f>O n;m=mmap;v=mget! m "k";v"#;
+        assert!(parse_and_verify(code).is_ok());
+    }
+
+    #[test]
+    fn verify_mget_bang_in_number_returning_fn_errors() {
+        // Enclosing returns plain n — must produce ILO-T026.
+        let code = r#"f>n;m=mmap;v=mget! m "k";v"#;
+        let errs = parse_and_verify(code).unwrap_err();
+        assert!(
+            errs.iter()
+                .any(|e| e.code == "ILO-T026" && e.message.contains("not an Optional")),
+            "expected ILO-T026, got: {:?}",
+            errs
+        );
+    }
+
+    #[test]
+    fn verify_bang_on_non_result_non_optional_errors() {
+        // Calling `!` on a builtin returning plain n triggers ILO-T025
+        // ("not a Result or Optional") — new wording from this PR.
+        let code = "f>n;v=abs! -3;v";
+        let errs = parse_and_verify(code).unwrap_err();
+        assert!(
+            errs.iter()
+                .any(|e| e.code == "ILO-T025" && e.message.contains("not a Result or Optional")),
+            "expected ILO-T025 with new wording, got: {:?}",
+            errs
+        );
+    }
 }
