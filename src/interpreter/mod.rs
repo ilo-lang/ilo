@@ -6998,4 +6998,51 @@ mod tests {
         let result = run_str(source, Some("f"), vec![]);
         assert_eq!(result, Value::Number(5.0));
     }
+
+    // ---- at xs i with negative indices (covers new interpreter arms) ----
+
+    #[test]
+    fn interp_at_list_negative_last() {
+        let source = "f>n;xs=[10,20,30];at xs -1";
+        let result = run_str(source, Some("f"), vec![]);
+        assert_eq!(result, Value::Number(30.0));
+    }
+
+    #[test]
+    fn interp_at_list_negative_first() {
+        let source = "f>n;xs=[10,20,30];at xs -3";
+        let result = run_str(source, Some("f"), vec![]);
+        assert_eq!(result, Value::Number(10.0));
+    }
+
+    #[test]
+    fn interp_at_text_negative_last() {
+        let source = r#"f>t;at "abc" -1"#;
+        let result = run_str(source, Some("f"), vec![]);
+        assert_eq!(result, Value::Text("c".to_string()));
+    }
+
+    #[test]
+    fn interp_at_list_negative_out_of_range() {
+        let prog = parse_program("f>n;xs=[10,20,30];at xs -4");
+        let err = run(&prog, Some("f"), vec![]).unwrap_err();
+        let msg = format!("{err:?}");
+        assert!(msg.contains("out of range"), "got {msg}");
+    }
+
+    #[test]
+    fn interp_at_text_negative_out_of_range() {
+        let prog = parse_program(r#"f>t;at "ab" -3"#);
+        let err = run(&prog, Some("f"), vec![]).unwrap_err();
+        let msg = format!("{err:?}");
+        assert!(msg.contains("out of range"), "got {msg}");
+    }
+
+    #[test]
+    fn interp_at_fractional_index_errors() {
+        let prog = parse_program("f>n;xs=[10,20,30];at xs 1.5");
+        let err = run(&prog, Some("f"), vec![]).unwrap_err();
+        let msg = format!("{err:?}");
+        assert!(msg.contains("integer"), "got {msg}");
+    }
 }

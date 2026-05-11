@@ -20847,4 +20847,71 @@ f>n;r=mk 10 20;+r.x r.y";
         let result = vm_run(source, Some("f"), vec![]);
         assert_eq!(result, Value::Nil);
     }
+
+    // ---- jit_at negative-index coverage ----
+
+    #[cfg(feature = "cranelift")]
+    #[test]
+    fn jit_at_list_negative_last() {
+        let list = NanVal::heap_list(vec![
+            NanVal::number(10.0),
+            NanVal::number(20.0),
+            NanVal::number(30.0),
+        ]);
+        let v = NanVal(jit_at(list.0, NanVal::number(-1.0).0));
+        assert!(v.is_number());
+        assert_eq!(v.as_number(), 30.0);
+    }
+
+    #[cfg(feature = "cranelift")]
+    #[test]
+    fn jit_at_list_negative_first() {
+        let list = NanVal::heap_list(vec![
+            NanVal::number(10.0),
+            NanVal::number(20.0),
+            NanVal::number(30.0),
+        ]);
+        let v = NanVal(jit_at(list.0, NanVal::number(-3.0).0));
+        assert!(v.is_number());
+        assert_eq!(v.as_number(), 10.0);
+    }
+
+    #[cfg(feature = "cranelift")]
+    #[test]
+    fn jit_at_list_negative_out_of_range() {
+        let list = NanVal::heap_list(vec![NanVal::number(1.0), NanVal::number(2.0)]);
+        let bits = jit_at(list.0, NanVal::number(-3.0).0);
+        assert_eq!(bits, TAG_NIL);
+    }
+
+    #[cfg(feature = "cranelift")]
+    #[test]
+    fn jit_at_text_negative_last() {
+        let s = NanVal::heap_string("abc".to_string());
+        let v = NanVal(jit_at(s.0, NanVal::number(-1.0).0));
+        assert!(v.is_string());
+        let got = unsafe {
+            match v.as_heap_ref() {
+                HeapObj::Str(s) => s.clone(),
+                _ => panic!("expected string"),
+            }
+        };
+        assert_eq!(got, "c");
+    }
+
+    #[cfg(feature = "cranelift")]
+    #[test]
+    fn jit_at_text_negative_out_of_range() {
+        let s = NanVal::heap_string("ab".to_string());
+        let bits = jit_at(s.0, NanVal::number(-3.0).0);
+        assert_eq!(bits, TAG_NIL);
+    }
+
+    #[cfg(feature = "cranelift")]
+    #[test]
+    fn jit_at_fractional_index_returns_nil() {
+        let list = NanVal::heap_list(vec![NanVal::number(1.0)]);
+        let bits = jit_at(list.0, NanVal::number(0.5).0);
+        assert_eq!(bits, TAG_NIL);
+    }
 }
