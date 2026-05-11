@@ -15,7 +15,8 @@ fn ilo() -> Command {
     Command::new(env!("CARGO_BIN_EXE_ilo"))
 }
 
-const SLC_REPRO: &str = r#"go>L t;ls=["a","b","c","d","e"];@i 0..3{b=*i 1;b1=+b 1;s=slc ls b b1;p=prnt s};ls"#;
+const SLC_REPRO: &str =
+    r#"go>L t;ls=["a","b","c","d","e"];@i 0..3{b=*i 1;b1=+b 1;s=slc ls b b1;p=prnt s};ls"#;
 const MSET_REPRO: &str = r#"go>M t t;m=mset mmap "init" "x";@i 0..3{b=*i 1;b1=+b 1;ix=slc "abc" b b1;m=mset m ix "v"};m"#;
 // OP_MDEL had the same map-clone RC bug as OP_MSET (HashMap::clone bit-copies
 // NanVals without bumping heap RCs, and HashMap::remove drops the removed entry
@@ -95,7 +96,10 @@ fn check_mdel(engine: &str) {
     // The loop adds then immediately deletes each of "a","b","c"; only the
     // pre-existing "keep" entry should survive. Cross-engine output must match.
     let trimmed = out.trim();
-    assert_eq!(trimmed, "{keep: kv}", "{engine}: unexpected output: {out:?}");
+    assert_eq!(
+        trimmed, "{keep: kv}",
+        "{engine}: unexpected output: {out:?}"
+    );
 }
 
 #[test]
