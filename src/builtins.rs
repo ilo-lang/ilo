@@ -24,6 +24,7 @@ pub enum Builtin {
     // Collections
     Len,
     Hd,
+    At,
     Tl,
     Rev,
     Srt,
@@ -95,6 +96,7 @@ impl Builtin {
             "avg" => Some(Builtin::Avg),
             "len" => Some(Builtin::Len),
             "hd" => Some(Builtin::Hd),
+            "at" => Some(Builtin::At),
             "tl" => Some(Builtin::Tl),
             "rev" => Some(Builtin::Rev),
             "srt" => Some(Builtin::Srt),
@@ -153,6 +155,7 @@ impl Builtin {
             Builtin::Avg => "avg",
             Builtin::Len => "len",
             Builtin::Hd => "hd",
+            Builtin::At => "at",
             Builtin::Tl => "tl",
             Builtin::Rev => "rev",
             Builtin::Srt => "srt",
@@ -207,10 +210,10 @@ mod tests {
     fn round_trip_all_builtins() {
         let all = [
             "str", "num", "abs", "flr", "cel", "rou", "min", "max", "mod", "sum", "avg", "len",
-            "hd", "tl", "rev", "srt", "slc", "unq", "flat", "has", "spl", "cat", "map", "flt",
-            "fld", "grp", "rnd", "now", "rd", "rdl", "rdb", "wr", "wrl", "prnt", "env", "trm",
-            "fmt", "rgx", "jpth", "jdmp", "jpar", "get", "post", "mmap", "mget", "mset", "mhas",
-            "mkeys", "mvals", "mdel",
+            "hd", "at", "tl", "rev", "srt", "slc", "unq", "flat", "has", "spl", "cat", "map",
+            "flt", "fld", "grp", "rnd", "now", "rd", "rdl", "rdb", "wr", "wrl", "prnt", "env",
+            "trm", "fmt", "rgx", "jpth", "jdmp", "jpar", "get", "post", "mmap", "mget", "mset",
+            "mhas", "mkeys", "mvals", "mdel",
         ];
         for name in &all {
             let b = Builtin::from_name(name).unwrap_or_else(|| panic!("missing builtin: {name}"));

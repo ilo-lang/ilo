@@ -622,6 +622,58 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             )),
         };
     }
+    if builtin == Some(Builtin::At) && args.len() == 2 {
+        let idx = match &args[1] {
+            Value::Number(n) => {
+                if *n < 0.0 || n.fract() != 0.0 {
+                    return Err(RuntimeError::new(
+                        "ILO-R009",
+                        "at: index must be a non-negative integer".to_string(),
+                    ));
+                }
+                *n as usize
+            }
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("at: index must be a number, got {:?}", other),
+                ));
+            }
+        };
+        return match &args[0] {
+            Value::List(items) => {
+                if idx >= items.len() {
+                    Err(RuntimeError::new(
+                        "ILO-R009",
+                        format!(
+                            "at: index {idx} out of range for list of length {}",
+                            items.len()
+                        ),
+                    ))
+                } else {
+                    Ok(items[idx].clone())
+                }
+            }
+            Value::Text(s) => {
+                let chars: Vec<char> = s.chars().collect();
+                if idx >= chars.len() {
+                    Err(RuntimeError::new(
+                        "ILO-R009",
+                        format!(
+                            "at: index {idx} out of range for text of length {}",
+                            chars.len()
+                        ),
+                    ))
+                } else {
+                    Ok(Value::Text(chars[idx].to_string()))
+                }
+            }
+            other => Err(RuntimeError::new(
+                "ILO-R009",
+                format!("at requires a list or text, got {:?}", other),
+            )),
+        };
+    }
     if builtin == Some(Builtin::Tl) && args.len() == 1 {
         return match &args[0] {
             Value::List(items) => {

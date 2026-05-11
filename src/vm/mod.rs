@@ -177,6 +177,7 @@ pub(crate) const OP_CMPK_NE_N: u8 = 95; // skip-if R[A] != K[C]  (f64)
 
 // ABC mode — type-specialized string concatenation (both operands known text, no type check)
 pub(crate) const OP_ADD_SS: u8 = 96; // R[A] = R[B] ++ R[C]  (both known text)
+pub(crate) const OP_AT: u8 = 103; // R[A] = at(R[B], R[C])  (i-th element of list/text)
 
 // ABx mode — register + 16-bit operand
 pub(crate) const OP_LOADK: u8 = 20;
@@ -1610,6 +1611,13 @@ impl RegCompiler {
                             self.emit_abc(OP_HD, ra, rb, 0);
                             return ra;
                         }
+                        (Builtin::At, 2) => {
+                            let rb = self.compile_expr(&args[0]);
+                            let rc = self.compile_expr(&args[1]);
+                            let ra = self.alloc_reg();
+                            self.emit_abc(OP_AT, ra, rb, rc);
+                            return ra;
+                        }
                         (Builtin::Tl, 1) => {
                             let rb = self.compile_expr(&args[0]);
                             let ra = self.alloc_reg();
@@ -2332,7 +2340,7 @@ fn chunk_is_all_numeric(chunk: &Chunk) -> bool {
             OP_RECNEW | OP_LISTNEW | OP_RECWITH | OP_WRAPOK | OP_WRAPERR | OP_STR | OP_CAT
             | OP_SPL | OP_REV | OP_SRT | OP_SLC | OP_UNQ | OP_LISTAPPEND | OP_JPAR | OP_JDMP
             | OP_ENV | OP_GET | OP_GETH | OP_POST | OP_POSTH | OP_RD | OP_RDL | OP_WR | OP_WRL
-            | OP_MAPNEW | OP_MGET | OP_MSET | OP_MKEYS | OP_MVALS | OP_HD | OP_TL => {
+            | OP_MAPNEW | OP_MGET | OP_MSET | OP_MKEYS | OP_MVALS | OP_HD | OP_AT | OP_TL => {
                 return false;
             }
             _ => {}
@@ -5364,6 +5372,48 @@ impl<'a> VM<'a> {
                     };
                     reg_set!(a, result);
                 }
+                OP_AT => {
+                    let a = ((inst >> 16) & 0xFF) as usize + base;
+                    let b = ((inst >> 8) & 0xFF) as usize + base;
+                    let c = (inst & 0xFF) as usize + base;
+                    let v = reg!(b);
+                    let i = reg!(c);
+                    if !i.is_number() {
+                        vm_err!(VmError::Type("at: index must be a number"));
+                    }
+                    let n = i.as_number();
+                    if n < 0.0 || n.fract() != 0.0 {
+                        vm_err!(VmError::Type("at: index must be a non-negative integer"));
+                    }
+                    let idx = n as usize;
+                    let result = if v.is_string() {
+                        let s = unsafe {
+                            match v.as_heap_ref() {
+                                HeapObj::Str(s) => s,
+                                _ => unreachable!(),
+                            }
+                        };
+                        let chars: Vec<char> = s.chars().collect();
+                        if idx >= chars.len() {
+                            vm_err!(VmError::Type("at: index out of range"));
+                        }
+                        NanVal::heap_string(chars[idx].to_string())
+                    } else if v.is_heap() {
+                        match unsafe { v.as_heap_ref() } {
+                            HeapObj::List(items) => {
+                                if idx >= items.len() {
+                                    vm_err!(VmError::Type("at: index out of range"));
+                                }
+                                items[idx].clone_rc();
+                                items[idx]
+                            }
+                            _ => vm_err!(VmError::Type("at requires a list or text")),
+                        }
+                    } else {
+                        vm_err!(VmError::Type("at requires a list or text"));
+                    };
+                    reg_set!(a, result);
+                }
                 OP_TL => {
                     let a = ((inst >> 16) & 0xFF) as usize + base;
                     let b = ((inst >> 8) & 0xFF) as usize + base;
@@ -6498,6 +6548,44 @@ pub(crate) extern "C" fn jit_hd(a: u64) -> u64 {
         }
         items[0].clone_rc();
         return items[0].0;
+    }
+    TAG_NIL
+}
+
+#[cfg(feature = "cranelift")]
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn jit_at(a: u64, b: u64) -> u64 {
+    let v = NanVal(a);
+    let i = NanVal(b);
+    if !i.is_number() {
+        return TAG_NIL;
+    }
+    let n = i.as_number();
+    if n < 0.0 || n.fract() != 0.0 {
+        return TAG_NIL;
+    }
+    let idx = n as usize;
+    if v.is_string() {
+        let s = unsafe {
+            match v.as_heap_ref() {
+                HeapObj::Str(s) => s,
+                _ => unreachable!(),
+            }
+        };
+        let chars: Vec<char> = s.chars().collect();
+        if idx >= chars.len() {
+            return TAG_NIL;
+        }
+        return NanVal::heap_string(chars[idx].to_string()).0;
+    }
+    if v.is_heap()
+        && let HeapObj::List(items) = unsafe { v.as_heap_ref() }
+    {
+        if idx >= items.len() {
+            return TAG_NIL;
+        }
+        items[idx].clone_rc();
+        return items[idx].0;
     }
     TAG_NIL
 }

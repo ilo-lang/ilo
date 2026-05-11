@@ -273,6 +273,7 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("cat", &["L t", "t"], "t"),
     ("has", &["list_or_text", "any"], "b"),
     ("hd", &["list_or_text"], "any"),
+    ("at", &["list_or_text", "n"], "any"),
     ("tl", &["list_or_text"], "list_or_text"),
     ("rev", &["list_or_text"], "list_or_text"),
     ("srt", &["list_or_text"], "list_or_text"),
@@ -484,6 +485,37 @@ fn builtin_check_args(
                         code: "ILO-T013",
                         function: func_ctx.to_string(),
                         message: format!("'hd' expects a list or text, got {other}"),
+                        hint: None,
+                        span,
+                        is_warning: false,
+                    }),
+                }
+            }
+            (Ty::Unknown, errors)
+        }
+        "at" => {
+            // at xs i — returns the i-th element of xs (list or text)
+            if let Some(arg) = arg_types.get(1)
+                && !compatible(arg, &Ty::Number)
+            {
+                errors.push(VerifyError {
+                    code: "ILO-T013",
+                    function: func_ctx.to_string(),
+                    message: format!("'at' index must be n, got {arg}"),
+                    hint: None,
+                    span,
+                    is_warning: false,
+                });
+            }
+            if let Some(arg) = arg_types.first() {
+                match arg {
+                    Ty::List(inner) => return (*inner.clone(), errors),
+                    Ty::Text => return (Ty::Text, errors),
+                    Ty::Unknown => return (Ty::Unknown, errors),
+                    other => errors.push(VerifyError {
+                        code: "ILO-T013",
+                        function: func_ctx.to_string(),
+                        message: format!("'at' expects a list or text, got {other}"),
                         hint: None,
                         span,
                         is_warning: false,
