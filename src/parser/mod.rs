@@ -211,6 +211,37 @@ impl Parser {
         }
     }
 
+    /// Stricter variant of `is_fn_decl_start` used at top-level body boundaries
+    /// to disambiguate fn declarations from record construction. A real fn decl
+    /// always has `>` followed by a return type before the body's first `;`,
+    /// while a record `Outer a:1 b:2` never has a `>` before its terminator.
+    /// Returns true only when a `>` is visible before the next `;`/`}`/`{`/EOF
+    /// at the same bracket depth.
+    fn is_fn_decl_start_strict(&self, pos: usize) -> bool {
+        if !self.is_fn_decl_start(pos) {
+            return false;
+        }
+        // Fast path: `Ident >` is unambiguous in body position because a leading
+        // `name>` statement is not legal here (no expression starts with a bare
+        // identifier followed by `>` in a way that doesn't look like a fn decl
+        // header). Even `a > b` would only appear after a `;`, but it has no
+        // following `;type;` shape — but we still want to confirm by scanning.
+        let mut i = pos + 1;
+        let mut depth: i32 = 0;
+        while let Some(tok) = self.token_at(i) {
+            match tok {
+                Token::LParen | Token::LBracket | Token::LBrace => depth += 1,
+                Token::RParen | Token::RBracket => depth -= 1,
+                _ if depth > 0 => {}
+                Token::Greater if depth == 0 => return true,
+                Token::Semi | Token::RBrace => return false,
+                _ => {}
+            }
+            i += 1;
+        }
+        false
+    }
+
     /// Advance past tokens until we reach what looks like the start of the next
     /// declaration (or EOF). Returns the span of the last token consumed.
     /// Tracks brace depth so nested `{…}` blocks are skipped atomically.
@@ -509,7 +540,7 @@ impl Parser {
         if self.peek() == Some(&Token::Semi) {
             self.advance();
         }
-        let body = self.parse_body()?;
+        let body = self.parse_body_with(true)?;
         let end = self.prev_span();
         Ok(Decl::Function {
             name,
@@ -675,6 +706,16 @@ impl Parser {
 
     /// Parse a semicolon-separated body, wrapping each statement with its source span.
     fn parse_body(&mut self) -> Result<Vec<Spanned<Stmt>>> {
+        self.parse_body_with(false)
+    }
+
+    /// Parse a semicolon-separated body. When `top_level` is true, the body
+    /// also terminates if the tokens after a `;` look like the start of the
+    /// next top-level function declaration. This closes the "sibling helper
+    /// slurp" trap where a body's final bare call would otherwise consume the
+    /// next function's name as an argument (and the trailing `>type;` would
+    /// then be parsed as a comparison, hiding the boundary).
+    fn parse_body_with(&mut self, top_level: bool) -> Result<Vec<Spanned<Stmt>>> {
         let mut stmts = Vec::new();
         if !self.at_body_end() {
             let span_start = self.peek_span();
@@ -686,6 +727,9 @@ impl Parser {
             while self.peek() == Some(&Token::Semi) {
                 self.advance();
                 if self.at_body_end() {
+                    break;
+                }
+                if top_level && self.is_fn_decl_start_strict(self.pos) {
                     break;
                 }
                 let span_start = self.peek_span();
