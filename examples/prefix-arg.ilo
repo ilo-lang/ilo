@@ -1,0 +1,8 @@
+-- Prefix-binary expressions as call arguments: no intermediate names needed.
+
+window ls:L n lo:n>L n;slc ls lo +lo 2
+
+-- run: window [10,20,30,40,50] 1
+-- out: [20, 30]
+-- run: window [10,20,30,40,50] 3
+-- out: [40, 50]
