@@ -735,6 +735,46 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             )),
         };
     }
+    if builtin == Some(Builtin::Lst) && args.len() == 3 {
+        let idx = match &args[1] {
+            Value::Number(n) => {
+                if *n < 0.0 || n.fract() != 0.0 {
+                    return Err(RuntimeError::new(
+                        "ILO-R009",
+                        "lst: index must be a non-negative integer".to_string(),
+                    ));
+                }
+                *n as usize
+            }
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("lst: index must be a number, got {:?}", other),
+                ));
+            }
+        };
+        return match &args[0] {
+            Value::List(items) => {
+                if idx >= items.len() {
+                    Err(RuntimeError::new(
+                        "ILO-R009",
+                        format!(
+                            "lst: index {idx} out of range for list of length {}",
+                            items.len()
+                        ),
+                    ))
+                } else {
+                    let mut new_items = items.clone();
+                    new_items[idx] = args[2].clone();
+                    Ok(Value::List(new_items))
+                }
+            }
+            other => Err(RuntimeError::new(
+                "ILO-R009",
+                format!("lst requires a list, got {:?}", other),
+            )),
+        };
+    }
     if builtin == Some(Builtin::Tl) && args.len() == 1 {
         return match &args[0] {
             Value::List(items) => {

@@ -178,6 +178,8 @@ pub(crate) const OP_CMPK_NE_N: u8 = 95; // skip-if R[A] != K[C]  (f64)
 // ABC mode — type-specialized string concatenation (both operands known text, no type check)
 pub(crate) const OP_ADD_SS: u8 = 96; // R[A] = R[B] ++ R[C]  (both known text)
 pub(crate) const OP_AT: u8 = 103; // R[A] = at(R[B], R[C])  (i-th element of list/text)
+// Two-word instruction: OP_LST A=result B=list C=index; data word A=value_reg
+pub(crate) const OP_LST: u8 = 110; // R[A] = list-replace(R[B], R[C], R[D])  (new list with index C replaced by D)
 
 // ABC mode — transcendental math (f64, std::f64 backed, NaN on domain error)
 pub(crate) const OP_POW: u8 = 97; // R[A] = pow(R[B], R[C])
@@ -1704,6 +1706,18 @@ impl RegCompiler {
                             self.emit_abc(0, rd, 0, 0);
                             return ra;
                         }
+                        (Builtin::Lst, 3) => {
+                            // lst list i v — two-instruction sequence:
+                            //   OP_LST   A=result  B=list  C=index
+                            //   data word: A=value_reg
+                            let rb = self.compile_expr(&args[0]);
+                            let rc = self.compile_expr(&args[1]);
+                            let rd = self.compile_expr(&args[2]);
+                            let ra = self.alloc_reg();
+                            self.emit_abc(OP_LST, ra, rb, rc);
+                            self.emit_abc(0, rd, 0, 0);
+                            return ra;
+                        }
                         (Builtin::Rnd, 0) => {
                             let ra = self.alloc_reg();
                             self.emit_abc(OP_RND0, ra, 0, 0);
@@ -2425,7 +2439,8 @@ fn chunk_is_all_numeric(chunk: &Chunk) -> bool {
             OP_RECNEW | OP_LISTNEW | OP_RECWITH | OP_WRAPOK | OP_WRAPERR | OP_STR | OP_CAT
             | OP_SPL | OP_REV | OP_SRT | OP_SLC | OP_UNQ | OP_LISTAPPEND | OP_JPAR | OP_JDMP
             | OP_ENV | OP_GET | OP_GETH | OP_POST | OP_POSTH | OP_RD | OP_RDL | OP_WR | OP_WRL
-            | OP_MAPNEW | OP_MGET | OP_MSET | OP_MKEYS | OP_MVALS | OP_HD | OP_AT | OP_TL => {
+            | OP_MAPNEW | OP_MGET | OP_MSET | OP_MKEYS | OP_MVALS | OP_HD | OP_AT | OP_LST
+            | OP_TL => {
                 return false;
             }
             _ => {}
@@ -5729,6 +5744,50 @@ impl<'a> VM<'a> {
                         vm_err!(VmError::Type("slc requires a list or text"));
                     }
                 }
+                OP_LST => {
+                    // Two-instruction sequence: OP_LST A=result B=list C=index; data word A=value_reg
+                    let a = ((inst >> 16) & 0xFF) as usize + base;
+                    let b = ((inst >> 8) & 0xFF) as usize + base;
+                    let c = (inst & 0xFF) as usize + base;
+                    // SAFETY: compiler always emits the data word immediately after OP_LST
+                    let data_inst = unsafe { *code.get_unchecked(ip) };
+                    ip += 1;
+                    let d = ((data_inst >> 16) & 0xFF) as usize + base;
+                    let vb = reg!(b);
+                    let vc = reg!(c);
+                    let vd = reg!(d);
+                    if !vc.is_number() {
+                        vm_err!(VmError::Type("lst: index must be a number"));
+                    }
+                    let n = vc.as_number();
+                    if n < 0.0 || n.fract() != 0.0 {
+                        vm_err!(VmError::Type("lst: index must be a non-negative integer"));
+                    }
+                    let idx = n as usize;
+                    if vb.is_heap() {
+                        match unsafe { vb.as_heap_ref() } {
+                            HeapObj::List(items) => {
+                                if idx >= items.len() {
+                                    vm_err!(VmError::Type("lst: index out of range"));
+                                }
+                                let mut new_items: Vec<NanVal> = Vec::with_capacity(items.len());
+                                for (i, v) in items.iter().enumerate() {
+                                    if i == idx {
+                                        vd.clone_rc();
+                                        new_items.push(vd);
+                                    } else {
+                                        v.clone_rc();
+                                        new_items.push(*v);
+                                    }
+                                }
+                                reg_set!(a, NanVal::heap_list(new_items));
+                            }
+                            _ => vm_err!(VmError::Type("lst requires a list")),
+                        }
+                    } else {
+                        vm_err!(VmError::Type("lst requires a list"));
+                    }
+                }
                 OP_LISTAPPEND => {
                     let a = ((inst >> 16) & 0xFF) as usize + base;
                     let b = ((inst >> 8) & 0xFF) as usize + base;
@@ -6840,6 +6899,41 @@ pub(crate) extern "C" fn jit_at(a: u64, b: u64) -> u64 {
         let idx = adjusted as usize;
         items[idx].clone_rc();
         return items[idx].0;
+    }
+    TAG_NIL
+}
+
+#[cfg(feature = "cranelift")]
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn jit_lst(list: u64, idx: u64, val: u64) -> u64 {
+    let v = NanVal(list);
+    let i = NanVal(idx);
+    let new_val = NanVal(val);
+    if !i.is_number() {
+        return list;
+    }
+    let n = i.as_number();
+    if n < 0.0 || n.fract() != 0.0 {
+        return list;
+    }
+    let pos = n as usize;
+    if v.is_heap()
+        && let HeapObj::List(items) = unsafe { v.as_heap_ref() }
+    {
+        if pos >= items.len() {
+            return list;
+        }
+        let mut new_items: Vec<NanVal> = Vec::with_capacity(items.len());
+        for (i, item) in items.iter().enumerate() {
+            if i == pos {
+                new_val.clone_rc();
+                new_items.push(new_val);
+            } else {
+                item.clone_rc();
+                new_items.push(*item);
+            }
+        }
+        return NanVal::heap_list(new_items).0;
     }
     TAG_NIL
 }
@@ -8169,7 +8263,7 @@ pub(crate) fn find_block_leaders(code: &[u32]) -> Vec<usize> {
                 leaders.insert(i + 2);
                 leaders.insert(i + 3);
             }
-            OP_SLC | OP_MSET | OP_POSTH => {
+            OP_SLC | OP_LST | OP_MSET | OP_POSTH => {
                 // 2-word instructions: the following word is data, not an instruction.
                 // Skip it so its bits aren't mis-decoded as an opcode that might mark
                 // bogus leaders. The instruction after the data word is a normal leader
