@@ -162,7 +162,7 @@ Per-call time (ns) across 8 micro-benchmarks. Lower is better. [Full results →
 | Node/V8 | 569ns | 1.3us | 354ns | 5.3us | 1.0us | 46.7us | 480ns | 81ns | 191ns | 12.4us | 284.5us |
 | TypeScript | 427ns | 1.2us | 236ns | 5.4us | 1.0us | 45.9us | 421ns | 75ns | 167ns | 12.7us | 310.2us |
 | ilo AOT | 1.8us | 12.9us | 1.1us | 33.0us | 5.3us | 37.3us | 1.1us | 148ns | 126ns | n/a | n/a |
-| ilo JIT | 1.3us | 5.0us | 504ns | 26.2us | 3.2us | 37.2us | 935ns | 150ns | 125ns | 16.5us | 1.7ms |
+| ilo Cranelift | 1.3us | 5.0us | 504ns | 26.2us | 3.2us | 37.2us | 935ns | 150ns | 125ns | 16.5us | 1.7ms |
 | ilo VM | 11.3us | 10.5us | 3.1us | 31.6us | 53.5us | 528.3us | 2.4us | 1.2us | 7.0us | 16.9us | 171.1us |
 | ilo Interpreter | 91.4us | 61.2us | 54.3us | 1.3ms | 1.0ms | 17.4ms | 84.2us | 10.6us | 155.1us | 32.3us | 174.7us |
 | Lua | 4.0us | 39.8us | 7.5us | 49.2us | 27.0us | 339.1us | 3.8us | 967ns | 4.3us | 16.1us | 54.3us |
