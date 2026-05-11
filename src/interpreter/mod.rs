@@ -8478,4 +8478,37 @@ mod tests {
             err.message
         );
     }
+
+    // ---- box_muller_normal + Builtin::Rndn coverage ----
+
+    #[test]
+    fn box_muller_sigma_zero_returns_mu() {
+        // sigma == 0 short-circuit: must return exactly mu (no NaN, no jitter).
+        assert_eq!(box_muller_normal(5.0, 0.0), 5.0);
+        assert_eq!(box_muller_normal(-1.25, 0.0), -1.25);
+        assert_eq!(box_muller_normal(0.0, 0.0), 0.0);
+    }
+
+    #[test]
+    fn box_muller_finite_for_nonzero_sigma() {
+        fastrand::seed(42);
+        for _ in 0..200 {
+            let v = box_muller_normal(0.0, 1.0);
+            assert!(v.is_finite(), "got non-finite {v}");
+        }
+    }
+
+    #[test]
+    fn interp_rndn_sigma_zero_returns_mu() {
+        let source = "f>n;rndn 7 0";
+        let result = run_str(source, Some("f"), vec![]);
+        assert_eq!(result, Value::Number(7.0));
+    }
+
+    #[test]
+    fn interp_rndn_negative_mu_sigma_zero() {
+        let source = "f>n;rndn -3 0";
+        let result = run_str(source, Some("f"), vec![]);
+        assert_eq!(result, Value::Number(-3.0));
+    }
 }

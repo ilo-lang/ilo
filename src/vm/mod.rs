@@ -180,7 +180,7 @@ pub(crate) const OP_ADD_SS: u8 = 96; // R[A] = R[B] ++ R[C]  (both known text)
 pub(crate) const OP_AT: u8 = 103; // R[A] = at(R[B], R[C])  (i-th element of list/text)
 // Two-word instruction: OP_LST A=result B=list C=index; data word A=value_reg
 pub(crate) const OP_LST: u8 = 110; // R[A] = list-replace(R[B], R[C], R[D])  (new list with index C replaced by D)
-pub(crate) const OP_RNDN: u8 = 153; // R[A] = normal(mu=R[B], sigma=R[C])  (Box-Muller)
+pub(crate) const OP_RNDN: u8 = 137; // R[A] = normal(mu=R[B], sigma=R[C])  (Box-Muller)
 
 // ABC mode — transcendental math (f64, std::f64 backed, NaN on domain error)
 pub(crate) const OP_POW: u8 = 97; // R[A] = pow(R[B], R[C])
@@ -23659,5 +23659,140 @@ f>n;r=mk 10 20;+r.x r.y";
         };
         let msg = format!("{err:?}");
         assert!(msg.contains("3-arg non-json"), "got {msg}");
+    }
+
+    // ---- OP_RNDN VM dispatch + jit_rndn helper coverage ----
+
+    #[test]
+    fn vm_op_rndn_sigma_zero_returns_mu() {
+        use crate::interpreter::Value;
+        fn make_abc(op: u8, a: u8, b: u8, c: u8) -> u32 {
+            ((op as u32) << 24) | ((a as u32) << 16) | ((b as u32) << 8) | (c as u32)
+        }
+        fn make_abx(op: u8, a: u8, bx: u16) -> u32 {
+            ((op as u32) << 24) | ((a as u32) << 16) | (bx as u32)
+        }
+        let code = vec![
+            make_abx(OP_LOADK, 1, 0),
+            make_abx(OP_LOADK, 2, 1),
+            make_abc(OP_RNDN, 3, 1, 2),
+            make_abc(OP_RET, 3, 0, 0),
+        ];
+        let chunk = Chunk {
+            code,
+            constants: vec![Value::Number(5.0), Value::Number(0.0)],
+            param_count: 0,
+            reg_count: 4,
+            spans: vec![crate::ast::Span::UNKNOWN; 4],
+            all_regs_numeric: false,
+        };
+        let program = CompiledProgram {
+            chunks: vec![chunk],
+            func_names: vec!["f".to_string()],
+            nan_constants: vec![vec![NanVal::number(5.0), NanVal::number(0.0)]],
+            type_registry: TypeRegistry::default(),
+            is_tool: vec![false],
+        };
+        match run(&program, Some("f"), vec![]).expect("rndn should not error") {
+            Value::Number(n) => assert_eq!(n, 5.0),
+            other => panic!("expected number, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn vm_op_rndn_finite_for_nonzero_sigma() {
+        use crate::interpreter::Value;
+        fn make_abc(op: u8, a: u8, b: u8, c: u8) -> u32 {
+            ((op as u32) << 24) | ((a as u32) << 16) | ((b as u32) << 8) | (c as u32)
+        }
+        fn make_abx(op: u8, a: u8, bx: u16) -> u32 {
+            ((op as u32) << 24) | ((a as u32) << 16) | (bx as u32)
+        }
+        let code = vec![
+            make_abx(OP_LOADK, 1, 0),
+            make_abx(OP_LOADK, 2, 1),
+            make_abc(OP_RNDN, 3, 1, 2),
+            make_abc(OP_RET, 3, 0, 0),
+        ];
+        let chunk = Chunk {
+            code,
+            constants: vec![Value::Number(0.0), Value::Number(1.0)],
+            param_count: 0,
+            reg_count: 4,
+            spans: vec![crate::ast::Span::UNKNOWN; 4],
+            all_regs_numeric: false,
+        };
+        let program = CompiledProgram {
+            chunks: vec![chunk],
+            func_names: vec!["f".to_string()],
+            nan_constants: vec![vec![NanVal::number(0.0), NanVal::number(1.0)]],
+            type_registry: TypeRegistry::default(),
+            is_tool: vec![false],
+        };
+        fastrand::seed(7);
+        match run(&program, Some("f"), vec![]).expect("rndn should not error") {
+            Value::Number(n) => assert!(n.is_finite(), "got non-finite {n}"),
+            other => panic!("expected number, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn vm_op_rndn_non_number_errors() {
+        use crate::interpreter::Value;
+        fn make_abc(op: u8, a: u8, b: u8, c: u8) -> u32 {
+            ((op as u32) << 24) | ((a as u32) << 16) | ((b as u32) << 8) | (c as u32)
+        }
+        fn make_abx(op: u8, a: u8, bx: u16) -> u32 {
+            ((op as u32) << 24) | ((a as u32) << 16) | (bx as u32)
+        }
+        let code = vec![
+            make_abx(OP_LOADK, 1, 0),
+            make_abx(OP_LOADK, 2, 1),
+            make_abc(OP_RNDN, 3, 1, 2),
+            make_abc(OP_RET, 3, 0, 0),
+        ];
+        let chunk = Chunk {
+            code,
+            constants: vec![Value::Bool(true), Value::Number(0.0)],
+            param_count: 0,
+            reg_count: 4,
+            spans: vec![crate::ast::Span::UNKNOWN; 4],
+            all_regs_numeric: false,
+        };
+        let program = CompiledProgram {
+            chunks: vec![chunk],
+            func_names: vec!["f".to_string()],
+            nan_constants: vec![vec![NanVal::boolean(true), NanVal::number(0.0)]],
+            type_registry: TypeRegistry::default(),
+            is_tool: vec![false],
+        };
+        let res = run(&program, Some("f"), vec![]);
+        assert!(res.is_err(), "expected type error, got {res:?}");
+    }
+
+    #[cfg(feature = "cranelift")]
+    #[test]
+    fn jit_rndn_sigma_zero_returns_mu() {
+        let v = NanVal(jit_rndn(NanVal::number(5.0).0, NanVal::number(0.0).0));
+        assert!(v.is_number());
+        assert_eq!(v.as_number(), 5.0);
+    }
+
+    #[cfg(feature = "cranelift")]
+    #[test]
+    fn jit_rndn_finite_for_nonzero_sigma() {
+        fastrand::seed(11);
+        let v = NanVal(jit_rndn(NanVal::number(0.0).0, NanVal::number(1.0).0));
+        assert!(v.is_number());
+        assert!(v.as_number().is_finite());
+    }
+
+    #[cfg(feature = "cranelift")]
+    #[test]
+    fn jit_rndn_non_number_returns_nil() {
+        let bits = jit_rndn(NanVal::boolean(true).0, NanVal::number(0.0).0);
+        assert_eq!(bits, TAG_NIL);
+        let bits = jit_rndn(NanVal::number(0.0).0, NanVal::boolean(true).0);
+        assert_eq!(bits, TAG_NIL);
     }
 }
