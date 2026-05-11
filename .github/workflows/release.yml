@@ -185,13 +185,7 @@ jobs:
           sparse-checkout: |
             pi
             skills/ilo
-            README.md
             LICENSE
-
-      - name: Copy README and LICENSE into pi package
-        run: |
-          cp README.md pi/README.md
-          cp LICENSE pi/LICENSE
 
       - name: Sync canonical skill into pi package
         run: |
