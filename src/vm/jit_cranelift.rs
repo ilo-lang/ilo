@@ -963,7 +963,7 @@ fn compile_function_body(
 
     // Track whether the current block has been terminated
     let mut block_terminated = false;
-    // Track whether to skip the next instruction (used by OP_POSTH data word)
+    // Track whether to skip the next instruction (data word for OP_POSTH, OP_SLC, OP_MSET)
     let mut skip_next = false;
 
     // Translate bytecode instruction by instruction
@@ -1867,10 +1867,13 @@ fn compile_function_body(
                 builder.def_var(vars[a_idx], result);
             }
             OP_SLC => {
-                // slc(R[B], R[C], R[C+1])
+                // slc(R[B], R[C], R[D]) — D in data word A field
                 let bv = builder.use_var(vars[b_idx]);
                 let cv = builder.use_var(vars[c_idx]);
-                let dv = builder.use_var(vars[c_idx + 1]);
+                let data_inst = chunk.code[ip + 1];
+                skip_next = true;
+                let d_idx = ((data_inst >> 16) & 0xFF) as usize;
+                let dv = builder.use_var(vars[d_idx]);
                 let fref = get_func_ref(&mut builder, module, helpers.slc);
                 let call_inst = builder.ins().call(fref, &[bv, cv, dv]);
                 let result = builder.inst_results(call_inst)[0];
@@ -3175,11 +3178,15 @@ fn compile_function_body(
                 builder.def_var(vars[a_idx], result);
             }
             OP_MSET => {
+                // mset(R[B], R[C], R[D]) — D in data word A field
                 let bv = builder.use_var(vars[b_idx]);
                 let cv = builder.use_var(vars[c_idx]);
-                let cv1 = builder.use_var(vars[c_idx + 1]);
+                let data_inst = chunk.code[ip + 1];
+                skip_next = true;
+                let d_idx = ((data_inst >> 16) & 0xFF) as usize;
+                let dv = builder.use_var(vars[d_idx]);
                 let fref = get_func_ref(&mut builder, module, helpers.mset);
-                let call_inst = builder.ins().call(fref, &[bv, cv, cv1]);
+                let call_inst = builder.ins().call(fref, &[bv, cv, dv]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
             }
