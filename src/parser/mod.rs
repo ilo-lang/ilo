@@ -511,6 +511,12 @@ impl Parser {
 
     fn parse_type(&mut self) -> Result<Type> {
         match self.peek().cloned() {
+            Some(Token::LParen) => {
+                self.advance();
+                let inner = self.parse_type()?;
+                self.expect(&Token::RParen)?;
+                Ok(inner)
+            }
             Some(Token::Ident(ref s)) if s == "n" => {
                 self.advance();
                 Ok(Type::Number)
@@ -619,6 +625,7 @@ impl Parser {
             Some(Token::ResultType) => true,
             Some(Token::SumType) => true,
             Some(Token::FnType) => true,
+            Some(Token::LParen) => true,
             _ => false,
         }
     }
@@ -6384,5 +6391,62 @@ mod tests {
             "expected Call to dbl, got {:?}",
             body[0].node
         );
+    }
+
+    // ── Coverage: parse_type LParen branch (nested generic types) ──────────
+
+    fn first_fn_return_debug(src: &str) -> String {
+        let prog = parse_str(src);
+        match &prog.declarations[0] {
+            Decl::Function { return_type, .. } => format!("{:?}", return_type),
+            _ => String::from("not-a-fn"),
+        }
+    }
+
+    fn first_fn_param_debug(src: &str) -> String {
+        let prog = parse_str(src);
+        match &prog.declarations[0] {
+            Decl::Function { params, .. } => format!("{:?}", params),
+            _ => String::from("not-a-fn"),
+        }
+    }
+
+    #[test]
+    fn parse_type_result_of_list() {
+        // `R (L n) t` — exercises LParen arm of parse_type around `L n`.
+        let s = first_fn_return_debug("f>R (L n) t;~[1,2,3]");
+        assert!(s.contains("Result"), "no Result: {s}");
+        assert!(s.contains("List"), "no List: {s}");
+    }
+
+    #[test]
+    fn parse_type_parens_around_atom_transparent() {
+        // `R (n) t` — single-token in parens unwraps to plain `n`.
+        let s = first_fn_return_debug("f>R (n) t;~1");
+        assert!(s.contains("Result"), "no Result: {s}");
+        assert!(s.contains("Number"), "no Number: {s}");
+    }
+
+    #[test]
+    fn parse_type_param_with_paren_type() {
+        // LParen in a param type position exercises can_start_type's LParen branch.
+        let s = first_fn_param_debug("f x:(L n)>n;0");
+        assert!(s.contains("List"), "no List: {s}");
+        assert!(s.contains("Number"), "no Number: {s}");
+    }
+
+    #[test]
+    fn parse_type_nested_paren_around_atom_does_not_break_flat() {
+        // Sanity: existing flat `R n t` still parses.
+        let s = first_fn_return_debug("f>R n t;~1");
+        assert!(s.contains("Result"), "no Result: {s}");
+    }
+
+    #[test]
+    fn parse_type_triple_nested_paren() {
+        // `R (L (R n t)) t` — recursive parse_type calls through LParen arm twice.
+        let s = first_fn_return_debug("f>R (L (R n t)) t;~[~1,~2]");
+        assert!(s.contains("Result"), "no Result: {s}");
+        assert!(s.contains("List"), "no List: {s}");
     }
 }
