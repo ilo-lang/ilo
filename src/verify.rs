@@ -324,6 +324,36 @@ fn is_builtin(name: &str) -> bool {
     Builtin::is_builtin(name)
 }
 
+/// If `name` is a pure builtin that's safe to pass as a higher-order argument,
+/// return its function type. Returns None for IO/HTTP/Map builtins, for HOFs
+/// themselves (map/flt/fld/grp), and for builtins with ambiguous/polymorphic
+/// types that can't be reduced to a single `Ty::Fn` signature (hd, tl, etc).
+fn builtin_as_fn_ty(name: &str) -> Option<Ty> {
+    let n = Ty::Number;
+    let t = Ty::Text;
+    Some(match name {
+        // 1-arg n->n
+        "abs" | "flr" | "cel" | "rou" => Ty::Fn(vec![n.clone()], Box::new(n)),
+        // 2-arg n,n->n (suitable as fld accumulator)
+        "min" | "max" | "mod" => Ty::Fn(vec![n.clone(), n.clone()], Box::new(n)),
+        // 1-arg list->n
+        "sum" | "avg" => Ty::Fn(vec![Ty::List(Box::new(n.clone()))], Box::new(n)),
+        // 1-arg t->t
+        "trm" => Ty::Fn(vec![t.clone()], Box::new(t)),
+        // 1-arg n->t and t->R n t
+        "str" => Ty::Fn(vec![n], Box::new(t)),
+        "num" => Ty::Fn(
+            vec![t.clone()],
+            Box::new(Ty::Result(Box::new(Ty::Number), Box::new(t))),
+        ),
+        // 1-arg any->t (passthrough but typed as text for json dump)
+        "jdmp" => Ty::Fn(vec![Ty::Unknown], Box::new(t)),
+        // 1-arg list->n (len of list)
+        "len" => Ty::Fn(vec![Ty::List(Box::new(Ty::Unknown))], Box::new(Ty::Number)),
+        _ => return None,
+    })
+}
+
 fn builtin_check_args(
     name: &str,
     arg_types: &[Ty],
@@ -1739,6 +1769,10 @@ impl VerifyContext {
                     // Function name used as a value — resolve to Ty::Fn
                     let params: Vec<Ty> = sig.params.iter().map(|(_, t)| t.clone()).collect();
                     Ty::Fn(params, Box::new(sig.return_type.clone()))
+                } else if let Some(fn_ty) = builtin_as_fn_ty(name) {
+                    // Pure builtin used as a value (e.g. `fld max xs 0`).
+                    // Promote to Ty::Fn so HOF args type-check.
+                    fn_ty
                 } else {
                     let mut candidates: Vec<String> = scope
                         .iter()

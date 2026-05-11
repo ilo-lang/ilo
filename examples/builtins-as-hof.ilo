@@ -1,0 +1,23 @@
+-- Builtins as higher-order arguments.
+-- `max`, `min`, `abs`, etc. can be passed directly to fld/map without a wrapper.
+
+-- Fold with the `max` builtin to find the maximum.
+mx xs:L n>n;fld max xs 0
+
+-- Fold with the `min` builtin (seed must be safely high).
+mn xs:L n>n;fld min xs 99999
+
+-- Map with the `abs` builtin to take absolute values.
+abs-all xs:L n>L n;map abs xs
+
+-- vm/jit lack higher-order builtins (no FnRef dispatch)
+-- engine-skip: vm
+-- engine-skip: jit
+-- engine-skip: cranelift
+
+-- run: mx [3,1,4,1,5,9,2,6]
+-- out: 9
+-- run: mn [3,1,4,1,5,9,2,6]
+-- out: 1
+-- run: abs-all [-1,2,-3,4,-5]
+-- out: [1, 2, 3, 4, 5]
