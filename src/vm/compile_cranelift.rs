@@ -1841,7 +1841,11 @@ fn compile_function_body(
             OP_SLC => {
                 let bv = builder.use_var(vars[b_idx]);
                 let cv = builder.use_var(vars[c_idx]);
-                let dv = builder.use_var(vars[c_idx + 1]);
+                // Consume the next instruction (data word) at compile time; end-index reg in A field
+                let data_inst = chunk.code[ip + 1];
+                skip_next = true;
+                let d_idx = ((data_inst >> 16) & 0xFF) as usize;
+                let dv = builder.use_var(vars[d_idx]);
                 let fref = get_func_ref(&mut builder, module, helpers.slc);
                 let call_inst = builder.ins().call(fref, &[bv, cv, dv]);
                 let result = builder.inst_results(call_inst)[0];
@@ -2702,9 +2706,13 @@ fn compile_function_body(
             OP_MSET => {
                 let bv = builder.use_var(vars[b_idx]);
                 let cv = builder.use_var(vars[c_idx]);
-                let cv1 = builder.use_var(vars[c_idx + 1]);
+                // Consume the next instruction (data word) at compile time; val reg in A field
+                let data_inst = chunk.code[ip + 1];
+                skip_next = true;
+                let d_idx = ((data_inst >> 16) & 0xFF) as usize;
+                let dv = builder.use_var(vars[d_idx]);
                 let fref = get_func_ref(&mut builder, module, helpers.mset);
-                let call_inst = builder.ins().call(fref, &[bv, cv, cv1]);
+                let call_inst = builder.ins().call(fref, &[bv, cv, dv]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
             }

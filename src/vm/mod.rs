@@ -119,7 +119,7 @@ pub(crate) const OP_HD: u8 = 51; // R[A] = hd(R[B])  (head of list/text)
 pub(crate) const OP_TL: u8 = 52; // R[A] = tl(R[B])  (tail of list/text)
 pub(crate) const OP_REV: u8 = 53; // R[A] = rev(R[B])  (reverse list or text)
 pub(crate) const OP_SRT: u8 = 54; // R[A] = srt(R[B])  (sort list or text)
-pub(crate) const OP_SLC: u8 = 55; // R[A] = slc(R[B], R[C], R[C+1])  (slice list or text)
+pub(crate) const OP_SLC: u8 = 55; // R[A] = slc(R[B], R[C], R[D])  (slice; D in data word A field)
 pub(crate) const OP_RND0: u8 = 57; // R[A] = random float in [0,1)
 pub(crate) const OP_RND2: u8 = 58; // R[A] = random int in [R[B], R[C]]
 pub(crate) const OP_NOW: u8 = 59; // R[A] = current unix timestamp (seconds, float)
@@ -136,7 +136,7 @@ pub(crate) const OP_ISLIST: u8 = 68; // R[A] = R[B] is List
 // Map operations
 pub(crate) const OP_MAPNEW: u8 = 69; // R[A] = {}  (empty map)
 pub(crate) const OP_MGET: u8 = 70; // R[A] = R[B][R[C]]  (get key → nil if missing)
-pub(crate) const OP_MSET: u8 = 71; // R[A] = mset(R[B], R[C], R[C+1])  (key=C, val=C+1)
+pub(crate) const OP_MSET: u8 = 71; // R[A] = mset(R[B], R[C], R[D])  (D=val in data word A field)
 pub(crate) const OP_MHAS: u8 = 72; // R[A] = R[B] has key R[C]
 pub(crate) const OP_MKEYS: u8 = 73; // R[A] = keys(R[B])  → L t
 pub(crate) const OP_MVALS: u8 = 74; // R[A] = vals(R[B])  → L v
@@ -1631,12 +1631,15 @@ impl RegCompiler {
                             return ra;
                         }
                         (Builtin::Slc, 3) => {
+                            // slc list start end — two-instruction sequence:
+                            //   OP_SLC   A=result  B=list  C=start
+                            //   data word: A=end_reg (consumed by OP_SLC dispatch; ip advances past it)
                             let rb = self.compile_expr(&args[0]);
                             let rc = self.compile_expr(&args[1]);
                             let rd = self.compile_expr(&args[2]);
-                            debug_assert_eq!(rd, rc + 1, "slc args should be consecutive regs");
                             let ra = self.alloc_reg();
                             self.emit_abc(OP_SLC, ra, rb, rc);
+                            self.emit_abc(0, rd, 0, 0);
                             return ra;
                         }
                         (Builtin::Rnd, 0) => {
@@ -1859,16 +1862,15 @@ impl RegCompiler {
                             return ra;
                         }
                         (Builtin::Mset, 3) => {
+                            // mset map key val — two-instruction sequence:
+                            //   OP_MSET  A=result  B=map  C=key
+                            //   data word: A=val_reg (consumed by OP_MSET dispatch; ip advances past it)
                             let rb = self.compile_expr(&args[0]);
                             let rc = self.compile_expr(&args[1]);
                             let rd = self.compile_expr(&args[2]);
-                            debug_assert_eq!(
-                                rd,
-                                rc + 1,
-                                "mset key/val args should be consecutive regs"
-                            );
                             let ra = self.alloc_reg();
                             self.emit_abc(OP_MSET, ra, rb, rc);
+                            self.emit_abc(0, rd, 0, 0);
                             return ra;
                         }
                         (Builtin::Mhas, 2) => {
@@ -3611,19 +3613,30 @@ impl<'a> VM<'a> {
                     reg_set!(a, result);
                 }
                 OP_MSET => {
+                    // Two-instruction sequence: OP_MSET A=result B=map C=key; data word A=val_reg
                     let a = ((inst >> 16) & 0xFF) as usize + base;
                     let b = ((inst >> 8) & 0xFF) as usize + base;
                     let c = (inst & 0xFF) as usize + base;
+                    // SAFETY: compiler always emits the data word immediately after OP_MSET
+                    let data_inst = unsafe { *code.get_unchecked(ip) };
+                    ip += 1;
+                    let d = ((data_inst >> 16) & 0xFF) as usize + base;
                     let map_v = reg!(b);
                     let key_v = reg!(c);
-                    let val_v = reg!(c + 1);
+                    let val_v = reg!(d);
                     let result = unsafe {
                         match map_v.as_heap_ref() {
                             HeapObj::Map(m) => match key_v.as_heap_ref() {
                                 HeapObj::Str(k) => {
                                     let mut new_map = m.clone();
+                                    // m.clone() bit-copies values; bump RC for each retained entry
+                                    for v in new_map.values() {
+                                        v.clone_rc();
+                                    }
                                     val_v.clone_rc();
-                                    new_map.insert(k.clone(), val_v);
+                                    if let Some(old) = new_map.insert(k.clone(), val_v) {
+                                        old.drop_rc();
+                                    }
                                     NanVal::heap_map(new_map)
                                 }
                                 _ => vm_err!(VmError::Type("mset: key must be text")),
@@ -3704,7 +3717,15 @@ impl<'a> VM<'a> {
                             HeapObj::Map(m) => match key_v.as_heap_ref() {
                                 HeapObj::Str(k) => {
                                     let mut new_map = m.clone();
-                                    new_map.remove(k.as_str());
+                                    // m.clone() bit-copies values; bump RC for each retained entry
+                                    for v in new_map.values() {
+                                        v.clone_rc();
+                                    }
+                                    // drop_rc the removed value before HashMap::remove discards it,
+                                    // otherwise its inner heap RC leaks/double-frees on next gc.
+                                    if let Some(removed) = new_map.remove(k.as_str()) {
+                                        removed.drop_rc();
+                                    }
                                     NanVal::heap_map(new_map)
                                 }
                                 _ => vm_err!(VmError::Type("mdel: key must be text")),
@@ -3719,7 +3740,9 @@ impl<'a> VM<'a> {
                     let b = ((inst >> 8) & 0xFF) as usize + base;
                     let v = reg!(b);
                     println!("{}", v.to_value());
-                    reg_set!(a, v); // passthrough — same value returned
+                    // passthrough: same heap value now lives in two regs, bump RC
+                    v.clone_rc();
+                    reg_set!(a, v);
                 }
                 OP_RD => {
                     let a = ((inst >> 16) & 0xFF) as usize + base;
@@ -5475,10 +5498,14 @@ impl<'a> VM<'a> {
                     }
                 }
                 OP_SLC => {
+                    // Two-instruction sequence: OP_SLC A=result B=list C=start; data word A=end_reg
                     let a = ((inst >> 16) & 0xFF) as usize + base;
                     let b = ((inst >> 8) & 0xFF) as usize + base;
                     let c = (inst & 0xFF) as usize + base;
-                    let d = c + 1;
+                    // SAFETY: compiler always emits the data word immediately after OP_SLC
+                    let data_inst = unsafe { *code.get_unchecked(ip) };
+                    ip += 1;
+                    let d = ((data_inst >> 16) & 0xFF) as usize + base;
                     let vb = reg!(b);
                     let vc = reg!(c);
                     let vd = reg!(d);
@@ -7779,7 +7806,9 @@ pub extern "C" fn ilo_aot_parse_arg(ptr: u64) -> u64 {
 pub(crate) fn find_block_leaders(code: &[u32]) -> Vec<usize> {
     let mut leaders = std::collections::BTreeSet::new();
     leaders.insert(0);
-    for (i, &inst) in code.iter().enumerate() {
+    let mut i = 0;
+    while i < code.len() {
+        let inst = code[i];
         let op = (inst >> 24) as u8;
         match op {
             OP_JMP | OP_JMPF | OP_JMPT | OP_JMPNN => {
@@ -7800,6 +7829,14 @@ pub(crate) fn find_block_leaders(code: &[u32]) -> Vec<usize> {
                 leaders.insert(i + 2);
                 leaders.insert(i + 3);
             }
+            OP_SLC | OP_MSET | OP_POSTH => {
+                // 2-word instructions: the following word is data, not an instruction.
+                // Skip it so its bits aren't mis-decoded as an opcode that might mark
+                // bogus leaders. The instruction after the data word is a normal leader
+                // candidate (and will be reached on the next loop iteration).
+                i += 2;
+                continue;
+            }
             op if op == OP_CMPK_GE_N
                 || op == OP_CMPK_GT_N
                 || op == OP_CMPK_LT_N
@@ -7814,6 +7851,7 @@ pub(crate) fn find_block_leaders(code: &[u32]) -> Vec<usize> {
             }
             _ => {}
         }
+        i += 1;
     }
     leaders.into_iter().filter(|&l| l <= code.len()).collect()
 }
