@@ -3694,6 +3694,47 @@ mod tests {
         assert!(bytes4.is_ok());
     }
 
+    // ── AOT translator coverage for the new transcendental math opcodes ───
+    // These exercise the OP_POW and OP_SQRT|OP_LOG|OP_EXP|OP_SIN|OP_COS arms
+    // in compile_function_body, which the JIT-based --run-cranelift tests do
+    // not reach (those go through jit_cranelift::compile_and_call, not the
+    // AOT translator).
+    #[test]
+    fn codegen_pow_emits_object() {
+        let bytes = compile_to_object_bytes("f>n;pow 2 10");
+        assert!(bytes.is_ok(), "pow AOT failed: {:?}", bytes.err());
+    }
+
+    #[test]
+    fn codegen_sqrt_emits_object() {
+        let bytes = compile_to_object_bytes("f>n;sqrt 4");
+        assert!(bytes.is_ok(), "sqrt AOT failed: {:?}", bytes.err());
+    }
+
+    #[test]
+    fn codegen_log_emits_object() {
+        let bytes = compile_to_object_bytes("f>n;log 2.5");
+        assert!(bytes.is_ok(), "log AOT failed: {:?}", bytes.err());
+    }
+
+    #[test]
+    fn codegen_exp_emits_object() {
+        let bytes = compile_to_object_bytes("f>n;exp 1");
+        assert!(bytes.is_ok(), "exp AOT failed: {:?}", bytes.err());
+    }
+
+    #[test]
+    fn codegen_sin_emits_object() {
+        let bytes = compile_to_object_bytes("f>n;sin 0");
+        assert!(bytes.is_ok(), "sin AOT failed: {:?}", bytes.err());
+    }
+
+    #[test]
+    fn codegen_cos_emits_object() {
+        let bytes = compile_to_object_bytes("f>n;cos 0");
+        assert!(bytes.is_ok(), "cos AOT failed: {:?}", bytes.err());
+    }
+
     #[test]
     fn codegen_min_max_emits_object() {
         let bytes = compile_to_object_bytes("f a:n b:n>n;min a b");
