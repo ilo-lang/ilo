@@ -226,14 +226,47 @@ pub fn normalize_newlines(source: &str) -> String {
 pub fn lex(source: &str) -> Result<Vec<(Token, std::ops::Range<usize>)>, LexError> {
     let normalized = normalize_newlines(source);
     let mut lexer = Token::lexer(&normalized);
-    let mut tokens = Vec::new();
+    let mut tokens: Vec<(Token, std::ops::Range<usize>)> = Vec::new();
 
     while let Some(result) = lexer.next() {
         match result {
-            Ok(token) => tokens.push((token, lexer.span())),
+            Ok(token) => {
+                let span = lexer.span();
+                // Detect uppercase mid-identifier: a single uppercase type sigil
+                // (L/R/F/O/M/S) sitting flush against a preceding ident.
+                if is_type_sigil(&token) {
+                    if let Some((Token::Ident(prev), prev_span)) = tokens.last() {
+                        if prev_span.end == span.start {
+                            let sigil_char = normalized[span.clone()].chars().next().unwrap();
+                            return Err(uppercase_mid_ident_error(
+                                prev,
+                                sigil_char,
+                                &normalized[span.end..],
+                                prev_span.start,
+                            ));
+                        }
+                    }
+                }
+                tokens.push((token, span));
+            }
             Err(()) => {
                 let span = lexer.span();
                 let bad = &normalized[span.clone()];
+                // Single uppercase ASCII letter directly after an ident is a
+                // mid-identifier capital (e.g. `isAgg` → `is` + bad `A`).
+                if bad.len() == 1
+                    && bad.chars().next().unwrap().is_ascii_uppercase()
+                    && let Some((Token::Ident(prev), prev_span)) = tokens.last()
+                    && prev_span.end == span.start
+                {
+                    let c = bad.chars().next().unwrap();
+                    return Err(uppercase_mid_ident_error(
+                        prev,
+                        c,
+                        &normalized[span.end..],
+                        prev_span.start,
+                    ));
+                }
                 let (code, suggestion) = lex_error_kind(bad);
                 return Err(LexError {
                     code,
@@ -245,7 +278,97 @@ pub fn lex(source: &str) -> Result<Vec<(Token, std::ops::Range<usize>)>, LexErro
         }
     }
 
+    // Post-lex: detect underscore-separated identifier fragments like
+    // `rev_ps` → Ident("rev"), Underscore, Ident("ps") with no whitespace.
+    for i in 0..tokens.len().saturating_sub(2) {
+        let (a, sa) = (&tokens[i].0, &tokens[i].1);
+        let (b, sb) = (&tokens[i + 1].0, &tokens[i + 1].1);
+        let (c, sc) = (&tokens[i + 2].0, &tokens[i + 2].1);
+        if matches!(a, Token::Ident(_))
+            && *b == Token::Underscore
+            && matches!(c, Token::Ident(_))
+            && sa.end == sb.start
+            && sb.end == sc.start
+        {
+            let Token::Ident(ap) = a else { unreachable!() };
+            let Token::Ident(cp) = c else { unreachable!() };
+            // Greedily collect any further `_ident` pairs in the same run.
+            let mut combined = format!("{ap}_{cp}");
+            let mut end = sc.end;
+            let mut j = i + 3;
+            while j + 1 < tokens.len()
+                && tokens[j].0 == Token::Underscore
+                && matches!(tokens[j + 1].0, Token::Ident(_))
+                && tokens[j - 1].1.end == tokens[j].1.start
+                && tokens[j].1.end == tokens[j + 1].1.start
+            {
+                if let Token::Ident(s) = &tokens[j + 1].0 {
+                    combined.push('_');
+                    combined.push_str(s);
+                }
+                end = tokens[j + 1].1.end;
+                j += 2;
+            }
+            return Err(LexError {
+                code: "ILO-L002",
+                position: sa.start,
+                snippet: normalized[sa.start..end].to_string(),
+                suggestion: format!(
+                    "underscores are not allowed in identifiers; use hyphens (e.g. `{}`)",
+                    combined.replace('_', "-")
+                ),
+            });
+        }
+    }
+
     Ok(tokens)
+}
+
+fn is_type_sigil(t: &Token) -> bool {
+    matches!(
+        t,
+        Token::ListType
+            | Token::ResultType
+            | Token::FnType
+            | Token::OptType
+            | Token::MapType
+            | Token::SumType
+    )
+}
+
+fn uppercase_mid_ident_error(
+    prev: &str,
+    cap: char,
+    rest_after_cap: &str,
+    start: usize,
+) -> LexError {
+    // Reconstruct the offending identifier by reading trailing [A-Za-z0-9-] chars
+    // so hyphenated tails like `isHello-world` are echoed in full.
+    let trailing: String = rest_after_cap
+        .chars()
+        .take_while(|c| c.is_ascii_alphanumeric() || *c == '-')
+        .collect();
+    let offset = prev.len();
+    let full = format!("{prev}{cap}{trailing}");
+    let lower = full.to_lowercase();
+    let hyphenated = {
+        let mut s = String::with_capacity(full.len() + 2);
+        for (i, c) in full.chars().enumerate() {
+            if i > 0 && c.is_ascii_uppercase() && !s.ends_with('-') {
+                s.push('-');
+            }
+            s.push(c.to_ascii_lowercase());
+        }
+        s
+    };
+    LexError {
+        code: "ILO-L003",
+        position: start,
+        snippet: full.clone(),
+        suggestion: format!(
+            "identifiers must be lowercase ASCII; got '{full}' (capital '{cap}' at offset {offset}). Use lowercase, e.g. `{hyphenated}` or `{lower}`"
+        ),
+    }
 }
 
 fn lex_error_kind(bad_token: &str) -> (&'static str, String) {
