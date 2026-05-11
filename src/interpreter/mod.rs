@@ -1665,9 +1665,8 @@ fn serde_json_to_value(v: serde_json::Value) -> Value {
 
 fn eval_body(env: &mut Env, stmts: &[Spanned<Stmt>]) -> Result<BodyResult> {
     let mut last = Value::Nil;
-    for (i, spanned) in stmts.iter().enumerate() {
-        let is_last = i == stmts.len() - 1;
-        match eval_stmt(env, &spanned.node, is_last) {
+    for spanned in stmts.iter() {
+        match eval_stmt(env, &spanned.node) {
             Ok(Some(BodyResult::Return(v))) => return Ok(BodyResult::Return(v)),
             Ok(Some(BodyResult::Break(v))) => return Ok(BodyResult::Break(v)),
             Ok(Some(BodyResult::Continue)) => return Ok(BodyResult::Continue),
@@ -1691,7 +1690,7 @@ fn eval_body(env: &mut Env, stmts: &[Spanned<Stmt>]) -> Result<BodyResult> {
     Ok(BodyResult::Value(last))
 }
 
-fn eval_stmt(env: &mut Env, stmt: &Stmt, is_last: bool) -> Result<Option<BodyResult>> {
+fn eval_stmt(env: &mut Env, stmt: &Stmt) -> Result<Option<BodyResult>> {
     match stmt {
         Stmt::Let { name, value } => {
             let val = eval_expr(env, value)?;
@@ -1782,12 +1781,7 @@ fn eval_stmt(env: &mut Env, stmt: &Stmt, is_last: bool) -> Result<Option<BodyRes
                         BodyResult::Return(v) => return Ok(Some(BodyResult::Return(v))),
                         BodyResult::Break(v) => return Ok(Some(BodyResult::Break(v))),
                         BodyResult::Continue => return Ok(Some(BodyResult::Continue)),
-                        BodyResult::Value(v) => {
-                            if is_last {
-                                return Ok(Some(BodyResult::Return(v)));
-                            }
-                            return Ok(Some(BodyResult::Value(v)));
-                        }
+                        BodyResult::Value(v) => return Ok(Some(BodyResult::Value(v))),
                     }
                 }
             }
