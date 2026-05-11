@@ -1,0 +1,4 @@
+# Synced from the canonical skills/ilo/SKILL.md by the publish-pi job
+# at release time. The directory is created on demand in CI and in
+# local `npm pack` testing; don't commit it.
+skills/

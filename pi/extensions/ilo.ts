@@ -1,27 +1,29 @@
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Type } from "typebox";
+import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { existsSync } from "node:fs";
+import { dirname, resolve as resolvePath } from "node:path";
+import { fileURLToPath } from "node:url";
 
 type Details = Record<string, unknown>;
 type ToolResult = {
 	content: Array<{ type: "text"; text: string }>;
 	details: Details;
 };
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { existsSync } from "node:fs";
-import { dirname, resolve as resolvePath } from "node:path";
-import { fileURLToPath } from "node:url";
 
 const REPL_IDLE_TIMEOUT_MS = 5 * 60 * 1000;
 const REPL_REQUEST_TIMEOUT_MS = 30 * 1000;
+
+interface PendingRequest {
+	resolve: (value: string) => void;
+	reject: (err: Error) => void;
+}
 
 interface ReplState {
 	process: ChildProcessWithoutNullStreams;
 	buffer: string;
 	idleTimer: NodeJS.Timeout | null;
-	pending: Array<{
-		resolve: (value: string) => void;
-		reject: (err: Error) => void;
-	}>;
+	pending: PendingRequest[];
 }
 
 let repl: ReplState | null = null;
@@ -112,6 +114,10 @@ function startRepl(): ReplState {
 	};
 	repl = state;
 
+	// `ilo serv` speaks newline-delimited JSON: one request line in, one response
+	// line out. If a line arrives with no pending request it means the protocol
+	// has drifted (or the child emitted something unexpected); surface it on
+	// stderr instead of silently consuming it.
 	proc.stdout.on("data", (chunk: Buffer) => {
 		state.buffer += chunk.toString();
 		let newlineIndex = state.buffer.indexOf("\n");
@@ -119,9 +125,18 @@ function startRepl(): ReplState {
 			const line = state.buffer.slice(0, newlineIndex);
 			state.buffer = state.buffer.slice(newlineIndex + 1);
 			const pending = state.pending.shift();
-			if (pending) pending.resolve(line);
+			if (pending) {
+				pending.resolve(line);
+			} else if (line.length > 0) {
+				process.stderr.write(`pi-ilo-lang: orphan response from ilo serv: ${line}\n`);
+			}
 			newlineIndex = state.buffer.indexOf("\n");
 		}
+	});
+
+	proc.stdin.on("error", (err) => {
+		const head = state.pending.shift();
+		if (head) head.reject(err);
 	});
 
 	proc.on("close", () => {
@@ -144,28 +159,60 @@ function startRepl(): ReplState {
 	return state;
 }
 
-function sendToRepl(payload: object): Promise<string> {
+function sendToRepl(payload: object, signal?: AbortSignal): Promise<string> {
 	const state = repl ?? startRepl();
 	resetReplIdleTimer();
 
 	return new Promise<string>((resolve, reject) => {
+		if (state.process.exitCode !== null || !state.process.stdin.writable) {
+			reject(new Error("ilo serv session is not writable"));
+			return;
+		}
+
 		const timer = setTimeout(() => {
+			const index = state.pending.indexOf(entry);
+			if (index !== -1) state.pending.splice(index, 1);
 			reject(new Error("ilo serv request timed out"));
 		}, REPL_REQUEST_TIMEOUT_MS);
 
-		state.pending.push({
+		const entry: PendingRequest = {
 			resolve: (value) => {
 				clearTimeout(timer);
+				signal?.removeEventListener("abort", onAbort);
 				resolve(value);
 			},
 			reject: (err) => {
 				clearTimeout(timer);
+				signal?.removeEventListener("abort", onAbort);
 				reject(err);
 			},
-		});
+		};
 
-		state.process.stdin.write(JSON.stringify(payload) + "\n");
+		const onAbort = () => {
+			const index = state.pending.indexOf(entry);
+			if (index !== -1) state.pending.splice(index, 1);
+			entry.reject(new Error("ilo serv request aborted"));
+		};
+		if (signal) signal.addEventListener("abort", onAbort, { once: true });
+
+		state.pending.push(entry);
+
+		try {
+			state.process.stdin.write(JSON.stringify(payload) + "\n");
+		} catch (err) {
+			const index = state.pending.indexOf(entry);
+			if (index !== -1) state.pending.splice(index, 1);
+			entry.reject(err instanceof Error ? err : new Error(String(err)));
+		}
 	});
+}
+
+function describeIloError(err: unknown): string {
+	const message = err instanceof Error ? err.message : String(err);
+	if ((err as NodeJS.ErrnoException)?.code === "ENOENT") {
+		return `ilo binary not found. Install ilo (https://github.com/ilo-lang/ilo) or set ILO_BIN to an explicit path. (${message})`;
+	}
+	return message;
 }
 
 export default function (pi: ExtensionAPI) {
@@ -213,17 +260,25 @@ export default function (pi: ExtensionAPI) {
 			if (func) cliArgs.push(func);
 			cliArgs.push(...args);
 
-			const result = await runIlo(cliArgs, undefined, signal);
-			const text = [
-				result.stdout ? `stdout:\n${result.stdout}` : "stdout: (empty)",
-				result.stderr ? `stderr:\n${result.stderr}` : "",
-				`exit: ${result.exitCode}`,
-			].filter(Boolean).join("\n\n");
+			try {
+				const result = await runIlo(cliArgs, undefined, signal);
+				const text = [
+					result.stdout ? `stdout:\n${result.stdout}` : "stdout: (empty)",
+					result.stderr ? `stderr:\n${result.stderr}` : "",
+					`exit: ${result.exitCode}`,
+				].filter(Boolean).join("\n\n");
 
-			return {
-				content: [{ type: "text", text }],
-				details: { ...result },
-			};
+				return {
+					content: [{ type: "text", text }],
+					details: { ...result },
+				};
+			} catch (err) {
+				const message = describeIloError(err);
+				return {
+					content: [{ type: "text", text: `Error: ${message}` }],
+					details: { error: message },
+				};
+			}
 		},
 	});
 
@@ -250,15 +305,23 @@ export default function (pi: ExtensionAPI) {
 			})),
 		}),
 
-		async execute(_toolCallId, params): Promise<ToolResult> {
+		async execute(_toolCallId, params, signal): Promise<ToolResult> {
 			const command = params.command as string;
 
 			if (command === "start") {
-				startRepl();
-				return {
-					content: [{ type: "text", text: "ilo serv session started." }],
-					details: { running: true },
-				};
+				try {
+					startRepl();
+					return {
+						content: [{ type: "text", text: "ilo serv session started." }],
+						details: { running: true },
+					};
+				} catch (err) {
+					const message = describeIloError(err);
+					return {
+						content: [{ type: "text", text: `Error: ${message}` }],
+						details: { error: message },
+					};
+				}
 			}
 
 			if (command === "stop") {
@@ -290,13 +353,13 @@ export default function (pi: ExtensionAPI) {
 				if (params.args) payload.args = params.args;
 
 				try {
-					const responseLine = await sendToRepl(payload);
+					const responseLine = await sendToRepl(payload, signal);
 					return {
 						content: [{ type: "text", text: responseLine }],
 						details: { response: responseLine },
 					};
 				} catch (err) {
-					const message = err instanceof Error ? err.message : String(err);
+					const message = describeIloError(err);
 					return {
 						content: [{ type: "text", text: `Error: ${message}` }],
 						details: { error: message },
