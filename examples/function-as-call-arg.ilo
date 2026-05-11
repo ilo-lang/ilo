@@ -1,0 +1,18 @@
+-- Functions composed in argument position: no intermediate bindings needed.
+-- `str pct n 10` parses as one nested call. `hd tl xs` chains.
+-- HOF positions (e.g. fld's first arg) still take bare function refs --
+-- see examples/builtins-as-hof.ilo.
+
+dbl x:n>n;*x 2
+pct a:n b:n>n;*/ a b 100
+
+show n:n>t;str pct n 10
+snd xs:L n>n;hd tl xs
+dbd n:n>n;dbl n
+
+-- run: show 3
+-- out: 30
+-- run: snd [10,20,30]
+-- out: 20
+-- run: dbd 5
+-- out: 10

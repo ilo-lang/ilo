@@ -1,9 +1,20 @@
 use crate::ast::*;
 use crate::lexer::Token;
+use std::collections::HashMap;
 
 pub struct Parser {
     tokens: Vec<(Token, Span)>,
     pos: usize,
+    /// Known function arities, populated with builtins at construction
+    /// and extended with user-function headers as they're parsed.
+    /// Used by `parse_call_or_atom` to eagerly consume nested calls when an
+    /// Ident in arg position is a known function — so `prnt str nc` parses
+    /// as `prnt(str(nc))` without requiring parens.
+    fn_arity: HashMap<String, usize>,
+    /// For each known function, which parameter positions take a function
+    /// reference (HOF positions). A `true` at index i means "this arg
+    /// should be parsed as a bare ref, not eagerly expanded as a call".
+    fn_param_is_fn: HashMap<String, Vec<bool>>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -25,7 +36,13 @@ impl Parser {
             .into_iter()
             .filter(|(t, _)| *t != Token::Newline)
             .collect();
-        Parser { tokens, pos: 0 }
+        let (fn_arity, fn_param_is_fn) = builtin_arity_tables();
+        Parser {
+            tokens,
+            pos: 0,
+            fn_arity,
+            fn_param_is_fn,
+        }
     }
 
     fn peek(&self) -> Option<&Token> {
@@ -479,6 +496,11 @@ impl Parser {
         let start = self.peek_span();
         let name = self.expect_ident()?;
         let params = self.parse_params()?;
+        // Register arity + per-param fn-ref flags BEFORE parsing the body so
+        // recursive self-references inside the body benefit from eager
+        // call-arg expansion (e.g. `fac n:n>n;?=n 0{1}{*n fac -n 1}` —
+        // `fac -n 1` is parsed as a single nested call).
+        self.register_user_fn(&name, &params);
         self.expect(&Token::Greater)?;
         let return_type = self.parse_type()?;
         // The header/body boundary is normally a `;`, but a newline (filtered
@@ -1266,9 +1288,14 @@ impl Parser {
                 self.advance(); // consume !
             }
             // Parse additional args (operands until we hit >>, ;, }, etc.)
+            // Use call-arg parsing so nested calls inside a pipe target
+            // expand naturally (e.g. `xs >> map str` keeps `str` as a bare
+            // fn-ref since `map`'s first arg is a fn-ref position).
             let mut args = Vec::new();
             while self.can_start_operand() {
-                args.push(self.parse_operand()?);
+                let arg_idx = args.len();
+                let in_fn_pos = self.is_fn_ref_position(&func_name, arg_idx);
+                args.push(self.parse_call_arg(in_fn_pos)?);
             }
             // Piped value becomes last arg
             args.push(expr);
@@ -1536,6 +1563,79 @@ impl Parser {
         })
     }
 
+    /// Register a user function's arity and per-param fn-ref flags so that
+    /// call-arg parsing can eagerly consume nested calls when this function
+    /// is used as the outer callee.
+    fn register_user_fn(&mut self, name: &str, params: &[Param]) {
+        self.fn_arity.insert(name.to_string(), params.len());
+        let flags: Vec<bool> = params
+            .iter()
+            .map(|p| matches!(p.ty, Type::Fn(_, _)))
+            .collect();
+        self.fn_param_is_fn.insert(name.to_string(), flags);
+    }
+
+    /// Is arg position `arg_idx` of function `outer_name` a fn-ref position
+    /// (i.e. expects a function reference, not a regular value)? When true,
+    /// we must NOT eagerly expand an Ident in that position as a nested call.
+    fn is_fn_ref_position(&self, outer_name: &str, arg_idx: usize) -> bool {
+        self.fn_param_is_fn
+            .get(outer_name)
+            .and_then(|v| v.get(arg_idx).copied())
+            .unwrap_or(false)
+    }
+
+    /// Parse a single call argument. If `in_fn_ref_pos` is true, falls back
+    /// to plain `parse_operand` so an Ident stays as a bare ref (HOF use).
+    /// Otherwise, when the next token is an Ident naming a known function
+    /// with arity N, eagerly consume that Ident plus its N args as a nested
+    /// call — this lets agents write `prnt str nc` and `hd tl xs` naturally.
+    fn parse_call_arg(&mut self, in_fn_ref_pos: bool) -> Result<Expr> {
+        if !in_fn_ref_pos
+            && let Some(Token::Ident(name)) = self.peek()
+            && let Some(&arity) = self.fn_arity.get(name)
+            && arity > 0
+        {
+            // Don't eagerly expand if the Ident is followed by tokens that
+            // turn it into something other than a plain call (record fields,
+            // field/index access, postfix-bang, zero-arg paren form).
+            let next = self.token_at(self.pos + 1);
+            let is_record = matches!(next, Some(Token::Ident(_)))
+                && self.token_at(self.pos + 2) == Some(&Token::Colon);
+            let is_field = matches!(next, Some(Token::Dot) | Some(Token::DotQuestion));
+            let is_zero_arg_call =
+                next == Some(&Token::LParen) && self.token_at(self.pos + 2) == Some(&Token::RParen);
+            let is_unwrap = next == Some(&Token::Bang) && {
+                let ident_span = self.peek_span();
+                let bang_span = self
+                    .tokens
+                    .get(self.pos + 1)
+                    .map(|(_, s)| *s)
+                    .unwrap_or(Span::UNKNOWN);
+                ident_span.end > 0 && bang_span.start == ident_span.end
+            };
+            if !(is_record || is_field || is_zero_arg_call || is_unwrap) {
+                let inner_name = name.clone();
+                self.advance(); // consume the inner function ident
+                let mut inner_args = Vec::with_capacity(arity);
+                for i in 0..arity {
+                    if !self.can_start_operand() {
+                        // Underfilled — let the verifier report arity mismatch.
+                        break;
+                    }
+                    let inner_fn_pos = self.is_fn_ref_position(&inner_name, i);
+                    inner_args.push(self.parse_call_arg(inner_fn_pos)?);
+                }
+                return Ok(Expr::Call {
+                    function: inner_name,
+                    args: inner_args,
+                    unwrap: false,
+                });
+            }
+        }
+        self.parse_operand()
+    }
+
     /// Parse function call or plain atom
     /// call = IDENT atom+ (greedy, when not a record)
     /// Also handles zero-arg calls: `func()`
@@ -1577,7 +1677,9 @@ impl Parser {
             if unwrap {
                 let mut args = Vec::new();
                 while self.can_start_operand() {
-                    args.push(self.parse_operand()?);
+                    let arg_idx = args.len();
+                    let in_fn_pos = self.is_fn_ref_position(&name, arg_idx);
+                    args.push(self.parse_call_arg(in_fn_pos)?);
                 }
                 return Ok(Expr::Call {
                     function: name,
@@ -1618,7 +1720,9 @@ impl Parser {
                 }
                 let mut args = Vec::new();
                 while self.can_start_operand() {
-                    args.push(self.parse_operand()?);
+                    let arg_idx = args.len();
+                    let in_fn_pos = self.is_fn_ref_position(&name, arg_idx);
+                    args.push(self.parse_call_arg(in_fn_pos)?);
                     // After each arg, if next is infix, stop
                     if let Some(tok) = self.peek()
                         && Self::is_infix_or_suffix_op(tok)
@@ -1952,6 +2056,117 @@ impl Parser {
             None => Err(self.error("ILO-P014", "expected number, got EOF".into())),
         }
     }
+}
+
+/// Build the parser's static arity/HOF tables for builtins. These are used
+/// during call-arg parsing to eagerly consume nested calls in arg position
+/// (so `prnt str nc` parses as `prnt(str(nc))` instead of `prnt(str, nc)`).
+///
+/// Builtins with overloaded arities (`rnd`/`now` — 0 args, but also seen
+/// with args in `rnd`, plus `get`/`post`/`rd`/`rdb` 1-or-2-arg variants and
+/// `srt` 1-or-2-arg variants) get the BASE/canonical arity entered here.
+/// `srt`'s entry uses arity 2 with a fn-ref first position, which lets
+/// `srt cmp xs` expand and degrades gracefully for `srt xs` (the loop
+/// simply stops when no more operands are available).
+///
+/// Mutating-only HOFs (`map`/`flt`/`fld`/`grp`) get fn-ref flag on slot 0.
+fn builtin_arity_tables() -> (HashMap<String, usize>, HashMap<String, Vec<bool>>) {
+    // (name, arity, fn_ref_positions)
+    let entries: &[(&str, usize, &[usize])] = &[
+        // Conversion
+        ("str", 1, &[]),
+        ("num", 1, &[]),
+        // Math (unary)
+        ("abs", 1, &[]),
+        ("flr", 1, &[]),
+        ("cel", 1, &[]),
+        ("rou", 1, &[]),
+        ("sqrt", 1, &[]),
+        ("log", 1, &[]),
+        ("exp", 1, &[]),
+        ("sin", 1, &[]),
+        ("cos", 1, &[]),
+        // Math (binary)
+        ("min", 2, &[]),
+        ("max", 2, &[]),
+        ("mod", 2, &[]),
+        ("pow", 2, &[]),
+        // Aggregates
+        ("sum", 1, &[]),
+        ("avg", 1, &[]),
+        // Collections (unary)
+        ("len", 1, &[]),
+        ("hd", 1, &[]),
+        ("tl", 1, &[]),
+        ("rev", 1, &[]),
+        ("unq", 1, &[]),
+        ("flat", 1, &[]),
+        // Collections (binary)
+        ("at", 2, &[]),
+        ("has", 2, &[]),
+        ("spl", 2, &[]),
+        ("cat", 2, &[]),
+        // Collections (ternary)
+        ("slc", 3, &[]),
+        // Sort: 2-arg form (cmp, list) with fn-ref slot 0; 1-arg form
+        // (list) still parses because the loop stops when no operand
+        // follows. The 0th slot is a fn-ref position so `srt xs` keeps
+        // `xs` as a bare ref and doesn't try to expand it.
+        ("srt", 2, &[0]),
+        // Higher-order
+        ("map", 2, &[0]),
+        ("flt", 2, &[0]),
+        ("fld", 3, &[0]),
+        ("grp", 2, &[0]),
+        // I/O
+        ("prnt", 1, &[]),
+        ("wr", 2, &[]),
+        ("wrl", 2, &[]),
+        ("trm", 1, &[]),
+        // fmt is variadic (template + N args) — leave to greedy parsing
+        // JSON
+        ("jdmp", 1, &[]),
+        ("jpar", 1, &[]),
+        ("jpth", 2, &[]),
+        // Regex
+        ("rgx", 2, &[]),
+        // Map (associative)
+        ("mget", 2, &[]),
+        ("mset", 3, &[]),
+        ("mhas", 2, &[]),
+        ("mkeys", 1, &[]),
+        ("mvals", 1, &[]),
+        ("mdel", 2, &[]),
+        // Note: omitted by design — these have overloads or zero-arg forms
+        // best left to the existing greedy/zero-arg paths:
+        //   rnd, now, mmap (0-arg, special-cased above)
+        //   get, post, rd, rdb, rdl, env (variable arity / IO)
+        //   $ / get (path access via dollar prefix)
+    ];
+    let mut arity = HashMap::new();
+    let mut fn_flags = HashMap::new();
+    for (name, n, hof_slots) in entries {
+        arity.insert((*name).to_string(), *n);
+        let mut flags = vec![false; *n];
+        for &slot in *hof_slots {
+            if slot < flags.len() {
+                flags[slot] = true;
+            }
+        }
+        fn_flags.insert((*name).to_string(), flags);
+    }
+    // Mirror entries under their long-form aliases (e.g. `filter` → `flt`)
+    // so agents writing `filter pos xs` still get the HOF first-arg
+    // protection and arity-aware expansion.
+    for (long, short) in crate::ast::all_builtin_aliases() {
+        if let Some(n) = arity.get(short).copied() {
+            arity.insert(long.to_string(), n);
+        }
+        if let Some(flags) = fn_flags.get(short).cloned() {
+            fn_flags.insert(long.to_string(), flags);
+        }
+    }
+    (arity, fn_flags)
 }
 
 /// Extract the last expression from a body, falling back to Nil.

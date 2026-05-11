@@ -421,6 +421,12 @@ pub fn resolve_alias(name: &str) -> Option<&'static str> {
         .map(|(_, short)| *short)
 }
 
+/// Iterate over all (long_name, short_name) builtin alias pairs.
+/// Used by the parser to mirror arity/HOF metadata onto long-form names.
+pub fn all_builtin_aliases() -> impl Iterator<Item = (&'static str, &'static str)> {
+    BUILTIN_ALIASES.iter().copied()
+}
+
 /// Resolve aliases in all Call expressions throughout a program.
 /// Mutates function names in-place so downstream passes see only canonical names.
 pub fn resolve_aliases(program: &mut Program) {
