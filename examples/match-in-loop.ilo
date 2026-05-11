@@ -1,0 +1,17 @@
+-- match as the tail of an @ loop body: value yields into the loop, not the caller.
+
+evens n:n>n;a=0;@i 0..n{r=mod i 2;?r{0:a=+a i;_:a}};+a 0
+
+label n:n>n;?n{0:0;_:n}
+
+-- engine-skip: jit
+-- run: evens 0
+-- out: 0
+-- run: evens 5
+-- out: 6
+-- run: evens 10
+-- out: 20
+-- run: label 0
+-- out: 0
+-- run: label 7
+-- out: 7
