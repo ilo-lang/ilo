@@ -21364,4 +21364,48 @@ f>n;r=mk 10 20;+r.x r.y";
         let bits = jit_lst(s.0, NanVal::number(0.0).0, NanVal::number(99.0).0);
         assert_eq!(bits, TAG_NIL);
     }
+
+    // ---- VM compile coverage for 3-arg `wr` overload ----
+
+    fn parse_for_vm(source: &str) -> crate::ast::Program {
+        let tokens = crate::lexer::lex(source).unwrap();
+        let token_spans: Vec<(crate::lexer::Token, crate::ast::Span)> = tokens
+            .into_iter()
+            .map(|(t, r)| {
+                (
+                    t,
+                    crate::ast::Span {
+                        start: r.start,
+                        end: r.end,
+                    },
+                )
+            })
+            .collect();
+        let (prog, errors) = crate::parser::parse(token_spans);
+        assert!(errors.is_empty(), "parse errors: {:?}", errors);
+        prog
+    }
+
+    #[test]
+    fn vm_compile_wr_3arg_json_succeeds() {
+        // Compile only — don't write to disk. Confirms the json fast-path emits.
+        let src = r#"f>R t t;wr "/tmp/__ilo_test_wr.json" [1,2,3] "json""#;
+        let prog = parse_for_vm(src);
+        let compiled = crate::vm::compile(&prog).expect("compile should succeed for json overload");
+        assert!(!compiled.chunks.is_empty());
+    }
+
+    #[test]
+    fn vm_compile_wr_3arg_non_json_emits_compile_error() {
+        // csv/tsv 3-arg form is not yet implemented in the VM compiler;
+        // it should report a clear UndefinedFunction error.
+        let src = r#"f>R t t;wr "/tmp/__ilo_test_wr.csv" [[1,2]] "csv""#;
+        let prog = parse_for_vm(src);
+        let err = match crate::vm::compile(&prog) {
+            Ok(_) => panic!("csv 3-arg should not compile"),
+            Err(e) => e,
+        };
+        let msg = format!("{err:?}");
+        assert!(msg.contains("3-arg non-json"), "got {msg}");
+    }
 }

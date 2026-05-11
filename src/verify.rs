@@ -6354,4 +6354,75 @@ mod tests {
             errors
         );
     }
+
+    // ---- wr 3-arg overload coverage ----
+
+    #[test]
+    fn verify_wr_3arg_json_ok() {
+        let code = r#"f>R t t;wr "/tmp/x.json" [1,2,3] "json""#;
+        assert!(parse_and_verify(code).is_ok());
+    }
+
+    #[test]
+    fn verify_wr_3arg_csv_ok() {
+        let code = r#"f>R t t;wr "/tmp/x.csv" [["a","b"]] "csv""#;
+        assert!(parse_and_verify(code).is_ok());
+    }
+
+    #[test]
+    fn verify_wr_3arg_unsupported_format_literal() {
+        let code = r#"f>R t t;wr "/tmp/x.dat" [1,2,3] "yaml""#;
+        let result = parse_and_verify(code);
+        assert!(result.is_err());
+        let errors = result.unwrap_err();
+        assert!(
+            errors.iter().any(|e| e.message.contains("not supported")),
+            "errors: {:?}",
+            errors
+        );
+    }
+
+    #[test]
+    fn verify_wr_3arg_format_must_be_text() {
+        // 3-arg wr with numeric format arg: type-checker should reject.
+        let code = r#"f>R t t;wr "/tmp/x" [1] 5"#;
+        let result = parse_and_verify(code);
+        assert!(result.is_err());
+        let errors = result.unwrap_err();
+        assert!(
+            errors.iter().any(|e| e.message.contains("'wr' arg 3")),
+            "errors: {:?}",
+            errors
+        );
+    }
+
+    #[test]
+    fn verify_wr_2arg_content_must_be_text() {
+        // 2-arg wr: arg 2 must be text. (Triggers `arg_types.len() < 3` branch.)
+        let code = r#"f>R t t;wr "/tmp/x" 42"#;
+        let result = parse_and_verify(code);
+        assert!(result.is_err());
+        let errors = result.unwrap_err();
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.message.contains("'wr' arg 2 expects t")),
+            "errors: {:?}",
+            errors
+        );
+    }
+
+    #[test]
+    fn verify_wr_arity_message_mentions_2_or_3() {
+        // 4-arg wr should fail arity with "2 or 3" range.
+        let code = r#"f>R t t;wr "/tmp/x" [1] "json" "extra""#;
+        let result = parse_and_verify(code);
+        assert!(result.is_err());
+        let errors = result.unwrap_err();
+        assert!(
+            errors.iter().any(|e| e.message.contains("2 or 3")),
+            "errors: {:?}",
+            errors
+        );
+    }
 }
