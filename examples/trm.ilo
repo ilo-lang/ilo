@@ -1,0 +1,8 @@
+-- `trm` strips leading/trailing whitespace from a text value.
+-- Canonical short form is `trm`; `trim` is the long-form alias and resolves
+-- to the same builtin.
+
+trm-demo>t;trm "  hello  "
+
+-- run: trm-demo
+-- out: hello
