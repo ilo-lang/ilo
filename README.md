@@ -187,3 +187,7 @@ Per-call time (ns) across 8 micro-benchmarks. Lower is better. [Full results →
 4. **Language-agnostic** - structural tokens (`@`, `>`, `?`, `^`, `~`, `!`, `$`) over English words
 
 See the [manifesto](https://ilo-lang.ai/docs/manifesto/) for full rationale.
+
+## Author
+
+Built by [Daniel John Morris](https://danieljohnmorris.com), Technology Director at Cubitts. ilo is the language I wanted while building with LLMs and AI agents.
