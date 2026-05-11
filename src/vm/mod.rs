@@ -53,8 +53,6 @@ pub enum CompileError {
 
 #[cfg(feature = "cranelift")]
 pub mod compile_cranelift;
-#[cfg(all(target_arch = "aarch64", target_os = "macos"))]
-pub mod jit_arm64;
 #[cfg(feature = "cranelift")]
 pub mod jit_cranelift;
 #[cfg(feature = "llvm")]
