@@ -1,0 +1,13 @@
+-- Snake_case dot-access on records parsed from real-world JSON.
+stars j:t>R n t;r=jpar! j;r.stargazers_count
+trend j:t>R n t;r=jpar! j;r.change_1d
+cov j:t>R n t;r=jpar! j;r.people_vaccinated_per_hundred
+
+-- run: stars {"stargazers_count":42}
+-- out: 42
+
+-- run: trend {"change_1d":0.07}
+-- out: 0.07
+
+-- run: cov {"people_vaccinated_per_hundred":12.5}
+-- out: 12.5
