@@ -69,6 +69,7 @@ struct HelperFuncs {
     dot: FuncId,
     rnd0: FuncId,
     rnd2: FuncId,
+    rndn: FuncId,
     now: FuncId,
     env: FuncId,
     get: FuncId,
@@ -221,6 +222,7 @@ fn declare_all_helpers(module: &mut ObjectModule) -> HelperFuncs {
         dot: declare_helper(module, "jit_dot", 2, 1),
         rnd0: declare_helper(module, "jit_rnd0", 0, 1),
         rnd2: declare_helper(module, "jit_rnd2", 2, 1),
+        rndn: declare_helper(module, "jit_rndn", 2, 1),
         now: declare_helper(module, "jit_now", 0, 1),
         env: declare_helper(module, "jit_env", 1, 1),
         get: declare_helper(module, "jit_get", 1, 1),
@@ -950,9 +952,9 @@ fn compile_function_body(
                 // Guaranteed numeric outputs.
                 OP_ADD_NN | OP_SUB_NN | OP_MUL_NN | OP_DIV_NN | OP_ADDK_N | OP_SUBK_N
                 | OP_MULK_N | OP_DIVK_N | OP_LEN | OP_ABS | OP_MIN | OP_MAX | OP_FLR | OP_CEL
-                | OP_ROU | OP_RND0 | OP_RND2 | OP_NOW | OP_MOD | OP_CLAMP | OP_POW | OP_SQRT
-                | OP_LOG | OP_EXP | OP_SIN | OP_COS | OP_TAN | OP_LOG10 | OP_LOG2 | OP_ATAN2
-                | OP_MEDIAN | OP_QUANTILE | OP_STDEV | OP_VARIANCE | OP_DOT => {
+                | OP_ROU | OP_RND0 | OP_RND2 | OP_RNDN | OP_NOW | OP_MOD | OP_CLAMP | OP_POW
+                | OP_SQRT | OP_LOG | OP_EXP | OP_SIN | OP_COS | OP_TAN | OP_LOG10 | OP_LOG2
+                | OP_ATAN2 | OP_MEDIAN | OP_QUANTILE | OP_STDEV | OP_VARIANCE | OP_DOT => {
                     num_write[a] = true;
                 }
                 // LOADK: numeric only when the constant itself is a number.
@@ -1931,6 +1933,18 @@ fn compile_function_body(
                 let bv = builder.use_var(vars[b_idx]);
                 let cv = builder.use_var(vars[c_idx]);
                 let fref = get_func_ref(&mut builder, module, helpers.rnd2);
+                let call_inst = builder.ins().call(fref, &[bv, cv]);
+                let result = builder.inst_results(call_inst)[0];
+                builder.def_var(vars[a_idx], result);
+                if a_idx < reg_count && reg_always_num[a_idx] {
+                    let rf = builder.ins().bitcast(F64, mf, result);
+                    builder.def_var(f64_vars[a_idx], rf);
+                }
+            }
+            OP_RNDN => {
+                let bv = builder.use_var(vars[b_idx]);
+                let cv = builder.use_var(vars[c_idx]);
+                let fref = get_func_ref(&mut builder, module, helpers.rndn);
                 let call_inst = builder.ins().call(fref, &[bv, cv]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);

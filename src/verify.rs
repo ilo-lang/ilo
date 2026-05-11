@@ -307,6 +307,7 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("take", &["n", "list_or_text"], "list_or_text"),
     ("drop", &["n", "list_or_text"], "list_or_text"),
     ("rnd", &[], "n"),
+    ("rndn", &["n", "n"], "n"),
     ("now", &[], "n"),
     ("env", &["t"], "R t t"),
     ("jpth", &["t", "t"], "R t t"),
@@ -498,6 +499,21 @@ fn builtin_check_args(
                         code: "ILO-T013",
                         function: func_ctx.to_string(),
                         message: format!("'rnd' arg {} expects n, got {arg}", i + 1),
+                        hint: None,
+                        span,
+                        is_warning: false,
+                    });
+                }
+            }
+            (Ty::Number, errors)
+        }
+        "rndn" => {
+            for (i, arg) in arg_types.iter().enumerate() {
+                if !compatible(arg, &Ty::Number) {
+                    errors.push(VerifyError {
+                        code: "ILO-T013",
+                        function: func_ctx.to_string(),
+                        message: format!("'rndn' arg {} expects n, got {arg}", i + 1),
                         hint: None,
                         span,
                         is_warning: false,

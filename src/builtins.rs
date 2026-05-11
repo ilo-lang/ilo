@@ -81,6 +81,7 @@ pub enum Builtin {
 
     // Random / time
     Rnd,
+    Rndn,
     Now,
 
     // I/O
@@ -190,6 +191,7 @@ impl Builtin {
             "partition" => Some(Builtin::Partition),
             "frq" => Some(Builtin::Frq),
             "rnd" => Some(Builtin::Rnd),
+            "rndn" => Some(Builtin::Rndn),
             "now" => Some(Builtin::Now),
             "rd" => Some(Builtin::Rd),
             "rdl" => Some(Builtin::Rdl),
@@ -290,6 +292,7 @@ impl Builtin {
             Builtin::Partition => "partition",
             Builtin::Frq => "frq",
             Builtin::Rnd => "rnd",
+            Builtin::Rndn => "rndn",
             Builtin::Now => "now",
             Builtin::Rd => "rd",
             Builtin::Rdl => "rdl",
@@ -426,6 +429,7 @@ mod tests {
             "transpose",
             "matmul",
             "dot",
+            "rndn",
         ];
         for name in &all {
             let b = Builtin::from_name(name).unwrap_or_else(|| panic!("missing builtin: {name}"));

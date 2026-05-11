@@ -180,6 +180,7 @@ pub(crate) const OP_ADD_SS: u8 = 96; // R[A] = R[B] ++ R[C]  (both known text)
 pub(crate) const OP_AT: u8 = 103; // R[A] = at(R[B], R[C])  (i-th element of list/text)
 // Two-word instruction: OP_LST A=result B=list C=index; data word A=value_reg
 pub(crate) const OP_LST: u8 = 110; // R[A] = list-replace(R[B], R[C], R[D])  (new list with index C replaced by D)
+pub(crate) const OP_RNDN: u8 = 153; // R[A] = normal(mu=R[B], sigma=R[C])  (Box-Muller)
 
 // ABC mode — transcendental math (f64, std::f64 backed, NaN on domain error)
 pub(crate) const OP_POW: u8 = 97; // R[A] = pow(R[B], R[C])
@@ -1962,6 +1963,14 @@ impl RegCompiler {
                             let rc = self.compile_expr(&args[1]);
                             let ra = self.alloc_reg();
                             self.emit_abc(OP_RND2, ra, rb, rc);
+                            self.reg_is_num[ra as usize] = true;
+                            return ra;
+                        }
+                        (Builtin::Rndn, 2) => {
+                            let rb = self.compile_expr(&args[0]);
+                            let rc = self.compile_expr(&args[1]);
+                            let ra = self.alloc_reg();
+                            self.emit_abc(OP_RNDN, ra, rb, rc);
                             self.reg_is_num[ra as usize] = true;
                             return ra;
                         }
@@ -5625,6 +5634,22 @@ impl<'a> VM<'a> {
                     }
                     reg_set!(a, NanVal::number(fastrand::i64(lo..=hi) as f64));
                 }
+                OP_RNDN => {
+                    let a = ((inst >> 16) & 0xFF) as usize + base;
+                    let b = ((inst >> 8) & 0xFF) as usize + base;
+                    let c = (inst & 0xFF) as usize + base;
+                    let vb = reg!(b);
+                    let vc = reg!(c);
+                    if !vb.is_number() || !vc.is_number() {
+                        vm_err!(VmError::Type("rndn requires two numbers"));
+                    }
+                    let mu = vb.as_number();
+                    let sigma = vc.as_number();
+                    reg_set!(
+                        a,
+                        NanVal::number(crate::interpreter::box_muller_normal(mu, sigma))
+                    );
+                }
                 OP_NOW => {
                     let a = ((inst >> 16) & 0xFF) as usize + base;
                     let ts = std::time::SystemTime::now()
@@ -8012,6 +8037,20 @@ pub(crate) extern "C" fn jit_rnd2(a: u64, b: u64) -> u64 {
             return TAG_NIL;
         }
         NanVal::number(fastrand::i64(lo..=hi) as f64).0
+    } else {
+        TAG_NIL
+    }
+}
+
+#[cfg(feature = "cranelift")]
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn jit_rndn(a: u64, b: u64) -> u64 {
+    let av = NanVal(a);
+    let bv = NanVal(b);
+    if av.is_number() && bv.is_number() {
+        let mu = av.as_number();
+        let sigma = bv.as_number();
+        NanVal::number(crate::interpreter::box_muller_normal(mu, sigma)).0
     } else {
         TAG_NIL
     }
