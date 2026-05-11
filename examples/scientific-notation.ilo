@@ -1,0 +1,19 @@
+-- Scientific notation in number literals.
+-- Useful for finance, science, and policy figures where the alternative
+-- (e.g. 1000000000.0) is verbose and easy to miscount.
+
+-- US federal deficit projection (rough, in dollars): 1.9 trillion.
+deficit>n;1.9e12
+
+-- Planck's constant (J*s), 6.62607015e-34.
+planck>n;6.62607015e-34
+
+-- Combine: scale a budget figure to billions by dividing by 1e9.
+in-billions x:n>n;/x 1e9
+
+-- run: deficit
+-- out: 1900000000000
+-- run: planck
+-- out: 0.000000000000000000000000000000000662607015
+-- run: in-billions 5e11
+-- out: 500
