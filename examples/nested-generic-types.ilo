@@ -1,0 +1,12 @@
+-- Nested generic types: parenthesise compound types inside type ctors.
+-- Lets a signature distinguish R-of-list from R-of-scalar precisely so
+-- the verifier knows the Ok variant is a list, not an unrelated `L n` arg.
+
+-- Validate a list, return Ok-wrapped list or Err message.
+nz xs:L n>R (L n) t;l=len xs;=l 0 ^"empty";~xs
+
+-- run: nz [1,2,3]
+-- out: ~[1, 2, 3]
+
+-- run: nz []
+-- out: ^empty

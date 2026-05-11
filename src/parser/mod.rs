@@ -511,6 +511,12 @@ impl Parser {
 
     fn parse_type(&mut self) -> Result<Type> {
         match self.peek().cloned() {
+            Some(Token::LParen) => {
+                self.advance();
+                let inner = self.parse_type()?;
+                self.expect(&Token::RParen)?;
+                Ok(inner)
+            }
             Some(Token::Ident(ref s)) if s == "n" => {
                 self.advance();
                 Ok(Type::Number)
@@ -619,6 +625,7 @@ impl Parser {
             Some(Token::ResultType) => true,
             Some(Token::SumType) => true,
             Some(Token::FnType) => true,
+            Some(Token::LParen) => true,
             _ => false,
         }
     }
