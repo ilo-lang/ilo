@@ -455,7 +455,12 @@ impl Parser {
         let params = self.parse_params()?;
         self.expect(&Token::Greater)?;
         let return_type = self.parse_type()?;
-        self.expect(&Token::Semi)?;
+        // The header/body boundary is normally a `;`, but a newline (filtered
+        // out before parsing) leaves no separator. Accept either: consume a
+        // `;` if present, otherwise fall straight into the body.
+        if self.peek() == Some(&Token::Semi) {
+            self.advance();
+        }
         let body = self.parse_body()?;
         let end = self.prev_span();
         Ok(Decl::Function {

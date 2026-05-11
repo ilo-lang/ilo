@@ -1,0 +1,15 @@
+-- Multi-line function declarations: a newline between the header and body
+-- works the same as a `;` separator. Useful when the return type is a
+-- multi-token type like `R t t` or `L n` and you want to keep the
+-- header readable on its own line.
+
+greet name:t>R t t
+  ~+"hello " name
+
+nums>L n
+  [1,2,3]
+
+-- run: greet "world"
+-- out: ~hello "world"
+-- run: nums
+-- out: [1, 2, 3]
