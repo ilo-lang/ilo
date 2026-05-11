@@ -1120,324 +1120,6 @@ fn inline_fmt_basic() {
     assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "foo and bar");
 }
 
-// --- --run-jit ---
-
-#[cfg(all(target_arch = "aarch64", target_os = "macos"))]
-#[test]
-fn run_jit_arm64_numeric() {
-    // On arm64 macOS, --run-jit should compile and run a simple numeric function
-    let out = ilo()
-        .args(["f x:n>n;*x 2", "--run-jit", "f", "5"])
-        .output()
-        .expect("failed to run ilo");
-    // Either succeeds with correct output, or fails gracefully
-    if out.status.success() {
-        let stdout = String::from_utf8_lossy(&out.stdout);
-        assert_eq!(stdout.trim(), "10", "expected 10, got: {stdout}");
-    }
-    // If JIT compilation fails, that's also acceptable
-}
-
-// --- Additional ARM64 JIT opcode coverage ---
-
-#[cfg(all(target_arch = "aarch64", target_os = "macos"))]
-#[test]
-fn run_jit_arm64_no_arg() {
-    // f>n;42: no-arg function → vec![] run_args (main.rs L248), call_0 (jit_arm64.rs L42)
-    let out = ilo()
-        .args(["f>n;42", "--run-jit", "f"])
-        .output()
-        .expect("failed to run ilo");
-    if out.status.success() {
-        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "42");
-    }
-}
-
-#[cfg(all(target_arch = "aarch64", target_os = "macos"))]
-#[test]
-fn run_jit_arm64_addition() {
-    // OP_ADD_NN (jit_arm64.rs L150), arm64_fadd (L63-65), call_2 (L44)
-    let out = ilo()
-        .args(["f x:n y:n>n;+x y", "--run-jit", "f", "3", "4"])
-        .output()
-        .expect("failed to run ilo");
-    if out.status.success() {
-        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "7");
-    }
-}
-
-#[cfg(all(target_arch = "aarch64", target_os = "macos"))]
-#[test]
-fn run_jit_arm64_subtraction() {
-    // OP_SUB_NN (jit_arm64.rs L151), arm64_fsub (L67-69)
-    let out = ilo()
-        .args(["f x:n y:n>n;-x y", "--run-jit", "f", "10", "3"])
-        .output()
-        .expect("failed to run ilo");
-    if out.status.success() {
-        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "7");
-    }
-}
-
-#[cfg(all(target_arch = "aarch64", target_os = "macos"))]
-#[test]
-fn run_jit_arm64_division_nn() {
-    // OP_DIV_NN (jit_arm64.rs L153), arm64_fdiv (L75-77), float result path (main.rs L263-264)
-    let out = ilo()
-        .args(["f x:n y:n>n;/x y", "--run-jit", "f", "1", "3"])
-        .output()
-        .expect("failed to run ilo");
-    if out.status.success() {
-        let stdout = String::from_utf8_lossy(&out.stdout);
-        // 1/3 = 0.333... — non-integer result triggers float output branch
-        assert!(
-            stdout.trim().starts_with("0.333"),
-            "expected 0.333…, got: {stdout}"
-        );
-    }
-}
-
-#[cfg(all(target_arch = "aarch64", target_os = "macos"))]
-#[test]
-fn run_jit_arm64_addk() {
-    // OP_ADDK_N (jit_arm64.rs L155-163), arm64_ldr_d_imm, arm64_adr
-    let out = ilo()
-        .args(["f x:n>n;+x 1", "--run-jit", "f", "5"])
-        .output()
-        .expect("failed to run ilo");
-    if out.status.success() {
-        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "6");
-    }
-}
-
-#[cfg(all(target_arch = "aarch64", target_os = "macos"))]
-#[test]
-fn run_jit_arm64_subk() {
-    // OP_SUBK_N (jit_arm64.rs L165-172)
-    let out = ilo()
-        .args(["f x:n>n;-x 1", "--run-jit", "f", "5"])
-        .output()
-        .expect("failed to run ilo");
-    if out.status.success() {
-        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "4");
-    }
-}
-
-#[cfg(all(target_arch = "aarch64", target_os = "macos"))]
-#[test]
-fn run_jit_arm64_divk() {
-    // OP_DIVK_N (jit_arm64.rs L183-190)
-    let out = ilo()
-        .args(["f x:n>n;/x 2", "--run-jit", "f", "10"])
-        .output()
-        .expect("failed to run ilo");
-    if out.status.success() {
-        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "5");
-    }
-}
-
-#[cfg(all(target_arch = "aarch64", target_os = "macos"))]
-#[test]
-fn run_jit_arm64_negate() {
-    // OP_NEG — unary negation (jit_arm64.rs L212-214), arm64_fneg (L79-81)
-    let out = ilo()
-        .args(["f x:n>n;-x", "--run-jit", "f", "5"])
-        .output()
-        .expect("failed to run ilo");
-    if out.status.success() {
-        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "-5");
-    }
-}
-
-#[cfg(all(target_arch = "aarch64", target_os = "macos"))]
-#[test]
-fn run_jit_arm64_not_eligible() {
-    // is_jit_eligible returns false for OP_EQ (L23), compile_and_call → None → L267-268
-    let out = ilo()
-        .args(["f x:n y:n>b;=x y", "--run-jit", "f", "1", "1"])
-        .output()
-        .expect("failed to run ilo");
-    assert!(
-        !out.status.success(),
-        "should fail for non-eligible function"
-    );
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(
-        stderr.contains("eligible") || stderr.contains("JIT"),
-        "expected eligibility error, got: {stderr}"
-    );
-}
-
-#[cfg(all(target_arch = "aarch64", target_os = "macos"))]
-#[test]
-fn run_jit_arm64_const_dedup() {
-    // add_const called twice with same value → dedup return (jit_arm64.rs L129)
-    // Two ADDK_N using constant 1.0: second call finds existing entry
-    let out = ilo()
-        .args(["f x:n>n;a=+x 1;+a 1", "--run-jit", "f", "5"])
-        .output()
-        .expect("failed to run ilo");
-    if out.status.success() {
-        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "7");
-    }
-}
-
-#[cfg(all(target_arch = "aarch64", target_os = "macos"))]
-#[test]
-fn run_jit_arm64_3_args() {
-    // call_3 (jit_arm64.rs L45)
-    let out = ilo()
-        .args(["f x:n y:n z:n>n;+x y", "--run-jit", "f", "3", "4", "0"])
-        .output()
-        .expect("failed to run ilo");
-    if out.status.success() {
-        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "7");
-    }
-}
-
-#[cfg(all(target_arch = "aarch64", target_os = "macos"))]
-#[test]
-fn run_jit_arm64_4_args() {
-    // call_4 (jit_arm64.rs L46)
-    let out = ilo()
-        .args([
-            "f x:n y:n z:n w:n>n;+x y",
-            "--run-jit",
-            "f",
-            "3",
-            "4",
-            "0",
-            "0",
-        ])
-        .output()
-        .expect("failed to run ilo");
-    if out.status.success() {
-        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "7");
-    }
-}
-
-#[cfg(all(target_arch = "aarch64", target_os = "macos"))]
-#[test]
-fn run_jit_arm64_5_args() {
-    // call_5 (jit_arm64.rs L47)
-    let out = ilo()
-        .args([
-            "f x:n y:n z:n w:n p:n>n;+x y",
-            "--run-jit",
-            "f",
-            "3",
-            "4",
-            "0",
-            "0",
-            "0",
-        ])
-        .output()
-        .expect("failed to run ilo");
-    if out.status.success() {
-        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "7");
-    }
-}
-
-#[cfg(all(target_arch = "aarch64", target_os = "macos"))]
-#[test]
-fn run_jit_arm64_6_args() {
-    // call_6 (jit_arm64.rs L48)
-    let out = ilo()
-        .args([
-            "f x:n y:n z:n w:n p:n q:n>n;+x y",
-            "--run-jit",
-            "f",
-            "3",
-            "4",
-            "0",
-            "0",
-            "0",
-            "0",
-        ])
-        .output()
-        .expect("failed to run ilo");
-    if out.status.success() {
-        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "7");
-    }
-}
-
-#[cfg(all(target_arch = "aarch64", target_os = "macos"))]
-#[test]
-fn run_jit_arm64_7_args() {
-    // call_7 (jit_arm64.rs L49)
-    let out = ilo()
-        .args([
-            "f x:n y:n z:n w:n p:n q:n r:n>n;+x y",
-            "--run-jit",
-            "f",
-            "3",
-            "4",
-            "0",
-            "0",
-            "0",
-            "0",
-            "0",
-        ])
-        .output()
-        .expect("failed to run ilo");
-    if out.status.success() {
-        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "7");
-    }
-}
-
-#[cfg(all(target_arch = "aarch64", target_os = "macos"))]
-#[test]
-fn run_jit_arm64_8_args() {
-    // call_8 (jit_arm64.rs L50)
-    let out = ilo()
-        .args([
-            "f x:n y:n z:n w:n p:n q:n r:n s:n>n;+x y",
-            "--run-jit",
-            "f",
-            "3",
-            "4",
-            "0",
-            "0",
-            "0",
-            "0",
-            "0",
-            "0",
-        ])
-        .output()
-        .expect("failed to run ilo");
-    if out.status.success() {
-        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "7");
-    }
-}
-
-#[cfg(all(target_arch = "aarch64", target_os = "macos"))]
-#[test]
-fn run_jit_arm64_multiply_nn() {
-    // OP_MUL_NN (jit_arm64.rs L152) — both register operands → arm64_fmul with a,b,c
-    let out = ilo()
-        .args(["f x:n y:n>n;*x y", "--run-jit", "f", "3", "4"])
-        .output()
-        .expect("failed to run ilo");
-    if out.status.success() {
-        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "12");
-    }
-}
-
-#[cfg(not(all(target_arch = "aarch64", target_os = "macos")))]
-#[test]
-fn run_jit_unavailable_on_non_arm64() {
-    let out = ilo()
-        .args(["f x:n>n;*x 2", "--run-jit", "f", "5"])
-        .output()
-        .expect("failed to run ilo");
-    assert!(!out.status.success(), "should fail on non-arm64 platform");
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(
-        stderr.contains("arm64") || stderr.contains("aarch64") || stderr.contains("JIT"),
-        "expected JIT unavailability message, got: {stderr}"
-    );
-}
-
 // --- Runtime error paths ---
 
 #[test]
@@ -1740,7 +1422,7 @@ fn bench_jit_float_result() {
         "expected bench output, got: {stdout}"
     );
     // On JIT-capable platforms, the result line should show 0.5 (not integer)
-    if stdout.contains("Custom JIT") || stdout.contains("Cranelift JIT") {
+    if stdout.contains("Cranelift JIT") {
         assert!(
             stdout.contains("0.5"),
             "expected float result in JIT output, got: {stdout}"
@@ -1748,9 +1430,9 @@ fn bench_jit_float_result() {
     }
 }
 
-// main.rs L560 (arm64 closing } when JIT returns None) + L593 (Cranelift closing })
-// L197 (arm64 LOADK non-number → None) + L161 (Cranelift LOADK non-number → None)
-// Uses a function with a text constant: JIT can't compile it → returns None
+// L593 (Cranelift closing })
+// L161 (Cranelift LOADK non-number → None)
+// Uses a function with a text constant: Cranelift falls back via NanVal
 #[test]
 fn bench_jit_non_numeric_const() {
     // f x:n>n;y="hi";x — NanVal JIT now handles text constants
@@ -1776,7 +1458,7 @@ fn bench_jit_non_numeric_const() {
     );
 }
 
-// vm/jit_arm64.rs L207-209 (OP_MOVE with a != b) + vm/jit_cranelift.rs L167-170 (OP_MOVE with a != b)
+// vm/jit_cranelift.rs L167-170 (OP_MOVE with a != b)
 // Uses a match with wildcard arm: compile_match_arms allocates result_reg then body gives
 // a different reg → OP_MOVE result_reg, body_reg (a != b) is emitted
 #[test]
@@ -1799,7 +1481,7 @@ fn bench_jit_move_different_regs() {
         "expected bench output, got: {stdout}"
     );
     // Result should be 8 (x + 1 = 7 + 1)
-    if stdout.contains("Custom JIT") || stdout.contains("Cranelift JIT") {
+    if stdout.contains("Cranelift JIT") {
         assert!(
             stdout.contains("  result:     8"),
             "expected result 8 in JIT output, got: {stdout}"
