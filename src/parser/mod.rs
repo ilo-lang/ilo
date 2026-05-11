@@ -80,42 +80,13 @@ impl Parser {
                 self.advance();
                 Ok(name)
             }
-            Some(Token::KwIf) => Err(self.error_hint(
-                "ILO-P011",
-                "`if` is a reserved word and cannot be used as an identifier".into(),
-                "ilo uses `cond{body}` for conditional branches".into(),
-            )),
-            Some(Token::KwReturn) => Err(self.error_hint(
-                "ILO-P011",
-                "`return` is a reserved word and cannot be used as an identifier".into(),
-                "ilo uses `ret expr` for early returns".into(),
-            )),
-            Some(Token::KwLet) => Err(self.error_hint(
-                "ILO-P011",
-                "`let` is a reserved word and cannot be used as an identifier".into(),
-                "ilo uses `name=expr` for bindings".into(),
-            )),
-            Some(Token::KwFn) => Err(self.error_hint(
-                "ILO-P011",
-                "`fn` is a reserved word and cannot be used as an identifier".into(),
-                "ilo defines functions as `name params>return;body`".into(),
-            )),
-            Some(Token::KwDef) => Err(self.error_hint(
-                "ILO-P011",
-                "`def` is a reserved word and cannot be used as an identifier".into(),
-                "ilo defines functions as `name params>return;body`".into(),
-            )),
-            Some(Token::KwVar) => Err(self.error_hint(
-                "ILO-P011",
-                "`var` is a reserved word and cannot be used as an identifier".into(),
-                "ilo uses `name=expr` for bindings".into(),
-            )),
-            Some(Token::KwConst) => Err(self.error_hint(
-                "ILO-P011",
-                "`const` is a reserved word and cannot be used as an identifier".into(),
-                "ilo uses `name=expr` for bindings".into(),
-            )),
-            Some(tok) => Err(self.error("ILO-P005", format!("expected identifier, got {:?}", tok))),
+            Some(tok) => {
+                if let Some((msg, hint)) = reserved_keyword_message(&tok) {
+                    Err(self.error_hint("ILO-P011", msg, hint))
+                } else {
+                    Err(self.error("ILO-P005", format!("expected identifier, got {:?}", tok)))
+                }
+            }
             None => Err(self.error("ILO-P006", "expected identifier, got EOF".into())),
         }
     }
@@ -240,6 +211,35 @@ impl Parser {
     }
 
     fn parse_decl(&mut self) -> Result<Decl> {
+        // Reserved-keyword binding attempts: `var=5`, `let=5`, `if=5`, ...
+        // Surface the friendly ILO-P011 message before any expression-level
+        // cascade fires.
+        if self.token_at(self.pos + 1) == Some(&Token::Eq)
+            && let Some(tok) = self.peek()
+            && let Some((msg, _)) = reserved_keyword_message(tok)
+        {
+            return Err(self.error_hint(
+                "ILO-P011",
+                msg,
+                "use `name=expr` for bindings (e.g. `count=5`)".to_string(),
+            ));
+        }
+        // Loop-control words `cnt`/`brk` used as binding names: `cnt=5`.
+        if let Some(Token::Ident(name)) = self.peek()
+            && (name == "cnt" || name == "brk")
+            && self.token_at(self.pos + 1) == Some(&Token::Eq)
+        {
+            let (word, role, alt) = if name == "cnt" {
+                ("cnt", "continue", "count")
+            } else {
+                ("brk", "break", "brake")
+            };
+            return Err(self.error_hint(
+                "ILO-P011",
+                format!("`{word}` is reserved for {role} (loop control) and cannot be used as an identifier"),
+                format!("pick a different name like `{alt}` or `{}`", &word[..1]),
+            ));
+        }
         match self.peek() {
             Some(Token::Type) => self.parse_type_decl(),
             Some(Token::Tool) => self.parse_tool_decl(),
@@ -640,6 +640,19 @@ impl Parser {
     }
 
     fn parse_stmt(&mut self) -> Result<Stmt> {
+        // Reserved-keyword binding attempts inside a function body: `var=5`,
+        // `let=5`, `if=5`, ... Surface the friendly ILO-P011 message before
+        // `parse_atom` cascades into a cryptic ILO-P009.
+        if self.token_at(self.pos + 1) == Some(&Token::Eq)
+            && let Some(tok) = self.peek()
+            && let Some((msg, _)) = reserved_keyword_message(tok)
+        {
+            return Err(self.error_hint(
+                "ILO-P011",
+                msg,
+                "use `name=expr` for bindings (e.g. `count=5`)".to_string(),
+            ));
+        }
         match self.peek() {
             Some(Token::Question) => {
                 if self.is_prefix_ternary() {
@@ -656,6 +669,13 @@ impl Parser {
                 Ok(Stmt::Return(value))
             }
             Some(Token::Ident(name)) if name == "brk" => {
+                if self.token_at(self.pos + 1) == Some(&Token::Eq) {
+                    return Err(self.error_hint(
+                        "ILO-P011",
+                        "`brk` is reserved for break (loop control) and cannot be used as an identifier".into(),
+                        "pick a different name like `brake` or `b`".into(),
+                    ));
+                }
                 self.advance(); // consume "brk"
                 // brk with optional value expression
                 let value = if self.at_body_end() {
@@ -666,6 +686,13 @@ impl Parser {
                 Ok(Stmt::Break(value))
             }
             Some(Token::Ident(name)) if name == "cnt" => {
+                if self.token_at(self.pos + 1) == Some(&Token::Eq) {
+                    return Err(self.error_hint(
+                        "ILO-P011",
+                        "`cnt` is reserved for continue (loop control) and cannot be used as an identifier".into(),
+                        "pick a different name like `count` or `c`".into(),
+                    ));
+                }
                 self.advance(); // consume "cnt"
                 Ok(Stmt::Continue)
             }
@@ -1875,6 +1902,24 @@ fn wrap_body_as_let(name: &str, mut body: Vec<Spanned<Stmt>>) -> Vec<Spanned<Stm
         }
     }
     body
+}
+
+/// Map a reserved-keyword token to its `(message, hint)` pair for ILO-P011.
+fn reserved_keyword_message(tok: &Token) -> Option<(String, String)> {
+    let (name, hint) = match tok {
+        Token::KwIf => ("if", "ilo uses `cond{body}` for conditional branches"),
+        Token::KwReturn => ("return", "ilo uses `ret expr` for early returns"),
+        Token::KwLet => ("let", "ilo uses `name=expr` for bindings"),
+        Token::KwFn => ("fn", "ilo defines functions as `name params>return;body`"),
+        Token::KwDef => ("def", "ilo defines functions as `name params>return;body`"),
+        Token::KwVar => ("var", "ilo uses `name=expr` for bindings"),
+        Token::KwConst => ("const", "ilo uses `name=expr` for bindings"),
+        _ => return None,
+    };
+    Some((
+        format!("`{name}` is a reserved word and cannot be used as an identifier"),
+        hint.to_string(),
+    ))
 }
 
 /// Check if an expression is a comparison or logical operator — eligible
