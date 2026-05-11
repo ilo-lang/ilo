@@ -5479,10 +5479,10 @@ impl<'a> VM<'a> {
                         vm_err!(VmError::Type("at: index must be a number"));
                     }
                     let n = i.as_number();
-                    if n < 0.0 || n.fract() != 0.0 {
-                        vm_err!(VmError::Type("at: index must be a non-negative integer"));
+                    if n.fract() != 0.0 {
+                        vm_err!(VmError::Type("at: index must be an integer"));
                     }
-                    let idx = n as usize;
+                    let raw = n as i64;
                     let result = if v.is_string() {
                         let s = unsafe {
                             match v.as_heap_ref() {
@@ -5491,16 +5491,21 @@ impl<'a> VM<'a> {
                             }
                         };
                         let chars: Vec<char> = s.chars().collect();
-                        if idx >= chars.len() {
+                        let len = chars.len() as i64;
+                        let adjusted = if raw < 0 { raw + len } else { raw };
+                        if adjusted < 0 || adjusted >= len {
                             vm_err!(VmError::Type("at: index out of range"));
                         }
-                        NanVal::heap_string(chars[idx].to_string())
+                        NanVal::heap_string(chars[adjusted as usize].to_string())
                     } else if v.is_heap() {
                         match unsafe { v.as_heap_ref() } {
                             HeapObj::List(items) => {
-                                if idx >= items.len() {
+                                let len = items.len() as i64;
+                                let adjusted = if raw < 0 { raw + len } else { raw };
+                                if adjusted < 0 || adjusted >= len {
                                     vm_err!(VmError::Type("at: index out of range"));
                                 }
+                                let idx = adjusted as usize;
                                 items[idx].clone_rc();
                                 items[idx]
                             }
@@ -6725,10 +6730,10 @@ pub(crate) extern "C" fn jit_at(a: u64, b: u64) -> u64 {
         return TAG_NIL;
     }
     let n = i.as_number();
-    if n < 0.0 || n.fract() != 0.0 {
+    if n.fract() != 0.0 {
         return TAG_NIL;
     }
-    let idx = n as usize;
+    let raw = n as i64;
     if v.is_string() {
         let s = unsafe {
             match v.as_heap_ref() {
@@ -6737,17 +6742,22 @@ pub(crate) extern "C" fn jit_at(a: u64, b: u64) -> u64 {
             }
         };
         let chars: Vec<char> = s.chars().collect();
-        if idx >= chars.len() {
+        let len = chars.len() as i64;
+        let adjusted = if raw < 0 { raw + len } else { raw };
+        if adjusted < 0 || adjusted >= len {
             return TAG_NIL;
         }
-        return NanVal::heap_string(chars[idx].to_string()).0;
+        return NanVal::heap_string(chars[adjusted as usize].to_string()).0;
     }
     if v.is_heap()
         && let HeapObj::List(items) = unsafe { v.as_heap_ref() }
     {
-        if idx >= items.len() {
+        let len = items.len() as i64;
+        let adjusted = if raw < 0 { raw + len } else { raw };
+        if adjusted < 0 || adjusted >= len {
             return TAG_NIL;
         }
+        let idx = adjusted as usize;
         items[idx].clone_rc();
         return items[idx].0;
     }

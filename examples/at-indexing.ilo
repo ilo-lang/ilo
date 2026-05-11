@@ -1,7 +1,10 @@
--- at xs i: i-th element of a list (0-indexed). Out-of-range is a runtime error.
+-- at xs i: i-th element of a list (0-indexed).
+-- Negative i counts from the end: -1 is the last element.
+-- Out-of-range (i >= len or i < -len) is a runtime error.
 
 nth xs:L n i:n>n;at xs i
-last xs:L n>n;at xs -(len xs) 1
+last xs:L n>n;at xs -1
+penultimate xs:L n>n;at xs -2
 
 -- run: nth [10,20,30] 1
 -- out: 20
@@ -11,3 +14,5 @@ last xs:L n>n;at xs -(len xs) 1
 -- out: 30
 -- run: last [10,20,30]
 -- out: 30
+-- run: penultimate [10,20,30]
+-- out: 20
