@@ -7106,4 +7106,56 @@ mod tests {
         let msg = format!("{err:?}");
         assert!(msg.contains("integer"), "got {msg}");
     }
+
+    // ---- lst xs i v: replace element at index, returning a new list ----
+
+    #[test]
+    fn interp_lst_happy() {
+        let source = "f>L n;lst [10,20,30] 1 99";
+        let result = run_str(source, Some("f"), vec![]);
+        assert_eq!(
+            result,
+            Value::List(vec![
+                Value::Number(10.0),
+                Value::Number(99.0),
+                Value::Number(30.0),
+            ])
+        );
+    }
+
+    #[test]
+    fn interp_lst_first_index() {
+        let source = "f>L n;lst [10,20,30] 0 7";
+        let result = run_str(source, Some("f"), vec![]);
+        assert_eq!(
+            result,
+            Value::List(vec![
+                Value::Number(7.0),
+                Value::Number(20.0),
+                Value::Number(30.0),
+            ])
+        );
+    }
+
+    #[test]
+    fn interp_lst_out_of_range_errors() {
+        let prog = parse_program("f>L n;lst [1,2,3] 5 0");
+        let err = run(&prog, Some("f"), vec![]).unwrap_err();
+        assert!(format!("{err:?}").contains("out of range"));
+    }
+
+    #[test]
+    fn interp_lst_negative_index_errors() {
+        let prog = parse_program("f>L n;lst [1,2,3] -1 0");
+        let err = run(&prog, Some("f"), vec![]).unwrap_err();
+        let msg = format!("{err:?}");
+        assert!(msg.contains("non-negative integer"), "got {msg}");
+    }
+
+    #[test]
+    fn interp_lst_fractional_index_errors() {
+        let prog = parse_program("f>L n;lst [1,2,3] 1.5 0");
+        let err = run(&prog, Some("f"), vec![]).unwrap_err();
+        assert!(format!("{err:?}").contains("non-negative integer"));
+    }
 }

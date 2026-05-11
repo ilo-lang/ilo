@@ -21217,4 +21217,115 @@ f>n;r=mk 10 20;+r.x r.y";
         let bits = jit_at(list.0, NanVal::number(0.5).0);
         assert_eq!(bits, TAG_NIL);
     }
+
+    // ---- OP_LST VM dispatch + jit_lst helper coverage ----
+
+    fn parse_for_vm_lst(source: &str) -> crate::ast::Program {
+        let tokens = crate::lexer::lex(source).unwrap();
+        let token_spans: Vec<(crate::lexer::Token, crate::ast::Span)> = tokens
+            .into_iter()
+            .map(|(t, r)| {
+                (
+                    t,
+                    crate::ast::Span {
+                        start: r.start,
+                        end: r.end,
+                    },
+                )
+            })
+            .collect();
+        let (prog, errors) = crate::parser::parse(token_spans);
+        assert!(errors.is_empty(), "parse errors: {:?}", errors);
+        prog
+    }
+
+    #[test]
+    fn vm_op_lst_happy() {
+        use crate::interpreter::Value;
+        let prog = parse_for_vm_lst("f>L n;lst [10,20,30] 1 99");
+        let compiled = compile(&prog).expect("compile lst");
+        let result = run(&compiled, Some("f"), vec![]).expect("run lst");
+        assert_eq!(
+            result,
+            Value::List(vec![
+                Value::Number(10.0),
+                Value::Number(99.0),
+                Value::Number(30.0),
+            ])
+        );
+    }
+
+    #[test]
+    fn vm_op_lst_out_of_range_errors() {
+        let prog = parse_for_vm_lst("f>L n;lst [1,2,3] 5 0");
+        let compiled = compile(&prog).expect("compile lst");
+        let err = run(&compiled, Some("f"), vec![]).unwrap_err();
+        assert!(format!("{err:?}").contains("out of range"));
+    }
+
+    #[cfg(feature = "cranelift")]
+    #[test]
+    fn jit_lst_happy() {
+        let list = NanVal::heap_list(vec![
+            NanVal::number(10.0),
+            NanVal::number(20.0),
+            NanVal::number(30.0),
+        ]);
+        let v = NanVal(jit_lst(
+            list.0,
+            NanVal::number(1.0).0,
+            NanVal::number(99.0).0,
+        ));
+        assert!(v.is_heap());
+        let items = unsafe {
+            match v.as_heap_ref() {
+                HeapObj::List(items) => items.clone(),
+                _ => panic!("expected list"),
+            }
+        };
+        assert_eq!(items.len(), 3);
+        assert_eq!(items[0].as_number(), 10.0);
+        assert_eq!(items[1].as_number(), 99.0);
+        assert_eq!(items[2].as_number(), 30.0);
+    }
+
+    #[cfg(feature = "cranelift")]
+    #[test]
+    fn jit_lst_out_of_range_returns_original() {
+        let list = NanVal::heap_list(vec![NanVal::number(1.0), NanVal::number(2.0)]);
+        let bits = jit_lst(list.0, NanVal::number(5.0).0, NanVal::number(99.0).0);
+        assert_eq!(bits, list.0);
+    }
+
+    #[cfg(feature = "cranelift")]
+    #[test]
+    fn jit_lst_negative_index_returns_original() {
+        let list = NanVal::heap_list(vec![NanVal::number(1.0), NanVal::number(2.0)]);
+        let bits = jit_lst(list.0, NanVal::number(-1.0).0, NanVal::number(99.0).0);
+        assert_eq!(bits, list.0);
+    }
+
+    #[cfg(feature = "cranelift")]
+    #[test]
+    fn jit_lst_fractional_index_returns_original() {
+        let list = NanVal::heap_list(vec![NanVal::number(1.0), NanVal::number(2.0)]);
+        let bits = jit_lst(list.0, NanVal::number(0.5).0, NanVal::number(99.0).0);
+        assert_eq!(bits, list.0);
+    }
+
+    #[cfg(feature = "cranelift")]
+    #[test]
+    fn jit_lst_non_number_index_returns_original() {
+        let list = NanVal::heap_list(vec![NanVal::number(1.0)]);
+        let bits = jit_lst(list.0, NanVal::boolean(true).0, NanVal::number(99.0).0);
+        assert_eq!(bits, list.0);
+    }
+
+    #[cfg(feature = "cranelift")]
+    #[test]
+    fn jit_lst_non_list_returns_nil() {
+        let s = NanVal::heap_string("abc".to_string());
+        let bits = jit_lst(s.0, NanVal::number(0.0).0, NanVal::number(99.0).0);
+        assert_eq!(bits, TAG_NIL);
+    }
 }

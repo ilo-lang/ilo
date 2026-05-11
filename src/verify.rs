@@ -6265,4 +6265,57 @@ mod tests {
             errs
         );
     }
+
+    // ---- lst xs i v verify coverage ----
+
+    #[test]
+    fn verify_lst_happy_path() {
+        let code = "f>L n;lst [1,2,3] 1 99";
+        assert!(parse_and_verify(code).is_ok());
+    }
+
+    #[test]
+    fn verify_lst_index_must_be_number() {
+        let code = r#"f>L n;lst [1,2,3] "x" 99"#;
+        let result = parse_and_verify(code);
+        assert!(result.is_err());
+        let errors = result.unwrap_err();
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.message.contains("'lst' index must be n")),
+            "errors: {:?}",
+            errors
+        );
+    }
+
+    #[test]
+    fn verify_lst_value_type_mismatch() {
+        let code = r#"f>L n;lst [1,2,3] 1 "x""#;
+        let result = parse_and_verify(code);
+        assert!(result.is_err());
+        let errors = result.unwrap_err();
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.message.contains("does not match list element type")),
+            "errors: {:?}",
+            errors
+        );
+    }
+
+    #[test]
+    fn verify_lst_first_arg_must_be_list() {
+        let code = r#"f>L n;lst "abc" 1 99"#;
+        let result = parse_and_verify(code);
+        assert!(result.is_err());
+        let errors = result.unwrap_err();
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.message.contains("'lst' expects a list")),
+            "errors: {:?}",
+            errors
+        );
+    }
 }
