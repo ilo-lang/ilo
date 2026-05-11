@@ -278,6 +278,70 @@ pub fn lex(source: &str) -> Result<Vec<(Token, std::ops::Range<usize>)>, LexErro
         }
     }
 
+    // Post-lex: after `.` or `.?` (field access), accept JSON-style snake_case
+    // field names by merging contiguous `Ident (Underscore (Ident|Number))*`
+    // runs back into a single `Ident` token. Real-world JSON (which agents
+    // consume via `jpar!`) is overwhelmingly snake_case (`stargazers_count`,
+    // `change_1d`, ...), and dot-access on those keys is the canonical path.
+    // The strict identifier rule (lowercase + hyphens) still applies to
+    // bindings, so `my_var=5` keeps emitting ILO-L002 below.
+    let mut i = 0;
+    while i + 2 < tokens.len() {
+        let prev_is_dot = i > 0
+            && matches!(tokens[i - 1].0, Token::Dot | Token::DotQuestion)
+            && tokens[i - 1].1.end == tokens[i].1.start;
+        if !prev_is_dot {
+            i += 1;
+            continue;
+        }
+        if !matches!(tokens[i].0, Token::Ident(_)) {
+            i += 1;
+            continue;
+        }
+        // Greedily collect contiguous `_ (Ident | integer Number Ident?)`
+        // segments. Each `_Number` group may also absorb a trailing letter
+        // glued to the number (e.g. `change_1d`, `x_2y_3z`), and the loop
+        // continues afterward so alternating segments like
+        // `ema_20d_change_5d` stitch fully.
+        let mut j = i + 1;
+        let mut has_underscore = false;
+        while j + 1 < tokens.len()
+            && tokens[j].0 == Token::Underscore
+            && tokens[j - 1].1.end == tokens[j].1.start
+            && tokens[j].1.end == tokens[j + 1].1.start
+        {
+            match &tokens[j + 1].0 {
+                Token::Ident(_) => {
+                    has_underscore = true;
+                    j += 2;
+                }
+                Token::Number(n) if n.fract() == 0.0 && *n >= 0.0 => {
+                    has_underscore = true;
+                    j += 2;
+                    // Absorb a trailing letter glued to the number
+                    // (e.g. the `d` in `change_1d`).
+                    if j < tokens.len()
+                        && tokens[j - 1].1.end == tokens[j].1.start
+                        && matches!(tokens[j].0, Token::Ident(_))
+                    {
+                        j += 1;
+                    }
+                }
+                _ => break,
+            }
+        }
+        if !has_underscore {
+            i += 1;
+            continue;
+        }
+        let start = tokens[i].1.start;
+        let end = tokens[j - 1].1.end;
+        let merged = normalized[start..end].to_string();
+        let new_tok = (Token::Ident(merged), start..end);
+        tokens.splice(i..j, std::iter::once(new_tok));
+        i += 1;
+    }
+
     // Post-lex: detect underscore-separated identifier fragments like
     // `rev_ps` → Ident("rev"), Underscore, Ident("ps") with no whitespace.
     for i in 0..tokens.len().saturating_sub(2) {
