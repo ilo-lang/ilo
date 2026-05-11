@@ -134,7 +134,7 @@ pub enum Token {
     Underscore,
 
     // Literals
-    #[regex(r"-?[0-9]+(\.[0-9]+)?", |lex| lex.slice().parse::<f64>().ok())]
+    #[regex(r"-?[0-9]+(\.[0-9]+)?([eE][+-]?[0-9]+)?", |lex| lex.slice().parse::<f64>().ok())]
     Number(f64),
 
     #[regex(r#""[^"\\]*(?:\\.[^"\\]*)*""#, |lex| {
