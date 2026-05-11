@@ -48,7 +48,12 @@ fn run_ok_all(src: &str, args: &[&str], expected: &str) {
 }
 
 fn run_err(src: &str) -> String {
-    let out = ilo().arg(src).output().expect("failed to spawn ilo");
+    // Pass `f` as the function arg so we hit the execution path; inline-no-func
+    // form is AST-dump mode (per PR #178) which skips verify errors.
+    let out = ilo()
+        .args([src, "f"])
+        .output()
+        .expect("failed to spawn ilo");
     assert!(
         !out.status.success(),
         "expected failure for {src:?}, stdout: {}",
