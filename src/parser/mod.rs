@@ -131,20 +131,41 @@ impl Parser {
         let mut declarations = Vec::new();
         let mut errors: Vec<ParseError> = Vec::new();
         const MAX_ERRORS: usize = 20;
+        // Cascade suppression: once we've reported a P001 at the top level, drop
+        // further P001 errors until the parser successfully consumes another
+        // declaration. The first P001 nearly always has the actionable hint;
+        // subsequent ones are noise produced while resyncing through stray
+        // tokens (e.g. a leftover `}` after a body-level parse failure).
+        let mut suppress_p001 = false;
 
         while !self.at_end() {
             if errors.len() >= MAX_ERRORS {
                 break;
             }
+            let before_pos = self.pos;
             match self.parse_decl() {
-                Ok(decl) => declarations.push(decl),
+                Ok(decl) => {
+                    declarations.push(decl);
+                    suppress_p001 = false;
+                }
                 Err(e) => {
                     let err_span = e.span;
-                    errors.push(e);
+                    let is_cascade_class = matches!(e.code, "ILO-P001" | "ILO-P002");
+                    if !(is_cascade_class && suppress_p001) {
+                        errors.push(e);
+                    }
+                    if is_cascade_class {
+                        suppress_p001 = true;
+                    }
                     let end_span = self.sync_to_decl_boundary();
                     declarations.push(Decl::Error {
                         span: err_span.merge(end_span),
                     });
+                    // Guarantee forward progress so we cannot loop emitting the
+                    // same error against the same token (e.g. a stray `}`).
+                    if self.pos == before_pos {
+                        self.advance();
+                    }
                 }
             }
         }
@@ -190,6 +211,11 @@ impl Parser {
                 }
                 Some(Token::RBrace) => {
                     if depth == 0 {
+                        // Stray top-level `}` — consume it so the outer loop
+                        // makes progress rather than re-reporting the same
+                        // token as a "missing declaration".
+                        last_span = self.peek_span();
+                        self.advance();
                         break;
                     }
                     depth -= 1;
