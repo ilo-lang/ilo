@@ -14017,6 +14017,79 @@ mod tests {
             let r = jit_listget(list.0, TAG_NIL);
             assert!(is_nil(r));
         }
+
+        // ── jit_fmt2 ──────────────────────────────────────────────────────
+
+        #[test]
+        fn jit_fmt2_basic() {
+            let r = jit_fmt2(num(3.14159), num(2.0));
+            let rv = NanVal(r);
+            assert!(rv.is_string());
+            let HeapObj::Str(s) = (unsafe { rv.as_heap_ref() }) else {
+                panic!("expected Str")
+            };
+            assert_eq!(s.clone(), "3.14");
+        }
+
+        #[test]
+        fn jit_fmt2_zero_digits() {
+            let r = jit_fmt2(num(1.0), num(0.0));
+            let rv = NanVal(r);
+            assert!(rv.is_string());
+            let HeapObj::Str(s) = (unsafe { rv.as_heap_ref() }) else {
+                panic!("expected Str")
+            };
+            assert_eq!(s.clone(), "1");
+        }
+
+        #[test]
+        fn jit_fmt2_negative_digits_clamped_to_zero() {
+            // d <= 0.0 branch — digits coerced to 0.
+            let r = jit_fmt2(num(2.7), num(-3.0));
+            let rv = NanVal(r);
+            assert!(rv.is_string());
+            let HeapObj::Str(s) = (unsafe { rv.as_heap_ref() }) else {
+                panic!("expected Str")
+            };
+            assert_eq!(s.clone(), "3");
+        }
+
+        #[test]
+        fn jit_fmt2_non_finite_digits_clamped_to_zero() {
+            // !d.is_finite() branch.
+            let r = jit_fmt2(num(2.7), num(f64::NAN));
+            let rv = NanVal(r);
+            assert!(rv.is_string());
+            let HeapObj::Str(s) = (unsafe { rv.as_heap_ref() }) else {
+                panic!("expected Str")
+            };
+            assert_eq!(s.clone(), "3");
+        }
+
+        #[test]
+        fn jit_fmt2_non_number_first_arg_returns_nil() {
+            let r = jit_fmt2(str_val("oops"), num(2.0));
+            assert!(is_nil(r));
+        }
+
+        #[test]
+        fn jit_fmt2_non_number_second_arg_returns_nil() {
+            let r = jit_fmt2(num(3.14), str_val("two"));
+            assert!(is_nil(r));
+        }
+
+        #[test]
+        fn jit_fmt2_digits_clamped_to_twenty() {
+            // digits >= 20 hits the .min(20) cap.
+            let r = jit_fmt2(num(1.0), num(50.0));
+            let rv = NanVal(r);
+            assert!(rv.is_string());
+            let HeapObj::Str(s) = (unsafe { rv.as_heap_ref() }) else {
+                panic!("expected Str")
+            };
+            // 20 zeros after the decimal point.
+            assert_eq!(s.clone(), format!("1.{}", "0".repeat(20)));
+        }
     }
 
     // ── VM execution path tests ───────────────────────────────────────────────

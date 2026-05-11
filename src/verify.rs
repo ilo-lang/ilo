@@ -6442,4 +6442,38 @@ mod tests {
             errors
         );
     }
+
+    #[test]
+    fn verify_fmt2_rejects_non_number_arg() {
+        // First arg text — should produce ILO-T013 with arg-index 1.
+        let result = parse_and_verify(r#"f>t;fmt2 "hi" 2"#);
+        let errs = result.unwrap_err();
+        assert!(
+            errs.iter().any(
+                |e| e.code == "ILO-T013" && e.message.contains("'fmt2' arg 1 expects n, got t")
+            ),
+            "expected ILO-T013 for arg 1, got: {:?}",
+            errs
+        );
+    }
+
+    #[test]
+    fn verify_fmt2_rejects_non_number_second_arg() {
+        // Second arg text — ILO-T013 with arg-index 2.
+        let result = parse_and_verify(r#"f>t;fmt2 3.14 "two""#);
+        let errs = result.unwrap_err();
+        assert!(
+            errs.iter().any(
+                |e| e.code == "ILO-T013" && e.message.contains("'fmt2' arg 2 expects n, got t")
+            ),
+            "expected ILO-T013 for arg 2, got: {:?}",
+            errs
+        );
+    }
+
+    #[test]
+    fn verify_fmt2_valid_returns_text() {
+        // Sanity: valid call typechecks.
+        assert!(parse_and_verify("f>t;fmt2 3.14 2").is_ok());
+    }
 }

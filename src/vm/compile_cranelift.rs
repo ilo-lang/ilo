@@ -5295,4 +5295,11 @@ f a:t b:t>t;join a b"#,
             bytes.err()
         );
     }
+
+    // AOT codegen for OP_FMT2 — drives the jit_fmt2 helper call path.
+    #[test]
+    fn codegen_cov_fmt2() {
+        let bytes = compile_to_object_bytes("f>t;fmt2 3.14159 2");
+        assert!(bytes.is_ok(), "FMT2 codegen failed: {:?}", bytes.err());
+    }
 }

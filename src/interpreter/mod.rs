@@ -7174,4 +7174,23 @@ mod tests {
         let err = run(&prog, Some("f"), vec![]).unwrap_err();
         assert!(format!("{err:?}").contains("non-negative integer"));
     }
+
+    // fmt2 error arm: non-number args bypass the verifier when calling
+    // call_function directly, exercising the runtime type guard.
+    #[test]
+    fn interp_fmt2_rejects_non_number_args() {
+        let mut env = Env::new();
+        let result = call_function(
+            &mut env,
+            "fmt2",
+            vec![Value::Text("hi".to_string()), Value::Number(2.0)],
+        );
+        let err = result.unwrap_err();
+        assert_eq!(err.code, "ILO-R009");
+        assert!(
+            err.message.contains("fmt2 requires two numbers"),
+            "got: {}",
+            err.message
+        );
+    }
 }
