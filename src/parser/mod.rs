@@ -1574,6 +1574,7 @@ impl Parser {
                     // After each arg, if next is infix, stop
                     if let Some(tok) = self.peek()
                         && Self::infix_binding_power(tok).is_some()
+                        && !self.looks_like_prefix_binary(self.pos)
                     {
                         break;
                     }
@@ -1617,15 +1618,23 @@ impl Parser {
     /// (operator followed by 2+ simple atoms before the next operator/terminator)?
     ///
     /// Used to disambiguate: `fac -n 1` (prefix: `-` + 2 atoms) vs `x - 3` (infix: `-` + 1 atom).
-    /// Only counts consecutive simple atoms — stops at operators, `;`, `}`, fn boundaries.
+    /// Counts consecutive simple atoms; an operator-headed sub-expression that itself
+    /// looks_like_prefix_binary also counts as one atom (so `h +a +b c` parses with
+    /// `+a` and `+b c` as two args).
     fn looks_like_prefix_binary(&self, pos: usize) -> bool {
+        self.scan_prefix_binary_end(pos).is_some()
+    }
+
+    /// If the token at `pos` heads a prefix-binary expression (operator + 2 atoms,
+    /// where each atom may itself be a nested prefix-binary), return the position
+    /// just after the last consumed token. Otherwise return None.
+    fn scan_prefix_binary_end(&self, pos: usize) -> Option<usize> {
         if pos >= self.tokens.len() {
-            return false;
+            return None;
         }
-        // Count consecutive simple atoms after the operator at pos
         let mut count = 0;
         let mut look = pos + 1;
-        while look < self.tokens.len() {
+        while look < self.tokens.len() && count < 2 {
             // Stop at function declaration boundaries
             if self.is_fn_decl_start(look) {
                 break;
@@ -1663,11 +1672,37 @@ impl Parser {
                         look += 1;
                     }
                 }
-                // Stop at operators, terminators, etc.
+                // A nested prefix-binary operator counts as one atom if it itself
+                // heads a prefix-binary sub-expression. Only the binary-only
+                // operators listed in parse_prefix_binop qualify (plus Minus,
+                // which is handled by parse_minus and is also binary-capable).
+                // Unary-only operators (Bang/Tilde/Caret) are intentionally
+                // excluded — they aren't prefix-binary.
+                Token::Plus
+                | Token::Minus
+                | Token::Star
+                | Token::Slash
+                | Token::Greater
+                | Token::Less
+                | Token::GreaterEq
+                | Token::LessEq
+                | Token::Eq
+                | Token::NotEq
+                | Token::Amp
+                | Token::Pipe
+                | Token::PlusEq => {
+                    if let Some(end) = self.scan_prefix_binary_end(look) {
+                        count += 1;
+                        look = end;
+                    } else {
+                        break;
+                    }
+                }
+                // Stop at other operators, terminators, etc.
                 _ => break,
             }
         }
-        count >= 2
+        if count >= 2 { Some(look) } else { None }
     }
 
     /// Can the current token start an atom?
