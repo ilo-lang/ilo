@@ -28,13 +28,42 @@ fn ilo() -> Command {
 }
 
 /// Run an inline ilo snippet and return (exit_success, combined stderr).
+///
+/// Passes the first function name as an explicit entry-point arg so we
+/// exercise the execution path (where verify errors gate exit). Inline mode
+/// with no entry point is an AST-dump inspection path and intentionally
+/// skips verify gating; these tests are about the verifier itself, not the
+/// dispatch mode, so we route them through the execution path.
 fn run(code: &str) -> (bool, String) {
+    // Crude but sufficient for these snippets: the first identifier before
+    // a parameter list or `>` is the function name. All snippets here start
+    // with the function declaration (possibly preceded by a `type` decl).
+    let first_fn_name = first_function_name(code).unwrap_or("f");
     let out = ilo()
         .arg(code)
+        .arg(first_fn_name)
         .output()
         .unwrap_or_else(|e| panic!("failed to spawn ilo: {e}"));
     let stderr = String::from_utf8_lossy(&out.stderr).to_string();
     (out.status.success(), stderr)
+}
+
+/// Extract the first function name from a snippet by skipping any leading
+/// `type {...}` declarations and reading the next identifier. Returns None
+/// if no obvious function name is found (caller should default to "f").
+fn first_function_name(code: &str) -> Option<&str> {
+    let mut rest = code.trim_start();
+    // Skip leading `type name{...}` decls.
+    while let Some(stripped) = rest.strip_prefix("type ") {
+        // Find the closing `}` of the type body.
+        let close = stripped.find('}')?;
+        rest = stripped[close + 1..].trim_start();
+    }
+    // Read identifier characters (letters, digits, hyphen).
+    let end = rest
+        .find(|c: char| !c.is_ascii_alphanumeric() && c != '-' && c != '_')
+        .unwrap_or(rest.len());
+    if end == 0 { None } else { Some(&rest[..end]) }
 }
 
 /// Assert that `code` fails and that stderr contains `expected_code`.

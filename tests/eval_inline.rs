@@ -35,6 +35,65 @@ fn inline_no_args_outputs_ast() {
     );
 }
 
+// Inline-no-func AST-dump mode is an inspection path, not an execution path.
+// Verify errors on partial snippets (e.g. a function body that references
+// an undeclared name) should not gate the AST dump; the user is exploring
+// structure, not running code.
+#[test]
+fn inline_no_args_skips_verify_errors_on_partial_snippet() {
+    let out = ilo()
+        .args(["f>n;slc xs 0 1"])
+        .output()
+        .expect("failed to run ilo");
+    assert!(
+        out.status.success(),
+        "expected AST dump to succeed without verify gating; stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("\"slc\""),
+        "expected AST JSON containing the builtin call, got: {}",
+        stdout
+    );
+}
+
+// Regression: when a function name IS provided, verify must still gate
+// execution. A program that references an undeclared variable must still
+// produce a verify error and a non-zero exit.
+#[test]
+fn inline_with_func_arg_still_reports_verify_errors() {
+    let out = ilo()
+        .args(["f>n;slc xs 0 1", "f"])
+        .output()
+        .expect("failed to run ilo");
+    assert!(
+        !out.status.success(),
+        "expected verify error to gate execution when a func arg is given"
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let combined = format!("{stderr}{stdout}");
+    assert!(
+        combined.contains("undefined variable") || combined.contains("ILO-T004"),
+        "expected an undefined-variable diagnostic; got stdout: {stdout}, stderr: {stderr}"
+    );
+}
+
+// A real lex/parse error must still gate the AST dump in inline-no-func
+// mode — we can't dump an AST we couldn't build.
+#[test]
+fn inline_no_args_parse_error_still_fatal() {
+    let out = ilo()
+        .args(["this is not valid ilo code @@##$$"])
+        .output()
+        .expect("failed to run ilo");
+    assert!(
+        !out.status.success(),
+        "expected parse error to gate AST dump"
+    );
+}
+
 // --- Inline code: multiple functions ---
 
 #[test]
@@ -667,8 +726,10 @@ fn json_flag_produces_json_error() {
 
 #[test]
 fn text_flag_produces_plain_error() {
+    // Pass a func arg so we exercise the execution path (where verify gates),
+    // not the inline-no-func AST-dump path (where verify is skipped).
     let out = ilo()
-        .args(["--text", "f x:n>n;+x \"hi\""])
+        .args(["--text", "f x:n>n;+x \"hi\"", "f", "1"])
         .output()
         .expect("failed to run ilo");
     assert!(!out.status.success());
@@ -689,7 +750,7 @@ fn text_flag_produces_plain_error() {
 #[test]
 fn ansi_flag_produces_colored_error() {
     let out = ilo()
-        .args(["--ansi", "f x:n>n;+x \"hi\""])
+        .args(["--ansi", "f x:n>n;+x \"hi\"", "f", "1"])
         .output()
         .expect("failed to run ilo");
     assert!(!out.status.success());
@@ -734,7 +795,7 @@ fn json_flag_parse_error_has_span() {
 #[test]
 fn text_flag_verify_error_has_function_note() {
     let out = ilo()
-        .args(["--text", "f x:n>n;+x \"hi\""])
+        .args(["--text", "f x:n>n;+x \"hi\"", "f", "1"])
         .output()
         .expect("failed to run ilo");
     assert!(!out.status.success());
@@ -769,7 +830,7 @@ fn mutual_exclusion_json_text() {
 #[test]
 fn no_color_env_produces_no_ansi() {
     let out = ilo()
-        .args(["f x:n>n;+x \"hi\""])
+        .args(["f x:n>n;+x \"hi\"", "f", "1"])
         .env("NO_COLOR", "1")
         .output()
         .expect("failed to run ilo");
@@ -1628,7 +1689,7 @@ fn unwrap_verifier_t026() {
 fn get_verifier_wrong_type() {
     // get with number arg should fail verification
     let out = ilo()
-        .args(["f x:n>R t t;get x"])
+        .args(["f x:n>R t t;get x", "f", "1"])
         .output()
         .expect("failed to run ilo");
     let stderr = String::from_utf8_lossy(&out.stderr);
@@ -1686,7 +1747,7 @@ fn dollar_bang_parses_inline() {
 fn post_verifier_wrong_type_url() {
     // first arg (url) must be t
     let out = ilo()
-        .args(["f x:n body:t>R t t;post x body"])
+        .args(["f x:n body:t>R t t;post x body", "f", "1", "b"])
         .output()
         .expect("failed to run ilo");
     let stderr = String::from_utf8_lossy(&out.stderr);
@@ -1700,7 +1761,7 @@ fn post_verifier_wrong_type_url() {
 fn post_verifier_wrong_type_body() {
     // second arg (body) must be t
     let out = ilo()
-        .args(["f url:t x:n>R t t;post url x"])
+        .args(["f url:t x:n>R t t;post url x", "f", "u", "1"])
         .output()
         .expect("failed to run ilo");
     let stderr = String::from_utf8_lossy(&out.stderr);

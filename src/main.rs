@@ -2268,15 +2268,33 @@ fn dispatch_run(r: cli::RunArgs, mode: OutputMode, explicit_json: bool, no_hints
         had_errors = true;
     }
 
-    let verify_result = verify::verify(&program);
-    for w in &verify_result.warnings {
-        report_diagnostic(&Diagnostic::from(w).with_source(source.clone()), mode);
-    }
-    if !verify_result.errors.is_empty() {
-        for e in &verify_result.errors {
-            report_diagnostic(&Diagnostic::from(e).with_source(source.clone()), mode);
+    // Inline-no-func AST-dump mode: when running `ilo '<code>'` with no entry
+    // point and no other mode flag, the binary prints the AST and exits. This
+    // is an inspection path, not an execution path, so verify (which exists to
+    // gate execution) shouldn't gate it. Skipping verify here also avoids
+    // false-positive errors on builtins or partial snippets that users want to
+    // explore via the AST dump. Parse errors still gate (we can't dump an AST
+    // we couldn't parse).
+    let ast_dump_mode = !is_file
+        && r.rest.is_empty()
+        && !r.bench
+        && !r.explain
+        && r.emit.is_none()
+        && !r.dense
+        && !r.expanded
+        && matches!(r.effective_engine(), cli::Engine::Default);
+
+    if !ast_dump_mode {
+        let verify_result = verify::verify(&program);
+        for w in &verify_result.warnings {
+            report_diagnostic(&Diagnostic::from(w).with_source(source.clone()), mode);
         }
-        had_errors = true;
+        if !verify_result.errors.is_empty() {
+            for e in &verify_result.errors {
+                report_diagnostic(&Diagnostic::from(e).with_source(source.clone()), mode);
+            }
+            had_errors = true;
+        }
     }
 
     if had_errors {
