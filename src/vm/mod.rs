@@ -1909,6 +1909,42 @@ impl RegCompiler {
                             }
                             return ra;
                         }
+                        // 3-arg `wr path data "json"` — serialise with jdmp,
+                        // then write. Only the literal "json" format is inlined;
+                        // other formats fall through (and the verifier rejects
+                        // unknown literal formats up-front).
+                        (Builtin::Wr, 3) => {
+                            if let crate::ast::Expr::Literal(crate::ast::Literal::Text(fmt_str)) =
+                                &args[2]
+                                && fmt_str == "json"
+                            {
+                                let rpath = self.compile_expr(&args[0]);
+                                let rdata = self.compile_expr(&args[1]);
+                                // jdmp(data) → text
+                                let rjson = self.alloc_reg();
+                                self.emit_abc(OP_JDMP, rjson, rdata, 0);
+                                let ra = self.alloc_reg();
+                                self.emit_abc(OP_WR, ra, rpath, rjson);
+                                if *unwrap {
+                                    let check_reg = self.alloc_reg();
+                                    self.emit_abc(OP_ISOK, check_reg, ra, 0);
+                                    let skip_ret = self.emit_jmpt(check_reg);
+                                    self.emit_abx(OP_RET, ra, 0);
+                                    self.current.patch_jump(skip_ret);
+                                    self.emit_abc(OP_UNWRAP, ra, ra, 0);
+                                    self.next_reg = ra + 1;
+                                }
+                                return ra;
+                            }
+                            // non-"json" 3-arg wr (csv/tsv or dynamic): no VM
+                            // path yet — surface a clear compile error.
+                            self.first_error.get_or_insert(
+                                CompileError::UndefinedFunction {
+                                    name: "wr (3-arg non-json format not yet supported in VM; use --run-tree)".to_string(),
+                                },
+                            );
+                            return self.alloc_reg();
+                        }
                         (Builtin::Jpar, 1) => {
                             let rb = self.compile_expr(&args[0]);
                             let ra = self.alloc_reg();

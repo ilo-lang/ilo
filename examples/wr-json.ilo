@@ -1,0 +1,7 @@
+-- 3-arg wr: serialise a value as JSON and write it in one call.
+-- Equivalent to `wr path (jdmp data)`, but type-checks data of any shape.
+
+dump>R t t;wr "/tmp/ilo_wr_json_example.json" (mset (mset mmap "x" 1) "y" 2) "json"
+
+-- run: dump
+-- out: ~/tmp/ilo_wr_json_example.json

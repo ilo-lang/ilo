@@ -906,7 +906,11 @@ fn builtin_check_args(
                     is_warning: false,
                 });
             }
+            // 2-arg form: wr path content — content must be text.
+            // 3-arg form: wr path data fmt — data may be any serialisable type;
+            // fmt selects the encoder (csv/tsv/json) and must be text.
             if name == "wr"
+                && arg_types.len() < 3
                 && let Some(arg) = arg_types.get(1)
                 && !compatible(arg, &Ty::Text)
             {
@@ -914,7 +918,22 @@ fn builtin_check_args(
                     code: "ILO-T013",
                     function: func_ctx.to_string(),
                     message: format!("'wr' arg 2 expects t (content), got {arg}"),
-                    hint: None,
+                    hint: Some(
+                        "for typed data use the 3-arg form: wr path data \"json\"".to_string(),
+                    ),
+                    span,
+                    is_warning: false,
+                });
+            }
+            if name == "wr"
+                && let Some(arg) = arg_types.get(2)
+                && !compatible(arg, &Ty::Text)
+            {
+                errors.push(VerifyError {
+                    code: "ILO-T013",
+                    function: func_ctx.to_string(),
+                    message: format!("'wr' arg 3 (format) expects t, got {arg}"),
+                    hint: Some("supported formats: \"json\", \"csv\", \"tsv\"".to_string()),
                     span,
                     is_warning: false,
                 });
@@ -1881,7 +1900,7 @@ impl VerifyContext {
                             "0 or 2".to_string()
                         } else if callee == "srt" || callee == "rd" || callee == "get" {
                             "1 or 2".to_string()
-                        } else if callee == "post" {
+                        } else if callee == "post" || callee == "wr" {
                             "2 or 3".to_string()
                         } else {
                             expected_arity.to_string()
@@ -1897,6 +1916,23 @@ impl VerifyContext {
                             Some(span),
                         );
                         return Ty::Unknown;
+                    }
+                    // Literal-format check for 3-arg `wr path data fmt`:
+                    // if fmt is a string literal, fail fast on unsupported values.
+                    if callee == "wr"
+                        && args.len() == 3
+                        && let Expr::Literal(Literal::Text(fmt)) = &args[2]
+                        && !matches!(fmt.as_str(), "json" | "csv" | "tsv")
+                    {
+                        self.err(
+                            "ILO-T013",
+                            func,
+                            format!(
+                                "'wr' format \"{fmt}\" is not supported; expected \"json\", \"csv\", or \"tsv\""
+                            ),
+                            Some("e.g. wr path data \"json\"".to_string()),
+                            Some(span),
+                        );
                     }
                     let (ret_ty, errors) = builtin_check_args(callee, &arg_types, func, Some(span));
                     self.errors.extend(errors);
