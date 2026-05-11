@@ -20,7 +20,13 @@ scripts/ensure-ilo.sh
 
 Run this at the start of every ilo task. It installs ilo if missing, or updates it if a newer version is available.
 
-If you are running inside the pi coding agent with `pi-ilo-lang` installed, prefer the `ilo_run` and `ilo_repl` tools over shelling out: they take structured args and skip the per-call permission prompt.
+## Running ilo from an agent
+
+Three ways to execute ilo, in preference order:
+
+1. **Named tools (`ilo_run`, `ilo_repl`)** - if your agent exposes them (e.g. via `pi-ilo-lang` in pi), prefer them. Structured args, no per-call shell permission prompt.
+2. **`ilo serv`** - long-lived JSON request/response loop, runnable from any shell. Send a line `{"program": "...", "func": "...", "args": [...]}`, get one response line back. Use when you would otherwise spawn many short-lived `ilo` processes.
+3. **One-shot shell** - `ilo '<code>' [args...]` via the bash tool. Fine for a single call.
 
 ## Load the Full Spec
 
