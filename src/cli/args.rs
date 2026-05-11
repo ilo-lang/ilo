@@ -90,22 +90,19 @@ pub struct RunArgs {
 
     // Convenience aliases for --engine (mutually exclusive via conflicts_with).
     /// Tree-walking interpreter.
-    #[arg(long = "run-tree", conflicts_with_all = ["engine", "run", "run_vm", "run_jit", "run_cranelift", "run_llvm"])]
+    #[arg(long = "run-tree", conflicts_with_all = ["engine", "run", "run_vm", "run_cranelift", "run_llvm"])]
     pub run_tree: bool,
     /// Alias for --run-tree.
-    #[arg(long = "run", conflicts_with_all = ["engine", "run_tree", "run_vm", "run_jit", "run_cranelift", "run_llvm"])]
+    #[arg(long = "run", conflicts_with_all = ["engine", "run_tree", "run_vm", "run_cranelift", "run_llvm"])]
     pub run: bool,
     /// Register VM.
-    #[arg(long = "run-vm", conflicts_with_all = ["engine", "run", "run_tree", "run_jit", "run_cranelift", "run_llvm"])]
+    #[arg(long = "run-vm", conflicts_with_all = ["engine", "run", "run_tree", "run_cranelift", "run_llvm"])]
     pub run_vm: bool,
-    /// Custom ARM64 JIT (macOS Apple Silicon only).
-    #[arg(long = "run-jit", conflicts_with_all = ["engine", "run", "run_tree", "run_vm", "run_cranelift", "run_llvm"])]
-    pub run_jit: bool,
     /// Cranelift JIT.
-    #[arg(long = "run-cranelift", conflicts_with_all = ["engine", "run", "run_tree", "run_vm", "run_jit", "run_llvm"])]
+    #[arg(long = "run-cranelift", conflicts_with_all = ["engine", "run", "run_tree", "run_vm", "run_llvm"])]
     pub run_cranelift: bool,
     /// LLVM JIT.
-    #[arg(long = "run-llvm", conflicts_with_all = ["engine", "run", "run_tree", "run_vm", "run_jit", "run_cranelift"])]
+    #[arg(long = "run-llvm", conflicts_with_all = ["engine", "run", "run_tree", "run_vm", "run_cranelift"])]
     pub run_llvm: bool,
 
     /// Benchmark mode.
@@ -146,7 +143,6 @@ pub enum Engine {
     Default,
     Tree,
     Vm,
-    Jit,
     Cranelift,
     Llvm,
 }
@@ -158,8 +154,6 @@ impl RunArgs {
             Engine::Tree
         } else if self.run_vm {
             Engine::Vm
-        } else if self.run_jit {
-            Engine::Jit
         } else if self.run_cranelift {
             Engine::Cranelift
         } else if self.run_llvm {
@@ -638,16 +632,6 @@ mod tests {
     }
 
     #[test]
-    fn engine_flag_run_jit() {
-        let cli = Cli::try_parse_from(["ilo", "run", "--run-jit", "code"]).unwrap();
-        if let Some(Cmd::Run(r)) = cli.cmd {
-            assert_eq!(r.effective_engine(), Engine::Jit);
-        } else {
-            panic!("expected Run subcommand");
-        }
-    }
-
-    #[test]
     fn engine_flag_run_alias() {
         // --run is alias for --run-tree
         let cli = Cli::try_parse_from(["ilo", "run", "--run", "code"]).unwrap();
@@ -668,7 +652,6 @@ mod tests {
             run_tree: false,
             run: false,
             run_vm: false,
-            run_jit: false,
             run_cranelift: false,
             run_llvm: false,
             bench: false,

@@ -13,7 +13,7 @@ by-len ws:L t>L t;srt wlen ws
 -- there's no built-in reverse-sort, but srt + rev does it
 by-len-desc ws:L t>L t;rev (srt wlen ws)
 
--- engine-skip: vm jit
+-- engine-skip: vm
 -- run: by-dist [-3,1,-5,2]
 -- out: [1, 2, -3, -5]
 -- run: by-len ["banana","fig","apple","kiwi"]

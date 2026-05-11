@@ -1985,7 +1985,6 @@ fn dispatch_bare_args(raw_args: Vec<String>, global: &cli::Global) -> i32 {
     let m = mode_args_start;
     let (engine_flag, run_rest_start) = if args.len() > m {
         match args[m].as_str() {
-            "--run-jit" => (Some(cli::Engine::Jit), m + 1),
             "--run-cranelift" => (Some(cli::Engine::Cranelift), m + 1),
             "--run-llvm" => (Some(cli::Engine::Llvm), m + 1),
             "--run-vm" => (Some(cli::Engine::Vm), m + 1),
@@ -2006,7 +2005,6 @@ fn dispatch_bare_args(raw_args: Vec<String>, global: &cli::Global) -> i32 {
                     run_tree: false,
                     run: false,
                     run_vm: false,
-                    run_jit: false,
                     run_cranelift: false,
                     run_llvm: false,
                     bench: true,
@@ -2027,7 +2025,6 @@ fn dispatch_bare_args(raw_args: Vec<String>, global: &cli::Global) -> i32 {
                     run_tree: false,
                     run: false,
                     run_vm: false,
-                    run_jit: false,
                     run_cranelift: false,
                     run_llvm: false,
                     bench: false,
@@ -2053,7 +2050,6 @@ fn dispatch_bare_args(raw_args: Vec<String>, global: &cli::Global) -> i32 {
                     run_tree: false,
                     run: false,
                     run_vm: false,
-                    run_jit: false,
                     run_cranelift: false,
                     run_llvm: false,
                     bench: false,
@@ -2074,7 +2070,6 @@ fn dispatch_bare_args(raw_args: Vec<String>, global: &cli::Global) -> i32 {
                     run_tree: false,
                     run: false,
                     run_vm: false,
-                    run_jit: false,
                     run_cranelift: false,
                     run_llvm: false,
                     bench: false,
@@ -2095,7 +2090,6 @@ fn dispatch_bare_args(raw_args: Vec<String>, global: &cli::Global) -> i32 {
                     run_tree: false,
                     run: false,
                     run_vm: false,
-                    run_jit: false,
                     run_cranelift: false,
                     run_llvm: false,
                     bench: false,
@@ -2128,7 +2122,6 @@ fn dispatch_bare_args(raw_args: Vec<String>, global: &cli::Global) -> i32 {
         run_tree: false,
         run: false,
         run_vm: false,
-        run_jit: false,
         run_cranelift: false,
         run_llvm: false,
         bench: false,
@@ -2335,7 +2328,6 @@ fn dispatch_run(r: cli::RunArgs, mode: OutputMode, explicit_json: bool, no_hints
         let rest = &r.rest;
 
         match engine {
-            cli::Engine::Jit => run_jit_engine(&program, rest),
             cli::Engine::Cranelift => run_cranelift_engine(&program, rest, explicit_json),
             cli::Engine::Llvm => run_llvm_engine(&program, rest),
             cli::Engine::Vm => {
@@ -2436,73 +2428,6 @@ fn dispatch_run(r: cli::RunArgs, mode: OutputMode, explicit_json: bool, no_hints
     }
 
     exit_code
-}
-
-/// JIT (arm64) engine dispatch. Returns exit code.
-fn run_jit_engine(program: &ast::Program, rest: &[String]) -> i32 {
-    let func_name = rest.first().map(|s| s.as_str());
-    let jit_args: Vec<f64> = if rest.len() > 1 {
-        let mut args = Vec::new();
-        for a in &rest[1..] {
-            match a.parse::<f64>() {
-                Ok(v) => args.push(v),
-                Err(_) => {
-                    eprintln!("error: JIT argument '{}' is not a valid number", a);
-                    return 1;
-                }
-            }
-        }
-        args
-    } else {
-        vec![]
-    };
-
-    #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
-    {
-        let compiled = match vm::compile(program) {
-            Ok(c) => c,
-            Err(e) => {
-                eprintln!("Compile error: {}", e);
-                return 1;
-            }
-        };
-        let target = func_name.unwrap_or(
-            compiled
-                .func_names
-                .first()
-                .map(|s| s.as_str())
-                .unwrap_or("main"),
-        );
-        let func_idx = match compiled.func_names.iter().position(|n| n == target) {
-            Some(i) => i,
-            None => {
-                eprintln!("undefined function: {}", target);
-                return 1;
-            }
-        };
-        let chunk = &compiled.chunks[func_idx];
-        let nan_consts = &compiled.nan_constants[func_idx];
-        match vm::jit_arm64::compile_and_call(chunk, nan_consts, &jit_args) {
-            Some(result) => {
-                if result == (result as i64) as f64 {
-                    println!("{}", result as i64);
-                } else {
-                    println!("{}", result);
-                }
-                0
-            }
-            None => {
-                eprintln!("JIT: function not eligible for compilation (numeric-only required)");
-                1
-            }
-        }
-    }
-    #[cfg(not(all(target_arch = "aarch64", target_os = "macos")))]
-    {
-        let _ = (program, func_name, jit_args);
-        eprintln!("Custom JIT (arm64) is only available on aarch64 macOS");
-        1
-    }
 }
 
 /// Cranelift JIT engine dispatch. Returns exit code.
@@ -2685,7 +2610,6 @@ fn print_help() {
     println!("  --run-tree       Tree-walking interpreter");
     println!("  --run-vm         Register VM");
     println!("  --run-cranelift  Cranelift JIT");
-    println!("  --run-jit        Custom ARM64 JIT (macOS Apple Silicon only)");
     println!("  --run-llvm       LLVM JIT (requires --features llvm build)\n");
     println!("Examples:");
     println!("  ilo 'f x:n>n;*x 2' 5             Define and call f(5) → 10");
@@ -3020,6 +2944,7 @@ fn run_bench(program: &ast::Program, func_name: Option<&str>, args: &[interprete
             .unwrap_or("main"),
     );
     let func_idx_jit = compiled.func_names.iter().position(|n| n == call_name_jit);
+    #[cfg(feature = "llvm")]
     let jit_args: Vec<f64> = args
         .iter()
         .filter_map(|a| match a {
@@ -3027,45 +2952,8 @@ fn run_bench(program: &ast::Program, func_name: Option<&str>, args: &[interprete
             _ => None,
         })
         .collect();
-    #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
+    #[cfg(feature = "llvm")]
     let all_numeric = jit_args.len() == args.len();
-
-    let mut jit_arm64_ns: Option<u128> = None;
-    #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
-    if let Some(fi) = func_idx_jit
-        && all_numeric
-    {
-        let chunk = &compiled.chunks[fi];
-        let nan_consts = &compiled.nan_constants[fi];
-        if let Some(jit_func) = vm::jit_arm64::compile(chunk, nan_consts) {
-            // Warmup
-            for _ in 0..100 {
-                let _ = vm::jit_arm64::call(&jit_func, &jit_args);
-            }
-
-            let start = Instant::now();
-            let mut jit_result = 0.0f64;
-            for _ in 0..iterations {
-                jit_result = vm::jit_arm64::call(&jit_func, &jit_args)
-                    .expect("arm64 JIT error during benchmark");
-            }
-            let jit_dur = start.elapsed();
-            let ns = jit_dur.as_nanos() / iterations as u128;
-            jit_arm64_ns = Some(ns);
-
-            println!("Custom JIT (arm64)");
-            if jit_result == (jit_result as i64) as f64 {
-                println!("  result:     {}", jit_result as i64);
-            } else {
-                println!("  result:     {}", jit_result);
-            }
-            println!("  iterations: {}", iterations);
-            println!("  total:      {:.2}ms", jit_dur.as_nanos() as f64 / 1e6);
-            println!("  per call:   {}ns", ns);
-            println!();
-        }
-    }
-
     let mut jit_cranelift_ns: Option<u128> = None;
     #[cfg(feature = "cranelift")]
     if let Some(fi) = func_idx_jit {
@@ -3222,15 +3110,6 @@ print(f"__NS__={{_per}}")
             );
         }
     }
-    if let Some(jit_ns) = jit_arm64_ns
-        && jit_ns > 0
-        && vm_reuse_ns > 0
-    {
-        println!(
-            "  Custom JIT (arm64) is {:.1}x faster than VM (reusable)",
-            vm_reuse_ns as f64 / jit_ns as f64
-        );
-    }
     if let Some(jit_ns) = jit_cranelift_ns
         && jit_ns > 0
         && vm_reuse_ns > 0
@@ -3288,15 +3167,6 @@ print(f"__NS__={{_per}}")
                     vm_reuse_ns as f64 / py as f64
                 );
             }
-        }
-        if let Some(jit_ns) = jit_arm64_ns
-            && jit_ns > 0
-            && py > 0
-        {
-            println!(
-                "  Custom JIT (arm64) is {:.1}x faster than Python",
-                py as f64 / jit_ns as f64
-            );
         }
         if let Some(jit_ns) = jit_cranelift_ns
             && jit_ns > 0
@@ -6150,7 +6020,7 @@ mod tests {
         assert_eq!(code, 0);
     }
 
-    // ── dispatch_bare_args: engine flags (--run-jit, --run-vm, --run-cranelift, --run-llvm, --run)
+    // ── dispatch_bare_args: engine flags (--run-vm, --run-cranelift, --run-llvm, --run)
 
     #[test]
     fn dispatch_bare_args_run_vm_engine_flag() {
@@ -6452,7 +6322,6 @@ mod tests {
             run_tree: false,
             run: false,
             run_vm: false,
-            run_jit: false,
             run_cranelift: false,
             run_llvm: false,
             bench: false,
@@ -6478,7 +6347,6 @@ mod tests {
             run_tree: false,
             run: false,
             run_vm: false,
-            run_jit: false,
             run_cranelift: false,
             run_llvm: false,
             bench: false,
@@ -6505,7 +6373,6 @@ mod tests {
             run_tree: false,
             run: false,
             run_vm: false,
-            run_jit: false,
             run_cranelift: false,
             run_llvm: false,
             bench: false,
@@ -6532,7 +6399,6 @@ mod tests {
             run_tree: false,
             run: false,
             run_vm: false,
-            run_jit: false,
             run_cranelift: false,
             run_llvm: false,
             bench: false,
@@ -6557,7 +6423,6 @@ mod tests {
             run_tree: false,
             run: false,
             run_vm: false,
-            run_jit: false,
             run_cranelift: false,
             run_llvm: false,
             bench: false,
@@ -6584,7 +6449,6 @@ mod tests {
             run_tree: false,
             run: false,
             run_vm: false,
-            run_jit: false,
             run_cranelift: false,
             run_llvm: false,
             bench: false,
@@ -6611,7 +6475,6 @@ mod tests {
             run_tree: false,
             run: false,
             run_vm: false,
-            run_jit: false,
             run_cranelift: false,
             run_llvm: false,
             bench: false,

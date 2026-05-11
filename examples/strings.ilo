@@ -9,7 +9,7 @@ greet name:t age:t>t;fmt "Hello {}, you are {} years old" name age
 -- Deduplicate characters in text
 dedup s:t>t;unq s
 
--- engine-skip: vm jit
+-- engine-skip: vm
 -- run: parts hello-world-foo
 -- out: [hello, world, foo]
 -- run: greet alice 30

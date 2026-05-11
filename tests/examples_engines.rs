@@ -5,16 +5,10 @@
 // Supported engines tested here:
 //   --run-tree   Tree-walking interpreter
 //   --run-vm     Register VM
-//   --run-jit    Custom ARM64 JIT (aarch64 macOS only; numeric-only functions)
 //
 // Per-example skip annotations (anywhere in the file):
-//   -- engine-skip: jit    Skip the JIT engine for this example
 //   -- engine-skip: vm     Skip the VM engine for this example
 //   -- engine-skip: tree   Skip the interpreter for this example
-//
-// Examples that use HTTP builtins (get/post) or tool calls should add
-//   -- engine-skip: jit
-// since the JIT only handles numeric-only functions.
 
 use std::path::PathBuf;
 use std::process::Command;
@@ -78,11 +72,6 @@ fn parse_engine_skips(src: &str) -> std::collections::HashSet<String> {
     skips
 }
 
-/// Detect whether the current platform supports the ARM64 JIT.
-fn jit_supported() -> bool {
-    cfg!(all(target_arch = "aarch64", target_os = "macos"))
-}
-
 #[derive(Debug, Clone, Copy)]
 struct Engine {
     name: &'static str,
@@ -90,7 +79,7 @@ struct Engine {
 }
 
 fn engines() -> Vec<Engine> {
-    let mut list = vec![
+    vec![
         Engine {
             name: "tree",
             flag: "--run-tree",
@@ -99,14 +88,7 @@ fn engines() -> Vec<Engine> {
             name: "vm",
             flag: "--run-vm",
         },
-    ];
-    if jit_supported() {
-        list.push(Engine {
-            name: "jit",
-            flag: "--run-jit",
-        });
-    }
-    list
+    ]
 }
 
 #[test]
@@ -154,11 +136,6 @@ fn examples_all_engines() {
 
                 if !out.status.success() {
                     let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
-                    // If the JIT reports "not eligible", skip gracefully rather than fail.
-                    if engine.name == "jit" && stderr.contains("not eligible") {
-                        total -= 1; // don't count as tested
-                        continue;
-                    }
                     failures.push(format!(
                         "{name} [{engine_name}] (line {}): `ilo {} {} {}`\n  FAILED (exit {})\n  stderr: {stderr}",
                         case.line,

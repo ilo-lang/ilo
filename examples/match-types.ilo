@@ -11,7 +11,6 @@ double-num x:_>t;?x{n v:str *v 2;_:"not a number"}
 -- Match on literal number values (from match.ilo pattern)
 grade n:n>t;?n{100:"perfect";90:"great";_:"ok"}
 
--- engine-skip: jit
 -- run: describe 42
 -- out: number
 -- run: describe hello

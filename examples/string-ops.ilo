@@ -19,7 +19,6 @@ sort-chars s:t>t;srt s
 -- Trim whitespace (hardcoded so spaces survive CLI parsing)
 trim-demo>t;trm "  hello  "
 
--- engine-skip: jit
 -- run: first-ch hello
 -- out: h
 -- run: rest-ch hello

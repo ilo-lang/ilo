@@ -12,7 +12,6 @@
 //   - `ilo <code> --mcp` (missing arg) — error path in dispatch_bare_args
 //   - `ilo <code> --tools` (missing arg) — error path in dispatch_bare_args
 //   - `ilo ''` (empty inline code) — empty-string guard
-//   - `ilo run --run-jit 'code' f abc` — non-numeric JIT arg parse error
 //   - `ilo run --run-vm 'code' f 5` — VM execution
 //   - `ilo run --run-tree 'code' f 5` — tree-walking interpreter execution
 //   - unknown flag in `ilo tools` — tools_cmd error path
@@ -238,21 +237,6 @@ fn run_tree_basic_execution() {
     );
 }
 
-/// `ilo run --run-jit 'f x:n>n;*x 2' f abc` — non-numeric arg to JIT should fail.
-/// On non-arm64 macOS this hits the unsupported-platform path; on arm64 it
-/// should hit the numeric-parse error.  Either way the exit code must be 1.
-#[test]
-fn run_jit_non_numeric_arg_fails() {
-    let (ok, _stdout, stderr) = run_args(&["run", "--run-jit", "f x:n>n;*x 2", "f", "abc"]);
-    // The JIT path on non-arm64 will say "only available on aarch64 macOS";
-    // on arm64 it should say "not a valid number".
-    // In both cases the process should fail.
-    assert!(
-        !ok || stderr.contains("error") || stderr.contains("Error"),
-        "JIT with non-numeric arg should fail or emit an error; stderr: {stderr}"
-    );
-}
-
 // ── tools subcommand — unknown flag error path ────────────────────────────────
 
 /// `ilo tools --unknown-flag` should fail and mention the unknown flag.
@@ -428,17 +412,6 @@ fn cli_cov_serve_tools_no_path() {
     assert!(
         stderr.contains("--tools") || stderr.contains("requires") || stderr.contains("error"),
         "should mention --tools error, got: {stderr}"
-    );
-}
-
-/// `ilo run --run-jit 'f x:n>n;+x 1' nonexistent` — JIT with undefined function (L2473-2474)
-#[test]
-fn cli_cov_jit_fn_not_found() {
-    let (ok, _stdout, stderr) = run_args(&["run", "--run-jit", "f x:n>n;+x 1", "nonexistent"]);
-    // On non-aarch64, the JIT may not be available; either way exit should be non-zero
-    assert!(
-        !ok || stderr.contains("error") || stderr.contains("Error"),
-        "JIT with undefined function should fail or error; stderr: {stderr}"
     );
 }
 
