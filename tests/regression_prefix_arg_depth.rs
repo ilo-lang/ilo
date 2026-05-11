@@ -95,7 +95,14 @@ fn three_arg_prefix_cranelift() {
 // Multi-fn source must be passed as a file because `;` in the single-arg form
 // can swallow fn-decl boundaries in some shapes.
 fn check_infix_on_call(engine: &str) {
-    let path = std::env::temp_dir().join("ilo_prefix_arg_t3.ilo");
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let seq = COUNTER.fetch_add(1, Ordering::Relaxed);
+    let path = std::env::temp_dir().join(format!(
+        "ilo_prefix_arg_t3_{}_{}.ilo",
+        std::process::id(),
+        seq
+    ));
     std::fs::write(&path, "g x:n>n;*x 2\nf>n;a=g 5;+a 3\n").unwrap();
     let out = ilo()
         .args([path.to_str().unwrap(), engine, "f"])
@@ -186,7 +193,14 @@ fn abs_guard_cranelift() {
 // This pins the current behavior — if a future change shifts the count
 // threshold, this test will flag the semantic change loudly.
 fn check_single_atom_after_op(engine: &str) {
-    let path = std::env::temp_dir().join("ilo_prefix_arg_single.ilo");
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let seq = COUNTER.fetch_add(1, Ordering::Relaxed);
+    let path = std::env::temp_dir().join(format!(
+        "ilo_prefix_arg_single_{}_{}.ilo",
+        std::process::id(),
+        seq
+    ));
     std::fs::write(&path, "f a:n>n;a\ng x:n>n;f +x\n").unwrap();
     let out = ilo()
         .args([path.to_str().unwrap(), engine, "g", "3"])

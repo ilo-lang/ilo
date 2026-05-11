@@ -18,6 +18,12 @@ pub enum Builtin {
     Min,
     Max,
     Mod,
+    Pow,
+    Sqrt,
+    Log,
+    Exp,
+    Sin,
+    Cos,
     Sum,
     Avg,
 
@@ -92,6 +98,12 @@ impl Builtin {
             "min" => Some(Builtin::Min),
             "max" => Some(Builtin::Max),
             "mod" => Some(Builtin::Mod),
+            "pow" => Some(Builtin::Pow),
+            "sqrt" => Some(Builtin::Sqrt),
+            "log" => Some(Builtin::Log),
+            "exp" => Some(Builtin::Exp),
+            "sin" => Some(Builtin::Sin),
+            "cos" => Some(Builtin::Cos),
             "sum" => Some(Builtin::Sum),
             "avg" => Some(Builtin::Avg),
             "len" => Some(Builtin::Len),
@@ -151,6 +163,12 @@ impl Builtin {
             Builtin::Min => "min",
             Builtin::Max => "max",
             Builtin::Mod => "mod",
+            Builtin::Pow => "pow",
+            Builtin::Sqrt => "sqrt",
+            Builtin::Log => "log",
+            Builtin::Exp => "exp",
+            Builtin::Sin => "sin",
+            Builtin::Cos => "cos",
             Builtin::Sum => "sum",
             Builtin::Avg => "avg",
             Builtin::Len => "len",
@@ -209,11 +227,11 @@ mod tests {
     #[test]
     fn round_trip_all_builtins() {
         let all = [
-            "str", "num", "abs", "flr", "cel", "rou", "min", "max", "mod", "sum", "avg", "len",
-            "hd", "at", "tl", "rev", "srt", "slc", "unq", "flat", "has", "spl", "cat", "map",
-            "flt", "fld", "grp", "rnd", "now", "rd", "rdl", "rdb", "wr", "wrl", "prnt", "env",
-            "trm", "fmt", "rgx", "jpth", "jdmp", "jpar", "get", "post", "mmap", "mget", "mset",
-            "mhas", "mkeys", "mvals", "mdel",
+            "str", "num", "abs", "flr", "cel", "rou", "min", "max", "mod", "pow", "sqrt", "log",
+            "exp", "sin", "cos", "sum", "avg", "len", "hd", "at", "tl", "rev", "srt", "slc", "unq",
+            "flat", "has", "spl", "cat", "map", "flt", "fld", "grp", "rnd", "now", "rd", "rdl",
+            "rdb", "wr", "wrl", "prnt", "env", "trm", "fmt", "rgx", "jpth", "jdmp", "jpar", "get",
+            "post", "mmap", "mget", "mset", "mhas", "mkeys", "mvals", "mdel",
         ];
         for name in &all {
             let b = Builtin::from_name(name).unwrap_or_else(|| panic!("missing builtin: {name}"));

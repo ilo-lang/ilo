@@ -515,6 +515,37 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             )),
         };
     }
+    if matches!(
+        builtin,
+        Some(Builtin::Sqrt | Builtin::Log | Builtin::Exp | Builtin::Sin | Builtin::Cos)
+    ) && args.len() == 1
+    {
+        return match &args[0] {
+            Value::Number(n) => {
+                let result = match builtin {
+                    Some(Builtin::Sqrt) => n.sqrt(),
+                    Some(Builtin::Log) => n.ln(),
+                    Some(Builtin::Exp) => n.exp(),
+                    Some(Builtin::Sin) => n.sin(),
+                    _ => n.cos(),
+                };
+                Ok(Value::Number(result))
+            }
+            other => Err(RuntimeError::new(
+                "ILO-R009",
+                format!("{} requires a number, got {:?}", name, other),
+            )),
+        };
+    }
+    if builtin == Some(Builtin::Pow) && args.len() == 2 {
+        return match (&args[0], &args[1]) {
+            (Value::Number(a), Value::Number(b)) => Ok(Value::Number(a.powf(*b))),
+            _ => Err(RuntimeError::new(
+                "ILO-R009",
+                "pow requires two numbers".to_string(),
+            )),
+        };
+    }
     if builtin == Some(Builtin::Now) && args.is_empty() {
         let ts = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -2546,6 +2577,64 @@ mod tests {
         let prog = parse_program(source);
         let result = run(&prog, Some("f"), vec![Value::Number(10.0)]);
         assert!(result.is_err());
+    }
+
+    // ── Error paths for the new transcendental math builtins ─────────────
+    // The tree-walker accepts any Value at runtime; verify catches the type
+    // mismatch at compile time but does not run here. These tests cover the
+    // `other => Err(...)` arms in the Sqrt|Log|Exp|Sin|Cos and Pow handlers.
+    #[test]
+    fn interpret_sqrt_non_number_errors() {
+        let source = "f x:t>n;sqrt x";
+        let prog = parse_program(source);
+        let err = run(&prog, Some("f"), vec![Value::Text("nope".into())]).unwrap_err();
+        assert!(
+            err.to_string().contains("sqrt") && err.to_string().contains("requires a number"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn interpret_log_non_number_errors() {
+        let prog = parse_program("f x:t>n;log x");
+        let err = run(&prog, Some("f"), vec![Value::Text("nope".into())]).unwrap_err();
+        assert!(err.to_string().contains("log"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn interpret_exp_non_number_errors() {
+        let prog = parse_program("f x:t>n;exp x");
+        let err = run(&prog, Some("f"), vec![Value::Text("nope".into())]).unwrap_err();
+        assert!(err.to_string().contains("exp"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn interpret_sin_non_number_errors() {
+        let prog = parse_program("f x:t>n;sin x");
+        let err = run(&prog, Some("f"), vec![Value::Text("nope".into())]).unwrap_err();
+        assert!(err.to_string().contains("sin"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn interpret_cos_non_number_errors() {
+        let prog = parse_program("f x:t>n;cos x");
+        let err = run(&prog, Some("f"), vec![Value::Text("nope".into())]).unwrap_err();
+        assert!(err.to_string().contains("cos"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn interpret_pow_non_number_errors() {
+        let prog = parse_program("f x:t y:t>n;pow x y");
+        let err = run(
+            &prog,
+            Some("f"),
+            vec![Value::Text("a".into()), Value::Text("b".into())],
+        )
+        .unwrap_err();
+        assert!(
+            err.to_string().contains("pow") && err.to_string().contains("two numbers"),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]

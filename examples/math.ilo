@@ -1,0 +1,17 @@
+-- Transcendental builtins: pow, sqrt, log, exp, sin, cos (radians).
+
+-- 2D Euclidean distance: sqrt(x^2 + y^2)
+dist x:n y:n>n;a=*x x;b=*y y;sqrt +a b
+
+-- Compound interest: principal * (1 + rate)^years
+ci p:n r:n y:n>n;g=+1 r;f=pow g y;*p f
+
+-- Log/exp round-trip
+rt x:n>n;e=exp x;log e
+
+-- run: dist 3 4
+-- out: 5
+-- run: ci 1000 0.05 10
+-- out: 1628.894626777442
+-- run: rt 5
+-- out: 5
