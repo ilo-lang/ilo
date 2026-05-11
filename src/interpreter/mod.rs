@@ -2060,7 +2060,14 @@ fn eval_expr(env: &mut Env, expr: &Expr) -> Result<Value> {
                         propagate_value: Some(Box::new(Value::Err(e))),
                         ..RuntimeError::new("ILO-R014", "auto-unwrap propagating Err")
                     }),
-                    other => Ok(other), // non-Result values pass through
+                    // Optional auto-unwrap: nil propagates as the function's return.
+                    // Non-nil values pass through (Optional<T> is represented inline,
+                    // so Some(v) is just v at runtime).
+                    Value::Nil => Err(RuntimeError {
+                        propagate_value: Some(Box::new(Value::Nil)),
+                        ..RuntimeError::new("ILO-R014", "auto-unwrap propagating nil")
+                    }),
+                    other => Ok(other), // non-Result/non-nil values pass through
                 }
             } else {
                 Ok(result)

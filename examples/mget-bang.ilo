@@ -1,0 +1,30 @@
+-- mget! — one-step Optional unwrap with nil propagation.
+--
+-- `mget m k` returns `O v` (nil if the key is missing, the value if present).
+-- Before mget! existed, every reader had to write a two-step bind:
+--   r = mget m "k"
+--   v = r ?? 0
+-- to extract a value, even when the key was known to be present.
+--
+-- mget! collapses that to a single call: if the key is present, the call
+-- yields the value; if missing, nil propagates out of the enclosing function
+-- (which therefore must return an Optional).
+--
+-- Parallels the existing `!` on R-returning calls: Ok→v, Err→propagate.
+
+-- Present key: mget! yields the inner value (5).
+present>O n;m=mset mmap "k" 5;v=mget! m "k";v
+
+-- Missing key: mget! propagates nil immediately. The `+v 99` is never reached.
+missing>O n;m=mmap;v=mget! m "k";+v 99
+
+-- The two-step `??` idiom still works when a default is preferred over
+-- propagation.
+defaulted>n;m=mmap;r=mget m "k";v=r??42;v
+
+-- run: present
+-- out: 5
+-- run: missing
+-- out: nil
+-- run: defaulted
+-- out: 42
