@@ -20,6 +20,8 @@ scripts/ensure-ilo.sh
 
 Run this at the start of every ilo task. It installs ilo if missing, or updates it if a newer version is available.
 
+If you are running inside the pi coding agent with `pi-ilo-lang` installed, prefer the `ilo_run` and `ilo_repl` tools over shelling out: they take structured args and skip the per-call permission prompt.
+
 ## Load the Full Spec
 
 After ensuring ilo is installed, load the compact AI spec for complete language reference:

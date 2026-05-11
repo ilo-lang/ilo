@@ -175,3 +175,43 @@ jobs:
           }
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  publish-pi:
+    needs: [release]
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            pi
+            skills/ilo
+
+      - name: Sync canonical skill into pi package
+        run: |
+          mkdir -p pi/skills/ilo
+          cp skills/ilo/SKILL.md pi/skills/ilo/SKILL.md
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Set npm version from tag
+        working-directory: pi
+        env:
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          version="${REF_NAME#v}"
+          npm version "$version" --no-git-tag-version
+
+      - name: Publish to npm
+        working-directory: pi
+        run: |
+          output=$(npm publish --access public 2>&1) && echo "$output" || {
+            echo "$output"
+            echo "$output" | grep -q "previously published" || exit 1
+          }
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
