@@ -17,6 +17,7 @@ flip xs:L n>L n;rev xs
 -- Sort a list of numbers
 sorted xs:L n>L n;srt xs
 
+-- vm/jit lack higher-order builtins (flt, map, fld passing function refs); jit also can't bind list args
 -- engine-skip: vm jit
 -- run: first [10,20,30]
 -- out: 10
