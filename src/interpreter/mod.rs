@@ -178,6 +178,11 @@ impl Env {
         if self.functions.contains_key(name) {
             return Ok(Value::FnRef(name.to_string()));
         }
+        // Builtin names also resolve to FnRef so they can be passed to
+        // higher-order builtins (e.g. `fld max xs 0`).
+        if Builtin::is_builtin(name) {
+            return Ok(Value::FnRef(name.to_string()));
+        }
         Err(RuntimeError::new(
             "ILO-R001",
             format!("undefined variable: {}", name),
