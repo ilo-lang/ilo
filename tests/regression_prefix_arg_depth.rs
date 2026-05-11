@@ -98,8 +98,11 @@ fn check_infix_on_call(engine: &str) {
     use std::sync::atomic::{AtomicU64, Ordering};
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let seq = COUNTER.fetch_add(1, Ordering::Relaxed);
-    let path = std::env::temp_dir()
-        .join(format!("ilo_prefix_arg_t3_{}_{}.ilo", std::process::id(), seq));
+    let path = std::env::temp_dir().join(format!(
+        "ilo_prefix_arg_t3_{}_{}.ilo",
+        std::process::id(),
+        seq
+    ));
     std::fs::write(&path, "g x:n>n;*x 2\nf>n;a=g 5;+a 3\n").unwrap();
     let out = ilo()
         .args([path.to_str().unwrap(), engine, "f"])
