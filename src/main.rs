@@ -1310,6 +1310,45 @@ fn serv_cmd(args_slice: &[String]) {
     }
 }
 
+/// Scan args for `--run-tree` / `--run` / `--run-vm` / `--run-cranelift` /
+/// `--run-llvm` anywhere in the list and remove them. argv[0] (binary name)
+/// is preserved at position 0. Returns the chosen engine (if any) plus the
+/// remaining args. Multiple conflicting engine flags produce an error.
+fn extract_run_engine_flag(
+    args: Vec<String>,
+) -> Result<(Option<cli::Engine>, Vec<String>), String> {
+    let mut engine: Option<cli::Engine> = None;
+    let mut conflict = false;
+    let mut remaining = Vec::with_capacity(args.len());
+
+    for arg in args {
+        let candidate = match arg.as_str() {
+            "--run-cranelift" => Some(cli::Engine::Cranelift),
+            "--run-llvm" => Some(cli::Engine::Llvm),
+            "--run-vm" => Some(cli::Engine::Vm),
+            "--run" | "--run-tree" => Some(cli::Engine::Tree),
+            _ => None,
+        };
+        match candidate {
+            Some(e) => match engine {
+                None => engine = Some(e),
+                Some(prev) if prev == e => {} // identical flag repeated: ignore
+                Some(_) => conflict = true,
+            },
+            None => remaining.push(arg),
+        }
+    }
+
+    if conflict {
+        return Err(
+            "error: --run, --run-tree, --run-vm, --run-cranelift, --run-llvm are mutually exclusive"
+                .to_string(),
+        );
+    }
+
+    Ok((engine, remaining))
+}
+
 /// Scan args for --json/-j, --text/-t, --ansi/-a, --no-hints/-nh.
 /// Return (mode, explicit_json, no_hints, remaining_args).
 /// Multiple format flags -> error + exit(1).
@@ -1856,6 +1895,24 @@ fn dispatch_bare_args(raw_args: Vec<String>, global: &cli::Global) -> i32 {
     // Strip output mode flags from raw_args (--json/-j, --text/-t, --ansi/-a, --no-hints/-n)
     let (mode, explicit_json, no_hints, args) = detect_output_mode(raw_args);
 
+    // Extract --run-* engine flags from anywhere in the arg list so users can
+    // pass them before or after positional args. Examples that should be
+    // equivalent:
+    //   ilo 'f>n;5' --run-tree f
+    //   ilo 'f>n;5' f --run-tree
+    //   ilo --run-tree 'f>n;5' f
+    //   ilo file.ilo --run-tree main
+    //   ilo --run-tree file.ilo main
+    //
+    // Conflicting flags (e.g. --run-tree --run-vm) still error cleanly.
+    let (pre_engine, args) = match extract_run_engine_flag(args) {
+        Ok(v) => v,
+        Err(msg) => {
+            eprintln!("{msg}");
+            return 1;
+        }
+    };
+
     // Override with clap-parsed global flags if they were set
     let mode = if global.ansi {
         OutputMode::Ansi
@@ -1994,6 +2051,10 @@ fn dispatch_bare_args(raw_args: Vec<String>, global: &cli::Global) -> i32 {
     } else {
         (None, m)
     };
+
+    // Merge in any --run-* flag extracted from a non-canonical position
+    // (before the source, or after positional func/args).
+    let engine_flag = engine_flag.or(pre_engine);
 
     // Check for mode flags at the start of remaining args
     if args.len() > m {
