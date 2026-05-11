@@ -179,6 +179,14 @@ pub(crate) const OP_CMPK_NE_N: u8 = 95; // skip-if R[A] != K[C]  (f64)
 pub(crate) const OP_ADD_SS: u8 = 96; // R[A] = R[B] ++ R[C]  (both known text)
 pub(crate) const OP_AT: u8 = 103; // R[A] = at(R[B], R[C])  (i-th element of list/text)
 
+// ABC mode — transcendental math (f64, std::f64 backed, NaN on domain error)
+pub(crate) const OP_POW: u8 = 97; // R[A] = pow(R[B], R[C])
+pub(crate) const OP_SQRT: u8 = 98; // R[A] = sqrt(R[B])
+pub(crate) const OP_LOG: u8 = 99; // R[A] = ln(R[B])
+pub(crate) const OP_EXP: u8 = 100; // R[A] = exp(R[B])
+pub(crate) const OP_SIN: u8 = 101; // R[A] = sin(R[B])
+pub(crate) const OP_COS: u8 = 102; // R[A] = cos(R[B])
+
 // ABx mode — register + 16-bit operand
 pub(crate) const OP_LOADK: u8 = 20;
 pub(crate) const OP_JMP: u8 = 21;
@@ -1581,6 +1589,35 @@ impl RegCompiler {
                                 _ => OP_ROU,
                             };
                             self.emit_abc(op, ra, rb, 0);
+                            self.reg_is_num[ra as usize] = true;
+                            return ra;
+                        }
+                        (
+                            Builtin::Sqrt
+                            | Builtin::Log
+                            | Builtin::Exp
+                            | Builtin::Sin
+                            | Builtin::Cos,
+                            1,
+                        ) => {
+                            let rb = self.compile_expr(&args[0]);
+                            let ra = self.alloc_reg();
+                            let op = match builtin {
+                                Builtin::Sqrt => OP_SQRT,
+                                Builtin::Log => OP_LOG,
+                                Builtin::Exp => OP_EXP,
+                                Builtin::Sin => OP_SIN,
+                                _ => OP_COS,
+                            };
+                            self.emit_abc(op, ra, rb, 0);
+                            self.reg_is_num[ra as usize] = true;
+                            return ra;
+                        }
+                        (Builtin::Pow, 2) => {
+                            let rb = self.compile_expr(&args[0]);
+                            let rc = self.compile_expr(&args[1]);
+                            let ra = self.alloc_reg();
+                            self.emit_abc(OP_POW, ra, rb, rc);
                             self.reg_is_num[ra as usize] = true;
                             return ra;
                         }
@@ -4913,6 +4950,37 @@ impl<'a> VM<'a> {
                     };
                     reg_set!(a, NanVal::number(result));
                 }
+                OP_SQRT | OP_LOG | OP_EXP | OP_SIN | OP_COS => {
+                    let a = ((inst >> 16) & 0xFF) as usize + base;
+                    let b = ((inst >> 8) & 0xFF) as usize + base;
+                    let v = reg!(b);
+                    let result = if v.is_number() {
+                        let n = v.as_number();
+                        match op {
+                            OP_SQRT => n.sqrt(),
+                            OP_LOG => n.ln(),
+                            OP_EXP => n.exp(),
+                            OP_SIN => n.sin(),
+                            _ => n.cos(),
+                        }
+                    } else {
+                        f64::NAN
+                    };
+                    reg_set!(a, NanVal::number(result));
+                }
+                OP_POW => {
+                    let a = ((inst >> 16) & 0xFF) as usize + base;
+                    let b = ((inst >> 8) & 0xFF) as usize + base;
+                    let c = (inst & 0xFF) as usize + base;
+                    let vb = reg!(b);
+                    let vc = reg!(c);
+                    let result = if vb.is_number() && vc.is_number() {
+                        vb.as_number().powf(vc.as_number())
+                    } else {
+                        f64::NAN
+                    };
+                    reg_set!(a, NanVal::number(result));
+                }
                 OP_RND0 => {
                     let a = ((inst >> 16) & 0xFF) as usize + base;
                     reg_set!(a, NanVal::number(fastrand::f64()));
@@ -6337,6 +6405,73 @@ pub(crate) extern "C" fn jit_rou(a: u64) -> u64 {
         NanVal::number(v.as_number().round()).0
     } else {
         TAG_NIL
+    }
+}
+
+#[cfg(feature = "cranelift")]
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn jit_pow(a: u64, b: u64) -> u64 {
+    let av = NanVal(a);
+    let bv = NanVal(b);
+    if av.is_number() && bv.is_number() {
+        NanVal::number(av.as_number().powf(bv.as_number())).0
+    } else {
+        NanVal::number(f64::NAN).0
+    }
+}
+
+#[cfg(feature = "cranelift")]
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn jit_sqrt(a: u64) -> u64 {
+    let v = NanVal(a);
+    if v.is_number() {
+        NanVal::number(v.as_number().sqrt()).0
+    } else {
+        NanVal::number(f64::NAN).0
+    }
+}
+
+#[cfg(feature = "cranelift")]
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn jit_log(a: u64) -> u64 {
+    let v = NanVal(a);
+    if v.is_number() {
+        NanVal::number(v.as_number().ln()).0
+    } else {
+        NanVal::number(f64::NAN).0
+    }
+}
+
+#[cfg(feature = "cranelift")]
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn jit_exp(a: u64) -> u64 {
+    let v = NanVal(a);
+    if v.is_number() {
+        NanVal::number(v.as_number().exp()).0
+    } else {
+        NanVal::number(f64::NAN).0
+    }
+}
+
+#[cfg(feature = "cranelift")]
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn jit_sin(a: u64) -> u64 {
+    let v = NanVal(a);
+    if v.is_number() {
+        NanVal::number(v.as_number().sin()).0
+    } else {
+        NanVal::number(f64::NAN).0
+    }
+}
+
+#[cfg(feature = "cranelift")]
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn jit_cos(a: u64) -> u64 {
+    let v = NanVal(a);
+    if v.is_number() {
+        NanVal::number(v.as_number().cos()).0
+    } else {
+        NanVal::number(f64::NAN).0
     }
 }
 
@@ -20359,5 +20494,100 @@ f>n;r=mk 10 20;+r.x r.y";
             msg.contains("list") || msg.contains("foreach"),
             "got: {msg}"
         );
+    }
+
+    #[cfg(feature = "cranelift")]
+    #[test]
+    fn jit_math_helpers_return_nan_on_non_number() {
+        // Path A: the JIT extern "C" helpers must return a NaN-boxed number
+        // (not TAG_NIL) when their inputs are not numbers. Cranelift codegen
+        // calls these directly, so this also covers that engine.
+        let nil = TAG_NIL;
+        for got in [
+            jit_pow(nil, NanVal::number(2.0).0),
+            jit_pow(NanVal::number(2.0).0, nil),
+            jit_sqrt(nil),
+            jit_log(nil),
+            jit_exp(nil),
+            jit_sin(nil),
+            jit_cos(nil),
+        ] {
+            let v = NanVal(got);
+            assert!(
+                v.is_number() && v.as_number().is_nan(),
+                "expected NaN-boxed number, got bits={:#x}",
+                got
+            );
+        }
+    }
+
+    #[test]
+    fn vm_math_ops_return_nan_on_non_number() {
+        // Path B: OP_SQRT / OP_POW on a non-number register must store
+        // NaN rather than raising a runtime error. We hand-craft bytecode
+        // because the verifier rejects this at compile time for typed code.
+        use crate::interpreter::Value;
+
+        fn make_abc(op: u8, a: u8, b: u8, c: u8) -> u32 {
+            ((op as u32) << 24) | ((a as u32) << 16) | ((b as u32) << 8) | (c as u32)
+        }
+        fn make_abx(op: u8, a: u8, bx: u16) -> u32 {
+            ((op as u32) << 24) | ((a as u32) << 16) | (bx as u32)
+        }
+
+        // Unary: sqrt(nil) → NaN
+        // R[1] = LOADK nil; R[2] = SQRT R[1]; RET R[2]
+        let code = vec![
+            make_abx(OP_LOADK, 1, 0),
+            make_abc(OP_SQRT, 2, 1, 0),
+            make_abc(OP_RET, 2, 0, 0),
+        ];
+        let chunk = Chunk {
+            code,
+            constants: vec![Value::Nil],
+            param_count: 0,
+            reg_count: 3,
+            spans: vec![crate::ast::Span::UNKNOWN; 3],
+            all_regs_numeric: false,
+        };
+        let program = CompiledProgram {
+            chunks: vec![chunk],
+            func_names: vec!["f".to_string()],
+            nan_constants: vec![vec![NanVal::nil()]],
+            type_registry: TypeRegistry::default(),
+            is_tool: vec![false],
+        };
+        let result = run(&program, Some("f"), vec![]).expect("sqrt nil should not error");
+        match result {
+            Value::Number(n) => assert!(n.is_nan(), "expected NaN, got {n}"),
+            other => panic!("expected number, got {:?}", other),
+        }
+
+        // Binary: pow(nil, nil) → NaN
+        let code = vec![
+            make_abx(OP_LOADK, 1, 0),
+            make_abc(OP_POW, 2, 1, 1),
+            make_abc(OP_RET, 2, 0, 0),
+        ];
+        let chunk = Chunk {
+            code,
+            constants: vec![Value::Nil],
+            param_count: 0,
+            reg_count: 3,
+            spans: vec![crate::ast::Span::UNKNOWN; 3],
+            all_regs_numeric: false,
+        };
+        let program = CompiledProgram {
+            chunks: vec![chunk],
+            func_names: vec!["f".to_string()],
+            nan_constants: vec![vec![NanVal::nil()]],
+            type_registry: TypeRegistry::default(),
+            is_tool: vec![false],
+        };
+        let result = run(&program, Some("f"), vec![]).expect("pow nil should not error");
+        match result {
+            Value::Number(n) => assert!(n.is_nan(), "expected NaN, got {n}"),
+            other => panic!("expected number, got {:?}", other),
+        }
     }
 }

@@ -515,6 +515,37 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             )),
         };
     }
+    if matches!(
+        builtin,
+        Some(Builtin::Sqrt | Builtin::Log | Builtin::Exp | Builtin::Sin | Builtin::Cos)
+    ) && args.len() == 1
+    {
+        return match &args[0] {
+            Value::Number(n) => {
+                let result = match builtin {
+                    Some(Builtin::Sqrt) => n.sqrt(),
+                    Some(Builtin::Log) => n.ln(),
+                    Some(Builtin::Exp) => n.exp(),
+                    Some(Builtin::Sin) => n.sin(),
+                    _ => n.cos(),
+                };
+                Ok(Value::Number(result))
+            }
+            other => Err(RuntimeError::new(
+                "ILO-R009",
+                format!("{} requires a number, got {:?}", name, other),
+            )),
+        };
+    }
+    if builtin == Some(Builtin::Pow) && args.len() == 2 {
+        return match (&args[0], &args[1]) {
+            (Value::Number(a), Value::Number(b)) => Ok(Value::Number(a.powf(*b))),
+            _ => Err(RuntimeError::new(
+                "ILO-R009",
+                "pow requires two numbers".to_string(),
+            )),
+        };
+    }
     if builtin == Some(Builtin::Now) && args.is_empty() {
         let ts = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
