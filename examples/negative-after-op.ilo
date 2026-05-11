@@ -1,0 +1,24 @@
+-- Negative literals immediately after a binary operator. The lexer eats
+-- `-0.05` as a single Number token, but a negative literal is itself a valid
+-- second operand to a binary op, so `<r -0.05` parses cleanly as
+-- `LessThan(r, -0.05)`. Same holds for negative literals in prefix-binary
+-- arg position (`+a -3`) and in call arg position (`mod n -2`).
+
+below x:n>n;<x -0.05{1}{0}
+shift a:n>n;+a -3
+modn n:n>n;mod n -2
+
+-- run: below -0.1
+-- out: 1
+-- run: below 0.1
+-- out: 0
+-- run: below -0.05
+-- out: 0
+-- run: shift 10
+-- out: 7
+-- run: shift -5
+-- out: -8
+-- run: modn 7
+-- out: 1
+-- run: modn 10
+-- out: 0
