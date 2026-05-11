@@ -1,0 +1,9 @@
+-- Prefix nil-coalesce: ??a b returns a if non-nil, else b. Mirror of a??b.
+
+dflt o:O n d:n>n;??o d
+
+-- run: dflt nil 42
+-- out: 42
+
+-- run: dflt 7 42
+-- out: 7
