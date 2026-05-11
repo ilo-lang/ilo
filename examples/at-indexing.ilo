@@ -1,0 +1,13 @@
+-- at xs i: i-th element of a list (0-indexed). Out-of-range is a runtime error.
+
+nth xs:L n i:n>n;at xs i
+last xs:L n>n;at xs -(len xs) 1
+
+-- run: nth [10,20,30] 1
+-- out: 20
+-- run: nth [10,20,30] 0
+-- out: 10
+-- run: nth [10,20,30] 2
+-- out: 30
+-- run: last [10,20,30]
+-- out: 30
