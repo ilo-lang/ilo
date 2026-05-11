@@ -6392,4 +6392,55 @@ mod tests {
             body[0].node
         );
     }
+
+    // ── Coverage: parse_type LParen branch (nested generic types) ──────────
+
+    #[test]
+    fn parse_type_result_of_list() {
+        // `R (L n) t` — exercises LParen arm of parse_type around `L n`.
+        let prog = parse_str("f>R (L n) t;~[1,2,3]");
+        let Decl::Function { return_type, .. } = &prog.declarations[0] else {
+            panic!("expected function")
+        };
+        let Type::Result(ok, _err) = return_type else {
+            panic!("expected Result return type, got {:?}", return_type)
+        };
+        assert!(
+            matches!(ok.as_ref(), Type::List(inner) if matches!(inner.as_ref(), Type::Number)),
+            "expected L n inside R, got {:?}",
+            ok
+        );
+    }
+
+    #[test]
+    fn parse_type_parens_around_atom_transparent() {
+        // `R (n) t` — single-token in parens unwraps to plain `n`.
+        let prog = parse_str("f>R (n) t;~1");
+        let Decl::Function { return_type, .. } = &prog.declarations[0] else {
+            panic!("expected function")
+        };
+        let Type::Result(ok, _err) = return_type else {
+            panic!("expected Result, got {:?}", return_type)
+        };
+        assert!(
+            matches!(ok.as_ref(), Type::Number),
+            "expected n inside parens, got {:?}",
+            ok
+        );
+    }
+
+    #[test]
+    fn parse_type_param_with_paren_type() {
+        // LParen in a param type position exercises can_start_type's LParen branch.
+        let prog = parse_str("f x:(L n)>n;0");
+        let Decl::Function { params, .. } = &prog.declarations[0] else {
+            panic!("expected function")
+        };
+        assert_eq!(params.len(), 1);
+        assert!(
+            matches!(&params[0].ty, Type::List(inner) if matches!(inner.as_ref(), Type::Number)),
+            "expected (L n) param type, got {:?}",
+            params[0].ty
+        );
+    }
 }
