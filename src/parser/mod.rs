@@ -1252,6 +1252,13 @@ impl Parser {
 
     /// Return the infix binding power (left, right) for a token, or None if not infix.
     /// Higher numbers bind tighter. Right bp > left bp for left-associativity.
+    /// Operators that, in the middle of a call-arg sequence, may end the call
+    /// by binding the preceding expression as their left operand. Covers
+    /// Pratt-table infix ops plus `??` (handled by `maybe_nil_coalesce`).
+    fn is_infix_or_suffix_op(token: &Token) -> bool {
+        matches!(token, Token::NilCoalesce) || Self::infix_binding_power(token).is_some()
+    }
+
     fn infix_binding_power(token: &Token) -> Option<(u8, u8, BinOp)> {
         match token {
             Token::Pipe => Some((1, 2, BinOp::Or)),
@@ -1343,6 +1350,16 @@ impl Parser {
             | Some(Token::Amp)
             | Some(Token::Pipe)
             | Some(Token::PlusEq) => self.parse_prefix_binop(),
+            // Prefix nil-coalesce: ??a b — mirror of infix `a ?? b`
+            Some(Token::NilCoalesce) => {
+                self.advance();
+                let value = self.parse_operand()?;
+                let default = self.parse_expr_inner()?;
+                Ok(Expr::NilCoalesce {
+                    value: Box::new(value),
+                    default: Box::new(default),
+                })
+            }
             // Match expression: ?expr{...} or ?{...}, or prefix ternary: ?=x 0 10 20
             Some(Token::Question) => self.parse_question_expr(),
             // Atoms and calls — infix operators can follow these
@@ -1563,7 +1580,7 @@ impl Parser {
                 // If the first token is an infix-eligible operator, check if it
                 // looks like a prefix binary op (followed by 2+ atoms) or infix
                 if let Some(tok) = self.peek()
-                    && Self::infix_binding_power(tok).is_some()
+                    && Self::is_infix_or_suffix_op(tok)
                     && !self.looks_like_prefix_binary(self.pos)
                 {
                     return Ok(atom);
@@ -1573,7 +1590,7 @@ impl Parser {
                     args.push(self.parse_operand()?);
                     // After each arg, if next is infix, stop
                     if let Some(tok) = self.peek()
-                        && Self::infix_binding_power(tok).is_some()
+                        && Self::is_infix_or_suffix_op(tok)
                         && !self.looks_like_prefix_binary(self.pos)
                     {
                         break;
@@ -1690,7 +1707,8 @@ impl Parser {
                 | Token::NotEq
                 | Token::Amp
                 | Token::Pipe
-                | Token::PlusEq => {
+                | Token::PlusEq
+                | Token::NilCoalesce => {
                     if let Some(end) = self.scan_prefix_binary_end(look) {
                         count += 1;
                         look = end;
@@ -1747,6 +1765,7 @@ impl Parser {
                     | Some(Token::Amp)
                     | Some(Token::Pipe)
                     | Some(Token::PlusEq)
+                    | Some(Token::NilCoalesce)
                     | Some(Token::Bang)
                     | Some(Token::Tilde)
                     | Some(Token::Caret)
@@ -1772,6 +1791,15 @@ impl Parser {
             | Some(Token::Amp)
             | Some(Token::Pipe)
             | Some(Token::PlusEq) => self.parse_prefix_binop(),
+            Some(Token::NilCoalesce) => {
+                self.advance();
+                let value = self.parse_operand()?;
+                let default = self.parse_expr_inner()?;
+                Ok(Expr::NilCoalesce {
+                    value: Box::new(value),
+                    default: Box::new(default),
+                })
+            }
             Some(Token::Minus) => self.parse_minus(),
             Some(Token::Bang) => {
                 self.advance();
