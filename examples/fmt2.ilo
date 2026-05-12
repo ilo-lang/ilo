@@ -19,7 +19,7 @@ round-down>t;fmt2 2.5 0
 neg-digits>t;fmt2 3.7 -1
 
 -- Build a percentile-report line: "p95: 0.99"
-report v:n>t;cat ["p95: " fmt2 v 2] ""
+report v:n>t;s=fmt2 v 2;cat ["p95: " s] ""
 
 -- run: pi-2
 -- out: 3.14
