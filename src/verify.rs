@@ -286,6 +286,7 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("enumerate", &["list"], "list"),
     ("range", &["n", "n"], "L n"),
     ("window", &["n", "list"], "list"),
+    ("chunks", &["n", "L a"], "L (L a)"),
     ("has", &["list_or_text", "any"], "b"),
     ("hd", &["list_or_text"], "any"),
     ("at", &["list_or_text", "n"], "any"),
@@ -1411,6 +1412,37 @@ fn builtin_check_args(
                 _ => Ty::Unknown,
             };
             (ret, errors)
+        }
+        "chunks" => {
+            // chunks n xs:L a → L (L a) — split into non-overlapping chunks of size n.
+            if let Some(arg) = arg_types.first()
+                && !compatible(arg, &Ty::Number)
+            {
+                errors.push(VerifyError {
+                    code: "ILO-T013",
+                    function: func_ctx.to_string(),
+                    message: format!("'chunks' arg 1 expects n, got {arg}"),
+                    hint: None,
+                    span,
+                    is_warning: false,
+                });
+            }
+            let inner = match arg_types.get(1) {
+                Some(Ty::List(inner)) => *inner.clone(),
+                Some(Ty::Unknown) | None => Ty::Unknown,
+                Some(other) => {
+                    errors.push(VerifyError {
+                        code: "ILO-T013",
+                        function: func_ctx.to_string(),
+                        message: format!("'chunks' expects a list, got {other}"),
+                        hint: None,
+                        span,
+                        is_warning: false,
+                    });
+                    Ty::Unknown
+                }
+            };
+            (Ty::List(Box::new(Ty::List(Box::new(inner)))), errors)
         }
         "frq" => {
             // frq xs:L a → M t n — count occurrences of each element.

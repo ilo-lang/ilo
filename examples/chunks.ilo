@@ -1,0 +1,26 @@
+-- chunks n xs:L a > L (L a) — split a list into non-overlapping pieces
+-- of size n. The final piece may be shorter when len xs % n != 0.
+-- Useful for batch processing and pagination.
+--
+-- Contrast with `window n xs` which yields *overlapping* fixed-size views
+-- and drops any trailing partial. e.g. with n=5 and xs=[1,2,3]:
+--   chunks 5 [1,2,3] -> [[1,2,3]]   (one short trailing chunk)
+--   window 5 [1,2,3] -> []           (no full-size window fits)
+-- Matches Rust's slice::chunks / slice::windows precedent.
+
+basic>L (L n);chunks 2 [1, 2, 3, 4, 5]
+exact>L (L n);chunks 3 [1, 2, 3, 4, 5, 6]
+big>L (L n);chunks 10 [1, 2, 3]
+ones>L (L n);chunks 1 [1, 2, 3]
+empty>L (L n);chunks 2 []
+
+-- run: basic
+-- out: [[1, 2], [3, 4], [5]]
+-- run: exact
+-- out: [[1, 2, 3], [4, 5, 6]]
+-- run: big
+-- out: [[1, 2, 3]]
+-- run: ones
+-- out: [[1], [2], [3]]
+-- run: empty
+-- out: []

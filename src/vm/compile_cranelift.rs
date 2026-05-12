@@ -79,6 +79,7 @@ struct HelperFuncs {
     enumerate: FuncId,
     range: FuncId,
     window: FuncId,
+    chunks: FuncId,
     tl: FuncId,
     rev: FuncId,
     srt: FuncId,
@@ -214,6 +215,7 @@ fn declare_all_helpers(module: &mut ObjectModule) -> HelperFuncs {
         enumerate: declare_helper(module, "jit_enumerate", 1, 1),
         range: declare_helper(module, "jit_range", 2, 1),
         window: declare_helper(module, "jit_window", 2, 1),
+        chunks: declare_helper(module, "jit_chunks", 2, 1),
         tl: declare_helper(module, "jit_tl", 1, 1),
         rev: declare_helper(module, "jit_rev", 1, 1),
         srt: declare_helper(module, "jit_srt", 1, 1),
@@ -946,7 +948,7 @@ fn compile_function_body(
                 | OP_MVALS | OP_LISTNEW | OP_LISTAPPEND | OP_RECNEW | OP_RECWITH | OP_PRT
                 | OP_RD | OP_RDL | OP_WR | OP_WRL | OP_TRM | OP_UNQ | OP_UNIQBY | OP_PARTITION
                 | OP_FRQ | OP_NUM | OP_RGXSUB | OP_ZIP | OP_ENUMERATE | OP_RANGE | OP_WINDOW
-                | OP_FFT | OP_IFFT => {
+                | OP_CHUNKS | OP_FFT | OP_IFFT => {
                     non_num_write[a] = true;
                     non_bool_write[a] = true;
                 }
@@ -1973,6 +1975,14 @@ fn compile_function_body(
                 let bv = builder.use_var(vars[b_idx]);
                 let cv = builder.use_var(vars[c_idx]);
                 let fref = get_func_ref(&mut builder, module, helpers.window);
+                let call_inst = builder.ins().call(fref, &[bv, cv]);
+                let result = builder.inst_results(call_inst)[0];
+                builder.def_var(vars[a_idx], result);
+            }
+            OP_CHUNKS => {
+                let bv = builder.use_var(vars[b_idx]);
+                let cv = builder.use_var(vars[c_idx]);
+                let fref = get_func_ref(&mut builder, module, helpers.chunks);
                 let call_inst = builder.ins().call(fref, &[bv, cv]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
