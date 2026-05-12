@@ -280,6 +280,9 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("wr", &["t", "t"], "R t t"),
     ("wrl", &["t", "L t"], "R t t"),
     ("trm", &["t"], "t"),
+    ("upr", &["t"], "t"),
+    ("lwr", &["t"], "t"),
+    ("cap", &["t"], "t"),
     ("spl", &["t", "t"], "L t"),
     ("cat", &["L t", "t"], "t"),
     ("zip", &["list", "list"], "list"),
@@ -368,7 +371,7 @@ fn builtin_as_fn_ty(name: &str) -> Option<Ty> {
             Ty::Fn(vec![Ty::List(Box::new(n.clone()))], Box::new(n))
         }
         // 1-arg t->t
-        "trm" => Ty::Fn(vec![t.clone()], Box::new(t)),
+        "trm" | "upr" | "lwr" | "cap" => Ty::Fn(vec![t.clone()], Box::new(t)),
         // 1-arg n->t and t->R n t
         "str" => Ty::Fn(vec![n], Box::new(t)),
         "num" => Ty::Fn(
@@ -826,14 +829,14 @@ fn builtin_check_args(
             };
             (ret, errors)
         }
-        "trm" => {
+        "trm" | "upr" | "lwr" | "cap" => {
             if let Some(arg) = arg_types.first()
                 && !compatible(arg, &Ty::Text)
             {
                 errors.push(VerifyError {
                     code: "ILO-T013",
                     function: func_ctx.to_string(),
-                    message: format!("'trm' expects t, got {arg}"),
+                    message: format!("'{name}' expects t, got {arg}"),
                     hint: None,
                     span,
                     is_warning: false,

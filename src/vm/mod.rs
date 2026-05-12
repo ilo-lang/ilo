@@ -190,6 +190,11 @@ pub(crate) const OP_SIN: u8 = 101; // R[A] = sin(R[B])
 pub(crate) const OP_COS: u8 = 102; // R[A] = cos(R[B])
 // Note: OP_FMT2 is reserved at 104 (pending merge of #171).
 pub(crate) const OP_TAN: u8 = 105; // R[A] = tan(R[B])
+
+// String case conversion — single-arg t->t
+pub(crate) const OP_UPR: u8 = 118; // R[A] = uppercase(R[B])
+pub(crate) const OP_LWR: u8 = 119; // R[A] = lowercase(R[B])
+pub(crate) const OP_CAP: u8 = 120; // R[A] = capitalise(R[B])
 pub(crate) const OP_LOG10: u8 = 106; // R[A] = log10(R[B])
 pub(crate) const OP_LOG2: u8 = 107; // R[A] = log2(R[B])
 pub(crate) const OP_ATAN2: u8 = 108; // R[A] = atan2(R[B], R[C])  (y first, x second)
@@ -2031,6 +2036,24 @@ impl RegCompiler {
                             let rb = self.compile_expr(&args[0]);
                             let ra = self.alloc_reg();
                             self.emit_abc(OP_TRM, ra, rb, 0);
+                            return ra;
+                        }
+                        (Builtin::Upr, 1) => {
+                            let rb = self.compile_expr(&args[0]);
+                            let ra = self.alloc_reg();
+                            self.emit_abc(OP_UPR, ra, rb, 0);
+                            return ra;
+                        }
+                        (Builtin::Lwr, 1) => {
+                            let rb = self.compile_expr(&args[0]);
+                            let ra = self.alloc_reg();
+                            self.emit_abc(OP_LWR, ra, rb, 0);
+                            return ra;
+                        }
+                        (Builtin::Cap, 1) => {
+                            let rb = self.compile_expr(&args[0]);
+                            let ra = self.alloc_reg();
+                            self.emit_abc(OP_CAP, ra, rb, 0);
                             return ra;
                         }
                         (Builtin::Unq, 1) => {
@@ -4216,6 +4239,63 @@ impl<'a> VM<'a> {
                     let s = unsafe {
                         match v.as_heap_ref() {
                             HeapObj::Str(s) => s.as_str().trim().to_owned(),
+                            _ => unreachable!(),
+                        }
+                    };
+                    reg_set!(a, NanVal::heap_string(s));
+                }
+                OP_UPR => {
+                    let a = ((inst >> 16) & 0xFF) as usize + base;
+                    let b = ((inst >> 8) & 0xFF) as usize + base;
+                    let v = reg!(b);
+                    if !v.is_string() {
+                        vm_err!(VmError::Type("upr requires a string"));
+                    }
+                    // SAFETY: is_string() confirmed heap-tagged string with live RC.
+                    let s = unsafe {
+                        match v.as_heap_ref() {
+                            HeapObj::Str(s) => s.as_str().to_uppercase(),
+                            _ => unreachable!(),
+                        }
+                    };
+                    reg_set!(a, NanVal::heap_string(s));
+                }
+                OP_LWR => {
+                    let a = ((inst >> 16) & 0xFF) as usize + base;
+                    let b = ((inst >> 8) & 0xFF) as usize + base;
+                    let v = reg!(b);
+                    if !v.is_string() {
+                        vm_err!(VmError::Type("lwr requires a string"));
+                    }
+                    // SAFETY: is_string() confirmed heap-tagged string with live RC.
+                    let s = unsafe {
+                        match v.as_heap_ref() {
+                            HeapObj::Str(s) => s.as_str().to_lowercase(),
+                            _ => unreachable!(),
+                        }
+                    };
+                    reg_set!(a, NanVal::heap_string(s));
+                }
+                OP_CAP => {
+                    let a = ((inst >> 16) & 0xFF) as usize + base;
+                    let b = ((inst >> 8) & 0xFF) as usize + base;
+                    let v = reg!(b);
+                    if !v.is_string() {
+                        vm_err!(VmError::Type("cap requires a string"));
+                    }
+                    // SAFETY: is_string() confirmed heap-tagged string with live RC.
+                    let s = unsafe {
+                        match v.as_heap_ref() {
+                            HeapObj::Str(s) => {
+                                let src = s.as_str();
+                                let mut chars = src.chars();
+                                match chars.next() {
+                                    Some(c) => {
+                                        c.to_uppercase().collect::<String>() + chars.as_str()
+                                    }
+                                    None => String::new(),
+                                }
+                            }
                             _ => unreachable!(),
                         }
                     };
@@ -9269,6 +9349,61 @@ pub(crate) extern "C" fn jit_trm(v: u64) -> u64 {
     let s = unsafe {
         match nv.as_heap_ref() {
             HeapObj::Str(s) => s.as_str().trim().to_owned(),
+            _ => unreachable!(),
+        }
+    };
+    NanVal::heap_string(s).0
+}
+
+#[cfg(feature = "cranelift")]
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn jit_upr(v: u64) -> u64 {
+    let nv = NanVal(v);
+    if !nv.is_string() {
+        return TAG_NIL;
+    }
+    let s = unsafe {
+        match nv.as_heap_ref() {
+            HeapObj::Str(s) => s.as_str().to_uppercase(),
+            _ => unreachable!(),
+        }
+    };
+    NanVal::heap_string(s).0
+}
+
+#[cfg(feature = "cranelift")]
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn jit_lwr(v: u64) -> u64 {
+    let nv = NanVal(v);
+    if !nv.is_string() {
+        return TAG_NIL;
+    }
+    let s = unsafe {
+        match nv.as_heap_ref() {
+            HeapObj::Str(s) => s.as_str().to_lowercase(),
+            _ => unreachable!(),
+        }
+    };
+    NanVal::heap_string(s).0
+}
+
+#[cfg(feature = "cranelift")]
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn jit_cap(v: u64) -> u64 {
+    let nv = NanVal(v);
+    if !nv.is_string() {
+        return TAG_NIL;
+    }
+    let s = unsafe {
+        match nv.as_heap_ref() {
+            HeapObj::Str(s) => {
+                let src = s.as_str();
+                let mut chars = src.chars();
+                match chars.next() {
+                    Some(c) => c.to_uppercase().collect::<String>() + chars.as_str(),
+                    None => String::new(),
+                }
+            }
             _ => unreachable!(),
         }
     };

@@ -1,0 +1,16 @@
+-- String-case builtins: `upr` (uppercase), `lwr` (lowercase),
+-- `cap` (capitalise first char, leave the rest unchanged).
+-- ASCII-only for the first cut.
+
+upr-demo>t;upr "hello world"
+lwr-demo>t;lwr "HELLO WORLD"
+cap-demo>t;cap "hello world"
+
+-- run: upr-demo
+-- out: HELLO WORLD
+
+-- run: lwr-demo
+-- out: hello world
+
+-- run: cap-demo
+-- out: Hello world
