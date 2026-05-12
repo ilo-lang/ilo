@@ -1,0 +1,14 @@
+-- Literal-int dot-index for lists: `xs.0` is sugar for `at xs 0`.
+-- Use it when the index is a literal number known at parse time.
+-- For a variable index, write `at xs i` instead.
+
+frst xs:L n>n;xs.0
+thrd xs:L n>n;xs.2
+nest>n;xss=[[1,2],[3,4]];xss.0.1
+
+-- run: frst [10,20,30]
+-- out: 10
+-- run: thrd [10,20,30]
+-- out: 30
+-- run: nest
+-- out: 2
