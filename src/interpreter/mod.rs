@@ -1378,6 +1378,40 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             )),
         };
     }
+    if builtin == Some(Builtin::Upr) && args.len() == 1 {
+        return match &args[0] {
+            Value::Text(s) => Ok(Value::Text(s.to_uppercase())),
+            other => Err(RuntimeError::new(
+                "ILO-R009",
+                format!("upr requires text, got {:?}", other),
+            )),
+        };
+    }
+    if builtin == Some(Builtin::Lwr) && args.len() == 1 {
+        return match &args[0] {
+            Value::Text(s) => Ok(Value::Text(s.to_lowercase())),
+            other => Err(RuntimeError::new(
+                "ILO-R009",
+                format!("lwr requires text, got {:?}", other),
+            )),
+        };
+    }
+    if builtin == Some(Builtin::Cap) && args.len() == 1 {
+        return match &args[0] {
+            Value::Text(s) => {
+                let mut chars = s.chars();
+                let out = match chars.next() {
+                    Some(c) => c.to_uppercase().collect::<String>() + chars.as_str(),
+                    None => String::new(),
+                };
+                Ok(Value::Text(out))
+            }
+            other => Err(RuntimeError::new(
+                "ILO-R009",
+                format!("cap requires text, got {:?}", other),
+            )),
+        };
+    }
     if builtin == Some(Builtin::Unq) && args.len() == 1 {
         return match &args[0] {
             Value::List(xs) => {
