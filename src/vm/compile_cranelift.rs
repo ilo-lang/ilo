@@ -132,6 +132,8 @@ struct HelperFuncs {
     upr: FuncId,
     lwr: FuncId,
     cap: FuncId,
+    padl: FuncId,
+    padr: FuncId,
     unq: FuncId,
     uniqby: FuncId,
     partition: FuncId,
@@ -284,6 +286,8 @@ fn declare_all_helpers(module: &mut ObjectModule) -> HelperFuncs {
         upr: declare_helper(module, "jit_upr", 1, 1),
         lwr: declare_helper(module, "jit_lwr", 1, 1),
         cap: declare_helper(module, "jit_cap", 1, 1),
+        padl: declare_helper(module, "jit_padl", 2, 1),
+        padr: declare_helper(module, "jit_padr", 2, 1),
         unq: declare_helper(module, "jit_unq", 1, 1),
         uniqby: declare_helper(module, "jit_uniqby", 2, 1),
         partition: declare_helper(module, "jit_partition", 2, 1),
@@ -980,10 +984,10 @@ fn compile_function_body(
                 | OP_ENV | OP_JPTH | OP_JDMP | OP_JPAR | OP_MAPNEW | OP_MGET | OP_MSET
                 | OP_MDEL | OP_MKEYS | OP_MVALS | OP_LISTNEW | OP_LISTAPPEND | OP_RECNEW
                 | OP_RECWITH | OP_PRT | OP_RD | OP_RDL | OP_WR | OP_WRL | OP_TRM | OP_UPR
-                | OP_LWR | OP_CAP | OP_UNQ | OP_UNIQBY | OP_PARTITION | OP_FRQ | OP_NUM
-                | OP_RGXSUB | OP_ZIP | OP_ENUMERATE | OP_RANGE | OP_WINDOW | OP_CHUNKS
-                | OP_CUMSUM | OP_SETUNION | OP_SETINTER | OP_SETDIFF | OP_FFT | OP_IFFT
-                | OP_TRANSPOSE | OP_MATMUL => {
+                | OP_LWR | OP_CAP | OP_PADL | OP_PADR | OP_UNQ | OP_UNIQBY | OP_PARTITION
+                | OP_FRQ | OP_NUM | OP_RGXSUB | OP_ZIP | OP_ENUMERATE | OP_RANGE | OP_WINDOW
+                | OP_CHUNKS | OP_CUMSUM | OP_SETUNION | OP_SETINTER | OP_SETDIFF | OP_FFT
+                | OP_IFFT | OP_TRANSPOSE | OP_MATMUL => {
                     non_num_write[a] = true;
                     non_bool_write[a] = true;
                 }
@@ -3121,6 +3125,22 @@ fn compile_function_body(
                 let bv = builder.use_var(vars[b_idx]);
                 let fref = get_func_ref(&mut builder, module, helpers.cap);
                 let call_inst = builder.ins().call(fref, &[bv]);
+                let result = builder.inst_results(call_inst)[0];
+                builder.def_var(vars[a_idx], result);
+            }
+            OP_PADL => {
+                let bv = builder.use_var(vars[b_idx]);
+                let cv = builder.use_var(vars[c_idx]);
+                let fref = get_func_ref(&mut builder, module, helpers.padl);
+                let call_inst = builder.ins().call(fref, &[bv, cv]);
+                let result = builder.inst_results(call_inst)[0];
+                builder.def_var(vars[a_idx], result);
+            }
+            OP_PADR => {
+                let bv = builder.use_var(vars[b_idx]);
+                let cv = builder.use_var(vars[c_idx]);
+                let fref = get_func_ref(&mut builder, module, helpers.padr);
+                let call_inst = builder.ins().call(fref, &[bv, cv]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
             }

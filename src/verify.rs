@@ -283,6 +283,8 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("upr", &["t"], "t"),
     ("lwr", &["t"], "t"),
     ("cap", &["t"], "t"),
+    ("padl", &["t", "n"], "t"),
+    ("padr", &["t", "n"], "t"),
     ("spl", &["t", "t"], "L t"),
     ("cat", &["L t", "t"], "t"),
     ("zip", &["list", "list"], "list"),
@@ -377,6 +379,8 @@ fn builtin_as_fn_ty(name: &str) -> Option<Ty> {
         }
         // 1-arg t->t
         "trm" | "upr" | "lwr" | "cap" => Ty::Fn(vec![t.clone()], Box::new(t)),
+        // 2-arg t,n->t
+        "padl" | "padr" => Ty::Fn(vec![t.clone(), n.clone()], Box::new(t)),
         // 1-arg n->t and t->R n t
         "str" => Ty::Fn(vec![n], Box::new(t)),
         "num" => Ty::Fn(
@@ -842,6 +846,33 @@ fn builtin_check_args(
                     code: "ILO-T013",
                     function: func_ctx.to_string(),
                     message: format!("'{name}' expects t, got {arg}"),
+                    hint: None,
+                    span,
+                    is_warning: false,
+                });
+            }
+            (Ty::Text, errors)
+        }
+        "padl" | "padr" => {
+            if let Some(arg) = arg_types.first()
+                && !compatible(arg, &Ty::Text)
+            {
+                errors.push(VerifyError {
+                    code: "ILO-T013",
+                    function: func_ctx.to_string(),
+                    message: format!("'{name}' arg 1 expects t, got {arg}"),
+                    hint: None,
+                    span,
+                    is_warning: false,
+                });
+            }
+            if let Some(arg) = arg_types.get(1)
+                && !compatible(arg, &Ty::Number)
+            {
+                errors.push(VerifyError {
+                    code: "ILO-T013",
+                    function: func_ctx.to_string(),
+                    message: format!("'{name}' arg 2 expects n, got {arg}"),
                     hint: None,
                     span,
                     is_warning: false,

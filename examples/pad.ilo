@@ -1,0 +1,22 @@
+-- padl x w: left-pad text x with spaces to width w.
+-- padr x w: right-pad text x with spaces to width w.
+-- If x is already ≥ w characters, it's returned unchanged.
+
+pl x:t w:n>t;padl x w
+pr x:t w:n>t;padr x w
+
+-- A tiny formatted table: left-align labels, right-align numbers.
+row label:t value:t>t;l=padr label 8;r=padl value 5;cat [l r] ""
+
+-- run: pl "hi" 5
+-- out:    hi
+-- run: pr "hi" 5
+-- out: hi
+-- run: pl "exact" 5
+-- out: exact
+-- run: pr "already-wider" 4
+-- out: already-wider
+-- run: row "apples" "12"
+-- out: apples     12
+-- run: row "pears" "3"
+-- out: pears       3
