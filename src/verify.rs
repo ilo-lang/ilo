@@ -282,6 +282,7 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("spl", &["t", "t"], "L t"),
     ("cat", &["L t", "t"], "t"),
     ("zip", &["list", "list"], "list"),
+    ("enumerate", &["list"], "list"),
     ("has", &["list_or_text", "any"], "b"),
     ("hd", &["list_or_text"], "any"),
     ("at", &["list_or_text", "n"], "any"),
@@ -663,6 +664,25 @@ fn builtin_check_args(
                 _ => Ty::Unknown,
             };
             (Ty::List(Box::new(Ty::List(Box::new(inner)))), errors)
+        }
+        "enumerate" => {
+            // enumerate xs — returns a list of [index, value] pairs.
+            // Inner element type is erased to Unknown because the pair holds
+            // both a number (index) and an `a` (element).
+            if let Some(arg) = arg_types.first() {
+                match arg {
+                    Ty::List(_) | Ty::Unknown => {}
+                    other => errors.push(VerifyError {
+                        code: "ILO-T013",
+                        function: func_ctx.to_string(),
+                        message: format!("'enumerate' expects a list, got {other}"),
+                        hint: None,
+                        span,
+                        is_warning: false,
+                    }),
+                }
+            }
+            (Ty::List(Box::new(Ty::List(Box::new(Ty::Unknown)))), errors)
         }
         "tl" => {
             if let Some(arg) = arg_types.first() {

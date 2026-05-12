@@ -49,6 +49,7 @@ pub enum Builtin {
     Spl,
     Cat,
     Zip,
+    Enumerate,
 
     // Higher-order
     Map,
@@ -140,6 +141,7 @@ impl Builtin {
             "spl" => Some(Builtin::Spl),
             "cat" => Some(Builtin::Cat),
             "zip" => Some(Builtin::Zip),
+            "enumerate" => Some(Builtin::Enumerate),
             "map" => Some(Builtin::Map),
             "flt" => Some(Builtin::Flt),
             "fld" => Some(Builtin::Fld),
@@ -218,6 +220,7 @@ impl Builtin {
             Builtin::Spl => "spl",
             Builtin::Cat => "cat",
             Builtin::Zip => "zip",
+            Builtin::Enumerate => "enumerate",
             Builtin::Map => "map",
             Builtin::Flt => "flt",
             Builtin::Fld => "fld",
@@ -302,6 +305,7 @@ mod tests {
             "spl",
             "cat",
             "zip",
+            "enumerate",
             "map",
             "flt",
             "fld",

@@ -1,0 +1,10 @@
+-- enumerate xs: pair each element with its index, returning [[i, v], ...].
+-- "map with index" appears in every program — destructure the pair to use it.
+
+idx xs:L n>L (L _);enumerate xs
+words xs:L t>L (L _);enumerate xs
+
+-- run: idx [10,20,30]
+-- out: [[0, 10], [1, 20], [2, 30]]
+-- run: words ["a","b","c"]
+-- out: [[0, a], [1, b], [2, c]]
