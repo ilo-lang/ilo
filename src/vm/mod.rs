@@ -197,6 +197,7 @@ pub(crate) const OP_SRTDESC: u8 = 117; // R[A] = rsrt(R[B])  (descending sort of
 pub(crate) const OP_RGXSUB: u8 = 115; // R[A] = rgxsub(R[B], R[C], R[D])  (pattern, replacement, subject; D in data word A field)
 pub(crate) const OP_ZIP: u8 = 111; // R[A] = zip(R[B], R[C])  (list of [x,y] pairs, truncated)
 pub(crate) const OP_ENUMERATE: u8 = 139; // R[A] = enumerate(R[B])  (list of [i, v] pairs)
+pub(crate) const OP_WINDOW: u8 = 146; // R[A] = window(R[B] (n), R[C] (list))  → list of n-sized sublists
 
 // ABC mode — text formatting
 pub(crate) const OP_FMT2: u8 = 104; // R[A] = fmt2(R[B], R[C])  (format number to N decimal places → t)
@@ -1737,6 +1738,14 @@ impl RegCompiler {
                             self.emit_abc(OP_RANGE, ra, rb, rc);
                             return ra;
                         }
+                        (Builtin::Window, 2) => {
+                            // window n xs — emit B=n, C=xs
+                            let rb = self.compile_expr(&args[0]);
+                            let rc = self.compile_expr(&args[1]);
+                            let ra = self.alloc_reg();
+                            self.emit_abc(OP_WINDOW, ra, rb, rc);
+                            return ra;
+                        }
                         (Builtin::Tl, 1) => {
                             let rb = self.compile_expr(&args[0]);
                             let ra = self.alloc_reg();
@@ -2574,7 +2583,7 @@ fn chunk_is_all_numeric(chunk: &Chunk) -> bool {
             | OP_PARTITION | OP_LISTAPPEND | OP_JPAR | OP_JDMP | OP_ENV | OP_GET | OP_GETH
             | OP_POST | OP_POSTH | OP_RD | OP_RDL | OP_WR | OP_WRL | OP_MAPNEW | OP_MGET
             | OP_MSET | OP_MKEYS | OP_MVALS | OP_HD | OP_AT | OP_LST | OP_TL | OP_FMT2
-            | OP_RGXSUB | OP_ZIP | OP_ENUMERATE | OP_FFT | OP_IFFT | OP_RANGE => {
+            | OP_RGXSUB | OP_ZIP | OP_ENUMERATE | OP_WINDOW | OP_FFT | OP_IFFT | OP_RANGE => {
                 return false;
             }
             _ => {}
@@ -5825,6 +5834,44 @@ impl<'a> VM<'a> {
                     };
                     reg_set!(a, NanVal::heap_list(out));
                 }
+                OP_WINDOW => {
+                    let a = ((inst >> 16) & 0xFF) as usize + base;
+                    let b = ((inst >> 8) & 0xFF) as usize + base;
+                    let c = (inst & 0xFF) as usize + base;
+                    let vn = reg!(b);
+                    let vxs = reg!(c);
+                    if !vn.is_number() {
+                        vm_err!(VmError::Type("window: size must be a number"));
+                    }
+                    let nf = vn.as_number();
+                    if !nf.is_finite() || nf <= 0.0 || nf.fract() != 0.0 {
+                        vm_err!(VmError::Type("window: size must be a positive integer"));
+                    }
+                    let n = nf as usize;
+                    let xs = if vxs.is_heap() {
+                        match unsafe { vxs.as_heap_ref() } {
+                            HeapObj::List(items) => items,
+                            _ => vm_err!(VmError::Type("window arg 2 requires a list")),
+                        }
+                    } else {
+                        vm_err!(VmError::Type("window arg 2 requires a list"));
+                    };
+                    let out: Vec<NanVal> = if n > xs.len() {
+                        Vec::new()
+                    } else {
+                        let mut acc = Vec::with_capacity(xs.len() - n + 1);
+                        for w in xs.windows(n) {
+                            let mut sub = Vec::with_capacity(n);
+                            for v in w {
+                                v.clone_rc();
+                                sub.push(*v);
+                            }
+                            acc.push(NanVal::heap_list(sub));
+                        }
+                        acc
+                    };
+                    reg_set!(a, NanVal::heap_list(out));
+                }
                 OP_TL => {
                     let a = ((inst >> 16) & 0xFF) as usize + base;
                     let b = ((inst >> 8) & 0xFF) as usize + base;
@@ -7450,6 +7497,41 @@ pub(crate) extern "C" fn jit_range(a: u64, b: u64) -> u64 {
         out.push(NanVal::number(i as f64));
     }
     NanVal::heap_list(out).0
+}
+
+#[cfg(feature = "cranelift")]
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn jit_window(n_val: u64, xs_val: u64) -> u64 {
+    let vn = NanVal(n_val);
+    let vxs = NanVal(xs_val);
+    if !vn.is_number() {
+        return TAG_NIL;
+    }
+    let nf = vn.as_number();
+    if !nf.is_finite() || nf <= 0.0 || nf.fract() != 0.0 {
+        return TAG_NIL;
+    }
+    let n = nf as usize;
+    if !vxs.is_heap() {
+        return TAG_NIL;
+    }
+    let xs = match unsafe { vxs.as_heap_ref() } {
+        HeapObj::List(items) => items,
+        _ => return TAG_NIL,
+    };
+    if n > xs.len() {
+        return NanVal::heap_list(Vec::new()).0;
+    }
+    let mut acc: Vec<NanVal> = Vec::with_capacity(xs.len() - n + 1);
+    for w in xs.windows(n) {
+        let mut sub = Vec::with_capacity(n);
+        for v in w {
+            v.clone_rc();
+            sub.push(*v);
+        }
+        acc.push(NanVal::heap_list(sub));
+    }
+    NanVal::heap_list(acc).0
 }
 
 #[cfg(feature = "cranelift")]

@@ -1,0 +1,32 @@
+-- window n xs:L a > L (L a) — sliding windows of size n.
+-- Each element is a consecutive n-sized sub-list of xs.
+-- n > len xs returns []. n must be a positive integer.
+
+-- Basic 3-wide window over 5 elements
+basic>L (L n);window 3 [1, 2, 3, 4, 5]
+
+-- 2-wide pairs (moving pair)
+pairs>L (L n);window 2 [10, 20, 30]
+
+-- Single-element windows
+singles>L (L n);window 1 [1, 2, 3]
+
+-- n larger than list → empty list
+toobig>L (L n);window 5 [1, 2, 3]
+
+-- 3-element moving sum: window then map sum.
+-- Tree only — vm/cranelift don't dispatch builtins-as-HOF yet.
+sums>L n;map sum (window 3 [1, 2, 3, 4, 5])
+
+-- engine-skip: vm
+-- engine-skip: cranelift
+-- run: basic
+-- out: [[1, 2, 3], [2, 3, 4], [3, 4, 5]]
+-- run: pairs
+-- out: [[10, 20], [20, 30]]
+-- run: singles
+-- out: [[1], [2], [3]]
+-- run: toobig
+-- out: []
+-- run: sums
+-- out: [6, 9, 12]

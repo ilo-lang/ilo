@@ -788,6 +788,42 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             )),
         };
     }
+    if builtin == Some(Builtin::Window) && args.len() == 2 {
+        let n = match &args[0] {
+            Value::Number(v) => {
+                if !v.is_finite() || *v <= 0.0 || v.fract() != 0.0 {
+                    return Err(RuntimeError::new(
+                        "ILO-R009",
+                        format!("window: size must be a positive integer, got {}", v),
+                    ));
+                }
+                *v as usize
+            }
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("window: size must be a number, got {:?}", other),
+                ));
+            }
+        };
+        let xs = match &args[1] {
+            Value::List(items) => items,
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("window arg 2 requires a list, got {:?}", other),
+                ));
+            }
+        };
+        if n > xs.len() {
+            return Ok(Value::List(vec![]));
+        }
+        let mut out = Vec::with_capacity(xs.len() - n + 1);
+        for w in xs.windows(n) {
+            out.push(Value::List(w.to_vec()));
+        }
+        return Ok(Value::List(out));
+    }
     if builtin == Some(Builtin::Zip) && args.len() == 2 {
         let xs = match &args[0] {
             Value::List(items) => items,
