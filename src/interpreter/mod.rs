@@ -1420,6 +1420,35 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             }
         };
     }
+    if builtin == Some(Builtin::GetMany) && args.len() == 1 {
+        let urls = match &args[0] {
+            Value::List(items) => {
+                let mut out = Vec::with_capacity(items.len());
+                for (i, v) in items.iter().enumerate() {
+                    match v {
+                        Value::Text(s) => out.push(s.clone()),
+                        other => {
+                            return Err(RuntimeError::new(
+                                "ILO-R009",
+                                format!(
+                                    "get-many requires L t (list of urls); element {i} is {:?}",
+                                    other
+                                ),
+                            ));
+                        }
+                    }
+                }
+                out
+            }
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("get-many requires L t (list of urls), got {:?}", other),
+                ));
+            }
+        };
+        return Ok(Value::List(get_many_fetch(&urls)));
+    }
     if builtin == Some(Builtin::Post) && (args.len() == 2 || args.len() == 3) {
         let (url, body) = match (&args[0], &args[1]) {
             (Value::Text(u), Value::Text(b)) => (u.clone(), b.clone()),
@@ -3745,6 +3774,66 @@ pub(crate) fn cooley_tukey(re: &mut [f64], im: &mut [f64], inverse: bool) {
             *x *= scale;
         }
     }
+}
+
+/// Maximum number of concurrent HTTP GET requests for `get-many`.
+/// Caps fan-out so a 10k-url list does not spawn 10k threads.
+pub(crate) const GET_MANY_MAX_CONCURRENCY: usize = 10;
+
+/// Fan-out concurrent HTTP GETs and collect one Result per URL, preserving order.
+///
+/// Each successful fetch (any 2xx-5xx response with valid UTF-8 body) becomes
+/// `Ok(body)`; transport, DNS, or UTF-8 failures become `Err(message)`.
+///
+/// The function uses `std::thread::scope` to spawn worker threads chunked
+/// `GET_MANY_MAX_CONCURRENCY` at a time. Each chunk runs in parallel and
+/// joins before the next chunk starts. When the `http` feature is disabled,
+/// every URL becomes `Err("http feature not enabled")`.
+pub(crate) fn get_many_fetch(urls: &[String]) -> Vec<Value> {
+    if urls.is_empty() {
+        return Vec::new();
+    }
+    let mut results: Vec<Value> = (0..urls.len()).map(|_| Value::Nil).collect();
+    #[cfg(feature = "http")]
+    {
+        let chunks: Vec<(usize, &[String])> = urls
+            .chunks(GET_MANY_MAX_CONCURRENCY)
+            .enumerate()
+            .map(|(i, c)| (i * GET_MANY_MAX_CONCURRENCY, c))
+            .collect();
+        for (base, chunk) in chunks {
+            std::thread::scope(|s| {
+                let mut handles = Vec::with_capacity(chunk.len());
+                for url in chunk.iter() {
+                    let u = url.clone();
+                    handles.push(s.spawn(move || match minreq::get(u.as_str()).send() {
+                        Ok(resp) => match resp.as_str() {
+                            Ok(body) => Value::Ok(Box::new(Value::Text(body.to_string()))),
+                            Err(e) => Value::Err(Box::new(Value::Text(format!(
+                                "response is not valid UTF-8: {e}"
+                            )))),
+                        },
+                        Err(e) => Value::Err(Box::new(Value::Text(e.to_string()))),
+                    }));
+                }
+                for (i, h) in handles.into_iter().enumerate() {
+                    let v = h.join().unwrap_or_else(|_| {
+                        Value::Err(Box::new(Value::Text("worker thread panicked".to_string())))
+                    });
+                    results[base + i] = v;
+                }
+            });
+        }
+    }
+    #[cfg(not(feature = "http"))]
+    {
+        for slot in results.iter_mut() {
+            *slot = Value::Err(Box::new(Value::Text(
+                "http feature not enabled".to_string(),
+            )));
+        }
+    }
+    results
 }
 
 #[cfg(test)]

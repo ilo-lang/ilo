@@ -273,6 +273,7 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("get", &["t", "M t t"], "R t t"),
     ("post", &["t", "t"], "R t t"),
     ("post", &["t", "t", "M t t"], "R t t"),
+    ("get-many", &["L t"], "L (R t t)"),
     ("rd", &["t"], "R ? t"),
     ("rd", &["t", "t"], "R ? t"),
     ("rdl", &["t"], "R (L t) t"),
@@ -1246,6 +1247,26 @@ fn builtin_check_args(
                 }
             }
             (Ty::Result(Box::new(Ty::Text), Box::new(Ty::Text)), errors)
+        }
+        "get-many" => {
+            // get-many urls — urls is L t; returns L (R t t) (one Result per URL)
+            let list_text = Ty::List(Box::new(Ty::Text));
+            if let Some(arg) = arg_types.first()
+                && !compatible(arg, &list_text)
+            {
+                errors.push(VerifyError {
+                    code: "ILO-T013",
+                    function: func_ctx.to_string(),
+                    message: format!("'get-many' expects L t (list of urls), got {arg}"),
+                    hint: None,
+                    span,
+                    is_warning: false,
+                });
+            }
+            (
+                Ty::List(Box::new(Ty::Result(Box::new(Ty::Text), Box::new(Ty::Text)))),
+                errors,
+            )
         }
         "rd" | "rdb" => {
             // rd path         — 1-arg: auto-detect format from extension → R ? t

@@ -148,6 +148,7 @@ struct HelperFuncs {
     post: FuncId,
     geth: FuncId,
     posth: FuncId,
+    getmany: FuncId,
     // AOT-specific helpers
     get_arena_ptr: FuncId,
     get_registry_ptr: FuncId,
@@ -303,6 +304,7 @@ fn declare_all_helpers(module: &mut ObjectModule) -> HelperFuncs {
         post: declare_helper(module, "jit_post", 2, 1),
         geth: declare_helper(module, "jit_geth", 2, 1),
         posth: declare_helper(module, "jit_posth", 3, 1),
+        getmany: declare_helper(module, "jit_getmany", 1, 1),
         // AOT-specific helpers
         get_arena_ptr: declare_helper(module, "jit_get_arena_ptr", 0, 1),
         get_registry_ptr: declare_helper(module, "jit_get_registry_ptr", 0, 1),
@@ -983,13 +985,13 @@ fn compile_function_body(
                 | OP_UNWRAP | OP_RECFLD | OP_RECFLD_NAME | OP_LISTGET | OP_INDEX | OP_STR
                 | OP_HD | OP_AT | OP_FMT2 | OP_TL | OP_REV | OP_SRT | OP_SRTDESC | OP_SLC
                 | OP_TAKE | OP_DROP | OP_SPL | OP_CAT | OP_GET | OP_POST | OP_GETH | OP_POSTH
-                | OP_ENV | OP_JPTH | OP_JDMP | OP_JPAR | OP_MAPNEW | OP_MGET | OP_MSET
-                | OP_MDEL | OP_MKEYS | OP_MVALS | OP_LISTNEW | OP_LISTAPPEND | OP_RECNEW
-                | OP_RECWITH | OP_PRT | OP_RD | OP_RDL | OP_WR | OP_WRL | OP_TRM | OP_UPR
-                | OP_LWR | OP_CAP | OP_PADL | OP_PADR | OP_UNQ | OP_UNIQBY | OP_PARTITION
-                | OP_FRQ | OP_NUM | OP_RGXSUB | OP_ZIP | OP_ENUMERATE | OP_RANGE | OP_WINDOW
-                | OP_CHUNKS | OP_CUMSUM | OP_SETUNION | OP_SETINTER | OP_SETDIFF | OP_FFT
-                | OP_IFFT | OP_TRANSPOSE | OP_MATMUL => {
+                | OP_GETMANY | OP_ENV | OP_JPTH | OP_JDMP | OP_JPAR | OP_MAPNEW | OP_MGET
+                | OP_MSET | OP_MDEL | OP_MKEYS | OP_MVALS | OP_LISTNEW | OP_LISTAPPEND
+                | OP_RECNEW | OP_RECWITH | OP_PRT | OP_RD | OP_RDL | OP_WR | OP_WRL | OP_TRM
+                | OP_UPR | OP_LWR | OP_CAP | OP_PADL | OP_PADR | OP_UNQ | OP_UNIQBY
+                | OP_PARTITION | OP_FRQ | OP_NUM | OP_RGXSUB | OP_ZIP | OP_ENUMERATE | OP_RANGE
+                | OP_WINDOW | OP_CHUNKS | OP_CUMSUM | OP_SETUNION | OP_SETINTER | OP_SETDIFF
+                | OP_FFT | OP_IFFT | OP_TRANSPOSE | OP_MATMUL => {
                     non_num_write[a] = true;
                     non_bool_write[a] = true;
                 }
@@ -3235,6 +3237,13 @@ fn compile_function_body(
                 let cv = builder.use_var(vars[c_idx]);
                 let fref = get_func_ref(&mut builder, module, helpers.geth);
                 let call_inst = builder.ins().call(fref, &[bv, cv]);
+                let result = builder.inst_results(call_inst)[0];
+                builder.def_var(vars[a_idx], result);
+            }
+            OP_GETMANY => {
+                let bv = builder.use_var(vars[b_idx]);
+                let fref = get_func_ref(&mut builder, module, helpers.getmany);
+                let call_inst = builder.ins().call(fref, &[bv]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
             }
