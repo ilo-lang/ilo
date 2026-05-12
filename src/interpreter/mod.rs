@@ -2524,6 +2524,40 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         return Ok(Value::List(vec![Value::List(pass), Value::List(fail)]));
     }
 
+    if builtin == Some(Builtin::Flatmap) && args.len() == 2 {
+        let fn_name = resolve_fn_ref(&args[0]).ok_or_else(|| {
+            RuntimeError::new(
+                "ILO-R009",
+                format!(
+                    "flatmap: first arg must be a function reference, got {:?}",
+                    args[0]
+                ),
+            )
+        })?;
+        let items = match &args[1] {
+            Value::List(l) => l.clone(),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("flatmap: second arg must be a list, got {:?}", other),
+                ));
+            }
+        };
+        let mut result: Vec<Value> = Vec::new();
+        for item in items {
+            match call_function(env, &fn_name, vec![item])? {
+                Value::List(inner) => result.extend(inner),
+                other => {
+                    return Err(RuntimeError::new(
+                        "ILO-R009",
+                        format!("flatmap: function must return a list, got {:?}", other),
+                    ));
+                }
+            }
+        }
+        return Ok(Value::List(result));
+    }
+
     if builtin == Some(Builtin::Uniqby) && args.len() == 2 {
         let fn_name = resolve_fn_ref(&args[0]).ok_or_else(|| {
             RuntimeError::new(

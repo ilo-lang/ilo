@@ -1,0 +1,15 @@
+-- flatmap: map then flatten one level. Use when a function returns a list
+-- per element and you want a single flat list of results.
+-- Signature: flatmap fn:F a (L b) xs:L a > L b
+
+-- Repeat each number n times: 2 -> [2, 2], 3 -> [3, 3, 3]
+rep n:n>L n;xs=[];@i 0..n{xs=+=xs n};xs
+
+-- Apply rep to every element and flatten one level.
+expand xs:L n>L n;flatmap rep xs
+
+-- vm and cranelift do not yet implement HOF dispatch (FnRef resolution)
+-- engine-skip: vm
+-- engine-skip: cranelift
+-- run: expand [1,2,3]
+-- out: [1, 2, 2, 3, 3, 3]

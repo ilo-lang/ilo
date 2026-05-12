@@ -78,6 +78,7 @@ pub enum Builtin {
     Uniqby,
     Partition,
     Frq,
+    Flatmap,
 
     // Random / time
     Rnd,
@@ -201,6 +202,7 @@ impl Builtin {
             "uniqby" => Some(Builtin::Uniqby),
             "partition" => Some(Builtin::Partition),
             "frq" => Some(Builtin::Frq),
+            "flatmap" => Some(Builtin::Flatmap),
             "rnd" => Some(Builtin::Rnd),
             "rndn" => Some(Builtin::Rndn),
             "now" => Some(Builtin::Now),
@@ -311,6 +313,7 @@ impl Builtin {
             Builtin::Uniqby => "uniqby",
             Builtin::Partition => "partition",
             Builtin::Frq => "frq",
+            Builtin::Flatmap => "flatmap",
             Builtin::Rnd => "rnd",
             Builtin::Rndn => "rndn",
             Builtin::Now => "now",
@@ -422,6 +425,7 @@ mod tests {
             "uniqby",
             "partition",
             "frq",
+            "flatmap",
             "rnd",
             "now",
             "rd",
