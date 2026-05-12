@@ -1642,6 +1642,59 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         return Ok(acc);
     }
 
+    if builtin == Some(Builtin::Uniqby) && args.len() == 2 {
+        let fn_name = resolve_fn_ref(&args[0]).ok_or_else(|| {
+            RuntimeError::new(
+                "ILO-R009",
+                format!(
+                    "uniqby: first arg must be a function reference, got {:?}",
+                    args[0]
+                ),
+            )
+        })?;
+        let items = match &args[1] {
+            Value::List(l) => l.clone(),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("uniqby: second arg must be a list, got {:?}", other),
+                ));
+            }
+        };
+        let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut out: Vec<Value> = Vec::new();
+        for item in items {
+            let key = call_function(env, &fn_name, vec![item.clone()])?;
+            // Prefix the hashed key with a type tag so values from distinct
+            // domains never alias each other. Without this, `Number(5)` and
+            // `Text("5")` both stringify to `"5"` and collide.
+            let key_str = match &key {
+                Value::Text(s) => format!("t:{s}"),
+                Value::Number(n) => {
+                    if *n == (*n as i64) as f64 {
+                        format!("n:{}", *n as i64)
+                    } else {
+                        format!("n:{n}")
+                    }
+                }
+                Value::Bool(b) => format!("b:{b}"),
+                other => {
+                    return Err(RuntimeError::new(
+                        "ILO-R009",
+                        format!(
+                            "uniqby: key function must return a string, number, or bool, got {:?}",
+                            other
+                        ),
+                    ));
+                }
+            };
+            if seen.insert(key_str) {
+                out.push(item);
+            }
+        }
+        return Ok(Value::List(out));
+    }
+
     if builtin == Some(Builtin::Grp) && args.len() == 2 {
         let fn_name = resolve_fn_ref(&args[0]).ok_or_else(|| {
             RuntimeError::new(

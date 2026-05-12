@@ -120,6 +120,7 @@ struct HelperFuncs {
     prt: FuncId,
     trm: FuncId,
     unq: FuncId,
+    uniqby: FuncId,
     // File I/O
     rd: FuncId,
     rdl: FuncId,
@@ -238,6 +239,7 @@ fn register_helpers(builder: &mut JITBuilder) {
         ("jit_prt", jit_prt as *const u8),
         ("jit_trm", jit_trm as *const u8),
         ("jit_unq", jit_unq as *const u8),
+        ("jit_uniqby", jit_uniqby as *const u8),
         // File I/O
         ("jit_rd", jit_rd as *const u8),
         ("jit_rdl", jit_rdl as *const u8),
@@ -347,6 +349,7 @@ fn declare_all_helpers(module: &mut JITModule) -> HelperFuncs {
         prt: declare_helper(module, "jit_prt", 1, 1),
         trm: declare_helper(module, "jit_trm", 1, 1),
         unq: declare_helper(module, "jit_unq", 1, 1),
+        uniqby: declare_helper(module, "jit_uniqby", 2, 1),
         // File I/O
         rd: declare_helper(module, "jit_rd", 1, 1),
         rdl: declare_helper(module, "jit_rdl", 1, 1),
@@ -921,7 +924,7 @@ fn compile_function_body(
                 | OP_MAPNEW | OP_MGET | OP_MSET | OP_MDEL | OP_MKEYS | OP_MVALS
                 | OP_LISTNEW | OP_LISTAPPEND
                 | OP_RECNEW | OP_RECWITH
-                | OP_PRT | OP_RD | OP_RDL | OP_WR | OP_WRL | OP_TRM | OP_UNQ
+                | OP_PRT | OP_RD | OP_RDL | OP_WR | OP_WRL | OP_TRM | OP_UNQ | OP_UNIQBY
                 | OP_NUM | OP_RGXSUB => {
                     non_num_write[a] = true;
                     non_bool_write[a] = true;
@@ -3415,6 +3418,15 @@ fn compile_function_body(
                 let bv = builder.use_var(vars[b_idx]);
                 let fref = get_func_ref(&mut builder, module, helpers.unq);
                 let call_inst = builder.ins().call(fref, &[bv]);
+                let result = builder.inst_results(call_inst)[0];
+                builder.def_var(vars[a_idx], result);
+            }
+            OP_UNIQBY => {
+                // HOF: B = fn-ref reg, C = list reg. Helper is a stub today.
+                let bv = builder.use_var(vars[b_idx]);
+                let cv = builder.use_var(vars[c_idx]);
+                let fref = get_func_ref(&mut builder, module, helpers.uniqby);
+                let call_inst = builder.ins().call(fref, &[bv, cv]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
             }

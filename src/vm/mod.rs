@@ -205,6 +205,8 @@ pub(crate) const OP_FMT2: u8 = 104; // R[A] = fmt2(R[B], R[C])  (format number t
 // of `[real, imag]` pairs; OP_IFFT takes the same shape and returns `L n`.
 pub(crate) const OP_FFT: u8 = 129; // R[A] = fft(R[B])
 pub(crate) const OP_IFFT: u8 = 130; // R[A] = ifft(R[B])
+// Higher-order: uniqby fn xs — pre-allocated, HOF dispatch not yet wired in VM.
+pub(crate) const OP_UNIQBY: u8 = 116; // R[A] = uniqby(R[B] (fn-ref), R[C] (list))
 
 // ABx mode — register + 16-bit operand
 pub(crate) const OP_LOADK: u8 = 20;
@@ -2529,10 +2531,11 @@ fn chunk_is_all_numeric(chunk: &Chunk) -> bool {
         let op = (inst >> 24) as u8;
         match op {
             OP_RECNEW | OP_LISTNEW | OP_RECWITH | OP_WRAPOK | OP_WRAPERR | OP_STR | OP_CAT
-            | OP_SPL | OP_REV | OP_SRT | OP_SRTDESC | OP_SLC | OP_UNQ | OP_LISTAPPEND | OP_JPAR
-            | OP_JDMP | OP_ENV | OP_GET | OP_GETH | OP_POST | OP_POSTH | OP_RD | OP_RDL | OP_WR
-            | OP_WRL | OP_MAPNEW | OP_MGET | OP_MSET | OP_MKEYS | OP_MVALS | OP_HD | OP_AT
-            | OP_LST | OP_TL | OP_FMT2 | OP_RGXSUB | OP_ZIP | OP_FFT | OP_IFFT => {
+            | OP_SPL | OP_REV | OP_SRT | OP_SRTDESC | OP_SLC | OP_UNQ | OP_UNIQBY
+            | OP_LISTAPPEND | OP_JPAR | OP_JDMP | OP_ENV | OP_GET | OP_GETH | OP_POST
+            | OP_POSTH | OP_RD | OP_RDL | OP_WR | OP_WRL | OP_MAPNEW | OP_MGET | OP_MSET
+            | OP_MKEYS | OP_MVALS | OP_HD | OP_AT | OP_LST | OP_TL | OP_FMT2 | OP_RGXSUB
+            | OP_ZIP | OP_FFT | OP_IFFT => {
                 return false;
             }
             _ => {}
@@ -6123,6 +6126,12 @@ impl<'a> VM<'a> {
                         }
                     }
                 }
+                OP_UNIQBY => {
+                    // HOF dispatch not wired through the VM yet (matches map/flt/fld/grp).
+                    // Emitter currently falls through to OP_CALL → interpreter; this arm
+                    // exists so the opcode is a known dispatch target for future wiring.
+                    vm_err!(VmError::Type("uniqby: VM HOF dispatch not implemented"));
+                }
                 _ => vm_err!(VmError::UnknownOpcode { op }),
             }
         }
@@ -8415,6 +8424,15 @@ pub(crate) extern "C" fn jit_unq(v: u64) -> u64 {
         }
         return NanVal::heap_list(out).0;
     }
+    TAG_NIL
+}
+
+#[cfg(feature = "cranelift")]
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn jit_uniqby(_fn_ref: u64, _list: u64) -> u64 {
+    // HOF dispatch is not wired through the JIT yet (matches map/flt/fld/grp).
+    // Returns nil so callers see a typed failure rather than UB. The emitter
+    // does not produce OP_UNIQBY today; this stub exists for plumbing parity.
     TAG_NIL
 }
 
