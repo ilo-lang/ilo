@@ -2197,6 +2197,34 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             )),
         };
     }
+    if builtin == Some(Builtin::Rdjl) && args.len() == 1 {
+        return match &args[0] {
+            Value::Text(path) => match std::fs::read_to_string(path) {
+                Ok(content) => {
+                    let mut items: Vec<Value> = Vec::new();
+                    for line in content.split('\n') {
+                        if line.is_empty() {
+                            continue;
+                        }
+                        let parsed = match serde_json::from_str::<serde_json::Value>(line) {
+                            Ok(v) => Value::Ok(Box::new(serde_json_to_value(v))),
+                            Err(e) => Value::Err(Box::new(Value::Text(e.to_string()))),
+                        };
+                        items.push(parsed);
+                    }
+                    Ok(Value::List(items))
+                }
+                Err(e) => Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("rdjl failed to read '{}': {}", path, e),
+                )),
+            },
+            other => Err(RuntimeError::new(
+                "ILO-R009",
+                format!("rdjl requires text path, got {:?}", other),
+            )),
+        };
+    }
 
     if builtin == Some(Builtin::Env) && args.len() == 1 {
         return match &args[0] {

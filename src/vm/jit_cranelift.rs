@@ -121,6 +121,7 @@ struct HelperFuncs {
     jpth: FuncId,
     jdmp: FuncId,
     jpar: FuncId,
+    rdjl: FuncId,
     call: FuncId,
     // Type predicates
     isnum: FuncId,
@@ -271,6 +272,7 @@ fn register_helpers(builder: &mut JITBuilder) {
         ("jit_jpth", jit_jpth as *const u8),
         ("jit_jdmp", jit_jdmp as *const u8),
         ("jit_jpar", jit_jpar as *const u8),
+        ("jit_rdjl", jit_rdjl as *const u8),
         ("jit_call", jit_call as *const u8),
         // Type predicates
         ("jit_isnum", jit_isnum as *const u8),
@@ -411,6 +413,7 @@ fn declare_all_helpers(module: &mut JITModule) -> HelperFuncs {
         jpth: declare_helper(module, "jit_jpth", 2, 1),
         jdmp: declare_helper(module, "jit_jdmp", 1, 1),
         jpar: declare_helper(module, "jit_jpar", 1, 1),
+        rdjl: declare_helper(module, "jit_rdjl", 1, 1),
         call: declare_helper(module, "jit_call", 4, 1),
         // Type predicates
         isnum: declare_helper(module, "jit_isnum", 1, 1),
@@ -1016,7 +1019,7 @@ fn compile_function_body(
                 | OP_SETUNION | OP_SETINTER | OP_SETDIFF
                 | OP_INV | OP_SOLVE
                 | OP_SPL | OP_CAT | OP_GET | OP_POST | OP_GETH | OP_POSTH | OP_GETMANY
-                | OP_ENV | OP_JPTH | OP_JDMP | OP_JPAR
+                | OP_ENV | OP_JPTH | OP_JDMP | OP_JPAR | OP_RDJL
                 | OP_MAPNEW | OP_MGET | OP_MSET | OP_MDEL | OP_MKEYS | OP_MVALS
                 | OP_LISTNEW | OP_LISTAPPEND
                 | OP_RECNEW | OP_RECWITH
@@ -3598,6 +3601,13 @@ fn compile_function_body(
             OP_JPAR => {
                 let bv = builder.use_var(vars[b_idx]);
                 let fref = get_func_ref(&mut builder, module, helpers.jpar);
+                let call_inst = builder.ins().call(fref, &[bv]);
+                let result = builder.inst_results(call_inst)[0];
+                builder.def_var(vars[a_idx], result);
+            }
+            OP_RDJL => {
+                let bv = builder.use_var(vars[b_idx]);
+                let fref = get_func_ref(&mut builder, module, helpers.rdjl);
                 let call_inst = builder.ins().call(fref, &[bv]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);

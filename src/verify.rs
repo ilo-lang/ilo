@@ -319,6 +319,7 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("fmt", &["t"], "t"), // variadic: fmt template arg1 arg2 … — checked specially
     ("fmt2", &["n", "n"], "t"),
     ("jpar", &["t"], "R ? t"),
+    ("rdjl", &["t"], "L (R ? t)"),
     // Higher-order: map/flt/fld take a function ref as first arg (special-cased in builtin_check_args)
     ("map", &["fn", "list"], "list"),
     ("flt", &["fn", "list"], "list"),
@@ -1426,6 +1427,28 @@ fn builtin_check_args(
             }
             (
                 Ty::Result(Box::new(Ty::Unknown), Box::new(Ty::Text)),
+                errors,
+            )
+        }
+        "rdjl" => {
+            if let Some(arg) = arg_types.first()
+                && !compatible(arg, &Ty::Text)
+            {
+                errors.push(VerifyError {
+                    code: "ILO-T013",
+                    function: func_ctx.to_string(),
+                    message: format!("'rdjl' expects t (path), got {arg}"),
+                    hint: None,
+                    span,
+                    is_warning: false,
+                });
+            }
+            // rdjl path → L (R _ t): list of per-line parse results
+            (
+                Ty::List(Box::new(Ty::Result(
+                    Box::new(Ty::Unknown),
+                    Box::new(Ty::Text),
+                ))),
                 errors,
             )
         }

@@ -109,6 +109,7 @@ pub enum Builtin {
     Jpth,
     Jdmp,
     Jpar,
+    Rdjl,
 
     // HTTP
     Get,
@@ -221,6 +222,7 @@ impl Builtin {
             "jpth" => Some(Builtin::Jpth),
             "jdmp" => Some(Builtin::Jdmp),
             "jpar" => Some(Builtin::Jpar),
+            "rdjl" => Some(Builtin::Rdjl),
             "get" => Some(Builtin::Get),
             "post" => Some(Builtin::Post),
             "get-many" => Some(Builtin::GetMany),
@@ -328,6 +330,7 @@ impl Builtin {
             Builtin::Jpth => "jpth",
             Builtin::Jdmp => "jdmp",
             Builtin::Jpar => "jpar",
+            Builtin::Rdjl => "rdjl",
             Builtin::Get => "get",
             Builtin::Post => "post",
             Builtin::GetMany => "get-many",
@@ -456,6 +459,7 @@ mod tests {
             "solve",
             "inv",
             "det",
+            "rdjl",
         ];
         for name in &all {
             let b = Builtin::from_name(name).unwrap_or_else(|| panic!("missing builtin: {name}"));
