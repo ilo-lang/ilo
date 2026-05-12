@@ -110,10 +110,15 @@ fn compress_section(lines: &[String]) -> String {
                 }
                 TableState::InData => {
                     // Real data row: extract cells.
-                    let cells: Vec<&str> = t
+                    // Handle escaped pipes `\|` inside cells by substituting a
+                    // placeholder before splitting, then restoring after.
+                    const PIPE_PLACEHOLDER: &str = "\u{0001}";
+                    let escaped = t.replace("\\|", PIPE_PLACEHOLDER);
+                    let cells: Vec<String> = escaped
                         .split('|')
                         .map(str::trim)
                         .filter(|s| !s.is_empty())
+                        .map(|s| s.replace(PIPE_PLACEHOLDER, "|"))
                         .collect();
                     items.push(collapse_ws(&cells.join("=")));
                 }
