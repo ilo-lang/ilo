@@ -50,6 +50,7 @@ struct HelperFuncs {
     abs: FuncId,
     min: FuncId,
     max: FuncId,
+    clamp: FuncId,
     flr: FuncId,
     cel: FuncId,
     rou: FuncId,
@@ -181,6 +182,7 @@ fn declare_all_helpers(module: &mut ObjectModule) -> HelperFuncs {
         num: declare_helper(module, "jit_num", 1, 1),
         abs: declare_helper(module, "jit_abs", 1, 1),
         min: declare_helper(module, "jit_min", 2, 1),
+        clamp: declare_helper(module, "jit_clamp", 3, 1),
         max: declare_helper(module, "jit_max", 2, 1),
         flr: declare_helper(module, "jit_flr", 1, 1),
         cel: declare_helper(module, "jit_cel", 1, 1),
@@ -910,8 +912,8 @@ fn compile_function_body(
                 // Guaranteed numeric outputs.
                 OP_ADD_NN | OP_SUB_NN | OP_MUL_NN | OP_DIV_NN | OP_ADDK_N | OP_SUBK_N
                 | OP_MULK_N | OP_DIVK_N | OP_LEN | OP_ABS | OP_MIN | OP_MAX | OP_FLR | OP_CEL
-                | OP_ROU | OP_RND0 | OP_RND2 | OP_NOW | OP_MOD | OP_POW | OP_SQRT | OP_LOG
-                | OP_EXP | OP_SIN | OP_COS | OP_TAN | OP_LOG10 | OP_LOG2 | OP_ATAN2 => {
+                | OP_ROU | OP_RND0 | OP_RND2 | OP_NOW | OP_MOD | OP_CLAMP | OP_POW | OP_SQRT
+                | OP_LOG | OP_EXP | OP_SIN | OP_COS | OP_TAN | OP_LOG10 | OP_LOG2 | OP_ATAN2 => {
                     num_write[a] = true;
                 }
                 // LOADK: numeric only when the constant itself is a number.
@@ -1471,6 +1473,23 @@ fn compile_function_body(
                 builder.def_var(vars[a_idx], result);
                 if a_idx < reg_count && reg_always_num[a_idx] {
                     builder.def_var(f64_vars[a_idx], result_f);
+                }
+            }
+            OP_CLAMP => {
+                // clamp(R[B]=x, R[C]=lo, R[D]=hi) — D in data word A field
+                let bv = builder.use_var(vars[b_idx]);
+                let cv = builder.use_var(vars[c_idx]);
+                let data_inst = chunk.code[ip + 1];
+                skip_next = true;
+                let d_idx = ((data_inst >> 16) & 0xFF) as usize;
+                let dv = builder.use_var(vars[d_idx]);
+                let fref = get_func_ref(&mut builder, module, helpers.clamp);
+                let call_inst = builder.ins().call(fref, &[bv, cv, dv]);
+                let result = builder.inst_results(call_inst)[0];
+                builder.def_var(vars[a_idx], result);
+                if a_idx < reg_count && reg_always_num[a_idx] {
+                    let rf = builder.ins().bitcast(F64, mf, result);
+                    builder.def_var(f64_vars[a_idx], rf);
                 }
             }
             // ── Result/Option wrapping ──
