@@ -123,6 +123,11 @@ pub enum Builtin {
     Mkeys,
     Mvals,
     Mdel,
+
+    // Linear algebra
+    Solve,
+    Inv,
+    Det,
 }
 
 impl Builtin {
@@ -226,6 +231,9 @@ impl Builtin {
             "mkeys" => Some(Builtin::Mkeys),
             "mvals" => Some(Builtin::Mvals),
             "mdel" => Some(Builtin::Mdel),
+            "solve" => Some(Builtin::Solve),
+            "inv" => Some(Builtin::Inv),
+            "det" => Some(Builtin::Det),
             _ => None,
         }
     }
@@ -330,6 +338,9 @@ impl Builtin {
             Builtin::Mkeys => "mkeys",
             Builtin::Mvals => "mvals",
             Builtin::Mdel => "mdel",
+            Builtin::Solve => "solve",
+            Builtin::Inv => "inv",
+            Builtin::Det => "det",
         }
     }
 
@@ -442,6 +453,9 @@ mod tests {
             "dot",
             "rndn",
             "get-many",
+            "solve",
+            "inv",
+            "det",
         ];
         for name in &all {
             let b = Builtin::from_name(name).unwrap_or_else(|| panic!("missing builtin: {name}"));

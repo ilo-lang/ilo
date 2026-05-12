@@ -1,0 +1,21 @@
+-- Advanced linear algebra: solve, inv, det via LU decomposition with
+-- partial pivoting. Matrices are row-major nested lists (L (L n));
+-- vectors are flat lists (L n). Singular and non-square inputs raise.
+
+-- Determinant of a square matrix.
+de a:L (L n)>n;det a
+
+-- Solve Ax = b for x.
+sv a:L (L n) b:L n>L n;solve a b
+
+-- Matrix inverse.
+iv a:L (L n)>L (L n);inv a
+
+-- run: de [[1,0],[0,1]]
+-- out: 1
+-- run: de [[2,1],[1,3]]
+-- out: 5
+-- run: sv [[1,1],[1,-1]] [3,1]
+-- out: [2, 1]
+-- run: iv [[2,0],[0,2]]
+-- out: [[0.5, 0], [0, 0.5]]

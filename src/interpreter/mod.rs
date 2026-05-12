@@ -338,6 +338,145 @@ fn parse_csv_row(line: &str, sep: char) -> Vec<String> {
     fields
 }
 
+// ── Linear algebra helpers ──────────────────────────────────────────
+
+/// Coerce a `Value` into a row-major matrix `Vec<Vec<f64>>`.
+fn matrix_from_value(v: &Value, name: &str) -> Result<Vec<Vec<f64>>> {
+    let rows = match v {
+        Value::List(rs) => rs,
+        other => {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!("{}: expected a list of lists, got {:?}", name, other),
+            ));
+        }
+    };
+    let mut mat: Vec<Vec<f64>> = Vec::with_capacity(rows.len());
+    for row in rows {
+        let cells = match row {
+            Value::List(cs) => cs,
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("{}: each row must be a list, got {:?}", name, other),
+                ));
+            }
+        };
+        let mut r: Vec<f64> = Vec::with_capacity(cells.len());
+        for c in cells {
+            match c {
+                Value::Number(n) => r.push(*n),
+                other => {
+                    return Err(RuntimeError::new(
+                        "ILO-R009",
+                        format!("{}: matrix cells must be numbers, got {:?}", name, other),
+                    ));
+                }
+            }
+        }
+        mat.push(r);
+    }
+    Ok(mat)
+}
+
+/// Coerce a `Value` into a vector `Vec<f64>`.
+fn vec_from_value(v: &Value, name: &str) -> Result<Vec<f64>> {
+    let items = match v {
+        Value::List(xs) => xs,
+        other => {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!("{}: expected a list of numbers, got {:?}", name, other),
+            ));
+        }
+    };
+    let mut out: Vec<f64> = Vec::with_capacity(items.len());
+    for item in items {
+        match item {
+            Value::Number(n) => out.push(*n),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("{}: vector items must be numbers, got {:?}", name, other),
+                ));
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// LU decomposition with partial pivoting, in-place on an owned matrix.
+/// Returns (LU, pivot indices, determinant, singular flag). When `singular`
+/// is true, the LU and det values are still well-formed (det = 0) but the
+/// system has no unique solution.
+#[allow(clippy::needless_range_loop)]
+pub(crate) fn lu_decompose(mut a: Vec<Vec<f64>>) -> (Vec<Vec<f64>>, Vec<usize>, f64, bool) {
+    let n = a.len();
+    let mut piv: Vec<usize> = (0..n).collect();
+    let mut det_sign = 1.0_f64;
+    let mut singular = false;
+    for k in 0..n {
+        // Pivot: find row with max |a[i][k]| for i in k..n
+        let mut max_val = a[k][k].abs();
+        let mut max_row = k;
+        for i in (k + 1)..n {
+            let v = a[i][k].abs();
+            if v > max_val {
+                max_val = v;
+                max_row = i;
+            }
+        }
+        if max_val < 1e-12 {
+            singular = true;
+            continue;
+        }
+        if max_row != k {
+            a.swap(k, max_row);
+            piv.swap(k, max_row);
+            det_sign = -det_sign;
+        }
+        let pivot = a[k][k];
+        for i in (k + 1)..n {
+            a[i][k] /= pivot;
+            let factor = a[i][k];
+            for j in (k + 1)..n {
+                a[i][j] -= factor * a[k][j];
+            }
+        }
+    }
+    let mut det = det_sign;
+    for (i, row) in a.iter().enumerate().take(n) {
+        det *= row[i];
+    }
+    if singular {
+        det = 0.0;
+    }
+    (a, piv, det, singular)
+}
+
+/// Solve LUx = Pb using the result of `lu_decompose`.
+pub(crate) fn lu_solve(lu: &[Vec<f64>], piv: &[usize], b: &[f64]) -> Vec<f64> {
+    let n = lu.len();
+    // Apply permutation: y = Pb
+    let mut x: Vec<f64> = (0..n).map(|i| b[piv[i]]).collect();
+    // Forward solve Ly = Pb (L has unit diagonal)
+    for i in 0..n {
+        for j in 0..i {
+            let lij = lu[i][j];
+            x[i] -= lij * x[j];
+        }
+    }
+    // Back solve Ux = y
+    for i in (0..n).rev() {
+        for j in (i + 1)..n {
+            let uij = lu[i][j];
+            x[i] -= uij * x[j];
+        }
+        x[i] /= lu[i][i];
+    }
+    x
+}
+
 fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
     // Builtins — resolve name to enum once, then dispatch via match
     let builtin = Builtin::from_name(name);
@@ -435,6 +574,102 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 "mdel: expects map and text key".to_string(),
             )),
         };
+    }
+    if builtin == Some(Builtin::Det) && args.len() == 1 {
+        let mat = matrix_from_value(&args[0], "det")?;
+        let n = mat.len();
+        if n == 0 {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                "det: empty matrix".to_string(),
+            ));
+        }
+        for row in &mat {
+            if row.len() != n {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    "det: matrix must be square".to_string(),
+                ));
+            }
+        }
+        let (_lu, _piv, det, _) = lu_decompose(mat);
+        return Ok(Value::Number(det));
+    }
+    if builtin == Some(Builtin::Inv) && args.len() == 1 {
+        let mat = matrix_from_value(&args[0], "inv")?;
+        let n = mat.len();
+        if n == 0 {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                "inv: empty matrix".to_string(),
+            ));
+        }
+        for row in &mat {
+            if row.len() != n {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    "inv: matrix must be square".to_string(),
+                ));
+            }
+        }
+        let (lu, piv, _det, singular) = lu_decompose(mat);
+        if singular {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                "inv: matrix is singular".to_string(),
+            ));
+        }
+        let mut cols: Vec<Vec<f64>> = Vec::with_capacity(n);
+        for j in 0..n {
+            let mut e = vec![0.0; n];
+            e[j] = 1.0;
+            cols.push(lu_solve(&lu, &piv, &e));
+        }
+        // Assemble row-major: result[i][j] = cols[j][i]
+        let rows: Vec<Value> = (0..n)
+            .map(|i| {
+                Value::List(
+                    (0..n)
+                        .map(|j| Value::Number(cols[j][i]))
+                        .collect::<Vec<_>>(),
+                )
+            })
+            .collect();
+        return Ok(Value::List(rows));
+    }
+    if builtin == Some(Builtin::Solve) && args.len() == 2 {
+        let mat = matrix_from_value(&args[0], "solve")?;
+        let b = vec_from_value(&args[1], "solve")?;
+        let n = mat.len();
+        if n == 0 {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                "solve: empty matrix".to_string(),
+            ));
+        }
+        for row in &mat {
+            if row.len() != n {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    "solve: matrix must be square".to_string(),
+                ));
+            }
+        }
+        if b.len() != n {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                "solve: vector length must match matrix size".to_string(),
+            ));
+        }
+        let (lu, piv, _det, singular) = lu_decompose(mat);
+        if singular {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                "solve: matrix is singular".to_string(),
+            ));
+        }
+        let x = lu_solve(&lu, &piv, &b);
+        return Ok(Value::List(x.into_iter().map(Value::Number).collect()));
     }
     if builtin == Some(Builtin::Str) {
         if args.len() != 1 {

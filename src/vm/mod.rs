@@ -251,6 +251,11 @@ pub(crate) const OP_PADR: u8 = 122; // R[A] = pad_right(R[B], R[C]) (text, width
 
 pub(crate) const OP_GETMANY: u8 = 136; // R[A] = get_many(R[B])  (L t → L (R t t), concurrent fan-out)
 
+// Linear algebra advanced.
+pub(crate) const OP_SOLVE: u8 = 126; // R[A] = solve(R[B], R[C])  — solve Ax = b
+pub(crate) const OP_INV: u8 = 127; // R[A] = inv(R[B])  — matrix inverse
+pub(crate) const OP_DET: u8 = 128; // R[A] = det(R[B])  — matrix determinant
+
 // ABx mode — register + 16-bit operand
 pub(crate) const OP_LOADK: u8 = 20;
 pub(crate) const OP_JMP: u8 = 21;
@@ -1733,6 +1738,26 @@ impl RegCompiler {
                             self.reg_is_num[ra as usize] = true;
                             return ra;
                         }
+                        (Builtin::Solve, 2) => {
+                            let rb = self.compile_expr(&args[0]);
+                            let rc = self.compile_expr(&args[1]);
+                            let ra = self.alloc_reg();
+                            self.emit_abc(OP_SOLVE, ra, rb, rc);
+                            return ra;
+                        }
+                        (Builtin::Inv, 1) => {
+                            let rb = self.compile_expr(&args[0]);
+                            let ra = self.alloc_reg();
+                            self.emit_abc(OP_INV, ra, rb, 0);
+                            return ra;
+                        }
+                        (Builtin::Det, 1) => {
+                            let rb = self.compile_expr(&args[0]);
+                            let ra = self.alloc_reg();
+                            self.emit_abc(OP_DET, ra, rb, 0);
+                            self.reg_is_num[ra as usize] = true;
+                            return ra;
+                        }
                         (Builtin::Spl, 2) => {
                             let rb = self.compile_expr(&args[0]);
                             let rc = self.compile_expr(&args[1]);
@@ -2765,7 +2790,7 @@ fn chunk_is_all_numeric(chunk: &Chunk) -> bool {
             | OP_WRL | OP_MAPNEW | OP_MGET | OP_MSET | OP_MKEYS | OP_MVALS | OP_HD | OP_AT
             | OP_LST | OP_TL | OP_FMT2 | OP_RGXSUB | OP_ZIP | OP_ENUMERATE | OP_WINDOW | OP_FFT
             | OP_IFFT | OP_RANGE | OP_CHUNKS | OP_CUMSUM | OP_SETUNION | OP_SETINTER
-            | OP_SETDIFF | OP_TRANSPOSE | OP_MATMUL => {
+            | OP_SETDIFF | OP_TRANSPOSE | OP_MATMUL | OP_INV | OP_SOLVE => {
                 return false;
             }
             _ => {}
@@ -5678,6 +5703,96 @@ impl<'a> VM<'a> {
                     }
                     reg_set!(a, NanVal::number(total));
                 }
+                OP_DET => {
+                    let a = ((inst >> 16) & 0xFF) as usize + base;
+                    let b = ((inst >> 8) & 0xFF) as usize + base;
+                    let v = reg!(b);
+                    let mat = match nanval_to_matrix(v) {
+                        Ok(m) => m,
+                        Err(e) => vm_err!(VmError::Type(e)),
+                    };
+                    let n = mat.len();
+                    if n == 0 {
+                        vm_err!(VmError::Type("det: empty matrix"));
+                    }
+                    for row in &mat {
+                        if row.len() != n {
+                            vm_err!(VmError::Type("det: matrix must be square"));
+                        }
+                    }
+                    let (_lu, _piv, det, _singular) = crate::interpreter::lu_decompose(mat);
+                    reg_set!(a, NanVal::number(det));
+                }
+                OP_INV => {
+                    let a = ((inst >> 16) & 0xFF) as usize + base;
+                    let b = ((inst >> 8) & 0xFF) as usize + base;
+                    let v = reg!(b);
+                    let mat = match nanval_to_matrix(v) {
+                        Ok(m) => m,
+                        Err(e) => vm_err!(VmError::Type(e)),
+                    };
+                    let n = mat.len();
+                    if n == 0 {
+                        vm_err!(VmError::Type("inv: empty matrix"));
+                    }
+                    for row in &mat {
+                        if row.len() != n {
+                            vm_err!(VmError::Type("inv: matrix must be square"));
+                        }
+                    }
+                    let (lu, piv, _det, singular) = crate::interpreter::lu_decompose(mat);
+                    if singular {
+                        vm_err!(VmError::Type("inv: matrix is singular"));
+                    }
+                    let mut cols: Vec<Vec<f64>> = Vec::with_capacity(n);
+                    for j in 0..n {
+                        let mut e = vec![0.0; n];
+                        e[j] = 1.0;
+                        cols.push(crate::interpreter::lu_solve(&lu, &piv, &e));
+                    }
+                    let rows: Vec<NanVal> = (0..n)
+                        .map(|i| {
+                            let row: Vec<NanVal> =
+                                (0..n).map(|j| NanVal::number(cols[j][i])).collect();
+                            NanVal::heap_list(row)
+                        })
+                        .collect();
+                    reg_set!(a, NanVal::heap_list(rows));
+                }
+                OP_SOLVE => {
+                    let a = ((inst >> 16) & 0xFF) as usize + base;
+                    let b = ((inst >> 8) & 0xFF) as usize + base;
+                    let c = (inst & 0xFF) as usize + base;
+                    let va = reg!(b);
+                    let vb = reg!(c);
+                    let mat = match nanval_to_matrix(va) {
+                        Ok(m) => m,
+                        Err(e) => vm_err!(VmError::Type(e)),
+                    };
+                    let vec_b = match nanval_to_vec(vb) {
+                        Ok(v) => v,
+                        Err(e) => vm_err!(VmError::Type(e)),
+                    };
+                    let n = mat.len();
+                    if n == 0 {
+                        vm_err!(VmError::Type("solve: empty matrix"));
+                    }
+                    for row in &mat {
+                        if row.len() != n {
+                            vm_err!(VmError::Type("solve: matrix must be square"));
+                        }
+                    }
+                    if vec_b.len() != n {
+                        vm_err!(VmError::Type("solve: vector length must match matrix size"));
+                    }
+                    let (lu, piv, _det, singular) = crate::interpreter::lu_decompose(mat);
+                    if singular {
+                        vm_err!(VmError::Type("solve: matrix is singular"));
+                    }
+                    let x = crate::interpreter::lu_solve(&lu, &piv, &vec_b);
+                    let list: Vec<NanVal> = x.into_iter().map(NanVal::number).collect();
+                    reg_set!(a, NanVal::heap_list(list));
+                }
                 OP_RND0 => {
                     let a = ((inst >> 16) & 0xFF) as usize + base;
                     reg_set!(a, NanVal::number(fastrand::f64()));
@@ -7180,6 +7295,41 @@ fn nanval_to_key_string(v: NanVal) -> Option<String> {
     None
 }
 
+/// Convert a NanVal expected to be a list-of-numbers into Vec<f64>.
+fn nanval_to_vec(v: NanVal) -> std::result::Result<Vec<f64>, &'static str> {
+    if !v.is_heap() {
+        return Err("expected a list of numbers");
+    }
+    let items = match unsafe { v.as_heap_ref() } {
+        HeapObj::List(items) => items,
+        _ => return Err("expected a list of numbers"),
+    };
+    let mut out: Vec<f64> = Vec::with_capacity(items.len());
+    for item in items {
+        if !item.is_number() {
+            return Err("vector items must be numbers");
+        }
+        out.push(item.as_number());
+    }
+    Ok(out)
+}
+
+/// Convert a NanVal expected to be a list-of-list-of-numbers into Vec<Vec<f64>>.
+fn nanval_to_matrix(v: NanVal) -> std::result::Result<Vec<Vec<f64>>, &'static str> {
+    if !v.is_heap() {
+        return Err("expected a list of lists");
+    }
+    let rows = match unsafe { v.as_heap_ref() } {
+        HeapObj::List(items) => items,
+        _ => return Err("expected a list of lists"),
+    };
+    let mut out: Vec<Vec<f64>> = Vec::with_capacity(rows.len());
+    for row in rows {
+        out.push(nanval_to_vec(*row)?);
+    }
+    Ok(out)
+}
+
 fn nanval_to_json(v: NanVal) -> serde_json::Value {
     if v.is_number() {
         let n = v.as_number();
@@ -8119,6 +8269,97 @@ pub(crate) extern "C" fn jit_dot(a: u64, b: u64) -> u64 {
         total += x.as_number() * y.as_number();
     }
     NanVal::number(total).0
+}
+
+#[cfg(feature = "cranelift")]
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn jit_det(a: u64) -> u64 {
+    let v = NanVal(a);
+    let mat = match nanval_to_matrix(v) {
+        Ok(m) => m,
+        Err(_) => return NanVal::number(f64::NAN).0,
+    };
+    let n = mat.len();
+    if n == 0 {
+        return NanVal::number(f64::NAN).0;
+    }
+    for row in &mat {
+        if row.len() != n {
+            return NanVal::number(f64::NAN).0;
+        }
+    }
+    let (_lu, _piv, det, _singular) = crate::interpreter::lu_decompose(mat);
+    NanVal::number(det).0
+}
+
+#[cfg(feature = "cranelift")]
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn jit_inv(a: u64) -> u64 {
+    let v = NanVal(a);
+    let mat = match nanval_to_matrix(v) {
+        Ok(m) => m,
+        Err(_) => return TAG_NIL,
+    };
+    let n = mat.len();
+    if n == 0 {
+        return TAG_NIL;
+    }
+    for row in &mat {
+        if row.len() != n {
+            return TAG_NIL;
+        }
+    }
+    let (lu, piv, _det, singular) = crate::interpreter::lu_decompose(mat);
+    if singular {
+        return TAG_NIL;
+    }
+    let mut cols: Vec<Vec<f64>> = Vec::with_capacity(n);
+    for j in 0..n {
+        let mut e = vec![0.0; n];
+        e[j] = 1.0;
+        cols.push(crate::interpreter::lu_solve(&lu, &piv, &e));
+    }
+    let rows: Vec<NanVal> = (0..n)
+        .map(|i| {
+            let row: Vec<NanVal> = (0..n).map(|j| NanVal::number(cols[j][i])).collect();
+            NanVal::heap_list(row)
+        })
+        .collect();
+    NanVal::heap_list(rows).0
+}
+
+#[cfg(feature = "cranelift")]
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn jit_solve(a: u64, b: u64) -> u64 {
+    let va = NanVal(a);
+    let vb = NanVal(b);
+    let mat = match nanval_to_matrix(va) {
+        Ok(m) => m,
+        Err(_) => return TAG_NIL,
+    };
+    let vec_b = match nanval_to_vec(vb) {
+        Ok(v) => v,
+        Err(_) => return TAG_NIL,
+    };
+    let n = mat.len();
+    if n == 0 {
+        return TAG_NIL;
+    }
+    for row in &mat {
+        if row.len() != n {
+            return TAG_NIL;
+        }
+    }
+    if vec_b.len() != n {
+        return TAG_NIL;
+    }
+    let (lu, piv, _det, singular) = crate::interpreter::lu_decompose(mat);
+    if singular {
+        return TAG_NIL;
+    }
+    let x = crate::interpreter::lu_solve(&lu, &piv, &vec_b);
+    let list: Vec<NanVal> = x.into_iter().map(NanVal::number).collect();
+    NanVal::heap_list(list).0
 }
 
 #[cfg(feature = "cranelift")]
