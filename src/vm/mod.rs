@@ -194,6 +194,7 @@ pub(crate) const OP_LOG10: u8 = 106; // R[A] = log10(R[B])
 pub(crate) const OP_LOG2: u8 = 107; // R[A] = log2(R[B])
 pub(crate) const OP_ATAN2: u8 = 108; // R[A] = atan2(R[B], R[C])  (y first, x second)
 pub(crate) const OP_SRTDESC: u8 = 117; // R[A] = rsrt(R[B])  (descending sort of list)
+pub(crate) const OP_RGXSUB: u8 = 115; // R[A] = rgxsub(R[B], R[C], R[D])  (pattern, replacement, subject; D in data word A field)
 
 // ABC mode — text formatting
 pub(crate) const OP_FMT2: u8 = 104; // R[A] = fmt2(R[B], R[C])  (format number to N decimal places → t)
@@ -1735,6 +1736,18 @@ impl RegCompiler {
                             self.emit_abc(0, rd, 0, 0);
                             return ra;
                         }
+                        (Builtin::Rgxsub, 3) => {
+                            // rgxsub pattern replacement subject — two-instruction sequence:
+                            //   OP_RGXSUB A=result  B=pattern  C=replacement
+                            //   data word: A=subject_reg (consumed by OP_RGXSUB dispatch; ip advances past it)
+                            let rb = self.compile_expr(&args[0]);
+                            let rc = self.compile_expr(&args[1]);
+                            let rd = self.compile_expr(&args[2]);
+                            let ra = self.alloc_reg();
+                            self.emit_abc(OP_RGXSUB, ra, rb, rc);
+                            self.emit_abc(0, rd, 0, 0);
+                            return ra;
+                        }
                         (Builtin::Rnd, 0) => {
                             let ra = self.alloc_reg();
                             self.emit_abc(OP_RND0, ra, 0, 0);
@@ -2493,7 +2506,7 @@ fn chunk_is_all_numeric(chunk: &Chunk) -> bool {
             | OP_SPL | OP_REV | OP_SRT | OP_SRTDESC | OP_SLC | OP_UNQ | OP_LISTAPPEND | OP_JPAR
             | OP_JDMP | OP_ENV | OP_GET | OP_GETH | OP_POST | OP_POSTH | OP_RD | OP_RDL | OP_WR
             | OP_WRL | OP_MAPNEW | OP_MGET | OP_MSET | OP_MKEYS | OP_MVALS | OP_HD | OP_AT
-            | OP_LST | OP_TL | OP_FMT2 => {
+            | OP_LST | OP_TL | OP_FMT2 | OP_RGXSUB => {
                 return false;
             }
             _ => {}
@@ -5920,6 +5933,48 @@ impl<'a> VM<'a> {
                         vm_err!(VmError::Type("lst requires a list"));
                     }
                 }
+                OP_RGXSUB => {
+                    // Two-instruction sequence: OP_RGXSUB A=result B=pattern C=replacement;
+                    // data word A=subject_reg
+                    let a = ((inst >> 16) & 0xFF) as usize + base;
+                    let b = ((inst >> 8) & 0xFF) as usize + base;
+                    let c = (inst & 0xFF) as usize + base;
+                    // SAFETY: compiler always emits the data word immediately after OP_RGXSUB
+                    let data_inst = unsafe { *code.get_unchecked(ip) };
+                    ip += 1;
+                    let d = ((data_inst >> 16) & 0xFF) as usize + base;
+                    let vb = reg!(b);
+                    let vc = reg!(c);
+                    let vd = reg!(d);
+                    if !vb.is_string() || !vc.is_string() || !vd.is_string() {
+                        vm_err!(VmError::Type("rgxsub requires three strings"));
+                    }
+                    let pat = unsafe {
+                        match vb.as_heap_ref() {
+                            HeapObj::Str(s) => s.as_str(),
+                            _ => unreachable!(),
+                        }
+                    };
+                    let repl = unsafe {
+                        match vc.as_heap_ref() {
+                            HeapObj::Str(s) => s.as_str(),
+                            _ => unreachable!(),
+                        }
+                    };
+                    let subj = unsafe {
+                        match vd.as_heap_ref() {
+                            HeapObj::Str(s) => s.as_str(),
+                            _ => unreachable!(),
+                        }
+                    };
+                    match regex::Regex::new(pat) {
+                        Ok(re) => {
+                            let out = re.replace_all(subj, repl).into_owned();
+                            reg_set!(a, NanVal::heap_string(out));
+                        }
+                        Err(_) => vm_err!(VmError::Type("rgxsub: invalid regex pattern")),
+                    }
+                }
                 OP_LISTAPPEND => {
                     let a = ((inst >> 16) & 0xFF) as usize + base;
                     let b = ((inst >> 8) & 0xFF) as usize + base;
@@ -7300,6 +7355,39 @@ pub(crate) extern "C" fn jit_slc(a: u64, start: u64, end: u64) -> u64 {
 
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
+pub(crate) extern "C" fn jit_rgxsub(pat_v: u64, repl_v: u64, subj_v: u64) -> u64 {
+    let vp = NanVal(pat_v);
+    let vr = NanVal(repl_v);
+    let vs = NanVal(subj_v);
+    if !vp.is_string() || !vr.is_string() || !vs.is_string() {
+        return TAG_NIL;
+    }
+    let pat = unsafe {
+        match vp.as_heap_ref() {
+            HeapObj::Str(s) => s.as_str(),
+            _ => unreachable!(),
+        }
+    };
+    let repl = unsafe {
+        match vr.as_heap_ref() {
+            HeapObj::Str(s) => s.as_str(),
+            _ => unreachable!(),
+        }
+    };
+    let subj = unsafe {
+        match vs.as_heap_ref() {
+            HeapObj::Str(s) => s.as_str(),
+            _ => unreachable!(),
+        }
+    };
+    match regex::Regex::new(pat) {
+        Ok(re) => NanVal::heap_string(re.replace_all(subj, repl).into_owned()).0,
+        Err(_) => TAG_NIL,
+    }
+}
+
+#[cfg(feature = "cranelift")]
+#[unsafe(no_mangle)]
 pub(crate) extern "C" fn jit_listappend(a: u64, b: u64) -> u64 {
     let list_val = NanVal(a);
     let item_val = NanVal(b);
@@ -8467,7 +8555,7 @@ pub(crate) fn find_block_leaders(code: &[u32]) -> Vec<usize> {
                 leaders.insert(i + 2);
                 leaders.insert(i + 3);
             }
-            OP_SLC | OP_LST | OP_MSET | OP_POSTH => {
+            OP_SLC | OP_LST | OP_MSET | OP_POSTH | OP_RGXSUB => {
                 // 2-word instructions: the following word is data, not an instruction.
                 // Skip it so its bits aren't mis-decoded as an opcode that might mark
                 // bogus leaders. The instruction after the data word is a normal leader

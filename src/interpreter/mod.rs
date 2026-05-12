@@ -1760,6 +1760,50 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         };
         return Ok(Value::List(result));
     }
+    if builtin == Some(Builtin::Rgxsub) && args.len() == 3 {
+        let pattern = match &args[0] {
+            Value::Text(s) => s.as_str(),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!(
+                        "rgxsub: first arg must be a string pattern, got {:?}",
+                        other
+                    ),
+                ));
+            }
+        };
+        let replacement = match &args[1] {
+            Value::Text(s) => s.as_str(),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!(
+                        "rgxsub: second arg must be a string replacement, got {:?}",
+                        other
+                    ),
+                ));
+            }
+        };
+        let subject = match &args[2] {
+            Value::Text(s) => s.as_str(),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!(
+                        "rgxsub: third arg must be a string subject, got {:?}",
+                        other
+                    ),
+                ));
+            }
+        };
+        let re = regex::Regex::new(pattern).map_err(|e| {
+            RuntimeError::new("ILO-R009", format!("rgxsub: invalid regex pattern: {e}"))
+        })?;
+        return Ok(Value::Text(
+            re.replace_all(subject, replacement).into_owned(),
+        ));
+    }
     if builtin == Some(Builtin::Flat) && args.len() == 1 {
         let items = match &args[0] {
             Value::List(l) => l.clone(),

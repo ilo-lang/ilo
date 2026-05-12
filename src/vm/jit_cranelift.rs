@@ -86,6 +86,7 @@ struct HelperFuncs {
     rsrt: FuncId,
     slc: FuncId,
     lst: FuncId,
+    rgxsub: FuncId,
     listappend: FuncId,
     index: FuncId,
     recfld: FuncId,
@@ -200,6 +201,7 @@ fn register_helpers(builder: &mut JITBuilder) {
         ("jit_rsrt", jit_rsrt as *const u8),
         ("jit_slc", jit_slc as *const u8),
         ("jit_lst", jit_lst as *const u8),
+        ("jit_rgxsub", jit_rgxsub as *const u8),
         ("jit_listappend", jit_listappend as *const u8),
         ("jit_index", jit_index as *const u8),
         ("jit_recfld", jit_recfld as *const u8),
@@ -305,6 +307,7 @@ fn declare_all_helpers(module: &mut JITModule) -> HelperFuncs {
         rsrt: declare_helper(module, "jit_rsrt", 1, 1),
         slc: declare_helper(module, "jit_slc", 3, 1),
         lst: declare_helper(module, "jit_lst", 3, 1),
+        rgxsub: declare_helper(module, "jit_rgxsub", 3, 1),
         listappend: declare_helper(module, "jit_listappend", 2, 1),
         index: declare_helper(module, "jit_index", 2, 1),
         recfld: declare_helper(module, "jit_recfld", 2, 1),
@@ -909,7 +912,7 @@ fn compile_function_body(
                 | OP_LISTNEW | OP_LISTAPPEND
                 | OP_RECNEW | OP_RECWITH
                 | OP_PRT | OP_RD | OP_RDL | OP_WR | OP_WRL | OP_TRM | OP_UNQ
-                | OP_NUM => {
+                | OP_NUM | OP_RGXSUB => {
                     non_num_write[a] = true;
                     non_bool_write[a] = true;
                 }
@@ -1007,7 +1010,7 @@ fn compile_function_body(
 
     // Track whether the current block has been terminated
     let mut block_terminated = false;
-    // Track whether to skip the next instruction (data word for OP_POSTH, OP_SLC, OP_MSET)
+    // Track whether to skip the next instruction (data word for OP_POSTH, OP_SLC, OP_MSET, OP_RGXSUB)
     let mut skip_next = false;
 
     // Translate bytecode instruction by instruction
@@ -2003,6 +2006,19 @@ fn compile_function_body(
                 let d_idx = ((data_inst >> 16) & 0xFF) as usize;
                 let dv = builder.use_var(vars[d_idx]);
                 let fref = get_func_ref(&mut builder, module, helpers.lst);
+                let call_inst = builder.ins().call(fref, &[bv, cv, dv]);
+                let result = builder.inst_results(call_inst)[0];
+                builder.def_var(vars[a_idx], result);
+            }
+            OP_RGXSUB => {
+                // rgxsub(R[B]=pattern, R[C]=replacement, R[D]=subject) — D in data word A field
+                let bv = builder.use_var(vars[b_idx]);
+                let cv = builder.use_var(vars[c_idx]);
+                let data_inst = chunk.code[ip + 1];
+                skip_next = true;
+                let d_idx = ((data_inst >> 16) & 0xFF) as usize;
+                let dv = builder.use_var(vars[d_idx]);
+                let fref = get_func_ref(&mut builder, module, helpers.rgxsub);
                 let call_inst = builder.ins().call(fref, &[bv, cv, dv]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
