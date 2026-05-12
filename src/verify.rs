@@ -319,6 +319,10 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("sum", &["list"], "n"),
     ("cumsum", &["L n"], "L n"),
     ("avg", &["list"], "n"),
+    ("median", &["list"], "n"),
+    ("quantile", &["list", "n"], "n"),
+    ("stdev", &["list"], "n"),
+    ("variance", &["list"], "n"),
     ("fft", &["list"], "list"),
     ("ifft", &["list"], "list"),
     ("rgx", &["t", "t"], "L t"),
@@ -357,7 +361,9 @@ fn builtin_as_fn_ty(name: &str) -> Option<Ty> {
         // 2-arg n,n->n (suitable as fld accumulator)
         "min" | "max" | "mod" => Ty::Fn(vec![n.clone(), n.clone()], Box::new(n)),
         // 1-arg list->n
-        "sum" | "avg" => Ty::Fn(vec![Ty::List(Box::new(n.clone()))], Box::new(n)),
+        "sum" | "avg" | "median" | "stdev" | "variance" => {
+            Ty::Fn(vec![Ty::List(Box::new(n.clone()))], Box::new(n))
+        }
         // 1-arg t->t
         "trm" => Ty::Fn(vec![t.clone()], Box::new(t)),
         // 1-arg n->t and t->R n t
@@ -970,6 +976,50 @@ fn builtin_check_args(
                 }
             }
             (Ty::List(Box::new(Ty::Number)), errors)
+        }
+        "median" | "stdev" | "variance" => {
+            if let Some(arg) = arg_types.first() {
+                match arg {
+                    Ty::List(_) | Ty::Unknown => {}
+                    other => errors.push(VerifyError {
+                        code: "ILO-T013",
+                        function: func_ctx.to_string(),
+                        message: format!("'{name}' expects a list of numbers, got {other}"),
+                        hint: None,
+                        span,
+                        is_warning: false,
+                    }),
+                }
+            }
+            (Ty::Number, errors)
+        }
+        "quantile" => {
+            if let Some(arg) = arg_types.first() {
+                match arg {
+                    Ty::List(_) | Ty::Unknown => {}
+                    other => errors.push(VerifyError {
+                        code: "ILO-T013",
+                        function: func_ctx.to_string(),
+                        message: format!("'quantile' first arg must be a list, got {other}"),
+                        hint: None,
+                        span,
+                        is_warning: false,
+                    }),
+                }
+            }
+            if let Some(arg) = arg_types.get(1)
+                && !compatible(arg, &Ty::Number)
+            {
+                errors.push(VerifyError {
+                    code: "ILO-T013",
+                    function: func_ctx.to_string(),
+                    message: format!("'quantile' second arg p must be n, got {arg}"),
+                    hint: None,
+                    span,
+                    is_warning: false,
+                });
+            }
+            (Ty::Number, errors)
         }
         "slc" => {
             if let Some(arg) = arg_types.first() {

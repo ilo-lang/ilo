@@ -93,6 +93,10 @@ struct HelperFuncs {
     fft: FuncId,
     ifft: FuncId,
     cumsum: FuncId,
+    median: FuncId,
+    quantile: FuncId,
+    stdev: FuncId,
+    variance: FuncId,
     slc: FuncId,
     lst: FuncId,
     rgxsub: FuncId,
@@ -220,6 +224,10 @@ fn register_helpers(builder: &mut JITBuilder) {
         ("jit_fft", jit_fft as *const u8),
         ("jit_ifft", jit_ifft as *const u8),
         ("jit_cumsum", jit_cumsum as *const u8),
+        ("jit_median", jit_median as *const u8),
+        ("jit_quantile", jit_quantile as *const u8),
+        ("jit_stdev", jit_stdev as *const u8),
+        ("jit_variance", jit_variance as *const u8),
         ("jit_slc", jit_slc as *const u8),
         ("jit_lst", jit_lst as *const u8),
         ("jit_rgxsub", jit_rgxsub as *const u8),
@@ -338,6 +346,10 @@ fn declare_all_helpers(module: &mut JITModule) -> HelperFuncs {
         fft: declare_helper(module, "jit_fft", 1, 1),
         ifft: declare_helper(module, "jit_ifft", 1, 1),
         cumsum: declare_helper(module, "jit_cumsum", 1, 1),
+        median: declare_helper(module, "jit_median", 1, 1),
+        quantile: declare_helper(module, "jit_quantile", 2, 1),
+        stdev: declare_helper(module, "jit_stdev", 1, 1),
+        variance: declare_helper(module, "jit_variance", 1, 1),
         slc: declare_helper(module, "jit_slc", 3, 1),
         lst: declare_helper(module, "jit_lst", 3, 1),
         rgxsub: declare_helper(module, "jit_rgxsub", 3, 1),
@@ -912,7 +924,8 @@ fn compile_function_body(
                 | OP_LEN | OP_ABS | OP_MIN | OP_MAX
                 | OP_FLR | OP_CEL | OP_ROU | OP_RND0 | OP_RND2 | OP_NOW
                 | OP_MOD | OP_CLAMP | OP_POW | OP_SQRT | OP_LOG | OP_EXP | OP_SIN | OP_COS
-                | OP_TAN | OP_LOG10 | OP_LOG2 | OP_ATAN2 => {
+                | OP_TAN | OP_LOG10 | OP_LOG2 | OP_ATAN2
+                | OP_MEDIAN | OP_QUANTILE | OP_STDEV | OP_VARIANCE => {
                     num_write[a] = true;
                 }
                 // LOADK: numeric only when the constant itself is a number.
@@ -2097,6 +2110,35 @@ fn compile_function_body(
             OP_CUMSUM => {
                 let bv = builder.use_var(vars[b_idx]);
                 let fref = get_func_ref(&mut builder, module, helpers.cumsum);
+                let call_inst = builder.ins().call(fref, &[bv]);
+                let result = builder.inst_results(call_inst)[0];
+                builder.def_var(vars[a_idx], result);
+            }
+            OP_MEDIAN => {
+                let bv = builder.use_var(vars[b_idx]);
+                let fref = get_func_ref(&mut builder, module, helpers.median);
+                let call_inst = builder.ins().call(fref, &[bv]);
+                let result = builder.inst_results(call_inst)[0];
+                builder.def_var(vars[a_idx], result);
+            }
+            OP_QUANTILE => {
+                let bv = builder.use_var(vars[b_idx]);
+                let cv = builder.use_var(vars[c_idx]);
+                let fref = get_func_ref(&mut builder, module, helpers.quantile);
+                let call_inst = builder.ins().call(fref, &[bv, cv]);
+                let result = builder.inst_results(call_inst)[0];
+                builder.def_var(vars[a_idx], result);
+            }
+            OP_STDEV => {
+                let bv = builder.use_var(vars[b_idx]);
+                let fref = get_func_ref(&mut builder, module, helpers.stdev);
+                let call_inst = builder.ins().call(fref, &[bv]);
+                let result = builder.inst_results(call_inst)[0];
+                builder.def_var(vars[a_idx], result);
+            }
+            OP_VARIANCE => {
+                let bv = builder.use_var(vars[b_idx]);
+                let fref = get_func_ref(&mut builder, module, helpers.variance);
                 let call_inst = builder.ins().call(fref, &[bv]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);

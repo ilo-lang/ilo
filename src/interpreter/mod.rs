@@ -2039,6 +2039,189 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         }
         return Ok(Value::Number(total / items.len() as f64));
     }
+    if builtin == Some(Builtin::Median) && args.len() == 1 {
+        let items = match &args[0] {
+            Value::List(l) => l,
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("median: arg must be a list, got {:?}", other),
+                ));
+            }
+        };
+        if items.is_empty() {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                "median: cannot take median of an empty list".to_string(),
+            ));
+        }
+        let mut nums: Vec<f64> = Vec::with_capacity(items.len());
+        for item in items {
+            match item {
+                Value::Number(n) => nums.push(*n),
+                other => {
+                    return Err(RuntimeError::new(
+                        "ILO-R009",
+                        format!("median: list elements must be numbers, got {:?}", other),
+                    ));
+                }
+            }
+        }
+        // Per the NaN contract for math builtins (PR #162): if any input is
+        // NaN, propagate NaN rather than silently sorting it to an arbitrary
+        // position via `partial_cmp(...).unwrap_or(Equal)`.
+        if nums.iter().any(|x| x.is_nan()) {
+            return Ok(Value::Number(f64::NAN));
+        }
+        nums.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        let n = nums.len();
+        let m = if n % 2 == 1 {
+            nums[n / 2]
+        } else {
+            (nums[n / 2 - 1] + nums[n / 2]) / 2.0
+        };
+        return Ok(Value::Number(m));
+    }
+    if builtin == Some(Builtin::Quantile) && args.len() == 2 {
+        let items = match &args[0] {
+            Value::List(l) => l,
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("quantile: first arg must be a list, got {:?}", other),
+                ));
+            }
+        };
+        let p = match &args[1] {
+            Value::Number(n) => *n,
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("quantile: second arg p must be a number, got {:?}", other),
+                ));
+            }
+        };
+        if items.is_empty() {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                "quantile: cannot take quantile of an empty list".to_string(),
+            ));
+        }
+        let mut nums: Vec<f64> = Vec::with_capacity(items.len());
+        for item in items {
+            match item {
+                Value::Number(n) => nums.push(*n),
+                other => {
+                    return Err(RuntimeError::new(
+                        "ILO-R009",
+                        format!("quantile: list elements must be numbers, got {:?}", other),
+                    ));
+                }
+            }
+        }
+        // NaN-propagation: if any input is NaN, return NaN (see median).
+        if nums.iter().any(|x| x.is_nan()) {
+            return Ok(Value::Number(f64::NAN));
+        }
+        nums.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        let p = p.clamp(0.0, 1.0);
+        let n = nums.len();
+        if n == 1 {
+            return Ok(Value::Number(nums[0]));
+        }
+        let pos = p * (n - 1) as f64;
+        let lo = pos.floor() as usize;
+        let hi = pos.ceil() as usize;
+        let frac = pos - lo as f64;
+        let q = nums[lo] + frac * (nums[hi] - nums[lo]);
+        return Ok(Value::Number(q));
+    }
+    if builtin == Some(Builtin::Variance) && args.len() == 1 {
+        let items = match &args[0] {
+            Value::List(l) => l,
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("variance: arg must be a list, got {:?}", other),
+                ));
+            }
+        };
+        if items.is_empty() {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                "variance: cannot take variance of an empty list".to_string(),
+            ));
+        }
+        let mut nums: Vec<f64> = Vec::with_capacity(items.len());
+        for item in items {
+            match item {
+                Value::Number(n) => nums.push(*n),
+                other => {
+                    return Err(RuntimeError::new(
+                        "ILO-R009",
+                        format!("variance: list elements must be numbers, got {:?}", other),
+                    ));
+                }
+            }
+        }
+        let n = nums.len();
+        if n == 1 {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                "variance: at least 2 samples required".to_string(),
+            ));
+        }
+        // NaN-propagation: any NaN input → NaN result.
+        if nums.iter().any(|x| x.is_nan()) {
+            return Ok(Value::Number(f64::NAN));
+        }
+        let mean = nums.iter().sum::<f64>() / n as f64;
+        let sse: f64 = nums.iter().map(|x| (x - mean).powi(2)).sum();
+        return Ok(Value::Number(sse / (n - 1) as f64));
+    }
+    if builtin == Some(Builtin::Stdev) && args.len() == 1 {
+        let items = match &args[0] {
+            Value::List(l) => l,
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("stdev: arg must be a list, got {:?}", other),
+                ));
+            }
+        };
+        if items.is_empty() {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                "stdev: cannot take stdev of an empty list".to_string(),
+            ));
+        }
+        let mut nums: Vec<f64> = Vec::with_capacity(items.len());
+        for item in items {
+            match item {
+                Value::Number(n) => nums.push(*n),
+                other => {
+                    return Err(RuntimeError::new(
+                        "ILO-R009",
+                        format!("stdev: list elements must be numbers, got {:?}", other),
+                    ));
+                }
+            }
+        }
+        let n = nums.len();
+        if n == 1 {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                "stdev: at least 2 samples required".to_string(),
+            ));
+        }
+        // NaN-propagation: any NaN input → NaN result.
+        if nums.iter().any(|x| x.is_nan()) {
+            return Ok(Value::Number(f64::NAN));
+        }
+        let mean = nums.iter().sum::<f64>() / n as f64;
+        let sse: f64 = nums.iter().map(|x| (x - mean).powi(2)).sum();
+        return Ok(Value::Number((sse / (n - 1) as f64).sqrt()));
+    }
     if builtin == Some(Builtin::Rgx) && args.len() == 2 {
         let pattern = match &args[0] {
             Value::Text(s) => s.as_str(),
