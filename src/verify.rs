@@ -287,6 +287,9 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("range", &["n", "n"], "L n"),
     ("window", &["n", "list"], "list"),
     ("chunks", &["n", "L a"], "L (L a)"),
+    ("setunion", &["list", "list"], "list"),
+    ("setinter", &["list", "list"], "list"),
+    ("setdiff", &["list", "list"], "list"),
     ("has", &["list_or_text", "any"], "b"),
     ("hd", &["list_or_text"], "any"),
     ("at", &["list_or_text", "n"], "any"),
@@ -742,6 +745,47 @@ fn builtin_check_args(
                 }
             };
             (Ty::List(Box::new(Ty::List(Box::new(inner)))), errors)
+        }
+        name @ ("setunion" | "setinter" | "setdiff") => {
+            // setunion/setinter/setdiff a:L _ b:L _ > L _
+            let elem_a = match arg_types.first() {
+                Some(Ty::List(inner)) => Some((**inner).clone()),
+                Some(Ty::Unknown) | None => None,
+                Some(other) => {
+                    errors.push(VerifyError {
+                        code: "ILO-T013",
+                        function: func_ctx.to_string(),
+                        message: format!("'{name}' arg 1 expects a list, got {other}"),
+                        hint: None,
+                        span,
+                        is_warning: false,
+                    });
+                    None
+                }
+            };
+            let elem_b = match arg_types.get(1) {
+                Some(Ty::List(inner)) => Some((**inner).clone()),
+                Some(Ty::Unknown) | None => None,
+                Some(other) => {
+                    errors.push(VerifyError {
+                        code: "ILO-T013",
+                        function: func_ctx.to_string(),
+                        message: format!("'{name}' arg 2 expects a list, got {other}"),
+                        hint: None,
+                        span,
+                        is_warning: false,
+                    });
+                    None
+                }
+            };
+            let inner = match (elem_a, elem_b) {
+                (Some(a), Some(b)) if compatible(&a, &b) => a,
+                (Some(a), None) => a,
+                (None, Some(b)) => b,
+                (Some(a), Some(_)) => a,
+                _ => Ty::Unknown,
+            };
+            (Ty::List(Box::new(inner)), errors)
         }
         "tl" => {
             if let Some(arg) = arg_types.first() {

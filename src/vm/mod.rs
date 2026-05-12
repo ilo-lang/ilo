@@ -227,6 +227,11 @@ pub(crate) const OP_UNIQBY: u8 = 116; // R[A] = uniqby(R[B] (fn-ref), R[C] (list
 pub(crate) const OP_PARTITION: u8 = 147; // R[A] = partition(R[B] (fn-ref), R[C] (list)) → L (L a)
 pub(crate) const OP_FRQ: u8 = 140; // R[A] = frq(R[B] (list))  — frequency map (M t n)
 
+// Set operations on lists, dedup + sorted output (stringwise on type-prefixed key).
+pub(crate) const OP_SETUNION: u8 = 150; // R[A] = setunion(R[B], R[C])
+pub(crate) const OP_SETINTER: u8 = 151; // R[A] = setinter(R[B], R[C])
+pub(crate) const OP_SETDIFF: u8 = 152; // R[A] = setdiff(R[B], R[C])
+
 // ABx mode — register + 16-bit operand
 pub(crate) const OP_LOADK: u8 = 20;
 pub(crate) const OP_JMP: u8 = 21;
@@ -1764,6 +1769,27 @@ impl RegCompiler {
                             self.emit_abc(OP_CHUNKS, ra, rb, rc);
                             return ra;
                         }
+                        (Builtin::Setunion, 2) => {
+                            let rb = self.compile_expr(&args[0]);
+                            let rc = self.compile_expr(&args[1]);
+                            let ra = self.alloc_reg();
+                            self.emit_abc(OP_SETUNION, ra, rb, rc);
+                            return ra;
+                        }
+                        (Builtin::Setinter, 2) => {
+                            let rb = self.compile_expr(&args[0]);
+                            let rc = self.compile_expr(&args[1]);
+                            let ra = self.alloc_reg();
+                            self.emit_abc(OP_SETINTER, ra, rb, rc);
+                            return ra;
+                        }
+                        (Builtin::Setdiff, 2) => {
+                            let rb = self.compile_expr(&args[0]);
+                            let rc = self.compile_expr(&args[1]);
+                            let ra = self.alloc_reg();
+                            self.emit_abc(OP_SETDIFF, ra, rb, rc);
+                            return ra;
+                        }
                         (Builtin::Tl, 1) => {
                             let rb = self.compile_expr(&args[0]);
                             let ra = self.alloc_reg();
@@ -2637,7 +2663,7 @@ fn chunk_is_all_numeric(chunk: &Chunk) -> bool {
             | OP_POST | OP_POSTH | OP_RD | OP_RDL | OP_WR | OP_WRL | OP_MAPNEW | OP_MGET
             | OP_MSET | OP_MKEYS | OP_MVALS | OP_HD | OP_AT | OP_LST | OP_TL | OP_FMT2
             | OP_RGXSUB | OP_ZIP | OP_ENUMERATE | OP_WINDOW | OP_FFT | OP_IFFT | OP_RANGE
-            | OP_CHUNKS | OP_CUMSUM => {
+            | OP_CHUNKS | OP_CUMSUM | OP_SETUNION | OP_SETINTER | OP_SETDIFF => {
                 return false;
             }
             _ => {}
@@ -6468,6 +6494,76 @@ impl<'a> VM<'a> {
                         .collect();
                     reg_set!(a, NanVal::heap_map(map));
                 }
+                OP_SETUNION | OP_SETINTER | OP_SETDIFF => {
+                    let a = ((inst >> 16) & 0xFF) as usize + base;
+                    let b = ((inst >> 8) & 0xFF) as usize + base;
+                    let c = (inst & 0xFF) as usize + base;
+                    let vb = reg!(b);
+                    let vc = reg!(c);
+                    let op_name = match op {
+                        OP_SETUNION => "setunion",
+                        OP_SETINTER => "setinter",
+                        _ => "setdiff",
+                    };
+                    let xs = if vb.is_heap() {
+                        match unsafe { vb.as_heap_ref() } {
+                            HeapObj::List(items) => items,
+                            _ => vm_err!(VmError::Type("setop arg 1 requires a list")),
+                        }
+                    } else {
+                        vm_err!(VmError::Type("setop arg 1 requires a list"));
+                    };
+                    let ys = if vc.is_heap() {
+                        match unsafe { vc.as_heap_ref() } {
+                            HeapObj::List(items) => items,
+                            _ => vm_err!(VmError::Type("setop arg 2 requires a list")),
+                        }
+                    } else {
+                        vm_err!(VmError::Type("setop arg 2 requires a list"));
+                    };
+                    use std::collections::{HashMap, HashSet};
+                    let mut set_a: HashSet<String> = HashSet::new();
+                    let mut first_a: HashMap<String, NanVal> = HashMap::new();
+                    for x in xs {
+                        let k = match setops_key(*x, op_name) {
+                            Ok(k) => k,
+                            Err(_) => vm_err!(VmError::Type(
+                                "setop: elements must be text, number, or bool"
+                            )),
+                        };
+                        if set_a.insert(k.clone()) {
+                            first_a.insert(k, *x);
+                        }
+                    }
+                    let mut set_b: HashSet<String> = HashSet::new();
+                    let mut first_b: HashMap<String, NanVal> = HashMap::new();
+                    for y in ys {
+                        let k = match setops_key(*y, op_name) {
+                            Ok(k) => k,
+                            Err(_) => vm_err!(VmError::Type(
+                                "setop: elements must be text, number, or bool"
+                            )),
+                        };
+                        if set_b.insert(k.clone()) {
+                            first_b.insert(k, *y);
+                        }
+                    }
+                    let mut keys: Vec<String> = match op {
+                        OP_SETUNION => set_a.union(&set_b).cloned().collect(),
+                        OP_SETINTER => set_a.intersection(&set_b).cloned().collect(),
+                        _ => set_a.difference(&set_b).cloned().collect(),
+                    };
+                    keys.sort();
+                    let mut out: Vec<NanVal> = Vec::with_capacity(keys.len());
+                    for k in &keys {
+                        let v = first_a.get(k).copied().or_else(|| first_b.get(k).copied());
+                        if let Some(v) = v {
+                            v.clone_rc();
+                            out.push(v);
+                        }
+                    }
+                    reg_set!(a, NanVal::heap_list(out));
+                }
                 OP_UNIQBY => {
                     // HOF dispatch not wired through the VM yet (matches map/flt/fld/grp).
                     // Emitter currently falls through to OP_CALL → interpreter; this arm
@@ -6484,6 +6580,36 @@ impl<'a> VM<'a> {
             }
         }
     }
+}
+
+/// Build a type-prefixed key string for `setunion`/`setinter`/`setdiff`.
+/// Returns `Err` with a human-readable message when the value is not t/n/b.
+/// Mirrors the prefix scheme used by `uniqby` (post-hotfix) so that
+/// `Number(5)` and `Text("5")` never collide.
+fn setops_key(v: NanVal, op_name: &str) -> Result<String, String> {
+    if v.is_number() {
+        let n = v.as_number();
+        if n == (n as i64) as f64 {
+            return Ok(format!("n:{}", n as i64));
+        }
+        return Ok(format!("n:{n}"));
+    }
+    if v.0 == TAG_TRUE {
+        return Ok("b:true".to_string());
+    }
+    if v.0 == TAG_FALSE {
+        return Ok("b:false".to_string());
+    }
+    if v.is_string() {
+        let s = unsafe {
+            match v.as_heap_ref() {
+                HeapObj::Str(s) => s,
+                _ => return Err(format!("{op_name}: invalid string heap object")),
+            }
+        };
+        return Ok(format!("t:{s}"));
+    }
+    Err(format!("{op_name}: elements must be text, number, or bool"))
 }
 
 /// Lexicographic comparison of two NanVal strings.
@@ -7713,6 +7839,84 @@ pub(crate) extern "C" fn jit_zip(a: u64, b: u64) -> u64 {
         out.push(NanVal::heap_list(vec![x, y]));
     }
     NanVal::heap_list(out).0
+}
+
+#[cfg(feature = "cranelift")]
+fn jit_setop_impl(a: u64, b: u64, op: u8) -> u64 {
+    let va = NanVal(a);
+    let vb = NanVal(b);
+    if !va.is_heap() || !vb.is_heap() {
+        return TAG_NIL;
+    }
+    let xs = match unsafe { va.as_heap_ref() } {
+        HeapObj::List(items) => items,
+        _ => return TAG_NIL,
+    };
+    let ys = match unsafe { vb.as_heap_ref() } {
+        HeapObj::List(items) => items,
+        _ => return TAG_NIL,
+    };
+    let op_name = match op {
+        OP_SETUNION => "setunion",
+        OP_SETINTER => "setinter",
+        _ => "setdiff",
+    };
+    use std::collections::{HashMap, HashSet};
+    let mut set_a: HashSet<String> = HashSet::new();
+    let mut first_a: HashMap<String, NanVal> = HashMap::new();
+    for x in xs {
+        let k = match setops_key(*x, op_name) {
+            Ok(k) => k,
+            Err(_) => return TAG_NIL,
+        };
+        if set_a.insert(k.clone()) {
+            first_a.insert(k, *x);
+        }
+    }
+    let mut set_b: HashSet<String> = HashSet::new();
+    let mut first_b: HashMap<String, NanVal> = HashMap::new();
+    for y in ys {
+        let k = match setops_key(*y, op_name) {
+            Ok(k) => k,
+            Err(_) => return TAG_NIL,
+        };
+        if set_b.insert(k.clone()) {
+            first_b.insert(k, *y);
+        }
+    }
+    let mut keys: Vec<String> = match op {
+        OP_SETUNION => set_a.union(&set_b).cloned().collect(),
+        OP_SETINTER => set_a.intersection(&set_b).cloned().collect(),
+        _ => set_a.difference(&set_b).cloned().collect(),
+    };
+    keys.sort();
+    let mut out: Vec<NanVal> = Vec::with_capacity(keys.len());
+    for k in &keys {
+        let v = first_a.get(k).copied().or_else(|| first_b.get(k).copied());
+        if let Some(v) = v {
+            v.clone_rc();
+            out.push(v);
+        }
+    }
+    NanVal::heap_list(out).0
+}
+
+#[cfg(feature = "cranelift")]
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn jit_setunion(a: u64, b: u64) -> u64 {
+    jit_setop_impl(a, b, OP_SETUNION)
+}
+
+#[cfg(feature = "cranelift")]
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn jit_setinter(a: u64, b: u64) -> u64 {
+    jit_setop_impl(a, b, OP_SETINTER)
+}
+
+#[cfg(feature = "cranelift")]
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn jit_setdiff(a: u64, b: u64) -> u64 {
+    jit_setop_impl(a, b, OP_SETDIFF)
 }
 
 #[cfg(feature = "cranelift")]

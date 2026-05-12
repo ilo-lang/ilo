@@ -86,6 +86,9 @@ struct HelperFuncs {
     range: FuncId,
     window: FuncId,
     chunks: FuncId,
+    setunion: FuncId,
+    setinter: FuncId,
+    setdiff: FuncId,
     tl: FuncId,
     rev: FuncId,
     srt: FuncId,
@@ -217,6 +220,9 @@ fn register_helpers(builder: &mut JITBuilder) {
         ("jit_range", jit_range as *const u8),
         ("jit_window", jit_window as *const u8),
         ("jit_chunks", jit_chunks as *const u8),
+        ("jit_setunion", jit_setunion as *const u8),
+        ("jit_setinter", jit_setinter as *const u8),
+        ("jit_setdiff", jit_setdiff as *const u8),
         ("jit_tl", jit_tl as *const u8),
         ("jit_rev", jit_rev as *const u8),
         ("jit_srt", jit_srt as *const u8),
@@ -339,6 +345,9 @@ fn declare_all_helpers(module: &mut JITModule) -> HelperFuncs {
         range: declare_helper(module, "jit_range", 2, 1),
         window: declare_helper(module, "jit_window", 2, 1),
         chunks: declare_helper(module, "jit_chunks", 2, 1),
+        setunion: declare_helper(module, "jit_setunion", 2, 1),
+        setinter: declare_helper(module, "jit_setinter", 2, 1),
+        setdiff: declare_helper(module, "jit_setdiff", 2, 1),
         tl: declare_helper(module, "jit_tl", 1, 1),
         rev: declare_helper(module, "jit_rev", 1, 1),
         srt: declare_helper(module, "jit_srt", 1, 1),
@@ -957,6 +966,7 @@ fn compile_function_body(
                 | OP_FFT | OP_IFFT
                 | OP_SLC | OP_LST | OP_ZIP | OP_ENUMERATE | OP_RANGE | OP_WINDOW | OP_CHUNKS
                 | OP_CUMSUM
+                | OP_SETUNION | OP_SETINTER | OP_SETDIFF
                 | OP_SPL | OP_CAT | OP_GET | OP_POST | OP_GETH | OP_POSTH
                 | OP_ENV | OP_JPTH | OP_JDMP | OP_JPAR
                 | OP_MAPNEW | OP_MGET | OP_MSET | OP_MDEL | OP_MKEYS | OP_MVALS
@@ -2061,6 +2071,30 @@ fn compile_function_body(
                 let bv = builder.use_var(vars[b_idx]);
                 let cv = builder.use_var(vars[c_idx]);
                 let fref = get_func_ref(&mut builder, module, helpers.chunks);
+                let call_inst = builder.ins().call(fref, &[bv, cv]);
+                let result = builder.inst_results(call_inst)[0];
+                builder.def_var(vars[a_idx], result);
+            }
+            OP_SETUNION => {
+                let bv = builder.use_var(vars[b_idx]);
+                let cv = builder.use_var(vars[c_idx]);
+                let fref = get_func_ref(&mut builder, module, helpers.setunion);
+                let call_inst = builder.ins().call(fref, &[bv, cv]);
+                let result = builder.inst_results(call_inst)[0];
+                builder.def_var(vars[a_idx], result);
+            }
+            OP_SETINTER => {
+                let bv = builder.use_var(vars[b_idx]);
+                let cv = builder.use_var(vars[c_idx]);
+                let fref = get_func_ref(&mut builder, module, helpers.setinter);
+                let call_inst = builder.ins().call(fref, &[bv, cv]);
+                let result = builder.inst_results(call_inst)[0];
+                builder.def_var(vars[a_idx], result);
+            }
+            OP_SETDIFF => {
+                let bv = builder.use_var(vars[b_idx]);
+                let cv = builder.use_var(vars[c_idx]);
+                let fref = get_func_ref(&mut builder, module, helpers.setdiff);
                 let call_inst = builder.ins().call(fref, &[bv, cv]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
