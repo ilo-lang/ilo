@@ -70,6 +70,9 @@ struct HelperFuncs {
     log10: FuncId,
     log2: FuncId,
     atan2: FuncId,
+    transpose: FuncId,
+    matmul: FuncId,
+    dot: FuncId,
     rnd0: FuncId,
     rnd2: FuncId,
     now: FuncId,
@@ -209,6 +212,9 @@ fn register_helpers(builder: &mut JITBuilder) {
         ("jit_log10", jit_log10 as *const u8),
         ("jit_log2", jit_log2 as *const u8),
         ("jit_atan2", jit_atan2 as *const u8),
+        ("jit_transpose", jit_transpose as *const u8),
+        ("jit_matmul", jit_matmul as *const u8),
+        ("jit_dot", jit_dot as *const u8),
         ("jit_rnd0", jit_rnd0 as *const u8),
         ("jit_rnd2", jit_rnd2 as *const u8),
         ("jit_now", jit_now as *const u8),
@@ -339,6 +345,9 @@ fn declare_all_helpers(module: &mut JITModule) -> HelperFuncs {
         log10: declare_helper(module, "jit_log10", 1, 1),
         log2: declare_helper(module, "jit_log2", 1, 1),
         atan2: declare_helper(module, "jit_atan2", 2, 1),
+        transpose: declare_helper(module, "jit_transpose", 1, 1),
+        matmul: declare_helper(module, "jit_matmul", 2, 1),
+        dot: declare_helper(module, "jit_dot", 2, 1),
         rnd0: declare_helper(module, "jit_rnd0", 0, 1),
         rnd2: declare_helper(module, "jit_rnd2", 2, 1),
         now: declare_helper(module, "jit_now", 0, 1),
@@ -949,7 +958,7 @@ fn compile_function_body(
                 | OP_FLR | OP_CEL | OP_ROU | OP_RND0 | OP_RND2 | OP_NOW
                 | OP_MOD | OP_CLAMP | OP_POW | OP_SQRT | OP_LOG | OP_EXP | OP_SIN | OP_COS
                 | OP_TAN | OP_LOG10 | OP_LOG2 | OP_ATAN2
-                | OP_MEDIAN | OP_QUANTILE | OP_STDEV | OP_VARIANCE => {
+                | OP_MEDIAN | OP_QUANTILE | OP_STDEV | OP_VARIANCE | OP_DOT => {
                     num_write[a] = true;
                 }
                 // LOADK: numeric only when the constant itself is a number.
@@ -988,7 +997,8 @@ fn compile_function_body(
                 | OP_LISTNEW | OP_LISTAPPEND
                 | OP_RECNEW | OP_RECWITH
                 | OP_PRT | OP_RD | OP_RDL | OP_WR | OP_WRL | OP_TRM | OP_UPR | OP_LWR | OP_CAP
-                | OP_UNQ | OP_UNIQBY | OP_PARTITION | OP_FRQ | OP_NUM | OP_RGXSUB => {
+                | OP_UNQ | OP_UNIQBY | OP_PARTITION | OP_FRQ | OP_NUM | OP_RGXSUB
+                | OP_TRANSPOSE | OP_MATMUL => {
                     non_num_write[a] = true;
                     non_bool_write[a] = true;
                 }
@@ -1923,6 +1933,34 @@ fn compile_function_body(
                 let bv = builder.use_var(vars[b_idx]);
                 let cv = builder.use_var(vars[c_idx]);
                 let fref = get_func_ref(&mut builder, module, helpers.atan2);
+                let call_inst = builder.ins().call(fref, &[bv, cv]);
+                let result = builder.inst_results(call_inst)[0];
+                builder.def_var(vars[a_idx], result);
+                if a_idx < reg_count && reg_always_num[a_idx] {
+                    let mf = cranelift_codegen::ir::MemFlags::new();
+                    let rf = builder.ins().bitcast(F64, mf, result);
+                    builder.def_var(f64_vars[a_idx], rf);
+                }
+            }
+            OP_TRANSPOSE => {
+                let bv = builder.use_var(vars[b_idx]);
+                let fref = get_func_ref(&mut builder, module, helpers.transpose);
+                let call_inst = builder.ins().call(fref, &[bv]);
+                let result = builder.inst_results(call_inst)[0];
+                builder.def_var(vars[a_idx], result);
+            }
+            OP_MATMUL => {
+                let bv = builder.use_var(vars[b_idx]);
+                let cv = builder.use_var(vars[c_idx]);
+                let fref = get_func_ref(&mut builder, module, helpers.matmul);
+                let call_inst = builder.ins().call(fref, &[bv, cv]);
+                let result = builder.inst_results(call_inst)[0];
+                builder.def_var(vars[a_idx], result);
+            }
+            OP_DOT => {
+                let bv = builder.use_var(vars[b_idx]);
+                let cv = builder.use_var(vars[c_idx]);
+                let fref = get_func_ref(&mut builder, module, helpers.dot);
                 let call_inst = builder.ins().call(fref, &[bv, cv]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);

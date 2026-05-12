@@ -239,6 +239,11 @@ pub(crate) const OP_SETUNION: u8 = 150; // R[A] = setunion(R[B], R[C])
 pub(crate) const OP_SETINTER: u8 = 151; // R[A] = setinter(R[B], R[C])
 pub(crate) const OP_SETDIFF: u8 = 152; // R[A] = setdiff(R[B], R[C])
 
+// Linear algebra basics.
+pub(crate) const OP_TRANSPOSE: u8 = 123; // R[A] = transpose(R[B])  (L (L n) -> L (L n))
+pub(crate) const OP_MATMUL: u8 = 124; // R[A] = matmul(R[B], R[C])
+pub(crate) const OP_DOT: u8 = 125; // R[A] = dot(R[B], R[C])  (vector dot product -> n)
+
 // ABx mode — register + 16-bit operand
 pub(crate) const OP_LOADK: u8 = 20;
 pub(crate) const OP_JMP: u8 = 21;
@@ -1700,6 +1705,27 @@ impl RegCompiler {
                             self.reg_is_num[ra as usize] = true;
                             return ra;
                         }
+                        (Builtin::Transpose, 1) => {
+                            let rb = self.compile_expr(&args[0]);
+                            let ra = self.alloc_reg();
+                            self.emit_abc(OP_TRANSPOSE, ra, rb, 0);
+                            return ra;
+                        }
+                        (Builtin::Matmul, 2) => {
+                            let rb = self.compile_expr(&args[0]);
+                            let rc = self.compile_expr(&args[1]);
+                            let ra = self.alloc_reg();
+                            self.emit_abc(OP_MATMUL, ra, rb, rc);
+                            return ra;
+                        }
+                        (Builtin::Dot, 2) => {
+                            let rb = self.compile_expr(&args[0]);
+                            let rc = self.compile_expr(&args[1]);
+                            let ra = self.alloc_reg();
+                            self.emit_abc(OP_DOT, ra, rb, rc);
+                            self.reg_is_num[ra as usize] = true;
+                            return ra;
+                        }
                         (Builtin::Spl, 2) => {
                             let rb = self.compile_expr(&args[0]);
                             let rc = self.compile_expr(&args[1]);
@@ -2704,7 +2730,7 @@ fn chunk_is_all_numeric(chunk: &Chunk) -> bool {
             | OP_MAPNEW | OP_MGET | OP_MSET | OP_MKEYS | OP_MVALS | OP_HD | OP_AT | OP_LST
             | OP_TL | OP_FMT2 | OP_RGXSUB | OP_ZIP | OP_ENUMERATE | OP_WINDOW | OP_FFT
             | OP_IFFT | OP_RANGE | OP_CHUNKS | OP_CUMSUM | OP_SETUNION | OP_SETINTER
-            | OP_SETDIFF => {
+            | OP_SETDIFF | OP_TRANSPOSE | OP_MATMUL => {
                 return false;
             }
             _ => {}
@@ -5402,6 +5428,183 @@ impl<'a> VM<'a> {
                     };
                     reg_set!(a, NanVal::number(result));
                 }
+                OP_TRANSPOSE => {
+                    let a = ((inst >> 16) & 0xFF) as usize + base;
+                    let b = ((inst >> 8) & 0xFF) as usize + base;
+                    let v = reg!(b);
+                    if !v.is_heap() {
+                        vm_err!(VmError::Type("transpose requires a list of lists"));
+                    }
+                    let rows = match unsafe { v.as_heap_ref() } {
+                        HeapObj::List(items) => items,
+                        _ => vm_err!(VmError::Type("transpose requires a list of lists")),
+                    };
+                    if rows.is_empty() {
+                        reg_set!(a, NanVal::heap_list(vec![]));
+                    } else {
+                        let mut row_refs: Vec<&Vec<NanVal>> = Vec::with_capacity(rows.len());
+                        let mut ncols: Option<usize> = None;
+                        let mut shape_err = false;
+                        for row in rows {
+                            if !row.is_heap() {
+                                shape_err = true;
+                                break;
+                            }
+                            let r = match unsafe { row.as_heap_ref() } {
+                                HeapObj::List(items) => items,
+                                _ => {
+                                    shape_err = true;
+                                    break;
+                                }
+                            };
+                            match ncols {
+                                None => ncols = Some(r.len()),
+                                Some(n) if n != r.len() => {
+                                    shape_err = true;
+                                    break;
+                                }
+                                _ => {}
+                            }
+                            row_refs.push(r);
+                        }
+                        if shape_err {
+                            vm_err!(VmError::Type("transpose: ragged rows"));
+                        }
+                        let ncols = ncols.unwrap_or(0);
+                        let mut result: Vec<NanVal> = Vec::with_capacity(ncols);
+                        for j in 0..ncols {
+                            let mut col: Vec<NanVal> = Vec::with_capacity(row_refs.len());
+                            for r in &row_refs {
+                                let v = r[j];
+                                v.clone_rc();
+                                col.push(v);
+                            }
+                            result.push(NanVal::heap_list(col));
+                        }
+                        reg_set!(a, NanVal::heap_list(result));
+                    }
+                }
+                OP_MATMUL => {
+                    let a = ((inst >> 16) & 0xFF) as usize + base;
+                    let b = ((inst >> 8) & 0xFF) as usize + base;
+                    let c = (inst & 0xFF) as usize + base;
+                    let va = reg!(b);
+                    let vb = reg!(c);
+                    if !va.is_heap() || !vb.is_heap() {
+                        vm_err!(VmError::Type("matmul requires lists of lists"));
+                    }
+                    let a_rows_v = match unsafe { va.as_heap_ref() } {
+                        HeapObj::List(items) => items,
+                        _ => vm_err!(VmError::Type("matmul requires lists of lists")),
+                    };
+                    let b_rows_v = match unsafe { vb.as_heap_ref() } {
+                        HeapObj::List(items) => items,
+                        _ => vm_err!(VmError::Type("matmul requires lists of lists")),
+                    };
+                    // Extract a as Vec<Vec<f64>>
+                    let mut a_mat: Vec<Vec<f64>> = Vec::with_capacity(a_rows_v.len());
+                    let mut a_cols: Option<usize> = None;
+                    for row in a_rows_v {
+                        if !row.is_heap() {
+                            vm_err!(VmError::Type("matmul: rows must be lists"));
+                        }
+                        let r = match unsafe { row.as_heap_ref() } {
+                            HeapObj::List(items) => items,
+                            _ => vm_err!(VmError::Type("matmul: rows must be lists")),
+                        };
+                        match a_cols {
+                            None => a_cols = Some(r.len()),
+                            Some(n) if n != r.len() => {
+                                vm_err!(VmError::Type("matmul: ragged rows in first arg"));
+                            }
+                            _ => {}
+                        }
+                        let mut nums = Vec::with_capacity(r.len());
+                        for v in r {
+                            if !v.is_number() {
+                                vm_err!(VmError::Type("matmul: elements must be numbers"));
+                            }
+                            nums.push(v.as_number());
+                        }
+                        a_mat.push(nums);
+                    }
+                    let mut b_mat: Vec<Vec<f64>> = Vec::with_capacity(b_rows_v.len());
+                    let mut b_cols: Option<usize> = None;
+                    for row in b_rows_v {
+                        if !row.is_heap() {
+                            vm_err!(VmError::Type("matmul: rows must be lists"));
+                        }
+                        let r = match unsafe { row.as_heap_ref() } {
+                            HeapObj::List(items) => items,
+                            _ => vm_err!(VmError::Type("matmul: rows must be lists")),
+                        };
+                        match b_cols {
+                            None => b_cols = Some(r.len()),
+                            Some(n) if n != r.len() => {
+                                vm_err!(VmError::Type("matmul: ragged rows in second arg"));
+                            }
+                            _ => {}
+                        }
+                        let mut nums = Vec::with_capacity(r.len());
+                        for v in r {
+                            if !v.is_number() {
+                                vm_err!(VmError::Type("matmul: elements must be numbers"));
+                            }
+                            nums.push(v.as_number());
+                        }
+                        b_mat.push(nums);
+                    }
+                    let a_rows_n = a_mat.len();
+                    let a_cols_n = a_cols.unwrap_or(0);
+                    let b_rows_n = b_mat.len();
+                    let b_cols_n = b_cols.unwrap_or(0);
+                    if a_cols_n != b_rows_n {
+                        vm_err!(VmError::Type("matmul: shape mismatch"));
+                    }
+                    let mut out: Vec<NanVal> = Vec::with_capacity(a_rows_n);
+                    #[allow(clippy::needless_range_loop)]
+                    for i in 0..a_rows_n {
+                        let mut row: Vec<NanVal> = Vec::with_capacity(b_cols_n);
+                        for j in 0..b_cols_n {
+                            let mut s = 0.0_f64;
+                            for k in 0..a_cols_n {
+                                s += a_mat[i][k] * b_mat[k][j];
+                            }
+                            row.push(NanVal::number(s));
+                        }
+                        out.push(NanVal::heap_list(row));
+                    }
+                    reg_set!(a, NanVal::heap_list(out));
+                }
+                OP_DOT => {
+                    let a = ((inst >> 16) & 0xFF) as usize + base;
+                    let b = ((inst >> 8) & 0xFF) as usize + base;
+                    let c = (inst & 0xFF) as usize + base;
+                    let va = reg!(b);
+                    let vb = reg!(c);
+                    if !va.is_heap() || !vb.is_heap() {
+                        vm_err!(VmError::Type("dot requires two lists"));
+                    }
+                    let xs = match unsafe { va.as_heap_ref() } {
+                        HeapObj::List(items) => items,
+                        _ => vm_err!(VmError::Type("dot requires two lists")),
+                    };
+                    let ys = match unsafe { vb.as_heap_ref() } {
+                        HeapObj::List(items) => items,
+                        _ => vm_err!(VmError::Type("dot requires two lists")),
+                    };
+                    if xs.len() != ys.len() {
+                        vm_err!(VmError::Type("dot: length mismatch"));
+                    }
+                    let mut total = 0.0_f64;
+                    for (x, y) in xs.iter().zip(ys.iter()) {
+                        if !x.is_number() || !y.is_number() {
+                            vm_err!(VmError::Type("dot: list elements must be numbers"));
+                        }
+                        total += x.as_number() * y.as_number();
+                    }
+                    reg_set!(a, NanVal::number(total));
+                }
                 OP_RND0 => {
                     let a = ((inst >> 16) & 0xFF) as usize + base;
                     reg_set!(a, NanVal::number(fastrand::f64()));
@@ -7628,6 +7831,167 @@ pub(crate) extern "C" fn jit_atan2(a: u64, b: u64) -> u64 {
     } else {
         NanVal::number(f64::NAN).0
     }
+}
+
+#[cfg(feature = "cranelift")]
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn jit_transpose(a: u64) -> u64 {
+    let v = NanVal(a);
+    if !v.is_heap() {
+        return TAG_NIL;
+    }
+    let rows = match unsafe { v.as_heap_ref() } {
+        HeapObj::List(items) => items,
+        _ => return TAG_NIL,
+    };
+    if rows.is_empty() {
+        return NanVal::heap_list(vec![]).0;
+    }
+    let mut row_refs: Vec<&Vec<NanVal>> = Vec::with_capacity(rows.len());
+    let mut ncols: Option<usize> = None;
+    for row in rows {
+        if !row.is_heap() {
+            return TAG_NIL;
+        }
+        let r = match unsafe { row.as_heap_ref() } {
+            HeapObj::List(items) => items,
+            _ => return TAG_NIL,
+        };
+        match ncols {
+            None => ncols = Some(r.len()),
+            Some(n) if n != r.len() => return TAG_NIL,
+            _ => {}
+        }
+        row_refs.push(r);
+    }
+    let ncols = ncols.unwrap_or(0);
+    let mut result: Vec<NanVal> = Vec::with_capacity(ncols);
+    for j in 0..ncols {
+        let mut col: Vec<NanVal> = Vec::with_capacity(row_refs.len());
+        for r in &row_refs {
+            let v = r[j];
+            v.clone_rc();
+            col.push(v);
+        }
+        result.push(NanVal::heap_list(col));
+    }
+    NanVal::heap_list(result).0
+}
+
+#[cfg(feature = "cranelift")]
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn jit_matmul(a: u64, b: u64) -> u64 {
+    let va = NanVal(a);
+    let vb = NanVal(b);
+    if !va.is_heap() || !vb.is_heap() {
+        return TAG_NIL;
+    }
+    let a_rows_v = match unsafe { va.as_heap_ref() } {
+        HeapObj::List(items) => items,
+        _ => return TAG_NIL,
+    };
+    let b_rows_v = match unsafe { vb.as_heap_ref() } {
+        HeapObj::List(items) => items,
+        _ => return TAG_NIL,
+    };
+    let mut a_mat: Vec<Vec<f64>> = Vec::with_capacity(a_rows_v.len());
+    let mut a_cols: Option<usize> = None;
+    for row in a_rows_v {
+        if !row.is_heap() {
+            return TAG_NIL;
+        }
+        let r = match unsafe { row.as_heap_ref() } {
+            HeapObj::List(items) => items,
+            _ => return TAG_NIL,
+        };
+        match a_cols {
+            None => a_cols = Some(r.len()),
+            Some(n) if n != r.len() => return TAG_NIL,
+            _ => {}
+        }
+        let mut nums = Vec::with_capacity(r.len());
+        for v in r {
+            if !v.is_number() {
+                return TAG_NIL;
+            }
+            nums.push(v.as_number());
+        }
+        a_mat.push(nums);
+    }
+    let mut b_mat: Vec<Vec<f64>> = Vec::with_capacity(b_rows_v.len());
+    let mut b_cols: Option<usize> = None;
+    for row in b_rows_v {
+        if !row.is_heap() {
+            return TAG_NIL;
+        }
+        let r = match unsafe { row.as_heap_ref() } {
+            HeapObj::List(items) => items,
+            _ => return TAG_NIL,
+        };
+        match b_cols {
+            None => b_cols = Some(r.len()),
+            Some(n) if n != r.len() => return TAG_NIL,
+            _ => {}
+        }
+        let mut nums = Vec::with_capacity(r.len());
+        for v in r {
+            if !v.is_number() {
+                return TAG_NIL;
+            }
+            nums.push(v.as_number());
+        }
+        b_mat.push(nums);
+    }
+    let a_rows_n = a_mat.len();
+    let a_cols_n = a_cols.unwrap_or(0);
+    let b_rows_n = b_mat.len();
+    let b_cols_n = b_cols.unwrap_or(0);
+    if a_cols_n != b_rows_n {
+        return TAG_NIL;
+    }
+    let mut out: Vec<NanVal> = Vec::with_capacity(a_rows_n);
+    #[allow(clippy::needless_range_loop)]
+    for i in 0..a_rows_n {
+        let mut row: Vec<NanVal> = Vec::with_capacity(b_cols_n);
+        for j in 0..b_cols_n {
+            let mut s = 0.0_f64;
+            for k in 0..a_cols_n {
+                s += a_mat[i][k] * b_mat[k][j];
+            }
+            row.push(NanVal::number(s));
+        }
+        out.push(NanVal::heap_list(row));
+    }
+    NanVal::heap_list(out).0
+}
+
+#[cfg(feature = "cranelift")]
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn jit_dot(a: u64, b: u64) -> u64 {
+    let va = NanVal(a);
+    let vb = NanVal(b);
+    if !va.is_heap() || !vb.is_heap() {
+        return NanVal::number(f64::NAN).0;
+    }
+    let xs = match unsafe { va.as_heap_ref() } {
+        HeapObj::List(items) => items,
+        _ => return NanVal::number(f64::NAN).0,
+    };
+    let ys = match unsafe { vb.as_heap_ref() } {
+        HeapObj::List(items) => items,
+        _ => return NanVal::number(f64::NAN).0,
+    };
+    if xs.len() != ys.len() {
+        return NanVal::number(f64::NAN).0;
+    }
+    let mut total = 0.0_f64;
+    for (x, y) in xs.iter().zip(ys.iter()) {
+        if !x.is_number() || !y.is_number() {
+            return NanVal::number(f64::NAN).0;
+        }
+        total += x.as_number() * y.as_number();
+    }
+    NanVal::number(total).0
 }
 
 #[cfg(feature = "cranelift")]

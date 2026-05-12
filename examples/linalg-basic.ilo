@@ -1,0 +1,19 @@
+-- Basic linalg builtins: transpose, matmul, dot.
+-- Hand-rolling these in ilo risks silent precision loss (manifesto class:
+-- same as expx Taylor), so they ship as host-vetted builtins.
+
+-- Transpose a fixed 2×3 matrix into a 3×2 matrix.
+trn>L (L n);transpose [[1,2,3],[4,5,6]]
+
+-- Matrix product of two 2×2 matrices.
+mm>L (L n);matmul [[1,2],[3,4]] [[5,6],[7,8]]
+
+-- Vector dot product: 1*4 + 2*5 + 3*6 = 32.
+dp>n;dot [1,2,3] [4,5,6]
+
+-- run: trn
+-- out: [[1, 4], [2, 5], [3, 6]]
+-- run: mm
+-- out: [[19, 22], [43, 50]]
+-- run: dp
+-- out: 32

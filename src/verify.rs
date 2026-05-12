@@ -333,6 +333,9 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("variance", &["list"], "n"),
     ("fft", &["list"], "list"),
     ("ifft", &["list"], "list"),
+    ("transpose", &["L (L n)"], "L (L n)"),
+    ("matmul", &["L (L n)", "L (L n)"], "L (L n)"),
+    ("dot", &["L n", "L n"], "n"),
     ("rgx", &["t", "t"], "L t"),
     ("rgxsub", &["t", "t", "t"], "t"),
     // Map builtins (M k v type)
@@ -1708,6 +1711,73 @@ fn builtin_check_args(
                 _ => Ty::Map(Box::new(Ty::Unknown), Box::new(Ty::Unknown)),
             };
             (map_ty, errors)
+        }
+        "transpose" => {
+            // transpose m:L (L n) → L (L n)
+            if let Some(arg) = arg_types.first() {
+                let ok = match arg {
+                    Ty::List(inner) => matches!(inner.as_ref(), Ty::List(_) | Ty::Unknown),
+                    Ty::Unknown => true,
+                    _ => false,
+                };
+                if !ok {
+                    errors.push(VerifyError {
+                        code: "ILO-T013",
+                        function: func_ctx.to_string(),
+                        message: format!("'transpose' expects L (L n), got {arg}"),
+                        hint: None,
+                        span,
+                        is_warning: false,
+                    });
+                }
+            }
+            let ret = match arg_types.first() {
+                Some(ty @ Ty::List(inner)) if matches!(inner.as_ref(), Ty::List(_)) => ty.clone(),
+                _ => Ty::List(Box::new(Ty::List(Box::new(Ty::Number)))),
+            };
+            (ret, errors)
+        }
+        "matmul" => {
+            // matmul a:L (L n) b:L (L n) → L (L n)
+            for (i, arg) in arg_types.iter().enumerate() {
+                let ok = match arg {
+                    Ty::List(inner) => matches!(inner.as_ref(), Ty::List(_) | Ty::Unknown),
+                    Ty::Unknown => true,
+                    _ => false,
+                };
+                if !ok {
+                    errors.push(VerifyError {
+                        code: "ILO-T013",
+                        function: func_ctx.to_string(),
+                        message: format!("'matmul' arg {} must be L (L n), got {arg}", i + 1),
+                        hint: None,
+                        span,
+                        is_warning: false,
+                    });
+                }
+            }
+            (Ty::List(Box::new(Ty::List(Box::new(Ty::Number)))), errors)
+        }
+        "dot" => {
+            // dot xs:L n ys:L n → n
+            for (i, arg) in arg_types.iter().enumerate() {
+                let ok = match arg {
+                    Ty::List(inner) => compatible(inner, &Ty::Number),
+                    Ty::Unknown => true,
+                    _ => false,
+                };
+                if !ok {
+                    errors.push(VerifyError {
+                        code: "ILO-T013",
+                        function: func_ctx.to_string(),
+                        message: format!("'dot' arg {} must be L n, got {arg}", i + 1),
+                        hint: None,
+                        span,
+                        is_warning: false,
+                    });
+                }
+            }
+            (Ty::Number, errors)
         }
         _ => (Ty::Unknown, errors),
     }
