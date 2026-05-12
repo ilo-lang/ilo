@@ -113,6 +113,7 @@ pub enum Builtin {
     // HTTP
     Get,
     Post,
+    GetMany,
 
     // Map (associative array)
     Mmap,
@@ -217,6 +218,7 @@ impl Builtin {
             "jpar" => Some(Builtin::Jpar),
             "get" => Some(Builtin::Get),
             "post" => Some(Builtin::Post),
+            "get-many" => Some(Builtin::GetMany),
             "mmap" => Some(Builtin::Mmap),
             "mget" => Some(Builtin::Mget),
             "mset" => Some(Builtin::Mset),
@@ -320,6 +322,7 @@ impl Builtin {
             Builtin::Jpar => "jpar",
             Builtin::Get => "get",
             Builtin::Post => "post",
+            Builtin::GetMany => "get-many",
             Builtin::Mmap => "mmap",
             Builtin::Mget => "mget",
             Builtin::Mset => "mset",
@@ -438,6 +441,7 @@ mod tests {
             "matmul",
             "dot",
             "rndn",
+            "get-many",
         ];
         for name in &all {
             let b = Builtin::from_name(name).unwrap_or_else(|| panic!("missing builtin: {name}"));

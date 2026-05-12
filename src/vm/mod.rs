@@ -249,6 +249,8 @@ pub(crate) const OP_DOT: u8 = 125; // R[A] = dot(R[B], R[C])  (vector dot produc
 pub(crate) const OP_PADL: u8 = 121; // R[A] = pad_left(R[B], R[C])  (text, width → text)
 pub(crate) const OP_PADR: u8 = 122; // R[A] = pad_right(R[B], R[C]) (text, width → text)
 
+pub(crate) const OP_GETMANY: u8 = 136; // R[A] = get_many(R[B])  (L t → L (R t t), concurrent fan-out)
+
 // ABx mode — register + 16-bit operand
 pub(crate) const OP_LOADK: u8 = 20;
 pub(crate) const OP_JMP: u8 = 21;
@@ -2044,6 +2046,14 @@ impl RegCompiler {
                             }
                             return ra;
                         }
+                        (Builtin::GetMany, 1) => {
+                            // get-many urls — concurrent fan-out, no auto-unwrap
+                            // (signature is L t → L (R t t); per-URL errors are first-class)
+                            let rb = self.compile_expr(&args[0]);
+                            let ra = self.alloc_reg();
+                            self.emit_abc(OP_GETMANY, ra, rb, 0);
+                            return ra;
+                        }
                         (Builtin::Post, 3) => {
                             // post url body headers — two-instruction sequence:
                             //   OP_POSTH  A=result  B=url  C=body
@@ -2751,9 +2761,9 @@ fn chunk_is_all_numeric(chunk: &Chunk) -> bool {
             OP_RECNEW | OP_LISTNEW | OP_RECWITH | OP_WRAPOK | OP_WRAPERR | OP_STR | OP_CAT
             | OP_SPL | OP_REV | OP_SRT | OP_SRTDESC | OP_SLC | OP_TAKE | OP_DROP | OP_UNQ
             | OP_UNIQBY | OP_FRQ | OP_PARTITION | OP_LISTAPPEND | OP_JPAR | OP_JDMP | OP_ENV
-            | OP_GET | OP_GETH | OP_POST | OP_POSTH | OP_RD | OP_RDL | OP_WR | OP_WRL
-            | OP_MAPNEW | OP_MGET | OP_MSET | OP_MKEYS | OP_MVALS | OP_HD | OP_AT | OP_LST
-            | OP_TL | OP_FMT2 | OP_RGXSUB | OP_ZIP | OP_ENUMERATE | OP_WINDOW | OP_FFT
+            | OP_GET | OP_GETH | OP_GETMANY | OP_POST | OP_POSTH | OP_RD | OP_RDL | OP_WR
+            | OP_WRL | OP_MAPNEW | OP_MGET | OP_MSET | OP_MKEYS | OP_MVALS | OP_HD | OP_AT
+            | OP_LST | OP_TL | OP_FMT2 | OP_RGXSUB | OP_ZIP | OP_ENUMERATE | OP_WINDOW | OP_FFT
             | OP_IFFT | OP_RANGE | OP_CHUNKS | OP_CUMSUM | OP_SETUNION | OP_SETINTER
             | OP_SETDIFF | OP_TRANSPOSE | OP_MATMUL => {
                 return false;
@@ -5858,6 +5868,44 @@ impl<'a> VM<'a> {
                     ));
                     reg_set!(a, result);
                 }
+                OP_GETMANY => {
+                    // ABC: A=result, B=urls (L t). Returns L (R t t).
+                    let a = ((inst >> 16) & 0xFF) as usize + base;
+                    let b = ((inst >> 8) & 0xFF) as usize + base;
+                    let v = reg!(b);
+                    if !v.is_heap() {
+                        vm_err!(VmError::Type("get-many requires a list of strings"));
+                    }
+                    // SAFETY: is_heap() confirmed a heap-tagged value with live RC.
+                    let urls: Vec<String> = match unsafe { v.as_heap_ref() } {
+                        HeapObj::List(items) => {
+                            let mut out = Vec::with_capacity(items.len());
+                            for item in items.iter() {
+                                if !item.is_string() {
+                                    vm_err!(VmError::Type(
+                                        "get-many requires L t (list of strings)"
+                                    ));
+                                }
+                                // SAFETY: is_string() confirmed.
+                                let s = unsafe {
+                                    match item.as_heap_ref() {
+                                        HeapObj::Str(s) => s.as_str().to_owned(),
+                                        _ => unreachable!(),
+                                    }
+                                };
+                                out.push(s);
+                            }
+                            out
+                        }
+                        _ => {
+                            vm_err!(VmError::Type("get-many requires a list of strings"));
+                        }
+                    };
+                    let values = crate::interpreter::get_many_fetch(&urls);
+                    let nan_items: Vec<NanVal> = values.iter().map(NanVal::from_value).collect();
+                    let result = NanVal::heap_list(nan_items);
+                    reg_set!(a, result);
+                }
                 OP_POSTH => {
                     // Two-instruction sequence: OP_POSTH A=result B=url C=body; data word A=headers_reg
                     let a = ((inst >> 16) & 0xFF) as usize + base;
@@ -8171,6 +8219,38 @@ pub(crate) extern "C" fn jit_get(a: u64) -> u64 {
     {
         NanVal::heap_err(NanVal::heap_string("http feature not enabled".to_string())).0
     }
+}
+
+#[cfg(feature = "cranelift")]
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn jit_getmany(a: u64) -> u64 {
+    let v = NanVal(a);
+    if !v.is_heap() {
+        return TAG_NIL;
+    }
+    // SAFETY: is_heap() confirmed a heap-tagged value with live RC.
+    let urls: Vec<String> = match unsafe { v.as_heap_ref() } {
+        HeapObj::List(items) => {
+            let mut out = Vec::with_capacity(items.len());
+            for item in items.iter() {
+                if !item.is_string() {
+                    return TAG_NIL;
+                }
+                let s = unsafe {
+                    match item.as_heap_ref() {
+                        HeapObj::Str(s) => s.as_str().to_owned(),
+                        _ => unreachable!(),
+                    }
+                };
+                out.push(s);
+            }
+            out
+        }
+        _ => return TAG_NIL,
+    };
+    let values = crate::interpreter::get_many_fetch(&urls);
+    let nan_items: Vec<NanVal> = values.iter().map(NanVal::from_value).collect();
+    NanVal::heap_list(nan_items).0
 }
 
 #[cfg(feature = "cranelift")]

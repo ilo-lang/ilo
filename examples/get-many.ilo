@@ -1,0 +1,13 @@
+-- get-many: concurrent HTTP GET fan-out.
+-- Takes a list of URLs and returns a list of Results in the same order.
+-- Successful fetches become Ok(body); transport/UTF-8 errors become Err(msg).
+-- Up to 10 requests run in parallel; a 30-URL list runs as 3 parallel batches.
+
+fetch-all urls:L t>L (R t t);get-many urls
+
+-- Count how many fetches succeeded.
+count-ok urls:L t>n;rs=get-many urls;len (flt is-ok rs)
+is-ok r:R t t>b;?r{~_:true;^_:false}
+
+-- Examples are not executed against the live network in CI, so no `-- run:` line.
+-- To try locally: ilo examples/get-many.ilo fetch-all "https://example.com,https://example.org"

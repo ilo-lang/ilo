@@ -156,6 +156,7 @@ struct HelperFuncs {
     post: FuncId,
     geth: FuncId,
     posth: FuncId,
+    getmany: FuncId,
 }
 
 fn declare_helper(module: &mut JITModule, name: &str, n_params: usize, n_returns: usize) -> FuncId {
@@ -301,6 +302,7 @@ fn register_helpers(builder: &mut JITBuilder) {
         ("jit_post", jit_post as *const u8),
         ("jit_geth", jit_geth as *const u8),
         ("jit_posth", jit_posth as *const u8),
+        ("jit_getmany", jit_getmany as *const u8),
     ];
     for &(name, ptr) in helpers {
         builder.symbol(name, ptr);
@@ -437,6 +439,7 @@ fn declare_all_helpers(module: &mut JITModule) -> HelperFuncs {
         post: declare_helper(module, "jit_post", 2, 1),
         geth: declare_helper(module, "jit_geth", 2, 1),
         posth: declare_helper(module, "jit_posth", 3, 1),
+        getmany: declare_helper(module, "jit_getmany", 1, 1),
     }
 }
 
@@ -1000,7 +1003,7 @@ fn compile_function_body(
                 | OP_SLC | OP_LST | OP_ZIP | OP_TAKE | OP_DROP | OP_ENUMERATE | OP_RANGE
                 | OP_WINDOW | OP_CHUNKS | OP_CUMSUM
                 | OP_SETUNION | OP_SETINTER | OP_SETDIFF
-                | OP_SPL | OP_CAT | OP_GET | OP_POST | OP_GETH | OP_POSTH
+                | OP_SPL | OP_CAT | OP_GET | OP_POST | OP_GETH | OP_POSTH | OP_GETMANY
                 | OP_ENV | OP_JPTH | OP_JDMP | OP_JPAR
                 | OP_MAPNEW | OP_MGET | OP_MSET | OP_MDEL | OP_MKEYS | OP_MVALS
                 | OP_LISTNEW | OP_LISTAPPEND
@@ -3776,6 +3779,13 @@ fn compile_function_body(
                 let cv = builder.use_var(vars[c_idx]);
                 let fref = get_func_ref(&mut builder, module, helpers.geth);
                 let call_inst = builder.ins().call(fref, &[bv, cv]);
+                let result = builder.inst_results(call_inst)[0];
+                builder.def_var(vars[a_idx], result);
+            }
+            OP_GETMANY => {
+                let bv = builder.use_var(vars[b_idx]);
+                let fref = get_func_ref(&mut builder, module, helpers.getmany);
+                let call_inst = builder.ins().call(fref, &[bv]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
             }
