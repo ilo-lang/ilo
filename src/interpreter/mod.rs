@@ -801,6 +801,22 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         }
         return Ok(Value::List(out));
     }
+    if builtin == Some(Builtin::Enumerate) && args.len() == 1 {
+        let xs = match &args[0] {
+            Value::List(items) => items,
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("enumerate requires a list, got {:?}", other),
+                ));
+            }
+        };
+        let mut out = Vec::with_capacity(xs.len());
+        for (i, v) in xs.iter().enumerate() {
+            out.push(Value::List(vec![Value::Number(i as f64), v.clone()]));
+        }
+        return Ok(Value::List(out));
+    }
     if builtin == Some(Builtin::Tl) && args.len() == 1 {
         return match &args[0] {
             Value::List(items) => {

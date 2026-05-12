@@ -196,6 +196,7 @@ pub(crate) const OP_ATAN2: u8 = 108; // R[A] = atan2(R[B], R[C])  (y first, x se
 pub(crate) const OP_SRTDESC: u8 = 117; // R[A] = rsrt(R[B])  (descending sort of list)
 pub(crate) const OP_RGXSUB: u8 = 115; // R[A] = rgxsub(R[B], R[C], R[D])  (pattern, replacement, subject; D in data word A field)
 pub(crate) const OP_ZIP: u8 = 111; // R[A] = zip(R[B], R[C])  (list of [x,y] pairs, truncated)
+pub(crate) const OP_ENUMERATE: u8 = 139; // R[A] = enumerate(R[B])  (list of [i, v] pairs)
 
 // ABC mode — text formatting
 pub(crate) const OP_FMT2: u8 = 104; // R[A] = fmt2(R[B], R[C])  (format number to N decimal places → t)
@@ -1706,6 +1707,12 @@ impl RegCompiler {
                             self.emit_abc(OP_ZIP, ra, rb, rc);
                             return ra;
                         }
+                        (Builtin::Enumerate, 1) => {
+                            let rb = self.compile_expr(&args[0]);
+                            let ra = self.alloc_reg();
+                            self.emit_abc(OP_ENUMERATE, ra, rb, 0);
+                            return ra;
+                        }
                         (Builtin::Tl, 1) => {
                             let rb = self.compile_expr(&args[0]);
                             let ra = self.alloc_reg();
@@ -2537,7 +2544,7 @@ fn chunk_is_all_numeric(chunk: &Chunk) -> bool {
             | OP_PARTITION | OP_LISTAPPEND | OP_JPAR | OP_JDMP | OP_ENV | OP_GET | OP_GETH
             | OP_POST | OP_POSTH | OP_RD | OP_RDL | OP_WR | OP_WRL | OP_MAPNEW | OP_MGET
             | OP_MSET | OP_MKEYS | OP_MVALS | OP_HD | OP_AT | OP_LST | OP_TL | OP_FMT2
-            | OP_RGXSUB | OP_ZIP | OP_FFT | OP_IFFT => {
+            | OP_RGXSUB | OP_ZIP | OP_ENUMERATE | OP_FFT | OP_IFFT => {
                 return false;
             }
             _ => {}
@@ -5716,6 +5723,26 @@ impl<'a> VM<'a> {
                     }
                     reg_set!(a, NanVal::heap_list(out));
                 }
+                OP_ENUMERATE => {
+                    let a = ((inst >> 16) & 0xFF) as usize + base;
+                    let b = ((inst >> 8) & 0xFF) as usize + base;
+                    let vb = reg!(b);
+                    let xs = if vb.is_heap() {
+                        match unsafe { vb.as_heap_ref() } {
+                            HeapObj::List(items) => items,
+                            _ => vm_err!(VmError::Type("enumerate requires a list")),
+                        }
+                    } else {
+                        vm_err!(VmError::Type("enumerate requires a list"));
+                    };
+                    let mut out: Vec<NanVal> = Vec::with_capacity(xs.len());
+                    for (i, &v) in xs.iter().enumerate() {
+                        v.clone_rc();
+                        let pair = NanVal::heap_list(vec![NanVal::number(i as f64), v]);
+                        out.push(pair);
+                    }
+                    reg_set!(a, NanVal::heap_list(out));
+                }
                 OP_TL => {
                     let a = ((inst >> 16) & 0xFF) as usize + base;
                     let b = ((inst >> 8) & 0xFF) as usize + base;
@@ -7262,6 +7289,25 @@ pub(crate) extern "C" fn jit_zip(a: u64, b: u64) -> u64 {
         x.clone_rc();
         y.clone_rc();
         out.push(NanVal::heap_list(vec![x, y]));
+    }
+    NanVal::heap_list(out).0
+}
+
+#[cfg(feature = "cranelift")]
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn jit_enumerate(a: u64) -> u64 {
+    let va = NanVal(a);
+    if !va.is_heap() {
+        return TAG_NIL;
+    }
+    let xs = match unsafe { va.as_heap_ref() } {
+        HeapObj::List(items) => items,
+        _ => return TAG_NIL,
+    };
+    let mut out: Vec<NanVal> = Vec::with_capacity(xs.len());
+    for (i, &v) in xs.iter().enumerate() {
+        v.clone_rc();
+        out.push(NanVal::heap_list(vec![NanVal::number(i as f64), v]));
     }
     NanVal::heap_list(out).0
 }
