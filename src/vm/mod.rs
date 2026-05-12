@@ -1909,6 +1909,42 @@ impl RegCompiler {
                             }
                             return ra;
                         }
+                        // 3-arg `wr path data "json"` — serialise with jdmp,
+                        // then write. Only the literal "json" format is inlined;
+                        // other formats fall through (and the verifier rejects
+                        // unknown literal formats up-front).
+                        (Builtin::Wr, 3) => {
+                            if let crate::ast::Expr::Literal(crate::ast::Literal::Text(fmt_str)) =
+                                &args[2]
+                                && fmt_str == "json"
+                            {
+                                let rpath = self.compile_expr(&args[0]);
+                                let rdata = self.compile_expr(&args[1]);
+                                // jdmp(data) → text
+                                let rjson = self.alloc_reg();
+                                self.emit_abc(OP_JDMP, rjson, rdata, 0);
+                                let ra = self.alloc_reg();
+                                self.emit_abc(OP_WR, ra, rpath, rjson);
+                                if *unwrap {
+                                    let check_reg = self.alloc_reg();
+                                    self.emit_abc(OP_ISOK, check_reg, ra, 0);
+                                    let skip_ret = self.emit_jmpt(check_reg);
+                                    self.emit_abx(OP_RET, ra, 0);
+                                    self.current.patch_jump(skip_ret);
+                                    self.emit_abc(OP_UNWRAP, ra, ra, 0);
+                                    self.next_reg = ra + 1;
+                                }
+                                return ra;
+                            }
+                            // non-"json" 3-arg wr (csv/tsv or dynamic): no VM
+                            // path yet — surface a clear compile error.
+                            self.first_error.get_or_insert(
+                                CompileError::UndefinedFunction {
+                                    name: "wr (3-arg non-json format not yet supported in VM; use --run-tree)".to_string(),
+                                },
+                            );
+                            return self.alloc_reg();
+                        }
                         (Builtin::Jpar, 1) => {
                             let rb = self.compile_expr(&args[0]);
                             let ra = self.alloc_reg();
@@ -21327,5 +21363,49 @@ f>n;r=mk 10 20;+r.x r.y";
         let s = NanVal::heap_string("abc".to_string());
         let bits = jit_lst(s.0, NanVal::number(0.0).0, NanVal::number(99.0).0);
         assert_eq!(bits, TAG_NIL);
+    }
+
+    // ---- VM compile coverage for 3-arg `wr` overload ----
+
+    fn parse_for_vm(source: &str) -> crate::ast::Program {
+        let tokens = crate::lexer::lex(source).unwrap();
+        let token_spans: Vec<(crate::lexer::Token, crate::ast::Span)> = tokens
+            .into_iter()
+            .map(|(t, r)| {
+                (
+                    t,
+                    crate::ast::Span {
+                        start: r.start,
+                        end: r.end,
+                    },
+                )
+            })
+            .collect();
+        let (prog, errors) = crate::parser::parse(token_spans);
+        assert!(errors.is_empty(), "parse errors: {:?}", errors);
+        prog
+    }
+
+    #[test]
+    fn vm_compile_wr_3arg_json_succeeds() {
+        // Compile only — don't write to disk. Confirms the json fast-path emits.
+        let src = r#"f>R t t;wr "/tmp/__ilo_test_wr.json" [1,2,3] "json""#;
+        let prog = parse_for_vm(src);
+        let compiled = crate::vm::compile(&prog).expect("compile should succeed for json overload");
+        assert!(!compiled.chunks.is_empty());
+    }
+
+    #[test]
+    fn vm_compile_wr_3arg_non_json_emits_compile_error() {
+        // csv/tsv 3-arg form is not yet implemented in the VM compiler;
+        // it should report a clear UndefinedFunction error.
+        let src = r#"f>R t t;wr "/tmp/__ilo_test_wr.csv" [[1,2]] "csv""#;
+        let prog = parse_for_vm(src);
+        let err = match crate::vm::compile(&prog) {
+            Ok(_) => panic!("csv 3-arg should not compile"),
+            Err(e) => e,
+        };
+        let msg = format!("{err:?}");
+        assert!(msg.contains("3-arg non-json"), "got {msg}");
     }
 }
