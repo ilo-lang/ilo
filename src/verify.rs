@@ -310,6 +310,7 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("grp", &["fn", "list"], "map"),
     ("uniqby", &["fn", "list"], "list"),
     ("partition", &["fn", "list"], "list"),
+    ("frq", &["list"], "map"),
     ("flat", &["list"], "list"),
     ("sum", &["list"], "n"),
     ("avg", &["list"], "n"),
@@ -1360,6 +1361,22 @@ fn builtin_check_args(
                 _ => Ty::Unknown,
             };
             (ret, errors)
+        }
+        "frq" => {
+            // frq xs:L a → M t n — count occurrences of each element.
+            if let Some(first) = arg_types.first()
+                && !matches!(first, Ty::List(_) | Ty::Unknown)
+            {
+                errors.push(VerifyError {
+                    code: "ILO-T013",
+                    function: func_ctx.to_string(),
+                    message: format!("'frq' expects a list, got {first}"),
+                    hint: None,
+                    span,
+                    is_warning: false,
+                });
+            }
+            (Ty::Map(Box::new(Ty::Text), Box::new(Ty::Number)), errors)
         }
         "flat" => {
             // flat xs:L (L a) → L a — flatten one level
@@ -6515,6 +6532,7 @@ mod tests {
             "grp",
             "uniqby",
             "partition",
+            "frq",
             "prnt",
             "get",
             "post",
