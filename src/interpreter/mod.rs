@@ -405,6 +405,120 @@ fn vec_from_value(v: &Value, name: &str) -> Result<Vec<f64>> {
     Ok(out)
 }
 
+/// Format one field for csv/tsv output following RFC 4180 quoting.
+/// Quote the field if it contains the separator, `"`, or newline.
+/// Inner `"` are escaped as `""`.
+fn fmt_csv_field(v: &Value, sep: char) -> String {
+    let raw = match v {
+        Value::Text(s) => s.clone(),
+        Value::Number(n) => {
+            if *n == (*n as i64) as f64 {
+                format!("{}", *n as i64)
+            } else {
+                format!("{n}")
+            }
+        }
+        Value::Bool(b) => format!("{b}"),
+        Value::Nil => String::new(),
+        other => format!("{other}"),
+    };
+    if raw.contains(sep) || raw.contains('"') || raw.contains('\n') {
+        format!("\"{}\"", raw.replace('"', "\"\""))
+    } else {
+        raw
+    }
+}
+
+/// Serialise a list of rows as csv or tsv.
+///
+/// Row shapes:
+///   * `L (L _)` — list of lists, no header row.
+///   * `L record` — header from the first record's fields (keys sorted for
+///     stable output across runs since fields are stored in a HashMap).
+///   * `L (M k v)` — header from the first map's keys (sorted likewise).
+pub(crate) fn write_csv_tsv(rows: &[Value], sep: char) -> Result<String> {
+    let mut out = String::new();
+    let first = match rows.first() {
+        Some(r) => r,
+        None => return Ok(out),
+    };
+    let (header, use_keys): (Option<Vec<String>>, bool) = match first {
+        Value::List(_) => (None, false),
+        Value::Record { fields, .. } => {
+            let mut keys: Vec<String> = fields.keys().cloned().collect();
+            keys.sort();
+            (Some(keys), true)
+        }
+        Value::Map(m) => {
+            let mut keys: Vec<String> = m.keys().cloned().collect();
+            keys.sort();
+            (Some(keys), true)
+        }
+        other => {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!(
+                    "wr: each row must be a list, record, or map, got {:?}",
+                    other
+                ),
+            ));
+        }
+    };
+    if let Some(ref keys) = header {
+        for (i, k) in keys.iter().enumerate() {
+            if i > 0 {
+                out.push(sep);
+            }
+            out.push_str(&fmt_csv_field(&Value::Text(k.clone()), sep));
+        }
+        out.push('\n');
+    }
+    for row in rows {
+        match (row, use_keys, header.as_ref()) {
+            (Value::List(fields), false, _) => {
+                for (i, f) in fields.iter().enumerate() {
+                    if i > 0 {
+                        out.push(sep);
+                    }
+                    out.push_str(&fmt_csv_field(f, sep));
+                }
+                out.push('\n');
+            }
+            (Value::Record { fields, .. }, true, Some(keys)) => {
+                for (i, k) in keys.iter().enumerate() {
+                    if i > 0 {
+                        out.push(sep);
+                    }
+                    let v = fields.get(k).cloned().unwrap_or(Value::Nil);
+                    out.push_str(&fmt_csv_field(&v, sep));
+                }
+                out.push('\n');
+            }
+            (Value::Map(m), true, Some(keys)) => {
+                for (i, k) in keys.iter().enumerate() {
+                    if i > 0 {
+                        out.push(sep);
+                    }
+                    let v = m.get(k).cloned().unwrap_or(Value::Nil);
+                    out.push_str(&fmt_csv_field(&v, sep));
+                }
+                out.push('\n');
+            }
+            (other, _, _) => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!(
+                        "wr: row shape mismatch (expected {} rows), got {:?}",
+                        if use_keys { "record/map" } else { "list" },
+                        other
+                    ),
+                ));
+            }
+        }
+    }
+    Ok(out)
+}
+
 /// LU decomposition with partial pivoting, in-place on an owned matrix.
 /// Returns (LU, pivot indices, determinant, singular flag). When `singular`
 /// is true, the LU and det values are still well-formed (det = 0) but the
@@ -2066,49 +2180,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                             ));
                         }
                     };
-                    let mut out = String::new();
-                    for row in rows {
-                        match row {
-                            Value::List(fields) => {
-                                for (i, f) in fields.iter().enumerate() {
-                                    if i > 0 {
-                                        out.push(sep);
-                                    }
-                                    let s = match f {
-                                        Value::Text(s) => {
-                                            if s.contains(sep)
-                                                || s.contains('"')
-                                                || s.contains('\n')
-                                            {
-                                                format!("\"{}\"", s.replace('"', "\"\""))
-                                            } else {
-                                                out.push_str(s);
-                                                continue;
-                                            }
-                                        }
-                                        Value::Number(n) => {
-                                            if *n == (*n as i64) as f64 {
-                                                format!("{}", *n as i64)
-                                            } else {
-                                                format!("{n}")
-                                            }
-                                        }
-                                        Value::Bool(b) => format!("{b}"),
-                                        other => format!("{other}"),
-                                    };
-                                    out.push_str(&s);
-                                }
-                                out.push('\n');
-                            }
-                            other => {
-                                return Err(RuntimeError::new(
-                                    "ILO-R009",
-                                    format!("wr: each row must be a list, got {:?}", other),
-                                ));
-                            }
-                        }
-                    }
-                    out
+                    write_csv_tsv(rows, sep)?
                 }
                 "json" => {
                     fn value_to_json(v: &Value) -> serde_json::Value {
