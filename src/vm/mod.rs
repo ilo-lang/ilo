@@ -207,6 +207,8 @@ pub(crate) const OP_FMT2: u8 = 104; // R[A] = fmt2(R[B], R[C])  (format number t
 pub(crate) const OP_FFT: u8 = 129; // R[A] = fft(R[B])
 pub(crate) const OP_IFFT: u8 = 130; // R[A] = ifft(R[B])
 pub(crate) const OP_CLAMP: u8 = 149; // R[A] = clamp(R[B], R[C], R[D])  (lo in C, hi in D; D in data word A field)
+// Numeric range — R[A] = range(R[B], R[C]) → L n of [B..C) (half-open, empty if B>=C).
+pub(crate) const OP_RANGE: u8 = 138;
 // Higher-order: uniqby fn xs — pre-allocated, HOF dispatch not yet wired in VM.
 pub(crate) const OP_UNIQBY: u8 = 116; // R[A] = uniqby(R[B] (fn-ref), R[C] (list))
 // Higher-order: partition fn xs — pre-allocated, HOF dispatch not yet wired in VM.
@@ -1728,6 +1730,13 @@ impl RegCompiler {
                             self.emit_abc(OP_ENUMERATE, ra, rb, 0);
                             return ra;
                         }
+                        (Builtin::Range, 2) => {
+                            let rb = self.compile_expr(&args[0]);
+                            let rc = self.compile_expr(&args[1]);
+                            let ra = self.alloc_reg();
+                            self.emit_abc(OP_RANGE, ra, rb, rc);
+                            return ra;
+                        }
                         (Builtin::Tl, 1) => {
                             let rb = self.compile_expr(&args[0]);
                             let ra = self.alloc_reg();
@@ -2565,7 +2574,7 @@ fn chunk_is_all_numeric(chunk: &Chunk) -> bool {
             | OP_PARTITION | OP_LISTAPPEND | OP_JPAR | OP_JDMP | OP_ENV | OP_GET | OP_GETH
             | OP_POST | OP_POSTH | OP_RD | OP_RDL | OP_WR | OP_WRL | OP_MAPNEW | OP_MGET
             | OP_MSET | OP_MKEYS | OP_MVALS | OP_HD | OP_AT | OP_LST | OP_TL | OP_FMT2
-            | OP_RGXSUB | OP_ZIP | OP_ENUMERATE | OP_FFT | OP_IFFT => {
+            | OP_RGXSUB | OP_ZIP | OP_ENUMERATE | OP_FFT | OP_IFFT | OP_RANGE => {
                 return false;
             }
             _ => {}
@@ -5785,6 +5794,37 @@ impl<'a> VM<'a> {
                     }
                     reg_set!(a, NanVal::heap_list(out));
                 }
+                OP_RANGE => {
+                    let a = ((inst >> 16) & 0xFF) as usize + base;
+                    let b = ((inst >> 8) & 0xFF) as usize + base;
+                    let c = (inst & 0xFF) as usize + base;
+                    let vb = reg!(b);
+                    let vc = reg!(c);
+                    if !vb.is_number() || !vc.is_number() {
+                        vm_err!(VmError::Type("range requires numbers"));
+                    }
+                    // Reject non-integer bounds rather than silently
+                    // truncating (matches `at`'s integer-index guard).
+                    if vb.as_number().fract() != 0.0 || vc.as_number().fract() != 0.0 {
+                        vm_err!(VmError::Type("range: bounds must be integers"));
+                    }
+                    let start = vb.as_number() as i64;
+                    let end = vc.as_number() as i64;
+                    let out: Vec<NanVal> = if start >= end {
+                        Vec::new()
+                    } else {
+                        let len = (end - start) as u64;
+                        if len > 1_000_000 {
+                            vm_err!(VmError::Type("range too large (max 1000000)"));
+                        }
+                        let mut v = Vec::with_capacity(len as usize);
+                        for i in start..end {
+                            v.push(NanVal::number(i as f64));
+                        }
+                        v
+                    };
+                    reg_set!(a, NanVal::heap_list(out));
+                }
                 OP_TL => {
                     let a = ((inst >> 16) & 0xFF) as usize + base;
                     let b = ((inst >> 8) & 0xFF) as usize + base;
@@ -7382,6 +7422,34 @@ pub(crate) extern "C" fn jit_lst(list: u64, idx: u64, val: u64) -> u64 {
         return NanVal::heap_list(new_items).0;
     }
     TAG_NIL
+}
+
+#[cfg(feature = "cranelift")]
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn jit_range(a: u64, b: u64) -> u64 {
+    let va = NanVal(a);
+    let vb = NanVal(b);
+    if !va.is_number() || !vb.is_number() {
+        return TAG_NIL;
+    }
+    // Reject non-integer bounds rather than silently truncating.
+    if va.as_number().fract() != 0.0 || vb.as_number().fract() != 0.0 {
+        return TAG_NIL;
+    }
+    let start = va.as_number() as i64;
+    let end = vb.as_number() as i64;
+    if start >= end {
+        return NanVal::heap_list(Vec::new()).0;
+    }
+    let len = (end - start) as u64;
+    if len > 1_000_000 {
+        return TAG_NIL;
+    }
+    let mut out: Vec<NanVal> = Vec::with_capacity(len as usize);
+    for i in start..end {
+        out.push(NanVal::number(i as f64));
+    }
+    NanVal::heap_list(out).0
 }
 
 #[cfg(feature = "cranelift")]

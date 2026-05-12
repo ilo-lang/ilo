@@ -830,6 +830,41 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         }
         return Ok(Value::List(out));
     }
+    if builtin == Some(Builtin::Range) && args.len() == 2 {
+        return match (&args[0], &args[1]) {
+            (Value::Number(a), Value::Number(b)) => {
+                // Reject non-integer bounds rather than silently truncating
+                // (e.g. `range 1.9 4.9` previously yielded `[1,2,3]`).
+                if a.fract() != 0.0 || b.fract() != 0.0 {
+                    return Err(RuntimeError::new(
+                        "ILO-R009",
+                        "range: bounds must be integers".to_string(),
+                    ));
+                }
+                let start = *a as i64;
+                let end = *b as i64;
+                if start >= end {
+                    return Ok(Value::List(Vec::new()));
+                }
+                let len = (end - start) as u64;
+                if len > 1_000_000 {
+                    return Err(RuntimeError::new(
+                        "ILO-R009",
+                        format!("range too large: {len} elements (max 1000000)"),
+                    ));
+                }
+                let mut out = Vec::with_capacity(len as usize);
+                for i in start..end {
+                    out.push(Value::Number(i as f64));
+                }
+                Ok(Value::List(out))
+            }
+            _ => Err(RuntimeError::new(
+                "ILO-R009",
+                "range requires two numbers".to_string(),
+            )),
+        };
+    }
     if builtin == Some(Builtin::Tl) && args.len() == 1 {
         return match &args[0] {
             Value::List(items) => {

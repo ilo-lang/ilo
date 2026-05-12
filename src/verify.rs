@@ -284,6 +284,7 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("cat", &["L t", "t"], "t"),
     ("zip", &["list", "list"], "list"),
     ("enumerate", &["list"], "list"),
+    ("range", &["n", "n"], "L n"),
     ("has", &["list_or_text", "any"], "b"),
     ("hd", &["list_or_text"], "any"),
     ("at", &["list_or_text", "n"], "any"),
@@ -454,6 +455,21 @@ fn builtin_check_args(
                 }
             }
             (Ty::Number, errors)
+        }
+        "range" => {
+            for (i, arg) in arg_types.iter().enumerate() {
+                if !compatible(arg, &Ty::Number) {
+                    errors.push(VerifyError {
+                        code: "ILO-T013",
+                        function: func_ctx.to_string(),
+                        message: format!("'range' arg {} expects n, got {arg}", i + 1),
+                        hint: None,
+                        span,
+                        is_warning: false,
+                    });
+                }
+            }
+            (Ty::List(Box::new(Ty::Number)), errors)
         }
         "rnd" => {
             for (i, arg) in arg_types.iter().enumerate() {

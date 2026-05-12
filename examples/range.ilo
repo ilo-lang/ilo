@@ -1,0 +1,16 @@
+-- range a b: half-open numeric range [a, a+1, ..., b-1] as L n.
+-- Empty when a >= b. Saves ~10 tokens vs a manual loop accumulator.
+
+basic >L n;range 0 5
+empty >L n;range 3 3
+flipped >L n;range 5 3
+neg >L n;range -2 3
+
+-- run: basic
+-- out: [0, 1, 2, 3, 4]
+-- run: empty
+-- out: []
+-- run: flipped
+-- out: []
+-- run: neg
+-- out: [-2, -1, 0, 1, 2]

@@ -51,6 +51,7 @@ pub enum Builtin {
     Cat,
     Zip,
     Enumerate,
+    Range,
 
     // Higher-order
     Map,
@@ -145,6 +146,7 @@ impl Builtin {
             "cat" => Some(Builtin::Cat),
             "zip" => Some(Builtin::Zip),
             "enumerate" => Some(Builtin::Enumerate),
+            "range" => Some(Builtin::Range),
             "map" => Some(Builtin::Map),
             "flt" => Some(Builtin::Flt),
             "fld" => Some(Builtin::Fld),
@@ -226,6 +228,7 @@ impl Builtin {
             Builtin::Cat => "cat",
             Builtin::Zip => "zip",
             Builtin::Enumerate => "enumerate",
+            Builtin::Range => "range",
             Builtin::Map => "map",
             Builtin::Flt => "flt",
             Builtin::Fld => "fld",
@@ -275,6 +278,7 @@ mod tests {
     #[test]
     fn round_trip_all_builtins() {
         let all = [
+            "range",
             "str",
             "num",
             "abs",
