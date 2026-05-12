@@ -6738,4 +6738,112 @@ mod tests {
         assert!(s.contains("Result"), "no Result: {s}");
         assert!(s.contains("List"), "no List: {s}");
     }
+
+    // ---- list-literal-refs parser coverage ----
+
+    fn first_list_items(prog: &Program) -> Vec<Expr> {
+        let Decl::Function { body, .. } = &prog.declarations[0] else {
+            panic!("expected function")
+        };
+        let Stmt::Expr(Expr::List(items)) = &body[0].node else {
+            panic!("expected list, got {:?}", body[0].node)
+        };
+        items.clone()
+    }
+
+    #[test]
+    fn parse_list_whitespace_refs_are_bare_refs() {
+        // `[a b c]` must be a 3-element list of bare refs, not Call(a, [b, c]).
+        let prog = parse_str("f a:n b:n c:n>L n;[a b c]");
+        let items = first_list_items(&prog);
+        assert_eq!(items.len(), 3);
+        for (i, name) in ["a", "b", "c"].iter().enumerate() {
+            assert!(
+                matches!(&items[i], Expr::Ref(n) if n == name),
+                "items[{i}] not Ref({name}), got {:?}",
+                items[i]
+            );
+        }
+    }
+
+    #[test]
+    fn parse_list_comma_mode_keeps_calls() {
+        // With a top-level comma, calls inside elements remain calls.
+        let prog = parse_str("f x:n>L n;[flr x, cel x]");
+        let items = first_list_items(&prog);
+        assert_eq!(items.len(), 2);
+        assert!(matches!(&items[0], Expr::Call { function, .. } if function == "flr"));
+        assert!(matches!(&items[1], Expr::Call { function, .. } if function == "cel"));
+    }
+
+    #[test]
+    fn parse_list_whitespace_parens_force_call() {
+        // `[(flr x) y]` — parens reset no_whitespace_call so flr x is a call.
+        let prog = parse_str("f x:n y:n>L n;[(flr x) y]");
+        let items = first_list_items(&prog);
+        assert_eq!(items.len(), 2);
+        assert!(matches!(&items[0], Expr::Call { function, .. } if function == "flr"));
+        assert!(matches!(&items[1], Expr::Ref(n) if n == "y"));
+    }
+
+    #[test]
+    fn parse_list_has_top_level_comma_ignores_nested() {
+        // Nested brackets contain a comma but outer is whitespace-mode.
+        // Outer must still be whitespace-mode (no top-level comma).
+        let prog = parse_str("f>L L n;[[1,2] [3,4]]");
+        let items = first_list_items(&prog);
+        assert_eq!(items.len(), 2);
+        for inner in &items {
+            let Expr::List(sub) = inner else {
+                panic!("expected nested list, got {:?}", inner)
+            };
+            assert_eq!(sub.len(), 2);
+        }
+    }
+
+    #[test]
+    fn parse_list_empty_whitespace_mode() {
+        // Empty list — list_has_top_level_comma must hit the RBracket-at-depth-0
+        // early-return without errors.
+        let prog = parse_str("f>L n;[]");
+        let items = first_list_items(&prog);
+        assert!(items.is_empty());
+    }
+
+    #[test]
+    fn parse_list_single_ref_whitespace_mode() {
+        let prog = parse_str("f a:n>L n;[a]");
+        let items = first_list_items(&prog);
+        assert_eq!(items.len(), 1);
+        assert!(matches!(&items[0], Expr::Ref(n) if n == "a"));
+    }
+
+    #[test]
+    fn parse_list_whitespace_with_literals_and_refs() {
+        let prog = parse_str("f a:n>L n;[1 a 2]");
+        let items = first_list_items(&prog);
+        assert_eq!(items.len(), 3);
+        assert!(matches!(&items[1], Expr::Ref(n) if n == "a"));
+    }
+
+    #[test]
+    fn parse_list_comma_mode_with_parens_inside() {
+        // Top-level comma + nested paren — exercises the LParen reset path
+        // inside comma-mode element parsing.
+        let prog = parse_str("f x:n>L n;[(flr x), x]");
+        let items = first_list_items(&prog);
+        assert_eq!(items.len(), 2);
+        assert!(matches!(&items[0], Expr::Call { function, .. } if function == "flr"));
+    }
+
+    #[test]
+    fn parse_list_whitespace_with_ok_err_wrappers() {
+        // `[~1 ^2 ~3]` — call_ok path through Tilde/Caret arms in whitespace mode.
+        let prog = parse_str("f>L R n t;[~1 ^\"e\" ~3]");
+        let items = first_list_items(&prog);
+        assert_eq!(items.len(), 3);
+        assert!(matches!(&items[0], Expr::Ok(_)));
+        assert!(matches!(&items[1], Expr::Err(_)));
+        assert!(matches!(&items[2], Expr::Ok(_)));
+    }
 }
