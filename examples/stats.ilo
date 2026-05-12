@@ -1,0 +1,32 @@
+-- Descriptive statistics builtins: median, quantile, stdev, variance.
+--
+-- These are sample statistics: variance and stdev divide by N - 1 so they
+-- match the convention used by R, NumPy (ddof=1), and most spreadsheet
+-- functions (e.g. STDEV.S). Quantile uses linear interpolation between
+-- adjacent values, with p clamped to [0, 1].
+--
+-- median   xs:L n > n
+-- quantile xs:L n p:n > n
+-- stdev    xs:L n > n
+-- variance xs:L n > n
+
+-- Median of an odd-length list is the middle value after sorting.
+mid-odd>n;median [1, 2, 3, 4, 5]
+
+-- Median of an even-length list is the mean of the two middle values.
+mid-even>n;median [1, 2, 3, 4]
+
+-- 90th percentile: linear interpolation at position p * (n - 1).
+p90>n;quantile [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] 0.9
+
+-- Sample standard deviation of a small dataset (matches R's `sd`).
+spread>n;stdev [2, 4, 4, 4, 5, 5, 7, 9]
+
+-- run: mid-odd
+-- out: 3
+-- run: mid-even
+-- out: 2.5
+-- run: p90
+-- out: 9.1
+-- run: spread
+-- out: 2.138089935299395

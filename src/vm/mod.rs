@@ -213,6 +213,14 @@ pub(crate) const OP_RANGE: u8 = 138;
 pub(crate) const OP_CHUNKS: u8 = 148; // R[A] = chunks(R[B], R[C])  (n, list → L (L a))
 // Running sum: R[A] = cumsum(R[B]). Input L n; output L n of same length.
 pub(crate) const OP_CUMSUM: u8 = 145; // R[A] = cumsum(R[B])
+
+// Statistics builtins: single-arg numeric reducers over a list of numbers,
+// modeled on `OP_FFT` (1-arg list -> value). `OP_QUANTILE` is the 2-arg
+// variant: R[A] = quantile(R[B]=list, R[C]=p in [0,1] with linear interp).
+pub(crate) const OP_MEDIAN: u8 = 141; // R[A] = median(R[B])
+pub(crate) const OP_QUANTILE: u8 = 142; // R[A] = quantile(R[B], R[C])
+pub(crate) const OP_STDEV: u8 = 143; // R[A] = stdev(R[B])
+pub(crate) const OP_VARIANCE: u8 = 144; // R[A] = variance(R[B])
 // Higher-order: uniqby fn xs — pre-allocated, HOF dispatch not yet wired in VM.
 pub(crate) const OP_UNIQBY: u8 = 116; // R[A] = uniqby(R[B] (fn-ref), R[C] (list))
 // Higher-order: partition fn xs — pre-allocated, HOF dispatch not yet wired in VM.
@@ -1796,6 +1804,35 @@ impl RegCompiler {
                             let rb = self.compile_expr(&args[0]);
                             let ra = self.alloc_reg();
                             self.emit_abc(OP_CUMSUM, ra, rb, 0);
+                            return ra;
+                        }
+                        (Builtin::Median, 1) => {
+                            let rb = self.compile_expr(&args[0]);
+                            let ra = self.alloc_reg();
+                            self.emit_abc(OP_MEDIAN, ra, rb, 0);
+                            self.reg_is_num[ra as usize] = true;
+                            return ra;
+                        }
+                        (Builtin::Quantile, 2) => {
+                            let rb = self.compile_expr(&args[0]);
+                            let rc = self.compile_expr(&args[1]);
+                            let ra = self.alloc_reg();
+                            self.emit_abc(OP_QUANTILE, ra, rb, rc);
+                            self.reg_is_num[ra as usize] = true;
+                            return ra;
+                        }
+                        (Builtin::Stdev, 1) => {
+                            let rb = self.compile_expr(&args[0]);
+                            let ra = self.alloc_reg();
+                            self.emit_abc(OP_STDEV, ra, rb, 0);
+                            self.reg_is_num[ra as usize] = true;
+                            return ra;
+                        }
+                        (Builtin::Variance, 1) => {
+                            let rb = self.compile_expr(&args[0]);
+                            let ra = self.alloc_reg();
+                            self.emit_abc(OP_VARIANCE, ra, rb, 0);
+                            self.reg_is_num[ra as usize] = true;
                             return ra;
                         }
                         (Builtin::Slc, 3) => {
@@ -6159,6 +6196,44 @@ impl<'a> VM<'a> {
                     };
                     reg_set!(a, result);
                 }
+                OP_MEDIAN => {
+                    let a = ((inst >> 16) & 0xFF) as usize + base;
+                    let b = ((inst >> 8) & 0xFF) as usize + base;
+                    let v = reg!(b);
+                    match vm_median(v) {
+                        Ok(out) => reg_set!(a, out),
+                        Err(msg) => vm_err!(VmError::Type(msg)),
+                    }
+                }
+                OP_QUANTILE => {
+                    let a = ((inst >> 16) & 0xFF) as usize + base;
+                    let b = ((inst >> 8) & 0xFF) as usize + base;
+                    let c = (inst & 0xFF) as usize + base;
+                    let vb = reg!(b);
+                    let vc = reg!(c);
+                    match vm_quantile(vb, vc) {
+                        Ok(out) => reg_set!(a, out),
+                        Err(msg) => vm_err!(VmError::Type(msg)),
+                    }
+                }
+                OP_STDEV => {
+                    let a = ((inst >> 16) & 0xFF) as usize + base;
+                    let b = ((inst >> 8) & 0xFF) as usize + base;
+                    let v = reg!(b);
+                    match vm_stdev(v) {
+                        Ok(out) => reg_set!(a, out),
+                        Err(msg) => vm_err!(VmError::Type(msg)),
+                    }
+                }
+                OP_VARIANCE => {
+                    let a = ((inst >> 16) & 0xFF) as usize + base;
+                    let b = ((inst >> 8) & 0xFF) as usize + base;
+                    let v = reg!(b);
+                    match vm_variance(v) {
+                        Ok(out) => reg_set!(a, out),
+                        Err(msg) => vm_err!(VmError::Type(msg)),
+                    }
+                }
                 OP_SLC => {
                     // Two-instruction sequence: OP_SLC A=result B=list C=start; data word A=end_reg
                     let a = ((inst >> 16) & 0xFF) as usize + base;
@@ -7947,6 +8022,155 @@ fn vm_ifft_pairs_to_real(v: NanVal) -> Result<NanVal, &'static str> {
     vm_cooley_tukey(&mut re, &mut im, true);
     let reals: Vec<NanVal> = re.into_iter().map(NanVal::number).collect();
     Ok(NanVal::heap_list(reals))
+}
+
+/// Collect a NanVal list-of-numbers into a Vec<f64>, returning a stable
+/// error message keyed off `builtin` (the canonical name) used by all four
+/// statistics helpers below.
+fn vm_collect_numbers(v: NanVal, builtin: &'static str) -> Result<Vec<f64>, &'static str> {
+    if !v.is_heap() {
+        return Err(match builtin {
+            "median" => "median requires a list of numbers",
+            "quantile" => "quantile first arg must be a list of numbers",
+            "stdev" => "stdev requires a list of numbers",
+            _ => "variance requires a list of numbers",
+        });
+    }
+    let items = match unsafe { v.as_heap_ref() } {
+        HeapObj::List(items) => items,
+        _ => {
+            return Err(match builtin {
+                "median" => "median requires a list of numbers",
+                "quantile" => "quantile first arg must be a list of numbers",
+                "stdev" => "stdev requires a list of numbers",
+                _ => "variance requires a list of numbers",
+            });
+        }
+    };
+    if items.is_empty() {
+        return Err(match builtin {
+            "median" => "median: input list must not be empty",
+            "quantile" => "quantile: input list must not be empty",
+            "stdev" => "stdev: input list must not be empty",
+            _ => "variance: input list must not be empty",
+        });
+    }
+    let mut out: Vec<f64> = Vec::with_capacity(items.len());
+    for item in items {
+        if !item.is_number() {
+            return Err(match builtin {
+                "median" => "median: list elements must be numbers",
+                "quantile" => "quantile: list elements must be numbers",
+                "stdev" => "stdev: list elements must be numbers",
+                _ => "variance: list elements must be numbers",
+            });
+        }
+        out.push(item.as_number());
+    }
+    Ok(out)
+}
+
+fn vm_median(v: NanVal) -> Result<NanVal, &'static str> {
+    let mut nums = vm_collect_numbers(v, "median")?;
+    // NaN-propagation per the math-builtins NaN contract: any NaN input → NaN.
+    // Avoids silently mis-sorting NaNs via `partial_cmp(...).unwrap_or(Equal)`.
+    if nums.iter().any(|x| x.is_nan()) {
+        return Ok(NanVal::number(f64::NAN));
+    }
+    nums.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let n = nums.len();
+    let m = if n % 2 == 1 {
+        nums[n / 2]
+    } else {
+        (nums[n / 2 - 1] + nums[n / 2]) / 2.0
+    };
+    Ok(NanVal::number(m))
+}
+
+fn vm_quantile(v: NanVal, p: NanVal) -> Result<NanVal, &'static str> {
+    if !p.is_number() {
+        return Err("quantile: second arg p must be a number");
+    }
+    let mut nums = vm_collect_numbers(v, "quantile")?;
+    // NaN-propagation (see vm_median).
+    if nums.iter().any(|x| x.is_nan()) {
+        return Ok(NanVal::number(f64::NAN));
+    }
+    nums.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let p = p.as_number().clamp(0.0, 1.0);
+    let n = nums.len();
+    if n == 1 {
+        return Ok(NanVal::number(nums[0]));
+    }
+    let pos = p * (n - 1) as f64;
+    let lo = pos.floor() as usize;
+    let hi = pos.ceil() as usize;
+    let frac = pos - lo as f64;
+    Ok(NanVal::number(nums[lo] + frac * (nums[hi] - nums[lo])))
+}
+
+fn vm_variance(v: NanVal) -> Result<NanVal, &'static str> {
+    let nums = vm_collect_numbers(v, "variance")?;
+    let n = nums.len();
+    if n == 1 {
+        return Err("variance: at least 2 samples required");
+    }
+    if nums.iter().any(|x| x.is_nan()) {
+        return Ok(NanVal::number(f64::NAN));
+    }
+    let mean = nums.iter().sum::<f64>() / n as f64;
+    let sse: f64 = nums.iter().map(|x| (x - mean).powi(2)).sum();
+    Ok(NanVal::number(sse / (n - 1) as f64))
+}
+
+fn vm_stdev(v: NanVal) -> Result<NanVal, &'static str> {
+    let nums = vm_collect_numbers(v, "stdev")?;
+    let n = nums.len();
+    if n == 1 {
+        return Err("stdev: at least 2 samples required");
+    }
+    if nums.iter().any(|x| x.is_nan()) {
+        return Ok(NanVal::number(f64::NAN));
+    }
+    let mean = nums.iter().sum::<f64>() / n as f64;
+    let sse: f64 = nums.iter().map(|x| (x - mean).powi(2)).sum();
+    Ok(NanVal::number((sse / (n - 1) as f64).sqrt()))
+}
+
+#[cfg(feature = "cranelift")]
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn jit_median(a: u64) -> u64 {
+    match vm_median(NanVal(a)) {
+        Ok(v) => v.0,
+        Err(_) => TAG_NIL,
+    }
+}
+
+#[cfg(feature = "cranelift")]
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn jit_quantile(a: u64, b: u64) -> u64 {
+    match vm_quantile(NanVal(a), NanVal(b)) {
+        Ok(v) => v.0,
+        Err(_) => TAG_NIL,
+    }
+}
+
+#[cfg(feature = "cranelift")]
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn jit_stdev(a: u64) -> u64 {
+    match vm_stdev(NanVal(a)) {
+        Ok(v) => v.0,
+        Err(_) => TAG_NIL,
+    }
+}
+
+#[cfg(feature = "cranelift")]
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn jit_variance(a: u64) -> u64 {
+    match vm_variance(NanVal(a)) {
+        Ok(v) => v.0,
+        Err(_) => TAG_NIL,
+    }
 }
 
 #[cfg(feature = "cranelift")]

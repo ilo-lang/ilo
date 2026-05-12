@@ -87,6 +87,10 @@ struct HelperFuncs {
     fft: FuncId,
     ifft: FuncId,
     cumsum: FuncId,
+    median: FuncId,
+    quantile: FuncId,
+    stdev: FuncId,
+    variance: FuncId,
     slc: FuncId,
     rgxsub: FuncId,
     listappend: FuncId,
@@ -224,6 +228,10 @@ fn declare_all_helpers(module: &mut ObjectModule) -> HelperFuncs {
         fft: declare_helper(module, "jit_fft", 1, 1),
         ifft: declare_helper(module, "jit_ifft", 1, 1),
         cumsum: declare_helper(module, "jit_cumsum", 1, 1),
+        median: declare_helper(module, "jit_median", 1, 1),
+        quantile: declare_helper(module, "jit_quantile", 2, 1),
+        stdev: declare_helper(module, "jit_stdev", 1, 1),
+        variance: declare_helper(module, "jit_variance", 1, 1),
         slc: declare_helper(module, "jit_slc", 3, 1),
         rgxsub: declare_helper(module, "jit_rgxsub", 3, 1),
         listappend: declare_helper(module, "jit_listappend", 2, 1),
@@ -921,7 +929,8 @@ fn compile_function_body(
                 OP_ADD_NN | OP_SUB_NN | OP_MUL_NN | OP_DIV_NN | OP_ADDK_N | OP_SUBK_N
                 | OP_MULK_N | OP_DIVK_N | OP_LEN | OP_ABS | OP_MIN | OP_MAX | OP_FLR | OP_CEL
                 | OP_ROU | OP_RND0 | OP_RND2 | OP_NOW | OP_MOD | OP_CLAMP | OP_POW | OP_SQRT
-                | OP_LOG | OP_EXP | OP_SIN | OP_COS | OP_TAN | OP_LOG10 | OP_LOG2 | OP_ATAN2 => {
+                | OP_LOG | OP_EXP | OP_SIN | OP_COS | OP_TAN | OP_LOG10 | OP_LOG2 | OP_ATAN2
+                | OP_MEDIAN | OP_QUANTILE | OP_STDEV | OP_VARIANCE => {
                     num_write[a] = true;
                 }
                 // LOADK: numeric only when the constant itself is a number.
@@ -2034,6 +2043,35 @@ fn compile_function_body(
             OP_CUMSUM => {
                 let bv = builder.use_var(vars[b_idx]);
                 let fref = get_func_ref(&mut builder, module, helpers.cumsum);
+                let call_inst = builder.ins().call(fref, &[bv]);
+                let result = builder.inst_results(call_inst)[0];
+                builder.def_var(vars[a_idx], result);
+            }
+            OP_MEDIAN => {
+                let bv = builder.use_var(vars[b_idx]);
+                let fref = get_func_ref(&mut builder, module, helpers.median);
+                let call_inst = builder.ins().call(fref, &[bv]);
+                let result = builder.inst_results(call_inst)[0];
+                builder.def_var(vars[a_idx], result);
+            }
+            OP_QUANTILE => {
+                let bv = builder.use_var(vars[b_idx]);
+                let cv = builder.use_var(vars[c_idx]);
+                let fref = get_func_ref(&mut builder, module, helpers.quantile);
+                let call_inst = builder.ins().call(fref, &[bv, cv]);
+                let result = builder.inst_results(call_inst)[0];
+                builder.def_var(vars[a_idx], result);
+            }
+            OP_STDEV => {
+                let bv = builder.use_var(vars[b_idx]);
+                let fref = get_func_ref(&mut builder, module, helpers.stdev);
+                let call_inst = builder.ins().call(fref, &[bv]);
+                let result = builder.inst_results(call_inst)[0];
+                builder.def_var(vars[a_idx], result);
+            }
+            OP_VARIANCE => {
+                let bv = builder.use_var(vars[b_idx]);
+                let fref = get_func_ref(&mut builder, module, helpers.variance);
                 let call_inst = builder.ins().call(fref, &[bv]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
