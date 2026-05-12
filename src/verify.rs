@@ -288,6 +288,7 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("rev", &["list_or_text"], "list_or_text"),
     ("srt", &["list_or_text"], "list_or_text"),
     ("srt", &["fn", "list"], "list"),
+    ("rsrt", &["list_or_text"], "list_or_text"),
     ("unq", &["list_or_text"], "list_or_text"),
     ("slc", &["list_or_text", "n", "n"], "list_or_text"),
     ("lst", &["list", "n", "any"], "list"),
@@ -788,6 +789,24 @@ fn builtin_check_args(
                         code: "ILO-T013",
                         function: func_ctx.to_string(),
                         message: format!("'srt' expects a list or text, got {other}"),
+                        hint: None,
+                        span,
+                        is_warning: false,
+                    }),
+                }
+            }
+            (Ty::Unknown, errors)
+        }
+        "rsrt" => {
+            if let Some(arg) = arg_types.first() {
+                match arg {
+                    Ty::List(inner) => return (Ty::List(inner.clone()), errors),
+                    Ty::Text => return (Ty::Text, errors),
+                    Ty::Unknown => return (Ty::Unknown, errors),
+                    other => errors.push(VerifyError {
+                        code: "ILO-T013",
+                        function: func_ctx.to_string(),
+                        message: format!("'rsrt' expects a list or text, got {other}"),
                         hint: None,
                         span,
                         is_warning: false,

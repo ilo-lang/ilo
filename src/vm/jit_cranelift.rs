@@ -83,6 +83,7 @@ struct HelperFuncs {
     tl: FuncId,
     rev: FuncId,
     srt: FuncId,
+    rsrt: FuncId,
     slc: FuncId,
     lst: FuncId,
     listappend: FuncId,
@@ -196,6 +197,7 @@ fn register_helpers(builder: &mut JITBuilder) {
         ("jit_tl", jit_tl as *const u8),
         ("jit_rev", jit_rev as *const u8),
         ("jit_srt", jit_srt as *const u8),
+        ("jit_rsrt", jit_rsrt as *const u8),
         ("jit_slc", jit_slc as *const u8),
         ("jit_lst", jit_lst as *const u8),
         ("jit_listappend", jit_listappend as *const u8),
@@ -300,6 +302,7 @@ fn declare_all_helpers(module: &mut JITModule) -> HelperFuncs {
         tl: declare_helper(module, "jit_tl", 1, 1),
         rev: declare_helper(module, "jit_rev", 1, 1),
         srt: declare_helper(module, "jit_srt", 1, 1),
+        rsrt: declare_helper(module, "jit_rsrt", 1, 1),
         slc: declare_helper(module, "jit_slc", 3, 1),
         lst: declare_helper(module, "jit_lst", 3, 1),
         listappend: declare_helper(module, "jit_listappend", 2, 1),
@@ -898,7 +901,8 @@ fn compile_function_body(
                 | OP_NEG
                 | OP_WRAPOK | OP_WRAPERR | OP_UNWRAP
                 | OP_RECFLD | OP_RECFLD_NAME | OP_LISTGET | OP_INDEX
-                | OP_STR | OP_HD | OP_AT | OP_FMT2 | OP_TL | OP_REV | OP_SRT | OP_SLC | OP_LST
+                | OP_STR | OP_HD | OP_AT | OP_FMT2 | OP_TL | OP_REV | OP_SRT | OP_SRTDESC
+                | OP_SLC | OP_LST
                 | OP_SPL | OP_CAT | OP_GET | OP_POST | OP_GETH | OP_POSTH
                 | OP_ENV | OP_JPTH | OP_JDMP | OP_JPAR
                 | OP_MAPNEW | OP_MGET | OP_MSET | OP_MDEL | OP_MKEYS | OP_MVALS
@@ -1966,6 +1970,13 @@ fn compile_function_body(
             OP_SRT => {
                 let bv = builder.use_var(vars[b_idx]);
                 let fref = get_func_ref(&mut builder, module, helpers.srt);
+                let call_inst = builder.ins().call(fref, &[bv]);
+                let result = builder.inst_results(call_inst)[0];
+                builder.def_var(vars[a_idx], result);
+            }
+            OP_SRTDESC => {
+                let bv = builder.use_var(vars[b_idx]);
+                let fref = get_func_ref(&mut builder, module, helpers.rsrt);
                 let call_inst = builder.ins().call(fref, &[bv]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);

@@ -1,0 +1,13 @@
+-- rsrt xs: descending sort. Same Ord as srt, just reversed.
+-- One-step alternative to `rev (srt xs)`.
+
+-- Numeric: largest first
+top-nums xs:L n>L n;rsrt xs
+
+-- Text: lexicographic descending
+top-words ws:L t>L t;rsrt ws
+
+-- run: top-nums [3,1,4,1,5,9,2,6]
+-- out: [9, 6, 5, 4, 3, 2, 1, 1]
+-- run: top-words ["banana","apple","cherry"]
+-- out: ["cherry", "banana", "apple"]
