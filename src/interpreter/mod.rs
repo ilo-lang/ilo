@@ -1642,6 +1642,42 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         return Ok(acc);
     }
 
+    if builtin == Some(Builtin::Partition) && args.len() == 2 {
+        let fn_name = resolve_fn_ref(&args[0]).ok_or_else(|| {
+            RuntimeError::new(
+                "ILO-R009",
+                format!(
+                    "partition: first arg must be a function reference, got {:?}",
+                    args[0]
+                ),
+            )
+        })?;
+        let items = match &args[1] {
+            Value::List(l) => l.clone(),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("partition: second arg must be a list, got {:?}", other),
+                ));
+            }
+        };
+        let mut pass: Vec<Value> = Vec::new();
+        let mut fail: Vec<Value> = Vec::new();
+        for item in items {
+            match call_function(env, &fn_name, vec![item.clone()])? {
+                Value::Bool(true) => pass.push(item),
+                Value::Bool(false) => fail.push(item),
+                other => {
+                    return Err(RuntimeError::new(
+                        "ILO-R009",
+                        format!("partition: predicate must return bool, got {:?}", other),
+                    ));
+                }
+            }
+        }
+        return Ok(Value::List(vec![Value::List(pass), Value::List(fail)]));
+    }
+
     if builtin == Some(Builtin::Uniqby) && args.len() == 2 {
         let fn_name = resolve_fn_ref(&args[0]).ok_or_else(|| {
             RuntimeError::new(

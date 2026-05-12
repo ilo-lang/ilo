@@ -308,6 +308,7 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("fld", &["fn", "list", "any"], "any"),
     ("grp", &["fn", "list"], "map"),
     ("uniqby", &["fn", "list"], "list"),
+    ("partition", &["fn", "list"], "list"),
     ("flat", &["list"], "list"),
     ("sum", &["list"], "n"),
     ("avg", &["list"], "n"),
@@ -1313,6 +1314,29 @@ fn builtin_check_args(
             }
             let ret = match arg_types.get(1) {
                 Some(ty @ Ty::List(_)) => ty.clone(),
+                _ => Ty::Unknown,
+            };
+            (ret, errors)
+        }
+        "partition" => {
+            // partition fn:F a b xs:L a → L (L a) — split into [passing, failing]
+            if let Some(fn_ty) = arg_types.first()
+                && !matches!(fn_ty, Ty::Fn(_, _) | Ty::Unknown)
+            {
+                errors.push(VerifyError {
+                    code: "ILO-T013",
+                    function: func_ctx.to_string(),
+                    message: format!(
+                        "'partition' first arg must be a function (F ...), got {fn_ty}"
+                    ),
+                    hint: Some("pass a predicate function: partition pred xs".to_string()),
+                    span,
+                    is_warning: false,
+                });
+            }
+            // Return type: L (L a) where a is the element type of the input list.
+            let ret = match arg_types.get(1) {
+                Some(ty @ Ty::List(_)) => Ty::List(Box::new(ty.clone())),
                 _ => Ty::Unknown,
             };
             (ret, errors)
@@ -6465,7 +6489,17 @@ mod tests {
         }
         // IO/HTTP/HOF/polymorphic builtins must NOT promote.
         for n in [
-            "map", "flt", "fld", "grp", "uniqby", "prnt", "get", "post", "hd", "tl",
+            "map",
+            "flt",
+            "fld",
+            "grp",
+            "uniqby",
+            "partition",
+            "prnt",
+            "get",
+            "post",
+            "hd",
+            "tl",
         ] {
             assert!(
                 builtin_as_fn_ty(n).is_none(),
