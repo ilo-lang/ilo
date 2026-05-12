@@ -304,6 +304,8 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("unq", &["list_or_text"], "list_or_text"),
     ("slc", &["list_or_text", "n", "n"], "list_or_text"),
     ("lst", &["list", "n", "any"], "list"),
+    ("take", &["n", "list_or_text"], "list_or_text"),
+    ("drop", &["n", "list_or_text"], "list_or_text"),
     ("rnd", &[], "n"),
     ("now", &[], "n"),
     ("env", &["t"], "R t t"),
@@ -1102,6 +1104,37 @@ fn builtin_check_args(
                 _ => Ty::Unknown,
             };
             (ret, errors)
+        }
+        "take" | "drop" => {
+            // take n xs / drop n xs — first arg is n, second is list_or_text
+            if let Some(arg) = arg_types.first()
+                && !compatible(arg, &Ty::Number)
+            {
+                errors.push(VerifyError {
+                    code: "ILO-T013",
+                    function: func_ctx.to_string(),
+                    message: format!("'{name}' count must be n, got {arg}"),
+                    hint: None,
+                    span,
+                    is_warning: false,
+                });
+            }
+            if let Some(arg) = arg_types.get(1) {
+                match arg {
+                    Ty::List(inner) => return (Ty::List(inner.clone()), errors),
+                    Ty::Text => return (Ty::Text, errors),
+                    Ty::Unknown => return (Ty::Unknown, errors),
+                    other => errors.push(VerifyError {
+                        code: "ILO-T013",
+                        function: func_ctx.to_string(),
+                        message: format!("'{name}' expects a list or text, got {other}"),
+                        hint: None,
+                        span,
+                        is_warning: false,
+                    }),
+                }
+            }
+            (Ty::Unknown, errors)
         }
         "get" => {
             // get url          — 1-arg
