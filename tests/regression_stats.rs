@@ -233,9 +233,9 @@ fn single_element_variance_and_stdev_error() {
 fn nan_propagates_through_stats() {
     // Any NaN element → NaN result. Avoids silently sorting NaNs to an
     // arbitrary position via `partial_cmp(...).unwrap_or(Equal)`.
-    // Build NaN at runtime as `0 / 0` to keep the source ascii-only.
+    // Build NaN at runtime as `sqrt -1` (real sqrt of a negative is NaN).
     for builtin in ["median", "stdev", "variance"] {
-        let src = format!("f>n;x=0/0;{builtin} [1, 2, x, 4]");
+        let src = format!("f>n;x=sqrt -1;{builtin} [1, 2, x, 4]");
         for engine in engines() {
             let out = run_ok(engine, &src, "f");
             let got = first_line_as_f64(&out);
@@ -246,7 +246,7 @@ fn nan_propagates_through_stats() {
         }
     }
     // quantile takes two args (xs, p).
-    let qsrc = "f>n;x=0/0;quantile [1, 2, x, 4] 0.5";
+    let qsrc = "f>n;x=sqrt -1;quantile [1, 2, x, 4] 0.5";
     for engine in engines() {
         let out = run_ok(engine, qsrc, "f");
         let got = first_line_as_f64(&out);
