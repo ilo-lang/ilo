@@ -85,6 +85,8 @@ struct HelperFuncs {
     rev: FuncId,
     srt: FuncId,
     rsrt: FuncId,
+    fft: FuncId,
+    ifft: FuncId,
     slc: FuncId,
     lst: FuncId,
     rgxsub: FuncId,
@@ -201,6 +203,8 @@ fn register_helpers(builder: &mut JITBuilder) {
         ("jit_rev", jit_rev as *const u8),
         ("jit_srt", jit_srt as *const u8),
         ("jit_rsrt", jit_rsrt as *const u8),
+        ("jit_fft", jit_fft as *const u8),
+        ("jit_ifft", jit_ifft as *const u8),
         ("jit_slc", jit_slc as *const u8),
         ("jit_lst", jit_lst as *const u8),
         ("jit_rgxsub", jit_rgxsub as *const u8),
@@ -308,6 +312,8 @@ fn declare_all_helpers(module: &mut JITModule) -> HelperFuncs {
         rev: declare_helper(module, "jit_rev", 1, 1),
         srt: declare_helper(module, "jit_srt", 1, 1),
         rsrt: declare_helper(module, "jit_rsrt", 1, 1),
+        fft: declare_helper(module, "jit_fft", 1, 1),
+        ifft: declare_helper(module, "jit_ifft", 1, 1),
         slc: declare_helper(module, "jit_slc", 3, 1),
         lst: declare_helper(module, "jit_lst", 3, 1),
         rgxsub: declare_helper(module, "jit_rgxsub", 3, 1),
@@ -908,6 +914,7 @@ fn compile_function_body(
                 | OP_WRAPOK | OP_WRAPERR | OP_UNWRAP
                 | OP_RECFLD | OP_RECFLD_NAME | OP_LISTGET | OP_INDEX
                 | OP_STR | OP_HD | OP_AT | OP_FMT2 | OP_TL | OP_REV | OP_SRT | OP_SRTDESC
+                | OP_FFT | OP_IFFT
                 | OP_SLC | OP_LST | OP_ZIP
                 | OP_SPL | OP_CAT | OP_GET | OP_POST | OP_GETH | OP_POSTH
                 | OP_ENV | OP_JPTH | OP_JDMP | OP_JPAR
@@ -1991,6 +1998,20 @@ fn compile_function_body(
             OP_SRTDESC => {
                 let bv = builder.use_var(vars[b_idx]);
                 let fref = get_func_ref(&mut builder, module, helpers.rsrt);
+                let call_inst = builder.ins().call(fref, &[bv]);
+                let result = builder.inst_results(call_inst)[0];
+                builder.def_var(vars[a_idx], result);
+            }
+            OP_FFT => {
+                let bv = builder.use_var(vars[b_idx]);
+                let fref = get_func_ref(&mut builder, module, helpers.fft);
+                let call_inst = builder.ins().call(fref, &[bv]);
+                let result = builder.inst_results(call_inst)[0];
+                builder.def_var(vars[a_idx], result);
+            }
+            OP_IFFT => {
+                let bv = builder.use_var(vars[b_idx]);
+                let fref = get_func_ref(&mut builder, module, helpers.ifft);
                 let call_inst = builder.ins().call(fref, &[bv]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);

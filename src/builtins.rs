@@ -30,6 +30,8 @@ pub enum Builtin {
     Atan2,
     Sum,
     Avg,
+    Fft,
+    Ifft,
 
     // Collections
     Len,
@@ -119,6 +121,8 @@ impl Builtin {
             "atan2" => Some(Builtin::Atan2),
             "sum" => Some(Builtin::Sum),
             "avg" => Some(Builtin::Avg),
+            "fft" => Some(Builtin::Fft),
+            "ifft" => Some(Builtin::Ifft),
             "len" => Some(Builtin::Len),
             "hd" => Some(Builtin::Hd),
             "at" => Some(Builtin::At),
@@ -193,6 +197,8 @@ impl Builtin {
             Builtin::Atan2 => "atan2",
             Builtin::Sum => "sum",
             Builtin::Avg => "avg",
+            Builtin::Fft => "fft",
+            Builtin::Ifft => "ifft",
             Builtin::Len => "len",
             Builtin::Hd => "hd",
             Builtin::At => "at",
@@ -259,7 +265,7 @@ mod tests {
             "tl", "rev", "srt", "rsrt", "slc", "lst", "unq", "flat", "has", "spl", "cat", "zip",
             "map", "flt", "fld", "grp", "rnd", "now", "rd", "rdl", "rdb", "wr", "wrl", "prnt",
             "env", "trm", "fmt", "fmt2", "rgx", "rgxsub", "jpth", "jdmp", "jpar", "get", "post",
-            "mmap", "mget", "mset", "mhas", "mkeys", "mvals", "mdel",
+            "mmap", "mget", "mset", "mhas", "mkeys", "mvals", "mdel", "fft", "ifft",
         ];
         for name in &all {
             let b = Builtin::from_name(name).unwrap_or_else(|| panic!("missing builtin: {name}"));

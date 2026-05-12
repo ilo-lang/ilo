@@ -310,6 +310,8 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("flat", &["list"], "list"),
     ("sum", &["list"], "n"),
     ("avg", &["list"], "n"),
+    ("fft", &["list"], "list"),
+    ("ifft", &["list"], "list"),
     ("rgx", &["t", "t"], "L t"),
     ("rgxsub", &["t", "t", "t"], "t"),
     // Map builtins (M k v type)
@@ -858,6 +860,41 @@ fn builtin_check_args(
                 }
             }
             (Ty::Unknown, errors)
+        }
+        "fft" => {
+            if let Some(arg) = arg_types.first() {
+                match arg {
+                    Ty::List(_) | Ty::Unknown => {}
+                    other => errors.push(VerifyError {
+                        code: "ILO-T013",
+                        function: func_ctx.to_string(),
+                        message: format!("'fft' expects a list of numbers, got {other}"),
+                        hint: None,
+                        span,
+                        is_warning: false,
+                    }),
+                }
+            }
+            // Output is L (L n) — list of [real, imag] pairs.
+            (Ty::List(Box::new(Ty::List(Box::new(Ty::Number)))), errors)
+        }
+        "ifft" => {
+            if let Some(arg) = arg_types.first() {
+                match arg {
+                    Ty::List(_) | Ty::Unknown => {}
+                    other => errors.push(VerifyError {
+                        code: "ILO-T013",
+                        function: func_ctx.to_string(),
+                        message: format!(
+                            "'ifft' expects a list of [real, imag] pairs, got {other}"
+                        ),
+                        hint: None,
+                        span,
+                        is_warning: false,
+                    }),
+                }
+            }
+            (Ty::List(Box::new(Ty::Number)), errors)
         }
         "slc" => {
             if let Some(arg) = arg_types.first() {
