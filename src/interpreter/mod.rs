@@ -856,6 +856,56 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             )),
         };
     }
+    if builtin == Some(Builtin::Dtfmt) && args.len() == 2 {
+        return match (&args[0], &args[1]) {
+            (Value::Number(epoch), Value::Text(fmt_str)) => {
+                if !epoch.is_finite() {
+                    return Ok(Value::Err(Box::new(Value::Text(format!(
+                        "dtfmt: epoch is not finite ({epoch})"
+                    )))));
+                }
+                if *epoch < i64::MIN as f64 || *epoch > i64::MAX as f64 {
+                    return Ok(Value::Err(Box::new(Value::Text(format!(
+                        "dtfmt: epoch out of range ({epoch})"
+                    )))));
+                }
+                let secs = *epoch as i64;
+                match chrono::DateTime::<chrono::Utc>::from_timestamp(secs, 0) {
+                    Some(dt) => {
+                        let formatted = dt.format(fmt_str.as_str()).to_string();
+                        Ok(Value::Ok(Box::new(Value::Text(formatted))))
+                    }
+                    None => Ok(Value::Err(Box::new(Value::Text(format!(
+                        "dtfmt: timestamp out of range ({secs})"
+                    ))))),
+                }
+            }
+            _ => Err(RuntimeError::new(
+                "ILO-R009",
+                "dtfmt requires a number (epoch) and text (format)".to_string(),
+            )),
+        };
+    }
+    if builtin == Some(Builtin::Dtparse) && args.len() == 2 {
+        return match (&args[0], &args[1]) {
+            (Value::Text(text), Value::Text(fmt_str)) => {
+                let parsed = chrono::NaiveDateTime::parse_from_str(text, fmt_str)
+                    .map(|ndt| ndt.and_utc().timestamp() as f64)
+                    .or_else(|_| {
+                        chrono::NaiveDate::parse_from_str(text, fmt_str)
+                            .map(|nd| nd.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp() as f64)
+                    });
+                match parsed {
+                    Ok(n) => Ok(Value::Ok(Box::new(Value::Number(n)))),
+                    Err(e) => Ok(Value::Err(Box::new(Value::Text(format!("dtparse: {e}"))))),
+                }
+            }
+            _ => Err(RuntimeError::new(
+                "ILO-R009",
+                "dtparse requires two text args".to_string(),
+            )),
+        };
+    }
     if builtin == Some(Builtin::Rnd) {
         if args.is_empty() {
             return Ok(Value::Number(fastrand::f64()));

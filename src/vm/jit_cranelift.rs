@@ -162,6 +162,9 @@ struct HelperFuncs {
     solve: FuncId,
     inv: FuncId,
     det: FuncId,
+    // Datetime
+    dtfmt: FuncId,
+    dtparse: FuncId,
 }
 
 fn declare_helper(module: &mut JITModule, name: &str, n_params: usize, n_returns: usize) -> FuncId {
@@ -312,6 +315,8 @@ fn register_helpers(builder: &mut JITBuilder) {
         ("jit_solve", jit_solve as *const u8),
         ("jit_inv", jit_inv as *const u8),
         ("jit_det", jit_det as *const u8),
+        ("jit_dtfmt", jit_dtfmt as *const u8),
+        ("jit_dtparse", jit_dtparse as *const u8),
     ];
     for &(name, ptr) in helpers {
         builder.symbol(name, ptr);
@@ -454,6 +459,8 @@ fn declare_all_helpers(module: &mut JITModule) -> HelperFuncs {
         solve: declare_helper(module, "jit_solve", 2, 1),
         inv: declare_helper(module, "jit_inv", 1, 1),
         det: declare_helper(module, "jit_det", 1, 1),
+        dtfmt: declare_helper(module, "jit_dtfmt", 2, 1),
+        dtparse: declare_helper(module, "jit_dtparse", 2, 1),
     }
 }
 
@@ -1025,7 +1032,7 @@ fn compile_function_body(
                 | OP_RECNEW | OP_RECWITH
                 | OP_PRT | OP_RD | OP_RDL | OP_WR | OP_WRL | OP_TRM | OP_UPR | OP_LWR | OP_CAP
                 | OP_PADL | OP_PADR | OP_UNQ | OP_UNIQBY | OP_PARTITION | OP_FRQ | OP_NUM
-                | OP_RGXSUB | OP_TRANSPOSE | OP_MATMUL => {
+                | OP_RGXSUB | OP_TRANSPOSE | OP_MATMUL | OP_DTFMT | OP_DTPARSE => {
                     non_num_write[a] = true;
                     non_bool_write[a] = true;
                 }
@@ -3609,6 +3616,22 @@ fn compile_function_body(
                 let bv = builder.use_var(vars[b_idx]);
                 let fref = get_func_ref(&mut builder, module, helpers.rdjl);
                 let call_inst = builder.ins().call(fref, &[bv]);
+                let result = builder.inst_results(call_inst)[0];
+                builder.def_var(vars[a_idx], result);
+            }
+            OP_DTFMT => {
+                let bv = builder.use_var(vars[b_idx]);
+                let cv = builder.use_var(vars[c_idx]);
+                let fref = get_func_ref(&mut builder, module, helpers.dtfmt);
+                let call_inst = builder.ins().call(fref, &[bv, cv]);
+                let result = builder.inst_results(call_inst)[0];
+                builder.def_var(vars[a_idx], result);
+            }
+            OP_DTPARSE => {
+                let bv = builder.use_var(vars[b_idx]);
+                let cv = builder.use_var(vars[c_idx]);
+                let fref = get_func_ref(&mut builder, module, helpers.dtparse);
+                let call_inst = builder.ins().call(fref, &[bv, cv]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
             }

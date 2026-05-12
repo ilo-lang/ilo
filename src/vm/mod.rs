@@ -206,6 +206,8 @@ pub(crate) const OP_ENUMERATE: u8 = 139; // R[A] = enumerate(R[B])  (list of [i,
 pub(crate) const OP_WINDOW: u8 = 146; // R[A] = window(R[B] (n), R[C] (list))  → list of n-sized sublists
 pub(crate) const OP_TAKE: u8 = 113; // R[A] = take(R[B], R[C])  (first B elements of C; B=n_reg, C=list_reg)
 pub(crate) const OP_DROP: u8 = 114; // R[A] = drop(R[B], R[C])  (skip first B elements of C)
+pub(crate) const OP_DTFMT: u8 = 131; // R[A] = dtfmt(R[B] epoch, R[C] fmt) → t
+pub(crate) const OP_DTPARSE: u8 = 132; // R[A] = dtparse(R[B] text, R[C] fmt) → R n t
 
 // ABC mode — text formatting
 pub(crate) const OP_FMT2: u8 = 104; // R[A] = fmt2(R[B], R[C])  (format number to N decimal places → t)
@@ -1990,6 +1992,29 @@ impl RegCompiler {
                             self.reg_is_num[ra as usize] = true;
                             return ra;
                         }
+                        (Builtin::Dtfmt, 2) => {
+                            let rb = self.compile_expr(&args[0]);
+                            let rc = self.compile_expr(&args[1]);
+                            let ra = self.alloc_reg();
+                            self.emit_abc(OP_DTFMT, ra, rb, rc);
+                            return ra;
+                        }
+                        (Builtin::Dtparse, 2) => {
+                            let rb = self.compile_expr(&args[0]);
+                            let rc = self.compile_expr(&args[1]);
+                            let ra = self.alloc_reg();
+                            self.emit_abc(OP_DTPARSE, ra, rb, rc);
+                            if *unwrap {
+                                let check_reg = self.alloc_reg();
+                                self.emit_abc(OP_ISOK, check_reg, ra, 0);
+                                let skip_ret = self.emit_jmpt(check_reg);
+                                self.emit_abx(OP_RET, ra, 0);
+                                self.current.patch_jump(skip_ret);
+                                self.emit_abc(OP_UNWRAP, ra, ra, 0);
+                                self.next_reg = ra + 1;
+                            }
+                            return ra;
+                        }
                         (Builtin::Rnd, 2) => {
                             let rb = self.compile_expr(&args[0]);
                             let rc = self.compile_expr(&args[1]);
@@ -2800,7 +2825,7 @@ fn chunk_is_all_numeric(chunk: &Chunk) -> bool {
             | OP_WR | OP_WRL | OP_MAPNEW | OP_MGET | OP_MSET | OP_MKEYS | OP_MVALS | OP_HD
             | OP_AT | OP_LST | OP_TL | OP_FMT2 | OP_RGXSUB | OP_ZIP | OP_ENUMERATE | OP_WINDOW
             | OP_FFT | OP_IFFT | OP_RANGE | OP_CHUNKS | OP_CUMSUM | OP_SETUNION | OP_SETINTER
-            | OP_SETDIFF | OP_TRANSPOSE | OP_MATMUL | OP_INV | OP_SOLVE => {
+            | OP_SETDIFF | OP_TRANSPOSE | OP_MATMUL | OP_INV | OP_SOLVE | OP_DTFMT | OP_DTPARSE => {
                 return false;
             }
             _ => {}
@@ -5846,6 +5871,82 @@ impl<'a> VM<'a> {
                         .unwrap()
                         .as_secs_f64();
                     reg_set!(a, NanVal::number(ts));
+                }
+                OP_DTFMT => {
+                    let a = ((inst >> 16) & 0xFF) as usize + base;
+                    let b = ((inst >> 8) & 0xFF) as usize + base;
+                    let c = (inst & 0xFF) as usize + base;
+                    let vb = reg!(b);
+                    let vc = reg!(c);
+                    if !vb.is_number() {
+                        vm_err!(VmError::Type("dtfmt requires a number (epoch)"));
+                    }
+                    if !vc.is_string() {
+                        vm_err!(VmError::Type("dtfmt requires a string format"));
+                    }
+                    let epoch_f = vb.as_number();
+                    // SAFETY: is_string() confirmed heap-tagged string with live RC.
+                    let fmt_str: String = unsafe {
+                        match vc.as_heap_ref() {
+                            HeapObj::Str(s) => s.as_str().to_owned(),
+                            _ => unreachable!(),
+                        }
+                    };
+                    let result = if !epoch_f.is_finite() {
+                        NanVal::heap_err(NanVal::heap_string(format!(
+                            "dtfmt: epoch is not finite ({epoch_f})"
+                        )))
+                    } else if epoch_f < i64::MIN as f64 || epoch_f > i64::MAX as f64 {
+                        NanVal::heap_err(NanVal::heap_string(format!(
+                            "dtfmt: epoch out of range ({epoch_f})"
+                        )))
+                    } else {
+                        let secs = epoch_f as i64;
+                        match chrono::DateTime::<chrono::Utc>::from_timestamp(secs, 0) {
+                            Some(dt) => NanVal::heap_ok(NanVal::heap_string(
+                                dt.format(&fmt_str).to_string(),
+                            )),
+                            None => NanVal::heap_err(NanVal::heap_string(format!(
+                                "dtfmt: timestamp out of range ({secs})"
+                            ))),
+                        }
+                    };
+                    reg_set!(a, result);
+                }
+                OP_DTPARSE => {
+                    let a = ((inst >> 16) & 0xFF) as usize + base;
+                    let b = ((inst >> 8) & 0xFF) as usize + base;
+                    let c = (inst & 0xFF) as usize + base;
+                    let vb = reg!(b);
+                    let vc = reg!(c);
+                    if !vb.is_string() || !vc.is_string() {
+                        vm_err!(VmError::Type("dtparse requires two strings"));
+                    }
+                    // SAFETY: is_string() confirmed heap-tagged strings with live RC.
+                    let text: String = unsafe {
+                        match vb.as_heap_ref() {
+                            HeapObj::Str(s) => s.as_str().to_owned(),
+                            _ => unreachable!(),
+                        }
+                    };
+                    let fmt_str: String = unsafe {
+                        match vc.as_heap_ref() {
+                            HeapObj::Str(s) => s.as_str().to_owned(),
+                            _ => unreachable!(),
+                        }
+                    };
+                    let parsed = chrono::NaiveDateTime::parse_from_str(&text, &fmt_str)
+                        .map(|ndt| ndt.and_utc().timestamp() as f64)
+                        .or_else(|_| {
+                            chrono::NaiveDate::parse_from_str(&text, &fmt_str).map(|nd| {
+                                nd.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp() as f64
+                            })
+                        });
+                    let result = match parsed {
+                        Ok(n) => NanVal::heap_ok(NanVal::number(n)),
+                        Err(e) => NanVal::heap_err(NanVal::heap_string(format!("dtparse: {e}"))),
+                    };
+                    reg_set!(a, result);
                 }
                 OP_ENV => {
                     let a = ((inst >> 16) & 0xFF) as usize + base;
@@ -10160,6 +10261,77 @@ pub(crate) extern "C" fn jit_rdjl(a: u64) -> u64 {
         // channel, so nil is the conventional signal here (matches jit_rd /
         // jit_jpar conventions for non-string inputs).
         Err(_) => TAG_NIL,
+    }
+}
+
+#[cfg(feature = "cranelift")]
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn jit_dtfmt(epoch: u64, fmt: u64) -> u64 {
+    let ev = NanVal(epoch);
+    let fv = NanVal(fmt);
+    if !ev.is_number() || !fv.is_string() {
+        return TAG_NIL;
+    }
+    let e_f = ev.as_number();
+    let fmt_str = unsafe {
+        match fv.as_heap_ref() {
+            HeapObj::Str(s) => s.as_str().to_owned(),
+            _ => unreachable!(),
+        }
+    };
+    if !e_f.is_finite() {
+        return NanVal::heap_err(NanVal::heap_string(format!(
+            "dtfmt: epoch is not finite ({e_f})"
+        )))
+        .0;
+    }
+    if e_f < i64::MIN as f64 || e_f > i64::MAX as f64 {
+        return NanVal::heap_err(NanVal::heap_string(format!(
+            "dtfmt: epoch out of range ({e_f})"
+        )))
+        .0;
+    }
+    let e = e_f as i64;
+    match chrono::DateTime::<chrono::Utc>::from_timestamp(e, 0) {
+        Some(dt) => NanVal::heap_ok(NanVal::heap_string(dt.format(&fmt_str).to_string())).0,
+        None => {
+            NanVal::heap_err(NanVal::heap_string(format!(
+                "dtfmt: timestamp out of range ({e})"
+            )))
+            .0
+        }
+    }
+}
+
+#[cfg(feature = "cranelift")]
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn jit_dtparse(text: u64, fmt: u64) -> u64 {
+    let tv = NanVal(text);
+    let fv = NanVal(fmt);
+    if !tv.is_string() || !fv.is_string() {
+        return TAG_NIL;
+    }
+    let t_str = unsafe {
+        match tv.as_heap_ref() {
+            HeapObj::Str(s) => s.as_str().to_owned(),
+            _ => unreachable!(),
+        }
+    };
+    let f_str = unsafe {
+        match fv.as_heap_ref() {
+            HeapObj::Str(s) => s.as_str().to_owned(),
+            _ => unreachable!(),
+        }
+    };
+    let parsed = chrono::NaiveDateTime::parse_from_str(&t_str, &f_str)
+        .map(|ndt| ndt.and_utc().timestamp() as f64)
+        .or_else(|_| {
+            chrono::NaiveDate::parse_from_str(&t_str, &f_str)
+                .map(|nd| nd.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp() as f64)
+        });
+    match parsed {
+        Ok(n) => NanVal::heap_ok(NanVal::number(n)).0,
+        Err(e) => NanVal::heap_err(NanVal::heap_string(format!("dtparse: {e}"))).0,
     }
 }
 
