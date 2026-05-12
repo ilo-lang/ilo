@@ -307,6 +307,7 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("flt", &["fn", "list"], "list"),
     ("fld", &["fn", "list", "any"], "any"),
     ("grp", &["fn", "list"], "map"),
+    ("uniqby", &["fn", "list"], "list"),
     ("flat", &["list"], "list"),
     ("sum", &["list"], "n"),
     ("avg", &["list"], "n"),
@@ -1295,6 +1296,26 @@ fn builtin_check_args(
                 Ty::Map(Box::new(key_ty), Box::new(Ty::List(Box::new(elem_ty)))),
                 errors,
             )
+        }
+        "uniqby" => {
+            // uniqby fn:F a t xs:L a → L a — keep first occurrence by key fn
+            if let Some(fn_ty) = arg_types.first()
+                && !matches!(fn_ty, Ty::Fn(_, _) | Ty::Unknown)
+            {
+                errors.push(VerifyError {
+                    code: "ILO-T013",
+                    function: func_ctx.to_string(),
+                    message: format!("'uniqby' first arg must be a function (F ...), got {fn_ty}"),
+                    hint: Some("pass a function name: uniqby key-fn xs".to_string()),
+                    span,
+                    is_warning: false,
+                });
+            }
+            let ret = match arg_types.get(1) {
+                Some(ty @ Ty::List(_)) => ty.clone(),
+                _ => Ty::Unknown,
+            };
+            (ret, errors)
         }
         "flat" => {
             // flat xs:L (L a) → L a — flatten one level
@@ -6444,7 +6465,7 @@ mod tests {
         }
         // IO/HTTP/HOF/polymorphic builtins must NOT promote.
         for n in [
-            "map", "flt", "fld", "grp", "prnt", "get", "post", "hd", "tl",
+            "map", "flt", "fld", "grp", "uniqby", "prnt", "get", "post", "hd", "tl",
         ] {
             assert!(
                 builtin_as_fn_ty(n).is_none(),

@@ -2243,6 +2243,7 @@ fn builtin_arity_tables() -> (HashMap<String, usize>, HashMap<String, Vec<bool>>
         ("flt", 2, &[0]),
         ("fld", 3, &[0]),
         ("grp", 2, &[0]),
+        ("uniqby", 2, &[0]),
         // I/O
         ("prnt", 1, &[]),
         ("wr", 2, &[]),

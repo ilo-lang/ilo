@@ -55,6 +55,7 @@ pub enum Builtin {
     Flt,
     Fld,
     Grp,
+    Uniqby,
 
     // Random / time
     Rnd,
@@ -142,6 +143,7 @@ impl Builtin {
             "flt" => Some(Builtin::Flt),
             "fld" => Some(Builtin::Fld),
             "grp" => Some(Builtin::Grp),
+            "uniqby" => Some(Builtin::Uniqby),
             "rnd" => Some(Builtin::Rnd),
             "now" => Some(Builtin::Now),
             "rd" => Some(Builtin::Rd),
@@ -218,6 +220,7 @@ impl Builtin {
             Builtin::Flt => "flt",
             Builtin::Fld => "fld",
             Builtin::Grp => "grp",
+            Builtin::Uniqby => "uniqby",
             Builtin::Rnd => "rnd",
             Builtin::Now => "now",
             Builtin::Rd => "rd",
@@ -263,9 +266,9 @@ mod tests {
             "str", "num", "abs", "flr", "cel", "rou", "min", "max", "mod", "pow", "sqrt", "log",
             "exp", "sin", "cos", "tan", "log10", "log2", "atan2", "sum", "avg", "len", "hd", "at",
             "tl", "rev", "srt", "rsrt", "slc", "lst", "unq", "flat", "has", "spl", "cat", "zip",
-            "map", "flt", "fld", "grp", "rnd", "now", "rd", "rdl", "rdb", "wr", "wrl", "prnt",
-            "env", "trm", "fmt", "fmt2", "rgx", "rgxsub", "jpth", "jdmp", "jpar", "get", "post",
-            "mmap", "mget", "mset", "mhas", "mkeys", "mvals", "mdel", "fft", "ifft",
+            "map", "flt", "fld", "grp", "uniqby", "rnd", "now", "rd", "rdl", "rdb", "wr", "wrl",
+            "prnt", "env", "trm", "fmt", "fmt2", "rgx", "rgxsub", "jpth", "jdmp", "jpar", "get",
+            "post", "mmap", "mget", "mset", "mhas", "mkeys", "mvals", "mdel", "fft", "ifft",
         ];
         for name in &all {
             let b = Builtin::from_name(name).unwrap_or_else(|| panic!("missing builtin: {name}"));
