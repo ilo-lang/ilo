@@ -1,0 +1,22 @@
+-- take n xs: first n elements of a list or text.
+-- drop n xs: skip the first n; return the rest.
+-- Both truncate (no error) when n exceeds the length.
+-- Negative n raises a runtime error.
+
+first-two xs:L n>L n;take 2 xs
+rest-after-two xs:L n>L n;drop 2 xs
+head3 s:t>t;take 3 s
+tail-from2 s:t>t;drop 2 s
+
+-- run: first-two [1,2,3,4,5]
+-- out: [1, 2]
+-- run: rest-after-two [1,2,3,4,5]
+-- out: [3, 4, 5]
+-- run: first-two [1,2]
+-- out: [1, 2]
+-- run: rest-after-two [1,2]
+-- out: []
+-- run: head3 "hello"
+-- out: hel
+-- run: tail-from2 "hello"
+-- out: llo

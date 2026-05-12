@@ -1253,6 +1253,86 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             )),
         };
     }
+    if builtin == Some(Builtin::Take) && args.len() == 2 {
+        let n = match &args[0] {
+            Value::Number(n) => {
+                if n.fract() != 0.0 {
+                    return Err(RuntimeError::new(
+                        "ILO-R009",
+                        "take: count must be an integer".to_string(),
+                    ));
+                }
+                if *n < 0.0 {
+                    return Err(RuntimeError::new(
+                        "ILO-R009",
+                        "take: count must be a non-negative integer".to_string(),
+                    ));
+                }
+                *n as usize
+            }
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("take: count must be a number, got {:?}", other),
+                ));
+            }
+        };
+        return match &args[1] {
+            Value::List(items) => {
+                let end = n.min(items.len());
+                Ok(Value::List(items[..end].to_vec()))
+            }
+            Value::Text(s) => {
+                let chars: Vec<char> = s.chars().collect();
+                let end = n.min(chars.len());
+                Ok(Value::Text(chars[..end].iter().collect()))
+            }
+            other => Err(RuntimeError::new(
+                "ILO-R009",
+                format!("take requires a list or text, got {:?}", other),
+            )),
+        };
+    }
+    if builtin == Some(Builtin::Drop) && args.len() == 2 {
+        let n = match &args[0] {
+            Value::Number(n) => {
+                if n.fract() != 0.0 {
+                    return Err(RuntimeError::new(
+                        "ILO-R009",
+                        "drop: count must be an integer".to_string(),
+                    ));
+                }
+                if *n < 0.0 {
+                    return Err(RuntimeError::new(
+                        "ILO-R009",
+                        "drop: count must be a non-negative integer".to_string(),
+                    ));
+                }
+                *n as usize
+            }
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("drop: count must be a number, got {:?}", other),
+                ));
+            }
+        };
+        return match &args[1] {
+            Value::List(items) => {
+                let start = n.min(items.len());
+                Ok(Value::List(items[start..].to_vec()))
+            }
+            Value::Text(s) => {
+                let chars: Vec<char> = s.chars().collect();
+                let start = n.min(chars.len());
+                Ok(Value::Text(chars[start..].iter().collect()))
+            }
+            other => Err(RuntimeError::new(
+                "ILO-R009",
+                format!("drop requires a list or text, got {:?}", other),
+            )),
+        };
+    }
     if builtin == Some(Builtin::Get) && (args.len() == 1 || args.len() == 2) {
         let url = match &args[0] {
             Value::Text(u) => u.clone(),

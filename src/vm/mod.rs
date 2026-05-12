@@ -203,6 +203,8 @@ pub(crate) const OP_RGXSUB: u8 = 115; // R[A] = rgxsub(R[B], R[C], R[D])  (patte
 pub(crate) const OP_ZIP: u8 = 111; // R[A] = zip(R[B], R[C])  (list of [x,y] pairs, truncated)
 pub(crate) const OP_ENUMERATE: u8 = 139; // R[A] = enumerate(R[B])  (list of [i, v] pairs)
 pub(crate) const OP_WINDOW: u8 = 146; // R[A] = window(R[B] (n), R[C] (list))  → list of n-sized sublists
+pub(crate) const OP_TAKE: u8 = 113; // R[A] = take(R[B], R[C])  (first B elements of C; B=n_reg, C=list_reg)
+pub(crate) const OP_DROP: u8 = 114; // R[A] = drop(R[B], R[C])  (skip first B elements of C)
 
 // ABC mode — text formatting
 pub(crate) const OP_FMT2: u8 = 104; // R[A] = fmt2(R[B], R[C])  (format number to N decimal places → t)
@@ -1902,6 +1904,21 @@ impl RegCompiler {
                             self.emit_abc(0, rd, 0, 0);
                             return ra;
                         }
+                        (Builtin::Take, 2) => {
+                            // take n xs — B=n_reg, C=list_reg
+                            let rb = self.compile_expr(&args[0]);
+                            let rc = self.compile_expr(&args[1]);
+                            let ra = self.alloc_reg();
+                            self.emit_abc(OP_TAKE, ra, rb, rc);
+                            return ra;
+                        }
+                        (Builtin::Drop, 2) => {
+                            let rb = self.compile_expr(&args[0]);
+                            let rc = self.compile_expr(&args[1]);
+                            let ra = self.alloc_reg();
+                            self.emit_abc(OP_DROP, ra, rb, rc);
+                            return ra;
+                        }
                         (Builtin::Rnd, 0) => {
                             let ra = self.alloc_reg();
                             self.emit_abc(OP_RND0, ra, 0, 0);
@@ -2681,12 +2698,13 @@ fn chunk_is_all_numeric(chunk: &Chunk) -> bool {
         let op = (inst >> 24) as u8;
         match op {
             OP_RECNEW | OP_LISTNEW | OP_RECWITH | OP_WRAPOK | OP_WRAPERR | OP_STR | OP_CAT
-            | OP_SPL | OP_REV | OP_SRT | OP_SRTDESC | OP_SLC | OP_UNQ | OP_UNIQBY | OP_FRQ
-            | OP_PARTITION | OP_LISTAPPEND | OP_JPAR | OP_JDMP | OP_ENV | OP_GET | OP_GETH
-            | OP_POST | OP_POSTH | OP_RD | OP_RDL | OP_WR | OP_WRL | OP_MAPNEW | OP_MGET
-            | OP_MSET | OP_MKEYS | OP_MVALS | OP_HD | OP_AT | OP_LST | OP_TL | OP_FMT2
-            | OP_RGXSUB | OP_ZIP | OP_ENUMERATE | OP_WINDOW | OP_FFT | OP_IFFT | OP_RANGE
-            | OP_CHUNKS | OP_CUMSUM | OP_SETUNION | OP_SETINTER | OP_SETDIFF => {
+            | OP_SPL | OP_REV | OP_SRT | OP_SRTDESC | OP_SLC | OP_TAKE | OP_DROP | OP_UNQ
+            | OP_UNIQBY | OP_FRQ | OP_PARTITION | OP_LISTAPPEND | OP_JPAR | OP_JDMP | OP_ENV
+            | OP_GET | OP_GETH | OP_POST | OP_POSTH | OP_RD | OP_RDL | OP_WR | OP_WRL
+            | OP_MAPNEW | OP_MGET | OP_MSET | OP_MKEYS | OP_MVALS | OP_HD | OP_AT | OP_LST
+            | OP_TL | OP_FMT2 | OP_RGXSUB | OP_ZIP | OP_ENUMERATE | OP_WINDOW | OP_FFT
+            | OP_IFFT | OP_RANGE | OP_CHUNKS | OP_CUMSUM | OP_SETUNION | OP_SETINTER
+            | OP_SETDIFF => {
                 return false;
             }
             _ => {}
@@ -6473,6 +6491,96 @@ impl<'a> VM<'a> {
                         Err(_) => vm_err!(VmError::Type("rgxsub: invalid regex pattern")),
                     }
                 }
+                OP_TAKE => {
+                    let a = ((inst >> 16) & 0xFF) as usize + base;
+                    let b = ((inst >> 8) & 0xFF) as usize + base;
+                    let c = (inst & 0xFF) as usize + base;
+                    let vn = reg!(b);
+                    let vc = reg!(c);
+                    if !vn.is_number() {
+                        vm_err!(VmError::Type("take: count must be a number"));
+                    }
+                    let nf = vn.as_number();
+                    if nf.fract() != 0.0 {
+                        vm_err!(VmError::Type("take: count must be an integer"));
+                    }
+                    if nf < 0.0 {
+                        vm_err!(VmError::Type("take: count must be a non-negative integer"));
+                    }
+                    let n = nf as usize;
+                    if vc.is_string() {
+                        let s = unsafe {
+                            match vc.as_heap_ref() {
+                                HeapObj::Str(s) => s,
+                                _ => unreachable!(),
+                            }
+                        };
+                        let chars: Vec<char> = s.chars().collect();
+                        let end = n.min(chars.len());
+                        let result: String = chars[..end].iter().collect();
+                        reg_set!(a, NanVal::heap_string(result));
+                    } else if vc.is_heap() {
+                        match unsafe { vc.as_heap_ref() } {
+                            HeapObj::List(items) => {
+                                let end = n.min(items.len());
+                                let mut sliced = Vec::with_capacity(end);
+                                for v in &items[..end] {
+                                    v.clone_rc();
+                                    sliced.push(*v);
+                                }
+                                reg_set!(a, NanVal::heap_list(sliced));
+                            }
+                            _ => vm_err!(VmError::Type("take requires a list or text")),
+                        }
+                    } else {
+                        vm_err!(VmError::Type("take requires a list or text"));
+                    }
+                }
+                OP_DROP => {
+                    let a = ((inst >> 16) & 0xFF) as usize + base;
+                    let b = ((inst >> 8) & 0xFF) as usize + base;
+                    let c = (inst & 0xFF) as usize + base;
+                    let vn = reg!(b);
+                    let vc = reg!(c);
+                    if !vn.is_number() {
+                        vm_err!(VmError::Type("drop: count must be a number"));
+                    }
+                    let nf = vn.as_number();
+                    if nf.fract() != 0.0 {
+                        vm_err!(VmError::Type("drop: count must be an integer"));
+                    }
+                    if nf < 0.0 {
+                        vm_err!(VmError::Type("drop: count must be a non-negative integer"));
+                    }
+                    let n = nf as usize;
+                    if vc.is_string() {
+                        let s = unsafe {
+                            match vc.as_heap_ref() {
+                                HeapObj::Str(s) => s,
+                                _ => unreachable!(),
+                            }
+                        };
+                        let chars: Vec<char> = s.chars().collect();
+                        let start = n.min(chars.len());
+                        let result: String = chars[start..].iter().collect();
+                        reg_set!(a, NanVal::heap_string(result));
+                    } else if vc.is_heap() {
+                        match unsafe { vc.as_heap_ref() } {
+                            HeapObj::List(items) => {
+                                let start = n.min(items.len());
+                                let mut sliced = Vec::with_capacity(items.len() - start);
+                                for v in &items[start..] {
+                                    v.clone_rc();
+                                    sliced.push(*v);
+                                }
+                                reg_set!(a, NanVal::heap_list(sliced));
+                            }
+                            _ => vm_err!(VmError::Type("drop requires a list or text")),
+                        }
+                    } else {
+                        vm_err!(VmError::Type("drop requires a list or text"));
+                    }
+                }
                 OP_LISTAPPEND => {
                     let a = ((inst >> 16) & 0xFF) as usize + base;
                     let b = ((inst >> 8) & 0xFF) as usize + base;
@@ -8619,6 +8727,82 @@ pub(crate) extern "C" fn jit_rgxsub(pat_v: u64, repl_v: u64, subj_v: u64) -> u64
         Ok(re) => NanVal::heap_string(re.replace_all(subj, repl).into_owned()).0,
         Err(_) => TAG_NIL,
     }
+}
+
+#[cfg(feature = "cranelift")]
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn jit_take(n_val: u64, xs: u64) -> u64 {
+    let vn = NanVal(n_val);
+    let vc = NanVal(xs);
+    if !vn.is_number() {
+        return TAG_NIL;
+    }
+    let nf = vn.as_number();
+    if nf.fract() != 0.0 || nf < 0.0 {
+        return TAG_NIL;
+    }
+    let n = nf as usize;
+    if vc.is_string() {
+        let s = unsafe {
+            match vc.as_heap_ref() {
+                HeapObj::Str(s) => s,
+                _ => unreachable!(),
+            }
+        };
+        let chars: Vec<char> = s.chars().collect();
+        let end = n.min(chars.len());
+        return NanVal::heap_string(chars[..end].iter().collect()).0;
+    }
+    if vc.is_heap()
+        && let HeapObj::List(items) = unsafe { vc.as_heap_ref() }
+    {
+        let end = n.min(items.len());
+        let mut sliced = Vec::with_capacity(end);
+        for v in &items[..end] {
+            v.clone_rc();
+            sliced.push(*v);
+        }
+        return NanVal::heap_list(sliced).0;
+    }
+    TAG_NIL
+}
+
+#[cfg(feature = "cranelift")]
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn jit_drop(n_val: u64, xs: u64) -> u64 {
+    let vn = NanVal(n_val);
+    let vc = NanVal(xs);
+    if !vn.is_number() {
+        return TAG_NIL;
+    }
+    let nf = vn.as_number();
+    if nf.fract() != 0.0 || nf < 0.0 {
+        return TAG_NIL;
+    }
+    let n = nf as usize;
+    if vc.is_string() {
+        let s = unsafe {
+            match vc.as_heap_ref() {
+                HeapObj::Str(s) => s,
+                _ => unreachable!(),
+            }
+        };
+        let chars: Vec<char> = s.chars().collect();
+        let start = n.min(chars.len());
+        return NanVal::heap_string(chars[start..].iter().collect()).0;
+    }
+    if vc.is_heap()
+        && let HeapObj::List(items) = unsafe { vc.as_heap_ref() }
+    {
+        let start = n.min(items.len());
+        let mut sliced = Vec::with_capacity(items.len() - start);
+        for v in &items[start..] {
+            v.clone_rc();
+            sliced.push(*v);
+        }
+        return NanVal::heap_list(sliced).0;
+    }
+    TAG_NIL
 }
 
 #[cfg(feature = "cranelift")]
