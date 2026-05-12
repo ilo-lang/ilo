@@ -317,6 +317,7 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("frq", &["list"], "map"),
     ("flat", &["list"], "list"),
     ("sum", &["list"], "n"),
+    ("cumsum", &["L n"], "L n"),
     ("avg", &["list"], "n"),
     ("fft", &["list"], "list"),
     ("ifft", &["list"], "list"),
@@ -1459,6 +1460,34 @@ fn builtin_check_args(
                 });
             }
             (Ty::Map(Box::new(Ty::Text), Box::new(Ty::Number)), errors)
+        }
+        "cumsum" => {
+            if let Some(arg) = arg_types.first() {
+                match arg {
+                    Ty::List(inner) => {
+                        if !compatible(inner, &Ty::Number) {
+                            errors.push(VerifyError {
+                                code: "ILO-T013",
+                                function: func_ctx.to_string(),
+                                message: format!("'cumsum' expects L n, got L {inner}"),
+                                hint: None,
+                                span,
+                                is_warning: false,
+                            });
+                        }
+                    }
+                    Ty::Unknown => {}
+                    other => errors.push(VerifyError {
+                        code: "ILO-T013",
+                        function: func_ctx.to_string(),
+                        message: format!("'cumsum' expects L n, got {other}"),
+                        hint: None,
+                        span,
+                        is_warning: false,
+                    }),
+                }
+            }
+            (Ty::List(Box::new(Ty::Number)), errors)
         }
         "flat" => {
             // flat xs:L (L a) → L a — flatten one level

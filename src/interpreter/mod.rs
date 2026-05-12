@@ -1981,6 +1981,34 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         }
         return Ok(Value::Number(total));
     }
+    if builtin == Some(Builtin::Cumsum) && args.len() == 1 {
+        let items = match &args[0] {
+            Value::List(l) => l,
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("cumsum: arg must be a list, got {:?}", other),
+                ));
+            }
+        };
+        let mut total = 0.0_f64;
+        let mut out: Vec<Value> = Vec::with_capacity(items.len());
+        for item in items {
+            match item {
+                Value::Number(n) => {
+                    total += n;
+                    out.push(Value::Number(total));
+                }
+                other => {
+                    return Err(RuntimeError::new(
+                        "ILO-R009",
+                        format!("cumsum: list elements must be numbers, got {:?}", other),
+                    ));
+                }
+            }
+        }
+        return Ok(Value::List(out));
+    }
     if builtin == Some(Builtin::Avg) && args.len() == 1 {
         let items = match &args[0] {
             Value::List(l) => l,
