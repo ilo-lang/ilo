@@ -1,0 +1,30 @@
+-- Closure-bind: HOFs (srt, map, flt, fld) accept an optional ctx arg
+-- that is passed to every invocation of the fn.
+--
+-- Pattern shown: sort symbols by an external priority lookup map.
+-- Without closure-bind, you'd have to zip the priority into each element
+-- (records of {sym, pri}) before sorting, then unzip after — recurring
+-- per-program tax that closure-bind removes.
+
+-- Key fn: takes element + ctx (the lookup map). Missing keys sort last.
+pri sym:t m:M t n>n;r=mget m sym;?r{n v:v;_:99999}
+
+-- 3-arg srt: srt key-fn ctx xs
+top pri-map:M t n syms:L t>L t;srt pri pri-map syms
+
+-- Build a small priority map and sort by it.
+main>L t;m=mset mmap "a" 2;m=mset m "b" 3;m=mset m "c" 1;top m ["a","b","c"]
+
+-- map closure-bind: enrich each symbol with its price via lookup
+look sym:t pm:M t n>n;r=mget pm sym;?r{n v:v;_:0}
+prices pm:M t n syms:L t>L n;map look pm syms
+
+prices-demo>L n;m=mset mmap "a" 10;m=mset m "b" 20;prices m ["a","b","a"]
+
+-- engine-skip: vm
+-- engine-skip: jit
+-- engine-skip: cranelift
+-- run: main
+-- out: [c, a, b]
+-- run: prices-demo
+-- out: [10, 20, 10]

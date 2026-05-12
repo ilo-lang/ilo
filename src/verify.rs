@@ -723,6 +723,42 @@ fn builtin_check_args(
             (Ty::Text, errors)
         }
         "srt" => {
+            if arg_types.len() == 3 {
+                // srt key-fn ctx xs — closure-bind variant: fn takes (elem, ctx)
+                if let Some(fn_ty) = arg_types.first()
+                    && !matches!(fn_ty, Ty::Fn(_, _) | Ty::Unknown)
+                {
+                    errors.push(VerifyError {
+                        code: "ILO-T013",
+                        function: func_ctx.to_string(),
+                        message: format!("'srt' key arg must be a function (F ...), got {fn_ty}"),
+                        hint: Some("pass a function name: srt key-fn ctx xs".to_string()),
+                        span,
+                        is_warning: false,
+                    });
+                }
+                // fn must accept 2 args
+                if let Some(Ty::Fn(params, _)) = arg_types.first()
+                    && params.len() != 2
+                {
+                    errors.push(VerifyError {
+                        code: "ILO-T013",
+                        function: func_ctx.to_string(),
+                        message: format!(
+                            "'srt' key fn must take 2 args (elem, ctx) for closure-bind variant, got {} args",
+                            params.len()
+                        ),
+                        hint: Some("for srt fn ctx xs, fn must be: F a c b".to_string()),
+                        span,
+                        is_warning: false,
+                    });
+                }
+                let ret = match arg_types.get(2) {
+                    Some(ty @ Ty::List(_)) => ty.clone(),
+                    _ => Ty::Unknown,
+                };
+                return (ret, errors);
+            }
             if arg_types.len() == 2 {
                 // srt key-fn xs — sort by key function
                 if let Some(fn_ty) = arg_types.first()
@@ -1000,7 +1036,7 @@ fn builtin_check_args(
         }
         "map" => {
             // map fn:F a b xs:L a → L b
-            // First arg must be a function type; second must be a list.
+            // map fn:F a c b ctx:c xs:L a → L b   (closure-bind variant)
             if let Some(fn_ty) = arg_types.first()
                 && !matches!(fn_ty, Ty::Fn(_, _) | Ty::Unknown)
             {
@@ -1009,6 +1045,23 @@ fn builtin_check_args(
                     function: func_ctx.to_string(),
                     message: format!("'map' first arg must be a function (F ...), got {fn_ty}"),
                     hint: Some("pass a function name: map sq xs".to_string()),
+                    span,
+                    is_warning: false,
+                });
+            }
+            // closure-bind: fn must take 2 args (elem, ctx)
+            if arg_types.len() == 3
+                && let Some(Ty::Fn(params, _)) = arg_types.first()
+                && params.len() != 2
+            {
+                errors.push(VerifyError {
+                    code: "ILO-T013",
+                    function: func_ctx.to_string(),
+                    message: format!(
+                        "'map' fn must take 2 args (elem, ctx) for closure-bind variant, got {} args",
+                        params.len()
+                    ),
+                    hint: Some("for map fn ctx xs, fn must be: F a c b".to_string()),
                     span,
                     is_warning: false,
                 });
@@ -1022,7 +1075,7 @@ fn builtin_check_args(
         }
         "flt" => {
             // flt fn:F a b xs:L a → L a
-            // First arg: function returning bool; second: list.
+            // flt fn:F a c b ctx:c xs:L a → L a   (closure-bind variant)
             if let Some(fn_ty) = arg_types.first()
                 && !matches!(fn_ty, Ty::Fn(_, _) | Ty::Unknown)
             {
@@ -1035,8 +1088,25 @@ fn builtin_check_args(
                     is_warning: false,
                 });
             }
-            // Return type: same list type as input
-            let ret = match arg_types.get(1) {
+            if arg_types.len() == 3
+                && let Some(Ty::Fn(params, _)) = arg_types.first()
+                && params.len() != 2
+            {
+                errors.push(VerifyError {
+                    code: "ILO-T013",
+                    function: func_ctx.to_string(),
+                    message: format!(
+                        "'flt' fn must take 2 args (elem, ctx) for closure-bind variant, got {} args",
+                        params.len()
+                    ),
+                    hint: Some("for flt fn ctx xs, fn must be: F a c b".to_string()),
+                    span,
+                    is_warning: false,
+                });
+            }
+            // Return type: same list type as input (last arg position)
+            let list_idx = if arg_types.len() == 3 { 2 } else { 1 };
+            let ret = match arg_types.get(list_idx) {
                 Some(ty @ Ty::List(_)) => ty.clone(),
                 _ => Ty::Unknown,
             };
@@ -1044,7 +1114,7 @@ fn builtin_check_args(
         }
         "fld" => {
             // fld fn:F a b b xs:L a init:b → b
-            // First arg: function; second: list; third: initial accumulator.
+            // fld fn:F a c b b ctx:c xs:L a init:b → b   (closure-bind variant)
             if let Some(fn_ty) = arg_types.first()
                 && !matches!(fn_ty, Ty::Fn(_, _) | Ty::Unknown)
             {
@@ -1057,8 +1127,25 @@ fn builtin_check_args(
                     is_warning: false,
                 });
             }
-            // Return type: accumulator type (third arg) or function return type
-            let ret = match arg_types.get(2) {
+            if arg_types.len() == 4
+                && let Some(Ty::Fn(params, _)) = arg_types.first()
+                && params.len() != 3
+            {
+                errors.push(VerifyError {
+                    code: "ILO-T013",
+                    function: func_ctx.to_string(),
+                    message: format!(
+                        "'fld' fn must take 3 args (acc, elem, ctx) for closure-bind variant, got {} args",
+                        params.len()
+                    ),
+                    hint: Some("for fld fn ctx xs init, fn must be: F b a c b".to_string()),
+                    span,
+                    is_warning: false,
+                });
+            }
+            // Return type: accumulator type (last arg) or function return type
+            let init_idx = if arg_types.len() == 4 { 3 } else { 2 };
+            let ret = match arg_types.get(init_idx) {
                 Some(ty) if !matches!(ty, Ty::Unknown) => ty.clone(),
                 _ => match arg_types.first() {
                     Some(Ty::Fn(_, ret)) => *ret.clone(),
@@ -1899,7 +1986,16 @@ impl VerifyContext {
                         builtin_arity(callee).expect("is_builtin guarantees arity exists");
                     let arity_ok = if callee == "rnd" {
                         args.is_empty() || args.len() == 2
-                    } else if callee == "srt" || callee == "rd" {
+                    } else if callee == "srt" {
+                        // srt xs / srt fn xs / srt fn ctx xs
+                        args.len() == 1 || args.len() == 2 || args.len() == 3
+                    } else if callee == "map" || callee == "flt" {
+                        // map fn xs / map fn ctx xs   (closure-bind variant)
+                        args.len() == 2 || args.len() == 3
+                    } else if callee == "fld" {
+                        // fld fn xs init / fld fn ctx xs init  (closure-bind variant)
+                        args.len() == 3 || args.len() == 4
+                    } else if callee == "rd" {
                         args.len() == 1 || args.len() == 2
                     } else if callee == "wr" {
                         args.len() == 2 || args.len() == 3
@@ -1915,7 +2011,13 @@ impl VerifyContext {
                     if !arity_ok {
                         let arity_desc = if callee == "rnd" {
                             "0 or 2".to_string()
-                        } else if callee == "srt" || callee == "rd" || callee == "get" {
+                        } else if callee == "srt" {
+                            "1, 2, or 3".to_string()
+                        } else if callee == "map" || callee == "flt" {
+                            "2 or 3".to_string()
+                        } else if callee == "fld" {
+                            "3 or 4".to_string()
+                        } else if callee == "rd" || callee == "get" {
                             "1 or 2".to_string()
                         } else if callee == "post" || callee == "wr" {
                             "2 or 3".to_string()
