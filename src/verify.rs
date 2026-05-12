@@ -281,6 +281,7 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("trm", &["t"], "t"),
     ("spl", &["t", "t"], "L t"),
     ("cat", &["L t", "t"], "t"),
+    ("zip", &["list", "list"], "list"),
     ("has", &["list_or_text", "any"], "b"),
     ("hd", &["list_or_text"], "any"),
     ("at", &["list_or_text", "n"], "any"),
@@ -616,6 +617,48 @@ fn builtin_check_args(
                 None => {}
             }
             (Ty::Unknown, errors)
+        }
+        "zip" => {
+            // zip xs ys — returns a list of 2-element pairs [[x,y],...].
+            // Truncates to the shorter list. Inner element type is the unification
+            // (or fallback to Unknown) of the two list element types.
+            let elem_a = match arg_types.first() {
+                Some(Ty::List(inner)) => Some((**inner).clone()),
+                Some(Ty::Unknown) | None => None,
+                Some(other) => {
+                    errors.push(VerifyError {
+                        code: "ILO-T013",
+                        function: func_ctx.to_string(),
+                        message: format!("'zip' arg 1 expects a list, got {other}"),
+                        hint: None,
+                        span,
+                        is_warning: false,
+                    });
+                    None
+                }
+            };
+            let elem_b = match arg_types.get(1) {
+                Some(Ty::List(inner)) => Some((**inner).clone()),
+                Some(Ty::Unknown) | None => None,
+                Some(other) => {
+                    errors.push(VerifyError {
+                        code: "ILO-T013",
+                        function: func_ctx.to_string(),
+                        message: format!("'zip' arg 2 expects a list, got {other}"),
+                        hint: None,
+                        span,
+                        is_warning: false,
+                    });
+                    None
+                }
+            };
+            let inner = match (elem_a, elem_b) {
+                (Some(a), Some(b)) if compatible(&a, &b) => a,
+                (Some(a), None) => a,
+                (None, Some(b)) => b,
+                _ => Ty::Unknown,
+            };
+            (Ty::List(Box::new(Ty::List(Box::new(inner)))), errors)
         }
         "tl" => {
             if let Some(arg) = arg_types.first() {
