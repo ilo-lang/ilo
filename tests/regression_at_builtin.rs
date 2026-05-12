@@ -165,55 +165,166 @@ fn at_out_of_range_cranelift() {
     );
 }
 
-// Negative index: tree/vm error, cranelift returns nil.
-const NEG_SRC: &str = "f>n;xs=[10,20,30];at xs -1";
+// Negative index: Python-style from-the-end indexing.
+// -1 = last element, -2 = second-to-last, etc.
+const NEG_LAST_SRC: &str = "f>n;xs=[10,20,30];at xs -1";
 
-#[test]
-fn at_negative_index_tree() {
-    let out = ilo()
-        .args([NEG_SRC, "--run-tree", "f"])
-        .output()
-        .expect("failed to run ilo");
-    assert!(
-        !out.status.success(),
-        "tree: expected error for at xs -1, got stdout={}",
-        String::from_utf8_lossy(&out.stdout)
-    );
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(
-        stderr.contains("non-negative") || stderr.contains("ILO-R009"),
-        "tree: expected non-negative/ILO-R009 error, got stderr={stderr}"
-    );
+fn check_neg_last(engine: &str) {
+    assert_eq!(run(engine, NEG_LAST_SRC, "f"), "30", "engine={engine}");
 }
 
 #[test]
-fn at_negative_index_vm() {
-    let out = ilo()
-        .args([NEG_SRC, "--run-vm", "f"])
-        .output()
-        .expect("failed to run ilo");
-    assert!(
-        !out.status.success(),
-        "vm: expected error for at xs -1, got stdout={}",
-        String::from_utf8_lossy(&out.stdout)
-    );
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(
-        stderr.contains("non-negative") || stderr.contains("at"),
-        "vm: expected non-negative/at error, got stderr={stderr}"
-    );
+fn at_negative_last_tree() {
+    check_neg_last("--run-tree");
+}
+
+#[test]
+fn at_negative_last_vm() {
+    check_neg_last("--run-vm");
 }
 
 #[test]
 #[cfg(feature = "cranelift")]
-fn at_negative_index_cranelift() {
+fn at_negative_last_cranelift() {
+    check_neg_last("--run-cranelift");
+}
+
+// -3 on a 3-element list reaches the first element.
+const NEG_FIRST_SRC: &str = "f>n;xs=[10,20,30];at xs -3";
+
+fn check_neg_first(engine: &str) {
+    assert_eq!(run(engine, NEG_FIRST_SRC, "f"), "10", "engine={engine}");
+}
+
+#[test]
+fn at_negative_first_tree() {
+    check_neg_first("--run-tree");
+}
+
+#[test]
+fn at_negative_first_vm() {
+    check_neg_first("--run-vm");
+}
+
+#[test]
+#[cfg(feature = "cranelift")]
+fn at_negative_first_cranelift() {
+    check_neg_first("--run-cranelift");
+}
+
+// Negative index on text: -1 yields the last character.
+const NEG_TEXT_SRC: &str = "f>t;xs=[\"a\",\"b\",\"c\"];at xs -1";
+
+fn check_neg_text(engine: &str) {
+    assert_eq!(run(engine, NEG_TEXT_SRC, "f"), "c", "engine={engine}");
+}
+
+#[test]
+fn at_negative_text_tree() {
+    check_neg_text("--run-tree");
+}
+
+#[test]
+fn at_negative_text_vm() {
+    check_neg_text("--run-vm");
+}
+
+#[test]
+#[cfg(feature = "cranelift")]
+fn at_negative_text_cranelift() {
+    check_neg_text("--run-cranelift");
+}
+
+// Out-of-range negative: -4 on a 3-element list errors (tree/vm); nil for cranelift.
+const NEG_OOR_SRC: &str = "f>n;xs=[10,20,30];at xs -4";
+
+fn check_neg_oor_error(engine: &str) {
     let out = ilo()
-        .args([NEG_SRC, "--run-cranelift", "f"])
+        .args([NEG_OOR_SRC, engine, "f"])
+        .output()
+        .expect("failed to run ilo");
+    assert!(
+        !out.status.success(),
+        "engine={engine}: expected runtime error for at xs -4, got stdout={}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("at") || stderr.contains("range") || stderr.contains("ILO-R009"),
+        "engine={engine}: expected at/range/ILO-R009 error, got stderr={stderr}"
+    );
+}
+
+#[test]
+fn at_negative_oor_tree() {
+    check_neg_oor_error("--run-tree");
+}
+
+#[test]
+fn at_negative_oor_vm() {
+    check_neg_oor_error("--run-vm");
+}
+
+#[test]
+#[cfg(feature = "cranelift")]
+fn at_negative_oor_cranelift() {
+    let out = ilo()
+        .args([NEG_OOR_SRC, "--run-cranelift", "f"])
         .output()
         .expect("failed to run ilo");
     assert!(
         out.status.success(),
-        "cranelift: expected success returning nil for at xs -1, got stderr={}",
+        "cranelift: expected success returning nil for at xs -4, got stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("nil"),
+        "cranelift: expected stdout to contain nil, got {stdout}"
+    );
+}
+
+// Non-integer negative index still errors (the integer guard is preserved).
+const NEG_FLOAT_SRC: &str = "f>n;xs=[10,20,30];at xs -0.5";
+
+fn check_neg_float_error(engine: &str) {
+    let out = ilo()
+        .args([NEG_FLOAT_SRC, engine, "f"])
+        .output()
+        .expect("failed to run ilo");
+    assert!(
+        !out.status.success(),
+        "engine={engine}: expected error for at xs -0.5, got stdout={}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("integer") || stderr.contains("ILO-R009") || stderr.contains("at"),
+        "engine={engine}: expected integer/at error, got stderr={stderr}"
+    );
+}
+
+#[test]
+fn at_negative_float_tree() {
+    check_neg_float_error("--run-tree");
+}
+
+#[test]
+fn at_negative_float_vm() {
+    check_neg_float_error("--run-vm");
+}
+
+// Cranelift JIT mirrors hd's behaviour: returns nil on non-integer index.
+#[test]
+#[cfg(feature = "cranelift")]
+fn at_negative_float_cranelift() {
+    let out = ilo()
+        .args([NEG_FLOAT_SRC, "--run-cranelift", "f"])
+        .output()
+        .expect("failed to run ilo");
+    assert!(
+        out.status.success(),
+        "cranelift: expected success returning nil for at xs -0.5, got stderr={}",
         String::from_utf8_lossy(&out.stderr)
     );
     let stdout = String::from_utf8_lossy(&out.stdout);

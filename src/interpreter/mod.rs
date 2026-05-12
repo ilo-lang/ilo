@@ -659,15 +659,15 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         };
     }
     if builtin == Some(Builtin::At) && args.len() == 2 {
-        let idx = match &args[1] {
+        let i = match &args[1] {
             Value::Number(n) => {
-                if *n < 0.0 || n.fract() != 0.0 {
+                if n.fract() != 0.0 {
                     return Err(RuntimeError::new(
                         "ILO-R009",
-                        "at: index must be a non-negative integer".to_string(),
+                        "at: index must be an integer".to_string(),
                     ));
                 }
-                *n as usize
+                *n as i64
             }
             other => {
                 return Err(RuntimeError::new(
@@ -678,30 +678,34 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         };
         return match &args[0] {
             Value::List(items) => {
-                if idx >= items.len() {
+                let len = items.len() as i64;
+                let adjusted = if i < 0 { i + len } else { i };
+                if adjusted < 0 || adjusted >= len {
                     Err(RuntimeError::new(
                         "ILO-R009",
                         format!(
-                            "at: index {idx} out of range for list of length {}",
+                            "at: index {i} out of range for list of length {}",
                             items.len()
                         ),
                     ))
                 } else {
-                    Ok(items[idx].clone())
+                    Ok(items[adjusted as usize].clone())
                 }
             }
             Value::Text(s) => {
                 let chars: Vec<char> = s.chars().collect();
-                if idx >= chars.len() {
+                let len = chars.len() as i64;
+                let adjusted = if i < 0 { i + len } else { i };
+                if adjusted < 0 || adjusted >= len {
                     Err(RuntimeError::new(
                         "ILO-R009",
                         format!(
-                            "at: index {idx} out of range for text of length {}",
+                            "at: index {i} out of range for text of length {}",
                             chars.len()
                         ),
                     ))
                 } else {
-                    Ok(Value::Text(chars[idx].to_string()))
+                    Ok(Value::Text(chars[adjusted as usize].to_string()))
                 }
             }
             other => Err(RuntimeError::new(
@@ -6993,5 +6997,52 @@ mod tests {
         let source = r#"f>O n;m=mset mmap "k" 5;v=mget! m "k";v"#;
         let result = run_str(source, Some("f"), vec![]);
         assert_eq!(result, Value::Number(5.0));
+    }
+
+    // ---- at xs i with negative indices (covers new interpreter arms) ----
+
+    #[test]
+    fn interp_at_list_negative_last() {
+        let source = "f>n;xs=[10,20,30];at xs -1";
+        let result = run_str(source, Some("f"), vec![]);
+        assert_eq!(result, Value::Number(30.0));
+    }
+
+    #[test]
+    fn interp_at_list_negative_first() {
+        let source = "f>n;xs=[10,20,30];at xs -3";
+        let result = run_str(source, Some("f"), vec![]);
+        assert_eq!(result, Value::Number(10.0));
+    }
+
+    #[test]
+    fn interp_at_text_negative_last() {
+        let source = r#"f>t;at "abc" -1"#;
+        let result = run_str(source, Some("f"), vec![]);
+        assert_eq!(result, Value::Text("c".to_string()));
+    }
+
+    #[test]
+    fn interp_at_list_negative_out_of_range() {
+        let prog = parse_program("f>n;xs=[10,20,30];at xs -4");
+        let err = run(&prog, Some("f"), vec![]).unwrap_err();
+        let msg = format!("{err:?}");
+        assert!(msg.contains("out of range"), "got {msg}");
+    }
+
+    #[test]
+    fn interp_at_text_negative_out_of_range() {
+        let prog = parse_program(r#"f>t;at "ab" -3"#);
+        let err = run(&prog, Some("f"), vec![]).unwrap_err();
+        let msg = format!("{err:?}");
+        assert!(msg.contains("out of range"), "got {msg}");
+    }
+
+    #[test]
+    fn interp_at_fractional_index_errors() {
+        let prog = parse_program("f>n;xs=[10,20,30];at xs 1.5");
+        let err = run(&prog, Some("f"), vec![]).unwrap_err();
+        let msg = format!("{err:?}");
+        assert!(msg.contains("integer"), "got {msg}");
     }
 }
