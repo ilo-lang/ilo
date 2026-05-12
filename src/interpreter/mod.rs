@@ -522,7 +522,16 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
     }
     if matches!(
         builtin,
-        Some(Builtin::Sqrt | Builtin::Log | Builtin::Exp | Builtin::Sin | Builtin::Cos)
+        Some(
+            Builtin::Sqrt
+                | Builtin::Log
+                | Builtin::Exp
+                | Builtin::Sin
+                | Builtin::Cos
+                | Builtin::Tan
+                | Builtin::Log10
+                | Builtin::Log2
+        )
     ) && args.len() == 1
     {
         return match &args[0] {
@@ -532,7 +541,10 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                     Some(Builtin::Log) => n.ln(),
                     Some(Builtin::Exp) => n.exp(),
                     Some(Builtin::Sin) => n.sin(),
-                    _ => n.cos(),
+                    Some(Builtin::Cos) => n.cos(),
+                    Some(Builtin::Tan) => n.tan(),
+                    Some(Builtin::Log10) => n.log10(),
+                    _ => n.log2(),
                 };
                 Ok(Value::Number(result))
             }
@@ -548,6 +560,15 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             _ => Err(RuntimeError::new(
                 "ILO-R009",
                 "pow requires two numbers".to_string(),
+            )),
+        };
+    }
+    if builtin == Some(Builtin::Atan2) && args.len() == 2 {
+        return match (&args[0], &args[1]) {
+            (Value::Number(y), Value::Number(x)) => Ok(Value::Number(y.atan2(*x))),
+            _ => Err(RuntimeError::new(
+                "ILO-R009",
+                "atan2 requires two numbers".to_string(),
             )),
         };
     }
