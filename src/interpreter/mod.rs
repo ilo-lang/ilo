@@ -819,7 +819,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             )),
         };
     }
-    if builtin == Some(Builtin::Srt) && args.len() == 2 {
+    if builtin == Some(Builtin::Srt) && (args.len() == 2 || args.len() == 3) {
         let fn_name = resolve_fn_ref(&args[0]).ok_or_else(|| {
             RuntimeError::new(
                 "ILO-R009",
@@ -829,12 +829,18 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 ),
             )
         })?;
-        let items = match &args[1] {
+        // closure-bind: srt fn ctx xs
+        let (ctx, list_arg) = if args.len() == 3 {
+            (Some(args[1].clone()), &args[2])
+        } else {
+            (None, &args[1])
+        };
+        let items = match list_arg {
             Value::List(l) => l.clone(),
             other => {
                 return Err(RuntimeError::new(
                     "ILO-R009",
-                    format!("srt: second arg must be a list, got {:?}", other),
+                    format!("srt: list arg must be a list, got {:?}", other),
                 ));
             }
         };
@@ -842,7 +848,11 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         let mut keyed: Vec<(Value, Value)> = items
             .into_iter()
             .map(|item| {
-                let key = call_function(env, &fn_name, vec![item.clone()])?;
+                let call_args = match &ctx {
+                    Some(c) => vec![item.clone(), c.clone()],
+                    None => vec![item.clone()],
+                };
+                let key = call_function(env, &fn_name, call_args)?;
                 Ok((key, item))
             })
             .collect::<Result<_>>()?;
@@ -1390,7 +1400,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             _ => None,
         }
     }
-    if builtin == Some(Builtin::Map) && args.len() == 2 {
+    if builtin == Some(Builtin::Map) && (args.len() == 2 || args.len() == 3) {
         let fn_name = resolve_fn_ref(&args[0]).ok_or_else(|| {
             RuntimeError::new(
                 "ILO-R009",
@@ -1400,22 +1410,32 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 ),
             )
         })?;
-        let items = match &args[1] {
+        // closure-bind: map fn ctx xs
+        let (ctx, list_arg) = if args.len() == 3 {
+            (Some(args[1].clone()), &args[2])
+        } else {
+            (None, &args[1])
+        };
+        let items = match list_arg {
             Value::List(l) => l.clone(),
             other => {
                 return Err(RuntimeError::new(
                     "ILO-R009",
-                    format!("map: second arg must be a list, got {:?}", other),
+                    format!("map: list arg must be a list, got {:?}", other),
                 ));
             }
         };
         let mut result = Vec::with_capacity(items.len());
         for item in items {
-            result.push(call_function(env, &fn_name, vec![item])?);
+            let call_args = match &ctx {
+                Some(c) => vec![item, c.clone()],
+                None => vec![item],
+            };
+            result.push(call_function(env, &fn_name, call_args)?);
         }
         return Ok(Value::List(result));
     }
-    if builtin == Some(Builtin::Flt) && args.len() == 2 {
+    if builtin == Some(Builtin::Flt) && (args.len() == 2 || args.len() == 3) {
         let fn_name = resolve_fn_ref(&args[0]).ok_or_else(|| {
             RuntimeError::new(
                 "ILO-R009",
@@ -1425,18 +1445,27 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 ),
             )
         })?;
-        let items = match &args[1] {
+        let (ctx, list_arg) = if args.len() == 3 {
+            (Some(args[1].clone()), &args[2])
+        } else {
+            (None, &args[1])
+        };
+        let items = match list_arg {
             Value::List(l) => l.clone(),
             other => {
                 return Err(RuntimeError::new(
                     "ILO-R009",
-                    format!("flt: second arg must be a list, got {:?}", other),
+                    format!("flt: list arg must be a list, got {:?}", other),
                 ));
             }
         };
         let mut result = Vec::new();
         for item in items {
-            match call_function(env, &fn_name, vec![item.clone()])? {
+            let call_args = match &ctx {
+                Some(c) => vec![item.clone(), c.clone()],
+                None => vec![item.clone()],
+            };
+            match call_function(env, &fn_name, call_args)? {
                 Value::Bool(true) => result.push(item),
                 Value::Bool(false) => {}
                 other => {
@@ -1449,7 +1478,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         }
         return Ok(Value::List(result));
     }
-    if builtin == Some(Builtin::Fld) && args.len() == 3 {
+    if builtin == Some(Builtin::Fld) && (args.len() == 3 || args.len() == 4) {
         let fn_name = resolve_fn_ref(&args[0]).ok_or_else(|| {
             RuntimeError::new(
                 "ILO-R009",
@@ -1459,18 +1488,28 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 ),
             )
         })?;
-        let items = match &args[1] {
+        // closure-bind: fld fn ctx xs init
+        let (ctx, list_arg, init) = if args.len() == 4 {
+            (Some(args[1].clone()), &args[2], args[3].clone())
+        } else {
+            (None, &args[1], args[2].clone())
+        };
+        let items = match list_arg {
             Value::List(l) => l.clone(),
             other => {
                 return Err(RuntimeError::new(
                     "ILO-R009",
-                    format!("fld: second arg must be a list, got {:?}", other),
+                    format!("fld: list arg must be a list, got {:?}", other),
                 ));
             }
         };
-        let mut acc = args[2].clone();
+        let mut acc = init;
         for item in items {
-            acc = call_function(env, &fn_name, vec![acc, item])?;
+            let call_args = match &ctx {
+                Some(c) => vec![acc, item, c.clone()],
+                None => vec![acc, item],
+            };
+            acc = call_function(env, &fn_name, call_args)?;
         }
         return Ok(acc);
     }
