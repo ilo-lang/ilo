@@ -1,0 +1,16 @@
+-- Normal-distribution sampling with `rndn mu sigma`.
+-- Box-Muller transform under the hood — each call returns one f64 sample
+-- from N(mu, sigma). Useful for Monte-Carlo, risk modelling, ML-prep noise.
+
+-- Sample 100 times from N(0, 1); return whether the empirical mean is
+-- within 5 standard errors of zero (tolerance 0.5). Stochastic but reliable.
+mc-mean-ok>b;s=0;@i 0..100{x=rndn 0 1;s=+s x};m=/s 100;a=abs m;<a 0.5
+
+-- Sample once from N(10, 2). 99.99% of samples lie within mu +/- 4 sigma,
+-- so checking the value falls in [2, 18] is safe.
+one-shot>b;x=rndn 10 2;r=?>x 2 1 0;u=?<x 18 1 0;t=*r u;=t 1
+
+-- run: mc-mean-ok
+-- out: true
+-- run: one-shot
+-- out: true

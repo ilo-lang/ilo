@@ -631,6 +631,13 @@ fn emit_expr(out: &mut String, level: usize, expr: &Expr) -> String {
                     emit_expr(out, level, &args[1])
                 );
             }
+            if function == "rndn" && args.len() == 2 {
+                return format!(
+                    "float(__import__('random').gauss({}, {}))",
+                    emit_expr(out, level, &args[0]),
+                    emit_expr(out, level, &args[1])
+                );
+            }
             if function == "flr" && args.len() == 1 {
                 return format!(
                     "float(__import__('math').floor({}))",

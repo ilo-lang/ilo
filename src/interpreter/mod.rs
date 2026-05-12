@@ -267,6 +267,24 @@ fn run_with_env(
 /// Grid formats ("csv", "tsv") → Ok(List of rows).
 /// Graph formats ("json")      → Ok(parsed JSON) or Err(parse error message).
 /// Raw/unknown                 → Ok(plain Text).
+/// Box-Muller transform: sample from N(mu, sigma) using two uniform [0,1) samples.
+/// Uses fastrand to mirror the rnd builtin's RNG.
+pub(crate) fn box_muller_normal(mu: f64, sigma: f64) -> f64 {
+    // sigma == 0: distribution is a point mass at mu. Short-circuit so we
+    // never hit 0 * inf = NaN when u1 underflows.
+    if sigma == 0.0 {
+        return mu;
+    }
+    // Avoid u1 == 0 so ln() is finite. fastrand::f64() is in [0, 1).
+    let mut u1 = fastrand::f64();
+    while u1 <= f64::MIN_POSITIVE {
+        u1 = fastrand::f64();
+    }
+    let u2 = fastrand::f64();
+    let z = (-2.0 * u1.ln()).sqrt() * (2.0 * std::f64::consts::PI * u2).cos();
+    mu + sigma * z
+}
+
 fn parse_format(fmt: &str, content: &str) -> std::result::Result<Value, String> {
     match fmt {
         "csv" | "tsv" => {
@@ -591,6 +609,17 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             .unwrap()
             .as_secs_f64();
         return Ok(Value::Number(ts));
+    }
+    if builtin == Some(Builtin::Rndn) && args.len() == 2 {
+        return match (&args[0], &args[1]) {
+            (Value::Number(mu), Value::Number(sigma)) => {
+                Ok(Value::Number(box_muller_normal(*mu, *sigma)))
+            }
+            _ => Err(RuntimeError::new(
+                "ILO-R009",
+                "rndn requires two numbers".to_string(),
+            )),
+        };
     }
     if builtin == Some(Builtin::Rnd) {
         if args.is_empty() {
@@ -8498,5 +8527,38 @@ mod tests {
             "got: {}",
             err.message
         );
+    }
+
+    // ---- box_muller_normal + Builtin::Rndn coverage ----
+
+    #[test]
+    fn box_muller_sigma_zero_returns_mu() {
+        // sigma == 0 short-circuit: must return exactly mu (no NaN, no jitter).
+        assert_eq!(box_muller_normal(5.0, 0.0), 5.0);
+        assert_eq!(box_muller_normal(-1.25, 0.0), -1.25);
+        assert_eq!(box_muller_normal(0.0, 0.0), 0.0);
+    }
+
+    #[test]
+    fn box_muller_finite_for_nonzero_sigma() {
+        fastrand::seed(42);
+        for _ in 0..200 {
+            let v = box_muller_normal(0.0, 1.0);
+            assert!(v.is_finite(), "got non-finite {v}");
+        }
+    }
+
+    #[test]
+    fn interp_rndn_sigma_zero_returns_mu() {
+        let source = "f>n;rndn 7 0";
+        let result = run_str(source, Some("f"), vec![]);
+        assert_eq!(result, Value::Number(7.0));
+    }
+
+    #[test]
+    fn interp_rndn_negative_mu_sigma_zero() {
+        let source = "f>n;rndn -3 0";
+        let result = run_str(source, Some("f"), vec![]);
+        assert_eq!(result, Value::Number(-3.0));
     }
 }
