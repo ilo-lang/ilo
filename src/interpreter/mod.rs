@@ -2178,6 +2178,231 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             .collect();
         return Ok(Value::Map(map));
     }
+    if builtin == Some(Builtin::Transpose) && args.len() == 1 {
+        let rows = match &args[0] {
+            Value::List(l) => l,
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("transpose: arg must be a list of lists, got {:?}", other),
+                ));
+            }
+        };
+        if rows.is_empty() {
+            return Ok(Value::List(vec![]));
+        }
+        let mut row_data: Vec<&Vec<Value>> = Vec::with_capacity(rows.len());
+        let mut ncols: Option<usize> = None;
+        for row in rows {
+            match row {
+                Value::List(r) => {
+                    match ncols {
+                        None => ncols = Some(r.len()),
+                        Some(n) if n != r.len() => {
+                            return Err(RuntimeError::new(
+                                "ILO-R009",
+                                format!(
+                                    "transpose: ragged rows (expected {n} cols, got {})",
+                                    r.len()
+                                ),
+                            ));
+                        }
+                        _ => {}
+                    }
+                    row_data.push(r);
+                }
+                other => {
+                    return Err(RuntimeError::new(
+                        "ILO-R009",
+                        format!("transpose: rows must be lists, got {:?}", other),
+                    ));
+                }
+            }
+        }
+        let ncols = ncols.unwrap_or(0);
+        let mut result: Vec<Value> = Vec::with_capacity(ncols);
+        for j in 0..ncols {
+            let mut col: Vec<Value> = Vec::with_capacity(row_data.len());
+            for r in &row_data {
+                col.push(r[j].clone());
+            }
+            result.push(Value::List(col));
+        }
+        return Ok(Value::List(result));
+    }
+    if builtin == Some(Builtin::Matmul) && args.len() == 2 {
+        let a_rows = match &args[0] {
+            Value::List(l) => l,
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("matmul: first arg must be a list of lists, got {:?}", other),
+                ));
+            }
+        };
+        let b_rows = match &args[1] {
+            Value::List(l) => l,
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!(
+                        "matmul: second arg must be a list of lists, got {:?}",
+                        other
+                    ),
+                ));
+            }
+        };
+        // Extract a as Vec<Vec<f64>>
+        let mut a: Vec<Vec<f64>> = Vec::with_capacity(a_rows.len());
+        let mut a_cols: Option<usize> = None;
+        for row in a_rows {
+            match row {
+                Value::List(r) => {
+                    match a_cols {
+                        None => a_cols = Some(r.len()),
+                        Some(n) if n != r.len() => {
+                            return Err(RuntimeError::new(
+                                "ILO-R009",
+                                format!(
+                                    "matmul: ragged rows in first arg (expected {n} cols, got {})",
+                                    r.len()
+                                ),
+                            ));
+                        }
+                        _ => {}
+                    }
+                    let mut nums = Vec::with_capacity(r.len());
+                    for v in r {
+                        match v {
+                            Value::Number(n) => nums.push(*n),
+                            other => {
+                                return Err(RuntimeError::new(
+                                    "ILO-R009",
+                                    format!("matmul: elements must be numbers, got {:?}", other),
+                                ));
+                            }
+                        }
+                    }
+                    a.push(nums);
+                }
+                other => {
+                    return Err(RuntimeError::new(
+                        "ILO-R009",
+                        format!("matmul: rows must be lists, got {:?}", other),
+                    ));
+                }
+            }
+        }
+        let mut b: Vec<Vec<f64>> = Vec::with_capacity(b_rows.len());
+        let mut b_cols: Option<usize> = None;
+        for row in b_rows {
+            match row {
+                Value::List(r) => {
+                    match b_cols {
+                        None => b_cols = Some(r.len()),
+                        Some(n) if n != r.len() => {
+                            return Err(RuntimeError::new(
+                                "ILO-R009",
+                                format!(
+                                    "matmul: ragged rows in second arg (expected {n} cols, got {})",
+                                    r.len()
+                                ),
+                            ));
+                        }
+                        _ => {}
+                    }
+                    let mut nums = Vec::with_capacity(r.len());
+                    for v in r {
+                        match v {
+                            Value::Number(n) => nums.push(*n),
+                            other => {
+                                return Err(RuntimeError::new(
+                                    "ILO-R009",
+                                    format!("matmul: elements must be numbers, got {:?}", other),
+                                ));
+                            }
+                        }
+                    }
+                    b.push(nums);
+                }
+                other => {
+                    return Err(RuntimeError::new(
+                        "ILO-R009",
+                        format!("matmul: rows must be lists, got {:?}", other),
+                    ));
+                }
+            }
+        }
+        let a_rows_n = a.len();
+        let a_cols_n = a_cols.unwrap_or(0);
+        let b_rows_n = b.len();
+        let b_cols_n = b_cols.unwrap_or(0);
+        if a_cols_n != b_rows_n {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!(
+                    "matmul: shape mismatch (a is {a_rows_n}x{a_cols_n}, b is {b_rows_n}x{b_cols_n})"
+                ),
+            ));
+        }
+        let mut out: Vec<Value> = Vec::with_capacity(a_rows_n);
+        #[allow(clippy::needless_range_loop)]
+        for i in 0..a_rows_n {
+            let mut row: Vec<Value> = Vec::with_capacity(b_cols_n);
+            for j in 0..b_cols_n {
+                let mut s = 0.0_f64;
+                for k in 0..a_cols_n {
+                    s += a[i][k] * b[k][j];
+                }
+                row.push(Value::Number(s));
+            }
+            out.push(Value::List(row));
+        }
+        return Ok(Value::List(out));
+    }
+    if builtin == Some(Builtin::Dot) && args.len() == 2 {
+        let xs = match &args[0] {
+            Value::List(l) => l,
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("dot: first arg must be a list, got {:?}", other),
+                ));
+            }
+        };
+        let ys = match &args[1] {
+            Value::List(l) => l,
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("dot: second arg must be a list, got {:?}", other),
+                ));
+            }
+        };
+        if xs.len() != ys.len() {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!(
+                    "dot: length mismatch (xs has {}, ys has {})",
+                    xs.len(),
+                    ys.len()
+                ),
+            ));
+        }
+        let mut total = 0.0_f64;
+        for (x, y) in xs.iter().zip(ys.iter()) {
+            match (x, y) {
+                (Value::Number(a), Value::Number(b)) => total += a * b,
+                _ => {
+                    return Err(RuntimeError::new(
+                        "ILO-R009",
+                        "dot: list elements must be numbers".to_string(),
+                    ));
+                }
+            }
+        }
+        return Ok(Value::Number(total));
+    }
     if builtin == Some(Builtin::Sum) && args.len() == 1 {
         let items = match &args[0] {
             Value::List(l) => l,

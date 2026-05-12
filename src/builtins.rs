@@ -39,6 +39,11 @@ pub enum Builtin {
     Fft,
     Ifft,
 
+    // Linear algebra
+    Transpose,
+    Matmul,
+    Dot,
+
     // Collections
     Len,
     Hd,
@@ -150,6 +155,9 @@ impl Builtin {
             "variance" => Some(Builtin::Variance),
             "fft" => Some(Builtin::Fft),
             "ifft" => Some(Builtin::Ifft),
+            "transpose" => Some(Builtin::Transpose),
+            "matmul" => Some(Builtin::Matmul),
+            "dot" => Some(Builtin::Dot),
             "len" => Some(Builtin::Len),
             "hd" => Some(Builtin::Hd),
             "at" => Some(Builtin::At),
@@ -247,6 +255,9 @@ impl Builtin {
             Builtin::Variance => "variance",
             Builtin::Fft => "fft",
             Builtin::Ifft => "ifft",
+            Builtin::Transpose => "transpose",
+            Builtin::Matmul => "matmul",
+            Builtin::Dot => "dot",
             Builtin::Len => "len",
             Builtin::Hd => "hd",
             Builtin::At => "at",
@@ -412,6 +423,9 @@ mod tests {
             "ifft",
             "window",
             "chunks",
+            "transpose",
+            "matmul",
+            "dot",
         ];
         for name in &all {
             let b = Builtin::from_name(name).unwrap_or_else(|| panic!("missing builtin: {name}"));
