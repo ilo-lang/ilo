@@ -244,6 +244,10 @@ pub(crate) const OP_TRANSPOSE: u8 = 123; // R[A] = transpose(R[B])  (L (L n) -> 
 pub(crate) const OP_MATMUL: u8 = 124; // R[A] = matmul(R[B], R[C])
 pub(crate) const OP_DOT: u8 = 125; // R[A] = dot(R[B], R[C])  (vector dot product -> n)
 
+// ABC mode — string padding
+pub(crate) const OP_PADL: u8 = 121; // R[A] = pad_left(R[B], R[C])  (text, width → text)
+pub(crate) const OP_PADR: u8 = 122; // R[A] = pad_right(R[B], R[C]) (text, width → text)
+
 // ABx mode — register + 16-bit operand
 pub(crate) const OP_LOADK: u8 = 20;
 pub(crate) const OP_JMP: u8 = 21;
@@ -2097,6 +2101,18 @@ impl RegCompiler {
                             let rb = self.compile_expr(&args[0]);
                             let ra = self.alloc_reg();
                             self.emit_abc(OP_CAP, ra, rb, 0);
+                            return ra;
+                        }
+                        (Builtin::Padl | Builtin::Padr, 2) => {
+                            let rb = self.compile_expr(&args[0]);
+                            let rc = self.compile_expr(&args[1]);
+                            let ra = self.alloc_reg();
+                            let op = if builtin == Builtin::Padl {
+                                OP_PADL
+                            } else {
+                                OP_PADR
+                            };
+                            self.emit_abc(op, ra, rb, rc);
                             return ra;
                         }
                         (Builtin::Unq, 1) => {
@@ -4344,6 +4360,44 @@ impl<'a> VM<'a> {
                         }
                     };
                     reg_set!(a, NanVal::heap_string(s));
+                }
+                OP_PADL | OP_PADR => {
+                    let op_byte = (inst >> 24) as u8;
+                    let a = ((inst >> 16) & 0xFF) as usize + base;
+                    let b = ((inst >> 8) & 0xFF) as usize + base;
+                    let c = (inst & 0xFF) as usize + base;
+                    let sv = reg!(b);
+                    let wv = reg!(c);
+                    if !sv.is_string() {
+                        vm_err!(VmError::Type("pad requires a string"));
+                    }
+                    if !wv.is_number() {
+                        vm_err!(VmError::Type("pad width must be a number"));
+                    }
+                    let wn = wv.as_number();
+                    if !wn.is_finite() || wn.fract() != 0.0 || wn < 0.0 {
+                        vm_err!(VmError::Type("pad width must be a non-negative integer"));
+                    }
+                    let w = wn as usize;
+                    // SAFETY: is_string() confirmed.
+                    let s = unsafe {
+                        match sv.as_heap_ref() {
+                            HeapObj::Str(s) => s.as_str().to_owned(),
+                            _ => unreachable!(),
+                        }
+                    };
+                    let cc = s.chars().count();
+                    let out = if cc >= w {
+                        s
+                    } else {
+                        let pad = " ".repeat(w - cc);
+                        if op_byte == OP_PADL {
+                            format!("{pad}{s}")
+                        } else {
+                            format!("{s}{pad}")
+                        }
+                    };
+                    reg_set!(a, NanVal::heap_string(out));
                 }
                 OP_UNQ => {
                     let a = ((inst >> 16) & 0xFF) as usize + base;
@@ -9956,6 +10010,50 @@ pub(crate) extern "C" fn jit_cap(v: u64) -> u64 {
         }
     };
     NanVal::heap_string(s).0
+}
+
+#[cfg(feature = "cranelift")]
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn jit_padl(sv: u64, wv: u64) -> u64 {
+    jit_pad_impl(sv, wv, true)
+}
+
+#[cfg(feature = "cranelift")]
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn jit_padr(sv: u64, wv: u64) -> u64 {
+    jit_pad_impl(sv, wv, false)
+}
+
+#[cfg(feature = "cranelift")]
+fn jit_pad_impl(sv: u64, wv: u64, left: bool) -> u64 {
+    let s_nv = NanVal(sv);
+    let w_nv = NanVal(wv);
+    if !s_nv.is_string() || !w_nv.is_number() {
+        return TAG_NIL;
+    }
+    let wn = w_nv.as_number();
+    if !wn.is_finite() || wn.fract() != 0.0 || wn < 0.0 {
+        return TAG_NIL;
+    }
+    let w = wn as usize;
+    let s = unsafe {
+        match s_nv.as_heap_ref() {
+            HeapObj::Str(s) => s.as_str().to_owned(),
+            _ => unreachable!(),
+        }
+    };
+    let cc = s.chars().count();
+    let out = if cc >= w {
+        s
+    } else {
+        let pad = " ".repeat(w - cc);
+        if left {
+            format!("{pad}{s}")
+        } else {
+            format!("{s}{pad}")
+        }
+    };
+    NanVal::heap_string(out).0
 }
 
 #[cfg(feature = "cranelift")]

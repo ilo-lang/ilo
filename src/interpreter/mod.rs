@@ -1492,6 +1492,56 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             )),
         };
     }
+    if (builtin == Some(Builtin::Padl) || builtin == Some(Builtin::Padr)) && args.len() == 2 {
+        let name = if builtin == Some(Builtin::Padl) {
+            "padl"
+        } else {
+            "padr"
+        };
+        let s = match &args[0] {
+            Value::Text(t) => t.clone(),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("{name} arg 1 requires text, got {:?}", other),
+                ));
+            }
+        };
+        let w = match &args[1] {
+            Value::Number(n) => {
+                if !n.is_finite() || n.fract() != 0.0 {
+                    return Err(RuntimeError::new(
+                        "ILO-R009",
+                        format!("{name} width must be a non-negative integer, got {n}"),
+                    ));
+                }
+                if *n < 0.0 {
+                    return Err(RuntimeError::new(
+                        "ILO-R009",
+                        format!("{name} width must be non-negative, got {n}"),
+                    ));
+                }
+                *n as usize
+            }
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("{name} arg 2 requires number, got {:?}", other),
+                ));
+            }
+        };
+        let char_count = s.chars().count();
+        if char_count >= w {
+            return Ok(Value::Text(s));
+        }
+        let pad = " ".repeat(w - char_count);
+        let out = if builtin == Some(Builtin::Padl) {
+            format!("{pad}{s}")
+        } else {
+            format!("{s}{pad}")
+        };
+        return Ok(Value::Text(out));
+    }
     if builtin == Some(Builtin::Unq) && args.len() == 1 {
         return match &args[0] {
             Value::List(xs) => {
