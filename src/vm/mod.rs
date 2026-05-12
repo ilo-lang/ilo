@@ -211,6 +211,8 @@ pub(crate) const OP_CLAMP: u8 = 149; // R[A] = clamp(R[B], R[C], R[D])  (lo in C
 // Numeric range — R[A] = range(R[B], R[C]) → L n of [B..C) (half-open, empty if B>=C).
 pub(crate) const OP_RANGE: u8 = 138;
 pub(crate) const OP_CHUNKS: u8 = 148; // R[A] = chunks(R[B], R[C])  (n, list → L (L a))
+// Running sum: R[A] = cumsum(R[B]). Input L n; output L n of same length.
+pub(crate) const OP_CUMSUM: u8 = 145; // R[A] = cumsum(R[B])
 // Higher-order: uniqby fn xs — pre-allocated, HOF dispatch not yet wired in VM.
 pub(crate) const OP_UNIQBY: u8 = 116; // R[A] = uniqby(R[B] (fn-ref), R[C] (list))
 // Higher-order: partition fn xs — pre-allocated, HOF dispatch not yet wired in VM.
@@ -1790,6 +1792,12 @@ impl RegCompiler {
                             self.emit_abc(OP_IFFT, ra, rb, 0);
                             return ra;
                         }
+                        (Builtin::Cumsum, 1) => {
+                            let rb = self.compile_expr(&args[0]);
+                            let ra = self.alloc_reg();
+                            self.emit_abc(OP_CUMSUM, ra, rb, 0);
+                            return ra;
+                        }
                         (Builtin::Slc, 3) => {
                             // slc list start end — two-instruction sequence:
                             //   OP_SLC   A=result  B=list  C=start
@@ -2592,7 +2600,7 @@ fn chunk_is_all_numeric(chunk: &Chunk) -> bool {
             | OP_POST | OP_POSTH | OP_RD | OP_RDL | OP_WR | OP_WRL | OP_MAPNEW | OP_MGET
             | OP_MSET | OP_MKEYS | OP_MVALS | OP_HD | OP_AT | OP_LST | OP_TL | OP_FMT2
             | OP_RGXSUB | OP_ZIP | OP_ENUMERATE | OP_WINDOW | OP_FFT | OP_IFFT | OP_RANGE
-            | OP_CHUNKS => {
+            | OP_CHUNKS | OP_CUMSUM => {
                 return false;
             }
             _ => {}
@@ -6121,6 +6129,36 @@ impl<'a> VM<'a> {
                         Err(msg) => vm_err!(VmError::Type(msg)),
                     }
                 }
+                OP_CUMSUM => {
+                    let a = ((inst >> 16) & 0xFF) as usize + base;
+                    let b = ((inst >> 8) & 0xFF) as usize + base;
+                    let v = reg!(b);
+                    let result = if v.is_heap() {
+                        match unsafe { v.as_heap_ref() } {
+                            HeapObj::List(items) => {
+                                let mut total = 0.0_f64;
+                                let mut out: Vec<NanVal> = Vec::with_capacity(items.len());
+                                let mut bad = false;
+                                for item in items {
+                                    if !item.is_number() {
+                                        bad = true;
+                                        break;
+                                    }
+                                    total += item.as_number();
+                                    out.push(NanVal::number(total));
+                                }
+                                if bad {
+                                    vm_err!(VmError::Type("cumsum: list elements must be numbers"));
+                                }
+                                NanVal::heap_list(out)
+                            }
+                            _ => vm_err!(VmError::Type("cumsum requires a list of numbers")),
+                        }
+                    } else {
+                        vm_err!(VmError::Type("cumsum requires a list of numbers"));
+                    };
+                    reg_set!(a, result);
+                }
                 OP_SLC => {
                     // Two-instruction sequence: OP_SLC A=result B=list C=start; data word A=end_reg
                     let a = ((inst >> 16) & 0xFF) as usize + base;
@@ -7927,6 +7965,27 @@ pub(crate) extern "C" fn jit_ifft(a: u64) -> u64 {
         Ok(v) => v.0,
         Err(_) => TAG_NIL,
     }
+}
+
+#[cfg(feature = "cranelift")]
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn jit_cumsum(a: u64) -> u64 {
+    let v = NanVal(a);
+    if v.is_heap()
+        && let HeapObj::List(items) = unsafe { v.as_heap_ref() }
+    {
+        let mut total = 0.0_f64;
+        let mut out: Vec<NanVal> = Vec::with_capacity(items.len());
+        for item in items {
+            if !item.is_number() {
+                return TAG_NIL;
+            }
+            total += item.as_number();
+            out.push(NanVal::number(total));
+        }
+        return NanVal::heap_list(out).0;
+    }
+    TAG_NIL
 }
 
 #[cfg(feature = "cranelift")]
