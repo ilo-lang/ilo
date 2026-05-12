@@ -71,6 +71,7 @@ pub enum Builtin {
     Fmt,
     Fmt2,
     Rgx,
+    Rgxsub,
 
     // JSON
     Jpth,
@@ -148,6 +149,7 @@ impl Builtin {
             "fmt" => Some(Builtin::Fmt),
             "fmt2" => Some(Builtin::Fmt2),
             "rgx" => Some(Builtin::Rgx),
+            "rgxsub" => Some(Builtin::Rgxsub),
             "jpth" => Some(Builtin::Jpth),
             "jdmp" => Some(Builtin::Jdmp),
             "jpar" => Some(Builtin::Jpar),
@@ -220,6 +222,7 @@ impl Builtin {
             Builtin::Fmt => "fmt",
             Builtin::Fmt2 => "fmt2",
             Builtin::Rgx => "rgx",
+            Builtin::Rgxsub => "rgxsub",
             Builtin::Jpth => "jpth",
             Builtin::Jdmp => "jdmp",
             Builtin::Jpar => "jpar",
@@ -252,8 +255,8 @@ mod tests {
             "exp", "sin", "cos", "tan", "log10", "log2", "atan2", "sum", "avg", "len", "hd", "at",
             "tl", "rev", "srt", "rsrt", "slc", "lst", "unq", "flat", "has", "spl", "cat", "map",
             "flt", "fld", "grp", "rnd", "now", "rd", "rdl", "rdb", "wr", "wrl", "prnt", "env",
-            "trm", "fmt", "fmt2", "rgx", "jpth", "jdmp", "jpar", "get", "post", "mmap", "mget",
-            "mset", "mhas", "mkeys", "mvals", "mdel",
+            "trm", "fmt", "fmt2", "rgx", "rgxsub", "jpth", "jdmp", "jpar", "get", "post", "mmap",
+            "mget", "mset", "mhas", "mkeys", "mvals", "mdel",
         ];
         for name in &all {
             let b = Builtin::from_name(name).unwrap_or_else(|| panic!("missing builtin: {name}"));

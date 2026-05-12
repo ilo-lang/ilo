@@ -310,6 +310,7 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("sum", &["list"], "n"),
     ("avg", &["list"], "n"),
     ("rgx", &["t", "t"], "L t"),
+    ("rgxsub", &["t", "t", "t"], "t"),
     // Map builtins (M k v type)
     ("mmap", &[], "map"),
     ("mget", &["map", "t"], "optional"),
@@ -1029,6 +1030,21 @@ fn builtin_check_args(
         }
         "jdmp" => {
             // jdmp accepts any value, no type checking needed
+            (Ty::Text, errors)
+        }
+        "rgxsub" => {
+            for (i, arg) in arg_types.iter().enumerate() {
+                if !compatible(arg, &Ty::Text) {
+                    errors.push(VerifyError {
+                        code: "ILO-T013",
+                        function: func_ctx.to_string(),
+                        message: format!("'rgxsub' arg {} expects t, got {arg}", i + 1),
+                        hint: None,
+                        span,
+                        is_warning: false,
+                    });
+                }
+            }
             (Ty::Text, errors)
         }
         "prnt" => {

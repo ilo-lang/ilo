@@ -1,0 +1,12 @@
+-- rgxsub pattern replacement subject: global regex replace, returns text.
+-- Supports backrefs $1, $2, in the replacement (Rust `regex` crate syntax).
+
+scrub-digits s:t>t;rgxsub "\d+" "X" s
+swap-pair s:t>t;rgxsub "(\w+)-(\w+)" "$2-$1" s
+
+-- run: scrub-digits a1b22c333
+-- out: aXbXcX
+-- run: swap-pair hello-world
+-- out: world-hello
+-- run: scrub-digits nodigits
+-- out: nodigits

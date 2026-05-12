@@ -79,6 +79,7 @@ struct HelperFuncs {
     srt: FuncId,
     rsrt: FuncId,
     slc: FuncId,
+    rgxsub: FuncId,
     listappend: FuncId,
     index: FuncId,
     recfld: FuncId,
@@ -203,6 +204,7 @@ fn declare_all_helpers(module: &mut ObjectModule) -> HelperFuncs {
         srt: declare_helper(module, "jit_srt", 1, 1),
         rsrt: declare_helper(module, "jit_rsrt", 1, 1),
         slc: declare_helper(module, "jit_slc", 3, 1),
+        rgxsub: declare_helper(module, "jit_rgxsub", 3, 1),
         listappend: declare_helper(module, "jit_listappend", 2, 1),
         index: declare_helper(module, "jit_index", 2, 1),
         recfld: declare_helper(module, "jit_recfld", 2, 1),
@@ -922,7 +924,7 @@ fn compile_function_body(
                 | OP_SPL | OP_CAT | OP_GET | OP_POST | OP_GETH | OP_POSTH | OP_ENV | OP_JPTH
                 | OP_JDMP | OP_JPAR | OP_MAPNEW | OP_MGET | OP_MSET | OP_MDEL | OP_MKEYS
                 | OP_MVALS | OP_LISTNEW | OP_LISTAPPEND | OP_RECNEW | OP_RECWITH | OP_PRT
-                | OP_RD | OP_RDL | OP_WR | OP_WRL | OP_TRM | OP_UNQ | OP_NUM => {
+                | OP_RD | OP_RDL | OP_WR | OP_WRL | OP_TRM | OP_UNQ | OP_NUM | OP_RGXSUB => {
                     non_num_write[a] = true;
                     non_bool_write[a] = true;
                 }
@@ -1942,6 +1944,19 @@ fn compile_function_body(
                 let d_idx = ((data_inst >> 16) & 0xFF) as usize;
                 let dv = builder.use_var(vars[d_idx]);
                 let fref = get_func_ref(&mut builder, module, helpers.slc);
+                let call_inst = builder.ins().call(fref, &[bv, cv, dv]);
+                let result = builder.inst_results(call_inst)[0];
+                builder.def_var(vars[a_idx], result);
+            }
+            OP_RGXSUB => {
+                // rgxsub(R[B]=pattern, R[C]=replacement, R[D]=subject) — D in data word A field
+                let bv = builder.use_var(vars[b_idx]);
+                let cv = builder.use_var(vars[c_idx]);
+                let data_inst = chunk.code[ip + 1];
+                skip_next = true;
+                let d_idx = ((data_inst >> 16) & 0xFF) as usize;
+                let dv = builder.use_var(vars[d_idx]);
+                let fref = get_func_ref(&mut builder, module, helpers.rgxsub);
                 let call_inst = builder.ins().call(fref, &[bv, cv, dv]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
