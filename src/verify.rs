@@ -350,6 +350,10 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("mkeys", &["map"], "L t"),
     ("mvals", &["map"], "list"),
     ("mdel", &["map", "t"], "map"),
+    // Linear algebra
+    ("solve", &["L (L n)", "L n"], "L n"),
+    ("inv", &["L (L n)"], "L (L n)"),
+    ("det", &["L (L n)"], "n"),
 ];
 
 fn builtin_arity(name: &str) -> Option<usize> {
@@ -1844,6 +1848,67 @@ fn builtin_check_args(
                         is_warning: false,
                     });
                 }
+            }
+            (Ty::Number, errors)
+        }
+        "solve" => {
+            let matrix_ty = Ty::List(Box::new(Ty::List(Box::new(Ty::Number))));
+            let vec_ty = Ty::List(Box::new(Ty::Number));
+            if let Some(arg) = arg_types.first()
+                && !compatible(arg, &matrix_ty)
+            {
+                errors.push(VerifyError {
+                    code: "ILO-T013",
+                    function: func_ctx.to_string(),
+                    message: format!("'solve' first arg expects L (L n), got {arg}"),
+                    hint: None,
+                    span,
+                    is_warning: false,
+                });
+            }
+            if let Some(arg) = arg_types.get(1)
+                && !compatible(arg, &vec_ty)
+            {
+                errors.push(VerifyError {
+                    code: "ILO-T013",
+                    function: func_ctx.to_string(),
+                    message: format!("'solve' second arg expects L n, got {arg}"),
+                    hint: None,
+                    span,
+                    is_warning: false,
+                });
+            }
+            (vec_ty, errors)
+        }
+        "inv" => {
+            let matrix_ty = Ty::List(Box::new(Ty::List(Box::new(Ty::Number))));
+            if let Some(arg) = arg_types.first()
+                && !compatible(arg, &matrix_ty)
+            {
+                errors.push(VerifyError {
+                    code: "ILO-T013",
+                    function: func_ctx.to_string(),
+                    message: format!("'inv' expects L (L n), got {arg}"),
+                    hint: None,
+                    span,
+                    is_warning: false,
+                });
+            }
+            (matrix_ty, errors)
+        }
+        "det" => {
+            let matrix_ty = Ty::List(Box::new(Ty::List(Box::new(Ty::Number))));
+            if let Some(arg) = arg_types.first()
+                && !compatible(arg, &matrix_ty)
+            {
+                errors.push(VerifyError {
+                    code: "ILO-T013",
+                    function: func_ctx.to_string(),
+                    message: format!("'det' expects L (L n), got {arg}"),
+                    hint: None,
+                    span,
+                    is_warning: false,
+                });
             }
             (Ty::Number, errors)
         }

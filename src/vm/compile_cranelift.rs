@@ -157,6 +157,10 @@ struct HelperFuncs {
     aot_set_registry: FuncId,
     aot_parse_arg: FuncId,
     string_const: FuncId,
+    // Linear algebra
+    solve: FuncId,
+    inv: FuncId,
+    det: FuncId,
 }
 
 fn declare_helper(
@@ -313,6 +317,10 @@ fn declare_all_helpers(module: &mut ObjectModule) -> HelperFuncs {
         aot_set_registry: declare_helper(module, "ilo_aot_set_registry", 2, 0),
         aot_parse_arg: declare_helper(module, "ilo_aot_parse_arg", 1, 1),
         string_const: declare_helper(module, "jit_string_const", 1, 1),
+        // Linear algebra
+        solve: declare_helper(module, "jit_solve", 2, 1),
+        inv: declare_helper(module, "jit_inv", 1, 1),
+        det: declare_helper(module, "jit_det", 1, 1),
     }
 }
 
@@ -960,7 +968,7 @@ fn compile_function_body(
                 | OP_MULK_N | OP_DIVK_N | OP_LEN | OP_ABS | OP_MIN | OP_MAX | OP_FLR | OP_CEL
                 | OP_ROU | OP_RND0 | OP_RND2 | OP_RNDN | OP_NOW | OP_MOD | OP_CLAMP | OP_POW
                 | OP_SQRT | OP_LOG | OP_EXP | OP_SIN | OP_COS | OP_TAN | OP_LOG10 | OP_LOG2
-                | OP_ATAN2 | OP_MEDIAN | OP_QUANTILE | OP_STDEV | OP_VARIANCE | OP_DOT => {
+                | OP_ATAN2 | OP_MEDIAN | OP_QUANTILE | OP_STDEV | OP_VARIANCE | OP_DOT | OP_DET => {
                     num_write[a] = true;
                 }
                 // LOADK: numeric only when the constant itself is a number.
@@ -991,7 +999,7 @@ fn compile_function_body(
                 | OP_UPR | OP_LWR | OP_CAP | OP_PADL | OP_PADR | OP_UNQ | OP_UNIQBY
                 | OP_PARTITION | OP_FRQ | OP_NUM | OP_RGXSUB | OP_ZIP | OP_ENUMERATE | OP_RANGE
                 | OP_WINDOW | OP_CHUNKS | OP_CUMSUM | OP_SETUNION | OP_SETINTER | OP_SETDIFF
-                | OP_FFT | OP_IFFT | OP_TRANSPOSE | OP_MATMUL => {
+                | OP_FFT | OP_IFFT | OP_TRANSPOSE | OP_MATMUL | OP_INV | OP_SOLVE => {
                     non_num_write[a] = true;
                     non_bool_write[a] = true;
                 }
@@ -1903,6 +1911,32 @@ fn compile_function_body(
                     let rf = builder.ins().bitcast(F64, mf, result);
                     builder.def_var(f64_vars[a_idx], rf);
                 }
+            }
+            OP_DET => {
+                let bv = builder.use_var(vars[b_idx]);
+                let fref = get_func_ref(&mut builder, module, helpers.det);
+                let call_inst = builder.ins().call(fref, &[bv]);
+                let result = builder.inst_results(call_inst)[0];
+                builder.def_var(vars[a_idx], result);
+                if a_idx < reg_count && reg_always_num[a_idx] {
+                    let rf = builder.ins().bitcast(F64, mf, result);
+                    builder.def_var(f64_vars[a_idx], rf);
+                }
+            }
+            OP_INV => {
+                let bv = builder.use_var(vars[b_idx]);
+                let fref = get_func_ref(&mut builder, module, helpers.inv);
+                let call_inst = builder.ins().call(fref, &[bv]);
+                let result = builder.inst_results(call_inst)[0];
+                builder.def_var(vars[a_idx], result);
+            }
+            OP_SOLVE => {
+                let bv = builder.use_var(vars[b_idx]);
+                let cv = builder.use_var(vars[c_idx]);
+                let fref = get_func_ref(&mut builder, module, helpers.solve);
+                let call_inst = builder.ins().call(fref, &[bv, cv]);
+                let result = builder.inst_results(call_inst)[0];
+                builder.def_var(vars[a_idx], result);
             }
             OP_SQRT | OP_LOG | OP_EXP | OP_SIN | OP_COS | OP_TAN | OP_LOG10 | OP_LOG2 => {
                 let bv = builder.use_var(vars[b_idx]);

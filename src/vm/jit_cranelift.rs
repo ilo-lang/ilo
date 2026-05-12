@@ -157,6 +157,10 @@ struct HelperFuncs {
     geth: FuncId,
     posth: FuncId,
     getmany: FuncId,
+    // Linear algebra
+    solve: FuncId,
+    inv: FuncId,
+    det: FuncId,
 }
 
 fn declare_helper(module: &mut JITModule, name: &str, n_params: usize, n_returns: usize) -> FuncId {
@@ -303,6 +307,9 @@ fn register_helpers(builder: &mut JITBuilder) {
         ("jit_geth", jit_geth as *const u8),
         ("jit_posth", jit_posth as *const u8),
         ("jit_getmany", jit_getmany as *const u8),
+        ("jit_solve", jit_solve as *const u8),
+        ("jit_inv", jit_inv as *const u8),
+        ("jit_det", jit_det as *const u8),
     ];
     for &(name, ptr) in helpers {
         builder.symbol(name, ptr);
@@ -440,6 +447,10 @@ fn declare_all_helpers(module: &mut JITModule) -> HelperFuncs {
         geth: declare_helper(module, "jit_geth", 2, 1),
         posth: declare_helper(module, "jit_posth", 3, 1),
         getmany: declare_helper(module, "jit_getmany", 1, 1),
+        // Linear algebra
+        solve: declare_helper(module, "jit_solve", 2, 1),
+        inv: declare_helper(module, "jit_inv", 1, 1),
+        det: declare_helper(module, "jit_det", 1, 1),
     }
 }
 
@@ -970,7 +981,7 @@ fn compile_function_body(
                 | OP_FLR | OP_CEL | OP_ROU | OP_RND0 | OP_RND2 | OP_RNDN | OP_NOW
                 | OP_MOD | OP_CLAMP | OP_POW | OP_SQRT | OP_LOG | OP_EXP | OP_SIN | OP_COS
                 | OP_TAN | OP_LOG10 | OP_LOG2 | OP_ATAN2
-                | OP_MEDIAN | OP_QUANTILE | OP_STDEV | OP_VARIANCE | OP_DOT => {
+                | OP_MEDIAN | OP_QUANTILE | OP_STDEV | OP_VARIANCE | OP_DOT | OP_DET => {
                     num_write[a] = true;
                 }
                 // LOADK: numeric only when the constant itself is a number.
@@ -1003,6 +1014,7 @@ fn compile_function_body(
                 | OP_SLC | OP_LST | OP_ZIP | OP_TAKE | OP_DROP | OP_ENUMERATE | OP_RANGE
                 | OP_WINDOW | OP_CHUNKS | OP_CUMSUM
                 | OP_SETUNION | OP_SETINTER | OP_SETDIFF
+                | OP_INV | OP_SOLVE
                 | OP_SPL | OP_CAT | OP_GET | OP_POST | OP_GETH | OP_POSTH | OP_GETMANY
                 | OP_ENV | OP_JPTH | OP_JDMP | OP_JPAR
                 | OP_MAPNEW | OP_MGET | OP_MSET | OP_MDEL | OP_MKEYS | OP_MVALS
@@ -1981,6 +1993,33 @@ fn compile_function_body(
                     let rf = builder.ins().bitcast(F64, mf, result);
                     builder.def_var(f64_vars[a_idx], rf);
                 }
+            }
+            OP_DET => {
+                let bv = builder.use_var(vars[b_idx]);
+                let fref = get_func_ref(&mut builder, module, helpers.det);
+                let call_inst = builder.ins().call(fref, &[bv]);
+                let result = builder.inst_results(call_inst)[0];
+                builder.def_var(vars[a_idx], result);
+                if a_idx < reg_count && reg_always_num[a_idx] {
+                    let mf = cranelift_codegen::ir::MemFlags::new();
+                    let rf = builder.ins().bitcast(F64, mf, result);
+                    builder.def_var(f64_vars[a_idx], rf);
+                }
+            }
+            OP_INV => {
+                let bv = builder.use_var(vars[b_idx]);
+                let fref = get_func_ref(&mut builder, module, helpers.inv);
+                let call_inst = builder.ins().call(fref, &[bv]);
+                let result = builder.inst_results(call_inst)[0];
+                builder.def_var(vars[a_idx], result);
+            }
+            OP_SOLVE => {
+                let bv = builder.use_var(vars[b_idx]);
+                let cv = builder.use_var(vars[c_idx]);
+                let fref = get_func_ref(&mut builder, module, helpers.solve);
+                let call_inst = builder.ins().call(fref, &[bv, cv]);
+                let result = builder.inst_results(call_inst)[0];
+                builder.def_var(vars[a_idx], result);
             }
             OP_SQRT | OP_LOG | OP_EXP | OP_SIN | OP_COS | OP_TAN | OP_LOG10 | OP_LOG2 => {
                 let bv = builder.use_var(vars[b_idx]);
