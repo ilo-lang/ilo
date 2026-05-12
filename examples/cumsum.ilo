@@ -3,7 +3,7 @@
 -- The classic trick: a window-k moving sum over xs can be computed in
 -- O(n) by taking differences of cumsum at offsets k apart. Dividing by k
 -- gives the moving average. Below we show the running-sum directly, and
--- a window-2 moving sum computed from `at cs i+1 - at cs i`.
+-- a window-2 moving sum computed from cumsum differences.
 
 -- Basic running sum
 running>L n;cumsum [1, 2, 3, 4]
@@ -13,13 +13,8 @@ empty>L n;cumsum []
 
 -- Window-2 moving sum via cumsum diff: pairs of adjacent xs summed.
 -- xs = [10, 20, 30, 40]; cumsum = [10, 30, 60, 100]
--- window-2 sums = [30, 50, 70] = [cs[1]-cs[-1], cs[2]-cs[0], cs[3]-cs[1]]
--- We emit the simpler cs[i]-cs[i-1] tail trick: cs[1..]-cs[..-1] = xs[1..].
--- For a true window-2 moving sum, see `pairsum` below.
-pairsum>L n
-  xs:L n=[10, 20, 30, 40]
-  cs:L n=cumsum xs
-  ;[at cs 1, (at cs 2) - (at cs 0), (at cs 3) - (at cs 1)]
+-- window-2 sums = [30, 50, 70] = [cs[1], cs[2]-cs[0], cs[3]-cs[1]]
+pairsum>L n;xs=[10, 20, 30, 40];cs=cumsum xs;a=at cs 1;b=-(at cs 2) (at cs 0);c=-(at cs 3) (at cs 1);[a, b, c]
 
 -- run: running
 -- out: [1, 3, 6, 10]
