@@ -1,0 +1,13 @@
+-- lst xs i v: return a new list with element at index i replaced by v.
+-- Value-semantics: the original list is unchanged. Out-of-range is a runtime
+-- error on tree/vm engines (cranelift returns the list unchanged).
+--
+-- This replaces user-space rebuild loops for "increment bin i" patterns that
+-- previously rebuilt the entire list on every update.
+
+hist samples:L n bins:L n>L n;@s samples{c=at bins s;bins=lst bins s +c 1};bins
+
+-- run: hist [0,2,1,2,3,1,2,0] [0,0,0,0]
+-- out: [2, 2, 3, 1]
+-- run: hist [1,1,1] [0,0]
+-- out: [0, 3]

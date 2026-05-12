@@ -290,6 +290,7 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("srt", &["fn", "list"], "list"),
     ("unq", &["list_or_text"], "list_or_text"),
     ("slc", &["list_or_text", "n", "n"], "list_or_text"),
+    ("lst", &["list", "n", "any"], "list"),
     ("rnd", &[], "n"),
     ("now", &[], "n"),
     ("env", &["t"], "R t t"),
@@ -562,6 +563,54 @@ fn builtin_check_args(
                         is_warning: false,
                     }),
                 }
+            }
+            (Ty::Unknown, errors)
+        }
+        "lst" => {
+            // lst xs i v — return new list with index i replaced by v.
+            // Type variable: list element type and value type must match.
+            if let Some(arg) = arg_types.get(1)
+                && !compatible(arg, &Ty::Number)
+            {
+                errors.push(VerifyError {
+                    code: "ILO-T013",
+                    function: func_ctx.to_string(),
+                    message: format!("'lst' index must be n, got {arg}"),
+                    hint: None,
+                    span,
+                    is_warning: false,
+                });
+            }
+            let list_ty = arg_types.first();
+            let val_ty = arg_types.get(2);
+            match list_ty {
+                Some(Ty::List(inner)) => {
+                    if let Some(v) = val_ty
+                        && !compatible(v, inner)
+                    {
+                        errors.push(VerifyError {
+                            code: "ILO-T013",
+                            function: func_ctx.to_string(),
+                            message: format!(
+                                "'lst' value type {v} does not match list element type {inner}"
+                            ),
+                            hint: None,
+                            span,
+                            is_warning: false,
+                        });
+                    }
+                    return (Ty::List(inner.clone()), errors);
+                }
+                Some(Ty::Unknown) => return (Ty::Unknown, errors),
+                Some(other) => errors.push(VerifyError {
+                    code: "ILO-T013",
+                    function: func_ctx.to_string(),
+                    message: format!("'lst' expects a list, got {other}"),
+                    hint: None,
+                    span,
+                    is_warning: false,
+                }),
+                None => {}
             }
             (Ty::Unknown, errors)
         }
@@ -6214,6 +6263,59 @@ mod tests {
                 .any(|e| e.code == "ILO-T025" && e.message.contains("not a Result or Optional")),
             "expected ILO-T025 with new wording, got: {:?}",
             errs
+        );
+    }
+
+    // ---- lst xs i v verify coverage ----
+
+    #[test]
+    fn verify_lst_happy_path() {
+        let code = "f>L n;lst [1,2,3] 1 99";
+        assert!(parse_and_verify(code).is_ok());
+    }
+
+    #[test]
+    fn verify_lst_index_must_be_number() {
+        let code = r#"f>L n;lst [1,2,3] "x" 99"#;
+        let result = parse_and_verify(code);
+        assert!(result.is_err());
+        let errors = result.unwrap_err();
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.message.contains("'lst' index must be n")),
+            "errors: {:?}",
+            errors
+        );
+    }
+
+    #[test]
+    fn verify_lst_value_type_mismatch() {
+        let code = r#"f>L n;lst [1,2,3] 1 "x""#;
+        let result = parse_and_verify(code);
+        assert!(result.is_err());
+        let errors = result.unwrap_err();
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.message.contains("does not match list element type")),
+            "errors: {:?}",
+            errors
+        );
+    }
+
+    #[test]
+    fn verify_lst_first_arg_must_be_list() {
+        let code = r#"f>L n;lst "abc" 1 99"#;
+        let result = parse_and_verify(code);
+        assert!(result.is_err());
+        let errors = result.unwrap_err();
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.message.contains("'lst' expects a list")),
+            "errors: {:?}",
+            errors
         );
     }
 }

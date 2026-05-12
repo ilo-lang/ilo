@@ -735,6 +735,46 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             )),
         };
     }
+    if builtin == Some(Builtin::Lst) && args.len() == 3 {
+        let idx = match &args[1] {
+            Value::Number(n) => {
+                if *n < 0.0 || n.fract() != 0.0 {
+                    return Err(RuntimeError::new(
+                        "ILO-R009",
+                        "lst: index must be a non-negative integer".to_string(),
+                    ));
+                }
+                *n as usize
+            }
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("lst: index must be a number, got {:?}", other),
+                ));
+            }
+        };
+        return match &args[0] {
+            Value::List(items) => {
+                if idx >= items.len() {
+                    Err(RuntimeError::new(
+                        "ILO-R009",
+                        format!(
+                            "lst: index {idx} out of range for list of length {}",
+                            items.len()
+                        ),
+                    ))
+                } else {
+                    let mut new_items = items.clone();
+                    new_items[idx] = args[2].clone();
+                    Ok(Value::List(new_items))
+                }
+            }
+            other => Err(RuntimeError::new(
+                "ILO-R009",
+                format!("lst requires a list, got {:?}", other),
+            )),
+        };
+    }
     if builtin == Some(Builtin::Tl) && args.len() == 1 {
         return match &args[0] {
             Value::List(items) => {
@@ -7065,5 +7105,57 @@ mod tests {
         let err = run(&prog, Some("f"), vec![]).unwrap_err();
         let msg = format!("{err:?}");
         assert!(msg.contains("integer"), "got {msg}");
+    }
+
+    // ---- lst xs i v: replace element at index, returning a new list ----
+
+    #[test]
+    fn interp_lst_happy() {
+        let source = "f>L n;lst [10,20,30] 1 99";
+        let result = run_str(source, Some("f"), vec![]);
+        assert_eq!(
+            result,
+            Value::List(vec![
+                Value::Number(10.0),
+                Value::Number(99.0),
+                Value::Number(30.0),
+            ])
+        );
+    }
+
+    #[test]
+    fn interp_lst_first_index() {
+        let source = "f>L n;lst [10,20,30] 0 7";
+        let result = run_str(source, Some("f"), vec![]);
+        assert_eq!(
+            result,
+            Value::List(vec![
+                Value::Number(7.0),
+                Value::Number(20.0),
+                Value::Number(30.0),
+            ])
+        );
+    }
+
+    #[test]
+    fn interp_lst_out_of_range_errors() {
+        let prog = parse_program("f>L n;lst [1,2,3] 5 0");
+        let err = run(&prog, Some("f"), vec![]).unwrap_err();
+        assert!(format!("{err:?}").contains("out of range"));
+    }
+
+    #[test]
+    fn interp_lst_negative_index_errors() {
+        let prog = parse_program("f>L n;lst [1,2,3] -1 0");
+        let err = run(&prog, Some("f"), vec![]).unwrap_err();
+        let msg = format!("{err:?}");
+        assert!(msg.contains("non-negative integer"), "got {msg}");
+    }
+
+    #[test]
+    fn interp_lst_fractional_index_errors() {
+        let prog = parse_program("f>L n;lst [1,2,3] 1.5 0");
+        let err = run(&prog, Some("f"), vec![]).unwrap_err();
+        assert!(format!("{err:?}").contains("non-negative integer"));
     }
 }

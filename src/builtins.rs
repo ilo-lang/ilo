@@ -39,6 +39,7 @@ pub enum Builtin {
     Rev,
     Srt,
     Slc,
+    Lst,
     Unq,
     Flat,
     Has,
@@ -121,6 +122,7 @@ impl Builtin {
             "rev" => Some(Builtin::Rev),
             "srt" => Some(Builtin::Srt),
             "slc" => Some(Builtin::Slc),
+            "lst" => Some(Builtin::Lst),
             "unq" => Some(Builtin::Unq),
             "flat" => Some(Builtin::Flat),
             "has" => Some(Builtin::Has),
@@ -190,6 +192,7 @@ impl Builtin {
             Builtin::Rev => "rev",
             Builtin::Srt => "srt",
             Builtin::Slc => "slc",
+            Builtin::Lst => "lst",
             Builtin::Unq => "unq",
             Builtin::Flat => "flat",
             Builtin::Has => "has",
@@ -241,10 +244,10 @@ mod tests {
         let all = [
             "str", "num", "abs", "flr", "cel", "rou", "min", "max", "mod", "pow", "sqrt", "log",
             "exp", "sin", "cos", "tan", "log10", "log2", "atan2", "sum", "avg", "len", "hd", "at",
-            "tl", "rev", "srt", "slc", "unq", "flat", "has", "spl", "cat", "map", "flt", "fld",
-            "grp", "rnd", "now", "rd", "rdl", "rdb", "wr", "wrl", "prnt", "env", "trm", "fmt",
-            "rgx", "jpth", "jdmp", "jpar", "get", "post", "mmap", "mget", "mset", "mhas", "mkeys",
-            "mvals", "mdel",
+            "tl", "rev", "srt", "slc", "lst", "unq", "flat", "has", "spl", "cat", "map", "flt",
+            "fld", "grp", "rnd", "now", "rd", "rdl", "rdb", "wr", "wrl", "prnt", "env", "trm",
+            "fmt", "rgx", "jpth", "jdmp", "jpar", "get", "post", "mmap", "mget", "mset", "mhas",
+            "mkeys", "mvals", "mdel",
         ];
         for name in &all {
             let b = Builtin::from_name(name).unwrap_or_else(|| panic!("missing builtin: {name}"));

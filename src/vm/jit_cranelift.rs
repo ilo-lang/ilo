@@ -83,6 +83,7 @@ struct HelperFuncs {
     rev: FuncId,
     srt: FuncId,
     slc: FuncId,
+    lst: FuncId,
     listappend: FuncId,
     index: FuncId,
     recfld: FuncId,
@@ -194,6 +195,7 @@ fn register_helpers(builder: &mut JITBuilder) {
         ("jit_rev", jit_rev as *const u8),
         ("jit_srt", jit_srt as *const u8),
         ("jit_slc", jit_slc as *const u8),
+        ("jit_lst", jit_lst as *const u8),
         ("jit_listappend", jit_listappend as *const u8),
         ("jit_index", jit_index as *const u8),
         ("jit_recfld", jit_recfld as *const u8),
@@ -296,6 +298,7 @@ fn declare_all_helpers(module: &mut JITModule) -> HelperFuncs {
         rev: declare_helper(module, "jit_rev", 1, 1),
         srt: declare_helper(module, "jit_srt", 1, 1),
         slc: declare_helper(module, "jit_slc", 3, 1),
+        lst: declare_helper(module, "jit_lst", 3, 1),
         listappend: declare_helper(module, "jit_listappend", 2, 1),
         index: declare_helper(module, "jit_index", 2, 1),
         recfld: declare_helper(module, "jit_recfld", 2, 1),
@@ -892,7 +895,7 @@ fn compile_function_body(
                 | OP_NEG
                 | OP_WRAPOK | OP_WRAPERR | OP_UNWRAP
                 | OP_RECFLD | OP_RECFLD_NAME | OP_LISTGET | OP_INDEX
-                | OP_STR | OP_HD | OP_AT | OP_TL | OP_REV | OP_SRT | OP_SLC
+                | OP_STR | OP_HD | OP_AT | OP_TL | OP_REV | OP_SRT | OP_SLC | OP_LST
                 | OP_SPL | OP_CAT | OP_GET | OP_POST | OP_GETH | OP_POSTH
                 | OP_ENV | OP_JPTH | OP_JDMP | OP_JPAR
                 | OP_MAPNEW | OP_MGET | OP_MSET | OP_MDEL | OP_MKEYS | OP_MVALS
@@ -1965,6 +1968,19 @@ fn compile_function_body(
                 let d_idx = ((data_inst >> 16) & 0xFF) as usize;
                 let dv = builder.use_var(vars[d_idx]);
                 let fref = get_func_ref(&mut builder, module, helpers.slc);
+                let call_inst = builder.ins().call(fref, &[bv, cv, dv]);
+                let result = builder.inst_results(call_inst)[0];
+                builder.def_var(vars[a_idx], result);
+            }
+            OP_LST => {
+                // lst(R[B], R[C], R[D]) — D in data word A field
+                let bv = builder.use_var(vars[b_idx]);
+                let cv = builder.use_var(vars[c_idx]);
+                let data_inst = chunk.code[ip + 1];
+                skip_next = true;
+                let d_idx = ((data_inst >> 16) & 0xFF) as usize;
+                let dv = builder.use_var(vars[d_idx]);
+                let fref = get_func_ref(&mut builder, module, helpers.lst);
                 let call_inst = builder.ins().call(fref, &[bv, cv, dv]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
