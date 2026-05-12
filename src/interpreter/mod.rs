@@ -1849,6 +1849,106 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         }
         return Ok(Value::List(result));
     }
+    if builtin == Some(Builtin::Fft) && args.len() == 1 {
+        let items = match &args[0] {
+            Value::List(l) => l,
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("fft: arg must be a list of numbers, got {:?}", other),
+                ));
+            }
+        };
+        if items.is_empty() {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                "fft: input list must not be empty".to_string(),
+            ));
+        }
+        let mut reals: Vec<f64> = Vec::with_capacity(items.len());
+        for item in items {
+            match item {
+                Value::Number(n) => reals.push(*n),
+                other => {
+                    return Err(RuntimeError::new(
+                        "ILO-R009",
+                        format!("fft: list elements must be numbers, got {:?}", other),
+                    ));
+                }
+            }
+        }
+        let n = next_pow2(reals.len());
+        let mut re = reals;
+        re.resize(n, 0.0);
+        let mut im = vec![0.0_f64; n];
+        cooley_tukey(&mut re, &mut im, false);
+        let result: Vec<Value> = re
+            .into_iter()
+            .zip(im)
+            .map(|(r, i)| Value::List(vec![Value::Number(r), Value::Number(i)]))
+            .collect();
+        return Ok(Value::List(result));
+    }
+    if builtin == Some(Builtin::Ifft) && args.len() == 1 {
+        let items = match &args[0] {
+            Value::List(l) => l,
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("ifft: arg must be a list of pairs, got {:?}", other),
+                ));
+            }
+        };
+        if items.is_empty() {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                "ifft: input list must not be empty".to_string(),
+            ));
+        }
+        let mut re: Vec<f64> = Vec::with_capacity(items.len());
+        let mut im: Vec<f64> = Vec::with_capacity(items.len());
+        for item in items {
+            match item {
+                Value::List(pair) if pair.len() == 2 => {
+                    let r = match &pair[0] {
+                        Value::Number(n) => *n,
+                        _ => {
+                            return Err(RuntimeError::new(
+                                "ILO-R009",
+                                "ifft: pair elements must be numbers".to_string(),
+                            ));
+                        }
+                    };
+                    let i = match &pair[1] {
+                        Value::Number(n) => *n,
+                        _ => {
+                            return Err(RuntimeError::new(
+                                "ILO-R009",
+                                "ifft: pair elements must be numbers".to_string(),
+                            ));
+                        }
+                    };
+                    re.push(r);
+                    im.push(i);
+                }
+                other => {
+                    return Err(RuntimeError::new(
+                        "ILO-R009",
+                        format!(
+                            "ifft: each element must be a [real, imag] pair, got {:?}",
+                            other
+                        ),
+                    ));
+                }
+            }
+        }
+        let n = next_pow2(re.len());
+        re.resize(n, 0.0);
+        im.resize(n, 0.0);
+        cooley_tukey(&mut re, &mut im, true);
+        let result: Vec<Value> = re.into_iter().map(Value::Number).collect();
+        return Ok(Value::List(result));
+    }
 
     // Dynamic dispatch: callee resolved to a FnRef at runtime
     // (e.g. calling a function passed as a parameter: `fn x` where fn:F n n)
@@ -2563,6 +2663,86 @@ fn match_pattern(pattern: &Pattern, value: &Value) -> Option<Vec<(String, Value)
             } else {
                 None
             }
+        }
+    }
+}
+
+/// Smallest power of 2 >= n. Used to zero-pad FFT input.
+fn next_pow2(n: usize) -> usize {
+    if n <= 1 {
+        return 1;
+    }
+    let mut p = 1usize;
+    while p < n {
+        p <<= 1;
+    }
+    p
+}
+
+/// In-place iterative Cooley-Tukey radix-2 FFT.
+/// `re.len() == im.len()` and must be a power of 2.
+/// If `inverse` is true, applies the inverse transform (divides by N at the end).
+pub(crate) fn cooley_tukey(re: &mut [f64], im: &mut [f64], inverse: bool) {
+    let n = re.len();
+    debug_assert_eq!(n, im.len());
+    if n <= 1 {
+        return;
+    }
+    debug_assert!(n.is_power_of_two());
+
+    // Bit-reversal permutation.
+    let mut j = 0usize;
+    for i in 1..n {
+        let mut bit = n >> 1;
+        while j & bit != 0 {
+            j ^= bit;
+            bit >>= 1;
+        }
+        j ^= bit;
+        if i < j {
+            re.swap(i, j);
+            im.swap(i, j);
+        }
+    }
+
+    // Butterfly stages.
+    let sign: f64 = if inverse { 1.0 } else { -1.0 };
+    let mut len = 2usize;
+    while len <= n {
+        let half = len / 2;
+        let theta = sign * 2.0 * std::f64::consts::PI / (len as f64);
+        let w_re = theta.cos();
+        let w_im = theta.sin();
+        let mut i = 0usize;
+        while i < n {
+            let mut cur_re = 1.0_f64;
+            let mut cur_im = 0.0_f64;
+            for k in 0..half {
+                let a_re = re[i + k];
+                let a_im = im[i + k];
+                let b_re = re[i + k + half] * cur_re - im[i + k + half] * cur_im;
+                let b_im = re[i + k + half] * cur_im + im[i + k + half] * cur_re;
+                re[i + k] = a_re + b_re;
+                im[i + k] = a_im + b_im;
+                re[i + k + half] = a_re - b_re;
+                im[i + k + half] = a_im - b_im;
+                let new_re = cur_re * w_re - cur_im * w_im;
+                let new_im = cur_re * w_im + cur_im * w_re;
+                cur_re = new_re;
+                cur_im = new_im;
+            }
+            i += len;
+        }
+        len <<= 1;
+    }
+
+    if inverse {
+        let scale = 1.0 / (n as f64);
+        for x in re.iter_mut() {
+            *x *= scale;
+        }
+        for x in im.iter_mut() {
+            *x *= scale;
         }
     }
 }

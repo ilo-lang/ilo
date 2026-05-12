@@ -1,0 +1,28 @@
+-- Discrete Fourier transform builtins: `fft` and `ifft`.
+--
+-- Implementation: iterative Cooley-Tukey radix-2. Inputs are zero-padded
+-- to the next power of two internally, so the number of output bins is
+-- that padded size, not the raw input size.
+--
+-- fft xs:L n > L (L n)   -- list of real samples, returns [real, imag] pairs
+-- ifft pairs:L (L n) > L n   -- inverse: pairs back to reals (imag dropped)
+
+-- DC impulse: every bin has the same magnitude (1, 0) when only the
+-- first sample is nonzero.
+dc-spectrum>L (L n);fft [1, 0, 0, 0]
+
+-- Round-trip through the inverse transform recovers the original samples
+-- (within FP noise; we use a power-of-two input so no zero padding is
+-- added).
+roundtrip>L n;ifft (fft [1, 2, 3, 4])
+
+-- Non-power-of-two input gets zero-padded to length 4 internally, so the
+-- recovered list has a trailing 0.0.
+padded>L n;ifft (fft [1, 2, 3])
+
+-- run: dc-spectrum
+-- out: [[1, 0], [1, 0], [1, 0], [1, 0]]
+-- run: roundtrip
+-- out: [1, 2, 3, 4]
+-- run: padded
+-- out: [1, 2, 3, 0]

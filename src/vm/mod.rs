@@ -200,6 +200,12 @@ pub(crate) const OP_ZIP: u8 = 111; // R[A] = zip(R[B], R[C])  (list of [x,y] pai
 // ABC mode — text formatting
 pub(crate) const OP_FMT2: u8 = 104; // R[A] = fmt2(R[B], R[C])  (format number to N decimal places → t)
 
+// Discrete Fourier transforms (Cooley-Tukey radix-2; input is zero-padded
+// internally to the next power of two). Output of OP_FFT is a `L (L n)` list
+// of `[real, imag]` pairs; OP_IFFT takes the same shape and returns `L n`.
+pub(crate) const OP_FFT: u8 = 129; // R[A] = fft(R[B])
+pub(crate) const OP_IFFT: u8 = 130; // R[A] = ifft(R[B])
+
 // ABx mode — register + 16-bit operand
 pub(crate) const OP_LOADK: u8 = 20;
 pub(crate) const OP_JMP: u8 = 21;
@@ -1720,6 +1726,18 @@ impl RegCompiler {
                             self.emit_abc(OP_SRTDESC, ra, rb, 0);
                             return ra;
                         }
+                        (Builtin::Fft, 1) => {
+                            let rb = self.compile_expr(&args[0]);
+                            let ra = self.alloc_reg();
+                            self.emit_abc(OP_FFT, ra, rb, 0);
+                            return ra;
+                        }
+                        (Builtin::Ifft, 1) => {
+                            let rb = self.compile_expr(&args[0]);
+                            let ra = self.alloc_reg();
+                            self.emit_abc(OP_IFFT, ra, rb, 0);
+                            return ra;
+                        }
                         (Builtin::Slc, 3) => {
                             // slc list start end — two-instruction sequence:
                             //   OP_SLC   A=result  B=list  C=start
@@ -2514,7 +2532,7 @@ fn chunk_is_all_numeric(chunk: &Chunk) -> bool {
             | OP_SPL | OP_REV | OP_SRT | OP_SRTDESC | OP_SLC | OP_UNQ | OP_LISTAPPEND | OP_JPAR
             | OP_JDMP | OP_ENV | OP_GET | OP_GETH | OP_POST | OP_POSTH | OP_RD | OP_RDL | OP_WR
             | OP_WRL | OP_MAPNEW | OP_MGET | OP_MSET | OP_MKEYS | OP_MVALS | OP_HD | OP_AT
-            | OP_LST | OP_TL | OP_FMT2 | OP_RGXSUB | OP_ZIP => {
+            | OP_LST | OP_TL | OP_FMT2 | OP_RGXSUB | OP_ZIP | OP_FFT | OP_IFFT => {
                 return false;
             }
             _ => {}
@@ -5884,6 +5902,24 @@ impl<'a> VM<'a> {
                         vm_err!(VmError::Type("rsrt requires a list or text"));
                     }
                 }
+                OP_FFT => {
+                    let a = ((inst >> 16) & 0xFF) as usize + base;
+                    let b = ((inst >> 8) & 0xFF) as usize + base;
+                    let v = reg!(b);
+                    match vm_fft_real_to_pairs(v) {
+                        Ok(out) => reg_set!(a, out),
+                        Err(msg) => vm_err!(VmError::Type(msg)),
+                    }
+                }
+                OP_IFFT => {
+                    let a = ((inst >> 16) & 0xFF) as usize + base;
+                    let b = ((inst >> 8) & 0xFF) as usize + base;
+                    let v = reg!(b);
+                    match vm_ifft_pairs_to_real(v) {
+                        Ok(out) => reg_set!(a, out),
+                        Err(msg) => vm_err!(VmError::Type(msg)),
+                    }
+                }
                 OP_SLC => {
                     // Two-instruction sequence: OP_SLC A=result B=list C=start; data word A=end_reg
                     let a = ((inst >> 16) & 0xFF) as usize + base;
@@ -7329,6 +7365,164 @@ pub(crate) extern "C" fn jit_srt(a: u64) -> u64 {
         }
     }
     TAG_NIL
+}
+
+/// Compute the next power of two >= `n` (with `next_pow2(0) == 1`).
+fn vm_next_pow2(n: usize) -> usize {
+    if n <= 1 {
+        return 1;
+    }
+    let mut p = 1usize;
+    while p < n {
+        p <<= 1;
+    }
+    p
+}
+
+/// In-place iterative Cooley-Tukey radix-2 FFT used by `OP_FFT` / `OP_IFFT`.
+fn vm_cooley_tukey(re: &mut [f64], im: &mut [f64], inverse: bool) {
+    let n = re.len();
+    if n <= 1 {
+        return;
+    }
+    let mut j = 0usize;
+    for i in 1..n {
+        let mut bit = n >> 1;
+        while j & bit != 0 {
+            j ^= bit;
+            bit >>= 1;
+        }
+        j ^= bit;
+        if i < j {
+            re.swap(i, j);
+            im.swap(i, j);
+        }
+    }
+    let sign: f64 = if inverse { 1.0 } else { -1.0 };
+    let mut len = 2usize;
+    while len <= n {
+        let half = len / 2;
+        let theta = sign * 2.0 * std::f64::consts::PI / (len as f64);
+        let w_re = theta.cos();
+        let w_im = theta.sin();
+        let mut i = 0usize;
+        while i < n {
+            let mut cur_re = 1.0_f64;
+            let mut cur_im = 0.0_f64;
+            for k in 0..half {
+                let a_re = re[i + k];
+                let a_im = im[i + k];
+                let b_re = re[i + k + half] * cur_re - im[i + k + half] * cur_im;
+                let b_im = re[i + k + half] * cur_im + im[i + k + half] * cur_re;
+                re[i + k] = a_re + b_re;
+                im[i + k] = a_im + b_im;
+                re[i + k + half] = a_re - b_re;
+                im[i + k + half] = a_im - b_im;
+                let new_re = cur_re * w_re - cur_im * w_im;
+                let new_im = cur_re * w_im + cur_im * w_re;
+                cur_re = new_re;
+                cur_im = new_im;
+            }
+            i += len;
+        }
+        len <<= 1;
+    }
+    if inverse {
+        let scale = 1.0 / (n as f64);
+        for x in re.iter_mut() {
+            *x *= scale;
+        }
+        for x in im.iter_mut() {
+            *x *= scale;
+        }
+    }
+}
+
+/// Run an FFT on a NanVal list of real numbers. Returns a NanVal list of
+/// `[real, imag]` pairs, or an error message if the input is malformed.
+fn vm_fft_real_to_pairs(v: NanVal) -> Result<NanVal, &'static str> {
+    if !v.is_heap() {
+        return Err("fft requires a list of numbers");
+    }
+    let items = match unsafe { v.as_heap_ref() } {
+        HeapObj::List(items) => items,
+        _ => return Err("fft requires a list of numbers"),
+    };
+    if items.is_empty() {
+        return Err("fft: input list must not be empty");
+    }
+    let mut re: Vec<f64> = Vec::with_capacity(items.len());
+    for item in items {
+        if !item.is_number() {
+            return Err("fft: list elements must be numbers");
+        }
+        re.push(item.as_number());
+    }
+    let n = vm_next_pow2(re.len());
+    re.resize(n, 0.0);
+    let mut im = vec![0.0_f64; n];
+    vm_cooley_tukey(&mut re, &mut im, false);
+    let pairs: Vec<NanVal> = re
+        .into_iter()
+        .zip(im)
+        .map(|(r, i)| NanVal::heap_list(vec![NanVal::number(r), NanVal::number(i)]))
+        .collect();
+    Ok(NanVal::heap_list(pairs))
+}
+
+/// Run an inverse FFT on a NanVal list of `[real, imag]` pairs. Returns a
+/// NanVal list of real numbers (imaginary parts are discarded).
+fn vm_ifft_pairs_to_real(v: NanVal) -> Result<NanVal, &'static str> {
+    if !v.is_heap() {
+        return Err("ifft requires a list of [real, imag] pairs");
+    }
+    let items = match unsafe { v.as_heap_ref() } {
+        HeapObj::List(items) => items,
+        _ => return Err("ifft requires a list of [real, imag] pairs"),
+    };
+    if items.is_empty() {
+        return Err("ifft: input list must not be empty");
+    }
+    let mut re: Vec<f64> = Vec::with_capacity(items.len());
+    let mut im: Vec<f64> = Vec::with_capacity(items.len());
+    for item in items {
+        if !item.is_heap() {
+            return Err("ifft: each element must be a [real, imag] pair");
+        }
+        let pair = match unsafe { item.as_heap_ref() } {
+            HeapObj::List(p) => p,
+            _ => return Err("ifft: each element must be a [real, imag] pair"),
+        };
+        if pair.len() != 2 || !pair[0].is_number() || !pair[1].is_number() {
+            return Err("ifft: each element must be a [real, imag] pair");
+        }
+        re.push(pair[0].as_number());
+        im.push(pair[1].as_number());
+    }
+    let n = vm_next_pow2(re.len());
+    re.resize(n, 0.0);
+    im.resize(n, 0.0);
+    vm_cooley_tukey(&mut re, &mut im, true);
+    let reals: Vec<NanVal> = re.into_iter().map(NanVal::number).collect();
+    Ok(NanVal::heap_list(reals))
+}
+
+#[cfg(feature = "cranelift")]
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn jit_fft(a: u64) -> u64 {
+    match vm_fft_real_to_pairs(NanVal(a)) {
+        Ok(v) => v.0,
+        Err(_) => TAG_NIL,
+    }
+}
+
+#[cfg(feature = "cranelift")]
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn jit_ifft(a: u64) -> u64 {
+    match vm_ifft_pairs_to_real(NanVal(a)) {
+        Ok(v) => v.0,
+        Err(_) => TAG_NIL,
+    }
 }
 
 #[cfg(feature = "cranelift")]
