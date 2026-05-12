@@ -1,0 +1,16 @@
+-- Datetime builtins: dtfmt (epoch -> R t t), dtparse (text -> R n t).
+-- UTC only. Format strings follow strftime conventions.
+
+-- Format a unix epoch as a date string. dtfmt returns a Result because the
+-- epoch may be non-finite or out of range for chrono; the enclosing fn
+-- returns R so the caller can pattern-match the result.
+fmtday e:n>R t t;dtfmt e "%Y-%m-%d"
+
+-- Parse a date string back to an epoch. dtparse returns a Result, so the
+-- enclosing fn must also return R for `!` to short-circuit on failure.
+parseday s:t>R n t;v=dtparse! s "%Y-%m-%d";~v
+
+-- run: fmtday 0
+-- out: ~1970-01-01
+-- run: fmtday 1735689600
+-- out: ~2025-01-01

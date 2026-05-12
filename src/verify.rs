@@ -312,6 +312,8 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("rnd", &[], "n"),
     ("rndn", &["n", "n"], "n"),
     ("now", &[], "n"),
+    ("dtfmt", &["n", "t"], "R t t"),
+    ("dtparse", &["t", "t"], "R n t"),
     ("env", &["t"], "R t t"),
     ("jpth", &["t", "t"], "R t t"),
     ("jdmp", &["any"], "t"),
@@ -1451,6 +1453,60 @@ fn builtin_check_args(
                 ))),
                 errors,
             )
+        }
+        "dtfmt" => {
+            if let Some(arg) = arg_types.first()
+                && !compatible(arg, &Ty::Number)
+            {
+                errors.push(VerifyError {
+                    code: "ILO-T013",
+                    function: func_ctx.to_string(),
+                    message: format!("'dtfmt' first arg must be n (unix epoch), got {arg}"),
+                    hint: None,
+                    span,
+                    is_warning: false,
+                });
+            }
+            if let Some(arg) = arg_types.get(1)
+                && !compatible(arg, &Ty::Text)
+            {
+                errors.push(VerifyError {
+                    code: "ILO-T013",
+                    function: func_ctx.to_string(),
+                    message: format!("'dtfmt' second arg must be t (format), got {arg}"),
+                    hint: None,
+                    span,
+                    is_warning: false,
+                });
+            }
+            (Ty::Result(Box::new(Ty::Text), Box::new(Ty::Text)), errors)
+        }
+        "dtparse" => {
+            if let Some(arg) = arg_types.first()
+                && !compatible(arg, &Ty::Text)
+            {
+                errors.push(VerifyError {
+                    code: "ILO-T013",
+                    function: func_ctx.to_string(),
+                    message: format!("'dtparse' first arg must be t, got {arg}"),
+                    hint: None,
+                    span,
+                    is_warning: false,
+                });
+            }
+            if let Some(arg) = arg_types.get(1)
+                && !compatible(arg, &Ty::Text)
+            {
+                errors.push(VerifyError {
+                    code: "ILO-T013",
+                    function: func_ctx.to_string(),
+                    message: format!("'dtparse' second arg must be t (format), got {arg}"),
+                    hint: None,
+                    span,
+                    is_warning: false,
+                });
+            }
+            (Ty::Result(Box::new(Ty::Number), Box::new(Ty::Text)), errors)
         }
         "map" => {
             // map fn:F a b xs:L a → L b

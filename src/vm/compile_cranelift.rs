@@ -150,6 +150,9 @@ struct HelperFuncs {
     geth: FuncId,
     posth: FuncId,
     getmany: FuncId,
+    // Datetime
+    dtfmt: FuncId,
+    dtparse: FuncId,
     // AOT-specific helpers
     get_arena_ptr: FuncId,
     get_registry_ptr: FuncId,
@@ -311,6 +314,8 @@ fn declare_all_helpers(module: &mut ObjectModule) -> HelperFuncs {
         geth: declare_helper(module, "jit_geth", 2, 1),
         posth: declare_helper(module, "jit_posth", 3, 1),
         getmany: declare_helper(module, "jit_getmany", 1, 1),
+        dtfmt: declare_helper(module, "jit_dtfmt", 2, 1),
+        dtparse: declare_helper(module, "jit_dtparse", 2, 1),
         // AOT-specific helpers
         get_arena_ptr: declare_helper(module, "jit_get_arena_ptr", 0, 1),
         get_registry_ptr: declare_helper(module, "jit_get_registry_ptr", 0, 1),
@@ -1002,7 +1007,7 @@ fn compile_function_body(
                 | OP_UNIQBY | OP_PARTITION | OP_FRQ | OP_NUM | OP_RGXSUB | OP_ZIP
                 | OP_ENUMERATE | OP_RANGE | OP_WINDOW | OP_CHUNKS | OP_CUMSUM | OP_SETUNION
                 | OP_SETINTER | OP_SETDIFF | OP_FFT | OP_IFFT | OP_TRANSPOSE | OP_MATMUL
-                | OP_INV | OP_SOLVE => {
+                | OP_INV | OP_SOLVE | OP_DTFMT | OP_DTPARSE => {
                     non_num_write[a] = true;
                     non_bool_write[a] = true;
                 }
@@ -3062,6 +3067,22 @@ fn compile_function_body(
                 let bv = builder.use_var(vars[b_idx]);
                 let fref = get_func_ref(&mut builder, module, helpers.rdjl);
                 let call_inst = builder.ins().call(fref, &[bv]);
+                let result = builder.inst_results(call_inst)[0];
+                builder.def_var(vars[a_idx], result);
+            }
+            OP_DTFMT => {
+                let bv = builder.use_var(vars[b_idx]);
+                let cv = builder.use_var(vars[c_idx]);
+                let fref = get_func_ref(&mut builder, module, helpers.dtfmt);
+                let call_inst = builder.ins().call(fref, &[bv, cv]);
+                let result = builder.inst_results(call_inst)[0];
+                builder.def_var(vars[a_idx], result);
+            }
+            OP_DTPARSE => {
+                let bv = builder.use_var(vars[b_idx]);
+                let cv = builder.use_var(vars[c_idx]);
+                let fref = get_func_ref(&mut builder, module, helpers.dtparse);
+                let call_inst = builder.ins().call(fref, &[bv, cv]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
             }

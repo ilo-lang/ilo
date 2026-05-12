@@ -83,6 +83,8 @@ pub enum Builtin {
     Rnd,
     Rndn,
     Now,
+    Dtfmt,
+    Dtparse,
 
     // I/O
     Rd,
@@ -202,6 +204,8 @@ impl Builtin {
             "rnd" => Some(Builtin::Rnd),
             "rndn" => Some(Builtin::Rndn),
             "now" => Some(Builtin::Now),
+            "dtfmt" => Some(Builtin::Dtfmt),
+            "dtparse" => Some(Builtin::Dtparse),
             "rd" => Some(Builtin::Rd),
             "rdl" => Some(Builtin::Rdl),
             "rdb" => Some(Builtin::Rdb),
@@ -310,6 +314,8 @@ impl Builtin {
             Builtin::Rnd => "rnd",
             Builtin::Rndn => "rndn",
             Builtin::Now => "now",
+            Builtin::Dtfmt => "dtfmt",
+            Builtin::Dtparse => "dtparse",
             Builtin::Rd => "rd",
             Builtin::Rdl => "rdl",
             Builtin::Rdb => "rdb",
@@ -460,6 +466,8 @@ mod tests {
             "inv",
             "det",
             "rdjl",
+            "dtfmt",
+            "dtparse",
         ];
         for name in &all {
             let b = Builtin::from_name(name).unwrap_or_else(|| panic!("missing builtin: {name}"));
