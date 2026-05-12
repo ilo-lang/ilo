@@ -3269,22 +3269,29 @@ print(f"__NS__={{_per}}")
 }
 
 fn parse_cli_arg(s: &str) -> interpreter::Value {
-    // Bracketed list: [1,2,3] or []
+    // Bracketed list: [1,2,3], ["apple","ant"], [] — split top-level commas,
+    // honoring quoted strings so commas inside strings don't split.
     if s.starts_with('[') && s.ends_with(']') {
         let inner = s[1..s.len() - 1].trim();
         if inner.is_empty() {
             return interpreter::Value::List(vec![]);
         }
-        let items = inner
-            .split(',')
+        let items = split_top_level_commas(inner)
+            .into_iter()
             .map(|part| parse_cli_arg(part.trim()))
             .collect();
         return interpreter::Value::List(items);
     }
+    // Quoted string: strip surrounding double quotes and treat as text.
+    // This preserves the raw contents (no escape decoding) which mirrors how
+    // the rest of the CLI passes bare text.
+    if s.len() >= 2 && s.starts_with('"') && s.ends_with('"') {
+        return interpreter::Value::Text(s[1..s.len() - 1].to_string());
+    }
     // Bare comma list: 1,2,3
     if s.contains(',') {
-        let items = s
-            .split(',')
+        let items = split_top_level_commas(s)
+            .into_iter()
             .map(|part| parse_cli_arg(part.trim()))
             .collect();
         return interpreter::Value::List(items);
@@ -3304,6 +3311,49 @@ fn parse_cli_arg(s: &str) -> interpreter::Value {
     } else {
         interpreter::Value::Text(s.to_string())
     }
+}
+
+/// Split on commas, but ignore commas inside double-quoted strings or nested
+/// brackets so list args like `["a,b","c"]` and `[[1,2],[3,4]]` parse correctly.
+fn split_top_level_commas(s: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    let mut depth = 0i32;
+    let mut in_str = false;
+    let mut prev_escape = false;
+    for ch in s.chars() {
+        if in_str {
+            cur.push(ch);
+            if prev_escape {
+                prev_escape = false;
+            } else if ch == '\\' {
+                prev_escape = true;
+            } else if ch == '"' {
+                in_str = false;
+            }
+            continue;
+        }
+        match ch {
+            '"' => {
+                in_str = true;
+                cur.push(ch);
+            }
+            '[' => {
+                depth += 1;
+                cur.push(ch);
+            }
+            ']' => {
+                depth -= 1;
+                cur.push(ch);
+            }
+            ',' if depth == 0 => {
+                out.push(std::mem::take(&mut cur));
+            }
+            _ => cur.push(ch),
+        }
+    }
+    out.push(cur);
+    out
 }
 
 /// Coerce CLI args to match a function's parameter types.

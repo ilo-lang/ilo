@@ -98,8 +98,7 @@ fn uniqby_all_same_key_keeps_first_tree() {
 
 // ── Order preservation: first-seen wins, original order preserved ──────────
 
-const PARITY_SRC: &str =
-    "par n:n>t\n==(mod n 2) 0{ret \"even\"}\n\"odd\"\nf xs:L n>L n;uniqby par xs";
+const PARITY_SRC: &str = "par n:n>t;?=(mod n 2) 0 \"even\" \"odd\"\nf xs:L n>L n;uniqby par xs";
 
 #[test]
 fn uniqby_preserves_order_tree() {

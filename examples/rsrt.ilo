@@ -10,4 +10,4 @@ top-words ws:L t>L t;rsrt ws
 -- run: top-nums [3,1,4,1,5,9,2,6]
 -- out: [9, 6, 5, 4, 3, 2, 1, 1]
 -- run: top-words ["banana","apple","cherry"]
--- out: ["cherry", "banana", "apple"]
+-- out: [cherry, banana, apple]

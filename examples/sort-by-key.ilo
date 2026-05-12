@@ -17,6 +17,6 @@ by-len-desc ws:L t>L t;rev (srt wlen ws)
 -- run: by-dist [-3,1,-5,2]
 -- out: [1, 2, -3, -5]
 -- run: by-len ["banana","fig","apple","kiwi"]
--- out: ["fig", "kiwi", "apple", "banana"]
+-- out: [fig, kiwi, apple, banana]
 -- run: by-len-desc ["banana","fig","apple","kiwi"]
--- out: ["banana", "apple", "kiwi", "fig"]
+-- out: [banana, apple, kiwi, fig]
