@@ -905,6 +905,52 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         });
         return Ok(Value::List(keyed.into_iter().map(|(_, v)| v).collect()));
     }
+    if builtin == Some(Builtin::Rsrt) && args.len() == 1 {
+        return match &args[0] {
+            Value::List(items) => {
+                if items.is_empty() {
+                    return Ok(Value::List(vec![]));
+                }
+                let all_numbers = items.iter().all(|v| matches!(v, Value::Number(_)));
+                let all_text = items.iter().all(|v| matches!(v, Value::Text(_)));
+                if all_numbers {
+                    let mut sorted = items.clone();
+                    sorted.sort_by(|a, b| {
+                        if let (Value::Number(x), Value::Number(y)) = (a, b) {
+                            y.partial_cmp(x).unwrap_or(std::cmp::Ordering::Equal)
+                        } else {
+                            unreachable!()
+                        }
+                    });
+                    Ok(Value::List(sorted))
+                } else if all_text {
+                    let mut sorted = items.clone();
+                    sorted.sort_by(|a, b| {
+                        if let (Value::Text(x), Value::Text(y)) = (a, b) {
+                            y.cmp(x)
+                        } else {
+                            unreachable!()
+                        }
+                    });
+                    Ok(Value::List(sorted))
+                } else {
+                    Err(RuntimeError::new(
+                        "ILO-R009",
+                        "rsrt: list must contain all numbers or all text".to_string(),
+                    ))
+                }
+            }
+            Value::Text(s) => {
+                let mut chars: Vec<char> = s.chars().collect();
+                chars.sort_by(|a, b| b.cmp(a));
+                Ok(Value::Text(chars.into_iter().collect()))
+            }
+            other => Err(RuntimeError::new(
+                "ILO-R009",
+                format!("rsrt requires a list or text, got {:?}", other),
+            )),
+        };
+    }
     if builtin == Some(Builtin::Slc) && args.len() == 3 {
         let start = match &args[1] {
             Value::Number(n) => *n as usize,

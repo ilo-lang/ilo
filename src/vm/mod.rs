@@ -193,6 +193,7 @@ pub(crate) const OP_TAN: u8 = 105; // R[A] = tan(R[B])
 pub(crate) const OP_LOG10: u8 = 106; // R[A] = log10(R[B])
 pub(crate) const OP_LOG2: u8 = 107; // R[A] = log2(R[B])
 pub(crate) const OP_ATAN2: u8 = 108; // R[A] = atan2(R[B], R[C])  (y first, x second)
+pub(crate) const OP_SRTDESC: u8 = 117; // R[A] = rsrt(R[B])  (descending sort of list)
 
 // ABC mode — text formatting
 pub(crate) const OP_FMT2: u8 = 104; // R[A] = fmt2(R[B], R[C])  (format number to N decimal places → t)
@@ -1704,6 +1705,12 @@ impl RegCompiler {
                             self.emit_abc(OP_SRT, ra, rb, 0);
                             return ra;
                         }
+                        (Builtin::Rsrt, 1) => {
+                            let rb = self.compile_expr(&args[0]);
+                            let ra = self.alloc_reg();
+                            self.emit_abc(OP_SRTDESC, ra, rb, 0);
+                            return ra;
+                        }
                         (Builtin::Slc, 3) => {
                             // slc list start end — two-instruction sequence:
                             //   OP_SLC   A=result  B=list  C=start
@@ -2483,10 +2490,10 @@ fn chunk_is_all_numeric(chunk: &Chunk) -> bool {
         let op = (inst >> 24) as u8;
         match op {
             OP_RECNEW | OP_LISTNEW | OP_RECWITH | OP_WRAPOK | OP_WRAPERR | OP_STR | OP_CAT
-            | OP_SPL | OP_REV | OP_SRT | OP_SLC | OP_UNQ | OP_LISTAPPEND | OP_JPAR | OP_JDMP
-            | OP_ENV | OP_GET | OP_GETH | OP_POST | OP_POSTH | OP_RD | OP_RDL | OP_WR | OP_WRL
-            | OP_MAPNEW | OP_MGET | OP_MSET | OP_MKEYS | OP_MVALS | OP_HD | OP_AT | OP_LST
-            | OP_TL | OP_FMT2 => {
+            | OP_SPL | OP_REV | OP_SRT | OP_SRTDESC | OP_SLC | OP_UNQ | OP_LISTAPPEND | OP_JPAR
+            | OP_JDMP | OP_ENV | OP_GET | OP_GETH | OP_POST | OP_POSTH | OP_RD | OP_RDL | OP_WR
+            | OP_WRL | OP_MAPNEW | OP_MGET | OP_MSET | OP_MKEYS | OP_MVALS | OP_HD | OP_AT
+            | OP_LST | OP_TL | OP_FMT2 => {
                 return false;
             }
             _ => {}
@@ -5762,6 +5769,66 @@ impl<'a> VM<'a> {
                         vm_err!(VmError::Type("srt requires a list or text"));
                     }
                 }
+                OP_SRTDESC => {
+                    let a = ((inst >> 16) & 0xFF) as usize + base;
+                    let b = ((inst >> 8) & 0xFF) as usize + base;
+                    let v = reg!(b);
+                    if v.is_string() {
+                        let s = unsafe {
+                            match v.as_heap_ref() {
+                                HeapObj::Str(s) => s,
+                                _ => unreachable!(),
+                            }
+                        };
+                        let mut chars: Vec<char> = s.chars().collect();
+                        chars.sort_by(|a, b| b.cmp(a));
+                        let sorted: String = chars.into_iter().collect();
+                        reg_set!(a, NanVal::heap_string(sorted));
+                    } else if v.is_heap() {
+                        match unsafe { v.as_heap_ref() } {
+                            HeapObj::List(items) => {
+                                if items.is_empty() {
+                                    reg_set!(a, NanVal::heap_list(vec![]));
+                                } else {
+                                    let all_numbers = items.iter().all(|v| v.is_number());
+                                    let all_strings = items.iter().all(|v| v.is_string());
+                                    if all_numbers {
+                                        let mut sorted: Vec<NanVal> = items
+                                            .iter()
+                                            .map(|v| {
+                                                v.clone_rc();
+                                                *v
+                                            })
+                                            .collect();
+                                        sorted.sort_by(|a, b| {
+                                            b.as_number()
+                                                .partial_cmp(&a.as_number())
+                                                .unwrap_or(std::cmp::Ordering::Equal)
+                                        });
+                                        reg_set!(a, NanVal::heap_list(sorted));
+                                    } else if all_strings {
+                                        let mut sorted: Vec<NanVal> = items
+                                            .iter()
+                                            .map(|v| {
+                                                v.clone_rc();
+                                                *v
+                                            })
+                                            .collect();
+                                        sorted.sort_by(|a, b| unsafe { nanval_str_cmp(*b, *a) });
+                                        reg_set!(a, NanVal::heap_list(sorted));
+                                    } else {
+                                        vm_err!(VmError::Type(
+                                            "rsrt: list must contain all numbers or all text"
+                                        ));
+                                    }
+                                }
+                            }
+                            _ => vm_err!(VmError::Type("rsrt requires a list or text")),
+                        }
+                    } else {
+                        vm_err!(VmError::Type("rsrt requires a list or text"));
+                    }
+                }
                 OP_SLC => {
                     // Two-instruction sequence: OP_SLC A=result B=list C=start; data word A=end_reg
                     let a = ((inst >> 16) & 0xFF) as usize + base;
@@ -7133,6 +7200,60 @@ pub(crate) extern "C" fn jit_srt(a: u64) -> u64 {
                 })
                 .collect();
             sorted.sort_by(|a, b| unsafe { nanval_str_cmp(*a, *b) });
+            return NanVal::heap_list(sorted).0;
+        }
+    }
+    TAG_NIL
+}
+
+#[cfg(feature = "cranelift")]
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn jit_rsrt(a: u64) -> u64 {
+    let v = NanVal(a);
+    if v.is_string() {
+        let s = unsafe {
+            match v.as_heap_ref() {
+                HeapObj::Str(s) => s,
+                _ => unreachable!(),
+            }
+        };
+        let mut chars: Vec<char> = s.chars().collect();
+        chars.sort_by(|a, b| b.cmp(a));
+        let sorted: String = chars.into_iter().collect();
+        return NanVal::heap_string(sorted).0;
+    }
+    if v.is_heap()
+        && let HeapObj::List(items) = unsafe { v.as_heap_ref() }
+    {
+        if items.is_empty() {
+            return NanVal::heap_list(vec![]).0;
+        }
+        let all_numbers = items.iter().all(|v| v.is_number());
+        let all_strings = items.iter().all(|v| v.is_string());
+        if all_numbers {
+            let mut sorted: Vec<NanVal> = items
+                .iter()
+                .map(|v| {
+                    v.clone_rc();
+                    *v
+                })
+                .collect();
+            sorted.sort_by(|a, b| {
+                b.as_number()
+                    .partial_cmp(&a.as_number())
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+            return NanVal::heap_list(sorted).0;
+        }
+        if all_strings {
+            let mut sorted: Vec<NanVal> = items
+                .iter()
+                .map(|v| {
+                    v.clone_rc();
+                    *v
+                })
+                .collect();
+            sorted.sort_by(|a, b| unsafe { nanval_str_cmp(*b, *a) });
             return NanVal::heap_list(sorted).0;
         }
     }
