@@ -1,0 +1,26 @@
+-- flat xs:L (L a) > L a — flatten a list one level.
+-- Non-list elements pass through unchanged.
+
+-- Basic nested flatten
+basic>L n;flat [[1, 2], [3, 4]]
+
+-- Empty outer list
+empty>L n;flat []
+
+-- Inner empty lists are dropped
+gaps>L n;flat [[1], [], [2]]
+
+-- Mixed: non-list items pass through
+mixed>L n;flat [[1, 2], 3, [4, 5]]
+
+-- flat is tree-only (vm/cranelift don't implement it)
+-- engine-skip: vm
+-- engine-skip: cranelift
+-- run: basic
+-- out: [1, 2, 3, 4]
+-- run: empty
+-- out: []
+-- run: gaps
+-- out: [1, 2]
+-- run: mixed
+-- out: [1, 2, 3, 4, 5]
