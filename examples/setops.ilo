@@ -1,0 +1,17 @@
+-- setunion / setinter / setdiff — set operations on lists.
+-- Inputs are deduped, output is sorted (stringwise on a type-prefixed key)
+-- so results are deterministic across runs and engines.
+--
+-- Element types must be text, number, or bool (same restriction as uniqby).
+-- Numbers and texts live in separate domains: 1 and "1" never collapse.
+--
+-- Caveat — sort is *lexicographic* on the stringified key, not numeric. So
+-- a list like [10, 2] sorts as [10, 2] (because "n:10" < "n:2" in string
+-- order), not the numerically-intuitive [2, 10]. If you need numeric order,
+-- sort the result yourself with `srt` after the set op.
+
+-- Tags shared between two posts: which subjects do they have in common?
+shared a:L t b:L t>L t;setinter a b
+
+-- run: shared ["rust","vm","jit","types"] ["types","jit","gc","async"]
+-- out: [jit, types]

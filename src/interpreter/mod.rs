@@ -933,6 +933,113 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         }
         return Ok(Value::List(out));
     }
+    if matches!(
+        builtin,
+        Some(Builtin::Setunion) | Some(Builtin::Setinter) | Some(Builtin::Setdiff)
+    ) && args.len() == 2
+    {
+        let op_name = match builtin {
+            Some(Builtin::Setunion) => "setunion",
+            Some(Builtin::Setinter) => "setinter",
+            Some(Builtin::Setdiff) => "setdiff",
+            _ => unreachable!(),
+        };
+        let xs = match &args[0] {
+            Value::List(items) => items,
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("{op_name} arg 1 requires a list, got {:?}", other),
+                ));
+            }
+        };
+        let ys = match &args[1] {
+            Value::List(items) => items,
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("{op_name} arg 2 requires a list, got {:?}", other),
+                ));
+            }
+        };
+        // Build type-prefixed string keys to avoid Number(5)/Text("5") collisions
+        // (same precedent as uniqby post-hotfix). Restrict elements to t/n/b.
+        fn key_for(v: &Value, op_name: &str) -> std::result::Result<String, RuntimeError> {
+            match v {
+                Value::Text(s) => Ok(format!("t:{s}")),
+                Value::Number(n) => {
+                    if *n == (*n as i64) as f64 {
+                        Ok(format!("n:{}", *n as i64))
+                    } else {
+                        Ok(format!("n:{n}"))
+                    }
+                }
+                Value::Bool(b) => Ok(format!("b:{b}")),
+                other => Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!(
+                        "{op_name}: elements must be text, number, or bool, got {:?}",
+                        other
+                    ),
+                )),
+            }
+        }
+        use std::collections::{HashMap, HashSet};
+        let mut set_a: HashSet<String> = HashSet::new();
+        let mut a_first: HashMap<String, Value> = HashMap::new();
+        for v in xs {
+            let k = key_for(v, op_name)?;
+            if set_a.insert(k.clone()) {
+                a_first.insert(k, v.clone());
+            }
+        }
+        let mut set_b: HashSet<String> = HashSet::new();
+        let mut b_first: HashMap<String, Value> = HashMap::new();
+        for v in ys {
+            let k = key_for(v, op_name)?;
+            if set_b.insert(k.clone()) {
+                b_first.insert(k, v.clone());
+            }
+        }
+        let (result_keys, value_lookup): (Vec<String>, &HashMap<String, Value>) = match builtin {
+            Some(Builtin::Setunion) => {
+                let mut keys: Vec<String> = set_a.union(&set_b).cloned().collect();
+                // Need a combined lookup; clone into a single map.
+                // Use a static-ish approach: merge into a_first below.
+                let mut merged = a_first;
+                for (k, v) in &b_first {
+                    merged.entry(k.clone()).or_insert_with(|| v.clone());
+                }
+                keys.sort();
+                // Return early with merged map by re-binding locally.
+                let mut out: Vec<Value> = Vec::with_capacity(keys.len());
+                for k in &keys {
+                    if let Some(v) = merged.get(k) {
+                        out.push(v.clone());
+                    }
+                }
+                return Ok(Value::List(out));
+            }
+            Some(Builtin::Setinter) => (
+                set_a.intersection(&set_b).cloned().collect::<Vec<_>>(),
+                &a_first,
+            ),
+            Some(Builtin::Setdiff) => (
+                set_a.difference(&set_b).cloned().collect::<Vec<_>>(),
+                &a_first,
+            ),
+            _ => unreachable!(),
+        };
+        let mut keys = result_keys;
+        keys.sort();
+        let mut out: Vec<Value> = Vec::with_capacity(keys.len());
+        for k in &keys {
+            if let Some(v) = value_lookup.get(k) {
+                out.push(v.clone());
+            }
+        }
+        return Ok(Value::List(out));
+    }
     if builtin == Some(Builtin::Tl) && args.len() == 1 {
         return match &args[0] {
             Value::List(items) => {
