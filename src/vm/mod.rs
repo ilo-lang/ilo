@@ -194,6 +194,9 @@ pub(crate) const OP_LOG10: u8 = 106; // R[A] = log10(R[B])
 pub(crate) const OP_LOG2: u8 = 107; // R[A] = log2(R[B])
 pub(crate) const OP_ATAN2: u8 = 108; // R[A] = atan2(R[B], R[C])  (y first, x second)
 
+// ABC mode — text formatting
+pub(crate) const OP_FMT2: u8 = 104; // R[A] = fmt2(R[B], R[C])  (format number to N decimal places → t)
+
 // ABx mode — register + 16-bit operand
 pub(crate) const OP_LOADK: u8 = 20;
 pub(crate) const OP_JMP: u8 = 21;
@@ -1676,6 +1679,13 @@ impl RegCompiler {
                             self.emit_abc(OP_AT, ra, rb, rc);
                             return ra;
                         }
+                        (Builtin::Fmt2, 2) => {
+                            let rb = self.compile_expr(&args[0]);
+                            let rc = self.compile_expr(&args[1]);
+                            let ra = self.alloc_reg();
+                            self.emit_abc(OP_FMT2, ra, rb, rc);
+                            return ra;
+                        }
                         (Builtin::Tl, 1) => {
                             let rb = self.compile_expr(&args[0]);
                             let ra = self.alloc_reg();
@@ -2476,7 +2486,7 @@ fn chunk_is_all_numeric(chunk: &Chunk) -> bool {
             | OP_SPL | OP_REV | OP_SRT | OP_SLC | OP_UNQ | OP_LISTAPPEND | OP_JPAR | OP_JDMP
             | OP_ENV | OP_GET | OP_GETH | OP_POST | OP_POSTH | OP_RD | OP_RDL | OP_WR | OP_WRL
             | OP_MAPNEW | OP_MGET | OP_MSET | OP_MKEYS | OP_MVALS | OP_HD | OP_AT | OP_LST
-            | OP_TL => {
+            | OP_TL | OP_FMT2 => {
                 return false;
             }
             _ => {}
@@ -5555,6 +5565,25 @@ impl<'a> VM<'a> {
                     };
                     reg_set!(a, result);
                 }
+                OP_FMT2 => {
+                    let a = ((inst >> 16) & 0xFF) as usize + base;
+                    let b = ((inst >> 8) & 0xFF) as usize + base;
+                    let c = (inst & 0xFF) as usize + base;
+                    let vb = reg!(b);
+                    let vc = reg!(c);
+                    if !vb.is_number() || !vc.is_number() {
+                        vm_err!(VmError::Type("fmt2 requires two numbers (x, digits)"));
+                    }
+                    let x = vb.as_number();
+                    let d = vc.as_number();
+                    let digits = if !d.is_finite() || d <= 0.0 {
+                        0usize
+                    } else {
+                        (d as usize).min(20)
+                    };
+                    let result = NanVal::heap_string(format!("{:.*}", digits, x));
+                    reg_set!(a, result);
+                }
                 OP_AT => {
                     let a = ((inst >> 16) & 0xFF) as usize + base;
                     let b = ((inst >> 8) & 0xFF) as usize + base;
@@ -6894,6 +6923,24 @@ pub(crate) extern "C" fn jit_hd(a: u64) -> u64 {
         return items[0].0;
     }
     TAG_NIL
+}
+
+#[cfg(feature = "cranelift")]
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn jit_fmt2(a: u64, b: u64) -> u64 {
+    let va = NanVal(a);
+    let vb = NanVal(b);
+    if !va.is_number() || !vb.is_number() {
+        return TAG_NIL;
+    }
+    let x = va.as_number();
+    let d = vb.as_number();
+    let digits = if !d.is_finite() || d <= 0.0 {
+        0usize
+    } else {
+        (d as usize).min(20)
+    };
+    NanVal::heap_string(format!("{:.*}", digits, x)).0
 }
 
 #[cfg(feature = "cranelift")]
@@ -13969,6 +14016,79 @@ mod tests {
             let list = NanVal::heap_list(items);
             let r = jit_listget(list.0, TAG_NIL);
             assert!(is_nil(r));
+        }
+
+        // ── jit_fmt2 ──────────────────────────────────────────────────────
+
+        #[test]
+        fn jit_fmt2_basic() {
+            let r = jit_fmt2(num(3.14159), num(2.0));
+            let rv = NanVal(r);
+            assert!(rv.is_string());
+            let HeapObj::Str(s) = (unsafe { rv.as_heap_ref() }) else {
+                panic!("expected Str")
+            };
+            assert_eq!(s.clone(), "3.14");
+        }
+
+        #[test]
+        fn jit_fmt2_zero_digits() {
+            let r = jit_fmt2(num(1.0), num(0.0));
+            let rv = NanVal(r);
+            assert!(rv.is_string());
+            let HeapObj::Str(s) = (unsafe { rv.as_heap_ref() }) else {
+                panic!("expected Str")
+            };
+            assert_eq!(s.clone(), "1");
+        }
+
+        #[test]
+        fn jit_fmt2_negative_digits_clamped_to_zero() {
+            // d <= 0.0 branch — digits coerced to 0.
+            let r = jit_fmt2(num(2.7), num(-3.0));
+            let rv = NanVal(r);
+            assert!(rv.is_string());
+            let HeapObj::Str(s) = (unsafe { rv.as_heap_ref() }) else {
+                panic!("expected Str")
+            };
+            assert_eq!(s.clone(), "3");
+        }
+
+        #[test]
+        fn jit_fmt2_non_finite_digits_clamped_to_zero() {
+            // !d.is_finite() branch.
+            let r = jit_fmt2(num(2.7), num(f64::NAN));
+            let rv = NanVal(r);
+            assert!(rv.is_string());
+            let HeapObj::Str(s) = (unsafe { rv.as_heap_ref() }) else {
+                panic!("expected Str")
+            };
+            assert_eq!(s.clone(), "3");
+        }
+
+        #[test]
+        fn jit_fmt2_non_number_first_arg_returns_nil() {
+            let r = jit_fmt2(str_val("oops"), num(2.0));
+            assert!(is_nil(r));
+        }
+
+        #[test]
+        fn jit_fmt2_non_number_second_arg_returns_nil() {
+            let r = jit_fmt2(num(3.14), str_val("two"));
+            assert!(is_nil(r));
+        }
+
+        #[test]
+        fn jit_fmt2_digits_clamped_to_twenty() {
+            // digits >= 20 hits the .min(20) cap.
+            let r = jit_fmt2(num(1.0), num(50.0));
+            let rv = NanVal(r);
+            assert!(rv.is_string());
+            let HeapObj::Str(s) = (unsafe { rv.as_heap_ref() }) else {
+                panic!("expected Str")
+            };
+            // 20 zeros after the decimal point.
+            assert_eq!(s.clone(), format!("1.{}", "0".repeat(20)));
         }
     }
 

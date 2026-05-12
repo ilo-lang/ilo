@@ -73,6 +73,7 @@ struct HelperFuncs {
     has: FuncId,
     hd: FuncId,
     at: FuncId,
+    fmt2: FuncId,
     tl: FuncId,
     rev: FuncId,
     srt: FuncId,
@@ -195,6 +196,7 @@ fn declare_all_helpers(module: &mut ObjectModule) -> HelperFuncs {
         has: declare_helper(module, "jit_has", 2, 1),
         hd: declare_helper(module, "jit_hd", 1, 1),
         at: declare_helper(module, "jit_at", 2, 1),
+        fmt2: declare_helper(module, "jit_fmt2", 2, 1),
         tl: declare_helper(module, "jit_tl", 1, 1),
         rev: declare_helper(module, "jit_rev", 1, 1),
         srt: declare_helper(module, "jit_srt", 1, 1),
@@ -914,8 +916,8 @@ fn compile_function_body(
                 // Ops that write a non-numeric or unknown type to R[A].
                 OP_ADD | OP_SUB | OP_MUL | OP_DIV | OP_ADD_SS | OP_NEG | OP_WRAPOK | OP_WRAPERR
                 | OP_UNWRAP | OP_RECFLD | OP_RECFLD_NAME | OP_LISTGET | OP_INDEX | OP_STR
-                | OP_HD | OP_AT | OP_TL | OP_REV | OP_SRT | OP_SLC | OP_SPL | OP_CAT | OP_GET
-                | OP_POST | OP_GETH | OP_POSTH | OP_ENV | OP_JPTH | OP_JDMP | OP_JPAR
+                | OP_HD | OP_AT | OP_FMT2 | OP_TL | OP_REV | OP_SRT | OP_SLC | OP_SPL | OP_CAT
+                | OP_GET | OP_POST | OP_GETH | OP_POSTH | OP_ENV | OP_JPTH | OP_JDMP | OP_JPAR
                 | OP_MAPNEW | OP_MGET | OP_MSET | OP_MDEL | OP_MKEYS | OP_MVALS | OP_LISTNEW
                 | OP_LISTAPPEND | OP_RECNEW | OP_RECWITH | OP_PRT | OP_RD | OP_RDL | OP_WR
                 | OP_WRL | OP_TRM | OP_UNQ | OP_NUM => {
@@ -1889,6 +1891,14 @@ fn compile_function_body(
                 let bv = builder.use_var(vars[b_idx]);
                 let cv = builder.use_var(vars[c_idx]);
                 let fref = get_func_ref(&mut builder, module, helpers.at);
+                let call_inst = builder.ins().call(fref, &[bv, cv]);
+                let result = builder.inst_results(call_inst)[0];
+                builder.def_var(vars[a_idx], result);
+            }
+            OP_FMT2 => {
+                let bv = builder.use_var(vars[b_idx]);
+                let cv = builder.use_var(vars[c_idx]);
+                let fref = get_func_ref(&mut builder, module, helpers.fmt2);
                 let call_inst = builder.ins().call(fref, &[bv, cv]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
@@ -5284,5 +5294,12 @@ f a:t b:t>t;join a b"#,
             "RECWITH ambiguous codegen failed: {:?}",
             bytes.err()
         );
+    }
+
+    // AOT codegen for OP_FMT2 — drives the jit_fmt2 helper call path.
+    #[test]
+    fn codegen_cov_fmt2() {
+        let bytes = compile_to_object_bytes("f>t;fmt2 3.14159 2");
+        assert!(bytes.is_ok(), "FMT2 codegen failed: {:?}", bytes.err());
     }
 }

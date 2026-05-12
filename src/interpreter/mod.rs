@@ -1081,6 +1081,22 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             )),
         };
     }
+    if builtin == Some(Builtin::Fmt2) && args.len() == 2 {
+        return match (&args[0], &args[1]) {
+            (Value::Number(x), Value::Number(d)) => {
+                let digits = if !d.is_finite() || *d <= 0.0 {
+                    0usize
+                } else {
+                    (*d as usize).min(20)
+                };
+                Ok(Value::Text(format!("{:.*}", digits, x)))
+            }
+            _ => Err(RuntimeError::new(
+                "ILO-R009",
+                "fmt2 requires two numbers (x, digits)".to_string(),
+            )),
+        };
+    }
     if builtin == Some(Builtin::Fmt) && !args.is_empty() {
         let template = match &args[0] {
             Value::Text(s) => s.clone(),
@@ -7157,5 +7173,24 @@ mod tests {
         let prog = parse_program("f>L n;lst [1,2,3] 1.5 0");
         let err = run(&prog, Some("f"), vec![]).unwrap_err();
         assert!(format!("{err:?}").contains("non-negative integer"));
+    }
+
+    // fmt2 error arm: non-number args bypass the verifier when calling
+    // call_function directly, exercising the runtime type guard.
+    #[test]
+    fn interp_fmt2_rejects_non_number_args() {
+        let mut env = Env::new();
+        let result = call_function(
+            &mut env,
+            "fmt2",
+            vec![Value::Text("hi".to_string()), Value::Number(2.0)],
+        );
+        let err = result.unwrap_err();
+        assert_eq!(err.code, "ILO-R009");
+        assert!(
+            err.message.contains("fmt2 requires two numbers"),
+            "got: {}",
+            err.message
+        );
     }
 }

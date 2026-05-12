@@ -298,6 +298,7 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("jdmp", &["any"], "t"),
     ("prnt", &["any"], "any"),
     ("fmt", &["t"], "t"), // variadic: fmt template arg1 arg2 … — checked specially
+    ("fmt2", &["n", "n"], "t"),
     ("jpar", &["t"], "R ? t"),
     // Higher-order: map/flt/fld take a function ref as first arg (special-cased in builtin_check_args)
     ("map", &["fn", "list"], "list"),
@@ -702,6 +703,22 @@ fn builtin_check_args(
                     span,
                     is_warning: false,
                 });
+            }
+            (Ty::Text, errors)
+        }
+        "fmt2" => {
+            // fmt2 x digits — format number x to `digits` decimal places, returning text.
+            for (i, arg) in arg_types.iter().enumerate() {
+                if !compatible(arg, &Ty::Number) {
+                    errors.push(VerifyError {
+                        code: "ILO-T013",
+                        function: func_ctx.to_string(),
+                        message: format!("'fmt2' arg {} expects n, got {arg}", i + 1),
+                        hint: None,
+                        span,
+                        is_warning: false,
+                    });
+                }
             }
             (Ty::Text, errors)
         }
@@ -6424,5 +6441,39 @@ mod tests {
             "errors: {:?}",
             errors
         );
+    }
+
+    #[test]
+    fn verify_fmt2_rejects_non_number_arg() {
+        // First arg text — should produce ILO-T013 with arg-index 1.
+        let result = parse_and_verify(r#"f>t;fmt2 "hi" 2"#);
+        let errs = result.unwrap_err();
+        assert!(
+            errs.iter().any(
+                |e| e.code == "ILO-T013" && e.message.contains("'fmt2' arg 1 expects n, got t")
+            ),
+            "expected ILO-T013 for arg 1, got: {:?}",
+            errs
+        );
+    }
+
+    #[test]
+    fn verify_fmt2_rejects_non_number_second_arg() {
+        // Second arg text — ILO-T013 with arg-index 2.
+        let result = parse_and_verify(r#"f>t;fmt2 3.14 "two""#);
+        let errs = result.unwrap_err();
+        assert!(
+            errs.iter().any(
+                |e| e.code == "ILO-T013" && e.message.contains("'fmt2' arg 2 expects n, got t")
+            ),
+            "expected ILO-T013 for arg 2, got: {:?}",
+            errs
+        );
+    }
+
+    #[test]
+    fn verify_fmt2_valid_returns_text() {
+        // Sanity: valid call typechecks.
+        assert!(parse_and_verify("f>t;fmt2 3.14 2").is_ok());
     }
 }
