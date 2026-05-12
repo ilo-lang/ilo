@@ -113,6 +113,7 @@ struct HelperFuncs {
     jpth: FuncId,
     jdmp: FuncId,
     jpar: FuncId,
+    rdjl: FuncId,
     call: FuncId,
     // Type predicates
     isnum: FuncId,
@@ -273,6 +274,7 @@ fn declare_all_helpers(module: &mut ObjectModule) -> HelperFuncs {
         jpth: declare_helper(module, "jit_jpth", 2, 1),
         jdmp: declare_helper(module, "jit_jdmp", 1, 1),
         jpar: declare_helper(module, "jit_jpar", 1, 1),
+        rdjl: declare_helper(module, "jit_rdjl", 1, 1),
         call: declare_helper(module, "jit_call", 4, 1),
         // Type predicates
         isnum: declare_helper(module, "jit_isnum", 1, 1),
@@ -993,13 +995,14 @@ fn compile_function_body(
                 | OP_UNWRAP | OP_RECFLD | OP_RECFLD_NAME | OP_LISTGET | OP_INDEX | OP_STR
                 | OP_HD | OP_AT | OP_FMT2 | OP_TL | OP_REV | OP_SRT | OP_SRTDESC | OP_SLC
                 | OP_TAKE | OP_DROP | OP_SPL | OP_CAT | OP_GET | OP_POST | OP_GETH | OP_POSTH
-                | OP_GETMANY | OP_ENV | OP_JPTH | OP_JDMP | OP_JPAR | OP_MAPNEW | OP_MGET
-                | OP_MSET | OP_MDEL | OP_MKEYS | OP_MVALS | OP_LISTNEW | OP_LISTAPPEND
-                | OP_RECNEW | OP_RECWITH | OP_PRT | OP_RD | OP_RDL | OP_WR | OP_WRL | OP_TRM
-                | OP_UPR | OP_LWR | OP_CAP | OP_PADL | OP_PADR | OP_UNQ | OP_UNIQBY
-                | OP_PARTITION | OP_FRQ | OP_NUM | OP_RGXSUB | OP_ZIP | OP_ENUMERATE | OP_RANGE
-                | OP_WINDOW | OP_CHUNKS | OP_CUMSUM | OP_SETUNION | OP_SETINTER | OP_SETDIFF
-                | OP_FFT | OP_IFFT | OP_TRANSPOSE | OP_MATMUL | OP_INV | OP_SOLVE => {
+                | OP_GETMANY | OP_ENV | OP_JPTH | OP_JDMP | OP_JPAR | OP_RDJL | OP_MAPNEW
+                | OP_MGET | OP_MSET | OP_MDEL | OP_MKEYS | OP_MVALS | OP_LISTNEW
+                | OP_LISTAPPEND | OP_RECNEW | OP_RECWITH | OP_PRT | OP_RD | OP_RDL | OP_WR
+                | OP_WRL | OP_TRM | OP_UPR | OP_LWR | OP_CAP | OP_PADL | OP_PADR | OP_UNQ
+                | OP_UNIQBY | OP_PARTITION | OP_FRQ | OP_NUM | OP_RGXSUB | OP_ZIP
+                | OP_ENUMERATE | OP_RANGE | OP_WINDOW | OP_CHUNKS | OP_CUMSUM | OP_SETUNION
+                | OP_SETINTER | OP_SETDIFF | OP_FFT | OP_IFFT | OP_TRANSPOSE | OP_MATMUL
+                | OP_INV | OP_SOLVE => {
                     non_num_write[a] = true;
                     non_bool_write[a] = true;
                 }
@@ -3051,6 +3054,13 @@ fn compile_function_body(
             OP_JPAR => {
                 let bv = builder.use_var(vars[b_idx]);
                 let fref = get_func_ref(&mut builder, module, helpers.jpar);
+                let call_inst = builder.ins().call(fref, &[bv]);
+                let result = builder.inst_results(call_inst)[0];
+                builder.def_var(vars[a_idx], result);
+            }
+            OP_RDJL => {
+                let bv = builder.use_var(vars[b_idx]);
+                let fref = get_func_ref(&mut builder, module, helpers.rdjl);
                 let call_inst = builder.ins().call(fref, &[bv]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);

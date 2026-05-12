@@ -1,0 +1,14 @@
+-- JSONL streaming: rdjl reads a JSONL file line by line and returns
+-- L (R _ t) — a list of per-line parse results. Empty lines are skipped,
+-- so log files with stray blank lines parse cleanly. Each entry is
+-- wrapped in a Result so a single malformed line doesn't poison the
+-- whole stream.
+
+-- Hydrate a JSONL fixture, then count the parsed entries. In a real
+-- pipeline rdjl is used on a file produced by a log shipper or another
+-- process; here we generate one in-place so the example is hermetic.
+prepare p:t>R t t;wrl p ["{\"k\":1}", "{\"k\":2}", "{\"k\":3}"]
+n-lines p:t>n;w=prepare p;es=rdjl p;len es
+
+-- run: n-lines /tmp/ilo-jpar-stream-example.jsonl
+-- out: 3

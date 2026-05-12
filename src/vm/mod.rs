@@ -250,6 +250,7 @@ pub(crate) const OP_PADL: u8 = 121; // R[A] = pad_left(R[B], R[C])  (text, width
 pub(crate) const OP_PADR: u8 = 122; // R[A] = pad_right(R[B], R[C]) (text, width → text)
 
 pub(crate) const OP_GETMANY: u8 = 136; // R[A] = get_many(R[B])  (L t → L (R t t), concurrent fan-out)
+pub(crate) const OP_RDJL: u8 = 135; // R[A] = rdjl(R[B])  (read JSONL file → L (R _ t))
 
 // Linear algebra advanced.
 pub(crate) const OP_SOLVE: u8 = 126; // R[A] = solve(R[B], R[C])  — solve Ax = b
@@ -2271,6 +2272,15 @@ impl RegCompiler {
                             }
                             return ra;
                         }
+                        (Builtin::Rdjl, 1) => {
+                            // rdjl path → L (R _ t). Not a Result-returning op, so `!`
+                            // is unsupported here; the verifier rejects it via the
+                            // standard return-type check.
+                            let rb = self.compile_expr(&args[0]);
+                            let ra = self.alloc_reg();
+                            self.emit_abc(OP_RDJL, ra, rb, 0);
+                            return ra;
+                        }
                         // Map builtins
                         (Builtin::Mmap, 0) => {
                             let ra = self.alloc_reg();
@@ -2786,10 +2796,10 @@ fn chunk_is_all_numeric(chunk: &Chunk) -> bool {
             OP_RECNEW | OP_LISTNEW | OP_RECWITH | OP_WRAPOK | OP_WRAPERR | OP_STR | OP_CAT
             | OP_SPL | OP_REV | OP_SRT | OP_SRTDESC | OP_SLC | OP_TAKE | OP_DROP | OP_UNQ
             | OP_UNIQBY | OP_FRQ | OP_PARTITION | OP_LISTAPPEND | OP_JPAR | OP_JDMP | OP_ENV
-            | OP_GET | OP_GETH | OP_GETMANY | OP_POST | OP_POSTH | OP_RD | OP_RDL | OP_WR
-            | OP_WRL | OP_MAPNEW | OP_MGET | OP_MSET | OP_MKEYS | OP_MVALS | OP_HD | OP_AT
-            | OP_LST | OP_TL | OP_FMT2 | OP_RGXSUB | OP_ZIP | OP_ENUMERATE | OP_WINDOW | OP_FFT
-            | OP_IFFT | OP_RANGE | OP_CHUNKS | OP_CUMSUM | OP_SETUNION | OP_SETINTER
+            | OP_GET | OP_GETH | OP_GETMANY | OP_POST | OP_POSTH | OP_RD | OP_RDL | OP_RDJL
+            | OP_WR | OP_WRL | OP_MAPNEW | OP_MGET | OP_MSET | OP_MKEYS | OP_MVALS | OP_HD
+            | OP_AT | OP_LST | OP_TL | OP_FMT2 | OP_RGXSUB | OP_ZIP | OP_ENUMERATE | OP_WINDOW
+            | OP_FFT | OP_IFFT | OP_RANGE | OP_CHUNKS | OP_CUMSUM | OP_SETUNION | OP_SETINTER
             | OP_SETDIFF | OP_TRANSPOSE | OP_MATMUL | OP_INV | OP_SOLVE => {
                 return false;
             }
@@ -6168,6 +6178,40 @@ impl<'a> VM<'a> {
                         Err(e) => NanVal::heap_err(NanVal::heap_string(e.to_string())),
                     };
                     reg_set!(a, result);
+                }
+                OP_RDJL => {
+                    let a = ((inst >> 16) & 0xFF) as usize + base;
+                    let b = ((inst >> 8) & 0xFF) as usize + base;
+                    let v = reg!(b);
+                    if !v.is_string() {
+                        vm_err!(VmError::Type("rdjl requires a string path"));
+                    }
+                    // SAFETY: is_string() confirmed heap-tagged string with live RC.
+                    let path = unsafe {
+                        match v.as_heap_ref() {
+                            HeapObj::Str(s) => s.as_str().to_owned(),
+                            _ => unreachable!(),
+                        }
+                    };
+                    match std::fs::read_to_string(&path) {
+                        Ok(content) => {
+                            let mut items: Vec<NanVal> = Vec::new();
+                            for line in content.split('\n') {
+                                if line.is_empty() {
+                                    continue;
+                                }
+                                let entry = match serde_json::from_str::<serde_json::Value>(line) {
+                                    Ok(parsed) => NanVal::heap_ok(serde_json_to_nanval(parsed)),
+                                    Err(e) => NanVal::heap_err(NanVal::heap_string(e.to_string())),
+                                };
+                                items.push(entry);
+                            }
+                            reg_set!(a, NanVal::heap_list(items));
+                        }
+                        Err(_) => {
+                            vm_err!(VmError::Type("rdjl failed to read file"));
+                        }
+                    }
                 }
                 OP_SPL => {
                     let a = ((inst >> 16) & 0xFF) as usize + base;
@@ -10080,6 +10124,42 @@ pub(crate) extern "C" fn jit_jpar(a: u64) -> u64 {
     match serde_json::from_str::<serde_json::Value>(text) {
         Ok(parsed) => NanVal::heap_ok(serde_json_to_nanval(parsed)).0,
         Err(e) => NanVal::heap_err(NanVal::heap_string(e.to_string())).0,
+    }
+}
+
+#[cfg(feature = "cranelift")]
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn jit_rdjl(a: u64) -> u64 {
+    let v = NanVal(a);
+    if !v.is_string() {
+        return TAG_NIL;
+    }
+    let path = unsafe {
+        match v.as_heap_ref() {
+            HeapObj::Str(s) => s.as_str().to_owned(),
+            _ => unreachable!(),
+        }
+    };
+    match std::fs::read_to_string(&path) {
+        Ok(content) => {
+            let mut items: Vec<NanVal> = Vec::new();
+            for line in content.split('\n') {
+                if line.is_empty() {
+                    continue;
+                }
+                let entry = match serde_json::from_str::<serde_json::Value>(line) {
+                    Ok(parsed) => NanVal::heap_ok(serde_json_to_nanval(parsed)),
+                    Err(e) => NanVal::heap_err(NanVal::heap_string(e.to_string())),
+                };
+                items.push(entry);
+            }
+            NanVal::heap_list(items).0
+        }
+        // On file-read failure JIT returns nil; the VM dispatch path raises a
+        // typed runtime error. JIT helper-callers don't have a runtime-error
+        // channel, so nil is the conventional signal here (matches jit_rd /
+        // jit_jpar conventions for non-string inputs).
+        Err(_) => TAG_NIL,
     }
 }
 
