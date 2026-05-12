@@ -210,6 +210,7 @@ pub(crate) const OP_IFFT: u8 = 130; // R[A] = ifft(R[B])
 pub(crate) const OP_UNIQBY: u8 = 116; // R[A] = uniqby(R[B] (fn-ref), R[C] (list))
 // Higher-order: partition fn xs — pre-allocated, HOF dispatch not yet wired in VM.
 pub(crate) const OP_PARTITION: u8 = 147; // R[A] = partition(R[B] (fn-ref), R[C] (list)) → L (L a)
+pub(crate) const OP_FRQ: u8 = 140; // R[A] = frq(R[B] (list))  — frequency map (M t n)
 
 // ABx mode — register + 16-bit operand
 pub(crate) const OP_LOADK: u8 = 20;
@@ -1927,6 +1928,12 @@ impl RegCompiler {
                             self.emit_abc(OP_UNQ, ra, rb, 0);
                             return ra;
                         }
+                        (Builtin::Frq, 1) => {
+                            let rb = self.compile_expr(&args[0]);
+                            let ra = self.alloc_reg();
+                            self.emit_abc(OP_FRQ, ra, rb, 0);
+                            return ra;
+                        }
                         // fmt is variadic — falls through to OP_CALL -> interpreter
                         (Builtin::Prnt, 1) => {
                             let rb = self.compile_expr(&args[0]);
@@ -2540,7 +2547,7 @@ fn chunk_is_all_numeric(chunk: &Chunk) -> bool {
         let op = (inst >> 24) as u8;
         match op {
             OP_RECNEW | OP_LISTNEW | OP_RECWITH | OP_WRAPOK | OP_WRAPERR | OP_STR | OP_CAT
-            | OP_SPL | OP_REV | OP_SRT | OP_SRTDESC | OP_SLC | OP_UNQ | OP_UNIQBY
+            | OP_SPL | OP_REV | OP_SRT | OP_SRTDESC | OP_SLC | OP_UNQ | OP_UNIQBY | OP_FRQ
             | OP_PARTITION | OP_LISTAPPEND | OP_JPAR | OP_JDMP | OP_ENV | OP_GET | OP_GETH
             | OP_POST | OP_POSTH | OP_RD | OP_RDL | OP_WR | OP_WRL | OP_MAPNEW | OP_MGET
             | OP_MSET | OP_MKEYS | OP_MVALS | OP_HD | OP_AT | OP_LST | OP_TL | OP_FMT2
@@ -6155,6 +6162,37 @@ impl<'a> VM<'a> {
                         }
                     }
                 }
+                OP_FRQ => {
+                    let a = ((inst >> 16) & 0xFF) as usize + base;
+                    let b = ((inst >> 8) & 0xFF) as usize + base;
+                    let v = reg!(b);
+                    if (v.0 & TAG_MASK) != TAG_LIST {
+                        vm_err!(VmError::Type("frq requires a list"));
+                    }
+                    // SAFETY: TAG_LIST confirmed.
+                    let items = unsafe {
+                        match v.as_heap_ref() {
+                            HeapObj::List(l) => l.clone(),
+                            _ => unreachable!(),
+                        }
+                    };
+                    let mut counts: std::collections::HashMap<String, usize> =
+                        std::collections::HashMap::new();
+                    for item in items {
+                        let key_str = match nanval_to_key_string(item) {
+                            Some(s) => s,
+                            None => vm_err!(VmError::Type(
+                                "frq: list elements must be text, number, or bool"
+                            )),
+                        };
+                        *counts.entry(key_str).or_insert(0) += 1;
+                    }
+                    let map: std::collections::HashMap<String, NanVal> = counts
+                        .into_iter()
+                        .map(|(k, c)| (k, NanVal::number(c as f64)))
+                        .collect();
+                    reg_set!(a, NanVal::heap_map(map));
+                }
                 OP_UNIQBY => {
                     // HOF dispatch not wired through the VM yet (matches map/flt/fld/grp).
                     // Emitter currently falls through to OP_CALL → interpreter; this arm
@@ -6189,6 +6227,38 @@ unsafe fn nanval_str_cmp(a: NanVal, b: NanVal) -> std::cmp::Ordering {
         };
         sa.cmp(sb)
     }
+}
+
+/// Stringify a NanVal element value for use as a map key in `frq`.
+/// Returns None if the value is not a text, number, or bool.
+///
+/// Keys are prefixed with a type tag (`n:` / `t:` / `b:`) so that values
+/// from distinct domains never alias one another (e.g. `Number(1)` and
+/// `Text("1")` would otherwise both stringify to `"1"`). Matches the
+/// uniqby/setops precedent.
+fn nanval_to_key_string(v: NanVal) -> Option<String> {
+    if v.is_number() {
+        let n = v.as_number();
+        if n.fract() == 0.0 && n.abs() < 1e15 {
+            return Some(format!("n:{}", n as i64));
+        }
+        return Some(format!("n:{n}"));
+    }
+    match v.0 {
+        TAG_TRUE => return Some("b:true".to_string()),
+        TAG_FALSE => return Some("b:false".to_string()),
+        _ => {}
+    }
+    if v.is_string() {
+        // SAFETY: is_string() confirmed.
+        unsafe {
+            return match v.as_heap_ref() {
+                HeapObj::Str(s) => Some(format!("t:{s}")),
+                _ => None,
+            };
+        }
+    }
+    None
 }
 
 fn nanval_to_json(v: NanVal) -> serde_json::Value {
@@ -8497,6 +8567,34 @@ pub(crate) extern "C" fn jit_partition(_fn_ref: u64, _list: u64) -> u64 {
     // Returns nil so callers see a typed failure rather than UB. The emitter
     // does not produce OP_PARTITION today; this stub exists for plumbing parity.
     TAG_NIL
+}
+
+#[cfg(feature = "cranelift")]
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn jit_frq(v: u64) -> u64 {
+    let nv = NanVal(v);
+    if (nv.0 & TAG_MASK) != TAG_LIST {
+        return TAG_NIL;
+    }
+    // SAFETY: TAG_LIST confirmed.
+    let items = unsafe {
+        match nv.as_heap_ref() {
+            HeapObj::List(l) => l.clone(),
+            _ => return TAG_NIL,
+        }
+    };
+    let mut counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    for item in items {
+        match nanval_to_key_string(item) {
+            Some(s) => *counts.entry(s).or_insert(0) += 1,
+            None => return TAG_NIL,
+        }
+    }
+    let map: std::collections::HashMap<String, NanVal> = counts
+        .into_iter()
+        .map(|(k, c)| (k, NanVal::number(c as f64)))
+        .collect();
+    NanVal::heap_map(map).0
 }
 
 // ── JIT helpers: File I/O ───────────────────────────────────────────

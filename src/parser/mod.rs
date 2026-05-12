@@ -2226,6 +2226,7 @@ fn builtin_arity_tables() -> (HashMap<String, usize>, HashMap<String, Vec<bool>>
         ("rev", 1, &[]),
         ("unq", 1, &[]),
         ("flat", 1, &[]),
+        ("frq", 1, &[]),
         // Collections (binary)
         ("at", 2, &[]),
         ("has", 2, &[]),

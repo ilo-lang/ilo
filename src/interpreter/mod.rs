@@ -1798,6 +1798,49 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             .collect();
         return Ok(Value::Map(map));
     }
+    if builtin == Some(Builtin::Frq) && args.len() == 1 {
+        let items = match &args[0] {
+            Value::List(l) => l,
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("frq: arg must be a list, got {:?}", other),
+                ));
+            }
+        };
+        let mut counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+        for item in items {
+            // Prefix keys with a type tag so distinct domains never alias each
+            // other. Without this, `Number(1)` and `Text("1")` would both
+            // stringify to `"1"` and collide. Matches uniqby/setops precedent.
+            let key_str = match item {
+                Value::Text(s) => format!("t:{s}"),
+                Value::Number(n) => {
+                    if *n == (*n as i64) as f64 {
+                        format!("n:{}", *n as i64)
+                    } else {
+                        format!("n:{n}")
+                    }
+                }
+                Value::Bool(b) => format!("b:{b}"),
+                other => {
+                    return Err(RuntimeError::new(
+                        "ILO-R009",
+                        format!(
+                            "frq: list elements must be text, number, or bool, got {:?}",
+                            other
+                        ),
+                    ));
+                }
+            };
+            *counts.entry(key_str).or_insert(0) += 1;
+        }
+        let map = counts
+            .into_iter()
+            .map(|(k, v)| (k, Value::Number(v as f64)))
+            .collect();
+        return Ok(Value::Map(map));
+    }
     if builtin == Some(Builtin::Sum) && args.len() == 1 {
         let items = match &args[0] {
             Value::List(l) => l,
