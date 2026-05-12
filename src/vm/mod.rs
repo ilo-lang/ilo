@@ -206,6 +206,7 @@ pub(crate) const OP_FMT2: u8 = 104; // R[A] = fmt2(R[B], R[C])  (format number t
 // of `[real, imag]` pairs; OP_IFFT takes the same shape and returns `L n`.
 pub(crate) const OP_FFT: u8 = 129; // R[A] = fft(R[B])
 pub(crate) const OP_IFFT: u8 = 130; // R[A] = ifft(R[B])
+pub(crate) const OP_CLAMP: u8 = 149; // R[A] = clamp(R[B], R[C], R[D])  (lo in C, hi in D; D in data word A field)
 // Higher-order: uniqby fn xs — pre-allocated, HOF dispatch not yet wired in VM.
 pub(crate) const OP_UNIQBY: u8 = 116; // R[A] = uniqby(R[B] (fn-ref), R[C] (list))
 // Higher-order: partition fn xs — pre-allocated, HOF dispatch not yet wired in VM.
@@ -1602,6 +1603,19 @@ impl RegCompiler {
                             let rc = self.compile_expr(&args[1]);
                             let ra = self.alloc_reg();
                             self.emit_abc(OP_MOD, ra, rb, rc);
+                            self.reg_is_num[ra as usize] = true;
+                            return ra;
+                        }
+                        (Builtin::Clamp, 3) => {
+                            // clamp x lo hi — two-instruction sequence:
+                            //   OP_CLAMP A=result  B=x  C=lo
+                            //   data word: A=hi_reg (consumed by OP_CLAMP dispatch; ip advances past it)
+                            let rb = self.compile_expr(&args[0]);
+                            let rc = self.compile_expr(&args[1]);
+                            let rd = self.compile_expr(&args[2]);
+                            let ra = self.alloc_reg();
+                            self.emit_abc(OP_CLAMP, ra, rb, rc);
+                            self.emit_abc(0, rd, 0, 0);
                             self.reg_is_num[ra as usize] = true;
                             return ra;
                         }
@@ -5107,6 +5121,27 @@ impl<'a> VM<'a> {
                     }
                     reg_set!(a, NanVal::number(vb.as_number() % nc));
                 }
+                OP_CLAMP => {
+                    // Two-instruction sequence: OP_CLAMP A=result B=x C=lo; data word A=hi_reg
+                    let a = ((inst >> 16) & 0xFF) as usize + base;
+                    let b = ((inst >> 8) & 0xFF) as usize + base;
+                    let c = (inst & 0xFF) as usize + base;
+                    // SAFETY: compiler always emits the data word immediately after OP_CLAMP
+                    let data_inst = unsafe { *code.get_unchecked(ip) };
+                    ip += 1;
+                    let d = ((data_inst >> 16) & 0xFF) as usize + base;
+                    let vb = reg!(b);
+                    let vc = reg!(c);
+                    let vd = reg!(d);
+                    if !vb.is_number() || !vc.is_number() || !vd.is_number() {
+                        vm_err!(VmError::Type("clamp requires numbers"));
+                    }
+                    let x = vb.as_number();
+                    let lo = vc.as_number();
+                    let hi = vd.as_number();
+                    // Semantics: result = max(lo, min(hi, x)); when lo > hi, result == lo.
+                    reg_set!(a, NanVal::number(x.min(hi).max(lo)));
+                }
                 OP_FLR | OP_CEL | OP_ROU => {
                     let a = ((inst >> 16) & 0xFF) as usize + base;
                     let b = ((inst >> 8) & 0xFF) as usize + base;
@@ -6853,6 +6888,20 @@ pub(crate) extern "C" fn jit_mod(a: u64, b: u64) -> u64 {
             return TAG_NIL;
         }
         NanVal::number(av.as_number() % dv).0
+    } else {
+        TAG_NIL
+    }
+}
+
+#[cfg(feature = "cranelift")]
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn jit_clamp(x: u64, lo: u64, hi: u64) -> u64 {
+    let xv = NanVal(x);
+    let lv = NanVal(lo);
+    let hv = NanVal(hi);
+    if xv.is_number() && lv.is_number() && hv.is_number() {
+        // result = max(lo, min(hi, x)); when lo > hi, result == lo.
+        NanVal::number(xv.as_number().min(hv.as_number()).max(lv.as_number())).0
     } else {
         TAG_NIL
     }
@@ -8998,7 +9047,7 @@ pub(crate) fn find_block_leaders(code: &[u32]) -> Vec<usize> {
                 leaders.insert(i + 2);
                 leaders.insert(i + 3);
             }
-            OP_SLC | OP_LST | OP_MSET | OP_POSTH | OP_RGXSUB => {
+            OP_SLC | OP_LST | OP_MSET | OP_POSTH | OP_RGXSUB | OP_CLAMP => {
                 // 2-word instructions: the following word is data, not an instruction.
                 // Skip it so its bits aren't mis-decoded as an opcode that might mark
                 // bogus leaders. The instruction after the data word is a normal leader

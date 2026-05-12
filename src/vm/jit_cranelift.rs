@@ -54,6 +54,7 @@ struct HelperFuncs {
     num: FuncId,
     abs: FuncId,
     mod_fn: FuncId,
+    clamp: FuncId,
     min: FuncId,
     max: FuncId,
     flr: FuncId,
@@ -176,6 +177,7 @@ fn register_helpers(builder: &mut JITBuilder) {
         ("jit_num", jit_num as *const u8),
         ("jit_abs", jit_abs as *const u8),
         ("jit_mod", jit_mod as *const u8),
+        ("jit_clamp", jit_clamp as *const u8),
         ("jit_min", jit_min as *const u8),
         ("jit_max", jit_max as *const u8),
         ("jit_flr", jit_flr as *const u8),
@@ -289,6 +291,7 @@ fn declare_all_helpers(module: &mut JITModule) -> HelperFuncs {
         num: declare_helper(module, "jit_num", 1, 1),
         abs: declare_helper(module, "jit_abs", 1, 1),
         mod_fn: declare_helper(module, "jit_mod", 2, 1),
+        clamp: declare_helper(module, "jit_clamp", 3, 1),
         min: declare_helper(module, "jit_min", 2, 1),
         max: declare_helper(module, "jit_max", 2, 1),
         flr: declare_helper(module, "jit_flr", 1, 1),
@@ -896,7 +899,7 @@ fn compile_function_body(
                 | OP_ADDK_N | OP_SUBK_N | OP_MULK_N | OP_DIVK_N
                 | OP_LEN | OP_ABS | OP_MIN | OP_MAX
                 | OP_FLR | OP_CEL | OP_ROU | OP_RND0 | OP_RND2 | OP_NOW
-                | OP_MOD | OP_POW | OP_SQRT | OP_LOG | OP_EXP | OP_SIN | OP_COS
+                | OP_MOD | OP_CLAMP | OP_POW | OP_SQRT | OP_LOG | OP_EXP | OP_SIN | OP_COS
                 | OP_TAN | OP_LOG10 | OP_LOG2 | OP_ATAN2 => {
                     num_write[a] = true;
                 }
@@ -1791,6 +1794,24 @@ fn compile_function_body(
                 let cv = builder.use_var(vars[c_idx]);
                 let fref = get_func_ref(&mut builder, module, helpers.mod_fn);
                 let call_inst = builder.ins().call(fref, &[bv, cv]);
+                let result = builder.inst_results(call_inst)[0];
+                builder.def_var(vars[a_idx], result);
+                if a_idx < reg_count && reg_always_num[a_idx] {
+                    let mf = cranelift_codegen::ir::MemFlags::new();
+                    let rf = builder.ins().bitcast(F64, mf, result);
+                    builder.def_var(f64_vars[a_idx], rf);
+                }
+            }
+            OP_CLAMP => {
+                // clamp(R[B]=x, R[C]=lo, R[D]=hi) — D in data word A field
+                let bv = builder.use_var(vars[b_idx]);
+                let cv = builder.use_var(vars[c_idx]);
+                let data_inst = chunk.code[ip + 1];
+                skip_next = true;
+                let d_idx = ((data_inst >> 16) & 0xFF) as usize;
+                let dv = builder.use_var(vars[d_idx]);
+                let fref = get_func_ref(&mut builder, module, helpers.clamp);
+                let call_inst = builder.ins().call(fref, &[bv, cv, dv]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
                 if a_idx < reg_count && reg_always_num[a_idx] {

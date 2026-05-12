@@ -488,6 +488,19 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             )),
         };
     }
+    if builtin == Some(Builtin::Clamp) && args.len() == 3 {
+        return match (&args[0], &args[1], &args[2]) {
+            (Value::Number(x), Value::Number(lo), Value::Number(hi)) => {
+                // Semantics: result = max(lo, min(hi, x)). When lo > hi the
+                // outer max wins and returns lo, so the result is always >= lo.
+                Ok(Value::Number(x.min(*hi).max(*lo)))
+            }
+            _ => Err(RuntimeError::new(
+                "ILO-R009",
+                "clamp requires three numbers".to_string(),
+            )),
+        };
+    }
     if matches!(builtin, Some(Builtin::Min | Builtin::Max)) && args.len() == 2 {
         return match (&args[0], &args[1]) {
             (Value::Number(a), Value::Number(b)) => {

@@ -1,0 +1,20 @@
+-- clamp x lo hi — restrict x to the inclusive range [lo, hi].
+-- Equivalent to max(lo, min(hi, x)). When lo > hi the lower bound wins
+-- (result is always >= lo).
+
+-- Clamp a value into a range.
+into x:n lo:n hi:n>n;clamp x lo hi
+
+-- Saturate volume to a percentage 0..100.
+vol v:n>n;clamp v 0 100
+
+-- run: into 5 0 10
+-- out: 5
+-- run: into -3 0 10
+-- out: 0
+-- run: into 15 0 10
+-- out: 10
+-- run: vol 150
+-- out: 100
+-- run: vol -20
+-- out: 0
