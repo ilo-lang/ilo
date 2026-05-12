@@ -7,14 +7,14 @@ pub struct Parser {
     pos: usize,
     /// Known function arities, populated with builtins at construction
     /// and extended with user-function headers as they're parsed.
-    /// Used by `parse_call_or_atom` to eagerly consume nested calls when an
-    /// Ident in arg position is a known function — so `prnt str nc` parses
-    /// as `prnt(str(nc))` without requiring parens.
     fn_arity: HashMap<String, usize>,
     /// For each known function, which parameter positions take a function
-    /// reference (HOF positions). A `true` at index i means "this arg
-    /// should be parsed as a bare ref, not eagerly expanded as a call".
+    /// reference (HOF positions).
     fn_param_is_fn: HashMap<String, Vec<bool>>,
+    /// When true, an Ident followed by another whitespace-separated atom is
+    /// parsed as a bare Ref (list element) rather than a function call.
+    /// Set only inside list-literal element parsing.
+    no_whitespace_call: bool,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -42,6 +42,7 @@ impl Parser {
             pos: 0,
             fn_arity,
             fn_param_is_fn,
+            no_whitespace_call: false,
         }
     }
 
@@ -1368,7 +1369,55 @@ impl Parser {
 
     /// Parse a single list element — like `parse_expr_inner` but also handles
     /// `~expr` (Ok) and `^expr` (Err) wrapping that `parse_expr` normally handles.
+    /// Scan ahead from the current position (just past the opening `[`)
+    /// to determine whether this list literal contains a top-level comma.
+    /// Used to choose between comma-separated mode (calls allowed in
+    /// elements) and whitespace mode (bare refs are elements).
+    fn list_has_top_level_comma(&self) -> bool {
+        let mut depth_paren = 0;
+        let mut depth_bracket = 0;
+        let mut depth_brace = 0;
+        let mut i = self.pos;
+        while i < self.tokens.len() {
+            match &self.tokens[i].0 {
+                Token::LParen => depth_paren += 1,
+                Token::RParen => depth_paren -= 1,
+                Token::LBracket => depth_bracket += 1,
+                Token::RBracket => {
+                    if depth_bracket == 0 && depth_paren == 0 && depth_brace == 0 {
+                        return false;
+                    }
+                    depth_bracket -= 1;
+                }
+                Token::LBrace => depth_brace += 1,
+                Token::RBrace => depth_brace -= 1,
+                Token::Comma if depth_paren == 0 && depth_bracket == 0 && depth_brace == 0 => {
+                    return true;
+                }
+                _ => {}
+            }
+            i += 1;
+        }
+        false
+    }
+
+    /// Whitespace-mode list element: bare refs become elements, not calls.
+    /// Without this guard, `[a b c]` would parse as `[Call(a, [b, c])]` and
+    /// confuse agents who reasonably expect it to mirror `[1 2 3]`. Calls
+    /// inside whitespace-list elements still work via parens (`[(f x) y]`
+    /// or `[f(x) y]`) — the flag is cleared on paren entry.
     fn parse_list_element(&mut self) -> Result<Expr> {
+        let prev = self.no_whitespace_call;
+        self.no_whitespace_call = true;
+        let result = self.parse_list_element_call_ok();
+        self.no_whitespace_call = prev;
+        result
+    }
+
+    /// Comma-mode list element: full expression including whitespace-calls.
+    /// Used when the list literal contains a top-level comma, so
+    /// `[floor x, ceil x]` parses each side as its own call expression.
+    fn parse_list_element_call_ok(&mut self) -> Result<Expr> {
         match self.peek() {
             Some(Token::Tilde) => {
                 self.advance();
@@ -1709,6 +1758,13 @@ impl Parser {
                 });
             }
 
+            // Inside a list literal, `[a b c]` must yield three list
+            // elements rather than `[Call(a, [b, c])]`. If the next token
+            // would otherwise start a call argument, return the bare Ref.
+            if self.no_whitespace_call {
+                return Ok(atom);
+            }
+
             // Check for function call: name followed by args
             //
             // Infix interaction: when the first token after the name is an
@@ -1995,15 +2051,33 @@ impl Parser {
             }
             Some(Token::LParen) => {
                 self.advance();
-                let expr = self.parse_expr()?;
+                // Parenthesised expressions are self-contained — restore
+                // normal whitespace-call behaviour inside.
+                let prev = self.no_whitespace_call;
+                self.no_whitespace_call = false;
+                let expr = self.parse_expr();
+                self.no_whitespace_call = prev;
+                let expr = expr?;
                 self.expect(&Token::RParen)?;
                 Ok(expr)
             }
             Some(Token::LBracket) => {
                 self.advance();
+                // Disambiguation: if this list literal contains any comma
+                // (at depth 0), it uses comma-separated mode where each
+                // element is a full expression — calls like
+                // `[floor x, ceil x]` work as expected. Otherwise the list
+                // is whitespace-separated and bare refs become elements:
+                // `[a b c]` → `[a, b, c]`, mirroring `[1 2 3]`. Calls
+                // inside a whitespace-list must use parens: `[(f x) y]`.
+                let has_comma = self.list_has_top_level_comma();
                 let mut items = Vec::new();
                 while self.peek() != Some(&Token::RBracket) {
-                    items.push(self.parse_list_element()?);
+                    if has_comma {
+                        items.push(self.parse_list_element_call_ok()?);
+                    } else {
+                        items.push(self.parse_list_element()?);
+                    }
                     // Skip optional comma separator
                     if self.peek() == Some(&Token::Comma) {
                         self.advance();
@@ -6663,5 +6737,113 @@ mod tests {
         let s = first_fn_return_debug("f>R (L (R n t)) t;~[~1,~2]");
         assert!(s.contains("Result"), "no Result: {s}");
         assert!(s.contains("List"), "no List: {s}");
+    }
+
+    // ---- list-literal-refs parser coverage ----
+
+    fn first_list_items(prog: &Program) -> Vec<Expr> {
+        let Decl::Function { body, .. } = &prog.declarations[0] else {
+            panic!("expected function")
+        };
+        let Stmt::Expr(Expr::List(items)) = &body[0].node else {
+            panic!("expected list, got {:?}", body[0].node)
+        };
+        items.clone()
+    }
+
+    #[test]
+    fn parse_list_whitespace_refs_are_bare_refs() {
+        // `[a b c]` must be a 3-element list of bare refs, not Call(a, [b, c]).
+        let prog = parse_str("f a:n b:n c:n>L n;[a b c]");
+        let items = first_list_items(&prog);
+        assert_eq!(items.len(), 3);
+        for (i, name) in ["a", "b", "c"].iter().enumerate() {
+            assert!(
+                matches!(&items[i], Expr::Ref(n) if n == name),
+                "items[{i}] not Ref({name}), got {:?}",
+                items[i]
+            );
+        }
+    }
+
+    #[test]
+    fn parse_list_comma_mode_keeps_calls() {
+        // With a top-level comma, calls inside elements remain calls.
+        let prog = parse_str("f x:n>L n;[flr x, cel x]");
+        let items = first_list_items(&prog);
+        assert_eq!(items.len(), 2);
+        assert!(matches!(&items[0], Expr::Call { function, .. } if function == "flr"));
+        assert!(matches!(&items[1], Expr::Call { function, .. } if function == "cel"));
+    }
+
+    #[test]
+    fn parse_list_whitespace_parens_force_call() {
+        // `[(flr x) y]` — parens reset no_whitespace_call so flr x is a call.
+        let prog = parse_str("f x:n y:n>L n;[(flr x) y]");
+        let items = first_list_items(&prog);
+        assert_eq!(items.len(), 2);
+        assert!(matches!(&items[0], Expr::Call { function, .. } if function == "flr"));
+        assert!(matches!(&items[1], Expr::Ref(n) if n == "y"));
+    }
+
+    #[test]
+    fn parse_list_has_top_level_comma_ignores_nested() {
+        // Nested brackets contain a comma but outer is whitespace-mode.
+        // Outer must still be whitespace-mode (no top-level comma).
+        let prog = parse_str("f>L L n;[[1,2] [3,4]]");
+        let items = first_list_items(&prog);
+        assert_eq!(items.len(), 2);
+        for inner in &items {
+            let Expr::List(sub) = inner else {
+                panic!("expected nested list, got {:?}", inner)
+            };
+            assert_eq!(sub.len(), 2);
+        }
+    }
+
+    #[test]
+    fn parse_list_empty_whitespace_mode() {
+        // Empty list — list_has_top_level_comma must hit the RBracket-at-depth-0
+        // early-return without errors.
+        let prog = parse_str("f>L n;[]");
+        let items = first_list_items(&prog);
+        assert!(items.is_empty());
+    }
+
+    #[test]
+    fn parse_list_single_ref_whitespace_mode() {
+        let prog = parse_str("f a:n>L n;[a]");
+        let items = first_list_items(&prog);
+        assert_eq!(items.len(), 1);
+        assert!(matches!(&items[0], Expr::Ref(n) if n == "a"));
+    }
+
+    #[test]
+    fn parse_list_whitespace_with_literals_and_refs() {
+        let prog = parse_str("f a:n>L n;[1 a 2]");
+        let items = first_list_items(&prog);
+        assert_eq!(items.len(), 3);
+        assert!(matches!(&items[1], Expr::Ref(n) if n == "a"));
+    }
+
+    #[test]
+    fn parse_list_comma_mode_with_parens_inside() {
+        // Top-level comma + nested paren — exercises the LParen reset path
+        // inside comma-mode element parsing.
+        let prog = parse_str("f x:n>L n;[(flr x), x]");
+        let items = first_list_items(&prog);
+        assert_eq!(items.len(), 2);
+        assert!(matches!(&items[0], Expr::Call { function, .. } if function == "flr"));
+    }
+
+    #[test]
+    fn parse_list_whitespace_with_ok_err_wrappers() {
+        // `[~1 ^2 ~3]` — call_ok path through Tilde/Caret arms in whitespace mode.
+        let prog = parse_str("f>L R n t;[~1 ^\"e\" ~3]");
+        let items = first_list_items(&prog);
+        assert_eq!(items.len(), 3);
+        assert!(matches!(&items[0], Expr::Ok(_)));
+        assert!(matches!(&items[1], Expr::Err(_)));
+        assert!(matches!(&items[2], Expr::Ok(_)));
     }
 }

@@ -1,0 +1,15 @@
+-- List literals with bare variable refs.
+-- `[a b c]` parses the same way as `[1 2 3]` — three elements.
+-- Use commas (`[floor x, ceil x]`) when you want each element to be a full
+-- expression including whitespace-style calls.
+
+-- Three refs in a list — mirrors `[1 2 3]`.
+trio>L n;a=1;b=2;c=3;[a b c]
+
+-- Mixed refs and literals work too.
+mix>L n;a=1;c=3;[a 2 c]
+
+-- run: trio
+-- out: [1, 2, 3]
+-- run: mix
+-- out: [1, 2, 3]
