@@ -278,6 +278,66 @@ pub fn lex(source: &str) -> Result<Vec<(Token, std::ops::Range<usize>)>, LexErro
         }
     }
 
+    // Post-lex: split `Dot Number(N.M)` into `Dot Number(N) Dot Number(M)` so
+    // that chained literal-int dot-index access on nested lists parses correctly.
+    // Source `xs.0.0` tokenises as `Ident Dot Number(0.0)` because the number
+    // regex is greedy — without this pass the trailing `.0` is swallowed by the
+    // float literal and the second index disappears. Only fires when the Number
+    // immediately follows a Dot/DotQuestion (no whitespace) and its source slice
+    // contains a `.` but no exponent, so genuine floats like `1e2` or `f 1.5` are
+    // untouched.
+    {
+        let mut i = 0;
+        while i < tokens.len() {
+            if i == 0 {
+                i += 1;
+                continue;
+            }
+            let prev_is_dot = matches!(tokens[i - 1].0, Token::Dot | Token::DotQuestion)
+                && tokens[i - 1].1.end == tokens[i].1.start;
+            if !prev_is_dot {
+                i += 1;
+                continue;
+            }
+            let Token::Number(_) = tokens[i].0 else {
+                i += 1;
+                continue;
+            };
+            let span = tokens[i].1.clone();
+            let slice = &normalized[span.clone()];
+            if slice.contains('e') || slice.contains('E') || slice.starts_with('-') {
+                i += 1;
+                continue;
+            }
+            let Some(dot_at) = slice.find('.') else {
+                i += 1;
+                continue;
+            };
+            let head = &slice[..dot_at];
+            let tail = &slice[dot_at + 1..];
+            let (Ok(h), Ok(t)) = (head.parse::<f64>(), tail.parse::<f64>()) else {
+                i += 1;
+                continue;
+            };
+            let head_span = span.start..span.start + dot_at;
+            let dot_span = span.start + dot_at..span.start + dot_at + 1;
+            let tail_span = span.start + dot_at + 1..span.end;
+            tokens.splice(
+                i..i + 1,
+                [
+                    (Token::Number(h), head_span),
+                    (Token::Dot, dot_span),
+                    (Token::Number(t), tail_span),
+                ],
+            );
+            // Advance past the new triple; the new tail Number could itself
+            // be followed by another `.` outside the slice, but additional
+            // chaining (xs.0.0.0) would already be split because the lexer
+            // emitted distinct tokens for the next group.
+            i += 3;
+        }
+    }
+
     // Post-lex: after `.` or `.?` (field access), accept JSON-style snake_case
     // field names by merging contiguous `Ident (Underscore (Ident|Number))*`
     // runs back into a single `Ident` token. Real-world JSON (which agents
