@@ -1,0 +1,18 @@
+-- Sibling functions: a non-last function can end with a bare call.
+-- The parser detects that the next tokens form a fn-decl header and
+-- terminates the current body cleanly — no parentheses needed.
+
+-- ends in a bare call to `*`
+dbl x:n>n;*x 2
+
+-- adjacent fn declaration that previously got slurped as an arg to `*`
+sq x:n>n;*x x
+
+main>n;a=dbl 3;b=sq 4;+a b
+
+-- run: main
+-- out: 22
+-- run: dbl 21
+-- out: 42
+-- run: sq 5
+-- out: 25
