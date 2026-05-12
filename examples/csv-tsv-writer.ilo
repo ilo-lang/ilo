@@ -1,0 +1,14 @@
+-- 3-arg wr: serialise a list of rows as csv or tsv and write it in one call.
+-- Each row is itself a list of fields. RFC 4180 quoting applied (fields with
+-- the separator, a quote, or a newline are wrapped in "…" and inner quotes
+-- are escaped as "").
+
+dumpcsv>R t t;wr "/tmp/ilo_wr_csv_example.csv" [["name", "age"], ["alice", 30], ["bob", 25]] "csv"
+
+dumptsv>R t t;wr "/tmp/ilo_wr_tsv_example.tsv" [["name", "age"], ["alice", 30], ["bob", 25]] "tsv"
+
+-- run: dumpcsv
+-- out: ~/tmp/ilo_wr_csv_example.csv
+
+-- run: dumptsv
+-- out: ~/tmp/ilo_wr_tsv_example.tsv

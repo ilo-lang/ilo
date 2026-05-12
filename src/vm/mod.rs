@@ -209,6 +209,12 @@ pub(crate) const OP_DROP: u8 = 114; // R[A] = drop(R[B], R[C])  (skip first B el
 pub(crate) const OP_DTFMT: u8 = 131; // R[A] = dtfmt(R[B] epoch, R[C] fmt) → t
 pub(crate) const OP_DTPARSE: u8 = 132; // R[A] = dtparse(R[B] text, R[C] fmt) → R n t
 
+// Format-dump helper for csv/tsv: parallels OP_JDMP for the `wr path data fmt`
+// 3-arg overload. R[A] = serialised string; R[B] = data list; C = 0 for csv
+// (separator `,`), C = 1 for tsv (separator `\t`). The literal format is known
+// at compile time, so we encode it in the C field rather than via a register.
+pub(crate) const OP_CSVDMP: u8 = 134;
+
 // ABC mode — text formatting
 pub(crate) const OP_FMT2: u8 = 104; // R[A] = fmt2(R[B], R[C])  (format number to N decimal places → t)
 
@@ -2246,22 +2252,32 @@ impl RegCompiler {
                             }
                             return ra;
                         }
-                        // 3-arg `wr path data "json"` — serialise with jdmp,
-                        // then write. Only the literal "json" format is inlined;
-                        // other formats fall through (and the verifier rejects
-                        // unknown literal formats up-front).
+                        // 3-arg `wr path data fmt` — when fmt is a literal
+                        // "json"/"csv"/"tsv", serialise to a string register
+                        // then OP_WR. json uses OP_JDMP; csv/tsv uses OP_CSVDMP
+                        // (separator encoded in C: 0=csv, 1=tsv).
                         (Builtin::Wr, 3) => {
                             if let crate::ast::Expr::Literal(crate::ast::Literal::Text(fmt_str)) =
                                 &args[2]
-                                && fmt_str == "json"
+                                && matches!(fmt_str.as_str(), "json" | "csv" | "tsv")
                             {
                                 let rpath = self.compile_expr(&args[0]);
                                 let rdata = self.compile_expr(&args[1]);
-                                // jdmp(data) → text
-                                let rjson = self.alloc_reg();
-                                self.emit_abc(OP_JDMP, rjson, rdata, 0);
+                                let rcontent = self.alloc_reg();
+                                match fmt_str.as_str() {
+                                    "json" => {
+                                        self.emit_abc(OP_JDMP, rcontent, rdata, 0);
+                                    }
+                                    "csv" => {
+                                        self.emit_abc(OP_CSVDMP, rcontent, rdata, 0);
+                                    }
+                                    "tsv" => {
+                                        self.emit_abc(OP_CSVDMP, rcontent, rdata, 1);
+                                    }
+                                    _ => unreachable!(),
+                                }
                                 let ra = self.alloc_reg();
-                                self.emit_abc(OP_WR, ra, rpath, rjson);
+                                self.emit_abc(OP_WR, ra, rpath, rcontent);
                                 if *unwrap {
                                     let check_reg = self.alloc_reg();
                                     self.emit_abc(OP_ISOK, check_reg, ra, 0);
@@ -2273,11 +2289,11 @@ impl RegCompiler {
                                 }
                                 return ra;
                             }
-                            // non-"json" 3-arg wr (csv/tsv or dynamic): no VM
-                            // path yet — surface a clear compile error.
+                            // Dynamic format string: no VM path yet — surface
+                            // a clear compile error pointing at --run-tree.
                             self.first_error.get_or_insert(
                                 CompileError::UndefinedFunction {
-                                    name: "wr (3-arg non-json format not yet supported in VM; use --run-tree)".to_string(),
+                                    name: "wr (3-arg with dynamic format not yet supported in VM; use --run-tree)".to_string(),
                                 },
                             );
                             return self.alloc_reg();
@@ -2820,12 +2836,13 @@ fn chunk_is_all_numeric(chunk: &Chunk) -> bool {
         match op {
             OP_RECNEW | OP_LISTNEW | OP_RECWITH | OP_WRAPOK | OP_WRAPERR | OP_STR | OP_CAT
             | OP_SPL | OP_REV | OP_SRT | OP_SRTDESC | OP_SLC | OP_TAKE | OP_DROP | OP_UNQ
-            | OP_UNIQBY | OP_FRQ | OP_PARTITION | OP_LISTAPPEND | OP_JPAR | OP_JDMP | OP_ENV
-            | OP_GET | OP_GETH | OP_GETMANY | OP_POST | OP_POSTH | OP_RD | OP_RDL | OP_RDJL
-            | OP_WR | OP_WRL | OP_MAPNEW | OP_MGET | OP_MSET | OP_MKEYS | OP_MVALS | OP_HD
-            | OP_AT | OP_LST | OP_TL | OP_FMT2 | OP_RGXSUB | OP_ZIP | OP_ENUMERATE | OP_WINDOW
-            | OP_FFT | OP_IFFT | OP_RANGE | OP_CHUNKS | OP_CUMSUM | OP_SETUNION | OP_SETINTER
-            | OP_SETDIFF | OP_TRANSPOSE | OP_MATMUL | OP_INV | OP_SOLVE | OP_DTFMT | OP_DTPARSE => {
+            | OP_UNIQBY | OP_FRQ | OP_PARTITION | OP_LISTAPPEND | OP_JPAR | OP_JDMP | OP_CSVDMP
+            | OP_ENV | OP_GET | OP_GETH | OP_GETMANY | OP_POST | OP_POSTH | OP_RD | OP_RDL
+            | OP_RDJL | OP_WR | OP_WRL | OP_MAPNEW | OP_MGET | OP_MSET | OP_MKEYS | OP_MVALS
+            | OP_HD | OP_AT | OP_LST | OP_TL | OP_FMT2 | OP_RGXSUB | OP_ZIP | OP_ENUMERATE
+            | OP_WINDOW | OP_FFT | OP_IFFT | OP_RANGE | OP_CHUNKS | OP_CUMSUM | OP_SETUNION
+            | OP_SETINTER | OP_SETDIFF | OP_TRANSPOSE | OP_MATMUL | OP_INV | OP_SOLVE
+            | OP_DTFMT | OP_DTPARSE => {
                 return false;
             }
             _ => {}
@@ -6259,6 +6276,28 @@ impl<'a> VM<'a> {
                     let v = reg!(b);
                     let json_val = nanval_to_json(v);
                     reg_set!(a, NanVal::heap_string(json_val.to_string()));
+                }
+                OP_CSVDMP => {
+                    // Format the value in R[B] as csv (C==0) or tsv (C==1).
+                    // Re-uses the tree-walker writer so quoting/header rules
+                    // stay identical across engines.
+                    let a = ((inst >> 16) & 0xFF) as usize + base;
+                    let b = ((inst >> 8) & 0xFF) as usize + base;
+                    let c = (inst & 0xFF) as u8;
+                    let sep = if c == 0 { ',' } else { '\t' };
+                    let data = reg!(b).to_value();
+                    let rows = match data {
+                        Value::List(l) => l,
+                        _ => {
+                            vm_err!(VmError::Type("wr csv/tsv: data must be a list of rows"));
+                        }
+                    };
+                    match crate::interpreter::write_csv_tsv(&rows, sep) {
+                        Ok(s) => reg_set!(a, NanVal::heap_string(s)),
+                        Err(_e) => {
+                            vm_err!(VmError::Type("wr csv/tsv: row shape mismatch"));
+                        }
+                    }
                 }
                 OP_JPAR => {
                     let a = ((inst >> 16) & 0xFF) as usize + base;
@@ -24319,17 +24358,12 @@ f>n;r=mk 10 20;+r.x r.y";
     }
 
     #[test]
-    fn vm_compile_wr_3arg_non_json_emits_compile_error() {
-        // csv/tsv 3-arg form is not yet implemented in the VM compiler;
-        // it should report a clear UndefinedFunction error.
+    fn vm_compile_wr_3arg_csv_compiles() {
+        // csv/tsv 3-arg form now compiles. Pinning the successful path.
         let src = r#"f>R t t;wr "/tmp/__ilo_test_wr.csv" [[1,2]] "csv""#;
         let prog = parse_for_vm(src);
-        let err = match crate::vm::compile(&prog) {
-            Ok(_) => panic!("csv 3-arg should not compile"),
-            Err(e) => e,
-        };
-        let msg = format!("{err:?}");
-        assert!(msg.contains("3-arg non-json"), "got {msg}");
+        let compiled = crate::vm::compile(&prog).expect("compile should succeed for csv overload");
+        assert!(!compiled.chunks.is_empty());
     }
 
     // ---- OP_RNDN VM dispatch + jit_rndn helper coverage ----
