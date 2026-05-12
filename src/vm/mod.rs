@@ -195,6 +195,7 @@ pub(crate) const OP_LOG2: u8 = 107; // R[A] = log2(R[B])
 pub(crate) const OP_ATAN2: u8 = 108; // R[A] = atan2(R[B], R[C])  (y first, x second)
 pub(crate) const OP_SRTDESC: u8 = 117; // R[A] = rsrt(R[B])  (descending sort of list)
 pub(crate) const OP_RGXSUB: u8 = 115; // R[A] = rgxsub(R[B], R[C], R[D])  (pattern, replacement, subject; D in data word A field)
+pub(crate) const OP_ZIP: u8 = 111; // R[A] = zip(R[B], R[C])  (list of [x,y] pairs, truncated)
 
 // ABC mode — text formatting
 pub(crate) const OP_FMT2: u8 = 104; // R[A] = fmt2(R[B], R[C])  (format number to N decimal places → t)
@@ -1688,6 +1689,13 @@ impl RegCompiler {
                             self.emit_abc(OP_FMT2, ra, rb, rc);
                             return ra;
                         }
+                        (Builtin::Zip, 2) => {
+                            let rb = self.compile_expr(&args[0]);
+                            let rc = self.compile_expr(&args[1]);
+                            let ra = self.alloc_reg();
+                            self.emit_abc(OP_ZIP, ra, rb, rc);
+                            return ra;
+                        }
                         (Builtin::Tl, 1) => {
                             let rb = self.compile_expr(&args[0]);
                             let ra = self.alloc_reg();
@@ -2506,7 +2514,7 @@ fn chunk_is_all_numeric(chunk: &Chunk) -> bool {
             | OP_SPL | OP_REV | OP_SRT | OP_SRTDESC | OP_SLC | OP_UNQ | OP_LISTAPPEND | OP_JPAR
             | OP_JDMP | OP_ENV | OP_GET | OP_GETH | OP_POST | OP_POSTH | OP_RD | OP_RDL | OP_WR
             | OP_WRL | OP_MAPNEW | OP_MGET | OP_MSET | OP_MKEYS | OP_MVALS | OP_HD | OP_AT
-            | OP_LST | OP_TL | OP_FMT2 | OP_RGXSUB => {
+            | OP_LST | OP_TL | OP_FMT2 | OP_RGXSUB | OP_ZIP => {
                 return false;
             }
             _ => {}
@@ -5651,6 +5659,40 @@ impl<'a> VM<'a> {
                     };
                     reg_set!(a, result);
                 }
+                OP_ZIP => {
+                    let a = ((inst >> 16) & 0xFF) as usize + base;
+                    let b = ((inst >> 8) & 0xFF) as usize + base;
+                    let c = (inst & 0xFF) as usize + base;
+                    let vb = reg!(b);
+                    let vc = reg!(c);
+                    let xs = if vb.is_heap() {
+                        match unsafe { vb.as_heap_ref() } {
+                            HeapObj::List(items) => items,
+                            _ => vm_err!(VmError::Type("zip arg 1 requires a list")),
+                        }
+                    } else {
+                        vm_err!(VmError::Type("zip arg 1 requires a list"));
+                    };
+                    let ys = if vc.is_heap() {
+                        match unsafe { vc.as_heap_ref() } {
+                            HeapObj::List(items) => items,
+                            _ => vm_err!(VmError::Type("zip arg 2 requires a list")),
+                        }
+                    } else {
+                        vm_err!(VmError::Type("zip arg 2 requires a list"));
+                    };
+                    let n = xs.len().min(ys.len());
+                    let mut out: Vec<NanVal> = Vec::with_capacity(n);
+                    for i in 0..n {
+                        let x = xs[i];
+                        let y = ys[i];
+                        x.clone_rc();
+                        y.clone_rc();
+                        let pair = NanVal::heap_list(vec![x, y]);
+                        out.push(pair);
+                    }
+                    reg_set!(a, NanVal::heap_list(out));
+                }
                 OP_TL => {
                     let a = ((inst >> 16) & 0xFF) as usize + base;
                     let b = ((inst >> 8) & 0xFF) as usize + base;
@@ -7141,6 +7183,34 @@ pub(crate) extern "C" fn jit_lst(list: u64, idx: u64, val: u64) -> u64 {
         return NanVal::heap_list(new_items).0;
     }
     TAG_NIL
+}
+
+#[cfg(feature = "cranelift")]
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn jit_zip(a: u64, b: u64) -> u64 {
+    let va = NanVal(a);
+    let vb = NanVal(b);
+    if !va.is_heap() || !vb.is_heap() {
+        return TAG_NIL;
+    }
+    let xs = match unsafe { va.as_heap_ref() } {
+        HeapObj::List(items) => items,
+        _ => return TAG_NIL,
+    };
+    let ys = match unsafe { vb.as_heap_ref() } {
+        HeapObj::List(items) => items,
+        _ => return TAG_NIL,
+    };
+    let n = xs.len().min(ys.len());
+    let mut out: Vec<NanVal> = Vec::with_capacity(n);
+    for i in 0..n {
+        let x = xs[i];
+        let y = ys[i];
+        x.clone_rc();
+        y.clone_rc();
+        out.push(NanVal::heap_list(vec![x, y]));
+    }
+    NanVal::heap_list(out).0
 }
 
 #[cfg(feature = "cranelift")]

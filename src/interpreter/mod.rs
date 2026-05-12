@@ -775,6 +775,32 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             )),
         };
     }
+    if builtin == Some(Builtin::Zip) && args.len() == 2 {
+        let xs = match &args[0] {
+            Value::List(items) => items,
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("zip arg 1 requires a list, got {:?}", other),
+                ));
+            }
+        };
+        let ys = match &args[1] {
+            Value::List(items) => items,
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("zip arg 2 requires a list, got {:?}", other),
+                ));
+            }
+        };
+        let n = xs.len().min(ys.len());
+        let mut out = Vec::with_capacity(n);
+        for i in 0..n {
+            out.push(Value::List(vec![xs[i].clone(), ys[i].clone()]));
+        }
+        return Ok(Value::List(out));
+    }
     if builtin == Some(Builtin::Tl) && args.len() == 1 {
         return match &args[0] {
             Value::List(items) => {

@@ -1,0 +1,10 @@
+-- zip xs ys: pair-wise combine two lists into a list of [x,y] pairs.
+-- Truncates to the shorter of the two inputs (Python convention).
+
+pairs xs:L n ys:L n>L (L n);zip xs ys
+trunc xs:L n ys:L n>L (L n);zip xs ys
+
+-- run: pairs [1,2,3] [10,20,30]
+-- out: [[1, 10], [2, 20], [3, 30]]
+-- run: trunc [1,2,3,4] [10,20]
+-- out: [[1, 10], [2, 20]]
