@@ -210,6 +210,7 @@ pub(crate) const OP_IFFT: u8 = 130; // R[A] = ifft(R[B])
 pub(crate) const OP_CLAMP: u8 = 149; // R[A] = clamp(R[B], R[C], R[D])  (lo in C, hi in D; D in data word A field)
 // Numeric range — R[A] = range(R[B], R[C]) → L n of [B..C) (half-open, empty if B>=C).
 pub(crate) const OP_RANGE: u8 = 138;
+pub(crate) const OP_CHUNKS: u8 = 148; // R[A] = chunks(R[B], R[C])  (n, list → L (L a))
 // Higher-order: uniqby fn xs — pre-allocated, HOF dispatch not yet wired in VM.
 pub(crate) const OP_UNIQBY: u8 = 116; // R[A] = uniqby(R[B] (fn-ref), R[C] (list))
 // Higher-order: partition fn xs — pre-allocated, HOF dispatch not yet wired in VM.
@@ -1746,6 +1747,13 @@ impl RegCompiler {
                             self.emit_abc(OP_WINDOW, ra, rb, rc);
                             return ra;
                         }
+                        (Builtin::Chunks, 2) => {
+                            let rb = self.compile_expr(&args[0]);
+                            let rc = self.compile_expr(&args[1]);
+                            let ra = self.alloc_reg();
+                            self.emit_abc(OP_CHUNKS, ra, rb, rc);
+                            return ra;
+                        }
                         (Builtin::Tl, 1) => {
                             let rb = self.compile_expr(&args[0]);
                             let ra = self.alloc_reg();
@@ -2583,7 +2591,8 @@ fn chunk_is_all_numeric(chunk: &Chunk) -> bool {
             | OP_PARTITION | OP_LISTAPPEND | OP_JPAR | OP_JDMP | OP_ENV | OP_GET | OP_GETH
             | OP_POST | OP_POSTH | OP_RD | OP_RDL | OP_WR | OP_WRL | OP_MAPNEW | OP_MGET
             | OP_MSET | OP_MKEYS | OP_MVALS | OP_HD | OP_AT | OP_LST | OP_TL | OP_FMT2
-            | OP_RGXSUB | OP_ZIP | OP_ENUMERATE | OP_WINDOW | OP_FFT | OP_IFFT | OP_RANGE => {
+            | OP_RGXSUB | OP_ZIP | OP_ENUMERATE | OP_WINDOW | OP_FFT | OP_IFFT | OP_RANGE
+            | OP_CHUNKS => {
                 return false;
             }
             _ => {}
@@ -5812,8 +5821,6 @@ impl<'a> VM<'a> {
                     if !vb.is_number() || !vc.is_number() {
                         vm_err!(VmError::Type("range requires numbers"));
                     }
-                    // Reject non-integer bounds rather than silently
-                    // truncating (matches `at`'s integer-index guard).
                     if vb.as_number().fract() != 0.0 || vc.as_number().fract() != 0.0 {
                         vm_err!(VmError::Type("range: bounds must be integers"));
                     }
@@ -5870,6 +5877,39 @@ impl<'a> VM<'a> {
                         }
                         acc
                     };
+                    reg_set!(a, NanVal::heap_list(out));
+                }
+                OP_CHUNKS => {
+                    let a = ((inst >> 16) & 0xFF) as usize + base;
+                    let b = ((inst >> 8) & 0xFF) as usize + base;
+                    let c = (inst & 0xFF) as usize + base;
+                    let vb = reg!(b);
+                    let vc = reg!(c);
+                    if !vb.is_number() {
+                        vm_err!(VmError::Type("chunks: size must be a number"));
+                    }
+                    let n_raw = vb.as_number();
+                    if n_raw.fract() != 0.0 || n_raw <= 0.0 {
+                        vm_err!(VmError::Type("chunks: size must be a positive integer",));
+                    }
+                    let n = n_raw as usize;
+                    let xs = if vc.is_heap() {
+                        match unsafe { vc.as_heap_ref() } {
+                            HeapObj::List(items) => items,
+                            _ => vm_err!(VmError::Type("chunks: requires a list")),
+                        }
+                    } else {
+                        vm_err!(VmError::Type("chunks: requires a list"));
+                    };
+                    let mut out: Vec<NanVal> = Vec::with_capacity(xs.len().div_ceil(n));
+                    for chunk in xs.chunks(n) {
+                        let mut piece: Vec<NanVal> = Vec::with_capacity(chunk.len());
+                        for item in chunk {
+                            item.clone_rc();
+                            piece.push(*item);
+                        }
+                        out.push(NanVal::heap_list(piece));
+                    }
                     reg_set!(a, NanVal::heap_list(out));
                 }
                 OP_TL => {
@@ -7577,6 +7617,38 @@ pub(crate) extern "C" fn jit_enumerate(a: u64) -> u64 {
     for (i, &v) in xs.iter().enumerate() {
         v.clone_rc();
         out.push(NanVal::heap_list(vec![NanVal::number(i as f64), v]));
+    }
+    NanVal::heap_list(out).0
+}
+
+#[cfg(feature = "cranelift")]
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn jit_chunks(a: u64, b: u64) -> u64 {
+    let va = NanVal(a);
+    let vb = NanVal(b);
+    if !va.is_number() {
+        return TAG_NIL;
+    }
+    let n_raw = va.as_number();
+    if n_raw.fract() != 0.0 || n_raw <= 0.0 {
+        return TAG_NIL;
+    }
+    let n = n_raw as usize;
+    if !vb.is_heap() {
+        return TAG_NIL;
+    }
+    let xs = match unsafe { vb.as_heap_ref() } {
+        HeapObj::List(items) => items,
+        _ => return TAG_NIL,
+    };
+    let mut out: Vec<NanVal> = Vec::with_capacity(xs.len().div_ceil(n));
+    for chunk in xs.chunks(n) {
+        let mut piece: Vec<NanVal> = Vec::with_capacity(chunk.len());
+        for item in chunk {
+            item.clone_rc();
+            piece.push(*item);
+        }
+        out.push(NanVal::heap_list(piece));
     }
     NanVal::heap_list(out).0
 }

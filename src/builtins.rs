@@ -53,6 +53,7 @@ pub enum Builtin {
     Enumerate,
     Range,
     Window,
+    Chunks,
 
     // Higher-order
     Map,
@@ -149,6 +150,7 @@ impl Builtin {
             "enumerate" => Some(Builtin::Enumerate),
             "range" => Some(Builtin::Range),
             "window" => Some(Builtin::Window),
+            "chunks" => Some(Builtin::Chunks),
             "map" => Some(Builtin::Map),
             "flt" => Some(Builtin::Flt),
             "fld" => Some(Builtin::Fld),
@@ -232,6 +234,7 @@ impl Builtin {
             Builtin::Enumerate => "enumerate",
             Builtin::Range => "range",
             Builtin::Window => "window",
+            Builtin::Chunks => "chunks",
             Builtin::Map => "map",
             Builtin::Flt => "flt",
             Builtin::Fld => "fld",
@@ -391,6 +394,7 @@ mod tests {
             "spl",
             "cat",
             "zip",
+            "chunks",
             "map",
             "flt",
             "fld",

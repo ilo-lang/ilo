@@ -901,6 +901,38 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             )),
         };
     }
+    if builtin == Some(Builtin::Chunks) && args.len() == 2 {
+        let n_raw = match &args[0] {
+            Value::Number(n) => *n,
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("chunks: size must be a number, got {:?}", other),
+                ));
+            }
+        };
+        if n_raw.fract() != 0.0 || n_raw <= 0.0 {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!("chunks: size must be a positive integer, got {n_raw}"),
+            ));
+        }
+        let n = n_raw as usize;
+        let xs = match &args[1] {
+            Value::List(items) => items,
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("chunks: requires a list, got {:?}", other),
+                ));
+            }
+        };
+        let mut out: Vec<Value> = Vec::with_capacity(xs.len().div_ceil(n));
+        for chunk in xs.chunks(n) {
+            out.push(Value::List(chunk.to_vec()));
+        }
+        return Ok(Value::List(out));
+    }
     if builtin == Some(Builtin::Tl) && args.len() == 1 {
         return match &args[0] {
             Value::List(items) => {
