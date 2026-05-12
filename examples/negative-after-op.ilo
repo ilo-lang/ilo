@@ -8,6 +8,13 @@ below x:n>n;<x -0.05{1}{0}
 shift a:n>n;+a -3
 modn n:n>n;mod n -2
 
+-- Edge shapes: `-0` literal, list literal with neg middle, explicit `- 0 0.05`
+-- binary subtract workaround, and `+a -b` (negated ident ref, not a literal).
+zero>n;-0
+mid>n;l=[1 -2 3];hd tl l
+sub>n;- 0 0.05
+addref a:n b:n>n;+a -b
+
 -- run: below -0.1
 -- out: 1
 -- run: below 0.1
@@ -22,3 +29,13 @@ modn n:n>n;mod n -2
 -- out: 1
 -- run: modn 10
 -- out: 0
+-- run: zero
+-- out: 0
+-- run: mid
+-- out: -2
+-- run: sub
+-- out: -0.05
+-- run: addref 10 3
+-- out: 7
+-- run: addref -5 3
+-- out: -8
