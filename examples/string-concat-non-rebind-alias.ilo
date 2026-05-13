@@ -1,0 +1,31 @@
+-- `b = +a suffix` must NOT mutate `a`, even when `a` is RC=1.
+--
+-- The RC=1 in-place fast path on `OP_ADD` / `OP_ADD_SS` (VM) and
+-- `jit_add` / `jit_concat` (Cranelift) only fires for the rebind shape
+-- `name = +name suffix` — the pattern the compiler peephole emits for
+-- string-building accumulators. When the source and destination registers
+-- differ (`b = +a suffix`), we always allocate a fresh string and copy.
+-- Otherwise we'd silently mutate the caller's source.
+--
+-- Mirror of the `OP_LISTAPPEND` split landed in PR #250 and the
+-- `OP_MSET` / `jit_mset_inplace` split landed in PR #249.
+
+-- `a` is built by fmt (RC=1 at the concat). After the non-rebind concat,
+-- `a` must still be the original "k1". Pre-fix, the VM returned nil (slot
+-- nullified) and Cranelift returned "k1_x" (in-place mutation).
+preserve-source>t;a=fmt "k{}" 1;b=+a "_x";a
+
+-- The rebind shape is the accumulator pattern and must still grow in place
+-- (amortised O(n), not O(n²)). This stresses the fast path stays available.
+rebind-accumulator n:n>n;s="";@i 0..n{s=+s "x"};len s
+
+-- Both source and dest visible in one return. Pins the aliasing contract:
+-- `a` must be untouched.
+both-visible>t;a=fmt "k{}" 1;b=+a "_x";fmt "{}|{}" a b
+
+-- run: preserve-source
+-- out: k1
+-- run: rebind-accumulator 50
+-- out: 50
+-- run: both-visible
+-- out: k1|k1_x
