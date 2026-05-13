@@ -926,6 +926,21 @@ impl Parser {
     fn parse_let(&mut self) -> Result<Stmt> {
         let name = self.expect_ident()?;
         self.expect(&Token::Eq)?;
+        // Friendly hint: `name={...}` is a common reach for a map-literal from
+        // other languages. ilo builds maps with `mmap` + `mset`. Catch it
+        // before parse_expr emits the bare ILO-P009 "expected expression,
+        // got LBrace".
+        if self.peek() == Some(&Token::LBrace) && self.brace_looks_like_map_literal() {
+            return Err(self.error_hint(
+                "ILO-P009",
+                format!(
+                    "`{name}={{...}}` — ilo has no `{{key value}}` map literal syntax"
+                ),
+                format!(
+                    "build maps with `mmap` (empty) and `mset`, e.g. `{name}=mset mmap \"k\" v` (chain `mset` for multiple entries)"
+                ),
+            ));
+        }
         let value = self.parse_expr()?;
 
         // Check if this is a ternary assignment: v=cond{then}{else}
@@ -961,6 +976,21 @@ impl Parser {
         } else {
             Ok(Stmt::Let { name, value })
         }
+    }
+
+    /// Lookahead: does the `{` at current position look like a map-literal
+    /// attempt from another language? We fire only on shapes that are
+    /// unambiguously not a destructure or some other valid form:
+    /// `{"text" ...}`, `{<number> ...}`, or `{}` (empty braces).
+    /// Idents inside braces could be destructure shapes, so we skip them.
+    fn brace_looks_like_map_literal(&self) -> bool {
+        if self.peek() != Some(&Token::LBrace) {
+            return false;
+        }
+        matches!(
+            self.token_at(self.pos + 1),
+            Some(Token::Text(_) | Token::Number(_) | Token::RBrace)
+        )
     }
 
     /// Lookahead: `{ident;ident...}=` — destructure pattern
@@ -1006,9 +1036,70 @@ impl Parser {
             Some(self.parse_atom()?)
         };
         self.expect(&Token::LBrace)?;
+        // Friendly hint: `?cond{body}` on a bare bool is a common slip — the
+        // user reaches for braced-conditional execution but gets match syntax
+        // and the body is parsed as a pattern. If the body shape is clearly
+        // statement-like (not pattern-like) and a subject is present, suggest
+        // the `=cond true{body}` braced-conditional form.
+        if let Some(subj) = &subject {
+            if self.body_looks_like_statement_not_pattern() {
+                if let Some(subj_src) = subject_source(subj) {
+                    return Err(self.error_hint(
+                        "ILO-P011",
+                        format!(
+                            "`?{subj_src}{{...}}` is match syntax — the body is parsed as pattern arms, not statements"
+                        ),
+                        format!(
+                            "for braced-conditional execution on a bool, use `={subj_src} true{{body}}` (or `!{subj_src}{{body}}` for the negated case)"
+                        ),
+                    ));
+                }
+            }
+        }
         let arms = self.parse_match_arms()?;
         self.expect(&Token::RBrace)?;
         Ok(Stmt::Match { subject, arms })
+    }
+
+    /// After consuming `{` in a `?subject{...}` match, peek to see whether the
+    /// first arm body looks like a statement rather than a pattern. Patterns
+    /// have a `:` within the first 1-3 tokens; statement-shape bodies do not.
+    fn body_looks_like_statement_not_pattern(&self) -> bool {
+        // Empty body / immediate `}` — not a statement; let the normal parser
+        // surface its own error.
+        if matches!(self.peek(), Some(Token::RBrace) | None) {
+            return false;
+        }
+        // Look at the first identifier-led shape only. Patterns that start
+        // with `^`, `~`, `_`, literal, or type-letter (`n`, `t`, `b`, `l`)
+        // followed by ident — those we leave to parse_pattern. Statement-like:
+        // `Ident =` (let), `Ident <op-not-colon>` (call/expr).
+        match self.peek() {
+            Some(Token::Ident(name)) => {
+                // Type-letter pattern: `n x:` / `t x:` / `b x:` / `l x:` —
+                // an ident followed by another ident (or `_`) followed by `:`.
+                if matches!(name.as_str(), "n" | "t" | "b" | "l")
+                    && matches!(
+                        self.token_at(self.pos + 1),
+                        Some(Token::Ident(_) | Token::Underscore)
+                    )
+                    && self.token_at(self.pos + 2) == Some(&Token::Colon)
+                {
+                    return false;
+                }
+                // Plain `Ident :` is also a pattern shape (less common).
+                if self.token_at(self.pos + 1) == Some(&Token::Colon) {
+                    return false;
+                }
+                // Otherwise an ident followed by `=` or any operator is a
+                // statement.
+                true
+            }
+            // `+`, `-`, `*`, `/`, `=`, `>=`, `<=`, `<`, `>`, `!=`, `==` etc.
+            // at body head are clearly statement-shape expressions.
+            Some(t) if is_statement_head_operator(t) => true,
+            _ => false,
+        }
     }
 
     fn parse_match_arms(&mut self) -> Result<Vec<MatchArm>> {
@@ -3001,6 +3092,37 @@ fn reserved_keyword_message(tok: &Token) -> Option<(String, String)> {
 /// Check if an expression is a comparison or logical operator — eligible
 /// as a braceless guard condition. Prefix operators have fixed arity, so
 /// the parser knows exactly where the condition ends and the body begins.
+/// Operators that, when sitting as the first token inside a match-arm `{...}`,
+/// indicate the user wrote a statement (call / expr) rather than a pattern.
+/// Patterns lead with `^`, `~`, `_`, a literal, or a type-letter; an arithmetic
+/// or comparison operator at body head is therefore unambiguous statement-shape.
+fn is_statement_head_operator(t: &Token) -> bool {
+    matches!(
+        t,
+        Token::Plus
+            | Token::Minus
+            | Token::Star
+            | Token::Slash
+            | Token::Eq
+            | Token::Greater
+            | Token::GreaterEq
+            | Token::Less
+            | Token::LessEq
+            | Token::NotEq
+            | Token::Bang
+    )
+}
+
+/// Render a simple Expr subject as source-ish text for diagnostics —
+/// only the common case `Ref("name")` needs an exact echo; everything
+/// else falls back to a placeholder so the hint stays readable.
+fn subject_source(expr: &Expr) -> Option<String> {
+    match expr {
+        Expr::Ref(name) => Some(name.clone()),
+        _ => None,
+    }
+}
+
 fn is_guard_eligible_condition(expr: &Expr) -> bool {
     matches!(
         expr,

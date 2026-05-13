@@ -265,3 +265,102 @@ fn uppercase_mid_ident_includes_hyphenated_tail() {
         "should suggest fully hyphenated form: {err}"
     );
 }
+
+// ---- Camel-case rename cascade (per-file scan in a single pass) ----
+//
+// When the lexer rejects the first camelCase identifier, the suggestion now
+// lists every other distinct camelCase offender in the file so the user can
+// fix them all in one pass instead of N-1 retry rounds.
+
+#[test]
+fn camel_cascade_lists_other_offenders() {
+    let err = run_err("go>n;fooBar=1;bazQux=2;helloWorld=3;fooBar");
+    assert!(err.contains("ILO-L003"), "stderr: {err}");
+    assert!(
+        err.contains("Also found in this file"),
+        "should list extras: {err}"
+    );
+    assert!(err.contains("bazQux"), "should list bazQux: {err}");
+    assert!(err.contains("helloWorld"), "should list helloWorld: {err}");
+}
+
+#[test]
+fn camel_cascade_dedupes_current_offender() {
+    // `fooBar` appears twice in the source; the extras list must not
+    // re-echo it — only distinct other offenders.
+    let err = run_err("go>n;fooBar=1;fooBar");
+    assert!(err.contains("ILO-L003"), "stderr: {err}");
+    assert!(
+        !err.contains("Also found in this file"),
+        "single distinct offender should not produce a list: {err}"
+    );
+}
+
+#[test]
+fn camel_cascade_truncates_long_lists() {
+    let err = run_err("go>n;aA=1;bB=2;cC=3;dD=4;eE=5;fF=6;gG=7;hH=8;aA");
+    assert!(err.contains("ILO-L003"), "stderr: {err}");
+    assert!(
+        err.contains("more"),
+        "should truncate with `+N more`: {err}"
+    );
+}
+
+// ---- `?cond{body}` bare-bool match-vs-conditional confusion ----
+
+#[test]
+fn match_bare_bool_with_let_body_suggests_eq_true_form() {
+    let err = run_err("go>n;hit=true;errs=0;?hit{errs=+errs 1};errs");
+    assert!(err.contains("ILO-P011"), "stderr: {err}");
+    assert!(
+        err.contains("match syntax"),
+        "should explain that ?expr{{}} is match: {err}"
+    );
+    assert!(
+        err.contains("=hit true{body}"),
+        "should suggest =hit true{{body}}: {err}"
+    );
+}
+
+#[test]
+fn match_bare_bool_does_not_fire_on_real_pattern() {
+    // `~v:body` is a real Ok-pattern arm — must not trigger the hint.
+    run_ok("go>R n t;r=~5;?r{~v:v;^e:0}");
+}
+
+#[test]
+fn match_bare_bool_does_not_fire_on_literal_pattern() {
+    run_ok("go>n;x=2;?x{1:10;2:20;_:0}");
+}
+
+// ---- `name={...}` map-literal hint ----
+
+#[test]
+fn map_literal_text_key_hints_mset_mmap() {
+    let err = run_err("go>n;m={\"a\" 1};0");
+    assert!(err.contains("ILO-P009"), "stderr: {err}");
+    assert!(
+        err.contains("map literal syntax"),
+        "should explain no map literal: {err}"
+    );
+    assert!(err.contains("mset mmap"), "should suggest mset mmap: {err}");
+}
+
+#[test]
+fn map_literal_number_key_hints_mset_mmap() {
+    let err = run_err("go>n;m={1 \"a\"};0");
+    assert!(err.contains("ILO-P009"), "stderr: {err}");
+    assert!(err.contains("mset mmap"), "stderr: {err}");
+}
+
+#[test]
+fn map_literal_empty_braces_hints_mset_mmap() {
+    let err = run_err("go>n;m={};0");
+    assert!(err.contains("ILO-P009"), "stderr: {err}");
+    assert!(err.contains("mset mmap"), "stderr: {err}");
+}
+
+#[test]
+fn let_with_normal_rhs_still_parses() {
+    run_ok("go>n;x=5;y=+x 1;y");
+}
