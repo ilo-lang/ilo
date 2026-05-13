@@ -1,0 +1,27 @@
+-- Leading-uppercase JSON keys at dot-access (AWS-style: URL, ID, AccessKey).
+-- PR #220 fixed camelCase tails like `r.gitURL`; this covers keys whose
+-- *first* character is uppercase, where there's no preceding Ident to merge.
+furl j:t>R n t;r=jpar! j;r.URL
+fid j:t>R n t;r=jpar! j;r.ID
+fak j:t>R n t;r=jpar! j;r.AccessKey
+fsafe j:t>R n t;r=jpar! j;r.?URL
+fmix j:t>R n t;r=jpar! j;r.URL_count
+fsigil j:t>R n t;r=jpar! j;r.MetaData
+
+-- run: furl {"URL":"https://x"}
+-- out: https://x
+
+-- run: fid {"ID":42}
+-- out: 42
+
+-- run: fak {"AccessKey":"abc"}
+-- out: abc
+
+-- run: fsafe {"URL":"safe"}
+-- out: safe
+
+-- run: fmix {"URL_count":7}
+-- out: 7
+
+-- run: fsigil {"MetaData":"meta"}
+-- out: meta
