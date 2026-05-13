@@ -1,0 +1,33 @@
+-- Generic tree-bridge: tree-only builtins now work on every engine.
+--
+-- Pre-fix, `rgx`, `rgxall`, `fmt` variadic, 2-arg `rd`, and `rdb` errored
+-- under `--run-vm` and `--run-cranelift` with
+-- `Compile error: undefined function: <name>`. The fix routes them through
+-- `OP_CALL_BUILTIN_TREE`, a single opcode that hands the call to the same
+-- interpreter dispatcher `--run-tree` uses. Tree, VM, and Cranelift now
+-- produce identical output, which is what the engine harness asserts when
+-- it replays this example across all three.
+
+-- rgx: every match of a no-group pattern.
+digits>L t;rgx "\d+" "a1 b22 c333"
+
+-- rgxall: every match with capture groups, uniform L (L t) shape.
+pairs>L (L t);rgxall "(\w+)=(\d+)" "x=1 y=22 z=333"
+
+-- fmt: variadic; bridge handles arbitrary argc by spilling regs to a
+-- contiguous slot before the call.
+sentence>t;fmt "{} hits across {} files" 3 1
+
+-- rdb: in-memory CSV parse. Result-returning, so the function returns
+-- R (L (L t)) t and the engine asserts on the wrapped form.
+parsed>R (L (L t)) t;rdb "a,1
+b,2" "csv"
+
+-- run: digits
+-- out: [1, 22, 333]
+-- run: pairs
+-- out: [[x, 1], [y, 22], [z, 333]]
+-- run: sentence
+-- out: 3 hits across 1 files
+-- run: parsed
+-- out: ~[[a, 1], [b, 2]]

@@ -369,6 +369,137 @@ impl Builtin {
     pub fn is_builtin(name: &str) -> bool {
         Self::from_name(name).is_some()
     }
+
+    /// Stable list of every `Builtin` variant, in canonical order.
+    ///
+    /// The position of each variant in this slice is its on-wire tag
+    /// for `OP_CALL_BUILTIN_TREE`. Stability matters: appending is fine,
+    /// reordering or removing entries breaks any persisted bytecode.
+    pub const ALL: &'static [Builtin] = &[
+        Builtin::Str,
+        Builtin::Num,
+        Builtin::Abs,
+        Builtin::Flr,
+        Builtin::Cel,
+        Builtin::Rou,
+        Builtin::Min,
+        Builtin::Max,
+        Builtin::Mod,
+        Builtin::Clamp,
+        Builtin::Pow,
+        Builtin::Sqrt,
+        Builtin::Log,
+        Builtin::Exp,
+        Builtin::Sin,
+        Builtin::Cos,
+        Builtin::Tan,
+        Builtin::Log10,
+        Builtin::Log2,
+        Builtin::Atan2,
+        Builtin::Sum,
+        Builtin::Cumsum,
+        Builtin::Avg,
+        Builtin::Median,
+        Builtin::Quantile,
+        Builtin::Stdev,
+        Builtin::Variance,
+        Builtin::Fft,
+        Builtin::Ifft,
+        Builtin::Transpose,
+        Builtin::Matmul,
+        Builtin::Dot,
+        Builtin::Len,
+        Builtin::Hd,
+        Builtin::At,
+        Builtin::Tl,
+        Builtin::Rev,
+        Builtin::Srt,
+        Builtin::Rsrt,
+        Builtin::Slc,
+        Builtin::Lst,
+        Builtin::Take,
+        Builtin::Drop,
+        Builtin::Unq,
+        Builtin::Flat,
+        Builtin::Has,
+        Builtin::Spl,
+        Builtin::Cat,
+        Builtin::Zip,
+        Builtin::Enumerate,
+        Builtin::Range,
+        Builtin::Window,
+        Builtin::Chunks,
+        Builtin::Setunion,
+        Builtin::Setinter,
+        Builtin::Setdiff,
+        Builtin::Map,
+        Builtin::Flt,
+        Builtin::Fld,
+        Builtin::Grp,
+        Builtin::Uniqby,
+        Builtin::Partition,
+        Builtin::Frq,
+        Builtin::Flatmap,
+        Builtin::Rnd,
+        Builtin::Rndn,
+        Builtin::Now,
+        Builtin::Dtfmt,
+        Builtin::Dtparse,
+        Builtin::Rd,
+        Builtin::Rdl,
+        Builtin::Rdb,
+        Builtin::Wr,
+        Builtin::Wrl,
+        Builtin::Prnt,
+        Builtin::Env,
+        Builtin::Trm,
+        Builtin::Upr,
+        Builtin::Lwr,
+        Builtin::Cap,
+        Builtin::Padl,
+        Builtin::Padr,
+        Builtin::Ord,
+        Builtin::Chr,
+        Builtin::Fmt,
+        Builtin::Fmt2,
+        Builtin::Rgx,
+        Builtin::Rgxall,
+        Builtin::Rgxsub,
+        Builtin::Jpth,
+        Builtin::Jdmp,
+        Builtin::Jpar,
+        Builtin::Rdjl,
+        Builtin::Get,
+        Builtin::Post,
+        Builtin::GetMany,
+        Builtin::Mmap,
+        Builtin::Mget,
+        Builtin::Mset,
+        Builtin::Mhas,
+        Builtin::Mkeys,
+        Builtin::Mvals,
+        Builtin::Mdel,
+        Builtin::Solve,
+        Builtin::Inv,
+        Builtin::Det,
+    ];
+
+    /// On-wire 8-bit tag for cross-engine builtin dispatch. See `ALL`.
+    pub fn tag(self) -> u8 {
+        // Linear search over a small dense table; this is only called
+        // at compile time by the bytecode emitter, not on the hot path.
+        Self::ALL
+            .iter()
+            .position(|b| *b == self)
+            .expect("Builtin::ALL must include every variant") as u8
+    }
+
+    /// Inverse of `tag`. Returns `None` for unknown tags so the VM/JIT
+    /// can surface a clean runtime error rather than panicking on a
+    /// malformed instruction.
+    pub fn from_tag(tag: u8) -> Option<Builtin> {
+        Self::ALL.get(tag as usize).copied()
+    }
 }
 
 /// Result of a char-by-signed-index lookup on a `&str`.
@@ -541,6 +672,132 @@ mod tests {
     fn non_builtin_returns_none() {
         assert_eq!(Builtin::from_name("foo"), None);
         assert_eq!(Builtin::from_name(""), None);
+    }
+
+    #[test]
+    fn tag_round_trips_for_every_builtin() {
+        // Anchor for the OP_CALL_BUILTIN_TREE bridge: every builtin must
+        // tag↔from_tag cleanly, and Builtin::ALL must list every variant
+        // covered by from_name (no silent drift).
+        for name in &[
+            "str",
+            "num",
+            "abs",
+            "flr",
+            "cel",
+            "rou",
+            "min",
+            "max",
+            "mod",
+            "clamp",
+            "pow",
+            "sqrt",
+            "log",
+            "exp",
+            "sin",
+            "cos",
+            "tan",
+            "log10",
+            "log2",
+            "atan2",
+            "sum",
+            "cumsum",
+            "avg",
+            "median",
+            "quantile",
+            "stdev",
+            "variance",
+            "fft",
+            "ifft",
+            "transpose",
+            "matmul",
+            "dot",
+            "len",
+            "hd",
+            "at",
+            "tl",
+            "rev",
+            "srt",
+            "rsrt",
+            "slc",
+            "lst",
+            "take",
+            "drop",
+            "unq",
+            "flat",
+            "has",
+            "spl",
+            "cat",
+            "zip",
+            "enumerate",
+            "range",
+            "window",
+            "chunks",
+            "setunion",
+            "setinter",
+            "setdiff",
+            "map",
+            "flt",
+            "fld",
+            "grp",
+            "uniqby",
+            "partition",
+            "frq",
+            "flatmap",
+            "rnd",
+            "rndn",
+            "now",
+            "dtfmt",
+            "dtparse",
+            "rd",
+            "rdl",
+            "rdb",
+            "wr",
+            "wrl",
+            "prnt",
+            "env",
+            "trm",
+            "upr",
+            "lwr",
+            "cap",
+            "padl",
+            "padr",
+            "ord",
+            "chr",
+            "fmt",
+            "fmt2",
+            "rgx",
+            "rgxall",
+            "rgxsub",
+            "jpth",
+            "jdmp",
+            "jpar",
+            "rdjl",
+            "get",
+            "post",
+            "get-many",
+            "mmap",
+            "mget",
+            "mset",
+            "mhas",
+            "mkeys",
+            "mvals",
+            "mdel",
+            "solve",
+            "inv",
+            "det",
+        ] {
+            let b = Builtin::from_name(name).unwrap_or_else(|| panic!("no builtin: {name}"));
+            let t = b.tag();
+            let round = Builtin::from_tag(t).unwrap_or_else(|| panic!("no from_tag for {name}"));
+            assert_eq!(b, round, "tag round-trip failed for {name}");
+        }
+        // No tag collisions.
+        let tags: Vec<u8> = Builtin::ALL.iter().map(|b| b.tag()).collect();
+        let mut sorted = tags.clone();
+        sorted.sort();
+        sorted.dedup();
+        assert_eq!(sorted.len(), tags.len(), "tag collision in Builtin::ALL");
     }
 
     fn unwrap_found(r: CharAtResult) -> char {

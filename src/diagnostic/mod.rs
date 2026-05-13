@@ -178,6 +178,10 @@ impl From<&crate::vm::VmError> for Diagnostic {
             VmError::FieldNotFound { .. } => "ILO-R005",
             VmError::UnknownOpcode { .. } => "ILO-R013",
             VmError::Type(_) => "ILO-R004",
+            // Tree-bridge surfaces the interpreter's RuntimeError verbatim;
+            // R009 mirrors what the tree interpreter would produce for the
+            // same call, keeping diagnostic codes consistent across engines.
+            VmError::Runtime(_) => "ILO-R009",
         };
         Diagnostic::error(e.to_string()).with_code(code)
     }
