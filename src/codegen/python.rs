@@ -405,20 +405,18 @@ fn emit_match_stmt(out: &mut String, subject: &Option<Expr>, arms: &[MatchArm], 
                     "{} isinstance({}, tuple) and {}[0] == \"ok\":\n",
                     keyword, subj_str, subj_str
                 ));
-                if binding != "_" {
-                    indent(out, level + 1);
-                    out.push_str(&format!("{} = {}[1]\n", py_name(binding), subj_str));
-                }
+                // `_` is bound like any other name (SPEC.md line 1069); Python
+                // accepts `_` as a regular identifier so no special-casing.
+                indent(out, level + 1);
+                out.push_str(&format!("{} = {}[1]\n", py_name(binding), subj_str));
             }
             Pattern::Err(binding) => {
                 out.push_str(&format!(
                     "{} isinstance({}, tuple) and {}[0] == \"err\":\n",
                     keyword, subj_str, subj_str
                 ));
-                if binding != "_" {
-                    indent(out, level + 1);
-                    out.push_str(&format!("{} = {}[1]\n", py_name(binding), subj_str));
-                }
+                indent(out, level + 1);
+                out.push_str(&format!("{} = {}[1]\n", py_name(binding), subj_str));
             }
             Pattern::Literal(lit) => {
                 out.push_str(&format!(
@@ -435,10 +433,8 @@ fn emit_match_stmt(out: &mut String, subject: &Option<Expr>, arms: &[MatchArm], 
                     subj_str,
                     type_to_py(ty)
                 ));
-                if binding != "_" {
-                    indent(out, level + 1);
-                    out.push_str(&format!("{} = {}\n", py_name(binding), subj_str));
-                }
+                indent(out, level + 1);
+                out.push_str(&format!("{} = {}\n", py_name(binding), subj_str));
             }
         }
         emit_body(out, &arm.body, level + 1, true);
@@ -447,9 +443,13 @@ fn emit_match_stmt(out: &mut String, subject: &Option<Expr>, arms: &[MatchArm], 
 
 /// Returns true if the match arm needs statement-level codegen (can't be a simple ternary value).
 fn arm_needs_statements(arm: &MatchArm) -> bool {
+    // `_` is bound like any other name (SPEC.md line 1069), so wildcard-style
+    // bindings need statement-level codegen just like named ones — the body may
+    // reference `_`. Plain wildcards also bind `_` to the subject, but the
+    // ternary path special-cases that by inlining the subject expression.
     match &arm.pattern {
-        Pattern::Ok(binding) | Pattern::Err(binding) if binding != "_" => return true,
-        Pattern::TypeIs { binding, .. } if binding != "_" => return true,
+        Pattern::Ok(_) | Pattern::Err(_) | Pattern::TypeIs { .. } => return true,
+        Pattern::Wildcard if body_refs_underscore(&arm.body) => return true,
         _ => {}
     }
     arm.body.len() > 1
@@ -868,20 +868,18 @@ fn emit_match_expr_complex(
                     "{} isinstance({}, tuple) and {}[0] == \"ok\":\n",
                     keyword, subj_str, subj_str
                 ));
-                if binding != "_" {
-                    indent(out, level + 1);
-                    out.push_str(&format!("{} = {}[1]\n", py_name(binding), subj_str));
-                }
+                // `_` is bound like any other name (SPEC.md line 1069); Python
+                // accepts `_` as a regular identifier so no special-casing.
+                indent(out, level + 1);
+                out.push_str(&format!("{} = {}[1]\n", py_name(binding), subj_str));
             }
             Pattern::Err(binding) => {
                 out.push_str(&format!(
                     "{} isinstance({}, tuple) and {}[0] == \"err\":\n",
                     keyword, subj_str, subj_str
                 ));
-                if binding != "_" {
-                    indent(out, level + 1);
-                    out.push_str(&format!("{} = {}[1]\n", py_name(binding), subj_str));
-                }
+                indent(out, level + 1);
+                out.push_str(&format!("{} = {}[1]\n", py_name(binding), subj_str));
             }
             Pattern::Literal(lit) => {
                 out.push_str(&format!(
@@ -898,10 +896,8 @@ fn emit_match_expr_complex(
                     subj_str,
                     type_to_py(ty)
                 ));
-                if binding != "_" {
-                    indent(out, level + 1);
-                    out.push_str(&format!("{} = {}\n", py_name(binding), subj_str));
-                }
+                indent(out, level + 1);
+                out.push_str(&format!("{} = {}\n", py_name(binding), subj_str));
             }
         }
         emit_match_arm_body_to_tmp(out, &arm.body, level + 1, &tmp);
@@ -1002,6 +998,45 @@ fn emit_type(ty: &Type) -> String {
 /// Convert ilo names (kebab-case) to Python (snake_case)
 fn py_name(name: &str) -> String {
     name.replace('-', "_")
+}
+
+/// True if any stmt in the body references the ilo wildcard binding `_`.
+/// Used by the Python ternary fast-path to fall back to statement codegen
+/// when a `_:body` arm actually reads the subject via `_`.
+fn body_refs_underscore(body: &[Spanned<Stmt>]) -> bool {
+    body.iter().any(|s| stmt_refs_underscore(&s.node))
+}
+
+fn stmt_refs_underscore(stmt: &Stmt) -> bool {
+    match stmt {
+        Stmt::Let { value, .. } => expr_refs_underscore(value),
+        Stmt::Expr(e) => expr_refs_underscore(e),
+        _ => false,
+    }
+}
+
+fn expr_refs_underscore(expr: &Expr) -> bool {
+    match expr {
+        Expr::Ref(name) => name == "_",
+        Expr::Literal(_) => false,
+        Expr::BinOp { left, right, .. } => {
+            expr_refs_underscore(left) || expr_refs_underscore(right)
+        }
+        Expr::UnaryOp { operand, .. } => expr_refs_underscore(operand),
+        Expr::Call { args, .. } => args.iter().any(expr_refs_underscore),
+        Expr::Ok(e) | Expr::Err(e) => expr_refs_underscore(e),
+        Expr::Field { object, .. } => expr_refs_underscore(object),
+        Expr::Ternary {
+            condition,
+            then_expr,
+            else_expr,
+        } => {
+            expr_refs_underscore(condition)
+                || expr_refs_underscore(then_expr)
+                || expr_refs_underscore(else_expr)
+        }
+        _ => false,
+    }
 }
 
 #[cfg(test)]
@@ -1391,12 +1426,15 @@ mod tests {
 
     #[test]
     fn emit_match_expr_simple_stays_ternary() {
-        // Match expr with simple arms (no bindings needed) should still use ternary
-        let py = parse_and_emit(r#"f x:R n t>n;y=?x{~_:1;^_:0};y"#);
-        // Wildcard bindings — should use simple ternary path
+        // Literal-only arms (no Ok/Err/TypeIs bindings) take the ternary path.
+        // The previous shape of this test (`~_:1;^_:0`) is no longer covered
+        // by the ternary because `_` now binds like any other name — see
+        // SPEC.md "In any binding position the name `_` is permitted" — so
+        // Ok/Err arms always need statement-level codegen to emit the bind.
+        let py = parse_and_emit(r#"f x:n>n;y=?x{1:10;2:20;_:0};y"#);
         assert!(
-            py.contains("1 if isinstance(x, tuple)"),
-            "should use ternary: got: {}",
+            py.contains("10 if x == 1"),
+            "should use ternary for literal arms: got: {}",
             py
         );
     }
