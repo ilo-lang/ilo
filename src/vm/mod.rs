@@ -1009,6 +1009,25 @@ impl RegCompiler {
                         }
                         return None;
                     }
+                    // Peephole: `name = mset name key val` → OP_MSET A=existing, B=existing, C=key
+                    // with a=b the OP_MSET runtime checks RC=1 on the map and inserts in-place,
+                    // turning O(n²) map-accumulation into O(n) amortised.
+                    if let Expr::Call {
+                        function,
+                        args,
+                        unwrap: false,
+                    } = value
+                        && function == "mset"
+                        && args.len() == 3
+                        && let Expr::Ref(ref_name) = &args[0]
+                        && ref_name == name
+                    {
+                        let rc = self.compile_expr(&args[1]);
+                        let rd = self.compile_expr(&args[2]);
+                        self.emit_abc(OP_MSET, existing_reg, existing_reg, rc);
+                        self.emit_abc(0, rd, 0, 0);
+                        return None;
+                    }
                     // General re-binding: compile value and move to existing register
                     let reg = self.compile_expr(value);
                     if reg != existing_reg {
@@ -4303,27 +4322,70 @@ impl<'a> VM<'a> {
                     let map_v = reg!(b);
                     let key_v = reg!(c);
                     let val_v = reg!(d);
-                    let result = unsafe {
-                        match map_v.as_heap_ref() {
-                            HeapObj::Map(m) => match key_v.as_heap_ref() {
-                                HeapObj::Str(k) => {
+                    if (map_v.0 & TAG_MASK) != TAG_MAP {
+                        vm_err!(VmError::Type("mset: first arg must be a map"));
+                    }
+                    if !key_v.is_string() {
+                        vm_err!(VmError::Type("mset: key must be text"));
+                    }
+                    let ptr_b = (map_v.0 & PTR_MASK) as *const HeapObj;
+                    // Peek the RC count without reconstructing the Rc (which would bump it).
+                    // Same pattern as OP_LISTAPPEND / OP_ADD_SS RC=1 fast paths.
+                    let rc_count = {
+                        let rc_peek = unsafe { Rc::from_raw(ptr_b) };
+                        let count = Rc::strong_count(&rc_peek);
+                        std::mem::forget(rc_peek);
+                        count
+                    };
+                    // Fast path: a == b and RC == 1 — sole owner, mutate HashMap in place.
+                    // Compiler peephole `name = mset name k v` emits a == b, which lets the
+                    // common accumulator pattern stay RC=1 across loop iterations and turns
+                    // O(n²) clone-per-insert into O(n) amortised.
+                    if a == b && rc_count == 1 {
+                        // SAFETY: We are the sole owner (count==1) and no aliasing reference
+                        // exists. Cast to *mut to insert directly into the HashMap. Pointer
+                        // identity is unchanged, so slot a (== b) still holds the same NanVal.
+                        let heap_mut = unsafe { &mut *(ptr_b as *mut HeapObj) };
+                        match heap_mut {
+                            HeapObj::Map(m) => {
+                                let k_str = unsafe {
+                                    match key_v.as_heap_ref() {
+                                        HeapObj::Str(s) => s.clone(),
+                                        _ => unreachable!(),
+                                    }
+                                };
+                                val_v.clone_rc();
+                                if let Some(old) = m.insert(k_str, val_v) {
+                                    old.drop_rc();
+                                }
+                            }
+                            _ => unreachable!(),
+                        }
+                    } else {
+                        // RC > 1 or distinct dest register — must clone to avoid aliasing.
+                        let result = unsafe {
+                            match &*ptr_b {
+                                HeapObj::Map(m) => {
                                     let mut new_map = m.clone();
                                     // m.clone() bit-copies values; bump RC for each retained entry
                                     for v in new_map.values() {
                                         v.clone_rc();
                                     }
+                                    let k_str = match key_v.as_heap_ref() {
+                                        HeapObj::Str(s) => s.clone(),
+                                        _ => unreachable!(),
+                                    };
                                     val_v.clone_rc();
-                                    if let Some(old) = new_map.insert(k.clone(), val_v) {
+                                    if let Some(old) = new_map.insert(k_str, val_v) {
                                         old.drop_rc();
                                     }
                                     NanVal::heap_map(new_map)
                                 }
-                                _ => vm_err!(VmError::Type("mset: key must be text")),
-                            },
-                            _ => vm_err!(VmError::Type("mset: first arg must be a map")),
-                        }
-                    };
-                    reg_set!(a, result);
+                                _ => unreachable!(),
+                            }
+                        };
+                        reg_set!(a, result);
+                    }
                 }
                 OP_MHAS => {
                     let a = ((inst >> 16) & 0xFF) as usize + base;
@@ -10885,28 +10947,107 @@ pub(crate) extern "C" fn jit_mget(map: u64, key: u64) -> u64 {
     }
 }
 
+/// General mset helper — always clones the map. Used by Cranelift when the
+/// destination register differs from the map source register (no in-place
+/// safety guarantee, even if RC=1, because both src and dst slots will
+/// reference the result and Cranelift does not auto-drop overwritten vars).
+///
+/// Also fixes a latent bug in the pre-fix code: `m.clone()` bit-copied entries
+/// without bumping RC for retained heap values while `HeapObj::Drop` for Map
+/// decrements every value. With non-numeric values this was use-after-free
+/// waiting to happen; existing tests only used numeric values.
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn jit_mset(map: u64, key: u64, val: u64) -> u64 {
     let map_v = NanVal(map);
     let key_v = NanVal(key);
     let val_v = NanVal(val);
-    if !map_v.is_heap() || !key_v.is_heap() {
+    if (map_v.0 & TAG_MASK) != TAG_MAP || !key_v.is_string() {
         return TAG_NIL;
     }
+    let ptr_b = (map_v.0 & PTR_MASK) as *const HeapObj;
     unsafe {
-        match map_v.as_heap_ref() {
-            HeapObj::Map(m) => match key_v.as_heap_ref() {
-                HeapObj::Str(k) => {
-                    let mut new_map = m.clone();
-                    val_v.clone_rc();
-                    new_map.insert(k.clone(), val_v);
-                    NanVal::heap_map(new_map).0
+        match &*ptr_b {
+            HeapObj::Map(m) => {
+                let mut new_map = m.clone();
+                // Bump RC for each retained entry so the new map owns its values
+                // independently of the source. HeapObj::Drop for Map will
+                // decrement every value when this map is dropped, so the clones
+                // must each represent an owned ref.
+                for v in new_map.values() {
+                    v.clone_rc();
                 }
-                _ => TAG_NIL,
-            },
+                let k_str = match key_v.as_heap_ref() {
+                    HeapObj::Str(s) => s.clone(),
+                    _ => return TAG_NIL,
+                };
+                val_v.clone_rc();
+                if let Some(old) = new_map.insert(k_str, val_v) {
+                    old.drop_rc();
+                }
+                NanVal::heap_map(new_map).0
+            }
             _ => TAG_NIL,
         }
+    }
+}
+
+/// In-place mset helper — mutates the HashMap when the caller's map is the
+/// sole owner (strong_count == 1), else falls back to the cloning path.
+///
+/// The Cranelift compiler only emits a call to this helper when the OP_MSET
+/// destination and source registers are the same SSA variable (the compiler
+/// peephole `name = mset name k v` shape). In that case the def_var(a, result)
+/// overwrites the same variable the input came from, so returning the same
+/// pointer at RC=1 is balanced: the caller still holds exactly one ref.
+///
+/// Without that compile-time guarantee, returning the same pointer when
+/// strong_count == 1 and a != b would alias the result through both registers
+/// and silently mutate the caller's "source" map — see the open follow-up on
+/// the equivalent `jit_listappend` RC=1 alias case from PR #232.
+#[cfg(feature = "cranelift")]
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn jit_mset_inplace(map: u64, key: u64, val: u64) -> u64 {
+    let map_v = NanVal(map);
+    let key_v = NanVal(key);
+    let val_v = NanVal(val);
+    if (map_v.0 & TAG_MASK) != TAG_MAP || !key_v.is_string() {
+        return TAG_NIL;
+    }
+    let ptr_b = (map_v.0 & PTR_MASK) as *const HeapObj;
+    // Peek the RC count without taking ownership.
+    let rc_count = {
+        let rc_peek = unsafe { Rc::from_raw(ptr_b) };
+        let count = Rc::strong_count(&rc_peek);
+        std::mem::forget(rc_peek);
+        count
+    };
+    if rc_count == 1 {
+        // SAFETY: sole owner; no other reference exists. Cast to *mut and
+        // insert directly. The caller is the same SSA variable that produced
+        // the input map (compile-time guarantee), so def_var with the same
+        // pointer keeps strong_count == 1 — balanced.
+        let heap_mut = unsafe { &mut *(ptr_b as *mut HeapObj) };
+        match heap_mut {
+            HeapObj::Map(m) => {
+                let k_str = unsafe {
+                    match key_v.as_heap_ref() {
+                        HeapObj::Str(s) => s.clone(),
+                        _ => return TAG_NIL,
+                    }
+                };
+                val_v.clone_rc();
+                if let Some(old) = m.insert(k_str, val_v) {
+                    old.drop_rc();
+                }
+                // Return the same NanVal pointer — RC still 1.
+                map
+            }
+            _ => TAG_NIL,
+        }
+    } else {
+        // RC > 1 — fall back to the cloning path.
+        jit_mset(map, key, val)
     }
 }
 
@@ -15043,6 +15184,59 @@ mod tests {
             vec![],
         );
         assert_eq!(result, Value::Bool(true));
+    }
+
+    #[test]
+    fn vm_mset_rebind_accumulator_text_values() {
+        // m = mset m k v shape exercises the compiler peephole + OP_MSET RC=1
+        // in-place fast path. Text values catch the latent jit_mset RC bug if it
+        // ever ports to the VM slow path. Asserts every key is reachable after
+        // 8 iterations (a regression would either lose entries or panic).
+        let result = vm_run(
+            r#"f>n;m=mmap;m=mset m "a" "1";m=mset m "b" "2";m=mset m "c" "3";m=mset m "d" "4";m=mset m "e" "5";m=mset m "f" "6";m=mset m "g" "7";m=mset m "h" "8";len (mkeys m)"#,
+            Some("f"),
+            vec![],
+        );
+        assert_eq!(result, Value::Number(8.0));
+    }
+
+    #[test]
+    fn vm_mset_rebind_overwrite_same_key() {
+        // Repeated overwrite on the same key exercises the drop_rc path on the
+        // displaced value inside the RC=1 fast path. With Text values the old
+        // string Rc must be properly decremented when replaced.
+        let result = vm_run(
+            r#"f>t;m=mmap;m=mset m "k" "first";m=mset m "k" "second";m=mset m "k" "third";mget m "k" ?? "miss""#,
+            Some("f"),
+            vec![],
+        );
+        assert_eq!(result, Value::Text("third".into()));
+    }
+
+    #[test]
+    fn vm_mset_fn_arg_forces_slow_path() {
+        // Passing m to a helper that does its own mset puts the map at RC=2
+        // (caller slot + callee param slot). The callee's m=mset m k v therefore
+        // takes the slow path, must NOT mutate the caller's map.
+        let result = vm_run(
+            r#"addto m:M t t k:t v:t>t;m=mset m k v;mget m k ?? "miss"
+               f>t;m=mset mmap "a" "one";x=addto m "a" "two";mget m "a" ?? "miss""#,
+            Some("f"),
+            vec![],
+        );
+        assert_eq!(result, Value::Text("one".into()));
+    }
+
+    #[test]
+    fn vm_mset_non_rebind_distinct_dest() {
+        // Non-rebind shape m2 = mset m k v: a != b in OP_MSET emission. The fast
+        // path must not fire even when RC=1 (would alias the caller's map).
+        let result = vm_run(
+            r#"f>t;m=mset mmap "k" "1";m2=mset m "j" "2";mget m "j" ?? "miss""#,
+            Some("f"),
+            vec![],
+        );
+        assert_eq!(result, Value::Text("miss".into()));
     }
 
     #[test]

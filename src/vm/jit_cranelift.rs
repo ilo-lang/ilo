@@ -132,6 +132,7 @@ struct HelperFuncs {
     mapnew: FuncId,
     mget: FuncId,
     mset: FuncId,
+    mset_inplace: FuncId,
     mhas: FuncId,
     mkeys: FuncId,
     mvals: FuncId,
@@ -290,6 +291,7 @@ fn register_helpers(builder: &mut JITBuilder) {
         ("jit_mapnew", jit_mapnew as *const u8),
         ("jit_mget", jit_mget as *const u8),
         ("jit_mset", jit_mset as *const u8),
+        ("jit_mset_inplace", jit_mset_inplace as *const u8),
         ("jit_mhas", jit_mhas as *const u8),
         ("jit_mkeys", jit_mkeys as *const u8),
         ("jit_mvals", jit_mvals as *const u8),
@@ -436,6 +438,7 @@ fn declare_all_helpers(module: &mut JITModule) -> HelperFuncs {
         mapnew: declare_helper(module, "jit_mapnew", 0, 1),
         mget: declare_helper(module, "jit_mget", 2, 1),
         mset: declare_helper(module, "jit_mset", 3, 1),
+        mset_inplace: declare_helper(module, "jit_mset_inplace", 3, 1),
         mhas: declare_helper(module, "jit_mhas", 2, 1),
         mkeys: declare_helper(module, "jit_mkeys", 1, 1),
         mvals: declare_helper(module, "jit_mvals", 1, 1),
@@ -3773,7 +3776,15 @@ fn compile_function_body(
                 skip_next = true;
                 let d_idx = ((data_inst >> 16) & 0xFF) as usize;
                 let dv = builder.use_var(vars[d_idx]);
-                let fref = get_func_ref(&mut builder, module, helpers.mset);
+                // Pick the in-place helper only when the destination and source
+                // registers are the same SSA variable (compiler peephole shape).
+                // See jit_mset_inplace docs for why a != b is unsafe at RC=1.
+                let helper_fn = if a_idx == b_idx {
+                    helpers.mset_inplace
+                } else {
+                    helpers.mset
+                };
+                let fref = get_func_ref(&mut builder, module, helper_fn);
                 let call_inst = builder.ins().call(fref, &[bv, cv, dv]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
@@ -5323,6 +5334,45 @@ mod tests {
     fn cranelift_map_vals() {
         let result = jit_run(r#"f>n;m=mset mmap "x" 99;v=mvals m;len v"#, "f", &[]);
         assert_eq!(result, Some(Value::Number(1.0)));
+    }
+
+    #[test]
+    fn cranelift_mset_rebind_accumulator_text() {
+        // Exercises jit_mset_inplace fast path: m = mset m k v with Text values.
+        // Pre-fix jit_mset bit-copied entries without bumping RC; with Text
+        // values that produced over-decrement on map drop.
+        let result = jit_run(
+            r#"f>n;m=mmap;m=mset m "a" "1";m=mset m "b" "2";m=mset m "c" "3";len (mkeys m)"#,
+            "f",
+            &[],
+        );
+        assert_eq!(result, Some(Value::Number(3.0)));
+    }
+
+    #[test]
+    fn cranelift_mset_non_rebind_does_not_alias() {
+        // Non-rebind shape m2 = mset m k v: Cranelift OP_MSET must pick the
+        // cloning helper (jit_mset) not jit_mset_inplace, otherwise both m and
+        // m2 alias the same Rc and m would observe m2's insertion.
+        let result = jit_run(
+            r#"f>t;m=mset mmap "k" "1";m2=mset m "j" "2";mget m "j" ?? "miss""#,
+            "f",
+            &[],
+        );
+        assert_eq!(result, Some(Value::Text("miss".into())));
+    }
+
+    #[test]
+    fn cranelift_mset_overwrite_drops_old_text() {
+        // Overwriting a key with a new Text value must drop_rc the displaced
+        // value. With the latent jit_mset RC bug, the displaced Rc was never
+        // properly accounted for and the second `mget` would observe garbage.
+        let result = jit_run(
+            r#"f>t;m=mmap;m=mset m "k" "first";m=mset m "k" "second";mget m "k" ?? "miss""#,
+            "f",
+            &[],
+        );
+        assert_eq!(result, Some(Value::Text("second".into())));
     }
 
     #[test]
