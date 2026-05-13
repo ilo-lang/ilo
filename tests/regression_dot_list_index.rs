@@ -77,15 +77,22 @@ fn dot_index_out_of_range_tree_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn dot_index_out_of_range_cranelift() {
+    // After the JIT permissive-nil sweep (batch 1), Cranelift surfaces
+    // a runtime error for OOB literal-index OP_INDEX, matching tree/VM.
     let src = "f>n;xs=[10,20,30];xs.5";
     let out = ilo()
         .args([src, "--run-cranelift", "f"])
         .output()
         .expect("failed to run ilo");
     assert!(
-        out.status.success(),
-        "cranelift: expected success returning nil for xs.5, got stderr={}",
-        String::from_utf8_lossy(&out.stderr)
+        !out.status.success(),
+        "cranelift: expected runtime error for xs.5, got stdout={}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("out of bounds") || stderr.contains("ILO-R004"),
+        "cranelift: expected out-of-bounds diagnostic, got stderr={stderr}"
     );
 }
 

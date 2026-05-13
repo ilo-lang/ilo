@@ -1368,21 +1368,23 @@ fn run_cranelift_not_eligible() {
 // L441-443: run_default interpreter fallback error
 #[test]
 fn run_default_interpreter_error() {
-    // f xs:L n>n;xs.0 with empty list [] — JIT now handles this,
-    // returns nil for out-of-bounds index
+    // `f xs:L n>n;xs.0` with empty list [] — OP_INDEX on an out-of-bounds
+    // literal is a runtime error on every engine after the JIT permissive-
+    // nil sweep (batch 1). Tree/VM already surfaced this; the JIT helper
+    // now matches via JIT_RUNTIME_ERROR.
     let out = ilo()
         .args(["f xs:L n>n;xs.0", "f", "[]"])
         .output()
         .expect("failed to run ilo");
     assert!(
-        out.status.success(),
-        "JIT handles empty list index, stderr: {}",
-        String::from_utf8_lossy(&out.stderr)
+        !out.status.success(),
+        "expected runtime error for OOB list index, got stdout: {}",
+        String::from_utf8_lossy(&out.stdout)
     );
-    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
-        stdout.trim() == "nil",
-        "expected nil for empty list index, got: {stdout}"
+        stderr.contains("out of bounds") || stderr.contains("ILO-R004"),
+        "expected list-index-out-of-bounds diagnostic, got stderr: {stderr}"
     );
 }
 
