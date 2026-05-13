@@ -1,0 +1,35 @@
+-- `sleep ms` blocks the current engine for `ms` milliseconds and returns
+-- nil. Use it inside polling loops so the engine pauses instead of
+-- busy-waiting and pinning a core at 100% CPU.
+
+-- Trivial: sleep, then evaluate the next expression. The example asserts
+-- the return value of the trailing expression, not the wall clock, so
+-- the example harness stays deterministic. The cross-engine timing
+-- check lives in tests/regression_sleep.rs.
+
+after-sleep>n;sleep 10;42
+
+-- run: after-sleep
+-- out: 42
+
+-- Negative ms is clamped to zero so a stray `sleep -1` cannot hang the
+-- engine. Same goes for sleep 0: both must return promptly.
+
+sleep-zero>n;sleep 0;1
+
+-- run: sleep-zero
+-- out: 1
+
+sleep-negative>n;sleep -1;1
+
+-- run: sleep-negative
+-- out: 1
+
+-- Sleep inside a loop body: the polling-tail use case that motivated
+-- the builtin. Three iterations of `sleep 5` cap the loop's CPU cost
+-- regardless of how cheap the body is.
+
+paced-loop>n;@i 0..3 {sleep 5};7
+
+-- run: paced-loop
+-- out: 7
