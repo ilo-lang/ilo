@@ -1,0 +1,14 @@
+-- Chained `??`: bare `f a ?? g b ?? d` parses as `(f a) ?? (g b) ?? d`.
+-- The arity-aware call parser stops each call at its arg count, then
+-- `??` falls out as left-associative infix. First non-nil wins.
+
+lookup k1:t k2:t>n;m=mset (mset mmap "a" 1) "b" 2;mget m k1 ?? mget m k2 ?? 99
+
+-- run: lookup "a" "b"
+-- out: 1
+
+-- run: lookup "x" "b"
+-- out: 2
+
+-- run: lookup "x" "y"
+-- out: 99
