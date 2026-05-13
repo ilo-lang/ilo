@@ -262,6 +262,10 @@ pub(crate) const OP_DOT: u8 = 125; // R[A] = dot(R[B], R[C])  (vector dot produc
 pub(crate) const OP_PADL: u8 = 121; // R[A] = pad_left(R[B], R[C])  (text, width → text)
 pub(crate) const OP_PADR: u8 = 122; // R[A] = pad_right(R[B], R[C]) (text, width → text)
 
+// Per-char codepoint round-trip — t->n and n->t (Unicode scalar, 1-arg each).
+pub(crate) const OP_ORD: u8 = 153; // R[A] = first-char codepoint of R[B]
+pub(crate) const OP_CHR: u8 = 154; // R[A] = single-char string for codepoint R[B]
+
 pub(crate) const OP_GETMANY: u8 = 136; // R[A] = get_many(R[B])  (L t → L (R t t), concurrent fan-out)
 pub(crate) const OP_RDJL: u8 = 135; // R[A] = rdjl(R[B])  (read JSONL file → L (R _ t))
 
@@ -2182,6 +2186,18 @@ impl RegCompiler {
                             let rb = self.compile_expr(&args[0]);
                             let ra = self.alloc_reg();
                             self.emit_abc(OP_CAP, ra, rb, 0);
+                            return ra;
+                        }
+                        (Builtin::Ord, 1) => {
+                            let rb = self.compile_expr(&args[0]);
+                            let ra = self.alloc_reg();
+                            self.emit_abc(OP_ORD, ra, rb, 0);
+                            return ra;
+                        }
+                        (Builtin::Chr, 1) => {
+                            let rb = self.compile_expr(&args[0]);
+                            let ra = self.alloc_reg();
+                            self.emit_abc(OP_CHR, ra, rb, 0);
                             return ra;
                         }
                         (Builtin::Padl | Builtin::Padr, 2) => {
@@ -4459,6 +4475,47 @@ impl<'a> VM<'a> {
                             }
                             _ => unreachable!(),
                         }
+                    };
+                    reg_set!(a, NanVal::heap_string(s));
+                }
+                OP_ORD => {
+                    let a = ((inst >> 16) & 0xFF) as usize + base;
+                    let b = ((inst >> 8) & 0xFF) as usize + base;
+                    let v = reg!(b);
+                    if !v.is_string() {
+                        vm_err!(VmError::Type("ord requires a string"));
+                    }
+                    // SAFETY: is_string() confirmed heap-tagged string with live RC.
+                    let cp = unsafe {
+                        match v.as_heap_ref() {
+                            HeapObj::Str(s) => match s.as_str().chars().next() {
+                                Some(c) => c as u32,
+                                None => {
+                                    vm_err!(VmError::Type("ord requires a non-empty string"));
+                                }
+                            },
+                            _ => unreachable!(),
+                        }
+                    };
+                    reg_set!(a, NanVal::number(cp as f64));
+                }
+                OP_CHR => {
+                    let a = ((inst >> 16) & 0xFF) as usize + base;
+                    let b = ((inst >> 8) & 0xFF) as usize + base;
+                    let v = reg!(b);
+                    if !v.is_number() {
+                        vm_err!(VmError::Type("chr requires a number"));
+                    }
+                    let nv = v.as_number();
+                    if !nv.is_finite() || nv.fract() != 0.0 || nv < 0.0 || nv > u32::MAX as f64 {
+                        vm_err!(VmError::Type(
+                            "chr requires a non-negative integer codepoint"
+                        ));
+                    }
+                    let cp = nv as u32;
+                    let s = match char::from_u32(cp) {
+                        Some(c) => c.to_string(),
+                        None => vm_err!(VmError::Type("chr: not a valid Unicode codepoint")),
                     };
                     reg_set!(a, NanVal::heap_string(s));
                 }
@@ -10720,6 +10777,44 @@ fn jit_pad_impl(sv: u64, wv: u64, left: bool) -> u64 {
         }
     };
     NanVal::heap_string(out).0
+}
+
+#[cfg(feature = "cranelift")]
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn jit_ord(v: u64) -> u64 {
+    let nv = NanVal(v);
+    if !nv.is_string() {
+        return TAG_NIL;
+    }
+    // SAFETY: is_string() confirmed heap-tagged string with live RC.
+    let cp = unsafe {
+        match nv.as_heap_ref() {
+            HeapObj::Str(s) => match s.as_str().chars().next() {
+                Some(c) => c as u32,
+                None => return TAG_NIL,
+            },
+            _ => unreachable!(),
+        }
+    };
+    NanVal::number(cp as f64).0
+}
+
+#[cfg(feature = "cranelift")]
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn jit_chr(v: u64) -> u64 {
+    let nv = NanVal(v);
+    if !nv.is_number() {
+        return TAG_NIL;
+    }
+    let n = nv.as_number();
+    if !n.is_finite() || n.fract() != 0.0 || n < 0.0 || n > u32::MAX as f64 {
+        return TAG_NIL;
+    }
+    let cp = n as u32;
+    match char::from_u32(cp) {
+        Some(c) => NanVal::heap_string(c.to_string()).0,
+        None => TAG_NIL,
+    }
 }
 
 #[cfg(feature = "cranelift")]

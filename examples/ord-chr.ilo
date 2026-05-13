@@ -1,0 +1,24 @@
+-- `ord` returns the Unicode codepoint of the first character of a string.
+-- `chr` is the inverse: it returns a single-character string for a codepoint.
+-- Together they unblock per-char text work (NLP, classifiers, ASCII-fold).
+
+ord-h>n;ord "H"
+chr-72>t;chr 72
+roundtrip>t;chr ord "z"
+digit>n;ord "0"
+chr-zero>n;ord chr 0
+
+-- run: ord-h
+-- out: 72
+
+-- run: chr-72
+-- out: H
+
+-- run: roundtrip
+-- out: z
+
+-- run: digit
+-- out: 48
+
+-- run: chr-zero
+-- out: 0

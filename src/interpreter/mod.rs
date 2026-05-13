@@ -1999,6 +1999,45 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         };
         return Ok(Value::Text(out));
     }
+    if builtin == Some(Builtin::Ord) && args.len() == 1 {
+        return match &args[0] {
+            Value::Text(s) => match s.chars().next() {
+                Some(c) => Ok(Value::Number(c as u32 as f64)),
+                None => Err(RuntimeError::new(
+                    "ILO-R009",
+                    "ord requires a non-empty string".to_string(),
+                )),
+            },
+            other => Err(RuntimeError::new(
+                "ILO-R009",
+                format!("ord requires text, got {:?}", other),
+            )),
+        };
+    }
+    if builtin == Some(Builtin::Chr) && args.len() == 1 {
+        return match &args[0] {
+            Value::Number(n) => {
+                if !n.is_finite() || n.fract() != 0.0 || *n < 0.0 || *n > u32::MAX as f64 {
+                    return Err(RuntimeError::new(
+                        "ILO-R009",
+                        format!("chr requires a non-negative integer codepoint, got {n}"),
+                    ));
+                }
+                let cp = *n as u32;
+                match char::from_u32(cp) {
+                    Some(c) => Ok(Value::Text(c.to_string())),
+                    None => Err(RuntimeError::new(
+                        "ILO-R009",
+                        format!("chr: {cp} is not a valid Unicode codepoint"),
+                    )),
+                }
+            }
+            other => Err(RuntimeError::new(
+                "ILO-R009",
+                format!("chr requires number, got {:?}", other),
+            )),
+        };
+    }
     if builtin == Some(Builtin::Unq) && args.len() == 1 {
         return match &args[0] {
             Value::List(xs) => {

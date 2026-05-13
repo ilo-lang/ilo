@@ -323,6 +323,8 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("cap", &["t"], "t"),
     ("padl", &["t", "n"], "t"),
     ("padr", &["t", "n"], "t"),
+    ("ord", &["t"], "n"),
+    ("chr", &["n"], "t"),
     ("spl", &["t", "t"], "L t"),
     ("cat", &["L t", "t"], "t"),
     ("zip", &["list", "list"], "list"),
@@ -428,6 +430,9 @@ fn builtin_as_fn_ty(name: &str) -> Option<Ty> {
         "trm" | "upr" | "lwr" | "cap" => Ty::Fn(vec![t.clone()], Box::new(t)),
         // 2-arg t,n->t
         "padl" | "padr" => Ty::Fn(vec![t.clone(), n.clone()], Box::new(t)),
+        // 1-arg t->n / n->t (ASCII / Unicode codepoint round-trip)
+        "ord" => Ty::Fn(vec![t.clone()], Box::new(n.clone())),
+        "chr" => Ty::Fn(vec![n.clone()], Box::new(t.clone())),
         // 1-arg n->t and t->R n t
         "str" => Ty::Fn(vec![n], Box::new(t)),
         "num" => Ty::Fn(
@@ -935,6 +940,36 @@ fn builtin_check_args(
                     code: "ILO-T013",
                     function: func_ctx.to_string(),
                     message: format!("'{name}' arg 2 expects n, got {arg}"),
+                    hint: None,
+                    span,
+                    is_warning: false,
+                });
+            }
+            (Ty::Text, errors)
+        }
+        "ord" => {
+            if let Some(arg) = arg_types.first()
+                && !compatible(arg, &Ty::Text)
+            {
+                errors.push(VerifyError {
+                    code: "ILO-T013",
+                    function: func_ctx.to_string(),
+                    message: format!("'ord' expects t, got {arg}"),
+                    hint: None,
+                    span,
+                    is_warning: false,
+                });
+            }
+            (Ty::Number, errors)
+        }
+        "chr" => {
+            if let Some(arg) = arg_types.first()
+                && !compatible(arg, &Ty::Number)
+            {
+                errors.push(VerifyError {
+                    code: "ILO-T013",
+                    function: func_ctx.to_string(),
+                    message: format!("'chr' expects n, got {arg}"),
                     hint: None,
                     span,
                     is_warning: false,
