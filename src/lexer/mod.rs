@@ -344,11 +344,12 @@ pub fn lex(source: &str) -> Result<Vec<(Token, std::ops::Range<usize>)>, LexErro
                             }
                         }
                         let sigil_char = normalized[span.clone()].chars().next().unwrap();
-                        return Err(uppercase_mid_ident_error(
+                        return Err(uppercase_mid_ident_error_with_source(
                             &prev_name,
                             sigil_char,
                             &normalized[span.end..],
                             prev_span.start,
+                            Some(&normalized),
                         ));
                     }
                     // Leading-uppercase JSON key flush after a Dot/DotQuestion
@@ -398,11 +399,12 @@ pub fn lex(source: &str) -> Result<Vec<(Token, std::ops::Range<usize>)>, LexErro
                             }
                         }
                         let c = bad.chars().next().unwrap();
-                        return Err(uppercase_mid_ident_error(
+                        return Err(uppercase_mid_ident_error_with_source(
                             &prev_name,
                             c,
                             &normalized[span.end..],
                             prev_span.start,
+                            Some(&normalized),
                         ));
                     }
                     // Leading-uppercase JSON key flush after `.` or `.?`
@@ -860,11 +862,12 @@ fn is_type_sigil(t: &Token) -> bool {
     )
 }
 
-fn uppercase_mid_ident_error(
+fn uppercase_mid_ident_error_with_source(
     prev: &str,
     cap: char,
     rest_after_cap: &str,
     start: usize,
+    source: Option<&str>,
 ) -> LexError {
     // Reconstruct the offending identifier by reading trailing [A-Za-z0-9-] chars
     // so hyphenated tails like `isHello-world` are echoed in full.
@@ -875,24 +878,126 @@ fn uppercase_mid_ident_error(
     let offset = prev.len();
     let full = format!("{prev}{cap}{trailing}");
     let lower = full.to_lowercase();
-    let hyphenated = {
-        let mut s = String::with_capacity(full.len() + 2);
-        for (i, c) in full.chars().enumerate() {
-            if i > 0 && c.is_ascii_uppercase() && !s.ends_with('-') {
-                s.push('-');
+    let hyphenated = hyphenate_camel(&full);
+
+    let mut suggestion = format!(
+        "identifiers must be lowercase ASCII; got '{full}' (capital '{cap}' at offset {offset}). Use lowercase, e.g. `{hyphenated}` or `{lower}`"
+    );
+
+    // Scan the rest of the source for additional camelCase offenders so the
+    // user can fix them all in one pass instead of one ILO-L003 per run. Skip
+    // the current offender (same start position) and any identifier sitting
+    // in a post-dot field-access position (those are absorbed, not rejected).
+    if let Some(src) = source {
+        let mut extras: Vec<String> = Vec::new();
+        for offender in scan_camel_offenders(src) {
+            if offender.start == start {
+                continue;
             }
-            s.push(c.to_ascii_lowercase());
+            // Exclude the current offender name and any duplicates so the
+            // list shows only distinct additional identifiers to rename.
+            if offender.full == full {
+                continue;
+            }
+            if !extras.iter().any(|e| e == &offender.full) {
+                extras.push(offender.full);
+            }
         }
-        s
-    };
+        if !extras.is_empty() {
+            let preview: Vec<String> = extras.iter().take(5).cloned().collect();
+            let more = if extras.len() > preview.len() {
+                format!(" (+{} more)", extras.len() - preview.len())
+            } else {
+                String::new()
+            };
+            suggestion.push_str(&format!(
+                ". Also found in this file: {}{}",
+                preview.join(", "),
+                more
+            ));
+        }
+    }
+
     LexError {
         code: "ILO-L003",
         position: start,
         snippet: full.clone(),
-        suggestion: format!(
-            "identifiers must be lowercase ASCII; got '{full}' (capital '{cap}' at offset {offset}). Use lowercase, e.g. `{hyphenated}` or `{lower}`"
-        ),
+        suggestion,
     }
+}
+
+fn hyphenate_camel(full: &str) -> String {
+    let mut s = String::with_capacity(full.len() + 2);
+    for (i, c) in full.chars().enumerate() {
+        if i > 0 && c.is_ascii_uppercase() && !s.ends_with('-') {
+            s.push('-');
+        }
+        s.push(c.to_ascii_lowercase());
+    }
+    s
+}
+
+#[derive(Debug)]
+struct CamelOffender {
+    start: usize,
+    full: String,
+}
+
+/// Scan source for camelCase identifiers (lowercase-start with an
+/// uppercase ASCII letter mid-identifier) that would trigger ILO-L003.
+/// Skips identifiers immediately preceded by `.` or `.?` because those
+/// are post-dot field accesses, which the lexer absorbs rather than rejects.
+fn scan_camel_offenders(src: &str) -> Vec<CamelOffender> {
+    let bytes = src.as_bytes();
+    let mut out: Vec<CamelOffender> = Vec::new();
+    let mut i = 0;
+    while i < bytes.len() {
+        let b = bytes[i];
+        // Find start of a lowercase-led identifier.
+        let prev = if i == 0 { 0 } else { bytes[i - 1] };
+        let prev_prev = if i >= 2 { bytes[i - 2] } else { 0 };
+        let is_post_dot = prev == b'.' || (prev == b'?' && prev_prev == b'.');
+        if b.is_ascii_lowercase() && !(prev.is_ascii_alphanumeric() || prev == b'_' || prev == b'-')
+        {
+            // Walk the identifier-shaped run and look for a mid-capital.
+            let start = i;
+            let mut j = i;
+            let mut found_cap = false;
+            while j < bytes.len() {
+                let c = bytes[j];
+                if c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-' {
+                    j += 1;
+                } else if c.is_ascii_uppercase() && j > start {
+                    found_cap = true;
+                    j += 1;
+                } else {
+                    break;
+                }
+            }
+            if found_cap && !is_post_dot {
+                // Extend through any trailing alphanumeric/hyphen tail so
+                // `helloWorld-x` reports the full ident.
+                while j < bytes.len() {
+                    let c = bytes[j];
+                    if c.is_ascii_alphanumeric() || c == b'-' {
+                        j += 1;
+                    } else {
+                        break;
+                    }
+                }
+                if let Ok(full) = std::str::from_utf8(&bytes[start..j]) {
+                    out.push(CamelOffender {
+                        start,
+                        full: full.to_string(),
+                    });
+                }
+            }
+            i = j.max(i + 1);
+        } else {
+            i += 1;
+        }
+    }
+    out
 }
 
 fn lex_error_kind(bad_token: &str) -> (&'static str, String) {

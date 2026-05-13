@@ -265,3 +265,44 @@ fn uppercase_mid_ident_includes_hyphenated_tail() {
         "should suggest fully hyphenated form: {err}"
     );
 }
+
+// ---- Camel-case rename cascade (per-file scan in a single pass) ----
+//
+// When the lexer rejects the first camelCase identifier, the suggestion now
+// lists every other distinct camelCase offender in the file so the user can
+// fix them all in one pass instead of N-1 retry rounds.
+
+#[test]
+fn camel_cascade_lists_other_offenders() {
+    let err = run_err("go>n;fooBar=1;bazQux=2;helloWorld=3;fooBar");
+    assert!(err.contains("ILO-L003"), "stderr: {err}");
+    assert!(
+        err.contains("Also found in this file"),
+        "should list extras: {err}"
+    );
+    assert!(err.contains("bazQux"), "should list bazQux: {err}");
+    assert!(err.contains("helloWorld"), "should list helloWorld: {err}");
+}
+
+#[test]
+fn camel_cascade_dedupes_current_offender() {
+    // `fooBar` appears twice in the source; the extras list must not
+    // re-echo it — only distinct other offenders.
+    let err = run_err("go>n;fooBar=1;fooBar");
+    assert!(err.contains("ILO-L003"), "stderr: {err}");
+    assert!(
+        !err.contains("Also found in this file"),
+        "single distinct offender should not produce a list: {err}"
+    );
+}
+
+#[test]
+fn camel_cascade_truncates_long_lists() {
+    let err = run_err("go>n;aA=1;bB=2;cC=3;dD=4;eE=5;fF=6;gG=7;hH=8;aA");
+    assert!(err.contains("ILO-L003"), "stderr: {err}");
+    assert!(
+        err.contains("more"),
+        "should truncate with `+N more`: {err}"
+    );
+}
+
