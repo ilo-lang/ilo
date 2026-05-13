@@ -1,0 +1,17 @@
+-- Demonstrates that alias-hint scanning respects lexer token boundaries.
+-- The word `tail` appears in this comment and inside a string literal,
+-- but neither should trigger the alias hint. The hint only fires when
+-- an alias word is a real source identifier. We deliberately use the
+-- canonical `tl` form here so the example demonstrates an idiomatic
+-- program that produces no hints.
+
+-- Read the tail of a list (canonical short form).
+ltail xs:L n>L n;tl xs
+
+-- Echo a path that happens to contain "tail" - the hint must not fire.
+say-path>t;"/tmp/ilo-persona-streaming-tail-rerun/app.log"
+
+-- run: ltail [1,2,3,4]
+-- out: [2, 3, 4]
+-- run: say-path
+-- out: /tmp/ilo-persona-streaming-tail-rerun/app.log
