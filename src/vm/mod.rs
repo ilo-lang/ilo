@@ -10653,6 +10653,121 @@ pub extern "C" fn jit_recfld_name(rec: u64, field_name_ptr: u64, registry_ptr: u
     }
 }
 
+/// Strict variant of `jit_recfld` — sets `JIT_RUNTIME_ERROR` on miss or
+/// non-record and still returns `TAG_NIL`. Wired to `OP_RECFLD` (the
+/// error-on-miss op); `OP_RECFLD_SAFE` keeps using the permissive
+/// `jit_recfld`. See PR #248 for the safe/strict split.
+#[cfg(feature = "cranelift")]
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn jit_recfld_strict(rec: u64, field_idx: u64) -> u64 {
+    let rv = NanVal(rec);
+    let idx = field_idx as usize;
+
+    // Fast path: arena record
+    if rv.is_arena_record() {
+        unsafe {
+            let r = rv.as_arena_record();
+            if idx < r.n_fields as usize {
+                let v = NanVal(*r.field_ptr(idx));
+                v.clone_rc();
+                return v.0;
+            }
+        }
+        jit_set_runtime_error(VmError::FieldNotFound {
+            field: format!("index {}", idx),
+        });
+        return TAG_NIL;
+    }
+
+    if !rv.is_heap() {
+        jit_set_runtime_error(VmError::Type("field access on non-record"));
+        return TAG_NIL;
+    }
+    match unsafe { rv.as_heap_ref() } {
+        HeapObj::Record { fields, type_info } => {
+            if idx < fields.len() {
+                let val = fields[idx];
+                val.clone_rc();
+                val.0
+            } else {
+                let name = type_info.fields.get(idx).map(|s| s.as_str()).unwrap_or("?");
+                jit_set_runtime_error(VmError::FieldNotFound {
+                    field: name.to_string(),
+                });
+                TAG_NIL
+            }
+        }
+        _ => {
+            jit_set_runtime_error(VmError::Type("field access on non-record"));
+            TAG_NIL
+        }
+    }
+}
+
+/// Strict variant of `jit_recfld_name` — sets `JIT_RUNTIME_ERROR` on miss
+/// or non-record and still returns `TAG_NIL`. Wired to `OP_RECFLD_NAME`
+/// (the error-on-miss op); `OP_RECFLD_NAME_SAFE` keeps using the
+/// permissive `jit_recfld_name`.
+#[cfg(feature = "cranelift")]
+#[unsafe(no_mangle)]
+pub extern "C" fn jit_recfld_name_strict(rec: u64, field_name_ptr: u64, registry_ptr: u64) -> u64 {
+    // SAFETY: field_name_ptr is a null-terminated C string created by the JIT
+    // compiler (leaked CString) or AOT compiler (data section). It remains
+    // valid for the call duration.
+    let field_name = unsafe {
+        let cstr = std::ffi::CStr::from_ptr(field_name_ptr as *const std::ffi::c_char);
+        cstr.to_str().unwrap_or("")
+    };
+    let rv = NanVal(rec);
+
+    if rv.is_arena_record() {
+        // SAFETY: is_arena_record() confirmed the NanVal tag. registry_ptr
+        // comes from ACTIVE_REGISTRY (JIT) or jit_get_registry_ptr (AOT) —
+        // valid for call duration.
+        unsafe {
+            let r = rv.as_arena_record();
+            let registry = &*(registry_ptr as *const TypeRegistry);
+            if let Some(type_info) = registry.types.get(r.type_id as usize)
+                && let Some(idx) = type_info.fields.iter().position(|f| f == field_name)
+                && idx < r.n_fields as usize
+            {
+                let v = NanVal(*r.field_ptr(idx));
+                v.clone_rc();
+                return v.0;
+            }
+        }
+        jit_set_runtime_error(VmError::FieldNotFound {
+            field: field_name.to_string(),
+        });
+        return TAG_NIL;
+    }
+
+    if !rv.is_heap() {
+        jit_set_runtime_error(VmError::Type("field access on non-record"));
+        return TAG_NIL;
+    }
+    // SAFETY: is_heap() confirmed the NanVal is a heap pointer.
+    match unsafe { rv.as_heap_ref() } {
+        HeapObj::Record { type_info, fields } => {
+            if let Some(idx) = type_info.fields.iter().position(|f| f == field_name)
+                && idx < fields.len()
+            {
+                let val = fields[idx];
+                val.clone_rc();
+                return val.0;
+            }
+            jit_set_runtime_error(VmError::FieldNotFound {
+                field: field_name.to_string(),
+            });
+            TAG_NIL
+        }
+        _ => {
+            jit_set_runtime_error(VmError::Type("field access on non-record"));
+            TAG_NIL
+        }
+    }
+}
+
 /// Create a new flat record. `arena_ptr` is a pointer to a BumpArena,
 /// `registry_ptr` is a pointer to &TypeRegistry,
 /// `type_id` identifies the type, `regs` has n_fields u64 values.
