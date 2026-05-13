@@ -1,7 +1,7 @@
 {
   "name": "ilo",
   "description": "Write, run, debug, and explain programs in ilo — a token-optimised programming language for AI agents",
-  "version": "0.8.0",
+  "version": "0.10.3",
   "author": {
     "name": "Daniel Morris"
   },
