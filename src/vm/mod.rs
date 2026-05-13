@@ -215,6 +215,11 @@ pub(crate) const OP_DTPARSE: u8 = 132; // R[A] = dtparse(R[B] text, R[C] fmt) �
 // at compile time, so we encode it in the C field rather than via a register.
 pub(crate) const OP_CSVDMP: u8 = 134;
 
+// Pre-allocated for the flatmap HOF builtin. Mirrors `map`: the emitter
+// currently falls through to OP_CALL → interpreter (VM has no FnRef
+// dispatch yet), and the JIT translator arm is a stub.
+pub(crate) const OP_FLATMAP: u8 = 112; // R[A] = flatmap(fn=R[B], list=R[C])
+
 // ABC mode — text formatting
 pub(crate) const OP_FMT2: u8 = 104; // R[A] = fmt2(R[B], R[C])  (format number to N decimal places → t)
 
@@ -2387,8 +2392,8 @@ impl RegCompiler {
                             return ra;
                         }
                         // Builtins that fall through to OP_CALL (interpreter handles them):
-                        // fmt (variadic), map/flt/fld/grp (higher-order), sum/avg/rgx/flat,
-                        // rd 2-arg, rdb, wr 3-arg, srt 2-arg, etc.
+                        // fmt (variadic), map/flt/fld/grp/flatmap (higher-order),
+                        // sum/avg/rgx/flat, rd 2-arg, rdb, wr 3-arg, srt 2-arg, etc.
                         _ => {}
                     }
                 }
@@ -10429,6 +10434,16 @@ pub(crate) extern "C" fn jit_isbool(v: u64) -> u64 {
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn jit_islist(v: u64) -> u64 {
     NanVal::boolean((v & TAG_MASK) == TAG_LIST).0
+}
+
+// JIT stub for OP_FLATMAP. Mirrors `map`: the real implementation
+// lives in the tree-walking interpreter, and `flatmap` calls fall
+// through OP_CALL today. This helper is reserved for when the JIT
+// gains FnRef-aware HOF dispatch; until then it is unreachable.
+#[cfg(feature = "cranelift")]
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn jit_flatmap(_fn_ref: u64, _list: u64) -> u64 {
+    TAG_NIL
 }
 
 // ── JIT helpers: Map operations ─────────────────────────────────────

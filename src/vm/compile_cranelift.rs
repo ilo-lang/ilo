@@ -3325,6 +3325,15 @@ fn compile_function_body(
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
             }
+            OP_FLATMAP => {
+                // Pre-allocated HOF opcode. `flatmap` calls fall through to
+                // OP_CALL today (interpreter dispatch), mirroring `map`, so
+                // emitted bytecode should never contain OP_FLATMAP.
+                return Err(format!(
+                    "OP_FLATMAP not yet supported by cranelift codegen at instruction {}",
+                    ip
+                ));
+            }
             _ => {
                 return Err(format!("unsupported opcode {} at instruction {}", op, ip));
             }

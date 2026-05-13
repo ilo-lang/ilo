@@ -330,6 +330,7 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("uniqby", &["fn", "list"], "list"),
     ("partition", &["fn", "list"], "list"),
     ("frq", &["list"], "map"),
+    ("flatmap", &["fn", "list"], "list"),
     ("flat", &["list"], "list"),
     ("sum", &["list"], "n"),
     ("cumsum", &["L n"], "L n"),
@@ -1674,6 +1675,31 @@ fn builtin_check_args(
                 _ => Ty::Unknown,
             };
             (ret, errors)
+        }
+        "flatmap" => {
+            // flatmap fn:F a (L b) xs:L a → L b
+            // First arg must be a function returning a list; second must be a list.
+            if let Some(fn_ty) = arg_types.first()
+                && !matches!(fn_ty, Ty::Fn(_, _) | Ty::Unknown)
+            {
+                errors.push(VerifyError {
+                    code: "ILO-T013",
+                    function: func_ctx.to_string(),
+                    message: format!("'flatmap' first arg must be a function (F ...), got {fn_ty}"),
+                    hint: Some("pass a function name: flatmap f xs".to_string()),
+                    span,
+                    is_warning: false,
+                });
+            }
+            // Return type: the inner list element type of the function's return.
+            let ret_elem = match arg_types.first() {
+                Some(Ty::Fn(_, ret)) => match ret.as_ref() {
+                    Ty::List(inner) => *inner.clone(),
+                    _ => Ty::Unknown,
+                },
+                _ => Ty::Unknown,
+            };
+            (Ty::List(Box::new(ret_elem)), errors)
         }
         "partition" => {
             // partition fn:F a b xs:L a → L (L a) — split into [passing, failing]

@@ -3874,6 +3874,13 @@ fn compile_function_body(
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
             }
+            OP_FLATMAP => {
+                // Pre-allocated HOF opcode. The compiler currently lets `flatmap`
+                // calls fall through to OP_CALL (interpreter), mirroring `map`,
+                // so this arm should never fire for compiler-emitted bytecode.
+                // Bail out if encountered so the VM falls back to the interpreter.
+                return None;
+            }
             _ => {
                 // Unknown opcode — bail out
                 return None;
