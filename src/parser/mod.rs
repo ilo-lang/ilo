@@ -1870,10 +1870,16 @@ impl Parser {
                     let arg_idx = args.len();
                     let in_fn_pos = self.is_fn_ref_position(&name, arg_idx);
                     args.push(self.parse_call_arg(in_fn_pos)?);
-                    // After each arg, if next is infix, stop
+                    // After each arg, if next is infix, stop. `??` is always
+                    // infix once we've already collected at least one arg —
+                    // `f a ?? b` means `(f a) ?? b`, never `f a (??b ...)`.
+                    // Without this, chained `f a ?? g b ?? d` mis-parses as
+                    // `f a (?? g b) (?? d)` because the prefix-binary scanner
+                    // sees `?? g b` as a valid prefix nil-coalesce form.
                     if let Some(tok) = self.peek()
                         && Self::is_infix_or_suffix_op(tok)
-                        && !self.looks_like_prefix_binary(self.pos)
+                        && (matches!(tok, Token::NilCoalesce)
+                            || !self.looks_like_prefix_binary(self.pos))
                     {
                         break;
                     }
