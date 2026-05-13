@@ -1,0 +1,33 @@
+-- rgxall pattern text: every match as a list of capture groups.
+-- Shape is always L (L t): no-group patterns wrap the whole match in
+-- a single-element inner list, so the outer shape stays predictable.
+-- `rgx` returns only the first match when the pattern has a capture group,
+-- so `rgxall` is the right tool for HTML scraping and bulk extraction.
+
+-- No-group case: each match wrapped in a single-element list.
+all-digits>L (L t);rgxall "\d+" "a1 b22 c333"
+
+-- One capture group: pull the inner text of every <h2>.
+-- This is the case where `rgx` fails (first match only).
+inner-h2>L (L t);rgxall "<h2>([^<]+)</h2>" "<h2>One</h2> <h2>Two</h2> <h2>Three</h2>"
+
+-- Two capture groups: each inner list has length 2.
+kv-pairs>L (L t);rgxall "(\w+)=(\d+)" "x=1 y=22 z=333"
+
+-- No matches: empty outer list.
+no-match>L (L t);rgxall "\d+" "no digits here"
+
+-- run: all-digits
+-- out: [[1], [22], [333]]
+-- run: inner-h2
+-- out: [[One], [Two], [Three]]
+-- run: kv-pairs
+-- out: [[x, 1], [y, 22], [z, 333]]
+-- run: no-match
+-- out: []
+
+-- VM and cranelift compilers don't yet wire builtin calls through to the
+-- interpreter for rgx/rgxall (only --run-tree does). When that gap closes,
+-- drop these skips.
+-- engine-skip: vm
+-- engine-skip: cranelift
