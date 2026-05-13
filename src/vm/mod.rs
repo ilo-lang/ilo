@@ -2798,29 +2798,73 @@ impl RegCompiler {
             }
 
             Expr::List(items) => {
-                let item_regs: Vec<u8> = items.iter().map(|item| self.compile_expr(item)).collect();
+                // Fast path: emit one OP_LISTNEW reading consecutive registers
+                // a+1..a+n. Only viable when n fits in the u16 immediate AND we have
+                // n contiguous free registers above the result slot.
+                //
+                // The contiguous-reg requirement can be defeated by long lists or
+                // by lots of live locals before the literal — both push the items
+                // past the 255-register-per-frame ceiling. When the fast path
+                // can't fit, fall back to emitting an empty list and a chain of
+                // OP_LISTAPPEND, which only needs two registers regardless of
+                // list size and hits the same in-place Vec::push amortised-O(1)
+                // path the foreach-build pattern relies on.
+                let n = items.len();
+                let pre_reg = self.next_reg as usize;
+                // Fast path budget: each compile_expr in the item loop allocates
+                // at least one register per item (e.g. number literals via
+                // OP_LOAD_NUM), so after compiling n items next_reg has grown by
+                // ~n. Then we still need n more contiguous slots for the
+                // LISTNEW layout — total worst-case pre_reg + 2n + 1 (result
+                // reg). Use 2n + 1 as the upper bound; if items compile to
+                // existing regs we just waste a tiny bit of headroom and stay
+                // on the fast path. OP_LISTNEW's u16 bx also has to hold n.
+                let fits_contiguous = n <= u16::MAX as usize && pre_reg + 2 * n < 255;
 
-                let a = self.alloc_reg(); // result register
-                // Reserve slots for items
-                let items_base = self.next_reg;
-                assert!(
-                    (self.next_reg as usize) + items.len() <= 255,
-                    "register overflow: list literal requires too many register slots"
-                );
-                self.next_reg += items.len() as u8;
-                if self.next_reg > self.max_reg {
-                    self.max_reg = self.next_reg;
-                }
+                if fits_contiguous {
+                    let item_regs: Vec<u8> =
+                        items.iter().map(|item| self.compile_expr(item)).collect();
 
-                for (i, &item_reg) in item_regs.iter().enumerate() {
-                    let target = items_base + i as u8;
-                    if item_reg != target {
-                        self.emit_abc(OP_MOVE, target, item_reg, 0);
+                    let a = self.alloc_reg(); // result register
+                    // Reserve slots for items
+                    let items_base = self.next_reg;
+                    assert!(
+                        (self.next_reg as usize) + items.len() <= 255,
+                        "register overflow: list literal requires too many register slots"
+                    );
+                    self.next_reg += items.len() as u8;
+                    if self.next_reg > self.max_reg {
+                        self.max_reg = self.next_reg;
                     }
-                }
 
-                self.emit_abx(OP_LISTNEW, a, items.len() as u16);
-                a
+                    for (i, &item_reg) in item_regs.iter().enumerate() {
+                        let target = items_base + i as u8;
+                        if item_reg != target {
+                            self.emit_abc(OP_MOVE, target, item_reg, 0);
+                        }
+                    }
+
+                    self.emit_abx(OP_LISTNEW, a, items.len() as u16);
+                    a
+                } else {
+                    // Fallback: build the list incrementally.
+                    //   OP_LISTNEW a, 0          ; empty list at result reg
+                    //   for each item:
+                    //     scratch = compile_expr(item)
+                    //     OP_LISTAPPEND a, a, scratch
+                    //     reset next_reg so each item reuses the same scratch slot
+                    let a = self.alloc_reg();
+                    self.emit_abx(OP_LISTNEW, a, 0);
+                    let after_result = self.next_reg;
+                    for item in items.iter() {
+                        let item_reg = self.compile_expr(item);
+                        self.emit_abc(OP_LISTAPPEND, a, a, item_reg);
+                        // Free the scratch slot(s) used to compile this item so
+                        // the next item starts from the same low watermark.
+                        self.next_reg = after_result;
+                    }
+                    a
+                }
             }
 
             Expr::Record { type_name, fields } => {
