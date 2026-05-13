@@ -1,0 +1,15 @@
+-- Builtin names like lst, hd, tl, map, slc, len, cat are reserved and
+-- cannot be reused as user function names. Defining `lst>n;42` and then
+-- calling it would silently dispatch to the 3-arg list-constructor
+-- builtin, surfacing as a misleading ILO-T006 arity mismatch.
+--
+-- The parser now rejects builtin-named function decls with a friendly
+-- ILO-P011 + rename hint, so the agent's first retry is the right one.
+--
+-- Correct shape: pick a non-builtin name (here `show`).
+
+show n:n>n;n
+main>n;show 42
+
+-- run: main
+-- out: 42

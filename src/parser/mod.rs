@@ -1,4 +1,5 @@
 use crate::ast::*;
+use crate::builtins::Builtin;
 use crate::lexer::Token;
 use std::collections::HashMap;
 
@@ -550,6 +551,25 @@ impl Parser {
     fn parse_fn_decl(&mut self) -> Result<Decl> {
         let start = self.peek_span();
         let name = self.expect_ident()?;
+        // Reject user functions whose name collides with a builtin. Without this
+        // the verifier's call-dispatch (which checks `is_builtin` before user
+        // `self.functions`) would silently shadow the user function and report
+        // a misleading arity error from the builtin's signature (e.g. a
+        // persona writes `lst>n;42` + `lst()` and gets
+        // `ILO-T006 'lst' expects 3 args, got 0` from the 3-arg list-ctor
+        // builtin). Same precedent applies in `parse_stmt` for `fld=`/`cnt=`/
+        // `brk=` bindings — keep the diagnostic shape consistent.
+        if Builtin::is_builtin(&name) {
+            return Err(self.error_hint(
+                "ILO-P011",
+                format!(
+                    "`{name}` is a builtin and cannot be used as a function name"
+                ),
+                format!(
+                    "rename to something like `my{name}` or `{name}of` — builtins shadow user functions in calls, so reusing the name silently breaks dispatch"
+                ),
+            ));
+        }
         let params = self.parse_params()?;
         // Register arity + per-param fn-ref flags BEFORE parsing the body so
         // recursive self-references inside the body benefit from eager

@@ -823,10 +823,12 @@ mod tests {
     fn test_collect_calls_unary_op() {
         // neg uses a BinOp subtraction (- 0 x) which is the ilo idiom for
         // numeric negation. The unary `!` logical-not works on booleans.
-        let prog = parse("inv x:b>b;!x");
+        // `not` rather than `inv` because `inv` is the boolean-inverse
+        // builtin and parser rejects builtin-named function decls (ILO-P011).
+        let prog = parse("not x:b>b;!x");
         let graph = build_graph(&prog);
-        assert!(graph.functions.contains_key("inv"));
-        assert!(graph.functions["inv"].calls.is_empty());
+        assert!(graph.functions.contains_key("not"));
+        assert!(graph.functions["not"].calls.is_empty());
     }
 
     /// Expr::Ok — `~expr` ok-constructor.
@@ -919,9 +921,12 @@ mod tests {
     /// Stmt::ForEach — `@x xs{s=+s x}`
     #[test]
     fn test_collect_stmts_foreach() {
-        let prog = parse("add a:n b:n>n;+a b\nsum xs:L n>n;s=0;@x xs{s=add s x};s");
+        // `total` rather than `sum` because `sum` is a builtin and parser
+        // rejects builtin-named function decls (ILO-P011). `add` is not a
+        // builtin so it stays as is.
+        let prog = parse("add a:n b:n>n;+a b\ntotal xs:L n>n;s=0;@x xs{s=add s x};s");
         let graph = build_graph(&prog);
-        assert!(graph.functions["sum"].calls.contains("add"));
+        assert!(graph.functions["total"].calls.contains("add"));
     }
 
     /// Stmt::ForRange — `@i 0..n{body}`
