@@ -16,6 +16,14 @@ pub struct Parser {
     /// parsed as a bare Ref (list element) rather than a function call.
     /// Set only inside list-literal element parsing.
     no_whitespace_call: bool,
+    /// Synthetic top-level decls emitted by inline-lambda lifting. Appended to
+    /// `Program.declarations` after the main parse. Each inline lambda
+    /// `(p:t>r;body)` becomes a `Decl::Function { name: "__lit_N", ... }` here
+    /// and the call site is replaced by `Expr::Ref("__lit_N")` so HOFs see a
+    /// fn-ref just like a named helper.
+    lifted_decls: Vec<Decl>,
+    /// Monotonic counter for synthetic lambda names.
+    lambda_counter: usize,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -44,6 +52,8 @@ impl Parser {
             fn_arity,
             fn_param_is_fn,
             no_whitespace_call: false,
+            lifted_decls: Vec::new(),
+            lambda_counter: 0,
         }
     }
 
@@ -188,6 +198,11 @@ impl Parser {
                 }
             }
         }
+
+        // Append synthetic decls emitted by inline-lambda lifting. Their names
+        // start with `__lit_`, which is not a legal user ident (starts with
+        // `_`), so there is no collision risk.
+        declarations.append(&mut self.lifted_decls);
 
         (
             Program {
@@ -1309,9 +1324,13 @@ impl Parser {
         let body_span = body_start.merge(self.prev_span());
 
         // Dangling token detection: after a braceless guard body, the next token
-        // must be `;`, `}`, or EOF. If something else follows, the user likely
-        // wrote a function call without braces: `>=sp 1000 classify sp`
-        if !matches!(self.peek(), None | Some(Token::Semi) | Some(Token::RBrace)) {
+        // must be `;`, `}`, `)` (lambda-body terminator), or EOF. If something
+        // else follows, the user likely wrote a function call without braces:
+        // `>=sp 1000 classify sp`
+        if !matches!(
+            self.peek(),
+            None | Some(Token::Semi) | Some(Token::RBrace) | Some(Token::RParen)
+        ) {
             return Err(self.error_hint(
                 "ILO-P016",
                 "unexpected token after braceless guard body".to_string(),
@@ -2170,6 +2189,15 @@ impl Parser {
                 Ok(Expr::Ref("_".to_string()))
             }
             Some(Token::LParen) => {
+                // Inline-lambda disambiguation. A parenthesised inline fn
+                // literal looks like `(p1:t1 p2:t2 >ret;body)` or `(>ret;body)`
+                // for a zero-param body. The trigger is unambiguous: only a
+                // lambda has an `ident:` pair (or a leading `>`) immediately
+                // inside the paren before the matching `)`, without an
+                // intervening top-level `;` — a grouped expression never does.
+                if self.looks_like_inline_lambda() {
+                    return self.parse_inline_lambda();
+                }
                 self.advance();
                 // Parenthesised expressions are self-contained — restore
                 // normal whitespace-call behaviour inside.
@@ -2282,6 +2310,341 @@ impl Parser {
             }
             Some(tok) => Err(self.error("ILO-P009", format!("expected expression, got {:?}", tok))),
             None => Err(self.error("ILO-P010", "expected expression, got EOF".into())),
+        }
+    }
+
+    /// Lookahead: does the token at `self.pos` (`(`) open an inline lambda?
+    ///
+    /// Triggers (all unambiguous — grouped expressions never start this way):
+    ///   - `( ident : ...`  — at least one typed param
+    ///   - `( > ...`        — zero-param lambda
+    ///
+    /// We also require a `>` to appear at paren-depth 0 before the matching
+    /// `)` — this rejects e.g. `(a:1 b:2)` (record-style key:val, which is
+    /// not currently a valid grouped expression but guards against future
+    /// syntax overlap).
+    fn looks_like_inline_lambda(&self) -> bool {
+        debug_assert_eq!(self.peek(), Some(&Token::LParen));
+        let first = self.token_at(self.pos + 1);
+        let second = self.token_at(self.pos + 2);
+        let starts_like_lambda = matches!(
+            (first, second),
+            (Some(Token::Ident(_)), Some(Token::Colon)) | (Some(Token::Greater), _)
+        );
+        if !starts_like_lambda {
+            return false;
+        }
+        // Confirm a `>` exists at paren-depth 0 inside the parens.
+        let mut depth = 1usize;
+        let mut i = self.pos + 1;
+        while let Some(tok) = self.token_at(i) {
+            match tok {
+                Token::LParen | Token::LBracket | Token::LBrace => depth += 1,
+                Token::RParen | Token::RBracket | Token::RBrace => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return false;
+                    }
+                }
+                Token::Greater if depth == 1 => return true,
+                _ => {}
+            }
+            i += 1;
+        }
+        false
+    }
+
+    /// Parse `(params>return;body)` as an inline lambda. Lifts the body into
+    /// a synthetic top-level `Decl::Function { name: "__lit_N", .. }` and
+    /// returns `Expr::Ref("__lit_N")` so HOFs see a fn-ref identical to a
+    /// named helper.
+    ///
+    /// Phase 1: closures are rejected. Any reference to a name that isn't a
+    /// param, isn't a local binding, and isn't a known function/builtin
+    /// raises ILO-P017 pointing at the Phase 2 follow-up.
+    fn parse_inline_lambda(&mut self) -> Result<Expr> {
+        let start = self.peek_span();
+        self.expect(&Token::LParen)?;
+        // Parens are self-contained; reset whitespace-call mode inside.
+        let prev_no_ws = self.no_whitespace_call;
+        self.no_whitespace_call = false;
+        let params = self.parse_params()?;
+        self.expect(&Token::Greater)?;
+        let return_type = self.parse_type()?;
+        if self.peek() == Some(&Token::Semi) {
+            self.advance();
+        }
+        // The body parses until `)` at the current paren depth. We mark the
+        // RParen as a body terminator by parsing statements one-by-one and
+        // stopping when we see `)`. Reusing `parse_body` would consume the
+        // `)` as part of normal at-body-end logic — instead, parse a
+        // semicolon-separated sequence that terminates on RParen.
+        let body = self.parse_lambda_body()?;
+        self.no_whitespace_call = prev_no_ws;
+        let end = self.peek_span();
+        self.expect(&Token::RParen)?;
+
+        // Free-variable check (Phase 1 rejects captures).
+        let bound: std::collections::HashSet<String> =
+            params.iter().map(|p| p.name.clone()).collect();
+        let mut free = Vec::new();
+        // `local` is shared across the body's statement sequence so that a
+        // `let` in stmt N makes its name visible to stmt N+1.
+        let mut local: Vec<String> = Vec::new();
+        for stmt in &body {
+            self.collect_free_in_stmt(&stmt.node, &bound, &mut local, &mut free);
+        }
+        if let Some(name) = free.first() {
+            return Err(self.error_hint(
+                "ILO-P017",
+                format!("inline lambda captures `{}` from the enclosing scope", name),
+                "Phase 1 inline lambdas cannot close over outer variables. \
+                 Either pass `{name}` as an extra param and use the HOF's \
+                 ctx-arg form (`srt fn ctx xs`), or define a top-level helper. \
+                 Closure capture is tracked as a Phase 2 follow-up."
+                    .replace("{name}", name),
+            ));
+        }
+
+        // Lift to a synthetic top-level decl.
+        let name = format!("__lit_{}", self.lambda_counter);
+        self.lambda_counter += 1;
+        self.register_user_fn(&name, &params);
+        let span = start.merge(end);
+        self.lifted_decls.push(Decl::Function {
+            name: name.clone(),
+            params,
+            return_type,
+            body,
+            span,
+        });
+        Ok(Expr::Ref(name))
+    }
+
+    /// Parse a `;`-separated sequence of statements terminated by `)`.
+    fn parse_lambda_body(&mut self) -> Result<Vec<Spanned<Stmt>>> {
+        let mut stmts = Vec::new();
+        if self.peek() != Some(&Token::RParen) {
+            let span_start = self.peek_span();
+            let stmt = self.parse_stmt()?;
+            stmts.push(Spanned {
+                node: stmt,
+                span: span_start.merge(self.prev_span()),
+            });
+            while self.peek() == Some(&Token::Semi) {
+                self.advance();
+                if self.peek() == Some(&Token::RParen) {
+                    break;
+                }
+                let span_start = self.peek_span();
+                let stmt = self.parse_stmt()?;
+                stmts.push(Spanned {
+                    node: stmt,
+                    span: span_start.merge(self.prev_span()),
+                });
+            }
+        }
+        Ok(stmts)
+    }
+
+    /// Walk a statement and record any `Expr::Ref` that isn't bound by the
+    /// lambda's params, by an enclosing `let`/destructure/foreach inside the
+    /// body, or by a known function/builtin name. `local` carries
+    /// body-introduced bindings as we descend.
+    fn collect_free_in_stmt(
+        &self,
+        stmt: &Stmt,
+        params: &std::collections::HashSet<String>,
+        local: &mut Vec<String>,
+        free: &mut Vec<String>,
+    ) {
+        match stmt {
+            Stmt::Let { name, value } => {
+                self.collect_free_in_expr(value, params, local, free);
+                local.push(name.clone());
+            }
+            Stmt::Guard {
+                condition,
+                body,
+                else_body,
+                ..
+            } => {
+                self.collect_free_in_expr(condition, params, local, free);
+                let depth = local.len();
+                for s in body {
+                    self.collect_free_in_stmt(&s.node, params, local, free);
+                }
+                local.truncate(depth);
+                if let Some(eb) = else_body {
+                    let depth = local.len();
+                    for s in eb {
+                        self.collect_free_in_stmt(&s.node, params, local, free);
+                    }
+                    local.truncate(depth);
+                }
+            }
+            Stmt::Match { subject, arms } => {
+                if let Some(s) = subject {
+                    self.collect_free_in_expr(s, params, local, free);
+                }
+                for arm in arms {
+                    let depth = local.len();
+                    match &arm.pattern {
+                        Pattern::Err(b) | Pattern::Ok(b) => local.push(b.clone()),
+                        Pattern::TypeIs { binding, .. } => local.push(binding.clone()),
+                        _ => {}
+                    }
+                    for s in &arm.body {
+                        self.collect_free_in_stmt(&s.node, params, local, free);
+                    }
+                    local.truncate(depth);
+                }
+            }
+            Stmt::ForEach {
+                binding,
+                collection,
+                body,
+            } => {
+                self.collect_free_in_expr(collection, params, local, free);
+                let depth = local.len();
+                local.push(binding.clone());
+                for s in body {
+                    self.collect_free_in_stmt(&s.node, params, local, free);
+                }
+                local.truncate(depth);
+            }
+            Stmt::ForRange {
+                binding,
+                start,
+                end,
+                body,
+            } => {
+                self.collect_free_in_expr(start, params, local, free);
+                self.collect_free_in_expr(end, params, local, free);
+                let depth = local.len();
+                local.push(binding.clone());
+                for s in body {
+                    self.collect_free_in_stmt(&s.node, params, local, free);
+                }
+                local.truncate(depth);
+            }
+            Stmt::While { condition, body } => {
+                self.collect_free_in_expr(condition, params, local, free);
+                let depth = local.len();
+                for s in body {
+                    self.collect_free_in_stmt(&s.node, params, local, free);
+                }
+                local.truncate(depth);
+            }
+            Stmt::Return(e) | Stmt::Expr(e) => self.collect_free_in_expr(e, params, local, free),
+            Stmt::Break(opt) => {
+                if let Some(e) = opt {
+                    self.collect_free_in_expr(e, params, local, free);
+                }
+            }
+            Stmt::Continue => {}
+            Stmt::Destructure { bindings, value } => {
+                self.collect_free_in_expr(value, params, local, free);
+                for b in bindings {
+                    local.push(b.clone());
+                }
+            }
+        }
+    }
+
+    fn collect_free_in_expr(
+        &self,
+        expr: &Expr,
+        params: &std::collections::HashSet<String>,
+        local: &mut Vec<String>,
+        free: &mut Vec<String>,
+    ) {
+        match expr {
+            Expr::Literal(_) => {}
+            Expr::Ref(name) => {
+                if name == "_" {
+                    return;
+                }
+                if params.contains(name) || local.iter().any(|n| n == name) {
+                    return;
+                }
+                // Known top-level fn (incl. builtins and lifted lambdas) — fine
+                // as a fn-ref. The verifier will reject unknown refs anyway,
+                // but we need to whitelist these so legitimate HOF use inside
+                // a lambda body (`srt slen xs` for a top-level `slen`) doesn't
+                // trip the closure check.
+                if self.fn_arity.contains_key(name) {
+                    return;
+                }
+                if !free.iter().any(|n| n == name) {
+                    free.push(name.clone());
+                }
+            }
+            Expr::Field { object, .. } => self.collect_free_in_expr(object, params, local, free),
+            Expr::Index { object, .. } => self.collect_free_in_expr(object, params, local, free),
+            Expr::Call { function, args, .. } => {
+                // Function name is resolved against the known-fn table; if it
+                // isn't known, the verifier will flag it. We do NOT treat the
+                // callee name as a free var (calls aren't captures).
+                let _ = function;
+                for a in args {
+                    self.collect_free_in_expr(a, params, local, free);
+                }
+            }
+            Expr::BinOp { left, right, .. } => {
+                self.collect_free_in_expr(left, params, local, free);
+                self.collect_free_in_expr(right, params, local, free);
+            }
+            Expr::UnaryOp { operand, .. } => {
+                self.collect_free_in_expr(operand, params, local, free)
+            }
+            Expr::Ok(e) | Expr::Err(e) => self.collect_free_in_expr(e, params, local, free),
+            Expr::List(items) => {
+                for i in items {
+                    self.collect_free_in_expr(i, params, local, free);
+                }
+            }
+            Expr::Record { fields, .. } => {
+                for (_, v) in fields {
+                    self.collect_free_in_expr(v, params, local, free);
+                }
+            }
+            Expr::Match { subject, arms } => {
+                if let Some(s) = subject {
+                    self.collect_free_in_expr(s, params, local, free);
+                }
+                for arm in arms {
+                    let depth = local.len();
+                    match &arm.pattern {
+                        Pattern::Err(b) | Pattern::Ok(b) => local.push(b.clone()),
+                        Pattern::TypeIs { binding, .. } => local.push(binding.clone()),
+                        _ => {}
+                    }
+                    for s in &arm.body {
+                        self.collect_free_in_stmt(&s.node, params, local, free);
+                    }
+                    local.truncate(depth);
+                }
+            }
+            Expr::NilCoalesce { value, default } => {
+                self.collect_free_in_expr(value, params, local, free);
+                self.collect_free_in_expr(default, params, local, free);
+            }
+            Expr::With { object, updates } => {
+                self.collect_free_in_expr(object, params, local, free);
+                for (_, v) in updates {
+                    self.collect_free_in_expr(v, params, local, free);
+                }
+            }
+            Expr::Ternary {
+                condition,
+                then_expr,
+                else_expr,
+            } => {
+                self.collect_free_in_expr(condition, params, local, free);
+                self.collect_free_in_expr(then_expr, params, local, free);
+                self.collect_free_in_expr(else_expr, params, local, free);
+            }
         }
     }
 

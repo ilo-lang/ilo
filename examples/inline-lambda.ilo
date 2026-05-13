@@ -1,0 +1,31 @@
+-- Phase 1 inline lambdas: pass a `(params>ret;body)` literal to a HOF
+-- instead of defining a one-off top-level helper.
+--
+-- Phase 1 does NOT capture enclosing scope. The body's free variables must
+-- all be params, locals, or known fns. To thread external state in, use the
+-- HOF's ctx-arg form (`srt fn ctx xs`) which already works for named fns.
+-- Closure capture is the Phase 2 follow-up — ILO-P017 spells out the path.
+
+-- Sort numbers by distance from zero (would have needed a `dist` helper).
+by-dist xs:L n>L n;srt (x:n>n;abs x) xs
+
+-- Sort words by length (would have needed a `wlen` helper).
+by-len ws:L t>L t;srt (s:t>n;len s) ws
+
+-- Filter to non-empty strings (would have needed an `nempty` predicate).
+-- Note the parens around `len s`: prefix-binops take atoms, so the inner
+-- call needs grouping. Same rule as anywhere else in ilo.
+nonempty ws:L t>L t;flt (s:t>b;>(len s) 0) ws
+
+-- Sum of squares via inline accumulator (would have needed a `sqacc` helper).
+sumsq xs:L n>n;fld (a:n x:n>n;+a *x x) xs 0
+
+-- engine-skip: vm
+-- run: by-dist [-3,1,-5,2]
+-- out: [1, 2, -3, -5]
+-- run: by-len ["banana","fig","apple","kiwi"]
+-- out: [fig, kiwi, apple, banana]
+-- run: nonempty ["a","","b","","c"]
+-- out: [a, b, c]
+-- run: sumsq [1,2,3,4]
+-- out: 30
