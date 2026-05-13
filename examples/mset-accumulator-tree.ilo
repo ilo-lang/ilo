@@ -1,0 +1,30 @@
+-- Phase 2b.1: tree-walker RC-aware `mset` accumulator.
+--
+-- PR #249 made `m = mset m k v` O(n) amortised on the VM and Cranelift via an
+-- RC=1 in-place HashMap mutation. This example pins the equivalent shape on
+-- the tree walker, where `Value::Map` now holds `Arc<HashMap>` and the
+-- eval_stmt peephole drops env's reference before evaluating the RHS so
+-- `Arc::make_mut` mutates in place instead of cloning.
+--
+-- Before this change, the 16k-key Moby Dick word-frequency repro took ~70s on
+-- tree. After, it lands in the same ballpark as the VM (~0.1s).
+
+-- Three-word word-count: ["the", "cat", "the"] gives 2 distinct keys.
+count-words ws:L t>n;m=mmap;@w ws{c=mget m w ?? 0;m=mset m w +c 1};len (mkeys m)
+demo>n;count-words ["the","cat","the"]
+
+-- 200-key build via fmt. Old O(n²) tree took noticeable seconds; the new
+-- path is well under a millisecond.
+build-200>n;m=mmap;@i 0..200{k=fmt "k{}" i;m=mset m k i};len (mkeys m)
+
+-- Non-rebind shape: when the accumulator is bound to a different name, the
+-- peephole must NOT fire — the original `m` keeps its prior state. Here `m`
+-- still has just one key after `m2 = mset m ...`.
+preserve>n;m=mset mmap "a" 1;m2=mset m "b" 2;len (mkeys m)
+
+-- run: demo
+-- out: 2
+-- run: build-200
+-- out: 200
+-- run: preserve
+-- out: 1
