@@ -86,6 +86,7 @@ pub enum Builtin {
     Now,
     Dtfmt,
     Dtparse,
+    Sleep,
 
     // I/O
     Rd,
@@ -211,6 +212,7 @@ impl Builtin {
             "now" => Some(Builtin::Now),
             "dtfmt" => Some(Builtin::Dtfmt),
             "dtparse" => Some(Builtin::Dtparse),
+            "sleep" => Some(Builtin::Sleep),
             "rd" => Some(Builtin::Rd),
             "rdl" => Some(Builtin::Rdl),
             "rdb" => Some(Builtin::Rdb),
@@ -325,6 +327,7 @@ impl Builtin {
             Builtin::Now => "now",
             Builtin::Dtfmt => "dtfmt",
             Builtin::Dtparse => "dtparse",
+            Builtin::Sleep => "sleep",
             Builtin::Rd => "rd",
             Builtin::Rdl => "rdl",
             Builtin::Rdb => "rdb",
@@ -482,6 +485,7 @@ impl Builtin {
         Builtin::Solve,
         Builtin::Inv,
         Builtin::Det,
+        Builtin::Sleep,
     ];
 
     /// On-wire 8-bit tag for cross-engine builtin dispatch. See `ALL`.
@@ -661,6 +665,7 @@ mod tests {
             "rdjl",
             "dtfmt",
             "dtparse",
+            "sleep",
         ];
         for name in &all {
             let b = Builtin::from_name(name).unwrap_or_else(|| panic!("missing builtin: {name}"));
