@@ -976,6 +976,32 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             .as_secs_f64();
         return Ok(Value::Number(ts));
     }
+    if builtin == Some(Builtin::Sleep) && args.len() == 1 {
+        // sleep ms — blocks the current thread for `ms` milliseconds.
+        // Returns Nil so it composes as a statement inside loop bodies
+        // without polluting the printed result. Negative / NaN / Inf are
+        // treated as zero so a stray `sleep -1` cannot hang the engine.
+        return match &args[0] {
+            Value::Number(ms) => {
+                let clamped = if ms.is_finite() && *ms > 0.0 {
+                    // Cap at u64::MAX milliseconds; longer than any sane
+                    // program will ever need, and avoids the f64→u64 cast
+                    // overflowing into undefined behaviour for huge inputs.
+                    ms.min(u64::MAX as f64) as u64
+                } else {
+                    0
+                };
+                if clamped > 0 {
+                    std::thread::sleep(std::time::Duration::from_millis(clamped));
+                }
+                Ok(Value::Nil)
+            }
+            other => Err(RuntimeError::new(
+                "ILO-R009",
+                format!("sleep requires a number of milliseconds, got {other:?}"),
+            )),
+        };
+    }
     if builtin == Some(Builtin::Rndn) && args.len() == 2 {
         return match (&args[0], &args[1]) {
             (Value::Number(mu), Value::Number(sigma)) => {

@@ -351,6 +351,7 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("rnd", &[], "n"),
     ("rndn", &["n", "n"], "n"),
     ("now", &[], "n"),
+    ("sleep", &["n"], "_"),
     ("dtfmt", &["n", "t"], "R t t"),
     ("dtparse", &["t", "t"], "R n t"),
     ("env", &["t"], "R t t"),
@@ -2089,6 +2090,23 @@ fn builtin_check_args(
                 });
             }
             (Ty::Number, errors)
+        }
+        "sleep" => {
+            // sleep ms:n -> _   (blocks the current engine for `ms` milliseconds,
+            // returns nil so it composes naturally as a statement in any block).
+            if let Some(arg) = arg_types.first()
+                && !compatible(arg, &Ty::Number)
+            {
+                errors.push(VerifyError {
+                    code: "ILO-T013",
+                    function: func_ctx.to_string(),
+                    message: format!("'sleep' expects ms:n, got {arg}"),
+                    hint: Some("pass a number of milliseconds, e.g. sleep 100".to_string()),
+                    span,
+                    is_warning: false,
+                });
+            }
+            (Ty::Nil, errors)
         }
         _ => (Ty::Unknown, errors),
     }
