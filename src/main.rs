@@ -1445,11 +1445,19 @@ fn strip_string_contents(source: &str) -> String {
 
 /// Collect idiomatic hints by scanning source text for non-canonical forms.
 /// Returns a list of human-readable hint strings.
+///
+/// Word-boundary scans (alias hints) run over real lexer tokens, not raw text:
+/// re-lexing skips comments, strings, numbers, operators, and CLI argv, so a
+/// `tail` substring inside a comment line, a string literal, or a file path
+/// printed to stderr won't fire `hint: \`tail\` → \`tl\``. The text-based `==`
+/// scan strips both strings and comments first for the same reason.
 fn collect_hints(source: &str) -> Vec<String> {
     let mut hints = Vec::new();
     // Hint: == → = saves 1 character
-    // Scan for `==` outside string literals (reuse strip_string_contents)
-    let stripped = strip_string_contents(source);
+    // Scan for `==` outside string literals and comments. We don't use the
+    // lexer here because logos collapses both `=` and `==` into `Token::Eq`,
+    // so the distinction is only visible in raw text.
+    let stripped = strip_string_and_comment_contents(source);
     let mut pos = 0;
     let bytes = stripped.as_bytes();
     while pos + 1 < bytes.len() {
@@ -1459,16 +1467,53 @@ fn collect_hints(source: &str) -> Vec<String> {
         }
         pos += 1;
     }
-    // Hint: long-form builtin aliases → canonical short form
-    // Scan for word boundaries matching known aliases
-    let mut seen_alias = false;
-    for word in stripped.split(|c: char| !c.is_alphanumeric() && c != '_' && c != '-') {
-        if !seen_alias && let Some(short) = ast::resolve_alias(word) {
-            hints.push(format!("hint: `{word}` → `{short}` (canonical short form)"));
-            seen_alias = true; // one hint per run is enough
+    // Hint: long-form builtin aliases → canonical short form.
+    // Use lexer tokens so we only consider real source identifiers — not words
+    // appearing in comments, string literals, or anything outside the source
+    // itself. Falling back to no hint on lex failure is fine: the run already
+    // succeeded if we got here, so a re-lex failure is implausible, but we
+    // err on the side of "no hint" rather than spurious noise.
+    if let Ok(tokens) = lexer::lex(source) {
+        for (tok, _) in &tokens {
+            if let lexer::Token::Ident(word) = tok
+                && let Some(short) = ast::resolve_alias(word)
+            {
+                hints.push(format!("hint: `{word}` → `{short}` (canonical short form)"));
+                break; // one hint per run is enough
+            }
         }
     }
     hints
+}
+
+/// Strip both string-literal contents and `--`-prefixed line comments,
+/// replacing their contents with spaces so byte offsets are preserved.
+/// Used by the text-based `==` scan so a literal `==` inside a string or
+/// comment doesn't trigger the hint.
+fn strip_string_and_comment_contents(source: &str) -> String {
+    let stripped = strip_string_contents(source);
+    let mut out = String::with_capacity(stripped.len());
+    let mut chars = stripped.chars().peekable();
+    let mut in_comment = false;
+    while let Some(c) = chars.next() {
+        if in_comment {
+            if c == '\n' {
+                in_comment = false;
+                out.push(c);
+            } else {
+                out.push(' ');
+            }
+        } else if c == '-' && chars.peek() == Some(&'-') {
+            // Consume the second '-' and enter comment mode
+            chars.next();
+            out.push(' ');
+            out.push(' ');
+            in_comment = true;
+        } else {
+            out.push(c);
+        }
+    }
+    out
 }
 
 /// Emit hints to the appropriate output channel.
