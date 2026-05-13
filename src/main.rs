@@ -3137,6 +3137,20 @@ fn print_value(val: &interpreter::Value, as_json: bool, suppress_loop_tail: bool
         if suppress_loop_tail {
             return;
         }
+        // Top-level `Value::Ok(inner)` prints the inner value bare — no `~`
+        // prefix. Symmetric with the `Value::Err` split above (PR #255): `^e`
+        // goes to stderr with exit 1, so `~v` goes to stdout (inner) with
+        // exit 0. Bash callers piping a Result-returning ilo program no longer
+        // have to strip a leading `~` to consume the value.
+        //
+        // This applies only to the top-level program return. `Display` on
+        // `Value::Ok` still renders `~v` everywhere else (nested values,
+        // `prnt ~"x"`, REPL prompts, error messages, debug formatting) — those
+        // contexts genuinely want the wrapper visible.
+        if let interpreter::Value::Ok(inner) = val {
+            println!("{}", inner);
+            return;
+        }
         println!("{}", val);
         return;
     }
