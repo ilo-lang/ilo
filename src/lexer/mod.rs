@@ -415,6 +415,80 @@ pub fn lex(source: &str) -> Result<Vec<(Token, std::ops::Range<usize>)>, LexErro
         }
     }
 
+    // Post-lex: split a glued negative-literal `Number(-N)` back into
+    // `Minus` + `Number(N)` when the preceding token is one that introduces
+    // a fresh expression position. Six personas hit this in the assessment
+    // log: writing `-0 v` (intending `0 - v`) silently produces wrong results
+    // because Logos's `-?[0-9]+...` regex greedily consumes the leading `-`,
+    // so the parser sees `Number(-0)` followed by a stray `Ref(v)`. Same trap
+    // for `-1 cv`, `r1=-1 t2`, `v=p.1;-0 v`, etc. The canonical workaround is
+    // adding a space (`- 0 v`) but it's an easy-to-forget tax on numerical
+    // formulas.
+    //
+    // The split is gated on the *preceding* token rather than blanket-applied
+    // so that legitimate negative-literal-as-call-arg cases are preserved:
+    // `at xs -1`, `+a -3`, `into -3 0 10`, `<r -0.05`, `[1 -2 3]` all keep
+    // their `Number(-N)` token because the preceding token is value-producing
+    // (Ident/Number/etc). `LBracket` is *also* excluded so that
+    // `[-2 1 3]` (a comma-free list literal whose first element is negative)
+    // continues to lex as four tokens — splitting it would make the parser
+    // greedy-subtract `-2 1` into `Subtract(2, 1)` and silently produce a
+    // 2-element list.
+    //
+    // Contexts that *do* split:
+    //   - start of input (no previous token)
+    //   - `;` (statement boundary)
+    //   - `\n` (declaration boundary, after normalize_newlines)
+    //   - `=` (rhs of an assignment)
+    //   - `{` (start of a block - function body, conditional arm)
+    //   - `(` (start of a parenthesised expression)
+    //
+    // After splitting, the parser's existing `parse_minus` handles both
+    // `Negate(N)` (no following operand) and `Subtract(N, M)` (operand
+    // follows), so the unary-negation case at expression start (`a=-3`)
+    // still produces the same `-3` value via `Negate(3)`.
+    {
+        let mut i = 0;
+        while i < tokens.len() {
+            let Token::Number(_) = tokens[i].0 else {
+                i += 1;
+                continue;
+            };
+            let span = tokens[i].1.clone();
+            let slice = &normalized[span.clone()];
+            if !slice.starts_with('-') {
+                i += 1;
+                continue;
+            }
+            let prev_splits = i == 0
+                || matches!(
+                    tokens[i - 1].0,
+                    Token::Semi | Token::Newline | Token::Eq | Token::LBrace | Token::LParen
+                );
+            if !prev_splits {
+                i += 1;
+                continue;
+            }
+            // Re-parse the positive tail (skip the leading `-`) so the new
+            // Number carries the correct value. The slice is guaranteed by
+            // the lexer regex to be a valid f64 literal.
+            let positive_slice = &slice[1..];
+            let Ok(n) = positive_slice.parse::<f64>() else {
+                i += 1;
+                continue;
+            };
+            let minus_span = span.start..span.start + 1;
+            let number_span = span.start + 1..span.end;
+            tokens.splice(
+                i..i + 1,
+                [(Token::Minus, minus_span), (Token::Number(n), number_span)],
+            );
+            // Step past both new tokens - the new Number is not itself a
+            // candidate for re-splitting (its slice doesn't start with `-`).
+            i += 2;
+        }
+    }
+
     // Post-lex: after `.` or `.?` (field access), accept reserved keywords
     // (`type`, `if`, `let`, `fn`, `var`, `use`, `with`, type sigils `R`/`L`/`F`/`O`/`M`/`S`,
     // `true`, `false`, `nil`, ...) as plain field names by rewriting the keyword
@@ -847,7 +921,157 @@ mod tests {
         let tokens = lex(source).unwrap();
         assert_eq!(tokens[0].0, Token::Number(42.0));
         assert_eq!(tokens[1].0, Token::Number(3.14));
+        // After a value-producing token (Number), `-7` stays a negative
+        // literal so call-arg patterns like `f 1 -7` keep their meaning.
         assert_eq!(tokens[2].0, Token::Number(-7.0));
+    }
+
+    /// Negative-literal-vs-subtract: `-0 v` at fresh-expression position
+    /// must lex as three tokens (Minus, 0, v) so the parser sees prefix
+    /// subtract. Documented papercut hit by six+ personas in the
+    /// assessment log; previously `Number(-0)` + stray `Ident(v)` silently
+    /// produced wrong results.
+    #[test]
+    fn lex_neg_zero_at_start_splits_into_minus_number() {
+        let source = "-0 v";
+        let tokens: Vec<_> = lex(source).unwrap().into_iter().map(|(t, _)| t).collect();
+        assert_eq!(
+            tokens,
+            vec![
+                Token::Minus,
+                Token::Number(0.0),
+                Token::Ident("v".to_string()),
+            ]
+        );
+    }
+
+    /// Same split fires after `;` (statement boundary).
+    #[test]
+    fn lex_neg_literal_after_semi_splits() {
+        let source = "v=p;-0 v";
+        let tokens: Vec<_> = lex(source).unwrap().into_iter().map(|(t, _)| t).collect();
+        // ... ; - 0 v
+        assert_eq!(tokens[3], Token::Semi);
+        assert_eq!(tokens[4], Token::Minus);
+        assert_eq!(tokens[5], Token::Number(0.0));
+        assert_eq!(tokens[6], Token::Ident("v".to_string()));
+    }
+
+    /// Split fires after `=` (rhs of assignment): `r1=-1 t2`.
+    #[test]
+    fn lex_neg_literal_after_eq_splits() {
+        let source = "r1=-1 t2";
+        let tokens: Vec<_> = lex(source).unwrap().into_iter().map(|(t, _)| t).collect();
+        assert_eq!(tokens[0], Token::Ident("r1".to_string()));
+        assert_eq!(tokens[1], Token::Eq);
+        assert_eq!(tokens[2], Token::Minus);
+        assert_eq!(tokens[3], Token::Number(1.0));
+        assert_eq!(tokens[4], Token::Ident("t2".to_string()));
+    }
+
+    /// Split fires after `{` (block start): `{-0 v}`.
+    #[test]
+    fn lex_neg_literal_after_lbrace_splits() {
+        let source = "{-0 v}";
+        let tokens: Vec<_> = lex(source).unwrap().into_iter().map(|(t, _)| t).collect();
+        assert_eq!(tokens[0], Token::LBrace);
+        assert_eq!(tokens[1], Token::Minus);
+        assert_eq!(tokens[2], Token::Number(0.0));
+        assert_eq!(tokens[3], Token::Ident("v".to_string()));
+        assert_eq!(tokens[4], Token::RBrace);
+    }
+
+    /// Split fires after `(` so `(-0 v)` is `Subtract(0, v)`.
+    #[test]
+    fn lex_neg_literal_after_lparen_splits() {
+        let source = "(-0 v)";
+        let tokens: Vec<_> = lex(source).unwrap().into_iter().map(|(t, _)| t).collect();
+        assert_eq!(tokens[0], Token::LParen);
+        assert_eq!(tokens[1], Token::Minus);
+        assert_eq!(tokens[2], Token::Number(0.0));
+        assert_eq!(tokens[3], Token::Ident("v".to_string()));
+        assert_eq!(tokens[4], Token::RParen);
+    }
+
+    /// Negative literal as call arg after an ident must NOT split:
+    /// `at xs -1` calls `at` with three args, `-1` stays a literal.
+    #[test]
+    fn lex_neg_literal_after_ident_stays_literal() {
+        let source = "at xs -1";
+        let tokens: Vec<_> = lex(source).unwrap().into_iter().map(|(t, _)| t).collect();
+        assert_eq!(
+            tokens,
+            vec![
+                Token::Ident("at".to_string()),
+                Token::Ident("xs".to_string()),
+                Token::Number(-1.0),
+            ]
+        );
+    }
+
+    /// Negative literal mid-list (after a Number) stays literal:
+    /// `[1 -2 3]` is a 3-element list `[1, -2, 3]`.
+    #[test]
+    fn lex_neg_literal_mid_list_stays_literal() {
+        let source = "[1 -2 3]";
+        let tokens: Vec<_> = lex(source).unwrap().into_iter().map(|(t, _)| t).collect();
+        assert_eq!(
+            tokens,
+            vec![
+                Token::LBracket,
+                Token::Number(1.0),
+                Token::Number(-2.0),
+                Token::Number(3.0),
+                Token::RBracket,
+            ]
+        );
+    }
+
+    /// Negative literal at the *start* of a comma-free list must also
+    /// stay a literal — otherwise `[-2 1 3]` would split into
+    /// `[ - 2 1 3 ]` and parse-greedy `Subtract(2, 1)` into a 2-element
+    /// list. `LBracket` is deliberately excluded from the split contexts.
+    #[test]
+    fn lex_neg_literal_after_lbracket_stays_literal() {
+        let source = "[-2 1 3]";
+        let tokens: Vec<_> = lex(source).unwrap().into_iter().map(|(t, _)| t).collect();
+        assert_eq!(
+            tokens,
+            vec![
+                Token::LBracket,
+                Token::Number(-2.0),
+                Token::Number(1.0),
+                Token::Number(3.0),
+                Token::RBracket,
+            ]
+        );
+    }
+
+    /// Float negative literal at fresh-expression position also splits.
+    #[test]
+    fn lex_neg_float_at_start_splits() {
+        let source = "-0.05 r";
+        let tokens: Vec<_> = lex(source).unwrap().into_iter().map(|(t, _)| t).collect();
+        assert_eq!(tokens[0], Token::Minus);
+        assert_eq!(tokens[1], Token::Number(0.05));
+        assert_eq!(tokens[2], Token::Ident("r".to_string()));
+    }
+
+    /// Prefix subtract via `+a -3` (negate-3 as second operand to `+`):
+    /// the `-3` after an ident must STAY a literal so `+a -3` means
+    /// `a + (-3)`. Pinned by PR #172.
+    #[test]
+    fn lex_neg_literal_after_prefix_binop_operand_stays() {
+        let source = "+a -3";
+        let tokens: Vec<_> = lex(source).unwrap().into_iter().map(|(t, _)| t).collect();
+        assert_eq!(
+            tokens,
+            vec![
+                Token::Plus,
+                Token::Ident("a".to_string()),
+                Token::Number(-3.0),
+            ]
+        );
     }
 
     #[test]
