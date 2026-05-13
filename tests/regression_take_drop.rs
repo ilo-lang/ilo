@@ -207,102 +207,67 @@ fn drop_text_cranelift() {
     check_drop_text("--run-cranelift");
 }
 
-// ── negative count: error on tree/vm; nil on cranelift JIT ────────────
+// ── negative count: Python-style tail semantics across every engine ───
+//
+// Pre-change behaviour: tree/VM errored "must be non-negative integer",
+// Cranelift JIT silently returned nil. Both were workarounds for the
+// missing tail-indexing concept. New behaviour: `take -k xs` keeps all
+// but the last |k| (xs[:-k]); `drop -k xs` keeps only the last |k|
+// (xs[-k:]). Deep coverage of every-engine parity for these edge cases
+// lives in `regression_neg_index_slice.rs`; this file's tests just lock
+// the headline cases so the stale "must be non-negative" check cannot
+// silently reappear in any one engine.
+
 const TAKE_NEG: &str = "f>L n;xs=[1,2,3];take -1 xs";
 
-fn check_take_neg_error(engine: &str) {
-    let out = ilo()
-        .args([TAKE_NEG, engine, "f"])
-        .output()
-        .expect("failed to run ilo");
-    assert!(
-        !out.status.success(),
-        "engine={engine}: expected error for take -1, got stdout={}",
-        String::from_utf8_lossy(&out.stdout)
-    );
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(
-        stderr.contains("take") || stderr.contains("non-negative") || stderr.contains("ILO-R009"),
-        "engine={engine}: expected take/non-negative error, got stderr={stderr}"
+fn check_take_neg_python_style(engine: &str) {
+    assert_eq!(
+        run(engine, TAKE_NEG, "f"),
+        "[1, 2]",
+        "engine={engine}: expected take -1 to drop the last element"
     );
 }
 
 #[test]
 fn take_negative_tree() {
-    check_take_neg_error("--run-tree");
+    check_take_neg_python_style("--run-tree");
 }
 
 #[test]
 fn take_negative_vm() {
-    check_take_neg_error("--run-vm");
+    check_take_neg_python_style("--run-vm");
 }
 
 #[test]
 #[cfg(feature = "cranelift")]
 fn take_negative_cranelift() {
-    // Cranelift JIT mirrors at/hd: returns nil on guard failure rather than erroring.
-    let out = ilo()
-        .args([TAKE_NEG, "--run-cranelift", "f"])
-        .output()
-        .expect("failed to run ilo");
-    assert!(
-        out.status.success(),
-        "cranelift: expected success returning nil for take -1, got stderr={}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(
-        stdout.contains("nil"),
-        "cranelift: expected nil, got {stdout}"
-    );
+    check_take_neg_python_style("--run-cranelift");
 }
 
 const DROP_NEG: &str = "f>L n;xs=[1,2,3];drop -1 xs";
 
-fn check_drop_neg_error(engine: &str) {
-    let out = ilo()
-        .args([DROP_NEG, engine, "f"])
-        .output()
-        .expect("failed to run ilo");
-    assert!(
-        !out.status.success(),
-        "engine={engine}: expected error for drop -1, got stdout={}",
-        String::from_utf8_lossy(&out.stdout)
-    );
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(
-        stderr.contains("drop") || stderr.contains("non-negative") || stderr.contains("ILO-R009"),
-        "engine={engine}: expected drop/non-negative error, got stderr={stderr}"
+fn check_drop_neg_python_style(engine: &str) {
+    assert_eq!(
+        run(engine, DROP_NEG, "f"),
+        "[3]",
+        "engine={engine}: expected drop -1 to keep only the last element"
     );
 }
 
 #[test]
 fn drop_negative_tree() {
-    check_drop_neg_error("--run-tree");
+    check_drop_neg_python_style("--run-tree");
 }
 
 #[test]
 fn drop_negative_vm() {
-    check_drop_neg_error("--run-vm");
+    check_drop_neg_python_style("--run-vm");
 }
 
 #[test]
 #[cfg(feature = "cranelift")]
 fn drop_negative_cranelift() {
-    let out = ilo()
-        .args([DROP_NEG, "--run-cranelift", "f"])
-        .output()
-        .expect("failed to run ilo");
-    assert!(
-        out.status.success(),
-        "cranelift: expected success returning nil for drop -1, got stderr={}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(
-        stdout.contains("nil"),
-        "cranelift: expected nil, got {stdout}"
-    );
+    check_drop_neg_python_style("--run-cranelift");
 }
 
 // ── type variable: take/drop preserve element type (list of text) ─────
