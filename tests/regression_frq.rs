@@ -22,13 +22,15 @@ fn run(engine: &str, src: &str, entry: &str) -> String {
     String::from_utf8_lossy(&out.stdout).trim().to_string()
 }
 
-// ── Strings: frq ["a","b","a","c","b","a"] → {t:a:3, t:b:2, t:c:1} ────────
+// ── Strings: frq ["a","b","a","c","b","a"] → {"a":3, "b":2, "c":1} ────────
 // Map iteration order is non-deterministic, so probe via mget on each key.
-// Keys are type-prefixed (`t:` for text) to prevent cross-type collisions.
+// Keys are bare stringified element values (no type prefix), matching the
+// `grp` convention. Heterogeneous-type collisions are covered separately
+// below as a documented behaviour.
 
-const STRING_A_SRC: &str = r#"f>n;m=frq ["a","b","a","c","b","a"];r=mget m "t:a";?r{n v:v;_:-1}"#;
-const STRING_B_SRC: &str = r#"f>n;m=frq ["a","b","a","c","b","a"];r=mget m "t:b";?r{n v:v;_:-1}"#;
-const STRING_C_SRC: &str = r#"f>n;m=frq ["a","b","a","c","b","a"];r=mget m "t:c";?r{n v:v;_:-1}"#;
+const STRING_A_SRC: &str = r#"f>n;m=frq ["a","b","a","c","b","a"];r=mget m "a";?r{n v:v;_:-1}"#;
+const STRING_B_SRC: &str = r#"f>n;m=frq ["a","b","a","c","b","a"];r=mget m "b";?r{n v:v;_:-1}"#;
+const STRING_C_SRC: &str = r#"f>n;m=frq ["a","b","a","c","b","a"];r=mget m "c";?r{n v:v;_:-1}"#;
 
 fn check_string_freq(engine: &str) {
     assert_eq!(run(engine, STRING_A_SRC, "f"), "3", "engine={engine} key=a");
@@ -52,11 +54,11 @@ fn frq_strings_cranelift() {
     check_string_freq("--run-cranelift");
 }
 
-// ── Numbers: frq [1,2,1,3,2,1] — keys are prefixed `n:<num>` ──────────────
+// ── Numbers: frq [1,2,1,3,2,1] — keys are bare stringified numbers ────────
 
-const NUM_1_SRC: &str = r#"f>n;m=frq [1,2,1,3,2,1];r=mget m "n:1";?r{n v:v;_:-1}"#;
-const NUM_2_SRC: &str = r#"f>n;m=frq [1,2,1,3,2,1];r=mget m "n:2";?r{n v:v;_:-1}"#;
-const NUM_3_SRC: &str = r#"f>n;m=frq [1,2,1,3,2,1];r=mget m "n:3";?r{n v:v;_:-1}"#;
+const NUM_1_SRC: &str = r#"f>n;m=frq [1,2,1,3,2,1];r=mget m "1";?r{n v:v;_:-1}"#;
+const NUM_2_SRC: &str = r#"f>n;m=frq [1,2,1,3,2,1];r=mget m "2";?r{n v:v;_:-1}"#;
+const NUM_3_SRC: &str = r#"f>n;m=frq [1,2,1,3,2,1];r=mget m "3";?r{n v:v;_:-1}"#;
 
 fn check_num_freq(engine: &str) {
     assert_eq!(run(engine, NUM_1_SRC, "f"), "3", "engine={engine} key=1");
@@ -106,9 +108,9 @@ fn frq_empty_cranelift() {
     check_empty("--run-cranelift");
 }
 
-// ── Singleton: frq ["x"] → {t:x:1} ────────────────────────────────────────
+// ── Singleton: frq ["x"] → {"x":1} ────────────────────────────────────────
 
-const SINGLE_SRC: &str = r#"f>n;m=frq ["x"];r=mget m "t:x";?r{n v:v;_:-1}"#;
+const SINGLE_SRC: &str = r#"f>n;m=frq ["x"];r=mget m "x";?r{n v:v;_:-1}"#;
 
 fn check_single(engine: &str) {
     assert_eq!(run(engine, SINGLE_SRC, "f"), "1", "engine={engine}");
@@ -130,22 +132,64 @@ fn frq_single_cranelift() {
     check_single("--run-cranelift");
 }
 
-// ── Cross-type: frq [1, "1", true] — keys must NOT collide ────────────────
-// Without type prefixes, `Number(1)` and `Text("1")` would both stringify to
-// `"1"` and the resulting count would be 2 instead of 1 for each. Verify the
-// prefixed shape: `{n:1: 1, t:1: 1, b:true: 1}`.
+// ── Bare keys round-trip through mkeys: the regression that motivated the
+//    fix. Persona devops-sre flagged that `mkeys (frq xs)` returned
+//    `["t:a","t:b",...]` which broke downstream `fmt`/`cat` of the key. Lock
+//    the bare-key surface: sort the keys and read the first one back, which
+//    proves the prefix is gone end-to-end (not just on the mget probe path).
 
-const CROSS_NUM_SRC: &str = r#"f>n;m=frq [1, "1", true];r=mget m "n:1";?r{n v:v;_:-1}"#;
-const CROSS_TXT_SRC: &str = r#"f>n;m=frq [1, "1", true];r=mget m "t:1";?r{n v:v;_:-1}"#;
-const CROSS_BOOL_SRC: &str = r#"f>n;m=frq [1, "1", true];r=mget m "b:true";?r{n v:v;_:-1}"#;
+const MKEYS_SRC: &str = r#"f>t;m=frq ["b","a","a"];ks=srt (mkeys m);hd ks"#;
+
+fn check_mkeys(engine: &str) {
+    assert_eq!(run(engine, MKEYS_SRC, "f"), "a", "engine={engine}");
+}
+
+#[test]
+fn frq_mkeys_bare_tree() {
+    check_mkeys("--run-tree");
+}
+
+#[test]
+fn frq_mkeys_bare_vm() {
+    check_mkeys("--run-vm");
+}
+
+#[test]
+#[cfg(feature = "cranelift")]
+fn frq_mkeys_bare_cranelift() {
+    check_mkeys("--run-cranelift");
+}
+
+// ── Cross-type collision: frq [1, "1", true] — the documented tradeoff.
+// With bare keys, distinct-typed values that share a print form collide on
+// the shared string. `1` and `"1"` both become key `"1"`; their counts sum.
+// `true` keeps its own key `"true"`. This matches `grp idt`'s collision
+// policy and is the deliberate price of dropping the leaky `n:`/`t:`/`b:`
+// prefix from the user-visible API surface.
+
+const CROSS_SHARED_SRC: &str = r#"f>n;m=frq [1, "1", true];r=mget m "1";?r{n v:v;_:-1}"#;
+const CROSS_BOOL_SRC: &str = r#"f>n;m=frq [1, "1", true];r=mget m "true";?r{n v:v;_:-1}"#;
+const CROSS_NOPREFIX_SRC: &str = r#"f>n;m=frq [1, "1", true];r=mget m "t:1";?r{n v:v;_:0}"#;
 
 fn check_cross_type(engine: &str) {
-    assert_eq!(run(engine, CROSS_NUM_SRC, "f"), "1", "engine={engine} n:1");
-    assert_eq!(run(engine, CROSS_TXT_SRC, "f"), "1", "engine={engine} t:1");
+    // Number(1) and Text("1") collide on bare key "1"; combined count is 2.
+    assert_eq!(
+        run(engine, CROSS_SHARED_SRC, "f"),
+        "2",
+        "engine={engine} shared key '1'"
+    );
+    // Bool keeps its own bare key.
     assert_eq!(
         run(engine, CROSS_BOOL_SRC, "f"),
         "1",
-        "engine={engine} b:true"
+        "engine={engine} key 'true'"
+    );
+    // The old prefixed form must no longer hit — guard against regression
+    // back to leaked type tags.
+    assert_eq!(
+        run(engine, CROSS_NOPREFIX_SRC, "f"),
+        "0",
+        "engine={engine} legacy 't:1' must not exist"
     );
 }
 
