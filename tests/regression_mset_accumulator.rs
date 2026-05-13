@@ -110,6 +110,34 @@ fn mset_overwrite_text_cranelift() {
 // The function-call boundary, where the callee is passed the map and rebinds
 // locally, IS a real RC > 1 trigger and is covered below.
 
+// ── Non-rebind shape with sole owner must not alias caller's map ────────────
+//
+// `m2 = mset m k v` is the general (non-rebind) shape: the destination is a
+// new variable, distinct from the map source. Even when m is the sole owner
+// (strong_count == 1) the in-place fast path must NOT fire — otherwise both
+// `m` and `m2` would reference the same Rc and the caller's map would silently
+// mutate through `m2`. The Cranelift OP_MSET compile path therefore picks
+// `jit_mset_inplace` only when destination and source share the same SSA var.
+
+const NONREBIND_NO_ALIAS_SRC: &str =
+    "f>t;m=mset mmap \"k\" \"1\";m2=mset m \"j\" \"2\";mget m \"j\" ?? \"miss\"";
+
+#[test]
+fn mset_nonrebind_no_alias_tree() {
+    assert_eq!(run("--run-tree", NONREBIND_NO_ALIAS_SRC, "f"), "miss");
+}
+
+#[test]
+fn mset_nonrebind_no_alias_vm() {
+    assert_eq!(run("--run-vm", NONREBIND_NO_ALIAS_SRC, "f"), "miss");
+}
+
+#[test]
+#[cfg(feature = "cranelift")]
+fn mset_nonrebind_no_alias_cranelift() {
+    assert_eq!(run("--run-cranelift", NONREBIND_NO_ALIAS_SRC, "f"), "miss");
+}
+
 // ── RC > 1 via function-call boundary ───────────────────────────────────────
 //
 // Passing `m` to a helper that does its own `mset` puts the map at RC=2
