@@ -187,13 +187,50 @@ pub fn normalize_newlines(source: &str) -> String {
     let mut last_significant: Option<char> = None;
 
     while let Some(c) = chars.next() {
-        if c == '\n' {
+        if c == '"' {
+            // Pass through string literal content verbatim so `--` inside a
+            // string isn't mistaken for a comment, and so `\n` (if ever present
+            // inside a string) isn't rewritten to `;`. Mirrors logos's string
+            // regex: closing quote terminates unless escaped.
+            out.push(c);
+            last_significant = Some(c);
+            while let Some(sc) = chars.next() {
+                out.push(sc);
+                if sc == '\\' {
+                    if let Some(esc) = chars.next() {
+                        out.push(esc);
+                    }
+                } else if sc == '"' {
+                    last_significant = Some(sc);
+                    break;
+                }
+            }
+        } else if c == '-' && chars.peek() == Some(&'-') {
+            // `--` starts a line comment. Drop the comment content (including
+            // both dashes) up to but not including the next `\n`, so the
+            // following `\n` is handled normally by the loop. This matches the
+            // logos `--[^\n]*` skip rule but runs BEFORE newline normalization,
+            // so an indented comment line doesn't bleed `;` separators into
+            // the comment body where the logos regex would then swallow them.
+            chars.next(); // consume second '-'
+            while let Some(&nc) = chars.peek() {
+                if nc == '\n' {
+                    break;
+                }
+                chars.next();
+            }
+            // Do not push anything; do not update last_significant. The
+            // surrounding `\n` handling on the next loop iteration emits the
+            // appropriate `;` or newline based on the line that follows.
+        } else if c == '\n' {
             // Check if next line is indented (starts with space or tab)
             if matches!(chars.peek(), Some(' ') | Some('\t')) {
                 // Indented continuation → emit `;` and skip the whitespace
                 // But first check if the last non-whitespace char was `{` — if so, skip the `;`
-                if last_significant == Some('{') {
-                    // Don't emit `;` after `{`, just skip whitespace
+                // Also skip if `out` already ends in `;` (e.g. previous line
+                // was a comment that produced no significant output).
+                if last_significant == Some('{') || out.ends_with(';') {
+                    // Don't emit `;` after `{` or an existing `;`, just skip whitespace
                 } else {
                     out.push(';');
                 }
@@ -202,7 +239,8 @@ pub fn normalize_newlines(source: &str) -> String {
                     chars.next();
                 }
                 // If the continuation line starts with `}`, don't add `;` before it
-                if chars.peek() == Some(&'}') && last_significant != Some('{') {
+                if chars.peek() == Some(&'}') && last_significant != Some('{') && out.ends_with(';')
+                {
                     out.pop(); // remove the `;` we just pushed
                 }
             } else if chars.peek() == Some(&'}') {
