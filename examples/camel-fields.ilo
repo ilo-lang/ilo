@@ -1,0 +1,13 @@
+-- camelCase dot-access on records parsed from real-world JSON (NVD, AWS, Stripe, GitHub).
+sev j:t>R n t;r=jpar! j;r.baseSeverity
+url j:t>R n t;r=jpar! j;r.gitURL
+chained j:t>R n t;r=jpar! j;r.baseSeverity.label
+
+-- run: sev {"baseSeverity":"HIGH"}
+-- out: HIGH
+
+-- run: url {"gitURL":"https://x"}
+-- out: https://x
+
+-- run: chained {"baseSeverity":{"label":"low"}}
+-- out: low
