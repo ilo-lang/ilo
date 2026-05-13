@@ -405,6 +405,7 @@ const BUILTIN_ALIASES: &[(&str, &str)] = &[
     ("split", "spl"),
     ("format", "fmt"),
     ("regex", "rgx"),
+    ("regex_all", "rgxall"),
     ("regex_sub", "rgxsub"),
     ("read", "rd"),
     ("readlines", "rdl"),

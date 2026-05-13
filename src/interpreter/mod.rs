@@ -3273,6 +3273,59 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         };
         return Ok(Value::List(result));
     }
+    if builtin == Some(Builtin::Rgxall) && args.len() == 2 {
+        let pattern = match &args[0] {
+            Value::Text(s) => s.as_str(),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!(
+                        "rgxall: first arg must be a string pattern, got {:?}",
+                        other
+                    ),
+                ));
+            }
+        };
+        let input = match &args[1] {
+            Value::Text(s) => s.as_str(),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("rgxall: second arg must be a string, got {:?}", other),
+                ));
+            }
+        };
+        let re = regex::Regex::new(pattern).map_err(|e| {
+            RuntimeError::new("ILO-R009", format!("rgxall: invalid regex pattern: {e}"))
+        })?;
+        // Outer shape is always L (L t). Inner-list contents depend on the
+        // pattern:
+        // - No capture groups: inner list is [whole_match] (length 1).
+        // - With capture groups: inner list holds only the groups that
+        //   *participated* in this particular match, in declaration order.
+        //   For straight patterns like `(\w+)=(\d+)` that means N declared
+        //   groups = N inner-list entries on every match. For alternation
+        //   patterns like `(a)|(b)`, only the branch that fired contributes,
+        //   so the inner list can be shorter than the declared group count.
+        //   This matches the `rgx` family's existing filter_map semantics
+        //   and avoids the empty-string-sentinel ambiguity of an alternative
+        //   "always emit N slots" design.
+        let result: Vec<Value> = if re.captures_len() > 1 {
+            re.captures_iter(input)
+                .map(|caps| {
+                    let groups: Vec<Value> = (1..caps.len())
+                        .filter_map(|i| caps.get(i).map(|m| Value::Text(m.as_str().to_string())))
+                        .collect();
+                    Value::List(groups)
+                })
+                .collect()
+        } else {
+            re.find_iter(input)
+                .map(|m| Value::List(vec![Value::Text(m.as_str().to_string())]))
+                .collect()
+        };
+        return Ok(Value::List(result));
+    }
     if builtin == Some(Builtin::Rgxsub) && args.len() == 3 {
         let pattern = match &args[0] {
             Value::Text(s) => s.as_str(),
