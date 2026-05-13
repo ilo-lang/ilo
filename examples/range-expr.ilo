@@ -13,10 +13,9 @@ trim-both a:n b:n>L n;xs=[];@j -a 1..-b 1{xs=+=xs j};xs
 -- Skip the last one: @j 0..-n 1 iterates 0..(n-1) = [0,1,2,3]
 drop-last n:n>L n;xs=[];@j 0..-n 1{xs=+=xs j};xs
 
--- Call-style bounds still need a binding (`n=len xs` first).
--- This is the documented workaround; the parser does not call-parse
--- inside range bounds.
-sum-via-len xs:L n>n;n=len xs;s=0;@j 0..n{s=+s j};+s 0
+-- Call-style bounds work directly: `len xs`, `at ys 0`, etc.
+-- The previous intermediate-binding workaround is no longer needed.
+sum-via-len xs:L n>n;s=0;@j 0..len xs{s=+s j};+s 0
 
 -- run: skip-first-two 3 10
 -- out: [5, 6, 7, 8, 9]

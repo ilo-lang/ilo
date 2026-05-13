@@ -1,16 +1,13 @@
 // Cross-engine regression tests for range bounds in `@` loops.
 //
-// Until this fix, `parse_foreach` used `parse_atom` for both range bounds,
-// so `@j +i 2..n` (prefix-binop start) and `@j 0..*n 2` (prefix-binop end)
-// were rejected with ILO-P009. Personas had to bind an intermediate
-// (`jst=+i 2;@j jst..n`) for every compound bound. Now both sides accept
-// any operand: literals, idents, prefix-binop forms (`+a b`, `-a b`,
-// `*a b`, `/a b`), and unary forms (`-x` literal negation).
-//
-// Call-style bounds (`@j 0..len xs`) explicitly still require an
-// intermediate binding; the `call_style_bound_still_requires_binding`
-// test below anchors that contract so a future change extending range
-// bounds to `parse_call_or_atom` is a deliberate decision.
+// Previously `parse_foreach` used `parse_atom` (literals/idents only), then
+// `parse_operand` (literals, idents, prefix-binop, unary minus). Personas
+// kept hitting the next ceiling: call forms like `@j 0..len xs` and
+// `@j 0..at ys 0` still required an intermediate binding. The fix switches
+// both bounds to `parse_expr_inner`, which accepts any expression form
+// including calls. Call args naturally stop at `..` and `{` because neither
+// token starts an operand, so `0..len xs{...}` parses as `0..Call(len,[xs])`
+// with the body intact.
 
 use std::process::Command;
 
@@ -113,29 +110,45 @@ fn ident_to_ident_bounds_still_work() {
 }
 
 #[test]
-fn call_style_bound_still_requires_binding() {
-    // Anchor: bare function-call bounds remain unsupported. If this test
-    // starts failing because the call form now parses, that's a deliberate
-    // extension and the test should be updated (and the assessment-doc
-    // entry reopened to consider the call-form follow-up).
-    let out = ilo()
-        .args([
-            "f>n;xs=[1,2,3];s=0;@j 0..len xs{s=+s j};+s 0",
-            "--run-tree",
-            "f",
-        ])
-        .output()
-        .expect("failed to run ilo");
-    assert!(
-        !out.status.success(),
-        "expected call-style range bound to fail; stdout={} stderr={}",
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr)
+fn call_style_end_bound_len() {
+    // `0..len xs` now parses directly; the previous workaround
+    // (`n=len xs;@j 0..n`) is no longer required.
+    check_all("f>n;xs=[1,2,3];s=0;@j 0..len xs{s=+s j};+s 0", "3");
+}
+
+#[test]
+fn call_style_bound_still_works_with_binding() {
+    // The previously documented workaround keeps working too.
+    check_all("f>n;xs=[1,2,3];n=len xs;s=0;@j 0..n{s=+s j};+s 0", "3");
+}
+
+#[test]
+fn call_style_end_bound_at() {
+    // Two-arg call as the end bound: `0..at ys 0` where ys=[4,1,1] →
+    // 0..4 = [0,1,2,3], summed via +=0..3 = 6.
+    check_all("f>n;ys=[4,1,1];s=0;@j 0..at ys 0{s=+s j};+s 0", "6");
+}
+
+#[test]
+fn call_style_start_bound_at() {
+    // Call form on the start side: `at xs 0..len xs` with xs=[2,9,9,9] →
+    // 2..4 = [2, 3], summed = 5.
+    check_all("f>n;xs=[2,9,9,9];s=0;@j at xs 0..len xs{s=+s j};+s 0", "5");
+}
+
+#[test]
+fn prefix_binop_start_with_call_end() {
+    // Mixed: prefix-binop start, call end. `+i 2..len xs` with i=3, xs=[a,b,c,d,e,f]
+    // → 5..6 = [5], summed = 5.
+    check_all(
+        "f>n;i=3;xs=[\"a\",\"b\",\"c\",\"d\",\"e\",\"f\"];s=0;@j +i 2..len xs{s=+s j};+s 0",
+        "5",
     );
 }
 
 #[test]
-fn call_style_bound_works_with_binding() {
-    // The documented workaround: bind first, then range over the binding.
-    check_all("f>n;xs=[1,2,3];n=len xs;s=0;@j 0..n{s=+s j};+s 0", "3");
+fn call_bounds_both_sides() {
+    // Both sides as calls: `at xs 0..len xs`, body iterates xs[0]..len(xs).
+    // xs=[1,3,3,3], so j in 1..4 → sum 1+2+3 = 6.
+    check_all("f>n;xs=[1,3,3,3];s=0;@j at xs 0..len xs{s=+s j};+s 0", "6");
 }
