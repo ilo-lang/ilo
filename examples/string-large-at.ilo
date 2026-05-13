@@ -1,0 +1,24 @@
+-- Per-char iteration over a non-trivial text with `at s i`.
+-- Before the fix, `at s i` did `s.chars().collect::<Vec<char>>()` on every
+-- call, making this loop O(n²) and the apparent culprit behind the 222k-token
+-- "OOM" reports from NLP personas. Now `at` is allocation-free for the
+-- in-range case and the loop scales linearly.
+
+-- Count uppercase ASCII letters in a mixed-case word.
+upper-count s:t>n;l=len s;n=0;@i 0..l{c=at s i;>=c "A"{<=c "Z"{n=+n 1}}};+n 0
+
+-- Iterate the same word twice, once forwards, once with negative indices,
+-- and confirm both paths see the same characters. For index i, the matching
+-- negative index is i - l (so 0 maps to -l, l-1 maps to -1).
+roundtrip s:t>n;l=len s;ok=0;@i 0..l{a=at s i;j=-i l;b=at s j;=a b{ok=+ok 1}};+ok 0
+
+-- run: upper-count HelloWorld
+-- out: 2
+-- run: upper-count ALLCAPS
+-- out: 7
+-- run: upper-count nouppershere
+-- out: 0
+-- run: roundtrip abcde
+-- out: 5
+-- run: roundtrip x
+-- out: 1

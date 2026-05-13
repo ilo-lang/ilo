@@ -1,5 +1,5 @@
 use crate::ast::*;
-use crate::builtins::Builtin;
+use crate::builtins::{Builtin, CharAtResult, char_at_signed};
 use crate::interpreter::Value;
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -6592,13 +6592,12 @@ impl<'a> VM<'a> {
                                 _ => unreachable!(),
                             }
                         };
-                        let chars: Vec<char> = s.chars().collect();
-                        let len = chars.len() as i64;
-                        let adjusted = if raw < 0 { raw + len } else { raw };
-                        if adjusted < 0 || adjusted >= len {
-                            vm_err!(VmError::Type("at: index out of range"));
+                        match char_at_signed(s, raw) {
+                            CharAtResult::Found(c) => NanVal::heap_string(c.to_string()),
+                            CharAtResult::OutOfRange { .. } => {
+                                vm_err!(VmError::Type("at: index out of range"))
+                            }
                         }
-                        NanVal::heap_string(chars[adjusted as usize].to_string())
                     } else if v.is_heap() {
                         match unsafe { v.as_heap_ref() } {
                             HeapObj::List(items) => {
@@ -8904,13 +8903,10 @@ pub(crate) extern "C" fn jit_at(a: u64, b: u64) -> u64 {
                 _ => unreachable!(),
             }
         };
-        let chars: Vec<char> = s.chars().collect();
-        let len = chars.len() as i64;
-        let adjusted = if raw < 0 { raw + len } else { raw };
-        if adjusted < 0 || adjusted >= len {
-            return TAG_NIL;
-        }
-        return NanVal::heap_string(chars[adjusted as usize].to_string()).0;
+        return match char_at_signed(s, raw) {
+            CharAtResult::Found(c) => NanVal::heap_string(c.to_string()).0,
+            CharAtResult::OutOfRange { .. } => TAG_NIL,
+        };
     }
     if v.is_heap()
         && let HeapObj::List(items) = unsafe { v.as_heap_ref() }

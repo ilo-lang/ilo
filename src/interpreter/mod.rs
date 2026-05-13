@@ -1,5 +1,5 @@
 use crate::ast::*;
-use crate::builtins::Builtin;
+use crate::builtins::{Builtin, CharAtResult, char_at_signed};
 use std::collections::HashMap;
 
 pub mod json;
@@ -1154,22 +1154,13 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                     Ok(items[adjusted as usize].clone())
                 }
             }
-            Value::Text(s) => {
-                let chars: Vec<char> = s.chars().collect();
-                let len = chars.len() as i64;
-                let adjusted = if i < 0 { i + len } else { i };
-                if adjusted < 0 || adjusted >= len {
-                    Err(RuntimeError::new(
-                        "ILO-R009",
-                        format!(
-                            "at: index {i} out of range for text of length {}",
-                            chars.len()
-                        ),
-                    ))
-                } else {
-                    Ok(Value::Text(chars[adjusted as usize].to_string()))
-                }
-            }
+            Value::Text(s) => match char_at_signed(s, i) {
+                CharAtResult::Found(c) => Ok(Value::Text(c.to_string())),
+                CharAtResult::OutOfRange { len } => Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("at: index {i} out of range for text of length {len}"),
+                )),
+            },
             other => Err(RuntimeError::new(
                 "ILO-R009",
                 format!("at requires a list or text, got {:?}", other),

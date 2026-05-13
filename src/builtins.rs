@@ -371,6 +371,52 @@ impl Builtin {
     }
 }
 
+/// Result of a char-by-signed-index lookup on a `&str`.
+pub(crate) enum CharAtResult {
+    /// The codepoint at the requested index.
+    Found(char),
+    /// Index was out of range; carries the total char count for error messages.
+    OutOfRange { len: usize },
+}
+
+/// Fetch the i-th codepoint of `s`, supporting negative indices (`-1` = last).
+///
+/// Allocation-free in every path: positive indices walk `s.chars().nth(idx)`
+/// (O(idx)); negative indices pay one O(n) `chars().count()` to adjust, then
+/// the same `chars().nth`. Prior implementations did
+/// `s.chars().collect::<Vec<char>>()` on every call, making per-char loops
+/// like `@i 0..len s{c=at s i}` O(n²) AND allocating a fresh Vec per
+/// iteration. The Vec allocator pressure was the observable trigger behind
+/// the 222k-token "OOM" cluster in NLP workloads.
+///
+/// We deliberately do not branch on `s.is_ascii()` for a constant-time ASCII
+/// path here: `is_ascii` itself walks the full string, so the guard would be
+/// O(n) per call, more expensive than the `chars().nth(idx)` it replaces.
+/// True O(1) ASCII indexing needs a cached `is_ascii` flag on the string
+/// value; that's deferred with the RC-aware accumulator work.
+pub(crate) fn char_at_signed(s: &str, raw_idx: i64) -> CharAtResult {
+    if raw_idx >= 0 {
+        let idx = raw_idx as usize;
+        if let Some(c) = s.chars().nth(idx) {
+            return CharAtResult::Found(c);
+        }
+        // Out of range: pay one O(n) pass for the count, only on error.
+        return CharAtResult::OutOfRange {
+            len: s.chars().count(),
+        };
+    }
+    // Negative index: count chars to adjust, then walk again to the target.
+    let len = s.chars().count();
+    let adjusted = raw_idx + len as i64;
+    if adjusted < 0 {
+        return CharAtResult::OutOfRange { len };
+    }
+    match s.chars().nth(adjusted as usize) {
+        Some(c) => CharAtResult::Found(c),
+        None => CharAtResult::OutOfRange { len },
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -495,5 +541,50 @@ mod tests {
     fn non_builtin_returns_none() {
         assert_eq!(Builtin::from_name("foo"), None);
         assert_eq!(Builtin::from_name(""), None);
+    }
+
+    fn unwrap_found(r: CharAtResult) -> char {
+        match r {
+            CharAtResult::Found(c) => c,
+            CharAtResult::OutOfRange { len } => panic!("expected Found, got OutOfRange len={len}"),
+        }
+    }
+
+    fn unwrap_oor(r: CharAtResult) -> usize {
+        match r {
+            CharAtResult::OutOfRange { len } => len,
+            CharAtResult::Found(c) => panic!("expected OutOfRange, got Found({c:?})"),
+        }
+    }
+
+    #[test]
+    fn char_at_signed_ascii_positive() {
+        assert_eq!(unwrap_found(char_at_signed("hello", 0)), 'h');
+        assert_eq!(unwrap_found(char_at_signed("hello", 4)), 'o');
+        assert_eq!(unwrap_oor(char_at_signed("hello", 5)), 5);
+        assert_eq!(unwrap_oor(char_at_signed("", 0)), 0);
+    }
+
+    #[test]
+    fn char_at_signed_ascii_negative() {
+        assert_eq!(unwrap_found(char_at_signed("hello", -1)), 'o');
+        assert_eq!(unwrap_found(char_at_signed("hello", -5)), 'h');
+        assert_eq!(unwrap_oor(char_at_signed("hello", -6)), 5);
+    }
+
+    #[test]
+    fn char_at_signed_unicode_positive() {
+        // "naïve" — 5 codepoints, 6 bytes
+        assert_eq!(unwrap_found(char_at_signed("naïve", 0)), 'n');
+        assert_eq!(unwrap_found(char_at_signed("naïve", 2)), 'ï');
+        assert_eq!(unwrap_found(char_at_signed("naïve", 4)), 'e');
+        assert_eq!(unwrap_oor(char_at_signed("naïve", 5)), 5);
+    }
+
+    #[test]
+    fn char_at_signed_unicode_negative() {
+        assert_eq!(unwrap_found(char_at_signed("naïve", -1)), 'e');
+        assert_eq!(unwrap_found(char_at_signed("naïve", -3)), 'ï');
+        assert_eq!(unwrap_oor(char_at_signed("naïve", -6)), 5);
     }
 }
