@@ -21,7 +21,7 @@ parse-err>R n t;v=num! "abc";~v
 fmt-err>R t t;v=dtfmt! 99999999999999 "%Y";~v
 
 -- run: parse-ok
--- out: ~42
+-- out: 42
 
 -- run: parse-err
 -- err: ^abc

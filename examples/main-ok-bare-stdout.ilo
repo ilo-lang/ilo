@@ -1,0 +1,19 @@
+-- Demonstrates the top-level `~v` stdout contract. A program whose entry
+-- function returns `Value::Ok(inner)` prints just `inner` to stdout — no
+-- leading `~` — so shell callers can consume the value without stripping a
+-- prefix.
+--
+-- Symmetric with the `^e` half of the contract pinned by
+-- examples/main-err-exit-code.ilo and PR #255: `^e` goes to stderr with
+-- exit 1, `~v` goes to stdout (bare) with exit 0.
+--
+-- `Display` on `Value::Ok` still renders `~v` everywhere else: nested
+-- values, `prnt ~"x"`, REPL prompts, error messages. Only the top-level
+-- program-return print path is split. The cross-engine regression test in
+-- tests/regression_main_ok_stdout_bare.rs pins the contract directly.
+
+-- Trivial Result-returning entry that always succeeds.
+m>R n t;~7
+
+-- run:
+-- out: 7

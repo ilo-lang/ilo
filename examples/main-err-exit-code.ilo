@@ -12,7 +12,7 @@
 parse s:t>R n t;num s
 
 -- run: parse 42
--- out: ~42
+-- out: 42
 
 -- run: parse abc
 -- err: ^abc

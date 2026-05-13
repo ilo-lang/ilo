@@ -9,7 +9,7 @@ div a:n b:n>R n t;=b 0 ^"divide by zero";~/a b
 parse tx:t>R n t;num tx
 
 -- run: div 10 2
--- out: ~5
+-- out: 5
 -- A Value::Err return from the entry function exits 1 with the err line on
 -- stderr, mirroring `!!` panic-unwrap from PR #248. The examples harness
 -- understands `-- err:` for this contract.

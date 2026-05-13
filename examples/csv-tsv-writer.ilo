@@ -8,7 +8,7 @@ dumpcsv>R t t;wr "/tmp/ilo_wr_csv_example.csv" [["name", "age"], ["alice", 30], 
 dumptsv>R t t;wr "/tmp/ilo_wr_tsv_example.tsv" [["name", "age"], ["alice", 30], ["bob", 25]] "tsv"
 
 -- run: dumpcsv
--- out: ~/tmp/ilo_wr_csv_example.csv
+-- out: /tmp/ilo_wr_csv_example.csv
 
 -- run: dumptsv
--- out: ~/tmp/ilo_wr_tsv_example.tsv
+-- out: /tmp/ilo_wr_tsv_example.tsv
