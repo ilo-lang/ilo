@@ -1,0 +1,29 @@
+-- `ys = +=xs item` must NOT mutate `xs`, even when `xs` is RC=1.
+--
+-- The RC=1 in-place fast path on `OP_LISTAPPEND` (VM) and `jit_listappend`
+-- (Cranelift) only fires for the rebind shape `name = += name item` — the
+-- pattern the compiler peephole emits for accumulator loops. When the source
+-- and destination registers differ (`ys = += xs item`), we always allocate a
+-- fresh list and copy. Otherwise we'd silently mutate the caller's source.
+--
+-- Mirror of the `OP_MSET` / `jit_mset_inplace` split landed in PR #249.
+
+-- xs is a fresh list literal (RC=1 at the append). After the non-rebind
+-- append, xs must still be the original three elements. Pre-fix, both VM and
+-- Cranelift returned [1, 2, 3, 99].
+preserve-source>L n;xs=[1,2,3];ys=+=xs 99;xs
+
+-- The rebind shape is the accumulator pattern and must still grow in place
+-- (amortised O(1) per push). This stresses the fast path stays available.
+rebind-accumulator>n;xs=[];@i 0..50{xs=+=xs i};len xs
+
+-- Both source and destination visible in one return. Length pair pins the
+-- aliasing contract: xs must be untouched.
+both-visible>t;xs=[1,2,3];ys=+=xs 99;fmt "{};{}" (len xs) (len ys)
+
+-- run: preserve-source
+-- out: [1, 2, 3]
+-- run: rebind-accumulator
+-- out: 50
+-- run: both-visible
+-- out: 3;4

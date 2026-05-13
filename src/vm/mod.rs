@@ -7744,30 +7744,30 @@ impl<'a> VM<'a> {
                         std::mem::forget(rc_peek);
                         count
                     };
-                    if rc_count == 1 {
-                        // SAFETY: We are the sole owner (count==1). No other reference
-                        // exists. Cast to *mut to push directly into the Vec without
-                        // altering the Rc refcount.
+                    // Fast path requires BOTH `a == b` (rebind shape — the
+                    // compiler peephole `name = += name item` emits this) AND
+                    // `rc_count == 1` (sole owner). When `a != b` the caller
+                    // wrote `ys = += xs item` expecting `xs` to be preserved;
+                    // mutating in place and aliasing the pointer into slot `a`
+                    // would silently corrupt the caller's source list. Mirror
+                    // of the `OP_MSET` `a == b && rc_count == 1` guard above.
+                    if a == b && rc_count == 1 {
+                        // SAFETY: We are the sole owner (count==1) and the
+                        // destination slot is the same SSA variable, so the
+                        // returned pointer's strong_count stays at 1 — balanced.
                         let heap_mut = unsafe { &mut *(ptr_b as *mut HeapObj) };
                         match heap_mut {
                             HeapObj::List(items) => {
                                 item_val.clone_rc();
                                 items.push(item_val);
-                                // The NanVal pointer is unchanged; copy to slot a if a != b.
-                                if a != b {
-                                    unsafe { self.stack.get_unchecked(a) }.drop_rc();
-                                    list_val.clone_rc();
-                                    unsafe {
-                                        *self.stack.as_mut_ptr().add(a) = list_val;
-                                    }
-                                }
                                 // a == b: list_val already in slot, nothing to do.
                             }
                             _ => return Err(VmError::Type("+= requires a list")),
                         }
                     } else {
-                        // RC > 1 — must copy to avoid aliasing.
-                        // SAFETY: ptr_b is a live heap pointer; we borrow it read-only.
+                        // RC > 1 or distinct dest register — must copy to avoid
+                        // aliasing. SAFETY: ptr_b is a live heap pointer; we
+                        // borrow it read-only.
                         match unsafe { &*ptr_b } {
                             HeapObj::List(items) => {
                                 let mut new_items = Vec::with_capacity(items.len() + 1);
@@ -10314,6 +10314,15 @@ pub(crate) extern "C" fn jit_drop(n_val: u64, xs: u64) -> u64 {
     TAG_NIL
 }
 
+/// Clone-always listappend helper — the safe path. Allocates a fresh List and
+/// copies every element, bumping RC for retained heap entries.
+///
+/// The Cranelift compiler picks this helper for OP_LISTAPPEND whenever the
+/// destination and source registers differ in the bytecode (`a_idx != b_idx`,
+/// the `ys = += xs item` shape). Returning the source pointer at RC=1 in that
+/// case would alias the result through both slots and silently mutate the
+/// caller's source list. See the `OP_MSET` `jit_mset` / `jit_mset_inplace`
+/// split landed in PR #249 for the same pattern on maps.
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn jit_listappend(a: u64, b: u64) -> u64 {
@@ -10335,14 +10344,62 @@ pub(crate) extern "C" fn jit_listappend(a: u64, b: u64) -> u64 {
         (item_val, false)
     };
 
+    match unsafe { list_val.as_heap_ref() } {
+        HeapObj::List(items) => {
+            let mut new_items = Vec::with_capacity(items.len() + 1);
+            for v in items {
+                v.clone_rc();
+                new_items.push(*v);
+            }
+            if !item_already_owned {
+                item_val.clone_rc();
+            }
+            new_items.push(item_val);
+            NanVal::heap_list(new_items).0
+        }
+        _ => TAG_NIL,
+    }
+}
+
+/// In-place listappend helper — mutates the Vec when the caller's list is the
+/// sole owner (strong_count == 1), else falls back to the cloning path.
+///
+/// The Cranelift compiler only emits a call to this helper when the
+/// OP_LISTAPPEND destination and source registers are the same SSA variable
+/// (the compiler peephole `name = += name item` shape). In that case the
+/// def_var(a, result) overwrites the same variable the input came from, so
+/// returning the same pointer at RC=1 is balanced: the caller still holds
+/// exactly one ref.
+///
+/// Without that compile-time guarantee, returning the same pointer when
+/// strong_count == 1 and a != b would alias the result through both registers
+/// and silently mutate the caller's source list — the bug fixed by splitting
+/// this helper out of the old combined `jit_listappend`. Mirrors the
+/// `jit_mset_inplace` split from PR #249.
+#[cfg(feature = "cranelift")]
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn jit_listappend_inplace(a: u64, b: u64) -> u64 {
+    let list_val = NanVal(a);
+    let item_val = NanVal(b);
+    if !list_val.is_heap() {
+        return TAG_NIL;
+    }
+
+    // Normalise the item: promote arena records to heap before anything else.
+    let (item_val, item_already_owned) = if item_val.is_arena_record() {
+        let registry_ptr = ACTIVE_REGISTRY.with(|r| r.get());
+        if registry_ptr.is_null() {
+            return TAG_NIL;
+        }
+        let promoted = item_val.promote_arena_to_heap(unsafe { &*registry_ptr });
+        (promoted, true) // promote_arena_to_heap gives us RC=1 ownership
+    } else {
+        (item_val, false)
+    };
+
     let ptr = (list_val.0 & PTR_MASK) as *const HeapObj;
 
-    // RC=1 fast path: mutate the Vec in-place using standard amortized growth.
-    // The JIT's FOREACHPREP/FOREACHNEXT reads Vec.len at HeapObj+24 (correct), so
-    // there is no requirement for cap == len. Standard push with capacity doubling
-    // gives O(n log n) total allocations instead of O(n²) from the old reserve_exact(1).
-    // NOTE: the JIT compiler's OP_LISTAPPEND peephole always emits a==b (the same
-    // register for both list operands), so RC is always 1 here in JIT-compiled code.
+    // Peek the RC count without taking ownership.
     let rc_count = {
         let rc_peek = unsafe { Rc::from_raw(ptr) };
         let count = Rc::strong_count(&rc_peek);
@@ -10351,10 +10408,13 @@ pub(crate) extern "C" fn jit_listappend(a: u64, b: u64) -> u64 {
     };
 
     if rc_count == 1 {
+        // SAFETY: sole owner; no other reference exists. The caller is the
+        // same SSA variable that produced the input list (compile-time
+        // guarantee from compile_cranelift.rs's `a_idx == b_idx` check), so
+        // def_var with the same pointer keeps strong_count == 1 — balanced.
         let heap_mut = unsafe { &mut *(ptr as *mut HeapObj) };
         match heap_mut {
             HeapObj::List(items) => {
-                // Standard push: amortized O(1), same as the VM's OP_LISTAPPEND path.
                 if !item_already_owned {
                     item_val.clone_rc();
                 }
@@ -10364,7 +10424,9 @@ pub(crate) extern "C" fn jit_listappend(a: u64, b: u64) -> u64 {
             _ => TAG_NIL,
         }
     } else {
-        // Slow path: copy list
+        // RC > 1 — fall back to the cloning path. We still need to honour the
+        // promoted-item ownership flag, so inline the copy rather than calling
+        // jit_listappend (which would re-promote a heap item).
         match unsafe { list_val.as_heap_ref() } {
             HeapObj::List(items) => {
                 let mut new_items = Vec::with_capacity(items.len() + 1);
