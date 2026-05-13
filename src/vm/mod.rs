@@ -994,6 +994,25 @@ impl RegCompiler {
                         }
                         return None;
                     }
+                    // Peephole: `name = mset name key val` → OP_MSET A=existing, B=existing, C=key
+                    // with a=b the OP_MSET runtime checks RC=1 on the map and inserts in-place,
+                    // turning O(n²) map-accumulation into O(n) amortised.
+                    if let Expr::Call {
+                        function,
+                        args,
+                        unwrap: false,
+                    } = value
+                        && function == "mset"
+                        && args.len() == 3
+                        && let Expr::Ref(ref_name) = &args[0]
+                        && ref_name == name
+                    {
+                        let rc = self.compile_expr(&args[1]);
+                        let rd = self.compile_expr(&args[2]);
+                        self.emit_abc(OP_MSET, existing_reg, existing_reg, rc);
+                        self.emit_abc(0, rd, 0, 0);
+                        return None;
+                    }
                     // General re-binding: compile value and move to existing register
                     let reg = self.compile_expr(value);
                     if reg != existing_reg {
