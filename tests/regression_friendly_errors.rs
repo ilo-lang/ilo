@@ -306,3 +306,30 @@ fn camel_cascade_truncates_long_lists() {
     );
 }
 
+// ---- `?cond{body}` bare-bool match-vs-conditional confusion ----
+
+#[test]
+fn match_bare_bool_with_let_body_suggests_eq_true_form() {
+    let err = run_err("go>n;hit=true;errs=0;?hit{errs=+errs 1};errs");
+    assert!(err.contains("ILO-P011"), "stderr: {err}");
+    assert!(
+        err.contains("match syntax"),
+        "should explain that ?expr{{}} is match: {err}"
+    );
+    assert!(
+        err.contains("=hit true{body}"),
+        "should suggest =hit true{{body}}: {err}"
+    );
+}
+
+#[test]
+fn match_bare_bool_does_not_fire_on_real_pattern() {
+    // `~v:body` is a real Ok-pattern arm — must not trigger the hint.
+    run_ok("go>R n t;r=~5;?r{~v:v;^e:0}");
+}
+
+#[test]
+fn match_bare_bool_does_not_fire_on_literal_pattern() {
+    run_ok("go>n;x=2;?x{1:10;2:20;_:0}");
+}
+
