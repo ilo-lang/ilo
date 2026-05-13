@@ -18,6 +18,10 @@ pub enum VmError {
     UnknownOpcode { op: u8 },
     #[error("{0}")]
     Type(&'static str),
+    /// Dynamic runtime message produced by helpers (used by the tree-bridge
+    /// dispatcher to surface interpreter errors with their original wording).
+    #[error("{0}")]
+    Runtime(String),
 }
 
 type VmResult<T> = Result<T, VmError>;
@@ -265,6 +269,54 @@ pub(crate) const OP_PADR: u8 = 122; // R[A] = pad_right(R[B], R[C]) (text, width
 // Per-char codepoint round-trip — t->n and n->t (Unicode scalar, 1-arg each).
 pub(crate) const OP_ORD: u8 = 153; // R[A] = first-char codepoint of R[B]
 pub(crate) const OP_CHR: u8 = 154; // R[A] = single-char string for codepoint R[B]
+
+// Generic bridge for tree-only builtins (rgx, rgxall, fmt-variadic, rd 2-arg,
+// rdb, plus any future builtin that the VM/JIT hasn't natively lowered yet).
+//
+// Encoding (ABC):
+//   A = result_reg
+//   B = Builtin::tag()  (8-bit on-wire builtin id; see src/builtins.rs)
+//   C = argc            (number of args)
+//
+// The compiler guarantees args live contiguously in R[A+1..=A+argc], mirroring
+// OP_CALL's calling convention. The dispatcher copies them out, converts each
+// NanVal to an owned `Value`, calls the interpreter's `call_function` helper
+// (the same routine `--run-tree` already uses), then converts the result back
+// to a NanVal. RC: input NanVals are read by reference (no clone_rc); the
+// returned NanVal carries fresh RC=1 like every other heap-producing op.
+//
+// This is deliberately a runtime fallback, not a native lowering. Any builtin
+// that gets a dedicated opcode (`OP_RGXSUB`, `OP_FMT2`, etc.) is preferred by
+// the emitter — this op only fires when no specialised arm matches.
+pub(crate) const OP_CALL_BUILTIN_TREE: u8 = 155;
+
+/// Builtins eligible for tree-bridge dispatch when no specialised VM opcode
+/// matches the call shape. The list is deliberately narrow: it covers the
+/// regex/format/file-format family that has no FnRef args, so NanVal↔Value
+/// round-tripping is lossless. Adding a new entry here makes the builtin
+/// callable from `--run-vm` and `--run-cranelift` for free.
+///
+/// HOFs (`map`, `flt`, `fld`, `grp`, `flatmap`, `uniqby`, `partition`,
+/// 2-arg `srt`, dynamic-fmt `wr`) are NOT eligible: their function-reference
+/// argument can't survive the round-trip until FnRef nan-tagging lands.
+pub(crate) fn is_tree_bridge_eligible(b: crate::builtins::Builtin, argc: usize) -> bool {
+    use crate::builtins::Builtin;
+    match (b, argc) {
+        (Builtin::Rgx, 2) => true,
+        (Builtin::Rgxall, 2) => true,
+        (Builtin::Fmt, _) if argc >= 1 => true,
+        (Builtin::Rd, 2) => true,
+        (Builtin::Rdb, 2) => true,
+        _ => false,
+    }
+}
+
+/// Builtins that return a Result (`R _ t`) and therefore participate in
+/// the auto-unwrap (`!`) protocol when called via the tree bridge.
+pub(crate) fn tree_bridge_returns_result(b: crate::builtins::Builtin) -> bool {
+    use crate::builtins::Builtin;
+    matches!(b, Builtin::Rd | Builtin::Rdb)
+}
 
 pub(crate) const OP_GETMANY: u8 = 136; // R[A] = get_many(R[B])  (L t → L (R t t), concurrent fan-out)
 pub(crate) const OP_RDJL: u8 = 135; // R[A] = rdjl(R[B])  (read JSONL file → L (R _ t))
@@ -547,6 +599,72 @@ impl RegCompiler {
             "jump offset {offset_i32} exceeds i16 range — function body too large (max ~32K instructions)"
         );
         self.emit_abx(OP_JMP, 0, offset_i32 as i16 as u16);
+    }
+
+    /// Emit the OP_CALL_BUILTIN_TREE bridge for a tree-only builtin call.
+    ///
+    /// Layout matches OP_CALL: result lands in `R[A]` and args are placed
+    /// contiguously in `R[A+1..=A+argc]`. The dispatcher (VM + Cranelift)
+    /// reads from that slice, builds owned `Value`s, calls the interpreter's
+    /// `call_function` helper, and stores the result back into `R[A]`.
+    ///
+    /// Auto-unwrap (`!`) is supported for Result-returning builtins (`rd`,
+    /// `rdb`); other builtins assume non-Result returns. Verify already
+    /// rejects `!` on non-Result builtins.
+    fn emit_call_builtin_tree(
+        &mut self,
+        builtin: crate::builtins::Builtin,
+        args: &[Expr],
+        unwrap: bool,
+    ) -> u8 {
+        // Compile args first to whatever registers the expr compiler picks.
+        let arg_regs: Vec<u8> = args.iter().map(|a| self.compile_expr(a)).collect();
+
+        // Allocate the result register, then `argc` contiguous slots right
+        // after it. The VM/JIT dispatcher reads R[a+1..=a+argc] as the
+        // arg slice.
+        let a = self.alloc_reg();
+        assert!(
+            (self.next_reg as usize) + args.len() <= 255,
+            "register overflow: tree-bridge call requires too many slots"
+        );
+        let args_base = self.next_reg;
+        self.next_reg += args.len() as u8;
+        if self.next_reg > self.max_reg {
+            self.max_reg = self.next_reg;
+        }
+        for (i, &src) in arg_regs.iter().enumerate() {
+            let dst = args_base + i as u8;
+            if src != dst {
+                self.emit_abc(OP_MOVE, dst, src, 0);
+            }
+        }
+
+        assert!(args.len() <= 255, "tree-bridge call: too many args");
+        self.emit_abc(OP_CALL_BUILTIN_TREE, a, builtin.tag(), args.len() as u8);
+
+        // Only the result register stays live across the call.
+        self.next_reg = a + 1;
+        // The bridge returns a fully boxed value of unknown shape.
+        self.current_all_regs_numeric = false;
+
+        if unwrap {
+            // Result-returning builtins only; verify will have rejected `!`
+            // on a non-Result builtin before reaching here.
+            debug_assert!(
+                tree_bridge_returns_result(builtin),
+                "auto-unwrap on a non-Result tree-bridge builtin slipped past verify"
+            );
+            let check_reg = self.alloc_reg();
+            self.emit_abc(OP_ISOK, check_reg, a, 0);
+            let skip_ret = self.emit_jmpt(check_reg);
+            self.emit_abx(OP_RET, a, 0); // propagate Err
+            self.current.patch_jump(skip_ret);
+            self.emit_abc(OP_UNWRAP, a, a, 0); // extract Ok inner
+            self.next_reg = a + 1;
+        }
+
+        a
     }
 
     /// Try to emit a fused CMPK guard for a non-negated guard whose condition is
@@ -2407,11 +2525,28 @@ impl RegCompiler {
                             self.emit_abc(OP_MDEL, ra, rb, rc);
                             return ra;
                         }
-                        // Builtins that fall through to OP_CALL (interpreter handles them):
-                        // fmt (variadic), map/flt/fld/grp/flatmap (higher-order),
-                        // sum/avg/rgx/flat, rd 2-arg, rdb, wr 3-arg, srt 2-arg, etc.
+                        // Builtins that fall through:
+                        //   - tree-bridge eligible (rgx, rgxall, fmt-variadic, rd 2-arg, rdb)
+                        //     → routed to OP_CALL_BUILTIN_TREE below
+                        //   - HOFs (map/flt/fld/grp/flatmap/uniqby/partition/srt 2-arg/wr 3-arg
+                        //     with dynamic fmt) → still error; FnRef args can't round-trip
+                        //     through the bridge until FnRef NaN-tagging lands
                         _ => {}
                     }
+                }
+
+                // Tree-bridge: any builtin without a native VM opcode that
+                // takes no FnRef args. This is the interpreter-fallback path
+                // promised by the older "fall through to OP_CALL → interpreter"
+                // comments — those were aspirational; OP_CALL only routes user
+                // functions. The bridge converts NanVals to owned `Value`s,
+                // calls the same `call_function` the tree interpreter uses,
+                // then converts back. Slower than a native opcode but correct,
+                // and lets every tree-only builtin work on every engine.
+                if let Some(builtin) = Builtin::from_name(function)
+                    && is_tree_bridge_eligible(builtin, args.len())
+                {
+                    return self.emit_call_builtin_tree(builtin, args, *unwrap);
                 }
 
                 let arg_regs: Vec<u8> = args.iter().map(|a| self.compile_expr(a)).collect();
@@ -2863,7 +2998,7 @@ fn chunk_is_all_numeric(chunk: &Chunk) -> bool {
             | OP_HD | OP_AT | OP_LST | OP_TL | OP_FMT2 | OP_RGXSUB | OP_ZIP | OP_ENUMERATE
             | OP_WINDOW | OP_FFT | OP_IFFT | OP_RANGE | OP_CHUNKS | OP_CUMSUM | OP_SETUNION
             | OP_SETINTER | OP_SETDIFF | OP_TRANSPOSE | OP_MATMUL | OP_INV | OP_SOLVE
-            | OP_DTFMT | OP_DTPARSE => {
+            | OP_DTFMT | OP_DTPARSE | OP_CALL_BUILTIN_TREE => {
                 return false;
             }
             _ => {}
@@ -7181,6 +7316,48 @@ impl<'a> VM<'a> {
                         Err(_) => vm_err!(VmError::Type("rgxsub: invalid regex pattern")),
                     }
                 }
+                OP_CALL_BUILTIN_TREE => {
+                    // Generic bridge for tree-only builtins. Layout:
+                    //   A = result_reg, B = Builtin::tag, C = argc
+                    //   args live in R[A+1..=A+argc]
+                    let a = ((inst >> 16) & 0xFF) as usize + base;
+                    let tag = ((inst >> 8) & 0xFF) as u8;
+                    let argc = (inst & 0xFF) as usize;
+                    let builtin = match crate::builtins::Builtin::from_tag(tag) {
+                        Some(b) => b,
+                        None => {
+                            vm_err!(VmError::Type(
+                                "call-builtin-tree: unknown builtin tag (bytecode mismatch)"
+                            ));
+                        }
+                    };
+
+                    // Collect args as owned Values. We deliberately do not
+                    // mutate the source registers — the bridge owns its copies
+                    // and drops them when the temporary Vec falls out of scope.
+                    let mut value_args: Vec<Value> = Vec::with_capacity(argc);
+                    for i in 0..argc {
+                        let v = reg!(a + 1 + i);
+                        value_args.push(v.to_value());
+                    }
+
+                    // Run the same dispatcher the tree interpreter uses.
+                    // No env is needed for the bridge-eligible set (no FnRef
+                    // args, no user-function callbacks), so we hand it an
+                    // empty `Program` shell.
+                    let result = match crate::interpreter::call_builtin_for_bridge(
+                        builtin.name(),
+                        value_args,
+                    ) {
+                        Ok(v) => v,
+                        Err(e) => {
+                            vm_err!(VmError::Runtime(e.message));
+                        }
+                    };
+
+                    let nv = NanVal::from_value(&result);
+                    reg_set!(a, nv);
+                }
                 OP_TAKE => {
                     let a = ((inst >> 16) & 0xFF) as usize + base;
                     let b = ((inst >> 8) & 0xFF) as usize + base;
@@ -9714,6 +9891,50 @@ pub(crate) extern "C" fn jit_slc(a: u64, start: u64, end: u64) -> u64 {
         return NanVal::heap_list(sliced).0;
     }
     TAG_NIL
+}
+
+/// Cranelift bridge for tree-only builtins (rgx, rgxall, fmt-variadic, 2-arg
+/// rd, rdb, and any future entry added to `is_tree_bridge_eligible`).
+///
+/// Signature: `(tag, argc, regs_ptr) -> u64`. The caller stack-spills the
+/// arg registers into a contiguous `argc`-element NanVal buffer and passes
+/// the address as `regs_ptr`. We re-box each arg as a `Value`, dispatch via
+/// the interpreter's `call_function`, and return the NanVal of the result.
+///
+/// Errors return `TAG_NIL` (matching the existing JIT helper convention; see
+/// `jit_rgxsub` and `jit_rd` for precedent). A future native opcode for a
+/// specific builtin can supersede this bridge without changing callers.
+///
+/// SAFETY: `regs_ptr` must point to at least `argc` valid `NanVal`s in
+/// readable memory for the duration of the call. The compiler guarantees
+/// this by spilling registers into a sized stack slot of `argc * 8` bytes
+/// immediately before the call instruction.
+#[cfg(feature = "cranelift")]
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn jit_call_builtin_tree(tag: u64, argc: u64, regs_ptr: u64) -> u64 {
+    let tag = tag as u8;
+    let argc = argc as usize;
+    let builtin = match crate::builtins::Builtin::from_tag(tag) {
+        Some(b) => b,
+        None => return TAG_NIL,
+    };
+    // SAFETY: caller guarantees `regs_ptr` points to `argc` valid NanVals.
+    // NanVal is Copy (u64); reading by value never aliases.
+    let regs: &[NanVal] = unsafe {
+        if argc == 0 {
+            &[]
+        } else {
+            std::slice::from_raw_parts(regs_ptr as *const NanVal, argc)
+        }
+    };
+    let mut value_args: Vec<Value> = Vec::with_capacity(argc);
+    for nv in regs {
+        value_args.push(nv.to_value());
+    }
+    match crate::interpreter::call_builtin_for_bridge(builtin.name(), value_args) {
+        Ok(v) => NanVal::from_value(&v).0,
+        Err(_) => TAG_NIL,
+    }
 }
 
 #[cfg(feature = "cranelift")]
