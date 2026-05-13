@@ -88,6 +88,23 @@ fn friendly_brk_binding() {
     assert!(!err.contains("ILO-T028"), "cascade leaked: {err}");
 }
 
+#[test]
+fn friendly_fld_binding() {
+    let err = run_err("fld=5");
+    assert!(err.contains("ILO-P011"), "stderr: {err}");
+    assert!(
+        err.contains("`fld` is reserved for the fold builtin"),
+        "stderr: {err}"
+    );
+    assert!(err.contains("field"), "hint should suggest `field`: {err}");
+    // Should not cascade through to the verifier's misleading arity error.
+    assert!(!err.contains("ILO-T006"), "arity cascade leaked: {err}");
+    assert!(
+        !err.contains("arity mismatch"),
+        "arity cascade leaked: {err}"
+    );
+}
+
 // ---- Underscore mid-identifier ----
 
 #[test]
