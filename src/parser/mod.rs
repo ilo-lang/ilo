@@ -964,8 +964,20 @@ impl Parser {
         Ok(MatchArm { pattern, body })
     }
 
-    /// Parse body of a match arm — multiple statements until next arm pattern or `}`
+    /// Parse body of a match arm — multiple statements until next arm pattern or `}`.
+    ///
+    /// Two body shapes are accepted:
+    /// - Brace block: `~v:{stmt1;stmt2;final-expr}` — mirrors `=cond{block}` grammar,
+    ///   makes the arm boundary unambiguous when the body contains call-shapes that
+    ///   could look like patterns. Final stmt is the arm value.
+    /// - Inline `;`-separated: `~v:stmt1;stmt2;final-expr` — existing form. `;` followed
+    ///   by a pattern-shaped token sequence starts a new arm (see `semi_starts_new_arm`).
     fn parse_arm_body(&mut self) -> Result<Vec<Spanned<Stmt>>> {
+        // Brace-block form: only when the `{...}` is not a destructure pattern start
+        // (e.g. `{a, b}=v` is a destructure assignment, kept on the inline path).
+        if self.peek() == Some(&Token::LBrace) && !self.is_destructure_pattern() {
+            return self.parse_brace_body();
+        }
         let mut stmts = Vec::new();
         if !self.at_arm_end() {
             let span_start = self.peek_span();
