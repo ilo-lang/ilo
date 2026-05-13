@@ -39,7 +39,7 @@ cargo test                       # full test suite
 
 ## Release process
 
-1. Bump `version` in `Cargo.toml`
+1. Bump version everywhere: `scripts/bump-version.sh X.Y.Z` (rewrites `Cargo.toml`, `AGENTS.md`, `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`; `npm/` and `pi/` are bumped from the tag by CI)
 2. Commit + tag `vX.Y.Z`
 3. `git push origin main --tags` → triggers `.github/workflows/release.yml` → builds 5 native targets + WASM, publishes GitHub Release + npm package
 
