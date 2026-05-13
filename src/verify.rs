@@ -212,6 +212,21 @@ fn compatible(a: &Ty, b: &Ty) -> bool {
     }
 }
 
+/// Validate a value being passed as a map key against the map's declared
+/// key type. Allowed scalar key types are `Text` and `Number`; both may be
+/// passed where the declared key type is `Unknown` (uninferred). Otherwise
+/// the supplied type must be `compatible` with the declared type.
+fn is_valid_map_key_arg(supplied: &Ty, declared: &Ty) -> bool {
+    if matches!(supplied, Ty::Unknown) || matches!(declared, Ty::Unknown) {
+        return true;
+    }
+    // A scalar map key must be text or number; nothing else.
+    if !matches!(supplied, Ty::Text | Ty::Number) {
+        return false;
+    }
+    compatible(supplied, declared)
+}
+
 /// Diagnostic-layer hint for an undefined kebab-case identifier whose halves
 /// are themselves bound in scope. Misreading `best-d` (single identifier) as
 /// `best - d` (subtraction) is a recurring persona footgun; the lexer always
@@ -1848,7 +1863,17 @@ fn builtin_check_args(
             (Ty::List(Box::new(Ty::List(Box::new(inner)))), errors)
         }
         "frq" => {
-            // frq xs:L a → M t n — count occurrences of each element.
+            // frq xs:L a → M a n — count occurrences of each element. The
+            // resulting map's key type matches the element type of the list
+            // (Text → M t n; Number → M n n; Bool → M t n since bools are
+            // stringified at the MapKey boundary).
+            let key_ty = match arg_types.first() {
+                Some(Ty::List(inner)) => match inner.as_ref() {
+                    Ty::Bool => Ty::Text,
+                    other => other.clone(),
+                },
+                _ => Ty::Unknown,
+            };
             if let Some(first) = arg_types.first()
                 && !matches!(first, Ty::List(_) | Ty::Unknown)
             {
@@ -1861,7 +1886,7 @@ fn builtin_check_args(
                     is_warning: false,
                 });
             }
-            (Ty::Map(Box::new(Ty::Text), Box::new(Ty::Number)), errors)
+            (Ty::Map(Box::new(key_ty), Box::new(Ty::Number)), errors)
         }
         "cumsum" => {
             if let Some(arg) = arg_types.first() {
@@ -1907,18 +1932,22 @@ fn builtin_check_args(
             errors,
         ),
         "mget" => {
-            // mget map key → O value_type
-            let val_ty = match arg_types.first() {
-                Some(Ty::Map(_, v)) => *v.clone(),
-                _ => Ty::Unknown,
+            // mget map key → O value_type. The key type must be compatible
+            // with the declared map key type (text or number); we no longer
+            // hard-code "must be text" — see PR #257 for the MapKey rollout.
+            let (key_ty_decl, val_ty) = match arg_types.first() {
+                Some(Ty::Map(k, v)) => (*k.clone(), *v.clone()),
+                _ => (Ty::Unknown, Ty::Unknown),
             };
             if let Some(key_ty) = arg_types.get(1)
-                && !compatible(key_ty, &Ty::Text)
+                && !is_valid_map_key_arg(key_ty, &key_ty_decl)
             {
                 errors.push(VerifyError {
                     code: "ILO-T013",
                     function: func_ctx.to_string(),
-                    message: format!("'mget' key must be t, got {key_ty}"),
+                    message: format!(
+                        "'mget' key must match map key type {key_ty_decl}, got {key_ty}"
+                    ),
                     hint: None,
                     span,
                     is_warning: false,
@@ -1927,17 +1956,41 @@ fn builtin_check_args(
             (Ty::Optional(Box::new(val_ty)), errors)
         }
         "mset" => {
-            // mset map key val → map (same type as input map, or inferred)
+            // mset map key val → map (same key type as input map, value type
+            // inferred from the third arg if not previously known).
+            let (key_ty_decl, val_ty_decl) = match arg_types.first() {
+                Some(Ty::Map(k, v)) => (Some(*k.clone()), Some(*v.clone())),
+                _ => (None, None),
+            };
+            if let (Some(key_ty), Some(decl)) = (arg_types.get(1), key_ty_decl.as_ref())
+                && !is_valid_map_key_arg(key_ty, decl)
+            {
+                errors.push(VerifyError {
+                    code: "ILO-T013",
+                    function: func_ctx.to_string(),
+                    message: format!("'mset' key must match map key type {decl}, got {key_ty}"),
+                    hint: None,
+                    span,
+                    is_warning: false,
+                });
+            }
             let map_ty = match arg_types.first() {
                 Some(Ty::Map(k, _)) => {
                     let val_ty = arg_types.get(2).cloned().unwrap_or(Ty::Unknown);
                     Ty::Map(k.clone(), Box::new(val_ty))
                 }
-                _ => Ty::Map(Box::new(Ty::Unknown), Box::new(Ty::Unknown)),
+                _ => Ty::Map(
+                    Box::new(Ty::Unknown),
+                    Box::new(val_ty_decl.unwrap_or(Ty::Unknown)),
+                ),
             };
             (map_ty, errors)
         }
         "mhas" => {
+            let key_ty_decl = match arg_types.first() {
+                Some(Ty::Map(k, _)) => *k.clone(),
+                _ => Ty::Unknown,
+            };
             if let Some(first) = arg_types.first()
                 && !matches!(first, Ty::Map(_, _) | Ty::Unknown)
             {
@@ -1945,6 +1998,20 @@ fn builtin_check_args(
                     code: "ILO-T013",
                     function: func_ctx.to_string(),
                     message: format!("'mhas' expects a map, got {first}"),
+                    hint: None,
+                    span,
+                    is_warning: false,
+                });
+            }
+            if let Some(key_ty) = arg_types.get(1)
+                && !is_valid_map_key_arg(key_ty, &key_ty_decl)
+            {
+                errors.push(VerifyError {
+                    code: "ILO-T013",
+                    function: func_ctx.to_string(),
+                    message: format!(
+                        "'mhas' key must match map key type {key_ty_decl}, got {key_ty}"
+                    ),
                     hint: None,
                     span,
                     is_warning: false,
@@ -1965,7 +2032,12 @@ fn builtin_check_args(
                     is_warning: false,
                 });
             }
-            (Ty::List(Box::new(Ty::Text)), errors)
+            // mkeys returns the declared key type (was hard-coded to L t).
+            let key_ty = match arg_types.first() {
+                Some(Ty::Map(k, _)) => *k.clone(),
+                _ => Ty::Text,
+            };
+            (Ty::List(Box::new(key_ty)), errors)
         }
         "mvals" => {
             let val_ty = match arg_types.first() {
@@ -1975,6 +2047,24 @@ fn builtin_check_args(
             (Ty::List(Box::new(val_ty)), errors)
         }
         "mdel" => {
+            let key_ty_decl = match arg_types.first() {
+                Some(Ty::Map(k, _)) => *k.clone(),
+                _ => Ty::Unknown,
+            };
+            if let Some(key_ty) = arg_types.get(1)
+                && !is_valid_map_key_arg(key_ty, &key_ty_decl)
+            {
+                errors.push(VerifyError {
+                    code: "ILO-T013",
+                    function: func_ctx.to_string(),
+                    message: format!(
+                        "'mdel' key must match map key type {key_ty_decl}, got {key_ty}"
+                    ),
+                    hint: None,
+                    span,
+                    is_warning: false,
+                });
+            }
             let map_ty = match arg_types.first() {
                 Some(ty @ Ty::Map(_, _)) => ty.clone(),
                 _ => Ty::Map(Box::new(Ty::Unknown), Box::new(Ty::Unknown)),
@@ -5896,13 +5986,32 @@ mod tests {
     }
 
     #[test]
-    fn mget_key_non_text() {
-        // mget key must be t; passing n (123) should error
+    fn mget_key_type_mismatch() {
+        // Map declared with text keys (M t n); passing a number key
+        // mismatches and should error.
         let errs = parse_and_verify("f m:M t n>O n;mget m 123").unwrap_err();
         assert!(
             errs.iter()
                 .any(|e| e.code == "ILO-T013" && e.message.contains("mget"))
         );
+    }
+
+    #[test]
+    fn mget_numeric_key_ok() {
+        // Map declared with numeric keys (M n t); passing a number key is fine.
+        assert!(parse_and_verify("f m:M n t>O t;mget m 42").is_ok());
+    }
+
+    #[test]
+    fn mset_numeric_key_ok() {
+        // Map declared with numeric keys (M n n); mset accepts numeric keys.
+        assert!(parse_and_verify("f m:M n n>M n n;mset m 7 11").is_ok());
+    }
+
+    #[test]
+    fn mkeys_numeric_returns_list_of_numbers() {
+        // mkeys returns L of the declared key type — L n for M n t.
+        assert!(parse_and_verify("f m:M n t>L n;mkeys m").is_ok());
     }
 
     #[test]
