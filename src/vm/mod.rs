@@ -1793,6 +1793,22 @@ impl RegCompiler {
                             let rb = self.compile_expr(&args[0]);
                             let ra = self.alloc_reg();
                             self.emit_abc(OP_NUM, ra, rb, 0);
+                            // num returns R n t — handle auto-unwrap (`!`):
+                            //   on Ok(v), extract v; on Err, propagate-RET as
+                            //   the enclosing function's tail return. Tree
+                            //   short-circuits via RuntimeError.propagate_value
+                            //   so the VM must match that contract here rather
+                            //   than letting `Value::Ok(...)` flow on as the
+                            //   result of `num! ...`.
+                            if *unwrap {
+                                let check_reg = self.alloc_reg();
+                                self.emit_abc(OP_ISOK, check_reg, ra, 0);
+                                let skip_ret = self.emit_jmpt(check_reg);
+                                self.emit_abx(OP_RET, ra, 0);
+                                self.current.patch_jump(skip_ret);
+                                self.emit_abc(OP_UNWRAP, ra, ra, 0);
+                                self.next_reg = ra + 1;
+                            }
                             return ra;
                         }
                         (Builtin::Abs, 1) => {
@@ -2168,6 +2184,17 @@ impl RegCompiler {
                             let rc = self.compile_expr(&args[1]);
                             let ra = self.alloc_reg();
                             self.emit_abc(OP_DTFMT, ra, rb, rc);
+                            // dtfmt returns R t t — handle auto-unwrap (`!`).
+                            // Mirrors the Dtparse handling immediately below.
+                            if *unwrap {
+                                let check_reg = self.alloc_reg();
+                                self.emit_abc(OP_ISOK, check_reg, ra, 0);
+                                let skip_ret = self.emit_jmpt(check_reg);
+                                self.emit_abx(OP_RET, ra, 0);
+                                self.current.patch_jump(skip_ret);
+                                self.emit_abc(OP_UNWRAP, ra, ra, 0);
+                                self.next_reg = ra + 1;
+                            }
                             return ra;
                         }
                         (Builtin::Dtparse, 2) => {

@@ -176,19 +176,42 @@ fn mget_two_step_default_miss_cranelift() {
     check_two_step_miss("--run-cranelift");
 }
 
-// ── existing Result `!` path unchanged ───────────────────────────────────
-// num! returns R n t; propagation should yield the wrapped Err.
+// ── Result `!` propagation: cross-engine contract ───────────────────────
+// `!` on a Result-returning builtin must short-circuit on Err the same way
+// it does for user functions:
+//   - Ok(v)  → extract v; subsequent statements see the inner value.
+//   - Err(e) → return Value::Err(e) from the enclosing function, skipping
+//              any remaining statements (including a tail `~v` wrap).
+//
+// Tree implements this via `RuntimeError.propagate_value`. The VM emits
+// OP_ISOK / OP_RET / OP_UNWRAP at the call site; Cranelift inherits the
+// behaviour because it consumes VM bytecode. All three engines must agree:
+// before this fix `num!` and `dtfmt!` on VM/Cranelift skipped the guard
+// and produced `Value::Ok(Value::Err(_))` on the Err branch.
+
+// num! returns R n t.
 const RESULT_BANG_OK_SRC: &str = r#"f>R n t;v=num! "42";~v"#;
 const RESULT_BANG_ERR_SRC: &str = r#"f>R n t;v=num! "abc";~v"#;
 
 fn check_result_ok(engine: &str) {
-    let out = run(engine, RESULT_BANG_OK_SRC, "f");
-    // Tree prints `~42`, VM prints `~~42` (pre-existing wrap-display
-    // discrepancy unrelated to this change). Both contain "42" and start with
-    // a wrap marker.
+    // After the fix, every engine prints `~42` — num! unwraps to 42, then
+    // the explicit `~v` wraps it as Ok(42). Previously VM/Cranelift printed
+    // `~~42` because num! left the Ok wrap on.
+    assert_eq!(
+        run(engine, RESULT_BANG_OK_SRC, "f"),
+        "~42",
+        "engine={engine}"
+    );
+}
+
+fn check_result_err(engine: &str) {
+    // num! "abc" → Err("abc") propagates out of f before the `~v` wrap
+    // runs. Entry-function Err contract (#255) means exit=1 with the err
+    // on stderr.
+    let stderr = run_err(engine, RESULT_BANG_ERR_SRC, "f");
     assert!(
-        out.starts_with('~') && out.contains("42"),
-        "engine={engine}: expected wrapped 42, got {out}"
+        stderr.contains("abc"),
+        "engine={engine}: expected err containing abc on stderr, got {stderr}"
     );
 }
 
@@ -203,35 +226,142 @@ fn result_bang_ok_vm() {
 }
 
 #[test]
+#[cfg(feature = "cranelift")]
+fn result_bang_ok_cranelift() {
+    check_result_ok("--run-cranelift");
+}
+
+#[test]
 fn result_bang_err_tree() {
-    // Tree: `!` short-circuit returns Value::Err from `f`. The entry function
-    // err contract (regression_main_err_exit_code.rs) means we exit 1 with
-    // the err on stderr.
-    let out = run_err("--run-tree", RESULT_BANG_ERR_SRC, "f");
-    assert!(
-        out.contains("abc"),
-        "expected err containing abc on stderr, got {out}"
-    );
+    check_result_err("--run-tree");
 }
 
 #[test]
 fn result_bang_err_vm() {
-    // VM: known pre-existing divergence. `num! "abc"` does not short-circuit
-    // the enclosing `~v` wrap, so the program returns `Value::Ok(Value::Err)`
-    // (printed as `~^abc`) on the VM where tree returns `Value::Err`. The
-    // tree behaviour is correct. Fixing the VM `!` propagation is its own
-    // change — out of scope for the entry-function exit-code fix. We assert
-    // here that some "abc" surfaces somewhere and the process at least
-    // doesn't crash, to keep coverage and pin the contract until the VM bug
-    // is addressed in a follow-up.
-    let out = ilo()
-        .args([RESULT_BANG_ERR_SRC, "--run-vm", "f"])
-        .output()
-        .expect("failed to run ilo");
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    let stderr = String::from_utf8_lossy(&out.stderr);
+    check_result_err("--run-vm");
+}
+
+#[test]
+#[cfg(feature = "cranelift")]
+fn result_bang_err_cranelift() {
+    check_result_err("--run-cranelift");
+}
+
+// ── dtfmt!: timestamp-out-of-range Err short-circuit ─────────────────────
+// dtfmt returns R t t. A 14-digit epoch overflows chrono's range and
+// surfaces as Err("dtfmt: timestamp out of range (...)"). Pre-fix, VM and
+// Cranelift wrapped the Err in an Ok and emitted `~^dtfmt: …`. Tree
+// propagated the Err out of f as exit=1.
+const DTFMT_BANG_ERR_SRC: &str = r#"f>R t t;v=dtfmt! 99999999999999 "%Y";~v"#;
+
+fn check_dtfmt_err(engine: &str) {
+    let stderr = run_err(engine, DTFMT_BANG_ERR_SRC, "f");
     assert!(
-        stdout.contains("abc") || stderr.contains("abc"),
-        "expected err containing abc somewhere, stdout={stdout} stderr={stderr}",
+        stderr.contains("dtfmt") && stderr.contains("out of range"),
+        "engine={engine}: expected dtfmt err on stderr, got {stderr}"
     );
+}
+
+#[test]
+fn dtfmt_bang_err_tree() {
+    check_dtfmt_err("--run-tree");
+}
+
+#[test]
+fn dtfmt_bang_err_vm() {
+    check_dtfmt_err("--run-vm");
+}
+
+#[test]
+#[cfg(feature = "cranelift")]
+fn dtfmt_bang_err_cranelift() {
+    check_dtfmt_err("--run-cranelift");
+}
+
+// ── num! short-circuit skips subsequent statements ───────────────────────
+// If num! propagates Err, the `~99` literal on the next line must not run.
+const NUM_BANG_SHORTCIRCUIT_SRC: &str = r#"f>R n t;v=num! "abc";~99"#;
+
+fn check_num_shortcircuit(engine: &str) {
+    let stderr = run_err(engine, NUM_BANG_SHORTCIRCUIT_SRC, "f");
+    assert!(
+        stderr.contains("abc"),
+        "engine={engine}: expected propagated err, got {stderr}"
+    );
+}
+
+#[test]
+fn num_bang_shortcircuit_tree() {
+    check_num_shortcircuit("--run-tree");
+}
+
+#[test]
+fn num_bang_shortcircuit_vm() {
+    check_num_shortcircuit("--run-vm");
+}
+
+#[test]
+#[cfg(feature = "cranelift")]
+fn num_bang_shortcircuit_cranelift() {
+    check_num_shortcircuit("--run-cranelift");
+}
+
+// ── rd! / rdl! short-circuit on missing file ─────────────────────────────
+// rd / rdl return R _ t. A path that doesn't exist must propagate as Err
+// out of the enclosing function — same contract as num!. These cover the
+// existing OP_RD / OP_RDL fast-paths (already correct pre-fix) so we don't
+// regress them while wiring up num! and dtfmt!.
+const RD_BANG_SRC: &str = r#"f>R t t;v=rd! "/no/such/path/ilo-test";~v"#;
+const RDL_BANG_SRC: &str = r#"f>R (L t) t;v=rdl! "/no/such/path/ilo-test";~v"#;
+
+fn check_rd_err(engine: &str) {
+    let stderr = run_err(engine, RD_BANG_SRC, "f");
+    assert!(
+        stderr.to_lowercase().contains("no such")
+            || stderr.contains("not found")
+            || stderr.contains("/no/such/path"),
+        "engine={engine}: expected file-not-found err, got {stderr}"
+    );
+}
+
+fn check_rdl_err(engine: &str) {
+    let stderr = run_err(engine, RDL_BANG_SRC, "f");
+    assert!(
+        stderr.to_lowercase().contains("no such")
+            || stderr.contains("not found")
+            || stderr.contains("/no/such/path"),
+        "engine={engine}: expected file-not-found err, got {stderr}"
+    );
+}
+
+#[test]
+fn rd_bang_err_tree() {
+    check_rd_err("--run-tree");
+}
+
+#[test]
+fn rd_bang_err_vm() {
+    check_rd_err("--run-vm");
+}
+
+#[test]
+#[cfg(feature = "cranelift")]
+fn rd_bang_err_cranelift() {
+    check_rd_err("--run-cranelift");
+}
+
+#[test]
+fn rdl_bang_err_tree() {
+    check_rdl_err("--run-tree");
+}
+
+#[test]
+fn rdl_bang_err_vm() {
+    check_rdl_err("--run-vm");
+}
+
+#[test]
+#[cfg(feature = "cranelift")]
+fn rdl_bang_err_cranelift() {
+    check_rdl_err("--run-cranelift");
 }

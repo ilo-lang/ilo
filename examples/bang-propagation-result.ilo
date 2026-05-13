@@ -1,0 +1,30 @@
+-- `!` on a Result-returning builtin short-circuits the enclosing function
+-- on Err the same way it does for user functions: Ok(v) extracts v; Err(e)
+-- returns Value::Err(e) out of the function, skipping any tail wraps.
+--
+-- Pre-fix, the VM and Cranelift backends had per-builtin fast-paths for
+-- `num` and `dtfmt` that dropped the `!` flag and produced
+-- `Value::Ok(Value::Err(_))` on the Err branch instead of propagating.
+-- Tree was correct via `RuntimeError.propagate_value`. This example pins
+-- the cross-engine contract.
+
+-- Happy path: num! "42" extracts 42, then `~v` wraps it back as Ok(42).
+parse-ok>R n t;v=num! "42";~v
+
+-- Err path: num! "abc" returns Err("abc") which propagates out of the
+-- function before the explicit `~v` wrap runs. Exit code is 1 and the
+-- err surfaces on stderr (entry-function Err contract from #255).
+parse-err>R n t;v=num! "abc";~v
+
+-- Same contract for dtfmt!: an out-of-range epoch returns Err and `!`
+-- propagates it before the tail wrap.
+fmt-err>R t t;v=dtfmt! 99999999999999 "%Y";~v
+
+-- run: parse-ok
+-- out: ~42
+
+-- run: parse-err
+-- err: ^abc
+
+-- run: fmt-err
+-- err: ^dtfmt: timestamp out of range (99999999999999)
