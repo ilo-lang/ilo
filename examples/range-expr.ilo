@@ -1,0 +1,30 @@
+-- Range bounds in @ loops accept prefix-op expressions, not just atoms.
+-- Saves the intermediate-binding tax for `start = current + offset` patterns.
+
+-- Skip the first two: @j +i 2..n iterates 5..10 = [5,6,7,8,9]
+skip-first-two i:n n:n>L n;xs=[];@j +i 2..n{xs=+=xs j};xs
+
+-- Double-end: @j 0..*n 2 iterates 0..(n*2) = 0..6 = [0,1,2,3,4,5]
+double-end n:n>L n;xs=[];@j 0..*n 2{xs=+=xs j};xs
+
+-- Trim both ends: @j -a 1..-b 1 iterates 1..5 = [1,2,3,4]
+trim-both a:n b:n>L n;xs=[];@j -a 1..-b 1{xs=+=xs j};xs
+
+-- Skip the last one: @j 0..-n 1 iterates 0..(n-1) = [0,1,2,3]
+drop-last n:n>L n;xs=[];@j 0..-n 1{xs=+=xs j};xs
+
+-- Call-style bounds still need a binding (`n=len xs` first).
+-- This is the documented workaround; the parser does not call-parse
+-- inside range bounds.
+sum-via-len xs:L n>n;n=len xs;s=0;@j 0..n{s=+s j};+s 0
+
+-- run: skip-first-two 3 10
+-- out: [5, 6, 7, 8, 9]
+-- run: double-end 3
+-- out: [0, 1, 2, 3, 4, 5]
+-- run: trim-both 2 6
+-- out: [1, 2, 3, 4]
+-- run: drop-last 5
+-- out: [0, 1, 2, 3]
+-- run: sum-via-len [1,2,3]
+-- out: 3
