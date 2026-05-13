@@ -1,0 +1,24 @@
+-- Call-form expressions are allowed on both sides of `..` in @ loops.
+-- Saves the intermediate-binding tax that personas kept tripping over:
+-- `n=len xs;@j 0..n` collapses to `@j 0..len xs`.
+
+-- End bound is a 1-arg call: sum the indices of xs.
+sum-indices xs:L n>n;s=0;@j 0..len xs{s=+s j};+s 0
+
+-- End bound is a 2-arg call: `at ys 0` is the first element of ys.
+sum-to-first ys:L n>n;s=0;@j 0..at ys 0{s=+s j};+s 0
+
+-- Start bound is a call: iterate from xs[0] up to len xs.
+range-from-first xs:L n>L n;out=[];@j at xs 0..len xs{out=+=out j};out
+
+-- Mixed: prefix-binop start with call-form end.
+slide i:n xs:L n>L n;out=[];@j +i 2..len xs{out=+=out j};out
+
+-- run: sum-indices [1,2,3]
+-- out: 3
+-- run: sum-to-first [4,9,9,9]
+-- out: 6
+-- run: range-from-first [2,9,9,9]
+-- out: [2, 3]
+-- run: slide 3 ["a","b","c","d","e","f"]
+-- out: [5]
