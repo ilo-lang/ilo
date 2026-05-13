@@ -1445,11 +1445,19 @@ fn strip_string_contents(source: &str) -> String {
 
 /// Collect idiomatic hints by scanning source text for non-canonical forms.
 /// Returns a list of human-readable hint strings.
+///
+/// Word-boundary scans (alias hints) run over real lexer tokens, not raw text:
+/// re-lexing skips comments, strings, numbers, operators, and CLI argv, so a
+/// `tail` substring inside a comment line, a string literal, or a file path
+/// printed to stderr won't fire `hint: \`tail\` → \`tl\``. The text-based `==`
+/// scan strips both strings and comments first for the same reason.
 fn collect_hints(source: &str) -> Vec<String> {
     let mut hints = Vec::new();
     // Hint: == → = saves 1 character
-    // Scan for `==` outside string literals (reuse strip_string_contents)
-    let stripped = strip_string_contents(source);
+    // Scan for `==` outside string literals and comments. We don't use the
+    // lexer here because logos collapses both `=` and `==` into `Token::Eq`,
+    // so the distinction is only visible in raw text.
+    let stripped = strip_string_and_comment_contents(source);
     let mut pos = 0;
     let bytes = stripped.as_bytes();
     while pos + 1 < bytes.len() {
@@ -1459,16 +1467,53 @@ fn collect_hints(source: &str) -> Vec<String> {
         }
         pos += 1;
     }
-    // Hint: long-form builtin aliases → canonical short form
-    // Scan for word boundaries matching known aliases
-    let mut seen_alias = false;
-    for word in stripped.split(|c: char| !c.is_alphanumeric() && c != '_' && c != '-') {
-        if !seen_alias && let Some(short) = ast::resolve_alias(word) {
-            hints.push(format!("hint: `{word}` → `{short}` (canonical short form)"));
-            seen_alias = true; // one hint per run is enough
+    // Hint: long-form builtin aliases → canonical short form.
+    // Use lexer tokens so we only consider real source identifiers — not words
+    // appearing in comments, string literals, or anything outside the source
+    // itself. Falling back to no hint on lex failure is fine: the run already
+    // succeeded if we got here, so a re-lex failure is implausible, but we
+    // err on the side of "no hint" rather than spurious noise.
+    if let Ok(tokens) = lexer::lex(source) {
+        for (tok, _) in &tokens {
+            if let lexer::Token::Ident(word) = tok
+                && let Some(short) = ast::resolve_alias(word)
+            {
+                hints.push(format!("hint: `{word}` → `{short}` (canonical short form)"));
+                break; // one hint per run is enough
+            }
         }
     }
     hints
+}
+
+/// Strip both string-literal contents and `--`-prefixed line comments,
+/// replacing their contents with spaces so byte offsets are preserved.
+/// Used by the text-based `==` scan so a literal `==` inside a string or
+/// comment doesn't trigger the hint.
+fn strip_string_and_comment_contents(source: &str) -> String {
+    let stripped = strip_string_contents(source);
+    let mut out = String::with_capacity(stripped.len());
+    let mut chars = stripped.chars().peekable();
+    let mut in_comment = false;
+    while let Some(c) = chars.next() {
+        if in_comment {
+            if c == '\n' {
+                in_comment = false;
+                out.push(c);
+            } else {
+                out.push(' ');
+            }
+        } else if c == '-' && chars.peek() == Some(&'-') {
+            // Consume the second '-' and enter comment mode
+            chars.next();
+            out.push(' ');
+            out.push(' ');
+            in_comment = true;
+        } else {
+            out.push(c);
+        }
+    }
+    out
 }
 
 /// Emit hints to the appropriate output channel.
@@ -6603,6 +6648,74 @@ mod tests {
     fn collect_hints_no_hints_when_clean() {
         let hints = collect_hints("f x:n>n;+x 1");
         assert!(hints.is_empty(), "clean code should have no hints");
+    }
+
+    // Regression: streaming-tail persona reported `hint: tail → tl` firing on
+    // every Approach B run because the file path contained `tail`. The path
+    // never reaches `collect_hints`, but the same root cause — raw-text scan
+    // ignoring lexer boundaries — let alias words inside comments fire the
+    // hint. These tests pin the lexer-token contract.
+    #[test]
+    fn collect_hints_alias_in_comment_does_not_fire() {
+        // `tail` in a line comment must not trigger the alias hint.
+        let hints = collect_hints("-- reading /tmp/ilo-streaming-tail-rerun/app.log\nf>n;42");
+        assert!(
+            hints.is_empty(),
+            "alias word in comment should not fire hint, got: {:?}",
+            hints
+        );
+    }
+
+    #[test]
+    fn collect_hints_other_alias_words_in_comments_do_not_fire() {
+        // Spot-check a handful of common alias source words — none of these
+        // should fire when they appear only in comments.
+        for word in ["tail", "filter", "flatmap", "length", "head", "append"] {
+            let src = format!("-- builtin: {word} something\nf>n;42");
+            let hints = collect_hints(&src);
+            assert!(
+                hints.is_empty(),
+                "comment-only `{}` should not fire hint, got: {:?}",
+                word,
+                hints
+            );
+        }
+    }
+
+    #[test]
+    fn collect_hints_alias_in_string_does_not_fire() {
+        // `tail` inside a string literal must not trigger the hint.
+        let hints = collect_hints(r#"f>t;"tail of the file""#);
+        assert!(
+            hints.is_empty(),
+            "alias word in string literal should not fire hint, got: {:?}",
+            hints
+        );
+    }
+
+    #[test]
+    fn collect_hints_real_alias_use_still_fires() {
+        // Contract: the hint *should* still fire when the alias appears as
+        // a real source identifier. `tail` is a known alias for `tl`.
+        let hints = collect_hints("f xs:L n>L n;tail xs");
+        assert!(
+            hints
+                .iter()
+                .any(|h| h.contains("`tail`") && h.contains("`tl`")),
+            "expected tail→tl hint on real alias use, got: {:?}",
+            hints
+        );
+    }
+
+    #[test]
+    fn collect_hints_double_equals_inside_comment_no_hint() {
+        // `==` inside a comment shouldn't trigger the equality hint either.
+        let hints = collect_hints("-- compare a == b here\nf x:n y:n>b;=x y");
+        assert!(
+            hints.is_empty(),
+            "`==` inside comment should not fire hint, got: {:?}",
+            hints
+        );
     }
 
     // ── tools_cmd: error paths ────────────────────────────────────────────────
