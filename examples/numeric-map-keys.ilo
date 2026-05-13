@@ -1,0 +1,33 @@
+-- Numeric map keys: M n _ — maps with integer keys, no `k=str j` tax.
+-- Before MapKey, every map lookup keyed by a loop index had to go through a
+-- `k=str j` stringification step (the routing-tsp tax). Now numeric keys are
+-- first-class: declare `M n _` and pass numbers straight through.
+--
+-- Floats floor to i64 at the builtin boundary, matching `at xs i`. Text and
+-- number keys are distinct: Int(1) and Text("1") never collide.
+
+-- Build a small histogram by writing through numeric keys.
+hist>n;m=mmap;m=mset m 1 10;m=mset m 2 20;m=mset m 3 30;r=mget m 2;?r{n v:v;_:-1}
+
+-- mhas works with numeric keys.
+has-key>b;m=mmap;m=mset m 42 "answer";mhas m 42
+
+-- mdel works with numeric keys.
+del-key>n;m=mmap;m=mset m 1 100;m=mset m 2 200;m=mdel m 1;len (mkeys m)
+
+-- mkeys returns L n for a numeric-keyed map.
+key-count>n;m=mmap;m=mset m 1 0;m=mset m 2 0;m=mset m 3 0;ks=mkeys m;len ks
+
+-- Iteration is deterministic via sorted mkeys.
+sorted-keys>t;m=mmap;m=mset m 3 0;m=mset m 1 0;m=mset m 2 0;ks=srt (mkeys m);fmt "{};{};{}" (str (at ks 0)) (str (at ks 1)) (str (at ks 2))
+
+-- run: hist
+-- out: 20
+-- run: has-key
+-- out: true
+-- run: del-key
+-- out: 1
+-- run: key-count
+-- out: 3
+-- run: sorted-keys
+-- out: 1;2;3
