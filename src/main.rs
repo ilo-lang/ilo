@@ -2424,6 +2424,7 @@ fn dispatch_run(r: cli::RunArgs, mode: OutputMode, explicit_json: bool, no_hints
                         return 1;
                     }
                 };
+                let suppress = program_result_should_suppress(&program, func_name);
                 run_vm_with_provider(
                     &compiled,
                     func_name,
@@ -2436,6 +2437,7 @@ fn dispatch_run(r: cli::RunArgs, mode: OutputMode, explicit_json: bool, no_hints
                     &source,
                     mode,
                     explicit_json,
+                    suppress,
                 )
             }
             cli::Engine::Tree => {
@@ -2518,6 +2520,7 @@ fn run_cranelift_engine(program: &ast::Program, rest: &[String], explicit_json: 
         vec![]
     };
     let run_args = coerce_cli_args(program, func_name, run_args);
+    let suppress = program_result_should_suppress(program, func_name);
 
     #[cfg(feature = "cranelift")]
     {
@@ -2551,7 +2554,7 @@ fn run_cranelift_engine(program: &ast::Program, rest: &[String], explicit_json: 
         match vm::jit_cranelift::compile_and_call(chunk, nan_consts, &nan_args, &compiled) {
             Some(result_bits) => {
                 let result = vm::NanVal(result_bits).to_value();
-                print_value(&result, explicit_json);
+                print_value(&result, explicit_json, suppress);
                 0
             }
             None => {
@@ -2562,7 +2565,7 @@ fn run_cranelift_engine(program: &ast::Program, rest: &[String], explicit_json: 
     }
     #[cfg(not(feature = "cranelift"))]
     {
-        let _ = (func_name, run_args, explicit_json);
+        let _ = (func_name, run_args, explicit_json, suppress);
         eprintln!("Cranelift JIT not enabled. Build with: cargo build --features cranelift");
         1
     }
@@ -2710,13 +2713,14 @@ fn run_vm_with_provider(
     source: &str,
     mode: OutputMode,
     explicit_json: bool,
+    suppress_loop_tail: bool,
 ) -> i32 {
     #[cfg(feature = "tools")]
     if let Some(provider) = mcp_provider {
         let rt = mcp_rt.expect("runtime present with mcp_provider");
         match vm::run_with_tools(compiled, func_name, args, provider, rt) {
             Ok(val) => {
-                print_value(&val, explicit_json);
+                print_value(&val, explicit_json, suppress_loop_tail);
                 return 0;
             }
             Err(e) => {
@@ -2749,7 +2753,7 @@ fn run_vm_with_provider(
             &runtime,
         ) {
             Ok(val) => {
-                print_value(&val, explicit_json);
+                print_value(&val, explicit_json, suppress_loop_tail);
                 0
             }
             Err(e) => {
@@ -2761,7 +2765,7 @@ fn run_vm_with_provider(
 
     match vm::run(compiled, func_name, args) {
         Ok(val) => {
-            print_value(&val, explicit_json);
+            print_value(&val, explicit_json, suppress_loop_tail);
             0
         }
         Err(e) => {
@@ -2785,6 +2789,7 @@ fn run_interp_with_provider(
     mode: OutputMode,
     explicit_json: bool,
 ) -> i32 {
+    let suppress = program_result_should_suppress(program, func_name);
     #[cfg(feature = "tools")]
     if let Some(provider) = mcp_provider {
         let rt = std::sync::Arc::new(mcp_rt.expect("runtime present with mcp_provider"));
@@ -2796,7 +2801,7 @@ fn run_interp_with_provider(
             rt,
         ) {
             Ok(val) => {
-                print_value(&val, explicit_json);
+                print_value(&val, explicit_json, suppress);
                 return 0;
             }
             Err(e) => {
@@ -2831,7 +2836,7 @@ fn run_interp_with_provider(
             runtime,
         ) {
             Ok(val) => {
-                print_value(&val, explicit_json);
+                print_value(&val, explicit_json, suppress);
                 0
             }
             Err(e) => {
@@ -2843,7 +2848,7 @@ fn run_interp_with_provider(
 
     match interpreter::run(program, func_name, args) {
         Ok(val) => {
-            print_value(&val, explicit_json);
+            print_value(&val, explicit_json, suppress);
             0
         }
         Err(e) => {
@@ -2861,6 +2866,7 @@ fn run_default(
     mode: OutputMode,
     explicit_json: bool,
 ) -> i32 {
+    let suppress = program_result_should_suppress(program, func_name);
     // Try Cranelift JIT first — all functions are now eligible
     #[cfg(feature = "cranelift")]
     {
@@ -2880,7 +2886,7 @@ fn run_default(
                     vm::jit_cranelift::compile_and_call(chunk, nan_consts, &nan_args, &compiled)
                 {
                     let result = vm::NanVal(result_bits).to_value();
-                    print_value(&result, explicit_json);
+                    print_value(&result, explicit_json, suppress);
                     return 0;
                 }
             }
@@ -2890,7 +2896,7 @@ fn run_default(
     // Fall back to interpreter
     match interpreter::run(program, func_name, args) {
         Ok(val) => {
-            print_value(&val, explicit_json);
+            print_value(&val, explicit_json, suppress);
             0
         }
         Err(e) => {
@@ -2900,10 +2906,92 @@ fn run_default(
     }
 }
 
+/// Walk a body looking for any `ret` or braceless guard — these short-circuit the
+/// function and mean the program's return value did not come from the body-tail.
+fn body_has_early_return(body: &[ast::Spanned<ast::Stmt>]) -> bool {
+    for s in body {
+        if stmt_has_early_return(&s.node) {
+            return true;
+        }
+    }
+    false
+}
+
+fn stmt_has_early_return(stmt: &ast::Stmt) -> bool {
+    match stmt {
+        ast::Stmt::Return(_) => true,
+        // Braceless guards (`cond expr`) early-return from the function.
+        ast::Stmt::Guard {
+            braceless: true, ..
+        } => true,
+        // Braced guards do NOT early-return, but their bodies might contain `ret`.
+        ast::Stmt::Guard {
+            body, else_body, ..
+        } => {
+            body_has_early_return(body)
+                || else_body.as_ref().is_some_and(|b| body_has_early_return(b))
+        }
+        ast::Stmt::Match { arms, .. } => arms.iter().any(|a| body_has_early_return(&a.body)),
+        ast::Stmt::ForEach { body, .. }
+        | ast::Stmt::ForRange { body, .. }
+        | ast::Stmt::While { body, .. } => body_has_early_return(body),
+        _ => false,
+    }
+}
+
+/// Top-level auto-print suppression rule for the program's final value.
+///
+/// Returns true when the program's syntactic entry-function body ends with a
+/// `@`/`wh` loop AND has no early-return path. In that case the loop's
+/// last-body-value bubbles up as the program result, and re-printing it on top
+/// of whatever the loop body already printed (e.g. via `prnt`) just duplicates
+/// the last item. Functions are still free to use loop-as-expression value
+/// internally; this is purely about the final stdout line at the top level.
+fn program_result_should_suppress(program: &ast::Program, func_name: Option<&str>) -> bool {
+    let entry_body: Option<&Vec<ast::Spanned<ast::Stmt>>> = match func_name {
+        Some(name) => program.declarations.iter().find_map(|d| match d {
+            ast::Decl::Function { name: n, body, .. } if n == name => Some(body),
+            _ => None,
+        }),
+        None => program.declarations.iter().find_map(|d| match d {
+            ast::Decl::Function { body, .. } => Some(body),
+            _ => None,
+        }),
+    };
+    let Some(body) = entry_body else {
+        return false;
+    };
+    let Some(last) = body.last() else {
+        return false;
+    };
+    let ends_with_loop = matches!(
+        last.node,
+        ast::Stmt::ForEach { .. } | ast::Stmt::ForRange { .. } | ast::Stmt::While { .. }
+    );
+    if !ends_with_loop {
+        return false;
+    }
+    // Only suppress when the entry body has no early-return path. With an
+    // early-return present (`ret`, braceless guard) we can't tell at print
+    // time whether the value came from the loop tail or from an explicit
+    // return, so we err on the side of printing.
+    !body_has_early_return(body)
+}
+
 /// Print a program result value. When `as_json` is true (explicit -j/--json), wraps it as
 /// `{"ok": ...}` or `{"error": ...}`. Auto-detected JSON mode does not affect result format.
-fn print_value(val: &interpreter::Value, as_json: bool) {
+///
+/// In plain (non-JSON) mode, suppresses the line entirely when
+/// `suppress_loop_tail` is true — see [`program_result_should_suppress`] for
+/// the rule. A bare Nil that came from an *explicit* return (e.g. a function
+/// declared `>O n` returning `nil`) is still printed, because the user asked
+/// for it. JSON mode is unchanged so machine-readable consumers always get a
+/// structured result.
+fn print_value(val: &interpreter::Value, as_json: bool, suppress_loop_tail: bool) {
     if !as_json {
+        if suppress_loop_tail {
+            return;
+        }
         println!("{}", val);
         return;
     }
@@ -4109,6 +4197,7 @@ mod tests {
             "f x:n>n;*x 2",
             OutputMode::Text,
             false,
+            false,
         );
     }
 
@@ -4127,6 +4216,7 @@ mod tests {
             "f x:n>n;*x 3",
             OutputMode::Json,
             true,
+            false,
         );
     }
 
@@ -4269,40 +4359,40 @@ mod tests {
 
     #[test]
     fn print_value_plain_number_no_json() {
-        print_value(&interpreter::Value::Number(42.0), false);
+        print_value(&interpreter::Value::Number(42.0), false, false);
     }
 
     #[test]
     fn print_value_ok_as_json() {
         let val = interpreter::Value::Ok(Box::new(interpreter::Value::Number(42.0)));
-        print_value(&val, true);
+        print_value(&val, true, false);
     }
 
     #[test]
     fn print_value_err_as_json() {
         let val = interpreter::Value::Err(Box::new(interpreter::Value::Text("oops".into())));
-        print_value(&val, true);
+        print_value(&val, true, false);
     }
 
     #[test]
     fn print_value_err_no_json() {
         let val = interpreter::Value::Err(Box::new(interpreter::Value::Text("fail".into())));
-        print_value(&val, false);
+        print_value(&val, false, false);
     }
 
     #[test]
     fn print_value_text_as_json() {
-        print_value(&interpreter::Value::Text("hello".into()), true);
+        print_value(&interpreter::Value::Text("hello".into()), true, false);
     }
 
     #[test]
     fn print_value_bool_as_json() {
-        print_value(&interpreter::Value::Bool(true), true);
+        print_value(&interpreter::Value::Bool(true), true, false);
     }
 
     #[test]
     fn print_value_nil_as_json() {
-        print_value(&interpreter::Value::Nil, true);
+        print_value(&interpreter::Value::Nil, true, false);
     }
 
     #[test]
@@ -4311,7 +4401,7 @@ mod tests {
             interpreter::Value::Number(1.0),
             interpreter::Value::Number(2.0),
         ]);
-        print_value(&val, true);
+        print_value(&val, true, false);
     }
 
     // ── warn_cross_language_syntax: Json mode ─────────────────────────────────
@@ -4770,7 +4860,7 @@ mod tests {
             interpreter::Value::Number(1.0),
             interpreter::Value::Text("x".into()),
         ]);
-        print_value(&val, false);
+        print_value(&val, false, false);
     }
 
     #[test]
@@ -4778,7 +4868,7 @@ mod tests {
         let mut m = std::collections::HashMap::new();
         m.insert("k".to_string(), interpreter::Value::Number(7.0));
         let val = interpreter::Value::Map(m);
-        print_value(&val, true);
+        print_value(&val, true, false);
     }
 
     #[test]
@@ -4786,7 +4876,7 @@ mod tests {
         let mut m = std::collections::HashMap::new();
         m.insert("key".to_string(), interpreter::Value::Bool(true));
         let val = interpreter::Value::Map(m);
-        print_value(&val, false);
+        print_value(&val, false, false);
     }
 
     // ── subprocess helpers ────────────────────────────────────────────────────
@@ -6830,6 +6920,7 @@ mod tests {
             None,
             "f>n;/1 0",
             OutputMode::Text,
+            false,
             false,
         );
         assert_eq!(code, 1);
