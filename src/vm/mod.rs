@@ -10821,21 +10821,69 @@ pub(crate) extern "C" fn jit_mset(map: u64, key: u64, val: u64) -> u64 {
     let map_v = NanVal(map);
     let key_v = NanVal(key);
     let val_v = NanVal(val);
-    if !map_v.is_heap() || !key_v.is_heap() {
+    if (map_v.0 & TAG_MASK) != TAG_MAP || !key_v.is_string() {
         return TAG_NIL;
     }
-    unsafe {
-        match map_v.as_heap_ref() {
-            HeapObj::Map(m) => match key_v.as_heap_ref() {
-                HeapObj::Str(k) => {
+    let ptr_b = (map_v.0 & PTR_MASK) as *const HeapObj;
+    // RC=1 fast path: when the caller's variable is the sole holder (typical
+    // `m = mset m k v` accumulator), mutate the HashMap in place to avoid O(n²)
+    // copy-per-insert. Mirrors `jit_listappend` (src/vm/mod.rs:10113). The JIT
+    // calling convention: caller's NanVal is passed by value (no RC change);
+    // the helper returns a NanVal whose RC matches what the caller's destination
+    // slot will own. For the rebind shape the JIT def_var overwrites the same
+    // SSA var with our return value, so returning the same pointer at RC=1 is
+    // balanced (caller still holds exactly one ref).
+    let rc_count = {
+        let rc_peek = unsafe { Rc::from_raw(ptr_b) };
+        let count = Rc::strong_count(&rc_peek);
+        std::mem::forget(rc_peek);
+        count
+    };
+    if rc_count == 1 {
+        // SAFETY: sole owner; no other reference exists. Cast to *mut and insert.
+        let heap_mut = unsafe { &mut *(ptr_b as *mut HeapObj) };
+        match heap_mut {
+            HeapObj::Map(m) => {
+                let k_str = unsafe {
+                    match key_v.as_heap_ref() {
+                        HeapObj::Str(s) => s.clone(),
+                        _ => return TAG_NIL,
+                    }
+                };
+                val_v.clone_rc();
+                if let Some(old) = m.insert(k_str, val_v) {
+                    old.drop_rc();
+                }
+                // Return the same NanVal — same pointer, RC still 1.
+                map
+            }
+            _ => TAG_NIL,
+        }
+    } else {
+        // RC > 1 — must clone the map. Fix latent bug: previous code bit-copied
+        // entries via `m.clone()` but never bumped RC for retained values, while
+        // HeapObj::Drop for Map decrements every value. With non-numeric values
+        // that produced use-after-free / double-decrement. Bump RC per entry to
+        // match the VM OP_MSET path.
+        unsafe {
+            match &*ptr_b {
+                HeapObj::Map(m) => {
                     let mut new_map = m.clone();
+                    for v in new_map.values() {
+                        v.clone_rc();
+                    }
+                    let k_str = match key_v.as_heap_ref() {
+                        HeapObj::Str(s) => s.clone(),
+                        _ => return TAG_NIL,
+                    };
                     val_v.clone_rc();
-                    new_map.insert(k.clone(), val_v);
+                    if let Some(old) = new_map.insert(k_str, val_v) {
+                        old.drop_rc();
+                    }
                     NanVal::heap_map(new_map).0
                 }
                 _ => TAG_NIL,
-            },
-            _ => TAG_NIL,
+            }
         }
     }
 }
