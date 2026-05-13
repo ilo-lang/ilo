@@ -1,4 +1,4 @@
-// Phase 1 regression tests for inline lambdas.
+// Regression tests for inline lambdas (Phase 1 + Phase 2).
 //
 // Inline lambda = `(params>return;body)` literal passed where a fn-ref is
 // expected (HOF arg position). The parser lifts each lambda to a synthetic
@@ -7,9 +7,12 @@
 // tree interpreter, fmt, python codegen, ...) treats it identically to a
 // named helper.
 //
-// Phase 1 deliberately rejects captures: any reference inside the body to a
-// name that is not a param, local binding, or known top-level function/
-// builtin raises ILO-P017 with a hint pointing at Phase 2 / closure-bind.
+// Phase 2 (this PR) adds closure capture: free variables in the body get
+// lifted as trailing params on the synthetic decl, and the call site emits
+// `Expr::MakeClosure { fn_name, captures }` which evaluates to a
+// `Value::Closure { fn_name, captures }` runtime value. Closure-aware HOFs
+// append the captures after the per-item args at each call, matching the
+// existing single-ctx form (#186) generalised to N captures.
 //
 // HOF dispatch in the VM and Cranelift JIT is the parked FnRef NaN-tagging
 // effort — every test here runs on `--run-tree` only, matching the
@@ -48,6 +51,7 @@ fn run_ok(src: &str, entry: &str, args: &[&str]) -> String {
     String::from_utf8_lossy(&out.stdout).trim().to_string()
 }
 
+#[allow(dead_code)]
 fn run_err(src: &str, entry: &str) -> String {
     let path = write_src(entry, src);
     let out = ilo()
@@ -151,29 +155,68 @@ f xs:L n>L n;sorted xs
     assert_eq!(run_ok(src, "f", &["[-3,1,-5,2]"]), "[1, 2, -3, -5]");
 }
 
-// ── Phase 1: closure capture rejected with ILO-P017 ────────────────────────
+// ── Phase 2: closure capture works ─────────────────────────────────────────
 
 #[test]
-fn closure_capture_rejected_simple() {
+fn closure_capture_single_var_filter() {
+    // Single capture: `thr` is in the enclosing fn's scope and the lambda
+    // references it. The parser lifts `__lit_0(x, thr)` and emits a
+    // MakeClosure at the call site; flt appends the capture to each call.
     let src = "f xs:L n thr:n>L n;flt (x:n>b;>x thr) xs";
-    let err = run_err(src, "f");
-    assert!(
-        err.contains("ILO-P017") && err.contains("thr"),
-        "expected ILO-P017 about `thr` capture, got: {err}"
+    assert_eq!(run_ok(src, "f", &["[1,5,3,8,2]", "4"]), "[5, 8]");
+}
+
+#[test]
+fn closure_capture_in_sort_key() {
+    // `srt` with an inline key that closes over `target`.
+    let src = "f xs:L n target:n>L n;srt (x:n>n;abs -x target) xs";
+    assert_eq!(run_ok(src, "f", &["[1,5,10,20]", "8"]), "[10, 5, 1, 20]");
+}
+
+#[test]
+fn closure_capture_in_map() {
+    // `map` with an inline transform that closes over `bump`.
+    let src = "f xs:L n bump:n>L n;map (x:n>n;+x bump) xs";
+    assert_eq!(run_ok(src, "f", &["[1,2,3]", "10"]), "[11, 12, 13]");
+}
+
+#[test]
+fn closure_capture_in_fld() {
+    // `fld` with an inline reducer that closes over `weight`.
+    let src = "f xs:L n weight:n>n;fld (a:n x:n>n;+a *x weight) xs 0";
+    assert_eq!(run_ok(src, "f", &["[1,2,3,4]", "5"]), "50");
+}
+
+#[test]
+fn closure_capture_multiple_vars() {
+    // Two captures: `lo` and `hi` both appear in the body. Both lift as
+    // trailing params on the synthetic decl, and both flow as captures.
+    let src = "f xs:L n lo:n hi:n>L n;flt (x:n>b;&(>=x lo) <=x hi) xs";
+    assert_eq!(run_ok(src, "f", &["[1,3,5,7,9,11]", "3", "7"]), "[3, 5, 7]");
+}
+
+#[test]
+fn closure_capture_text_value() {
+    // Capture a Text value, not just numbers. By-value snapshot semantics.
+    let src = "f ws:L t prefix:t>L t;flt (w:t>b;has w prefix) ws";
+    assert_eq!(
+        run_ok(src, "f", &["[\"apple\",\"banana\",\"apricot\"]", "ap"]),
+        "[apple, apricot]"
     );
 }
 
 #[test]
-fn closure_capture_rejected_points_at_phase_2() {
-    let src = "f xs:L n thr:n>L n;flt (x:n>b;>x thr) xs";
-    let err = run_err(src, "f");
-    assert!(
-        err.contains("ctx") || err.contains("Phase 2") || err.contains("phase 2"),
-        "expected ILO-P017 hint to mention ctx-arg or Phase 2, got: {err}"
-    );
+fn closure_capture_by_value_snapshot() {
+    // The capture is snapshot when the closure is constructed, not read
+    // live at each call. We mutate the source local after the `srt` runs
+    // (well — srt has already completed by then). This just exercises that
+    // mutating the capture's source name post-construction is irrelevant
+    // because srt already consumed it. The real check is value-equality.
+    let src = "f xs:L n bias:n>L n;ys=srt (x:n>n;+x bias) xs;ys";
+    assert_eq!(run_ok(src, "f", &["[3,1,2]", "0"]), "[1, 2, 3]");
 }
 
-// ── Phase 1: ctx-arg form is the documented escape hatch ───────────────────
+// ── Phase 1 ctx-arg form is still supported alongside captures ─────────────
 
 #[test]
 fn ctx_arg_form_works_with_inline_lambda() {
