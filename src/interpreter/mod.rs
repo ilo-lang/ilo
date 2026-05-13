@@ -5,6 +5,108 @@ use std::sync::Arc;
 
 pub mod json;
 
+/// A typed key for `Value::Map` and `HeapObj::Map`.
+///
+/// Two variants — `Text` for string keys and `Int` for integer keys.
+/// Floats are normalised to `Int` at the builtin boundary (`floor` + `as i64`),
+/// matching the indexing convention of `at xs i`. NaN/Infinity keys are
+/// rejected with a runtime error there, so they never reach `MapKey`.
+///
+/// `Bool` is intentionally not represented: token-cost wise, bool maps are
+/// always shorter to express as a two-arm `?` than as a two-entry map, and the
+/// surface syntax for bool literals as map keys would add lexer ambiguity.
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
+pub enum MapKey {
+    Text(String),
+    Int(i64),
+}
+
+impl MapKey {
+    pub fn as_text(&self) -> Option<&str> {
+        match self {
+            MapKey::Text(s) => Some(s.as_str()),
+            _ => None,
+        }
+    }
+
+    pub fn as_int(&self) -> Option<i64> {
+        match self {
+            MapKey::Int(n) => Some(*n),
+            _ => None,
+        }
+    }
+
+    /// Stringified form used by serialisations that need a textual key
+    /// (e.g. JSON object keys, CSV headers, the `Display` impl).
+    pub fn to_display_string(&self) -> String {
+        match self {
+            MapKey::Text(s) => s.clone(),
+            MapKey::Int(n) => n.to_string(),
+        }
+    }
+
+    /// Normalise an ilo `Value` into a `MapKey`. Used at the builtin boundary
+    /// for `mget`, `mset`, `mhas`, `mdel`. Numbers floor to i64 to match
+    /// `at xs i`; non-finite numbers are rejected.
+    pub fn from_value(v: &Value, op_name: &str) -> std::result::Result<Self, RuntimeError> {
+        match v {
+            Value::Text(s) => Ok(MapKey::Text(s.clone())),
+            Value::Number(n) => {
+                if !n.is_finite() {
+                    return Err(RuntimeError::new(
+                        "ILO-R009",
+                        format!("{op_name}: numeric key must be finite, got {n}"),
+                    ));
+                }
+                Ok(MapKey::Int(n.floor() as i64))
+            }
+            other => Err(RuntimeError::new(
+                "ILO-R009",
+                format!("{op_name}: key must be text or number, got {other:?}"),
+            )),
+        }
+    }
+}
+
+impl std::fmt::Display for MapKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            MapKey::Text(s) => write!(f, "{s}"),
+            MapKey::Int(n) => write!(f, "{n}"),
+        }
+    }
+}
+
+/// Total ordering for deterministic iteration order in `mkeys`/`mvals`.
+/// In well-typed code maps are homogeneous, so the cross-variant ordering
+/// (Int < Text) is academic — it just keeps tests deterministic if a poorly
+/// typed map mixes both.
+impl Ord for MapKey {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        match (self, other) {
+            (MapKey::Int(a), MapKey::Int(b)) => a.cmp(b),
+            (MapKey::Text(a), MapKey::Text(b)) => a.cmp(b),
+            (MapKey::Int(_), MapKey::Text(_)) => std::cmp::Ordering::Less,
+            (MapKey::Text(_), MapKey::Int(_)) => std::cmp::Ordering::Greater,
+        }
+    }
+}
+
+impl PartialOrd for MapKey {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+/// Convert a `MapKey` back to a `Value` for use in builtin returns such as
+/// `mkeys`. Text → `Value::Text`, Int → `Value::Number(f64)`.
+pub fn map_key_to_value(k: &MapKey) -> Value {
+    match k {
+        MapKey::Text(s) => Value::Text(s.clone()),
+        MapKey::Int(n) => Value::Number(*n as f64),
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {
     Number(f64),
@@ -12,7 +114,7 @@ pub enum Value {
     Bool(bool),
     Nil,
     List(Vec<Value>),
-    Map(Arc<HashMap<String, Value>>),
+    Map(Arc<HashMap<MapKey, Value>>),
     Record {
         type_name: String,
         fields: HashMap<String, Value>,
@@ -70,7 +172,7 @@ impl std::fmt::Display for Value {
             }
             Value::Map(m) => {
                 write!(f, "{{")?;
-                let mut keys: Vec<&String> = m.keys().collect();
+                let mut keys: Vec<&MapKey> = m.keys().collect();
                 keys.sort();
                 for (i, k) in keys.iter().enumerate() {
                     if i > 0 {
@@ -503,9 +605,12 @@ pub(crate) fn write_csv_tsv(rows: &[Value], sep: char) -> Result<String> {
             (Some(keys), true)
         }
         Value::Map(m) => {
-            let mut keys: Vec<String> = m.keys().cloned().collect();
+            let mut keys: Vec<MapKey> = m.keys().cloned().collect();
             keys.sort();
-            (Some(keys), true)
+            (
+                Some(keys.iter().map(|k| k.to_display_string()).collect()),
+                true,
+            )
         }
         other => {
             return Err(RuntimeError::new(
@@ -548,11 +653,21 @@ pub(crate) fn write_csv_tsv(rows: &[Value], sep: char) -> Result<String> {
                 out.push('\n');
             }
             (Value::Map(m), true, Some(keys)) => {
+                // Build a stringified-key view of the map to match the
+                // header order. Header keys are stringified per
+                // `MapKey::to_display_string` so a numeric key `1` matches
+                // the header column "1".
+                let str_view: HashMap<String, &Value> =
+                    m.iter().map(|(k, v)| (k.to_display_string(), v)).collect();
                 for (i, k) in keys.iter().enumerate() {
                     if i > 0 {
                         out.push(sep);
                     }
-                    let v = m.get(k).cloned().unwrap_or(Value::Nil);
+                    let v = str_view
+                        .get(k.as_str())
+                        .copied()
+                        .cloned()
+                        .unwrap_or(Value::Nil);
                     out.push_str(&fmt_csv_field(&v, sep));
                 }
                 out.push('\n');
@@ -669,11 +784,14 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         return Ok(Value::Map(Arc::new(HashMap::new())));
     }
     if builtin == Some(Builtin::Mget) && args.len() == 2 {
-        return match (&args[0], &args[1]) {
-            (Value::Map(m), Value::Text(k)) => Ok(m.get(k).cloned().unwrap_or(Value::Nil)),
+        return match &args[0] {
+            Value::Map(m) => {
+                let key = MapKey::from_value(&args[1], "mget")?;
+                Ok(m.get(&key).cloned().unwrap_or(Value::Nil))
+            }
             _ => Err(RuntimeError::new(
                 "ILO-R009",
-                "mget: expects map and text key".to_string(),
+                "mget: expects map and key".to_string(),
             )),
         };
     }
@@ -684,34 +802,38 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         let map_val = it.next().unwrap();
         let key_val = it.next().unwrap();
         let value = it.next().unwrap();
-        return match (map_val, key_val) {
-            (Value::Map(mut m), Value::Text(k)) => {
+        return match map_val {
+            Value::Map(mut m) => {
+                let key = MapKey::from_value(&key_val, "mset")?;
                 let inner = Arc::make_mut(&mut m);
-                inner.insert(k, value);
+                inner.insert(key, value);
                 Ok(Value::Map(m))
             }
             _ => Err(RuntimeError::new(
                 "ILO-R009",
-                "mset: expects map, text key, and value".to_string(),
+                "mset: expects map, key, and value".to_string(),
             )),
         };
     }
     if builtin == Some(Builtin::Mhas) && args.len() == 2 {
-        return match (&args[0], &args[1]) {
-            (Value::Map(m), Value::Text(k)) => Ok(Value::Bool(m.contains_key(k.as_str()))),
+        return match &args[0] {
+            Value::Map(m) => {
+                let key = MapKey::from_value(&args[1], "mhas")?;
+                Ok(Value::Bool(m.contains_key(&key)))
+            }
             _ => Err(RuntimeError::new(
                 "ILO-R009",
-                "mhas: expects map and text key".to_string(),
+                "mhas: expects map and key".to_string(),
             )),
         };
     }
     if builtin == Some(Builtin::Mkeys) && args.len() == 1 {
         return match &args[0] {
             Value::Map(m) => {
-                let mut keys: Vec<&String> = m.keys().collect();
+                let mut keys: Vec<&MapKey> = m.keys().collect();
                 keys.sort();
                 Ok(Value::List(
-                    keys.into_iter().map(|k| Value::Text(k.clone())).collect(),
+                    keys.into_iter().map(map_key_to_value).collect(),
                 ))
             }
             _ => Err(RuntimeError::new(
@@ -723,8 +845,8 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
     if builtin == Some(Builtin::Mvals) && args.len() == 1 {
         return match &args[0] {
             Value::Map(m) => {
-                let mut pairs: Vec<(&String, &Value)> = m.iter().collect();
-                pairs.sort_by_key(|(k, _)| k.as_str());
+                let mut pairs: Vec<(&MapKey, &Value)> = m.iter().collect();
+                pairs.sort_by(|(a, _), (b, _)| a.cmp(b));
                 Ok(Value::List(
                     pairs.into_iter().map(|(_, v)| v.clone()).collect(),
                 ))
@@ -739,15 +861,16 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         let mut it = args.into_iter();
         let map_val = it.next().unwrap();
         let key_val = it.next().unwrap();
-        return match (map_val, key_val) {
-            (Value::Map(mut m), Value::Text(k)) => {
+        return match map_val {
+            Value::Map(mut m) => {
+                let key = MapKey::from_value(&key_val, "mdel")?;
                 let inner = Arc::make_mut(&mut m);
-                inner.remove(k.as_str());
+                inner.remove(&key);
                 Ok(Value::Map(m))
             }
             _ => Err(RuntimeError::new(
                 "ILO-R009",
-                "mdel: expects map and text key".to_string(),
+                "mdel: expects map and key".to_string(),
             )),
         };
     }
@@ -1861,7 +1984,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                             Value::Text(s) => s.clone(),
                             other => format!("{other:?}"),
                         };
-                        (k.clone(), vs)
+                        (k.to_display_string(), vs)
                     })
                     .collect::<Vec<_>>(),
                 other => {
@@ -1948,7 +2071,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                             Value::Text(s) => s.clone(),
                             other => format!("{other:?}"),
                         };
-                        (k.clone(), vs)
+                        (k.to_display_string(), vs)
                     })
                     .collect::<Vec<_>>(),
                 other => {
@@ -2325,7 +2448,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                             Value::Map(m) => {
                                 let obj: serde_json::Map<String, serde_json::Value> = m
                                     .iter()
-                                    .map(|(k, v)| (k.clone(), value_to_json(v)))
+                                    .map(|(k, v)| (k.to_display_string(), value_to_json(v)))
                                     .collect();
                                 serde_json::Value::Object(obj)
                             }
@@ -2789,22 +2912,24 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 ));
             }
         };
-        let mut groups: std::collections::HashMap<String, Vec<Value>> =
+        let mut groups: std::collections::HashMap<MapKey, Vec<Value>> =
             std::collections::HashMap::new();
         for item in items {
             let mut call_args = vec![item.clone()];
             call_args.extend(captures.iter().cloned());
             let key = call_function(env, &fn_name, call_args)?;
-            let key_str = match &key {
-                Value::Text(s) => s.clone(),
+            let map_key = match &key {
+                Value::Text(s) => MapKey::Text(s.clone()),
                 Value::Number(n) => {
-                    if *n == (*n as i64) as f64 {
-                        format!("{}", *n as i64)
-                    } else {
-                        format!("{n}")
+                    if !n.is_finite() {
+                        return Err(RuntimeError::new(
+                            "ILO-R009",
+                            format!("grp: numeric key must be finite, got {n}"),
+                        ));
                     }
+                    MapKey::Int(n.floor() as i64)
                 }
-                Value::Bool(b) => format!("{b}"),
+                Value::Bool(b) => MapKey::Text(format!("{b}")),
                 other => {
                     return Err(RuntimeError::new(
                         "ILO-R009",
@@ -2815,9 +2940,9 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                     ));
                 }
             };
-            groups.entry(key_str).or_default().push(item);
+            groups.entry(map_key).or_default().push(item);
         }
-        let map: HashMap<String, Value> = groups
+        let map: HashMap<MapKey, Value> = groups
             .into_iter()
             .map(|(k, v)| (k, Value::List(v)))
             .collect();
@@ -2833,23 +2958,25 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 ));
             }
         };
-        let mut counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+        let mut counts: std::collections::HashMap<MapKey, usize> = std::collections::HashMap::new();
         for item in items {
-            // Stringify elements without a type tag, matching `grp`'s convention
-            // for user-visible map keys. Heterogeneous lists where distinct-typed
-            // values share a print form (e.g. `Number(1)` and `Text("1")`) will
-            // collide on the shared string; this is the same collision policy as
-            // `grp idt xs` and is documented in `examples/frq.ilo`.
-            let key_str = match item {
-                Value::Text(s) => s.clone(),
+            // Build a typed `MapKey` so the resulting map preserves the element
+            // type. Heterogeneous lists where text and number variants share a
+            // print form (e.g. `Number(1)` and `Text("1")`) are now correctly
+            // kept distinct — they were merged into a single key in the
+            // pre-MapKey era.
+            let map_key = match item {
+                Value::Text(s) => MapKey::Text(s.clone()),
                 Value::Number(n) => {
-                    if *n == (*n as i64) as f64 {
-                        format!("{}", *n as i64)
-                    } else {
-                        format!("{n}")
+                    if !n.is_finite() {
+                        return Err(RuntimeError::new(
+                            "ILO-R009",
+                            format!("frq: numeric element must be finite, got {n}"),
+                        ));
                     }
+                    MapKey::Int(n.floor() as i64)
                 }
-                Value::Bool(b) => format!("{b}"),
+                Value::Bool(b) => MapKey::Text(format!("{b}")),
                 other => {
                     return Err(RuntimeError::new(
                         "ILO-R009",
@@ -2860,9 +2987,9 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                     ));
                 }
             };
-            *counts.entry(key_str).or_insert(0) += 1;
+            *counts.entry(map_key).or_insert(0) += 1;
         }
-        let map: HashMap<String, Value> = counts
+        let map: HashMap<MapKey, Value> = counts
             .into_iter()
             .map(|(k, v)| (k, Value::Number(v as f64)))
             .collect();
@@ -3719,7 +3846,7 @@ fn value_to_json(val: &Value) -> serde_json::Value {
         Value::Map(m) => {
             let map: serde_json::Map<String, serde_json::Value> = m
                 .iter()
-                .map(|(k, v)| (k.clone(), value_to_json(v)))
+                .map(|(k, v)| (k.to_display_string(), value_to_json(v)))
                 .collect();
             serde_json::Value::Object(map)
         }
@@ -7038,11 +7165,11 @@ mod tests {
             panic!("expected Map")
         };
         assert_eq!(
-            m.get("small").unwrap(),
+            m.get(&MapKey::Text("small".to_string())).unwrap(),
             &Value::List(vec![1.0, 3.0, 2.0].into_iter().map(Value::Number).collect())
         );
         assert_eq!(
-            m.get("big").unwrap(),
+            m.get(&MapKey::Text("big".to_string())).unwrap(),
             &Value::List(vec![8.0, 9.0].into_iter().map(Value::Number).collect())
         );
     }
@@ -7065,15 +7192,15 @@ mod tests {
             panic!("expected Map")
         };
         assert_eq!(
-            m.get("1").unwrap(),
+            m.get(&MapKey::Text("1".to_string())).unwrap(),
             &Value::List(vec![1.0, 1.0].into_iter().map(Value::Number).collect())
         );
         assert_eq!(
-            m.get("2").unwrap(),
+            m.get(&MapKey::Text("2".to_string())).unwrap(),
             &Value::List(vec![2.0, 2.0].into_iter().map(Value::Number).collect())
         );
         assert_eq!(
-            m.get("3").unwrap(),
+            m.get(&MapKey::Text("3".to_string())).unwrap(),
             &Value::List(vec![3.0].into_iter().map(Value::Number).collect())
         );
     }
@@ -8553,8 +8680,8 @@ mod tests {
         let Value::Map(m) = result else {
             panic!("expected map")
         };
-        assert!(m.contains_key("true"));
-        assert!(m.contains_key("false"));
+        assert!(m.contains_key(&MapKey::Text("true".to_string())));
+        assert!(m.contains_key(&MapKey::Text("false".to_string())));
     }
 
     // ── avg non-number element (line 1053) ──────────────────────────────────
@@ -8682,8 +8809,9 @@ mod tests {
 
     #[test]
     fn interpret_grp_float_key() {
-        // Key function returns a fractional number → format!("{n}") path (line 1016)
-        // Use floor-then-half: key = x/2 for x in [1,2,3] → keys 0.5, 1.0, 1.5
+        // Key function returns a fractional number — under MapKey numeric
+        // keys floor to i64 at the boundary, matching `at xs i`. So
+        // /1 2 = 0.5 → 0, /2 2 = 1 → 1, /3 2 = 1.5 → 1. Two distinct groups.
         let source = "half x:n>n;/x 2 g xs:L n>_;grp half xs";
         let result = run_str(
             source,
@@ -8697,12 +8825,9 @@ mod tests {
         let Value::Map(m) = result else {
             panic!("expected Map")
         };
-        // 1/2=0.5, 2/2=1, 3/2=1.5 → 3 groups
-        assert!(
-            m.contains_key("0.5") || m.contains_key("1.5"),
-            "expected float key, got: {:?}",
-            m.keys().collect::<Vec<_>>()
-        );
+        assert_eq!(m.len(), 2);
+        assert!(m.contains_key(&MapKey::Int(0)));
+        assert!(m.contains_key(&MapKey::Int(1)));
     }
 
     // ── ForRange early return (lines 1370-1371) ───────────────────────────────
@@ -9175,7 +9300,7 @@ mod tests {
             source,
             Some("f"),
             vec![Value::Map(Arc::new(std::collections::HashMap::from([(
-                "a".to_string(),
+                MapKey::Text("a".to_string()),
                 Value::Number(1.0),
             )])))],
         );

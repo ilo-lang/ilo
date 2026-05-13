@@ -36,9 +36,12 @@ impl Value {
                 Ok(serde_json::Value::Array(arr?))
             }
             Value::Map(m) => {
+                // Numeric keys are stringified, matching JS/Python JSON
+                // serialisation conventions. The round-trip is lossy: a map
+                // with numeric keys will come back as a record with text keys.
                 let mut json_map = serde_json::Map::with_capacity(m.len());
                 for (k, v) in m.iter() {
-                    json_map.insert(k.clone(), v.to_json()?);
+                    json_map.insert(k.to_display_string(), v.to_json()?);
                 }
                 Ok(serde_json::Value::Object(json_map))
             }
