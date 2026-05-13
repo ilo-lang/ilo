@@ -3318,6 +3318,83 @@ pub(crate) fn jit_arena_reset() {
     JIT_ARENA.with(|cell| cell.borrow_mut().reset());
 }
 
+// ── JIT runtime-error signalling ─────────────────────────────────────────
+//
+// Cranelift JIT helpers (`jit_hd`, `jit_at`, `jit_tl`, ...) are `extern "C" fn`
+// that return `u64` (NanVal bits). There is no in-band way to signal a runtime
+// error from a helper back to host code, so historically helpers silently
+// returned `TAG_NIL` on every failure path. That diverged from the tree and
+// VM engines, which raise `VmError::Type(...)` on the same inputs.
+//
+// This module provides a thread-local error cell that helpers can set on the
+// failure path. The JIT entry point (`jit_cranelift::call`) installs an RAII
+// guard that clears the cell before each invocation and inspects it on
+// return. If a helper has set an error, the entry point synthesises a
+// `VmRuntimeError` and propagates it as a `Result::Err` instead of treating
+// the `TAG_NIL` return as a successful result.
+//
+// Spans/call-stacks are not yet carried through helpers (the JIT IR doesn't
+// thread the source span across the C ABI); cranelift JIT errors surface
+// without a precise span for now. Helpers continue to return `TAG_NIL` on the
+// error path so the generated IR doesn't need to special-case a sentinel.
+//
+// v1 scope: applied to `jit_hd`, `jit_at`, `jit_tl` only. Other helpers
+// (`jit_lst`, `jit_listget`, `jit_index`, `jit_jpth`, `jit_slc`, ...) keep
+// the existing permissive-nil semantics; harmonising them is parked.
+thread_local! {
+    static JIT_RUNTIME_ERROR: std::cell::RefCell<Option<VmError>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Record a runtime error from inside a JIT helper. The entry point will
+/// pick this up after the JIT function returns and surface it as a
+/// `VmRuntimeError`. Helpers should still return `TAG_NIL` after calling
+/// this so the generated IR can carry on without a special-case sentinel.
+#[cfg(feature = "cranelift")]
+pub(crate) fn jit_set_runtime_error(err: VmError) {
+    JIT_RUNTIME_ERROR.with(|cell| {
+        // Preserve the first error if a later helper also errors before the
+        // entry point unwinds — keeps the surfaced message closest to root
+        // cause.
+        let mut slot = cell.borrow_mut();
+        if slot.is_none() {
+            *slot = Some(err);
+        }
+    });
+}
+
+/// Pop any pending JIT runtime error. Called by the JIT entry point after
+/// the compiled function returns.
+#[cfg(feature = "cranelift")]
+pub(crate) fn jit_take_runtime_error() -> Option<VmError> {
+    JIT_RUNTIME_ERROR.with(|cell| cell.borrow_mut().take())
+}
+
+/// RAII guard that clears the JIT runtime error cell on entry and on drop.
+/// Installed by the JIT entry point so a stale error from a previous call
+/// can never leak into the next invocation, even on a Rust-side panic.
+#[cfg(feature = "cranelift")]
+pub(crate) struct JitRuntimeErrorGuard;
+
+#[cfg(feature = "cranelift")]
+impl JitRuntimeErrorGuard {
+    pub(crate) fn new() -> Self {
+        JIT_RUNTIME_ERROR.with(|cell| {
+            *cell.borrow_mut() = None;
+        });
+        JitRuntimeErrorGuard
+    }
+}
+
+#[cfg(feature = "cranelift")]
+impl Drop for JitRuntimeErrorGuard {
+    fn drop(&mut self) {
+        JIT_RUNTIME_ERROR.with(|cell| {
+            *cell.borrow_mut() = None;
+        });
+    }
+}
+
 enum HeapObj {
     Str(String),
     List(Vec<NanVal>),
@@ -9288,6 +9365,7 @@ pub(crate) extern "C" fn jit_hd(a: u64) -> u64 {
             }
         };
         if s.is_empty() {
+            jit_set_runtime_error(VmError::Type("hd: empty text"));
             return TAG_NIL;
         }
         return NanVal::heap_string(
@@ -9302,11 +9380,13 @@ pub(crate) extern "C" fn jit_hd(a: u64) -> u64 {
         && let HeapObj::List(items) = unsafe { v.as_heap_ref() }
     {
         if items.is_empty() {
+            jit_set_runtime_error(VmError::Type("hd: empty list"));
             return TAG_NIL;
         }
         items[0].clone_rc();
         return items[0].0;
     }
+    jit_set_runtime_error(VmError::Type("hd requires a list or text"));
     TAG_NIL
 }
 
@@ -9334,10 +9414,12 @@ pub(crate) extern "C" fn jit_at(a: u64, b: u64) -> u64 {
     let v = NanVal(a);
     let i = NanVal(b);
     if !i.is_number() {
+        jit_set_runtime_error(VmError::Type("at: index must be a number"));
         return TAG_NIL;
     }
     let n = i.as_number();
     if n.fract() != 0.0 {
+        jit_set_runtime_error(VmError::Type("at: index must be an integer"));
         return TAG_NIL;
     }
     let raw = n as i64;
@@ -9350,7 +9432,10 @@ pub(crate) extern "C" fn jit_at(a: u64, b: u64) -> u64 {
         };
         return match char_at_signed(s, raw) {
             CharAtResult::Found(c) => NanVal::heap_string(c.to_string()).0,
-            CharAtResult::OutOfRange { .. } => TAG_NIL,
+            CharAtResult::OutOfRange { .. } => {
+                jit_set_runtime_error(VmError::Type("at: index out of range"));
+                TAG_NIL
+            }
         };
     }
     if v.is_heap()
@@ -9359,12 +9444,14 @@ pub(crate) extern "C" fn jit_at(a: u64, b: u64) -> u64 {
         let len = items.len() as i64;
         let adjusted = if raw < 0 { raw + len } else { raw };
         if adjusted < 0 || adjusted >= len {
+            jit_set_runtime_error(VmError::Type("at: index out of range"));
             return TAG_NIL;
         }
         let idx = adjusted as usize;
         items[idx].clone_rc();
         return items[idx].0;
     }
+    jit_set_runtime_error(VmError::Type("at requires a list or text"));
     TAG_NIL
 }
 
@@ -9635,6 +9722,7 @@ pub(crate) extern "C" fn jit_tl(a: u64) -> u64 {
             }
         };
         if s.is_empty() {
+            jit_set_runtime_error(VmError::Type("tl: empty text"));
             return TAG_NIL;
         }
         let mut chars = s.chars();
@@ -9645,6 +9733,7 @@ pub(crate) extern "C" fn jit_tl(a: u64) -> u64 {
         && let HeapObj::List(items) = unsafe { v.as_heap_ref() }
     {
         if items.is_empty() {
+            jit_set_runtime_error(VmError::Type("tl: empty list"));
             return TAG_NIL;
         }
         let tail: Vec<NanVal> = items[1..]
@@ -9656,6 +9745,7 @@ pub(crate) extern "C" fn jit_tl(a: u64) -> u64 {
             .collect();
         return NanVal::heap_list(tail).0;
     }
+    jit_set_runtime_error(VmError::Type("tl requires a list or text"));
     TAG_NIL
 }
 
