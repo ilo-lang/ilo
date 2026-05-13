@@ -7026,7 +7026,11 @@ mod tests {
         let args = first_stmt_outer_call_args(&prog);
         assert_eq!(args.len(), 1);
         match &args[0] {
-            Expr::Call { function, args, unwrap } => {
+            Expr::Call {
+                function,
+                args,
+                unwrap,
+            } => {
                 assert_eq!(function, "xs");
                 assert!(args.is_empty());
                 assert!(!unwrap);
@@ -7094,7 +7098,11 @@ mod tests {
         };
         assert_eq!(len_args.len(), 1);
         match &len_args[0] {
-            Expr::Call { function, args, unwrap } => {
+            Expr::Call {
+                function,
+                args,
+                unwrap,
+            } => {
                 assert_eq!(function, "fetch");
                 assert!(args.is_empty());
                 assert!(*unwrap, "expected unwrap=true for fetch!()");
