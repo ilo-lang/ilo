@@ -167,6 +167,8 @@ struct HelperFuncs {
     // Datetime
     dtfmt: FuncId,
     dtparse: FuncId,
+    // Tree-bridge for tree-only builtins (rgx, rgxall, fmt-variadic, etc.)
+    call_builtin_tree: FuncId,
 }
 
 fn declare_helper(module: &mut JITModule, name: &str, n_params: usize, n_returns: usize) -> FuncId {
@@ -321,6 +323,7 @@ fn register_helpers(builder: &mut JITBuilder) {
         ("jit_det", jit_det as *const u8),
         ("jit_dtfmt", jit_dtfmt as *const u8),
         ("jit_dtparse", jit_dtparse as *const u8),
+        ("jit_call_builtin_tree", jit_call_builtin_tree as *const u8),
     ];
     for &(name, ptr) in helpers {
         builder.symbol(name, ptr);
@@ -467,6 +470,7 @@ fn declare_all_helpers(module: &mut JITModule) -> HelperFuncs {
         det: declare_helper(module, "jit_det", 1, 1),
         dtfmt: declare_helper(module, "jit_dtfmt", 2, 1),
         dtparse: declare_helper(module, "jit_dtparse", 2, 1),
+        call_builtin_tree: declare_helper(module, "jit_call_builtin_tree", 3, 1),
     }
 }
 
@@ -1039,7 +1043,8 @@ fn compile_function_body(
                 | OP_RECNEW | OP_RECWITH
                 | OP_PRT | OP_RD | OP_RDL | OP_WR | OP_WRL | OP_TRM | OP_UPR | OP_LWR | OP_CAP
                 | OP_PADL | OP_PADR | OP_CHR | OP_UNQ | OP_UNIQBY | OP_PARTITION | OP_FRQ | OP_NUM
-                | OP_RGXSUB | OP_TRANSPOSE | OP_MATMUL | OP_DTFMT | OP_DTPARSE => {
+                | OP_RGXSUB | OP_TRANSPOSE | OP_MATMUL | OP_DTFMT | OP_DTPARSE
+                | OP_CALL_BUILTIN_TREE => {
                     non_num_write[a] = true;
                     non_bool_write[a] = true;
                 }
@@ -2346,6 +2351,40 @@ fn compile_function_body(
                 let dv = builder.use_var(vars[d_idx]);
                 let fref = get_func_ref(&mut builder, module, helpers.rgxsub);
                 let call_inst = builder.ins().call(fref, &[bv, cv, dv]);
+                let result = builder.inst_results(call_inst)[0];
+                builder.def_var(vars[a_idx], result);
+            }
+            OP_CALL_BUILTIN_TREE => {
+                // Generic bridge for tree-only builtins.
+                //   A = result_reg, B = Builtin::tag, C = argc
+                //   args live in R[A+1..=A+argc]
+                // Spill args to a stack slot, then call
+                // `jit_call_builtin_tree(tag, argc, regs_ptr)`.
+                let tag = b_idx as i64; // B field already extracted as u8 into b_idx
+                let argc = c_idx; // C field is argc
+                let tag_val = builder.ins().iconst(I64, tag);
+                let argc_val = builder.ins().iconst(I64, argc as i64);
+
+                let regs_ptr = if argc == 0 {
+                    // No args: pass a null pointer; the helper's slice
+                    // construction handles argc=0 without dereferencing.
+                    builder.ins().iconst(I64, 0)
+                } else {
+                    let slot =
+                        builder.create_sized_stack_slot(cranelift_codegen::ir::StackSlotData::new(
+                            cranelift_codegen::ir::StackSlotKind::ExplicitSlot,
+                            (argc * 8) as u32,
+                            0,
+                        ));
+                    for i in 0..argc {
+                        let src = builder.use_var(vars[a_idx + 1 + i]);
+                        builder.ins().stack_store(src, slot, (i * 8) as i32);
+                    }
+                    builder.ins().stack_addr(I64, slot, 0)
+                };
+
+                let fref = get_func_ref(&mut builder, module, helpers.call_builtin_tree);
+                let call_inst = builder.ins().call(fref, &[tag_val, argc_val, regs_ptr]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
             }

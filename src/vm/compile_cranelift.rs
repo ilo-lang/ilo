@@ -155,6 +155,8 @@ struct HelperFuncs {
     // Datetime
     dtfmt: FuncId,
     dtparse: FuncId,
+    // Tree-bridge for tree-only builtins
+    call_builtin_tree: FuncId,
     // AOT-specific helpers
     get_arena_ptr: FuncId,
     get_registry_ptr: FuncId,
@@ -320,6 +322,7 @@ fn declare_all_helpers(module: &mut ObjectModule) -> HelperFuncs {
         getmany: declare_helper(module, "jit_getmany", 1, 1),
         dtfmt: declare_helper(module, "jit_dtfmt", 2, 1),
         dtparse: declare_helper(module, "jit_dtparse", 2, 1),
+        call_builtin_tree: declare_helper(module, "jit_call_builtin_tree", 3, 1),
         // AOT-specific helpers
         get_arena_ptr: declare_helper(module, "jit_get_arena_ptr", 0, 1),
         get_registry_ptr: declare_helper(module, "jit_get_registry_ptr", 0, 1),
@@ -1012,7 +1015,7 @@ fn compile_function_body(
                 | OP_UNQ | OP_UNIQBY | OP_PARTITION | OP_FRQ | OP_NUM | OP_RGXSUB | OP_ZIP
                 | OP_ENUMERATE | OP_RANGE | OP_WINDOW | OP_CHUNKS | OP_CUMSUM | OP_SETUNION
                 | OP_SETINTER | OP_SETDIFF | OP_FFT | OP_IFFT | OP_TRANSPOSE | OP_MATMUL
-                | OP_INV | OP_SOLVE | OP_DTFMT | OP_DTPARSE => {
+                | OP_INV | OP_SOLVE | OP_DTFMT | OP_DTPARSE | OP_CALL_BUILTIN_TREE => {
                     non_num_write[a] = true;
                     non_bool_write[a] = true;
                 }
@@ -2241,6 +2244,35 @@ fn compile_function_body(
                 let dv = builder.use_var(vars[d_idx]);
                 let fref = get_func_ref(&mut builder, module, helpers.rgxsub);
                 let call_inst = builder.ins().call(fref, &[bv, cv, dv]);
+                let result = builder.inst_results(call_inst)[0];
+                builder.def_var(vars[a_idx], result);
+            }
+            OP_CALL_BUILTIN_TREE => {
+                // Generic tree-bridge: A=result, B=Builtin::tag, C=argc;
+                // args contiguous in R[A+1..=A+argc]. Mirrors jit_cranelift.
+                let tag = b_idx as i64;
+                let argc = c_idx;
+                let tag_val = builder.ins().iconst(I64, tag);
+                let argc_val = builder.ins().iconst(I64, argc as i64);
+
+                let regs_ptr = if argc == 0 {
+                    builder.ins().iconst(I64, 0)
+                } else {
+                    let slot =
+                        builder.create_sized_stack_slot(cranelift_codegen::ir::StackSlotData::new(
+                            cranelift_codegen::ir::StackSlotKind::ExplicitSlot,
+                            (argc * 8) as u32,
+                            0,
+                        ));
+                    for i in 0..argc {
+                        let src = builder.use_var(vars[a_idx + 1 + i]);
+                        builder.ins().stack_store(src, slot, (i * 8) as i32);
+                    }
+                    builder.ins().stack_addr(I64, slot, 0)
+                };
+
+                let fref = get_func_ref(&mut builder, module, helpers.call_builtin_tree);
+                let call_inst = builder.ins().call(fref, &[tag_val, argc_val, regs_ptr]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
             }
