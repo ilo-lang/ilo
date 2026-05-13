@@ -1,0 +1,21 @@
+-- Large record literals work at any size. Once a record literal would
+-- exceed the VM 255-register-per-frame budget for the consecutive-slot
+-- layout, the compiler falls back to OP_RECNEW_EMPTY + per-field
+-- OP_RECSETFIELD emission. From the persona view, big-record literals
+-- with hundreds of fields just work, no chunking via `with` or
+-- builder helpers required.
+
+type big{f0:n;f1:n;f2:n;f3:n;f4:n;f5:n;f6:n;f7:n;f8:n;f9:n;f10:n;f11:n;f12:n;f13:n;f14:n;f15:n;f16:n;f17:n;f18:n;f19:n;f20:n;f21:n;f22:n;f23:n;f24:n;f25:n;f26:n;f27:n;f28:n;f29:n;f30:n;f31:n;f32:n;f33:n;f34:n;f35:n;f36:n;f37:n;f38:n;f39:n;f40:n;f41:n;f42:n;f43:n;f44:n;f45:n;f46:n;f47:n;f48:n;f49:n;f50:n;f51:n;f52:n;f53:n;f54:n;f55:n;f56:n;f57:n;f58:n;f59:n;f60:n;f61:n;f62:n;f63:n;f64:n;f65:n;f66:n;f67:n;f68:n;f69:n;f70:n;f71:n;f72:n;f73:n;f74:n;f75:n;f76:n;f77:n;f78:n;f79:n;f80:n;f81:n;f82:n;f83:n;f84:n;f85:n;f86:n;f87:n;f88:n;f89:n;f90:n;f91:n;f92:n;f93:n;f94:n;f95:n;f96:n;f97:n;f98:n;f99:n;f100:n;f101:n;f102:n;f103:n;f104:n;f105:n;f106:n;f107:n;f108:n;f109:n;f110:n;f111:n;f112:n;f113:n;f114:n;f115:n;f116:n;f117:n;f118:n;f119:n;f120:n;f121:n;f122:n;f123:n;f124:n;f125:n;f126:n;f127:n;f128:n;f129:n;f130:n;f131:n;f132:n;f133:n;f134:n;f135:n;f136:n;f137:n;f138:n;f139:n;f140:n;f141:n;f142:n;f143:n;f144:n;f145:n;f146:n;f147:n;f148:n;f149:n}
+
+-- 150-field record literal, big enough to defeat the consecutive-slot
+-- fast path. Read one field back at the far end of the record to
+-- prove the per-field emission landed in the right slots.
+hit-f140>n;r=big f0:0 f1:1 f2:2 f3:3 f4:4 f5:5 f6:6 f7:7 f8:8 f9:9 f10:10 f11:11 f12:12 f13:13 f14:14 f15:15 f16:16 f17:17 f18:18 f19:19 f20:20 f21:21 f22:22 f23:23 f24:24 f25:25 f26:26 f27:27 f28:28 f29:29 f30:30 f31:31 f32:32 f33:33 f34:34 f35:35 f36:36 f37:37 f38:38 f39:39 f40:40 f41:41 f42:42 f43:43 f44:44 f45:45 f46:46 f47:47 f48:48 f49:49 f50:50 f51:51 f52:52 f53:53 f54:54 f55:55 f56:56 f57:57 f58:58 f59:59 f60:60 f61:61 f62:62 f63:63 f64:64 f65:65 f66:66 f67:67 f68:68 f69:69 f70:70 f71:71 f72:72 f73:73 f74:74 f75:75 f76:76 f77:77 f78:78 f79:79 f80:80 f81:81 f82:82 f83:83 f84:84 f85:85 f86:86 f87:87 f88:88 f89:89 f90:90 f91:91 f92:92 f93:93 f94:94 f95:95 f96:96 f97:97 f98:98 f99:99 f100:100 f101:101 f102:102 f103:103 f104:104 f105:105 f106:106 f107:107 f108:108 f109:109 f110:110 f111:111 f112:112 f113:113 f114:114 f115:115 f116:116 f117:117 f118:118 f119:119 f120:120 f121:121 f122:122 f123:123 f124:124 f125:125 f126:126 f127:127 f128:128 f129:129 f130:130 f131:131 f132:132 f133:133 f134:134 f135:135 f136:136 f137:137 f138:138 f139:139 f140:140 f141:141 f142:142 f143:143 f144:144 f145:145 f146:146 f147:147 f148:148 f149:149;r.f140
+
+-- Aggregate across multiple fields to confirm every slot is reachable.
+sum-3>n;r=big f0:0 f1:1 f2:2 f3:3 f4:4 f5:5 f6:6 f7:7 f8:8 f9:9 f10:10 f11:11 f12:12 f13:13 f14:14 f15:15 f16:16 f17:17 f18:18 f19:19 f20:20 f21:21 f22:22 f23:23 f24:24 f25:25 f26:26 f27:27 f28:28 f29:29 f30:30 f31:31 f32:32 f33:33 f34:34 f35:35 f36:36 f37:37 f38:38 f39:39 f40:40 f41:41 f42:42 f43:43 f44:44 f45:45 f46:46 f47:47 f48:48 f49:49 f50:50 f51:51 f52:52 f53:53 f54:54 f55:55 f56:56 f57:57 f58:58 f59:59 f60:60 f61:61 f62:62 f63:63 f64:64 f65:65 f66:66 f67:67 f68:68 f69:69 f70:70 f71:71 f72:72 f73:73 f74:74 f75:75 f76:76 f77:77 f78:78 f79:79 f80:80 f81:81 f82:82 f83:83 f84:84 f85:85 f86:86 f87:87 f88:88 f89:89 f90:90 f91:91 f92:92 f93:93 f94:94 f95:95 f96:96 f97:97 f98:98 f99:99 f100:100 f101:101 f102:102 f103:103 f104:104 f105:105 f106:106 f107:107 f108:108 f109:109 f110:110 f111:111 f112:112 f113:113 f114:114 f115:115 f116:116 f117:117 f118:118 f119:119 f120:120 f121:121 f122:122 f123:123 f124:124 f125:125 f126:126 f127:127 f128:128 f129:129 f130:130 f131:131 f132:132 f133:133 f134:134 f135:135 f136:136 f137:137 f138:138 f139:139 f140:140 f141:141 f142:142 f143:143 f144:144 f145:145 f146:146 f147:147 f148:148 f149:149;+r.f0 +r.f75 r.f149
+
+-- run: hit-f140
+-- out: 140
+-- run: sum-3
+-- out: 224
