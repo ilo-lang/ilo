@@ -1,0 +1,55 @@
+-- Multi-line function bodies — readable indented form.
+--
+-- ilo's spec says newlines are non-semantic: an entire program can be one
+-- line, but a multi-line file with indented continuations must work too.
+-- These shapes all used to fail with ILO-P009 ("expected expression, got
+-- Semi" / "got PipeOp") because `normalize_newlines` injected a `;` inside
+-- brackets or before a continuation pipe. Now they all run.
+
+-- Multi-line list literal.
+nums>L n
+  xs=[
+    1,
+    2,
+    3
+  ]
+  xs
+
+-- Multi-line list literal with leading commas (common when copy-pasting
+-- columns of values).
+items>L n
+  xs=[1
+    ,2
+    ,3]
+  xs
+
+-- Multi-line paren-grouped expression.
+gp x:n>n
+  y=(+x
+    1)
+  y
+
+-- Pipe chain across multiple lines — `>>` on a continuation line is never
+-- a statement start, so the `;` injection is suppressed.
+pipe x:n>n
+  x
+    >>str
+    >>len
+
+-- Indented multi-statement body (already worked, kept as a regression
+-- baseline).
+tot p:n q:n>n
+  s=*p q
+  t=*s q
+  +s t
+
+-- run: nums
+-- out: [1, 2, 3]
+-- run: items
+-- out: [1, 2, 3]
+-- run: gp 5
+-- out: 6
+-- run: pipe 42
+-- out: 2
+-- run: tot 3 4
+-- out: 60
