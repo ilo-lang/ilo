@@ -1,0 +1,37 @@
+-- Comments above a paren-bound call must not corrupt parsing.
+-- Previously a comment immediately above `m=(fmt "k={}" 1)` made the
+-- function body empty and reported a misleading error inside the
+-- format string. Comments are free per the manifesto; this example
+-- pins the contract across every engine.
+
+fmt-with-leading-comment>t
+  -- format a key-value pair
+  m=(fmt "k={}" 1)
+  m
+
+stacked-comments>n
+  -- one
+  -- two
+  -- three
+  x=42
+  x
+
+comment-between-bindings>n
+  a=1
+  -- mid-body note
+  b=2
+  +a b
+
+dashes-in-string>t
+  -- the `--` inside the string is not a comment
+  m="hello -- world"
+  m
+
+-- run: fmt-with-leading-comment
+-- out: k=1
+-- run: stacked-comments
+-- out: 42
+-- run: comment-between-bindings
+-- out: 3
+-- run: dashes-in-string
+-- out: hello -- world
