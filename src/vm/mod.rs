@@ -290,6 +290,17 @@ pub(crate) const OP_CHR: u8 = 154; // R[A] = single-char string for codepoint R[
 // the emitter — this op only fires when no specialised arm matches.
 pub(crate) const OP_CALL_BUILTIN_TREE: u8 = 155;
 
+// Safe field access — `.?field` on records. Returns nil when the object is
+// nil OR the field is missing on a present record. Mirrors OP_RECFLD /
+// OP_RECFLD_NAME byte-for-byte (same ABC encoding) but with the missing-field
+// branch redirected to TAG_NIL instead of FieldNotFound. Used by the dynamic-
+// record (jpar) path so heterogeneous JSON records don't need jdmp+jpth-per-
+// probe to test for the presence of an optional field. The strict opcodes
+// (OP_RECFLD / OP_RECFLD_NAME) are still emitted for non-safe `.field` access
+// so typo-on-known-type detection survives.
+pub(crate) const OP_RECFLD_SAFE: u8 = 156;
+pub(crate) const OP_RECFLD_NAME_SAFE: u8 = 157;
+
 /// Builtins eligible for tree-bridge dispatch when no specialised VM opcode
 /// matches the call shape. The list is deliberately narrow: it covers the
 /// regex/format/file-format family that has no FnRef args, so NanVal↔Value
@@ -1662,22 +1673,23 @@ impl RegCompiler {
                     Some(idx) => {
                         // Fast path: direct field index
                         let c = idx as u8;
-                        // Check if this field is known numeric from the type definition
-                        let field_is_num = obj_type != u16::MAX
-                            && idx < 64
-                            && (self.type_registry.types[obj_type as usize].num_fields
-                                & (1 << idx))
-                                != 0;
                         if *safe {
-                            self.emit_abx(OP_JMPNN, obj_reg, 1);
-                            self.emit_abx(OP_JMP, 0, 1);
-                            self.emit_abc(OP_RECFLD, obj_reg, obj_reg, c);
-                            self.reg_record_type[obj_reg as usize] = u16::MAX;
-                            if field_is_num {
-                                self.reg_is_num[obj_reg as usize] = true;
-                            }
-                            obj_reg
+                            // OP_RECFLD_SAFE handles both nil-object and missing-field
+                            // by producing nil, so no JMPNN wrapper is needed. A
+                            // missing optional field can surface as nil even when the
+                            // static type marks it numeric, so we deliberately do not
+                            // propagate `field_is_num` here.
+                            let ra = self.alloc_reg();
+                            self.emit_abc(OP_RECFLD_SAFE, ra, obj_reg, c);
+                            self.reg_record_type[ra as usize] = u16::MAX;
+                            ra
                         } else {
+                            // Check if this field is known numeric from the type def.
+                            let field_is_num = obj_type != u16::MAX
+                                && idx < 64
+                                && (self.type_registry.types[obj_type as usize].num_fields
+                                    & (1 << idx))
+                                    != 0;
                             let ra = self.alloc_reg();
                             self.emit_abc(OP_RECFLD, ra, obj_reg, c);
                             if field_is_num {
@@ -1691,11 +1703,10 @@ impl RegCompiler {
                         let ki = self.current.add_const(Value::Text(field.clone()));
                         assert!(ki <= 255, "constant pool overflow for dynamic field name");
                         if *safe {
-                            self.emit_abx(OP_JMPNN, obj_reg, 1);
-                            self.emit_abx(OP_JMP, 0, 1);
-                            self.emit_abc(OP_RECFLD_NAME, obj_reg, obj_reg, ki as u8);
-                            self.reg_record_type[obj_reg as usize] = u16::MAX;
-                            obj_reg
+                            let ra = self.alloc_reg();
+                            self.emit_abc(OP_RECFLD_NAME_SAFE, ra, obj_reg, ki as u8);
+                            self.reg_record_type[ra as usize] = u16::MAX;
+                            ra
                         } else {
                             let ra = self.alloc_reg();
                             self.emit_abc(OP_RECFLD_NAME, ra, obj_reg, ki as u8);
@@ -4847,6 +4858,120 @@ impl<'a> VM<'a> {
                         };
                         reg_set!(a, field_val);
                     } // end else (heap record path)
+                }
+                OP_RECFLD_SAFE => {
+                    // Safe field access by index: nil on nil-object, on
+                    // missing field, or on non-record. Mirrors OP_RECFLD but
+                    // every error arm is redirected to TAG_NIL.
+                    let a = ((inst >> 16) & 0xFF) as usize + base;
+                    let b = ((inst >> 8) & 0xFF) as usize + base;
+                    let field_idx = (inst & 0xFF) as usize;
+                    let record = reg!(b);
+                    let field_val = if record.0 == TAG_NIL {
+                        NanVal::nil()
+                    } else if record.is_arena_record() {
+                        // SAFETY: is_arena_record() confirmed the TAG_ARENA_REC
+                        // tag, so as_arena_record() yields a `*const ArenaRecord`
+                        // into the live bump arena owned by this VM. field_ptr is
+                        // only dereferenced after the explicit n_fields bounds
+                        // check below; clone_rc is a no-op for numeric fields and
+                        // increments the refcount for heap-tagged ones.
+                        unsafe {
+                            let rec = record.as_arena_record();
+                            if field_idx < rec.n_fields as usize {
+                                let v = NanVal(*rec.field_ptr(field_idx));
+                                v.clone_rc();
+                                v
+                            } else {
+                                NanVal::nil()
+                            }
+                        }
+                    } else if record.is_heap() {
+                        // SAFETY: is_heap() confirmed a heap-tagged NanVal with
+                        // live RC, so as_heap_ref() yields a valid `&HeapObj`.
+                        // fields[idx] is dereferenced only after the explicit
+                        // len() bounds check.
+                        unsafe {
+                            match record.as_heap_ref() {
+                                HeapObj::Record { fields, .. } => {
+                                    if field_idx < fields.len() {
+                                        let val = fields[field_idx];
+                                        val.clone_rc();
+                                        val
+                                    } else {
+                                        NanVal::nil()
+                                    }
+                                }
+                                _ => NanVal::nil(),
+                            }
+                        }
+                    } else {
+                        NanVal::nil()
+                    };
+                    reg_set!(a, field_val);
+                }
+                OP_RECFLD_NAME_SAFE => {
+                    // Safe dynamic field access by name: nil on nil-object,
+                    // missing field, or non-record. Used by `.?` on records
+                    // whose static field layout is unknown (e.g. jpar output).
+                    let a = ((inst >> 16) & 0xFF) as usize + base;
+                    let b = ((inst >> 8) & 0xFF) as usize + base;
+                    let c = (inst & 0xFF) as usize;
+                    // SAFETY: `ci` is set from the current frame's chunk_idx,
+                    // which the compiler guarantees is a valid index into
+                    // self.program.chunks (mirrors the strict OP_RECFLD_NAME
+                    // arm at L4807).
+                    let chunk = unsafe { self.program.chunks.get_unchecked(ci) };
+                    let field_name = match &chunk.constants[c] {
+                        Value::Text(s) => s.as_str(),
+                        _ => vm_err!(VmError::Type("RecordFieldSafe expects string constant")),
+                    };
+                    let record = reg!(b);
+                    let field_val = if record.0 == TAG_NIL {
+                        NanVal::nil()
+                    } else if record.is_arena_record() {
+                        // SAFETY: is_arena_record() confirmed the TAG_ARENA_REC
+                        // tag. The record's type_id was set at construction time
+                        // from the same type registry we're reading here, so it
+                        // is always a valid index into types[]. field_ptr is
+                        // dereferenced only after the explicit n_fields bounds
+                        // check below.
+                        unsafe {
+                            let rec = record.as_arena_record();
+                            let type_info = &self.program.type_registry.types[rec.type_id as usize];
+                            match type_info.fields.iter().position(|f| f == field_name) {
+                                Some(idx) if idx < rec.n_fields as usize => {
+                                    let v = NanVal(*rec.field_ptr(idx));
+                                    v.clone_rc();
+                                    v
+                                }
+                                _ => NanVal::nil(),
+                            }
+                        }
+                    } else if record.is_heap() {
+                        // SAFETY: is_heap() confirmed a heap-tagged NanVal with
+                        // live RC, so as_heap_ref() yields a valid `&HeapObj`.
+                        // fields[idx] is dereferenced only after the explicit
+                        // len() bounds check.
+                        unsafe {
+                            match record.as_heap_ref() {
+                                HeapObj::Record { type_info, fields } => {
+                                    match type_info.fields.iter().position(|f| f == field_name) {
+                                        Some(idx) if idx < fields.len() => {
+                                            let val = fields[idx];
+                                            val.clone_rc();
+                                            val
+                                        }
+                                        _ => NanVal::nil(),
+                                    }
+                                }
+                                _ => NanVal::nil(),
+                            }
+                        }
+                    } else {
+                        NanVal::nil()
+                    };
+                    reg_set!(a, field_val);
                 }
                 OP_INDEX => {
                     let a = ((inst >> 16) & 0xFF) as usize + base;
