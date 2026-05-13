@@ -4288,27 +4288,70 @@ impl<'a> VM<'a> {
                     let map_v = reg!(b);
                     let key_v = reg!(c);
                     let val_v = reg!(d);
-                    let result = unsafe {
-                        match map_v.as_heap_ref() {
-                            HeapObj::Map(m) => match key_v.as_heap_ref() {
-                                HeapObj::Str(k) => {
+                    if (map_v.0 & TAG_MASK) != TAG_MAP {
+                        vm_err!(VmError::Type("mset: first arg must be a map"));
+                    }
+                    if !key_v.is_string() {
+                        vm_err!(VmError::Type("mset: key must be text"));
+                    }
+                    let ptr_b = (map_v.0 & PTR_MASK) as *const HeapObj;
+                    // Peek the RC count without reconstructing the Rc (which would bump it).
+                    // Same pattern as OP_LISTAPPEND / OP_ADD_SS RC=1 fast paths.
+                    let rc_count = {
+                        let rc_peek = unsafe { Rc::from_raw(ptr_b) };
+                        let count = Rc::strong_count(&rc_peek);
+                        std::mem::forget(rc_peek);
+                        count
+                    };
+                    // Fast path: a == b and RC == 1 — sole owner, mutate HashMap in place.
+                    // Compiler peephole `name = mset name k v` emits a == b, which lets the
+                    // common accumulator pattern stay RC=1 across loop iterations and turns
+                    // O(n²) clone-per-insert into O(n) amortised.
+                    if a == b && rc_count == 1 {
+                        // SAFETY: We are the sole owner (count==1) and no aliasing reference
+                        // exists. Cast to *mut to insert directly into the HashMap. Pointer
+                        // identity is unchanged, so slot a (== b) still holds the same NanVal.
+                        let heap_mut = unsafe { &mut *(ptr_b as *mut HeapObj) };
+                        match heap_mut {
+                            HeapObj::Map(m) => {
+                                let k_str = unsafe {
+                                    match key_v.as_heap_ref() {
+                                        HeapObj::Str(s) => s.clone(),
+                                        _ => unreachable!(),
+                                    }
+                                };
+                                val_v.clone_rc();
+                                if let Some(old) = m.insert(k_str, val_v) {
+                                    old.drop_rc();
+                                }
+                            }
+                            _ => unreachable!(),
+                        }
+                    } else {
+                        // RC > 1 or distinct dest register — must clone to avoid aliasing.
+                        let result = unsafe {
+                            match &*ptr_b {
+                                HeapObj::Map(m) => {
                                     let mut new_map = m.clone();
                                     // m.clone() bit-copies values; bump RC for each retained entry
                                     for v in new_map.values() {
                                         v.clone_rc();
                                     }
+                                    let k_str = match key_v.as_heap_ref() {
+                                        HeapObj::Str(s) => s.clone(),
+                                        _ => unreachable!(),
+                                    };
                                     val_v.clone_rc();
-                                    if let Some(old) = new_map.insert(k.clone(), val_v) {
+                                    if let Some(old) = new_map.insert(k_str, val_v) {
                                         old.drop_rc();
                                     }
                                     NanVal::heap_map(new_map)
                                 }
-                                _ => vm_err!(VmError::Type("mset: key must be text")),
-                            },
-                            _ => vm_err!(VmError::Type("mset: first arg must be a map")),
-                        }
-                    };
-                    reg_set!(a, result);
+                                _ => unreachable!(),
+                            }
+                        };
+                        reg_set!(a, result);
+                    }
                 }
                 OP_MHAS => {
                     let a = ((inst >> 16) & 0xFF) as usize + base;
