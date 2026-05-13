@@ -61,11 +61,29 @@ const PATHKEY_HIT: &str = r#"f>n;m=mset mmap "k" 5;ks=["k"];mget m ks.0 ?? 0"#;
 const CALLKEY_HIT: &str = r#"f>n;m=mset mmap "5" 7;mget m str 5 ?? 0"#;
 // Parenthesised key — defensive lower bound on the precedence.
 const PARENKEY_HIT: &str = r#"f>n;m=mset mmap "5" 7;mget m (str 5) ?? 0"#;
-// Note: bare-chained `mget m "a" ?? mget m "b" ?? 99` does NOT parse
-// today — the arity-aware call parser doesn't extend through a `??`
-// boundary, so the second `mget` slurps `m "b" ?? 99` as three args.
-// Bind each lookup into a temp first (`a=mget m "a";b=mget m "b";a??b??99`)
-// or parenthesise. Logged as a separate adjacent finding.
+
+// --- chained `mget m k ?? mget m k2 ?? d` ---
+//
+// Earlier, the post-arg break in `parse_call_or_atom` let `??` through
+// when followed by 2+ atoms (the prefix-binary lookahead matched), so
+// `mget m "a" ?? mget m "b" ?? 99` parsed as `mget m "a" (?? mget m) (?? "b" ...)`
+// and failed with ILO-T006 "expects 2 args, got 3". Now `??` is always
+// infix once at least one call arg has been collected.
+
+// First lookup hits — short-circuits before second `mget` runs.
+const CHAIN_FIRST_HIT: &str = r#"f>n;m=mset mmap "a" 1;mget m "a" ?? mget m "b" ?? 99"#;
+// First miss, second hits.
+const CHAIN_SECOND_HIT: &str = r#"f>n;m=mset mmap "b" 2;mget m "a" ?? mget m "b" ?? 99"#;
+// Both miss — default wins.
+const CHAIN_BOTH_MISS: &str = r#"f>n;m=mmap;mget m "a" ?? mget m "b" ?? 99"#;
+// Two-element chain with no trailing default.
+const CHAIN_NO_DEFAULT_HIT: &str = r#"f>O n;m=mset mmap "a" 1;mget m "a" ?? mget m "b""#;
+const CHAIN_NO_DEFAULT_MISS: &str = r#"f>O n;m=mset mmap "b" 2;mget m "a" ?? mget m "b""#;
+// `at` is another arity-2 builtin — confirm the fix isn't `mget`-specific.
+// (Skip the out-of-bounds case: engines disagree on whether `at` returns nil
+// or raises ILO-R004/ILO-R009, which is orthogonal to the parser fix.)
+const CHAIN_AT_FIRST_HIT: &str = r#"f>n;xs=[10 20 30];at xs 0 ?? at xs 1 ?? 0"#;
+const CHAIN_AT_SECOND_HIT: &str = r#"f>n;xs=[10 20 30];at xs 1 ?? at xs 2 ?? 0"#;
 
 fn check_all(engine: &str) {
     assert_eq!(
@@ -112,6 +130,41 @@ fn check_all(engine: &str) {
         run_file(engine, PARENKEY_HIT, "f"),
         "7",
         "parenkey hit engine={engine}"
+    );
+    assert_eq!(
+        run_file(engine, CHAIN_FIRST_HIT, "f"),
+        "1",
+        "chain first hit engine={engine}"
+    );
+    assert_eq!(
+        run_file(engine, CHAIN_SECOND_HIT, "f"),
+        "2",
+        "chain second hit engine={engine}"
+    );
+    assert_eq!(
+        run_file(engine, CHAIN_BOTH_MISS, "f"),
+        "99",
+        "chain both miss engine={engine}"
+    );
+    assert_eq!(
+        run_file(engine, CHAIN_NO_DEFAULT_HIT, "f"),
+        "1",
+        "chain no-default hit engine={engine}"
+    );
+    assert_eq!(
+        run_file(engine, CHAIN_NO_DEFAULT_MISS, "f"),
+        "2",
+        "chain no-default miss engine={engine}"
+    );
+    assert_eq!(
+        run_file(engine, CHAIN_AT_FIRST_HIT, "f"),
+        "10",
+        "chain at first hit engine={engine}"
+    );
+    assert_eq!(
+        run_file(engine, CHAIN_AT_SECOND_HIT, "f"),
+        "20",
+        "chain at second hit engine={engine}"
     );
 }
 
