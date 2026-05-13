@@ -325,6 +325,7 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("padr", &["t", "n"], "t"),
     ("ord", &["t"], "n"),
     ("chr", &["n"], "t"),
+    ("chars", &["t"], "L t"),
     ("spl", &["t", "t"], "L t"),
     ("cat", &["L t", "t"], "t"),
     ("zip", &["list", "list"], "list"),
@@ -435,6 +436,8 @@ fn builtin_as_fn_ty(name: &str) -> Option<Ty> {
         // 1-arg t->n / n->t (ASCII / Unicode codepoint round-trip)
         "ord" => Ty::Fn(vec![t.clone()], Box::new(n.clone())),
         "chr" => Ty::Fn(vec![n.clone()], Box::new(t.clone())),
+        // 1-arg t -> L t (split into single-char strings, one per Unicode scalar)
+        "chars" => Ty::Fn(vec![t.clone()], Box::new(Ty::List(Box::new(t.clone())))),
         // 1-arg n->t and t->R n t
         "str" => Ty::Fn(vec![n], Box::new(t)),
         "num" => Ty::Fn(
@@ -978,6 +981,21 @@ fn builtin_check_args(
                 });
             }
             (Ty::Text, errors)
+        }
+        "chars" => {
+            if let Some(arg) = arg_types.first()
+                && !compatible(arg, &Ty::Text)
+            {
+                errors.push(VerifyError {
+                    code: "ILO-T013",
+                    function: func_ctx.to_string(),
+                    message: format!("'chars' expects t, got {arg}"),
+                    hint: None,
+                    span,
+                    is_warning: false,
+                });
+            }
+            (Ty::List(Box::new(Ty::Text)), errors)
         }
         "unq" => {
             if let Some(arg) = arg_types.first() {

@@ -270,6 +270,10 @@ pub(crate) const OP_PADR: u8 = 122; // R[A] = pad_right(R[B], R[C]) (text, width
 pub(crate) const OP_ORD: u8 = 153; // R[A] = first-char codepoint of R[B]
 pub(crate) const OP_CHR: u8 = 154; // R[A] = single-char string for codepoint R[B]
 
+// Explode a string into single-char strings, one per Unicode scalar.
+// t -> L t. No sentinels for empty input — returns empty list.
+pub(crate) const OP_CHARS: u8 = 158; // R[A] = chars(R[B])
+
 // Generic bridge for tree-only builtins (rgx, rgxall, fmt-variadic, rd 2-arg,
 // rdb, plus any future builtin that the VM/JIT hasn't natively lowered yet).
 //
@@ -2350,6 +2354,12 @@ impl RegCompiler {
                             let rb = self.compile_expr(&args[0]);
                             let ra = self.alloc_reg();
                             self.emit_abc(OP_CHR, ra, rb, 0);
+                            return ra;
+                        }
+                        (Builtin::Chars, 1) => {
+                            let rb = self.compile_expr(&args[0]);
+                            let ra = self.alloc_reg();
+                            self.emit_abc(OP_CHARS, ra, rb, 0);
                             return ra;
                         }
                         (Builtin::Padl | Builtin::Padr, 2) => {
@@ -4774,6 +4784,26 @@ impl<'a> VM<'a> {
                         None => vm_err!(VmError::Type("chr: not a valid Unicode codepoint")),
                     };
                     reg_set!(a, NanVal::heap_string(s));
+                }
+                OP_CHARS => {
+                    let a = ((inst >> 16) & 0xFF) as usize + base;
+                    let b = ((inst >> 8) & 0xFF) as usize + base;
+                    let v = reg!(b);
+                    if !v.is_string() {
+                        vm_err!(VmError::Type("chars requires a string"));
+                    }
+                    // SAFETY: is_string() confirmed heap-tagged string with live RC.
+                    let items: Vec<NanVal> = unsafe {
+                        match v.as_heap_ref() {
+                            HeapObj::Str(s) => s
+                                .as_str()
+                                .chars()
+                                .map(|c| NanVal::heap_string(c.to_string()))
+                                .collect(),
+                            _ => unreachable!(),
+                        }
+                    };
+                    reg_set!(a, NanVal::heap_list(items));
                 }
                 OP_PADL | OP_PADR => {
                     let op_byte = (inst >> 24) as u8;
@@ -11349,6 +11379,27 @@ pub(crate) extern "C" fn jit_chr(v: u64) -> u64 {
         Some(c) => NanVal::heap_string(c.to_string()).0,
         None => TAG_NIL,
     }
+}
+
+#[cfg(feature = "cranelift")]
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn jit_chars(v: u64) -> u64 {
+    let nv = NanVal(v);
+    if !nv.is_string() {
+        return TAG_NIL;
+    }
+    // SAFETY: is_string() confirmed heap-tagged string with live RC.
+    let items: Vec<NanVal> = unsafe {
+        match nv.as_heap_ref() {
+            HeapObj::Str(s) => s
+                .as_str()
+                .chars()
+                .map(|c| NanVal::heap_string(c.to_string()))
+                .collect(),
+            _ => unreachable!(),
+        }
+    };
+    NanVal::heap_list(items).0
 }
 
 #[cfg(feature = "cranelift")]

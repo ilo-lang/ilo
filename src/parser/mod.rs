@@ -2734,6 +2734,7 @@ fn builtin_arity_tables() -> (HashMap<String, usize>, HashMap<String, Vec<bool>>
         ("cap", 1, &[]),
         ("ord", 1, &[]),
         ("chr", 1, &[]),
+        ("chars", 1, &[]),
         // fmt is variadic (template + N args) — leave to greedy parsing
         // JSON
         ("jdmp", 1, &[]),
