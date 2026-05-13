@@ -1,0 +1,49 @@
+-- mget m k ?? d — one-line extract-with-default for map lookup.
+--
+-- `mget` returns an Optional (nil if the key is missing). Combined with
+-- `??` you get a terse default in a single statement:
+--
+--   v = mget m k ?? 0
+--
+-- The parser is arity-aware: `mget` takes exactly 2 args, so `??` binds
+-- to the whole `(mget m k)` result, not to the key. No need to bind the
+-- raw lookup into a temporary first. Works for literal keys, variable
+-- keys, path-access keys, call-result keys, parenthesised keys, and any
+-- value type (numbers, text, lists, maps).
+
+-- Literal key, value present.
+hit>n;m=mset mmap "k" 5;mget m "k" ?? 0
+
+-- Literal key, value missing — default applies.
+miss>n;m=mmap;mget m "missing" ?? 99
+
+-- Variable key, value present.
+varkey>n;m=mset mmap "k" 5;k="k";mget m k ?? 0
+
+-- Variable key, missing — default applies.
+varkey-miss>n;m=mmap;k="missing";mget m k ?? 7
+
+-- Text-typed value with a text default.
+textval>t;m=mset mmap "k" "hi";mget m "k" ?? "default"
+
+-- Text default reached when the key is absent.
+textval-miss>t;m=mmap;mget m "absent" ?? "default"
+
+-- Path-access key — `ks.0` is evaluated as the key, then `?? 0` applies
+-- to the whole `mget` result.
+pathkey>n;m=mset mmap "k" 5;ks=["k"];mget m ks.0 ?? 0
+
+-- run: hit
+-- out: 5
+-- run: miss
+-- out: 99
+-- run: varkey
+-- out: 5
+-- run: varkey-miss
+-- out: 7
+-- run: textval
+-- out: hi
+-- run: textval-miss
+-- out: default
+-- run: pathkey
+-- out: 5
