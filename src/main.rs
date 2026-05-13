@@ -6622,6 +6622,74 @@ mod tests {
         assert!(hints.is_empty(), "clean code should have no hints");
     }
 
+    // Regression: streaming-tail persona reported `hint: tail → tl` firing on
+    // every Approach B run because the file path contained `tail`. The path
+    // never reaches `collect_hints`, but the same root cause — raw-text scan
+    // ignoring lexer boundaries — let alias words inside comments fire the
+    // hint. These tests pin the lexer-token contract.
+    #[test]
+    fn collect_hints_alias_in_comment_does_not_fire() {
+        // `tail` in a line comment must not trigger the alias hint.
+        let hints = collect_hints("-- reading /tmp/ilo-streaming-tail-rerun/app.log\nf>n;42");
+        assert!(
+            hints.is_empty(),
+            "alias word in comment should not fire hint, got: {:?}",
+            hints
+        );
+    }
+
+    #[test]
+    fn collect_hints_other_alias_words_in_comments_do_not_fire() {
+        // Spot-check a handful of common alias source words — none of these
+        // should fire when they appear only in comments.
+        for word in ["tail", "filter", "flatmap", "length", "head", "append"] {
+            let src = format!("-- builtin: {word} something\nf>n;42");
+            let hints = collect_hints(&src);
+            assert!(
+                hints.is_empty(),
+                "comment-only `{}` should not fire hint, got: {:?}",
+                word,
+                hints
+            );
+        }
+    }
+
+    #[test]
+    fn collect_hints_alias_in_string_does_not_fire() {
+        // `tail` inside a string literal must not trigger the hint.
+        let hints = collect_hints(r#"f>t;"tail of the file""#);
+        assert!(
+            hints.is_empty(),
+            "alias word in string literal should not fire hint, got: {:?}",
+            hints
+        );
+    }
+
+    #[test]
+    fn collect_hints_real_alias_use_still_fires() {
+        // Contract: the hint *should* still fire when the alias appears as
+        // a real source identifier. `tail` is a known alias for `tl`.
+        let hints = collect_hints("f xs:L n>L n;tail xs");
+        assert!(
+            hints
+                .iter()
+                .any(|h| h.contains("`tail`") && h.contains("`tl`")),
+            "expected tail→tl hint on real alias use, got: {:?}",
+            hints
+        );
+    }
+
+    #[test]
+    fn collect_hints_double_equals_inside_comment_no_hint() {
+        // `==` inside a comment shouldn't trigger the equality hint either.
+        let hints = collect_hints("-- compare a == b here\nf x:n y:n>b;=x y");
+        assert!(
+            hints.is_empty(),
+            "`==` inside comment should not fire hint, got: {:?}",
+            hints
+        );
+    }
+
     // ── tools_cmd: error paths ────────────────────────────────────────────────
 
     #[test]
