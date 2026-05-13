@@ -392,6 +392,10 @@ const BUILTIN_ALIASES: &[(&str, &str)] = &[
     ("reverse", "rev"),
     ("sort", "srt"),
     ("slice", "slc"),
+    // `lset xs i v` is a discoverability alias for `lst xs i v`. Personas
+    // reach for it from the `mset`/`lset` mental model (L↔M parallelism);
+    // canonical name stays `lst`, so bytecode and `fmt` output are unchanged.
+    ("lset", "lst"),
     ("unique", "unq"),
     ("filter", "flt"),
     ("fold", "fld"),
