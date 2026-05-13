@@ -2262,6 +2262,7 @@ fn builtin_arity_tables() -> (HashMap<String, usize>, HashMap<String, Vec<bool>>
         ("jpth", 2, &[]),
         // Regex
         ("rgx", 2, &[]),
+        ("rgxall", 2, &[]),
         ("rgxsub", 3, &[]),
         // Map (associative)
         ("mget", 2, &[]),

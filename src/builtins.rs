@@ -106,6 +106,7 @@ pub enum Builtin {
     Fmt,
     Fmt2,
     Rgx,
+    Rgxall,
     Rgxsub,
 
     // JSON
@@ -224,6 +225,7 @@ impl Builtin {
             "fmt" => Some(Builtin::Fmt),
             "fmt2" => Some(Builtin::Fmt2),
             "rgx" => Some(Builtin::Rgx),
+            "rgxall" => Some(Builtin::Rgxall),
             "rgxsub" => Some(Builtin::Rgxsub),
             "jpth" => Some(Builtin::Jpth),
             "jdmp" => Some(Builtin::Jdmp),
@@ -335,6 +337,7 @@ impl Builtin {
             Builtin::Fmt => "fmt",
             Builtin::Fmt2 => "fmt2",
             Builtin::Rgx => "rgx",
+            Builtin::Rgxall => "rgxall",
             Builtin::Rgxsub => "rgxsub",
             Builtin::Jpth => "jpth",
             Builtin::Jdmp => "jdmp",
@@ -444,6 +447,7 @@ mod tests {
             "fmt",
             "fmt2",
             "rgx",
+            "rgxall",
             "rgxsub",
             "jpth",
             "jdmp",
