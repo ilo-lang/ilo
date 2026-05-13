@@ -1434,10 +1434,19 @@ impl Parser {
             // expand naturally (e.g. `xs >> map str` keeps `str` as a bare
             // fn-ref since `map`'s first arg is a fn-ref position).
             let mut args = Vec::new();
+            // Piped value will occupy the final slot, so explicit args here
+            // fill slots 0..arity-1. Subtract 1 from the outer-arity advertised
+            // to `parse_call_arg` so `fmt` correctly sees these as middle
+            // slots (and so a misplaced `fmt` in a pipe target gets the
+            // precise ILO-P018 rather than silently mis-parsing).
+            let pipe_outer_arity = self.fn_arity.get(&func_name).copied();
             while self.can_start_operand() {
                 let arg_idx = args.len();
                 let in_fn_pos = self.is_fn_ref_position(&func_name, arg_idx);
-                args.push(self.parse_call_arg(in_fn_pos)?);
+                let outer_ctx = pipe_outer_arity
+                    .filter(|&k| k > 0)
+                    .map(|k| (func_name.as_str(), k - 1, arg_idx));
+                args.push(self.parse_call_arg(in_fn_pos, outer_ctx)?);
             }
             // Piped value becomes last arg
             args.push(expr);
@@ -1775,12 +1784,108 @@ impl Parser {
             .unwrap_or(false)
     }
 
+    /// Is `name` a variadic-trailing builtin — one that, when used as a nested
+    /// call argument, must occupy the LAST arg slot of the outer call and
+    /// then consumes every remaining operand as its own trailing args?
+    ///
+    /// Currently only `fmt`. The rule is intentionally narrow:
+    ///   * trailing slot of a known-arity outer → eagerly parse template + tail.
+    ///   * middle slot → emit ILO-P018 (must be last, or wrap in parens).
+    ///   * outside known-arity context → fall through to existing behaviour
+    ///     (top-level call, list element with comma boundary, etc.).
+    fn is_variadic_trailing_builtin(name: &str) -> bool {
+        name == "fmt" || name == "format"
+    }
+
     /// Parse a single call argument. If `in_fn_ref_pos` is true, falls back
     /// to plain `parse_operand` so an Ident stays as a bare ref (HOF use).
     /// Otherwise, when the next token is an Ident naming a known function
     /// with arity N, eagerly consume that Ident plus its N args as a nested
     /// call — this lets agents write `prnt str nc` and `hd tl xs` naturally.
-    fn parse_call_arg(&mut self, in_fn_ref_pos: bool) -> Result<Expr> {
+    ///
+    /// `outer_ctx` carries the surrounding call's name, total arity, and the
+    /// current slot index (the slot this arg fills). It lets us decide
+    /// whether a variadic-trailing builtin like `fmt` is at the trailing slot
+    /// (eagerly consume its template + remaining operands) or a middle slot
+    /// (emit ILO-P018). `None` means we're not parsing inside a known-arity
+    /// outer, so the variadic-trailing rule doesn't apply.
+    fn parse_call_arg(
+        &mut self,
+        in_fn_ref_pos: bool,
+        outer_ctx: Option<(&str, usize, usize)>,
+    ) -> Result<Expr> {
+        // Variadic-trailing handling for `fmt` (and its `format` alias) when
+        // used as a nested arg of a known-arity outer.
+        if !in_fn_ref_pos
+            && let Some(Token::Ident(name)) = self.peek()
+            && Self::is_variadic_trailing_builtin(name)
+            && let Some((outer_name, outer_arity, arg_idx)) = outer_ctx
+        {
+            // Don't fire on shapes that wouldn't be a plain call anyway —
+            // record fields, field/index access, bang-unwrap, zero-arg paren.
+            let next = self.token_at(self.pos + 1);
+            let is_record = matches!(next, Some(Token::Ident(_)))
+                && self.token_at(self.pos + 2) == Some(&Token::Colon);
+            let is_field = matches!(next, Some(Token::Dot) | Some(Token::DotQuestion));
+            let is_zero_arg_call =
+                next == Some(&Token::LParen) && self.token_at(self.pos + 2) == Some(&Token::RParen);
+            let is_unwrap = next == Some(&Token::Bang) && {
+                let ident_span = self.peek_span();
+                let bang_span = self
+                    .tokens
+                    .get(self.pos + 1)
+                    .map(|(_, s)| *s)
+                    .unwrap_or(Span::UNKNOWN);
+                ident_span.end > 0 && bang_span.start == ident_span.end
+            };
+            if !(is_record || is_field || is_zero_arg_call || is_unwrap) {
+                let fmt_name = name.clone();
+                let is_trailing = arg_idx + 1 == outer_arity;
+                if !is_trailing {
+                    return Err(self.error_hint(
+                        "ILO-P018",
+                        format!(
+                            "`{fmt_name}` must be the last argument to `{outer_name}`; \
+wrap in parens to use it earlier"
+                        ),
+                        format!(
+                            "`{outer_name}` expects {outer_arity} args and `{fmt_name}` is at \
+slot {arg_idx} of {outer_arity}. Either move `{fmt_name}` to the last position, \
+or write `({fmt_name} \"...\" ...)` so its args are grouped."
+                        ),
+                    ));
+                }
+                // Trailing slot — eagerly consume `fmt` + template + all
+                // remaining operands as fmt's args.
+                self.advance(); // consume `fmt`
+                let mut fmt_args = Vec::new();
+                // fmt requires a template (its declared arity 1); if no
+                // operand follows, leave the underfilled call for the
+                // verifier to flag with its usual ILO-T013 error.
+                while self.can_start_operand() {
+                    // fmt's own slots are all value positions (no fn-refs),
+                    // and nested fmt-in-fmt is the same trailing slot of its
+                    // recursive context — pass through.
+                    fmt_args.push(self.parse_call_arg(false, None)?);
+                    // Stop on infix operators so `prnt fmt "x" 1 + 2` keeps
+                    // `+ 2` for the outer expression parser to handle (as it
+                    // would for any nested call's last arg).
+                    if let Some(tok) = self.peek()
+                        && Self::is_infix_or_suffix_op(tok)
+                        && (matches!(tok, Token::NilCoalesce)
+                            || !self.looks_like_prefix_binary(self.pos))
+                    {
+                        break;
+                    }
+                }
+                return Ok(Expr::Call {
+                    function: fmt_name,
+                    args: fmt_args,
+                    unwrap: false,
+                });
+            }
+        }
+
         if !in_fn_ref_pos
             && let Some(Token::Ident(name)) = self.peek()
             && let Some(&arity) = self.fn_arity.get(name)
@@ -1814,7 +1919,8 @@ impl Parser {
                         break;
                     }
                     let inner_fn_pos = self.is_fn_ref_position(&inner_name, i);
-                    inner_args.push(self.parse_call_arg(inner_fn_pos)?);
+                    inner_args
+                        .push(self.parse_call_arg(inner_fn_pos, Some((&inner_name, arity, i)))?);
                 }
                 return Ok(Expr::Call {
                     function: inner_name,
@@ -1866,10 +1972,14 @@ impl Parser {
             // If we consumed !, this must be a call (even with zero args if nothing follows)
             if unwrap {
                 let mut args = Vec::new();
+                let outer_arity_known = self.fn_arity.get(&name).copied();
                 while self.can_start_operand() {
                     let arg_idx = args.len();
                     let in_fn_pos = self.is_fn_ref_position(&name, arg_idx);
-                    args.push(self.parse_call_arg(in_fn_pos)?);
+                    let outer_ctx = outer_arity_known
+                        .filter(|&k| k > 0)
+                        .map(|k| (name.as_str(), k, arg_idx));
+                    args.push(self.parse_call_arg(in_fn_pos, outer_ctx)?);
                 }
                 return Ok(Expr::Call {
                     function: name,
@@ -1916,10 +2026,14 @@ impl Parser {
                     return Ok(atom);
                 }
                 let mut args = Vec::new();
+                let outer_arity_known = self.fn_arity.get(&name).copied();
                 while self.can_start_operand() {
                     let arg_idx = args.len();
                     let in_fn_pos = self.is_fn_ref_position(&name, arg_idx);
-                    args.push(self.parse_call_arg(in_fn_pos)?);
+                    let outer_ctx = outer_arity_known
+                        .filter(|&k| k > 0)
+                        .map(|k| (name.as_str(), k, arg_idx));
+                    args.push(self.parse_call_arg(in_fn_pos, outer_ctx)?);
                     // After each arg, if next is infix, stop. `??` is always
                     // infix once we've already collected at least one arg —
                     // `f a ?? b` means `(f a) ?? b`, never `f a (??b ...)`.

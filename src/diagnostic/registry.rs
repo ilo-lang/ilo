@@ -273,6 +273,35 @@ Closure capture is tracked as a Phase 2 follow-up; once it lands, free
 variables will be captured by value automatically.
 "#,
     },
+    ErrorEntry {
+        code: "ILO-P018",
+        short: "variadic builtin not in trailing position",
+        long: r#"## ILO-P018: variadic builtin not in trailing position
+
+`fmt` (and its `format` alias) is variadic — it takes a template plus any
+number of trailing values. When used as a nested argument to another known
+builtin, it MUST occupy the LAST argument slot of the outer call, because the
+parser has no way to know where `fmt`'s args end and the outer's resume.
+
+**Wrong:**
+
+    f x:t y:t z:t>n;f x fmt "tmpl {}" 1 z
+
+`fmt` here is at the middle slot of a 3-arg outer `f`; the parser can't tell
+whether `fmt` consumes `"tmpl {}" 1` or `"tmpl {}" 1 z`.
+
+**Fix A: move `fmt` to the trailing slot** if the outer's signature allows
+(most common idiom — `prnt fmt "..."`, `wr path fmt "..."`, `prnt str fmt
+"..."` all already satisfy this rule).
+
+**Fix B: wrap the `fmt` call in parens** to group its args explicitly:
+
+    f x (fmt "tmpl {}" 1) z
+
+The parens make the `fmt` call self-contained, so the outer's arg counter
+treats it as a single operand.
+"#,
+    },
     // ── Type / Verifier ──────────────────────────────────────────────────────
     ErrorEntry {
         code: "ILO-T001",
