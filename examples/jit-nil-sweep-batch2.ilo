@@ -1,0 +1,22 @@
+-- Positive paths for the batch-2 helpers (strict recfld_name hit, safe
+-- recfld_name miss, mget hit + miss). The companion regression suite
+-- covers the error paths; this example pins the happy paths
+-- cross-engine via the `examples_engines` harness so future codegen
+-- changes can't silently regress them.
+
+strict-hit j:t>R n t;r=jpar! j;~r.present
+safe-miss  j:t>R t t;r=jpar! j;~fmt "{}" r.?missing
+mget-miss>O n;m=mset (mmap) "a" 1;mget m "z"
+mget-hit>O n;m=mset (mmap) "a" 1;mget m "a"
+
+-- run: strict-hit {"present":42}
+-- out: ~42
+
+-- run: safe-miss {"present":1}
+-- out: ~nil
+
+-- run: mget-miss
+-- out: nil
+
+-- run: mget-hit
+-- out: 1
