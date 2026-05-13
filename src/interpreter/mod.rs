@@ -164,6 +164,19 @@ impl Env {
         self.vars.push((name.to_string(), value));
     }
 
+    /// Move out the current value bound to `name`, leaving the slot intact with
+    /// `Value::Nil`. Returns `None` if no binding exists. Used by the
+    /// self-rebind accumulator peephole to drop the env's Arc reference so
+    /// `Arc::make_mut` can mutate the heap object in place.
+    fn take(&mut self, name: &str) -> Option<Value> {
+        for entry in self.vars.iter_mut().rev() {
+            if entry.0 == name {
+                return Some(std::mem::replace(&mut entry.1, Value::Nil));
+            }
+        }
+        None
+    }
+
     /// Always create a fresh binding in the innermost scope (used for function parameters).
     fn define(&mut self, name: &str, value: Value) {
         self.vars.push((name.to_string(), value));
@@ -3711,9 +3724,70 @@ fn eval_body(env: &mut Env, stmts: &[Spanned<Stmt>]) -> Result<BodyResult> {
     Ok(BodyResult::Value(last))
 }
 
+/// If `value` is the self-rebind accumulator shape `name = mset name k v`,
+/// return `Some((key_expr, val_expr))`. Returns `None` for any other shape
+/// (different target name, nested calls, unwrap form, wrong arity), which
+/// then falls through to the general assignment path.
+fn match_self_rebind_mset<'a>(name: &str, value: &'a Expr) -> Option<(&'a Expr, &'a Expr)> {
+    if let Expr::Call {
+        function,
+        args,
+        unwrap,
+    } = value
+        && !*unwrap
+        && function == "mset"
+        && args.len() == 3
+        && let Expr::Ref(arg_name) = &args[0]
+        && arg_name == name
+    {
+        return Some((&args[1], &args[2]));
+    }
+    None
+}
+
+/// Fast-path executor for the self-rebind shape. The caller has already taken
+/// the previous binding out of env, leaving `Value::Nil` in its place. We
+/// evaluate the key and value expressions, then drive `mset` with the moved
+/// `prev` so the Arc has refcount=1 and `Arc::make_mut` mutates in place.
+fn eval_self_rebind_mset(
+    env: &mut Env,
+    key_expr: &Expr,
+    val_expr: &Expr,
+    prev: Value,
+) -> Result<Value> {
+    let key_val = eval_expr(env, key_expr)?;
+    let val_val = eval_expr(env, val_expr)?;
+    let args = vec![prev, key_val, val_val];
+    call_function(env, "mset", args)
+}
+
 fn eval_stmt(env: &mut Env, stmt: &Stmt) -> Result<Option<BodyResult>> {
     match stmt {
         Stmt::Let { name, value } => {
+            // Peephole: `m = mset m k v` self-rebind. Drop env's binding to Nil
+            // before evaluating the RHS so the Arc<HashMap> inside `args[0]`
+            // becomes the sole reference. `Arc::make_mut` then mutates in place
+            // instead of cloning, giving O(n) amortised accumulator behaviour
+            // on the tree-walker (mirrors VM compiler peephole from PR #249).
+            if let Some((key_expr, val_expr)) = match_self_rebind_mset(name, value)
+                && let Some(prev) = env.take(name)
+            {
+                // `take` left Value::Nil in env's slot so the Arc<HashMap>
+                // moved into `prev` is the sole reference (refcount=1).
+                // `Arc::make_mut` inside the mset builtin then mutates the
+                // HashMap in place rather than cloning, giving O(n)
+                // amortised behaviour for the `m=mset m k v` accumulator.
+                //
+                // Cloning `prev` for error-recovery would defeat the
+                // refcount=1 invariant, so on Err we leave Nil in the
+                // slot. This is safe: errors here propagate to the
+                // function boundary unconditionally (ilo has no
+                // catch/recover form), so user code never observes the
+                // intermediate Nil.
+                let val = eval_self_rebind_mset(env, key_expr, val_expr, prev)?;
+                env.set(name, val);
+                return Ok(None);
+            }
             let val = eval_expr(env, value)?;
             env.set(name, val);
             Ok(None)
