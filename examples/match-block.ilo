@@ -1,0 +1,26 @@
+-- Match arms accept brace-block bodies: ~v:{stmt;stmt;final-expr}.
+-- Final statement of the block is the arm value; mirrors =cond{block}.
+-- Inline ;-separated bodies still work; brace form just disambiguates.
+
+-- Brace block with a local binding inside an Ok arm
+parse-ok>n;r=num "10";?r{~v:{d=*v 2;+d 1};^e:0}
+
+-- Brace block on the Err arm
+parse-bad>t;r=num "oops";?r{~v:str v;^e:{tag="err: ";+tag e}}
+
+-- Nested match inside a brace-block arm
+classify>t;r=num "0";?r{~v:{?v{0:"zero";_:"nonzero"}};^e:"bad"}
+
+-- Multi-line bool match with brace blocks (each branch does setup work)
+report b:b>t;?b{true:{tag="OK: ";+tag "all good"};false:{tag="FAIL: ";+tag "see logs"}}
+
+-- run: parse-ok
+-- out: 21
+-- run: parse-bad
+-- out: err: oops
+-- run: classify
+-- out: zero
+-- run: report true
+-- out: OK: all good
+-- run: report false
+-- out: FAIL: see logs
