@@ -92,6 +92,15 @@ fn rgxall_unicode_input() {
 }
 
 #[test]
+fn rgxall_alternation_absent_groups_filtered() {
+    // `(a)|(b)` against "a b": the matching branch contributes its group,
+    // the absent branch is filtered out (via captures.get(i).map). Inner
+    // list length tracks *participating* groups, not declared groups. This
+    // matches rgx's existing semantics and is the documented behaviour.
+    check(r#"f>L (L t);rgxall "(a)|(b)" "a b""#, "[[a], [b]]");
+}
+
+#[test]
 fn rgxall_invalid_pattern_errors() {
     // Unclosed group is a regex compile error; must surface as a runtime error.
     let out = ilo()

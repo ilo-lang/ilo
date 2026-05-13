@@ -3259,9 +3259,18 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         let re = regex::Regex::new(pattern).map_err(|e| {
             RuntimeError::new("ILO-R009", format!("rgxall: invalid regex pattern: {e}"))
         })?;
-        // Uniform shape: L (L t). Each match is a list of capture-group strings.
-        // No-group patterns wrap the whole match in a single-element inner list,
-        // so the outer shape stays predictable regardless of group count.
+        // Outer shape is always L (L t). Inner-list contents depend on the
+        // pattern:
+        // - No capture groups: inner list is [whole_match] (length 1).
+        // - With capture groups: inner list holds only the groups that
+        //   *participated* in this particular match, in declaration order.
+        //   For straight patterns like `(\w+)=(\d+)` that means N declared
+        //   groups = N inner-list entries on every match. For alternation
+        //   patterns like `(a)|(b)`, only the branch that fired contributes,
+        //   so the inner list can be shorter than the declared group count.
+        //   This matches the `rgx` family's existing filter_map semantics
+        //   and avoids the empty-string-sentinel ambiguity of an alternative
+        //   "always emit N slots" design.
         let result: Vec<Value> = if re.captures_len() > 1 {
             re.captures_iter(input)
                 .map(|caps| {
