@@ -1,0 +1,30 @@
+-- `_` in a match-arm pattern binds the matched inner value (or the subject
+-- itself for plain `_:body` wildcards). Bodies that don't reference `_` are
+-- unaffected — discard remains free. SPEC.md line 1069's `~_:~_` example
+-- relies on this: re-wrap unchanged composes at zero extra tokens.
+
+-- Re-wrap unchanged: `~_:~_` reads the unwrapped value via `_` and rewraps
+-- it in Ok. Same shape, no rename to `~v:~v`.
+rewrap s:t>R n t;r=num s;?r{~_:~_;^_:^"e"}
+
+-- Debug-log the discarded err without renaming `^_` to `^e`.
+log-err s:t>t;r=num s;?r{~v:str v;^_:fmt "err: {}" _}
+
+-- Plain wildcard catch-all: `_:_` echoes the subject.
+echo x:n>n;?x{1:10;_:_}
+
+-- TypeIs wildcard `n _:_` binds the typed-matched value too.
+typed-echo x:n>n;?x{n _:+_ 1;_:0}
+
+-- run: rewrap 3.14
+-- out: ~3.14
+-- run: rewrap oops
+-- err: ^e
+-- run: log-err abc
+-- out: err: abc
+-- run: echo 42
+-- out: 42
+-- run: echo 1
+-- out: 10
+-- run: typed-echo 5
+-- out: 6
