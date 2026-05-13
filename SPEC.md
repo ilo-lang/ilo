@@ -542,6 +542,14 @@ Use `ret` inside a braced conditional for explicit early return:
 f x:n>n;>x 0{ret x};-x   -- return x early if positive, else negate
 ```
 
+> **Common footgun.** `=cond{val}` reads like "if cond, return val" but it isn't. The braces are conditional execution: `val` is evaluated, discarded, and execution falls through to the next statement. If you want early return, use the braceless form `=cond val` (when val is a single expression) or wrap with `ret` inside the braces: `=cond{ret val}`.
+>
+> ```
+> f x:n>n;=x 1{99};0          -- f 1 → 0  (99 is discarded, falls through)
+> f x:n>n;=x 1 99;0           -- f 1 → 99 (braceless guard: early return)
+> f x:n>n;=x 1{ret 99};0      -- f 1 → 99 (explicit ret inside braces)
+> ```
+
 ### Ternary (Guard-Else)
 
 A guard followed by a second brace block becomes a ternary — it produces a value without early return:

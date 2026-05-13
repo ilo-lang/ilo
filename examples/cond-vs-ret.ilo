@@ -1,0 +1,27 @@
+-- Braced conditional `cond{val}` is conditional execution: val is evaluated,
+-- discarded, and execution falls through. For early return inside braces use
+-- `ret`. The braceless form `cond val` always early-returns when val is a
+-- single expression. This file pins all three forms across every engine so the
+-- footgun stays caught.
+
+-- Braced: 99 is discarded, falls through to 0
+fall x:n>n;=x 1{99};0
+
+-- Braceless guard: early return
+gd x:n>n;=x 1 99;0
+
+-- Explicit ret inside braces: early return
+explicit x:n>n;=x 1{ret 99};0
+
+-- run: fall 1
+-- out: 0
+-- run: fall 2
+-- out: 0
+-- run: gd 1
+-- out: 99
+-- run: gd 2
+-- out: 0
+-- run: explicit 1
+-- out: 99
+-- run: explicit 2
+-- out: 0
