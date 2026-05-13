@@ -98,44 +98,41 @@ fn at_text_unicode_cranelift() {
     check_eq("--run-cranelift", UNI_NEG_LAST_SRC, "e");
 }
 
-// Out-of-range on text: tree/vm error, cranelift returns nil (mirrors hd/list).
+// Out-of-range on text: errors on every engine (tree, VM, cranelift).
+// Prior to the JIT TLS-error fix, cranelift silently returned nil here.
 const TEXT_OOR_SRC: &str = "f>t;at \"abc\" 99";
 
-#[test]
-fn at_text_oor_tree() {
+fn check_text_oor_error(engine: &str) {
     let out = ilo()
-        .args([TEXT_OOR_SRC, "--run-tree", "f"])
+        .args([TEXT_OOR_SRC, engine, "f"])
         .output()
         .expect("failed to run ilo");
-    assert!(!out.status.success(), "expected error");
+    assert!(
+        !out.status.success(),
+        "engine={engine}: expected error, got stdout={}",
+        String::from_utf8_lossy(&out.stdout)
+    );
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
-        stderr.contains("range") || stderr.contains("ILO-R009"),
-        "stderr={stderr}"
+        stderr.contains("range") || stderr.contains("ILO-R009") || stderr.contains("ILO-R004"),
+        "engine={engine}: expected range/ILO-R009/ILO-R004 in stderr, got stderr={stderr}"
     );
 }
 
 #[test]
+fn at_text_oor_tree() {
+    check_text_oor_error("--run-tree");
+}
+
+#[test]
 fn at_text_oor_vm() {
-    let out = ilo()
-        .args([TEXT_OOR_SRC, "--run-vm", "f"])
-        .output()
-        .expect("failed to run ilo");
-    assert!(!out.status.success(), "expected error");
+    check_text_oor_error("--run-vm");
 }
 
 #[test]
 #[cfg(feature = "cranelift")]
 fn at_text_oor_cranelift() {
-    let out = ilo()
-        .args([TEXT_OOR_SRC, "--run-cranelift", "f"])
-        .output()
-        .expect("failed to run ilo");
-    assert!(out.status.success(), "expected nil (success)");
-    assert!(
-        String::from_utf8_lossy(&out.stdout).contains("nil"),
-        "stdout should be nil"
-    );
+    check_text_oor_error("--run-cranelift");
 }
 
 // --- Per-char loop correctness over a non-trivial string -------------------
