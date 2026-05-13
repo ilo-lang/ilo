@@ -143,9 +143,12 @@ fn assert_ok_exit(engine: &str) {
         String::from_utf8_lossy(&out.stderr),
     );
     let stdout = String::from_utf8_lossy(&out.stdout);
+    // Top-level Value::Ok prints bare (no `~` wrapper) — symmetric with the
+    // `^e`-to-stderr split this test file already pins. See
+    // regression_main_ok_stdout_bare.rs for the full contract.
     assert!(
-        stdout.contains("~7"),
-        "{engine}: expected `~7` on stdout, got {stdout:?}",
+        stdout.contains('7') && !stdout.contains('~'),
+        "{engine}: expected bare `7` on stdout (no `~` prefix), got {stdout:?}",
     );
 }
 

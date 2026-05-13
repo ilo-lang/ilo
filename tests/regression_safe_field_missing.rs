@@ -68,9 +68,11 @@ fn run_err(engine: &str, src: &str, entry: &str, args: &[&str]) -> String {
 const MISSING_FIELD: &str = "f j:t>R t t;r=jpar! j;~fmt \"{}\" r.?missing";
 
 fn check_missing(engine: &str) {
+    // Top-level Value::Ok prints bare (no `~` prefix) — see
+    // regression_main_ok_stdout_bare.rs.
     assert_eq!(
         run(engine, MISSING_FIELD, "f", &[r#"{"present":1}"#]),
-        "~nil",
+        "nil",
         "engine={engine}"
     );
 }
@@ -98,7 +100,7 @@ const PRESENT_FIELD: &str = "f j:t>R t t;r=jpar! j;~fmt \"{}\" r.?present";
 fn check_present(engine: &str) {
     assert_eq!(
         run(engine, PRESENT_FIELD, "f", &[r#"{"present":42}"#]),
-        "~42",
+        "42",
         "engine={engine}"
     );
 }
@@ -130,7 +132,7 @@ const CHAINED_MISSING: &str = "f j:t>R t t;r=jpar! j;~fmt \"{}\" r.?outer.?inner
 fn check_chained_missing(engine: &str) {
     assert_eq!(
         run(engine, CHAINED_MISSING, "f", &[r#"{"other":1}"#]),
-        "~nil",
+        "nil",
         "engine={engine}"
     );
 }
@@ -163,7 +165,7 @@ fn check_chained_present(engine: &str) {
             "f",
             &[r#"{"outer":{"inner":"x"}}"#]
         ),
-        "~x",
+        "x",
         "engine={engine}"
     );
 }
@@ -192,7 +194,7 @@ fn check_nil_object(engine: &str) {
     // r.?missing → nil, then nil.?anything → nil.
     assert_eq!(
         run(engine, NIL_OBJECT, "f", &[r#"{"a":1}"#]),
-        "~nil",
+        "nil",
         "engine={engine}"
     );
 }

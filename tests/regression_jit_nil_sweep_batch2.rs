@@ -92,9 +92,10 @@ fn strict_recfld_name_miss_cranelift() {
 const STRICT_HIT: &str = "f j:t>R n t;r=jpar! j;~r.present";
 
 fn check_strict_hit(engine: &str) {
+    // Top-level Value::Ok prints bare (see regression_main_ok_stdout_bare.rs).
     assert_eq!(
         run_ok(engine, STRICT_HIT, "f", &[r#"{"present":42}"#]),
-        "~42",
+        "42",
         "engine={engine}"
     );
 }
@@ -128,7 +129,7 @@ const SAFE_MISS: &str = "f j:t>R t t;r=jpar! j;~fmt \"{}\" r.?missing";
 fn check_safe_miss(engine: &str) {
     assert_eq!(
         run_ok(engine, SAFE_MISS, "f", &[r#"{"present":1}"#]),
-        "~nil",
+        "nil",
         "engine={engine}"
     );
 }
@@ -219,7 +220,7 @@ fn no_stale_jit_error_leak_after_strict_recfld_miss() {
     // Second fresh process: must succeed cleanly.
     assert_eq!(
         run_ok("--run-cranelift", STRICT_HIT, "f", &[r#"{"present":99}"#],),
-        "~99",
+        "99",
         "fresh process after strict-miss error must succeed"
     );
 }

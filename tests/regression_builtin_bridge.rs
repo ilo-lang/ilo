@@ -128,7 +128,9 @@ fn rd_csv_two_arg_in_block_function() {
         writeln!(f, "b,2").unwrap();
     }
     let src = format!(r#"f>R (L (L t)) t;rd "{}" "csv""#, path.to_str().unwrap());
-    check(&src, "~[[a, 1], [b, 2]]");
+    // Top-level Value::Ok prints bare (no `~` prefix) per the symmetric
+    // stdout/stderr split — see regression_main_ok_stdout_bare.rs.
+    check(&src, "[[a, 1], [b, 2]]");
     let _ = std::fs::remove_file(&path);
 }
 
@@ -139,10 +141,11 @@ fn rdb_csv_cross_engine() {
     // `rdb` parses an in-memory buffer in the given format; same dispatcher
     // as `rd`, so the bridge plumbing must handle both. Newline escapes
     // resolve at the string literal level.
+    // Top-level Value::Ok prints bare (no `~` prefix).
     check(
         r#"f>R (L (L t)) t;rdb "a,1
 b,2" "csv""#,
-        "~[[a, 1], [b, 2]]",
+        "[[a, 1], [b, 2]]",
     );
 }
 

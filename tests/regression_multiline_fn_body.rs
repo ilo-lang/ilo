@@ -91,9 +91,11 @@ const ML_PIPE_IN_BLOCK: &str =
     "agg xs:L n>n\n  s=0\n  @x xs{\n    v=x\n      >>str\n      >>len\n    s=+s v\n  }\n  s\n";
 
 fn check_all(engine: &str) {
+    // Top-level Value::Ok prints bare (no `~` prefix) — see
+    // regression_main_ok_stdout_bare.rs for the contract.
     assert_eq!(
         run_file(engine, ML_RESULT, "f"),
-        "~hello",
+        "hello",
         "multi-line R t t engine={engine}"
     );
     assert_eq!(
@@ -103,12 +105,12 @@ fn check_all(engine: &str) {
     );
     assert_eq!(
         run_file(engine, ML_NESTED, "h"),
-        "~[1, 2]",
+        "[1, 2]",
         "multi-line R L n t engine={engine}"
     );
     assert_eq!(
         run_file(engine, ML_INDENTED, "f"),
-        "~hello",
+        "hello",
         "multi-line indented engine={engine}"
     );
     assert_eq!(
@@ -118,7 +120,7 @@ fn check_all(engine: &str) {
     );
     assert_eq!(
         run_file(engine, SL_RESULT, "f"),
-        "~hello",
+        "hello",
         "single-line R t t engine={engine}"
     );
     assert_eq!(

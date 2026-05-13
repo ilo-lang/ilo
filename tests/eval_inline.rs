@@ -1600,7 +1600,10 @@ fn unwrap_ok_path_inline() {
         "stderr: {}",
         String::from_utf8_lossy(&out.stderr)
     );
-    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "~42");
+    // Top-level `Value::Ok(Number(42))` prints bare `42` (no `~` wrapper)
+    // per the symmetric stdout/stderr split with `^e`. See
+    // tests/regression_main_ok_stdout_bare.rs for the full contract.
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "42");
 }
 
 #[test]
@@ -1943,7 +1946,9 @@ fn range_empty() {
 
 #[test]
 fn alias_basic_run() {
-    // alias res R n t; function returning ~42 as res type
+    // alias res R n t; function returning ~42 as res type. Top-level
+    // `Value::Ok` prints bare (no `~` prefix) — see
+    // tests/regression_main_ok_stdout_bare.rs.
     let out = ilo()
         .args(["-e", "alias res R n t\nf>res;~42", "--run", "f"])
         .output()
@@ -1953,7 +1958,7 @@ fn alias_basic_run() {
         "stderr: {}",
         String::from_utf8_lossy(&out.stderr)
     );
-    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "~42");
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "42");
 }
 
 #[test]
