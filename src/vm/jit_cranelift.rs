@@ -144,6 +144,8 @@ struct HelperFuncs {
     cap: FuncId,
     padl: FuncId,
     padr: FuncId,
+    ord: FuncId,
+    chr: FuncId,
     unq: FuncId,
     uniqby: FuncId,
     partition: FuncId,
@@ -298,6 +300,8 @@ fn register_helpers(builder: &mut JITBuilder) {
         ("jit_cap", jit_cap as *const u8),
         ("jit_padl", jit_padl as *const u8),
         ("jit_padr", jit_padr as *const u8),
+        ("jit_ord", jit_ord as *const u8),
+        ("jit_chr", jit_chr as *const u8),
         ("jit_unq", jit_unq as *const u8),
         ("jit_uniqby", jit_uniqby as *const u8),
         ("jit_partition", jit_partition as *const u8),
@@ -441,6 +445,8 @@ fn declare_all_helpers(module: &mut JITModule) -> HelperFuncs {
         cap: declare_helper(module, "jit_cap", 1, 1),
         padl: declare_helper(module, "jit_padl", 2, 1),
         padr: declare_helper(module, "jit_padr", 2, 1),
+        ord: declare_helper(module, "jit_ord", 1, 1),
+        chr: declare_helper(module, "jit_chr", 1, 1),
         unq: declare_helper(module, "jit_unq", 1, 1),
         uniqby: declare_helper(module, "jit_uniqby", 2, 1),
         partition: declare_helper(module, "jit_partition", 2, 1),
@@ -991,7 +997,8 @@ fn compile_function_body(
                 | OP_FLR | OP_CEL | OP_ROU | OP_RND0 | OP_RND2 | OP_RNDN | OP_NOW
                 | OP_MOD | OP_CLAMP | OP_POW | OP_SQRT | OP_LOG | OP_EXP | OP_SIN | OP_COS
                 | OP_TAN | OP_LOG10 | OP_LOG2 | OP_ATAN2
-                | OP_MEDIAN | OP_QUANTILE | OP_STDEV | OP_VARIANCE | OP_DOT | OP_DET => {
+                | OP_MEDIAN | OP_QUANTILE | OP_STDEV | OP_VARIANCE | OP_DOT | OP_DET
+                | OP_ORD => {
                     num_write[a] = true;
                 }
                 // LOADK: numeric only when the constant itself is a number.
@@ -1031,7 +1038,7 @@ fn compile_function_body(
                 | OP_LISTNEW | OP_LISTAPPEND
                 | OP_RECNEW | OP_RECWITH
                 | OP_PRT | OP_RD | OP_RDL | OP_WR | OP_WRL | OP_TRM | OP_UPR | OP_LWR | OP_CAP
-                | OP_PADL | OP_PADR | OP_UNQ | OP_UNIQBY | OP_PARTITION | OP_FRQ | OP_NUM
+                | OP_PADL | OP_PADR | OP_CHR | OP_UNQ | OP_UNIQBY | OP_PARTITION | OP_FRQ | OP_NUM
                 | OP_RGXSUB | OP_TRANSPOSE | OP_MATMUL | OP_DTFMT | OP_DTPARSE => {
                     non_num_write[a] = true;
                     non_bool_write[a] = true;
@@ -3771,6 +3778,20 @@ fn compile_function_body(
                 let cv = builder.use_var(vars[c_idx]);
                 let fref = get_func_ref(&mut builder, module, helpers.padr);
                 let call_inst = builder.ins().call(fref, &[bv, cv]);
+                let result = builder.inst_results(call_inst)[0];
+                builder.def_var(vars[a_idx], result);
+            }
+            OP_ORD => {
+                let bv = builder.use_var(vars[b_idx]);
+                let fref = get_func_ref(&mut builder, module, helpers.ord);
+                let call_inst = builder.ins().call(fref, &[bv]);
+                let result = builder.inst_results(call_inst)[0];
+                builder.def_var(vars[a_idx], result);
+            }
+            OP_CHR => {
+                let bv = builder.use_var(vars[b_idx]);
+                let fref = get_func_ref(&mut builder, module, helpers.chr);
+                let call_inst = builder.ins().call(fref, &[bv]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
             }
