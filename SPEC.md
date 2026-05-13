@@ -1179,6 +1179,8 @@ In `--json` mode the value is always wrapped (`{"ok": v}` / `{"error": {...}}`) 
 
 `Display` on `Value::Ok` / `Value::Err` still renders `~v` / `^e` in every other context (nested values, `prnt`, REPL prompts, error messages, debug output) — only the top-level program-return print path is split.
 
+The contract above applies to the in-process runners (`ilo prog.ilo`, `--run-tree`, `--run-vm`, `--run-cranelift`). AOT-compiled standalone binaries from `ilo compile` emit their final value through the same runtime helper as the `prnt` builtin and therefore still print `~v` / `^e`; the split is tracked as a follow-up.
+
 ### Idiomatic hints
 
 After successful execution, ilo scans the source for non-canonical forms and emits hints to stderr:
