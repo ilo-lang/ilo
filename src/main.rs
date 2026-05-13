@@ -5175,7 +5175,7 @@ mod tests {
     fn print_value_map_as_json() {
         let mut m = std::collections::HashMap::new();
         m.insert("k".to_string(), interpreter::Value::Number(7.0));
-        let val = interpreter::Value::Map(m);
+        let val = interpreter::Value::Map(std::sync::Arc::new(m));
         print_value(&val, true, false);
     }
 
@@ -5183,7 +5183,7 @@ mod tests {
     fn print_value_map_plain_not_json() {
         let mut m = std::collections::HashMap::new();
         m.insert("key".to_string(), interpreter::Value::Bool(true));
-        let val = interpreter::Value::Map(m);
+        let val = interpreter::Value::Map(std::sync::Arc::new(m));
         print_value(&val, false, false);
     }
 

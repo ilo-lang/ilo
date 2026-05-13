@@ -3730,9 +3730,9 @@ impl NanVal {
                     HeapObj::List(items) => {
                         Value::List(items.iter().map(|v| v.to_value()).collect())
                     }
-                    HeapObj::Map(m) => {
-                        Value::Map(m.iter().map(|(k, v)| (k.clone(), v.to_value())).collect())
-                    }
+                    HeapObj::Map(m) => Value::Map(std::sync::Arc::new(
+                        m.iter().map(|(k, v)| (k.clone(), v.to_value())).collect(),
+                    )),
                     HeapObj::Record { type_info, fields } => Value::Record {
                         type_name: type_info.name.clone(),
                         fields: type_info
@@ -14351,7 +14351,7 @@ mod tests {
             Some("f"),
             vec![
                 Value::Text("http://127.0.0.1:1".to_string()),
-                Value::Map(headers),
+                Value::Map(std::sync::Arc::new(headers)),
             ],
         );
         let Value::Err(_) = result else {
@@ -14371,7 +14371,7 @@ mod tests {
             vec![
                 Value::Text("http://127.0.0.1:1".to_string()),
                 Value::Text("body".to_string()),
-                Value::Map(headers),
+                Value::Map(std::sync::Arc::new(headers)),
             ],
         );
         let Value::Err(_) = result else {
@@ -16598,11 +16598,11 @@ mod tests {
             "f coll:n needle:t>b;has coll needle",
             Some("f"),
             vec![
-                Value::Map({
+                Value::Map(std::sync::Arc::new({
                     let mut m = std::collections::HashMap::new();
                     m.insert("x".to_string(), Value::Text("1".to_string()));
                     m
-                }),
+                })),
                 Value::Text("x".to_string()),
             ],
         );
@@ -16644,7 +16644,7 @@ mod tests {
             Some("f"),
             vec![
                 Value::Text("http://127.0.0.1:1".to_string()),
-                Value::Map(std::collections::HashMap::new()),
+                Value::Map(std::sync::Arc::new(std::collections::HashMap::new())),
             ],
         );
         assert!(
@@ -16666,7 +16666,7 @@ mod tests {
             vec![
                 Value::Text("http://127.0.0.1:1".to_string()),
                 Value::Text("{}".to_string()),
-                Value::Map(std::collections::HashMap::new()),
+                Value::Map(std::sync::Arc::new(std::collections::HashMap::new())),
             ],
         );
         assert!(
@@ -18731,7 +18731,7 @@ mod tests {
             "f m:z k:z>n;mget m k",
             Some("f"),
             vec![
-                Value::Map(std::collections::HashMap::new()),
+                Value::Map(std::sync::Arc::new(std::collections::HashMap::new())),
                 Value::List(vec![Value::Number(1.0)]),
             ],
         );
@@ -18763,7 +18763,7 @@ mod tests {
             "f m:z k:z v:t>n;mset m k v",
             Some("f"),
             vec![
-                Value::Map(std::collections::HashMap::new()),
+                Value::Map(std::sync::Arc::new(std::collections::HashMap::new())),
                 Value::List(vec![Value::Number(1.0)]),
                 Value::Text("val".into()),
             ],
@@ -18797,7 +18797,7 @@ mod tests {
             "f m:z k:z>n;mhas m k",
             Some("f"),
             vec![
-                Value::Map(std::collections::HashMap::new()),
+                Value::Map(std::sync::Arc::new(std::collections::HashMap::new())),
                 Value::List(vec![Value::Number(1.0)]),
             ],
         );
@@ -18851,7 +18851,7 @@ mod tests {
             "f m:z k:z>n;mdel m k",
             Some("f"),
             vec![
-                Value::Map(std::collections::HashMap::new()),
+                Value::Map(std::sync::Arc::new(std::collections::HashMap::new())),
                 Value::List(vec![Value::Number(7.0)]),
             ],
         );
@@ -19087,7 +19087,9 @@ mod tests {
         let err = vm_run_err(
             "f x:z>n;x.0",
             Some("f"),
-            vec![Value::Map(std::collections::HashMap::new())],
+            vec![Value::Map(std::sync::Arc::new(
+                std::collections::HashMap::new(),
+            ))],
         );
         assert!(err.contains("list") || err.contains("index"), "got: {err}");
     }
@@ -19206,7 +19208,9 @@ mod tests {
         let err = vm_run_err(
             r#"f m:_>t;hd m"#,
             Some("f"),
-            vec![Value::Map(std::collections::HashMap::new())],
+            vec![Value::Map(std::sync::Arc::new(
+                std::collections::HashMap::new(),
+            ))],
         );
         assert!(err.contains("hd") || err.contains("list"), "got: {err}");
     }
@@ -19217,7 +19221,9 @@ mod tests {
         let err = vm_run_err(
             r#"f m:_>t;tl m"#,
             Some("f"),
-            vec![Value::Map(std::collections::HashMap::new())],
+            vec![Value::Map(std::sync::Arc::new(
+                std::collections::HashMap::new(),
+            ))],
         );
         assert!(err.contains("tl") || err.contains("list"), "got: {err}");
     }
@@ -19228,7 +19234,9 @@ mod tests {
         let err = vm_run_err(
             r#"f m:_>t;rev m"#,
             Some("f"),
-            vec![Value::Map(std::collections::HashMap::new())],
+            vec![Value::Map(std::sync::Arc::new(
+                std::collections::HashMap::new(),
+            ))],
         );
         assert!(err.contains("rev") || err.contains("list"), "got: {err}");
     }
@@ -19241,7 +19249,9 @@ mod tests {
         let err = vm_run_err(
             r#"f m:_>L t;srt m"#,
             Some("f"),
-            vec![Value::Map(std::collections::HashMap::new())],
+            vec![Value::Map(std::sync::Arc::new(
+                std::collections::HashMap::new(),
+            ))],
         );
         assert!(err.contains("srt") || err.contains("list"), "got: {err}");
     }
@@ -19385,7 +19395,7 @@ mod tests {
             r#"f m:_ i:n j:n>L t;slc m i j"#,
             Some("f"),
             vec![
-                Value::Map(std::collections::HashMap::new()),
+                Value::Map(std::sync::Arc::new(std::collections::HashMap::new())),
                 Value::Number(0.0),
                 Value::Number(1.0),
             ],
@@ -19552,7 +19562,7 @@ mod tests {
             Some("f"),
             vec![
                 Value::Number(42.0),
-                Value::Map(std::collections::HashMap::new()),
+                Value::Map(std::sync::Arc::new(std::collections::HashMap::new())),
             ],
         );
         assert!(
@@ -19570,7 +19580,7 @@ mod tests {
             vec![
                 Value::Number(1.0),
                 Value::Text("body".into()),
-                Value::Map(std::collections::HashMap::new()),
+                Value::Map(std::sync::Arc::new(std::collections::HashMap::new())),
             ],
         );
         assert!(
@@ -20892,7 +20902,10 @@ mod tests {
     fn vm_grp_empty_list() {
         let source = "id x:n>t;str x main xs:L n>M t L n;grp id xs";
         let result = vm_run(source, Some("main"), vec![Value::List(vec![])]);
-        assert_eq!(result, Value::Map(std::collections::HashMap::new()));
+        assert_eq!(
+            result,
+            Value::Map(std::sync::Arc::new(std::collections::HashMap::new()))
+        );
     }
 
     #[test]

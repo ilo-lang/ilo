@@ -37,7 +37,7 @@ impl Value {
             }
             Value::Map(m) => {
                 let mut json_map = serde_json::Map::with_capacity(m.len());
-                for (k, v) in m {
+                for (k, v) in m.iter() {
                     json_map.insert(k.clone(), v.to_json()?);
                 }
                 Ok(serde_json::Value::Object(json_map))

@@ -1,6 +1,7 @@
 use crate::ast::*;
 use crate::builtins::{Builtin, CharAtResult, char_at_signed};
 use std::collections::HashMap;
+use std::sync::Arc;
 
 pub mod json;
 
@@ -11,7 +12,7 @@ pub enum Value {
     Bool(bool),
     Nil,
     List(Vec<Value>),
-    Map(HashMap<String, Value>),
+    Map(Arc<HashMap<String, Value>>),
     Record {
         type_name: String,
         fields: HashMap<String, Value>,
@@ -630,7 +631,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
     }
     // Map builtins
     if builtin == Some(Builtin::Mmap) && args.is_empty() {
-        return Ok(Value::Map(HashMap::new()));
+        return Ok(Value::Map(Arc::new(HashMap::new())));
     }
     if builtin == Some(Builtin::Mget) && args.len() == 2 {
         return match (&args[0], &args[1]) {
@@ -642,11 +643,17 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         };
     }
     if builtin == Some(Builtin::Mset) && args.len() == 3 {
-        return match (&args[0], &args[1]) {
-            (Value::Map(m), Value::Text(k)) => {
-                let mut new_map = m.clone();
-                new_map.insert(k.clone(), args[2].clone());
-                Ok(Value::Map(new_map))
+        // Consume args so we can move the Arc<HashMap> and try Arc::make_mut for
+        // the RC=1 in-place mutation fast path (mirrors VM PR #249).
+        let mut it = args.into_iter();
+        let map_val = it.next().unwrap();
+        let key_val = it.next().unwrap();
+        let value = it.next().unwrap();
+        return match (map_val, key_val) {
+            (Value::Map(mut m), Value::Text(k)) => {
+                let inner = Arc::make_mut(&mut m);
+                inner.insert(k, value);
+                Ok(Value::Map(m))
             }
             _ => Err(RuntimeError::new(
                 "ILO-R009",
@@ -694,11 +701,14 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         };
     }
     if builtin == Some(Builtin::Mdel) && args.len() == 2 {
-        return match (&args[0], &args[1]) {
-            (Value::Map(m), Value::Text(k)) => {
-                let mut new_map = m.clone();
-                new_map.remove(k.as_str());
-                Ok(Value::Map(new_map))
+        let mut it = args.into_iter();
+        let map_val = it.next().unwrap();
+        let key_val = it.next().unwrap();
+        return match (map_val, key_val) {
+            (Value::Map(mut m), Value::Text(k)) => {
+                let inner = Arc::make_mut(&mut m);
+                inner.remove(k.as_str());
+                Ok(Value::Map(m))
             }
             _ => Err(RuntimeError::new(
                 "ILO-R009",
@@ -2740,11 +2750,11 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             };
             groups.entry(key_str).or_default().push(item);
         }
-        let map = groups
+        let map: HashMap<String, Value> = groups
             .into_iter()
             .map(|(k, v)| (k, Value::List(v)))
             .collect();
-        return Ok(Value::Map(map));
+        return Ok(Value::Map(Arc::new(map)));
     }
     if builtin == Some(Builtin::Frq) && args.len() == 1 {
         let items = match &args[0] {
@@ -2785,11 +2795,11 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             };
             *counts.entry(key_str).or_insert(0) += 1;
         }
-        let map = counts
+        let map: HashMap<String, Value> = counts
             .into_iter()
             .map(|(k, v)| (k, Value::Number(v as f64)))
             .collect();
-        return Ok(Value::Map(map));
+        return Ok(Value::Map(Arc::new(map)));
     }
     if builtin == Some(Builtin::Transpose) && args.len() == 1 {
         let rows = match &args[0] {
@@ -6934,7 +6944,10 @@ mod tests {
     fn interp_grp_empty_list() {
         let source = "id x:n>t;str x main xs:L n>M t L n;grp id xs";
         let result = run_str(source, Some("main"), vec![Value::List(vec![])]);
-        assert_eq!(result, Value::Map(std::collections::HashMap::new()));
+        assert_eq!(
+            result,
+            Value::Map(Arc::new(std::collections::HashMap::new()))
+        );
     }
 
     #[test]
@@ -9023,10 +9036,10 @@ mod tests {
         let result = run_str(
             source,
             Some("f"),
-            vec![Value::Map(std::collections::HashMap::from([(
+            vec![Value::Map(Arc::new(std::collections::HashMap::from([(
                 "a".to_string(),
                 Value::Number(1.0),
-            )]))],
+            )])))],
         );
         assert_eq!(result, Value::Text("other".to_string()));
     }
