@@ -2186,6 +2186,44 @@ impl Parser {
                         unwrap: false,
                     });
                 }
+                // Zero-arg call in operand position: `name()` and `name!()`.
+                // Mirrors the statement-head handling in `parse_call_or_atom`
+                // so `len xs()`, `@v xs(){...}`, `map dbl xs()`, `hd xs()`,
+                // `at xs() 0` all parse as `Call { args: [] }` instead of
+                // leaving the bare Ref behind and then choking on the LParen.
+                // SPEC.md:16 and :843 already document `make-id()` / `fetch!()`.
+                let unwrap_bang = self.peek() == Some(&Token::Bang) && {
+                    let prev = self.prev_span();
+                    let bang = self.peek_span();
+                    // Adjacent if spans are real (non-zero) and contiguous —
+                    // distinguish `name!()` (unwrap zero-arg call) from
+                    // `name !x` (call with NOT arg). Identical rule to 1789-1797.
+                    prev.end > 0 && bang.start == prev.end
+                };
+                if unwrap_bang
+                    && self.token_at(self.pos + 1) == Some(&Token::LParen)
+                    && self.token_at(self.pos + 2) == Some(&Token::RParen)
+                {
+                    self.advance(); // !
+                    self.advance(); // (
+                    self.advance(); // )
+                    return Ok(Expr::Call {
+                        function: name,
+                        args: vec![],
+                        unwrap: true,
+                    });
+                }
+                if self.peek() == Some(&Token::LParen)
+                    && self.token_at(self.pos + 1) == Some(&Token::RParen)
+                {
+                    self.advance(); // (
+                    self.advance(); // )
+                    return Ok(Expr::Call {
+                        function: name,
+                        args: vec![],
+                        unwrap: false,
+                    });
+                }
                 // Check for field access chain: ident.field.field...
                 let mut expr = Expr::Ref(name);
                 while matches!(self.peek(), Some(Token::Dot) | Some(Token::DotQuestion)) {
