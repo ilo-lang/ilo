@@ -39,6 +39,23 @@ fn run_ok(engine: &str, src: &str, entry: &str, args: &[&str]) -> String {
     String::from_utf8_lossy(&out.stdout).trim().to_string()
 }
 
+fn run_err(engine: &str, src: &str, entry: &str) -> String {
+    let path = write_src(entry, src);
+    let out = ilo()
+        .arg(&path)
+        .arg(engine)
+        .arg(entry)
+        .output()
+        .expect("failed to run ilo");
+    let _ = std::fs::remove_file(&path);
+    assert!(
+        !out.status.success(),
+        "expected failure for `{src}` on {engine}, stdout={}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+    String::from_utf8_lossy(&out.stderr).into_owned()
+}
+
 // ── basic: function returning a fixed-size list per element ───────────────
 
 const PAIR_SRC: &str = "pr x:n>L n;[x, x] f xs:L n>L n;flatmap pr xs";
@@ -77,5 +94,20 @@ fn flatmap_split_tree() {
     assert_eq!(
         run_ok("--run-tree", SPLIT_SRC, "f", &["[\"a:b\",\"c\"]"]),
         "[a, b, c]"
+    );
+}
+
+// ── verifier rejects a non-function in the fn position under --run-vm.
+// Pinned so a future refactor that drops the flatmap verify arm gets caught
+// on the VM dispatch path too, not just tree.
+
+const BAD_FN_SRC: &str = "f xs:L n>L n;flatmap 42 xs";
+
+#[test]
+fn flatmap_wrong_fn_arg_vm() {
+    let err = run_err("--run-vm", BAD_FN_SRC, "f");
+    assert!(
+        err.contains("flatmap") || err.contains("fn") || err.contains("function"),
+        "got: {err}"
     );
 }
