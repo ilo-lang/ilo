@@ -1,6 +1,7 @@
 use crate::ast::*;
 use crate::builtins::{Builtin, CharAtResult, char_at_signed};
 use std::collections::HashMap;
+use std::sync::Arc;
 
 pub mod json;
 
@@ -11,7 +12,7 @@ pub enum Value {
     Bool(bool),
     Nil,
     List(Vec<Value>),
-    Map(HashMap<String, Value>),
+    Map(Arc<HashMap<String, Value>>),
     Record {
         type_name: String,
         fields: HashMap<String, Value>,
@@ -161,6 +162,19 @@ impl Env {
         }
         // No existing binding — create in innermost scope
         self.vars.push((name.to_string(), value));
+    }
+
+    /// Move out the current value bound to `name`, leaving the slot intact with
+    /// `Value::Nil`. Returns `None` if no binding exists. Used by the
+    /// self-rebind accumulator peephole to drop the env's Arc reference so
+    /// `Arc::make_mut` can mutate the heap object in place.
+    fn take(&mut self, name: &str) -> Option<Value> {
+        for entry in self.vars.iter_mut().rev() {
+            if entry.0 == name {
+                return Some(std::mem::replace(&mut entry.1, Value::Nil));
+            }
+        }
+        None
     }
 
     /// Always create a fresh binding in the innermost scope (used for function parameters).
@@ -630,7 +644,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
     }
     // Map builtins
     if builtin == Some(Builtin::Mmap) && args.is_empty() {
-        return Ok(Value::Map(HashMap::new()));
+        return Ok(Value::Map(Arc::new(HashMap::new())));
     }
     if builtin == Some(Builtin::Mget) && args.len() == 2 {
         return match (&args[0], &args[1]) {
@@ -642,11 +656,17 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         };
     }
     if builtin == Some(Builtin::Mset) && args.len() == 3 {
-        return match (&args[0], &args[1]) {
-            (Value::Map(m), Value::Text(k)) => {
-                let mut new_map = m.clone();
-                new_map.insert(k.clone(), args[2].clone());
-                Ok(Value::Map(new_map))
+        // Consume args so we can move the Arc<HashMap> and try Arc::make_mut for
+        // the RC=1 in-place mutation fast path (mirrors VM PR #249).
+        let mut it = args.into_iter();
+        let map_val = it.next().unwrap();
+        let key_val = it.next().unwrap();
+        let value = it.next().unwrap();
+        return match (map_val, key_val) {
+            (Value::Map(mut m), Value::Text(k)) => {
+                let inner = Arc::make_mut(&mut m);
+                inner.insert(k, value);
+                Ok(Value::Map(m))
             }
             _ => Err(RuntimeError::new(
                 "ILO-R009",
@@ -694,11 +714,14 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         };
     }
     if builtin == Some(Builtin::Mdel) && args.len() == 2 {
-        return match (&args[0], &args[1]) {
-            (Value::Map(m), Value::Text(k)) => {
-                let mut new_map = m.clone();
-                new_map.remove(k.as_str());
-                Ok(Value::Map(new_map))
+        let mut it = args.into_iter();
+        let map_val = it.next().unwrap();
+        let key_val = it.next().unwrap();
+        return match (map_val, key_val) {
+            (Value::Map(mut m), Value::Text(k)) => {
+                let inner = Arc::make_mut(&mut m);
+                inner.remove(k.as_str());
+                Ok(Value::Map(m))
             }
             _ => Err(RuntimeError::new(
                 "ILO-R009",
@@ -2740,11 +2763,11 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             };
             groups.entry(key_str).or_default().push(item);
         }
-        let map = groups
+        let map: HashMap<String, Value> = groups
             .into_iter()
             .map(|(k, v)| (k, Value::List(v)))
             .collect();
-        return Ok(Value::Map(map));
+        return Ok(Value::Map(Arc::new(map)));
     }
     if builtin == Some(Builtin::Frq) && args.len() == 1 {
         let items = match &args[0] {
@@ -2785,11 +2808,11 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             };
             *counts.entry(key_str).or_insert(0) += 1;
         }
-        let map = counts
+        let map: HashMap<String, Value> = counts
             .into_iter()
             .map(|(k, v)| (k, Value::Number(v as f64)))
             .collect();
-        return Ok(Value::Map(map));
+        return Ok(Value::Map(Arc::new(map)));
     }
     if builtin == Some(Builtin::Transpose) && args.len() == 1 {
         let rows = match &args[0] {
@@ -3701,9 +3724,70 @@ fn eval_body(env: &mut Env, stmts: &[Spanned<Stmt>]) -> Result<BodyResult> {
     Ok(BodyResult::Value(last))
 }
 
+/// If `value` is the self-rebind accumulator shape `name = mset name k v`,
+/// return `Some((key_expr, val_expr))`. Returns `None` for any other shape
+/// (different target name, nested calls, unwrap form, wrong arity), which
+/// then falls through to the general assignment path.
+fn match_self_rebind_mset<'a>(name: &str, value: &'a Expr) -> Option<(&'a Expr, &'a Expr)> {
+    if let Expr::Call {
+        function,
+        args,
+        unwrap,
+    } = value
+        && !*unwrap
+        && function == "mset"
+        && args.len() == 3
+        && let Expr::Ref(arg_name) = &args[0]
+        && arg_name == name
+    {
+        return Some((&args[1], &args[2]));
+    }
+    None
+}
+
+/// Fast-path executor for the self-rebind shape. The caller has already taken
+/// the previous binding out of env, leaving `Value::Nil` in its place. We
+/// evaluate the key and value expressions, then drive `mset` with the moved
+/// `prev` so the Arc has refcount=1 and `Arc::make_mut` mutates in place.
+fn eval_self_rebind_mset(
+    env: &mut Env,
+    key_expr: &Expr,
+    val_expr: &Expr,
+    prev: Value,
+) -> Result<Value> {
+    let key_val = eval_expr(env, key_expr)?;
+    let val_val = eval_expr(env, val_expr)?;
+    let args = vec![prev, key_val, val_val];
+    call_function(env, "mset", args)
+}
+
 fn eval_stmt(env: &mut Env, stmt: &Stmt) -> Result<Option<BodyResult>> {
     match stmt {
         Stmt::Let { name, value } => {
+            // Peephole: `m = mset m k v` self-rebind. Drop env's binding to Nil
+            // before evaluating the RHS so the Arc<HashMap> inside `args[0]`
+            // becomes the sole reference. `Arc::make_mut` then mutates in place
+            // instead of cloning, giving O(n) amortised accumulator behaviour
+            // on the tree-walker (mirrors VM compiler peephole from PR #249).
+            if let Some((key_expr, val_expr)) = match_self_rebind_mset(name, value)
+                && let Some(prev) = env.take(name)
+            {
+                // `take` left Value::Nil in env's slot so the Arc<HashMap>
+                // moved into `prev` is the sole reference (refcount=1).
+                // `Arc::make_mut` inside the mset builtin then mutates the
+                // HashMap in place rather than cloning, giving O(n)
+                // amortised behaviour for the `m=mset m k v` accumulator.
+                //
+                // Cloning `prev` for error-recovery would defeat the
+                // refcount=1 invariant, so on Err we leave Nil in the
+                // slot. This is safe: errors here propagate to the
+                // function boundary unconditionally (ilo has no
+                // catch/recover form), so user code never observes the
+                // intermediate Nil.
+                let val = eval_self_rebind_mset(env, key_expr, val_expr, prev)?;
+                env.set(name, val);
+                return Ok(None);
+            }
             let val = eval_expr(env, value)?;
             env.set(name, val);
             Ok(None)
@@ -6934,7 +7018,10 @@ mod tests {
     fn interp_grp_empty_list() {
         let source = "id x:n>t;str x main xs:L n>M t L n;grp id xs";
         let result = run_str(source, Some("main"), vec![Value::List(vec![])]);
-        assert_eq!(result, Value::Map(std::collections::HashMap::new()));
+        assert_eq!(
+            result,
+            Value::Map(Arc::new(std::collections::HashMap::new()))
+        );
     }
 
     #[test]
@@ -9023,10 +9110,10 @@ mod tests {
         let result = run_str(
             source,
             Some("f"),
-            vec![Value::Map(std::collections::HashMap::from([(
+            vec![Value::Map(Arc::new(std::collections::HashMap::from([(
                 "a".to_string(),
                 Value::Number(1.0),
-            )]))],
+            )])))],
         );
         assert_eq!(result, Value::Text("other".to_string()));
     }
