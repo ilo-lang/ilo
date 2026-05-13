@@ -33,10 +33,16 @@ fn run_file(engine: &str, src: &str, entry: &str) -> String {
         seq
     ));
     std::fs::write(&path, src).unwrap();
-    let out = ilo()
-        .args([path.to_str().unwrap(), engine, entry])
-        .output()
-        .expect("failed to run ilo");
+    // `entry` may be a bare function name (`f`) or a function name plus
+    // whitespace-separated CLI args (`gp 5`). Split on whitespace so the
+    // CLI receives each token as its own argv slot — matches how the
+    // `examples_engines` harness invokes things.
+    let mut cmd = ilo();
+    cmd.arg(path.to_str().unwrap()).arg(engine);
+    for arg in entry.split_whitespace() {
+        cmd.arg(arg);
+    }
+    let out = cmd.output().expect("failed to run ilo");
     assert!(
         out.status.success(),
         "ilo {engine} failed for `{src}`: stderr={}",
@@ -59,6 +65,30 @@ const ML_INDENTED: &str = "f>R t t\n  ~\"hello\"\n";
 const SL_SIMPLE: &str = "f>n;5\n";
 // Single-line baseline, multi-token return type.
 const SL_RESULT: &str = "f>R t t;~\"hello\"\n";
+
+// Multi-line list literal — items spread across lines. Previously
+// `normalize_newlines` injected a `;` after `[` and between items, producing
+// ILO-P009 "expected expression, got Semi". `[`/`]` now suppress newlines.
+const ML_LIST_LITERAL: &str = "nums>L n\n  xs=[\n    1,\n    2,\n    3\n  ]\n  xs\n";
+// Multi-line list literal with leading commas (common when paginating
+// long literal columns).
+const ML_LIST_LEADING_COMMA: &str = "nums>L n\n  xs=[1\n    ,2\n    ,3]\n  xs\n";
+// Multi-line paren-grouped expression. `(`/`)` now suppress newlines and
+// emit a space so adjacent-line tokens don't glue together (`(+x\n  1)`
+// must not normalise to `(+x1)`).
+const ML_PAREN: &str = "gp x:n>n\n  y=(+x\n    1)\n  y\n";
+// Pipe chain across continuation lines. `>>` is never a statement start,
+// so the `;` is suppressed when a continuation line begins with `>>`.
+const ML_PIPE: &str = "pipe x:n>n\n  x\n    >>str\n    >>len\n";
+// Nested `(...)` inside `[...]` exercises both depth counters in the same
+// source. The leading-comma layout is common when columns of expressions
+// are spread across lines.
+const ML_NESTED_BRACKETS: &str = "nest>L n\n  xs=[(+1 2)\n    ,(+3 4)\n    ,(+5 6)]\n  xs\n";
+// Multi-line `>>` pipe chain inside a `{...}` loop body. The pipe
+// suppression must coexist with the `last_significant == '{'` rule for
+// the line right after `{`.
+const ML_PIPE_IN_BLOCK: &str =
+    "agg xs:L n>n\n  s=0\n  @x xs{\n    v=x\n      >>str\n      >>len\n    s=+s v\n  }\n  s\n";
 
 fn check_all(engine: &str) {
     assert_eq!(
@@ -90,6 +120,36 @@ fn check_all(engine: &str) {
         run_file(engine, SL_RESULT, "f"),
         "~hello",
         "single-line R t t engine={engine}"
+    );
+    assert_eq!(
+        run_file(engine, ML_LIST_LITERAL, "nums"),
+        "[1, 2, 3]",
+        "multi-line list literal engine={engine}"
+    );
+    assert_eq!(
+        run_file(engine, ML_LIST_LEADING_COMMA, "nums"),
+        "[1, 2, 3]",
+        "multi-line list literal leading-comma engine={engine}"
+    );
+    assert_eq!(
+        run_file(engine, ML_PAREN, "gp 5"),
+        "6",
+        "multi-line paren expression engine={engine}"
+    );
+    assert_eq!(
+        run_file(engine, ML_PIPE, "pipe 42"),
+        "2",
+        "multi-line pipe chain engine={engine}"
+    );
+    assert_eq!(
+        run_file(engine, ML_NESTED_BRACKETS, "nest"),
+        "[3, 7, 11]",
+        "nested ( inside [ engine={engine}"
+    );
+    assert_eq!(
+        run_file(engine, ML_PIPE_IN_BLOCK, "agg [1,22,333]"),
+        "6",
+        "multi-line pipe inside loop body engine={engine}"
     );
 }
 
