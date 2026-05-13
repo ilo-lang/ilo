@@ -317,6 +317,87 @@ Called like functions, compiled to dedicated opcodes.
 | `mkeys m` | sorted list of keys | `L t` |
 | `mvals m` | values sorted by key | `L v` |
 | `mdel m k` | new map with key k removed | `M k v` |
+| `at xs i` | i-th element of list or text (0-indexed; negative counts from end) | element |
+| `lst xs i v` | new list with index `i` set to `v` (list update; alias: `lset`) | `L a` |
+| `take n xs` | first `n` elements/chars of list or text (truncates if n > len) | same type |
+| `drop n xs` | skip first `n` elements/chars; return the rest | same type |
+| `rsrt xs` | sort descending (list or text chars) | same type |
+| `uniqby fn xs` | dedupe by key function (first occurrence wins) | `L a` |
+| `zip xs ys` | pairwise pairs of two lists; truncates to shorter input | `L (L _)` |
+| `enumerate xs` | pair each element with its index → `[[i, v], ...]` | `L (L _)` |
+| `range a b` | half-open numeric range `[a, a+1, ..., b-1]`; empty when `a >= b` | `L n` |
+| `flatmap fn xs` | map then flatten one level | `L b` |
+| `partition fn xs` | split list into `[passing, failing]` by predicate | `L (L a)` |
+| `chunks n xs` | non-overlapping chunks of size `n` (final chunk may be shorter) | `L (L a)` |
+| `window n xs` | sliding windows of size `n` (drops trailing partial; empty if n > len) | `L (L a)` |
+| `clamp x lo hi` | restrict `x` to `[lo, hi]` (lower bound wins when `lo > hi`) | `n` |
+| `cumsum xs` | running sum; output length matches input | `L n` |
+| `frq xs` | frequency map of elements (keys are bare stringified values) | `M t n` |
+| `median xs` | median of numeric list | `n` |
+| `quantile xs p` | sample quantile (linear interp; `p` clamped to `[0, 1]`) | `n` |
+| `stdev xs` | sample standard deviation (divides by N-1) | `n` |
+| `variance xs` | sample variance (divides by N-1) | `n` |
+| `setunion a b` | set union of two lists (deduped, sorted output) | `L a` |
+| `setinter a b` | set intersection (deduped, sorted) | `L a` |
+| `setdiff a b` | set difference `a - b` (deduped, sorted) | `L a` |
+| `chars s` | explode a string into single-char strings (one per Unicode scalar) | `L t` |
+| `ord s` | Unicode codepoint of the first character of `s` | `n` |
+| `chr n` | single-character string for codepoint `n` | `t` |
+| `upr s` | uppercase (ASCII) | `t` |
+| `lwr s` | lowercase (ASCII) | `t` |
+| `cap s` | capitalise first char (ASCII) | `t` |
+| `padl s w` | left-pad to width `w` with spaces (no-op if already wider) | `t` |
+| `padr s w` | right-pad to width `w` with spaces (no-op if already wider) | `t` |
+| `rgxall pat s` | every regex match as `L (L t)` (no-group: each match in a 1-elem list) | `L (L t)` |
+| `rgxsub pat repl s` | regex substitute all matches; `$1`, `$2`, ... reference capture groups | `t` |
+| `dtfmt epoch fmt` | format Unix epoch as text (strftime, UTC) | `R t t` |
+| `dtparse s fmt` | parse text to Unix epoch (strftime, UTC) | `R n t` |
+| `rdjl path` | read JSONL file as `L (R _ t)`: one parse result per non-empty line | `L (R _ t)` |
+| `get-many urls` | concurrent HTTP GET fan-out (max 10 parallel), preserves order | `L (R t t)` |
+| `sleep ms` | pause current engine for `ms` milliseconds; returns nil | `_` |
+| `rou n` | round to nearest integer (banker's rounding) | `n` |
+| `rndn mu sigma` | one sample from normal distribution `N(mu, sigma)` (Box-Muller) | `n` |
+| `pow b e` | `b` raised to power `e` | `n` |
+| `sqrt n` | square root | `n` |
+| `exp n` | natural exponent `e^n` | `n` |
+| `log n` | natural logarithm | `n` |
+| `log10 n` | base-10 logarithm | `n` |
+| `log2 n` | base-2 logarithm | `n` |
+| `sin n` | sine (radians) | `n` |
+| `cos n` | cosine (radians) | `n` |
+| `tan n` | tangent (radians) | `n` |
+| `atan2 y x` | two-argument arctangent (y, x order; radians) | `n` |
+| `transpose m` | transpose row-major matrix | `L (L n)` |
+| `matmul a b` | matrix product | `L (L n)` |
+| `dot a b` | vector dot product | `n` |
+| `solve a b` | solve `Ax = b` via LU with partial pivoting; errors on singular/non-square | `L n` |
+| `inv a` | matrix inverse; errors on singular/non-square | `L (L n)` |
+| `det a` | determinant; errors on non-square | `n` |
+| `fft xs` | discrete FFT: real samples → `L [re, im]`; zero-padded to next power of 2 | `L (L n)` |
+| `ifft pairs` | inverse FFT; imaginary part dropped on return | `L n` |
+| `fmt2 tmpl args…` | format with `{:fmt}` spec strings (precision, padding, etc.) | `t` |
+
+### Datetime (`dtfmt` / `dtparse`)
+
+UTC only. Format strings follow strftime conventions (`%Y-%m-%d %H:%M:%S`, `%s`, etc).
+
+```
+dtfmt 1700000000 "%Y-%m-%d"          -- R t t: Ok="2023-11-14", Err if out of range
+dtparse "2024-01-15" "%Y-%m-%d"       -- R n t: Ok=epoch seconds, Err if unparseable
+dtfmt! e "%H:%M:%S"                   -- auto-unwrap inside R-returning fn
+```
+
+### Set operations
+
+`setunion`, `setinter`, `setdiff` operate on lists of `t`, `n`, or `b` (same constraint as `uniqby`). Output is deduped and sorted by a type-prefixed string key, so results are deterministic across runs and engines. Sort is lexicographic on the key, not numeric — re-sort with `srt` afterwards if you need numeric order.
+
+### Linear algebra
+
+`transpose`, `matmul`, `dot`, `solve`, `inv`, `det` operate on row-major matrices (`L (L n)`) and flat vectors (`L n`). `solve`, `inv`, `det` use LU decomposition with partial pivoting and raise on singular or non-square inputs. These ship as host-vetted builtins because hand-rolled implementations risk silent precision loss.
+
+### FFT
+
+`fft xs` runs an iterative Cooley-Tukey radix-2 transform on real samples, zero-padding to the next power of two. Output is `L [re, im]` with one inner pair per frequency bin. `ifft pairs` is the inverse, dropping the imaginary part on return.
 
 ### Builtin aliases
 
@@ -326,7 +407,11 @@ All builtins accept long-form names that resolve to the canonical short form aft
 |-----------|---|-------|
 | `floor` | → | `flr` |
 | `ceil` | → | `cel` |
-| `round`, `random` | → | `rnd` |
+| `round` | → | `rou` |
+| `random` | → | `rnd` |
+| `lset` | → | `lst` |
+| `regex_all` | → | `rgxall` |
+| `regex_sub` | → | `rgxsub` |
 | `string` | → | `str` |
 | `number` | → | `num` |
 | `length` | → | `len` |
@@ -588,12 +673,14 @@ Braceless guards provide early return for simple cases. Use `ret` inside braced 
 
 ### Range Iteration
 
-`@i a..b{body}` iterates `i` from `a` (inclusive) to `b` (exclusive). Both bounds can be variables or expressions. The index variable is a fresh binding per iteration; other variables in the body update the enclosing scope:
+`@i a..b{body}` iterates `i` from `a` (inclusive) to `b` (exclusive). Both bounds can be atoms, prefix-op expressions, or function calls. The index variable is a fresh binding per iteration; other variables in the body update the enclosing scope:
 
 ```
-f>n;s=0;@i 0..5{s=+s i};s      -- sum 0+1+2+3+4 = 10
-f>n;xs=[];@i 0..3{xs=+=xs i};xs -- [0, 1, 2]
-f n:n>n;s=0;@i 0..n{s=+s i};s  -- dynamic end bound
+f>n;s=0;@i 0..5{s=+s i};s         -- sum 0+1+2+3+4 = 10
+f>n;xs=[];@i 0..3{xs=+=xs i};xs    -- [0, 1, 2]
+f n:n>n;s=0;@i 0..n{s=+s i};s     -- dynamic end bound
+g xs:L n>n;s=0;@j 0..len xs{s=+s j};s  -- call-form bound
+h i:n n:n>L n;xs=[];@j +i 2..n{xs=+=xs j};xs  -- prefix-op bound
 ```
 
 ### While Loop
@@ -734,6 +821,18 @@ Update:
 ```
 ord with total:fin cost:sh
 ```
+
+### Field names at dot-access
+
+After `.` or `.?`, the parser accepts any identifier-shaped token as a field name, including:
+
+- **Reserved keywords** — `r.type`, `r.if`, `r.use`, `r.true`, `r.nil`. JSON keys commonly mirror language keywords and dot-access must just work.
+- **camelCase** — `r.cvssMetricV31`, `r.userId`. Real-world JSON from APIs is rarely snake_case.
+- **Leading uppercase** — `r.Items`, `r.UserName`. PascalCase keys from .NET / Java backends are first-class.
+- **snake_case** — `r.type_id`, `r.user_name`.
+- **kebab-case** — `r.x-request-id` (requires the leading segment to be an identifier).
+
+These relaxations are scoped to post-dot position only — top-level identifiers still follow the standard naming rules.
 
 ---
 
@@ -902,6 +1001,21 @@ Semicolons separate statements. Last expression is the return value.
 f x:n>n;a=*x 2;b=+a 1;*b b    -- (x*2 + 1)^2
 ```
 
+Bodies may also be written across multiple newline-separated lines, indented under the signature. The parser stays inside the same function body while it sees an open bracket (`[`, `(`, `{`) or a pipe operator continuation. This makes long literals and multi-line conditional pipelines readable without semicolons:
+
+```
+f x:n>n
+  a=*x 2
+  b=+a 1
+  *b b
+
+g>L n
+  [10, 20, 30, 40,
+   50, 60, 70, 80]
+```
+
+Statement separation reverts to standard rules once brackets close. A blank line ends the current declaration.
+
 ### Multi-function files
 
 Functions in a file are separated by **newlines**. The parser strips all newlines, so the token stream is flat. After parsing each function body, the parser uses the next newline-delimited boundary to start the next declaration.
@@ -998,7 +1112,7 @@ The verifier provides context-aware hints:
 - **Missing arms** — lists uncovered match patterns with types
 - **Arity** — shows expected parameter signature
 
-### Output formats
+### Error output formats
 
 ```
 --ansi / -a     ANSI colour (default for TTY)
@@ -1020,6 +1134,26 @@ hint: `length` → `len` (canonical short form)
 ```
 
 Builtin alias hints appear at most once per program (the first long-form name found). In JSON mode, hints appear as `{"hints":["..."]}` on stderr. Suppress with `--no-hints` / `-nh`.
+
+### CLI invocation
+
+```
+ilo 'code' [args...]            -- inline program; default-runs the entry function
+ilo program.ilo [func] [args]   -- if `func` is omitted and the file declares exactly
+                                   one function, that function runs automatically
+ilo program.ilo --ast            -- print parsed AST as JSON and exit
+ilo --explain ILO-T004           -- print error explanation and exit
+ilo help ai                      -- compact AI spec to stdout (= contents of ai.txt)
+ilo serv                          -- long-lived JSON request/response loop
+```
+
+**Default-run.** Inline programs (`ilo 'code'`) and single-function files run their entry function with the remaining CLI args; no explicit function name needed. Multi-function files require either a function name argument or a function called `main`.
+
+**Text-typed params.** When the entry function declares a parameter of type `t`, the CLI passes the raw arg through without numeric coercion. `ilo 'f x:t>t;x' 42` returns the string `"42"`, not the number 42.
+
+**Exit codes.** A program returning `Value::Err` (or `^reason` from the entry function) exits with code 1 and prints the err payload on stderr. `~v` (Ok) and any non-Result return value exit 0. Verifier and parser errors exit 2.
+
+**List args from the CLI.** Comma-separated args become `L n` or `L t` automatically: `ilo 'f xs:L n>n;sum xs' 1,2,3`.
 
 ---
 
