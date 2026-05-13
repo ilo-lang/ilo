@@ -556,6 +556,57 @@ pub(crate) fn char_at_signed(s: &str, raw_idx: i64) -> CharAtResult {
     }
 }
 
+/// Resolve a Python-style signed slice bound against `len`.
+///
+/// - `raw >= 0`: clamp to `[0, len]`.
+/// - `raw < 0`: treat as `len + raw`, then clamp to `[0, len]`. So `-1` on a
+///   length-5 list becomes index `4` (the last element); `-5` becomes `0`;
+///   `-99` clamps to `0`.
+///
+/// Returned index is always in `[0, len]`, so callers can use it directly
+/// as a slice bound without further checks. Matches the semantics already
+/// applied to `at`'s negative index handling (`adjusted = if i < 0 { i + len }
+/// else { i }`) — see `Builtin::At` in the tree-walker and `OP_AT` in the VM.
+#[inline]
+pub(crate) fn resolve_slice_bound(raw: i64, len: usize) -> usize {
+    let len_i = len as i64;
+    let adjusted = if raw < 0 { raw + len_i } else { raw };
+    adjusted.clamp(0, len_i) as usize
+}
+
+/// Resolve `take n xs` against `len`, returning the prefix length to retain.
+///
+/// - `n >= 0`: take the first `min(n, len)` elements.
+/// - `n < 0`: take all but the last `|n|`. Equivalent to Python's `xs[:n]`.
+///   `take -1 [1,2,3]` returns `[1,2]`; `take -len xs` returns `[]`; `n` more
+///   negative than `-len` clamps to `0` (empty).
+#[inline]
+pub(crate) fn resolve_take_count(n: i64, len: usize) -> usize {
+    if n >= 0 {
+        (n as usize).min(len)
+    } else {
+        let adjusted = (len as i64) + n;
+        adjusted.max(0) as usize
+    }
+}
+
+/// Resolve `drop n xs` against `len`, returning the prefix length to skip.
+///
+/// - `n >= 0`: skip the first `min(n, len)` elements.
+/// - `n < 0`: keep only the last `|n|`, i.e. skip the leading `len - |n|`.
+///   Equivalent to Python's `xs[n:]`. `drop -1 [1,2,3]` returns `[3]`;
+///   `drop -len xs` returns the full list; `n` more negative than `-len`
+///   clamps to `0` (returns the full list).
+#[inline]
+pub(crate) fn resolve_drop_count(n: i64, len: usize) -> usize {
+    if n >= 0 {
+        (n as usize).min(len)
+    } else {
+        let adjusted = (len as i64) + n;
+        adjusted.max(0) as usize
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -682,6 +733,83 @@ mod tests {
     fn non_builtin_returns_none() {
         assert_eq!(Builtin::from_name("foo"), None);
         assert_eq!(Builtin::from_name(""), None);
+    }
+
+    #[test]
+    fn resolve_slice_bound_positive_and_clamps() {
+        // Within range: returned as-is.
+        assert_eq!(resolve_slice_bound(0, 5), 0);
+        assert_eq!(resolve_slice_bound(3, 5), 3);
+        assert_eq!(resolve_slice_bound(5, 5), 5);
+        // Past len: clamps up to len (matches existing slc behaviour).
+        assert_eq!(resolve_slice_bound(99, 5), 5);
+    }
+
+    #[test]
+    fn resolve_slice_bound_negative_python_style() {
+        // -1 is the last index; -len is 0; beyond -len clamps to 0.
+        assert_eq!(resolve_slice_bound(-1, 5), 4);
+        assert_eq!(resolve_slice_bound(-5, 5), 0);
+        assert_eq!(resolve_slice_bound(-99, 5), 0);
+    }
+
+    #[test]
+    fn resolve_slice_bound_empty_list() {
+        // len=0 makes every bound clamp to 0 — slc of an empty list always
+        // returns empty, never errors. The fencepost-trap case in the
+        // quant-trader run.
+        assert_eq!(resolve_slice_bound(0, 0), 0);
+        assert_eq!(resolve_slice_bound(-1, 0), 0);
+        assert_eq!(resolve_slice_bound(99, 0), 0);
+    }
+
+    #[test]
+    fn resolve_take_count_positive() {
+        assert_eq!(resolve_take_count(0, 5), 0);
+        assert_eq!(resolve_take_count(3, 5), 3);
+        assert_eq!(resolve_take_count(5, 5), 5);
+        assert_eq!(resolve_take_count(99, 5), 5);
+    }
+
+    #[test]
+    fn resolve_take_count_negative_drops_tail() {
+        // `take -k xs` == `xs[:-k]` — keep all but the last |k|.
+        assert_eq!(resolve_take_count(-1, 5), 4);
+        assert_eq!(resolve_take_count(-4, 5), 1);
+        assert_eq!(resolve_take_count(-5, 5), 0);
+        // Beyond -len clamps to 0 (empty), matching Python's `xs[:-99]`.
+        assert_eq!(resolve_take_count(-99, 5), 0);
+    }
+
+    #[test]
+    fn resolve_drop_count_positive() {
+        assert_eq!(resolve_drop_count(0, 5), 0);
+        assert_eq!(resolve_drop_count(3, 5), 3);
+        assert_eq!(resolve_drop_count(5, 5), 5);
+        assert_eq!(resolve_drop_count(99, 5), 5);
+    }
+
+    #[test]
+    fn resolve_drop_count_negative_keeps_tail() {
+        // `drop -k xs` == `xs[-k:]` — discard all but the last |k|.
+        // Returned value is the *prefix length to skip*.
+        assert_eq!(resolve_drop_count(-1, 5), 4); // skip 4, keep last 1
+        assert_eq!(resolve_drop_count(-4, 5), 1); // skip 1, keep last 4
+        assert_eq!(resolve_drop_count(-5, 5), 0); // skip 0, keep all
+        // Beyond -len clamps to 0 (keep everything), matching Python `xs[-99:]`.
+        assert_eq!(resolve_drop_count(-99, 5), 0);
+    }
+
+    #[test]
+    fn resolve_take_drop_empty_list() {
+        // Every count against len=0 must clamp to 0 — take/drop of empty
+        // never errors, irrespective of sign.
+        assert_eq!(resolve_take_count(0, 0), 0);
+        assert_eq!(resolve_take_count(-3, 0), 0);
+        assert_eq!(resolve_take_count(3, 0), 0);
+        assert_eq!(resolve_drop_count(0, 0), 0);
+        assert_eq!(resolve_drop_count(-3, 0), 0);
+        assert_eq!(resolve_drop_count(3, 0), 0);
     }
 
     #[test]
