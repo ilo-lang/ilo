@@ -307,6 +307,10 @@ pub(crate) fn is_tree_bridge_eligible(b: crate::builtins::Builtin, argc: usize) 
         (Builtin::Fmt, _) if argc >= 1 => true,
         (Builtin::Rd, 2) => true,
         (Builtin::Rdb, 2) => true,
+        // `sleep ms` has no FnRef args and returns Nil; the bridge round-trip
+        // is lossless, so VM/Cranelift get it for free. The actual sleep is
+        // delegated to `std::thread::sleep` inside the tree interpreter.
+        (Builtin::Sleep, 1) => true,
         _ => false,
     }
 }
