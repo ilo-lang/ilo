@@ -5,8 +5,9 @@
 -- Classify a spend amount into a tier (ends with text literal — safe)
 cls sp:n>t;>=sp 1000 "gold";>=sp 500 "silver";"bronze"
 
--- Clamp n to [lo, hi] (ends with +n 0 = n — binary expression, safe)
-clamp n:n lo:n hi:n>n;<n lo lo;>n hi hi;+n 0
+-- Clamp n to [lo, hi] (ends with +n 0 = n — binary expression, safe).
+-- Named `clmp` rather than `clamp` because `clamp` is a builtin (ILO-P011).
+clmp n:n lo:n hi:n>n;<n lo lo;>n hi hi;+n 0
 
 -- Absolute value (ends with - 0 v = 0-v = -v; note: space needed so -0 isn't lexed as number literal)
 ab v:n>n;>=v 0 v;- 0 v
@@ -17,9 +18,9 @@ ab v:n>n;>=v 0 v;- 0 v
 -- out: silver
 -- run: cls 100
 -- out: bronze
--- run: clamp 150 0 100
+-- run: clmp 150 0 100
 -- out: 100
--- run: clamp 50 0 100
+-- run: clmp 50 0 100
 -- out: 50
 -- run: ab -7
 -- out: 7

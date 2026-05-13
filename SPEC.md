@@ -915,7 +915,7 @@ The **last function in a file** can end with anything — greedy parsing stops a
 ```
 -- Non-last functions: end with a binary expression
 digs n:n>n;t=str n;l=len t;+l 0    -- +l 0 = l (binary, safe)
-clamp n:n lo:n hi:n>n;<n lo lo;>n hi hi;+n 0  -- +n 0 = n (binary, safe)
+clmp n:n lo:n hi:n>n;<n lo lo;>n hi hi;+n 0   -- +n 0 = n (binary, safe; `clamp` is a builtin)
 
 -- Last function: bare call is fine
 sz xs:L n>n;len xs                  -- EOF — greedy loop stops naturally

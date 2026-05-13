@@ -8,11 +8,11 @@ add a:n b:n>n;+a b
 mul-add a:n b:n c:n>n;+*a b c
 
 -- Average of three: a + (b + c), divided by 3
-avg a:n b:n c:n>n;/+a +b c 3
+mean3 a:n b:n c:n>n;/+a +b c 3
 
 -- run: add 10 20
 -- out: 30
 -- run: mul-add 3 4 5
 -- out: 17
--- run: avg 10 20 30
+-- run: mean3 10 20 30
 -- out: 20

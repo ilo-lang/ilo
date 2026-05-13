@@ -7,7 +7,8 @@
 digs n:n>n;t=str n;l=len t;+l 0
 
 -- Clamp using min + max (non-last — each call bound; end with binary +u 0)
-clamp n:n lo:n hi:n>n;t=min n hi;u=max lo t;+u 0
+-- Named `clmp` because `clamp` itself is now a builtin (ILO-P011)
+clmp n:n lo:n hi:n>n;t=min n hi;u=max lo t;+u 0
 
 -- Join a list of words with a space (non-last — bind result; +r "" = r, safe)
 join ws:L t>t;r=cat ws " ";+r ""
@@ -19,9 +20,9 @@ has-word sentence:t word:t>b;has sentence word
 -- out: 5
 -- run: digs 7
 -- out: 1
--- run: clamp 150 0 100
+-- run: clmp 150 0 100
 -- out: 100
--- run: clamp 50 0 100
+-- run: clmp 50 0 100
 -- out: 50
 -- run: join [hello,world,foo]
 -- out: hello world foo
