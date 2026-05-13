@@ -29,7 +29,9 @@ unsafe impl Send for JitFunction {}
 #[allow(dead_code)]
 struct HelperFuncs {
     add: FuncId,
+    add_inplace: FuncId,
     concat: FuncId,
+    concat_inplace: FuncId,
     sub: FuncId,
     mul: FuncId,
     div: FuncId,
@@ -190,7 +192,9 @@ fn declare_helper(module: &mut JITModule, name: &str, n_params: usize, n_returns
 fn register_helpers(builder: &mut JITBuilder) {
     let helpers: &[(&str, *const u8)] = &[
         ("jit_add", jit_add as *const u8),
+        ("jit_add_inplace", jit_add_inplace as *const u8),
         ("jit_concat", jit_concat as *const u8),
+        ("jit_concat_inplace", jit_concat_inplace as *const u8),
         ("jit_sub", jit_sub as *const u8),
         ("jit_mul", jit_mul as *const u8),
         ("jit_div", jit_div as *const u8),
@@ -342,7 +346,9 @@ fn register_helpers(builder: &mut JITBuilder) {
 fn declare_all_helpers(module: &mut JITModule) -> HelperFuncs {
     HelperFuncs {
         add: declare_helper(module, "jit_add", 2, 1),
+        add_inplace: declare_helper(module, "jit_add_inplace", 2, 1),
         concat: declare_helper(module, "jit_concat", 2, 1),
+        concat_inplace: declare_helper(module, "jit_concat_inplace", 2, 1),
         sub: declare_helper(module, "jit_sub", 2, 1),
         mul: declare_helper(module, "jit_mul", 2, 1),
         div: declare_helper(module, "jit_div", 2, 1),
@@ -1417,7 +1423,16 @@ fn compile_function_body(
                     // Slow path: call helper (handles string concat, etc.)
                     builder.switch_to_block(slow_block);
                     let helper = match op {
-                        OP_ADD => helpers.add,
+                        // OP_ADD is the only one with an in-place string-mutation
+                        // fast path; pick it only when dest == LHS source AND
+                        // RHS != LHS (rebind shape, excluding self-concat).
+                        OP_ADD => {
+                            if a_idx == b_idx && b_idx != c_idx {
+                                helpers.add_inplace
+                            } else {
+                                helpers.add
+                            }
+                        }
                         OP_SUB => helpers.sub,
                         OP_MUL => helpers.mul,
                         OP_DIV => helpers.div,
@@ -1437,7 +1452,15 @@ fn compile_function_body(
             OP_ADD_SS => {
                 let bv = builder.use_var(vars[b_idx]);
                 let cv = builder.use_var(vars[c_idx]);
-                let fref = get_func_ref(&mut builder, module, helpers.concat);
+                // Pick the in-place helper only when dest == LHS source AND
+                // RHS != LHS (rebind shape, excluding the self-concat `s = +s s`
+                // case where push_str would self-alias).
+                let helper_fn = if a_idx == b_idx && b_idx != c_idx {
+                    helpers.concat_inplace
+                } else {
+                    helpers.concat
+                };
+                let fref = get_func_ref(&mut builder, module, helper_fn);
                 let call_inst = builder.ins().call(fref, &[bv, cv]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
