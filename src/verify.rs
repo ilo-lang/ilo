@@ -212,6 +212,43 @@ fn compatible(a: &Ty, b: &Ty) -> bool {
     }
 }
 
+/// Diagnostic-layer hint for an undefined kebab-case identifier whose halves
+/// are themselves bound in scope. Misreading `best-d` (single identifier) as
+/// `best - d` (subtraction) is a recurring persona footgun; the lexer always
+/// keeps `best-d` atomic, so when both `best` and `d` resolve as values the
+/// most useful nudge is to spell that out and show the explicit subtraction
+/// form. Returns `None` if the name is not kebab-case or if any part is not
+/// in scope as a variable / function / builtin.
+fn kebab_subtract_hint<'a>(
+    name: &str,
+    candidates: impl Iterator<Item = &'a String> + Clone,
+) -> Option<String> {
+    if !name.contains('-') {
+        return None;
+    }
+    let parts: Vec<&str> = name.split('-').collect();
+    if parts.len() < 2 || parts.iter().any(|p| p.is_empty()) {
+        return None;
+    }
+    let all_resolved = parts.iter().all(|p| {
+        candidates.clone().any(|c| c == p) || is_builtin(p) || builtin_as_fn_ty(p).is_some()
+    });
+    if !all_resolved {
+        return None;
+    }
+    if parts.len() == 2 {
+        Some(format!(
+            "'{name}' is a single identifier (kebab-case); for subtraction write '- {a} {b}'",
+            a = parts[0],
+            b = parts[1],
+        ))
+    } else {
+        Some(format!(
+            "'{name}' is a single identifier (kebab-case); '-' inside an identifier never means subtraction"
+        ))
+    }
+}
+
 fn closest_match<'a>(name: &str, candidates: impl Iterator<Item = &'a String>) -> Option<String> {
     let mut best: Option<(String, usize)> = None;
     for candidate in candidates {
@@ -2702,8 +2739,14 @@ impl VerifyContext {
                         .flat_map(|frame| frame.keys().cloned())
                         .collect();
                     candidates.extend(self.functions.keys().cloned());
-                    let hint = closest_match(name, candidates.iter())
-                        .map(|s| format!("did you mean '{s}'?"));
+                    // Prefer the kebab-case clarification when every dash-separated
+                    // half resolves as a value: that's the high-signal case where
+                    // the model is liable to misread the atomic ident as a binop.
+                    // Fall back to the standard closest-match suggestion otherwise.
+                    let hint = kebab_subtract_hint(name, candidates.iter()).or_else(|| {
+                        closest_match(name, candidates.iter())
+                            .map(|s| format!("did you mean '{s}'?"))
+                    });
                     self.err(
                         "ILO-T004",
                         func,
