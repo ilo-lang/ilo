@@ -4097,76 +4097,50 @@ impl<'a> VM<'a> {
                     if bv.is_number() && cv.is_number() {
                         reg_set!(a, NanVal::number(bv.as_number() + cv.as_number()));
                     } else if bv.is_string() && cv.is_string() {
-                        // Fast path: if left string has RC=1 (sole owner), take ownership
-                        // via Rc::try_unwrap and push_str in place — O(n) amortized instead
-                        // of O(n²) for repeated `s = +s "x"` patterns.
+                        // Peek RC without bumping (Rc::from_raw + forget is balanced).
                         let ptr_b = (bv.0 & PTR_MASK) as *const HeapObj;
                         // SAFETY: bv.is_string() guarantees ptr_b was produced by
                         // Rc::into_raw in heap_string() with strong count >= 1.
-                        let rc_b = unsafe { Rc::from_raw(ptr_b) };
-                        if Rc::strong_count(&rc_b) == 1 {
-                            match Rc::try_unwrap(rc_b) {
-                                Ok(heap_obj) => {
-                                    // HeapObj::Str's Drop impl is a no-op (only non-string
-                                    // variants drop_rc children), so ptr::read of the String
-                                    // out of a ManuallyDrop shell is safe.
-                                    // SAFETY: tag is TAG_STRING → variant is HeapObj::Str.
-                                    let mut owned: String = unsafe {
-                                        let md = std::mem::ManuallyDrop::new(heap_obj);
-                                        std::ptr::read(match &*md {
-                                            HeapObj::Str(s) => s as *const String,
-                                            _ => unreachable!(),
-                                        })
-                                    };
-                                    // rc_b is consumed; the NanVal `bv` is now a dangling
-                                    // pointer. Nullify slot b immediately so that any
-                                    // subsequent OP_MOVE / reg_set! on b won't double-free.
-                                    unsafe {
-                                        *self.stack.as_mut_ptr().add(b) = NanVal::nil();
-                                    }
-                                    // Read the right-hand string BEFORE touching slot a.
-                                    let sc_ptr: *const str = unsafe {
-                                        match cv.as_heap_ref() {
-                                            HeapObj::Str(s) => s.as_str() as *const str,
-                                            _ => unreachable!(),
-                                        }
-                                    };
-                                    // SAFETY: cv still live so sc_ptr is valid.
-                                    owned.push_str(unsafe { &*sc_ptr });
-                                    let new_val = NanVal::heap_string(owned);
-                                    unsafe {
-                                        let slot = self.stack.as_mut_ptr().add(a);
-                                        // a != b: drop old value at slot a (b is nil after above).
-                                        // a == b: slot a == slot b, already nil — just write new_val.
-                                        if a != b {
-                                            (*slot).drop_rc();
-                                        }
-                                        *slot = new_val;
-                                    }
+                        let rc_count = {
+                            let rc_peek = unsafe { Rc::from_raw(ptr_b) };
+                            let count = Rc::strong_count(&rc_peek);
+                            std::mem::forget(rc_peek);
+                            count
+                        };
+                        // Fast path requires `a == b` (rebind shape — the
+                        // compiler peephole `name = +name suffix` emits this),
+                        // `rc_count == 1` (sole owner), AND `b != c` (no
+                        // self-concat aliasing). When `a != b` the caller
+                        // wrote `b = +a suffix` expecting `a` to be preserved;
+                        // mutating in place and aliasing the pointer into slot
+                        // `a` would silently corrupt the caller's source
+                        // string. When `b == c` (self-concat `s = +s s`) the
+                        // mutating push_str would read from the same buffer it
+                        // grows, which is UB if the underlying String
+                        // reallocates. Mirror of the `OP_LISTAPPEND` /
+                        // `OP_MSET` guards.
+                        if a == b && b != c && rc_count == 1 {
+                            // SAFETY: sole owner (count == 1), destination is
+                            // the same SSA variable, and RHS does not alias
+                            // LHS. The String mutation cannot be observed
+                            // through any other live reference.
+                            let heap_mut = unsafe { &mut *(ptr_b as *mut HeapObj) };
+                            let sc_ptr: *const str = unsafe {
+                                match cv.as_heap_ref() {
+                                    HeapObj::Str(s) => s.as_str() as *const str,
+                                    _ => unreachable!(),
                                 }
-                                Err(rc_back) => {
-                                    // Shouldn't happen (RC was 1), but fall back safely.
-                                    std::mem::forget(rc_back);
-                                    let result = unsafe {
-                                        let sb = match bv.as_heap_ref() {
-                                            HeapObj::Str(s) => s,
-                                            _ => unreachable!(),
-                                        };
-                                        let sc = match cv.as_heap_ref() {
-                                            HeapObj::Str(s) => s,
-                                            _ => unreachable!(),
-                                        };
-                                        let mut out = String::with_capacity(sb.len() + sc.len());
-                                        out.push_str(sb);
-                                        out.push_str(sc);
-                                        NanVal::heap_string(out)
-                                    };
-                                    reg_set!(a, result);
-                                }
+                            };
+                            match heap_mut {
+                                // SAFETY: cv is still live so sc_ptr is valid.
+                                HeapObj::Str(s) => s.push_str(unsafe { &*sc_ptr }),
+                                _ => unreachable!(),
                             }
+                            // a == b: bv already in slot a, nothing to write.
                         } else {
-                            // RC > 1 — must copy; restore count by forgetting rc_b.
-                            std::mem::forget(rc_b);
+                            // Non-rebind, RC > 1, or self-concat — clone-and-
+                            // write to avoid aliasing the caller's source
+                            // string or self-aliasing during push.
                             let result = unsafe {
                                 // SAFETY: is_string() confirmed heap-tagged with live RC.
                                 let sb = match bv.as_heap_ref() {
@@ -5857,63 +5831,47 @@ impl<'a> VM<'a> {
                     }
                     // SAFETY: compiler guarantees both are strings; bv.is_string() → heap-tagged.
                     let ptr_b = (bv.0 & PTR_MASK) as *const HeapObj;
-                    let rc_b = unsafe { Rc::from_raw(ptr_b) };
-                    if Rc::strong_count(&rc_b) == 1 {
-                        match Rc::try_unwrap(rc_b) {
-                            Ok(heap_obj) => {
-                                // SAFETY: tag is TAG_STRING → variant is HeapObj::Str.
-                                let mut owned: String = unsafe {
-                                    let md = std::mem::ManuallyDrop::new(heap_obj);
-                                    std::ptr::read(match &*md {
-                                        HeapObj::Str(s) => s as *const String,
-                                        _ => unreachable!(),
-                                    })
-                                };
-                                // Nullify slot b so no double-free.
-                                unsafe {
-                                    *self.stack.as_mut_ptr().add(b) = NanVal::nil();
-                                }
-                                // Read RHS string before touching slot a.
-                                let sc_ptr: *const str = unsafe {
-                                    match cv.as_heap_ref() {
-                                        HeapObj::Str(s) => s.as_str() as *const str,
-                                        _ => unreachable!(),
-                                    }
-                                };
-                                // SAFETY: cv still live so sc_ptr is valid.
-                                owned.push_str(unsafe { &*sc_ptr });
-                                let new_val = NanVal::heap_string(owned);
-                                unsafe {
-                                    let slot = self.stack.as_mut_ptr().add(a);
-                                    if a != b {
-                                        (*slot).drop_rc();
-                                    }
-                                    *slot = new_val;
-                                }
+                    // Peek RC without bumping (Rc::from_raw + forget is balanced).
+                    let rc_count = {
+                        let rc_peek = unsafe { Rc::from_raw(ptr_b) };
+                        let count = Rc::strong_count(&rc_peek);
+                        std::mem::forget(rc_peek);
+                        count
+                    };
+                    // Fast path requires `a == b` (rebind shape — the
+                    // compiler peephole `name = +name suffix` emits this),
+                    // `rc_count == 1` (sole owner), AND `b != c` (no
+                    // self-concat aliasing). When `a != b` the caller wrote
+                    // `b = +a suffix` expecting `a` to be preserved; mutating
+                    // in place and aliasing the pointer into slot `a` would
+                    // silently corrupt the caller's source string. When
+                    // `b == c` (self-concat `s = +s s`) the mutating push_str
+                    // would read from the same buffer it grows, which is UB if
+                    // the underlying String reallocates. Mirror of the
+                    // `OP_LISTAPPEND` / `OP_MSET` guards above.
+                    if a == b && b != c && rc_count == 1 {
+                        // SAFETY: sole owner (count == 1), destination is the
+                        // same SSA variable, and RHS does not alias LHS. The
+                        // String mutation cannot be observed through any other
+                        // live reference.
+                        let heap_mut = unsafe { &mut *(ptr_b as *mut HeapObj) };
+                        // Read RHS string via raw pointer (does not touch RC).
+                        let sc_ptr: *const str = unsafe {
+                            match cv.as_heap_ref() {
+                                HeapObj::Str(s) => s.as_str() as *const str,
+                                _ => unreachable!(),
                             }
-                            Err(rc_back) => {
-                                // Shouldn't happen (RC was 1), fall back safely.
-                                std::mem::forget(rc_back);
-                                let result = unsafe {
-                                    let sb = match bv.as_heap_ref() {
-                                        HeapObj::Str(s) => s,
-                                        _ => unreachable!(),
-                                    };
-                                    let sc = match cv.as_heap_ref() {
-                                        HeapObj::Str(s) => s,
-                                        _ => unreachable!(),
-                                    };
-                                    let mut out = String::with_capacity(sb.len() + sc.len());
-                                    out.push_str(sb);
-                                    out.push_str(sc);
-                                    NanVal::heap_string(out)
-                                };
-                                reg_set!(a, result);
-                            }
+                        };
+                        match heap_mut {
+                            // SAFETY: cv is still live so sc_ptr is valid.
+                            HeapObj::Str(s) => s.push_str(unsafe { &*sc_ptr }),
+                            _ => unreachable!(),
                         }
+                        // a == b: bv already in slot a, nothing to write.
                     } else {
-                        // RC > 1 — must copy; restore count by forgetting rc_b.
-                        std::mem::forget(rc_b);
+                        // Non-rebind, RC > 1, or self-concat — clone-and-write
+                        // to avoid aliasing the caller's source string or
+                        // self-aliasing during push.
                         let result = unsafe {
                             let sb = match bv.as_heap_ref() {
                                 HeapObj::Str(s) => s,
