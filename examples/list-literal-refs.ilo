@@ -1,7 +1,10 @@
 -- List literals with bare variable refs.
--- `[a b c]` parses the same way as `[1 2 3]` — three elements.
--- Use commas (`[floor x, ceil x]`) when you want each element to be a full
--- expression including whitespace-style calls.
+-- `[a b c]` parses the same way as `[1 2 3]` — three elements when each
+-- ident is a local/unknown name. A known function (builtin or declared
+-- fn) followed by operands eats exactly its arity instead, so `[str n]`
+-- or `[at xs 0 at xs 2]` parse as calls; see `listlit-fnref-greedy.ilo`
+-- for that branch. Commas (`[floor x, ceil x]`) still work when you want
+-- each element to be a full whitespace-call expression.
 
 -- Three refs in a list — mirrors `[1 2 3]`.
 trio>L n;a=1;b=2;c=3;[a b c]

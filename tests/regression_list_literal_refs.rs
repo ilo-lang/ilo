@@ -40,14 +40,18 @@ fn check_all(engine: &str) {
     assert_eq!(run(engine, MIXED, "f"), "[1, 2, 3]", "mixed {engine}");
     assert_eq!(run(engine, NUMERIC, "f"), "[1, 2, 3]", "numeric {engine}");
     assert_eq!(run(engine, COMMA_REFS, "f"), "[1, 2, 3]", "comma {engine}");
-    // `[f a]` resolves to a 2-element list of refs, NOT a call to f.
-    // Decision: the list-literal form prioritises the "list of elements"
-    // reading because it's the common case agents write; explicit parens
-    // remain available when a call is intended.
-    // Call form inside a list: use commas to separate elements so each
-    // side parses as a full expression including whitespace-calls.
-    // `[floor x, ceil x]` is the canonical form. The pure-whitespace form
-    // `[floor x ceil x]` would yield four list elements, not two calls.
+    // Refined rule (see `regression_listlit_fnref_greedy.rs` and
+    // `examples/listlit-fnref-greedy.ilo`): bare locals like `a`, `b`,
+    // `c` (not in `fn_arity`) stay as list elements - the assertions
+    // above pin that branch. A known function (builtin or declared fn)
+    // followed by operands eats EXACTLY its arity, so `[str n]` or
+    // `[at xs 0 at xs 2]` parse as calls. The arity cap mirrors the
+    // nested-call rule in `parse_call_arg` (line 1916).
+    //
+    // Commas still work as the explicit "full expression per element"
+    // form, including for `floor`/`ceil` here which aren't in `fn_arity`
+    // (the real builtins are `flr`/`cel`) and so wouldn't be eagerly
+    // expanded anyway. `[floor x, ceil x]` exercises the comma path.
     let out = ilo()
         .args(["f x:n>L n;[floor x, ceil x]", engine, "f", "3.5"])
         .output()
