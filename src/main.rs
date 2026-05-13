@@ -650,8 +650,7 @@ fn process_serv_request(
 
     // Run
     let func_name = req.func.as_deref();
-    let run_args: Vec<interpreter::Value> = req.args.iter().map(|a| parse_cli_arg(a)).collect();
-    let run_args = coerce_cli_args(&program, func_name, run_args);
+    let run_args = parse_cli_args_typed(&program, func_name, &req.args);
 
     #[cfg(feature = "tools")]
     let result = if let Some(p) = provider {
@@ -2389,12 +2388,12 @@ fn dispatch_run(r: cli::RunArgs, mode: OutputMode, explicit_json: bool, no_hints
     // Dispatch based on mode flags
     let exit_code = if r.bench {
         let func_name = r.rest.first().map(|s| s.as_str());
-        let run_args: Vec<interpreter::Value> = if r.rest.len() > 1 {
-            r.rest[1..].iter().map(|a| parse_cli_arg(a)).collect()
+        let raw = if r.rest.len() > 1 {
+            &r.rest[1..]
         } else {
-            vec![]
+            &[][..]
         };
-        let run_args = coerce_cli_args(&program, func_name, run_args);
+        let run_args = parse_cli_args_typed(&program, func_name, raw);
         run_bench(&program, func_name, &run_args);
         0
     } else if r.explain {
@@ -2435,12 +2434,8 @@ fn dispatch_run(r: cli::RunArgs, mode: OutputMode, explicit_json: bool, no_hints
             cli::Engine::Llvm => run_llvm_engine(&program, rest),
             cli::Engine::Vm => {
                 let func_name = rest.first().map(|s| s.as_str());
-                let run_args: Vec<interpreter::Value> = if rest.len() > 1 {
-                    rest[1..].iter().map(|a| parse_cli_arg(a)).collect()
-                } else {
-                    vec![]
-                };
-                let run_args = coerce_cli_args(&program, func_name, run_args);
+                let raw = if rest.len() > 1 { &rest[1..] } else { &[][..] };
+                let run_args = parse_cli_args_typed(&program, func_name, raw);
                 let compiled = match vm::compile(&program) {
                     Ok(c) => c,
                     Err(e) => {
@@ -2466,12 +2461,8 @@ fn dispatch_run(r: cli::RunArgs, mode: OutputMode, explicit_json: bool, no_hints
             }
             cli::Engine::Tree => {
                 let func_name = rest.first().map(|s| s.as_str());
-                let run_args: Vec<interpreter::Value> = if rest.len() > 1 {
-                    rest[1..].iter().map(|a| parse_cli_arg(a)).collect()
-                } else {
-                    vec![]
-                };
-                let run_args = coerce_cli_args(&program, func_name, run_args);
+                let raw = if rest.len() > 1 { &rest[1..] } else { &[][..] };
+                let run_args = parse_cli_args_typed(&program, func_name, raw);
                 run_interp_with_provider(
                     &program,
                     func_name,
@@ -2504,11 +2495,8 @@ fn dispatch_run(r: cli::RunArgs, mode: OutputMode, explicit_json: bool, no_hints
 
                 let (func_name, run_args) = if let Some(first) = rest.first() {
                     if func_names.contains(&first.as_str()) {
-                        let args: Vec<_> = rest[1..].iter().map(|a| parse_cli_arg(a)).collect();
-                        (
-                            Some(first.as_str()),
-                            coerce_cli_args(&program, Some(first.as_str()), args),
-                        )
+                        let fn_ref = Some(first.as_str());
+                        (fn_ref, parse_cli_args_typed(&program, fn_ref, &rest[1..]))
                     } else {
                         (None, rest.iter().map(|a| parse_cli_arg(a)).collect())
                     }
@@ -2562,12 +2550,8 @@ fn dispatch_run(r: cli::RunArgs, mode: OutputMode, explicit_json: bool, no_hints
 /// Cranelift JIT engine dispatch. Returns exit code.
 fn run_cranelift_engine(program: &ast::Program, rest: &[String], explicit_json: bool) -> i32 {
     let func_name = rest.first().map(|s| s.as_str());
-    let run_args: Vec<interpreter::Value> = if rest.len() > 1 {
-        rest[1..].iter().map(|a| parse_cli_arg(a)).collect()
-    } else {
-        vec![]
-    };
-    let run_args = coerce_cli_args(program, func_name, run_args);
+    let raw = if rest.len() > 1 { &rest[1..] } else { &[][..] };
+    let run_args = parse_cli_args_typed(program, func_name, raw);
     let suppress = program_result_should_suppress(program, func_name);
 
     #[cfg(feature = "cranelift")]
@@ -3488,23 +3472,94 @@ fn parse_cli_arg(s: &str) -> interpreter::Value {
     }
 }
 
+/// Parse a single CLI arg, taking the declared param type into account.
+///
+/// For `Type::Text` params, the raw CLI string is kept verbatim as `Text`,
+/// bypassing the greedy number/bool/list/nil parsing that `parse_cli_arg`
+/// would otherwise perform. This prevents silent type drift where a function
+/// declared as `arg:t` receives a `Number` at runtime because the CLI value
+/// happened to look numeric (e.g. `"2"`), which then breaks `num arg` /
+/// pattern-matches that key off the declared text type.
+///
+/// For every other declared type (or when no type is known), behaviour is
+/// identical to `parse_cli_arg`.
+fn parse_cli_arg_for_param(s: &str, expected: Option<&ast::Type>) -> interpreter::Value {
+    if matches!(expected, Some(ast::Type::Text)) {
+        // Preserve the raw CLI string verbatim. We still honor the surrounding
+        // double-quote convention `parse_cli_arg` uses (callers sometimes pass
+        // `"hello"` to force the text branch when no type info was available);
+        // stripping them keeps quoted callers backward-compatible. Everything
+        // else, *including* digits, `true`/`false`, `nil`, `[...]`, is kept
+        // as-is and becomes `Text`.
+        let stripped = if s.len() >= 2 && s.starts_with('"') && s.ends_with('"') {
+            &s[1..s.len() - 1]
+        } else {
+            s
+        };
+        return interpreter::Value::Text(stripped.to_string());
+    }
+    parse_cli_arg(s)
+}
+
+/// Look up a function's declared parameter types in the program.
+/// Returns `None` if the function isn't declared (e.g. inline-snippet entry).
+fn lookup_param_types<'a>(
+    program: &'a ast::Program,
+    func_name: Option<&str>,
+) -> Option<&'a [ast::Param]> {
+    let name = func_name?;
+    program.declarations.iter().find_map(|d| match d {
+        ast::Decl::Function {
+            name: n, params, ..
+        } if n == name => Some(params.as_slice()),
+        _ => None,
+    })
+}
+
+/// Parse and coerce CLI args against a function's declared parameter types.
+///
+/// - For `Type::Text` params, the raw CLI string is preserved as `Text`
+///   without any numeric/bool/list/nil coercion. This is the canonical fix
+///   for the silent `t`-param coercion bug (a CLI input of `"2"` against
+///   `arg:t` used to produce `Number(2.0)`).
+/// - For `Type::List(_)` params, a non-list value is wrapped as `[value]`.
+/// - All other params parse via `parse_cli_arg`'s standard rules.
+fn parse_cli_args_typed(
+    program: &ast::Program,
+    func_name: Option<&str>,
+    raw: &[String],
+) -> Vec<interpreter::Value> {
+    let params = lookup_param_types(program, func_name);
+    raw.iter()
+        .enumerate()
+        .map(|(i, s)| {
+            let expected = params.and_then(|ps| ps.get(i)).map(|p| &p.ty);
+            let mut v = parse_cli_arg_for_param(s, expected);
+            if matches!(expected, Some(ast::Type::List(_)))
+                && !matches!(&v, interpreter::Value::List(_))
+            {
+                v = interpreter::Value::List(vec![v]);
+            }
+            v
+        })
+        .collect()
+}
+
 /// Coerce CLI args to match a function's parameter types.
 /// - Wraps a non-list value in `[value]` when the param type is `L _`
+///
+/// Superseded in production by `parse_cli_args_typed`, which combines parsing
+/// and coercion in one type-aware pass. Kept under `#[cfg(test)]` because the
+/// existing test cases still pin the list-wrap behaviour cleanly when starting
+/// from pre-parsed `Value`s; the typed counterparts cover the new from-raw
+/// path. New non-test callers should use `parse_cli_args_typed`.
+#[cfg(test)]
 fn coerce_cli_args(
     program: &ast::Program,
     func_name: Option<&str>,
     mut args: Vec<interpreter::Value>,
 ) -> Vec<interpreter::Value> {
-    let Some(name) = func_name else {
-        return args;
-    };
-    let params: Option<&[ast::Param]> = program.declarations.iter().find_map(|d| match d {
-        ast::Decl::Function {
-            name: n, params, ..
-        } if n == name => Some(params.as_slice()),
-        _ => None,
-    });
-    let Some(params) = params else {
+    let Some(params) = lookup_param_types(program, func_name) else {
         return args;
     };
     for (i, param) in params.iter().enumerate() {
@@ -4768,6 +4823,94 @@ mod tests {
                 interpreter::Value::Number(3.0),
             ]
         );
+    }
+
+    // ── parse_cli_args_typed: text params bypass numeric coercion ────────────
+
+    /// Regression: a CLI arg of `"2"` against a `t`-typed param used to land
+    /// at runtime as `Number(2.0)`, breaking `num arg` and any branch that
+    /// keyed off the declared text type. The fix wires param types into CLI
+    /// parsing so the raw string is preserved verbatim as `Text`.
+    #[test]
+    fn typed_text_param_preserves_numeric_looking_input() {
+        let program = make_program("f arg:t>t;arg");
+        let raw = vec!["2".to_string()];
+        let parsed = parse_cli_args_typed(&program, Some("f"), &raw);
+        assert_eq!(parsed, vec![interpreter::Value::Text("2".into())]);
+    }
+
+    #[test]
+    fn typed_text_param_preserves_bool_looking_input() {
+        let program = make_program("f arg:t>t;arg");
+        let raw = vec!["true".to_string()];
+        let parsed = parse_cli_args_typed(&program, Some("f"), &raw);
+        assert_eq!(parsed, vec![interpreter::Value::Text("true".into())]);
+    }
+
+    #[test]
+    fn typed_text_param_preserves_nil_looking_input() {
+        let program = make_program("f arg:t>t;arg");
+        let raw = vec!["nil".to_string()];
+        let parsed = parse_cli_args_typed(&program, Some("f"), &raw);
+        assert_eq!(parsed, vec![interpreter::Value::Text("nil".into())]);
+    }
+
+    #[test]
+    fn typed_text_param_preserves_list_looking_input() {
+        // `t` param + `[1,2]` should remain the literal string, not become a list.
+        let program = make_program("f arg:t>t;arg");
+        let raw = vec!["[1,2]".to_string()];
+        let parsed = parse_cli_args_typed(&program, Some("f"), &raw);
+        assert_eq!(parsed, vec![interpreter::Value::Text("[1,2]".into())]);
+    }
+
+    #[test]
+    fn typed_number_param_still_parses_as_number() {
+        // Non-text params keep today's parsing semantics.
+        let program = make_program("f x:n>n;x");
+        let raw = vec!["42".to_string()];
+        let parsed = parse_cli_args_typed(&program, Some("f"), &raw);
+        assert_eq!(parsed, vec![interpreter::Value::Number(42.0)]);
+    }
+
+    #[test]
+    fn typed_list_param_still_wraps_scalar() {
+        // List coercion is preserved alongside the new text-preservation logic.
+        let program = make_program("f xs:L n>n;sum xs");
+        let raw = vec!["10".to_string()];
+        let parsed = parse_cli_args_typed(&program, Some("f"), &raw);
+        assert_eq!(
+            parsed,
+            vec![interpreter::Value::List(vec![interpreter::Value::Number(
+                10.0
+            )])]
+        );
+    }
+
+    #[test]
+    fn typed_mixed_params_route_correctly() {
+        // Mixed signature: `t` first, `n` second. The `"2"` for `t` must stay
+        // as Text, the `"3"` for `n` must become Number.
+        let program = make_program("f a:t b:n>t;a");
+        let raw = vec!["2".to_string(), "3".to_string()];
+        let parsed = parse_cli_args_typed(&program, Some("f"), &raw);
+        assert_eq!(
+            parsed,
+            vec![
+                interpreter::Value::Text("2".into()),
+                interpreter::Value::Number(3.0),
+            ]
+        );
+    }
+
+    #[test]
+    fn typed_no_func_name_falls_back_to_legacy_parsing() {
+        // Without a function name, no types to consult: behave like the
+        // pre-fix code path (greedy numeric parse).
+        let program = make_program("f arg:t>t;arg");
+        let raw = vec!["2".to_string()];
+        let parsed = parse_cli_args_typed(&program, None, &raw);
+        assert_eq!(parsed, vec![interpreter::Value::Number(2.0)]);
     }
 
     #[test]
