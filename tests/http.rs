@@ -66,20 +66,26 @@ async fn get_server_error_returns_err_value() {
 
 #[tokio::test]
 async fn get_bad_host_returns_err() {
-    // Unreachable host → runtime Err value, not a crash
+    // Unreachable host → runtime Err *value* (not a crash). The entry function
+    // returns Value::Err so the process exits 1 with the err line on stderr
+    // (see tests/regression_main_err_exit_code.rs for the cross-engine
+    // contract). What matters for this test: the binary completes with a
+    // structured err, never a signal/panic.
     let out = ilo()
         .args([r#"f url:t>R t t;get url"#, "http://127.0.0.1:1"])
         .output()
         .expect("failed to run ilo");
-    assert!(
-        out.status.success(),
-        "process should not crash on connection failure"
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "expected exit 1 from Value::Err return, got {:?}",
+        out.status.code(),
     );
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    // Should print Err(...) — the exact message varies by OS
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    // Should print Err(...) on stderr — the exact message varies by OS
     assert!(
-        stdout.contains("Err") || stdout.contains("err"),
-        "expected Err in output, got: {stdout}"
+        stderr.contains("Err") || stderr.contains("err") || stderr.contains('^'),
+        "expected Err in stderr, got: {stderr}"
     );
 }
 
@@ -168,6 +174,8 @@ async fn post_ok_and_match_result() {
 
 #[tokio::test]
 async fn post_bad_host_returns_err() {
+    // See `get_bad_host_returns_err` above — same contract: structured err
+    // from the entry function -> exit 1 with err on stderr, never a crash.
     let out = ilo()
         .args([
             r#"f url:t body:t>R t t;post url body"#,
@@ -176,14 +184,16 @@ async fn post_bad_host_returns_err() {
         ])
         .output()
         .expect("failed to run ilo");
-    assert!(
-        out.status.success(),
-        "process should not crash on connection failure"
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "expected exit 1 from Value::Err return, got {:?}",
+        out.status.code(),
     );
-    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
-        stdout.contains("Err") || stdout.contains("err"),
-        "expected Err in output, got: {stdout}"
+        stderr.contains("Err") || stderr.contains("err") || stderr.contains('^'),
+        "expected Err in stderr, got: {stderr}"
     );
 }
 

@@ -97,14 +97,20 @@ fn dtparse_round_trip() {
 #[test]
 fn dtparse_invalid_input_produces_err() {
     // Err path: `!` short-circuits and returns the Err to the caller. The
-    // surfaced error message includes the `dtparse:` prefix from our impl.
+    // entry function `f` returns Value::Err so the process exits 1 with the
+    // err line on stderr — see tests/regression_main_err_exit_code.rs for the
+    // cross-engine contract. The surfaced message includes the `dtparse:`
+    // prefix from our impl.
     let src = r#"f s:t>R n t;v=dtparse! s "%Y-%m-%d";~v"#;
     for engine in ENGINES {
         let (ok, stdout, stderr) = run(engine, src, &["f", "not-a-date"]);
-        assert!(ok, "{engine}: ilo failed: {stderr}");
         assert!(
-            stdout.contains("dtparse"),
-            "{engine}: expected dtparse error message, got `{stdout}`"
+            !ok,
+            "{engine}: expected exit 1, got success. stdout={stdout}"
+        );
+        assert!(
+            stderr.contains("dtparse"),
+            "{engine}: expected dtparse error message on stderr, got `{stderr}`"
         );
     }
 }
