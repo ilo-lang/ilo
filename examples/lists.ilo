@@ -7,8 +7,11 @@ fst xs:L n>n;xs.0
 -- Third element (safe — index expression)
 thr xs:L n>n;xs.2
 
--- Square each element, return last squared value (safe — foreach ends with })
-sq-last xs:L n>n;@x xs{*x x}
+-- Square each element, return last squared value. Bind the loop's value to
+-- `r` so the function's syntactic tail is an expression — top-level
+-- auto-print only fires when the tail is a value expression, never when
+-- the function body ends with a bare loop.
+sq-last xs:L n>n;r=0;@x xs{r=*x x};+r 0
 
 -- Length of list (last function — bare call safe at EOF)
 sz xs:L n>n;len xs

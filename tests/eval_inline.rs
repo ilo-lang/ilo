@@ -1886,8 +1886,13 @@ fn braceless_guard_early_return_vs_braced_conditional() {
 
 #[test]
 fn range_basic() {
+    // Loop's last body value (2) is captured into `r` and returned as the
+    // function's trailing expression so the top-level auto-print fires.
+    // Pre-loop-suppression this was `f>n;@i 0..3{i}` and relied on the loop
+    // being the function tail; that shape now (correctly) suppresses the
+    // top-level print to avoid double-output in print-loops.
     let out = ilo()
-        .args(["f>n;@i 0..3{i}", "--run", "f"])
+        .args(["f>n;r=0;@i 0..3{r=i};+r 0", "--run", "f"])
         .output()
         .expect("failed to run ilo");
     assert!(
@@ -1901,7 +1906,7 @@ fn range_basic() {
 #[test]
 fn range_with_arg() {
     let out = ilo()
-        .args(["f n:n>n;@i 0..n{*i i}", "4"])
+        .args(["f n:n>n;r=0;@i 0..n{r=*i i};+r 0", "4"])
         .output()
         .expect("failed to run ilo");
     assert!(
@@ -1909,7 +1914,7 @@ fn range_with_arg() {
         "stderr: {}",
         String::from_utf8_lossy(&out.stderr)
     );
-    // i goes 0,1,2,3 → last body value is 3*3 = 9
+    // i goes 0,1,2,3 → last body value bound into r is 3*3 = 9
     assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "9");
 }
 
