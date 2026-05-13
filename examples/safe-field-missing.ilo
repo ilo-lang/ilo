@@ -1,0 +1,23 @@
+-- `.?field` on a present record with the field missing now returns nil instead
+-- of erroring ILO-R005. Lets you walk heterogeneous JSON (NVD CVE metrics,
+-- GitHub events, Stripe payloads) without an outer jdmp+jpth fallback per
+-- optional probe. Static-typed records still error on typo via the verifier.
+miss j:t>R t t;r=jpar! j;~fmt "{}" r.?cvssMetricV31
+hit  j:t>R n t;r=jpar! j;r.?present
+chain j:t>R t t;r=jpar! j;~fmt "{}" r.?outer.?inner
+nilobj j:t>R t t;r=jpar! j;v=r.?missing;~fmt "{}" v.?anything
+
+-- run: miss {"cvssMetricV2":[]}
+-- out: ~nil
+
+-- run: hit {"present":42}
+-- out: 42
+
+-- run: chain {"outer":{"inner":"x"}}
+-- out: ~x
+
+-- run: chain {"other":1}
+-- out: ~nil
+
+-- run: nilobj {"a":1}
+-- out: ~nil

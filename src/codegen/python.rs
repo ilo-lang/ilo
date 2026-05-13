@@ -472,7 +472,14 @@ fn emit_expr(out: &mut String, level: usize, expr: &Expr) -> String {
         } => {
             let obj = emit_expr(out, level, object);
             if *safe {
-                format!("({0}[\"{1}\"] if {0} is not None else None)", obj, field)
+                // `.?field` returns None when the object is None *or* the field
+                // is missing on a present record. Matches the tree/VM/Cranelift
+                // semantics — heterogeneous JSON records (jpar output) commonly
+                // lack optional keys.
+                format!(
+                    "({0}.get(\"{1}\") if {0} is not None else None)",
+                    obj, field
+                )
             } else {
                 format!("{}[\"{}\"]", obj, field)
             }

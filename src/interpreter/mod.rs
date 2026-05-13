@@ -3914,9 +3914,18 @@ fn eval_expr(env: &mut Env, expr: &Expr) -> Result<Value> {
                 return Ok(Value::Nil);
             }
             match obj {
-                Value::Record { fields, .. } => fields.get(field).cloned().ok_or_else(|| {
-                    RuntimeError::new("ILO-R005", format!("no field '{}' on record", field))
-                }),
+                Value::Record { fields, .. } => match fields.get(field).cloned() {
+                    Some(v) => Ok(v),
+                    None if *safe => Ok(Value::Nil),
+                    None => Err(RuntimeError::new(
+                        "ILO-R005",
+                        format!("no field '{}' on record", field),
+                    )),
+                },
+                // Safe access on a non-record value (list, text, number, ...)
+                // returns nil to match the VM and Cranelift backends. The
+                // strict `.field` path below still errors on type mismatch.
+                _ if *safe => Ok(Value::Nil),
                 _ => Err(RuntimeError::new(
                     "ILO-R005",
                     format!("cannot access field '{}' on non-record", field),

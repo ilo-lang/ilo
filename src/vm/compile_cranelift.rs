@@ -1005,17 +1005,18 @@ fn compile_function_body(
                 OP_MOVE => {}
                 // Ops that write a non-numeric or unknown type to R[A].
                 OP_ADD | OP_SUB | OP_MUL | OP_DIV | OP_ADD_SS | OP_NEG | OP_WRAPOK | OP_WRAPERR
-                | OP_UNWRAP | OP_RECFLD | OP_RECFLD_NAME | OP_LISTGET | OP_INDEX | OP_STR
-                | OP_HD | OP_AT | OP_FMT2 | OP_TL | OP_REV | OP_SRT | OP_SRTDESC | OP_SLC
-                | OP_TAKE | OP_DROP | OP_SPL | OP_CAT | OP_GET | OP_POST | OP_GETH | OP_POSTH
-                | OP_GETMANY | OP_ENV | OP_JPTH | OP_JDMP | OP_JPAR | OP_RDJL | OP_MAPNEW
-                | OP_MGET | OP_MSET | OP_MDEL | OP_MKEYS | OP_MVALS | OP_LISTNEW
-                | OP_LISTAPPEND | OP_RECNEW | OP_RECWITH | OP_PRT | OP_RD | OP_RDL | OP_WR
-                | OP_WRL | OP_TRM | OP_UPR | OP_LWR | OP_CAP | OP_PADL | OP_PADR | OP_CHR
-                | OP_UNQ | OP_UNIQBY | OP_PARTITION | OP_FRQ | OP_NUM | OP_RGXSUB | OP_ZIP
-                | OP_ENUMERATE | OP_RANGE | OP_WINDOW | OP_CHUNKS | OP_CUMSUM | OP_SETUNION
-                | OP_SETINTER | OP_SETDIFF | OP_FFT | OP_IFFT | OP_TRANSPOSE | OP_MATMUL
-                | OP_INV | OP_SOLVE | OP_DTFMT | OP_DTPARSE | OP_CALL_BUILTIN_TREE => {
+                | OP_UNWRAP | OP_RECFLD | OP_RECFLD_NAME | OP_RECFLD_SAFE | OP_RECFLD_NAME_SAFE
+                | OP_LISTGET | OP_INDEX | OP_STR | OP_HD | OP_AT | OP_FMT2 | OP_TL | OP_REV
+                | OP_SRT | OP_SRTDESC | OP_SLC | OP_TAKE | OP_DROP | OP_SPL | OP_CAT | OP_GET
+                | OP_POST | OP_GETH | OP_POSTH | OP_GETMANY | OP_ENV | OP_JPTH | OP_JDMP
+                | OP_JPAR | OP_RDJL | OP_MAPNEW | OP_MGET | OP_MSET | OP_MDEL | OP_MKEYS
+                | OP_MVALS | OP_LISTNEW | OP_LISTAPPEND | OP_RECNEW | OP_RECWITH | OP_PRT
+                | OP_RD | OP_RDL | OP_WR | OP_WRL | OP_TRM | OP_UPR | OP_LWR | OP_CAP | OP_PADL
+                | OP_PADR | OP_CHR | OP_UNQ | OP_UNIQBY | OP_PARTITION | OP_FRQ | OP_NUM
+                | OP_RGXSUB | OP_ZIP | OP_ENUMERATE | OP_RANGE | OP_WINDOW | OP_CHUNKS
+                | OP_CUMSUM | OP_SETUNION | OP_SETINTER | OP_SETDIFF | OP_FFT | OP_IFFT
+                | OP_TRANSPOSE | OP_MATMUL | OP_INV | OP_SOLVE | OP_DTFMT | OP_DTPARSE
+                | OP_CALL_BUILTIN_TREE => {
                     non_num_write[a] = true;
                     non_bool_write[a] = true;
                 }
@@ -2386,6 +2387,46 @@ fn compile_function_body(
                 let ds_name = format!("ilo_fldname_{}", data_section_counter);
                 let name_ptr = create_data_section(module, &mut builder, &ds_name, &name_bytes)?;
                 // Get registry pointer at runtime
+                let fref_reg = get_func_ref(&mut builder, module, helpers.get_registry_ptr);
+                let reg_call = builder.ins().call(fref_reg, &[]);
+                let registry_val = builder.inst_results(reg_call)[0];
+                let fref = get_func_ref(&mut builder, module, helpers.recfld_name);
+                let call_inst = builder.ins().call(fref, &[bv, name_ptr, registry_val]);
+                let result = builder.inst_results(call_inst)[0];
+                builder.def_var(vars[a_idx], result);
+            }
+            OP_RECFLD_SAFE => {
+                // Safe field-by-index (AOT). jit_recfld already returns
+                // TAG_NIL on miss, non-record, and nil-object, so the safe
+                // variant is exactly the helper-routed path with no inline
+                // arena fast path.
+                let bv = builder.use_var(vars[b_idx]);
+                let field_idx_val = builder.ins().iconst(I64, c_idx as i64);
+                let fref = get_func_ref(&mut builder, module, helpers.recfld);
+                let call_inst = builder.ins().call(fref, &[bv, field_idx_val]);
+                let result = builder.inst_results(call_inst)[0];
+                builder.def_var(vars[a_idx], result);
+            }
+            OP_RECFLD_NAME_SAFE => {
+                // Safe field-by-name (AOT). Mirrors OP_RECFLD_NAME exactly;
+                // jit_recfld_name already returns TAG_NIL on miss. Distinct
+                // opcode kept so the VM interp can split error/safe cleanly.
+                let b_idx = ((inst >> 8) & 0xFF) as usize;
+                let c_idx = (inst & 0xFF) as usize;
+                let bv = builder.use_var(vars[b_idx]);
+                let mut name_bytes = match &chunk.constants[c_idx] {
+                    crate::interpreter::Value::Text(s) => s.as_bytes().to_vec(),
+                    _ => {
+                        return Err(format!(
+                            "OP_RECFLD_NAME_SAFE expects string constant at {}",
+                            ip
+                        ));
+                    }
+                };
+                name_bytes.push(0);
+                data_section_counter += 1;
+                let ds_name = format!("ilo_fldname_safe_{}", data_section_counter);
+                let name_ptr = create_data_section(module, &mut builder, &ds_name, &name_bytes)?;
                 let fref_reg = get_func_ref(&mut builder, module, helpers.get_registry_ptr);
                 let reg_call = builder.ins().call(fref_reg, &[]);
                 let registry_val = builder.inst_results(reg_call)[0];
