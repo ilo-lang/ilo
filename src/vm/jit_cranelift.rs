@@ -4170,10 +4170,31 @@ fn call_raw(func: &JitFunction, args: &[u64]) -> Option<u64> {
     })
 }
 
-/// Call a compiled NanVal JIT function with u64 args, returns u64.
+/// Outcome of calling a Cranelift-compiled function.
+///
+/// `NotEligible` means the JIT couldn't dispatch (compile failure or arg
+/// mismatch); callers may fall back to the bytecode VM. `Runtime` carries a
+/// real runtime error raised by a JIT helper (e.g. `hd []`, `at xs 99`).
+/// Callers should NOT fall back on `Runtime` — the program executed but
+/// hit a defined error condition, which is the same shape tree and VM
+/// surface for the same input.
+#[derive(Debug)]
+pub enum JitCallError {
+    NotEligible,
+    Runtime(VmRuntimeError),
+}
+
+/// Call a compiled NanVal JIT function with u64 args.
+///
+/// Installs a `JitRuntimeErrorGuard` for the duration of the call so a stale
+/// helper error can never leak into this invocation, and so the cell is
+/// cleared on drop even if Rust-side code panics later. Returns `Runtime`
+/// when a helper set the error cell, else `Ok` with the raw NanVal bits.
 /// Resets the JIT arena after each call (promoting the result if arena-tagged).
-pub fn call(func: &JitFunction, args: &[u64]) -> Option<u64> {
-    let mut result = call_raw(func, args)?;
+pub fn call(func: &JitFunction, args: &[u64]) -> Result<u64, JitCallError> {
+    let _err_guard = JitRuntimeErrorGuard::new();
+
+    let mut result = call_raw(func, args).ok_or(JitCallError::NotEligible)?;
 
     // Promote arena result and reset arena
     let rv = NanVal(result);
@@ -4186,7 +4207,15 @@ pub fn call(func: &JitFunction, args: &[u64]) -> Option<u64> {
     }
     jit_arena_reset();
 
-    Some(result)
+    if let Some(err) = jit_take_runtime_error() {
+        return Err(JitCallError::Runtime(VmRuntimeError {
+            error: err,
+            span: None,
+            call_stack: Vec::new(),
+        }));
+    }
+
+    Ok(result)
 }
 
 /// Compile and call in one shot (convenience wrapper).
@@ -4195,9 +4224,9 @@ pub fn compile_and_call(
     nan_consts: &[NanVal],
     args: &[u64],
     program: &CompiledProgram,
-) -> Option<u64> {
+) -> Result<u64, JitCallError> {
     with_active_registry(program, || {
-        let func = compile(chunk, nan_consts, program)?;
+        let func = compile(chunk, nan_consts, program).ok_or(JitCallError::NotEligible)?;
         call(&func, args)
     })
 }
@@ -4221,7 +4250,7 @@ mod tests {
         let chunk = &compiled.chunks[idx];
         let nan_consts = &compiled.nan_constants[idx];
         let nan_args: Vec<u64> = args.iter().map(|v| NanVal::from_value(v).0).collect();
-        let result = compile_and_call(chunk, nan_consts, &nan_args, &compiled)?;
+        let result = compile_and_call(chunk, nan_consts, &nan_args, &compiled).ok()?;
         Some(NanVal(result).to_value())
     }
 
@@ -4356,7 +4385,7 @@ mod tests {
         if let Some(func) = compile(chunk, nan_consts, &compiled) {
             let args: Vec<u64> = (1..=9).map(|i| NanVal::number(i as f64).0).collect();
             let result = call(&func, &args);
-            assert_eq!(result, None);
+            assert!(matches!(result, Err(JitCallError::NotEligible)));
         }
     }
 
@@ -4940,7 +4969,7 @@ mod tests {
             .map(|v| NanVal::from_value(v).0)
             .collect();
         let result = compile_and_call(chunk, nan_consts, &nan_args, &compiled);
-        assert!(result.is_some(), "JIT should handle OP_RECFLD_NAME");
+        assert!(result.is_ok(), "JIT should handle OP_RECFLD_NAME");
         let val = NanVal(result.unwrap()).to_value();
         match val {
             Value::Number(n) => assert_eq!(n, 42.0),
@@ -5002,7 +5031,7 @@ mod tests {
         // If it compiled, try calling it (should call g() and return 42).
         if let Some(f) = func {
             let result = call(&f, &[]);
-            assert_eq!(result, Some(NanVal::number(42.0).0));
+            assert_eq!(result.ok(), Some(NanVal::number(42.0).0));
         }
     }
 
