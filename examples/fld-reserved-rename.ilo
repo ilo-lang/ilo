@@ -1,0 +1,12 @@
+-- fld is reserved as the fold builtin. Using it as a variable name
+-- triggers ILO-P011 with a rename suggestion, not a misleading
+-- arity-mismatch cascade from the builtin call site.
+--
+-- Correct shape: pick a different name like field or folder.
+
+countup n:n>n;field=0;@i 0..n{field=+field 1};field
+
+-- run: countup 5
+-- out: 5
+-- run: countup 10
+-- out: 10
