@@ -509,6 +509,17 @@ fn emit_expr(out: &mut String, level: usize, expr: &Expr) -> String {
             if function == "now" && args.is_empty() {
                 return "(__import__('time').time())".to_string();
             }
+            if function == "sleep" && args.len() == 1 {
+                // sleep ms — emit a Python expression that blocks for ms
+                // milliseconds and evaluates to None (the ilo Nil sentinel).
+                // `__import__('time').sleep` takes seconds, so we divide by
+                // 1000 and clamp negatives to 0 to mirror the tree semantics.
+                let arg = emit_expr(out, level, &args[0]);
+                return format!(
+                    "(lambda _ms: (__import__('time').sleep(max(0.0, float(_ms)) / 1000.0), None)[1])({})",
+                    arg
+                );
+            }
             if function == "jpth" && args.len() == 2 {
                 let json_arg = emit_expr(out, level, &args[0]);
                 let path_arg = emit_expr(out, level, &args[1]);
