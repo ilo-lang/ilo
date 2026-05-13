@@ -634,15 +634,24 @@ Pipes desugar at parse time — no new AST node. Works with `!` for auto-unwrap:
 
 ### Safe Field Navigation
 
-`.?` accesses a field only if the object is not nil; returns nil if it is:
+`.?` is the tolerant field accessor. It returns nil whenever the access can't
+yield a real value, instead of erroring:
+
+- object is nil → nil
+- object is a present record but the field is missing → nil
+- object is not a record at all (list, text, number) → nil
 
 ```
-user.?name         -- nil if user is nil, else user.name
+user.?name         -- nil if user is nil, else user.name (or nil if absent)
 user.?addr.?city   -- chained: nil propagates through chain
 x.?name??"unknown" -- combine with ?? for defaults
+r.?optMetric.?v40  -- heterogeneous JSON (jpar): optional fields stay nil
 ```
 
-Compiled via `OP_JMPNN` + `OP_JMP` to skip field access on nil values.
+Strict `.field` access still errors on missing fields, so typo detection on
+user-defined record types survives at verify time (ILO-T019) and at runtime
+(ILO-R005). Use `.field` when you want the strictness, `.?field` when the
+field is optional or the record shape is dynamic.
 
 ### Nil-Coalesce Operator
 
