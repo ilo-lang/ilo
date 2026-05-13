@@ -2186,27 +2186,6 @@ fn dispatch_bare_args(raw_args: Vec<String>, global: &cli::Global) -> i32 {
                 };
                 return dispatch_run(run_args, mode, explicit_json, no_hints);
             }
-            "--ast" if engine_flag.is_none() => {
-                let run_args = cli::RunArgs {
-                    source,
-                    engine: cli::Engine::Default,
-                    run_tree: false,
-                    run: false,
-                    run_vm: false,
-                    run_cranelift: false,
-                    run_llvm: false,
-                    bench: false,
-                    emit: None,
-                    explain: false,
-                    dense: false,
-                    expanded: false,
-                    ast: true,
-                    tools_path: tools_config_path,
-                    mcp_path: mcp_config_path,
-                    rest: args[m + 1..].to_vec(),
-                };
-                return dispatch_run(run_args, mode, explicit_json, no_hints);
-            }
             _ => {}
         }
     }
