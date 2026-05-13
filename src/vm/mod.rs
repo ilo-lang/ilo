@@ -11278,7 +11278,15 @@ pub(crate) extern "C" fn jit_mapnew() -> u64 {
 pub(crate) extern "C" fn jit_mget(map: u64, key: u64) -> u64 {
     let map_v = NanVal(map);
     let key_v = NanVal(key);
-    if !map_v.is_heap() || !key_v.is_heap() {
+    // Wrong-type paths must error to match the tree/VM `OP_MGET`
+    // semantics. Missing-key returns `TAG_NIL` — that is the correct
+    // `O _` (Optional) shape, not a failure.
+    if (map_v.0 & TAG_MASK) != TAG_MAP {
+        jit_set_runtime_error(VmError::Type("mget: first arg must be a map"));
+        return TAG_NIL;
+    }
+    if !key_v.is_string() {
+        jit_set_runtime_error(VmError::Type("mget: key must be text"));
         return TAG_NIL;
     }
     unsafe {
@@ -11291,8 +11299,11 @@ pub(crate) extern "C" fn jit_mget(map: u64, key: u64) -> u64 {
                         v.0
                     })
                     .unwrap_or(TAG_NIL),
+                // Unreachable in practice: is_string() above already narrowed
+                // the key to HeapObj::Str. Kept as a defensive nil.
                 _ => TAG_NIL,
             },
+            // Unreachable: TAG_MAP check above already narrowed map_v.
             _ => TAG_NIL,
         }
     }
