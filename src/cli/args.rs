@@ -125,6 +125,10 @@ pub struct RunArgs {
     #[arg(long, short = 'e', aliases = ["fmt-expanded"])]
     pub expanded: bool,
 
+    /// Dump the parsed AST as JSON instead of running.
+    #[arg(long = "ast")]
+    pub ast: bool,
+
     /// HTTP tool provider config (JSON).
     #[arg(long = "tools")]
     pub tools_path: Option<String>,
@@ -659,6 +663,7 @@ mod tests {
             explain: false,
             dense: false,
             expanded: false,
+            ast: false,
             tools_path: None,
             mcp_path: None,
             rest: vec![],

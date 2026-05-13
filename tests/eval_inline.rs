@@ -222,9 +222,14 @@ fn file_bare_args_runs_first_func() {
 }
 
 #[test]
-fn file_no_args_outputs_ast() {
+fn file_with_ast_flag_dumps_ast() {
+    // Previously `ilo file.ilo` with no func arg dumped raw AST JSON,
+    // which was a long-standing first-touch surprise: users expected
+    // it to run. The AST dump is now gated behind an explicit `--ast`
+    // flag (the auto-run / friendly-listing behaviour is pinned in
+    // tests/regression_cli_default.rs).
     let out = ilo()
-        .args(["examples/01-simple-function.ilo"])
+        .args(["--ast", "examples/01-simple-function.ilo"])
         .output()
         .expect("failed to run ilo");
     assert!(out.status.success());
