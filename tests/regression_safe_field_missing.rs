@@ -276,10 +276,7 @@ fn safe_field_on_typed_list_caught_by_verifier() {
         "verifier should reject .?field on a typed list"
     );
     let err = String::from_utf8_lossy(&out.stderr);
-    assert!(
-        err.contains("ILO-T018"),
-        "expected ILO-T018, stderr: {err}"
-    );
+    assert!(err.contains("ILO-T018"), "expected ILO-T018, stderr: {err}");
 }
 
 // ── Static record typo detection still fires at verify time ────────────────
