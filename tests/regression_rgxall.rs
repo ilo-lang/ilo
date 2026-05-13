@@ -3,44 +3,41 @@
 // No-group patterns wrap the whole match in a single-element inner list,
 // so the outer shape stays predictable regardless of group count.
 //
-// Engine coverage: tree-only.
-//
-// The sibling builtin `rgx` is also tree-only today (both --run-vm and
-// --run-cranelift report `Compile error: undefined function: rgx` on main).
-// The VM compiler's "falls through to OP_CALL → interpreter" comment at
-// src/vm/mod.rs:2394-2397 is aspirational, not current — there is no
-// builtin bridge in OP_CALL's dispatcher today. Wiring rgx/rgxall through
-// the VM and cranelift is a separate, larger fix (touches verify, VM
-// compile, JIT compile) and out of scope for this PR. Keeping rgxall
-// tree-only matches rgx's actual reality; when the VM bridge lands, both
-// will switch on together and these tests should grow to check all three
-// engines.
+// Engine coverage: tree, VM, Cranelift JIT. The tree-only restriction
+// noted in the original landing PR is gone — `rgxall` (and its siblings
+// `rgx`, `fmt` variadic, 2-arg `rd`, `rdb`) now route through the generic
+// `OP_CALL_BUILTIN_TREE` bridge in the VM and Cranelift JIT, so every
+// engine produces identical output.
 
 use std::process::Command;
+
+const ENGINES: &[&str] = &["--run-tree", "--run-vm", "--run-cranelift"];
 
 fn ilo() -> Command {
     Command::new(env!("CARGO_BIN_EXE_ilo"))
 }
 
-fn run_text(src: &str) -> String {
+fn run_text_engine(src: &str, engine: &str) -> String {
     let out = ilo()
-        .args([src, "--run-tree", "f"])
+        .args([src, engine, "f"])
         .output()
         .expect("failed to run ilo");
     assert!(
         out.status.success(),
-        "ilo --run-tree failed for `{src}`: stderr={}",
+        "ilo {engine} failed for `{src}`: stderr={}",
         String::from_utf8_lossy(&out.stderr)
     );
     String::from_utf8_lossy(&out.stdout).trim().to_string()
 }
 
 fn check(src: &str, expected: &str) {
-    let actual = run_text(src);
-    assert_eq!(
-        actual, expected,
-        "src=`{src}`: got `{actual}`, expected `{expected}`"
-    );
+    for engine in ENGINES {
+        let actual = run_text_engine(src, engine);
+        assert_eq!(
+            actual, expected,
+            "engine={engine}, src=`{src}`: got `{actual}`, expected `{expected}`"
+        );
+    }
 }
 
 #[test]

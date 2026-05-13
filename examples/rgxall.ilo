@@ -25,9 +25,3 @@ no-match>L (L t);rgxall "\d+" "no digits here"
 -- out: [[x, 1], [y, 22], [z, 333]]
 -- run: no-match
 -- out: []
-
--- VM and cranelift compilers don't yet wire builtin calls through to the
--- interpreter for rgx/rgxall (only --run-tree does). When that gap closes,
--- drop these skips.
--- engine-skip: vm
--- engine-skip: cranelift
