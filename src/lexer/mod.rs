@@ -338,6 +338,59 @@ pub fn lex(source: &str) -> Result<Vec<(Token, std::ops::Range<usize>)>, LexErro
         }
     }
 
+    // Post-lex: after `.` or `.?` (field access), accept reserved keywords
+    // (`type`, `if`, `let`, `fn`, `var`, `use`, `with`, type sigils `R`/`L`/`F`/`O`/`M`/`S`,
+    // `true`, `false`, `nil`, ...) as plain field names by rewriting the keyword
+    // token back into a `Token::Ident` using the original source slice. Real-world
+    // JSON keys are frequently named after keywords (`type`, `if`, `use`), and
+    // dot-access on those should "just work" — the workaround was the verbose
+    // `jpth! resp "type"` per field. Only fires when the keyword token sits flush
+    // against a preceding `Dot`/`DotQuestion` (no whitespace), so reserved words
+    // in binding position still emit their friendly ILO-P011 error.
+    //
+    // This runs before the snake_case pass below so `record.type_id` correctly
+    // stitches: after this pass the token sequence becomes
+    // `Dot Ident("type") Underscore Ident("id")`, then the snake_case loop merges
+    // it into `Dot Ident("type_id")`.
+    {
+        let mut i = 0;
+        while i < tokens.len() {
+            if i == 0 {
+                i += 1;
+                continue;
+            }
+            let prev_is_dot = matches!(tokens[i - 1].0, Token::Dot | Token::DotQuestion)
+                && tokens[i - 1].1.end == tokens[i].1.start;
+            if !prev_is_dot {
+                i += 1;
+                continue;
+            }
+            if matches!(tokens[i].0, Token::Ident(_) | Token::Number(_)) {
+                i += 1;
+                continue;
+            }
+            let span = tokens[i].1.clone();
+            let slice = &normalized[span.clone()];
+            // Only rewrite tokens whose source slice is a valid bare field name —
+            // identifier-shaped (`[A-Za-z][A-Za-z0-9_]*`). This catches keyword
+            // tokens (`type`, `if`, `use`, ...) and type sigils (`R`, `L`, `F`,
+            // `O`, `M`, `S`), but skips punctuation like `..` or `.?` that the
+            // lexer happens to emit as non-Ident tokens.
+            let mut chars = slice.chars();
+            let first_ok = chars
+                .next()
+                .map(|c| c.is_ascii_alphabetic())
+                .unwrap_or(false);
+            let rest_ok = chars.all(|c| c.is_ascii_alphanumeric() || c == '_');
+            if !first_ok || !rest_ok {
+                i += 1;
+                continue;
+            }
+            tokens[i] = (Token::Ident(slice.to_string()), span);
+            i += 1;
+        }
+    }
+
     // Post-lex: after `.` or `.?` (field access), accept JSON-style snake_case
     // field names by merging contiguous `Ident (Underscore (Ident|Number))*`
     // runs back into a single `Ident` token. Real-world JSON (which agents

@@ -1,0 +1,26 @@
+-- Reserved keywords as field names at dot-access. Real-world JSON keys are
+-- often named after keywords (`type`, `if`, `use`); dot-access should just work.
+ftype j:t>R n t;r=jpar! j;r.type
+fif j:t>R n t;r=jpar! j;r.if
+fuse j:t>R n t;r=jpar! j;r.use
+ftrue j:t>R n t;r=jpar! j;r.true
+fnil j:t>R n t;r=jpar! j;r.nil
+ftypeid j:t>R n t;r=jpar! j;r.type_id
+
+-- run: ftype {"type":42}
+-- out: 42
+
+-- run: fif {"if":7}
+-- out: 7
+
+-- run: fuse {"use":1}
+-- out: 1
+
+-- run: ftrue {"true":99}
+-- out: 99
+
+-- run: fnil {"nil":13}
+-- out: 13
+
+-- run: ftypeid {"type_id":1234}
+-- out: 1234
