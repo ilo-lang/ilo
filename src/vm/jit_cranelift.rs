@@ -5297,6 +5297,45 @@ mod tests {
     }
 
     #[test]
+    fn cranelift_mset_rebind_accumulator_text() {
+        // Exercises jit_mset_inplace fast path: m = mset m k v with Text values.
+        // Pre-fix jit_mset bit-copied entries without bumping RC; with Text
+        // values that produced over-decrement on map drop.
+        let result = jit_run(
+            r#"f>n;m=mmap;m=mset m "a" "1";m=mset m "b" "2";m=mset m "c" "3";len (mkeys m)"#,
+            "f",
+            &[],
+        );
+        assert_eq!(result, Some(Value::Number(3.0)));
+    }
+
+    #[test]
+    fn cranelift_mset_non_rebind_does_not_alias() {
+        // Non-rebind shape m2 = mset m k v: Cranelift OP_MSET must pick the
+        // cloning helper (jit_mset) not jit_mset_inplace, otherwise both m and
+        // m2 alias the same Rc and m would observe m2's insertion.
+        let result = jit_run(
+            r#"f>t;m=mset mmap "k" "1";m2=mset m "j" "2";mget m "j" ?? "miss""#,
+            "f",
+            &[],
+        );
+        assert_eq!(result, Some(Value::Text("miss".into())));
+    }
+
+    #[test]
+    fn cranelift_mset_overwrite_drops_old_text() {
+        // Overwriting a key with a new Text value must drop_rc the displaced
+        // value. With the latent jit_mset RC bug, the displaced Rc was never
+        // properly accounted for and the second `mget` would observe garbage.
+        let result = jit_run(
+            r#"f>t;m=mmap;m=mset m "k" "first";m=mset m "k" "second";mget m "k" ?? "miss""#,
+            "f",
+            &[],
+        );
+        assert_eq!(result, Some(Value::Text("second".into())));
+    }
+
+    #[test]
     fn cranelift_map_del() {
         let result = jit_run(
             r#"f>n;m=mset mmap "a" 1;m=mdel m "a";k=mkeys m;len k"#,

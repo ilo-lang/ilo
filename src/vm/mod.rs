@@ -15055,6 +15055,59 @@ mod tests {
     }
 
     #[test]
+    fn vm_mset_rebind_accumulator_text_values() {
+        // m = mset m k v shape exercises the compiler peephole + OP_MSET RC=1
+        // in-place fast path. Text values catch the latent jit_mset RC bug if it
+        // ever ports to the VM slow path. Asserts every key is reachable after
+        // 8 iterations (a regression would either lose entries or panic).
+        let result = vm_run(
+            r#"f>n;m=mmap;m=mset m "a" "1";m=mset m "b" "2";m=mset m "c" "3";m=mset m "d" "4";m=mset m "e" "5";m=mset m "f" "6";m=mset m "g" "7";m=mset m "h" "8";len (mkeys m)"#,
+            Some("f"),
+            vec![],
+        );
+        assert_eq!(result, Value::Number(8.0));
+    }
+
+    #[test]
+    fn vm_mset_rebind_overwrite_same_key() {
+        // Repeated overwrite on the same key exercises the drop_rc path on the
+        // displaced value inside the RC=1 fast path. With Text values the old
+        // string Rc must be properly decremented when replaced.
+        let result = vm_run(
+            r#"f>t;m=mmap;m=mset m "k" "first";m=mset m "k" "second";m=mset m "k" "third";mget m "k" ?? "miss""#,
+            Some("f"),
+            vec![],
+        );
+        assert_eq!(result, Value::Text("third".into()));
+    }
+
+    #[test]
+    fn vm_mset_fn_arg_forces_slow_path() {
+        // Passing m to a helper that does its own mset puts the map at RC=2
+        // (caller slot + callee param slot). The callee's m=mset m k v therefore
+        // takes the slow path, must NOT mutate the caller's map.
+        let result = vm_run(
+            r#"addto m:M t t k:t v:t>t;m=mset m k v;mget m k ?? "miss"
+               f>t;m=mset mmap "a" "one";x=addto m "a" "two";mget m "a" ?? "miss""#,
+            Some("f"),
+            vec![],
+        );
+        assert_eq!(result, Value::Text("one".into()));
+    }
+
+    #[test]
+    fn vm_mset_non_rebind_distinct_dest() {
+        // Non-rebind shape m2 = mset m k v: a != b in OP_MSET emission. The fast
+        // path must not fire even when RC=1 (would alias the caller's map).
+        let result = vm_run(
+            r#"f>t;m=mset mmap "k" "1";m2=mset m "j" "2";mget m "j" ?? "miss""#,
+            Some("f"),
+            vec![],
+        );
+        assert_eq!(result, Value::Text("miss".into()));
+    }
+
+    #[test]
     fn vm_mkeys_empty_map() {
         let result = vm_run("f>L t;mkeys mmap", Some("f"), vec![]);
         assert_eq!(result, Value::List(vec![]));
