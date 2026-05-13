@@ -29,10 +29,20 @@ fn find_examples() -> Vec<PathBuf> {
     paths
 }
 
+#[derive(Clone, Copy, PartialEq)]
+enum Expect {
+    /// `-- out:` — program must exit 0 and the assertion is against stdout.
+    Stdout,
+    /// `-- err:` — program must exit 1 with the assertion against stderr.
+    /// Used for entry functions that return `Value::Err(_)`.
+    Stderr,
+}
+
 struct TestCase {
     run_args: Vec<String>,
     expected: String,
     line: usize,
+    expect: Expect,
 }
 
 fn parse_cases(src: &str) -> Vec<TestCase> {
@@ -45,13 +55,25 @@ fn parse_cases(src: &str) -> Vec<TestCase> {
             let args = rest.split_whitespace().map(str::to_string).collect();
             pending = Some((args, i + 1));
         } else if let (Some(rest), Some((args, ln))) =
-            (line.strip_prefix("-- out:"), pending.take())
+            (line.strip_prefix("-- out:"), pending.as_ref())
         {
             cases.push(TestCase {
-                run_args: args,
+                run_args: args.clone(),
                 expected: rest.trim().to_string(),
-                line: ln,
+                line: *ln,
+                expect: Expect::Stdout,
             });
+            pending = None;
+        } else if let (Some(rest), Some((args, ln))) =
+            (line.strip_prefix("-- err:"), pending.as_ref())
+        {
+            cases.push(TestCase {
+                run_args: args.clone(),
+                expected: rest.trim().to_string(),
+                line: *ln,
+                expect: Expect::Stderr,
+            });
+            pending = None;
         }
     }
     cases
@@ -132,30 +154,57 @@ fn examples_all_engines() {
                         )
                     });
 
-                let actual = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
 
-                if !out.status.success() {
-                    let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
-                    failures.push(format!(
-                        "{name} [{engine_name}] (line {}): `ilo {} {} {}`\n  FAILED (exit {})\n  stderr: {stderr}",
-                        case.line,
-                        path.display(),
-                        engine.flag,
-                        case.run_args.join(" "),
-                        out.status,
-                        engine_name = engine.name,
-                    ));
-                } else if actual != case.expected {
-                    failures.push(format!(
-                        "{name} [{engine_name}] (line {}): `ilo {} {} {}`\n  expected: {:?}\n  actual:   {:?}",
-                        case.line,
-                        path.display(),
-                        engine.flag,
-                        case.run_args.join(" "),
-                        case.expected,
-                        actual,
-                        engine_name = engine.name,
-                    ));
+                match case.expect {
+                    Expect::Stdout => {
+                        if !out.status.success() {
+                            failures.push(format!(
+                                "{name} [{engine_name}] (line {}): `ilo {} {} {}`\n  FAILED (exit {})\n  stderr: {stderr}",
+                                case.line,
+                                path.display(),
+                                engine.flag,
+                                case.run_args.join(" "),
+                                out.status,
+                                engine_name = engine.name,
+                            ));
+                        } else if stdout != case.expected {
+                            failures.push(format!(
+                                "{name} [{engine_name}] (line {}): `ilo {} {} {}`\n  expected: {:?}\n  actual:   {:?}",
+                                case.line,
+                                path.display(),
+                                engine.flag,
+                                case.run_args.join(" "),
+                                case.expected,
+                                stdout,
+                                engine_name = engine.name,
+                            ));
+                        }
+                    }
+                    Expect::Stderr => {
+                        if out.status.success() {
+                            failures.push(format!(
+                                "{name} [{engine_name}] (line {}): `ilo {} {} {}`\n  EXPECTED FAILURE but exit 0\n  stdout: {stdout}",
+                                case.line,
+                                path.display(),
+                                engine.flag,
+                                case.run_args.join(" "),
+                                engine_name = engine.name,
+                            ));
+                        } else if stderr != case.expected {
+                            failures.push(format!(
+                                "{name} [{engine_name}] (line {}): `ilo {} {} {}` (-- err:)\n  expected stderr: {:?}\n  actual stderr:   {:?}",
+                                case.line,
+                                path.display(),
+                                engine.flag,
+                                case.run_args.join(" "),
+                                case.expected,
+                                stderr,
+                                engine_name = engine.name,
+                            ));
+                        }
+                    }
                 }
             }
         }
