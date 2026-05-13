@@ -1144,11 +1144,16 @@ impl Parser {
     fn parse_foreach(&mut self) -> Result<Stmt> {
         self.expect(&Token::At)?;
         let binding = self.expect_ident()?;
-        let start_expr = self.parse_atom()?;
+        // Range bounds accept any operand, not just atoms: this lets personas
+        // write `@j +i 2..n` and `@j 0..-n 1` directly instead of binding an
+        // intermediate (`jst=+i 2;@j jst..n`). Call-style bounds like
+        // `@j 0..len xs` still need a binding; see tests/regression_range_expr.rs
+        // for the negative anchor.
+        let start_expr = self.parse_operand()?;
         // Check for range syntax: start..end
         if self.peek() == Some(&Token::DotDot) {
             self.advance(); // consume ..
-            let end_expr = self.parse_atom()?;
+            let end_expr = self.parse_operand()?;
             let body = self.parse_brace_body()?;
             return Ok(Stmt::ForRange {
                 binding,
