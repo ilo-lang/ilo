@@ -139,6 +139,15 @@ fn collect_calls(expr: &Expr, calls: &mut BTreeSet<String>, types: &mut BTreeSet
                 }
             }
         }
+        Expr::MakeClosure { fn_name, captures } => {
+            // MakeClosure binds captures onto a lifted fn — treat both the
+            // target fn and any nested calls in captures as call edges so the
+            // dep graph reflects them.
+            calls.insert(fn_name.clone());
+            for cap in captures {
+                collect_calls(cap, calls, types);
+            }
+        }
         Expr::Literal(_) | Expr::Ref(_) => {}
     }
 }

@@ -614,6 +614,16 @@ fn fmt_expr(expr: &Expr, mode: FmtMode) -> String {
                 .collect();
             format!("{} with {}", fmt_expr(object, mode), updates_str.join(" "))
         }
+        Expr::MakeClosure { fn_name, captures } => {
+            // Synthetic node from inline-lambda lifting. There is no surface
+            // syntax for `MakeClosure` because the user wrote `(p>r;body)`
+            // and the lifter rewrote it. Render as the lifted fn name plus a
+            // bracketed capture list — useful for ast-dump / debug; the
+            // round-trip parse won't reproduce this exact form but it keeps
+            // the printer total.
+            let caps: Vec<String> = captures.iter().map(|c| fmt_expr(c, mode)).collect();
+            format!("{}[{}]", fn_name, caps.join(" "))
+        }
     }
 }
 
