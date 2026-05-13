@@ -1,0 +1,21 @@
+-- mset accumulator: `m = mset m k v` in a loop runs in O(n) amortised, not O(n²).
+-- The compiler peephole rewrites the self-rebind to an in-place HashMap update
+-- when the variable holds the sole reference, matching the `s = +s c` and
+-- `xs = +=xs v` accumulator patterns.
+
+-- Build a word-frequency map by accumulating into the same variable. The
+-- pattern below used to clone the entire map on every `mset` — fine for a
+-- handful of keys, OOM at corpus scale (nlp-engineer's 222k-token Moby Dick).
+count-words ws:L t>n;m=mmap;@w ws{c=mget m w ?? 0;m=mset m w +c 1};len (mkeys m)
+
+-- Three-word demo: ["the", "cat", "the"] gives 2 distinct keys, "the" mapped
+-- to 2 and "cat" mapped to 1.
+demo>n;count-words ["the","cat","the"]
+
+-- Distinct-key accumulation: 200 keys via fmt.
+build-200>n;m=mmap;@i 0..200{k=fmt "k{}" i;m=mset m k i};len (mkeys m)
+
+-- run: demo
+-- out: 2
+-- run: build-200
+-- out: 200
