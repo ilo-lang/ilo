@@ -124,6 +124,7 @@ struct HelperFuncs {
     mapnew: FuncId,
     mget: FuncId,
     mset: FuncId,
+    mset_inplace: FuncId,
     mhas: FuncId,
     mkeys: FuncId,
     mvals: FuncId,
@@ -292,6 +293,7 @@ fn declare_all_helpers(module: &mut ObjectModule) -> HelperFuncs {
         mapnew: declare_helper(module, "jit_mapnew", 0, 1),
         mget: declare_helper(module, "jit_mget", 2, 1),
         mset: declare_helper(module, "jit_mset", 3, 1),
+        mset_inplace: declare_helper(module, "jit_mset_inplace", 3, 1),
         mhas: declare_helper(module, "jit_mhas", 2, 1),
         mkeys: declare_helper(module, "jit_mkeys", 1, 1),
         mvals: declare_helper(module, "jit_mvals", 1, 1),
@@ -3175,7 +3177,18 @@ fn compile_function_body(
                 skip_next = true;
                 let d_idx = ((data_inst >> 16) & 0xFF) as usize;
                 let dv = builder.use_var(vars[d_idx]);
-                let fref = get_func_ref(&mut builder, module, helpers.mset);
+                // Pick the in-place helper only when the destination and source
+                // registers are the same SSA variable. The compiler peephole
+                // `name = mset name k v` emits a == b, which guarantees that
+                // returning the same Rc pointer at RC=1 is balanced. When a != b
+                // the in-place path would alias the result through both slots
+                // and silently mutate the caller's source map (see jit_mset).
+                let helper_fn = if a_idx == b_idx {
+                    helpers.mset_inplace
+                } else {
+                    helpers.mset
+                };
+                let fref = get_func_ref(&mut builder, module, helper_fn);
                 let call_inst = builder.ins().call(fref, &[bv, cv, dv]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);

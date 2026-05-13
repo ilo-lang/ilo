@@ -10815,6 +10815,15 @@ pub(crate) extern "C" fn jit_mget(map: u64, key: u64) -> u64 {
     }
 }
 
+/// General mset helper — always clones the map. Used by Cranelift when the
+/// destination register differs from the map source register (no in-place
+/// safety guarantee, even if RC=1, because both src and dst slots will
+/// reference the result and Cranelift does not auto-drop overwritten vars).
+///
+/// Also fixes a latent bug in the pre-fix code: `m.clone()` bit-copied entries
+/// without bumping RC for retained heap values while `HeapObj::Drop` for Map
+/// decrements every value. With non-numeric values this was use-after-free
+/// waiting to happen; existing tests only used numeric values.
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn jit_mset(map: u64, key: u64, val: u64) -> u64 {
@@ -10825,14 +10834,56 @@ pub(crate) extern "C" fn jit_mset(map: u64, key: u64, val: u64) -> u64 {
         return TAG_NIL;
     }
     let ptr_b = (map_v.0 & PTR_MASK) as *const HeapObj;
-    // RC=1 fast path: when the caller's variable is the sole holder (typical
-    // `m = mset m k v` accumulator), mutate the HashMap in place to avoid O(n²)
-    // copy-per-insert. Mirrors `jit_listappend` (src/vm/mod.rs:10113). The JIT
-    // calling convention: caller's NanVal is passed by value (no RC change);
-    // the helper returns a NanVal whose RC matches what the caller's destination
-    // slot will own. For the rebind shape the JIT def_var overwrites the same
-    // SSA var with our return value, so returning the same pointer at RC=1 is
-    // balanced (caller still holds exactly one ref).
+    unsafe {
+        match &*ptr_b {
+            HeapObj::Map(m) => {
+                let mut new_map = m.clone();
+                // Bump RC for each retained entry so the new map owns its values
+                // independently of the source. HeapObj::Drop for Map will
+                // decrement every value when this map is dropped, so the clones
+                // must each represent an owned ref.
+                for v in new_map.values() {
+                    v.clone_rc();
+                }
+                let k_str = match key_v.as_heap_ref() {
+                    HeapObj::Str(s) => s.clone(),
+                    _ => return TAG_NIL,
+                };
+                val_v.clone_rc();
+                if let Some(old) = new_map.insert(k_str, val_v) {
+                    old.drop_rc();
+                }
+                NanVal::heap_map(new_map).0
+            }
+            _ => TAG_NIL,
+        }
+    }
+}
+
+/// In-place mset helper — mutates the HashMap when the caller's map is the
+/// sole owner (strong_count == 1), else falls back to the cloning path.
+///
+/// The Cranelift compiler only emits a call to this helper when the OP_MSET
+/// destination and source registers are the same SSA variable (the compiler
+/// peephole `name = mset name k v` shape). In that case the def_var(a, result)
+/// overwrites the same variable the input came from, so returning the same
+/// pointer at RC=1 is balanced: the caller still holds exactly one ref.
+///
+/// Without that compile-time guarantee, returning the same pointer when
+/// strong_count == 1 and a != b would alias the result through both registers
+/// and silently mutate the caller's "source" map — see the open follow-up on
+/// the equivalent `jit_listappend` RC=1 alias case from PR #232.
+#[cfg(feature = "cranelift")]
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn jit_mset_inplace(map: u64, key: u64, val: u64) -> u64 {
+    let map_v = NanVal(map);
+    let key_v = NanVal(key);
+    let val_v = NanVal(val);
+    if (map_v.0 & TAG_MASK) != TAG_MAP || !key_v.is_string() {
+        return TAG_NIL;
+    }
+    let ptr_b = (map_v.0 & PTR_MASK) as *const HeapObj;
+    // Peek the RC count without taking ownership.
     let rc_count = {
         let rc_peek = unsafe { Rc::from_raw(ptr_b) };
         let count = Rc::strong_count(&rc_peek);
@@ -10840,7 +10891,10 @@ pub(crate) extern "C" fn jit_mset(map: u64, key: u64, val: u64) -> u64 {
         count
     };
     if rc_count == 1 {
-        // SAFETY: sole owner; no other reference exists. Cast to *mut and insert.
+        // SAFETY: sole owner; no other reference exists. Cast to *mut and
+        // insert directly. The caller is the same SSA variable that produced
+        // the input map (compile-time guarantee), so def_var with the same
+        // pointer keeps strong_count == 1 — balanced.
         let heap_mut = unsafe { &mut *(ptr_b as *mut HeapObj) };
         match heap_mut {
             HeapObj::Map(m) => {
@@ -10854,37 +10908,14 @@ pub(crate) extern "C" fn jit_mset(map: u64, key: u64, val: u64) -> u64 {
                 if let Some(old) = m.insert(k_str, val_v) {
                     old.drop_rc();
                 }
-                // Return the same NanVal — same pointer, RC still 1.
+                // Return the same NanVal pointer — RC still 1.
                 map
             }
             _ => TAG_NIL,
         }
     } else {
-        // RC > 1 — must clone the map. Fix latent bug: previous code bit-copied
-        // entries via `m.clone()` but never bumped RC for retained values, while
-        // HeapObj::Drop for Map decrements every value. With non-numeric values
-        // that produced use-after-free / double-decrement. Bump RC per entry to
-        // match the VM OP_MSET path.
-        unsafe {
-            match &*ptr_b {
-                HeapObj::Map(m) => {
-                    let mut new_map = m.clone();
-                    for v in new_map.values() {
-                        v.clone_rc();
-                    }
-                    let k_str = match key_v.as_heap_ref() {
-                        HeapObj::Str(s) => s.clone(),
-                        _ => return TAG_NIL,
-                    };
-                    val_v.clone_rc();
-                    if let Some(old) = new_map.insert(k_str, val_v) {
-                        old.drop_rc();
-                    }
-                    NanVal::heap_map(new_map).0
-                }
-                _ => TAG_NIL,
-            }
-        }
+        // RC > 1 — fall back to the cloning path.
+        jit_mset(map, key, val)
     }
 }
 

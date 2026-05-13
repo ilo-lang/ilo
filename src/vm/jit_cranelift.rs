@@ -132,6 +132,7 @@ struct HelperFuncs {
     mapnew: FuncId,
     mget: FuncId,
     mset: FuncId,
+    mset_inplace: FuncId,
     mhas: FuncId,
     mkeys: FuncId,
     mvals: FuncId,
@@ -290,6 +291,7 @@ fn register_helpers(builder: &mut JITBuilder) {
         ("jit_mapnew", jit_mapnew as *const u8),
         ("jit_mget", jit_mget as *const u8),
         ("jit_mset", jit_mset as *const u8),
+        ("jit_mset_inplace", jit_mset_inplace as *const u8),
         ("jit_mhas", jit_mhas as *const u8),
         ("jit_mkeys", jit_mkeys as *const u8),
         ("jit_mvals", jit_mvals as *const u8),
@@ -436,6 +438,7 @@ fn declare_all_helpers(module: &mut JITModule) -> HelperFuncs {
         mapnew: declare_helper(module, "jit_mapnew", 0, 1),
         mget: declare_helper(module, "jit_mget", 2, 1),
         mset: declare_helper(module, "jit_mset", 3, 1),
+        mset_inplace: declare_helper(module, "jit_mset_inplace", 3, 1),
         mhas: declare_helper(module, "jit_mhas", 2, 1),
         mkeys: declare_helper(module, "jit_mkeys", 1, 1),
         mvals: declare_helper(module, "jit_mvals", 1, 1),
@@ -3733,7 +3736,15 @@ fn compile_function_body(
                 skip_next = true;
                 let d_idx = ((data_inst >> 16) & 0xFF) as usize;
                 let dv = builder.use_var(vars[d_idx]);
-                let fref = get_func_ref(&mut builder, module, helpers.mset);
+                // Pick the in-place helper only when the destination and source
+                // registers are the same SSA variable (compiler peephole shape).
+                // See jit_mset_inplace docs for why a != b is unsafe at RC=1.
+                let helper_fn = if a_idx == b_idx {
+                    helpers.mset_inplace
+                } else {
+                    helpers.mset
+                };
+                let fref = get_func_ref(&mut builder, module, helper_fn);
                 let call_inst = builder.ins().call(fref, &[bv, cv, dv]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
