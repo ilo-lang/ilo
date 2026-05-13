@@ -2072,6 +2072,17 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             )),
         };
     }
+    if builtin == Some(Builtin::Chars) && args.len() == 1 {
+        return match &args[0] {
+            Value::Text(s) => Ok(Value::List(
+                s.chars().map(|c| Value::Text(c.to_string())).collect(),
+            )),
+            other => Err(RuntimeError::new(
+                "ILO-R009",
+                format!("chars requires text, got {:?}", other),
+            )),
+        };
+    }
     if builtin == Some(Builtin::Unq) && args.len() == 1 {
         return match &args[0] {
             Value::List(xs) => {
