@@ -199,8 +199,18 @@ impl Parser {
 
     /// Return true if the tokens at `pos` look like the start of a function declaration:
     /// `Ident` followed by `>` (no-param function) OR `Ident Ident :` (has params).
+    ///
+    /// Reserved statement-keyword identifiers (`wh`/`ret`/`brk`/`cnt`) are never
+    /// valid function names — `parse_stmt` intercepts them as control-flow forms.
+    /// Short-circuiting here closes the `wh >cond{...}` mid-body re-parse trap,
+    /// where the body-boundary heuristic in `parse_body_with` would otherwise
+    /// treat `wh >v 0{...}` as a fresh fn decl named `wh` returning `v`.
     fn is_fn_decl_start(&self, pos: usize) -> bool {
-        if !matches!(self.token_at(pos), Some(Token::Ident(_))) {
+        let name = match self.token_at(pos) {
+            Some(Token::Ident(n)) => n,
+            _ => return false,
+        };
+        if is_reserved_stmt_keyword(name) {
             return false;
         }
         match self.token_at(pos + 1) {
@@ -2393,6 +2403,15 @@ fn wrap_body_as_let(name: &str, mut body: Vec<Spanned<Stmt>>) -> Vec<Spanned<Stm
         }
     }
     body
+}
+
+/// Identifier-keywords intercepted by `parse_stmt` as control-flow forms.
+/// These names can never legitimately start a function declaration, so the
+/// `is_fn_decl_start` heuristic must reject them — otherwise `wh >v 0{...}`
+/// gets mis-parsed as a fn decl named `wh` returning `v` (see the gis-analyst
+/// and routing-tsp persona reports).
+fn is_reserved_stmt_keyword(name: &str) -> bool {
+    matches!(name, "wh" | "ret" | "brk" | "cnt")
 }
 
 /// Map a reserved-keyword token to its `(message, hint)` pair for ILO-P011.
