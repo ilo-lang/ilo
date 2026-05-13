@@ -1,0 +1,28 @@
+-- `fmt` is variadic (template + N values). When used as a NESTED arg of
+-- another known-arity builtin, it must occupy the LAST slot of that outer
+-- call — in trailing position the parser eagerly consumes the template
+-- plus every remaining operand as fmt's args.
+--
+-- This is the idiomatic shape: no parens, no helper var.
+
+-- prnt is arity 1, fmt is its trailing arg → prnt(fmt("x={}", 42))
+say-x>t;fmt "x={}" 42
+
+-- wr path text — fmt at slot 1 (trailing) of wr
+greeting-text>t;fmt "hi {} from {}" "world" "ilo"
+
+-- nested: prnt upr fmt — fmt at slot 0 of upr (trailing), upr at slot 0 of prnt (trailing)
+loud n:n>t;upr fmt "x={}" n
+
+-- middle-position is rejected with ILO-P018 — wrap in parens to escape.
+-- Example: slc is arity 3 (list, start, end). fmt at slot 0 needs parens:
+slice-fmt n:n>t;slc (fmt "abcdef={}" n) 0 5
+
+-- run: say-x
+-- out: x=42
+-- run: greeting-text
+-- out: hi world from ilo
+-- run: loud 7
+-- out: X=7
+-- run: slice-fmt 9
+-- out: abcde
