@@ -7688,28 +7688,31 @@ unsafe fn nanval_str_cmp(a: NanVal, b: NanVal) -> std::cmp::Ordering {
 /// Stringify a NanVal element value for use as a map key in `frq`.
 /// Returns None if the value is not a text, number, or bool.
 ///
-/// Keys are prefixed with a type tag (`n:` / `t:` / `b:`) so that values
-/// from distinct domains never alias one another (e.g. `Number(1)` and
-/// `Text("1")` would otherwise both stringify to `"1"`). Matches the
-/// uniqby/setops precedent.
+/// Keys are bare stringifications of the element value, matching `grp`'s
+/// convention for user-visible map keys. Heterogeneous lists where
+/// distinct-typed values share a print form (e.g. `Number(1)` and
+/// `Text("1")`) will collide on the shared string; same collision policy
+/// as `grp idt xs`. The earlier type-prefixed shape (`n:` / `t:` / `b:`)
+/// leaked an internal disambiguation convention into the API surface and
+/// has been removed.
 fn nanval_to_key_string(v: NanVal) -> Option<String> {
     if v.is_number() {
         let n = v.as_number();
         if n.fract() == 0.0 && n.abs() < 1e15 {
-            return Some(format!("n:{}", n as i64));
+            return Some(format!("{}", n as i64));
         }
-        return Some(format!("n:{n}"));
+        return Some(format!("{n}"));
     }
     match v.0 {
-        TAG_TRUE => return Some("b:true".to_string()),
-        TAG_FALSE => return Some("b:false".to_string()),
+        TAG_TRUE => return Some("true".to_string()),
+        TAG_FALSE => return Some("false".to_string()),
         _ => {}
     }
     if v.is_string() {
         // SAFETY: is_string() confirmed.
         unsafe {
             return match v.as_heap_ref() {
-                HeapObj::Str(s) => Some(format!("t:{s}")),
+                HeapObj::Str(s) => Some(s.as_str().to_owned()),
                 _ => None,
             };
         }

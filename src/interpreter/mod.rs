@@ -2721,19 +2721,21 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         };
         let mut counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
         for item in items {
-            // Prefix keys with a type tag so distinct domains never alias each
-            // other. Without this, `Number(1)` and `Text("1")` would both
-            // stringify to `"1"` and collide. Matches uniqby/setops precedent.
+            // Stringify elements without a type tag, matching `grp`'s convention
+            // for user-visible map keys. Heterogeneous lists where distinct-typed
+            // values share a print form (e.g. `Number(1)` and `Text("1")`) will
+            // collide on the shared string; this is the same collision policy as
+            // `grp idt xs` and is documented in `examples/frq.ilo`.
             let key_str = match item {
-                Value::Text(s) => format!("t:{s}"),
+                Value::Text(s) => s.clone(),
                 Value::Number(n) => {
                     if *n == (*n as i64) as f64 {
-                        format!("n:{}", *n as i64)
+                        format!("{}", *n as i64)
                     } else {
-                        format!("n:{n}")
+                        format!("{n}")
                     }
                 }
-                Value::Bool(b) => format!("b:{b}"),
+                Value::Bool(b) => format!("{b}"),
                 other => {
                     return Err(RuntimeError::new(
                         "ILO-R009",
