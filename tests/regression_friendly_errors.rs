@@ -333,3 +333,34 @@ fn match_bare_bool_does_not_fire_on_literal_pattern() {
     run_ok("go>n;x=2;?x{1:10;2:20;_:0}");
 }
 
+// ---- `name={...}` map-literal hint ----
+
+#[test]
+fn map_literal_text_key_hints_mset_mmap() {
+    let err = run_err("go>n;m={\"a\" 1};0");
+    assert!(err.contains("ILO-P009"), "stderr: {err}");
+    assert!(
+        err.contains("map literal syntax"),
+        "should explain no map literal: {err}"
+    );
+    assert!(err.contains("mset mmap"), "should suggest mset mmap: {err}");
+}
+
+#[test]
+fn map_literal_number_key_hints_mset_mmap() {
+    let err = run_err("go>n;m={1 \"a\"};0");
+    assert!(err.contains("ILO-P009"), "stderr: {err}");
+    assert!(err.contains("mset mmap"), "stderr: {err}");
+}
+
+#[test]
+fn map_literal_empty_braces_hints_mset_mmap() {
+    let err = run_err("go>n;m={};0");
+    assert!(err.contains("ILO-P009"), "stderr: {err}");
+    assert!(err.contains("mset mmap"), "stderr: {err}");
+}
+
+#[test]
+fn let_with_normal_rhs_still_parses() {
+    run_ok("go>n;x=5;y=+x 1;y");
+}

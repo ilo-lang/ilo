@@ -926,6 +926,21 @@ impl Parser {
     fn parse_let(&mut self) -> Result<Stmt> {
         let name = self.expect_ident()?;
         self.expect(&Token::Eq)?;
+        // Friendly hint: `name={...}` is a common reach for a map-literal from
+        // other languages. ilo builds maps with `mmap` + `mset`. Catch it
+        // before parse_expr emits the bare ILO-P009 "expected expression,
+        // got LBrace".
+        if self.peek() == Some(&Token::LBrace) && self.brace_looks_like_map_literal() {
+            return Err(self.error_hint(
+                "ILO-P009",
+                format!(
+                    "`{name}={{...}}` — ilo has no `{{key value}}` map literal syntax"
+                ),
+                format!(
+                    "build maps with `mmap` (empty) and `mset`, e.g. `{name}=mset mmap \"k\" v` (chain `mset` for multiple entries)"
+                ),
+            ));
+        }
         let value = self.parse_expr()?;
 
         // Check if this is a ternary assignment: v=cond{then}{else}
@@ -961,6 +976,21 @@ impl Parser {
         } else {
             Ok(Stmt::Let { name, value })
         }
+    }
+
+    /// Lookahead: does the `{` at current position look like a map-literal
+    /// attempt from another language? We fire only on shapes that are
+    /// unambiguously not a destructure or some other valid form:
+    /// `{"text" ...}`, `{<number> ...}`, or `{}` (empty braces).
+    /// Idents inside braces could be destructure shapes, so we skip them.
+    fn brace_looks_like_map_literal(&self) -> bool {
+        if self.peek() != Some(&Token::LBrace) {
+            return false;
+        }
+        matches!(
+            self.token_at(self.pos + 1),
+            Some(Token::Text(_) | Token::Number(_) | Token::RBrace)
+        )
     }
 
     /// Lookahead: `{ident;ident...}=` — destructure pattern
