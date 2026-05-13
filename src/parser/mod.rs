@@ -1224,16 +1224,17 @@ impl Parser {
     fn parse_foreach(&mut self) -> Result<Stmt> {
         self.expect(&Token::At)?;
         let binding = self.expect_ident()?;
-        // Range bounds accept any operand, not just atoms: this lets personas
-        // write `@j +i 2..n` and `@j 0..-n 1` directly instead of binding an
-        // intermediate (`jst=+i 2;@j jst..n`). Call-style bounds like
-        // `@j 0..len xs` still need a binding; see tests/regression_range_expr.rs
-        // for the negative anchor.
-        let start_expr = self.parse_operand()?;
+        // Range bounds accept any expression form: literals, idents, prefix
+        // binops (`+i 2`), unary minus (`-n 1`), and call forms (`len xs`,
+        // `at ys 0`). Call args greedily stop at `..` and `{` because neither
+        // token starts an operand, so `@j 0..len xs{...}` parses cleanly as
+        // `0..Call(len,[xs])`. See tests/regression_range_expr.rs for the
+        // cross-engine matrix.
+        let start_expr = self.parse_expr_inner()?;
         // Check for range syntax: start..end
         if self.peek() == Some(&Token::DotDot) {
             self.advance(); // consume ..
-            let end_expr = self.parse_operand()?;
+            let end_expr = self.parse_expr_inner()?;
             let body = self.parse_brace_body()?;
             return Ok(Stmt::ForRange {
                 binding,
@@ -7460,7 +7461,7 @@ mod tests {
 
     #[test]
     fn zero_arg_call_as_loop_subject() {
-        // `@v xs(){...}` — loop subject goes through parse_operand → parse_atom.
+        // `@v xs(){...}` — loop subject goes through parse_expr_inner → parse_call_or_atom.
         let prog = parse_str("xs>L n;[1 2 3]\nf>n;t=0;@v xs(){t=+t v};t");
         let body = last_fn_body(&prog);
         let foreach = body
