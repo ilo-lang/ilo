@@ -1,0 +1,18 @@
+-- wh >cond{...} mid-body must parse as a while loop, not a fresh fn decl.
+-- Reserved statement keywords (wh/ret/brk/cnt) never start a fn header,
+-- so the parser's body-boundary heuristic now skips them.
+
+dec s:n>n;v=+s 0;wh >v 0{v=- v 1};+v 0
+
+cnt5 s:n>n;v=+s 0;c=0;wh >v 0{v=- v 1;c=+c 1};+c 0
+
+-- run: dec 5
+-- out: 0
+-- run: dec 0
+-- out: 0
+-- run: dec 1
+-- out: 0
+-- run: cnt5 5
+-- out: 5
+-- run: cnt5 3
+-- out: 3
