@@ -24,7 +24,9 @@ use std::collections::HashMap;
 #[allow(dead_code)]
 struct HelperFuncs {
     add: FuncId,
+    add_inplace: FuncId,
     concat: FuncId,
+    concat_inplace: FuncId,
     sub: FuncId,
     mul: FuncId,
     div: FuncId,
@@ -195,7 +197,9 @@ fn declare_helper(
 fn declare_all_helpers(module: &mut ObjectModule) -> HelperFuncs {
     HelperFuncs {
         add: declare_helper(module, "jit_add", 2, 1),
+        add_inplace: declare_helper(module, "jit_add_inplace", 2, 1),
         concat: declare_helper(module, "jit_concat", 2, 1),
+        concat_inplace: declare_helper(module, "jit_concat_inplace", 2, 1),
         sub: declare_helper(module, "jit_sub", 2, 1),
         mul: declare_helper(module, "jit_mul", 2, 1),
         div: declare_helper(module, "jit_div", 2, 1),
@@ -1314,7 +1318,21 @@ fn compile_function_body(
                     // Slow path: call helper
                     builder.switch_to_block(slow_block);
                     let helper = match op {
-                        OP_ADD => helpers.add,
+                        // OP_ADD is the only one with an in-place string-mutation
+                        // fast path; pick it only when dest == LHS source AND
+                        // RHS source != LHS source (the rebind shape the
+                        // compiler peephole emits, excluding the self-concat
+                        // `s = +s s` case where push_str would self-alias).
+                        // Otherwise the clone-always helper avoids aliasing the
+                        // caller's source string. Mirror of the OP_ADD_SS /
+                        // OP_LISTAPPEND splits.
+                        OP_ADD => {
+                            if a_idx == b_idx && b_idx != c_idx {
+                                helpers.add_inplace
+                            } else {
+                                helpers.add
+                            }
+                        }
                         OP_SUB => helpers.sub,
                         OP_MUL => helpers.mul,
                         OP_DIV => helpers.div,
@@ -1334,7 +1352,21 @@ fn compile_function_body(
             OP_ADD_SS => {
                 let bv = builder.use_var(vars[b_idx]);
                 let cv = builder.use_var(vars[c_idx]);
-                let fref = get_func_ref(&mut builder, module, helpers.concat);
+                // Pick the in-place helper only when the destination and LHS
+                // source registers are the same SSA variable AND the RHS is a
+                // different register (no self-concat aliasing). The compiler
+                // peephole `name = +name suffix` emits a == b. When a != b the
+                // in-place path would alias the result through both slots and
+                // silently mutate the caller's source string; when b == c
+                // (`s = +s s`) the helper's push_str would read from the same
+                // buffer it grows, which is UB on realloc. See
+                // jit_concat_inplace docs and the OP_LISTAPPEND split in #250.
+                let helper_fn = if a_idx == b_idx && b_idx != c_idx {
+                    helpers.concat_inplace
+                } else {
+                    helpers.concat
+                };
+                let fref = get_func_ref(&mut builder, module, helper_fn);
                 let call_inst = builder.ins().call(fref, &[bv, cv]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
