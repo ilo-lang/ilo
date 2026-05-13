@@ -117,6 +117,17 @@ pos x:?>b;>x 0
 ilo 'inner x:n>R n t;~x  outer x:n>R n t;~(inner! x)' 42  # → 42
 ```
 
+**Batteries included** - the standard library covers what real programs need without leaving ilo:
+
+- **Math**: `sqrt`, `pow`, `exp`, `log`/`log10`/`log2`, `sin`/`cos`/`tan`, `atan2`, `clamp`, `rou`
+- **Stats**: `median`, `quantile`, `stdev`, `variance`, `cumsum`, `frq`
+- **Linear algebra**: `transpose`, `matmul`, `dot`, `solve`, `inv`, `det`, `fft`/`ifft`
+- **Lists**: `at`, `take`/`drop`, `zip`, `enumerate`, `range`, `chunks`, `window`, `flatmap`, `partition`, `setunion`/`setinter`/`setdiff`
+- **Text**: `upr`/`lwr`/`cap`, `padl`/`padr`, `chars`, `ord`/`chr`, `rgxall`, `rgxsub`
+- **Time**: `now`, `sleep`, `dtfmt`/`dtparse` (strftime, UTC)
+- **JSONL**: `rdjl` for line-by-line parsing
+- **Concurrent HTTP**: `get-many` (up to 10 parallel)
+
 ## Teaching agents
 
 ilo ships as an [Agent Skill](https://agentskills.io). Install the plugin and the agent learns ilo automatically.
