@@ -240,6 +240,39 @@ do not need braces:
     cls sp:n>t;>=sp 1000 "gold";>=sp 500 "silver";"bronze"
 "#,
     },
+    ErrorEntry {
+        code: "ILO-P017",
+        short: "inline lambda captures outer scope",
+        long: r#"## ILO-P017: inline lambda captures outer scope
+
+Phase 1 inline lambdas — `(p:t>r;body)` passed to a HOF like `srt`, `map`,
+`flt`, `fld`, `grp` — cannot close over variables from the enclosing function.
+Every name referenced in the body must be a parameter of the lambda, a name
+bound locally inside the lambda body, or a known top-level function/builtin.
+
+**Wrong:**
+
+    rank xs:L n threshold:n>L n
+      srt (x:n>n;-x threshold) xs
+
+The lambda references `threshold` from the enclosing scope.
+
+**Fix A: use the HOF's ctx-arg form.** Every closure-aware HOF accepts an
+optional context value that is threaded through every call:
+
+    rank xs:L n threshold:n>L n
+      srt (x:n c:n>n;-x c) threshold xs
+
+**Fix B: define a top-level helper** that takes the value as a param and use
+`srt fn ctx xs`:
+
+    diff x:n c:n>n;-x c
+    rank xs:L n threshold:n>L n;srt diff threshold xs
+
+Closure capture is tracked as a Phase 2 follow-up; once it lands, free
+variables will be captured by value automatically.
+"#,
+    },
     // ── Type / Verifier ──────────────────────────────────────────────────────
     ErrorEntry {
         code: "ILO-T001",
