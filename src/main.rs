@@ -1913,6 +1913,23 @@ fn dispatch_bare_args(raw_args: Vec<String>, global: &cli::Global) -> i32 {
         }
     };
 
+    // Extract --ast flag from anywhere in the arg list so it can sit before
+    // the source, after the source, or after positional args. The flag
+    // forces the AST-dump path; without it `ilo file.ilo` auto-runs a
+    // single-function file or prints a friendly function listing.
+    let (pre_ast, args) = {
+        let mut found = false;
+        let mut filtered: Vec<String> = Vec::with_capacity(args.len());
+        for a in args.into_iter() {
+            if a == "--ast" {
+                found = true;
+            } else {
+                filtered.push(a);
+            }
+        }
+        (found, filtered)
+    };
+
     // Override with clap-parsed global flags if they were set
     let mode = if global.ansi {
         OutputMode::Ansi
@@ -2073,6 +2090,7 @@ fn dispatch_bare_args(raw_args: Vec<String>, global: &cli::Global) -> i32 {
                     explain: false,
                     dense: false,
                     expanded: false,
+                    ast: false,
                     tools_path: tools_config_path,
                     mcp_path: mcp_config_path,
                     rest: args[m + 1..].to_vec(),
@@ -2093,6 +2111,7 @@ fn dispatch_bare_args(raw_args: Vec<String>, global: &cli::Global) -> i32 {
                     explain: true,
                     dense: false,
                     expanded: false,
+                    ast: false,
                     tools_path: tools_config_path,
                     mcp_path: mcp_config_path,
                     rest: vec![],
@@ -2118,6 +2137,7 @@ fn dispatch_bare_args(raw_args: Vec<String>, global: &cli::Global) -> i32 {
                     explain: false,
                     dense: false,
                     expanded: false,
+                    ast: false,
                     tools_path: tools_config_path,
                     mcp_path: mcp_config_path,
                     rest: vec![],
@@ -2138,6 +2158,7 @@ fn dispatch_bare_args(raw_args: Vec<String>, global: &cli::Global) -> i32 {
                     explain: false,
                     dense: true,
                     expanded: false,
+                    ast: false,
                     tools_path: tools_config_path,
                     mcp_path: mcp_config_path,
                     rest: vec![],
@@ -2158,9 +2179,31 @@ fn dispatch_bare_args(raw_args: Vec<String>, global: &cli::Global) -> i32 {
                     explain: false,
                     dense: false,
                     expanded: true,
+                    ast: false,
                     tools_path: tools_config_path,
                     mcp_path: mcp_config_path,
                     rest: vec![],
+                };
+                return dispatch_run(run_args, mode, explicit_json, no_hints);
+            }
+            "--ast" if engine_flag.is_none() => {
+                let run_args = cli::RunArgs {
+                    source,
+                    engine: cli::Engine::Default,
+                    run_tree: false,
+                    run: false,
+                    run_vm: false,
+                    run_cranelift: false,
+                    run_llvm: false,
+                    bench: false,
+                    emit: None,
+                    explain: false,
+                    dense: false,
+                    expanded: false,
+                    ast: true,
+                    tools_path: tools_config_path,
+                    mcp_path: mcp_config_path,
+                    rest: args[m + 1..].to_vec(),
                 };
                 return dispatch_run(run_args, mode, explicit_json, no_hints);
             }
@@ -2190,6 +2233,7 @@ fn dispatch_bare_args(raw_args: Vec<String>, global: &cli::Global) -> i32 {
         explain: false,
         dense: false,
         expanded: false,
+        ast: pre_ast,
         tools_path: tools_config_path,
         mcp_path: mcp_config_path,
         rest,
@@ -2329,21 +2373,22 @@ fn dispatch_run(r: cli::RunArgs, mode: OutputMode, explicit_json: bool, no_hints
         had_errors = true;
     }
 
-    // Inline-no-func AST-dump mode: when running `ilo '<code>'` with no entry
-    // point and no other mode flag, the binary prints the AST and exits. This
-    // is an inspection path, not an execution path, so verify (which exists to
-    // gate execution) shouldn't gate it. Skipping verify here also avoids
+    // AST-dump mode: explicit (`--ast`) OR the legacy inline-no-func default
+    // (`ilo '<code>'` with no entry point and no other mode flag). This is an
+    // inspection path, not an execution path, so verify (which exists to gate
+    // execution) shouldn't gate it. Skipping verify here also avoids
     // false-positive errors on builtins or partial snippets that users want to
     // explore via the AST dump. Parse errors still gate (we can't dump an AST
     // we couldn't parse).
-    let ast_dump_mode = !is_file
-        && r.rest.is_empty()
-        && !r.bench
-        && !r.explain
-        && r.emit.is_none()
-        && !r.dense
-        && !r.expanded
-        && matches!(r.effective_engine(), cli::Engine::Default);
+    let ast_dump_mode = r.ast
+        || (!is_file
+            && r.rest.is_empty()
+            && !r.bench
+            && !r.explain
+            && r.emit.is_none()
+            && !r.dense
+            && !r.expanded
+            && matches!(r.effective_engine(), cli::Engine::Default));
 
     if !ast_dump_mode {
         let verify_result = verify::verify(&program);
@@ -2471,6 +2516,11 @@ fn dispatch_run(r: cli::RunArgs, mode: OutputMode, explicit_json: bool, no_hints
                     })
                     .collect();
 
+                // Explicit AST dump (`--ast`) takes precedence over everything.
+                if r.ast {
+                    return dump_ast_json(&program);
+                }
+
                 let (func_name, run_args) = if let Some(first) = rest.first() {
                     if func_names.contains(&first.as_str()) {
                         let args: Vec<_> = rest[1..].iter().map(|a| parse_cli_arg(a)).collect();
@@ -2481,18 +2531,37 @@ fn dispatch_run(r: cli::RunArgs, mode: OutputMode, explicit_json: bool, no_hints
                     } else {
                         (None, rest.iter().map(|a| parse_cli_arg(a)).collect())
                     }
-                } else {
-                    // No args at all: AST JSON
-                    match serde_json::to_string_pretty(&program) {
-                        Ok(json) => {
-                            println!("{}", json);
-                            return 0;
-                        }
-                        Err(e) => {
-                            eprintln!("Serialization error: {}", e);
+                } else if is_file {
+                    // File with no func arg: auto-run if there's exactly one
+                    // function, list available functions if there are
+                    // several, AST-dump if there are none (declarations-only
+                    // file — useful for inspecting type/alias-only modules).
+                    match func_names.len() {
+                        0 => return dump_ast_json(&program),
+                        1 => (None, vec![]),
+                        _ => {
+                            eprintln!(
+                                "error: {} defines multiple functions, please specify one.",
+                                source_arg
+                            );
+                            eprintln!("available functions:");
+                            for n in &func_names {
+                                eprintln!("  {}", n);
+                            }
+                            eprintln!();
+                            eprintln!("  ilo {} <func> [args...]   run a function", source_arg);
+                            eprintln!(
+                                "  ilo --ast {}              dump the parsed AST as JSON",
+                                source_arg
+                            );
                             return 1;
                         }
                     }
+                } else {
+                    // Inline code with no func arg and no other mode flag:
+                    // legacy AST-dump path. Preserved for tooling and for
+                    // `ilo '<snippet>'` inspection. Documented since 0.x.
+                    return dump_ast_json(&program);
                 };
 
                 run_default(&program, func_name, run_args, &source, mode, explicit_json)
@@ -2646,7 +2715,7 @@ fn print_help() {
     println!("  ilo <code> --explain / -x            Annotate each statement with its role");
     println!("  ilo <code> --dense / -d             Reformat (dense wire format)");
     println!("  ilo <code> --expanded / -e          Reformat (expanded human format)");
-    println!("  ilo <code>                        Print AST as JSON (no args)");
+    println!("  ilo --ast <code-or-file>          Print AST as JSON");
     println!("  ilo <code> --bench func [args...] Benchmark a function");
     println!("  ilo repl                          Interactive REPL");
     println!("  ilo graph <file> [flags]          Dependency graph (JSON or DOT)");
@@ -2848,6 +2917,21 @@ fn run_interp_with_provider(
         }
         Err(e) => {
             report_diagnostic(&Diagnostic::from(&e).with_source(source.to_string()), mode);
+            1
+        }
+    }
+}
+
+/// Serialize the program as pretty JSON to stdout. Used by the explicit
+/// `--ast` flag and by the legacy inline-no-func default path.
+fn dump_ast_json(program: &ast::Program) -> i32 {
+    match serde_json::to_string_pretty(program) {
+        Ok(json) => {
+            println!("{}", json);
+            0
+        }
+        Err(e) => {
+            eprintln!("Serialization error: {}", e);
             1
         }
     }
@@ -6439,6 +6523,7 @@ mod tests {
             explain: false,
             dense: false,
             expanded: false,
+            ast: false,
             tools_path: None,
             mcp_path: None,
             rest: vec![],
@@ -6464,6 +6549,7 @@ mod tests {
             explain: false,
             dense: false,
             expanded: false,
+            ast: false,
             tools_path: Some("/tmp/t.json".to_string()),
             mcp_path: Some("/tmp/m.json".to_string()),
             rest: vec![],
@@ -6490,6 +6576,7 @@ mod tests {
             explain: false,
             dense: false,
             expanded: false,
+            ast: false,
             tools_path: None,
             mcp_path: None,
             rest: vec![],
@@ -6516,6 +6603,7 @@ mod tests {
             explain: false,
             dense: false,
             expanded: false,
+            ast: false,
             tools_path: None,
             mcp_path: None,
             rest: vec!["f".to_string(), "1".to_string()],
@@ -6540,6 +6628,7 @@ mod tests {
             explain: false,
             dense: false,
             expanded: false,
+            ast: false,
             tools_path: None,
             mcp_path: None,
             rest: vec!["f".to_string(), "1".to_string()],
@@ -6566,6 +6655,7 @@ mod tests {
             explain: false,
             dense: false,
             expanded: false,
+            ast: false,
             tools_path: None,
             mcp_path: None,
             rest: vec![],
@@ -6592,6 +6682,7 @@ mod tests {
             explain: false,
             dense: false,
             expanded: false,
+            ast: false,
             tools_path: None,
             mcp_path: None,
             rest: vec!["f".to_string(), "1".to_string()],
