@@ -159,15 +159,20 @@ mkeys m                -- sorted key list
 
 ## Builtins Reference
 
-**Math**: `abs` `min` `max` `flr` `cel` `rnd` `sum` `avg`
-**Text**: `len` `str` `num` `trm` `spl` `cat` `fmt` `has` `rgx`
-**List**: `hd` `tl` `rev` `srt` `unq` `slc` `flat` `grp`
-**I/O**: `rd` `rdl` `rdb` `wr` `wrl` `prnt`
-**HTTP**: `get`/`$` `post` `env`
+**Math**: `abs` `min` `max` `mod` `flr` `cel` `rou` `rnd` `rndn` `clamp` `sum` `avg`
+**Math (transcendental)**: `sqrt` `pow` `exp` `log` `log10` `log2` `sin` `cos` `tan` `atan2`
+**Stats**: `median` `quantile` `stdev` `variance` `cumsum` `frq`
+**Linalg**: `transpose` `matmul` `dot` `solve` `inv` `det` `fft` `ifft`
+**Text**: `len` `str` `num` `trm` `spl` `cat` `fmt` `fmt2` `has` `rgx` `rgxall` `rgxsub`
+**Text case**: `upr` `lwr` `cap` `padl` `padr` `chars` `ord` `chr`
+**List**: `hd` `tl` `at` `lst` `take` `drop` `rev` `srt` `rsrt` `unq` `uniqby` `slc` `flat` `grp` `zip` `enumerate` `range` `chunks` `window` `flatmap` `partition`
+**Set ops**: `setunion` `setinter` `setdiff`
+**I/O**: `rd` `rdl` `rdjl` `rdb` `wr` `wrl` `prnt`
+**HTTP**: `get`/`$` `post` `get-many` `env`
 **JSON**: `jpth` `jdmp` `jpar`
 **Map**: `mmap` `mget` `mset` `mhas` `mkeys` `mvals` `mdel`
 **HOF**: `map` `flt` `fld`
-**Time**: `now`
+**Time**: `now` `sleep` `dtfmt` `dtparse`
 
 ## Naming Convention
 
