@@ -8574,7 +8574,14 @@ pub(crate) extern "C" fn jit_iserr(v: u64) -> u64 {
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn jit_unwrap(v: u64) -> u64 {
     let nv = NanVal(v);
+    // Defensive: OP_UNWRAP is only emitted by the compiler immediately after
+    // a passed OP_ISOK / OP_ISERR branch, which guarantees the value is a
+    // heap-allocated Ok or Err wrapper. These error arms should be
+    // unreachable from well-formed bytecode; setting JIT_RUNTIME_ERROR
+    // matches the tree interpreter's defensive `vm_err!` arm at the
+    // equivalent OP_UNWRAP site and protects against future codegen bugs.
     if !nv.is_heap() {
+        jit_set_runtime_error(VmError::Type("unwrap on non-Ok/Err"));
         return TAG_NIL;
     }
     unsafe {
@@ -8583,7 +8590,10 @@ pub(crate) extern "C" fn jit_unwrap(v: u64) -> u64 {
                 inner.clone_rc();
                 inner.0
             }
-            _ => TAG_NIL,
+            _ => {
+                jit_set_runtime_error(VmError::Type("unwrap on non-Ok/Err"));
+                TAG_NIL
+            }
         }
     }
 }
