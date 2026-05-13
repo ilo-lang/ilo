@@ -1,0 +1,44 @@
+-- Phase 2 inline lambdas: close over enclosing-scope variables.
+--
+-- Phase 1 (#247) lifted (params>ret;body) to synthetic top-level decls and
+-- rejected captures with ILO-P017, telling users to use the HOF's ctx-arg
+-- form (`srt fn ctx xs`). Phase 2 lifts that restriction: free vars in the
+-- lambda body are captured by value at the point the closure is constructed,
+-- and the closure-aware HOFs (`srt`, `map`, `flt`, `fld`, `grp`, `uniqby`,
+-- `partition`, `flatmap`) thread the captures through every per-item call.
+--
+-- Captures are by-value snapshots, matching the existing single-ctx form
+-- generalised to N captures. Multiple captures are fine; nested lambdas
+-- bubble their free vars through the outer lambda.
+
+-- Filter to values above a threshold the user passed in.
+above xs:L n thr:n>L n;flt (x:n>b;>x thr) xs
+
+-- Sort by distance from a target value, captured by the inline lambda.
+near xs:L n target:n>L n;srt (x:n>n;abs -x target) xs
+
+-- Bump every element by a captured amount.
+bump xs:L n by:n>L n;map (x:n>n;+x by) xs
+
+-- Two captures: filter to values between lo and hi (inclusive).
+between xs:L n lo:n hi:n>L n;flt (x:n>b;&(>=x lo) <=x hi) xs
+
+-- Capture a text value: keep words containing the captured substring.
+contains ws:L t needle:t>L t;flt (w:t>b;has w needle) ws
+
+-- Weighted sum: the per-item weight is captured.
+wsum xs:L n w:n>n;fld (a:n x:n>n;+a *x w) xs 0
+
+-- engine-skip: vm jit cranelift
+-- run: above [1,5,3,8,2] 4
+-- out: [5, 8]
+-- run: near [1,5,10,20] 8
+-- out: [10, 5, 1, 20]
+-- run: bump [1,2,3] 10
+-- out: [11, 12, 13]
+-- run: between [1,3,5,7,9,11] 3 7
+-- out: [3, 5, 7]
+-- run: contains ["apple","banana","apricot"] "ap"
+-- out: [apple, apricot]
+-- run: wsum [1,2,3,4] 5
+-- out: 50
