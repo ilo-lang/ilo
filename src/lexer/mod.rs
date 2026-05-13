@@ -235,16 +235,37 @@ pub fn lex(source: &str) -> Result<Vec<(Token, std::ops::Range<usize>)>, LexErro
                 // Detect uppercase mid-identifier: a single uppercase type sigil
                 // (L/R/F/O/M/S) sitting flush against a preceding ident.
                 if is_type_sigil(&token) {
-                    if let Some((Token::Ident(prev), prev_span)) = tokens.last() {
-                        if prev_span.end == span.start {
-                            let sigil_char = normalized[span.clone()].chars().next().unwrap();
-                            return Err(uppercase_mid_ident_error(
-                                prev,
-                                sigil_char,
-                                &normalized[span.end..],
-                                prev_span.start,
-                            ));
+                    let prev_info = tokens.last().and_then(|(t, s)| match t {
+                        Token::Ident(name) if s.end == span.start => {
+                            Some((name.clone(), s.clone()))
                         }
+                        _ => None,
+                    });
+                    if let Some((prev_name, prev_span)) = prev_info {
+                        // At a post-dot field-access position, real-world
+                        // JSON (NVD, AWS, Stripe, GitHub) is overwhelmingly
+                        // camelCase. Absorb the rest of the camelCase run
+                        // into a single Ident token rather than erroring.
+                        // The strict lowercase rule still applies to
+                        // bindings (no preceding Dot/DotQuestion).
+                        if prev_ident_is_post_dot(&tokens) {
+                            if let Some(_consumed) = absorb_camel_tail(
+                                &normalized,
+                                span.start,
+                                span.end,
+                                &mut lexer,
+                                &mut tokens,
+                            ) {
+                                continue;
+                            }
+                        }
+                        let sigil_char = normalized[span.clone()].chars().next().unwrap();
+                        return Err(uppercase_mid_ident_error(
+                            &prev_name,
+                            sigil_char,
+                            &normalized[span.end..],
+                            prev_span.start,
+                        ));
                     }
                 }
                 tokens.push((token, span));
@@ -254,18 +275,36 @@ pub fn lex(source: &str) -> Result<Vec<(Token, std::ops::Range<usize>)>, LexErro
                 let bad = &normalized[span.clone()];
                 // Single uppercase ASCII letter directly after an ident is a
                 // mid-identifier capital (e.g. `isAgg` → `is` + bad `A`).
-                if bad.len() == 1
-                    && bad.chars().next().unwrap().is_ascii_uppercase()
-                    && let Some((Token::Ident(prev), prev_span)) = tokens.last()
-                    && prev_span.end == span.start
-                {
-                    let c = bad.chars().next().unwrap();
-                    return Err(uppercase_mid_ident_error(
-                        prev,
-                        c,
-                        &normalized[span.end..],
-                        prev_span.start,
-                    ));
+                if bad.len() == 1 && bad.chars().next().unwrap().is_ascii_uppercase() {
+                    let prev_info = tokens.last().and_then(|(t, s)| match t {
+                        Token::Ident(name) if s.end == span.start => {
+                            Some((name.clone(), s.clone()))
+                        }
+                        _ => None,
+                    });
+                    if let Some((prev_name, prev_span)) = prev_info {
+                        // Post-dot field access: merge the camelCase tail into
+                        // the preceding Ident (mirrors the snake_case post-pass
+                        // below). Bindings still error normally.
+                        if prev_ident_is_post_dot(&tokens) {
+                            if let Some(_consumed) = absorb_camel_tail(
+                                &normalized,
+                                span.start,
+                                span.end,
+                                &mut lexer,
+                                &mut tokens,
+                            ) {
+                                continue;
+                            }
+                        }
+                        let c = bad.chars().next().unwrap();
+                        return Err(uppercase_mid_ident_error(
+                            &prev_name,
+                            c,
+                            &normalized[span.end..],
+                            prev_span.start,
+                        ));
+                    }
                 }
                 let (code, suggestion) = lex_error_kind(bad);
                 return Err(LexError {
@@ -499,6 +538,74 @@ pub fn lex(source: &str) -> Result<Vec<(Token, std::ops::Range<usize>)>, LexErro
     }
 
     Ok(tokens)
+}
+
+/// True when the last token is an `Ident` and the token before it is a
+/// `Dot`/`DotQuestion` sitting flush against it — i.e. the Ident is in
+/// post-dot field-access position (`record.<ident>` or `record.?<ident>`).
+fn prev_ident_is_post_dot(tokens: &[(Token, std::ops::Range<usize>)]) -> bool {
+    let n = tokens.len();
+    if n < 2 {
+        return false;
+    }
+    let (last_tok, last_span) = &tokens[n - 1];
+    let (prev_tok, prev_span) = &tokens[n - 2];
+    matches!(last_tok, Token::Ident(_))
+        && matches!(prev_tok, Token::Dot | Token::DotQuestion)
+        && prev_span.end == last_span.start
+}
+
+/// Absorb a camelCase JSON-key tail into the preceding `Ident` token.
+///
+/// Called from the main lex loop when an uppercase character appears flush
+/// against a post-dot `Ident` (e.g. the `S` in `record.baseSeverity`). Scans
+/// `normalized` from `from` consuming `[A-Za-z0-9]` characters, replaces the
+/// last token with a merged `Ident` spanning `prev_span.start..end`, and
+/// advances the logos lexer past the absorbed bytes. Returns `Some(end)` on
+/// success, `None` if nothing was absorbed (defensive — caller falls through
+/// to the existing error path).
+///
+/// Underscores are deliberately excluded here: snake_case stitching is handled
+/// by the dedicated post-lex pass below so that mixed `gitURL_count` still
+/// works (camelCase merges first, then the snake pass picks up the `_count`).
+fn absorb_camel_tail(
+    normalized: &str,
+    span_start: usize,
+    span_end: usize,
+    lexer: &mut logos::Lexer<'_, Token>,
+    tokens: &mut Vec<(Token, std::ops::Range<usize>)>,
+) -> Option<usize> {
+    let bytes = normalized.as_bytes();
+    let mut end = span_start;
+    while end < bytes.len() {
+        let b = bytes[end];
+        if b.is_ascii_alphanumeric() {
+            end += 1;
+        } else {
+            break;
+        }
+    }
+    if end == span_start {
+        return None;
+    }
+    let (prev_tok, prev_span) = tokens.pop()?;
+    let Token::Ident(_) = prev_tok else {
+        // Defensive: caller already checked, but restore on mismatch.
+        tokens.push((prev_tok, prev_span));
+        return None;
+    };
+    let merged_span = prev_span.start..end;
+    let merged = normalized[merged_span.clone()].to_string();
+    tokens.push((Token::Ident(merged), merged_span));
+    // Advance the logos lexer past the bytes we just absorbed. Logos has
+    // already consumed up to `span_end` (the end of the offending token —
+    // either the type sigil's 1 byte or the rejected uppercase byte), so
+    // bump by the remaining extent.
+    let bump = end.saturating_sub(span_end);
+    if bump > 0 {
+        lexer.bump(bump);
+    }
+    Some(end)
 }
 
 fn is_type_sigil(t: &Token) -> bool {
