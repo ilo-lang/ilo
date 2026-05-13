@@ -1,0 +1,31 @@
+-- Print-loop: `@x xs{prnt x}` at the function tail no longer double-prints.
+-- Previously the loop's last-body-value (the last printed item) was auto-
+-- printed again at top level, forcing a trailing `+0 0` sentinel idiom.
+-- Now: when the entry function's body ends with a loop AND has no early-
+-- return path, the top-level auto-print is suppressed. Loop-as-expression
+-- value inside functions is unchanged (callers still see the loop's last
+-- body value). Explicit `nil` returns from non-loop tails still print as
+-- "nil" — suppression is syntactic loop-tail only, not blanket Nil.
+-- `tests/regression_loop_print.rs` covers nested-caller, brk/while, and
+-- explicit-nil cases. The annotations below pin the single-line scenarios
+-- so `tests/examples_engines.rs` exercises them too.
+
+-- Single-item print-loop at top level: prints "42" once. Pre-fix this
+-- printed "42\n42\n".
+print-one>n;xs=[42];@x xs{prnt x}
+
+-- Empty-list loop: function returns nil, suppressed at top level
+-- (no "nil" line). Stdout is empty.
+empty-loop>n;xs=[];@x xs{prnt x}
+
+-- Trailing-expression sentinel: when the syntactic tail is an expression
+-- (not a loop), suppression does NOT apply — the value still auto-prints.
+-- Stdout: "99".
+with-sentinel>n;xs=[];@x xs{prnt x};+99 0
+
+-- run: print-one
+-- out: 42
+-- run: empty-loop
+-- out:
+-- run: with-sentinel
+-- out: 99
