@@ -351,6 +351,22 @@ pub fn lex(source: &str) -> Result<Vec<(Token, std::ops::Range<usize>)>, LexErro
                             prev_span.start,
                         ));
                     }
+                    // Leading-uppercase JSON key flush after a Dot/DotQuestion
+                    // (e.g. `r.URL` where `U` is consumed as a sigil-less
+                    // capital, or `r.MetaData` where `M` is the MapType
+                    // sigil). No preceding Ident to merge into; emit a fresh
+                    // Ident covering the whole identifier-shaped run.
+                    if prev_token_is_dot_flush(&tokens, span.start) {
+                        if let Some(_consumed) = emit_ident_at_dot(
+                            &normalized,
+                            span.start,
+                            span.end,
+                            &mut lexer,
+                            &mut tokens,
+                        ) {
+                            continue;
+                        }
+                    }
                 }
                 tokens.push((token, span));
             }
@@ -388,6 +404,22 @@ pub fn lex(source: &str) -> Result<Vec<(Token, std::ops::Range<usize>)>, LexErro
                             &normalized[span.end..],
                             prev_span.start,
                         ));
+                    }
+                    // Leading-uppercase JSON key flush after `.` or `.?`
+                    // (`r.URL`, `r.ID`, `r.AccessKey`). Logos rejects the
+                    // capital because it isn't a sigil; there is no preceding
+                    // Ident to merge into, so emit a fresh Ident spanning the
+                    // whole identifier-shaped run.
+                    if prev_token_is_dot_flush(&tokens, span.start) {
+                        if let Some(_consumed) = emit_ident_at_dot(
+                            &normalized,
+                            span.start,
+                            span.end,
+                            &mut lexer,
+                            &mut tokens,
+                        ) {
+                            continue;
+                        }
                     }
                 }
                 let (code, suggestion) = lex_error_kind(bad);
@@ -759,6 +791,56 @@ fn absorb_camel_tail(
     // already consumed up to `span_end` (the end of the offending token —
     // either the type sigil's 1 byte or the rejected uppercase byte), so
     // bump by the remaining extent.
+    let bump = end.saturating_sub(span_end);
+    if bump > 0 {
+        lexer.bump(bump);
+    }
+    Some(end)
+}
+
+/// True when the last token in the stream is `Dot`/`DotQuestion` and sits
+/// flush against `span_start` (no whitespace). Used to detect leading-
+/// uppercase JSON keys at post-dot field-access position (e.g. the `U` in
+/// `r.URL`, where there is no preceding Ident to merge into).
+fn prev_token_is_dot_flush(tokens: &[(Token, std::ops::Range<usize>)], span_start: usize) -> bool {
+    let Some((tok, sp)) = tokens.last() else {
+        return false;
+    };
+    matches!(tok, Token::Dot | Token::DotQuestion) && sp.end == span_start
+}
+
+/// Emit a fresh `Ident` token covering a leading-uppercase JSON key that
+/// appears flush after `.` or `.?` (e.g. `r.URL`, `r.AccessKey`). Mirrors
+/// `absorb_camel_tail` but pushes a new token rather than merging into a
+/// preceding `Ident`. Scans `normalized` from `span_start` consuming
+/// `[A-Za-z0-9]` characters, pushes `Token::Ident(slice)` with the
+/// resulting span, and bumps the logos lexer past the absorbed bytes.
+/// Returns `Some(end)` on success, `None` if nothing was absorbed.
+///
+/// Underscores are deliberately excluded — the snake_case post-pass picks
+/// up `_count` etc., so mixed `URL_count` still stitches correctly.
+fn emit_ident_at_dot(
+    normalized: &str,
+    span_start: usize,
+    span_end: usize,
+    lexer: &mut logos::Lexer<'_, Token>,
+    tokens: &mut Vec<(Token, std::ops::Range<usize>)>,
+) -> Option<usize> {
+    let bytes = normalized.as_bytes();
+    let mut end = span_start;
+    while end < bytes.len() {
+        if bytes[end].is_ascii_alphanumeric() {
+            end += 1;
+        } else {
+            break;
+        }
+    }
+    if end == span_start {
+        return None;
+    }
+    let new_span = span_start..end;
+    let new_ident = normalized[new_span.clone()].to_string();
+    tokens.push((Token::Ident(new_ident), new_span));
     let bump = end.saturating_sub(span_end);
     if bump > 0 {
         lexer.bump(bump);
