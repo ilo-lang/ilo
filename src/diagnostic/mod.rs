@@ -193,6 +193,7 @@ impl From<&crate::vm::CompileError> for Diagnostic {
         let code = match e {
             CompileError::UndefinedVariable { .. } => "ILO-R010",
             CompileError::UndefinedFunction { .. } => "ILO-R011",
+            CompileError::UnsupportedClosureCapture { .. } => "ILO-R012",
         };
         Diagnostic::error(e.to_string()).with_code(code)
     }

@@ -53,6 +53,13 @@ pub enum CompileError {
     UndefinedVariable { name: String },
     #[error("undefined function: {name}")]
     UndefinedFunction { name: String },
+    /// Inline lambda with capture (`Expr::MakeClosure`) cannot lower to the
+    /// register VM yet — HOF dispatch with N captures depends on the parked
+    /// FnRef NaN-tagging effort. Returning this from `vm::compile` lets the
+    /// default runner fall through to the tree interpreter cleanly, rather
+    /// than panicking partway through codegen.
+    #[error("inline lambda capture for `{fn_name}` is tree-only")]
+    UnsupportedClosureCapture { fn_name: String },
 }
 
 #[cfg(feature = "cranelift")]
@@ -3184,6 +3191,20 @@ impl RegCompiler {
                     a
                 }
             }
+            Expr::MakeClosure { fn_name, .. } => {
+                // VM/Cranelift HOF dispatch is the parked FnRef NaN-tagging
+                // effort. Inline lambdas with captures only run on the tree
+                // interpreter. Surface a compile error via `first_error` so
+                // `vm::compile` returns `Err(UnsupportedClosureCapture)`; the
+                // default runner in main.rs treats a failed `vm::compile` as
+                // "skip JIT, run on the tree" — which is exactly what we want
+                // until the FnRef NaN-tagging follow-up lands.
+                self.first_error
+                    .get_or_insert(CompileError::UnsupportedClosureCapture {
+                        fn_name: fn_name.clone(),
+                    });
+                0
+            }
         }
     }
 }
@@ -3798,6 +3819,15 @@ impl NanVal {
             Value::Ok(inner) => NanVal::heap_ok(NanVal::from_value(inner)),
             Value::Err(inner) => NanVal::heap_err(NanVal::from_value(inner)),
             Value::FnRef(name) => NanVal::heap_string(format!("<fn:{}>", name)),
+            Value::Closure { fn_name, .. } => {
+                // Closures don't round-trip through NanVal — VM/Cranelift HOF
+                // dispatch is the parked FnRef NaN-tagging follow-up. Falling
+                // back to a sentinel string keeps the dispatcher total; the
+                // VM `compile_expr` branch for `Expr::MakeClosure` panics
+                // before we get here in any well-formed program, so this is
+                // belt-and-braces.
+                NanVal::heap_string(format!("<closure:{}>", fn_name))
+            }
         }
     }
 
