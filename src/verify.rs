@@ -2748,39 +2748,44 @@ impl VerifyContext {
     }
 
     fn bind_pattern(&mut self, _func: &str, scope: &mut Scope, pattern: &Pattern, subject_ty: &Ty) {
+        // `_` is always bound to the matched inner value (or the subject itself
+        // for Pattern::Wildcard). SPEC.md documents this in the line 1069
+        // example `~_:~_` where the wildcard arm re-wraps the unchanged inner
+        // value. Binding `_` makes wildcard arms compose like named arms at
+        // zero extra tokens — discard remains free (bodies that never name `_`
+        // still work), and throwaway code can poke at the value (`fmt "..." _`)
+        // without renaming.
         match pattern {
             Pattern::Ok(name) => {
-                if name != "_" {
-                    let ty = match subject_ty {
-                        Ty::Result(ok, _) => *ok.clone(),
-                        Ty::Unknown => Ty::Unknown,
-                        _ => Ty::Unknown,
-                    };
-                    scope_insert(scope, name.clone(), ty);
-                }
+                let ty = match subject_ty {
+                    Ty::Result(ok, _) => *ok.clone(),
+                    Ty::Unknown => Ty::Unknown,
+                    _ => Ty::Unknown,
+                };
+                scope_insert(scope, name.clone(), ty);
             }
             Pattern::Err(name) => {
-                if name != "_" {
-                    let ty = match subject_ty {
-                        Ty::Result(_, err) => *err.clone(),
-                        Ty::Unknown => Ty::Unknown,
-                        _ => Ty::Unknown,
-                    };
-                    scope_insert(scope, name.clone(), ty);
-                }
+                let ty = match subject_ty {
+                    Ty::Result(_, err) => *err.clone(),
+                    Ty::Unknown => Ty::Unknown,
+                    _ => Ty::Unknown,
+                };
+                scope_insert(scope, name.clone(), ty);
             }
-            Pattern::Literal(_) | Pattern::Wildcard => {}
+            Pattern::Literal(_) => {}
+            Pattern::Wildcard => {
+                // Plain `_:body` — `_` resolves to the subject itself.
+                scope_insert(scope, "_".to_string(), subject_ty.clone());
+            }
             Pattern::TypeIs { ty, binding } => {
-                if binding != "_" {
-                    let bound_ty = match ty {
-                        Type::Number => Ty::Number,
-                        Type::Text => Ty::Text,
-                        Type::Bool => Ty::Bool,
-                        Type::List(_) => Ty::List(Box::new(Ty::Unknown)),
-                        _ => Ty::Unknown,
-                    };
-                    scope_insert(scope, binding.clone(), bound_ty);
-                }
+                let bound_ty = match ty {
+                    Type::Number => Ty::Number,
+                    Type::Text => Ty::Text,
+                    Type::Bool => Ty::Bool,
+                    Type::List(_) => Ty::List(Box::new(Ty::Unknown)),
+                    _ => Ty::Unknown,
+                };
+                scope_insert(scope, binding.clone(), bound_ty);
             }
         }
     }

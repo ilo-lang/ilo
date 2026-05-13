@@ -4294,26 +4294,22 @@ fn is_truthy(val: &Value) -> bool {
 }
 
 fn match_pattern(pattern: &Pattern, value: &Value) -> Option<Vec<(String, Value)>> {
+    // `_` is always bound — to the inner value for Ok/Err/TypeIs, to the
+    // subject itself for Wildcard. SPEC.md line 1069's `~_:~_` relies on this:
+    // wildcard arms compose like named arms at zero extra tokens. Bodies that
+    // never reference `_` are unaffected.
     match pattern {
-        Pattern::Wildcard => Some(vec![]),
+        Pattern::Wildcard => Some(vec![("_".to_string(), value.clone())]),
         Pattern::Ok(binding) => {
             if let Value::Ok(inner) = value {
-                let mut bindings = vec![];
-                if binding != "_" {
-                    bindings.push((binding.clone(), *inner.clone()));
-                }
-                Some(bindings)
+                Some(vec![(binding.clone(), *inner.clone())])
             } else {
                 None
             }
         }
         Pattern::Err(binding) => {
             if let Value::Err(inner) = value {
-                let mut bindings = vec![];
-                if binding != "_" {
-                    bindings.push((binding.clone(), *inner.clone()));
-                }
-                Some(bindings)
+                Some(vec![(binding.clone(), *inner.clone())])
             } else {
                 None
             }
@@ -4335,11 +4331,7 @@ fn match_pattern(pattern: &Pattern, value: &Value) -> Option<Vec<(String, Value)
                 _ => false,
             };
             if matches {
-                let mut bindings = vec![];
-                if binding != "_" {
-                    bindings.push((binding.clone(), value.clone()));
-                }
-                Some(bindings)
+                Some(vec![(binding.clone(), value.clone())])
             } else {
                 None
             }
