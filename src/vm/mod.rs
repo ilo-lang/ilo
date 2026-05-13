@@ -305,6 +305,21 @@ pub(crate) const OP_CALL_BUILTIN_TREE: u8 = 155;
 pub(crate) const OP_RECFLD_SAFE: u8 = 156;
 pub(crate) const OP_RECFLD_NAME_SAFE: u8 = 157;
 
+// Fallback emission for large records / `with` updates whose value count
+// exceeds the consecutive-register layout used by OP_RECNEW / OP_RECWITH.
+// These three opcodes cooperate to build a record incrementally using only
+// two registers (result + scratch) regardless of field count, mirroring the
+// OP_LISTNEW/OP_LISTAPPEND split that PR #237 introduced for list literals.
+//
+// SAFETY note on OP_RECSETFIELD: it mutates a record field in place without
+// any refcount dance. That's only sound because the compiler emits it
+// exclusively against records that were just allocated by OP_RECNEW_EMPTY
+// or OP_RECCOPY, with no opportunity for sharing in between. Never expose
+// this opcode through a user-facing construct without RC-aware checks.
+pub(crate) const OP_RECNEW_EMPTY: u8 = 161; // ABx: R[A] = new record of type Bx, all fields = Nil
+pub(crate) const OP_RECCOPY: u8 = 162; // ABC: R[A] = clone of record R[B] (fresh allocation, fields clone_rc'd)
+pub(crate) const OP_RECSETFIELD: u8 = 163; // ABC: R[A].field[C] = R[B]  (in-place, freshly-allocated A only)
+
 /// Builtins eligible for tree-bridge dispatch when no specialised VM opcode
 /// matches the call shape. The list is deliberately narrow: it covers the
 /// regex/format/file-format family that has no FnRef args, so NanVal↔Value
@@ -2924,42 +2939,78 @@ impl RegCompiler {
                     self.type_registry.types[type_id as usize].fields.clone();
                 let source_fields: HashMap<&str, &Expr> =
                     fields.iter().map(|(n, e)| (n.as_str(), e)).collect();
-                let ordered_regs: Vec<u8> = canonical_order
-                    .iter()
-                    .map(|fname| {
-                        let expr = source_fields[fname.as_str()];
-                        self.compile_expr(expr)
-                    })
-                    .collect();
 
-                let a = self.alloc_reg(); // result register
-                let fields_base = self.next_reg;
-                assert!(
-                    (self.next_reg as usize) + ordered_regs.len() <= 255,
-                    "register overflow: record literal requires too many register slots"
-                );
-                self.next_reg += ordered_regs.len() as u8;
-                if self.next_reg > self.max_reg {
-                    self.max_reg = self.next_reg;
-                }
-
-                for (i, &field_reg) in ordered_regs.iter().enumerate() {
-                    let target = fields_base + i as u8;
-                    if field_reg != target {
-                        self.emit_abc(OP_MOVE, target, field_reg, 0);
-                    }
-                }
+                let n = canonical_order.len();
+                let pre_reg = self.next_reg as usize;
+                // Fast path budget mirrors Expr::List (see comment there): each
+                // field compile allocates ~1 register, then we need n more
+                // contiguous slots for the RECNEW layout. n_fields and type_id
+                // each also have to fit in 8 bits inside the Bx field.
+                let fits_contiguous = n <= 255 && type_id <= 255 && pre_reg + 2 * n < 255;
 
                 assert!(
                     type_id <= 255,
                     "type_id {} exceeds 8-bit limit in OP_RECNEW",
                     type_id
                 );
-                let bx = (type_id << 8) | ordered_regs.len() as u16;
-                self.emit_abx(OP_RECNEW, a, bx);
-                // Track the type of this register
-                self.reg_record_type[a as usize] = type_id;
-                a
+
+                if fits_contiguous {
+                    let ordered_regs: Vec<u8> = canonical_order
+                        .iter()
+                        .map(|fname| {
+                            let expr = source_fields[fname.as_str()];
+                            self.compile_expr(expr)
+                        })
+                        .collect();
+
+                    let a = self.alloc_reg(); // result register
+                    let fields_base = self.next_reg;
+                    assert!(
+                        (self.next_reg as usize) + ordered_regs.len() <= 255,
+                        "register overflow: record literal requires too many register slots"
+                    );
+                    self.next_reg += ordered_regs.len() as u8;
+                    if self.next_reg > self.max_reg {
+                        self.max_reg = self.next_reg;
+                    }
+
+                    for (i, &field_reg) in ordered_regs.iter().enumerate() {
+                        let target = fields_base + i as u8;
+                        if field_reg != target {
+                            self.emit_abc(OP_MOVE, target, field_reg, 0);
+                        }
+                    }
+
+                    let bx = (type_id << 8) | ordered_regs.len() as u16;
+                    self.emit_abx(OP_RECNEW, a, bx);
+                    self.reg_record_type[a as usize] = type_id;
+                    a
+                } else {
+                    // Fallback for large records that would blow the 255-reg
+                    // frame ceiling on the contiguous layout:
+                    //   OP_RECNEW_EMPTY a, type_id          ; all fields = Nil
+                    //   for each canonical field i:
+                    //     scratch = compile_expr(value)
+                    //     OP_RECSETFIELD a, scratch, i      ; in-place mutate
+                    //     reset next_reg so each item reuses the scratch slot
+                    //
+                    // RC-safety: OP_RECSETFIELD mutates in place without
+                    // dropping the old slot value. That's safe here because
+                    // OP_RECNEW_EMPTY initialised every slot to Nil (drop_rc
+                    // is a no-op on Nil) and we never visit the same slot
+                    // twice in the loop below.
+                    let a = self.alloc_reg();
+                    self.emit_abx(OP_RECNEW_EMPTY, a, type_id);
+                    let after_result = self.next_reg;
+                    for (i, fname) in canonical_order.iter().enumerate() {
+                        let expr = source_fields[fname.as_str()];
+                        let val_reg = self.compile_expr(expr);
+                        self.emit_abc(OP_RECSETFIELD, a, val_reg, i as u8);
+                        self.next_reg = after_result;
+                    }
+                    self.reg_record_type[a as usize] = type_id;
+                    a
+                }
             }
 
             Expr::Match { subject, arms } => {
@@ -3018,11 +3069,6 @@ impl RegCompiler {
                 let obj_reg = self.compile_expr(object);
                 let obj_type = self.reg_record_type[obj_reg as usize];
 
-                let update_regs: Vec<u8> = updates
-                    .iter()
-                    .map(|(_, val_expr)| self.compile_expr(val_expr))
-                    .collect();
-
                 // Resolve update field names to indices
                 let update_indices: Vec<Option<u8>> = updates
                     .iter()
@@ -3037,59 +3083,106 @@ impl RegCompiler {
                     .collect();
                 let all_resolved = update_indices.iter().all(|i| i.is_some());
 
-                // Store as constant: indices (numbers) for resolved, names (strings) for unresolved
-                let const_val = if all_resolved {
-                    Value::List(
-                        update_indices
-                            .iter()
-                            .map(|i| Value::Number(i.unwrap() as f64))
-                            .collect(),
-                    )
-                } else {
-                    // Fallback: store field names for runtime resolution
-                    Value::List(
-                        updates
-                            .iter()
-                            .map(|(n, _)| Value::Text(n.clone()))
-                            .collect(),
-                    )
-                };
-                let const_idx = self.current.add_const_raw(const_val);
+                // Decide between the fast (consecutive-register) layout and
+                // the RECCOPY + per-field RECSETFIELD fallback. The fast path
+                // is preferred whenever it fits because OP_RECWITH does the
+                // copy + overwrite in a single bytecode dispatch. The
+                // fallback is only triggered for oversized with-expressions
+                // and currently requires all_resolved — unresolved field
+                // names in a >127-update with would be an extreme edge case
+                // we can address with a name-keyed setfield later if needed.
+                let n = updates.len();
+                let pre_reg = self.next_reg as usize;
+                let fits_contiguous = pre_reg + 2 * n < 255;
+                let use_fallback = !fits_contiguous && all_resolved;
 
-                let a = self.alloc_reg(); // result register
-                let updates_base = self.next_reg;
-                assert!(
-                    (self.next_reg as usize) + updates.len() <= 255,
-                    "register overflow: 'with' expression requires too many register slots"
-                );
-                self.next_reg += updates.len() as u8;
-                if self.next_reg > self.max_reg {
-                    self.max_reg = self.next_reg;
-                }
+                if !use_fallback {
+                    let update_regs: Vec<u8> = updates
+                        .iter()
+                        .map(|(_, val_expr)| self.compile_expr(val_expr))
+                        .collect();
 
-                // Move object into result slot
-                if obj_reg != a {
-                    self.emit_abc(OP_MOVE, a, obj_reg, 0);
-                }
+                    // Store as constant: indices (numbers) for resolved, names (strings) for unresolved
+                    let const_val = if all_resolved {
+                        Value::List(
+                            update_indices
+                                .iter()
+                                .map(|i| Value::Number(i.unwrap() as f64))
+                                .collect(),
+                        )
+                    } else {
+                        // Fallback: store field names for runtime resolution
+                        Value::List(
+                            updates
+                                .iter()
+                                .map(|(n, _)| Value::Text(n.clone()))
+                                .collect(),
+                        )
+                    };
+                    let const_idx = self.current.add_const_raw(const_val);
 
-                // Move update values into consecutive slots
-                for (i, &val_reg) in update_regs.iter().enumerate() {
-                    let target = updates_base + i as u8;
-                    if val_reg != target {
-                        self.emit_abc(OP_MOVE, target, val_reg, 0);
+                    let a = self.alloc_reg(); // result register
+                    let updates_base = self.next_reg;
+                    assert!(
+                        (self.next_reg as usize) + updates.len() <= 255,
+                        "register overflow: 'with' expression requires too many register slots"
+                    );
+                    self.next_reg += updates.len() as u8;
+                    if self.next_reg > self.max_reg {
+                        self.max_reg = self.next_reg;
                     }
-                }
 
-                assert!(
-                    const_idx <= 255,
-                    "constant pool overflow: field data index {} exceeds 8-bit limit in OP_RECWITH",
-                    const_idx
-                );
-                let bx = (const_idx << 8) | updates.len() as u16;
-                self.emit_abx(OP_RECWITH, a, bx);
-                // Propagate type (with doesn't change the type)
-                self.reg_record_type[a as usize] = obj_type;
-                a
+                    // Move object into result slot
+                    if obj_reg != a {
+                        self.emit_abc(OP_MOVE, a, obj_reg, 0);
+                    }
+
+                    // Move update values into consecutive slots
+                    for (i, &val_reg) in update_regs.iter().enumerate() {
+                        let target = updates_base + i as u8;
+                        if val_reg != target {
+                            self.emit_abc(OP_MOVE, target, val_reg, 0);
+                        }
+                    }
+
+                    assert!(
+                        const_idx <= 255,
+                        "constant pool overflow: field data index {} exceeds 8-bit limit in OP_RECWITH",
+                        const_idx
+                    );
+                    let bx = (const_idx << 8) | updates.len() as u16;
+                    self.emit_abx(OP_RECWITH, a, bx);
+                    // Propagate type (with doesn't change the type)
+                    self.reg_record_type[a as usize] = obj_type;
+                    a
+                } else {
+                    // Fallback emission for large `with` updates:
+                    //   OP_RECCOPY a, obj                ; new record, fields cloned from obj
+                    //   for each update i with field index idx:
+                    //     scratch = compile_expr(value)
+                    //     OP_RECSETFIELD a, scratch, idx
+                    //     reset next_reg so each update reuses the scratch slot
+                    //
+                    // RC-safety: OP_RECCOPY clones every field of `obj`
+                    // (clone_rc on heap values), producing a fresh record
+                    // with refcount 1. OP_RECSETFIELD then in-place
+                    // overwrites individual slots, dropping the cloned
+                    // value via drop_rc and storing the new one — same
+                    // bookkeeping as the existing OP_RECWITH dispatch, just
+                    // split across two bytecodes. The result aliases nothing
+                    // because the copy is fresh.
+                    let a = self.alloc_reg();
+                    self.emit_abc(OP_RECCOPY, a, obj_reg, 0);
+                    let after_result = self.next_reg;
+                    for (i, (_, val_expr)) in updates.iter().enumerate() {
+                        let idx = update_indices[i].unwrap();
+                        let val_reg = self.compile_expr(val_expr);
+                        self.emit_abc(OP_RECSETFIELD, a, val_reg, idx);
+                        self.next_reg = after_result;
+                    }
+                    self.reg_record_type[a as usize] = obj_type;
+                    a
+                }
             }
         }
     }
@@ -3105,15 +3198,16 @@ fn chunk_is_all_numeric(chunk: &Chunk) -> bool {
     for &inst in &chunk.code {
         let op = (inst >> 24) as u8;
         match op {
-            OP_RECNEW | OP_LISTNEW | OP_RECWITH | OP_WRAPOK | OP_WRAPERR | OP_STR | OP_CAT
-            | OP_SPL | OP_REV | OP_SRT | OP_SRTDESC | OP_SLC | OP_TAKE | OP_DROP | OP_UNQ
-            | OP_UNIQBY | OP_FRQ | OP_PARTITION | OP_LISTAPPEND | OP_JPAR | OP_JDMP | OP_CSVDMP
-            | OP_ENV | OP_GET | OP_GETH | OP_GETMANY | OP_POST | OP_POSTH | OP_RD | OP_RDL
-            | OP_RDJL | OP_WR | OP_WRL | OP_MAPNEW | OP_MGET | OP_MSET | OP_MKEYS | OP_MVALS
-            | OP_HD | OP_AT | OP_LST | OP_TL | OP_FMT2 | OP_RGXSUB | OP_ZIP | OP_ENUMERATE
-            | OP_WINDOW | OP_FFT | OP_IFFT | OP_RANGE | OP_CHUNKS | OP_CUMSUM | OP_SETUNION
-            | OP_SETINTER | OP_SETDIFF | OP_TRANSPOSE | OP_MATMUL | OP_INV | OP_SOLVE
-            | OP_DTFMT | OP_DTPARSE | OP_CALL_BUILTIN_TREE => {
+            OP_RECNEW | OP_LISTNEW | OP_RECWITH | OP_RECNEW_EMPTY | OP_RECCOPY | OP_RECSETFIELD
+            | OP_WRAPOK | OP_WRAPERR | OP_STR | OP_CAT | OP_SPL | OP_REV | OP_SRT | OP_SRTDESC
+            | OP_SLC | OP_TAKE | OP_DROP | OP_UNQ | OP_UNIQBY | OP_FRQ | OP_PARTITION
+            | OP_LISTAPPEND | OP_JPAR | OP_JDMP | OP_CSVDMP | OP_ENV | OP_GET | OP_GETH
+            | OP_GETMANY | OP_POST | OP_POSTH | OP_RD | OP_RDL | OP_RDJL | OP_WR | OP_WRL
+            | OP_MAPNEW | OP_MGET | OP_MSET | OP_MKEYS | OP_MVALS | OP_HD | OP_AT | OP_LST
+            | OP_TL | OP_FMT2 | OP_RGXSUB | OP_ZIP | OP_ENUMERATE | OP_WINDOW | OP_FFT
+            | OP_IFFT | OP_RANGE | OP_CHUNKS | OP_CUMSUM | OP_SETUNION | OP_SETINTER
+            | OP_SETDIFF | OP_TRANSPOSE | OP_MATMUL | OP_INV | OP_SOLVE | OP_DTFMT | OP_DTPARSE
+            | OP_CALL_BUILTIN_TREE => {
                 return false;
             }
             _ => {}
@@ -5721,6 +5815,149 @@ impl<'a> VM<'a> {
                         };
                         reg_set!(a, new_record);
                     } // end else (heap record path)
+                }
+                OP_RECNEW_EMPTY => {
+                    // R[A] = new record of type Bx with all fields = Nil.
+                    // Companion to OP_RECNEW for the oversized-literal fallback.
+                    let a = ((inst >> 16) & 0xFF) as usize + base;
+                    let type_id = (inst & 0xFFFF) as u16;
+                    let n_fields = self.program.type_registry.types[type_id as usize]
+                        .fields
+                        .len();
+
+                    if let Some(rec_ptr) = self.arena.alloc_record(type_id, n_fields) {
+                        unsafe {
+                            let rec = &mut *rec_ptr;
+                            for i in 0..n_fields {
+                                *rec.field_ptr_mut(i) = NanVal::nil().0;
+                            }
+                        }
+                        reg_set!(a, NanVal::arena_record(rec_ptr));
+                    } else {
+                        let type_info =
+                            Rc::clone(&self.program.type_registry.types[type_id as usize]);
+                        let fields: Vec<NanVal> = (0..n_fields).map(|_| NanVal::nil()).collect();
+                        reg_set!(a, NanVal::heap_record(type_info, fields.into_boxed_slice()));
+                    }
+                }
+                OP_RECCOPY => {
+                    // R[A] = fresh record cloned from R[B]. All fields clone_rc'd
+                    // so the new record can be mutated by OP_RECSETFIELD without
+                    // disturbing the source. Companion to OP_RECWITH for the
+                    // oversized-update fallback.
+                    let a = ((inst >> 16) & 0xFF) as usize + base;
+                    let b = ((inst >> 8) & 0xFF) as usize + base;
+                    let src = reg!(b);
+
+                    if src.is_arena_record() {
+                        let (type_id, n_fields) = unsafe {
+                            let rec = src.as_arena_record();
+                            (rec.type_id, rec.n_fields as usize)
+                        };
+                        if let Some(new_ptr) = self.arena.alloc_record(type_id, n_fields) {
+                            unsafe {
+                                let old_rec = src.as_arena_record();
+                                let new_rec = &mut *new_ptr;
+                                for i in 0..n_fields {
+                                    let v = NanVal(*old_rec.field_ptr(i));
+                                    v.clone_rc();
+                                    *new_rec.field_ptr_mut(i) = v.0;
+                                }
+                            }
+                            reg_set!(a, NanVal::arena_record(new_ptr));
+                        } else {
+                            // Arena full — promote to heap
+                            let type_info =
+                                Rc::clone(&self.program.type_registry.types[type_id as usize]);
+                            let mut new_fields = Vec::with_capacity(n_fields);
+                            unsafe {
+                                let old_rec = src.as_arena_record();
+                                for i in 0..n_fields {
+                                    let v = NanVal(*old_rec.field_ptr(i));
+                                    v.clone_rc();
+                                    new_fields.push(v);
+                                }
+                            }
+                            reg_set!(
+                                a,
+                                NanVal::heap_record(type_info, new_fields.into_boxed_slice())
+                            );
+                        }
+                    } else {
+                        debug_assert!(src.is_heap(), "OP_RECCOPY on non-record value");
+                        let new_record = unsafe {
+                            match src.as_heap_ref() {
+                                HeapObj::Record { type_info, fields } => {
+                                    let new_fields: Vec<NanVal> = fields.to_vec();
+                                    for v in new_fields.iter() {
+                                        v.clone_rc();
+                                    }
+                                    NanVal::heap_record(
+                                        Rc::clone(type_info),
+                                        new_fields.into_boxed_slice(),
+                                    )
+                                }
+                                _ => vm_err!(VmError::Type("'with' requires a record")),
+                            }
+                        };
+                        reg_set!(a, new_record);
+                    }
+                }
+                OP_RECSETFIELD => {
+                    // R[A].field[C] = R[B], in place.
+                    // The compiler only emits this against freshly-allocated
+                    // records (rc=1, no aliasing), so we skip defensive RC
+                    // checks. We still drop_rc the old slot value to keep
+                    // refcounts balanced — for Nil (post-RECNEW_EMPTY) that's
+                    // a no-op; for cloned heap values from RECCOPY it
+                    // releases the just-cloned reference before the new
+                    // value (clone_rc'd here) takes over.
+                    let a = ((inst >> 16) & 0xFF) as usize + base;
+                    let b = ((inst >> 8) & 0xFF) as usize + base;
+                    let c = (inst & 0xFF) as usize;
+                    let val = reg!(b);
+                    let rec = reg!(a);
+
+                    if rec.is_arena_record() {
+                        // SAFETY: arena records live in the bump arena for
+                        // the full duration of a VM run and are never
+                        // moved. Casting the const pointer to mut is sound
+                        // because the compiler only emits OP_RECSETFIELD
+                        // against records it just allocated via
+                        // OP_RECNEW_EMPTY/OP_RECCOPY — no aliasing.
+                        unsafe {
+                            let rec_ptr = (rec.0 & PTR_MASK) as *mut ArenaRecord;
+                            let r = &mut *rec_ptr;
+                            debug_assert!(
+                                c < r.n_fields as usize,
+                                "OP_RECSETFIELD field index out of range"
+                            );
+                            NanVal(*r.field_ptr(c)).drop_rc();
+                            val.clone_rc();
+                            *r.field_ptr_mut(c) = val.0;
+                        }
+                    } else {
+                        debug_assert!(rec.is_heap(), "OP_RECSETFIELD on non-record value");
+                        unsafe {
+                            match rec.as_heap_ref() {
+                                HeapObj::Record { fields, .. } => {
+                                    debug_assert!(
+                                        c < fields.len(),
+                                        "OP_RECSETFIELD field index out of range"
+                                    );
+                                    // SAFETY: We just allocated this record via
+                                    // OP_RECNEW_EMPTY/OP_RECCOPY and the compiler
+                                    // guarantees no other reference exists yet.
+                                    // Cast the &[NanVal] to *mut NanVal to mutate.
+                                    let slot_ptr = fields.as_ptr().add(c) as *mut NanVal;
+                                    (*slot_ptr).drop_rc();
+                                    val.clone_rc();
+                                    *slot_ptr = val;
+                                }
+                                _ => vm_err!(VmError::Type("OP_RECSETFIELD on non-record")),
+                            }
+                        }
+                    }
                 }
                 OP_LISTNEW => {
                     let a = ((inst >> 16) & 0xFF) as usize + base;
@@ -11074,6 +11311,133 @@ pub(crate) extern "C" fn jit_recwith_arena(
 
     // Heap record or arena-full fallback: delegate to the general helper
     jit_recwith(rec, indices_ptr, n_updates, regs)
+}
+
+/// Allocate a new record of type `type_id` with all fields = Nil.
+/// `arena_ptr` is a pointer to a BumpArena, `registry_ptr` is a pointer
+/// to &TypeRegistry. Companion to `jit_recnew` for the oversized-literal
+/// fallback emitted by the compiler when the consecutive-register layout
+/// would blow the 255-reg frame ceiling.
+#[cfg(feature = "cranelift")]
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn jit_recnew_empty(arena_ptr: u64, type_id: u64, registry_ptr: u64) -> u64 {
+    let tid = type_id as u16;
+    let registry = unsafe { &*(registry_ptr as *const TypeRegistry) };
+    let n = registry.types[tid as usize].fields.len();
+    let arena = unsafe { &mut *(arena_ptr as *mut BumpArena) };
+
+    if let Some(rec_ptr) = arena.alloc_record(tid, n) {
+        unsafe {
+            let rec = &mut *rec_ptr;
+            for i in 0..n {
+                *rec.field_ptr_mut(i) = TAG_NIL;
+            }
+        }
+        return NanVal::arena_record(rec_ptr).0;
+    }
+
+    // Arena full — heap fallback
+    let type_info = Rc::clone(&registry.types[tid as usize]);
+    let fields: Vec<NanVal> = (0..n).map(|_| NanVal::nil()).collect();
+    NanVal::heap_record(type_info, fields.into_boxed_slice()).0
+}
+
+/// Clone a record (fresh allocation, all fields clone_rc'd). Companion to
+/// `jit_recwith` for the oversized-update fallback: callers follow this
+/// with a series of `jit_recsetfield` calls to overwrite individual slots.
+#[cfg(feature = "cranelift")]
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn jit_reccopy(src: u64, arena_ptr: u64, registry_ptr: u64) -> u64 {
+    let rv = NanVal(src);
+    let arena = unsafe { &mut *(arena_ptr as *mut BumpArena) };
+    let registry = unsafe { &*(registry_ptr as *const TypeRegistry) };
+
+    if rv.is_arena_record() {
+        let (tid, n) = unsafe {
+            let rec = rv.as_arena_record();
+            (rec.type_id, rec.n_fields as usize)
+        };
+        if let Some(new_ptr) = arena.alloc_record(tid, n) {
+            unsafe {
+                let old_rec = rv.as_arena_record();
+                let new_rec = &mut *new_ptr;
+                for i in 0..n {
+                    let v = NanVal(*old_rec.field_ptr(i));
+                    v.clone_rc();
+                    *new_rec.field_ptr_mut(i) = v.0;
+                }
+            }
+            return NanVal::arena_record(new_ptr).0;
+        }
+        // Arena full — promote
+        let type_info = Rc::clone(&registry.types[tid as usize]);
+        let mut new_fields = Vec::with_capacity(n);
+        unsafe {
+            let old_rec = rv.as_arena_record();
+            for i in 0..n {
+                let v = NanVal(*old_rec.field_ptr(i));
+                v.clone_rc();
+                new_fields.push(v);
+            }
+        }
+        return NanVal::heap_record(type_info, new_fields.into_boxed_slice()).0;
+    }
+
+    if !rv.is_heap() {
+        return TAG_NIL;
+    }
+
+    match unsafe { rv.as_heap_ref() } {
+        HeapObj::Record { type_info, fields } => {
+            let new_fields: Vec<NanVal> = fields.to_vec();
+            for v in new_fields.iter() {
+                v.clone_rc();
+            }
+            NanVal::heap_record(Rc::clone(type_info), new_fields.into_boxed_slice()).0
+        }
+        _ => TAG_NIL,
+    }
+}
+
+/// In-place mutate field `idx` of record `rec` to `val`. SAFETY: only valid
+/// against records that were just allocated by `jit_recnew_empty` or
+/// `jit_reccopy` (rc=1, no aliasing). Drops the old slot value's refcount
+/// and clones the new one.
+#[cfg(feature = "cranelift")]
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn jit_recsetfield(rec: u64, val: u64, idx: u64) {
+    let rv = NanVal(rec);
+    let vv = NanVal(val);
+    let i = idx as usize;
+
+    if rv.is_arena_record() {
+        unsafe {
+            // SAFETY: arena records live for the duration of a VM run and
+            // are pinned. The compiler-emitted RECSETFIELD only targets
+            // freshly-allocated records, so the mut cast does not alias.
+            let rec_ptr = (rv.0 & PTR_MASK) as *mut ArenaRecord;
+            let r = &mut *rec_ptr;
+            debug_assert!(i < r.n_fields as usize, "jit_recsetfield idx oob");
+            NanVal(*r.field_ptr(i)).drop_rc();
+            vv.clone_rc();
+            *r.field_ptr_mut(i) = vv.0;
+        }
+        return;
+    }
+
+    if !rv.is_heap() {
+        return;
+    }
+
+    unsafe {
+        if let HeapObj::Record { fields, .. } = rv.as_heap_ref() {
+            debug_assert!(i < fields.len(), "jit_recsetfield idx oob");
+            let slot_ptr = fields.as_ptr().add(i) as *mut NanVal;
+            (*slot_ptr).drop_rc();
+            vv.clone_rc();
+            *slot_ptr = vv;
+        }
+    }
 }
 
 /// Create a new list from n items pointed to by `regs`.
