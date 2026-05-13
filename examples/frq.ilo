@@ -14,14 +14,14 @@
 words>n;m=frq ["the","cat","sat","on","the","mat","the","cat"];r=mget m "the";?r{n v:v;_:0}
 
 -- Character frequency (split a string into chars, then count).
-chars>n;m=frq (spl "mississippi" "");r=mget m "s";?r{n v:v;_:0}
+cfrq>n;m=frq (spl "mississippi" "");r=mget m "s";?r{n v:v;_:0}
 
 -- Number frequency: keys are bare stringified numbers ("1","2",...).
 nums>n;m=frq [1,2,1,3,1,2];r=mget m "1";?r{n v:v;_:0}
 
 -- run: words
 -- out: 3
--- run: chars
+-- run: cfrq
 -- out: 4
 -- run: nums
 -- out: 3
