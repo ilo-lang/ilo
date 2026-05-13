@@ -8,5 +8,6 @@ nz xs:L n>R (L n) t;l=len xs;=l 0 ^"empty";~xs
 -- run: nz [1,2,3]
 -- out: ~[1, 2, 3]
 
+-- Value::Err from the entry function exits 1 with the err on stderr.
 -- run: nz []
--- out: ^empty
+-- err: ^empty

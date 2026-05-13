@@ -1609,12 +1609,13 @@ fn unwrap_err_path_inline() {
         .output()
         .expect("failed to run ilo");
     std::fs::remove_file(&f).ok();
-    assert!(
-        out.status.success(),
-        "stderr: {}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "^fail");
+    // `outer` returns `Value::Err("fail")` (the inner err propagates through
+    // `~(inner! x)` unwrap). A Value::Err from the entry function must exit
+    // 1 with the err formatted to stderr — see
+    // tests/regression_main_err_exit_code.rs for the contract.
+    assert_eq!(out.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&out.stdout).trim().is_empty());
+    assert_eq!(String::from_utf8_lossy(&out.stderr).trim(), "^fail");
 }
 
 #[test]
@@ -1625,12 +1626,11 @@ fn unwrap_nested_propagation_inline() {
         .output()
         .expect("failed to run ilo");
     std::fs::remove_file(&f).ok();
-    assert!(
-        out.status.success(),
-        "stderr: {}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "^deep");
+    // Same contract as `unwrap_err_path_inline`: `a` returns Value::Err,
+    // process exits 1, err goes to stderr.
+    assert_eq!(out.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&out.stdout).trim().is_empty());
+    assert_eq!(String::from_utf8_lossy(&out.stderr).trim(), "^deep");
 }
 
 #[test]
@@ -2183,11 +2183,12 @@ fn json_flag_wraps_err_result() {
         .args(["--json", "-e", "f>R n t;^\"oops\"", "--run", "f"])
         .output()
         .expect("failed to run ilo");
-    assert!(
-        out.status.success(),
-        "stderr: {}",
-        String::from_utf8_lossy(&out.stderr)
-    );
+    // Entry function returns Value::Err -> exit 1, but in JSON mode the
+    // `{"error": {...}}` envelope is still emitted on stdout so machine
+    // consumers can parse a single stream and discriminate on the top-level
+    // key. See tests/regression_main_err_exit_code.rs for the cross-engine
+    // contract.
+    assert_eq!(out.status.code(), Some(1));
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(
         stdout.contains("\"error\""),

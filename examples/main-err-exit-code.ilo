@@ -1,0 +1,18 @@
+-- Demonstrates the `main` exit-code contract for Result-returning entry
+-- functions. A program whose entry function returns `~v` exits 0; one that
+-- returns `^reason` exits 1 with the err line on stderr (companion to the
+-- `!!` panic-unwrap path from PR #248).
+--
+-- The `-- err:` annotation tells the examples harness that the case must
+-- exit non-zero and the assertion is against stderr. The cross-engine
+-- regression test in tests/regression_main_err_exit_code.rs pins the
+-- contract directly.
+
+-- Parse text to a number; returns ~n on success, ^reason on failure.
+parse s:t>R n t;num s
+
+-- run: parse 42
+-- out: ~42
+
+-- run: parse abc
+-- err: ^abc

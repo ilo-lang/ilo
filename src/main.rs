@@ -2640,7 +2640,7 @@ fn run_cranelift_engine(
             Ok(result_bits) => {
                 let result = vm::NanVal(result_bits).to_value();
                 print_value(&result, explicit_json, suppress);
-                0
+                program_exit_code(&result)
             }
             Err(vm::jit_cranelift::JitCallError::Runtime(e)) => {
                 report_diagnostic(&Diagnostic::from(&e).with_source(source.to_string()), mode);
@@ -2810,7 +2810,7 @@ fn run_vm_with_provider(
         match vm::run_with_tools(compiled, func_name, args, provider, rt) {
             Ok(val) => {
                 print_value(&val, explicit_json, suppress_loop_tail);
-                return 0;
+                return program_exit_code(&val);
             }
             Err(e) => {
                 report_diagnostic(&Diagnostic::from(&e).with_source(source.to_string()), mode);
@@ -2843,7 +2843,7 @@ fn run_vm_with_provider(
         ) {
             Ok(val) => {
                 print_value(&val, explicit_json, suppress_loop_tail);
-                0
+                program_exit_code(&val)
             }
             Err(e) => {
                 report_diagnostic(&Diagnostic::from(&e).with_source(source.to_string()), mode);
@@ -2855,7 +2855,7 @@ fn run_vm_with_provider(
     match vm::run(compiled, func_name, args) {
         Ok(val) => {
             print_value(&val, explicit_json, suppress_loop_tail);
-            0
+            program_exit_code(&val)
         }
         Err(e) => {
             report_diagnostic(&Diagnostic::from(&e).with_source(source.to_string()), mode);
@@ -2891,7 +2891,7 @@ fn run_interp_with_provider(
         ) {
             Ok(val) => {
                 print_value(&val, explicit_json, suppress);
-                return 0;
+                return program_exit_code(&val);
             }
             Err(e) => {
                 report_diagnostic(&Diagnostic::from(&e).with_source(source.to_string()), mode);
@@ -2926,7 +2926,7 @@ fn run_interp_with_provider(
         ) {
             Ok(val) => {
                 print_value(&val, explicit_json, suppress);
-                0
+                program_exit_code(&val)
             }
             Err(e) => {
                 report_diagnostic(&Diagnostic::from(&e).with_source(source.to_string()), mode);
@@ -2938,7 +2938,7 @@ fn run_interp_with_provider(
     match interpreter::run(program, func_name, args) {
         Ok(val) => {
             print_value(&val, explicit_json, suppress);
-            0
+            program_exit_code(&val)
         }
         Err(e) => {
             report_diagnostic(&Diagnostic::from(&e).with_source(source.to_string()), mode);
@@ -2990,7 +2990,7 @@ fn run_default(
                     Ok(result_bits) => {
                         let result = vm::NanVal(result_bits).to_value();
                         print_value(&result, explicit_json, suppress);
-                        return 0;
+                        return program_exit_code(&result);
                     }
                     Err(vm::jit_cranelift::JitCallError::Runtime(e)) => {
                         // The JIT executed and surfaced a defined runtime
@@ -3017,7 +3017,7 @@ fn run_default(
     match interpreter::run(program, func_name, args) {
         Ok(val) => {
             print_value(&val, explicit_json, suppress);
-            0
+            program_exit_code(&val)
         }
         Err(e) => {
             report_diagnostic(&Diagnostic::from(&e).with_source(source.to_string()), mode);
@@ -3107,8 +3107,24 @@ fn program_result_should_suppress(program: &ast::Program, func_name: Option<&str
 /// declared `>O n` returning `nil`) is still printed, because the user asked
 /// for it. JSON mode is unchanged so machine-readable consumers always get a
 /// structured result.
+///
+/// `Value::Err(_)` is routed to stderr in plain mode (matching `report_diagnostic`'s
+/// stream convention for failures). In JSON mode the `{"error": ...}` envelope is
+/// still written to stdout, so machine consumers can keep parsing stdout uniformly
+/// and discriminate on the top-level key.
 fn print_value(val: &interpreter::Value, as_json: bool, suppress_loop_tail: bool) {
     if !as_json {
+        // Value::Err always prints to stderr — even when suppress_loop_tail
+        // is on. The loop-tail suppression rule exists to avoid duplicating
+        // the loop body's `prnt` output as a final stdout line for happy-path
+        // tail values; it must not silently swallow a program failure. The
+        // companion exit-code surfacing happens in `program_exit_code`, so
+        // skipping the err here would leave the operator with `exit 1` and
+        // zero diagnostic context.
+        if matches!(val, interpreter::Value::Err(_)) {
+            eprintln!("{}", val);
+            return;
+        }
         if suppress_loop_tail {
             return;
         }
@@ -3134,6 +3150,19 @@ fn print_value(val: &interpreter::Value, as_json: bool, suppress_loop_tail: bool
         }
     };
     println!("{}", json);
+}
+
+/// Exit code for a program's top-level result. `Value::Err(_)` from `main` (or any
+/// entry function) must surface as a non-zero exit so shell pipelines and CI can
+/// detect failure — this is the companion to [#248]'s `!!` panic-unwrap fix, which
+/// addressed the explicit-crash path. Returning the error variant from the `~`/`^`
+/// arm without `!!` is the same kind of failure semantically, just with a value.
+fn program_exit_code(val: &interpreter::Value) -> i32 {
+    if matches!(val, interpreter::Value::Err(_)) {
+        1
+    } else {
+        0
+    }
 }
 
 #[allow(unused_variables, unused_mut)]
