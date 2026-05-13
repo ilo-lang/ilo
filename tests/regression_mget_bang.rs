@@ -197,7 +197,11 @@ fn check_result_ok(engine: &str) {
     // After the fix, every engine prints `~42` — num! unwraps to 42, then
     // the explicit `~v` wraps it as Ok(42). Previously VM/Cranelift printed
     // `~~42` because num! left the Ok wrap on.
-    assert_eq!(run(engine, RESULT_BANG_OK_SRC, "f"), "~42", "engine={engine}");
+    assert_eq!(
+        run(engine, RESULT_BANG_OK_SRC, "f"),
+        "~42",
+        "engine={engine}"
+    );
 }
 
 fn check_result_err(engine: &str) {
