@@ -213,6 +213,23 @@ pub fn run(program: &Program, func_name: Option<&str>, args: Vec<Value>) -> Resu
     run_with_env(program, func_name, args, Env::new())
 }
 
+/// Dispatch a builtin call from the VM/Cranelift tree-bridge (`OP_CALL_BUILTIN_TREE`).
+///
+/// Used by `--run-vm` and `--run-cranelift` to delegate tree-only builtins
+/// (`rgx`, `rgxall`, `fmt` variadic, 2-arg `rd`, `rdb`) to the same code path
+/// the tree interpreter uses. Caller has already converted NanVal arg
+/// registers to owned `Value`s; we return an owned `Value` for the caller
+/// to NaN-box back into a result register.
+///
+/// Scope is deliberately limited to builtins that need no `Env`: no FnRef
+/// args, no user-function callbacks, no tool dispatch. The call_function
+/// dispatcher tolerates an empty Env for this subset because none of these
+/// builtins look up user bindings or invoke other functions.
+pub fn call_builtin_for_bridge(name: &str, args: Vec<Value>) -> Result<Value> {
+    let mut env = Env::new();
+    call_function(&mut env, name, args)
+}
+
 pub fn run_with_tools(
     program: &Program,
     func_name: Option<&str>,
