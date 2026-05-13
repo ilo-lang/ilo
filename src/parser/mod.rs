@@ -315,6 +315,19 @@ impl Parser {
                 format!("pick a different name like `{alt}` or `{}`", &word[..1]),
             ));
         }
+        // Builtin `fld` (fold) used as binding name: `fld=5`. Personas reach
+        // for `fld` as a natural variable (field/fold/folder); the builtin
+        // collision otherwise surfaces as a misleading ILO-T006 arity error.
+        if let Some(Token::Ident(name)) = self.peek()
+            && name == "fld"
+            && self.token_at(self.pos + 1) == Some(&Token::Eq)
+        {
+            return Err(self.error_hint(
+                "ILO-P011",
+                "`fld` is reserved for the fold builtin and cannot be used as an identifier".into(),
+                "pick a different name like `field` or `folder`".into(),
+            ));
+        }
         match self.peek() {
             Some(Token::Type) => self.parse_type_decl(),
             Some(Token::Tool) => self.parse_tool_decl(),
@@ -800,6 +813,16 @@ impl Parser {
                 }
                 self.advance(); // consume "cnt"
                 Ok(Stmt::Continue)
+            }
+            Some(Token::Ident(name))
+                if name == "fld" && self.token_at(self.pos + 1) == Some(&Token::Eq) =>
+            {
+                Err(self.error_hint(
+                    "ILO-P011",
+                    "`fld` is reserved for the fold builtin and cannot be used as an identifier"
+                        .into(),
+                    "pick a different name like `field` or `folder`".into(),
+                ))
             }
             Some(Token::Ident(name)) if name == "wh" => {
                 self.advance(); // consume "wh"
