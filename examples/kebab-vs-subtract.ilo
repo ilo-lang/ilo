@@ -1,0 +1,27 @@
+-- Kebab-case identifiers vs binary subtraction.
+-- A dash inside a name is part of the identifier; the lexer is greedy
+-- (`[a-z][a-z0-9]*(-[a-z0-9]+)*`), so `best-d` is always one token, never
+-- `best - d`. To subtract, separate the operator with spaces.
+
+-- Binary subtraction: prefix `-` followed by two atoms, spaces required.
+sub-explicit best:n d:n>n;- best d
+
+-- Kebab-case lookup: `best-d` is a single identifier, distinct from `best` and `d`.
+look best:n d:n best-d:n>n;best-d
+
+-- All three coexist: same scope binds `best`, `d`, and `best-d`. Each
+-- resolves independently. `str best-d` prints the kebab value (99),
+-- proving the parser never splits the ident into `best - d`.
+mix>L t;best=10;d=3;best-d=99;[str best-d, str best, str d]
+
+-- Multi-segment kebab works the same way.
+chain>n;a-b-c=42;a-b-c
+
+-- run: sub-explicit 10 3
+-- out: 7
+-- run: look 10 3 99
+-- out: 99
+-- run: mix
+-- out: [99, 10, 3]
+-- run: chain
+-- out: 42
