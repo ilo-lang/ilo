@@ -3234,6 +3234,50 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         };
         return Ok(Value::List(result));
     }
+    if builtin == Some(Builtin::Rgxall) && args.len() == 2 {
+        let pattern = match &args[0] {
+            Value::Text(s) => s.as_str(),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!(
+                        "rgxall: first arg must be a string pattern, got {:?}",
+                        other
+                    ),
+                ));
+            }
+        };
+        let input = match &args[1] {
+            Value::Text(s) => s.as_str(),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("rgxall: second arg must be a string, got {:?}", other),
+                ));
+            }
+        };
+        let re = regex::Regex::new(pattern).map_err(|e| {
+            RuntimeError::new("ILO-R009", format!("rgxall: invalid regex pattern: {e}"))
+        })?;
+        // Uniform shape: L (L t). Each match is a list of capture-group strings.
+        // No-group patterns wrap the whole match in a single-element inner list,
+        // so the outer shape stays predictable regardless of group count.
+        let result: Vec<Value> = if re.captures_len() > 1 {
+            re.captures_iter(input)
+                .map(|caps| {
+                    let groups: Vec<Value> = (1..caps.len())
+                        .filter_map(|i| caps.get(i).map(|m| Value::Text(m.as_str().to_string())))
+                        .collect();
+                    Value::List(groups)
+                })
+                .collect()
+        } else {
+            re.find_iter(input)
+                .map(|m| Value::List(vec![Value::Text(m.as_str().to_string())]))
+                .collect()
+        };
+        return Ok(Value::List(result));
+    }
     if builtin == Some(Builtin::Rgxsub) && args.len() == 3 {
         let pattern = match &args[0] {
             Value::Text(s) => s.as_str(),
