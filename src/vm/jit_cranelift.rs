@@ -113,7 +113,9 @@ struct HelperFuncs {
     listappend_inplace: FuncId,
     index: FuncId,
     recfld: FuncId,
+    recfld_strict: FuncId,
     recfld_name: FuncId,
+    recfld_name_strict: FuncId,
     recnew: FuncId,
     recwith: FuncId,
     recwith_arena: FuncId,
@@ -277,7 +279,12 @@ fn register_helpers(builder: &mut JITBuilder) {
         ),
         ("jit_index", jit_index as *const u8),
         ("jit_recfld", jit_recfld as *const u8),
+        ("jit_recfld_strict", jit_recfld_strict as *const u8),
         ("jit_recfld_name", jit_recfld_name as *const u8),
+        (
+            "jit_recfld_name_strict",
+            jit_recfld_name_strict as *const u8,
+        ),
         ("jit_recnew", jit_recnew as *const u8),
         ("jit_recwith", jit_recwith as *const u8),
         ("jit_recwith_arena", jit_recwith_arena as *const u8),
@@ -426,7 +433,9 @@ fn declare_all_helpers(module: &mut JITModule) -> HelperFuncs {
         listappend_inplace: declare_helper(module, "jit_listappend_inplace", 2, 1),
         index: declare_helper(module, "jit_index", 2, 1),
         recfld: declare_helper(module, "jit_recfld", 2, 1),
+        recfld_strict: declare_helper(module, "jit_recfld_strict", 2, 1),
         recfld_name: declare_helper(module, "jit_recfld_name", 3, 1),
+        recfld_name_strict: declare_helper(module, "jit_recfld_name_strict", 3, 1),
         recnew: declare_helper(module, "jit_recnew", 4, 1),
         recwith: declare_helper(module, "jit_recwith", 4, 1),
         recwith_arena: declare_helper(module, "jit_recwith_arena", 5, 1),
@@ -2506,10 +2515,16 @@ fn compile_function_body(
                 builder.switch_to_block(skip_clone_block);
                 builder.ins().jump(merge_block, &[field_val]);
 
-                // Heap path: call jit_recfld
+                // Heap path: call jit_recfld_strict so missing-field /
+                // non-record errors surface via JIT_RUNTIME_ERROR. The arena
+                // fast path above does no bounds check (c_idx is a
+                // compile-time-constant verified by the typechecker on
+                // statically-typed records); a verifier bug there would still
+                // segfault, which is the same shape as the existing
+                // arena-fast-path contract.
                 builder.switch_to_block(heap_block);
                 let field_idx_val = builder.ins().iconst(I64, c_idx as i64);
-                let fref = get_func_ref(&mut builder, module, helpers.recfld);
+                let fref = get_func_ref(&mut builder, module, helpers.recfld_strict);
                 let call_inst = builder.ins().call(fref, &[bv, field_idx_val]);
                 let heap_result = builder.inst_results(call_inst)[0];
                 builder.ins().jump(merge_block, &[heap_result]);
@@ -2536,7 +2551,10 @@ fn compile_function_body(
                 // Get registry pointer
                 let registry_ptr = ACTIVE_REGISTRY.with(|r| r.get() as u64);
                 let registry_val = builder.ins().iconst(I64, registry_ptr as i64);
-                let fref = get_func_ref(&mut builder, module, helpers.recfld_name);
+                // Strict variant: missing-name / non-record surfaces as a
+                // JIT_RUNTIME_ERROR. OP_RECFLD_NAME_SAFE below keeps using
+                // the permissive `jit_recfld_name` for `.?field` semantics.
+                let fref = get_func_ref(&mut builder, module, helpers.recfld_name_strict);
                 let call_inst = builder
                     .ins()
                     .call(fref, &[bv, field_name_val, registry_val]);
