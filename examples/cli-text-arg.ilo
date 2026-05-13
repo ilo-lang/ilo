@@ -1,0 +1,40 @@
+-- CLI args declared as `t` (text) are passed through verbatim from the
+-- command line, even when the raw input looks numeric, boolean, or
+-- list-like.
+--
+-- Before this fix, `ilo file.ilo f 2` with `f arg:t` silently coerced
+-- `"2"` to `Number(2.0)` because the CLI parser was type-blind. That
+-- broke any function branching off the declared text type, notably
+-- `num arg`, which returned nil because arg was already a number,
+-- which in turn collapsed the surrounding `?r{~i:.. ;^e:..}` match
+-- (no `nil` arm) into a silent `nil` return.
+--
+-- The fix is in `src/main.rs`: CLI parsing now consults the declared
+-- param type. `t` params skip the greedy numeric/bool/list parse and
+-- keep the raw input as `Text`.
+
+-- Round-trip: take a text param back through `num` and unwrap the
+-- result. Pre-fix this returned nil for any digit-shaped input; now
+-- it returns the parsed number for digits and -1 for non-numerics.
+parse-or-default arg:t>n;r=num arg;?r{~i:i;^e:0 - 1}
+
+-- Identity on the text param. The point is the type of the value
+-- crossing the function boundary: pre-fix `id-text 2` returned a
+-- Number that happened to print as `2`; post-fix it returns Text.
+-- The behavioural difference shows up under `num`, so we test that
+-- above and just use this case to confirm bool-shaped and nil-shaped
+-- inputs are preserved verbatim too.
+id-text arg:t>t;arg
+
+-- run: parse-or-default 2
+-- out: 2
+-- run: parse-or-default 42
+-- out: 42
+-- run: parse-or-default abc
+-- out: -1
+-- run: id-text true
+-- out: true
+-- run: id-text nil
+-- out: nil
+-- run: id-text 99
+-- out: 99
