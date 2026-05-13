@@ -2003,10 +2003,39 @@ or write `({fmt_name} \"...\" ...)` so its args are grouped."
             }
 
             // Inside a list literal, `[a b c]` must yield three list
-            // elements rather than `[Call(a, [b, c])]`. If the next token
-            // would otherwise start a call argument, return the bare Ref.
+            // elements rather than `[Call(a, [b, c])]`. Bare refs to locals
+            // stay as elements. But a known function (in `fn_arity` with
+            // arity > 0) followed by operands parses as a call with EXACTLY
+            // arity operands consumed - same arity-capped rule that the
+            // nested-call path in `parse_call_arg` uses (line 1916). This
+            // lets `[str n]`, `[at xs 0]`, `[map dbl xs]`, and side-by-side
+            // `[str a str b str c]` Just Work without forcing agents to
+            // bind every formatted value first or reach for parens.
+            //
+            // The arity cap is critical: without it, `[at xs 0 at xs 2]`
+            // would parse as `at(xs, 0, at, xs, 2)` (5 args) instead of two
+            // calls. Mirroring `parse_call_arg`'s `for i in 0..arity` keeps
+            // each list element to a single capped call.
             if self.no_whitespace_call {
-                return Ok(atom);
+                let arity = self.fn_arity.get(&name).copied().unwrap_or(0);
+                if arity == 0 || !self.can_start_operand() {
+                    return Ok(atom);
+                }
+                let mut args = Vec::with_capacity(arity);
+                for i in 0..arity {
+                    if !self.can_start_operand() {
+                        // Underfilled - let the verifier report arity
+                        // mismatch with its usual ILO-T006 error.
+                        break;
+                    }
+                    let inner_fn_pos = self.is_fn_ref_position(&name, i);
+                    args.push(self.parse_call_arg(inner_fn_pos, Some((&name, arity, i)))?);
+                }
+                return Ok(Expr::Call {
+                    function: name,
+                    args,
+                    unwrap: false,
+                });
             }
 
             // Check for function call: name followed by args

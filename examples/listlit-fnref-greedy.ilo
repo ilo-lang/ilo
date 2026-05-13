@@ -1,0 +1,37 @@
+-- Known functions inside list literals are greedy-expanded as calls.
+-- Refined sibling of `list-literal-refs.ilo`:
+--   * Bare local refs still parse as elements: `[a b c]` -> 3 elements.
+--   * Known functions (builtins, declared fns) eat exactly their arity
+--     of operands: `[str n]`, `[at xs 0]`, `[at xs 0 at xs 2]` Just Work.
+--   * HOF fn-ref slots are preserved: `[map dbl xs]` is one Call element.
+--
+-- This shape was the user-facing friction: `cat ["proteins=" str n] ""`
+-- used to fail with ILO-R009 because `str` was held as a bare ref and
+-- lowered to a FnRef. Now it joins to "proteins=42" as expected.
+
+-- The original repro: cat with a formatted value inline.
+protein n:n>t;cat ["proteins=" str n] ""
+
+-- Multiple greedy unary calls side-by-side.
+strs>L t;a=1;b=2;c=3;[str a str b str c]
+
+-- Arity cap on binary builtins: two at calls, not one over-supplied.
+pair>L n;xs=[10 20 30];[at xs 0 at xs 2]
+
+-- Nested known-fn calls collapse into a single capped element.
+nested>L n;xs=[[1 2 3] [4 5]];[len hd xs]
+
+-- Bare locals (not in fn_arity) still parse as elements, preserving the
+-- mirror with `[1 2 3]`.
+locals>L n;a=1;b=2;c=3;[a b c]
+
+-- run: protein 42
+-- out: proteins=42
+-- run: strs
+-- out: [1, 2, 3]
+-- run: pair
+-- out: [10, 30]
+-- run: nested
+-- out: [3]
+-- run: locals
+-- out: [1, 2, 3]
