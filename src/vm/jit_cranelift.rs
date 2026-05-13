@@ -1029,7 +1029,7 @@ fn compile_function_body(
                 | OP_ADD_SS  // string concat — always a string
                 | OP_NEG
                 | OP_WRAPOK | OP_WRAPERR | OP_UNWRAP
-                | OP_RECFLD | OP_RECFLD_NAME | OP_LISTGET | OP_INDEX
+                | OP_RECFLD | OP_RECFLD_NAME | OP_RECFLD_SAFE | OP_RECFLD_NAME_SAFE | OP_LISTGET | OP_INDEX
                 | OP_STR | OP_HD | OP_AT | OP_FMT2 | OP_TL | OP_REV | OP_SRT | OP_SRTDESC
                 | OP_FFT | OP_IFFT
                 | OP_SLC | OP_LST | OP_ZIP | OP_TAKE | OP_DROP | OP_ENUMERATE | OP_RANGE
@@ -2522,6 +2522,46 @@ fn compile_function_body(
                 let field_name_ptr = leaked.as_ptr() as u64;
                 let field_name_val = builder.ins().iconst(I64, field_name_ptr as i64);
                 // Get registry pointer
+                let registry_ptr = ACTIVE_REGISTRY.with(|r| r.get() as u64);
+                let registry_val = builder.ins().iconst(I64, registry_ptr as i64);
+                let fref = get_func_ref(&mut builder, module, helpers.recfld_name);
+                let call_inst = builder
+                    .ins()
+                    .call(fref, &[bv, field_name_val, registry_val]);
+                let result = builder.inst_results(call_inst)[0];
+                builder.def_var(vars[a_idx], result);
+            }
+            OP_RECFLD_SAFE => {
+                // Safe field-by-index: route through jit_recfld which already
+                // returns TAG_NIL on miss / non-record / nil-object. No inline
+                // arena fast path here — the dynamic-record (jpar) use case
+                // generally lives on the heap path anyway, and skipping the
+                // inline math keeps the safe variant trivially correct.
+                let bv = builder.use_var(vars[b_idx]);
+                let field_idx_val = builder.ins().iconst(I64, c_idx as i64);
+                let fref = get_func_ref(&mut builder, module, helpers.recfld);
+                let call_inst = builder.ins().call(fref, &[bv, field_idx_val]);
+                let result = builder.inst_results(call_inst)[0];
+                builder.def_var(vars[a_idx], result);
+            }
+            OP_RECFLD_NAME_SAFE => {
+                // Safe field-by-name: mirrors OP_RECFLD_NAME exactly, since
+                // jit_recfld_name already returns TAG_NIL on miss. Distinct
+                // opcode kept so the VM interpreter has a clean error/safe
+                // split and so future tightening (e.g. strict OP_RECFLD_NAME
+                // emitting ILO-R005) doesn't accidentally break `.?`.
+                let b_idx = ((inst >> 8) & 0xFF) as usize;
+                let c_idx = (inst & 0xFF) as usize;
+                let bv = builder.use_var(vars[b_idx]);
+                let cstring = match &chunk.constants[c_idx] {
+                    crate::interpreter::Value::Text(s) => {
+                        std::ffi::CString::new(s.as_bytes()).ok()?
+                    }
+                    _ => return None,
+                };
+                let leaked = Box::leak(Box::new(cstring));
+                let field_name_ptr = leaked.as_ptr() as u64;
+                let field_name_val = builder.ins().iconst(I64, field_name_ptr as i64);
                 let registry_ptr = ACTIVE_REGISTRY.with(|r| r.get() as u64);
                 let registry_val = builder.ins().iconst(I64, registry_ptr as i64);
                 let fref = get_func_ref(&mut builder, module, helpers.recfld_name);
