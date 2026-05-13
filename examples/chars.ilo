@@ -1,0 +1,20 @@
+-- `chars s` explodes a string into a list of single-char strings,
+-- one per Unicode scalar. No sentinel leading/trailing empty strings —
+-- empty input yields an empty list, not [""].
+
+ascii>L t;chars "abc"
+unicode>L t;chars "café"
+empty>L t;chars ""
+count>n;len (chars "hello")
+
+-- run: ascii
+-- out: [a, b, c]
+
+-- run: unicode
+-- out: [c, a, f, é]
+
+-- run: empty
+-- out: []
+
+-- run: count
+-- out: 5
