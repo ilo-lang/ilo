@@ -2430,7 +2430,9 @@ fn dispatch_run(r: cli::RunArgs, mode: OutputMode, explicit_json: bool, no_hints
         let rest = &r.rest;
 
         match engine {
-            cli::Engine::Cranelift => run_cranelift_engine(&program, rest, explicit_json),
+            cli::Engine::Cranelift => {
+                run_cranelift_engine(&program, rest, &source, mode, explicit_json)
+            }
             cli::Engine::Llvm => run_llvm_engine(&program, rest),
             cli::Engine::Vm => {
                 let func_name = rest.first().map(|s| s.as_str());
@@ -2548,7 +2550,13 @@ fn dispatch_run(r: cli::RunArgs, mode: OutputMode, explicit_json: bool, no_hints
 }
 
 /// Cranelift JIT engine dispatch. Returns exit code.
-fn run_cranelift_engine(program: &ast::Program, rest: &[String], explicit_json: bool) -> i32 {
+fn run_cranelift_engine(
+    program: &ast::Program,
+    rest: &[String],
+    source: &str,
+    mode: OutputMode,
+    explicit_json: bool,
+) -> i32 {
     let func_name = rest.first().map(|s| s.as_str());
     let raw = if rest.len() > 1 { &rest[1..] } else { &[][..] };
     let run_args = parse_cli_args_typed(program, func_name, raw);
@@ -2584,12 +2592,16 @@ fn run_cranelift_engine(program: &ast::Program, rest: &[String], explicit_json: 
             .map(|v| vm::NanVal::from_value(v).0)
             .collect();
         match vm::jit_cranelift::compile_and_call(chunk, nan_consts, &nan_args, &compiled) {
-            Some(result_bits) => {
+            Ok(result_bits) => {
                 let result = vm::NanVal(result_bits).to_value();
                 print_value(&result, explicit_json, suppress);
                 0
             }
-            None => {
+            Err(vm::jit_cranelift::JitCallError::Runtime(e)) => {
+                report_diagnostic(&Diagnostic::from(&e).with_source(source.to_string()), mode);
+                1
+            }
+            Err(vm::jit_cranelift::JitCallError::NotEligible) => {
                 eprintln!("Cranelift JIT: compilation failed");
                 1
             }
@@ -2597,7 +2609,7 @@ fn run_cranelift_engine(program: &ast::Program, rest: &[String], explicit_json: 
     }
     #[cfg(not(feature = "cranelift"))]
     {
-        let _ = (func_name, run_args, explicit_json, suppress);
+        let _ = (func_name, run_args, source, mode, explicit_json, suppress);
         eprintln!("Cranelift JIT not enabled. Build with: cargo build --features cranelift");
         1
     }
@@ -2929,12 +2941,28 @@ fn run_default(
                 let chunk = &compiled.chunks[func_idx];
                 let nan_consts = &compiled.nan_constants[func_idx];
                 let nan_args: Vec<u64> = args.iter().map(|v| vm::NanVal::from_value(v).0).collect();
-                if let Some(result_bits) =
-                    vm::jit_cranelift::compile_and_call(chunk, nan_consts, &nan_args, &compiled)
-                {
-                    let result = vm::NanVal(result_bits).to_value();
-                    print_value(&result, explicit_json, suppress);
-                    return 0;
+                match vm::jit_cranelift::compile_and_call(chunk, nan_consts, &nan_args, &compiled) {
+                    Ok(result_bits) => {
+                        let result = vm::NanVal(result_bits).to_value();
+                        print_value(&result, explicit_json, suppress);
+                        return 0;
+                    }
+                    Err(vm::jit_cranelift::JitCallError::Runtime(e)) => {
+                        // The JIT executed and surfaced a defined runtime
+                        // error (e.g. `hd []`, `at xs 99`). Do NOT fall back
+                        // to the tree interpreter — it would hide the error
+                        // or, worse, run the program a second time and
+                        // produce divergent observable behaviour.
+                        report_diagnostic(
+                            &Diagnostic::from(&e).with_source(source.to_string()),
+                            mode,
+                        );
+                        return 1;
+                    }
+                    Err(vm::jit_cranelift::JitCallError::NotEligible) => {
+                        // JIT couldn't dispatch this function — fall through
+                        // to the tree interpreter as before.
+                    }
                 }
             }
         }
@@ -7099,7 +7127,13 @@ mod tests {
     fn run_cranelift_engine_basic_numeric() {
         let program = make_program("f x:n>n;*x 2");
         // This exercises the cranelift path; may succeed or fall through
-        let code = run_cranelift_engine(&program, &["f".to_string(), "5".to_string()], false);
+        let code = run_cranelift_engine(
+            &program,
+            &["f".to_string(), "5".to_string()],
+            "",
+            OutputMode::Text,
+            false,
+        );
         // Cranelift JIT may succeed (0) or fail (1) depending on platform
         assert!(code == 0 || code == 1);
     }
@@ -7110,6 +7144,8 @@ mod tests {
         let code = run_cranelift_engine(
             &program,
             &["nonexistent".to_string(), "5".to_string()],
+            "",
+            OutputMode::Text,
             false,
         );
         // Function not found → exit 1
