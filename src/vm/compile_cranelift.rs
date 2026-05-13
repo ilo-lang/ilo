@@ -108,6 +108,9 @@ struct HelperFuncs {
     recfld: FuncId,
     recfld_name: FuncId,
     recnew: FuncId,
+    recnew_empty: FuncId,
+    reccopy: FuncId,
+    recsetfield: FuncId,
     recwith: FuncId,
     listnew: FuncId,
     listget: FuncId,
@@ -279,6 +282,9 @@ fn declare_all_helpers(module: &mut ObjectModule) -> HelperFuncs {
         recfld: declare_helper(module, "jit_recfld", 2, 1),
         recfld_name: declare_helper(module, "jit_recfld_name", 3, 1),
         recnew: declare_helper(module, "jit_recnew", 4, 1),
+        recnew_empty: declare_helper(module, "jit_recnew_empty", 3, 1),
+        reccopy: declare_helper(module, "jit_reccopy", 3, 1),
+        recsetfield: declare_helper(module, "jit_recsetfield", 3, 0),
         recwith: declare_helper(module, "jit_recwith", 4, 1),
         listnew: declare_helper(module, "jit_listnew", 2, 1),
         listget: declare_helper(module, "jit_listget", 2, 1),
@@ -1016,13 +1022,13 @@ fn compile_function_body(
                 | OP_SRT | OP_SRTDESC | OP_SLC | OP_TAKE | OP_DROP | OP_SPL | OP_CAT | OP_GET
                 | OP_POST | OP_GETH | OP_POSTH | OP_GETMANY | OP_ENV | OP_JPTH | OP_JDMP
                 | OP_JPAR | OP_RDJL | OP_MAPNEW | OP_MGET | OP_MSET | OP_MDEL | OP_MKEYS
-                | OP_MVALS | OP_LISTNEW | OP_LISTAPPEND | OP_RECNEW | OP_RECWITH | OP_PRT
-                | OP_RD | OP_RDL | OP_WR | OP_WRL | OP_TRM | OP_UPR | OP_LWR | OP_CAP | OP_PADL
-                | OP_PADR | OP_CHR | OP_CHARS | OP_UNQ | OP_UNIQBY | OP_PARTITION | OP_FRQ
-                | OP_NUM | OP_RGXSUB | OP_ZIP | OP_ENUMERATE | OP_RANGE | OP_WINDOW | OP_CHUNKS
-                | OP_CUMSUM | OP_SETUNION | OP_SETINTER | OP_SETDIFF | OP_FFT | OP_IFFT
-                | OP_TRANSPOSE | OP_MATMUL | OP_INV | OP_SOLVE | OP_DTFMT | OP_DTPARSE
-                | OP_CALL_BUILTIN_TREE => {
+                | OP_MVALS | OP_LISTNEW | OP_LISTAPPEND | OP_RECNEW | OP_RECWITH
+                | OP_RECNEW_EMPTY | OP_RECCOPY | OP_PRT | OP_RD | OP_RDL | OP_WR | OP_WRL
+                | OP_TRM | OP_UPR | OP_LWR | OP_CAP | OP_PADL | OP_PADR | OP_CHR | OP_CHARS
+                | OP_UNQ | OP_UNIQBY | OP_PARTITION | OP_FRQ | OP_NUM | OP_RGXSUB | OP_ZIP
+                | OP_ENUMERATE | OP_RANGE | OP_WINDOW | OP_CHUNKS | OP_CUMSUM | OP_SETUNION
+                | OP_SETINTER | OP_SETDIFF | OP_FFT | OP_IFFT | OP_TRANSPOSE | OP_MATMUL
+                | OP_INV | OP_SOLVE | OP_DTFMT | OP_DTPARSE | OP_CALL_BUILTIN_TREE => {
                     non_num_write[a] = true;
                     non_bool_write[a] = true;
                 }
@@ -2619,6 +2625,54 @@ fn compile_function_body(
                     .call(fref, &[old_rec, indices_gv, n_updates_val, regs_ptr]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
+            }
+            // ── Record creation (oversized-literal fallback) ──
+            OP_RECNEW_EMPTY => {
+                // Companion to OP_RECNEW for the fallback path the compiler
+                // emits when the consecutive-register layout would exceed
+                // the 255-reg frame ceiling. Cold path → simple helper call.
+                let type_id = (inst & 0xFFFF) as i64;
+                let fref_arena = get_func_ref(&mut builder, module, helpers.get_arena_ptr);
+                let arena_call = builder.ins().call(fref_arena, &[]);
+                let arena_ptr_val = builder.inst_results(arena_call)[0];
+                let fref_reg = get_func_ref(&mut builder, module, helpers.get_registry_ptr);
+                let reg_call = builder.ins().call(fref_reg, &[]);
+                let registry_ptr_val = builder.inst_results(reg_call)[0];
+                let type_id_val = builder.ins().iconst(I64, type_id);
+                let fref = get_func_ref(&mut builder, module, helpers.recnew_empty);
+                let call_inst = builder
+                    .ins()
+                    .call(fref, &[arena_ptr_val, type_id_val, registry_ptr_val]);
+                let result = builder.inst_results(call_inst)[0];
+                builder.def_var(vars[a_idx], result);
+            }
+            // ── Record copy (oversized-with fallback) ──
+            OP_RECCOPY => {
+                let b_idx = ((inst >> 8) & 0xFF) as usize;
+                let src = builder.use_var(vars[b_idx]);
+                let fref_arena = get_func_ref(&mut builder, module, helpers.get_arena_ptr);
+                let arena_call = builder.ins().call(fref_arena, &[]);
+                let arena_ptr_val = builder.inst_results(arena_call)[0];
+                let fref_reg = get_func_ref(&mut builder, module, helpers.get_registry_ptr);
+                let reg_call = builder.ins().call(fref_reg, &[]);
+                let registry_ptr_val = builder.inst_results(reg_call)[0];
+                let fref = get_func_ref(&mut builder, module, helpers.reccopy);
+                let call_inst = builder
+                    .ins()
+                    .call(fref, &[src, arena_ptr_val, registry_ptr_val]);
+                let result = builder.inst_results(call_inst)[0];
+                builder.def_var(vars[a_idx], result);
+            }
+            // ── Record set-field (in-place mutate, freshly-allocated only) ──
+            OP_RECSETFIELD => {
+                let b_idx = ((inst >> 8) & 0xFF) as usize;
+                let c = (inst & 0xFF) as i64;
+                let rec_val = builder.use_var(vars[a_idx]);
+                let val_val = builder.use_var(vars[b_idx]);
+                let idx_val = builder.ins().iconst(I64, c);
+                let fref = get_func_ref(&mut builder, module, helpers.recsetfield);
+                builder.ins().call(fref, &[rec_val, val_val, idx_val]);
+                // No result — R[A] still points to the same (now-mutated) record.
             }
             // ── List creation ──
             OP_LISTNEW => {

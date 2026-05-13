@@ -115,6 +115,9 @@ struct HelperFuncs {
     recfld: FuncId,
     recfld_name: FuncId,
     recnew: FuncId,
+    recnew_empty: FuncId,
+    reccopy: FuncId,
+    recsetfield: FuncId,
     recwith: FuncId,
     recwith_arena: FuncId,
     listnew: FuncId,
@@ -279,6 +282,9 @@ fn register_helpers(builder: &mut JITBuilder) {
         ("jit_recfld", jit_recfld as *const u8),
         ("jit_recfld_name", jit_recfld_name as *const u8),
         ("jit_recnew", jit_recnew as *const u8),
+        ("jit_recnew_empty", jit_recnew_empty as *const u8),
+        ("jit_reccopy", jit_reccopy as *const u8),
+        ("jit_recsetfield", jit_recsetfield as *const u8),
         ("jit_recwith", jit_recwith as *const u8),
         ("jit_recwith_arena", jit_recwith_arena as *const u8),
         ("jit_listnew", jit_listnew as *const u8),
@@ -428,6 +434,9 @@ fn declare_all_helpers(module: &mut JITModule) -> HelperFuncs {
         recfld: declare_helper(module, "jit_recfld", 2, 1),
         recfld_name: declare_helper(module, "jit_recfld_name", 3, 1),
         recnew: declare_helper(module, "jit_recnew", 4, 1),
+        recnew_empty: declare_helper(module, "jit_recnew_empty", 3, 1),
+        reccopy: declare_helper(module, "jit_reccopy", 3, 1),
+        recsetfield: declare_helper(module, "jit_recsetfield", 3, 0),
         recwith: declare_helper(module, "jit_recwith", 4, 1),
         recwith_arena: declare_helper(module, "jit_recwith_arena", 5, 1),
         listnew: declare_helper(module, "jit_listnew", 2, 1),
@@ -1052,7 +1061,7 @@ fn compile_function_body(
                 | OP_ENV | OP_JPTH | OP_JDMP | OP_JPAR | OP_RDJL
                 | OP_MAPNEW | OP_MGET | OP_MSET | OP_MDEL | OP_MKEYS | OP_MVALS
                 | OP_LISTNEW | OP_LISTAPPEND
-                | OP_RECNEW | OP_RECWITH
+                | OP_RECNEW | OP_RECWITH | OP_RECNEW_EMPTY | OP_RECCOPY
                 | OP_PRT | OP_RD | OP_RDL | OP_WR | OP_WRL | OP_TRM | OP_UPR | OP_LWR | OP_CAP
                 | OP_PADL | OP_PADR | OP_CHR | OP_CHARS | OP_UNQ | OP_UNIQBY | OP_PARTITION | OP_FRQ | OP_NUM
                 | OP_RGXSUB | OP_TRANSPOSE | OP_MATMUL | OP_DTFMT | OP_DTPARSE
@@ -3078,6 +3087,56 @@ fn compile_function_body(
                     let result = builder.inst_results(call_inst)[0];
                     builder.def_var(vars[a_idx], result);
                 }
+            }
+            OP_RECNEW_EMPTY => {
+                // Fallback emission for oversized record literals. The fast
+                // path (OP_RECNEW above) inlines the arena bump; this path
+                // is cold (only fires on records with >127 fields or lots
+                // of preceding locals) so a simple helper call is fine.
+                let type_id = (inst & 0xFFFF) as i64;
+                let arena_ptr_val = builder.ins().iconst(I64, jit_arena_ptr() as i64);
+                let type_id_val = builder.ins().iconst(I64, type_id);
+                let registry_ptr_val = builder
+                    .ins()
+                    .iconst(I64, &program.type_registry as *const TypeRegistry as i64);
+                let fref = get_func_ref(&mut builder, module, helpers.recnew_empty);
+                let call_inst = builder
+                    .ins()
+                    .call(fref, &[arena_ptr_val, type_id_val, registry_ptr_val]);
+                let result = builder.inst_results(call_inst)[0];
+                builder.def_var(vars[a_idx], result);
+            }
+            OP_RECCOPY => {
+                // R[A] = fresh clone of R[B]. Companion to OP_RECNEW_EMPTY
+                // for the oversized-with fallback. Same cold-path rationale
+                // as RECNEW_EMPTY: helper call rather than inlined.
+                let b_idx = ((inst >> 8) & 0xFF) as usize;
+                let src = builder.use_var(vars[b_idx]);
+                let arena_ptr_val = builder.ins().iconst(I64, jit_arena_ptr() as i64);
+                let registry_ptr_val = builder
+                    .ins()
+                    .iconst(I64, &program.type_registry as *const TypeRegistry as i64);
+                let fref = get_func_ref(&mut builder, module, helpers.reccopy);
+                let call_inst = builder
+                    .ins()
+                    .call(fref, &[src, arena_ptr_val, registry_ptr_val]);
+                let result = builder.inst_results(call_inst)[0];
+                builder.def_var(vars[a_idx], result);
+            }
+            OP_RECSETFIELD => {
+                // R[A].field[C] = R[B], in place. Only emitted against
+                // freshly-allocated records (rc=1, no aliasing), so the
+                // helper does no defensive RC dance — see the SAFETY
+                // comment on OP_RECSETFIELD in src/vm/mod.rs.
+                let b_idx = ((inst >> 8) & 0xFF) as usize;
+                let c = (inst & 0xFF) as i64;
+                let rec_val = builder.use_var(vars[a_idx]);
+                let val_val = builder.use_var(vars[b_idx]);
+                let idx_val = builder.ins().iconst(I64, c);
+                let fref = get_func_ref(&mut builder, module, helpers.recsetfield);
+                builder.ins().call(fref, &[rec_val, val_val, idx_val]);
+                // No result — the record at R[A] is mutated in place; the
+                // var still holds the same NanVal so we don't redefine it.
             }
             OP_LISTNEW => {
                 let n = (inst & 0xFFFF) as usize;
