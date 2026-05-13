@@ -1,0 +1,36 @@
+-- Zero-arg fn invocation `name()` works in every operand position, not just
+-- at statement head / RHS of assignment. Lets a zero-arg fn act as a
+-- "module-level constant" — bind once, call from anywhere — without inventing
+-- a sentinel `z:n` arg. Bare `name` (without `()`) stays a fn-ref so HOF args
+-- still work; only the explicit `()` triggers invocation.
+
+-- Module-level constant: zero-arg fn returning a fresh list each call.
+xs>L n;[10 20 30]
+
+-- 1. Top-level assignment / RHS position. Baseline (already worked).
+take-list>L n;cx=xs();cx
+
+-- 2. Call-arg position: builtin's operand is `xs()`.
+list-len>n;len xs()
+
+-- 3. Index-style position: `at xs() 0` — zero-arg call as first arg.
+first-elem>n;at xs() 0
+
+-- 4. Loop subject: `@v xs(){...}` iterates the freshly-built list each entry.
+sum-via-loop>n;t=0;@v xs(){t=+t v};t
+
+-- 5. Auto-unwrap zero-arg call `fetch!()` in operand position
+--    (SPEC.md:843 documents the `!()` form).
+fetch>R t t;~"ok"
+unwrap-len>R n t;~len fetch!()
+
+-- run: take-list
+-- out: [10, 20, 30]
+-- run: list-len
+-- out: 3
+-- run: first-elem
+-- out: 10
+-- run: sum-via-loop
+-- out: 60
+-- run: unwrap-len
+-- out: ~2

@@ -2196,6 +2196,44 @@ impl Parser {
                         unwrap: false,
                     });
                 }
+                // Zero-arg call in operand position: `name()` and `name!()`.
+                // Mirrors the statement-head handling in `parse_call_or_atom`
+                // so `len xs()`, `@v xs(){...}`, `map dbl xs()`, `hd xs()`,
+                // `at xs() 0` all parse as `Call { args: [] }` instead of
+                // leaving the bare Ref behind and then choking on the LParen.
+                // SPEC.md:16 and :843 already document `make-id()` / `fetch!()`.
+                let unwrap_bang = self.peek() == Some(&Token::Bang) && {
+                    let prev = self.prev_span();
+                    let bang = self.peek_span();
+                    // Adjacent if spans are real (non-zero) and contiguous —
+                    // distinguish `name!()` (unwrap zero-arg call) from
+                    // `name !x` (call with NOT arg). Identical rule to 1789-1797.
+                    prev.end > 0 && bang.start == prev.end
+                };
+                if unwrap_bang
+                    && self.token_at(self.pos + 1) == Some(&Token::LParen)
+                    && self.token_at(self.pos + 2) == Some(&Token::RParen)
+                {
+                    self.advance(); // !
+                    self.advance(); // (
+                    self.advance(); // )
+                    return Ok(Expr::Call {
+                        function: name,
+                        args: vec![],
+                        unwrap: true,
+                    });
+                }
+                if self.peek() == Some(&Token::LParen)
+                    && self.token_at(self.pos + 1) == Some(&Token::RParen)
+                {
+                    self.advance(); // (
+                    self.advance(); // )
+                    return Ok(Expr::Call {
+                        function: name,
+                        args: vec![],
+                        unwrap: false,
+                    });
+                }
                 // Check for field access chain: ident.field.field...
                 let mut expr = Expr::Ref(name);
                 while matches!(self.peek(), Some(Token::Dot) | Some(Token::DotQuestion)) {
@@ -6965,5 +7003,142 @@ mod tests {
         assert!(matches!(&items[0], Expr::Ok(_)));
         assert!(matches!(&items[1], Expr::Err(_)));
         assert!(matches!(&items[2], Expr::Ok(_)));
+    }
+
+    // Zero-arg call `name()` and `name!()` must parse in every operand
+    // position, not just at statement head. See `parse_atom` Ident arm and
+    // SPEC.md:16 / SPEC.md:843. Regression for routing-tsp friction #3.
+
+    fn last_fn_body(prog: &Program) -> &[Spanned<Stmt>] {
+        let decl = prog
+            .declarations
+            .iter()
+            .rev()
+            .find(|d| matches!(d, Decl::Function { .. }))
+            .expect("expected at least one function decl");
+        let Decl::Function { body, .. } = decl else {
+            unreachable!()
+        };
+        body
+    }
+
+    /// Extract the args of the outermost Call on the first statement of the
+    /// last function in `prog`. Statement can be Expr or Let — either works.
+    fn first_stmt_outer_call_args(prog: &Program) -> Vec<Expr> {
+        let body = last_fn_body(prog);
+        let expr = match &body[0].node {
+            Stmt::Expr(e) => e,
+            Stmt::Let { value, .. } => value,
+            Stmt::Return(e) => e,
+            other => panic!("unexpected first stmt: {:?}", other),
+        };
+        match expr {
+            Expr::Call { args, .. } => args.clone(),
+            other => panic!("expected Call expr, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn zero_arg_call_as_builtin_arg() {
+        // `len xs()` must parse as `len(xs())`, not as `len xs` + dangling `()`.
+        let prog = parse_str("xs>L n;[1 2 3]\nf>n;len xs()");
+        let args = first_stmt_outer_call_args(&prog);
+        assert_eq!(args.len(), 1);
+        match &args[0] {
+            Expr::Call {
+                function,
+                args,
+                unwrap,
+            } => {
+                assert_eq!(function, "xs");
+                assert!(args.is_empty());
+                assert!(!unwrap);
+            }
+            other => panic!("expected zero-arg Call for xs(), got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn zero_arg_call_as_hof_collection_arg() {
+        // `map dbl xs()` — last arg of a HOF is the operand path.
+        let prog = parse_str("xs>L n;[1 2 3]\ndbl x:n>n;* x 2\nf>L n;map dbl xs()");
+        let args = first_stmt_outer_call_args(&prog);
+        assert_eq!(args.len(), 2);
+        assert!(matches!(&args[0], Expr::Ref(n) if n == "dbl"));
+        match &args[1] {
+            Expr::Call { function, args, .. } => {
+                assert_eq!(function, "xs");
+                assert!(args.is_empty());
+            }
+            other => panic!("expected xs() Call, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn zero_arg_call_as_loop_subject() {
+        // `@v xs(){...}` — loop subject goes through parse_operand → parse_atom.
+        let prog = parse_str("xs>L n;[1 2 3]\nf>n;t=0;@v xs(){t=+t v};t");
+        let body = last_fn_body(&prog);
+        let foreach = body
+            .iter()
+            .find_map(|s| match &s.node {
+                Stmt::ForEach { collection, .. } => Some(collection),
+                _ => None,
+            })
+            .expect("expected ForEach stmt");
+        match foreach {
+            Expr::Call { function, args, .. } => {
+                assert_eq!(function, "xs");
+                assert!(args.is_empty());
+            }
+            other => panic!("expected xs() Call in loop subject, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn zero_arg_unwrap_call_in_operand_position() {
+        // `len fetch!()` — `name!()` must work in operand position too.
+        // SPEC.md:843 documents `fetch!()` for the auto-unwrap form.
+        let prog = parse_str("fetch>R t t;~\"hi\"\nf>R n t;~len fetch!()");
+        let body = last_fn_body(&prog);
+        // Body is `Expr(Ok(Call(len, [Call(fetch, [], unwrap=true)])))`.
+        let expr = match &body[0].node {
+            Stmt::Expr(e) => e,
+            Stmt::Return(e) => e,
+            other => panic!("expected Expr/Return stmt, got {:?}", other),
+        };
+        let ok_inner = match expr {
+            Expr::Ok(inner) => inner.as_ref(),
+            other => panic!("expected Ok wrapper, got {:?}", other),
+        };
+        let len_args = match ok_inner {
+            Expr::Call { function, args, .. } if function == "len" => args,
+            other => panic!("expected len Call, got {:?}", other),
+        };
+        assert_eq!(len_args.len(), 1);
+        match &len_args[0] {
+            Expr::Call {
+                function,
+                args,
+                unwrap,
+            } => {
+                assert_eq!(function, "fetch");
+                assert!(args.is_empty());
+                assert!(*unwrap, "expected unwrap=true for fetch!()");
+            }
+            other => panic!("expected fetch!() Call, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn bare_ident_still_parses_as_ref_for_hof_arg() {
+        // Make sure the fix doesn't regress the HOF fn-ref path:
+        // `map dbl xs` keeps `dbl` as Ref so the verifier can resolve it to
+        // a function reference. Only the trailing `()` triggers a Call.
+        let prog = parse_str("dbl x:n>n;* x 2\nf xs:L n>L n;map dbl xs");
+        let args = first_stmt_outer_call_args(&prog);
+        assert_eq!(args.len(), 2);
+        assert!(matches!(&args[0], Expr::Ref(n) if n == "dbl"));
+        assert!(matches!(&args[1], Expr::Ref(n) if n == "xs"));
     }
 }
