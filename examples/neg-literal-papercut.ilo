@@ -1,0 +1,41 @@
+-- `-0 v` (no space) used to lex as `Number(-0)` + stray `Ref(v)` and silently
+-- produced wrong results. Six+ personas hit this writing numerical formulas
+-- where "0 minus x" is the natural unary-negation idiom. Now `-0` glued to a
+-- following expression at a fresh-expression position splits into `Minus` +
+-- `Number(0)` so the parser reads it as binary subtract.
+--
+-- The fix is gated on the *preceding* token so call-arg negative literals
+-- (`at xs -1`, `+a -3`, `into -3 0 10`) keep their meaning. See
+-- `examples/negative-after-op.ilo` for the keep-literal pairings.
+
+-- The canonical bug: unary-negate-by-subtract-from-zero at statement position.
+ab x:n>n;-0 x
+
+-- Same shape inside a function body after a `;` separator.
+absp p:L _>n;v=p.1;-0 v
+
+-- Same shape on the rhs of an assignment.
+diff a:n b:n>n;r=-a b;r
+
+-- Same shape inside a braced block (function body / conditional arm).
+zarm c:n>n;<c 0{-0 c}{c}
+
+-- Same shape inside a parenthesised expression (safe-ending wrap).
+neg n:n>n;(-0 n)
+
+-- run: ab -7
+-- out: 7
+-- run: ab 7
+-- out: -7
+-- run: absp [10,3]
+-- out: -3
+-- run: diff 5 2
+-- out: 3
+-- run: zarm -4
+-- out: 4
+-- run: zarm 6
+-- out: 6
+-- run: neg 9
+-- out: -9
+-- run: neg -2
+-- out: 2
