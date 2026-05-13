@@ -176,6 +176,14 @@ pub enum Token {
 /// - `\n` followed by whitespace (indented continuation) → `;`
 /// - `\n` at column 0 (new declaration) → kept as `\n`
 /// - `;` immediately after `{` or before `}` → removed
+/// - Inside `(...)` or `[...]` (list literal, paren-group, fn-call arg list),
+///   `\n` is treated as whitespace: no `;` is emitted, so multi-line list and
+///   paren expressions parse correctly. String literals are walked through so
+///   `(`/`[` inside text don't affect depth.
+/// - Continuation lines starting with `>>` (pipe operator) suppress the `;`
+///   so `xs\n  >>map{...}` chains correctly. `>>` is never a valid statement
+///   start, so this is unambiguous. Other operators (`+`, `-`, `*`, ...) are
+///   valid prefix-call statement heads and are NOT special-cased.
 pub fn normalize_newlines(source: &str) -> String {
     if !source.contains('\n') {
         return source.to_string();
@@ -185,13 +193,17 @@ pub fn normalize_newlines(source: &str) -> String {
     let mut chars = source.chars().peekable();
     // Track the last non-whitespace char pushed to `out` to avoid O(n) trim_end scans.
     let mut last_significant: Option<char> = None;
+    // Depth of open `(` and `[` we're currently inside. `{` is tracked
+    // separately by `last_significant` (existing precedent).
+    let mut bracket_depth: u32 = 0;
 
     while let Some(c) = chars.next() {
         if c == '"' {
             // Pass through string literal content verbatim so `--` inside a
-            // string isn't mistaken for a comment, and so `\n` (if ever present
-            // inside a string) isn't rewritten to `;`. Mirrors logos's string
-            // regex: closing quote terminates unless escaped.
+            // string isn't mistaken for a comment, `\n` (if ever present
+            // inside a string) isn't rewritten to `;`, and `(`/`[` inside
+            // text don't bump bracket depth. Mirrors logos's string regex:
+            // closing quote terminates unless escaped.
             out.push(c);
             last_significant = Some(c);
             while let Some(sc) = chars.next() {
@@ -223,14 +235,41 @@ pub fn normalize_newlines(source: &str) -> String {
             // surrounding `\n` handling on the next loop iteration emits the
             // appropriate `;` or newline based on the line that follows.
         } else if c == '\n' {
+            // Inside `(...)` or `[...]`, treat newlines as whitespace —
+            // don't emit `;` or `\n`, but emit a single space so tokens on
+            // adjacent lines don't get glued together (e.g. `(+x\n  1)`
+            // must not become `(+x1)`). Then skip indent on the next line.
+            if bracket_depth > 0 {
+                out.push(' ');
+                while matches!(chars.peek(), Some(' ') | Some('\t')) {
+                    chars.next();
+                }
+                continue;
+            }
             // Check if next line is indented (starts with space or tab)
             if matches!(chars.peek(), Some(' ') | Some('\t')) {
+                // Peek past indent at the first real char on the next line
+                // so we can decide whether to emit a `;` before it.
+                let mut lookahead = chars.clone();
+                while matches!(lookahead.peek(), Some(' ') | Some('\t')) {
+                    lookahead.next();
+                }
+                // `>>` (pipe operator) at the start of a continuation line is
+                // never a statement start — it must be chaining the previous
+                // line's expression. Suppress the `;` so the chain parses.
+                // Other operators (`+`/`-`/`*`) are valid prefix-call
+                // statement starts and must NOT trigger this.
+                let next_is_pipe = {
+                    let mut probe = lookahead.clone();
+                    probe.next() == Some('>') && probe.next() == Some('>')
+                };
                 // Indented continuation → emit `;` and skip the whitespace
                 // But first check if the last non-whitespace char was `{` — if so, skip the `;`
                 // Also skip if `out` already ends in `;` (e.g. previous line
-                // was a comment that produced no significant output).
-                if last_significant == Some('{') || out.ends_with(';') {
-                    // Don't emit `;` after `{` or an existing `;`, just skip whitespace
+                // was a comment that produced no significant output), or if
+                // the continuation begins with `>>` (pipe chain).
+                if last_significant == Some('{') || out.ends_with(';') || next_is_pipe {
+                    // Don't emit `;`
                 } else {
                     out.push(';');
                 }
@@ -253,6 +292,13 @@ pub fn normalize_newlines(source: &str) -> String {
             out.push(c);
             if !c.is_ascii_whitespace() {
                 last_significant = Some(c);
+            }
+            match c {
+                '(' | '[' => bracket_depth += 1,
+                ')' | ']' => {
+                    bracket_depth = bracket_depth.saturating_sub(1);
+                }
+                _ => {}
             }
         }
     }
