@@ -3535,13 +3535,13 @@ fn parse_cli_arg(s: &str) -> interpreter::Value {
     if s.starts_with('[') && s.ends_with(']') {
         let inner = s[1..s.len() - 1].trim();
         if inner.is_empty() {
-            return interpreter::Value::List(vec![]);
+            return interpreter::Value::List(std::sync::Arc::new(vec![]));
         }
-        let items = split_top_level_commas(inner)
+        let items: Vec<interpreter::Value> = split_top_level_commas(inner)
             .into_iter()
             .map(|part| parse_cli_arg(part.trim()))
             .collect();
-        return interpreter::Value::List(items);
+        return interpreter::Value::List(std::sync::Arc::new(items));
     }
     // Quoted string: strip surrounding double quotes and treat as text.
     // This preserves the raw contents (no escape decoding) which mirrors how
@@ -3551,11 +3551,11 @@ fn parse_cli_arg(s: &str) -> interpreter::Value {
     }
     // Bare comma list: 1,2,3
     if s.contains(',') {
-        let items = split_top_level_commas(s)
+        let items: Vec<interpreter::Value> = split_top_level_commas(s)
             .into_iter()
             .map(|part| parse_cli_arg(part.trim()))
             .collect();
-        return interpreter::Value::List(items);
+        return interpreter::Value::List(std::sync::Arc::new(items));
     }
     if s == "nil" {
         return interpreter::Value::Nil;
@@ -3640,7 +3640,7 @@ fn parse_cli_args_typed(
             if matches!(expected, Some(ast::Type::List(_)))
                 && !matches!(&v, interpreter::Value::List(_))
             {
-                v = interpreter::Value::List(vec![v]);
+                v = interpreter::Value::List(std::sync::Arc::new(vec![v]));
             }
             v
         })
@@ -3671,7 +3671,7 @@ fn coerce_cli_args(
         if matches!(&param.ty, ast::Type::List(_))
             && !matches!(&args[i], interpreter::Value::List(_))
         {
-            args[i] = interpreter::Value::List(vec![args[i].clone()]);
+            args[i] = interpreter::Value::List(std::sync::Arc::new(vec![args[i].clone()]));
         }
     }
     args
@@ -3682,6 +3682,7 @@ fn coerce_cli_args(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
 
     // ── test helpers ──────────────────────────────────────────────────────────
 
@@ -3775,28 +3776,31 @@ mod tests {
     fn cli_arg_bracketed_list() {
         assert_eq!(
             parse_cli_arg("[1,2,3]"),
-            interpreter::Value::List(vec![
+            interpreter::Value::List(Arc::new(vec![
                 interpreter::Value::Number(1.0),
                 interpreter::Value::Number(2.0),
                 interpreter::Value::Number(3.0),
-            ])
+            ]))
         );
     }
 
     #[test]
     fn cli_arg_empty_bracketed_list() {
-        assert_eq!(parse_cli_arg("[]"), interpreter::Value::List(vec![]));
+        assert_eq!(
+            parse_cli_arg("[]"),
+            interpreter::Value::List(Arc::new(vec![]))
+        );
     }
 
     #[test]
     fn cli_arg_comma_list() {
         assert_eq!(
             parse_cli_arg("1,2,3"),
-            interpreter::Value::List(vec![
+            interpreter::Value::List(Arc::new(vec![
                 interpreter::Value::Number(1.0),
                 interpreter::Value::Number(2.0),
                 interpreter::Value::Number(3.0),
-            ])
+            ]))
         );
     }
 
@@ -3804,11 +3808,11 @@ mod tests {
     fn cli_arg_mixed_comma_list() {
         assert_eq!(
             parse_cli_arg("1,hello,true"),
-            interpreter::Value::List(vec![
+            interpreter::Value::List(Arc::new(vec![
                 interpreter::Value::Number(1.0),
                 interpreter::Value::Text("hello".into()),
                 interpreter::Value::Bool(true),
-            ])
+            ]))
         );
     }
 
@@ -4617,10 +4621,10 @@ mod tests {
 
     #[test]
     fn print_value_list_as_json() {
-        let val = interpreter::Value::List(vec![
+        let val = interpreter::Value::List(Arc::new(vec![
             interpreter::Value::Number(1.0),
             interpreter::Value::Number(2.0),
-        ]);
+        ]));
         print_value(&val, true, false);
     }
 
@@ -4842,9 +4846,9 @@ mod tests {
         let coerced = coerce_cli_args(&program, Some("f"), args);
         assert_eq!(
             coerced,
-            vec![interpreter::Value::List(vec![interpreter::Value::Number(
-                10.0
-            )])]
+            vec![interpreter::Value::List(Arc::new(vec![
+                interpreter::Value::Number(10.0)
+            ]))]
         );
     }
 
@@ -4865,10 +4869,10 @@ mod tests {
             })
             .collect();
         let (program, _) = crate::parser::parse(spans);
-        let args = vec![interpreter::Value::List(vec![
+        let args = vec![interpreter::Value::List(Arc::new(vec![
             interpreter::Value::Number(1.0),
             interpreter::Value::Number(2.0),
-        ])];
+        ]))];
         let coerced = coerce_cli_args(&program, Some("f"), args.clone());
         assert_eq!(coerced, args);
     }
@@ -4921,7 +4925,7 @@ mod tests {
         assert_eq!(
             coerced,
             vec![
-                interpreter::Value::List(vec![interpreter::Value::Number(5.0)]),
+                interpreter::Value::List(Arc::new(vec![interpreter::Value::Number(5.0)])),
                 interpreter::Value::Number(3.0),
             ]
         );
@@ -4983,9 +4987,9 @@ mod tests {
         let parsed = parse_cli_args_typed(&program, Some("f"), &raw);
         assert_eq!(
             parsed,
-            vec![interpreter::Value::List(vec![interpreter::Value::Number(
-                10.0
-            )])]
+            vec![interpreter::Value::List(Arc::new(vec![
+                interpreter::Value::Number(10.0)
+            ]))]
         );
     }
 
@@ -5164,10 +5168,10 @@ mod tests {
 
     #[test]
     fn print_value_list_plain_not_json() {
-        let val = interpreter::Value::List(vec![
+        let val = interpreter::Value::List(Arc::new(vec![
             interpreter::Value::Number(1.0),
             interpreter::Value::Text("x".into()),
-        ]);
+        ]));
         print_value(&val, false, false);
     }
 

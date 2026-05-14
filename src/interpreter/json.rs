@@ -96,7 +96,7 @@ impl Value {
             serde_json::Value::Array(arr) => {
                 let items: Result<Vec<_>, _> =
                     arr.iter().map(|v| Value::from_json(v, None)).collect();
-                Ok(Value::List(items?))
+                Ok(Value::List(std::sync::Arc::new(items?)))
             }
             serde_json::Value::Object(map) => {
                 // `{"ok": ...}` → Value::Ok(...)
@@ -129,6 +129,7 @@ impl Value {
 mod tests {
     use super::*;
     use serde_json::json;
+    use std::sync::Arc;
 
     // ── to_json ─────────────────────────────────────────────────────────
 
@@ -175,7 +176,10 @@ mod tests {
 
     #[test]
     fn to_json_list() {
-        let v = Value::List(vec![Value::Number(1.0), Value::Text("a".to_string())]);
+        let v = Value::List(Arc::new(vec![
+            Value::Number(1.0),
+            Value::Text("a".to_string()),
+        ]));
         assert_eq!(v.to_json().unwrap(), json!([1, "a"]));
     }
 
@@ -241,11 +245,11 @@ mod tests {
         let v = Value::from_json(&json!([1, 2, 3]), None).unwrap();
         assert_eq!(
             v,
-            Value::List(vec![
+            Value::List(Arc::new(vec![
                 Value::Number(1.0),
                 Value::Number(2.0),
                 Value::Number(3.0)
-            ])
+            ]))
         );
     }
 
@@ -321,10 +325,10 @@ mod tests {
 
     #[test]
     fn round_trip_list_of_text() {
-        let v = Value::List(vec![
+        let v = Value::List(Arc::new(vec![
             Value::Text("a".to_string()),
             Value::Text("b".to_string()),
-        ]);
+        ]));
         let j = v.to_json().unwrap();
         let back = Value::from_json(&j, None).unwrap();
         assert_eq!(back, v);

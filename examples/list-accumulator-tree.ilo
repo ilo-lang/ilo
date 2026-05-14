@@ -1,0 +1,29 @@
+-- Demonstrates the tree-walker list-append accumulator fast path.
+--
+-- Phase 2b.2 (this commit's parent PR) makes `Value::List` RC-aware via
+-- `Arc<Vec<Value>>` and adds an eval_stmt peephole for the self-rebind
+-- shapes `xs = +=xs v` and `xs = xs + ys`. With refcount=1 the peephole
+-- calls `Arc::make_mut` and mutates the inner Vec in place, so the loop
+-- below runs in O(n) instead of O(n²).
+--
+-- Mirror of the Phase 2b.1 Map fast path (PR #261).
+
+-- The canonical accumulator: build [0, 1, 2, ..., n-1] one element at a time.
+-- Pre-Phase-2b.2 the tree engine cloned the whole Vec on every iteration.
+-- After the fix it mutates in place because env's `xs` is the sole holder.
+build-range n:n>n;xs=[];@i 0..n{xs=+=xs i};len xs
+
+-- Concat self-rebind: same fast path via `+` on two lists.
+build-by-concat n:n>n;xs=[];@i 0..n{xs=+xs [i]};len xs
+
+-- Aliased concat must NOT use the fast path. `xs = +xs xs` reads `xs` after
+-- env.take() would have replaced it with Nil, so the peephole bails out and
+-- the general cloning path doubles the list correctly.
+self-double>n;xs=[1,2,3];xs=+xs xs;len xs
+
+-- run: build-range 50
+-- out: 50
+-- run: build-by-concat 20
+-- out: 20
+-- run: self-double
+-- out: 6

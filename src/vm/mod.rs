@@ -3076,20 +3076,20 @@ impl RegCompiler {
 
                     // Store as constant: indices (numbers) for resolved, names (strings) for unresolved
                     let const_val = if all_resolved {
-                        Value::List(
+                        Value::List(std::sync::Arc::new(
                             update_indices
                                 .iter()
                                 .map(|i| Value::Number(i.unwrap() as f64))
                                 .collect(),
-                        )
+                        ))
                     } else {
                         // Fallback: store field names for runtime resolution
-                        Value::List(
+                        Value::List(std::sync::Arc::new(
                             updates
                                 .iter()
                                 .map(|(n, _)| Value::Text(n.clone()))
                                 .collect(),
-                        )
+                        ))
                     };
                     let const_idx = self.current.add_const_raw(const_val);
 
@@ -3876,9 +3876,9 @@ impl NanVal {
                 );
                 match self.as_heap_ref() {
                     HeapObj::Str(s) => Value::Text(s.clone()),
-                    HeapObj::List(items) => {
-                        Value::List(items.iter().map(|v| v.to_value()).collect())
-                    }
+                    HeapObj::List(items) => Value::List(std::sync::Arc::new(
+                        items.iter().map(|v| v.to_value()).collect(),
+                    )),
                     HeapObj::Map(m) => Value::Map(std::sync::Arc::new(
                         m.iter().map(|(k, v)| (k.clone(), v.to_value())).collect(),
                     )),
@@ -12868,6 +12868,7 @@ mod tests {
     use super::*;
     use crate::lexer;
     use crate::parser;
+    use std::sync::Arc;
 
     static ENV_TEST_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
@@ -13169,11 +13170,11 @@ mod tests {
         let result = vm_run(source, Some("f"), vec![]);
         assert_eq!(
             result,
-            Value::List(vec![
+            Value::List(Arc::new(vec![
                 Value::Number(1.0),
                 Value::Number(2.0),
                 Value::Number(3.0),
-            ])
+            ]))
         );
     }
 
@@ -13423,11 +13424,11 @@ mod tests {
         let source = "f>L n;xs=[1, 2];+=xs 3";
         assert_eq!(
             vm_run(source, Some("f"), vec![]),
-            Value::List(vec![
+            Value::List(Arc::new(vec![
                 Value::Number(1.0),
                 Value::Number(2.0),
                 Value::Number(3.0)
-            ])
+            ]))
         );
     }
 
@@ -13436,7 +13437,7 @@ mod tests {
         let source = "f>L n;xs=[];+=xs 42";
         assert_eq!(
             vm_run(source, Some("f"), vec![]),
-            Value::List(vec![Value::Number(42.0)])
+            Value::List(Arc::new(vec![Value::Number(42.0)]))
         );
     }
 
@@ -13445,12 +13446,12 @@ mod tests {
         let source = "f>L n;a=[1, 2];b=[3, 4];+a b";
         assert_eq!(
             vm_run(source, Some("f"), vec![]),
-            Value::List(vec![
+            Value::List(Arc::new(vec![
                 Value::Number(1.0),
                 Value::Number(2.0),
                 Value::Number(3.0),
                 Value::Number(4.0)
-            ])
+            ]))
         );
     }
 
@@ -13459,7 +13460,7 @@ mod tests {
         let source = "f>L n;a=[1, 2];b=[];+a b";
         assert_eq!(
             vm_run(source, Some("f"), vec![]),
-            Value::List(vec![Value::Number(1.0), Value::Number(2.0)])
+            Value::List(Arc::new(vec![Value::Number(1.0), Value::Number(2.0)]))
         );
     }
 
@@ -14012,11 +14013,11 @@ mod tests {
         let source = "f>L n;xs=[10, 20, 30];@x xs{x};xs";
         assert_eq!(
             vm_run(source, Some("f"), vec![]),
-            Value::List(vec![
+            Value::List(Arc::new(vec![
                 Value::Number(10.0),
                 Value::Number(20.0),
                 Value::Number(30.0)
-            ])
+            ]))
         );
     }
 
@@ -14196,7 +14197,7 @@ mod tests {
         let source = "f>L n;xs=[1, 2];ys=[3];|xs ys";
         assert_eq!(
             vm_run(source, Some("f"), vec![]),
-            Value::List(vec![Value::Number(1.0), Value::Number(2.0)])
+            Value::List(Arc::new(vec![Value::Number(1.0), Value::Number(2.0)]))
         );
     }
 
@@ -14761,7 +14762,7 @@ mod tests {
         // OP_ADD: both heap but not both lists (list+ok) → type error
         // Declare params as list type to avoid NN/SS specialisations, pass list+ok at runtime.
         let source = "f x:L n y:L n>L n;+x y";
-        let list = Value::List(vec![Value::Number(1.0)]);
+        let list = Value::List(Arc::new(vec![Value::Number(1.0)]));
         let ok_val = Value::Ok(Box::new(Value::Number(1.0)));
         let err = vm_run_err(source, Some("f"), vec![list, ok_val]);
         assert!(err.contains("cannot add"), "got: {err}");
@@ -14924,7 +14925,7 @@ mod tests {
     fn vm_recfld_on_non_record() {
         // OP_RECFLD: field access on a list (heap but not record) → L1590
         let source = "f x:t>t;x.name";
-        let err = vm_run_err(source, Some("f"), vec![Value::List(vec![])]);
+        let err = vm_run_err(source, Some("f"), vec![Value::List(Arc::new(vec![]))]);
         assert!(
             err.contains("field access") || err.contains("record"),
             "got: {err}"
@@ -14965,7 +14966,7 @@ mod tests {
     fn vm_with_on_non_record() {
         // OP_RECWITH: with on a list (heap but not record) → L1786
         let source = "f x:t>t;x with name:\"bob\"";
-        let err = vm_run_err(source, Some("f"), vec![Value::List(vec![])]);
+        let err = vm_run_err(source, Some("f"), vec![Value::List(Arc::new(vec![]))]);
         assert!(err.contains("record") || err.contains("with"), "got: {err}");
     }
 
@@ -15225,11 +15226,11 @@ mod tests {
         let source = r#"f>L t;spl "a,b,c" ",""#;
         assert_eq!(
             vm_run(source, Some("f"), vec![]),
-            Value::List(vec![
+            Value::List(Arc::new(vec![
                 Value::Text("a".to_string()),
                 Value::Text("b".to_string()),
                 Value::Text("c".to_string()),
-            ])
+            ]))
         );
     }
 
@@ -15238,7 +15239,7 @@ mod tests {
         let source = r#"f>L t;spl "" ",""#;
         assert_eq!(
             vm_run(source, Some("f"), vec![]),
-            Value::List(vec![Value::Text("".to_string())])
+            Value::List(Arc::new(vec![Value::Text("".to_string())]))
         );
     }
 
@@ -15249,11 +15250,11 @@ mod tests {
             vm_run(
                 source,
                 Some("f"),
-                vec![Value::List(vec![
+                vec![Value::List(Arc::new(vec![
                     Value::Text("a".into()),
                     Value::Text("b".into()),
                     Value::Text("c".into()),
-                ])]
+                ]))]
             ),
             Value::Text("a,b,c".into())
         );
@@ -15263,7 +15264,7 @@ mod tests {
     fn vm_cat_empty_list() {
         let source = "f items:L t>t;cat items \"-\"";
         assert_eq!(
-            vm_run(source, Some("f"), vec![Value::List(vec![])]),
+            vm_run(source, Some("f"), vec![Value::List(Arc::new(vec![]))]),
             Value::Text("".into())
         );
     }
@@ -15276,11 +15277,11 @@ mod tests {
                 source,
                 Some("f"),
                 vec![
-                    Value::List(vec![
+                    Value::List(Arc::new(vec![
                         Value::Number(1.0),
                         Value::Number(2.0),
                         Value::Number(3.0)
-                    ]),
+                    ])),
                     Value::Number(2.0)
                 ]
             ),
@@ -15290,7 +15291,10 @@ mod tests {
             vm_run(
                 source,
                 Some("f"),
-                vec![Value::List(vec![Value::Number(1.0)]), Value::Number(5.0)]
+                vec![
+                    Value::List(Arc::new(vec![Value::Number(1.0)])),
+                    Value::Number(5.0)
+                ]
             ),
             Value::Bool(false)
         );
@@ -15323,7 +15327,7 @@ mod tests {
         let source = "f>L n;xs=[10, 20, 30];tl xs";
         assert_eq!(
             vm_run(source, Some("f"), vec![]),
-            Value::List(vec![Value::Number(20.0), Value::Number(30.0)])
+            Value::List(Arc::new(vec![Value::Number(20.0), Value::Number(30.0)]))
         );
     }
 
@@ -15350,11 +15354,11 @@ mod tests {
         let source = "f>L n;rev [1, 2, 3]";
         assert_eq!(
             vm_run(source, Some("f"), vec![]),
-            Value::List(vec![
+            Value::List(Arc::new(vec![
                 Value::Number(3.0),
                 Value::Number(2.0),
                 Value::Number(1.0)
-            ])
+            ]))
         );
     }
 
@@ -15369,11 +15373,11 @@ mod tests {
         let source = "f>L n;srt [3, 1, 2]";
         assert_eq!(
             vm_run(source, Some("f"), vec![]),
-            Value::List(vec![
+            Value::List(Arc::new(vec![
                 Value::Number(1.0),
                 Value::Number(2.0),
                 Value::Number(3.0)
-            ])
+            ]))
         );
     }
 
@@ -15382,11 +15386,11 @@ mod tests {
         let source = r#"f>L t;srt ["c", "a", "b"]"#;
         assert_eq!(
             vm_run(source, Some("f"), vec![]),
-            Value::List(vec![
+            Value::List(Arc::new(vec![
                 Value::Text("a".into()),
                 Value::Text("b".into()),
                 Value::Text("c".into())
-            ])
+            ]))
         );
     }
 
@@ -15395,7 +15399,7 @@ mod tests {
         let source = "f>L n;slc [1, 2, 3, 4, 5] 1 3";
         assert_eq!(
             vm_run(source, Some("f"), vec![]),
-            Value::List(vec![Value::Number(2.0), Value::Number(3.0)])
+            Value::List(Arc::new(vec![Value::Number(2.0), Value::Number(3.0)]))
         );
     }
 
@@ -15452,11 +15456,11 @@ mod tests {
     #[test]
     fn vm_ret_in_foreach() {
         let source = "f xs:L n>n;@x xs{>=x 10{ret x}};0";
-        let list = Value::List(vec![
+        let list = Value::List(Arc::new(vec![
             Value::Number(1.0),
             Value::Number(15.0),
             Value::Number(3.0),
-        ]);
+        ]));
         assert_eq!(vm_run(source, Some("f"), vec![list]), Value::Number(15.0));
     }
 
@@ -15911,11 +15915,11 @@ mod tests {
         };
         assert_eq!(
             *inner,
-            Value::List(vec![
+            Value::List(Arc::new(vec![
                 Value::Number(1.0),
                 Value::Number(2.0),
                 Value::Number(3.0)
-            ])
+            ]))
         );
     }
 
@@ -16013,20 +16017,20 @@ mod tests {
         let result = vm_run(
             "f xs:L n>L n;unq xs",
             Some("f"),
-            vec![Value::List(vec![
+            vec![Value::List(Arc::new(vec![
                 Value::Number(1.0),
                 Value::Number(2.0),
                 Value::Number(1.0),
                 Value::Number(3.0),
-            ])],
+            ]))],
         );
         assert_eq!(
             result,
-            Value::List(vec![
+            Value::List(Arc::new(vec![
                 Value::Number(1.0),
                 Value::Number(2.0),
                 Value::Number(3.0)
-            ])
+            ]))
         );
     }
 
@@ -16037,21 +16041,21 @@ mod tests {
         let result = vm_run(
             "f xs:L t>L t;unq xs",
             Some("f"),
-            vec![Value::List(vec![
+            vec![Value::List(Arc::new(vec![
                 Value::Text("a".into()),
                 Value::Text("b".into()),
                 Value::Text("a".into()),
                 Value::Text("c".into()),
                 Value::Text("b".into()),
-            ])],
+            ]))],
         );
         assert_eq!(
             result,
-            Value::List(vec![
+            Value::List(Arc::new(vec![
                 Value::Text("a".into()),
                 Value::Text("b".into()),
                 Value::Text("c".into()),
-            ])
+            ]))
         );
     }
 
@@ -16060,27 +16064,31 @@ mod tests {
         let result = vm_run(
             "f xs:L n>L n;unq xs",
             Some("f"),
-            vec![Value::List(vec![
+            vec![Value::List(Arc::new(vec![
                 Value::Number(3.0),
                 Value::Number(1.0),
                 Value::Number(2.0),
                 Value::Number(1.0),
-            ])],
+            ]))],
         );
         assert_eq!(
             result,
-            Value::List(vec![
+            Value::List(Arc::new(vec![
                 Value::Number(3.0),
                 Value::Number(1.0),
                 Value::Number(2.0)
-            ])
+            ]))
         );
     }
 
     #[test]
     fn vm_unq_empty_list() {
-        let result = vm_run("f xs:L n>L n;unq xs", Some("f"), vec![Value::List(vec![])]);
-        assert_eq!(result, Value::List(vec![]));
+        let result = vm_run(
+            "f xs:L n>L n;unq xs",
+            Some("f"),
+            vec![Value::List(Arc::new(vec![]))],
+        );
+        assert_eq!(result, Value::List(Arc::new(vec![])));
     }
 
     #[test]
@@ -16180,11 +16188,11 @@ mod tests {
         );
         assert_eq!(
             result,
-            Value::List(vec![
+            Value::List(Arc::new(vec![
                 Value::Text("a".into()),
                 Value::Text("b".into()),
                 Value::Text("c".into()),
-            ])
+            ]))
         );
     }
 
@@ -16198,11 +16206,11 @@ mod tests {
         );
         assert_eq!(
             result,
-            Value::List(vec![
+            Value::List(Arc::new(vec![
                 Value::Number(1.0),
                 Value::Number(2.0),
                 Value::Number(3.0),
-            ])
+            ]))
         );
     }
 
@@ -16293,13 +16301,13 @@ mod tests {
     #[test]
     fn vm_mkeys_empty_map() {
         let result = vm_run("f>L t;mkeys mmap", Some("f"), vec![]);
-        assert_eq!(result, Value::List(vec![]));
+        assert_eq!(result, Value::List(Arc::new(vec![])));
     }
 
     #[test]
     fn vm_mvals_empty_map() {
         let result = vm_run("f>L n;mvals mmap", Some("f"), vec![]);
-        assert_eq!(result, Value::List(vec![]));
+        assert_eq!(result, Value::List(Arc::new(vec![])));
     }
 
     #[test]
@@ -16322,7 +16330,11 @@ mod tests {
 
     #[test]
     fn vm_hd_empty_list_is_error() {
-        let err = vm_run_err("f xs:L n>n;hd xs", Some("f"), vec![Value::List(vec![])]);
+        let err = vm_run_err(
+            "f xs:L n>n;hd xs",
+            Some("f"),
+            vec![Value::List(Arc::new(vec![]))],
+        );
         assert!(err.contains("hd"), "expected hd error, got: {err}");
     }
 
@@ -16334,7 +16346,11 @@ mod tests {
 
     #[test]
     fn vm_tl_empty_list_is_error() {
-        let err = vm_run_err("f xs:L n>n;tl xs", Some("f"), vec![Value::List(vec![])]);
+        let err = vm_run_err(
+            "f xs:L n>n;tl xs",
+            Some("f"),
+            vec![Value::List(Arc::new(vec![]))],
+        );
         assert!(err.contains("tl"), "expected tl error, got: {err}");
     }
 
@@ -16349,10 +16365,10 @@ mod tests {
         let err = vm_run_err(
             "f xs:L n>t;srt xs",
             Some("f"),
-            vec![Value::List(vec![
+            vec![Value::List(Arc::new(vec![
                 Value::Number(1.0),
                 Value::Text("a".into()),
-            ])],
+            ]))],
         );
         assert!(err.contains("srt"), "expected srt error, got: {err}");
     }
@@ -16362,11 +16378,11 @@ mod tests {
         let result = vm_run(
             "f items:L t>t;cat items \"\"",
             Some("f"),
-            vec![Value::List(vec![
+            vec![Value::List(Arc::new(vec![
                 Value::Text("a".into()),
                 Value::Text("b".into()),
                 Value::Text("c".into()),
-            ])],
+            ]))],
         );
         assert_eq!(result, Value::Text("abc".into()));
     }
@@ -16377,11 +16393,11 @@ mod tests {
             "f xs:L n x:n>b;has xs x",
             Some("f"),
             vec![
-                Value::List(vec![
+                Value::List(Arc::new(vec![
                     Value::Number(1.0),
                     Value::Number(2.0),
                     Value::Number(3.0),
-                ]),
+                ])),
                 Value::Number(2.0),
             ],
         );
@@ -16394,11 +16410,11 @@ mod tests {
             "f xs:L n x:n>b;has xs x",
             Some("f"),
             vec![
-                Value::List(vec![
+                Value::List(Arc::new(vec![
                     Value::Number(1.0),
                     Value::Number(2.0),
                     Value::Number(3.0),
-                ]),
+                ])),
                 Value::Number(9.0),
             ],
         );
@@ -16411,32 +16427,40 @@ mod tests {
         let result = vm_run(
             "f xs:L n>L n;slc xs 0 100",
             Some("f"),
-            vec![Value::List(vec![
+            vec![Value::List(Arc::new(vec![
                 Value::Number(1.0),
                 Value::Number(2.0),
                 Value::Number(3.0),
-            ])],
+            ]))],
         );
         assert_eq!(
             result,
-            Value::List(vec![
+            Value::List(Arc::new(vec![
                 Value::Number(1.0),
                 Value::Number(2.0),
                 Value::Number(3.0),
-            ])
+            ]))
         );
     }
 
     #[test]
     fn vm_rev_empty_list() {
-        let result = vm_run("f xs:L n>L n;rev xs", Some("f"), vec![Value::List(vec![])]);
-        assert_eq!(result, Value::List(vec![]));
+        let result = vm_run(
+            "f xs:L n>L n;rev xs",
+            Some("f"),
+            vec![Value::List(Arc::new(vec![]))],
+        );
+        assert_eq!(result, Value::List(Arc::new(vec![])));
     }
 
     #[test]
     fn vm_srt_empty_list() {
-        let result = vm_run("f xs:L n>L n;srt xs", Some("f"), vec![Value::List(vec![])]);
-        assert_eq!(result, Value::List(vec![]));
+        let result = vm_run(
+            "f xs:L n>L n;srt xs",
+            Some("f"),
+            vec![Value::List(Arc::new(vec![]))],
+        );
+        assert_eq!(result, Value::List(Arc::new(vec![])));
     }
 
     #[test]
@@ -16521,7 +16545,11 @@ mod tests {
     fn vm_type_check_islist_match() {
         let src = r#"f x:n>b;?x{l _:true;_:false}"#;
         assert_eq!(
-            vm_run(src, Some("f"), vec![Value::List(vec![Value::Number(1.0)])]),
+            vm_run(
+                src,
+                Some("f"),
+                vec![Value::List(Arc::new(vec![Value::Number(1.0)]))]
+            ),
             Value::Bool(true)
         );
         assert_eq!(
@@ -16685,7 +16713,7 @@ mod tests {
             Some("f"),
             vec![
                 Value::Number(42.0),
-                Value::List(vec![Value::Text("a".into())]),
+                Value::List(Arc::new(vec![Value::Text("a".into())])),
             ],
         );
         assert!(
@@ -16724,10 +16752,10 @@ mod tests {
             Some("f"),
             vec![
                 Value::Text(path_str.into()),
-                Value::List(vec![
+                Value::List(Arc::new(vec![
                     Value::Text("line1".into()),
                     Value::Text("line2".into()),
-                ]),
+                ])),
             ],
         );
         assert!(
@@ -16876,16 +16904,16 @@ mod tests {
         let result = vm_run(
             "f xs:L n>L n;slc xs 1 3",
             Some("f"),
-            vec![Value::List(vec![
+            vec![Value::List(Arc::new(vec![
                 Value::Number(10.0),
                 Value::Number(20.0),
                 Value::Number(30.0),
                 Value::Number(40.0),
-            ])],
+            ]))],
         );
         assert_eq!(
             result,
-            Value::List(vec![Value::Number(20.0), Value::Number(30.0)])
+            Value::List(Arc::new(vec![Value::Number(20.0), Value::Number(30.0)]))
         );
     }
 
@@ -16896,7 +16924,7 @@ mod tests {
             "f xs:L n sep:t>t;cat xs sep",
             Some("f"),
             vec![
-                Value::List(vec![Value::Number(1.0)]),
+                Value::List(Arc::new(vec![Value::Number(1.0)])),
                 Value::Text(",".into()),
             ],
         );
@@ -16990,7 +17018,7 @@ mod tests {
     fn vm_srt_single_element() {
         // Single-element list: returns as-is
         let result = vm_run("f>L n;srt [42]", Some("f"), vec![]);
-        assert_eq!(result, Value::List(vec![Value::Number(42.0)]));
+        assert_eq!(result, Value::List(Arc::new(vec![Value::Number(42.0)])));
     }
 
     // --- OP_CAT where first arg is heap but not list (string) ---
@@ -17018,7 +17046,11 @@ mod tests {
     #[test]
     fn vm_not_on_empty_list_is_true() {
         // ![] → falsy, so !falsy = true
-        let result = vm_run("f xs:L n>b;!xs", Some("f"), vec![Value::List(vec![])]);
+        let result = vm_run(
+            "f xs:L n>b;!xs",
+            Some("f"),
+            vec![Value::List(Arc::new(vec![]))],
+        );
         assert_eq!(result, Value::Bool(true));
     }
 
@@ -17364,7 +17396,10 @@ mod tests {
         let result = vm_run(
             source,
             Some("f"),
-            vec![Value::List(vec![Value::Number(1.0), Value::Number(2.0)])],
+            vec![Value::List(Arc::new(vec![
+                Value::Number(1.0),
+                Value::Number(2.0),
+            ]))],
         );
         assert_eq!(result, Value::Text("[1,2]".to_string()));
     }
@@ -17428,7 +17463,7 @@ mod tests {
             "f xs:L n sep:t>t;cat xs sep",
             Some("f"),
             vec![
-                Value::List(vec![Value::Number(1.0), Value::Number(2.0)]),
+                Value::List(Arc::new(vec![Value::Number(1.0), Value::Number(2.0)])),
                 Value::Text(" ".to_string()),
             ],
         );
@@ -18682,7 +18717,7 @@ mod tests {
         let result = vm_run(
             r#"f xs:L n>t;?xs{l v:"got list";_:"other"}"#,
             Some("f"),
-            vec![Value::List(vec![Value::Number(1.0)])],
+            vec![Value::List(Arc::new(vec![Value::Number(1.0)]))],
         );
         assert_eq!(result, Value::Text("got list".into()));
     }
@@ -18816,7 +18851,7 @@ mod tests {
         let result = vm_run(
             r#"f xs:L n>t;?xs{l v:"list";_:"other"}"#,
             Some("f"),
-            vec![Value::List(vec![])],
+            vec![Value::List(Arc::new(vec![]))],
         );
         assert_eq!(result, Value::Text("list".into()));
     }
@@ -19226,7 +19261,7 @@ mod tests {
         );
 
         let list_src = r#"f x:n>b;?x{l _:true;_:false}"#;
-        let list = Value::List(vec![Value::Number(1.0)]);
+        let list = Value::List(Arc::new(vec![Value::Number(1.0)]));
         assert_eq!(vm_run(list_src, Some("f"), vec![list]), Value::Bool(true));
     }
 
@@ -19294,7 +19329,11 @@ mod tests {
     fn vm_safe_field_on_list_returns_nil() {
         let src = "f xs:L n>n;xs.?0??77";
         assert_eq!(
-            vm_run(src, Some("f"), vec![Value::List(vec![Value::Number(99.0)])]),
+            vm_run(
+                src,
+                Some("f"),
+                vec![Value::List(Arc::new(vec![Value::Number(99.0)]))]
+            ),
             Value::Number(99.0)
         );
     }
@@ -19539,7 +19578,7 @@ mod tests {
             Some("f"),
             vec![
                 Value::Map(std::sync::Arc::new(std::collections::HashMap::new())),
-                Value::List(vec![Value::Number(1.0)]),
+                Value::List(Arc::new(vec![Value::Number(1.0)])),
             ],
         );
         assert!(
@@ -19556,7 +19595,7 @@ mod tests {
             "f x:z k:t>n;mget x k",
             Some("f"),
             vec![
-                Value::List(vec![Value::Number(1.0)]),
+                Value::List(Arc::new(vec![Value::Number(1.0)])),
                 Value::Text("key".into()),
             ],
         );
@@ -19571,7 +19610,7 @@ mod tests {
             Some("f"),
             vec![
                 Value::Map(std::sync::Arc::new(std::collections::HashMap::new())),
-                Value::List(vec![Value::Number(1.0)]),
+                Value::List(Arc::new(vec![Value::Number(1.0)])),
                 Value::Text("val".into()),
             ],
         );
@@ -19605,7 +19644,7 @@ mod tests {
             Some("f"),
             vec![
                 Value::Map(std::sync::Arc::new(std::collections::HashMap::new())),
-                Value::List(vec![Value::Number(1.0)]),
+                Value::List(Arc::new(vec![Value::Number(1.0)])),
             ],
         );
         assert!(
@@ -19622,7 +19661,7 @@ mod tests {
             "f x:z k:t>n;mhas x k",
             Some("f"),
             vec![
-                Value::List(vec![Value::Number(1.0)]),
+                Value::List(Arc::new(vec![Value::Number(1.0)])),
                 Value::Text("k".into()),
             ],
         );
@@ -19635,7 +19674,7 @@ mod tests {
         let err = vm_run_err(
             "f x:z>n;mkeys x",
             Some("f"),
-            vec![Value::List(vec![Value::Text("a".into())])],
+            vec![Value::List(Arc::new(vec![Value::Text("a".into())]))],
         );
         assert!(err.contains("mkeys") || err.contains("map"), "got: {err}");
     }
@@ -19659,7 +19698,7 @@ mod tests {
             Some("f"),
             vec![
                 Value::Map(std::sync::Arc::new(std::collections::HashMap::new())),
-                Value::List(vec![Value::Number(7.0)]),
+                Value::List(Arc::new(vec![Value::Number(7.0)])),
             ],
         );
         assert!(
@@ -19675,7 +19714,7 @@ mod tests {
             "f x:z k:t>n;mdel x k",
             Some("f"),
             vec![
-                Value::List(vec![Value::Number(1.0)]),
+                Value::List(Arc::new(vec![Value::Number(1.0)])),
                 Value::Text("k".into()),
             ],
         );
@@ -19727,7 +19766,7 @@ mod tests {
             Some("f"),
             vec![
                 Value::Text("/nonexistent_dir_ilo/lines.txt".into()),
-                Value::List(vec![Value::Text("line1".into())]),
+                Value::List(Arc::new(vec![Value::Text("line1".into())])),
             ],
         );
         assert!(
@@ -19927,7 +19966,7 @@ mod tests {
             Some("f"),
             vec![
                 Value::Text("/tmp/ilo_wrl_elem.txt".into()),
-                Value::List(vec![Value::Number(42.0)]),
+                Value::List(Arc::new(vec![Value::Number(42.0)])),
             ],
         );
         assert!(
@@ -19995,7 +20034,7 @@ mod tests {
         let err = vm_run_err(
             r#"f xs:L t>t;cat xs 42"#,
             Some("f"),
-            vec![Value::List(vec![Value::Text("a".into())])],
+            vec![Value::List(Arc::new(vec![Value::Text("a".into())]))],
         );
         assert!(err.contains("cat") || err.contains("text"), "got: {err}");
     }
@@ -20081,7 +20120,7 @@ mod tests {
             r#"f xs:L n s:t e:t>L n;slc xs s e"#,
             Some("f"),
             vec![
-                Value::List(vec![Value::Number(1.0), Value::Number(2.0)]),
+                Value::List(Arc::new(vec![Value::Number(1.0), Value::Number(2.0)])),
                 Value::Text("a".into()),
                 Value::Text("b".into()),
             ],
@@ -20605,11 +20644,11 @@ mod tests {
         let result = vm_run(
             source,
             Some("f"),
-            vec![Value::List(vec![
+            vec![Value::List(Arc::new(vec![
                 Value::Number(1.0),
                 Value::Number(5.0),
                 Value::Number(2.0),
-            ])],
+            ]))],
         );
         assert_eq!(result, Value::Number(5.0));
     }
@@ -20629,11 +20668,11 @@ mod tests {
         let result = vm_run(
             source,
             Some("f"),
-            vec![Value::List(vec![
+            vec![Value::List(Arc::new(vec![
                 Value::Number(1.0),
                 Value::Number(5.0),
                 Value::Number(9.0),
-            ])],
+            ]))],
         );
         assert_eq!(result, Value::Number(0.0));
     }
@@ -20676,11 +20715,11 @@ mod tests {
         let result = vm_run(
             source,
             Some("mx"),
-            vec![Value::List(vec![
+            vec![Value::List(Arc::new(vec![
                 Value::Number(3.0),
                 Value::Number(1.0),
                 Value::Number(5.0),
-            ])],
+            ]))],
         );
         assert_eq!(result, Value::Number(5.0));
     }
@@ -20728,7 +20767,10 @@ mod tests {
         let result = vm_run(
             source,
             Some("f"),
-            vec![Value::List(vec![Value::Number(0.0), Value::Number(1.0)])],
+            vec![Value::List(Arc::new(vec![
+                Value::Number(0.0),
+                Value::Number(1.0),
+            ]))],
         );
         assert_eq!(result, Value::Number(20.0));
     }
@@ -20785,7 +20827,10 @@ mod tests {
         let result = vm_run(
             source,
             Some("f"),
-            vec![Value::List(vec![Value::Number(1.0), Value::Number(2.0)])],
+            vec![Value::List(Arc::new(vec![
+                Value::Number(1.0),
+                Value::Number(2.0),
+            ]))],
         );
         assert_eq!(result, Value::Number(2.0));
     }
@@ -20796,7 +20841,10 @@ mod tests {
         let result = vm_run(
             source,
             Some("f"),
-            vec![Value::List(vec![Value::Number(1.0), Value::Number(5.0)])],
+            vec![Value::List(Arc::new(vec![
+                Value::Number(1.0),
+                Value::Number(5.0),
+            ]))],
         );
         assert_eq!(result, Value::Number(5.0));
     }
@@ -20856,7 +20904,7 @@ mod tests {
         let result = vm_run(
             r#"f x:L n>t;?x{l v:"list";_:"other"}"#,
             Some("f"),
-            vec![Value::List(vec![Value::Number(1.0)])],
+            vec![Value::List(Arc::new(vec![Value::Number(1.0)]))],
         );
         assert_eq!(result, Value::Text("list".into()));
     }
@@ -21509,21 +21557,21 @@ mod tests {
         let result = vm_run(
             source,
             Some("main"),
-            vec![Value::List(
+            vec![Value::List(Arc::new(
                 vec![1.0, 2.0, 3.0, 4.0, 5.0]
                     .into_iter()
                     .map(Value::Number)
                     .collect(),
-            )],
+            ))],
         );
         assert_eq!(
             result,
-            Value::List(
+            Value::List(Arc::new(
                 vec![1.0, 4.0, 9.0, 16.0, 25.0]
                     .into_iter()
                     .map(Value::Number)
                     .collect()
-            )
+            ))
         );
     }
 
@@ -21553,10 +21601,10 @@ mod tests {
             Some("f"),
             vec![
                 Value::Text("sq".into()),
-                Value::List(vec![Value::Number(3.0)]),
+                Value::List(Arc::new(vec![Value::Number(3.0)])),
             ],
         );
-        assert_eq!(result, Value::List(vec![Value::Number(9.0)]));
+        assert_eq!(result, Value::List(Arc::new(vec![Value::Number(9.0)])));
     }
 
     #[test]
@@ -21566,16 +21614,18 @@ mod tests {
         let result = vm_run(
             source,
             Some("main"),
-            vec![Value::List(
+            vec![Value::List(Arc::new(
                 vec![-3.0, -1.0, 0.0, 2.0, 4.0]
                     .into_iter()
                     .map(Value::Number)
                     .collect(),
-            )],
+            ))],
         );
         assert_eq!(
             result,
-            Value::List(vec![2.0, 4.0].into_iter().map(Value::Number).collect())
+            Value::List(Arc::new(
+                vec![2.0, 4.0].into_iter().map(Value::Number).collect()
+            ))
         );
     }
 
@@ -21586,7 +21636,7 @@ mod tests {
         let err = vm_run_err(
             source,
             Some("f"),
-            vec![Value::List(vec![Value::Number(1.0)])],
+            vec![Value::List(Arc::new(vec![Value::Number(1.0)]))],
         );
         assert!(err.contains("flt") || err.contains("bool"), "got: {err}");
     }
@@ -21604,7 +21654,7 @@ mod tests {
         let err = vm_run_err(
             "f xs:L n>L n;flt 42 xs",
             Some("f"),
-            vec![Value::List(vec![Value::Number(1.0)])],
+            vec![Value::List(Arc::new(vec![Value::Number(1.0)]))],
         );
         assert!(
             err.contains("flt") || err.contains("fn") || err.contains("function"),
@@ -21619,12 +21669,12 @@ mod tests {
         let result = vm_run(
             source,
             Some("main"),
-            vec![Value::List(
+            vec![Value::List(Arc::new(
                 vec![1.0, 2.0, 3.0, 4.0, 5.0]
                     .into_iter()
                     .map(Value::Number)
                     .collect(),
-            )],
+            ))],
         );
         assert_eq!(result, Value::Number(15.0));
     }
@@ -21653,12 +21703,12 @@ mod tests {
         let result = vm_run(
             source,
             Some("main"),
-            vec![Value::List(
+            vec![Value::List(Arc::new(
                 vec![1.0, 8.0, 3.0, 9.0, 2.0]
                     .into_iter()
                     .map(Value::Number)
                     .collect(),
-            )],
+            ))],
         );
         let Value::Map(m) = result else {
             panic!("expected Map")
@@ -21666,11 +21716,15 @@ mod tests {
         use crate::interpreter::MapKey;
         assert_eq!(
             m.get(&MapKey::Text("small".to_string())).unwrap(),
-            &Value::List(vec![1.0, 3.0, 2.0].into_iter().map(Value::Number).collect())
+            &Value::List(Arc::new(
+                vec![1.0, 3.0, 2.0].into_iter().map(Value::Number).collect()
+            ))
         );
         assert_eq!(
             m.get(&MapKey::Text("big".to_string())).unwrap(),
-            &Value::List(vec![8.0, 9.0].into_iter().map(Value::Number).collect())
+            &Value::List(Arc::new(
+                vec![8.0, 9.0].into_iter().map(Value::Number).collect()
+            ))
         );
     }
 
@@ -21681,12 +21735,12 @@ mod tests {
         let result = vm_run(
             source,
             Some("main"),
-            vec![Value::List(
+            vec![Value::List(Arc::new(
                 vec![1.0, 2.0, 1.0, 3.0, 2.0]
                     .into_iter()
                     .map(Value::Number)
                     .collect(),
-            )],
+            ))],
         );
         let Value::Map(m) = result else {
             panic!("expected Map")
@@ -21694,15 +21748,19 @@ mod tests {
         use crate::interpreter::MapKey;
         assert_eq!(
             m.get(&MapKey::Text("1".to_string())).unwrap(),
-            &Value::List(vec![1.0, 1.0].into_iter().map(Value::Number).collect())
+            &Value::List(Arc::new(
+                vec![1.0, 1.0].into_iter().map(Value::Number).collect()
+            ))
         );
         assert_eq!(
             m.get(&MapKey::Text("2".to_string())).unwrap(),
-            &Value::List(vec![2.0, 2.0].into_iter().map(Value::Number).collect())
+            &Value::List(Arc::new(
+                vec![2.0, 2.0].into_iter().map(Value::Number).collect()
+            ))
         );
         assert_eq!(
             m.get(&MapKey::Text("3".to_string())).unwrap(),
-            &Value::List(vec![3.0].into_iter().map(Value::Number).collect())
+            &Value::List(Arc::new(vec![3.0].into_iter().map(Value::Number).collect()))
         );
     }
 
@@ -21710,7 +21768,7 @@ mod tests {
     #[ignore] // VM missing HOF/FnRef resolution
     fn vm_grp_empty_list() {
         let source = "id x:n>t;str x main xs:L n>M t L n;grp id xs";
-        let result = vm_run(source, Some("main"), vec![Value::List(vec![])]);
+        let result = vm_run(source, Some("main"), vec![Value::List(Arc::new(vec![]))]);
         assert_eq!(
             result,
             Value::Map(std::sync::Arc::new(std::collections::HashMap::new()))
@@ -21740,11 +21798,11 @@ mod tests {
         let result = vm_run(
             source,
             Some("g"),
-            vec![Value::List(vec![
+            vec![Value::List(Arc::new(vec![
                 Value::Number(1.0),
                 Value::Number(2.0),
                 Value::Number(1.0),
-            ])],
+            ]))],
         );
         let Value::Map(m) = result else {
             panic!("expected map")
@@ -21759,11 +21817,11 @@ mod tests {
         let result = vm_run(
             source,
             Some("g"),
-            vec![Value::List(vec![
+            vec![Value::List(Arc::new(vec![
                 Value::Number(-1.0),
                 Value::Number(1.0),
                 Value::Number(2.0),
-            ])],
+            ]))],
         );
         let Value::Map(m) = result else {
             panic!("expected map")
@@ -21780,11 +21838,11 @@ mod tests {
         let result = vm_run(
             source,
             Some("g"),
-            vec![Value::List(vec![
+            vec![Value::List(Arc::new(vec![
                 Value::Number(1.0),
                 Value::Number(2.0),
                 Value::Number(3.0),
-            ])],
+            ]))],
         );
         let Value::Map(m) = result else {
             panic!("expected Map")
@@ -21805,7 +21863,10 @@ mod tests {
         let err = vm_run_err(
             source,
             Some("g"),
-            vec![Value::List(vec![Value::Number(1.0), Value::Number(2.0)])],
+            vec![Value::List(Arc::new(vec![
+                Value::Number(1.0),
+                Value::Number(2.0),
+            ]))],
         );
         assert!(
             err.contains("grp") || err.contains("key") || err.contains("string"),
@@ -21822,12 +21883,12 @@ mod tests {
         let result = vm_run(
             source,
             Some("f"),
-            vec![Value::List(
+            vec![Value::List(Arc::new(
                 vec![1.0, 2.0, 3.0, 4.0, 5.0]
                     .into_iter()
                     .map(Value::Number)
                     .collect(),
-            )],
+            ))],
         );
         assert_eq!(result, Value::Number(15.0));
     }
@@ -21837,7 +21898,7 @@ mod tests {
     fn vm_sum_empty() {
         let source = "f xs:L n>n;sum xs";
         assert_eq!(
-            vm_run(source, Some("f"), vec![Value::List(vec![])]),
+            vm_run(source, Some("f"), vec![Value::List(Arc::new(vec![]))]),
             Value::Number(0.0)
         );
     }
@@ -21861,9 +21922,9 @@ mod tests {
         let result = vm_run(
             source,
             Some("f"),
-            vec![Value::List(
+            vec![Value::List(Arc::new(
                 vec![2.0, 4.0, 6.0].into_iter().map(Value::Number).collect(),
-            )],
+            ))],
         );
         assert_eq!(result, Value::Number(4.0));
     }
@@ -21885,7 +21946,7 @@ mod tests {
         let err = vm_run_err(
             "f xs:L n>n;avg xs",
             Some("f"),
-            vec![Value::List(vec![Value::Text("x".into())])],
+            vec![Value::List(Arc::new(vec![Value::Text("x".into())]))],
         );
         assert!(err.contains("avg") || err.contains("number"), "got: {err}");
     }
@@ -21899,12 +21960,12 @@ mod tests {
         let result = vm_run(source, Some("f"), vec![]);
         assert_eq!(
             result,
-            Value::List(
+            Value::List(Arc::new(
                 vec![1.0, 2.0, 3.0, 4.0, 5.0]
                     .into_iter()
                     .map(Value::Number)
                     .collect()
-            )
+            ))
         );
     }
 
@@ -21915,7 +21976,9 @@ mod tests {
         let result = vm_run(source, Some("f"), vec![]);
         assert_eq!(
             result,
-            Value::List(vec![1.0, 2.0, 3.0].into_iter().map(Value::Number).collect())
+            Value::List(Arc::new(
+                vec![1.0, 2.0, 3.0].into_iter().map(Value::Number).collect()
+            ))
         );
     }
 
@@ -21924,7 +21987,7 @@ mod tests {
     fn vm_flat_empty() {
         assert_eq!(
             vm_run("f>L n;flat []", Some("f"), vec![]),
-            Value::List(vec![])
+            Value::List(Arc::new(vec![]))
         );
     }
 
@@ -21943,19 +22006,19 @@ mod tests {
         let result = vm_run(
             source,
             Some("main"),
-            vec![Value::List(vec![
+            vec![Value::List(Arc::new(vec![
                 Value::Text("banana".into()),
                 Value::Text("a".into()),
                 Value::Text("cc".into()),
-            ])],
+            ]))],
         );
         assert_eq!(
             result,
-            Value::List(vec![
+            Value::List(Arc::new(vec![
                 Value::Text("a".into()),
                 Value::Text("cc".into()),
                 Value::Text("banana".into()),
-            ])
+            ]))
         );
     }
 
@@ -21966,19 +22029,19 @@ mod tests {
         let result = vm_run(
             source,
             Some("main"),
-            vec![Value::List(vec![
+            vec![Value::List(Arc::new(vec![
                 Value::Number(1.0),
                 Value::Number(3.0),
                 Value::Number(2.0),
-            ])],
+            ]))],
         );
         assert_eq!(
             result,
-            Value::List(vec![
+            Value::List(Arc::new(vec![
                 Value::Number(3.0),
                 Value::Number(2.0),
                 Value::Number(1.0)
-            ])
+            ]))
         );
     }
 
@@ -21989,19 +22052,19 @@ mod tests {
         let result = vm_run(
             source,
             Some("main"),
-            vec![Value::List(vec![
+            vec![Value::List(Arc::new(vec![
                 Value::Text("banana".into()),
                 Value::Text("apple".into()),
                 Value::Text("cherry".into()),
-            ])],
+            ]))],
         );
         assert_eq!(
             result,
-            Value::List(vec![
+            Value::List(Arc::new(vec![
                 Value::Text("apple".into()),
                 Value::Text("banana".into()),
                 Value::Text("cherry".into()),
-            ])
+            ]))
         );
     }
 
@@ -22018,7 +22081,7 @@ mod tests {
         let err = vm_run_err(
             "f xs:L n>L n;srt 42 xs",
             Some("f"),
-            vec![Value::List(vec![Value::Number(1.0)])],
+            vec![Value::List(Arc::new(vec![Value::Number(1.0)]))],
         );
         assert!(
             err.contains("srt") || err.contains("fn") || err.contains("function"),
@@ -22049,7 +22112,7 @@ mod tests {
     fn vm_ok_srt_empty_list() {
         assert_eq!(
             vm_run("f>L n;srt []", Some("f"), vec![]),
-            Value::List(vec![])
+            Value::List(Arc::new(vec![]))
         );
     }
 
@@ -22060,7 +22123,7 @@ mod tests {
         let source = "f>L n;slc [1, 2, 3] 1 100";
         assert_eq!(
             vm_run(source, Some("f"), vec![]),
-            Value::List(vec![Value::Number(2.0), Value::Number(3.0)])
+            Value::List(Arc::new(vec![Value::Number(2.0), Value::Number(3.0)]))
         );
     }
 
@@ -22071,15 +22134,18 @@ mod tests {
         let result = vm_run(
             "f xs:L t>L t;unq xs",
             Some("f"),
-            vec![Value::List(vec![
+            vec![Value::List(Arc::new(vec![
                 Value::Text("a".into()),
                 Value::Text("b".into()),
                 Value::Text("a".into()),
-            ])],
+            ]))],
         );
         assert_eq!(
             result,
-            Value::List(vec![Value::Text("a".into()), Value::Text("b".into())])
+            Value::List(Arc::new(vec![
+                Value::Text("a".into()),
+                Value::Text("b".into())
+            ]))
         );
     }
 
@@ -22184,7 +22250,10 @@ mod tests {
         );
         assert_eq!(
             result,
-            Value::List(vec![Value::Text("123".into()), Value::Text("456".into()),])
+            Value::List(Arc::new(vec![
+                Value::Text("123".into()),
+                Value::Text("456".into()),
+            ]))
         );
     }
 
@@ -22199,10 +22268,10 @@ mod tests {
         );
         assert_eq!(
             result,
-            Value::List(vec![
+            Value::List(Arc::new(vec![
                 Value::Text("name".into()),
                 Value::Text("alice".into()),
-            ])
+            ]))
         );
     }
 
@@ -22215,7 +22284,7 @@ mod tests {
             Some("f"),
             vec![Value::Text("no numbers here".into())],
         );
-        assert_eq!(result, Value::List(vec![]));
+        assert_eq!(result, Value::List(Arc::new(vec![])));
     }
 
     #[test]
@@ -22403,7 +22472,10 @@ mod tests {
         );
         assert_eq!(
             result,
-            Value::List(vec![Value::Text("a".into()), Value::Text("b".into())])
+            Value::List(Arc::new(vec![
+                Value::Text("a".into()),
+                Value::Text("b".into())
+            ]))
         );
     }
 
@@ -22423,7 +22495,7 @@ mod tests {
         );
         assert_eq!(
             result,
-            Value::List(vec![Value::Number(1.0), Value::Number(2.0)])
+            Value::List(Arc::new(vec![Value::Number(1.0), Value::Number(2.0)]))
         );
     }
 
@@ -23460,11 +23532,11 @@ f>n;r=mk 10 20;+r.x r.y";
         let src = "f>L n;[1 2 3]";
         assert_eq!(
             vm_run(src, Some("f"), vec![]),
-            Value::List(vec![
+            Value::List(Arc::new(vec![
                 Value::Number(1.0),
                 Value::Number(2.0),
                 Value::Number(3.0),
-            ])
+            ]))
         );
     }
 
@@ -23473,10 +23545,10 @@ f>n;r=mk 10 20;+r.x r.y";
         let src = r#"f w:t>L t;["hi" w]"#;
         assert_eq!(
             vm_run(src, Some("f"), vec![Value::Text("world".to_string())]),
-            Value::List(vec![
+            Value::List(Arc::new(vec![
                 Value::Text("hi".to_string()),
                 Value::Text("world".to_string())
-            ])
+            ]))
         );
     }
 
@@ -23485,11 +23557,11 @@ f>n;r=mk 10 20;+r.x r.y";
         let src = r#"f>L a;["search" 10 true]"#;
         assert_eq!(
             vm_run(src, Some("f"), vec![]),
-            Value::List(vec![
+            Value::List(Arc::new(vec![
                 Value::Text("search".to_string()),
                 Value::Number(10.0),
                 Value::Bool(true),
-            ])
+            ]))
         );
     }
 
@@ -23498,11 +23570,11 @@ f>n;r=mk 10 20;+r.x r.y";
         let src = "f>L n;[1, 2 3]";
         assert_eq!(
             vm_run(src, Some("f"), vec![]),
-            Value::List(vec![
+            Value::List(Arc::new(vec![
                 Value::Number(1.0),
                 Value::Number(2.0),
                 Value::Number(3.0),
-            ])
+            ]))
         );
     }
 
@@ -23651,11 +23723,11 @@ f>n;r=mk 10 20;+r.x r.y";
         let result = vm_run(src, Some("f"), vec![Value::Number(1.0)]);
         assert_eq!(
             result,
-            Value::List(vec![
+            Value::List(Arc::new(vec![
                 Value::Number(1.0),
                 Value::Number(2.0),
                 Value::Number(3.0),
-            ])
+            ]))
         );
     }
 
@@ -23968,7 +24040,7 @@ f>n;r=mk 10 20;+r.x r.y";
         let result = vm_run("f>L n;slc [1, 2, 3, 4, 5] 1 3", Some("f"), vec![]);
         assert_eq!(
             result,
-            Value::List(vec![Value::Number(2.0), Value::Number(3.0)])
+            Value::List(Arc::new(vec![Value::Number(2.0), Value::Number(3.0)]))
         );
     }
 
@@ -24043,7 +24115,7 @@ f>n;r=mk 10 20;+r.x r.y";
         let result = vm_run("f>L n;xs=[10, 20, 30];tl xs", Some("f"), vec![]);
         assert_eq!(
             result,
-            Value::List(vec![Value::Number(20.0), Value::Number(30.0)])
+            Value::List(Arc::new(vec![Value::Number(20.0), Value::Number(30.0)]))
         );
     }
 
@@ -24352,11 +24424,11 @@ f>n;r=mk 10 20;+r.x r.y";
         let result = vm_run("f>L n;rev [1, 2, 3]", Some("f"), vec![]);
         assert_eq!(
             result,
-            Value::List(vec![
+            Value::List(Arc::new(vec![
                 Value::Number(3.0),
                 Value::Number(2.0),
                 Value::Number(1.0),
-            ])
+            ]))
         );
     }
 
@@ -24376,11 +24448,11 @@ f>n;r=mk 10 20;+r.x r.y";
         );
         assert_eq!(
             result,
-            Value::List(vec![
+            Value::List(Arc::new(vec![
                 Value::Text("apple".into()),
                 Value::Text("banana".into()),
                 Value::Text("cherry".into()),
-            ])
+            ]))
         );
     }
 
@@ -24389,18 +24461,18 @@ f>n;r=mk 10 20;+r.x r.y";
         let result = vm_run("f>L n;srt [3,1,2]", Some("f"), vec![]);
         assert_eq!(
             result,
-            Value::List(vec![
+            Value::List(Arc::new(vec![
                 Value::Number(1.0),
                 Value::Number(2.0),
                 Value::Number(3.0),
-            ])
+            ]))
         );
     }
 
     #[test]
     fn vm_cov_srt_single_item_list() {
         let result = vm_run("f>L n;srt [42]", Some("f"), vec![]);
-        assert_eq!(result, Value::List(vec![Value::Number(42.0)]));
+        assert_eq!(result, Value::List(Arc::new(vec![Value::Number(42.0)])));
     }
 
     // ── OP_SLC — slice string ──────────────────────────────────────────────
@@ -24422,18 +24494,21 @@ f>n;r=mk 10 20;+r.x r.y";
         let result = vm_run(r#"f>L t;spl "a,b,c" ",""#, Some("f"), vec![]);
         assert_eq!(
             result,
-            Value::List(vec![
+            Value::List(Arc::new(vec![
                 Value::Text("a".into()),
                 Value::Text("b".into()),
                 Value::Text("c".into()),
-            ])
+            ]))
         );
     }
 
     #[test]
     fn vm_cov_spl_no_match() {
         let result = vm_run(r#"f>L t;spl "abc" ",""#, Some("f"), vec![]);
-        assert_eq!(result, Value::List(vec![Value::Text("abc".into())]));
+        assert_eq!(
+            result,
+            Value::List(Arc::new(vec![Value::Text("abc".into())]))
+        );
     }
 
     // ── OP_UNQ — unique string characters ─────────────────────────────────
@@ -25008,11 +25083,11 @@ f>n;r=mk 10 20;+r.x r.y";
             is_tool: vec![false],
         };
 
-        let list_arg = Value::List(vec![
+        let list_arg = Value::List(Arc::new(vec![
             Value::Number(10.0),
             Value::Number(20.0),
             Value::Number(30.0),
-        ]);
+        ]));
         let result = run(&program, Some("f"), vec![list_arg]).expect("should succeed");
         assert_eq!(result, Value::Number(20.0)); // index 1 → 20.0
     }
@@ -25060,11 +25135,11 @@ f>n;r=mk 10 20;+r.x r.y";
             is_tool: vec![false],
         };
 
-        let list_arg = Value::List(vec![
+        let list_arg = Value::List(Arc::new(vec![
             Value::Number(10.0),
             Value::Number(20.0),
             Value::Number(30.0),
-        ]);
+        ]));
         let result = run(&program, Some("f"), vec![list_arg]).expect("should succeed");
         assert_eq!(result, Value::Nil); // out of bounds → nil
     }
@@ -25256,7 +25331,11 @@ f>n;r=mk 10 20;+r.x r.y";
         // → returns false (line 721), falls through to general binding.
         let src = "f xs:L n>L n;xs=+=[] xs;xs";
         // This just tests that the program runs, not the specific opcode path
-        let result = vm_run(src, Some("f"), vec![Value::List(vec![Value::Number(1.0)])]);
+        let result = vm_run(
+            src,
+            Some("f"),
+            vec![Value::List(Arc::new(vec![Value::Number(1.0)]))],
+        );
         match result {
             Value::List(items) => assert!(!items.is_empty()),
             other => panic!("expected list, got {:?}", other),
@@ -25346,7 +25425,7 @@ f>n;r=mk 10 20;+r.x r.y";
             is_tool: vec![false],
         };
 
-        let list_arg = Value::List(vec![Value::Number(1.0), Value::Number(2.0)]);
+        let list_arg = Value::List(Arc::new(vec![Value::Number(1.0), Value::Number(2.0)]));
         let result = run(&program, Some("f"), vec![list_arg]);
         assert!(result.is_err());
         let msg = result.unwrap_err().to_string();
@@ -25970,11 +26049,11 @@ f>n;r=mk 10 20;+r.x r.y";
         let result = run(&compiled, Some("f"), vec![]).expect("run lst");
         assert_eq!(
             result,
-            Value::List(vec![
+            Value::List(Arc::new(vec![
                 Value::Number(10.0),
                 Value::Number(99.0),
                 Value::Number(30.0),
-            ])
+            ]))
         );
     }
 
