@@ -3574,7 +3574,7 @@ fn parse_cli_arg(s: &str) -> interpreter::Value {
     // This preserves the raw contents (no escape decoding) which mirrors how
     // the rest of the CLI passes bare text.
     if s.len() >= 2 && s.starts_with('"') && s.ends_with('"') {
-        return interpreter::Value::Text(s[1..s.len() - 1].to_string());
+        return interpreter::Value::Text(std::sync::Arc::new(s[1..s.len() - 1].to_string()));
     }
     // Bare comma list: 1,2,3
     if s.contains(',') {
@@ -3597,7 +3597,7 @@ fn parse_cli_arg(s: &str) -> interpreter::Value {
     } else if s == "false" {
         interpreter::Value::Bool(false)
     } else {
-        interpreter::Value::Text(s.to_string())
+        interpreter::Value::Text(std::sync::Arc::new(s.to_string()))
     }
 }
 
@@ -3625,7 +3625,7 @@ fn parse_cli_arg_for_param(s: &str, expected: Option<&ast::Type>) -> interpreter
         } else {
             s
         };
-        return interpreter::Value::Text(stripped.to_string());
+        return interpreter::Value::Text(std::sync::Arc::new(stripped.to_string()));
     }
     parse_cli_arg(s)
 }
@@ -3795,7 +3795,7 @@ mod tests {
     fn cli_arg_text() {
         assert_eq!(
             parse_cli_arg("hello"),
-            interpreter::Value::Text("hello".into())
+            interpreter::Value::Text(Arc::new("hello".to_string()))
         );
     }
 
@@ -3837,7 +3837,7 @@ mod tests {
             parse_cli_arg("1,hello,true"),
             interpreter::Value::List(Arc::new(vec![
                 interpreter::Value::Number(1.0),
-                interpreter::Value::Text("hello".into()),
+                interpreter::Value::Text(Arc::new("hello".to_string())),
                 interpreter::Value::Bool(true),
             ]))
         );
@@ -3846,7 +3846,10 @@ mod tests {
     #[test]
     fn cli_arg_infinity_is_text() {
         // inf is not finite so it should fall through to text
-        assert_eq!(parse_cli_arg("inf"), interpreter::Value::Text("inf".into()));
+        assert_eq!(
+            parse_cli_arg("inf"),
+            interpreter::Value::Text(Arc::new("inf".to_string()))
+        );
     }
 
     // ── detect_output_mode ────────────────────────────────────────────────────
@@ -4530,7 +4533,7 @@ mod tests {
         run_default(
             &program,
             Some("greet"),
-            vec![interpreter::Value::Text("world".into())],
+            vec![interpreter::Value::Text(Arc::new("world".to_string()))],
             "greet name:t>t;cat \"hi \" name",
             OutputMode::Text,
             false,
@@ -4621,19 +4624,27 @@ mod tests {
 
     #[test]
     fn print_value_err_as_json() {
-        let val = interpreter::Value::Err(Box::new(interpreter::Value::Text("oops".into())));
+        let val = interpreter::Value::Err(Box::new(interpreter::Value::Text(Arc::new(
+            "oops".to_string(),
+        ))));
         print_value(&val, true, false);
     }
 
     #[test]
     fn print_value_err_no_json() {
-        let val = interpreter::Value::Err(Box::new(interpreter::Value::Text("fail".into())));
+        let val = interpreter::Value::Err(Box::new(interpreter::Value::Text(Arc::new(
+            "fail".to_string(),
+        ))));
         print_value(&val, false, false);
     }
 
     #[test]
     fn print_value_text_as_json() {
-        print_value(&interpreter::Value::Text("hello".into()), true, false);
+        print_value(
+            &interpreter::Value::Text(Arc::new("hello".to_string())),
+            true,
+            false,
+        );
     }
 
     #[test]
@@ -4831,7 +4842,10 @@ mod tests {
     #[test]
     fn cli_arg_nan_is_text() {
         // NaN is not finite, so it should fall through to text
-        assert_eq!(parse_cli_arg("NaN"), interpreter::Value::Text("NaN".into()));
+        assert_eq!(
+            parse_cli_arg("NaN"),
+            interpreter::Value::Text(Arc::new("NaN".to_string()))
+        );
     }
 
     #[test]
@@ -4847,7 +4861,10 @@ mod tests {
     #[test]
     fn cli_arg_nil_not_text() {
         // "nil" should parse as Nil, not Text("nil")
-        assert_ne!(parse_cli_arg("nil"), interpreter::Value::Text("nil".into()));
+        assert_ne!(
+            parse_cli_arg("nil"),
+            interpreter::Value::Text(Arc::new("nil".to_string()))
+        );
     }
 
     // ── coerce_cli_args ──────────────────────────────────────────────────────
@@ -4969,7 +4986,10 @@ mod tests {
         let program = make_program("f arg:t>t;arg");
         let raw = vec!["2".to_string()];
         let parsed = parse_cli_args_typed(&program, Some("f"), &raw);
-        assert_eq!(parsed, vec![interpreter::Value::Text("2".into())]);
+        assert_eq!(
+            parsed,
+            vec![interpreter::Value::Text(Arc::new("2".to_string()))]
+        );
     }
 
     #[test]
@@ -4977,7 +4997,10 @@ mod tests {
         let program = make_program("f arg:t>t;arg");
         let raw = vec!["true".to_string()];
         let parsed = parse_cli_args_typed(&program, Some("f"), &raw);
-        assert_eq!(parsed, vec![interpreter::Value::Text("true".into())]);
+        assert_eq!(
+            parsed,
+            vec![interpreter::Value::Text(Arc::new("true".to_string()))]
+        );
     }
 
     #[test]
@@ -4985,7 +5008,10 @@ mod tests {
         let program = make_program("f arg:t>t;arg");
         let raw = vec!["nil".to_string()];
         let parsed = parse_cli_args_typed(&program, Some("f"), &raw);
-        assert_eq!(parsed, vec![interpreter::Value::Text("nil".into())]);
+        assert_eq!(
+            parsed,
+            vec![interpreter::Value::Text(Arc::new("nil".to_string()))]
+        );
     }
 
     #[test]
@@ -4994,7 +5020,10 @@ mod tests {
         let program = make_program("f arg:t>t;arg");
         let raw = vec!["[1,2]".to_string()];
         let parsed = parse_cli_args_typed(&program, Some("f"), &raw);
-        assert_eq!(parsed, vec![interpreter::Value::Text("[1,2]".into())]);
+        assert_eq!(
+            parsed,
+            vec![interpreter::Value::Text(Arc::new("[1,2]".to_string()))]
+        );
     }
 
     #[test]
@@ -5030,7 +5059,7 @@ mod tests {
         assert_eq!(
             parsed,
             vec![
-                interpreter::Value::Text("2".into()),
+                interpreter::Value::Text(Arc::new("2".to_string())),
                 interpreter::Value::Number(3.0),
             ]
         );
@@ -5197,7 +5226,7 @@ mod tests {
     fn print_value_list_plain_not_json() {
         let val = interpreter::Value::List(Arc::new(vec![
             interpreter::Value::Number(1.0),
-            interpreter::Value::Text("x".into()),
+            interpreter::Value::Text(Arc::new("x".to_string())),
         ]));
         print_value(&val, false, false);
     }

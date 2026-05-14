@@ -4556,15 +4556,21 @@ mod tests {
         let result = jit_run(
             r#"f a:t b:t>t;+ a b"#,
             "f",
-            &[Value::Text("hello".into()), Value::Text(" world".into())],
+            &[
+                Value::Text(Arc::new("hello".to_string())),
+                Value::Text(Arc::new(" world".to_string())),
+            ],
         );
-        assert_eq!(result, Some(Value::Text("hello world".into())));
+        assert_eq!(
+            result,
+            Some(Value::Text(Arc::new("hello world".to_string())))
+        );
     }
 
     #[test]
     fn cranelift_string_constant() {
         let result = jit_run(r#"f>t;"hello""#, "f", &[]);
-        assert_eq!(result, Some(Value::Text("hello".into())));
+        assert_eq!(result, Some(Value::Text(Arc::new("hello".to_string()))));
     }
 
     #[test]
@@ -4615,16 +4621,26 @@ mod tests {
 
     #[test]
     fn cranelift_wraperr() {
-        let result = jit_run(r#"f x:t>R n t;^"bad""#, "f", &[Value::Text("bad".into())]);
+        let result = jit_run(
+            r#"f x:t>R n t;^"bad""#,
+            "f",
+            &[Value::Text(Arc::new("bad".to_string()))],
+        );
         assert_eq!(
             result,
-            Some(Value::Err(Box::new(Value::Text("bad".into()))))
+            Some(Value::Err(Box::new(Value::Text(Arc::new(
+                "bad".to_string()
+            )))))
         );
     }
 
     #[test]
     fn cranelift_len_string() {
-        let result = jit_run(r#"f s:t>n;len s"#, "f", &[Value::Text("hello".into())]);
+        let result = jit_run(
+            r#"f s:t>n;len s"#,
+            "f",
+            &[Value::Text(Arc::new("hello".to_string()))],
+        );
         assert_eq!(result, Some(Value::Number(5.0)));
     }
 
@@ -4682,7 +4698,7 @@ mod tests {
     #[test]
     fn cranelift_str_builtin() {
         let result = jit_run("f x:n>t;str x", "f", &[Value::Number(42.0)]);
-        assert_eq!(result, Some(Value::Text("42".into())));
+        assert_eq!(result, Some(Value::Text(Arc::new("42".to_string()))));
     }
 
     #[test]
@@ -4709,7 +4725,7 @@ mod tests {
         let result = jit_run(
             r#"f s:t>n;r=num s;?r{~v:v;^_:0}"#,
             "f",
-            &[Value::Text("3.14".into())],
+            &[Value::Text(Arc::new("3.14".to_string()))],
         );
         assert_eq!(result, Some(Value::Number(3.14)));
     }
@@ -4769,11 +4785,13 @@ mod tests {
         let result = jit_run(
             r#"f k:t>R t t;env k"#,
             "f",
-            &[Value::Text("ILO_JIT_TEST_VAR".into())],
+            &[Value::Text(Arc::new("ILO_JIT_TEST_VAR".to_string()))],
         );
         assert_eq!(
             result,
-            Some(Value::Ok(Box::new(Value::Text("hello".into()))))
+            Some(Value::Ok(Box::new(Value::Text(Arc::new(
+                "hello".to_string()
+            )))))
         );
     }
 
@@ -4784,14 +4802,17 @@ mod tests {
         let result = jit_run(
             r#"f s:t sep:t>L t;spl s sep"#,
             "f",
-            &[Value::Text("a,b,c".into()), Value::Text(",".into())],
+            &[
+                Value::Text(Arc::new("a,b,c".to_string())),
+                Value::Text(Arc::new(",".to_string())),
+            ],
         );
         assert_eq!(
             result,
             Some(Value::List(std::sync::Arc::new(vec![
-                Value::Text("a".into()),
-                Value::Text("b".into()),
-                Value::Text("c".into()),
+                Value::Text(Arc::new("a".to_string())),
+                Value::Text(Arc::new("b".to_string())),
+                Value::Text(Arc::new("c".to_string())),
             ])))
         );
     }
@@ -4803,13 +4824,13 @@ mod tests {
             "f",
             &[
                 Value::List(std::sync::Arc::new(vec![
-                    Value::Text("x".into()),
-                    Value::Text("y".into()),
+                    Value::Text(Arc::new("x".to_string())),
+                    Value::Text(Arc::new("y".to_string())),
                 ])),
-                Value::Text("-".into()),
+                Value::Text(Arc::new("-".to_string())),
             ],
         );
-        assert_eq!(result, Some(Value::Text("x-y".into())));
+        assert_eq!(result, Some(Value::Text(Arc::new("x-y".to_string()))));
     }
 
     // ── has / hd / tl / rev / srt / slc ──────────────────────────────────────
@@ -5013,7 +5034,7 @@ mod tests {
     fn cranelift_jdmp_number() {
         // jdmp serialises numbers without trailing .0 (matches interpreter behaviour)
         let result = jit_run("f x:n>t;jdmp x", "f", &[Value::Number(42.0)]);
-        assert_eq!(result, Some(Value::Text("42".into())));
+        assert_eq!(result, Some(Value::Text(Arc::new("42".to_string()))));
     }
 
     #[test]
@@ -5021,7 +5042,7 @@ mod tests {
         let result = jit_run(
             r#"f s:t>R t t;jpar s"#,
             "f",
-            &[Value::Text(r#"{"k":"v"}"#.into())],
+            &[Value::Text(Arc::new(r#"{"k":"v"}"#.to_string()))],
         );
         assert!(matches!(result, Some(Value::Ok(_))));
     }
@@ -5032,13 +5053,15 @@ mod tests {
             r#"f j:t p:t>R t t;jpth j p"#,
             "f",
             &[
-                Value::Text(r#"{"name":"alice"}"#.into()),
-                Value::Text("name".into()),
+                Value::Text(Arc::new(r#"{"name":"alice"}"#.to_string())),
+                Value::Text(Arc::new("name".to_string())),
             ],
         );
         assert_eq!(
             result,
-            Some(Value::Ok(Box::new(Value::Text("alice".into()))))
+            Some(Value::Ok(Box::new(Value::Text(Arc::new(
+                "alice".to_string()
+            )))))
         );
     }
 
@@ -5061,7 +5084,9 @@ mod tests {
         let result = jit_run(
             r#"f x:R n t>n;?x{~_:1;^_:99}"#,
             "f",
-            &[Value::Err(Box::new(Value::Text("bad".into())))],
+            &[Value::Err(Box::new(Value::Text(Arc::new(
+                "bad".to_string(),
+            ))))],
         );
         assert_eq!(result, Some(Value::Number(99.0)));
     }
@@ -5142,7 +5167,7 @@ mod tests {
         let idx = compiled.func_names.iter().position(|n| n == "f").unwrap();
         let chunk = &compiled.chunks[idx];
         let nan_consts = &compiled.nan_constants[idx];
-        let nan_args: Vec<u64> = [Value::Text(r#"{"score":42}"#.to_string())]
+        let nan_args: Vec<u64> = [Value::Text(Arc::new(r#"{"score":42}"#.to_string()))]
             .iter()
             .map(|v| NanVal::from_value(v).0)
             .collect();
@@ -5273,9 +5298,9 @@ mod tests {
             "f xs:L n>n;s=0;@x xs{s=+s 1};s",
             "f",
             &[Value::List(std::sync::Arc::new(vec![
-                Value::Text("a".to_string()),
-                Value::Text("b".to_string()),
-                Value::Text("c".to_string()),
+                Value::Text(Arc::new("a".to_string())),
+                Value::Text(Arc::new("b".to_string())),
+                Value::Text(Arc::new("c".to_string())),
             ]))],
         );
         assert_eq!(result, Some(Value::Number(3.0)));
@@ -5467,9 +5492,15 @@ mod tests {
         let result = jit_run(
             "strjoin a:t b:t>t;+a b\nf a:t b:t>t;strjoin a b",
             "f",
-            &[Value::Text("hello".into()), Value::Text(" world".into())],
+            &[
+                Value::Text(Arc::new("hello".to_string())),
+                Value::Text(Arc::new(" world".to_string())),
+            ],
         );
-        assert_eq!(result, Some(Value::Text("hello world".into())));
+        assert_eq!(
+            result,
+            Some(Value::Text(Arc::new("hello world".to_string())))
+        );
     }
 
     #[test]
@@ -5481,9 +5512,9 @@ mod tests {
         let result = jit_run(
             "greet x:t>t;+\"hi \" x\nf name:t>t;greet name",
             "f",
-            &[Value::Text("alice".into())],
+            &[Value::Text(Arc::new("alice".to_string()))],
         );
-        assert_eq!(result, Some(Value::Text("hi alice".into())));
+        assert_eq!(result, Some(Value::Text(Arc::new("hi alice".to_string()))));
     }
 
     // ── Type predicate ops ────────────────────────────────────────────────────
@@ -5505,7 +5536,7 @@ mod tests {
         let result = jit_run(
             r#"f x:t>b;?x{t _:true;_:false}"#,
             "f",
-            &[Value::Text("hi".into())],
+            &[Value::Text(Arc::new("hi".to_string()))],
         );
         assert_eq!(result, Some(Value::Bool(true)));
     }
@@ -5582,7 +5613,7 @@ mod tests {
             "f",
             &[],
         );
-        assert_eq!(result, Some(Value::Text("miss".into())));
+        assert_eq!(result, Some(Value::Text(Arc::new("miss".to_string()))));
     }
 
     #[test]
@@ -5595,7 +5626,7 @@ mod tests {
             "f",
             &[],
         );
-        assert_eq!(result, Some(Value::Text("second".into())));
+        assert_eq!(result, Some(Value::Text(Arc::new("second".to_string()))));
     }
 
     #[test]
@@ -5619,8 +5650,12 @@ mod tests {
 
     #[test]
     fn cranelift_trm_builtin() {
-        let result = jit_run(r#"f s:t>t;trm s"#, "f", &[Value::Text("  hello  ".into())]);
-        assert_eq!(result, Some(Value::Text("hello".into())));
+        let result = jit_run(
+            r#"f s:t>t;trm s"#,
+            "f",
+            &[Value::Text(Arc::new("  hello  ".to_string()))],
+        );
+        assert_eq!(result, Some(Value::Text(Arc::new("hello".to_string()))));
     }
 
     #[test]
@@ -5647,7 +5682,10 @@ mod tests {
         let result = jit_run(
             r#"f x:t y:t>b;= x y"#,
             "f",
-            &[Value::Text("hello".into()), Value::Text("hello".into())],
+            &[
+                Value::Text(Arc::new("hello".to_string())),
+                Value::Text(Arc::new("hello".to_string())),
+            ],
         );
         assert_eq!(result, Some(Value::Bool(true)));
     }
@@ -5658,7 +5696,10 @@ mod tests {
         let result = jit_run(
             r#"f x:t y:t>b;< x y"#,
             "f",
-            &[Value::Text("a".into()), Value::Text("b".into())],
+            &[
+                Value::Text(Arc::new("a".to_string())),
+                Value::Text(Arc::new("b".to_string())),
+            ],
         );
         // String comparison: "a" < "b" is true
         assert_eq!(result, Some(Value::Bool(true)));
@@ -5693,7 +5734,10 @@ mod tests {
         let result = jit_run(
             "f p:t c:t>t;wr p c",
             "f",
-            &[Value::Text(path_str), Value::Text("hello jit\n".into())],
+            &[
+                Value::Text(Arc::new(path_str)),
+                Value::Text(Arc::new("hello jit\n".to_string())),
+            ],
         );
         // wr returns ok/err result; we just check it doesn't panic
         let _ = std::fs::remove_file(&path);
@@ -5799,7 +5843,11 @@ mod tests {
     #[test]
     fn cranelift_num_text_to_number() {
         // num converts a text to a number (returns Result)
-        let result = jit_run(r#"f s:t>R n t;num s"#, "f", &[Value::Text("3.14".into())]);
+        let result = jit_run(
+            r#"f s:t>R n t;num s"#,
+            "f",
+            &[Value::Text(Arc::new("3.14".to_string()))],
+        );
         assert_eq!(result, Some(Value::Ok(Box::new(Value::Number(3.14)))));
     }
 
@@ -5809,8 +5857,8 @@ mod tests {
     fn cranelift_map_set_and_get_string_value() {
         let result = jit_run(r#"f>t;m=mset mmap "key" "val";mget m "key""#, "f", &[]);
         match result {
-            Some(Value::Text(s)) => assert_eq!(s, "val"),
-            Some(Value::Ok(v)) => assert_eq!(*v, Value::Text("val".into())),
+            Some(Value::Text(s)) => assert_eq!(s.as_str(), "val"),
+            Some(Value::Ok(v)) => assert_eq!(*v, Value::Text(Arc::new("val".to_string()))),
             other => panic!("expected 'val', got {:?}", other),
         }
     }
@@ -5861,8 +5909,12 @@ mod tests {
     fn cranelift_move_string_value() {
         // When the source register holds a string (not proven always-numeric),
         // the MOVE handler takes the general is_heap-check path.
-        let result = jit_run(r#"f s:t>t;t=s;t"#, "f", &[Value::Text("hello".into())]);
-        assert_eq!(result, Some(Value::Text("hello".into())));
+        let result = jit_run(
+            r#"f s:t>t;t=s;t"#,
+            "f",
+            &[Value::Text(Arc::new("hello".to_string()))],
+        );
+        assert_eq!(result, Some(Value::Text(Arc::new("hello".to_string()))));
     }
 
     // ── NEG on non-numeric operand (helper slow path) ─────────────────────────
@@ -6033,7 +6085,10 @@ mod tests {
         let result = jit_run(
             "f x:n y:t>n;-x x",
             "f",
-            &[Value::Number(8.0), Value::Text("dummy".into())],
+            &[
+                Value::Number(8.0),
+                Value::Text(Arc::new("dummy".to_string())),
+            ],
         );
         assert_eq!(result, Some(Value::Number(0.0)));
     }
@@ -6043,7 +6098,10 @@ mod tests {
         let result = jit_run(
             "f x:n y:t>n;*x x",
             "f",
-            &[Value::Number(3.0), Value::Text("dummy".into())],
+            &[
+                Value::Number(3.0),
+                Value::Text(Arc::new("dummy".to_string())),
+            ],
         );
         assert_eq!(result, Some(Value::Number(9.0)));
     }
@@ -6053,7 +6111,10 @@ mod tests {
         let result = jit_run(
             "f x:n y:t>n;/x x",
             "f",
-            &[Value::Number(6.0), Value::Text("dummy".into())],
+            &[
+                Value::Number(6.0),
+                Value::Text(Arc::new("dummy".to_string())),
+            ],
         );
         assert_eq!(result, Some(Value::Number(1.0)));
     }
@@ -6099,7 +6160,10 @@ mod tests {
         let result = jit_run(
             "f x:n y:t>n;+x 1",
             "f",
-            &[Value::Number(5.0), Value::Text("dummy".into())],
+            &[
+                Value::Number(5.0),
+                Value::Text(Arc::new("dummy".to_string())),
+            ],
         );
         assert_eq!(result, Some(Value::Number(6.0)));
     }
@@ -6109,7 +6173,10 @@ mod tests {
         let result = jit_run(
             "f x:n y:t>n;-x 1",
             "f",
-            &[Value::Number(8.0), Value::Text("dummy".into())],
+            &[
+                Value::Number(8.0),
+                Value::Text(Arc::new("dummy".to_string())),
+            ],
         );
         assert_eq!(result, Some(Value::Number(7.0)));
     }
@@ -6119,7 +6186,10 @@ mod tests {
         let result = jit_run(
             "f x:n y:t>n;*x 3",
             "f",
-            &[Value::Number(4.0), Value::Text("dummy".into())],
+            &[
+                Value::Number(4.0),
+                Value::Text(Arc::new("dummy".to_string())),
+            ],
         );
         assert_eq!(result, Some(Value::Number(12.0)));
     }
@@ -6129,7 +6199,10 @@ mod tests {
         let result = jit_run(
             "f x:n y:t>n;/x 2",
             "f",
-            &[Value::Number(10.0), Value::Text("dummy".into())],
+            &[
+                Value::Number(10.0),
+                Value::Text(Arc::new("dummy".to_string())),
+            ],
         );
         assert_eq!(result, Some(Value::Number(5.0)));
     }
@@ -6178,7 +6251,10 @@ mod tests {
         let result = jit_run(
             "f x:n y:t>n;>x 5 1;0",
             "f",
-            &[Value::Number(10.0), Value::Text("dummy".into())],
+            &[
+                Value::Number(10.0),
+                Value::Text(Arc::new("dummy".to_string())),
+            ],
         );
         assert_eq!(result, Some(Value::Number(1.0)));
     }
@@ -6188,7 +6264,10 @@ mod tests {
         let result = jit_run(
             "f x:n y:t>n;<x 5 1;0",
             "f",
-            &[Value::Number(3.0), Value::Text("dummy".into())],
+            &[
+                Value::Number(3.0),
+                Value::Text(Arc::new("dummy".to_string())),
+            ],
         );
         assert_eq!(result, Some(Value::Number(1.0)));
     }
@@ -6198,7 +6277,10 @@ mod tests {
         let result = jit_run(
             "f x:n y:t>n;<=x 5 1;0",
             "f",
-            &[Value::Number(5.0), Value::Text("dummy".into())],
+            &[
+                Value::Number(5.0),
+                Value::Text(Arc::new("dummy".to_string())),
+            ],
         );
         assert_eq!(result, Some(Value::Number(1.0)));
     }
@@ -6208,7 +6290,10 @@ mod tests {
         let result = jit_run(
             "f x:n y:t>n;>=x 5 1;0",
             "f",
-            &[Value::Number(5.0), Value::Text("dummy".into())],
+            &[
+                Value::Number(5.0),
+                Value::Text(Arc::new("dummy".to_string())),
+            ],
         );
         assert_eq!(result, Some(Value::Number(1.0)));
     }
@@ -6218,7 +6303,10 @@ mod tests {
         let result = jit_run(
             "f x:n y:t>n;==x 5 1;0",
             "f",
-            &[Value::Number(5.0), Value::Text("dummy".into())],
+            &[
+                Value::Number(5.0),
+                Value::Text(Arc::new("dummy".to_string())),
+            ],
         );
         assert_eq!(result, Some(Value::Number(1.0)));
     }
@@ -6228,7 +6316,10 @@ mod tests {
         let result = jit_run(
             "f x:n y:t>n;!=x 5 1;0",
             "f",
-            &[Value::Number(3.0), Value::Text("dummy".into())],
+            &[
+                Value::Number(3.0),
+                Value::Text(Arc::new("dummy".to_string())),
+            ],
         );
         assert_eq!(result, Some(Value::Number(1.0)));
     }

@@ -1,0 +1,39 @@
+-- Demonstrates the tree-walker string-concat accumulator fast path.
+--
+-- Phase 2b.3 (this commit's parent PR) makes `Value::Text` RC-aware via
+-- `Arc<String>` and extends the existing eval_stmt self-rebind concat
+-- peephole to cover the Text/Text case. With refcount=1 the peephole
+-- calls `Arc::make_mut` and `push_str` to mutate the inner String in
+-- place, so the loop below runs in O(n) instead of O(n^2).
+--
+-- Mirror of the Phase 2b.1 Map fast path (PR #261) and the Phase 2b.2
+-- List fast path (PR #273).
+
+-- The canonical accumulator: build "xxx...x" of length n.
+-- Pre-Phase-2b.3 the tree engine cloned the whole String on every
+-- iteration. After the fix it mutates in place because env's `s` is the
+-- sole holder.
+build-xs n:n>n;s="";@i 0..n{s=+s "x"};len s
+
+-- Variable suffix: the rhs is a Ref, not a literal. The peephole still
+-- fires because `name` is a different binding from `s`.
+greet name:t>t;s="hello ";s=+s name;s
+
+-- Aliased concat must NOT use the fast path. `s = +s s` reads `s` after
+-- env.take() would have replaced it with Nil, so the peephole bails out
+-- and the general allocating path doubles the string correctly.
+self-double>t;s="ab";s=+s s;s
+
+-- Non-rebind shape: `b = +a c` must leave `a` untouched. The peephole's
+-- name-match fails, so apply_binop allocates a fresh String and the
+-- caller's `a` is preserved.
+preserve-source>t;a="k1";b=+a "_x";a
+
+-- run: build-xs 50
+-- out: 50
+-- run: greet world
+-- out: hello world
+-- run: self-double
+-- out: abab
+-- run: preserve-source
+-- out: k1
