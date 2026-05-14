@@ -180,6 +180,15 @@ Short names, 1-3 chars: `order`→`ord`, `customers`→`cs`, `data`→`d`, `item
 
 Function names follow the same rule. Field names in constructors keep their full form.
 
+**Identifier syntax**: lowercase ASCII with optional hyphenated segments only. Formal grammar: `[a-z][a-z0-9]*(-[a-z0-9]+)*`. Capital letters and underscores are rejected at binding and call sites.
+
+```
+run, run-d, r2      -- OK
+runD, RunD, run_d   -- ERROR (capital or underscore)
+```
+
+The only place capital letters and underscores are accepted is **after `.` or `.?`** at field-access position, so JSON keys from real APIs work as-is: `r.URL`, `r.AccessKey`, `r.access_key`, `r.?MetaData`.
+
 ## Running
 
 ```bash
