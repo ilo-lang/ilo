@@ -281,6 +281,43 @@ pub(crate) const OP_CHR: u8 = 154; // R[A] = single-char string for codepoint R[
 // t -> L t. No sentinels for empty input — returns empty list.
 pub(crate) const OP_CHARS: u8 = 158; // R[A] = chars(R[B])
 
+// Load a function reference (user fn or builtin) into a register.
+//
+// Encoding (ABx):
+//   A  = dest register
+//   Bx = 16-bit operand: high bit (bit 15) is kind (0=user, 1=builtin),
+//        low 15 bits are the id (chunk index for user, `Builtin::tag()`
+//        for builtin). 15 bits is plenty: OP_CALL itself is capped at
+//        255 user functions today and there are far fewer builtin tags.
+//
+// Used by the compiler when `Expr::Ref(name)` resolves to a function or
+// builtin name rather than a local variable — i.e. the function name is
+// being used as a first-class value (passed to a HOF, stored, etc.).
+//
+// The runtime semantics are zero-cost: a FnRef is a Copy NanVal with no
+// heap allocation, so OP_LOADFN compiles to a single register write.
+pub(crate) const OP_LOADFN: u8 = 159;
+
+// Dynamic call by function reference. The callee is a FnRef NanVal sitting
+// in a register; we decode its (kind, id), then either push a VM frame
+// (user fn) or invoke the builtin dispatch path (builtin).
+//
+// Encoding (ABC):
+//   A = result register
+//   B = register holding the FnRef NanVal
+//   C = argc (args live in R[A+1..=A+argc], mirroring OP_CALL)
+//
+// User-fn dispatch matches OP_CALL's frame layout exactly; the only
+// difference is `func_idx` comes from the FnRef payload instead of the
+// bytecode. Builtin dispatch routes through OP_CALL_BUILTIN_TREE-style
+// bridge semantics for builtins that don't have a native VM opcode that
+// accepts dynamic dispatch (i.e. every builtin currently).
+//
+// Pre-allocated here for PR 1; the dispatcher arm is wired up so FnRef
+// round-tripping can be tested end-to-end. HOF builtins start using it
+// in PR 2 onward.
+pub(crate) const OP_CALL_DYN: u8 = 160;
+
 // Generic bridge for tree-only builtins (rgx, rgxall, fmt-variadic, rd 2-arg,
 // rdb, plus any future builtin that the VM/JIT hasn't natively lowered yet).
 //
@@ -1744,6 +1781,25 @@ impl RegCompiler {
             Expr::Ref(name) => {
                 if let Some(reg) = self.resolve_local(name) {
                     reg // FREE — no instruction needed!
+                } else if let Some(idx) = self.func_names.iter().position(|n| n == name) {
+                    // User function used as a value (passed to a HOF, stored,
+                    // etc.). Encode as a FnRef NanVal via OP_LOADFN. Bx high
+                    // bit = 0 (kind=User), low 15 bits = chunk index.
+                    let ra = self.alloc_reg();
+                    assert!(
+                        idx <= 0x7FFF,
+                        "OP_LOADFN: user-fn index {} exceeds 15-bit limit",
+                        idx
+                    );
+                    self.emit_abx(OP_LOADFN, ra, idx as u16);
+                    ra
+                } else if let Some(b) = crate::builtins::Builtin::from_name(name) {
+                    // Builtin name used as a value. Bx high bit = 1 (kind=Builtin),
+                    // low 15 bits = `Builtin::tag()`.
+                    let ra = self.alloc_reg();
+                    let bx = 0x8000u16 | (b.tag() as u16);
+                    self.emit_abx(OP_LOADFN, ra, bx);
+                    ra
                 } else {
                     self.first_error
                         .get_or_insert(CompileError::UndefinedVariable { name: name.clone() });
@@ -2620,6 +2676,15 @@ impl RegCompiler {
                     return self.emit_call_builtin_tree(builtin, args, *unwrap);
                 }
 
+                // NOTE: Dynamic call by FnRef-in-register (the `cb 3`
+                // pattern where `cb` is a parameter typed `F ...`) is
+                // recognised here in PR 2 onward — see OP_CALL_DYN. PR 1
+                // only ships the value-side plumbing (FnRef tag, LOADFN,
+                // dispatcher arms), so calling a FnRef-typed local still
+                // surfaces as UndefinedFunction below. The HOF call-site
+                // tests that depend on this are gated with `#[ignore]`
+                // and are unblocked together in PR 2's first HOF lift.
+
                 let arg_regs: Vec<u8> = args.iter().map(|a| self.compile_expr(a)).collect();
                 let func_idx = self
                     .func_names
@@ -3193,7 +3258,7 @@ fn chunk_is_all_numeric(chunk: &Chunk) -> bool {
             | OP_TL | OP_FMT2 | OP_RGXSUB | OP_ZIP | OP_ENUMERATE | OP_WINDOW | OP_FFT
             | OP_IFFT | OP_RANGE | OP_CHUNKS | OP_CUMSUM | OP_SETUNION | OP_SETINTER
             | OP_SETDIFF | OP_TRANSPOSE | OP_MATMUL | OP_INV | OP_SOLVE | OP_DTFMT | OP_DTPARSE
-            | OP_CALL_BUILTIN_TREE => {
+            | OP_CALL_BUILTIN_TREE | OP_LOADFN | OP_CALL_DYN => {
                 return false;
             }
             _ => {}
@@ -3221,6 +3286,37 @@ const TAG_MAP: u64 = 0xFFFF_0000_0000_0000;
 pub(crate) const TAG_ARENA_REC: u64 = 0xFFFE_0000_0000_0000;
 const PTR_MASK: u64 = 0x0000_FFFF_FFFF_FFFF;
 const TAG_MASK: u64 = 0xFFFF_0000_0000_0000;
+
+// ── Function-reference NaN tagging ───────────────────────────────────
+//
+// FnRef values (`Value::FnRef(name)` in the tree) need to flow through
+// VM registers and Cranelift IR so higher-order builtins (`map`, `flt`,
+// `fld`, `srt`, `grp`, `uniqby`, `partition`, `flatmap`) can dispatch by
+// register. We encode them as a non-singleton variant of the QNAN tag,
+// distinguished from `TAG_NIL` / `TAG_TRUE` / `TAG_FALSE` by bit 47.
+//
+// Layout (within the 48-bit QNAN payload):
+//   bit 47       : FnRef discriminator (1 = FnRef, 0 = singleton nil/true/false)
+//   bit 32       : kind (0 = user function, 1 = builtin)
+//   bits 0..32   : id  (user-fn chunk index, or `Builtin::tag()` for builtins)
+//
+// `TAG_FNREF` = `0x7FFC_8000_0000_0000`. `(bits & FNREF_MASK) == TAG_FNREF`
+// detects the variant. The encoding is Copy (no heap, no Rc churn) and
+// participates in `is_number`/`is_heap` cleanly: `is_number` already
+// rejects anything in QNAN space, and `is_heap` is updated to exclude
+// FnRefs alongside the existing singleton exclusions.
+pub(crate) const TAG_FNREF: u64 = QNAN | (1u64 << 47);
+pub(crate) const FNREF_MASK: u64 = TAG_MASK | (1u64 << 47);
+pub(crate) const FNREF_KIND_BIT: u64 = 1u64 << 32;
+pub(crate) const FNREF_ID_MASK: u64 = 0x0000_0000_FFFF_FFFF;
+
+/// Kind tag for a FnRef NanVal — user function (resolved to a chunk index)
+/// or builtin (resolved to a `Builtin::tag()`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FnRefKind {
+    User,
+    Builtin,
+}
 
 // ── Bump Arena for Records ──────────────────────────────────────────
 //
@@ -3373,22 +3469,57 @@ impl Drop for BumpArena {
 thread_local! {
     pub(crate) static JIT_ARENA: std::cell::RefCell<BumpArena> = std::cell::RefCell::new(BumpArena::new());
     static ACTIVE_REGISTRY: std::cell::Cell<*const TypeRegistry> = const { std::cell::Cell::new(std::ptr::null()) };
+    /// Active `func_names` pointer for FnRef → name resolution during
+    /// VM-side serialisation (jdmp, error messages, etc.). Set by
+    /// `VM::execute()` for the duration of a run; cleared on drop.
+    /// `Vec<String>` is `Sized` so we store the slice through a raw
+    /// pointer to a `[String]`, paired with a length stored separately.
+    static ACTIVE_FUNC_NAMES: std::cell::Cell<*const Vec<String>> =
+        const { std::cell::Cell::new(std::ptr::null()) };
 }
 
-/// Run `f` with the active `TypeRegistry` pointer set to `program.type_registry`.
+/// Look up a user-fn name by index in the currently active `func_names`
+/// table. Returns `None` if no VM is running on this thread, or if `id`
+/// is out of range. Used by jdmp / error-message paths that don't carry
+/// a program reference but need to render a FnRef as `<fn:name>`.
+fn active_func_name(id: u32) -> Option<String> {
+    let ptr = ACTIVE_FUNC_NAMES.with(|r| r.get());
+    if ptr.is_null() {
+        return None;
+    }
+    // SAFETY: pointer is set only by `VM::execute()` to a live
+    // `Vec<String>` borrowed from `self.program.func_names`. The TLS is
+    // cleared via `ActiveRegistryGuard`-style RAII before the borrow
+    // ends, so the pointer is non-dangling for the duration of the run.
+    // Explicit `&*ptr` reborrow avoids the dangerous_implicit_autorefs
+    // lint and makes the aliasing intent visible.
+    unsafe {
+        let names: &Vec<String> = &*ptr;
+        names.get(id as usize).cloned()
+    }
+}
+
+/// Run `f` with both the active `TypeRegistry` and `func_names`
+/// pointers set from `program`.
 ///
-/// The pointer is only live for the duration of `f`; it is unconditionally
-/// cleared (set to null) when `f` returns **or panics**, so there is no risk
-/// of a dangling pointer after `program` is dropped.
+/// Both pointers are only live for the duration of `f`; they are
+/// unconditionally cleared (set to null) when `f` returns **or panics**,
+/// so there is no risk of a dangling pointer after `program` is
+/// dropped. The dual guard mirrors `VM::execute()` so callers that
+/// bypass the VM (the Cranelift JIT entry path is the main example)
+/// still get correct FnRef name resolution in jdmp / Display /
+/// to_value paths.
 pub fn with_active_registry<R>(program: &CompiledProgram, f: impl FnOnce() -> R) -> R {
     struct ClearGuard;
     impl Drop for ClearGuard {
         fn drop(&mut self) {
             ACTIVE_REGISTRY.with(|r| r.set(std::ptr::null()));
+            ACTIVE_FUNC_NAMES.with(|r| r.set(std::ptr::null()));
         }
     }
 
     ACTIVE_REGISTRY.with(|r| r.set(&program.type_registry as *const TypeRegistry));
+    ACTIVE_FUNC_NAMES.with(|r| r.set(&program.func_names as *const Vec<String>));
     let _guard = ClearGuard;
     f()
 }
@@ -3411,6 +3542,17 @@ pub(crate) struct ActiveRegistryGuard;
 impl Drop for ActiveRegistryGuard {
     fn drop(&mut self) {
         clear_active_registry();
+    }
+}
+
+/// RAII guard that clears `ACTIVE_FUNC_NAMES` on drop, paralleling
+/// `ActiveRegistryGuard`. Set by `VM::execute()` so jdmp / error paths
+/// can resolve user-fn FnRef ids to names without a Program reference.
+pub(crate) struct ActiveFuncNamesGuard;
+
+impl Drop for ActiveFuncNamesGuard {
+    fn drop(&mut self) {
+        ACTIVE_FUNC_NAMES.with(|r| r.set(std::ptr::null()));
     }
 }
 
@@ -3709,6 +3851,36 @@ impl NanVal {
             && self.0 != TAG_TRUE
             && self.0 != TAG_FALSE
             && (self.0 & TAG_MASK) != TAG_ARENA_REC
+            && !self.is_fnref()
+    }
+
+    /// True iff this NanVal carries a function reference (user fn or builtin).
+    #[inline]
+    pub(crate) fn is_fnref(self) -> bool {
+        (self.0 & FNREF_MASK) == TAG_FNREF
+    }
+
+    /// Construct a FnRef NanVal from kind + id. `id` must fit in 32 bits.
+    #[inline]
+    pub(crate) fn fnref(kind: FnRefKind, id: u32) -> Self {
+        let kind_bit = match kind {
+            FnRefKind::User => 0,
+            FnRefKind::Builtin => FNREF_KIND_BIT,
+        };
+        NanVal(TAG_FNREF | kind_bit | (id as u64 & FNREF_ID_MASK))
+    }
+
+    /// Decode a FnRef NanVal. Caller must have checked `is_fnref()`.
+    #[inline]
+    pub(crate) fn fnref_parts(self) -> (FnRefKind, u32) {
+        debug_assert!(self.is_fnref(), "fnref_parts on non-fnref NanVal");
+        let kind = if (self.0 & FNREF_KIND_BIT) != 0 {
+            FnRefKind::Builtin
+        } else {
+            FnRefKind::User
+        };
+        let id = (self.0 & FNREF_ID_MASK) as u32;
+        (kind, id)
     }
 
     #[inline]
@@ -3816,22 +3988,105 @@ impl NanVal {
             }
             Value::Ok(inner) => NanVal::heap_ok(NanVal::from_value(inner)),
             Value::Err(inner) => NanVal::heap_err(NanVal::from_value(inner)),
-            Value::FnRef(name) => NanVal::heap_string(format!("<fn:{}>", name)),
+            Value::FnRef(name) => {
+                // Without a program context we can resolve builtin names
+                // globally via `Builtin::tag()`, but user-fn names have no
+                // stable global id, so they fall back to the pre-PR-1 heap
+                // string. `from_value_with_program` upgrades user-fns to a
+                // real FnRef NanVal. Existing call sites (constants table,
+                // CLI-arg encoding, JIT entry path) keep working unchanged.
+                if let Some(b) = crate::builtins::Builtin::from_name(name) {
+                    NanVal::fnref(FnRefKind::Builtin, b.tag() as u32)
+                } else {
+                    NanVal::heap_string(format!("<fn:{}>", name))
+                }
+            }
             Value::Closure { fn_name, .. } => {
                 // Closures don't round-trip through NanVal — VM/Cranelift HOF
-                // dispatch is the parked FnRef NaN-tagging follow-up. Falling
-                // back to a sentinel string keeps the dispatcher total; the
-                // VM `compile_expr` branch for `Expr::MakeClosure` panics
-                // before we get here in any well-formed program, so this is
-                // belt-and-braces.
+                // dispatch with N captures is downstream of this PR. The VM
+                // `compile_expr` branch for `Expr::MakeClosure` records a
+                // `CompileError::UnsupportedClosureCapture` before we get here
+                // in any well-formed program, so this sentinel-string fallback
+                // is belt-and-braces for stray Closures threaded through the
+                // tree-bridge dispatcher.
                 NanVal::heap_string(format!("<closure:{}>", fn_name))
             }
+        }
+    }
+
+    /// Like `from_value` but resolves user-function FnRefs against the
+    /// supplied `func_names` slice. Used by the VM's bridge layer when
+    /// crossing back into the tree interpreter and vice versa.
+    pub(crate) fn from_value_with_program(val: &Value, func_names: &[String]) -> Self {
+        match val {
+            Value::List(items) => NanVal::heap_list(
+                items
+                    .iter()
+                    .map(|v| NanVal::from_value_with_program(v, func_names))
+                    .collect(),
+            ),
+            Value::Map(m) => {
+                let nan_map: HashMap<MapKey, NanVal> = m
+                    .iter()
+                    .map(|(k, v)| (k.clone(), NanVal::from_value_with_program(v, func_names)))
+                    .collect();
+                NanVal::heap_map(nan_map)
+            }
+            Value::Record { type_name, fields } => {
+                let field_names: Vec<String> = fields.keys().cloned().collect();
+                let type_info = Rc::new(TypeInfo {
+                    name: type_name.clone(),
+                    fields: field_names.clone(),
+                    num_fields: 0,
+                });
+                let flat: Box<[NanVal]> = field_names
+                    .iter()
+                    .map(|k| NanVal::from_value_with_program(&fields[k], func_names))
+                    .collect::<Vec<_>>()
+                    .into_boxed_slice();
+                NanVal::heap_record(type_info, flat)
+            }
+            Value::Ok(inner) => NanVal::heap_ok(NanVal::from_value_with_program(inner, func_names)),
+            Value::Err(inner) => {
+                NanVal::heap_err(NanVal::from_value_with_program(inner, func_names))
+            }
+            Value::FnRef(name) => {
+                if let Some(idx) = func_names.iter().position(|n| n == name) {
+                    NanVal::fnref(FnRefKind::User, idx as u32)
+                } else if let Some(b) = crate::builtins::Builtin::from_name(name) {
+                    NanVal::fnref(FnRefKind::Builtin, b.tag() as u32)
+                } else {
+                    // Unresolved name: fall back to text so the runtime
+                    // diagnostic surfaces "first arg must be a function
+                    // reference" rather than an opaque encode panic.
+                    NanVal::heap_string(name.clone())
+                }
+            }
+            _ => NanVal::from_value(val),
         }
     }
 
     pub fn to_value(self) -> Value {
         if self.is_number() {
             return Value::Number(self.as_number());
+        }
+        if self.is_fnref() {
+            // FnRef → Value::FnRef(name). Builtin tags resolve via the
+            // global `Builtin::ALL` table. User-fn ids resolve via the
+            // `ACTIVE_FUNC_NAMES` TLS set by `VM::execute()`; outside a
+            // running VM, fall back to a synthetic `<user_fn:N>` so the
+            // round-trip is total (any escaped value still surfaces as a
+            // `Value::FnRef` rather than a silent Nil).
+            let (kind, id) = self.fnref_parts();
+            let name = match kind {
+                FnRefKind::Builtin => crate::builtins::Builtin::from_tag(id as u8)
+                    .map(|b| b.name().to_string())
+                    .unwrap_or_else(|| format!("<unknown_builtin:{}>", id)),
+                FnRefKind::User => {
+                    active_func_name(id).unwrap_or_else(|| format!("<user_fn:{}>", id))
+                }
+            };
+            return Value::FnRef(name);
         }
         if self.is_arena_record() {
             return unsafe {
@@ -3895,6 +4150,71 @@ impl NanVal {
                     HeapObj::ErrVal(inner) => Value::Err(Box::new(inner.to_value())),
                 }
             },
+        }
+    }
+
+    /// Convert to Value, resolving FnRef user-fn ids against `func_names`.
+    /// Use this when bridging registers out to the tree interpreter so
+    /// `Value::FnRef("user_name")` carries the real name, not a synthetic
+    /// `<user_fn:idx>` placeholder.
+    pub fn to_value_with_program(self, func_names: &[String]) -> Value {
+        if self.is_fnref() {
+            let (kind, id) = self.fnref_parts();
+            let name = match kind {
+                FnRefKind::Builtin => crate::builtins::Builtin::from_tag(id as u8)
+                    .map(|b| b.name().to_string())
+                    .unwrap_or_else(|| format!("<unknown_builtin:{}>", id)),
+                FnRefKind::User => func_names
+                    .get(id as usize)
+                    .cloned()
+                    .unwrap_or_else(|| format!("<user_fn:{}>", id)),
+            };
+            return Value::FnRef(name);
+        }
+        // Recurse into containers so nested FnRefs (e.g. inside a list of
+        // function refs) are also resolved properly.
+        match self.0 {
+            v if NanVal(v).is_number() => Value::Number(NanVal(v).as_number()),
+            TAG_NIL => Value::Nil,
+            TAG_TRUE => Value::Bool(true),
+            TAG_FALSE => Value::Bool(false),
+            _ => {
+                if self.is_arena_record() {
+                    return self.to_value();
+                }
+                unsafe {
+                    debug_assert!(self.is_heap());
+                    match self.as_heap_ref() {
+                        HeapObj::Str(s) => Value::Text(s.clone()),
+                        HeapObj::List(items) => Value::List(std::sync::Arc::new(
+                            items
+                                .iter()
+                                .map(|v| v.to_value_with_program(func_names))
+                                .collect(),
+                        )),
+                        HeapObj::Map(m) => Value::Map(std::sync::Arc::new(
+                            m.iter()
+                                .map(|(k, v)| (k.clone(), v.to_value_with_program(func_names)))
+                                .collect(),
+                        )),
+                        HeapObj::Record { type_info, fields } => Value::Record {
+                            type_name: type_info.name.clone(),
+                            fields: type_info
+                                .fields
+                                .iter()
+                                .zip(fields.iter())
+                                .map(|(k, v)| (k.clone(), v.to_value_with_program(func_names)))
+                                .collect(),
+                        },
+                        HeapObj::OkVal(inner) => {
+                            Value::Ok(Box::new(inner.to_value_with_program(func_names)))
+                        }
+                        HeapObj::ErrVal(inner) => {
+                            Value::Err(Box::new(inner.to_value_with_program(func_names)))
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -4160,6 +4480,12 @@ impl<'a> VM<'a> {
         // The guard ensures the pointer is cleared on return or panic.
         ACTIVE_REGISTRY.with(|r| r.set(&self.program.type_registry as *const TypeRegistry));
         let _registry_guard = ActiveRegistryGuard;
+
+        // Same shape for func_names: VM-side serialisation paths
+        // (jdmp, errors) need to resolve user-fn FnRef ids back to names
+        // without threading the program reference through every helper.
+        ACTIVE_FUNC_NAMES.with(|r| r.set(&self.program.func_names as *const Vec<String>));
+        let _func_names_guard = ActiveFuncNamesGuard;
         // SAFETY: execute() is only called from call() after setup_call() has pushed
         // a frame, so frames is non-empty.
         let frame = unsafe { self.frames.last().unwrap_unchecked() };
@@ -5544,6 +5870,21 @@ impl<'a> VM<'a> {
                     }
                     reg_set!(a, v);
                 }
+                OP_LOADFN => {
+                    // Load a FnRef NanVal into R[A]. Bx high bit is the kind
+                    // (0=user, 1=builtin); low 15 bits are the id (user-fn
+                    // chunk index or `Builtin::tag()`). FnRefs are Copy with
+                    // no heap allocation, so no clone_rc is needed.
+                    let a = ((inst >> 16) & 0xFF) as usize + base;
+                    let bx = (inst & 0xFFFF) as u16;
+                    let kind = if (bx & 0x8000) != 0 {
+                        FnRefKind::Builtin
+                    } else {
+                        FnRefKind::User
+                    };
+                    let id = (bx & 0x7FFF) as u32;
+                    reg_set!(a, NanVal::fnref(kind, id));
+                }
                 OP_JMP => {
                     let sbx = (inst & 0xFFFF) as i16;
                     ip = (ip as isize + sbx as isize) as usize;
@@ -5670,6 +6011,104 @@ impl<'a> VM<'a> {
                     ip = 0;
                     base = new_base;
                 }
+                OP_CALL_DYN => {
+                    // Dynamic call by FnRef. Layout:
+                    //   A = result_reg, B = fnref_reg, C = argc
+                    //   args live in R[A+1..=A+argc] (mirrors OP_CALL).
+                    let a = ((inst >> 16) & 0xFF) as u8;
+                    let b = ((inst >> 8) & 0xFF) as u8;
+                    let n_args = (inst & 0xFF) as usize;
+                    let callee = reg!(base + b as usize);
+                    if !callee.is_fnref() {
+                        vm_err!(VmError::Type(
+                            "dynamic call: callee is not a function reference"
+                        ));
+                    }
+                    let (kind, id) = callee.fnref_parts();
+                    match kind {
+                        FnRefKind::User => {
+                            let func_idx = id as u16;
+                            if (func_idx as usize) >= self.program.chunks.len() {
+                                vm_err!(VmError::Type("dynamic call: function index out of range"));
+                            }
+                            // SAFETY: frames is non-empty while execute() is running.
+                            unsafe { self.frames.last_mut().unwrap_unchecked() }.ip = ip;
+
+                            // Push args onto stack, mirroring OP_CALL.
+                            let new_base = self.stack.len();
+                            let callee_all_numeric =
+                                unsafe { self.program.chunks.get_unchecked(func_idx as usize) }
+                                    .all_regs_numeric;
+                            for i in 0..n_args {
+                                let v = reg!(base + a as usize + 1 + i);
+                                if !callee_all_numeric && !v.is_number() {
+                                    v.clone_rc();
+                                }
+                                self.stack.push(v);
+                            }
+
+                            let reg_count =
+                                self.program.chunks[func_idx as usize].reg_count as usize;
+                            let new_len = new_base + reg_count;
+                            let old_len = self.stack.len();
+                            if new_len > old_len {
+                                self.stack.reserve(new_len - old_len);
+                                let nil = NanVal::nil();
+                                let ptr = self.stack.as_mut_ptr();
+                                for i in old_len..new_len {
+                                    unsafe {
+                                        ptr.add(i).write(nil);
+                                    }
+                                }
+                                unsafe {
+                                    self.stack.set_len(new_len);
+                                }
+                            }
+
+                            self.frames.push(CallFrame {
+                                chunk_idx: func_idx,
+                                ip: 0,
+                                stack_base: new_base,
+                                result_reg: a,
+                            });
+                            ci = func_idx as usize;
+                            ip = 0;
+                            base = new_base;
+                        }
+                        FnRefKind::Builtin => {
+                            // Builtin dispatch through the tree bridge. This
+                            // is the same path `OP_CALL_BUILTIN_TREE` uses;
+                            // we collect args as owned Values, invoke the
+                            // tree interpreter's builtin dispatcher, and
+                            // round-trip the result back. PR 1 ships this
+                            // path so end-to-end FnRef→call works for any
+                            // builtin; PR 2+ will specialise HOFs to a
+                            // native loop in the VM that uses OP_CALL_DYN
+                            // for the inner user-fn callback.
+                            let builtin = match crate::builtins::Builtin::from_tag(id as u8) {
+                                Some(b) => b,
+                                None => vm_err!(VmError::Type("dynamic call: unknown builtin tag")),
+                            };
+                            let mut value_args: Vec<Value> = Vec::with_capacity(n_args);
+                            for i in 0..n_args {
+                                let v = reg!(base + a as usize + 1 + i);
+                                value_args.push(v.to_value_with_program(&self.program.func_names));
+                            }
+                            let result = match crate::interpreter::call_builtin_for_bridge(
+                                builtin.name(),
+                                value_args,
+                            ) {
+                                Ok(v) => v,
+                                Err(e) => {
+                                    vm_err!(VmError::Runtime(e.message));
+                                }
+                            };
+                            let nv =
+                                NanVal::from_value_with_program(&result, &self.program.func_names);
+                            reg_set!(base + a as usize, nv);
+                        }
+                    }
+                }
                 OP_RET => {
                     let a = ((inst >> 16) & 0xFF) as usize + base;
                     let mut result = reg!(a);
@@ -5687,7 +6126,7 @@ impl<'a> VM<'a> {
 
                         if self.frames.is_empty() {
                             self.arena.reset();
-                            return Ok(result.to_value());
+                            return Ok(result.to_value_with_program(&self.program.func_names));
                         }
 
                         let f = unsafe { self.frames.last().unwrap_unchecked() };
@@ -5715,7 +6154,7 @@ impl<'a> VM<'a> {
                                 result = result.promote_arena_to_heap(&self.program.type_registry);
                             }
                             self.arena.reset();
-                            let val = result.to_value();
+                            let val = result.to_value_with_program(&self.program.func_names);
                             result.drop_rc();
                             return Ok(val);
                         }
@@ -8440,6 +8879,20 @@ fn nanval_to_json(v: NanVal) -> serde_json::Value {
             .map(serde_json::Value::Number)
             .unwrap_or(serde_json::Value::Null);
     }
+    if v.is_fnref() {
+        // Match the tree's `value_to_json` shape: a function reference
+        // jdumps to the same `<fn:name>` string the Display impl produces.
+        // Builtin tags resolve globally; user-fn ids resolve via the
+        // active VM's `func_names` TLS set in `VM::execute()`.
+        let (kind, id) = v.fnref_parts();
+        let name = match kind {
+            FnRefKind::Builtin => crate::builtins::Builtin::from_tag(id as u8)
+                .map(|b| b.name().to_string())
+                .unwrap_or_else(|| format!("<unknown_builtin:{}>", id)),
+            FnRefKind::User => active_func_name(id).unwrap_or_else(|| format!("<user_fn:{}>", id)),
+        };
+        return serde_json::Value::String(format!("<fn:{}>", name));
+    }
     if v.is_arena_record() {
         unsafe {
             let rec = v.as_arena_record();
@@ -8609,6 +9062,11 @@ fn nanval_equal(a: NanVal, b: NanVal) -> bool {
 fn nanval_truthy(v: NanVal) -> bool {
     if v.is_number() {
         v.as_number() != 0.0
+    } else if v.is_fnref() {
+        // A function reference is always truthy — same semantics as a
+        // bound function value in the tree. `if f { ... }` on a FnRef
+        // means "the function exists", which it does by construction.
+        true
     } else {
         match v.0 {
             TAG_NIL | TAG_FALSE => false,
@@ -12894,6 +13352,167 @@ mod tests {
     fn vm_run(source: &str, func: Option<&str>, args: Vec<Value>) -> Value {
         let prog = parse_program(source);
         compile_and_run(&prog, func, args).unwrap()
+    }
+
+    // ── FnRef NaN-tagging unit tests ────────────────────────────────────
+    //
+    // PR 1 introduces a non-singleton QNAN variant for function references
+    // so HOF dispatch can flow through VM registers and Cranelift IR. The
+    // tests below pin the bit-level invariants the rest of the pipeline
+    // depends on: predicates stay disjoint, encode/decode round-trips
+    // losslessly, and the `Value::FnRef` bridge resolves both user-fn and
+    // builtin names correctly.
+
+    #[test]
+    fn fnref_user_round_trip() {
+        let nv = NanVal::fnref(FnRefKind::User, 42);
+        assert!(nv.is_fnref(), "should classify as fnref");
+        assert!(!nv.is_number(), "fnref must not classify as number");
+        assert!(!nv.is_heap(), "fnref must not classify as heap (no Rc)");
+        let (kind, id) = nv.fnref_parts();
+        assert_eq!(kind, FnRefKind::User);
+        assert_eq!(id, 42);
+    }
+
+    #[test]
+    fn fnref_builtin_round_trip() {
+        // Use a real builtin tag so the Value bridge can resolve a name.
+        let tag = crate::builtins::Builtin::Abs.tag() as u32;
+        let nv = NanVal::fnref(FnRefKind::Builtin, tag);
+        assert!(nv.is_fnref());
+        let (kind, id) = nv.fnref_parts();
+        assert_eq!(kind, FnRefKind::Builtin);
+        assert_eq!(id, tag);
+    }
+
+    #[test]
+    fn fnref_disjoint_from_singletons() {
+        // FnRef bit 47 distinguishes the variant from nil/true/false even
+        // when the id payload is 0/1/2 (the singleton discriminator bits).
+        for id in [0u32, 1, 2, 3, 0x7FFF_FFFF] {
+            let nv = NanVal::fnref(FnRefKind::User, id);
+            assert!(nv.is_fnref(), "id={id}: is_fnref");
+            assert!(!nv.is_heap(), "id={id}: is_heap must be false");
+            assert_ne!(nv.0, TAG_NIL, "id={id}: must not collide with nil");
+            assert_ne!(nv.0, TAG_TRUE, "id={id}: must not collide with true");
+            assert_ne!(nv.0, TAG_FALSE, "id={id}: must not collide with false");
+        }
+    }
+
+    #[test]
+    fn fnref_disjoint_from_numbers_and_nan() {
+        // Real numbers and even f64::NAN canonicalise to bit patterns that
+        // do not match the FnRef mask. NaN canonicalisation in
+        // NanVal::number ensures this.
+        for f in [0.0_f64, 1.0, -1.0, 3.14, f64::INFINITY, f64::NEG_INFINITY] {
+            assert!(!NanVal::number(f).is_fnref(), "f={f}");
+        }
+        assert!(!NanVal::number(f64::NAN).is_fnref(), "canonical NaN");
+    }
+
+    #[test]
+    fn fnref_value_bridge_builtin() {
+        // Builtin names round-trip via from_value / to_value without a
+        // program context (builtin tags are globally stable).
+        let v = Value::FnRef("abs".to_string());
+        let nv = NanVal::from_value(&v);
+        assert!(nv.is_fnref());
+        let back = nv.to_value();
+        assert_eq!(back, Value::FnRef("abs".to_string()));
+    }
+
+    #[test]
+    fn fnref_value_bridge_user_with_program() {
+        // User-fn names need a program context to resolve to chunk index
+        // on encode and back to name on decode.
+        let func_names = vec!["sq".to_string(), "add".to_string()];
+        let v = Value::FnRef("add".to_string());
+        let nv = NanVal::from_value_with_program(&v, &func_names);
+        assert!(nv.is_fnref());
+        let (kind, id) = nv.fnref_parts();
+        assert_eq!(kind, FnRefKind::User);
+        assert_eq!(id, 1);
+        let back = nv.to_value_with_program(&func_names);
+        assert_eq!(back, Value::FnRef("add".to_string()));
+    }
+
+    #[test]
+    fn fnref_value_bridge_user_falls_back_to_text_when_unresolved() {
+        // An unresolved name is not callable; surface it as Text so the
+        // runtime gets a "first arg must be a function reference" error
+        // rather than a silent FnRef-of-nothing.
+        let func_names = vec!["other".to_string()];
+        let v = Value::FnRef("missing".to_string());
+        let nv = NanVal::from_value_with_program(&v, &func_names);
+        assert!(!nv.is_fnref());
+        assert!(nv.is_string());
+    }
+
+    #[test]
+    fn fnref_from_value_user_falls_back_to_heap_string_without_program() {
+        // Without program context the user-fn name has no stable global
+        // id; we keep the pre-PR-1 heap string fallback so legacy callers
+        // (constants table, CLI args) don't see a behaviour change.
+        // `from_value_with_program` is the supported path for promoting a
+        // user-fn FnRef into the new NaN tag.
+        let nv = NanVal::from_value(&Value::FnRef("user_only_name".to_string()));
+        assert!(!nv.is_fnref(), "should fall back to heap string");
+        assert!(nv.is_string());
+    }
+
+    #[test]
+    fn loadfn_emits_fnref_for_user_function() {
+        // `f x:n>n;*x x\ng x:n>L n;[f]` doesn't quite work because list
+        // literals greedy-parse fn refs. Use a direct return instead: a
+        // function whose body is just the bare name of another function.
+        let source = "sq x:n>n;*x x\nmkref>F n n;sq";
+        let prog = parse_program(source);
+        let compiled = compile(&prog).expect("compile");
+        // The mkref chunk should contain an OP_LOADFN instruction.
+        let mkref_idx = compiled
+            .func_names
+            .iter()
+            .position(|n| n == "mkref")
+            .expect("mkref present");
+        let found = compiled.chunks[mkref_idx].code.iter().any(|inst| {
+            let op = (inst >> 24) as u8;
+            op == OP_LOADFN
+        });
+        assert!(found, "mkref should emit OP_LOADFN to produce the FnRef");
+    }
+
+    #[test]
+    fn loadfn_then_round_trip_through_register_fnref() {
+        // End-to-end: a function returns a FnRef value; the VM should
+        // hand back Value::FnRef("sq") to the caller. This exercises
+        // OP_LOADFN at emit + execute, plus the to_value bridge on the
+        // result path.
+        let source = "sq x:n>n;*x x\nmkref>F n n;sq";
+        let result = vm_run(source, Some("mkref"), vec![]);
+        assert_eq!(result, Value::FnRef("sq".to_string()));
+    }
+
+    #[test]
+    fn loadfn_for_builtin_name_fnref() {
+        // Builtin names used as values get the same OP_LOADFN treatment.
+        let source = "mkref>F n n;abs";
+        let result = vm_run(source, Some("mkref"), vec![]);
+        assert_eq!(result, Value::FnRef("abs".to_string()));
+    }
+
+    #[test]
+    fn fnref_value_bridge_nested_in_list_user() {
+        // FnRefs nested in containers also resolve correctly through
+        // from_value_with_program / to_value_with_program.
+        let func_names = vec!["sq".to_string()];
+        let v = Value::List(std::sync::Arc::new(vec![
+            Value::FnRef("sq".to_string()),
+            Value::FnRef("abs".to_string()),
+        ]));
+        let nv = NanVal::from_value_with_program(&v, &func_names);
+        let back = nv.to_value_with_program(&func_names);
+        nv.drop_rc(); // release the heap list we built
+        assert_eq!(back, v);
     }
 
     #[test]
@@ -17741,17 +18360,19 @@ mod tests {
     }
 
     // ── NanVal::from_value FnRef path ─────────────────────────────────────────
+    //
+    // Pre-PR-1 behaviour: `Value::FnRef(name)` lossily encoded as the heap
+    // string `"<fn:name>"`, dropping the callable identity. PR 1 replaces
+    // that with a proper FnRef NanVal tag; builtin names round-trip via
+    // the global `Builtin::ALL` table, user-fn names require program
+    // context (panic without it — see `fnref_from_value_user_panics_*`).
 
     #[test]
-    fn vm_nanval_from_fnref() {
-        let val = Value::FnRef("my_fn".to_string());
+    fn vm_nanval_from_fnref_builtin() {
+        let val = Value::FnRef("abs".to_string());
         let nv = NanVal::from_value(&val);
-        // FnRef converts to a heap string like "<fn:my_fn>"
-        let back = nv.to_value();
-        let Value::Text(s) = back else {
-            panic!("expected Text")
-        };
-        assert!(s.contains("my_fn"), "got: {s}");
+        assert!(nv.is_fnref(), "builtin FnRef should NaN-tag");
+        assert_eq!(nv.to_value(), Value::FnRef("abs".to_string()));
     }
 
     // ── JIT helper functions (cranelift feature) ───────────────────────────────
@@ -21551,7 +22172,7 @@ mod tests {
     // ── HOF builtins: map, flt, fld, grp ────────────────────────────────
 
     #[test]
-    #[ignore] // VM missing HOF/FnRef resolution
+    #[ignore] // Dynamic dispatch (OP_CALL_DYN emission) arrives in PR 2.
     fn vm_map_squares() {
         let source = "sq x:n>n;*x x main xs:L n>L n;map sq xs";
         let result = vm_run(
@@ -21585,7 +22206,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // VM missing HOF/FnRef resolution
+    #[ignore] // Dynamic dispatch (OP_CALL_DYN emission) arrives in PR 2.
     fn vm_map_wrong_list_arg() {
         let source = "sq x:n>n;*x x f>t;map sq 42";
         let err = vm_run_err(source, Some("f"), vec![]);
@@ -21593,7 +22214,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // VM missing HOF/FnRef resolution
+    #[ignore] // Dynamic dispatch (OP_CALL_DYN emission) arrives in PR 2.
     fn vm_map_with_text_fn_name() {
         let source = "sq x:n>n;*x x f cb:t xs:L n>L n;map cb xs";
         let result = vm_run(
@@ -21608,7 +22229,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // VM missing HOF/FnRef resolution
+    #[ignore] // Dynamic dispatch (OP_CALL_DYN emission) arrives in PR 2.
     fn vm_flt_positive() {
         let source = "pos x:n>b;>x 0 main xs:L n>L n;flt pos xs";
         let result = vm_run(
@@ -21630,7 +22251,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // VM missing HOF/FnRef resolution
+    #[ignore] // Dynamic dispatch (OP_CALL_DYN emission) arrives in PR 2.
     fn vm_flt_predicate_returns_non_bool() {
         let source = "id x:n>n;x f xs:L n>L n;flt id xs";
         let err = vm_run_err(
@@ -21642,7 +22263,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // VM missing HOF/FnRef resolution
+    #[ignore] // Dynamic dispatch (OP_CALL_DYN emission) arrives in PR 2.
     fn vm_flt_wrong_list_arg() {
         let source = "pos x:n>b;>x 0 f>t;flt pos 42";
         let err = vm_run_err(source, Some("f"), vec![]);
@@ -21689,7 +22310,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // VM missing HOF/FnRef resolution
+    #[ignore] // Dynamic dispatch (OP_CALL_DYN emission) arrives in PR 2.
     fn vm_fld_wrong_list_arg() {
         let source = "add a:n b:n>n;+a b f>n;fld add 42 0";
         let err = vm_run_err(source, Some("f"), vec![]);
@@ -21697,7 +22318,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // VM missing HOF/FnRef resolution
+    #[ignore] // Dynamic dispatch (OP_CALL_DYN emission) arrives in PR 2.
     fn vm_grp_by_string_key() {
         let source = r#"cl x:n>t;>x 5{"big"}{"small"} main xs:L n>M t L n;grp cl xs"#;
         let result = vm_run(
@@ -21729,7 +22350,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // VM missing HOF/FnRef resolution
+    #[ignore] // Dynamic dispatch (OP_CALL_DYN emission) arrives in PR 2.
     fn vm_grp_by_numeric_key() {
         let source = "key x:n>t;str x main xs:L n>M t L n;grp key xs";
         let result = vm_run(
@@ -21765,7 +22386,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // VM missing HOF/FnRef resolution
+    #[ignore] // Dynamic dispatch (OP_CALL_DYN emission) arrives in PR 2.
     fn vm_grp_empty_list() {
         let source = "id x:n>t;str x main xs:L n>M t L n;grp id xs";
         let result = vm_run(source, Some("main"), vec![Value::List(Arc::new(vec![]))]);
@@ -21785,14 +22406,14 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // VM missing HOF/FnRef resolution
+    #[ignore] // Dynamic dispatch (OP_CALL_DYN emission) arrives in PR 2.
     fn vm_grp_wrong_list_arg() {
         let err = vm_run_err("id x:n>n;x f>t;grp id 42", Some("f"), vec![]);
         assert!(err.contains("grp") || err.contains("list"), "got: {err}");
     }
 
     #[test]
-    #[ignore] // VM missing HOF/FnRef resolution
+    #[ignore] // Dynamic dispatch (OP_CALL_DYN emission) arrives in PR 2.
     fn vm_grp_number_key() {
         let source = "id x:n>n;x g xs:L n>_;grp id xs";
         let result = vm_run(
@@ -21811,7 +22432,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // VM missing HOF/FnRef resolution
+    #[ignore] // Dynamic dispatch (OP_CALL_DYN emission) arrives in PR 2.
     fn vm_grp_bool_key() {
         let source = "pos x:n>b;>x 0 g xs:L n>_;grp pos xs";
         let result = vm_run(
@@ -21832,7 +22453,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // VM missing HOF/FnRef resolution
+    #[ignore] // Dynamic dispatch (OP_CALL_DYN emission) arrives in PR 2.
     fn vm_grp_float_key() {
         let source = "half x:n>n;/x 2 g xs:L n>_;grp half xs";
         let result = vm_run(
@@ -21857,7 +22478,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // VM missing HOF/FnRef resolution
+    #[ignore] // Dynamic dispatch (OP_CALL_DYN emission) arrives in PR 2.
     fn vm_grp_key_returns_list_error() {
         let source = "mk x:n>L n;[x] g xs:L n>_;grp mk xs";
         let err = vm_run_err(
@@ -22000,7 +22621,7 @@ mod tests {
     // ── srt with key fn ─────────────────────────────────────────────────
 
     #[test]
-    #[ignore] // VM missing HOF/FnRef resolution
+    #[ignore] // Dynamic dispatch (OP_CALL_DYN emission) arrives in PR 2.
     fn vm_srt_fn_by_length() {
         let source = "ln s:t>n;len s main xs:L t>L t;srt ln xs";
         let result = vm_run(
@@ -22023,7 +22644,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // VM missing HOF/FnRef resolution
+    #[ignore] // Dynamic dispatch (OP_CALL_DYN emission) arrives in PR 2.
     fn vm_srt_fn_numeric_key() {
         let source = "neg x:n>n;-x main xs:L n>L n;srt neg xs";
         let result = vm_run(
@@ -22046,7 +22667,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // VM missing HOF/FnRef resolution
+    #[ignore] // Dynamic dispatch (OP_CALL_DYN emission) arrives in PR 2.
     fn vm_srt_key_fn_text_keys() {
         let source = "id x:t>t;x main xs:L t>L t;srt id xs";
         let result = vm_run(
@@ -22069,7 +22690,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // VM missing HOF/FnRef resolution
+    #[ignore] // Dynamic dispatch (OP_CALL_DYN emission) arrives in PR 2.
     fn vm_srt_key_fn_wrong_second_arg() {
         let source = "sq x:n>n;*x x f>n;srt sq 42";
         let err = vm_run_err(source, Some("f"), vec![]);
@@ -22098,7 +22719,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // VM missing HOF/FnRef resolution
+    #[ignore] // Dynamic dispatch (OP_CALL_DYN emission) arrives in PR 2.
     fn vm_srt_bool_key_equal_ordering() {
         let source = "pos x:n>b;> x 0 f>L n;srt pos [3,-1,2,-2]";
         let result = vm_run(source, Some("f"), vec![]);
@@ -22425,14 +23046,16 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // VM missing HOF/FnRef resolution
     fn vm_jdmp_fnref() {
+        // Unignored in PR 1: FnRef NaN-tagging + ACTIVE_FUNC_NAMES TLS
+        // lets nanval_to_json resolve a user-fn FnRef back to its name,
+        // matching the tree's `<fn:sq>` serialisation.
         let source = "sq x:n>n;*x x f>t;r=sq;jdmp r";
         let result = vm_run(source, Some("f"), vec![]);
         let Value::Text(s) = result else {
-            panic!("expected Text")
+            panic!("expected Text, got: {result:?}")
         };
-        assert!(s.contains("fn:sq") || s.contains("sq"), "got: {s}");
+        assert!(s.contains("fn:sq"), "got: {s}");
     }
 
     #[test]
@@ -22565,7 +23188,7 @@ mod tests {
     // ── FnRef callee from scope ─────────────────────────────────────────
 
     #[test]
-    #[ignore] // VM missing HOF/FnRef resolution
+    #[ignore] // Dynamic dispatch (OP_CALL_DYN emission) arrives in PR 2.
     fn vm_fnref_callee_from_scope() {
         let source = "sq x:n>n;*x x f cb:z>n;cb 3";
         let result = vm_run(source, Some("f"), vec![Value::FnRef("sq".into())]);
@@ -22573,14 +23196,14 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // VM missing HOF/FnRef resolution
+    #[ignore] // Dynamic dispatch (OP_CALL_DYN emission) arrives in PR 2.
     fn vm_fn_ref_via_ref_expr() {
         let source = "dbl x:n>n;*x 2 main>n;f=dbl;f 10";
         assert_eq!(vm_run(source, Some("main"), vec![]), Value::Number(20.0));
     }
 
     #[test]
-    #[ignore] // VM missing HOF/FnRef resolution
+    #[ignore] // Dynamic dispatch (OP_CALL_DYN emission) arrives in PR 2.
     fn vm_text_callee_from_scope() {
         let source = "sq x:n>n;*x x f cb:z>n;cb 3";
         let result = vm_run(source, Some("f"), vec![Value::Text("sq".into())]);
@@ -22588,7 +23211,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // VM missing HOF/FnRef resolution
+    #[ignore] // Dynamic dispatch (OP_CALL_DYN emission) arrives in PR 2.
     fn vm_user_hof_fn_type() {
         let source = "sq x:n>n;*x x apl f:F n n x:n>n;f x";
         let result = vm_run(

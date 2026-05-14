@@ -1100,7 +1100,7 @@ fn compile_function_body(
                 | OP_PRT | OP_RD | OP_RDL | OP_WR | OP_WRL | OP_TRM | OP_UPR | OP_LWR | OP_CAP
                 | OP_PADL | OP_PADR | OP_CHR | OP_CHARS | OP_UNQ | OP_UNIQBY | OP_PARTITION | OP_FRQ | OP_NUM
                 | OP_RGXSUB | OP_TRANSPOSE | OP_MATMUL | OP_DTFMT | OP_DTPARSE
-                | OP_CALL_BUILTIN_TREE => {
+                | OP_CALL_BUILTIN_TREE | OP_LOADFN | OP_CALL_DYN => {
                     non_num_write[a] = true;
                     non_bool_write[a] = true;
                 }
@@ -1784,6 +1784,26 @@ fn compile_function_body(
                     }
                 }
             }
+            // FnRef constant load. Same shape as the non-heap arm of LOADK:
+            // bits are computed from (kind, id), no RC, single iconst.
+            OP_LOADFN => {
+                let bx = (inst & 0xFFFF) as u16;
+                let kind = if (bx & 0x8000) != 0 {
+                    FnRefKind::Builtin
+                } else {
+                    FnRefKind::User
+                };
+                let id = (bx & 0x7FFF) as u32;
+                let bits = NanVal::fnref(kind, id).0;
+                let kval = builder.ins().iconst(I64, bits as i64);
+                builder.def_var(vars[a_idx], kval);
+            }
+            // OP_CALL_DYN: JIT translation arrives in PR 2 with the first
+            // native HOF lowering. PR 1 leaves the compiler unable to emit
+            // OP_CALL_DYN, so this arm is unreachable from PR-1 bytecode.
+            // Defensive: bail out of JIT compilation (None) so callers can
+            // fall back to the interpreter VM, which has the dispatcher.
+            OP_CALL_DYN => return None,
             OP_JMP => {
                 let sbx = (inst & 0xFFFF) as i16;
                 let target = (ip as isize + 1 + sbx as isize) as usize;

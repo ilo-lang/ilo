@@ -1032,7 +1032,8 @@ fn compile_function_body(
                 | OP_UNQ | OP_UNIQBY | OP_PARTITION | OP_FRQ | OP_NUM | OP_RGXSUB | OP_ZIP
                 | OP_ENUMERATE | OP_RANGE | OP_WINDOW | OP_CHUNKS | OP_CUMSUM | OP_SETUNION
                 | OP_SETINTER | OP_SETDIFF | OP_FFT | OP_IFFT | OP_TRANSPOSE | OP_MATMUL
-                | OP_INV | OP_SOLVE | OP_DTFMT | OP_DTPARSE | OP_CALL_BUILTIN_TREE => {
+                | OP_INV | OP_SOLVE | OP_DTFMT | OP_DTPARSE | OP_CALL_BUILTIN_TREE | OP_LOADFN
+                | OP_CALL_DYN => {
                     non_num_write[a] = true;
                     non_bool_write[a] = true;
                 }
@@ -1689,6 +1690,31 @@ fn compile_function_body(
                         builder.def_var(f64_vars[a_idx], fv);
                     }
                 }
+            }
+            // ── Load function reference ──
+            // FnRefs are Copy NanVals (no heap, no RC), so OP_LOADFN
+            // compiles to a single iconst with the encoded bits. Bx high
+            // bit is kind (0=user, 1=builtin); low 15 bits are the id.
+            OP_LOADFN => {
+                let bx = (inst & 0xFFFF) as u16;
+                let kind = if (bx & 0x8000) != 0 {
+                    FnRefKind::Builtin
+                } else {
+                    FnRefKind::User
+                };
+                let id = (bx & 0x7FFF) as u32;
+                let bits = NanVal::fnref(kind, id).0;
+                let kval = builder.ins().iconst(I64, bits as i64);
+                builder.def_var(vars[a_idx], kval);
+            }
+            // OP_CALL_DYN is not emitted by the compiler in PR 1 (HOF
+            // dispatch hasn't been lifted yet). Cranelift translation
+            // arrives in PR 2 alongside the first native HOF lowering.
+            OP_CALL_DYN => {
+                return Err(format!(
+                    "OP_CALL_DYN not yet supported by cranelift codegen at instruction {}",
+                    ip
+                ));
             }
             // ── Control flow ──
             OP_JMP => {
