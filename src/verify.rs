@@ -3051,30 +3051,42 @@ impl VerifyContext {
                     Ty::Unknown
                 };
 
-                // Auto-unwrap: func! args — callee must return Result or Optional,
-                // and the enclosing function must return a matching type so the
-                // propagation (Err / nil) can early-return through it.
-                if *unwrap {
+                // Auto-unwrap: `func! args` or `func!! args`. Both require the
+                // callee to return Result or Optional. `!` (Propagate) additionally
+                // requires the enclosing function's return type to carry the
+                // propagated Err/nil. `!!` (Panic) aborts at runtime instead, so
+                // there is no enclosing-return constraint.
+                if unwrap.is_any() {
+                    let op_str = if unwrap.is_panic() { "!!" } else { "!" };
+                    let op_desc = if unwrap.is_panic() {
+                        "'!!' auto-unwraps R (Ok→v, Err→abort) or O (Some→v, Nil→abort)".to_string()
+                    } else {
+                        "'!' auto-unwraps R (Ok→v, Err→propagate) or O (Some→v, Nil→propagate)"
+                            .to_string()
+                    };
                     match &call_ty {
                         Ty::Result(ok_ty, _err_ty) => {
-                            // Check enclosing function returns a Result.
-                            // Clone the return type to release the &self borrow before calling self.err.
-                            let enc_rt =
-                                self.functions.get(func).map(|sig| sig.return_type.clone());
-                            // `for` over Option avoids a phantom else-branch in LLVM coverage
-                            // (the None path is unreachable in practice — func is always registered).
-                            #[allow(for_loops_over_fallibles)]
-                            for rt in enc_rt {
-                                match rt {
-                                    Ty::Result(_, _) => {}
-                                    other => {
-                                        self.err(
-                                            "ILO-T026",
-                                            func,
-                                            format!("'!' used in function '{func}' which returns {other}, not a Result"),
-                                            Some("the enclosing function must return R to propagate errors".to_string()),
-                                            Some(span),
-                                        );
+                            // Only `!` constrains the enclosing return type. `!!`
+                            // aborts the process, so it works in any context.
+                            if unwrap.is_propagate() {
+                                // Clone the return type to release the &self borrow before calling self.err.
+                                let enc_rt =
+                                    self.functions.get(func).map(|sig| sig.return_type.clone());
+                                // `for` over Option avoids a phantom else-branch in LLVM coverage
+                                // (the None path is unreachable in practice — func is always registered).
+                                #[allow(for_loops_over_fallibles)]
+                                for rt in enc_rt {
+                                    match rt {
+                                        Ty::Result(_, _) => {}
+                                        other => {
+                                            self.err(
+                                                "ILO-T026",
+                                                func,
+                                                format!("'!' used in function '{func}' which returns {other}, not a Result"),
+                                                Some("the enclosing function must return R to propagate errors".to_string()),
+                                                Some(span),
+                                            );
+                                        }
                                     }
                                 }
                             }
@@ -3083,21 +3095,24 @@ impl VerifyContext {
                         Ty::Optional(inner_ty) => {
                             // Optional unwrap propagates nil as the function's return.
                             // The enclosing function's return type must accept nil:
-                            // Optional, Nil, or Unknown (inferred).
-                            let enc_rt =
-                                self.functions.get(func).map(|sig| sig.return_type.clone());
-                            #[allow(for_loops_over_fallibles)]
-                            for rt in enc_rt {
-                                match rt {
-                                    Ty::Optional(_) | Ty::Nil | Ty::Unknown => {}
-                                    other => {
-                                        self.err(
-                                            "ILO-T026",
-                                            func,
-                                            format!("'!' used in function '{func}' which returns {other}, not an Optional"),
-                                            Some("the enclosing function must return O to propagate nil".to_string()),
-                                            Some(span),
-                                        );
+                            // Optional, Nil, or Unknown (inferred). `!!` skips this
+                            // check since nil aborts at runtime.
+                            if unwrap.is_propagate() {
+                                let enc_rt =
+                                    self.functions.get(func).map(|sig| sig.return_type.clone());
+                                #[allow(for_loops_over_fallibles)]
+                                for rt in enc_rt {
+                                    match rt {
+                                        Ty::Optional(_) | Ty::Nil | Ty::Unknown => {}
+                                        other => {
+                                            self.err(
+                                                "ILO-T026",
+                                                func,
+                                                format!("'!' used in function '{func}' which returns {other}, not an Optional"),
+                                                Some("the enclosing function must return O to propagate nil".to_string()),
+                                                Some(span),
+                                            );
+                                        }
                                     }
                                 }
                             }
@@ -3108,8 +3123,8 @@ impl VerifyContext {
                             self.err(
                                 "ILO-T025",
                                 func,
-                                format!("'!' used on call to '{callee}' which returns {other}, not a Result or Optional"),
-                                Some("'!' auto-unwraps R (Ok→v, Err→propagate) or O (Some→v, Nil→propagate)".to_string()),
+                                format!("'{op_str}' used on call to '{callee}' which returns {other}, not a Result or Optional"),
+                                Some(op_desc),
                                 Some(span),
                             );
                             Ty::Unknown
@@ -4932,7 +4947,7 @@ mod tests {
                             value: Expr::Call {
                                 function: "inner".to_string(),
                                 args: vec![Expr::Ref("x".to_string())],
-                                unwrap: true,
+                                unwrap: UnwrapMode::Propagate,
                             },
                         }),
                         Spanned::unknown(Stmt::Expr(Expr::Ok(Box::new(Expr::Ref(
@@ -4978,7 +4993,7 @@ mod tests {
                     body: vec![Spanned::unknown(Stmt::Expr(Expr::Call {
                         function: "inner".to_string(),
                         args: vec![Expr::Ref("x".to_string())],
-                        unwrap: true,
+                        unwrap: UnwrapMode::Propagate,
                     }))],
                     span: Span::UNKNOWN,
                 },
@@ -5022,7 +5037,7 @@ mod tests {
                     body: vec![Spanned::unknown(Stmt::Expr(Expr::Call {
                         function: "inner".to_string(),
                         args: vec![Expr::Ref("x".to_string())],
-                        unwrap: true,
+                        unwrap: UnwrapMode::Propagate,
                     }))],
                     span: Span::UNKNOWN,
                 },

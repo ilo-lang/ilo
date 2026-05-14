@@ -527,7 +527,11 @@ fn fmt_expr(expr: &Expr, mode: FmtMode) -> String {
             args,
             unwrap,
         } => {
-            let bang = if *unwrap { "!" } else { "" };
+            let bang = match unwrap {
+                UnwrapMode::None => "",
+                UnwrapMode::Propagate => "!",
+                UnwrapMode::Panic => "!!",
+            };
             if args.is_empty() {
                 format!("{}{}()", function, bang)
             } else {

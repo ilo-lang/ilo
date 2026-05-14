@@ -49,6 +49,7 @@ struct HelperFuncs {
     isok: FuncId,
     iserr: FuncId,
     unwrap: FuncId,
+    panic_unwrap: FuncId,
     jit_move: FuncId,
     drop_rc: FuncId,
     len: FuncId,
@@ -230,6 +231,7 @@ fn register_helpers(builder: &mut JITBuilder) {
         ("jit_isok", jit_isok as *const u8),
         ("jit_iserr", jit_iserr as *const u8),
         ("jit_unwrap", jit_unwrap as *const u8),
+        ("jit_panic_unwrap", jit_panic_unwrap as *const u8),
         ("jit_move", jit_move as *const u8),
         ("jit_drop_rc", jit_drop_rc as *const u8),
         ("jit_len", jit_len as *const u8),
@@ -392,6 +394,7 @@ fn declare_all_helpers(module: &mut JITModule) -> HelperFuncs {
         isok: declare_helper(module, "jit_isok", 1, 1),
         iserr: declare_helper(module, "jit_iserr", 1, 1),
         unwrap: declare_helper(module, "jit_unwrap", 1, 1),
+        panic_unwrap: declare_helper(module, "jit_panic_unwrap", 1, 1),
         jit_move: declare_helper(module, "jit_move", 1, 1),
         drop_rc: declare_helper(module, "jit_drop_rc", 1, 0),
         len: declare_helper(module, "jit_len", 1, 1),
@@ -1744,6 +1747,20 @@ fn compile_function_body(
                 let call_inst = builder.ins().call(fref, &[bv]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
+            }
+            OP_PANIC_UNWRAP => {
+                // `!!` panic-unwrap. The helper sets JIT_RUNTIME_ERROR (the
+                // post-call check in `compile_and_call` turns that into an
+                // `Err(VmRuntimeError)` to the caller), then returns TAG_NIL.
+                // We emit an immediate `return` so the rest of the function
+                // doesn't execute against the failed value, matching the VM
+                // dispatcher's `vm_err!` early-unwind contract.
+                let bv = builder.use_var(vars[b_idx]);
+                let fref = get_func_ref(&mut builder, module, helpers.panic_unwrap);
+                let call_inst = builder.ins().call(fref, &[bv]);
+                let nil_val = builder.inst_results(call_inst)[0];
+                builder.ins().return_(&[nil_val]);
+                block_terminated = true;
             }
             OP_LOADK => {
                 let bx = (inst & 0xFFFF) as usize;
