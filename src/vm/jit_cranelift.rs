@@ -180,6 +180,8 @@ struct HelperFuncs {
     dtparse: FuncId,
     // Tree-bridge for tree-only builtins (rgx, rgxall, fmt-variadic, etc.)
     call_builtin_tree: FuncId,
+    // Dynamic-dispatch bridge for OP_CALL_DYN (HOF callbacks: `map`, ...)
+    call_dyn: FuncId,
 }
 
 /// Pack a `Span { start, end }` into a single i64 immediate for passing to
@@ -365,6 +367,7 @@ fn register_helpers(builder: &mut JITBuilder) {
         ("jit_dtfmt", jit_dtfmt as *const u8),
         ("jit_dtparse", jit_dtparse as *const u8),
         ("jit_call_builtin_tree", jit_call_builtin_tree as *const u8),
+        ("jit_call_dyn", jit_call_dyn as *const u8),
     ];
     for &(name, ptr) in helpers {
         builder.symbol(name, ptr);
@@ -527,6 +530,7 @@ fn declare_all_helpers(module: &mut JITModule) -> HelperFuncs {
         dtfmt: declare_helper(module, "jit_dtfmt", 2, 1),
         dtparse: declare_helper(module, "jit_dtparse", 2, 1),
         call_builtin_tree: declare_helper(module, "jit_call_builtin_tree", 3, 1),
+        call_dyn: declare_helper(module, "jit_call_dyn", 3, 1),
     }
 }
 
@@ -1798,12 +1802,43 @@ fn compile_function_body(
                 let kval = builder.ins().iconst(I64, bits as i64);
                 builder.def_var(vars[a_idx], kval);
             }
-            // OP_CALL_DYN: JIT translation arrives in PR 2 with the first
-            // native HOF lowering. PR 1 leaves the compiler unable to emit
-            // OP_CALL_DYN, so this arm is unreachable from PR-1 bytecode.
-            // Defensive: bail out of JIT compilation (None) so callers can
-            // fall back to the interpreter VM, which has the dispatcher.
-            OP_CALL_DYN => return None,
+            // ── Dynamic call by function reference ──
+            // ABC: A = result_reg, B = fnref_reg, C = argc.
+            // Args live contiguously in R[A+1..=A+argc] (mirrors OP_CALL
+            // and OP_CALL_BUILTIN_TREE). Cranelift cannot resolve the
+            // callee statically (FnRef id is only known at runtime), so we
+            // delegate to the `jit_call_dyn` helper which handles both
+            // FnRef kinds:
+            //   - Builtin → tree-bridge (same path as OP_CALL_BUILTIN_TREE)
+            //   - User    → fresh `VM::new(active_program).call(idx, args)`
+            // Both paths rely on the FnRef NaN-tagging plumbing from PR 1
+            // (#274) so FnRef args survive the boxing round-trip.
+            OP_CALL_DYN => {
+                let argc = c_idx;
+                let callee_val = builder.use_var(vars[b_idx]);
+                let argc_val = builder.ins().iconst(I64, argc as i64);
+
+                let regs_ptr = if argc == 0 {
+                    builder.ins().iconst(I64, 0)
+                } else {
+                    let slot =
+                        builder.create_sized_stack_slot(cranelift_codegen::ir::StackSlotData::new(
+                            cranelift_codegen::ir::StackSlotKind::ExplicitSlot,
+                            (argc * 8) as u32,
+                            0,
+                        ));
+                    for i in 0..argc {
+                        let src = builder.use_var(vars[a_idx + 1 + i]);
+                        builder.ins().stack_store(src, slot, (i * 8) as i32);
+                    }
+                    builder.ins().stack_addr(I64, slot, 0)
+                };
+
+                let fref = get_func_ref(&mut builder, module, helpers.call_dyn);
+                let call_inst = builder.ins().call(fref, &[callee_val, argc_val, regs_ptr]);
+                let result = builder.inst_results(call_inst)[0];
+                builder.def_var(vars[a_idx], result);
+            }
             OP_JMP => {
                 let sbx = (inst & 0xFFFF) as i16;
                 let target = (ip as isize + 1 + sbx as isize) as usize;

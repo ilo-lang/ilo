@@ -165,6 +165,8 @@ struct HelperFuncs {
     dtparse: FuncId,
     // Tree-bridge for tree-only builtins
     call_builtin_tree: FuncId,
+    // Dynamic-dispatch bridge for OP_CALL_DYN (HOF callbacks: `map`, ...)
+    call_dyn: FuncId,
     // AOT-specific helpers
     get_arena_ptr: FuncId,
     get_registry_ptr: FuncId,
@@ -339,6 +341,7 @@ fn declare_all_helpers(module: &mut ObjectModule) -> HelperFuncs {
         dtfmt: declare_helper(module, "jit_dtfmt", 2, 1),
         dtparse: declare_helper(module, "jit_dtparse", 2, 1),
         call_builtin_tree: declare_helper(module, "jit_call_builtin_tree", 3, 1),
+        call_dyn: declare_helper(module, "jit_call_dyn", 3, 1),
         // AOT-specific helpers
         get_arena_ptr: declare_helper(module, "jit_get_arena_ptr", 0, 1),
         get_registry_ptr: declare_helper(module, "jit_get_registry_ptr", 0, 1),
@@ -1707,14 +1710,45 @@ fn compile_function_body(
                 let kval = builder.ins().iconst(I64, bits as i64);
                 builder.def_var(vars[a_idx], kval);
             }
-            // OP_CALL_DYN is not emitted by the compiler in PR 1 (HOF
-            // dispatch hasn't been lifted yet). Cranelift translation
-            // arrives in PR 2 alongside the first native HOF lowering.
+            // ── Dynamic call by function reference ──
+            // ABC: A = result_reg, B = fnref_reg, C = argc.
+            // Args live contiguously in R[A+1..=A+argc] (mirrors OP_CALL
+            // and OP_CALL_BUILTIN_TREE). The JIT side has no re-entrant
+            // function-pointer table for arbitrary FnRef dispatch, so we
+            // route through the `jit_call_dyn` helper which:
+            //   - for a Builtin FnRef: round-trips through the tree-bridge,
+            //     same as OP_CALL_BUILTIN_TREE
+            //   - for a User FnRef: re-enters the bytecode VM on the same
+            //     program via `VM::new(active_program).call(idx, args)`
+            // Both paths use the FnRef NaN-tagging plumbing from PR 1
+            // (#274) so FnRef args survive the boxing round-trip.
             OP_CALL_DYN => {
-                return Err(format!(
-                    "OP_CALL_DYN not yet supported by cranelift codegen at instruction {}",
-                    ip
-                ));
+                let argc = c_idx;
+                let callee_val = builder.use_var(vars[b_idx]);
+                let argc_val = builder.ins().iconst(I64, argc as i64);
+
+                // Spill args into a contiguous stack slot, mirroring the
+                // OP_CALL_BUILTIN_TREE lowering above.
+                let regs_ptr = if argc == 0 {
+                    builder.ins().iconst(I64, 0)
+                } else {
+                    let slot =
+                        builder.create_sized_stack_slot(cranelift_codegen::ir::StackSlotData::new(
+                            cranelift_codegen::ir::StackSlotKind::ExplicitSlot,
+                            (argc * 8) as u32,
+                            0,
+                        ));
+                    for i in 0..argc {
+                        let src = builder.use_var(vars[a_idx + 1 + i]);
+                        builder.ins().stack_store(src, slot, (i * 8) as i32);
+                    }
+                    builder.ins().stack_addr(I64, slot, 0)
+                };
+
+                let fref = get_func_ref(&mut builder, module, helpers.call_dyn);
+                let call_inst = builder.ins().call(fref, &[callee_val, argc_val, regs_ptr]);
+                let result = builder.inst_results(call_inst)[0];
+                builder.def_var(vars[a_idx], result);
             }
             // ── Control flow ──
             OP_JMP => {
