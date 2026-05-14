@@ -4689,7 +4689,7 @@ impl<'a> VM<'a> {
                         match map_v.as_heap_ref() {
                             HeapObj::Map(m) => {
                                 let mut pairs: Vec<(&MapKey, &NanVal)> = m.iter().collect();
-                                pairs.sort_by(|(a, _), (b, _)| a.cmp(b));
+                                pairs.sort_by_key(|(k, _)| (*k).clone());
                                 let nan_vals: Vec<NanVal> = pairs
                                     .iter()
                                     .map(|(_, v)| {
@@ -12032,7 +12032,7 @@ pub(crate) extern "C" fn jit_mvals(map: u64) -> u64 {
         match map_v.as_heap_ref() {
             HeapObj::Map(m) => {
                 let mut pairs: Vec<(&MapKey, &NanVal)> = m.iter().collect();
-                pairs.sort_by(|(a, _), (b, _)| a.cmp(b));
+                pairs.sort_by_key(|(k, _)| (*k).clone());
                 let nan_vals: Vec<NanVal> = pairs
                     .iter()
                     .map(|(_, v)| {

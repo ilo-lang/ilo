@@ -846,7 +846,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         return match &args[0] {
             Value::Map(m) => {
                 let mut pairs: Vec<(&MapKey, &Value)> = m.iter().collect();
-                pairs.sort_by(|(a, _), (b, _)| a.cmp(b));
+                pairs.sort_by_key(|(k, _)| (*k).clone());
                 Ok(Value::List(
                     pairs.into_iter().map(|(_, v)| v.clone()).collect(),
                 ))
