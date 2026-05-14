@@ -378,9 +378,10 @@ pub(crate) const OP_PANIC_UNWRAP: u8 = 164;
 /// round-tripping is lossless. Adding a new entry here makes the builtin
 /// callable from `--run-vm` and `--run-cranelift` for free.
 ///
-/// HOFs (`map`, `flt`, `fld`, `grp`, `flatmap`, `uniqby`, `partition`,
-/// 2-arg `srt`, dynamic-fmt `wr`) are NOT eligible: their function-reference
-/// argument can't survive the round-trip until FnRef nan-tagging lands.
+/// HOFs (`flt`, `fld`, `grp`, `flatmap`, `uniqby`, `partition`,
+/// 2-arg `srt`, dynamic-fmt `wr`) are NOT eligible: they get native VM
+/// lifts in the HOF dispatch chain (PR 2+). `map` is already lifted —
+/// see the `(Builtin::Map, 2)` arm in the compiler.
 pub(crate) fn is_tree_bridge_eligible(b: crate::builtins::Builtin, argc: usize) -> bool {
     use crate::builtins::Builtin;
     match (b, argc) {
@@ -2655,12 +2656,102 @@ impl RegCompiler {
                             self.emit_abc(OP_MDEL, ra, rb, rc);
                             return ra;
                         }
+                        // map fn xs → native HOF loop using OP_CALL_DYN.
+                        // The FnRef plumbing from #274 means we can keep the
+                        // callee in a register (NanVal-tagged) and invoke it
+                        // per element without ever leaving bytecode land.
+                        // Emits, schematically:
+                        //   fn_reg    = compile(fn)         ; OP_LOADFN if Ref to user/builtin name
+                        //   xs_reg    = compile(xs)
+                        //   acc_reg   = OP_LISTNEW 0        ; empty result list
+                        //   idx_reg   = OP_LOADK 0.0
+                        //   item_reg  = OP_LOADK nil        ; loop binding (allocated)
+                        //   res_reg   = OP_LOADK nil        ; per-iteration call result
+                        //   arg_reg   = OP_LOADK nil        ; contiguous arg slot for OP_CALL_DYN
+                        //                                    (must be at res_reg + 1)
+                        //   loop_top: OP_FOREACHPREP item_reg, xs_reg, idx_reg
+                        //             JMP end                 (empty list)
+                        //   body:     OP_MOVE arg_reg, item_reg
+                        //             OP_CALL_DYN res_reg, fn_reg, 1
+                        //             OP_LISTAPPEND acc_reg, acc_reg, res_reg
+                        //             OP_FOREACHNEXT item_reg, xs_reg, idx_reg
+                        //             JMP end                 (out of bounds)
+                        //             JMP body
+                        //   end:
+                        //   ra = acc_reg
+                        (Builtin::Map, 2) => {
+                            let fn_reg = self.compile_expr(&args[0]);
+                            let xs_reg = self.compile_expr(&args[1]);
+
+                            // Result list — start empty, OP_LISTAPPEND grows it
+                            // in-place when acc == acc + item.
+                            let acc_reg = self.alloc_reg();
+                            self.emit_abx(OP_LISTNEW, acc_reg, 0);
+
+                            // Loop index (number, fits the FOREACHNEXT contract).
+                            let idx_reg = self.alloc_reg();
+                            let zero_ki = self.current.add_const(Value::Number(0.0));
+                            self.emit_abx(OP_LOADK, idx_reg, zero_ki);
+                            self.reg_is_num[idx_reg as usize] = true;
+
+                            // Loop binding — receives R[xs_reg][i].
+                            let item_reg = self.alloc_reg();
+                            let nil_ki = self.current.add_const(Value::Nil);
+                            self.emit_abx(OP_LOADK, item_reg, nil_ki);
+
+                            // OP_CALL_DYN reads args from R[result+1..=result+argc].
+                            // Reserve two contiguous regs (result, then arg) so the
+                            // single-arg callback layout is correct.
+                            let res_reg = self.alloc_reg();
+                            self.emit_abx(OP_LOADK, res_reg, nil_ki);
+                            let arg_reg = self.alloc_reg();
+                            assert!(
+                                arg_reg == res_reg + 1,
+                                "map HOF: arg reg must follow result reg contiguously"
+                            );
+                            self.emit_abx(OP_LOADK, arg_reg, nil_ki);
+
+                            // OP_FOREACHPREP validates xs is a list and loads xs[0]
+                            // into item_reg; on empty it falls through to the exit JMP.
+                            let _loop_top = self.current.code.len();
+                            self.emit_abc(OP_FOREACHPREP, item_reg, xs_reg, idx_reg);
+                            let exit_jump_a = self.emit_jmp_placeholder();
+
+                            // Body
+                            let body_top = self.current.code.len();
+                            self.emit_abc(OP_MOVE, arg_reg, item_reg, 0);
+                            self.emit_abc(OP_CALL_DYN, res_reg, fn_reg, 1);
+                            // acc_reg = acc_reg ++ [res_reg]. dst == src1 hits the
+                            // in-place RC=1 fast path in the dispatcher / cranelift.
+                            self.emit_abc(OP_LISTAPPEND, acc_reg, acc_reg, res_reg);
+
+                            // Advance and re-test
+                            self.emit_abc(OP_FOREACHNEXT, item_reg, xs_reg, idx_reg);
+                            let exit_jump_b = self.emit_jmp_placeholder();
+                            self.emit_jump_to(body_top);
+
+                            // Exit — patch both empty-list and end-of-list jumps
+                            self.current.patch_jump(exit_jump_a);
+                            self.current.patch_jump(exit_jump_b);
+
+                            // The bridge-style result fully boxes a list; reset the
+                            // numeric-tracking on the result register so downstream
+                            // arithmetic doesn't assume it's a raw f64.
+                            self.current_all_regs_numeric = false;
+                            self.reg_is_num[acc_reg as usize] = false;
+
+                            // Free the scratch regs above acc_reg so subsequent
+                            // expressions can reuse them. acc_reg stays live as
+                            // the call site's result.
+                            self.next_reg = acc_reg + 1;
+                            return acc_reg;
+                        }
                         // Builtins that fall through:
                         //   - tree-bridge eligible (rgx, rgxall, fmt-variadic, rd 2-arg, rdb)
                         //     → routed to OP_CALL_BUILTIN_TREE below
-                        //   - HOFs (map/flt/fld/grp/flatmap/uniqby/partition/srt 2-arg/wr 3-arg
-                        //     with dynamic fmt) → still error; FnRef args can't round-trip
-                        //     through the bridge until FnRef NaN-tagging lands
+                        //   - HOFs (flt/fld/grp/flatmap/uniqby/partition/srt 2-arg/wr 3-arg
+                        //     with dynamic fmt) → still error; their native lift lands
+                        //     in PR 3 of the HOF dispatch chain (PR 2 = `map` only)
                         _ => {}
                     }
                 }
@@ -3479,6 +3570,15 @@ thread_local! {
     /// pointer to a `[String]`, paired with a length stored separately.
     static ACTIVE_FUNC_NAMES: std::cell::Cell<*const Vec<String>> =
         const { std::cell::Cell::new(std::ptr::null()) };
+    /// Active `CompiledProgram` pointer, set by `with_active_registry`
+    /// during a Cranelift JIT invocation. Used by `jit_call_dyn` to
+    /// re-enter the VM for a user-fn callback inside a HOF (`map`, etc.).
+    /// The JIT itself has no re-entrant function pointer table for
+    /// dynamic dispatch, so the FnRef → user-fn path routes through a
+    /// fresh `VM::new(compiled).call(func_idx, args)` on the same
+    /// bytecode program. Cleared by `with_active_registry`'s drop guard.
+    static ACTIVE_PROGRAM: std::cell::Cell<*const CompiledProgram> =
+        const { std::cell::Cell::new(std::ptr::null()) };
 }
 
 /// Look up a user-fn name by index in the currently active `func_names`
@@ -3518,11 +3618,13 @@ pub fn with_active_registry<R>(program: &CompiledProgram, f: impl FnOnce() -> R)
         fn drop(&mut self) {
             ACTIVE_REGISTRY.with(|r| r.set(std::ptr::null()));
             ACTIVE_FUNC_NAMES.with(|r| r.set(std::ptr::null()));
+            ACTIVE_PROGRAM.with(|r| r.set(std::ptr::null()));
         }
     }
 
     ACTIVE_REGISTRY.with(|r| r.set(&program.type_registry as *const TypeRegistry));
     ACTIVE_FUNC_NAMES.with(|r| r.set(&program.func_names as *const Vec<String>));
+    ACTIVE_PROGRAM.with(|r| r.set(program as *const CompiledProgram));
     let _guard = ClearGuard;
     f()
 }
@@ -11272,6 +11374,114 @@ pub(crate) extern "C" fn jit_call_builtin_tree(tag: u64, argc: u64, regs_ptr: u6
     match crate::interpreter::call_builtin_for_bridge(builtin.name(), value_args) {
         Ok(v) => NanVal::from_value(&v).0,
         Err(_) => TAG_NIL,
+    }
+}
+
+/// Dynamic call helper for the Cranelift JIT's OP_CALL_DYN lowering.
+///
+/// Args:
+///   callee_bits: NanVal bits of a FnRef (kind + id encoded by `NanVal::fnref`)
+///   argc:        number of args (callable via this helper today is 1; the
+///                signature uses an arg slice for forward-compat)
+///   regs_ptr:    pointer to `argc` contiguous NanVal slots holding the args
+///
+/// Dispatch:
+///   - Builtin FnRef → route through the tree-bridge (`call_builtin_for_bridge`),
+///     the same path `jit_call_builtin_tree` uses. This handles every builtin
+///     uniformly; HOFs receive `Value::FnRef` arg(s) since FnRef NaN-tagging
+///     round-trips losslessly through `to_value`/`from_value` (PR 1).
+///   - User-fn FnRef → spin up a fresh `VM::new(active_program).call(idx, args)`.
+///     Cranelift JIT has no re-entrant function pointer table for dynamic
+///     dispatch, so we re-enter the VM on the same bytecode program. The
+///     active program is published by `with_active_registry` via the
+///     `ACTIVE_PROGRAM` TLS slot, which is also responsible for clearing it.
+///
+/// Returns NanVal bits of the result, or `TAG_NIL` on any error path. The
+/// "swallow errors as nil" behaviour mirrors `jit_call_builtin_tree`; a
+/// follow-up can promote these to typed runtime errors once OP_CALL_DYN's
+/// in-band error signalling is wired (today the VM uses panics via `vm_err!`).
+///
+/// SAFETY: `regs_ptr` must point to at least `argc` valid `NanVal`s in
+/// readable memory for the duration of the call. The compiler emits a sized
+/// stack slot immediately before the call, mirroring `jit_call_builtin_tree`.
+#[cfg(feature = "cranelift")]
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn jit_call_dyn(callee_bits: u64, argc: u64, regs_ptr: u64) -> u64 {
+    let callee = NanVal(callee_bits);
+    if !callee.is_fnref() {
+        return TAG_NIL;
+    }
+    let (kind, id) = callee.fnref_parts();
+    let argc = argc as usize;
+
+    // SAFETY: caller guarantees `regs_ptr` points to `argc` valid NanVals.
+    let regs: &[NanVal] = unsafe {
+        if argc == 0 {
+            &[]
+        } else {
+            std::slice::from_raw_parts(regs_ptr as *const NanVal, argc)
+        }
+    };
+
+    match kind {
+        FnRefKind::Builtin => {
+            let builtin = match crate::builtins::Builtin::from_tag(id as u8) {
+                Some(b) => b,
+                None => return TAG_NIL,
+            };
+            let mut value_args: Vec<Value> = Vec::with_capacity(argc);
+            for nv in regs {
+                // Use the program-aware bridge so FnRef args render with
+                // their source name rather than `<user_fn:N>`. Falls back
+                // gracefully if no program is active.
+                let v = ACTIVE_FUNC_NAMES.with(|cell| {
+                    let ptr = cell.get();
+                    if ptr.is_null() {
+                        nv.to_value()
+                    } else {
+                        // SAFETY: pointer is non-null; lifetime is bounded by
+                        // `with_active_registry`'s drop guard, which clears
+                        // this TLS before the borrow ends.
+                        let names: &Vec<String> = unsafe { &*ptr };
+                        nv.to_value_with_program(names)
+                    }
+                });
+                value_args.push(v);
+            }
+            match crate::interpreter::call_builtin_for_bridge(builtin.name(), value_args) {
+                Ok(v) => NanVal::from_value(&v).0,
+                Err(_) => TAG_NIL,
+            }
+        }
+        FnRefKind::User => {
+            // Re-enter the VM on the same bytecode program. ACTIVE_PROGRAM
+            // is published by `with_active_registry`, which the Cranelift
+            // entry path (`compile_and_call`) wraps around every JIT
+            // invocation.
+            let prog_ptr = ACTIVE_PROGRAM.with(|cell| cell.get());
+            if prog_ptr.is_null() {
+                return TAG_NIL;
+            }
+            // SAFETY: pointer was set by `with_active_registry` to a live
+            // borrow that outlives this helper's invocation (cleared by
+            // the drop guard at the end of `with_active_registry`'s scope).
+            let program: &CompiledProgram = unsafe { &*prog_ptr };
+            let func_idx = id as u16;
+            if (func_idx as usize) >= program.chunks.len() {
+                return TAG_NIL;
+            }
+            let mut value_args: Vec<Value> = Vec::with_capacity(argc);
+            for nv in regs {
+                value_args.push(nv.to_value_with_program(&program.func_names));
+            }
+            // Fresh VM on the same program. `call(func_idx, ...)` mirrors
+            // OP_CALL_DYN's User arm in the bytecode interpreter.
+            let mut sub_vm = VM::new(program);
+            match sub_vm.call(func_idx, value_args) {
+                Ok(v) => NanVal::from_value_with_program(&v, &program.func_names).0,
+                Err(_) => TAG_NIL,
+            }
+        }
     }
 }
 
@@ -22445,7 +22655,6 @@ mod tests {
     // ── HOF builtins: map, flt, fld, grp ────────────────────────────────
 
     #[test]
-    #[ignore] // Dynamic dispatch (OP_CALL_DYN emission) arrives in PR 2.
     fn vm_map_squares() {
         let source = "sq x:n>n;*x x main xs:L n>L n;map sq xs";
         let result = vm_run(
@@ -22479,7 +22688,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // Dynamic dispatch (OP_CALL_DYN emission) arrives in PR 2.
     fn vm_map_wrong_list_arg() {
         let source = "sq x:n>n;*x x f>t;map sq 42";
         let err = vm_run_err(source, Some("f"), vec![]);

@@ -15,11 +15,10 @@ singles>L (L n);window 1 [1, 2, 3]
 toobig>L (L n);window 5 [1, 2, 3]
 
 -- 3-element moving sum: window then map sum.
--- Tree only — vm/cranelift don't dispatch builtins-as-HOF yet.
+-- Cross-engine: map with a builtin HOF callback now works on every engine
+-- (FnRef NaN-tagging + native `map` lift; see #274 and the PR 2 follow-up).
 sums>L n;map sum (window 3 [1, 2, 3, 4, 5])
 
--- engine-skip: vm
--- engine-skip: cranelift
 -- run: basic
 -- out: [[1, 2, 3], [2, 3, 4], [3, 4, 5]]
 -- run: pairs
