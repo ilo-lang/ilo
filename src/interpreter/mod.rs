@@ -4071,10 +4071,11 @@ fn eval_self_rebind_append(env: &mut Env, val_expr: &Expr, prev: Value) -> Resul
     }
 }
 
-/// If `value` is the self-rebind list-concat shape `name = name + ys`, return
-/// `Some(rhs_expr)`. Returns `None` for any other shape, including any case
-/// where the rhs references `name` (e.g. `s = s + s` self-concat), which
-/// would observe Nil after the fast path takes the binding.
+/// If `value` is the self-rebind list/text-concat shape `name = name + rhs`,
+/// return `Some(rhs_expr)`. Drives both the List and Text branches of
+/// `eval_self_rebind_concat`. Returns `None` for any other shape, including
+/// any case where the rhs references `name` (e.g. `s = s + s` self-concat),
+/// which would observe Nil after the fast path takes the binding.
 fn match_self_rebind_concat<'a>(name: &str, value: &'a Expr) -> Option<&'a Expr> {
     if let Expr::BinOp { op, left, right } = value
         && matches!(op, BinOp::Add)
@@ -4090,9 +4091,11 @@ fn match_self_rebind_concat<'a>(name: &str, value: &'a Expr) -> Option<&'a Expr>
 /// Fast-path executor for `xs = xs + ys`. Caller has taken the previous
 /// binding out of env. If both sides are lists, we use `Arc::make_mut` on the
 /// prev (which now has refcount=1) and `extend` from ys, again giving O(n)
-/// amortised behaviour for repeated concatenation. If the values aren't both
-/// lists (e.g. numeric add), we fall back to `apply_binop` so semantics match
-/// the general path exactly.
+/// amortised behaviour for repeated concatenation. If both sides are text,
+/// we do the same trick with `Arc::make_mut` and `push_str` to fold O(n^2)
+/// string-accumulator loops to O(n) amortised. If the values aren't both
+/// lists or both text (e.g. numeric add), we fall back to `apply_binop` so
+/// semantics match the general path exactly.
 fn eval_self_rebind_concat(env: &mut Env, rhs_expr: &Expr, prev: Value) -> Result<Value> {
     let rhs = eval_expr(env, rhs_expr)?;
     match (prev, rhs) {
@@ -4100,6 +4103,16 @@ fn eval_self_rebind_concat(env: &mut Env, rhs_expr: &Expr, prev: Value) -> Resul
             let inner = Arc::make_mut(&mut items);
             inner.extend(other.iter().cloned());
             Ok(Value::List(items))
+        }
+        (Value::Text(mut s), Value::Text(other)) => {
+            // `match_self_rebind_concat` already rejects RHSes that reference
+            // `name`, so `prev` and `other` cannot be the same Arc here. That
+            // means `Arc::make_mut(&mut s)` is free to mutate in place (the
+            // env's binding was taken to Nil, so refcount=1) and reading
+            // `other` after the mutation observes the unchanged source.
+            let inner = Arc::make_mut(&mut s);
+            inner.push_str(&other);
+            Ok(Value::Text(s))
         }
         (prev, rhs) => eval_binop(&BinOp::Add, &prev, &rhs),
     }
