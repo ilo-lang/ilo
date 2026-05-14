@@ -113,7 +113,7 @@ pub enum Value {
     Text(String),
     Bool(bool),
     Nil,
-    List(Vec<Value>),
+    List(Arc<Vec<Value>>),
     Map(Arc<HashMap<MapKey, Value>>),
     Record {
         type_name: String,
@@ -451,10 +451,10 @@ fn parse_format(fmt: &str, content: &str) -> std::result::Result<Value, String> 
                         .into_iter()
                         .map(Value::Text)
                         .collect();
-                    Value::List(fields)
+                    Value::List(Arc::new(fields))
                 })
                 .collect();
-            Ok(Value::List(rows))
+            Ok(Value::List(Arc::new(rows)))
         }
         "json" => serde_json::from_str::<serde_json::Value>(content)
             .map(serde_json_to_value)
@@ -507,7 +507,7 @@ fn matrix_from_value(v: &Value, name: &str) -> Result<Vec<Vec<f64>>> {
         }
     };
     let mut mat: Vec<Vec<f64>> = Vec::with_capacity(rows.len());
-    for row in rows {
+    for row in rows.iter() {
         let cells = match row {
             Value::List(cs) => cs,
             other => {
@@ -518,7 +518,7 @@ fn matrix_from_value(v: &Value, name: &str) -> Result<Vec<Vec<f64>>> {
             }
         };
         let mut r: Vec<f64> = Vec::with_capacity(cells.len());
-        for c in cells {
+        for c in cells.iter() {
             match c {
                 Value::Number(n) => r.push(*n),
                 other => {
@@ -546,7 +546,7 @@ fn vec_from_value(v: &Value, name: &str) -> Result<Vec<f64>> {
         }
     };
     let mut out: Vec<f64> = Vec::with_capacity(items.len());
-    for item in items {
+    for item in items.iter() {
         match item {
             Value::Number(n) => out.push(*n),
             other => {
@@ -832,9 +832,9 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             Value::Map(m) => {
                 let mut keys: Vec<&MapKey> = m.keys().collect();
                 keys.sort();
-                Ok(Value::List(
+                Ok(Value::List(Arc::new(
                     keys.into_iter().map(map_key_to_value).collect(),
-                ))
+                )))
             }
             _ => Err(RuntimeError::new(
                 "ILO-R009",
@@ -847,9 +847,9 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             Value::Map(m) => {
                 let mut pairs: Vec<(&MapKey, &Value)> = m.iter().collect();
                 pairs.sort_by_key(|(k, _)| (*k).clone());
-                Ok(Value::List(
+                Ok(Value::List(Arc::new(
                     pairs.into_iter().map(|(_, v)| v.clone()).collect(),
-                ))
+                )))
             }
             _ => Err(RuntimeError::new(
                 "ILO-R009",
@@ -927,14 +927,14 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         // Assemble row-major: result[i][j] = cols[j][i]
         let rows: Vec<Value> = (0..n)
             .map(|i| {
-                Value::List(
+                Value::List(Arc::new(
                     (0..n)
                         .map(|j| Value::Number(cols[j][i]))
                         .collect::<Vec<_>>(),
-                )
+                ))
             })
             .collect();
-        return Ok(Value::List(rows));
+        return Ok(Value::List(Arc::new(rows)));
     }
     if builtin == Some(Builtin::Solve) && args.len() == 2 {
         let mat = matrix_from_value(&args[0], "solve")?;
@@ -968,7 +968,9 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             ));
         }
         let x = lu_solve(&lu, &piv, &b);
-        return Ok(Value::List(x.into_iter().map(Value::Number).collect()));
+        return Ok(Value::List(Arc::new(
+            x.into_iter().map(Value::Number).collect(),
+        )));
     }
     if builtin == Some(Builtin::Str) {
         if args.len() != 1 {
@@ -1262,7 +1264,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                     .split(sep.as_str())
                     .map(|p| Value::Text(p.to_string()))
                     .collect();
-                Ok(Value::List(parts))
+                Ok(Value::List(Arc::new(parts)))
             }
             _ => Err(RuntimeError::new(
                 "ILO-R009",
@@ -1274,7 +1276,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         return match (&args[0], &args[1]) {
             (Value::List(items), Value::Text(sep)) => {
                 let mut parts = Vec::new();
-                for item in items {
+                for item in items.iter() {
                     match item {
                         Value::Text(s) => parts.push(s.clone()),
                         other => {
@@ -1407,9 +1409,9 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                         ),
                     ))
                 } else {
-                    let mut new_items = items.clone();
+                    let mut new_items = (**items).clone();
                     new_items[idx] = args[2].clone();
-                    Ok(Value::List(new_items))
+                    Ok(Value::List(Arc::new(new_items)))
                 }
             }
             other => Err(RuntimeError::new(
@@ -1446,13 +1448,13 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             }
         };
         if n > xs.len() {
-            return Ok(Value::List(vec![]));
+            return Ok(Value::List(Arc::new(vec![])));
         }
         let mut out = Vec::with_capacity(xs.len() - n + 1);
         for w in xs.windows(n) {
-            out.push(Value::List(w.to_vec()));
+            out.push(Value::List(Arc::new(w.to_vec())));
         }
-        return Ok(Value::List(out));
+        return Ok(Value::List(Arc::new(out)));
     }
     if builtin == Some(Builtin::Zip) && args.len() == 2 {
         let xs = match &args[0] {
@@ -1476,9 +1478,9 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         let n = xs.len().min(ys.len());
         let mut out = Vec::with_capacity(n);
         for i in 0..n {
-            out.push(Value::List(vec![xs[i].clone(), ys[i].clone()]));
+            out.push(Value::List(Arc::new(vec![xs[i].clone(), ys[i].clone()])));
         }
-        return Ok(Value::List(out));
+        return Ok(Value::List(Arc::new(out)));
     }
     if builtin == Some(Builtin::Enumerate) && args.len() == 1 {
         let xs = match &args[0] {
@@ -1492,9 +1494,12 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         };
         let mut out = Vec::with_capacity(xs.len());
         for (i, v) in xs.iter().enumerate() {
-            out.push(Value::List(vec![Value::Number(i as f64), v.clone()]));
+            out.push(Value::List(Arc::new(vec![
+                Value::Number(i as f64),
+                v.clone(),
+            ])));
         }
-        return Ok(Value::List(out));
+        return Ok(Value::List(Arc::new(out)));
     }
     if builtin == Some(Builtin::Range) && args.len() == 2 {
         return match (&args[0], &args[1]) {
@@ -1510,7 +1515,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 let start = *a as i64;
                 let end = *b as i64;
                 if start >= end {
-                    return Ok(Value::List(Vec::new()));
+                    return Ok(Value::List(Arc::new(Vec::new())));
                 }
                 let len = (end - start) as u64;
                 if len > 1_000_000 {
@@ -1523,7 +1528,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 for i in start..end {
                     out.push(Value::Number(i as f64));
                 }
-                Ok(Value::List(out))
+                Ok(Value::List(Arc::new(out)))
             }
             _ => Err(RuntimeError::new(
                 "ILO-R009",
@@ -1559,9 +1564,9 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         };
         let mut out: Vec<Value> = Vec::with_capacity(xs.len().div_ceil(n));
         for chunk in xs.chunks(n) {
-            out.push(Value::List(chunk.to_vec()));
+            out.push(Value::List(Arc::new(chunk.to_vec())));
         }
-        return Ok(Value::List(out));
+        return Ok(Value::List(Arc::new(out)));
     }
     if matches!(
         builtin,
@@ -1617,7 +1622,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         use std::collections::{HashMap, HashSet};
         let mut set_a: HashSet<String> = HashSet::new();
         let mut a_first: HashMap<String, Value> = HashMap::new();
-        for v in xs {
+        for v in xs.iter() {
             let k = key_for(v, op_name)?;
             if set_a.insert(k.clone()) {
                 a_first.insert(k, v.clone());
@@ -1625,7 +1630,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         }
         let mut set_b: HashSet<String> = HashSet::new();
         let mut b_first: HashMap<String, Value> = HashMap::new();
-        for v in ys {
+        for v in ys.iter() {
             let k = key_for(v, op_name)?;
             if set_b.insert(k.clone()) {
                 b_first.insert(k, v.clone());
@@ -1648,7 +1653,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                         out.push(v.clone());
                     }
                 }
-                return Ok(Value::List(out));
+                return Ok(Value::List(Arc::new(out)));
             }
             Some(Builtin::Setinter) => (
                 set_a.intersection(&set_b).cloned().collect::<Vec<_>>(),
@@ -1668,7 +1673,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 out.push(v.clone());
             }
         }
-        return Ok(Value::List(out));
+        return Ok(Value::List(Arc::new(out)));
     }
     if builtin == Some(Builtin::Tl) && args.len() == 1 {
         return match &args[0] {
@@ -1676,7 +1681,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 if items.is_empty() {
                     Err(RuntimeError::new("ILO-R009", "tl: empty list".to_string()))
                 } else {
-                    Ok(Value::List(items[1..].to_vec()))
+                    Ok(Value::List(Arc::new(items[1..].to_vec())))
                 }
             }
             Value::Text(s) => {
@@ -1697,9 +1702,9 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
     if builtin == Some(Builtin::Rev) && args.len() == 1 {
         return match &args[0] {
             Value::List(items) => {
-                let mut reversed = items.clone();
+                let mut reversed: Vec<Value> = (**items).clone();
                 reversed.reverse();
-                Ok(Value::List(reversed))
+                Ok(Value::List(Arc::new(reversed)))
             }
             Value::Text(s) => Ok(Value::Text(s.chars().rev().collect())),
             other => Err(RuntimeError::new(
@@ -1712,12 +1717,12 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         return match &args[0] {
             Value::List(items) => {
                 if items.is_empty() {
-                    return Ok(Value::List(vec![]));
+                    return Ok(Value::List(Arc::new(vec![])));
                 }
                 let all_numbers = items.iter().all(|v| matches!(v, Value::Number(_)));
                 let all_text = items.iter().all(|v| matches!(v, Value::Text(_)));
                 if all_numbers {
-                    let mut sorted = items.clone();
+                    let mut sorted: Vec<Value> = (**items).clone();
                     sorted.sort_by(|a, b| {
                         if let (Value::Number(x), Value::Number(y)) = (a, b) {
                             x.partial_cmp(y).unwrap_or(std::cmp::Ordering::Equal)
@@ -1725,9 +1730,9 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                             unreachable!()
                         }
                     });
-                    Ok(Value::List(sorted))
+                    Ok(Value::List(Arc::new(sorted)))
                 } else if all_text {
-                    let mut sorted = items.clone();
+                    let mut sorted: Vec<Value> = (**items).clone();
                     sorted.sort_by(|a, b| {
                         if let (Value::Text(x), Value::Text(y)) = (a, b) {
                             x.cmp(y)
@@ -1735,7 +1740,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                             unreachable!()
                         }
                     });
-                    Ok(Value::List(sorted))
+                    Ok(Value::List(Arc::new(sorted)))
                 } else {
                     Err(RuntimeError::new(
                         "ILO-R009",
@@ -1780,8 +1785,10 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 ));
             }
         };
-        // Compute keys for each item, then sort by key
-        let mut keyed: Vec<(Value, Value)> = items
+        // Compute keys for each item, then sort by key.
+        // `items: Arc<Vec<Value>>` — unwrap if refcount=1, else clone the Vec.
+        let owned_items: Vec<Value> = Arc::try_unwrap(items).unwrap_or_else(|arc| (*arc).clone());
+        let mut keyed: Vec<(Value, Value)> = owned_items
             .into_iter()
             .map(|item| {
                 let mut call_args = match &ctx {
@@ -1800,18 +1807,20 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             (Value::Text(a), Value::Text(b)) => a.cmp(b),
             _ => std::cmp::Ordering::Equal,
         });
-        return Ok(Value::List(keyed.into_iter().map(|(_, v)| v).collect()));
+        return Ok(Value::List(Arc::new(
+            keyed.into_iter().map(|(_, v)| v).collect(),
+        )));
     }
     if builtin == Some(Builtin::Rsrt) && args.len() == 1 {
         return match &args[0] {
             Value::List(items) => {
                 if items.is_empty() {
-                    return Ok(Value::List(vec![]));
+                    return Ok(Value::List(Arc::new(vec![])));
                 }
                 let all_numbers = items.iter().all(|v| matches!(v, Value::Number(_)));
                 let all_text = items.iter().all(|v| matches!(v, Value::Text(_)));
                 if all_numbers {
-                    let mut sorted = items.clone();
+                    let mut sorted: Vec<Value> = (**items).clone();
                     sorted.sort_by(|a, b| {
                         if let (Value::Number(x), Value::Number(y)) = (a, b) {
                             y.partial_cmp(x).unwrap_or(std::cmp::Ordering::Equal)
@@ -1819,9 +1828,9 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                             unreachable!()
                         }
                     });
-                    Ok(Value::List(sorted))
+                    Ok(Value::List(Arc::new(sorted)))
                 } else if all_text {
-                    let mut sorted = items.clone();
+                    let mut sorted: Vec<Value> = (**items).clone();
                     sorted.sort_by(|a, b| {
                         if let (Value::Text(x), Value::Text(y)) = (a, b) {
                             y.cmp(x)
@@ -1829,7 +1838,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                             unreachable!()
                         }
                     });
-                    Ok(Value::List(sorted))
+                    Ok(Value::List(Arc::new(sorted)))
                 } else {
                     Err(RuntimeError::new(
                         "ILO-R009",
@@ -1891,7 +1900,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 let len = items.len();
                 let end = crate::builtins::resolve_slice_bound(end_raw, len);
                 let start = crate::builtins::resolve_slice_bound(start_raw, len).min(end);
-                Ok(Value::List(items[start..end].to_vec()))
+                Ok(Value::List(Arc::new(items[start..end].to_vec())))
             }
             Value::Text(s) => {
                 let chars: Vec<char> = s.chars().collect();
@@ -1929,7 +1938,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         return match &args[1] {
             Value::List(items) => {
                 let end = crate::builtins::resolve_take_count(n, items.len());
-                Ok(Value::List(items[..end].to_vec()))
+                Ok(Value::List(Arc::new(items[..end].to_vec())))
             }
             Value::Text(s) => {
                 let chars: Vec<char> = s.chars().collect();
@@ -1965,7 +1974,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         return match &args[1] {
             Value::List(items) => {
                 let start = crate::builtins::resolve_drop_count(n, items.len());
-                Ok(Value::List(items[start..].to_vec()))
+                Ok(Value::List(Arc::new(items[start..].to_vec())))
             }
             Value::Text(s) => {
                 let chars: Vec<char> = s.chars().collect();
@@ -2063,7 +2072,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 ));
             }
         };
-        return Ok(Value::List(get_many_fetch(&urls)));
+        return Ok(Value::List(Arc::new(get_many_fetch(&urls))));
     }
     if builtin == Some(Builtin::Post) && (args.len() == 2 || args.len() == 3) {
         let (url, body) = match (&args[0], &args[1]) {
@@ -2257,9 +2266,9 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
     }
     if builtin == Some(Builtin::Chars) && args.len() == 1 {
         return match &args[0] {
-            Value::Text(s) => Ok(Value::List(
+            Value::Text(s) => Ok(Value::List(Arc::new(
                 s.chars().map(|c| Value::Text(c.to_string())).collect(),
-            )),
+            ))),
             other => Err(RuntimeError::new(
                 "ILO-R009",
                 format!("chars requires text, got {:?}", other),
@@ -2271,13 +2280,13 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             Value::List(xs) => {
                 let mut seen = std::collections::HashSet::new();
                 let mut out = Vec::new();
-                for v in xs {
+                for v in xs.iter() {
                     let key = format!("{v:?}");
                     if seen.insert(key) {
                         out.push(v.clone());
                     }
                 }
-                Ok(Value::List(out))
+                Ok(Value::List(Arc::new(out)))
             }
             Value::Text(s) => {
                 let mut seen = std::collections::HashSet::new();
@@ -2402,7 +2411,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                         .lines()
                         .map(|l| Value::Text(l.to_string()))
                         .collect();
-                    Ok(Value::Ok(Box::new(Value::List(lines))))
+                    Ok(Value::Ok(Box::new(Value::List(Arc::new(lines)))))
                 }
                 Err(e) => Ok(Value::Err(Box::new(Value::Text(e.to_string())))),
             },
@@ -2499,7 +2508,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         return match (&args[0], &args[1]) {
             (Value::Text(path), Value::List(lines)) => {
                 let mut content = String::new();
-                for line in lines {
+                for line in lines.iter() {
                     match line {
                         Value::Text(s) => {
                             content.push_str(s);
@@ -2601,7 +2610,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                         };
                         items.push(parsed);
                     }
-                    Ok(Value::List(items))
+                    Ok(Value::List(Arc::new(items)))
                 }
                 Err(e) => Err(RuntimeError::new(
                     "ILO-R009",
@@ -2680,7 +2689,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             }
         };
         let mut result = Vec::with_capacity(items.len());
-        for item in items {
+        for item in items.iter().cloned() {
             let mut call_args = match &ctx {
                 Some(c) => vec![item, c.clone()],
                 None => vec![item],
@@ -2688,7 +2697,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             call_args.extend(captures.iter().cloned());
             result.push(call_function(env, &fn_name, call_args)?);
         }
-        return Ok(Value::List(result));
+        return Ok(Value::List(Arc::new(result)));
     }
     if builtin == Some(Builtin::Flt) && (args.len() == 2 || args.len() == 3) {
         let fn_name = resolve_fn_ref(&args[0]).ok_or_else(|| {
@@ -2716,14 +2725,14 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             }
         };
         let mut result = Vec::new();
-        for item in items {
+        for item in items.iter() {
             let mut call_args = match &ctx {
                 Some(c) => vec![item.clone(), c.clone()],
                 None => vec![item.clone()],
             };
             call_args.extend(captures.iter().cloned());
             match call_function(env, &fn_name, call_args)? {
-                Value::Bool(true) => result.push(item),
+                Value::Bool(true) => result.push(item.clone()),
                 Value::Bool(false) => {}
                 other => {
                     return Err(RuntimeError::new(
@@ -2733,7 +2742,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 }
             }
         }
-        return Ok(Value::List(result));
+        return Ok(Value::List(Arc::new(result)));
     }
     if builtin == Some(Builtin::Fld) && (args.len() == 3 || args.len() == 4) {
         let fn_name = resolve_fn_ref(&args[0]).ok_or_else(|| {
@@ -2762,10 +2771,10 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             }
         };
         let mut acc = init;
-        for item in items {
+        for item in items.iter() {
             let mut call_args = match &ctx {
-                Some(c) => vec![acc, item, c.clone()],
-                None => vec![acc, item],
+                Some(c) => vec![acc, item.clone(), c.clone()],
+                None => vec![acc, item.clone()],
             };
             call_args.extend(captures.iter().cloned());
             acc = call_function(env, &fn_name, call_args)?;
@@ -2795,12 +2804,12 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         };
         let mut pass: Vec<Value> = Vec::new();
         let mut fail: Vec<Value> = Vec::new();
-        for item in items {
+        for item in items.iter() {
             let mut call_args = vec![item.clone()];
             call_args.extend(captures.iter().cloned());
             match call_function(env, &fn_name, call_args)? {
-                Value::Bool(true) => pass.push(item),
-                Value::Bool(false) => fail.push(item),
+                Value::Bool(true) => pass.push(item.clone()),
+                Value::Bool(false) => fail.push(item.clone()),
                 other => {
                     return Err(RuntimeError::new(
                         "ILO-R009",
@@ -2809,7 +2818,10 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 }
             }
         }
-        return Ok(Value::List(vec![Value::List(pass), Value::List(fail)]));
+        return Ok(Value::List(Arc::new(vec![
+            Value::List(Arc::new(pass)),
+            Value::List(Arc::new(fail)),
+        ])));
     }
 
     if builtin == Some(Builtin::Flatmap) && args.len() == 2 {
@@ -2833,11 +2845,11 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             }
         };
         let mut result: Vec<Value> = Vec::new();
-        for item in items {
+        for item in items.iter().cloned() {
             let mut call_args = vec![item];
             call_args.extend(captures.iter().cloned());
             match call_function(env, &fn_name, call_args)? {
-                Value::List(inner) => result.extend(inner),
+                Value::List(inner) => result.extend(inner.iter().cloned()),
                 other => {
                     return Err(RuntimeError::new(
                         "ILO-R009",
@@ -2846,7 +2858,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 }
             }
         }
-        return Ok(Value::List(result));
+        return Ok(Value::List(Arc::new(result)));
     }
 
     if builtin == Some(Builtin::Uniqby) && args.len() == 2 {
@@ -2871,7 +2883,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         };
         let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
         let mut out: Vec<Value> = Vec::new();
-        for item in items {
+        for item in items.iter() {
             let mut call_args = vec![item.clone()];
             call_args.extend(captures.iter().cloned());
             let key = call_function(env, &fn_name, call_args)?;
@@ -2899,10 +2911,10 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 }
             };
             if seen.insert(key_str) {
-                out.push(item);
+                out.push(item.clone());
             }
         }
-        return Ok(Value::List(out));
+        return Ok(Value::List(Arc::new(out)));
     }
 
     if builtin == Some(Builtin::Grp) && args.len() == 2 {
@@ -2927,7 +2939,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         };
         let mut groups: std::collections::HashMap<MapKey, Vec<Value>> =
             std::collections::HashMap::new();
-        for item in items {
+        for item in items.iter() {
             let mut call_args = vec![item.clone()];
             call_args.extend(captures.iter().cloned());
             let key = call_function(env, &fn_name, call_args)?;
@@ -2953,11 +2965,11 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                     ));
                 }
             };
-            groups.entry(map_key).or_default().push(item);
+            groups.entry(map_key).or_default().push(item.clone());
         }
         let map: HashMap<MapKey, Value> = groups
             .into_iter()
-            .map(|(k, v)| (k, Value::List(v)))
+            .map(|(k, v)| (k, Value::List(Arc::new(v))))
             .collect();
         return Ok(Value::Map(Arc::new(map)));
     }
@@ -2972,7 +2984,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             }
         };
         let mut counts: std::collections::HashMap<MapKey, usize> = std::collections::HashMap::new();
-        for item in items {
+        for item in items.iter() {
             // Build a typed `MapKey` so the resulting map preserves the element
             // type. Heterogeneous lists where text and number variants share a
             // print form (e.g. `Number(1)` and `Text("1")`) are now correctly
@@ -3019,11 +3031,11 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             }
         };
         if rows.is_empty() {
-            return Ok(Value::List(vec![]));
+            return Ok(Value::List(Arc::new(vec![])));
         }
         let mut row_data: Vec<&Vec<Value>> = Vec::with_capacity(rows.len());
         let mut ncols: Option<usize> = None;
-        for row in rows {
+        for row in rows.iter() {
             match row {
                 Value::List(r) => {
                     match ncols {
@@ -3056,9 +3068,9 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             for r in &row_data {
                 col.push(r[j].clone());
             }
-            result.push(Value::List(col));
+            result.push(Value::List(Arc::new(col)));
         }
-        return Ok(Value::List(result));
+        return Ok(Value::List(Arc::new(result)));
     }
     if builtin == Some(Builtin::Matmul) && args.len() == 2 {
         let a_rows = match &args[0] {
@@ -3085,7 +3097,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         // Extract a as Vec<Vec<f64>>
         let mut a: Vec<Vec<f64>> = Vec::with_capacity(a_rows.len());
         let mut a_cols: Option<usize> = None;
-        for row in a_rows {
+        for row in a_rows.iter() {
             match row {
                 Value::List(r) => {
                     match a_cols {
@@ -3102,7 +3114,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                         _ => {}
                     }
                     let mut nums = Vec::with_capacity(r.len());
-                    for v in r {
+                    for v in r.iter() {
                         match v {
                             Value::Number(n) => nums.push(*n),
                             other => {
@@ -3125,7 +3137,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         }
         let mut b: Vec<Vec<f64>> = Vec::with_capacity(b_rows.len());
         let mut b_cols: Option<usize> = None;
-        for row in b_rows {
+        for row in b_rows.iter() {
             match row {
                 Value::List(r) => {
                     match b_cols {
@@ -3142,7 +3154,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                         _ => {}
                     }
                     let mut nums = Vec::with_capacity(r.len());
-                    for v in r {
+                    for v in r.iter() {
                         match v {
                             Value::Number(n) => nums.push(*n),
                             other => {
@@ -3186,9 +3198,9 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 }
                 row.push(Value::Number(s));
             }
-            out.push(Value::List(row));
+            out.push(Value::List(Arc::new(row)));
         }
-        return Ok(Value::List(out));
+        return Ok(Value::List(Arc::new(out)));
     }
     if builtin == Some(Builtin::Dot) && args.len() == 2 {
         let xs = match &args[0] {
@@ -3244,7 +3256,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             }
         };
         let mut total = 0.0_f64;
-        for item in items {
+        for item in items.iter() {
             match item {
                 Value::Number(n) => total += n,
                 other => {
@@ -3269,7 +3281,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         };
         let mut total = 0.0_f64;
         let mut out: Vec<Value> = Vec::with_capacity(items.len());
-        for item in items {
+        for item in items.iter() {
             match item {
                 Value::Number(n) => {
                     total += n;
@@ -3283,7 +3295,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 }
             }
         }
-        return Ok(Value::List(out));
+        return Ok(Value::List(Arc::new(out)));
     }
     if builtin == Some(Builtin::Avg) && args.len() == 1 {
         let items = match &args[0] {
@@ -3302,7 +3314,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             ));
         }
         let mut total = 0.0_f64;
-        for item in items {
+        for item in items.iter() {
             match item {
                 Value::Number(n) => total += n,
                 other => {
@@ -3332,7 +3344,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             ));
         }
         let mut nums: Vec<f64> = Vec::with_capacity(items.len());
-        for item in items {
+        for item in items.iter() {
             match item {
                 Value::Number(n) => nums.push(*n),
                 other => {
@@ -3384,7 +3396,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             ));
         }
         let mut nums: Vec<f64> = Vec::with_capacity(items.len());
-        for item in items {
+        for item in items.iter() {
             match item {
                 Value::Number(n) => nums.push(*n),
                 other => {
@@ -3429,7 +3441,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             ));
         }
         let mut nums: Vec<f64> = Vec::with_capacity(items.len());
-        for item in items {
+        for item in items.iter() {
             match item {
                 Value::Number(n) => nums.push(*n),
                 other => {
@@ -3472,7 +3484,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             ));
         }
         let mut nums: Vec<f64> = Vec::with_capacity(items.len());
-        for item in items {
+        for item in items.iter() {
             match item {
                 Value::Number(n) => nums.push(*n),
                 other => {
@@ -3535,7 +3547,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 .map(|m| Value::Text(m.as_str().to_string()))
                 .collect()
         };
-        return Ok(Value::List(result));
+        return Ok(Value::List(Arc::new(result)));
     }
     if builtin == Some(Builtin::Rgxall) && args.len() == 2 {
         let pattern = match &args[0] {
@@ -3580,15 +3592,15 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                     let groups: Vec<Value> = (1..caps.len())
                         .filter_map(|i| caps.get(i).map(|m| Value::Text(m.as_str().to_string())))
                         .collect();
-                    Value::List(groups)
+                    Value::List(Arc::new(groups))
                 })
                 .collect()
         } else {
             re.find_iter(input)
-                .map(|m| Value::List(vec![Value::Text(m.as_str().to_string())]))
+                .map(|m| Value::List(Arc::new(vec![Value::Text(m.as_str().to_string())])))
                 .collect()
         };
-        return Ok(Value::List(result));
+        return Ok(Value::List(Arc::new(result)));
     }
     if builtin == Some(Builtin::Rgxsub) && args.len() == 3 {
         let pattern = match &args[0] {
@@ -3644,14 +3656,14 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 ));
             }
         };
-        let mut result = Vec::new();
-        for item in items {
+        let mut result: Vec<Value> = Vec::new();
+        for item in items.iter() {
             match item {
-                Value::List(inner) => result.extend(inner),
-                other => result.push(other),
+                Value::List(inner) => result.extend(inner.iter().cloned()),
+                other => result.push(other.clone()),
             }
         }
-        return Ok(Value::List(result));
+        return Ok(Value::List(Arc::new(result)));
     }
     if builtin == Some(Builtin::Fft) && args.len() == 1 {
         let items = match &args[0] {
@@ -3670,7 +3682,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             ));
         }
         let mut reals: Vec<f64> = Vec::with_capacity(items.len());
-        for item in items {
+        for item in items.iter() {
             match item {
                 Value::Number(n) => reals.push(*n),
                 other => {
@@ -3689,9 +3701,9 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         let result: Vec<Value> = re
             .into_iter()
             .zip(im)
-            .map(|(r, i)| Value::List(vec![Value::Number(r), Value::Number(i)]))
+            .map(|(r, i)| Value::List(Arc::new(vec![Value::Number(r), Value::Number(i)])))
             .collect();
-        return Ok(Value::List(result));
+        return Ok(Value::List(Arc::new(result)));
     }
     if builtin == Some(Builtin::Ifft) && args.len() == 1 {
         let items = match &args[0] {
@@ -3711,7 +3723,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         }
         let mut re: Vec<f64> = Vec::with_capacity(items.len());
         let mut im: Vec<f64> = Vec::with_capacity(items.len());
-        for item in items {
+        for item in items.iter() {
             match item {
                 Value::List(pair) if pair.len() == 2 => {
                     let r = match &pair[0] {
@@ -3751,7 +3763,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         im.resize(n, 0.0);
         cooley_tukey(&mut re, &mut im, true);
         let result: Vec<Value> = re.into_iter().map(Value::Number).collect();
-        return Ok(Value::List(result));
+        return Ok(Value::List(Arc::new(result)));
     }
 
     // Dynamic dispatch: callee resolved to a FnRef at runtime
@@ -3885,7 +3897,7 @@ fn serde_json_to_value(v: serde_json::Value) -> Value {
             }
         }
         serde_json::Value::Array(arr) => {
-            Value::List(arr.into_iter().map(serde_json_to_value).collect())
+            Value::List(Arc::new(arr.into_iter().map(serde_json_to_value).collect()))
         }
         serde_json::Value::String(s) => Value::Text(s),
         serde_json::Value::Number(n) => Value::Number(n.as_f64().unwrap_or(0.0)),
@@ -3957,6 +3969,7 @@ fn eval_self_rebind_mset(
     let args = vec![prev, key_val, val_val];
     call_function(env, "mset", args)
 }
+
 
 fn eval_stmt(env: &mut Env, stmt: &Stmt) -> Result<Option<BodyResult>> {
     match stmt {
@@ -4088,7 +4101,7 @@ fn eval_stmt(env: &mut Env, stmt: &Stmt) -> Result<Option<BodyResult>> {
             match coll {
                 Value::List(items) => {
                     let mut last = Value::Nil;
-                    for item in items {
+                    for item in items.iter().cloned() {
                         env.push_scope();
                         env.define(binding, item);
                         let result = eval_body(env, body);
@@ -4351,7 +4364,7 @@ fn eval_expr(env: &mut Env, expr: &Expr) -> Result<Value> {
             for item in items {
                 vals.push(eval_expr(env, item)?);
             }
-            Ok(Value::List(vals))
+            Ok(Value::List(Arc::new(vals)))
         }
         Expr::Record { type_name, fields } => {
             let mut field_map = HashMap::new();
@@ -4468,7 +4481,7 @@ fn eval_binop(op: &BinOp, left: &Value, right: &Value) -> Result<Value> {
             let mut out = Vec::with_capacity(a.len() + b.len());
             out.extend_from_slice(a);
             out.extend_from_slice(b);
-            Ok(Value::List(out))
+            Ok(Value::List(Arc::new(out)))
         }
         // Comparisons on numbers
         (BinOp::GreaterThan, Value::Number(a), Value::Number(b)) => Ok(Value::Bool(a > b)),
@@ -4482,9 +4495,14 @@ fn eval_binop(op: &BinOp, left: &Value, right: &Value) -> Result<Value> {
         (BinOp::LessOrEqual, Value::Text(a), Value::Text(b)) => Ok(Value::Bool(a <= b)),
         // List append
         (BinOp::Append, Value::List(items), val) => {
-            let mut new_items = items.clone();
+            // Slow path: items is borrowed (`&Arc<Vec<Value>>`), so we always
+            // clone the inner Vec here. The hot accumulator pattern
+            // `xs = +=xs v` is short-circuited in eval_stmt via the
+            // self-rebind peephole, which owns the Arc and uses
+            // `Arc::make_mut` for O(1) amortised in-place push.
+            let mut new_items = (**items).clone();
             new_items.push(val.clone());
-            Ok(Value::List(new_items))
+            Ok(Value::List(Arc::new(new_items)))
         }
         // Equality
         (BinOp::Equals, a, b) => Ok(Value::Bool(values_equal(a, b))),
@@ -5106,11 +5124,11 @@ mod tests {
         let source = "f>L n;xs=[1, 2];+=xs 3";
         assert_eq!(
             run_str(source, Some("f"), vec![]),
-            Value::List(vec![
+            Value::List(Arc::new(vec![
                 Value::Number(1.0),
                 Value::Number(2.0),
                 Value::Number(3.0)
-            ])
+            ]))
         );
     }
 
@@ -5119,7 +5137,7 @@ mod tests {
         let source = "f>L n;xs=[];+=xs 42";
         assert_eq!(
             run_str(source, Some("f"), vec![]),
-            Value::List(vec![Value::Number(42.0)])
+            Value::List(Arc::new(vec![Value::Number(42.0)]))
         );
     }
 
@@ -5128,12 +5146,12 @@ mod tests {
         let source = "f>L n;a=[1, 2];b=[3, 4];+a b";
         assert_eq!(
             run_str(source, Some("f"), vec![]),
-            Value::List(vec![
+            Value::List(Arc::new(vec![
                 Value::Number(1.0),
                 Value::Number(2.0),
                 Value::Number(3.0),
                 Value::Number(4.0)
-            ])
+            ]))
         );
     }
 
@@ -5307,17 +5325,17 @@ mod tests {
 
     #[test]
     fn display_list() {
-        let list = Value::List(vec![
+        let list = Value::List(Arc::new(vec![
             Value::Number(1.0),
             Value::Number(2.0),
             Value::Number(3.0),
-        ]);
+        ]));
         assert_eq!(format!("{}", list), "[1, 2, 3]");
     }
 
     #[test]
     fn display_list_empty() {
-        assert_eq!(format!("{}", Value::List(vec![])), "[]");
+        assert_eq!(format!("{}", Value::List(Arc::new(vec![]))), "[]");
     }
 
     #[test]
@@ -5637,8 +5655,8 @@ mod tests {
 
     #[test]
     fn is_truthy_list() {
-        assert!(!is_truthy(&Value::List(vec![])));
-        assert!(is_truthy(&Value::List(vec![Value::Number(1.0)])));
+        assert!(!is_truthy(&Value::List(Arc::new(vec![]))));
+        assert!(is_truthy(&Value::List(Arc::new(vec![Value::Number(1.0)]))));
     }
 
     #[test]
@@ -5790,11 +5808,11 @@ mod tests {
         let result = run_str(
             source,
             Some("f"),
-            vec![Value::List(vec![
+            vec![Value::List(Arc::new(vec![
                 Value::Number(1.0),
                 Value::Number(5.0),
                 Value::Number(2.0),
-            ])],
+            ]))],
         );
         assert_eq!(result, Value::Number(5.0));
     }
@@ -6045,11 +6063,11 @@ mod tests {
         let source = r#"f>L t;spl "a,b,c" ",""#;
         assert_eq!(
             run_str(source, Some("f"), vec![]),
-            Value::List(vec![
+            Value::List(Arc::new(vec![
                 Value::Text("a".to_string()),
                 Value::Text("b".to_string()),
                 Value::Text("c".to_string()),
-            ])
+            ]))
         );
     }
 
@@ -6058,7 +6076,7 @@ mod tests {
         let source = r#"f>L t;spl "" ",""#;
         assert_eq!(
             run_str(source, Some("f"), vec![]),
-            Value::List(vec![Value::Text("".to_string())])
+            Value::List(Arc::new(vec![Value::Text("".to_string())]))
         );
     }
 
@@ -6069,11 +6087,11 @@ mod tests {
             run_str(
                 source,
                 Some("f"),
-                vec![Value::List(vec![
+                vec![Value::List(Arc::new(vec![
                     Value::Text("a".into()),
                     Value::Text("b".into()),
                     Value::Text("c".into()),
-                ])]
+                ]))]
             ),
             Value::Text("a,b,c".into())
         );
@@ -6083,7 +6101,7 @@ mod tests {
     fn interpret_cat_empty_list() {
         let source = "f items:L t>t;cat items \"-\"";
         assert_eq!(
-            run_str(source, Some("f"), vec![Value::List(vec![])]),
+            run_str(source, Some("f"), vec![Value::List(Arc::new(vec![]))]),
             Value::Text("".into())
         );
     }
@@ -6096,7 +6114,7 @@ mod tests {
                 source,
                 Some("f"),
                 vec![
-                    Value::List(vec![Value::Number(1.0), Value::Number(2.0)]),
+                    Value::List(Arc::new(vec![Value::Number(1.0), Value::Number(2.0)])),
                     Value::Number(2.0)
                 ]
             ),
@@ -6106,7 +6124,10 @@ mod tests {
             run_str(
                 source,
                 Some("f"),
-                vec![Value::List(vec![Value::Number(1.0)]), Value::Number(5.0)]
+                vec![
+                    Value::List(Arc::new(vec![Value::Number(1.0)])),
+                    Value::Number(5.0)
+                ]
             ),
             Value::Bool(false)
         );
@@ -6139,7 +6160,7 @@ mod tests {
         let source = "f>L n;xs=[10, 20, 30];tl xs";
         assert_eq!(
             run_str(source, Some("f"), vec![]),
-            Value::List(vec![Value::Number(20.0), Value::Number(30.0)])
+            Value::List(Arc::new(vec![Value::Number(20.0), Value::Number(30.0)]))
         );
     }
 
@@ -6166,11 +6187,11 @@ mod tests {
         let source = "f>L n;rev [1, 2, 3]";
         assert_eq!(
             run_str(source, Some("f"), vec![]),
-            Value::List(vec![
+            Value::List(Arc::new(vec![
                 Value::Number(3.0),
                 Value::Number(2.0),
                 Value::Number(1.0)
-            ])
+            ]))
         );
     }
 
@@ -6188,11 +6209,11 @@ mod tests {
         let source = "f>L n;srt [3, 1, 2]";
         assert_eq!(
             run_str(source, Some("f"), vec![]),
-            Value::List(vec![
+            Value::List(Arc::new(vec![
                 Value::Number(1.0),
                 Value::Number(2.0),
                 Value::Number(3.0)
-            ])
+            ]))
         );
     }
 
@@ -6201,11 +6222,11 @@ mod tests {
         let source = r#"f>L t;srt ["c", "a", "b"]"#;
         assert_eq!(
             run_str(source, Some("f"), vec![]),
-            Value::List(vec![
+            Value::List(Arc::new(vec![
                 Value::Text("a".into()),
                 Value::Text("b".into()),
                 Value::Text("c".into())
-            ])
+            ]))
         );
     }
 
@@ -6223,7 +6244,7 @@ mod tests {
         let source = "f>L n;slc [1, 2, 3, 4, 5] 1 3";
         assert_eq!(
             run_str(source, Some("f"), vec![]),
-            Value::List(vec![Value::Number(2.0), Value::Number(3.0)])
+            Value::List(Arc::new(vec![Value::Number(2.0), Value::Number(3.0)]))
         );
     }
 
@@ -6241,7 +6262,7 @@ mod tests {
         let source = "f>L n;slc [1, 2, 3] 1 100";
         assert_eq!(
             run_str(source, Some("f"), vec![]),
-            Value::List(vec![Value::Number(2.0), Value::Number(3.0)])
+            Value::List(Arc::new(vec![Value::Number(2.0), Value::Number(3.0)]))
         );
     }
 
@@ -6312,11 +6333,11 @@ mod tests {
         let result = run_str(
             source,
             Some("mx"),
-            vec![Value::List(vec![
+            vec![Value::List(Arc::new(vec![
                 Value::Number(3.0),
                 Value::Number(1.0),
                 Value::Number(5.0),
-            ])],
+            ]))],
         );
         assert_eq!(result, Value::Number(5.0));
     }
@@ -6403,11 +6424,11 @@ mod tests {
     #[test]
     fn interpret_ret_in_foreach() {
         let source = "f xs:L n>n;@x xs{>=x 10{ret x}};0";
-        let list = Value::List(vec![
+        let list = Value::List(Arc::new(vec![
             Value::Number(1.0),
             Value::Number(15.0),
             Value::Number(3.0),
-        ]);
+        ]));
         assert_eq!(run_str(source, Some("f"), vec![list]), Value::Number(15.0));
     }
 
@@ -6850,7 +6871,10 @@ mod tests {
     #[test]
     fn ok_srt_empty_list() {
         let source = "f>L n;srt []";
-        assert_eq!(run_str(source, Some("f"), vec![]), Value::List(vec![]));
+        assert_eq!(
+            run_str(source, Some("f"), vec![]),
+            Value::List(Arc::new(vec![]))
+        );
     }
 
     // ---- Destructuring bind tests ----
@@ -7055,11 +7079,11 @@ mod tests {
         };
         assert_eq!(
             *inner,
-            Value::List(vec![
+            Value::List(Arc::new(vec![
                 Value::Number(1.0),
                 Value::Number(2.0),
                 Value::Number(3.0)
-            ])
+            ]))
         );
     }
 
@@ -7120,21 +7144,21 @@ mod tests {
         let result = run_str(
             source,
             Some("main"),
-            vec![Value::List(
+            vec![Value::List(Arc::new(
                 vec![1.0, 2.0, 3.0, 4.0, 5.0]
                     .into_iter()
                     .map(Value::Number)
                     .collect(),
-            )],
+            ))],
         );
         assert_eq!(
             result,
-            Value::List(
+            Value::List(Arc::new(
                 vec![1.0, 4.0, 9.0, 16.0, 25.0]
                     .into_iter()
                     .map(Value::Number)
                     .collect()
-            )
+            ))
         );
     }
 
@@ -7145,16 +7169,18 @@ mod tests {
         let result = run_str(
             source,
             Some("main"),
-            vec![Value::List(
+            vec![Value::List(Arc::new(
                 vec![-3.0, -1.0, 0.0, 2.0, 4.0]
                     .into_iter()
                     .map(Value::Number)
                     .collect(),
-            )],
+            ))],
         );
         assert_eq!(
             result,
-            Value::List(vec![2.0, 4.0].into_iter().map(Value::Number).collect())
+            Value::List(Arc::new(
+                vec![2.0, 4.0].into_iter().map(Value::Number).collect()
+            ))
         );
     }
 
@@ -7165,12 +7191,12 @@ mod tests {
         let result = run_str(
             source,
             Some("main"),
-            vec![Value::List(
+            vec![Value::List(Arc::new(
                 vec![1.0, 2.0, 3.0, 4.0, 5.0]
                     .into_iter()
                     .map(Value::Number)
                     .collect(),
-            )],
+            ))],
         );
         assert_eq!(result, Value::Number(15.0));
     }
@@ -7182,23 +7208,27 @@ mod tests {
         let result = run_str(
             source,
             Some("main"),
-            vec![Value::List(
+            vec![Value::List(Arc::new(
                 vec![1.0, 8.0, 3.0, 9.0, 2.0]
                     .into_iter()
                     .map(Value::Number)
                     .collect(),
-            )],
+            ))],
         );
         let Value::Map(m) = result else {
             panic!("expected Map")
         };
         assert_eq!(
             m.get(&MapKey::Text("small".to_string())).unwrap(),
-            &Value::List(vec![1.0, 3.0, 2.0].into_iter().map(Value::Number).collect())
+            &Value::List(Arc::new(
+                vec![1.0, 3.0, 2.0].into_iter().map(Value::Number).collect()
+            ))
         );
         assert_eq!(
             m.get(&MapKey::Text("big".to_string())).unwrap(),
-            &Value::List(vec![8.0, 9.0].into_iter().map(Value::Number).collect())
+            &Value::List(Arc::new(
+                vec![8.0, 9.0].into_iter().map(Value::Number).collect()
+            ))
         );
     }
 
@@ -7209,34 +7239,38 @@ mod tests {
         let result = run_str(
             source,
             Some("main"),
-            vec![Value::List(
+            vec![Value::List(Arc::new(
                 vec![1.0, 2.0, 1.0, 3.0, 2.0]
                     .into_iter()
                     .map(Value::Number)
                     .collect(),
-            )],
+            ))],
         );
         let Value::Map(m) = result else {
             panic!("expected Map")
         };
         assert_eq!(
             m.get(&MapKey::Text("1".to_string())).unwrap(),
-            &Value::List(vec![1.0, 1.0].into_iter().map(Value::Number).collect())
+            &Value::List(Arc::new(
+                vec![1.0, 1.0].into_iter().map(Value::Number).collect()
+            ))
         );
         assert_eq!(
             m.get(&MapKey::Text("2".to_string())).unwrap(),
-            &Value::List(vec![2.0, 2.0].into_iter().map(Value::Number).collect())
+            &Value::List(Arc::new(
+                vec![2.0, 2.0].into_iter().map(Value::Number).collect()
+            ))
         );
         assert_eq!(
             m.get(&MapKey::Text("3".to_string())).unwrap(),
-            &Value::List(vec![3.0].into_iter().map(Value::Number).collect())
+            &Value::List(Arc::new(vec![3.0].into_iter().map(Value::Number).collect()))
         );
     }
 
     #[test]
     fn interp_grp_empty_list() {
         let source = "id x:n>t;str x main xs:L n>M t L n;grp id xs";
-        let result = run_str(source, Some("main"), vec![Value::List(vec![])]);
+        let result = run_str(source, Some("main"), vec![Value::List(Arc::new(vec![]))]);
         assert_eq!(
             result,
             Value::Map(Arc::new(std::collections::HashMap::new()))
@@ -7261,12 +7295,12 @@ mod tests {
         let result = run_str(
             source,
             Some("f"),
-            vec![Value::List(
+            vec![Value::List(Arc::new(
                 vec![1.0, 2.0, 3.0, 4.0, 5.0]
                     .into_iter()
                     .map(Value::Number)
                     .collect(),
-            )],
+            ))],
         );
         assert_eq!(result, Value::Number(15.0));
     }
@@ -7274,7 +7308,7 @@ mod tests {
     #[test]
     fn interp_sum_empty() {
         let source = "f xs:L n>n;sum xs";
-        let result = run_str(source, Some("f"), vec![Value::List(vec![])]);
+        let result = run_str(source, Some("f"), vec![Value::List(Arc::new(vec![]))]);
         assert_eq!(result, Value::Number(0.0));
     }
 
@@ -7296,9 +7330,9 @@ mod tests {
         let result = run_str(
             source,
             Some("f"),
-            vec![Value::List(
+            vec![Value::List(Arc::new(
                 vec![2.0, 4.0, 6.0].into_iter().map(Value::Number).collect(),
-            )],
+            ))],
         );
         assert_eq!(result, Value::Number(4.0));
     }
@@ -7381,7 +7415,10 @@ mod tests {
         );
         assert_eq!(
             result,
-            Value::List(vec![Value::Text("123".into()), Value::Text("456".into()),])
+            Value::List(Arc::new(vec![
+                Value::Text("123".into()),
+                Value::Text("456".into()),
+            ]))
         );
     }
 
@@ -7397,10 +7434,10 @@ mod tests {
         // Returns first match's groups
         assert_eq!(
             result,
-            Value::List(vec![
+            Value::List(Arc::new(vec![
                 Value::Text("name".into()),
                 Value::Text("alice".into()),
-            ])
+            ]))
         );
     }
 
@@ -7412,7 +7449,7 @@ mod tests {
             Some("f"),
             vec![Value::Text("no numbers here".into())],
         );
-        assert_eq!(result, Value::List(vec![]));
+        assert_eq!(result, Value::List(Arc::new(vec![])));
     }
 
     #[test]
@@ -7434,12 +7471,12 @@ mod tests {
         let result = run_str(source, Some("f"), vec![]);
         assert_eq!(
             result,
-            Value::List(
+            Value::List(Arc::new(
                 vec![1.0, 2.0, 3.0, 4.0, 5.0]
                     .into_iter()
                     .map(Value::Number)
                     .collect()
-            )
+            ))
         );
     }
 
@@ -7450,7 +7487,9 @@ mod tests {
         let result = run_str(source, Some("f"), vec![]);
         assert_eq!(
             result,
-            Value::List(vec![1.0, 2.0, 3.0].into_iter().map(Value::Number).collect())
+            Value::List(Arc::new(
+                vec![1.0, 2.0, 3.0].into_iter().map(Value::Number).collect()
+            ))
         );
     }
 
@@ -7458,7 +7497,7 @@ mod tests {
     fn interp_flat_empty() {
         let source = "f>L n;flat []";
         let result = run_str(source, Some("f"), vec![]);
-        assert_eq!(result, Value::List(vec![]));
+        assert_eq!(result, Value::List(Arc::new(vec![])));
     }
 
     #[test]
@@ -7527,21 +7566,21 @@ mod tests {
         let result = run_str(
             "f xs:L n>L n;unq xs",
             Some("f"),
-            vec![Value::List(vec![
+            vec![Value::List(Arc::new(vec![
                 Value::Number(1.0),
                 Value::Number(2.0),
                 Value::Number(1.0),
                 Value::Number(3.0),
                 Value::Number(2.0),
-            ])],
+            ]))],
         );
         assert_eq!(
             result,
-            Value::List(vec![
+            Value::List(Arc::new(vec![
                 Value::Number(1.0),
                 Value::Number(2.0),
                 Value::Number(3.0)
-            ])
+            ]))
         );
     }
 
@@ -7550,15 +7589,18 @@ mod tests {
         let result = run_str(
             "f xs:L t>L t;unq xs",
             Some("f"),
-            vec![Value::List(vec![
+            vec![Value::List(Arc::new(vec![
                 Value::Text("a".into()),
                 Value::Text("b".into()),
                 Value::Text("a".into()),
-            ])],
+            ]))],
         );
         assert_eq!(
             result,
-            Value::List(vec![Value::Text("a".into()), Value::Text("b".into())])
+            Value::List(Arc::new(vec![
+                Value::Text("a".into()),
+                Value::Text("b".into())
+            ]))
         );
     }
 
@@ -7574,8 +7616,12 @@ mod tests {
 
     #[test]
     fn interpret_unq_empty_list() {
-        let result = run_str("f xs:L n>L n;unq xs", Some("f"), vec![Value::List(vec![])]);
-        assert_eq!(result, Value::List(vec![]));
+        let result = run_str(
+            "f xs:L n>L n;unq xs",
+            Some("f"),
+            vec![Value::List(Arc::new(vec![]))],
+        );
+        assert_eq!(result, Value::List(Arc::new(vec![])));
     }
 
     #[test]
@@ -7583,21 +7629,21 @@ mod tests {
         let result = run_str(
             "f xs:L n>L n;unq xs",
             Some("f"),
-            vec![Value::List(vec![
+            vec![Value::List(Arc::new(vec![
                 Value::Number(3.0),
                 Value::Number(1.0),
                 Value::Number(2.0),
                 Value::Number(1.0),
                 Value::Number(3.0),
-            ])],
+            ]))],
         );
         assert_eq!(
             result,
-            Value::List(vec![
+            Value::List(Arc::new(vec![
                 Value::Number(3.0),
                 Value::Number(1.0),
                 Value::Number(2.0)
-            ])
+            ]))
         );
     }
 
@@ -7647,19 +7693,19 @@ mod tests {
         let result = run_str(
             source,
             Some("main"),
-            vec![Value::List(vec![
+            vec![Value::List(Arc::new(vec![
                 Value::Text("banana".into()),
                 Value::Text("a".into()),
                 Value::Text("cc".into()),
-            ])],
+            ]))],
         );
         assert_eq!(
             result,
-            Value::List(vec![
+            Value::List(Arc::new(vec![
                 Value::Text("a".into()),
                 Value::Text("cc".into()),
                 Value::Text("banana".into()),
-            ])
+            ]))
         );
     }
 
@@ -7669,20 +7715,20 @@ mod tests {
         let result = run_str(
             source,
             Some("main"),
-            vec![Value::List(vec![
+            vec![Value::List(Arc::new(vec![
                 Value::Number(1.0),
                 Value::Number(3.0),
                 Value::Number(2.0),
-            ])],
+            ]))],
         );
         // sort by negative: highest first
         assert_eq!(
             result,
-            Value::List(vec![
+            Value::List(Arc::new(vec![
                 Value::Number(3.0),
                 Value::Number(2.0),
                 Value::Number(1.0)
-            ])
+            ]))
         );
     }
 
@@ -8016,19 +8062,19 @@ mod tests {
         let result = run_str(
             source,
             Some("main"),
-            vec![Value::List(vec![
+            vec![Value::List(Arc::new(vec![
                 Value::Text("banana".into()),
                 Value::Text("apple".into()),
                 Value::Text("cherry".into()),
-            ])],
+            ]))],
         );
         assert_eq!(
             result,
-            Value::List(vec![
+            Value::List(Arc::new(vec![
                 Value::Text("apple".into()),
                 Value::Text("banana".into()),
                 Value::Text("cherry".into()),
-            ])
+            ]))
         );
     }
 
@@ -8199,7 +8245,10 @@ mod tests {
             "wrl",
             vec![
                 Value::Text(path_str.clone()),
-                Value::List(vec![Value::Text("ok".into()), Value::Number(99.0)]),
+                Value::List(Arc::new(vec![
+                    Value::Text("ok".into()),
+                    Value::Number(99.0),
+                ])),
             ],
         );
         std::fs::remove_file(&path).ok();
@@ -8292,7 +8341,7 @@ mod tests {
         let err = run_str_err(
             source,
             Some("f"),
-            vec![Value::List(vec![Value::Number(1.0)])],
+            vec![Value::List(Arc::new(vec![Value::Number(1.0)]))],
         );
         assert!(err.contains("flt") || err.contains("bool"), "got: {err}");
     }
@@ -8384,7 +8433,10 @@ mod tests {
         let result = run_str(
             source,
             Some("f"),
-            vec![Value::List(vec![Value::Number(1.0), Value::Number(2.0)])],
+            vec![Value::List(Arc::new(vec![
+                Value::Number(1.0),
+                Value::Number(2.0),
+            ]))],
         );
         // Iteration: x=1 → cnt (continue), x=2 → 2. Last value of foreach body = 2.
         assert_eq!(result, Value::Number(2.0));
@@ -8398,7 +8450,10 @@ mod tests {
         let result = run_str(
             source,
             Some("f"),
-            vec![Value::List(vec![Value::Number(0.0), Value::Number(1.0)])],
+            vec![Value::List(Arc::new(vec![
+                Value::Number(0.0),
+                Value::Number(1.0),
+            ]))],
         );
         // x=0: true → 10, x=1: false → 20. Last value = 20.
         assert_eq!(result, Value::Number(20.0));
@@ -8411,7 +8466,10 @@ mod tests {
         let result = run_str(
             source,
             Some("f"),
-            vec![Value::List(vec![Value::Number(1.0), Value::Number(5.0)])],
+            vec![Value::List(Arc::new(vec![
+                Value::Number(1.0),
+                Value::Number(5.0),
+            ]))],
         );
         assert_eq!(result, Value::Number(5.0));
     }
@@ -8424,11 +8482,11 @@ mod tests {
         let result = run_str(
             source,
             Some("f"),
-            vec![Value::List(vec![
+            vec![Value::List(Arc::new(vec![
                 Value::Number(1.0),
                 Value::Number(5.0),
                 Value::Number(9.0),
-            ])],
+            ]))],
         );
         // x=1 → 0, x=5 → 5, x=9 → 0; last value of foreach = 0
         assert_eq!(result, Value::Number(0.0));
@@ -8481,7 +8539,7 @@ mod tests {
         let result = run_str(
             source,
             Some("f"),
-            vec![Value::List(vec![Value::Number(1.0)])],
+            vec![Value::List(Arc::new(vec![Value::Number(1.0)]))],
         );
         assert_eq!(result, Value::Text("list".into()));
     }
@@ -8531,7 +8589,10 @@ mod tests {
         );
         assert_eq!(
             result,
-            Value::List(vec![Value::Text("a".into()), Value::Text("b".into())])
+            Value::List(Arc::new(vec![
+                Value::Text("a".into()),
+                Value::Text("b".into())
+            ]))
         );
     }
 
@@ -8545,7 +8606,7 @@ mod tests {
         );
         assert_eq!(
             result,
-            Value::List(vec![Value::Number(1.0), Value::Number(2.0)])
+            Value::List(Arc::new(vec![Value::Number(1.0), Value::Number(2.0)]))
         );
     }
 
@@ -8568,7 +8629,7 @@ mod tests {
         let err = run_str_err(
             "f xs:L n>L n;srt 42 xs",
             Some("f"),
-            vec![Value::List(vec![Value::Number(1.0)])],
+            vec![Value::List(Arc::new(vec![Value::Number(1.0)]))],
         );
         assert!(err.contains("srt"), "got: {err}");
     }
@@ -8580,7 +8641,7 @@ mod tests {
         let err = run_str_err(
             "f xs:L n>L n;flt 42 xs",
             Some("f"),
-            vec![Value::List(vec![Value::Number(1.0)])],
+            vec![Value::List(Arc::new(vec![Value::Number(1.0)]))],
         );
         assert!(err.contains("flt"), "got: {err}");
     }
@@ -8596,10 +8657,10 @@ mod tests {
             Some("f"),
             vec![
                 Value::Text("sq".into()),
-                Value::List(vec![Value::Number(3.0)]),
+                Value::List(Arc::new(vec![Value::Number(3.0)])),
             ],
         );
-        assert_eq!(result, Value::List(vec![Value::Number(9.0)]));
+        assert_eq!(result, Value::List(Arc::new(vec![Value::Number(9.0)])));
     }
 
     // ── rd 2-arg explicit format (lines 736, 749, 750-751) ──────────────────
@@ -8680,11 +8741,11 @@ mod tests {
         let result = run_str(
             source,
             Some("g"),
-            vec![Value::List(vec![
+            vec![Value::List(Arc::new(vec![
                 Value::Number(1.0),
                 Value::Number(2.0),
                 Value::Number(1.0),
-            ])],
+            ]))],
         );
         let Value::Map(m) = result else {
             panic!("expected map")
@@ -8699,11 +8760,11 @@ mod tests {
         let result = run_str(
             source,
             Some("g"),
-            vec![Value::List(vec![
+            vec![Value::List(Arc::new(vec![
                 Value::Number(-1.0),
                 Value::Number(1.0),
                 Value::Number(2.0),
-            ])],
+            ]))],
         );
         let Value::Map(m) = result else {
             panic!("expected map")
@@ -8719,7 +8780,7 @@ mod tests {
         let err = run_str_err(
             "f xs:L n>n;avg xs",
             Some("f"),
-            vec![Value::List(vec![Value::Text("x".into())])],
+            vec![Value::List(Arc::new(vec![Value::Text("x".into())]))],
         );
         assert!(err.contains("avg"), "got: {err}");
     }
@@ -8844,11 +8905,11 @@ mod tests {
         let result = run_str(
             source,
             Some("g"),
-            vec![Value::List(vec![
+            vec![Value::List(Arc::new(vec![
                 Value::Number(1.0),
                 Value::Number(2.0),
                 Value::Number(3.0),
-            ])],
+            ]))],
         );
         let Value::Map(m) = result else {
             panic!("expected Map")
@@ -8966,7 +9027,10 @@ mod tests {
         let err = run_str_err(
             source,
             Some("g"),
-            vec![Value::List(vec![Value::Number(1.0), Value::Number(2.0)])],
+            vec![Value::List(Arc::new(vec![
+                Value::Number(1.0),
+                Value::Number(2.0),
+            ]))],
         );
         assert!(
             err.contains("grp") || err.contains("key") || err.contains("string"),
@@ -9304,7 +9368,10 @@ mod tests {
         let result = run_str(
             source,
             Some("f"),
-            vec![Value::List(vec![Value::Number(1.0), Value::Number(2.0)])],
+            vec![Value::List(Arc::new(vec![
+                Value::Number(1.0),
+                Value::Number(2.0),
+            ]))],
         );
         assert_eq!(result, Value::Text("list".to_string()));
     }
@@ -9426,11 +9493,11 @@ mod tests {
         let result = run_str(source, Some("f"), vec![]);
         assert_eq!(
             result,
-            Value::List(vec![
+            Value::List(Arc::new(vec![
                 Value::Number(10.0),
                 Value::Number(99.0),
                 Value::Number(30.0),
-            ])
+            ]))
         );
     }
 
@@ -9440,11 +9507,11 @@ mod tests {
         let result = run_str(source, Some("f"), vec![]);
         assert_eq!(
             result,
-            Value::List(vec![
+            Value::List(Arc::new(vec![
                 Value::Number(7.0),
                 Value::Number(20.0),
                 Value::Number(30.0),
-            ])
+            ]))
         );
     }
 

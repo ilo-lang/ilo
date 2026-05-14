@@ -4613,11 +4613,11 @@ mod tests {
         let result = jit_run(
             "f xs:L n>n;len xs",
             "f",
-            &[Value::List(vec![
+            &[Value::List(std::sync::Arc::new(vec![
                 Value::Number(1.0),
                 Value::Number(2.0),
                 Value::Number(3.0),
-            ])],
+            ]))],
         );
         assert_eq!(result, Some(Value::Number(3.0)));
     }
@@ -4768,11 +4768,11 @@ mod tests {
         );
         assert_eq!(
             result,
-            Some(Value::List(vec![
+            Some(Value::List(std::sync::Arc::new(vec![
                 Value::Text("a".into()),
                 Value::Text("b".into()),
                 Value::Text("c".into()),
-            ]))
+            ])))
         );
     }
 
@@ -4782,7 +4782,10 @@ mod tests {
             r#"f xs:L t sep:t>t;cat xs sep"#,
             "f",
             &[
-                Value::List(vec![Value::Text("x".into()), Value::Text("y".into())]),
+                Value::List(std::sync::Arc::new(vec![
+                    Value::Text("x".into()),
+                    Value::Text("y".into()),
+                ])),
                 Value::Text("-".into()),
             ],
         );
@@ -4797,11 +4800,11 @@ mod tests {
             "f xs:L n v:n>b;has xs v",
             "f",
             &[
-                Value::List(vec![
+                Value::List(std::sync::Arc::new(vec![
                     Value::Number(1.0),
                     Value::Number(2.0),
                     Value::Number(3.0),
-                ]),
+                ])),
                 Value::Number(2.0),
             ],
         );
@@ -4813,7 +4816,10 @@ mod tests {
         let result = jit_run(
             "f xs:L n>n;hd xs",
             "f",
-            &[Value::List(vec![Value::Number(10.0), Value::Number(20.0)])],
+            &[Value::List(std::sync::Arc::new(vec![
+                Value::Number(10.0),
+                Value::Number(20.0),
+            ]))],
         );
         assert_eq!(result, Some(Value::Number(10.0)));
     }
@@ -4823,15 +4829,18 @@ mod tests {
         let result = jit_run(
             "f xs:L n>L n;tl xs",
             "f",
-            &[Value::List(vec![
+            &[Value::List(std::sync::Arc::new(vec![
                 Value::Number(1.0),
                 Value::Number(2.0),
                 Value::Number(3.0),
-            ])],
+            ]))],
         );
         assert_eq!(
             result,
-            Some(Value::List(vec![Value::Number(2.0), Value::Number(3.0)]))
+            Some(Value::List(std::sync::Arc::new(vec![
+                Value::Number(2.0),
+                Value::Number(3.0)
+            ])))
         );
     }
 
@@ -4840,19 +4849,19 @@ mod tests {
         let result = jit_run(
             "f xs:L n>L n;rev xs",
             "f",
-            &[Value::List(vec![
+            &[Value::List(std::sync::Arc::new(vec![
                 Value::Number(1.0),
                 Value::Number(2.0),
                 Value::Number(3.0),
-            ])],
+            ]))],
         );
         assert_eq!(
             result,
-            Some(Value::List(vec![
+            Some(Value::List(std::sync::Arc::new(vec![
                 Value::Number(3.0),
                 Value::Number(2.0),
                 Value::Number(1.0)
-            ]))
+            ])))
         );
     }
 
@@ -4861,19 +4870,19 @@ mod tests {
         let result = jit_run(
             "f xs:L n>L n;srt xs",
             "f",
-            &[Value::List(vec![
+            &[Value::List(std::sync::Arc::new(vec![
                 Value::Number(3.0),
                 Value::Number(1.0),
                 Value::Number(2.0),
-            ])],
+            ]))],
         );
         assert_eq!(
             result,
-            Some(Value::List(vec![
+            Some(Value::List(std::sync::Arc::new(vec![
                 Value::Number(1.0),
                 Value::Number(2.0),
                 Value::Number(3.0)
-            ]))
+            ])))
         );
     }
 
@@ -4883,19 +4892,22 @@ mod tests {
             "f xs:L n a:n b:n>L n;slc xs a b",
             "f",
             &[
-                Value::List(vec![
+                Value::List(std::sync::Arc::new(vec![
                     Value::Number(10.0),
                     Value::Number(20.0),
                     Value::Number(30.0),
                     Value::Number(40.0),
-                ]),
+                ])),
                 Value::Number(1.0),
                 Value::Number(3.0),
             ],
         );
         assert_eq!(
             result,
-            Some(Value::List(vec![Value::Number(20.0), Value::Number(30.0)]))
+            Some(Value::List(std::sync::Arc::new(vec![
+                Value::Number(20.0),
+                Value::Number(30.0)
+            ])))
         );
     }
 
@@ -4908,17 +4920,20 @@ mod tests {
             "f xs:L n v:n>L n;r=+=xs v;r",
             "f",
             &[
-                Value::List(vec![Value::Number(1.0), Value::Number(2.0)]),
+                Value::List(std::sync::Arc::new(vec![
+                    Value::Number(1.0),
+                    Value::Number(2.0),
+                ])),
                 Value::Number(3.0),
             ],
         );
         assert_eq!(
             result,
-            Some(Value::List(vec![
+            Some(Value::List(std::sync::Arc::new(vec![
                 Value::Number(1.0),
                 Value::Number(2.0),
                 Value::Number(3.0)
-            ]))
+            ])))
         );
     }
 
@@ -4932,7 +4947,10 @@ mod tests {
         );
         assert_eq!(
             result,
-            Some(Value::List(vec![Value::Number(5.0), Value::Number(6.0)]))
+            Some(Value::List(std::sync::Arc::new(vec![
+                Value::Number(5.0),
+                Value::Number(6.0)
+            ])))
         );
     }
 
@@ -4942,11 +4960,11 @@ mod tests {
         let result = jit_run(
             "f xs:L n>n;xs.0",
             "f",
-            &[Value::List(vec![
+            &[Value::List(std::sync::Arc::new(vec![
                 Value::Number(10.0),
                 Value::Number(20.0),
                 Value::Number(30.0),
-            ])],
+            ]))],
         );
         assert_eq!(result, Some(Value::Number(10.0)));
     }
@@ -5066,7 +5084,7 @@ mod tests {
     fn cranelift_empty_list_literal() {
         // [] compiles to OP_LISTNEW with n=0 — exercises the empty-list JIT path
         let result = jit_run("f>L n;[]", "f", &[]);
-        assert_eq!(result, Some(Value::List(vec![])));
+        assert_eq!(result, Some(Value::List(std::sync::Arc::new(vec![]))));
     }
 
     // ── jit_run_numeric _ => None (line 1300) ────────────────────────────────
@@ -5218,11 +5236,11 @@ mod tests {
         let result = jit_run(
             "f xs:L n>n;s=0;@x xs{s=+s x};s",
             "f",
-            &[Value::List(vec![
+            &[Value::List(std::sync::Arc::new(vec![
                 Value::Number(1.0),
                 Value::Number(2.0),
                 Value::Number(3.0),
-            ])],
+            ]))],
         );
         assert_eq!(result, Some(Value::Number(6.0)));
     }
@@ -5234,11 +5252,11 @@ mod tests {
         let result = jit_run(
             "f xs:L n>n;s=0;@x xs{s=+s 1};s",
             "f",
-            &[Value::List(vec![
+            &[Value::List(std::sync::Arc::new(vec![
                 Value::Text("a".to_string()),
                 Value::Text("b".to_string()),
                 Value::Text("c".to_string()),
-            ])],
+            ]))],
         );
         assert_eq!(result, Some(Value::Number(3.0)));
     }
@@ -5249,7 +5267,7 @@ mod tests {
         let result = jit_run(
             "f xs:L n>n;s=0;@x xs{s=+s x};s",
             "f",
-            &[Value::List(vec![])],
+            &[Value::List(std::sync::Arc::new(vec![]))],
         );
         assert_eq!(result, Some(Value::Number(0.0)));
     }
@@ -5485,7 +5503,7 @@ mod tests {
         let result = jit_run(
             "f x:t>b;?x{l _:true;_:false}",
             "f",
-            &[Value::List(vec![Value::Number(1.0)])],
+            &[Value::List(std::sync::Arc::new(vec![Value::Number(1.0)]))],
         );
         assert_eq!(result, Some(Value::Bool(true)));
     }
@@ -5590,12 +5608,12 @@ mod tests {
         let result = jit_run(
             "f xs:L n>n;u=unq xs;len u",
             "f",
-            &[Value::List(vec![
+            &[Value::List(std::sync::Arc::new(vec![
                 Value::Number(1.0),
                 Value::Number(2.0),
                 Value::Number(1.0),
                 Value::Number(3.0),
-            ])],
+            ]))],
         );
         assert_eq!(result, Some(Value::Number(3.0)));
     }
@@ -5955,11 +5973,11 @@ mod tests {
         let result = jit_run(
             "f xs:L n>n;@x xs{*x x}",
             "f",
-            &[Value::List(vec![
+            &[Value::List(std::sync::Arc::new(vec![
                 Value::Number(3.0),
                 Value::Number(4.0),
                 Value::Number(5.0),
-            ])],
+            ]))],
         );
         // Last squared value: 5^2=25
         assert_eq!(result, Some(Value::Number(25.0)));
