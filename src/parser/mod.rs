@@ -2619,7 +2619,11 @@ or write `({fmt_name} \"...\" ...)` so its args are grouped."
         let end = self.peek_span();
         self.expect(&Token::RParen)?;
 
-        // Free-variable check (Phase 1 rejects captures).
+        // Free-variable analysis. Phase 1 rejected any free var with ILO-P017;
+        // Phase 2 captures them: the lifted decl gets capture params appended
+        // after the originals, and the call site emits `Expr::MakeClosure`
+        // with `Expr::Ref(c)` per capture so they're snapshot by value at
+        // closure-construction time.
         let bound: std::collections::HashSet<String> =
             params.iter().map(|p| p.name.clone()).collect();
         let mut free = Vec::new();
@@ -2629,31 +2633,36 @@ or write `({fmt_name} \"...\" ...)` so its args are grouped."
         for stmt in &body {
             self.collect_free_in_stmt(&stmt.node, &bound, &mut local, &mut free);
         }
-        if let Some(name) = free.first() {
-            return Err(self.error_hint(
-                "ILO-P017",
-                format!("inline lambda captures `{}` from the enclosing scope", name),
-                "Phase 1 inline lambdas cannot close over outer variables. \
-                 Either pass `{name}` as an extra param and use the HOF's \
-                 ctx-arg form (`srt fn ctx xs`), or define a top-level helper. \
-                 Closure capture is tracked as a Phase 2 follow-up."
-                    .replace("{name}", name),
-            ));
-        }
 
-        // Lift to a synthetic top-level decl.
+        // Lift to a synthetic top-level decl. If there are free variables,
+        // append them as capture params (`_:any` typed) after the originals.
         let name = format!("__lit_{}", self.lambda_counter);
         self.lambda_counter += 1;
-        self.register_user_fn(&name, &params);
+        let mut lifted_params = params;
+        for cap in &free {
+            lifted_params.push(Param {
+                name: cap.clone(),
+                ty: Type::Any,
+            });
+        }
+        self.register_user_fn(&name, &lifted_params);
         let span = start.merge(end);
         self.lifted_decls.push(Decl::Function {
             name: name.clone(),
-            params,
+            params: lifted_params,
             return_type,
             body,
             span,
         });
-        Ok(Expr::Ref(name))
+        if free.is_empty() {
+            Ok(Expr::Ref(name))
+        } else {
+            let captures: Vec<Expr> = free.into_iter().map(Expr::Ref).collect();
+            Ok(Expr::MakeClosure {
+                fn_name: name,
+                captures,
+            })
+        }
     }
 
     /// Parse a `;`-separated sequence of statements terminated by `)`.
@@ -2879,6 +2888,15 @@ or write `({fmt_name} \"...\" ...)` so its args are grouped."
                 self.collect_free_in_expr(condition, params, local, free);
                 self.collect_free_in_expr(then_expr, params, local, free);
                 self.collect_free_in_expr(else_expr, params, local, free);
+            }
+            Expr::MakeClosure { captures, .. } => {
+                // Already-lifted nested closure (only emitted by the parser
+                // itself). Its captures are expressions in the enclosing scope
+                // — walk them as free-var candidates so a nested lambda's
+                // capture transitively bubbles up through the outer lambda.
+                for cap in captures {
+                    self.collect_free_in_expr(cap, params, local, free);
+                }
             }
         }
     }

@@ -320,6 +320,23 @@ pub enum Expr {
         then_expr: Box<Expr>,
         else_expr: Box<Expr>,
     },
+
+    /// Construct a closure: bind capture values onto a named (lifted) function.
+    ///
+    /// Emitted by the parser when an inline lambda `(params>ret;body)` has free
+    /// variables in its body. The lambda is lifted to a synthetic top-level
+    /// `__lit_N` decl whose parameter list is `[original_params..., capture_params...]`,
+    /// and the call site becomes `Expr::MakeClosure { fn_name: "__lit_N", captures: [Ref(c1), ...] }`.
+    ///
+    /// At runtime this evaluates to `Value::Closure { fn_name, captures: [v1, ...] }`,
+    /// which closure-aware HOFs (`srt`, `map`, `flt`, `fld`, `grp`, `uniqby`,
+    /// `partition`, `flatmap`) treat as an N-arg-capturing fn-ref: each per-item
+    /// call gets the captures appended after the item args. Captures are
+    /// by-value snapshots, matching the existing single-ctx form (#186).
+    MakeClosure {
+        fn_name: String,
+        captures: Vec<Expr>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -558,6 +575,11 @@ fn resolve_aliases_expr(expr: &mut Expr) {
             resolve_aliases_expr(condition);
             resolve_aliases_expr(then_expr);
             resolve_aliases_expr(else_expr);
+        }
+        Expr::MakeClosure { captures, .. } => {
+            for cap in captures {
+                resolve_aliases_expr(cap);
+            }
         }
         Expr::Literal(_) | Expr::Ref(_) | Expr::Field { .. } | Expr::Index { .. } => {}
     }

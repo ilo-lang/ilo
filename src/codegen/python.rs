@@ -768,6 +768,18 @@ fn emit_expr(out: &mut String, level: usize, expr: &Expr) -> String {
             }
             format!("{{{}}}", parts.join(", "))
         }
+        Expr::MakeClosure { fn_name, captures } => {
+            // Emit as `lambda *a: fn_name(*a, c1, c2, ...)` so Python sees a
+            // callable that prepends the per-item args and appends captures,
+            // matching the tree interpreter's call shape.
+            let caps: Vec<String> = captures.iter().map(|c| emit_expr(out, level, c)).collect();
+            let cap_str = if caps.is_empty() {
+                String::new()
+            } else {
+                format!(", {}", caps.join(", "))
+            };
+            format!("(lambda *_a: {}(*_a{}))", py_name(fn_name), cap_str)
+        }
     }
 }
 

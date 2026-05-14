@@ -21,6 +21,18 @@ pub enum Value {
     Err(Box<Value>),
     /// A reference to a named function — produced when a function name is used as a value.
     FnRef(String),
+    /// A closure: a named (lifted) function plus by-value capture snapshots.
+    ///
+    /// Produced by `Expr::MakeClosure` when an inline lambda `(params>ret;body)`
+    /// closes over enclosing-scope variables. Closure-aware HOFs (srt, map,
+    /// flt, fld, grp, uniqby, partition, flatmap) detect this and append the
+    /// captures after the per-item args at call time. The lifted function's
+    /// param list is `[original_params..., capture_params...]`, so the
+    /// captures naturally line up as trailing args.
+    Closure {
+        fn_name: String,
+        captures: Vec<Value>,
+    },
 }
 
 impl std::fmt::Display for Value {
@@ -71,6 +83,16 @@ impl std::fmt::Display for Value {
             Value::Ok(v) => write!(f, "~{}", v),
             Value::Err(v) => write!(f, "^{}", v),
             Value::FnRef(name) => write!(f, "<fn:{}>", name),
+            Value::Closure { fn_name, captures } => {
+                write!(f, "<closure:{}[", fn_name)?;
+                for (i, c) in captures.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{}", c)?;
+                }
+                write!(f, "]>")
+            }
         }
     }
 }
@@ -1619,6 +1641,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 ),
             )
         })?;
+        let captures = closure_captures(&args[0]);
         // closure-bind: srt fn ctx xs
         let (ctx, list_arg) = if args.len() == 3 {
             (Some(args[1].clone()), &args[2])
@@ -1638,10 +1661,11 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         let mut keyed: Vec<(Value, Value)> = items
             .into_iter()
             .map(|item| {
-                let call_args = match &ctx {
+                let mut call_args = match &ctx {
                     Some(c) => vec![item.clone(), c.clone()],
                     None => vec![item.clone()],
                 };
+                call_args.extend(captures.iter().cloned());
                 let key = call_function(env, &fn_name, call_args)?;
                 Ok((key, item))
             })
@@ -2473,12 +2497,24 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
 
     // Higher-order builtins: map, flt, fld
     // A function reference can be Value::FnRef(name) or Value::Text(name) when the
-    // function name was passed as a CLI string argument.
+    // function name was passed as a CLI string argument. Inline lambdas with
+    // free-var capture produce Value::Closure, which carries the lifted fn
+    // name plus by-value capture snapshots to append after the per-item args.
     fn resolve_fn_ref(val: &Value) -> Option<String> {
         match val {
             Value::FnRef(n) => Some(n.clone()),
             Value::Text(n) => Some(n.clone()),
+            Value::Closure { fn_name, .. } => Some(fn_name.clone()),
             _ => None,
+        }
+    }
+    // Extract trailing captures from a closure value, if any. Closures carry
+    // by-value snapshots of free variables that get appended after the
+    // per-item args at each HOF call. Returns empty for plain FnRef/Text.
+    fn closure_captures(val: &Value) -> Vec<Value> {
+        match val {
+            Value::Closure { captures, .. } => captures.clone(),
+            _ => Vec::new(),
         }
     }
     if builtin == Some(Builtin::Map) && (args.len() == 2 || args.len() == 3) {
@@ -2491,6 +2527,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 ),
             )
         })?;
+        let captures = closure_captures(&args[0]);
         // closure-bind: map fn ctx xs
         let (ctx, list_arg) = if args.len() == 3 {
             (Some(args[1].clone()), &args[2])
@@ -2508,10 +2545,11 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         };
         let mut result = Vec::with_capacity(items.len());
         for item in items {
-            let call_args = match &ctx {
+            let mut call_args = match &ctx {
                 Some(c) => vec![item, c.clone()],
                 None => vec![item],
             };
+            call_args.extend(captures.iter().cloned());
             result.push(call_function(env, &fn_name, call_args)?);
         }
         return Ok(Value::List(result));
@@ -2526,6 +2564,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 ),
             )
         })?;
+        let captures = closure_captures(&args[0]);
         let (ctx, list_arg) = if args.len() == 3 {
             (Some(args[1].clone()), &args[2])
         } else {
@@ -2542,10 +2581,11 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         };
         let mut result = Vec::new();
         for item in items {
-            let call_args = match &ctx {
+            let mut call_args = match &ctx {
                 Some(c) => vec![item.clone(), c.clone()],
                 None => vec![item.clone()],
             };
+            call_args.extend(captures.iter().cloned());
             match call_function(env, &fn_name, call_args)? {
                 Value::Bool(true) => result.push(item),
                 Value::Bool(false) => {}
@@ -2569,6 +2609,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 ),
             )
         })?;
+        let captures = closure_captures(&args[0]);
         // closure-bind: fld fn ctx xs init
         let (ctx, list_arg, init) = if args.len() == 4 {
             (Some(args[1].clone()), &args[2], args[3].clone())
@@ -2586,10 +2627,11 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         };
         let mut acc = init;
         for item in items {
-            let call_args = match &ctx {
+            let mut call_args = match &ctx {
                 Some(c) => vec![acc, item, c.clone()],
                 None => vec![acc, item],
             };
+            call_args.extend(captures.iter().cloned());
             acc = call_function(env, &fn_name, call_args)?;
         }
         return Ok(acc);
@@ -2605,6 +2647,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 ),
             )
         })?;
+        let captures = closure_captures(&args[0]);
         let items = match &args[1] {
             Value::List(l) => l.clone(),
             other => {
@@ -2617,7 +2660,9 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         let mut pass: Vec<Value> = Vec::new();
         let mut fail: Vec<Value> = Vec::new();
         for item in items {
-            match call_function(env, &fn_name, vec![item.clone()])? {
+            let mut call_args = vec![item.clone()];
+            call_args.extend(captures.iter().cloned());
+            match call_function(env, &fn_name, call_args)? {
                 Value::Bool(true) => pass.push(item),
                 Value::Bool(false) => fail.push(item),
                 other => {
@@ -2641,6 +2686,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 ),
             )
         })?;
+        let captures = closure_captures(&args[0]);
         let items = match &args[1] {
             Value::List(l) => l.clone(),
             other => {
@@ -2652,7 +2698,9 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         };
         let mut result: Vec<Value> = Vec::new();
         for item in items {
-            match call_function(env, &fn_name, vec![item])? {
+            let mut call_args = vec![item];
+            call_args.extend(captures.iter().cloned());
+            match call_function(env, &fn_name, call_args)? {
                 Value::List(inner) => result.extend(inner),
                 other => {
                     return Err(RuntimeError::new(
@@ -2675,6 +2723,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 ),
             )
         })?;
+        let captures = closure_captures(&args[0]);
         let items = match &args[1] {
             Value::List(l) => l.clone(),
             other => {
@@ -2687,7 +2736,9 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
         let mut out: Vec<Value> = Vec::new();
         for item in items {
-            let key = call_function(env, &fn_name, vec![item.clone()])?;
+            let mut call_args = vec![item.clone()];
+            call_args.extend(captures.iter().cloned());
+            let key = call_function(env, &fn_name, call_args)?;
             // Prefix the hashed key with a type tag so values from distinct
             // domains never alias each other. Without this, `Number(5)` and
             // `Text("5")` both stringify to `"5"` and collide.
@@ -2728,6 +2779,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 ),
             )
         })?;
+        let captures = closure_captures(&args[0]);
         let items = match &args[1] {
             Value::List(l) => l.clone(),
             other => {
@@ -2740,7 +2792,9 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         let mut groups: std::collections::HashMap<String, Vec<Value>> =
             std::collections::HashMap::new();
         for item in items {
-            let key = call_function(env, &fn_name, vec![item.clone()])?;
+            let mut call_args = vec![item.clone()];
+            call_args.extend(captures.iter().cloned());
+            let key = call_function(env, &fn_name, call_args)?;
             let key_str = match &key {
                 Value::Text(s) => s.clone(),
                 Value::Number(n) => {
@@ -3672,6 +3726,9 @@ fn value_to_json(val: &Value) -> serde_json::Value {
         Value::Ok(inner) => value_to_json(inner),
         Value::Err(inner) => value_to_json(inner),
         Value::FnRef(name) => serde_json::Value::String(format!("<fn:{}>", name)),
+        Value::Closure { fn_name, .. } => {
+            serde_json::Value::String(format!("<closure:{}>", fn_name))
+        }
     }
 }
 
@@ -4063,11 +4120,16 @@ fn eval_expr(env: &mut Env, expr: &Expr) -> Result<Value> {
                 .rev()
                 .find(|(k, _)| k == function.as_str())
                 .map(|(_, v)| v.clone());
-            let callee = match callee_from_scope {
-                Some(Value::FnRef(name)) => name,
-                Some(Value::Text(name)) if env.functions.contains_key(&name) => name,
-                _ => function.clone(),
+            // A Closure value in scope dispatches to its lifted fn with the
+            // captured values appended after the user-supplied args (same shape
+            // as the HOF call sites). FnRef/Text keep their original behaviour.
+            let (callee, extra_captures) = match callee_from_scope {
+                Some(Value::FnRef(name)) => (name, Vec::new()),
+                Some(Value::Text(name)) if env.functions.contains_key(&name) => (name, Vec::new()),
+                Some(Value::Closure { fn_name, captures }) => (fn_name, captures),
+                _ => (function.clone(), Vec::new()),
             };
+            arg_vals.extend(extra_captures);
             let result = call_function(env, &callee, arg_vals)?;
             if *unwrap {
                 match result {
@@ -4203,6 +4265,16 @@ fn eval_expr(env: &mut Env, expr: &Expr) -> Result<Value> {
                 }
                 _ => Err(RuntimeError::new("ILO-R008", "'with' requires a record")),
             }
+        }
+        Expr::MakeClosure { fn_name, captures } => {
+            let mut cap_vals = Vec::with_capacity(captures.len());
+            for c in captures {
+                cap_vals.push(eval_expr(env, c)?);
+            }
+            Ok(Value::Closure {
+                fn_name: fn_name.clone(),
+                captures: cap_vals,
+            })
         }
     }
 }

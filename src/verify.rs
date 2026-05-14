@@ -3412,6 +3412,19 @@ impl VerifyContext {
                     }
                 }
             }
+
+            Expr::MakeClosure { fn_name, captures } => {
+                // Evaluate captures so any free-var-resolution errors surface
+                // here against the call site (which is where the user wrote the
+                // capture). The closure value itself is fn-like; we report
+                // Ty::Unknown so HOF signatures treat it like a fn-ref (same
+                // as a bare `Expr::Ref(fn_name)` does today).
+                for cap in captures {
+                    self.infer_expr(func, scope, cap, span);
+                }
+                let _ = fn_name;
+                Ty::Unknown
+            }
         }
     }
 
