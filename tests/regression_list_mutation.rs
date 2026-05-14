@@ -160,25 +160,13 @@ fn lst_out_of_range_vm() {
     check_oor_error("--run-vm");
 }
 
-// Cranelift JIT mirrors `at`'s permissive pattern: returns the original list
-// unchanged on out-of-range. Safer than nil because the caller can still chain.
+// Cranelift now matches tree/VM after the JIT permissive-nil sweep (batch 1):
+// lst OOB raises a runtime error rather than silently returning the original
+// list. The diagnostic is delivered via JIT_RUNTIME_ERROR + jit_cranelift::call.
 #[test]
 #[cfg(feature = "cranelift")]
 fn lst_out_of_range_cranelift() {
-    let out = ilo()
-        .args([OOR_SRC, "--run-cranelift", "f"])
-        .output()
-        .expect("failed to run ilo");
-    assert!(
-        out.status.success(),
-        "cranelift: expected success returning original list, got stderr={}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(
-        stdout.contains("[10, 20, 30]"),
-        "cranelift: expected original list [10, 20, 30], got {stdout}"
-    );
+    check_oor_error("--run-cranelift");
 }
 
 // Negative index: tree/vm error, cranelift returns original list unchanged.
@@ -223,19 +211,20 @@ fn lst_negative_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn lst_negative_cranelift() {
+    // Cranelift now errors on a negative `lst` index to match tree/VM.
     let out = ilo()
         .args([NEG_SRC, "--run-cranelift", "f"])
         .output()
         .expect("failed to run ilo");
     assert!(
-        out.status.success(),
-        "cranelift: expected success returning original list, got stderr={}",
-        String::from_utf8_lossy(&out.stderr)
+        !out.status.success(),
+        "cranelift: expected error for lst xs -1 v, got stdout={}",
+        String::from_utf8_lossy(&out.stdout)
     );
-    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
-        stdout.contains("[10, 20, 30]"),
-        "cranelift: expected original list, got {stdout}"
+        stderr.contains("non-negative") || stderr.contains("lst") || stderr.contains("ILO-R"),
+        "cranelift: expected non-negative/lst/ILO-R error, got stderr={stderr}"
     );
 }
 

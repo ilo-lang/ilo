@@ -9814,18 +9814,21 @@ pub(crate) extern "C" fn jit_lst(list: u64, idx: u64, val: u64) -> u64 {
     let i = NanVal(idx);
     let new_val = NanVal(val);
     if !i.is_number() {
-        return list;
+        jit_set_runtime_error(VmError::Type("lst: index must be a number"));
+        return TAG_NIL;
     }
     let n = i.as_number();
     if n < 0.0 || n.fract() != 0.0 {
-        return list;
+        jit_set_runtime_error(VmError::Type("lst: index must be a non-negative integer"));
+        return TAG_NIL;
     }
     let pos = n as usize;
     if v.is_heap()
         && let HeapObj::List(items) = unsafe { v.as_heap_ref() }
     {
         if pos >= items.len() {
-            return list;
+            jit_set_runtime_error(VmError::Type("lst: index out of range"));
+            return TAG_NIL;
         }
         let mut new_items: Vec<NanVal> = Vec::with_capacity(items.len());
         for (i, item) in items.iter().enumerate() {
@@ -9839,6 +9842,7 @@ pub(crate) extern "C" fn jit_lst(list: u64, idx: u64, val: u64) -> u64 {
         }
         return NanVal::heap_list(new_items).0;
     }
+    jit_set_runtime_error(VmError::Type("lst requires a list"));
     TAG_NIL
 }
 
@@ -10572,8 +10576,11 @@ pub(crate) extern "C" fn jit_slc(a: u64, start: u64, end: u64) -> u64 {
     let vc = NanVal(start);
     let vd = NanVal(end);
     if !vc.is_number() || !vd.is_number() {
+        jit_set_runtime_error(VmError::Type("slc: indices must be numbers"));
         return TAG_NIL;
     }
+    // OOB is deliberately clamped on tree/VM (slc is documented to saturate),
+    // so do not surface a runtime error for out-of-range start/end.
     let s_idx = vc.as_number() as usize;
     let e_idx = vd.as_number() as usize;
     if vb.is_string() {
@@ -10600,6 +10607,7 @@ pub(crate) extern "C" fn jit_slc(a: u64, start: u64, end: u64) -> u64 {
         }
         return NanVal::heap_list(sliced).0;
     }
+    jit_set_runtime_error(VmError::Type("slc requires a list or text"));
     TAG_NIL
 }
 
@@ -10893,6 +10901,7 @@ pub(crate) extern "C" fn jit_index(a: u64, idx: u64) -> u64 {
     let obj = NanVal(a);
     let i = idx as usize;
     if !obj.is_heap() {
+        jit_set_runtime_error(VmError::Type("index access on non-list"));
         return TAG_NIL;
     }
     match unsafe { obj.as_heap_ref() } {
@@ -10901,10 +10910,14 @@ pub(crate) extern "C" fn jit_index(a: u64, idx: u64) -> u64 {
                 items[i].clone_rc();
                 items[i].0
             } else {
+                jit_set_runtime_error(VmError::Type("list index out of bounds"));
                 TAG_NIL
             }
         }
-        _ => TAG_NIL,
+        _ => {
+            jit_set_runtime_error(VmError::Type("index access on non-list"));
+            TAG_NIL
+        }
     }
 }
 
@@ -11455,12 +11468,22 @@ pub(crate) extern "C" fn jit_listnew(regs: *const u64, n: u64) -> u64 {
 }
 
 /// LISTGET for foreach loops: returns Ok(item) if found, TAG_NIL if out of bounds.
+///
+/// OOB returning TAG_NIL is intentional: it is the loop-done sentinel that
+/// matches VM OP_LISTGET's fall-through-to-JMP semantic. Type errors
+/// (non-list collection, non-number index) are surfaced as runtime errors
+/// to match tree/VM behaviour.
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn jit_listget(list: u64, idx: u64) -> u64 {
     let lv = NanVal(list);
     let iv = NanVal(idx);
-    if !lv.is_heap() || !iv.is_number() {
+    if !lv.is_heap() {
+        jit_set_runtime_error(VmError::Type("foreach requires a list"));
+        return TAG_NIL;
+    }
+    if !iv.is_number() {
+        jit_set_runtime_error(VmError::Type("list index must be a number"));
         return TAG_NIL;
     }
     let i = iv.as_number() as usize;
@@ -11470,10 +11493,14 @@ pub(crate) extern "C" fn jit_listget(list: u64, idx: u64) -> u64 {
                 items[i].clone_rc();
                 NanVal::heap_ok(items[i]).0
             } else {
+                // OOB: loop-done sentinel, not an error.
                 TAG_NIL
             }
         }
-        _ => TAG_NIL,
+        _ => {
+            jit_set_runtime_error(VmError::Type("foreach requires a list"));
+            TAG_NIL
+        }
     }
 }
 
@@ -11483,6 +11510,7 @@ pub(crate) extern "C" fn jit_jpth(a: u64, b: u64) -> u64 {
     let av = NanVal(a);
     let bv = NanVal(b);
     if !av.is_string() || !bv.is_string() {
+        jit_set_runtime_error(VmError::Type("jpth requires two strings"));
         return TAG_NIL;
     }
     let json_str = unsafe {
@@ -25805,44 +25833,68 @@ f>n;r=mk 10 20;+r.x r.y";
         assert_eq!(items[2].as_number(), 30.0);
     }
 
+    // NOTE: these tests used to assert that jit_lst silently returned the
+    // input list (or TAG_NIL) on failure modes. The cross-engine permissive-
+    // nil sweep aligned the JIT helper with the tree/VM behaviour: every
+    // failure path now sets the JIT_RUNTIME_ERROR TLS cell and returns
+    // TAG_NIL, which `jit_cranelift::call` then surfaces as a runtime error.
+    // Each helper test therefore takes the error cell after the call and
+    // asserts (a) the return value is TAG_NIL and (b) the error message
+    // matches the tree/VM diagnostic.
+
     #[cfg(feature = "cranelift")]
     #[test]
-    fn jit_lst_out_of_range_returns_original() {
+    fn jit_lst_out_of_range_errors() {
+        let _g = JitRuntimeErrorGuard::new();
         let list = NanVal::heap_list(vec![NanVal::number(1.0), NanVal::number(2.0)]);
         let bits = jit_lst(list.0, NanVal::number(5.0).0, NanVal::number(99.0).0);
-        assert_eq!(bits, list.0);
+        assert_eq!(bits, TAG_NIL);
+        let err = jit_take_runtime_error().expect("expected runtime error");
+        assert!(format!("{err:?}").contains("out of range"), "got: {err:?}");
     }
 
     #[cfg(feature = "cranelift")]
     #[test]
-    fn jit_lst_negative_index_returns_original() {
+    fn jit_lst_negative_index_errors() {
+        let _g = JitRuntimeErrorGuard::new();
         let list = NanVal::heap_list(vec![NanVal::number(1.0), NanVal::number(2.0)]);
         let bits = jit_lst(list.0, NanVal::number(-1.0).0, NanVal::number(99.0).0);
-        assert_eq!(bits, list.0);
+        assert_eq!(bits, TAG_NIL);
+        let err = jit_take_runtime_error().expect("expected runtime error");
+        assert!(format!("{err:?}").contains("non-negative"), "got: {err:?}");
     }
 
     #[cfg(feature = "cranelift")]
     #[test]
-    fn jit_lst_fractional_index_returns_original() {
+    fn jit_lst_fractional_index_errors() {
+        let _g = JitRuntimeErrorGuard::new();
         let list = NanVal::heap_list(vec![NanVal::number(1.0), NanVal::number(2.0)]);
         let bits = jit_lst(list.0, NanVal::number(0.5).0, NanVal::number(99.0).0);
-        assert_eq!(bits, list.0);
+        assert_eq!(bits, TAG_NIL);
+        let err = jit_take_runtime_error().expect("expected runtime error");
+        assert!(format!("{err:?}").contains("integer"), "got: {err:?}");
     }
 
     #[cfg(feature = "cranelift")]
     #[test]
-    fn jit_lst_non_number_index_returns_original() {
+    fn jit_lst_non_number_index_errors() {
+        let _g = JitRuntimeErrorGuard::new();
         let list = NanVal::heap_list(vec![NanVal::number(1.0)]);
         let bits = jit_lst(list.0, NanVal::boolean(true).0, NanVal::number(99.0).0);
-        assert_eq!(bits, list.0);
+        assert_eq!(bits, TAG_NIL);
+        let err = jit_take_runtime_error().expect("expected runtime error");
+        assert!(format!("{err:?}").contains("number"), "got: {err:?}");
     }
 
     #[cfg(feature = "cranelift")]
     #[test]
-    fn jit_lst_non_list_returns_nil() {
+    fn jit_lst_non_list_errors() {
+        let _g = JitRuntimeErrorGuard::new();
         let s = NanVal::heap_string("abc".to_string());
         let bits = jit_lst(s.0, NanVal::number(0.0).0, NanVal::number(99.0).0);
         assert_eq!(bits, TAG_NIL);
+        let err = jit_take_runtime_error().expect("expected runtime error");
+        assert!(format!("{err:?}").contains("list"), "got: {err:?}");
     }
 
     // ---- VM compile coverage for 3-arg `wr` overload ----

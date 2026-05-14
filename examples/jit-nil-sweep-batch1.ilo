@@ -1,0 +1,32 @@
+-- lst / slc / jpth: cross-engine harmonisation, positive paths.
+--
+-- Companion to examples/at-hd-tl-oob-parity.ilo. This file exercises the
+-- positive paths for the helpers covered by batch 1 of the Cranelift
+-- permissive-nil sweep. The error paths are covered by the regression
+-- test suite (regression_jit_nil_sweep_batch1.rs); the example exists so
+-- the examples_engines harness pins the success-path behaviour across
+-- tree, VM, and Cranelift on every build.
+--
+-- Cranelift used to silently return nil (or the input list) on these
+-- helpers' failure modes. After this batch every engine surfaces a
+-- runtime error with matching shape: lst OOB / negative idx / non-list,
+-- index OOB / non-list, slc non-number indices / non-list-non-text,
+-- jpth non-string args. slc OOB-clamp and jpth path-miss remain the
+-- documented contract (saturate / Err-wrap respectively).
+
+set-middle xs:L n>L n;lst xs 1 99
+slice-clamp xs:L n>L n;slc xs 1 999
+slice-text s:t>t;slc s 1 999
+parse-ok>R t t;jpth "{\"a\":1}" "a"
+
+-- run: set-middle [10,20,30]
+-- out: [10, 99, 30]
+
+-- run: slice-clamp [10,20,30]
+-- out: [20, 30]
+
+-- run: slice-text "hello"
+-- out: ello
+
+-- run: parse-ok
+-- out: ~1

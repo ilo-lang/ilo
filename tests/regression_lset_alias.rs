@@ -120,9 +120,10 @@ fn lset_last_cranelift() {
     assert_eq!(run("--run-cranelift", LAST_SRC, "f"), "[1, 2, 9]");
 }
 
-// Out-of-range index: tree/vm raise a runtime error; Cranelift returns the
-// original list unchanged. Same split as the underlying `lst` builtin (see
-// regression_list_mutation.rs).
+// Out-of-range index: every engine now raises a runtime error after the
+// JIT permissive-nil sweep (batch 1) brought Cranelift's `lst` helper into
+// parity with tree/VM. `lset` is the surface alias of `lst`, so the same
+// split applies. See regression_list_mutation.rs.
 const OOB_SRC: &str = "f>L n;lset [1,2,3] 5 99";
 
 #[test]
@@ -155,11 +156,18 @@ fn lset_oob_vm_errors() {
 
 #[test]
 #[cfg(feature = "cranelift")]
-fn lset_oob_cranelift_passthrough() {
-    // Cranelift JIT mirrors `lst`'s permissive behaviour: returns the list
-    // unchanged rather than erroring. This is documented in the example
-    // header and in regression_list_mutation.rs; the alias must match.
-    assert_eq!(run("--run-cranelift", OOB_SRC, "f"), "[1, 2, 3]");
+fn lset_oob_cranelift_errors() {
+    // Cranelift now errors on OOB to match tree/VM (JIT nil-sweep batch 1).
+    let (stdout, stderr) = run_expect_fail("--run-cranelift", OOB_SRC, "f");
+    let combined = format!("{stdout}{stderr}");
+    assert!(
+        combined.contains("ILO-R004") || combined.contains("ILO-R009"),
+        "cranelift should raise R004/R009 on oob lset; got: {combined}"
+    );
+    assert!(
+        combined.contains("out of range"),
+        "cranelift error should mention 'out of range'; got: {combined}"
+    );
 }
 
 // Empty list with index 0: every engine treats this as out-of-range. Tree
