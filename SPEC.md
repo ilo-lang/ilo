@@ -115,6 +115,24 @@ Short names everywhere. 1–3 chars.
 
 Function names follow the same rules. Field names in constructors and external tool names keep their full form — they define the public interface.
 
+### Identifier syntax
+
+Identifiers are lowercase ASCII only, optionally with hyphenated segments. Formally: `[a-z][a-z0-9]*(-[a-z0-9]+)*`. Capital letters and underscores are rejected at the binding and call site.
+
+```
+run                -- OK
+run-d              -- OK (hyphen separates segments)
+r2                 -- OK (digit after first letter)
+runD               -- ERROR (capital letter)
+RunD               -- ERROR (leading capital)
+run_d              -- ERROR (underscore not allowed in bindings)
+-run               -- ERROR (must start with a letter)
+```
+
+`runD` in the interactive CLI surfaces as `ILO-L003 unexpected token` with a suggestion to use `run-d` or `rund`. The constraint is intentional: a single lexical shape per identifier keeps the token stream predictable for agents and avoids style debates over camelCase vs snake_case vs kebab-case.
+
+The only place capital letters and underscores are accepted is **after `.` or `.?`** at field-access position, so heterogeneous JSON keys from real APIs work without rewriting. See [Field names at dot-access](#field-names-at-dot-access) for the full list of post-dot relaxations (`r.URL`, `r.AccessKey`, `r.user_name`, etc.). Binding names (`AccessKey = ...`) and function names (`AccessKey x:n>n;...`) still error.
+
 ### Reserved words
 
 The following identifiers are reserved and cannot be used as names: `if`, `return`, `let`, `fn`, `def`, `var`, `const`. Using them produces a friendly error with the ilo equivalent:
