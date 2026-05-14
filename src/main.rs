@@ -2638,7 +2638,12 @@ fn run_cranelift_engine(
             .collect();
         match vm::jit_cranelift::compile_and_call(chunk, nan_consts, &nan_args, &compiled) {
             Ok(result_bits) => {
-                let result = vm::NanVal(result_bits).to_value();
+                // Use the program-aware bridge so user-fn FnRefs in the
+                // returned value resolve back to their source names
+                // rather than the synthetic `<user_fn:N>` placeholder.
+                // `with_active_registry` clears its TLS on return, so
+                // we cannot lean on the implicit context here.
+                let result = vm::NanVal(result_bits).to_value_with_program(&compiled.func_names);
                 print_value(&result, explicit_json, suppress);
                 program_exit_code(&result)
             }
