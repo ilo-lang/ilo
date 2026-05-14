@@ -1,0 +1,24 @@
+-- Cranelift JIT runtime errors now carry source spans, matching tree / VM.
+-- The previous JIT_RUNTIME_ERROR TLS only stored a bare VmError so cranelift
+-- diagnostics rendered with an empty `labels: []`. The fix packs the call-
+-- site span as a u64 immediate at compile time and threads it through the
+-- helper signature for jit_hd / jit_at / jit_tl.
+--
+-- The positive-path cases below succeed on every engine and exercise the
+-- newly-extended helper ABI: each call site now emits an extra iconst with
+-- the packed (start << 32 | end) span bits. If the immediate were ever
+-- forgotten on a call site, the function would crash at JIT-time on the
+-- arity mismatch, not run cleanly to completion.
+
+firstn xs:L n>n;hd xs
+last xs:L n>n;at xs -1
+rest xs:L n>L n;tl xs
+
+-- run: firstn [10,20,30]
+-- out: 10
+
+-- run: last [10,20,30]
+-- out: 30
+
+-- run: rest [10,20,30]
+-- out: [20, 30]
