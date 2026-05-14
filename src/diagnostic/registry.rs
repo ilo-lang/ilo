@@ -816,6 +816,28 @@ not a user error.
 If you see this, please file a bug report.
 "#,
     },
+    ErrorEntry {
+        code: "ILO-R026",
+        short: "panic-unwrap on Err / nil",
+        long: r#"## ILO-R026: panic-unwrap on Err / nil
+
+`func!! args` (panic-unwrap) aborts the program with exit code 1
+when the called function returns `^e` (Err) or `nil` (Optional).
+Unlike `func!`, which propagates the failure as the enclosing
+function's return value, `!!` terminates immediately and writes
+a `panic-unwrap: ...` diagnostic to stderr.
+
+Use `!!` when the failure is unrecoverable in the current context:
+short scripts, glue code, or main entry points where there is no
+caller to react to the error. Use `!` instead when the caller
+should observe and respond to the failure.
+
+```
+main>t;rdl!! "input.txt"    -- aborts with panic-unwrap if file missing
+main>n;num!! "abc"          -- aborts with panic-unwrap: abc
+```
+"#,
+    },
 ];
 
 /// Look up an error entry by code (e.g. `"ILO-T005"`).

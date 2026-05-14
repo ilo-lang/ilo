@@ -619,6 +619,32 @@ impl Parser {
         }
     }
 
+    /// If the next token is `!` or `!!` immediately adjacent (no whitespace)
+    /// to the previously-consumed token, consume it and return the matching
+    /// `UnwrapMode`. Otherwise return `UnwrapMode::None` and consume nothing.
+    ///
+    /// Adjacency is what distinguishes `func!` (postfix unwrap) from
+    /// `func !x` (call with a `!x` argument), and likewise for `!!`.
+    fn maybe_postfix_unwrap(&mut self) -> UnwrapMode {
+        let prev = self.prev_span();
+        let next_span = self.peek_span();
+        let adjacent = prev.end > 0 && next_span.start == prev.end;
+        if !adjacent {
+            return UnwrapMode::None;
+        }
+        match self.peek() {
+            Some(Token::BangBang) => {
+                self.advance();
+                UnwrapMode::Panic
+            }
+            Some(Token::Bang) => {
+                self.advance();
+                UnwrapMode::Propagate
+            }
+            _ => UnwrapMode::None,
+        }
+    }
+
     // ---- Types ----
 
     fn parse_type(&mut self) -> Result<Type> {
@@ -1512,14 +1538,7 @@ impl Parser {
         while matches!(self.peek(), Some(Token::PipeOp)) {
             self.advance(); // consume >>
             let func_name = self.expect_ident()?;
-            let unwrap = self.peek() == Some(&Token::Bang) && {
-                let prev = self.prev_span();
-                let bang = self.peek_span();
-                prev.end > 0 && bang.start == prev.end
-            };
-            if unwrap {
-                self.advance(); // consume !
-            }
+            let unwrap = self.maybe_postfix_unwrap();
             // Parse additional args (operands until we hit >>, ;, }, etc.)
             // Use call-arg parsing so nested calls inside a pipe target
             // expand naturally (e.g. `xs >> map str` keeps `str` as a bare
@@ -1718,18 +1737,10 @@ impl Parser {
         }
     }
 
-    /// `$expr` → `get expr`, `$!expr` → `get! expr`
+    /// `$expr` → `get expr`, `$!expr` → `get! expr`, `$!!expr` → `get!! expr`
     fn parse_dollar(&mut self) -> Result<Expr> {
         self.advance(); // consume $
-        // Check for $! (auto-unwrap)
-        let unwrap = self.peek() == Some(&Token::Bang) && {
-            let prev = self.prev_span();
-            let bang = self.peek_span();
-            prev.end > 0 && bang.start == prev.end
-        };
-        if unwrap {
-            self.advance(); // consume !
-        }
+        let unwrap = self.maybe_postfix_unwrap();
         let arg = self.parse_operand()?;
         Ok(Expr::Call {
             function: "get".to_string(),
@@ -1920,7 +1931,7 @@ impl Parser {
             let is_field = matches!(next, Some(Token::Dot) | Some(Token::DotQuestion));
             let is_zero_arg_call =
                 next == Some(&Token::LParen) && self.token_at(self.pos + 2) == Some(&Token::RParen);
-            let is_unwrap = next == Some(&Token::Bang) && {
+            let is_unwrap = matches!(next, Some(&Token::Bang) | Some(&Token::BangBang)) && {
                 let ident_span = self.peek_span();
                 let bang_span = self
                     .tokens
@@ -1972,7 +1983,7 @@ or write `({fmt_name} \"...\" ...)` so its args are grouped."
                 return Ok(Expr::Call {
                     function: fmt_name,
                     args: fmt_args,
-                    unwrap: false,
+                    unwrap: UnwrapMode::None,
                 });
             }
         }
@@ -1991,7 +2002,7 @@ or write `({fmt_name} \"...\" ...)` so its args are grouped."
             let is_field = matches!(next, Some(Token::Dot) | Some(Token::DotQuestion));
             let is_zero_arg_call =
                 next == Some(&Token::LParen) && self.token_at(self.pos + 2) == Some(&Token::RParen);
-            let is_unwrap = next == Some(&Token::Bang) && {
+            let is_unwrap = matches!(next, Some(&Token::Bang) | Some(&Token::BangBang)) && {
                 let ident_span = self.peek_span();
                 let bang_span = self
                     .tokens
@@ -2016,7 +2027,7 @@ or write `({fmt_name} \"...\" ...)` so its args are grouped."
                 return Ok(Expr::Call {
                     function: inner_name,
                     args: inner_args,
-                    unwrap: false,
+                    unwrap: UnwrapMode::None,
                 });
             }
         }
@@ -2033,20 +2044,13 @@ or write `({fmt_name} \"...\" ...)` so its args are grouped."
         if let Expr::Ref(ref name) = atom {
             let name = name.clone();
 
-            // Check for auto-unwrap: name! (postfix Bang ADJACENT to name, no space)
-            // Distinguish `func!` (unwrap) from `func !x` (call with NOT arg)
-            // by checking if Bang span starts right where the Ident span ended.
-            let unwrap = self.peek() == Some(&Token::Bang) && {
-                let prev = self.prev_span();
-                let bang = self.peek_span();
-                // Adjacent if spans are real (non-zero) and contiguous
-                prev.end > 0 && bang.start == prev.end
-            };
-            if unwrap {
-                self.advance(); // consume !
-            }
+            // Check for auto-unwrap: `name!` (Propagate) or `name!!` (Panic).
+            // Both must be ADJACENT to `name` (no space) to distinguish from
+            // `func !x` (call with a `!x` argument). `maybe_postfix_unwrap`
+            // encodes the adjacency rule.
+            let unwrap = self.maybe_postfix_unwrap();
 
-            // Check for zero-arg call: name() or name!()
+            // Check for zero-arg call: name() / name!() / name!!()
             if self.peek() == Some(&Token::LParen)
                 && self.pos + 1 < self.tokens.len()
                 && self.token_at(self.pos + 1) == Some(&Token::RParen)
@@ -2060,8 +2064,9 @@ or write `({fmt_name} \"...\" ...)` so its args are grouped."
                 });
             }
 
-            // If we consumed !, this must be a call (even with zero args if nothing follows)
-            if unwrap {
+            // If we consumed `!` / `!!`, this must be a call (even with zero
+            // args if nothing follows).
+            if unwrap.is_any() {
                 let mut args = Vec::new();
                 let outer_arity_known = self.fn_arity.get(&name).copied();
                 while self.can_start_operand() {
@@ -2075,7 +2080,7 @@ or write `({fmt_name} \"...\" ...)` so its args are grouped."
                 return Ok(Expr::Call {
                     function: name,
                     args,
-                    unwrap: true,
+                    unwrap,
                 });
             }
 
@@ -2089,7 +2094,7 @@ or write `({fmt_name} \"...\" ...)` so its args are grouped."
                 return Ok(Expr::Call {
                     function: name,
                     args: vec![],
-                    unwrap: false,
+                    unwrap: UnwrapMode::None,
                 });
             }
 
@@ -2125,7 +2130,7 @@ or write `({fmt_name} \"...\" ...)` so its args are grouped."
                 return Ok(Expr::Call {
                     function: name,
                     args,
-                    unwrap: false,
+                    unwrap: UnwrapMode::None,
                 });
             }
 
@@ -2171,7 +2176,7 @@ or write `({fmt_name} \"...\" ...)` so its args are grouped."
                 return Ok(Expr::Call {
                     function: name,
                     args,
-                    unwrap: false,
+                    unwrap: UnwrapMode::None,
                 });
             }
         }
@@ -2476,7 +2481,7 @@ or write `({fmt_name} \"...\" ...)` so its args are grouped."
                     return Ok(Expr::Call {
                         function: name,
                         args: vec![],
-                        unwrap: false,
+                        unwrap: UnwrapMode::None,
                     });
                 }
                 // Zero-arg call in operand position: `name()` and `name!()`.
@@ -2485,25 +2490,33 @@ or write `({fmt_name} \"...\" ...)` so its args are grouped."
                 // `at xs() 0` all parse as `Call { args: [] }` instead of
                 // leaving the bare Ref behind and then choking on the LParen.
                 // SPEC.md:16 and :843 already document `make-id()` / `fetch!()`.
-                let unwrap_bang = self.peek() == Some(&Token::Bang) && {
+                // `name!()` (Propagate) or `name!!()` (Panic) — postfix unwrap
+                // adjacent to the name, then a zero-arg paren-call.
+                let bang_mode = match self.peek() {
+                    Some(Token::Bang) => Some(UnwrapMode::Propagate),
+                    Some(Token::BangBang) => Some(UnwrapMode::Panic),
+                    _ => None,
+                };
+                let bang_adjacent = bang_mode.is_some() && {
                     let prev = self.prev_span();
                     let bang = self.peek_span();
                     // Adjacent if spans are real (non-zero) and contiguous —
                     // distinguish `name!()` (unwrap zero-arg call) from
-                    // `name !x` (call with NOT arg). Identical rule to 1789-1797.
+                    // `name !x` (call with NOT arg).
                     prev.end > 0 && bang.start == prev.end
                 };
-                if unwrap_bang
+                if bang_adjacent
                     && self.token_at(self.pos + 1) == Some(&Token::LParen)
                     && self.token_at(self.pos + 2) == Some(&Token::RParen)
                 {
-                    self.advance(); // !
+                    let mode = bang_mode.expect("guarded by bang_adjacent above");
+                    self.advance(); // ! or !!
                     self.advance(); // (
                     self.advance(); // )
                     return Ok(Expr::Call {
                         function: name,
                         args: vec![],
-                        unwrap: true,
+                        unwrap: mode,
                     });
                 }
                 if self.peek() == Some(&Token::LParen)
@@ -2514,7 +2527,7 @@ or write `({fmt_name} \"...\" ...)` so its args are grouped."
                     return Ok(Expr::Call {
                         function: name,
                         args: vec![],
-                        unwrap: false,
+                        unwrap: UnwrapMode::None,
                     });
                 }
                 // Check for field access chain: ident.field.field...
@@ -4818,14 +4831,14 @@ mod tests {
             panic!("expected unwrap call")
         };
         assert_eq!(function, "g");
-        assert!(unwrap);
+        assert!(unwrap.is_propagate());
         assert_eq!(args.len(), 1);
         assert!(matches!(&args[0], Expr::Ref(n) if n == "x"));
     }
 
     #[test]
     fn parse_unwrap_zero_arg() {
-        // fetch!() → Call { function: "fetch", unwrap: true, args: [] }
+        // fetch!() → Call { function: "fetch", unwrap: UnwrapMode::Propagate, args: [] }
         let prog = parse_str("f>R t t;d=g!();~d");
         let Decl::Function { body, .. } = &prog.declarations[0] else {
             panic!("expected function")
@@ -4843,7 +4856,7 @@ mod tests {
             panic!("expected unwrap zero-arg call")
         };
         assert_eq!(function, "g");
-        assert!(unwrap);
+        assert!(unwrap.is_propagate());
         assert!(args.is_empty());
     }
 
@@ -4865,7 +4878,7 @@ mod tests {
             panic!("expected call with NOT arg")
         };
         assert_eq!(function, "g");
-        assert!(!unwrap);
+        assert!(!unwrap.is_any());
         assert_eq!(args.len(), 1);
         assert!(matches!(
             &args[0],
@@ -4878,7 +4891,7 @@ mod tests {
 
     #[test]
     fn parse_unwrap_multi_arg() {
-        // f! a b → Call { function: "f", unwrap: true, args: [Ref("a"), Ref("b")] }
+        // f! a b → Call { function: "f", unwrap: UnwrapMode::Propagate, args: [Ref("a"), Ref("b")] }
         // Use let-bind to avoid greedy arg consumption at decl boundary
         let prog = parse_str("f a:n b:n>R n t;d=g! a b;~d");
         let Decl::Function { body, .. } = &prog.declarations[0] else {
@@ -4897,7 +4910,7 @@ mod tests {
             panic!("expected unwrap multi-arg call")
         };
         assert_eq!(function, "g");
-        assert!(unwrap);
+        assert!(unwrap.is_propagate());
         assert_eq!(args.len(), 2);
     }
 
@@ -4915,7 +4928,7 @@ mod tests {
             panic!("expected unwrap call expr")
         };
         assert_eq!(function, "g");
-        assert!(unwrap);
+        assert!(unwrap.is_propagate());
     }
 
     // ---- Braceless guards ----
@@ -5254,7 +5267,7 @@ mod tests {
         };
         assert_eq!(function, "get");
         assert_eq!(args.len(), 1);
-        assert!(!unwrap);
+        assert!(!unwrap.is_any());
     }
 
     #[test]
@@ -5273,7 +5286,7 @@ mod tests {
         };
         assert_eq!(function, "get");
         assert_eq!(args.len(), 1);
-        assert!(unwrap);
+        assert!(unwrap.is_propagate());
     }
 
     #[test]
@@ -6548,7 +6561,7 @@ mod tests {
         let Stmt::Expr(Expr::Call { unwrap, .. }) = &body[0].node else {
             panic!("expected Call expr")
         };
-        assert!(unwrap, "expected unwrap=true on piped call");
+        assert!(unwrap.is_propagate(), "expected unwrap=true on piped call");
     }
 
     // ── Coverage: L1413 — Token::Dollar in parse_operand ─────────────────────
@@ -6571,7 +6584,7 @@ mod tests {
             panic!("expected get call")
         };
         assert_eq!(function, "get");
-        assert!(!unwrap);
+        assert!(!unwrap.is_any());
     }
 
     // ── Coverage: L484 — SumType loop break on param name ────────────────────
@@ -7720,7 +7733,7 @@ mod tests {
             } => {
                 assert_eq!(function, "xs");
                 assert!(args.is_empty());
-                assert!(!unwrap);
+                assert!(!unwrap.is_any());
             }
             other => panic!("expected zero-arg Call for xs(), got {:?}", other),
         }
@@ -7792,7 +7805,7 @@ mod tests {
             } => {
                 assert_eq!(function, "fetch");
                 assert!(args.is_empty());
-                assert!(*unwrap, "expected unwrap=true for fetch!()");
+                assert!(unwrap.is_propagate(), "expected unwrap=true for fetch!()");
             }
             other => panic!("expected fetch!() Call, got {:?}", other),
         }

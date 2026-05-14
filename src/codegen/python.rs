@@ -160,7 +160,12 @@ fn stmt_uses_unwrap(stmt: &Stmt) -> bool {
 
 fn expr_uses_unwrap(expr: &Expr) -> bool {
     match expr {
-        Expr::Call { unwrap, args, .. } => *unwrap || args.iter().any(expr_uses_unwrap),
+        Expr::Call { unwrap, args, .. } => {
+            // Python codegen renders both `!` and `!!` as `_ilo_unwrap(...)`
+            // (Python doesn't model propagate-via-early-return; the helper
+            // raises on Err, which is the abort semantics anyway).
+            unwrap.is_any() || args.iter().any(expr_uses_unwrap)
+        }
         Expr::BinOp { left, right, .. } => expr_uses_unwrap(left) || expr_uses_unwrap(right),
         Expr::UnaryOp { operand, .. } => expr_uses_unwrap(operand),
         Expr::Ok(e) | Expr::Err(e) => expr_uses_unwrap(e),
@@ -507,7 +512,7 @@ fn emit_expr(out: &mut String, level: usize, expr: &Expr) -> String {
                     "(lambda s: (\"ok\", float(s)) if s.replace('.','',1).replace('-','',1).isdigit() else (\"err\", s))({})",
                     arg
                 );
-                return if *unwrap {
+                return if unwrap.is_any() {
                     format!("_ilo_unwrap({})", call)
                 } else {
                     call
@@ -535,7 +540,7 @@ fn emit_expr(out: &mut String, level: usize, expr: &Expr) -> String {
                     json_arg, path_arg
                 );
                 let call = format!("(lambda: {})()", call);
-                return if *unwrap {
+                return if unwrap.is_any() {
                     format!("_ilo_unwrap({})", call)
                 } else {
                     call
@@ -549,7 +554,7 @@ fn emit_expr(out: &mut String, level: usize, expr: &Expr) -> String {
             if function == "rd" && args.len() == 1 {
                 let arg = emit_expr(out, level, &args[0]);
                 let call = format!("_ilo_rd({})", arg);
-                return if *unwrap {
+                return if unwrap.is_any() {
                     format!("_ilo_unwrap({})", call)
                 } else {
                     call
@@ -559,7 +564,7 @@ fn emit_expr(out: &mut String, level: usize, expr: &Expr) -> String {
                 let path = emit_expr(out, level, &args[0]);
                 let fmt = emit_expr(out, level, &args[1]);
                 let call = format!("_ilo_rd({}, {})", path, fmt);
-                return if *unwrap {
+                return if unwrap.is_any() {
                     format!("_ilo_unwrap({})", call)
                 } else {
                     call
@@ -569,7 +574,7 @@ fn emit_expr(out: &mut String, level: usize, expr: &Expr) -> String {
                 let s = emit_expr(out, level, &args[0]);
                 let fmt = emit_expr(out, level, &args[1]);
                 let call = format!("_ilo_rdb({}, {})", s, fmt);
-                return if *unwrap {
+                return if unwrap.is_any() {
                     format!("_ilo_unwrap({})", call)
                 } else {
                     call
@@ -581,7 +586,7 @@ fn emit_expr(out: &mut String, level: usize, expr: &Expr) -> String {
                     "(lambda p: (\"ok\", open(p).read().splitlines()) if __import__('os.path', fromlist=['']).exists(p) else (\"err\", f\"{{p}}: no such file\"))({})",
                     arg
                 );
-                return if *unwrap {
+                return if unwrap.is_any() {
                     format!("_ilo_unwrap({})", call)
                 } else {
                     call
@@ -594,7 +599,7 @@ fn emit_expr(out: &mut String, level: usize, expr: &Expr) -> String {
                     "(lambda p, c: (open(p, 'w').write(c), (\"ok\", p))[1])({}, {})",
                     pa, content
                 );
-                return if *unwrap {
+                return if unwrap.is_any() {
                     format!("_ilo_unwrap({})", call)
                 } else {
                     call
@@ -607,7 +612,7 @@ fn emit_expr(out: &mut String, level: usize, expr: &Expr) -> String {
                     "(lambda p, ls: (open(p, 'w').write('\\n'.join(ls) + '\\n'), (\"ok\", p))[1])({}, {})",
                     pa, lines
                 );
-                return if *unwrap {
+                return if unwrap.is_any() {
                     format!("_ilo_unwrap({})", call)
                 } else {
                     call
@@ -620,7 +625,7 @@ fn emit_expr(out: &mut String, level: usize, expr: &Expr) -> String {
             if function == "jpar" && args.len() == 1 {
                 let arg = emit_expr(out, level, &args[0]);
                 let call = format!("(lambda s: (\"ok\", __import__('json').loads(s)))({})", arg);
-                return if *unwrap {
+                return if unwrap.is_any() {
                     format!("_ilo_unwrap({})", call)
                 } else {
                     call
@@ -633,7 +638,7 @@ fn emit_expr(out: &mut String, level: usize, expr: &Expr) -> String {
                     "(lambda k: (\"ok\", __import__('os').environ[k]) if k in __import__('os').environ else (\"err\", f\"env var '{{k}}' not set\"))({})",
                     arg
                 );
-                return if *unwrap {
+                return if unwrap.is_any() {
                     format!("_ilo_unwrap({})", call)
                 } else {
                     call
@@ -694,7 +699,7 @@ fn emit_expr(out: &mut String, level: usize, expr: &Expr) -> String {
             }
             let args_str: Vec<String> = args.iter().map(|a| emit_expr(out, level, a)).collect();
             let call = format!("{}({})", py_name(function), args_str.join(", "));
-            if *unwrap {
+            if unwrap.is_any() {
                 format!("_ilo_unwrap({})", call)
             } else {
                 call
@@ -1889,7 +1894,7 @@ mod tests {
                 body: vec![Spanned::unknown(Stmt::Expr(Expr::Call {
                     function: "num".into(),
                     args: vec![Expr::Ref("s".into())],
-                    unwrap: true,
+                    unwrap: UnwrapMode::Propagate,
                 }))],
                 span: Span::UNKNOWN,
             }],
@@ -2045,7 +2050,7 @@ mod tests {
             then_expr: Box::new(Expr::Call {
                 function: "g".into(),
                 args: vec![],
-                unwrap: true,
+                unwrap: UnwrapMode::Propagate,
             }),
             else_expr: Box::new(Expr::Literal(Literal::Number(0.0))),
         };

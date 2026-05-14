@@ -326,6 +326,13 @@ pub(crate) const OP_RECFLD_NAME_SAFE: u8 = 157;
 pub(crate) const OP_RECNEW_EMPTY: u8 = 161; // ABx: R[A] = new record of type Bx, all fields = Nil
 pub(crate) const OP_RECCOPY: u8 = 162; // ABC: R[A] = clone of record R[B] (fresh allocation, fields clone_rc'd)
 pub(crate) const OP_RECSETFIELD: u8 = 163; // ABC: R[A].field[C] = R[B]  (in-place, freshly-allocated A only)
+// `!!` panic-unwrap. Emitted on the cold branch after a failed OP_ISOK /
+// OP_JMPNN, where R[B] is the Err / Nil value that caused the branch. Raises a
+// runtime error formatted as `panic-unwrap: <Err payload>` (Result) or
+// `panic-unwrap: expected value, got nil` (Optional). A=B by convention; only
+// B is read. The opcode is terminal: control never returns from it on the hot
+// path, so register liveness afterwards doesn't matter.
+pub(crate) const OP_PANIC_UNWRAP: u8 = 164;
 
 /// Builtins eligible for tree-bridge dispatch when no specialised VM opcode
 /// matches the call shape. The list is deliberately narrow: it covers the
@@ -649,14 +656,14 @@ impl RegCompiler {
     /// reads from that slice, builds owned `Value`s, calls the interpreter's
     /// `call_function` helper, and stores the result back into `R[A]`.
     ///
-    /// Auto-unwrap (`!`) is supported for Result-returning builtins (`rd`,
-    /// `rdb`); other builtins assume non-Result returns. Verify already
-    /// rejects `!` on non-Result builtins.
+    /// Auto-unwrap (`!` and `!!`) is supported for Result-returning builtins
+    /// (`rd`, `rdb`); other builtins assume non-Result returns. Verify already
+    /// rejects `!` / `!!` on non-Result builtins.
     fn emit_call_builtin_tree(
         &mut self,
         builtin: crate::builtins::Builtin,
         args: &[Expr],
-        unwrap: bool,
+        unwrap: UnwrapMode,
     ) -> u8 {
         // Compile args first to whatever registers the expr compiler picks.
         let arg_regs: Vec<u8> = args.iter().map(|a| self.compile_expr(a)).collect();
@@ -689,23 +696,58 @@ impl RegCompiler {
         // The bridge returns a fully boxed value of unknown shape.
         self.current_all_regs_numeric = false;
 
-        if unwrap {
-            // Result-returning builtins only; verify will have rejected `!`
-            // on a non-Result builtin before reaching here.
+        if unwrap.is_any() {
+            // Result-returning builtins only; verify will have rejected `!` /
+            // `!!` on a non-Result builtin before reaching here.
             debug_assert!(
                 tree_bridge_returns_result(builtin),
                 "auto-unwrap on a non-Result tree-bridge builtin slipped past verify"
             );
-            let check_reg = self.alloc_reg();
-            self.emit_abc(OP_ISOK, check_reg, a, 0);
-            let skip_ret = self.emit_jmpt(check_reg);
-            self.emit_abx(OP_RET, a, 0); // propagate Err
-            self.current.patch_jump(skip_ret);
-            self.emit_abc(OP_UNWRAP, a, a, 0); // extract Ok inner
+            self.emit_result_unwrap(a, unwrap);
             self.next_reg = a + 1;
         }
 
         a
+    }
+
+    /// Emit the unwrap epilogue for a Result-returning call whose result is in
+    /// register `a`. Both `!` (Propagate) and `!!` (Panic) share the OP_ISOK
+    /// branch; they diverge on what the cold arm does:
+    ///
+    ///   - Propagate emits OP_RET to early-return the Err to the caller.
+    ///   - Panic emits OP_PANIC_UNWRAP to abort with a runtime diagnostic.
+    ///
+    /// Both ultimately extract the Ok inner with OP_UNWRAP on the hot branch.
+    fn emit_result_unwrap(&mut self, a: u8, unwrap: UnwrapMode) {
+        debug_assert!(unwrap.is_any(), "emit_result_unwrap called with None");
+        let check_reg = self.alloc_reg();
+        self.emit_abc(OP_ISOK, check_reg, a, 0);
+        let skip_cold = self.emit_jmpt(check_reg);
+        if unwrap.is_panic() {
+            self.emit_abc(OP_PANIC_UNWRAP, a, a, 0);
+        } else {
+            self.emit_abx(OP_RET, a, 0); // propagate Err
+        }
+        self.current.patch_jump(skip_cold);
+        self.emit_abc(OP_UNWRAP, a, a, 0); // extract Ok inner
+    }
+
+    /// Emit the unwrap epilogue for an Optional-returning call whose result is
+    /// in register `a`. Hot branch (non-nil) falls through; cold branch (nil)
+    /// either propagates via OP_RET (Propagate) or aborts via
+    /// OP_PANIC_UNWRAP (Panic). The trailing OP_MOVE acts as a barrier so the
+    /// emit-fn's last_is_ret heuristic doesn't confuse the propagate-RET with
+    /// the function's tail return.
+    fn emit_optional_unwrap(&mut self, a: u8, unwrap: UnwrapMode) {
+        debug_assert!(unwrap.is_any(), "emit_optional_unwrap called with None");
+        let skip_cold = self.emit_abx(OP_JMPNN, a, 0);
+        if unwrap.is_panic() {
+            self.emit_abc(OP_PANIC_UNWRAP, a, a, 0);
+        } else {
+            self.emit_abx(OP_RET, a, 0); // propagate nil
+        }
+        self.current.patch_jump(skip_cold);
+        self.emit_abc(OP_MOVE, a, a, 0);
     }
 
     /// Try to emit a fused CMPK guard for a non-negated guard whose condition is
@@ -1041,7 +1083,7 @@ impl RegCompiler {
                     if let Expr::Call {
                         function,
                         args,
-                        unwrap: false,
+                        unwrap: UnwrapMode::None,
                     } = value
                         && function == "mset"
                         && args.len() == 3
@@ -1826,13 +1868,8 @@ impl RegCompiler {
                             //   so the VM must match that contract here rather
                             //   than letting `Value::Ok(...)` flow on as the
                             //   result of `num! ...`.
-                            if *unwrap {
-                                let check_reg = self.alloc_reg();
-                                self.emit_abc(OP_ISOK, check_reg, ra, 0);
-                                let skip_ret = self.emit_jmpt(check_reg);
-                                self.emit_abx(OP_RET, ra, 0);
-                                self.current.patch_jump(skip_ret);
-                                self.emit_abc(OP_UNWRAP, ra, ra, 0);
+                            if unwrap.is_any() {
+                                self.emit_result_unwrap(ra, *unwrap);
                                 self.next_reg = ra + 1;
                             }
                             return ra;
@@ -2212,13 +2249,8 @@ impl RegCompiler {
                             self.emit_abc(OP_DTFMT, ra, rb, rc);
                             // dtfmt returns R t t — handle auto-unwrap (`!`).
                             // Mirrors the Dtparse handling immediately below.
-                            if *unwrap {
-                                let check_reg = self.alloc_reg();
-                                self.emit_abc(OP_ISOK, check_reg, ra, 0);
-                                let skip_ret = self.emit_jmpt(check_reg);
-                                self.emit_abx(OP_RET, ra, 0);
-                                self.current.patch_jump(skip_ret);
-                                self.emit_abc(OP_UNWRAP, ra, ra, 0);
+                            if unwrap.is_any() {
+                                self.emit_result_unwrap(ra, *unwrap);
                                 self.next_reg = ra + 1;
                             }
                             return ra;
@@ -2228,13 +2260,8 @@ impl RegCompiler {
                             let rc = self.compile_expr(&args[1]);
                             let ra = self.alloc_reg();
                             self.emit_abc(OP_DTPARSE, ra, rb, rc);
-                            if *unwrap {
-                                let check_reg = self.alloc_reg();
-                                self.emit_abc(OP_ISOK, check_reg, ra, 0);
-                                let skip_ret = self.emit_jmpt(check_reg);
-                                self.emit_abx(OP_RET, ra, 0);
-                                self.current.patch_jump(skip_ret);
-                                self.emit_abc(OP_UNWRAP, ra, ra, 0);
+                            if unwrap.is_any() {
+                                self.emit_result_unwrap(ra, *unwrap);
                                 self.next_reg = ra + 1;
                             }
                             return ra;
@@ -2260,13 +2287,8 @@ impl RegCompiler {
                             let ra = self.alloc_reg();
                             self.emit_abc(OP_ENV, ra, rb, 0);
                             // env returns R t t — handle auto-unwrap
-                            if *unwrap {
-                                let check_reg = self.alloc_reg();
-                                self.emit_abc(OP_ISOK, check_reg, ra, 0);
-                                let skip_ret = self.emit_jmpt(check_reg);
-                                self.emit_abx(OP_RET, ra, 0);
-                                self.current.patch_jump(skip_ret);
-                                self.emit_abc(OP_UNWRAP, ra, ra, 0);
+                            if unwrap.is_any() {
+                                self.emit_result_unwrap(ra, *unwrap);
                                 self.next_reg = ra + 1;
                             }
                             return ra;
@@ -2276,13 +2298,8 @@ impl RegCompiler {
                             let ra = self.alloc_reg();
                             self.emit_abc(OP_GET, ra, rb, 0);
                             // get returns R t t — handle auto-unwrap
-                            if *unwrap {
-                                let check_reg = self.alloc_reg();
-                                self.emit_abc(OP_ISOK, check_reg, ra, 0);
-                                let skip_ret = self.emit_jmpt(check_reg);
-                                self.emit_abx(OP_RET, ra, 0);
-                                self.current.patch_jump(skip_ret);
-                                self.emit_abc(OP_UNWRAP, ra, ra, 0);
+                            if unwrap.is_any() {
+                                self.emit_result_unwrap(ra, *unwrap);
                                 self.next_reg = ra + 1;
                             }
                             return ra;
@@ -2293,13 +2310,8 @@ impl RegCompiler {
                             let ra = self.alloc_reg();
                             self.emit_abc(OP_POST, ra, rb, rc);
                             // post returns R t t — handle auto-unwrap
-                            if *unwrap {
-                                let check_reg = self.alloc_reg();
-                                self.emit_abc(OP_ISOK, check_reg, ra, 0);
-                                let skip_ret = self.emit_jmpt(check_reg);
-                                self.emit_abx(OP_RET, ra, 0);
-                                self.current.patch_jump(skip_ret);
-                                self.emit_abc(OP_UNWRAP, ra, ra, 0);
+                            if unwrap.is_any() {
+                                self.emit_result_unwrap(ra, *unwrap);
                                 self.next_reg = ra + 1;
                             }
                             return ra;
@@ -2310,13 +2322,8 @@ impl RegCompiler {
                             let rc = self.compile_expr(&args[1]);
                             let ra = self.alloc_reg();
                             self.emit_abc(OP_GETH, ra, rb, rc);
-                            if *unwrap {
-                                let check_reg = self.alloc_reg();
-                                self.emit_abc(OP_ISOK, check_reg, ra, 0);
-                                let skip_ret = self.emit_jmpt(check_reg);
-                                self.emit_abx(OP_RET, ra, 0);
-                                self.current.patch_jump(skip_ret);
-                                self.emit_abc(OP_UNWRAP, ra, ra, 0);
+                            if unwrap.is_any() {
+                                self.emit_result_unwrap(ra, *unwrap);
                                 self.next_reg = ra + 1;
                             }
                             return ra;
@@ -2340,13 +2347,8 @@ impl RegCompiler {
                             self.emit_abc(OP_POSTH, ra, rb, r_body);
                             // data word carries headers reg in the A field; dispatch reads and skips it
                             self.emit_abc(0, r_hdrs, 0, 0);
-                            if *unwrap {
-                                let check_reg = self.alloc_reg();
-                                self.emit_abc(OP_ISOK, check_reg, ra, 0);
-                                let skip_ret = self.emit_jmpt(check_reg);
-                                self.emit_abx(OP_RET, ra, 0);
-                                self.current.patch_jump(skip_ret);
-                                self.emit_abc(OP_UNWRAP, ra, ra, 0);
+                            if unwrap.is_any() {
+                                self.emit_result_unwrap(ra, *unwrap);
                                 self.next_reg = ra + 1;
                             }
                             return ra;
@@ -2356,13 +2358,8 @@ impl RegCompiler {
                             let rc = self.compile_expr(&args[1]);
                             let ra = self.alloc_reg();
                             self.emit_abc(OP_JPTH, ra, rb, rc);
-                            if *unwrap {
-                                let check_reg = self.alloc_reg();
-                                self.emit_abc(OP_ISOK, check_reg, ra, 0);
-                                let skip_ret = self.emit_jmpt(check_reg);
-                                self.emit_abx(OP_RET, ra, 0);
-                                self.current.patch_jump(skip_ret);
-                                self.emit_abc(OP_UNWRAP, ra, ra, 0);
+                            if unwrap.is_any() {
+                                self.emit_result_unwrap(ra, *unwrap);
                                 self.next_reg = ra + 1;
                             }
                             return ra;
@@ -2455,13 +2452,8 @@ impl RegCompiler {
                                 OP_RD
                             };
                             self.emit_abc(op, ra, rb, 0);
-                            if *unwrap {
-                                let check_reg = self.alloc_reg();
-                                self.emit_abc(OP_ISOK, check_reg, ra, 0);
-                                let skip_ret = self.emit_jmpt(check_reg);
-                                self.emit_abx(OP_RET, ra, 0);
-                                self.current.patch_jump(skip_ret);
-                                self.emit_abc(OP_UNWRAP, ra, ra, 0);
+                            if unwrap.is_any() {
+                                self.emit_result_unwrap(ra, *unwrap);
                                 self.next_reg = ra + 1;
                             }
                             return ra;
@@ -2477,13 +2469,8 @@ impl RegCompiler {
                                 OP_WRL
                             };
                             self.emit_abc(op, ra, rb, rc);
-                            if *unwrap {
-                                let check_reg = self.alloc_reg();
-                                self.emit_abc(OP_ISOK, check_reg, ra, 0);
-                                let skip_ret = self.emit_jmpt(check_reg);
-                                self.emit_abx(OP_RET, ra, 0);
-                                self.current.patch_jump(skip_ret);
-                                self.emit_abc(OP_UNWRAP, ra, ra, 0);
+                            if unwrap.is_any() {
+                                self.emit_result_unwrap(ra, *unwrap);
                                 self.next_reg = ra + 1;
                             }
                             return ra;
@@ -2514,13 +2501,8 @@ impl RegCompiler {
                                 }
                                 let ra = self.alloc_reg();
                                 self.emit_abc(OP_WR, ra, rpath, rcontent);
-                                if *unwrap {
-                                    let check_reg = self.alloc_reg();
-                                    self.emit_abc(OP_ISOK, check_reg, ra, 0);
-                                    let skip_ret = self.emit_jmpt(check_reg);
-                                    self.emit_abx(OP_RET, ra, 0);
-                                    self.current.patch_jump(skip_ret);
-                                    self.emit_abc(OP_UNWRAP, ra, ra, 0);
+                                if unwrap.is_any() {
+                                    self.emit_result_unwrap(ra, *unwrap);
                                     self.next_reg = ra + 1;
                                 }
                                 return ra;
@@ -2538,13 +2520,8 @@ impl RegCompiler {
                             let rb = self.compile_expr(&args[0]);
                             let ra = self.alloc_reg();
                             self.emit_abc(OP_JPAR, ra, rb, 0);
-                            if *unwrap {
-                                let check_reg = self.alloc_reg();
-                                self.emit_abc(OP_ISOK, check_reg, ra, 0);
-                                let skip_ret = self.emit_jmpt(check_reg);
-                                self.emit_abx(OP_RET, ra, 0);
-                                self.current.patch_jump(skip_ret);
-                                self.emit_abc(OP_UNWRAP, ra, ra, 0);
+                            if unwrap.is_any() {
+                                self.emit_result_unwrap(ra, *unwrap);
                                 self.next_reg = ra + 1;
                             }
                             return ra;
@@ -2575,11 +2552,8 @@ impl RegCompiler {
                             // Trailing OP_MOVE ra, ra acts as a barrier so the
                             // function-emit check (`last_is_ret`) doesn't treat
                             // the propagate-RET as the function's tail return.
-                            if *unwrap {
-                                let skip_ret = self.emit_abx(OP_JMPNN, ra, 0);
-                                self.emit_abx(OP_RET, ra, 0);
-                                self.current.patch_jump(skip_ret);
-                                self.emit_abc(OP_MOVE, ra, ra, 0);
+                            if unwrap.is_any() {
+                                self.emit_optional_unwrap(ra, *unwrap);
                                 self.next_reg = ra + 1;
                             }
                             return ra;
@@ -2700,31 +2674,18 @@ impl RegCompiler {
                 // After call, only the result register is live
                 self.next_reg = a + 1;
 
-                // Auto-unwrap:
-                //   Result: Ok(v)→v, Err(e)→return Err to caller
-                //   Optional: Some(v)→v, Nil→return Nil to caller
-                if *unwrap {
+                // Auto-unwrap (`!` propagate, `!!` panic):
+                //   Result:   Ok(v)→v; Err(e) → RET or PANIC_UNWRAP
+                //   Optional: Some(v)→v; Nil  → RET or PANIC_UNWRAP
+                if unwrap.is_any() {
                     let is_optional = func_idx < self.func_return_types.len()
                         && matches!(self.func_return_types[func_idx], Type::Optional(_));
                     if is_optional {
-                        // Optional propagation: jump over the RET if non-nil.
-                        // Trailing OP_MOVE a, a is a no-op barrier so the
-                        // function-emit `last_is_ret` check doesn't mistake the
-                        // propagate-RET for the function's tail return.
-                        let skip_ret = self.emit_abx(OP_JMPNN, a, 0);
-                        self.emit_abx(OP_RET, a, 0); // propagate nil
-                        self.current.patch_jump(skip_ret);
-                        self.emit_abc(OP_MOVE, a, a, 0);
-                        self.next_reg = a + 1;
+                        self.emit_optional_unwrap(a, *unwrap);
                     } else {
-                        let check_reg = self.alloc_reg();
-                        self.emit_abc(OP_ISOK, check_reg, a, 0);
-                        let skip_ret = self.emit_jmpt(check_reg);
-                        self.emit_abx(OP_RET, a, 0); // propagate Err
-                        self.current.patch_jump(skip_ret);
-                        self.emit_abc(OP_UNWRAP, a, a, 0); // extract Ok inner
-                        self.next_reg = a + 1; // only result register live
+                        self.emit_result_unwrap(a, *unwrap);
                     }
+                    self.next_reg = a + 1;
                 }
 
                 a
@@ -5107,6 +5068,43 @@ impl<'a> VM<'a> {
                         }
                     };
                     reg_set!(a, inner);
+                }
+                OP_PANIC_UNWRAP => {
+                    // `!!` panic-unwrap. Emitted on the cold branch after
+                    // OP_ISOK / OP_JMPNN already ruled out Ok / non-nil, so we
+                    // know R[B] is Err(_) or Nil. Raise a runtime error with a
+                    // diagnostic-style message; the CLI runner turns this into
+                    // stderr + exit 1 (matches the contract established by
+                    // #254's JIT_RUNTIME_ERROR channel and the tree-walker
+                    // ILO-R026 path in interpreter::eval_expr).
+                    let b = ((inst >> 8) & 0xFF) as usize + base;
+                    let v = reg!(b);
+                    let msg = if v.0 == TAG_NIL {
+                        "panic-unwrap: expected value, got nil".to_string()
+                    } else if v.is_heap() {
+                        // SAFETY: `is_heap()` is true, so `v` is a live heap-
+                        // tagged NanVal whose RC is held by the register and
+                        // can be dereferenced for the duration of this match.
+                        // The expected variant is `HeapObj::ErrVal` (codegen
+                        // emits OP_PANIC_UNWRAP only on the cold branch of
+                        // OP_ISOK against a Result-typed callee), but the
+                        // match is defensive: any other heap shape falls
+                        // through to the "unexpected value" diagnostic
+                        // without UB.
+                        let inner = unsafe {
+                            match v.as_heap_ref() {
+                                HeapObj::ErrVal(inner) => Some(*inner),
+                                _ => None,
+                            }
+                        };
+                        match inner {
+                            Some(inner) => format!("panic-unwrap: {}", inner.to_value()),
+                            None => "panic-unwrap: unexpected value".to_string(),
+                        }
+                    } else {
+                        "panic-unwrap: unexpected value".to_string()
+                    };
+                    vm_err!(VmError::Runtime(msg));
                 }
                 OP_RECFLD => {
                     let a = ((inst >> 16) & 0xFF) as usize + base;
@@ -8972,6 +8970,47 @@ pub(crate) extern "C" fn jit_unwrap(v: u64) -> u64 {
             }
         }
     }
+}
+
+/// Cranelift counterpart of `OP_PANIC_UNWRAP`. Always sets `JIT_RUNTIME_ERROR`
+/// (Nil → "expected value, got nil"; Err(inner) → "panic-unwrap: <inner>"),
+/// then returns `TAG_NIL`. The dispatch in `jit_cranelift.rs` emits an
+/// immediate `return` after calling this so control never reads the returned
+/// value; the post-call `jit_take_runtime_error` in `compile_and_call` surfaces
+/// the runtime error to the caller, matching the contract established by #254.
+#[cfg(feature = "cranelift")]
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn jit_panic_unwrap(v: u64) -> u64 {
+    let nv = NanVal(v);
+    if nv.0 == TAG_NIL {
+        jit_set_runtime_error(VmError::Runtime(
+            "panic-unwrap: expected value, got nil".to_string(),
+        ));
+        return TAG_NIL;
+    }
+    if nv.is_heap() {
+        let inner_val: Option<Value> = unsafe {
+            match nv.as_heap_ref() {
+                HeapObj::ErrVal(inner) => Some(inner.to_value()),
+                _ => None,
+            }
+        };
+        match inner_val {
+            Some(val) => {
+                jit_set_runtime_error(VmError::Runtime(format!("panic-unwrap: {val}")));
+            }
+            None => {
+                jit_set_runtime_error(VmError::Runtime(
+                    "panic-unwrap: unexpected value".to_string(),
+                ));
+            }
+        }
+        return TAG_NIL;
+    }
+    jit_set_runtime_error(VmError::Runtime(
+        "panic-unwrap: unexpected value".to_string(),
+    ));
+    TAG_NIL
 }
 
 #[cfg(feature = "cranelift")]

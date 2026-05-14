@@ -236,6 +236,40 @@ pub enum Pattern {
     TypeIs { ty: Type, binding: String },
 }
 
+/// Auto-unwrap mode on `Expr::Call`. See `Expr::Call` for full semantics.
+///
+/// Stored as a single field instead of paired booleans so the type system
+/// enforces "propagate" and "panic" are mutually exclusive — every call site
+/// holds exactly one mode, never two flags that could drift apart.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum UnwrapMode {
+    /// No auto-unwrap.
+    #[default]
+    None,
+    /// `func! args` — on Err/nil, early-return to the enclosing function.
+    Propagate,
+    /// `func!! args` — on Err/nil, abort with diagnostic + exit 1.
+    Panic,
+}
+
+impl UnwrapMode {
+    /// True for `!` (propagate via early-return).
+    pub fn is_propagate(self) -> bool {
+        matches!(self, UnwrapMode::Propagate)
+    }
+
+    /// True for `!!` (abort with diagnostic + exit 1).
+    pub fn is_panic(self) -> bool {
+        matches!(self, UnwrapMode::Panic)
+    }
+
+    /// True if either `!` or `!!` is in effect — i.e. the call result must be
+    /// unwrapped (Result → inner, Optional → inner) one way or another.
+    pub fn is_any(self) -> bool {
+        !matches!(self, UnwrapMode::None)
+    }
+}
+
 /// Expressions
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Expr {
@@ -259,13 +293,21 @@ pub enum Expr {
     },
 
     /// Function call with positional args: `func arg1 arg2`
-    /// When `unwrap` is true, `func! args` auto-unwraps Result:
-    /// Ok(v) → v, Err(e) → propagate Err to enclosing function.
+    ///
+    /// The `unwrap` field controls auto-unwrap behaviour on Result / Optional returns:
+    /// - `UnwrapMode::None`: no auto-unwrap. The call result passes through verbatim.
+    /// - `UnwrapMode::Propagate` (written `func! args`): on `~v` / non-nil → inner value;
+    ///   on `^e` / nil → early-return that value as the enclosing function's return.
+    ///   Verifier enforces the enclosing function's return type can carry the
+    ///   propagated value (R for Result-returning callee, O / Nil / Unknown for Optional).
+    /// - `UnwrapMode::Panic` (written `func!! args`): on `~v` / non-nil → inner value;
+    ///   on `^e` / nil → abort with diagnostic + exit 1 via the runtime-error channel.
+    ///   No enclosing-return constraint.
     Call {
         function: String,
         args: Vec<Expr>,
         #[serde(default)]
-        unwrap: bool,
+        unwrap: UnwrapMode,
     },
 
     /// Prefix binary op: `+a b`, `*a b`
@@ -701,12 +743,12 @@ mod tests {
                     condition: Expr::Call {
                         function: "length".to_string(),
                         args: vec![Expr::Ref("x".to_string())],
-                        unwrap: false,
+                        unwrap: UnwrapMode::None,
                     },
                     body: vec![Spanned::unknown(Stmt::Expr(Expr::Call {
                         function: "length".to_string(),
                         args: vec![Expr::Ref("y".to_string())],
-                        unwrap: false,
+                        unwrap: UnwrapMode::None,
                     }))],
                 })],
                 span: Span::UNKNOWN,
@@ -745,7 +787,7 @@ mod tests {
                 body: vec![Spanned::unknown(Stmt::Return(Expr::Call {
                     function: "length".to_string(),
                     args: vec![Expr::Ref("x".to_string())],
-                    unwrap: false,
+                    unwrap: UnwrapMode::None,
                 }))],
                 span: Span::UNKNOWN,
             }],
@@ -774,7 +816,7 @@ mod tests {
                     value: Expr::Call {
                         function: "length".to_string(),
                         args: vec![Expr::Ref("x".to_string())],
-                        unwrap: false,
+                        unwrap: UnwrapMode::None,
                     },
                 })],
                 span: Span::UNKNOWN,
@@ -806,7 +848,7 @@ mod tests {
                 body: vec![Spanned::unknown(Stmt::Break(Some(Expr::Call {
                     function: "length".to_string(),
                     args: vec![Expr::Ref("x".to_string())],
-                    unwrap: false,
+                    unwrap: UnwrapMode::None,
                 })))],
                 span: Span::UNKNOWN,
             }],
@@ -854,12 +896,12 @@ mod tests {
                     value: Box::new(Expr::Call {
                         function: "length".to_string(),
                         args: vec![Expr::Ref("x".to_string())],
-                        unwrap: false,
+                        unwrap: UnwrapMode::None,
                     }),
                     default: Box::new(Expr::Call {
                         function: "reverse".to_string(),
                         args: vec![Expr::Ref("y".to_string())],
-                        unwrap: false,
+                        unwrap: UnwrapMode::None,
                     }),
                 }))],
                 span: Span::UNKNOWN,
@@ -898,7 +940,7 @@ mod tests {
                         Expr::Call {
                             function: "length".to_string(),
                             args: vec![Expr::Ref("a".to_string())],
-                            unwrap: false,
+                            unwrap: UnwrapMode::None,
                         },
                     )],
                 }))],
@@ -931,14 +973,14 @@ mod tests {
                     subject: Some(Box::new(Expr::Call {
                         function: "length".to_string(),
                         args: vec![Expr::Ref("x".to_string())],
-                        unwrap: false,
+                        unwrap: UnwrapMode::None,
                     })),
                     arms: vec![MatchArm {
                         pattern: Pattern::Wildcard,
                         body: vec![Spanned::unknown(Stmt::Expr(Expr::Call {
                             function: "reverse".to_string(),
                             args: vec![Expr::Ref("y".to_string())],
-                            unwrap: false,
+                            unwrap: UnwrapMode::None,
                         }))],
                     }],
                 }))],
@@ -978,14 +1020,14 @@ mod tests {
                     object: Box::new(Expr::Call {
                         function: "length".to_string(),
                         args: vec![Expr::Ref("x".to_string())],
-                        unwrap: false,
+                        unwrap: UnwrapMode::None,
                     }),
                     updates: vec![(
                         "a".to_string(),
                         Expr::Call {
                             function: "reverse".to_string(),
                             args: vec![Expr::Ref("y".to_string())],
-                            unwrap: false,
+                            unwrap: UnwrapMode::None,
                         },
                     )],
                 }))],
@@ -1049,7 +1091,7 @@ mod tests {
                         body: vec![Spanned::unknown(Stmt::Expr(Expr::Call {
                             function: "len".to_string(),
                             args: vec![Expr::Ref("x".to_string())],
-                            unwrap: false,
+                            unwrap: UnwrapMode::None,
                         }))],
                     }],
                 })],
@@ -1085,7 +1127,7 @@ mod tests {
                         body: vec![Spanned::unknown(Stmt::Expr(Expr::Call {
                             function: "len".to_string(),
                             args: vec![Expr::Ref("y".to_string())],
-                            unwrap: false,
+                            unwrap: UnwrapMode::None,
                         }))],
                     }],
                 }))],

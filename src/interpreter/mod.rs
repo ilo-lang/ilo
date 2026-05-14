@@ -3791,7 +3791,7 @@ fn match_self_rebind_mset<'a>(name: &str, value: &'a Expr) -> Option<(&'a Expr, 
         args,
         unwrap,
     } = value
-        && !*unwrap
+        && !unwrap.is_any()
         && function == "mset"
         && args.len() == 3
         && let Expr::Ref(arg_name) = &args[0]
@@ -4131,8 +4131,9 @@ fn eval_expr(env: &mut Env, expr: &Expr) -> Result<Value> {
             };
             arg_vals.extend(extra_captures);
             let result = call_function(env, &callee, arg_vals)?;
-            if *unwrap {
-                match result {
+            match *unwrap {
+                UnwrapMode::None => Ok(result),
+                UnwrapMode::Propagate => match result {
                     Value::Ok(v) => Ok(*v),
                     Value::Err(e) => Err(RuntimeError {
                         propagate_value: Some(Box::new(Value::Err(e))),
@@ -4146,9 +4147,23 @@ fn eval_expr(env: &mut Env, expr: &Expr) -> Result<Value> {
                         ..RuntimeError::new("ILO-R014", "auto-unwrap propagating nil")
                     }),
                     other => Ok(other), // non-Result/non-nil values pass through
-                }
-            } else {
-                Ok(result)
+                },
+                // `!!` panic-unwrap: on Err/nil, abort with diagnostic + exit 1.
+                // Surfaces as a regular RuntimeError (no propagate_value), which
+                // bubbles to the CLI runner and produces stderr + exit 1, matching
+                // the cross-engine error-channel contract established in #254.
+                UnwrapMode::Panic => match result {
+                    Value::Ok(v) => Ok(*v),
+                    Value::Err(e) => Err(RuntimeError::new(
+                        "ILO-R026",
+                        format!("panic-unwrap: {}", *e),
+                    )),
+                    Value::Nil => Err(RuntimeError::new(
+                        "ILO-R026",
+                        "panic-unwrap: expected value, got nil".to_string(),
+                    )),
+                    other => Ok(other), // non-Result/non-nil pass through (matches `!`)
+                },
             }
         }
         Expr::BinOp { op, left, right } => {
@@ -5752,7 +5767,7 @@ mod tests {
                             value: Expr::Call {
                                 function: "inner".to_string(),
                                 args: vec![Expr::Ref("x".to_string())],
-                                unwrap: true,
+                                unwrap: UnwrapMode::Propagate,
                             },
                         }),
                         Spanned::unknown(Stmt::Expr(Expr::Ok(Box::new(Expr::Ref(
@@ -5797,7 +5812,7 @@ mod tests {
                     value: Expr::Call {
                         function: callee.to_string(),
                         args: vec![Expr::Ref("x".to_string())],
-                        unwrap: true,
+                        unwrap: UnwrapMode::Propagate,
                     },
                 }),
                 Spanned::unknown(Stmt::Expr(Expr::Ok(Box::new(Expr::Ref("d".to_string()))))),
