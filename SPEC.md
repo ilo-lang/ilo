@@ -561,7 +561,8 @@ Match replaces `switch`. There is no fall-through — each arm is independent. T
 | `ret expr` | early return from function |
 | `~expr` | return ok |
 | `^expr` | return err |
-| `func! args` | call + auto-unwrap Result |
+| `func! args` | call + auto-unwrap Result, propagate Err to caller |
+| `func!! args` | call + auto-unwrap Result, abort on Err with exit 1 |
 | `wh cond{body}` | while loop |
 | `brk` / `brk expr` | exit enclosing loop (optional value) |
 | `cnt` | skip to next iteration of enclosing loop |
@@ -947,10 +948,30 @@ outer x:n>R n t;d=inner! x;~d
 Equivalent to `r=inner x;?r{~v:v;^e:^e}` but in 1 token instead of 12.
 
 Rules:
-- The called function must return `R` (else verifier error ILO-T025)
-- The enclosing function must return `R` (else verifier error ILO-T026)
+- The called function must return `R` or `O` (else verifier error ILO-T025)
+- The enclosing function must return `R` (or `O` for Optional callees) (else verifier error ILO-T026)
 - `!` goes after the function name, before args: `get! url` not `get url!`
 - Zero-arg: `fetch!()`
+
+### Panic-Unwrap `!!`
+
+`func!! args` is symmetric in shape with `!`, but on the failure path it aborts the program with a runtime diagnostic and exit code 1 instead of propagating. There is no enclosing-return-type constraint, so persona code can use it from `main>t`, `main>n`, or any non-Result / non-Optional context.
+
+```
+main>t;rdl!! "input.txt"            -- read file, abort with diagnostic if missing
+main>n;v=num!! "42";v               -- parse number, abort on parse error
+main>n;m=mset mmap "k" 7;mget!! m "k"   -- get value or abort if key missing
+```
+
+On `^e` (Err) the program writes `panic-unwrap: <Err payload>` to stderr and exits 1. On `O nil` the program writes `panic-unwrap: expected value, got nil`. On `~v` (Ok) or non-nil Optional, the inner value is extracted, identical to `!`.
+
+Rules:
+- The called function must return `R` or `O` (else verifier error ILO-T025)
+- **No constraint on the enclosing function's return type** — this is the difference from `!`
+- `!!` goes after the function name, before args: `rdl!! path` not `rdl path!!`
+- Zero-arg: `fetch!!()`
+
+Use `!` when the caller wants to react to the Err (compensate, retry, log). Use `!!` when the failure is a programming or environmental error the caller has no way to recover from — typical in short scripts, glue code, and main entry points.
 
 ---
 
