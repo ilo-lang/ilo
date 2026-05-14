@@ -581,9 +581,11 @@ Match replaces `switch`. There is no fall-through — each arm is independent. T
 | `t v:body` | text — branch if value is text, bind to `v` |
 | `b v:body` | bool — branch if value is a bool, bind to `v` |
 | `l v:body` | list — branch if value is a list, bind to `v` |
-| `_:body` | wildcard |
+| `_:body` | wildcard, binds matched subject to `_` |
 
 Arms separated by `;`. First match wins.
+
+In any binding position the name `_` is permitted and binds normally — `~_:body`, `^_:body`, `n _:body` etc. expose the matched inner value to `body` under the name `_`. Bodies that don't reference `_` are unaffected.
 
 ```
 cls sp:n>t;>=sp 1000 "gold";>=sp 500 "silver";"bronze"

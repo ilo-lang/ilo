@@ -1478,8 +1478,18 @@ impl RegCompiler {
             let saved_next = self.next_reg;
             let saved_locals = self.locals.len();
 
+            // `_` is always bound to the matched inner value (or to the
+            // subject itself for Pattern::Wildcard) — see SPEC.md line 1069's
+            // `~_:~_`. Wildcard arms compose like named arms at zero extra
+            // tokens; bodies that never reference `_` are unaffected.
             match &arm.pattern {
                 Pattern::Wildcard => {
+                    // Plain `_:body` — bind `_` to the subject so bodies can
+                    // reference the matched value.
+                    let bind_reg = self.alloc_reg();
+                    self.emit_abc(OP_MOVE, bind_reg, sub_reg, 0);
+                    self.add_local("_", bind_reg);
+
                     let body_result = self.compile_body(&arm.body);
                     if let Some(br) = body_result
                         && br != result_reg
@@ -1499,11 +1509,9 @@ impl RegCompiler {
                     self.emit_abc(OP_ISOK, test_reg, sub_reg, 0);
                     let skip = self.emit_jmpf(test_reg);
 
-                    if binding != "_" {
-                        let bind_reg = self.alloc_reg();
-                        self.emit_abc(OP_UNWRAP, bind_reg, sub_reg, 0);
-                        self.add_local(binding, bind_reg);
-                    }
+                    let bind_reg = self.alloc_reg();
+                    self.emit_abc(OP_UNWRAP, bind_reg, sub_reg, 0);
+                    self.add_local(binding, bind_reg);
 
                     let body_result = self.compile_body(&arm.body);
                     if let Some(br) = body_result
@@ -1520,11 +1528,9 @@ impl RegCompiler {
                     self.emit_abc(OP_ISERR, test_reg, sub_reg, 0);
                     let skip = self.emit_jmpf(test_reg);
 
-                    if binding != "_" {
-                        let bind_reg = self.alloc_reg();
-                        self.emit_abc(OP_UNWRAP, bind_reg, sub_reg, 0);
-                        self.add_local(binding, bind_reg);
-                    }
+                    let bind_reg = self.alloc_reg();
+                    self.emit_abc(OP_UNWRAP, bind_reg, sub_reg, 0);
+                    self.add_local(binding, bind_reg);
 
                     let body_result = self.compile_body(&arm.body);
                     if let Some(br) = body_result
@@ -1572,11 +1578,9 @@ impl RegCompiler {
                     self.emit_abc(opcode, test_reg, sub_reg, 0);
                     let skip = self.emit_jmpf(test_reg);
 
-                    if binding != "_" {
-                        let bind_reg = self.alloc_reg();
-                        self.emit_abc(OP_MOVE, bind_reg, sub_reg, 0);
-                        self.locals.push((binding.clone(), bind_reg));
-                    }
+                    let bind_reg = self.alloc_reg();
+                    self.emit_abc(OP_MOVE, bind_reg, sub_reg, 0);
+                    self.locals.push((binding.clone(), bind_reg));
                     let body_result = self.compile_body(&arm.body);
                     if let Some(br) = body_result
                         && br != result_reg
