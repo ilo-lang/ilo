@@ -1,0 +1,43 @@
+-- `!!` panic-unwrap: same shape as `!`, but on Err / nil the program aborts
+-- with a diagnostic + exit 1 instead of propagating to the enclosing fn.
+--
+-- Why this matters for token-minimal AI agents:
+--   Persona writes a one-shot script that needs to read a file or parse a
+--   number. With `!`, the persona is forced to declare `>R t t` + wrap
+--   the result with `~v`, and every call up the chain becomes R-typed.
+--   With `!!`, the persona keeps the natural `main >t` signature, and on
+--   the failure path the runtime aborts with a clean diagnostic. No viral
+--   R-typing, no boilerplate `~v` tail wraps.
+--
+-- Behaviour pinned here:
+--   - Result happy path (`num!! "42"`) extracts the inner value.
+--   - Result Err path (`num!! "abc"`) aborts with `panic-unwrap: abc` on
+--     stderr and exit 1.
+--   - Optional happy path (`mget!! m "k"`) returns the inner value when
+--     present.
+--   - Optional nil path (`mget!! m "missing"`) aborts with
+--     `panic-unwrap: expected value, got nil` on stderr and exit 1.
+--   - All four behaviours match across tree, VM, Cranelift.
+
+-- Happy path: Result. `num!! "42"` returns 42 as `n` (no R wrapper).
+parse-ok>n;num!! "42"
+
+-- Err path: Result. `num!! "abc"` aborts with stderr diagnostic + exit 1.
+parse-err>n;num!! "abc"
+
+-- Happy path: Optional. `mget!! m "k"` returns the value for present keys.
+mget-hit>n;m=mset mmap "k" 7;mget!! m "k"
+
+-- Nil path: Optional. `mget!! m "missing"` aborts on a missing key.
+mget-miss>n;m=mset mmap "k" 7;mget!! m "missing"
+
+-- The examples harness only exercises the happy paths. The Err / nil
+-- aborts emit a JSON-formatted runtime diagnostic on stderr that this
+-- file's `-- err:` matcher can't pin against; that surface is covered by
+-- `tests/regression_bangbang.rs` instead, which asserts substrings.
+
+-- run: parse-ok
+-- out: 42
+
+-- run: mget-hit
+-- out: 7
