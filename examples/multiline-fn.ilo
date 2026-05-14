@@ -10,6 +10,6 @@ nums>L n
   [1,2,3]
 
 -- run: greet "world"
--- out: ~hello world
+-- out: hello world
 -- run: nums
 -- out: [1, 2, 3]

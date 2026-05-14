@@ -11,6 +11,6 @@ fmtday e:n>R t t;dtfmt e "%Y-%m-%d"
 parseday s:t>R n t;v=dtparse! s "%Y-%m-%d";~v
 
 -- run: fmtday 0
--- out: ~1970-01-01
+-- out: 1970-01-01
 -- run: fmtday 1735689600
--- out: ~2025-01-01
+-- out: 2025-01-01

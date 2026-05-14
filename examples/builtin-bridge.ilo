@@ -30,4 +30,4 @@ b,2" "csv"
 -- run: sentence
 -- out: 3 hits across 1 files
 -- run: parsed
--- out: ~[[a, 1], [b, 2]]
+-- out: [[a, 1], [b, 2]]

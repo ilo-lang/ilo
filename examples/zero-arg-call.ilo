@@ -33,4 +33,4 @@ unwrap-len>R n t;~len fetch!()
 -- run: sum-via-loop
 -- out: 60
 -- run: unwrap-len
--- out: ~2
+-- out: 2

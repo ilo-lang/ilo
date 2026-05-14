@@ -27,8 +27,9 @@ main x:t>R _ t;mytool x"#;
         String::from_utf8_lossy(&out.stderr)
     );
     let stdout = String::from_utf8_lossy(&out.stdout);
-    // stub returns ~nil which displays as "~nil"
-    assert_eq!(stdout.trim(), "~nil");
+    // stub returns ~nil; top-level print strips the `~` wrapper per the
+    // symmetric stdout/stderr split (see regression_main_ok_stdout_bare.rs).
+    assert_eq!(stdout.trim(), "nil");
 }
 
 /// Same program via the register VM.
@@ -46,7 +47,8 @@ main x:t>R _ t;mytool x"#;
         String::from_utf8_lossy(&out.stderr)
     );
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert_eq!(stdout.trim(), "~nil");
+    // Top-level Value::Ok prints bare (see regression_main_ok_stdout_bare.rs).
+    assert_eq!(stdout.trim(), "nil");
 }
 
 // ── --tools flag requires a path ────────────────────────────────────────────
@@ -188,7 +190,7 @@ f>R _ t;mytool "test""#;
         "stderr: {}",
         String::from_utf8_lossy(&out.stderr)
     );
-    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "~nil");
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "nil");
 }
 
 /// Multiple tool declarations — all return stubs.
@@ -206,7 +208,7 @@ f>R _ t;b "test""#;
         "stderr: {}",
         String::from_utf8_lossy(&out.stderr)
     );
-    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "~nil");
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "nil");
 }
 
 // ── Ignored: real HTTP test ───────────────────────────────────────────────

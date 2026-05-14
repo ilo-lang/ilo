@@ -42,9 +42,14 @@ const PARENS_AROUND_ATOM: &str = "f>R (n) t;~1";
 const FLAT_RESULT: &str = "f>R n t;~1";
 
 fn check_all(engine: &str) {
+    // Top-level Value::Ok prints bare on stdout (the leading `~` is stripped
+    // by the symmetric stdout/stderr split — see
+    // regression_main_ok_stdout_bare.rs). Nested `Value::Ok` inside a list
+    // keeps its `~` because Display formatting is unchanged for non-top-level
+    // contexts.
     assert_eq!(
         run(engine, RESULT_OF_LIST, "f"),
-        "~[1, 2, 3]",
+        "[1, 2, 3]",
         "R (L n) t engine={engine}"
     );
     assert_eq!(
@@ -59,17 +64,17 @@ fn check_all(engine: &str) {
     );
     assert_eq!(
         run(engine, TRIPLE_NESTED, "f"),
-        "~[~1, ~2]",
-        "R (L (R n t)) t engine={engine}"
+        "[~1, ~2]",
+        "R (L (R n t)) t engine={engine} — outer `~` stripped, inner `~`s kept"
     );
     assert_eq!(
         run(engine, PARENS_AROUND_ATOM, "f"),
-        "~1",
+        "1",
         "R (n) t engine={engine}"
     );
     assert_eq!(
         run(engine, FLAT_RESULT, "f"),
-        "~1",
+        "1",
         "R n t (flat, no regression) engine={engine}"
     );
 }

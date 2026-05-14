@@ -8,16 +8,16 @@ chain j:t>R t t;r=jpar! j;~fmt "{}" r.?outer.?inner
 nilobj j:t>R t t;r=jpar! j;v=r.?missing;~fmt "{}" v.?anything
 
 -- run: miss {"cvssMetricV2":[]}
--- out: ~nil
+-- out: nil
 
 -- run: hit {"present":42}
 -- out: 42
 
 -- run: chain {"outer":{"inner":"x"}}
--- out: ~x
+-- out: x
 
 -- run: chain {"other":1}
--- out: ~nil
+-- out: nil
 
 -- run: nilobj {"a":1}
--- out: ~nil
+-- out: nil

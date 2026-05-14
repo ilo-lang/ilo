@@ -10,10 +10,10 @@ mget-miss>O n;m=mset (mmap) "a" 1;mget m "z"
 mget-hit>O n;m=mset (mmap) "a" 1;mget m "a"
 
 -- run: strict-hit {"present":42}
--- out: ~42
+-- out: 42
 
 -- run: safe-miss {"present":1}
--- out: ~nil
+-- out: nil
 
 -- run: mget-miss
 -- out: nil

@@ -17,7 +17,7 @@ echo x:n>n;?x{1:10;_:_}
 typed-echo x:n>n;?x{n _:+_ 1;_:0}
 
 -- run: rewrap 3.14
--- out: ~3.14
+-- out: 3.14
 -- run: rewrap oops
 -- err: ^e
 -- run: log-err abc

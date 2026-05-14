@@ -25,4 +25,4 @@ outer x:n>R n t;r=inner! x;~+r 1
 -- run: div-msg 10 0
 -- out: fail: zero
 -- run: outer 5
--- out: ~11
+-- out: 11

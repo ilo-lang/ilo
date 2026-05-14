@@ -194,12 +194,15 @@ const RESULT_BANG_OK_SRC: &str = r#"f>R n t;v=num! "42";~v"#;
 const RESULT_BANG_ERR_SRC: &str = r#"f>R n t;v=num! "abc";~v"#;
 
 fn check_result_ok(engine: &str) {
-    // After the fix, every engine prints `~42` — num! unwraps to 42, then
-    // the explicit `~v` wraps it as Ok(42). Previously VM/Cranelift printed
-    // `~~42` because num! left the Ok wrap on.
+    // After the VM bang-propagation fix (#257) every engine returns
+    // `Value::Ok(Number(42))`. Top-level `Value::Ok` prints bare on stdout
+    // (no `~` prefix) per the symmetric stdout/stderr split — see
+    // regression_main_ok_stdout_bare.rs. Previously the divergence was
+    // VM/Cranelift printing `~~42` because num! left the Ok wrap on; now
+    // every engine prints bare `42`.
     assert_eq!(
         run(engine, RESULT_BANG_OK_SRC, "f"),
-        "~42",
+        "42",
         "engine={engine}"
     );
 }
