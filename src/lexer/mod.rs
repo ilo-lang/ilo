@@ -69,6 +69,11 @@ pub enum Token {
     PipeOp,
     #[token("??")]
     NilCoalesce,
+    // `!!` panic-unwrap. Must precede single-char `!` so logos picks the
+    // longer match. Symmetric with `!` over R / O, but on Err / nil aborts
+    // with diagnostic + exit 1 instead of propagating to the enclosing fn.
+    #[token("!!")]
+    BangBang,
 
     // Single-char operators
     #[token("+")]
