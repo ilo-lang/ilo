@@ -1,0 +1,29 @@
+-- A function or builtin name used as a value yields a FnRef on every
+-- engine. Pre-fix this only worked on the tree interpreter; the VM and
+-- Cranelift JIT lossily encoded the name as a `"<fn:name>"` heap string,
+-- breaking any program that round-tripped a function-as-value through a
+-- register. PR 1 of the HOF-dispatch effort tags FnRefs as a non-singleton
+-- QNAN payload so the value flows losslessly across all engines.
+--
+-- This example pins the contract: a function returned, bound, and then
+-- returned again still renders as `<fn:name>` end to end.
+
+-- A trivial user function, used purely as the target of FnRef plumbing.
+sq x:n>n;*x x
+
+-- Return a user function by name.
+mku>F n n;sq
+
+-- Return a builtin by name. Pure builtins are verifier-promoted to a
+-- function type so the bare `abs` ref slots into `F n n` cleanly.
+mkb>F n n;abs
+
+-- FnRef survives a local binding before reaching the return slot.
+bnd>F n n;f=sq;f
+
+-- run: mku
+-- out: <fn:sq>
+-- run: mkb
+-- out: <fn:abs>
+-- run: bnd
+-- out: <fn:sq>
