@@ -1,0 +1,11 @@
+-- map fn xs: apply a function to every element of a list. The fn
+-- argument is a function reference (user-defined like `sq` or a pure
+-- builtin like `abs`). The result is a fresh list of the same length.
+-- Signature: map fn:F a b xs:L a > L b
+
+sq x:n>n;*x x
+
+main xs:L n>L n;map sq xs
+
+-- run: main [1,2,3,4,5]
+-- out: [1, 4, 9, 16, 25]

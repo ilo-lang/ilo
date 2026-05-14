@@ -22382,7 +22382,6 @@ mod tests {
     // ── HOF builtins: map, flt, fld, grp ────────────────────────────────
 
     #[test]
-    #[ignore] // Dynamic dispatch (OP_CALL_DYN emission) arrives in PR 2.
     fn vm_map_squares() {
         let source = "sq x:n>n;*x x main xs:L n>L n;map sq xs";
         let result = vm_run(
@@ -22416,7 +22415,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // Dynamic dispatch (OP_CALL_DYN emission) arrives in PR 2.
     fn vm_map_wrong_list_arg() {
         let source = "sq x:n>n;*x x f>t;map sq 42";
         let err = vm_run_err(source, Some("f"), vec![]);
