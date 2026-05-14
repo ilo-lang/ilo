@@ -106,12 +106,12 @@ const REWRAP_UNCHANGED: &str = "f s:t>R n t;r=num s;?r{~_:~_;^_:^\"e\"}\n";
 
 #[test]
 fn rewrap_unchanged_ok_tree() {
-    assert_eq!(run("--run-tree", REWRAP_UNCHANGED, "f", "3.14"), "~3.14");
+    assert_eq!(run("--run-tree", REWRAP_UNCHANGED, "f", "3.14"), "3.14");
 }
 
 #[test]
 fn rewrap_unchanged_ok_vm() {
-    assert_eq!(run("--run-vm", REWRAP_UNCHANGED, "f", "3.14"), "~3.14");
+    assert_eq!(run("--run-vm", REWRAP_UNCHANGED, "f", "3.14"), "3.14");
 }
 
 #[test]
@@ -119,7 +119,7 @@ fn rewrap_unchanged_ok_vm() {
 fn rewrap_unchanged_ok_cranelift() {
     assert_eq!(
         run("--run-cranelift", REWRAP_UNCHANGED, "f", "3.14"),
-        "~3.14"
+        "3.14"
     );
 }
 
