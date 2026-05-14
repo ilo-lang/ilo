@@ -3476,6 +3476,15 @@ thread_local! {
     /// pointer to a `[String]`, paired with a length stored separately.
     static ACTIVE_FUNC_NAMES: std::cell::Cell<*const Vec<String>> =
         const { std::cell::Cell::new(std::ptr::null()) };
+    /// Active `CompiledProgram` pointer, set by `with_active_registry`
+    /// during a Cranelift JIT invocation. Used by `jit_call_dyn` to
+    /// re-enter the VM for a user-fn callback inside a HOF (`map`, etc.).
+    /// The JIT itself has no re-entrant function pointer table for
+    /// dynamic dispatch, so the FnRef → user-fn path routes through a
+    /// fresh `VM::new(compiled).call(func_idx, args)` on the same
+    /// bytecode program. Cleared by `with_active_registry`'s drop guard.
+    static ACTIVE_PROGRAM: std::cell::Cell<*const CompiledProgram> =
+        const { std::cell::Cell::new(std::ptr::null()) };
 }
 
 /// Look up a user-fn name by index in the currently active `func_names`
@@ -3515,11 +3524,13 @@ pub fn with_active_registry<R>(program: &CompiledProgram, f: impl FnOnce() -> R)
         fn drop(&mut self) {
             ACTIVE_REGISTRY.with(|r| r.set(std::ptr::null()));
             ACTIVE_FUNC_NAMES.with(|r| r.set(std::ptr::null()));
+            ACTIVE_PROGRAM.with(|r| r.set(std::ptr::null()));
         }
     }
 
     ACTIVE_REGISTRY.with(|r| r.set(&program.type_registry as *const TypeRegistry));
     ACTIVE_FUNC_NAMES.with(|r| r.set(&program.func_names as *const Vec<String>));
+    ACTIVE_PROGRAM.with(|r| r.set(program as *const CompiledProgram));
     let _guard = ClearGuard;
     f()
 }
@@ -11269,6 +11280,114 @@ pub(crate) extern "C" fn jit_call_builtin_tree(tag: u64, argc: u64, regs_ptr: u6
     match crate::interpreter::call_builtin_for_bridge(builtin.name(), value_args) {
         Ok(v) => NanVal::from_value(&v).0,
         Err(_) => TAG_NIL,
+    }
+}
+
+/// Dynamic call helper for the Cranelift JIT's OP_CALL_DYN lowering.
+///
+/// Args:
+///   callee_bits: NanVal bits of a FnRef (kind + id encoded by `NanVal::fnref`)
+///   argc:        number of args (callable via this helper today is 1; the
+///                signature uses an arg slice for forward-compat)
+///   regs_ptr:    pointer to `argc` contiguous NanVal slots holding the args
+///
+/// Dispatch:
+///   - Builtin FnRef → route through the tree-bridge (`call_builtin_for_bridge`),
+///     the same path `jit_call_builtin_tree` uses. This handles every builtin
+///     uniformly; HOFs receive `Value::FnRef` arg(s) since FnRef NaN-tagging
+///     round-trips losslessly through `to_value`/`from_value` (PR 1).
+///   - User-fn FnRef → spin up a fresh `VM::new(active_program).call(idx, args)`.
+///     Cranelift JIT has no re-entrant function pointer table for dynamic
+///     dispatch, so we re-enter the VM on the same bytecode program. The
+///     active program is published by `with_active_registry` via the
+///     `ACTIVE_PROGRAM` TLS slot, which is also responsible for clearing it.
+///
+/// Returns NanVal bits of the result, or `TAG_NIL` on any error path. The
+/// "swallow errors as nil" behaviour mirrors `jit_call_builtin_tree`; a
+/// follow-up can promote these to typed runtime errors once OP_CALL_DYN's
+/// in-band error signalling is wired (today the VM uses panics via `vm_err!`).
+///
+/// SAFETY: `regs_ptr` must point to at least `argc` valid `NanVal`s in
+/// readable memory for the duration of the call. The compiler emits a sized
+/// stack slot immediately before the call, mirroring `jit_call_builtin_tree`.
+#[cfg(feature = "cranelift")]
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn jit_call_dyn(callee_bits: u64, argc: u64, regs_ptr: u64) -> u64 {
+    let callee = NanVal(callee_bits);
+    if !callee.is_fnref() {
+        return TAG_NIL;
+    }
+    let (kind, id) = callee.fnref_parts();
+    let argc = argc as usize;
+
+    // SAFETY: caller guarantees `regs_ptr` points to `argc` valid NanVals.
+    let regs: &[NanVal] = unsafe {
+        if argc == 0 {
+            &[]
+        } else {
+            std::slice::from_raw_parts(regs_ptr as *const NanVal, argc)
+        }
+    };
+
+    match kind {
+        FnRefKind::Builtin => {
+            let builtin = match crate::builtins::Builtin::from_tag(id as u8) {
+                Some(b) => b,
+                None => return TAG_NIL,
+            };
+            let mut value_args: Vec<Value> = Vec::with_capacity(argc);
+            for nv in regs {
+                // Use the program-aware bridge so FnRef args render with
+                // their source name rather than `<user_fn:N>`. Falls back
+                // gracefully if no program is active.
+                let v = ACTIVE_FUNC_NAMES.with(|cell| {
+                    let ptr = cell.get();
+                    if ptr.is_null() {
+                        nv.to_value()
+                    } else {
+                        // SAFETY: pointer is non-null; lifetime is bounded by
+                        // `with_active_registry`'s drop guard, which clears
+                        // this TLS before the borrow ends.
+                        let names: &Vec<String> = unsafe { &*ptr };
+                        nv.to_value_with_program(names)
+                    }
+                });
+                value_args.push(v);
+            }
+            match crate::interpreter::call_builtin_for_bridge(builtin.name(), value_args) {
+                Ok(v) => NanVal::from_value(&v).0,
+                Err(_) => TAG_NIL,
+            }
+        }
+        FnRefKind::User => {
+            // Re-enter the VM on the same bytecode program. ACTIVE_PROGRAM
+            // is published by `with_active_registry`, which the Cranelift
+            // entry path (`compile_and_call`) wraps around every JIT
+            // invocation.
+            let prog_ptr = ACTIVE_PROGRAM.with(|cell| cell.get());
+            if prog_ptr.is_null() {
+                return TAG_NIL;
+            }
+            // SAFETY: pointer was set by `with_active_registry` to a live
+            // borrow that outlives this helper's invocation (cleared by
+            // the drop guard at the end of `with_active_registry`'s scope).
+            let program: &CompiledProgram = unsafe { &*prog_ptr };
+            let func_idx = id as u16;
+            if (func_idx as usize) >= program.chunks.len() {
+                return TAG_NIL;
+            }
+            let mut value_args: Vec<Value> = Vec::with_capacity(argc);
+            for nv in regs {
+                value_args.push(nv.to_value_with_program(&program.func_names));
+            }
+            // Fresh VM on the same program. `call(func_idx, ...)` mirrors
+            // OP_CALL_DYN's User arm in the bytecode interpreter.
+            let mut sub_vm = VM::new(program);
+            match sub_vm.call(func_idx, value_args) {
+                Ok(v) => NanVal::from_value_with_program(&v, &program.func_names).0,
+                Err(_) => TAG_NIL,
+            }
+        }
     }
 }
 
