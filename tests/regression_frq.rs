@@ -1,7 +1,8 @@
-// Regression tests for the `frq xs` builtin: returns a frequency map
-// `M t n` (text key → count of occurrences). Unlike `grp`/`uniqby`, `frq`
-// is not a higher-order function — it takes a single list and keys by the
-// stringified element values, so it can be wired through every engine.
+// Regression tests for the `frq xs` builtin: returns a frequency map keyed
+// by the element type. `frq [text]` produces `M t n`; `frq [number]` produces
+// `M n n`. Unlike `grp`/`uniqby`, `frq` is not a higher-order function — it
+// takes a single list and keys by the typed element values, so it can be
+// wired through every engine.
 
 use std::process::Command;
 
@@ -54,11 +55,11 @@ fn frq_strings_cranelift() {
     check_string_freq("--run-cranelift");
 }
 
-// ── Numbers: frq [1,2,1,3,2,1] — keys are bare stringified numbers ────────
+// ── Numbers: frq [1,2,1,3,2,1] — keys preserve the number type ───────────
 
-const NUM_1_SRC: &str = r#"f>n;m=frq [1,2,1,3,2,1];r=mget m "1";?r{n v:v;_:-1}"#;
-const NUM_2_SRC: &str = r#"f>n;m=frq [1,2,1,3,2,1];r=mget m "2";?r{n v:v;_:-1}"#;
-const NUM_3_SRC: &str = r#"f>n;m=frq [1,2,1,3,2,1];r=mget m "3";?r{n v:v;_:-1}"#;
+const NUM_1_SRC: &str = r#"f>n;m=frq [1,2,1,3,2,1];r=mget m 1;?r{n v:v;_:-1}"#;
+const NUM_2_SRC: &str = r#"f>n;m=frq [1,2,1,3,2,1];r=mget m 2;?r{n v:v;_:-1}"#;
+const NUM_3_SRC: &str = r#"f>n;m=frq [1,2,1,3,2,1];r=mget m 3;?r{n v:v;_:-1}"#;
 
 fn check_num_freq(engine: &str) {
     assert_eq!(run(engine, NUM_1_SRC, "f"), "3", "engine={engine} key=1");
@@ -160,36 +161,33 @@ fn frq_mkeys_bare_cranelift() {
     check_mkeys("--run-cranelift");
 }
 
-// ── Cross-type collision: frq [1, "1", true] — the documented tradeoff.
-// With bare keys, distinct-typed values that share a print form collide on
-// the shared string. `1` and `"1"` both become key `"1"`; their counts sum.
-// `true` keeps its own key `"true"`. This matches `grp idt`'s collision
-// policy and is the deliberate price of dropping the leaky `n:`/`t:`/`b:`
-// prefix from the user-visible API surface.
+// ── Cross-type keys: frq [1, "1", true] — with typed `MapKey`, `Int(1)`,
+// `Text("1")` and `Text("true")` are distinct keys (no collision). Bools are
+// stringified to Text at the MapKey boundary. This documents the typed-key
+// behaviour introduced with MapKey: each typed value has its own slot.
 
-const CROSS_SHARED_SRC: &str = r#"f>n;m=frq [1, "1", true];r=mget m "1";?r{n v:v;_:-1}"#;
+const CROSS_NUM_SRC: &str = r#"f>n;m=frq [1, "1", true];r=mget m 1;?r{n v:v;_:-1}"#;
+const CROSS_TXT_SRC: &str = r#"f>n;m=frq [1, "1", true];r=mget m "1";?r{n v:v;_:-1}"#;
 const CROSS_BOOL_SRC: &str = r#"f>n;m=frq [1, "1", true];r=mget m "true";?r{n v:v;_:-1}"#;
-const CROSS_NOPREFIX_SRC: &str = r#"f>n;m=frq [1, "1", true];r=mget m "t:1";?r{n v:v;_:0}"#;
 
 fn check_cross_type(engine: &str) {
-    // Number(1) and Text("1") collide on bare key "1"; combined count is 2.
+    // Number(1) keeps its own typed key — count is 1.
     assert_eq!(
-        run(engine, CROSS_SHARED_SRC, "f"),
-        "2",
-        "engine={engine} shared key '1'"
+        run(engine, CROSS_NUM_SRC, "f"),
+        "1",
+        "engine={engine} numeric key 1"
     );
-    // Bool keeps its own bare key.
+    // Text("1") is a distinct key from Int(1) — count is 1.
+    assert_eq!(
+        run(engine, CROSS_TXT_SRC, "f"),
+        "1",
+        "engine={engine} text key '1'"
+    );
+    // Bool stringifies to Text("true") at the MapKey boundary — count is 1.
     assert_eq!(
         run(engine, CROSS_BOOL_SRC, "f"),
         "1",
         "engine={engine} key 'true'"
-    );
-    // The old prefixed form must no longer hit — guard against regression
-    // back to leaked type tags.
-    assert_eq!(
-        run(engine, CROSS_NOPREFIX_SRC, "f"),
-        "0",
-        "engine={engine} legacy 't:1' must not exist"
     );
 }
 

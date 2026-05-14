@@ -1,6 +1,6 @@
 use crate::ast::*;
 use crate::builtins::{Builtin, CharAtResult, char_at_signed};
-use crate::interpreter::Value;
+use crate::interpreter::{MapKey, Value};
 use std::collections::HashMap;
 use std::rc::Rc;
 
@@ -3538,7 +3538,7 @@ impl Drop for JitRuntimeErrorGuard {
 enum HeapObj {
     Str(String),
     List(Vec<NanVal>),
-    Map(HashMap<String, NanVal>),
+    Map(HashMap<MapKey, NanVal>),
     Record {
         type_info: Rc<TypeInfo>,
         fields: Box<[NanVal]>,
@@ -3686,7 +3686,7 @@ impl NanVal {
         NanVal(TAG_ERR | (ptr & PTR_MASK))
     }
 
-    fn heap_map(m: HashMap<String, NanVal>) -> Self {
+    fn heap_map(m: HashMap<MapKey, NanVal>) -> Self {
         let rc = Rc::new(HeapObj::Map(m));
         let ptr = Rc::into_raw(rc) as u64;
         NanVal(TAG_MAP | (ptr & PTR_MASK))
@@ -3793,7 +3793,7 @@ impl NanVal {
             Value::Text(s) => NanVal::heap_string(s.clone()),
             Value::List(items) => NanVal::heap_list(items.iter().map(NanVal::from_value).collect()),
             Value::Map(m) => {
-                let nan_map: HashMap<String, NanVal> = m
+                let nan_map: HashMap<MapKey, NanVal> = m
                     .iter()
                     .map(|(k, v)| (k.clone(), NanVal::from_value(v)))
                     .collect();
@@ -4547,18 +4547,22 @@ impl<'a> VM<'a> {
                     let c = (inst & 0xFF) as usize + base;
                     let map_v = reg!(b);
                     let key_v = reg!(c);
+                    let mk = match nanval_to_map_key(key_v) {
+                        Some(k) => k,
+                        None => vm_err!(VmError::Type("mget: key must be text or finite number")),
+                    };
+                    if (map_v.0 & TAG_MASK) != TAG_MAP {
+                        vm_err!(VmError::Type("mget: first arg must be a map"));
+                    }
                     let result = unsafe {
                         match map_v.as_heap_ref() {
-                            HeapObj::Map(m) => match key_v.as_heap_ref() {
-                                HeapObj::Str(k) => m
-                                    .get(k.as_str())
-                                    .map(|v| {
-                                        v.clone_rc();
-                                        *v
-                                    })
-                                    .unwrap_or_else(NanVal::nil),
-                                _ => vm_err!(VmError::Type("mget: key must be text")),
-                            },
+                            HeapObj::Map(m) => m
+                                .get(&mk)
+                                .map(|v| {
+                                    v.clone_rc();
+                                    *v
+                                })
+                                .unwrap_or_else(NanVal::nil),
                             _ => vm_err!(VmError::Type("mget: first arg must be a map")),
                         }
                     };
@@ -4579,9 +4583,10 @@ impl<'a> VM<'a> {
                     if (map_v.0 & TAG_MASK) != TAG_MAP {
                         vm_err!(VmError::Type("mset: first arg must be a map"));
                     }
-                    if !key_v.is_string() {
-                        vm_err!(VmError::Type("mset: key must be text"));
-                    }
+                    let mk = match nanval_to_map_key(key_v) {
+                        Some(k) => k,
+                        None => vm_err!(VmError::Type("mset: key must be text or finite number")),
+                    };
                     let ptr_b = (map_v.0 & PTR_MASK) as *const HeapObj;
                     // Peek the RC count without reconstructing the Rc (which would bump it).
                     // Same pattern as OP_LISTAPPEND / OP_ADD_SS RC=1 fast paths.
@@ -4602,14 +4607,8 @@ impl<'a> VM<'a> {
                         let heap_mut = unsafe { &mut *(ptr_b as *mut HeapObj) };
                         match heap_mut {
                             HeapObj::Map(m) => {
-                                let k_str = unsafe {
-                                    match key_v.as_heap_ref() {
-                                        HeapObj::Str(s) => s.clone(),
-                                        _ => unreachable!(),
-                                    }
-                                };
                                 val_v.clone_rc();
-                                if let Some(old) = m.insert(k_str, val_v) {
+                                if let Some(old) = m.insert(mk, val_v) {
                                     old.drop_rc();
                                 }
                             }
@@ -4625,12 +4624,8 @@ impl<'a> VM<'a> {
                                     for v in new_map.values() {
                                         v.clone_rc();
                                     }
-                                    let k_str = match key_v.as_heap_ref() {
-                                        HeapObj::Str(s) => s.clone(),
-                                        _ => unreachable!(),
-                                    };
                                     val_v.clone_rc();
-                                    if let Some(old) = new_map.insert(k_str, val_v) {
+                                    if let Some(old) = new_map.insert(mk, val_v) {
                                         old.drop_rc();
                                     }
                                     NanVal::heap_map(new_map)
@@ -4647,12 +4642,16 @@ impl<'a> VM<'a> {
                     let c = (inst & 0xFF) as usize + base;
                     let map_v = reg!(b);
                     let key_v = reg!(c);
+                    let mk = match nanval_to_map_key(key_v) {
+                        Some(k) => k,
+                        None => vm_err!(VmError::Type("mhas: key must be text or finite number")),
+                    };
+                    if (map_v.0 & TAG_MASK) != TAG_MAP {
+                        vm_err!(VmError::Type("mhas: first arg must be a map"));
+                    }
                     let result = unsafe {
                         match map_v.as_heap_ref() {
-                            HeapObj::Map(m) => match key_v.as_heap_ref() {
-                                HeapObj::Str(k) => NanVal::boolean(m.contains_key(k.as_str())),
-                                _ => vm_err!(VmError::Type("mhas: key must be text")),
-                            },
+                            HeapObj::Map(m) => NanVal::boolean(m.contains_key(&mk)),
                             _ => vm_err!(VmError::Type("mhas: first arg must be a map")),
                         }
                     };
@@ -4665,12 +4664,10 @@ impl<'a> VM<'a> {
                     let result = unsafe {
                         match map_v.as_heap_ref() {
                             HeapObj::Map(m) => {
-                                let mut keys: Vec<&String> = m.keys().collect();
+                                let mut keys: Vec<&MapKey> = m.keys().collect();
                                 keys.sort();
-                                let nan_keys: Vec<NanVal> = keys
-                                    .iter()
-                                    .map(|k| NanVal::heap_string((*k).clone()))
-                                    .collect();
+                                let nan_keys: Vec<NanVal> =
+                                    keys.iter().map(|k| map_key_to_nanval(k)).collect();
                                 NanVal::heap_list(nan_keys)
                             }
                             _ => vm_err!(VmError::Type("mkeys: expects a map")),
@@ -4685,8 +4682,8 @@ impl<'a> VM<'a> {
                     let result = unsafe {
                         match map_v.as_heap_ref() {
                             HeapObj::Map(m) => {
-                                let mut pairs: Vec<(&String, &NanVal)> = m.iter().collect();
-                                pairs.sort_by_key(|(k, _)| k.as_str());
+                                let mut pairs: Vec<(&MapKey, &NanVal)> = m.iter().collect();
+                                pairs.sort_by_key(|(k, _)| (*k).clone());
                                 let nan_vals: Vec<NanVal> = pairs
                                     .iter()
                                     .map(|(_, v)| {
@@ -4707,24 +4704,28 @@ impl<'a> VM<'a> {
                     let c = (inst & 0xFF) as usize + base;
                     let map_v = reg!(b);
                     let key_v = reg!(c);
+                    let mk = match nanval_to_map_key(key_v) {
+                        Some(k) => k,
+                        None => vm_err!(VmError::Type("mdel: key must be text or finite number")),
+                    };
+                    if (map_v.0 & TAG_MASK) != TAG_MAP {
+                        vm_err!(VmError::Type("mdel: first arg must be a map"));
+                    }
                     let result = unsafe {
                         match map_v.as_heap_ref() {
-                            HeapObj::Map(m) => match key_v.as_heap_ref() {
-                                HeapObj::Str(k) => {
-                                    let mut new_map = m.clone();
-                                    // m.clone() bit-copies values; bump RC for each retained entry
-                                    for v in new_map.values() {
-                                        v.clone_rc();
-                                    }
-                                    // drop_rc the removed value before HashMap::remove discards it,
-                                    // otherwise its inner heap RC leaks/double-frees on next gc.
-                                    if let Some(removed) = new_map.remove(k.as_str()) {
-                                        removed.drop_rc();
-                                    }
-                                    NanVal::heap_map(new_map)
+                            HeapObj::Map(m) => {
+                                let mut new_map = m.clone();
+                                // m.clone() bit-copies values; bump RC for each retained entry
+                                for v in new_map.values() {
+                                    v.clone_rc();
                                 }
-                                _ => vm_err!(VmError::Type("mdel: key must be text")),
-                            },
+                                // drop_rc the removed value before HashMap::remove discards it,
+                                // otherwise its inner heap RC leaks/double-frees on next gc.
+                                if let Some(removed) = new_map.remove(&mk) {
+                                    removed.drop_rc();
+                                }
+                                NanVal::heap_map(new_map)
+                            }
                             _ => vm_err!(VmError::Type("mdel: first arg must be a map")),
                         }
                     };
@@ -6917,7 +6918,7 @@ impl<'a> VM<'a> {
                                             _ => unreachable!(),
                                         }
                                     };
-                                    req = req.with_header(k.as_str(), &vs);
+                                    req = req.with_header(k.to_display_string().as_str(), &vs);
                                 }
                             }
                         }
@@ -7016,7 +7017,7 @@ impl<'a> VM<'a> {
                                             _ => unreachable!(),
                                         }
                                     };
-                                    req = req.with_header(k.as_str(), &vs);
+                                    req = req.with_header(k.to_display_string().as_str(), &vs);
                                 }
                             }
                         }
@@ -8166,18 +8167,18 @@ impl<'a> VM<'a> {
                             _ => unreachable!(),
                         }
                     };
-                    let mut counts: std::collections::HashMap<String, usize> =
+                    let mut counts: std::collections::HashMap<MapKey, usize> =
                         std::collections::HashMap::new();
                     for item in items {
-                        let key_str = match nanval_to_key_string(item) {
-                            Some(s) => s,
+                        let mk = match nanval_to_grouping_key(item) {
+                            Some(k) => k,
                             None => vm_err!(VmError::Type(
                                 "frq: list elements must be text, number, or bool"
                             )),
                         };
-                        *counts.entry(key_str).or_insert(0) += 1;
+                        *counts.entry(mk).or_insert(0) += 1;
                     }
-                    let map: std::collections::HashMap<String, NanVal> = counts
+                    let map: std::collections::HashMap<MapKey, NanVal> = counts
                         .into_iter()
                         .map(|(k, c)| (k, NanVal::number(c as f64)))
                         .collect();
@@ -8329,24 +8330,28 @@ unsafe fn nanval_str_cmp(a: NanVal, b: NanVal) -> std::cmp::Ordering {
 /// as `grp idt xs`. The earlier type-prefixed shape (`n:` / `t:` / `b:`)
 /// leaked an internal disambiguation convention into the API surface and
 /// has been removed.
-fn nanval_to_key_string(v: NanVal) -> Option<String> {
+/// Convert a NanVal into a `MapKey` for `grp`/`frq`. Mirrors the tree-walker's
+/// policy in `interpreter::call_function` for those builtins: text and number
+/// keep their type, bools become text "true"/"false", non-finite numbers
+/// fail. Floats floor to i64 to match `MapKey::from_value`.
+fn nanval_to_grouping_key(v: NanVal) -> Option<MapKey> {
     if v.is_number() {
         let n = v.as_number();
-        if n.fract() == 0.0 && n.abs() < 1e15 {
-            return Some(format!("{}", n as i64));
+        if !n.is_finite() {
+            return None;
         }
-        return Some(format!("{n}"));
+        return Some(MapKey::Int(n.floor() as i64));
     }
     match v.0 {
-        TAG_TRUE => return Some("true".to_string()),
-        TAG_FALSE => return Some("false".to_string()),
+        TAG_TRUE => return Some(MapKey::Text("true".to_string())),
+        TAG_FALSE => return Some(MapKey::Text("false".to_string())),
         _ => {}
     }
     if v.is_string() {
         // SAFETY: is_string() confirmed.
         unsafe {
             return match v.as_heap_ref() {
-                HeapObj::Str(s) => Some(s.as_str().to_owned()),
+                HeapObj::Str(s) => Some(MapKey::Text(s.clone())),
                 _ => None,
             };
         }
@@ -8387,6 +8392,42 @@ fn nanval_to_matrix(v: NanVal) -> std::result::Result<Vec<Vec<f64>>, &'static st
         out.push(nanval_to_vec(*row)?);
     }
     Ok(out)
+}
+
+/// Convert a NanVal map key into a typed `MapKey`. Returns `None` on a type
+/// the map-key boundary rejects (NaN, ±Inf, non-string non-number heap
+/// values). Numbers floor to i64 to match `at xs i` and the tree-walker's
+/// `MapKey::from_value`.
+#[inline]
+fn nanval_to_map_key(key_v: NanVal) -> Option<MapKey> {
+    if key_v.is_number() {
+        let n = key_v.as_number();
+        if !n.is_finite() {
+            return None;
+        }
+        return Some(MapKey::Int(n.floor() as i64));
+    }
+    if key_v.is_string() {
+        // SAFETY: is_string() confirmed heap-tagged string with live RC.
+        let s = unsafe {
+            match key_v.as_heap_ref() {
+                HeapObj::Str(s) => s.clone(),
+                _ => return None,
+            }
+        };
+        return Some(MapKey::Text(s));
+    }
+    None
+}
+
+/// Convert a typed `MapKey` back into a NanVal — used when materialising
+/// `mkeys`. Text keys become heap strings; Int keys become numeric NanVals.
+#[inline]
+fn map_key_to_nanval(k: &MapKey) -> NanVal {
+    match k {
+        MapKey::Text(s) => NanVal::heap_string(s.clone()),
+        MapKey::Int(n) => NanVal::number(*n as f64),
+    }
 }
 
 fn nanval_to_json(v: NanVal) -> serde_json::Value {
@@ -8449,7 +8490,7 @@ fn nanval_to_json(v: NanVal) -> serde_json::Value {
                     HeapObj::Map(m) => {
                         let obj: serde_json::Map<String, serde_json::Value> = m
                             .iter()
-                            .map(|(k, v)| (k.clone(), nanval_to_json(*v)))
+                            .map(|(k, v)| (k.to_display_string(), nanval_to_json(*v)))
                             .collect();
                         serde_json::Value::Object(obj)
                     }
@@ -11904,24 +11945,22 @@ pub(crate) extern "C" fn jit_mget(map: u64, key: u64) -> u64 {
         jit_set_runtime_error(VmError::Type("mget: first arg must be a map"));
         return TAG_NIL;
     }
-    if !key_v.is_string() {
-        jit_set_runtime_error(VmError::Type("mget: key must be text"));
-        return TAG_NIL;
-    }
+    let mk = match nanval_to_map_key(key_v) {
+        Some(k) => k,
+        None => {
+            jit_set_runtime_error(VmError::Type("mget: key must be text or number"));
+            return TAG_NIL;
+        }
+    };
     unsafe {
         match map_v.as_heap_ref() {
-            HeapObj::Map(m) => match key_v.as_heap_ref() {
-                HeapObj::Str(k) => m
-                    .get(k.as_str())
-                    .map(|v| {
-                        v.clone_rc();
-                        v.0
-                    })
-                    .unwrap_or(TAG_NIL),
-                // Unreachable in practice: is_string() above already narrowed
-                // the key to HeapObj::Str. Kept as a defensive nil.
-                _ => TAG_NIL,
-            },
+            HeapObj::Map(m) => m
+                .get(&mk)
+                .map(|v| {
+                    v.clone_rc();
+                    v.0
+                })
+                .unwrap_or(TAG_NIL),
             // Unreachable: TAG_MAP check above already narrowed map_v.
             _ => TAG_NIL,
         }
@@ -11943,9 +11982,13 @@ pub(crate) extern "C" fn jit_mset(map: u64, key: u64, val: u64) -> u64 {
     let map_v = NanVal(map);
     let key_v = NanVal(key);
     let val_v = NanVal(val);
-    if (map_v.0 & TAG_MASK) != TAG_MAP || !key_v.is_string() {
+    if (map_v.0 & TAG_MASK) != TAG_MAP {
         return TAG_NIL;
     }
+    let mk = match nanval_to_map_key(key_v) {
+        Some(k) => k,
+        None => return TAG_NIL,
+    };
     let ptr_b = (map_v.0 & PTR_MASK) as *const HeapObj;
     unsafe {
         match &*ptr_b {
@@ -11958,12 +12001,8 @@ pub(crate) extern "C" fn jit_mset(map: u64, key: u64, val: u64) -> u64 {
                 for v in new_map.values() {
                     v.clone_rc();
                 }
-                let k_str = match key_v.as_heap_ref() {
-                    HeapObj::Str(s) => s.clone(),
-                    _ => return TAG_NIL,
-                };
                 val_v.clone_rc();
-                if let Some(old) = new_map.insert(k_str, val_v) {
+                if let Some(old) = new_map.insert(mk, val_v) {
                     old.drop_rc();
                 }
                 NanVal::heap_map(new_map).0
@@ -11992,9 +12031,13 @@ pub(crate) extern "C" fn jit_mset_inplace(map: u64, key: u64, val: u64) -> u64 {
     let map_v = NanVal(map);
     let key_v = NanVal(key);
     let val_v = NanVal(val);
-    if (map_v.0 & TAG_MASK) != TAG_MAP || !key_v.is_string() {
+    if (map_v.0 & TAG_MASK) != TAG_MAP {
         return TAG_NIL;
     }
+    let mk = match nanval_to_map_key(key_v) {
+        Some(k) => k,
+        None => return TAG_NIL,
+    };
     let ptr_b = (map_v.0 & PTR_MASK) as *const HeapObj;
     // Peek the RC count without taking ownership.
     let rc_count = {
@@ -12011,14 +12054,8 @@ pub(crate) extern "C" fn jit_mset_inplace(map: u64, key: u64, val: u64) -> u64 {
         let heap_mut = unsafe { &mut *(ptr_b as *mut HeapObj) };
         match heap_mut {
             HeapObj::Map(m) => {
-                let k_str = unsafe {
-                    match key_v.as_heap_ref() {
-                        HeapObj::Str(s) => s.clone(),
-                        _ => return TAG_NIL,
-                    }
-                };
                 val_v.clone_rc();
-                if let Some(old) = m.insert(k_str, val_v) {
+                if let Some(old) = m.insert(mk, val_v) {
                     old.drop_rc();
                 }
                 // Return the same NanVal pointer — RC still 1.
@@ -12037,15 +12074,16 @@ pub(crate) extern "C" fn jit_mset_inplace(map: u64, key: u64, val: u64) -> u64 {
 pub(crate) extern "C" fn jit_mhas(map: u64, key: u64) -> u64 {
     let map_v = NanVal(map);
     let key_v = NanVal(key);
-    if !map_v.is_heap() || !key_v.is_heap() {
+    if (map_v.0 & TAG_MASK) != TAG_MAP {
         return TAG_FALSE;
     }
+    let mk = match nanval_to_map_key(key_v) {
+        Some(k) => k,
+        None => return TAG_FALSE,
+    };
     unsafe {
         match map_v.as_heap_ref() {
-            HeapObj::Map(m) => match key_v.as_heap_ref() {
-                HeapObj::Str(k) => NanVal::boolean(m.contains_key(k.as_str())).0,
-                _ => TAG_FALSE,
-            },
+            HeapObj::Map(m) => NanVal::boolean(m.contains_key(&mk)).0,
             _ => TAG_FALSE,
         }
     }
@@ -12061,12 +12099,9 @@ pub(crate) extern "C" fn jit_mkeys(map: u64) -> u64 {
     unsafe {
         match map_v.as_heap_ref() {
             HeapObj::Map(m) => {
-                let mut keys: Vec<&String> = m.keys().collect();
+                let mut keys: Vec<&MapKey> = m.keys().collect();
                 keys.sort();
-                let nan_keys: Vec<NanVal> = keys
-                    .iter()
-                    .map(|k| NanVal::heap_string((*k).clone()))
-                    .collect();
+                let nan_keys: Vec<NanVal> = keys.iter().map(|k| map_key_to_nanval(k)).collect();
                 NanVal::heap_list(nan_keys).0
             }
             _ => TAG_NIL,
@@ -12084,8 +12119,8 @@ pub(crate) extern "C" fn jit_mvals(map: u64) -> u64 {
     unsafe {
         match map_v.as_heap_ref() {
             HeapObj::Map(m) => {
-                let mut pairs: Vec<(&String, &NanVal)> = m.iter().collect();
-                pairs.sort_by_key(|(k, _)| k.as_str());
+                let mut pairs: Vec<(&MapKey, &NanVal)> = m.iter().collect();
+                pairs.sort_by_key(|(k, _)| (*k).clone());
                 let nan_vals: Vec<NanVal> = pairs
                     .iter()
                     .map(|(_, v)| {
@@ -12105,19 +12140,27 @@ pub(crate) extern "C" fn jit_mvals(map: u64) -> u64 {
 pub(crate) extern "C" fn jit_mdel(map: u64, key: u64) -> u64 {
     let map_v = NanVal(map);
     let key_v = NanVal(key);
-    if !map_v.is_heap() || !key_v.is_heap() {
+    if (map_v.0 & TAG_MASK) != TAG_MAP {
         return TAG_NIL;
     }
+    let mk = match nanval_to_map_key(key_v) {
+        Some(k) => k,
+        None => return TAG_NIL,
+    };
     unsafe {
         match map_v.as_heap_ref() {
-            HeapObj::Map(m) => match key_v.as_heap_ref() {
-                HeapObj::Str(k) => {
-                    let mut new_map = m.clone();
-                    new_map.remove(k.as_str());
-                    NanVal::heap_map(new_map).0
+            HeapObj::Map(m) => {
+                let mut new_map = m.clone();
+                // m.clone() bit-copies values; bump RC for each retained
+                // entry so the new map owns its values independently.
+                for v in new_map.values() {
+                    v.clone_rc();
                 }
-                _ => TAG_NIL,
-            },
+                if let Some(removed) = new_map.remove(&mk) {
+                    removed.drop_rc();
+                }
+                NanVal::heap_map(new_map).0
+            }
             _ => TAG_NIL,
         }
     }
@@ -12375,14 +12418,14 @@ pub(crate) extern "C" fn jit_frq(v: u64) -> u64 {
             _ => return TAG_NIL,
         }
     };
-    let mut counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    let mut counts: std::collections::HashMap<MapKey, usize> = std::collections::HashMap::new();
     for item in items {
-        match nanval_to_key_string(item) {
-            Some(s) => *counts.entry(s).or_insert(0) += 1,
+        match nanval_to_grouping_key(item) {
+            Some(k) => *counts.entry(k).or_insert(0) += 1,
             None => return TAG_NIL,
         }
     }
-    let map: std::collections::HashMap<String, NanVal> = counts
+    let map: std::collections::HashMap<MapKey, NanVal> = counts
         .into_iter()
         .map(|(k, c)| (k, NanVal::number(c as f64)))
         .collect();
@@ -12583,7 +12626,7 @@ pub(crate) extern "C" fn jit_geth(url_v: u64, headers_v: u64) -> u64 {
                             _ => unreachable!(),
                         }
                     };
-                    req = req.with_header(k.as_str(), &vs);
+                    req = req.with_header(k.to_display_string().as_str(), &vs);
                 }
             }
         }
@@ -12641,7 +12684,7 @@ pub(crate) extern "C" fn jit_posth(url_v: u64, body_v: u64, headers_v: u64) -> u
                             _ => unreachable!(),
                         }
                     };
-                    req = req.with_header(k.as_str(), &vs);
+                    req = req.with_header(k.to_display_string().as_str(), &vs);
                 }
             }
         }
@@ -15100,7 +15143,10 @@ mod tests {
         // bad host → Err value, even with headers passed as parameter
         let src = r#"f url:t hdrs:M t t>R t t;get url hdrs"#;
         let mut headers = std::collections::HashMap::new();
-        headers.insert("x-api-key".to_string(), Value::Text("tok".to_string()));
+        headers.insert(
+            crate::interpreter::MapKey::Text("x-api-key".to_string()),
+            Value::Text("tok".to_string()),
+        );
         let result = vm_run(
             src,
             Some("f"),
@@ -15119,7 +15165,10 @@ mod tests {
         // bad host → Err value, even with headers passed as parameter
         let src = r#"f url:t body:t hdrs:M t t>R t t;post url body hdrs"#;
         let mut headers = std::collections::HashMap::new();
-        headers.insert("x-api-key".to_string(), Value::Text("tok".to_string()));
+        headers.insert(
+            crate::interpreter::MapKey::Text("x-api-key".to_string()),
+            Value::Text("tok".to_string()),
+        );
         let result = vm_run(
             src,
             Some("f"),
@@ -17355,7 +17404,10 @@ mod tests {
             vec![
                 Value::Map(std::sync::Arc::new({
                     let mut m = std::collections::HashMap::new();
-                    m.insert("x".to_string(), Value::Text("1".to_string()));
+                    m.insert(
+                        crate::interpreter::MapKey::Text("x".to_string()),
+                        Value::Text("1".to_string()),
+                    );
                     m
                 })),
                 Value::Text("x".to_string()),
@@ -21611,12 +21663,13 @@ mod tests {
         let Value::Map(m) = result else {
             panic!("expected Map")
         };
+        use crate::interpreter::MapKey;
         assert_eq!(
-            m.get("small").unwrap(),
+            m.get(&MapKey::Text("small".to_string())).unwrap(),
             &Value::List(vec![1.0, 3.0, 2.0].into_iter().map(Value::Number).collect())
         );
         assert_eq!(
-            m.get("big").unwrap(),
+            m.get(&MapKey::Text("big".to_string())).unwrap(),
             &Value::List(vec![8.0, 9.0].into_iter().map(Value::Number).collect())
         );
     }
@@ -21638,16 +21691,17 @@ mod tests {
         let Value::Map(m) = result else {
             panic!("expected Map")
         };
+        use crate::interpreter::MapKey;
         assert_eq!(
-            m.get("1").unwrap(),
+            m.get(&MapKey::Text("1".to_string())).unwrap(),
             &Value::List(vec![1.0, 1.0].into_iter().map(Value::Number).collect())
         );
         assert_eq!(
-            m.get("2").unwrap(),
+            m.get(&MapKey::Text("2".to_string())).unwrap(),
             &Value::List(vec![2.0, 2.0].into_iter().map(Value::Number).collect())
         );
         assert_eq!(
-            m.get("3").unwrap(),
+            m.get(&MapKey::Text("3".to_string())).unwrap(),
             &Value::List(vec![3.0].into_iter().map(Value::Number).collect())
         );
     }
@@ -21714,8 +21768,9 @@ mod tests {
         let Value::Map(m) = result else {
             panic!("expected map")
         };
-        assert!(m.contains_key("true"));
-        assert!(m.contains_key("false"));
+        use crate::interpreter::MapKey;
+        assert!(m.contains_key(&MapKey::Text("true".to_string())));
+        assert!(m.contains_key(&MapKey::Text("false".to_string())));
     }
 
     #[test]
@@ -21734,9 +21789,11 @@ mod tests {
         let Value::Map(m) = result else {
             panic!("expected Map")
         };
+        use crate::interpreter::MapKey;
+        // Floats floor to i64 at MapKey boundary: 0.5 → 0, 1.5 → 1.
         assert!(
-            m.contains_key("0.5") || m.contains_key("1.5"),
-            "expected float key, got: {:?}",
+            m.contains_key(&MapKey::Int(0)) || m.contains_key(&MapKey::Int(1)),
+            "expected floored numeric key, got: {:?}",
             m.keys().collect::<Vec<_>>()
         );
     }
