@@ -1175,33 +1175,21 @@ impl Parser {
         }
         match self.token_at(after_semi) {
             // ^ident: or ^_: → err pattern
-            Some(Token::Caret) => {
-                if after_semi + 2 < self.tokens.len() {
-                    matches!(
-                        (self.token_at(after_semi + 1), self.token_at(after_semi + 2)),
-                        (
-                            Some(Token::Ident(_) | Token::Underscore),
-                            Some(Token::Colon)
-                        )
-                    )
-                } else {
-                    false
-                }
-            }
+            Some(Token::Caret) => matches!(
+                (self.token_at(after_semi + 1), self.token_at(after_semi + 2)),
+                (
+                    Some(Token::Ident(_) | Token::Underscore),
+                    Some(Token::Colon)
+                )
+            ),
             // ~ident: or ~_: → ok pattern
-            Some(Token::Tilde) => {
-                if after_semi + 2 < self.tokens.len() {
-                    matches!(
-                        (self.token_at(after_semi + 1), self.token_at(after_semi + 2)),
-                        (
-                            Some(Token::Ident(_) | Token::Underscore),
-                            Some(Token::Colon)
-                        )
-                    )
-                } else {
-                    false
-                }
-            }
+            Some(Token::Tilde) => matches!(
+                (self.token_at(after_semi + 1), self.token_at(after_semi + 2)),
+                (
+                    Some(Token::Ident(_) | Token::Underscore),
+                    Some(Token::Colon)
+                )
+            ),
             // _: → wildcard
             Some(Token::Underscore) => {
                 after_semi + 1 < self.tokens.len()
@@ -1214,17 +1202,13 @@ impl Parser {
             }
             // n/t/b/l ident: or n/t/b/l _: → TypeIs pattern
             Some(Token::Ident(ty_name)) if matches!(ty_name.as_str(), "n" | "t" | "b" | "l") => {
-                if after_semi + 2 < self.tokens.len() {
-                    matches!(
-                        (self.token_at(after_semi + 1), self.token_at(after_semi + 2)),
-                        (
-                            Some(Token::Ident(_) | Token::Underscore),
-                            Some(Token::Colon)
-                        )
+                matches!(
+                    (self.token_at(after_semi + 1), self.token_at(after_semi + 2)),
+                    (
+                        Some(Token::Ident(_) | Token::Underscore),
+                        Some(Token::Colon)
                     )
-                } else {
-                    false
-                }
+                )
             }
             _ => false,
         }

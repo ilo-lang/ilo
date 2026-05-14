@@ -2528,19 +2528,18 @@ impl VerifyContext {
 
     fn validate_named_type_recursive(&mut self, ty: &Ty, ctx: &str) {
         match ty {
-            Ty::Named(name) => {
-                if !self.types.contains_key(name) {
-                    let hint = closest_match(name, self.types.keys())
-                        .map(|s| format!("did you mean '{s}'?"));
-                    self.err(
-                        "ILO-T003",
-                        ctx,
-                        format!("undefined type '{name}'"),
-                        hint,
-                        None,
-                    );
-                }
+            Ty::Named(name) if !self.types.contains_key(name) => {
+                let hint =
+                    closest_match(name, self.types.keys()).map(|s| format!("did you mean '{s}'?"));
+                self.err(
+                    "ILO-T003",
+                    ctx,
+                    format!("undefined type '{name}'"),
+                    hint,
+                    None,
+                );
             }
+            Ty::Named(_) => {}
             Ty::List(inner) => self.validate_named_type_recursive(inner, ctx),
             Ty::Result(ok, err) => {
                 self.validate_named_type_recursive(ok, ctx);
