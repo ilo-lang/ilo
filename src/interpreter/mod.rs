@@ -50,7 +50,7 @@ impl MapKey {
     /// `at xs i`; non-finite numbers are rejected.
     pub fn from_value(v: &Value, op_name: &str) -> std::result::Result<Self, RuntimeError> {
         match v {
-            Value::Text(s) => Ok(MapKey::Text(s.clone())),
+            Value::Text(s) => Ok(MapKey::Text((**s).clone())),
             Value::Number(n) => {
                 if !n.is_finite() {
                     return Err(RuntimeError::new(
@@ -102,7 +102,7 @@ impl PartialOrd for MapKey {
 /// `mkeys`. Text → `Value::Text`, Int → `Value::Number(f64)`.
 pub fn map_key_to_value(k: &MapKey) -> Value {
     match k {
-        MapKey::Text(s) => Value::Text(s.clone()),
+        MapKey::Text(s) => Value::Text(Arc::new(s.clone())),
         MapKey::Int(n) => Value::Number(*n as f64),
     }
 }
@@ -110,7 +110,7 @@ pub fn map_key_to_value(k: &MapKey) -> Value {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {
     Number(f64),
-    Text(String),
+    Text(Arc<String>),
     Bool(bool),
     Nil,
     List(Arc<Vec<Value>>),
@@ -449,7 +449,7 @@ fn parse_format(fmt: &str, content: &str) -> std::result::Result<Value, String> 
                 .map(|line| {
                     let fields: Vec<Value> = parse_csv_row(line, sep)
                         .into_iter()
-                        .map(Value::Text)
+                        .map(|s| Value::Text(Arc::new(s)))
                         .collect();
                     Value::List(Arc::new(fields))
                 })
@@ -459,7 +459,7 @@ fn parse_format(fmt: &str, content: &str) -> std::result::Result<Value, String> 
         "json" => serde_json::from_str::<serde_json::Value>(content)
             .map(serde_json_to_value)
             .map_err(|e| e.to_string()),
-        _ => Ok(Value::Text(content.to_string())),
+        _ => Ok(Value::Text(Arc::new(content.to_string()))),
     }
 }
 
@@ -565,7 +565,7 @@ fn vec_from_value(v: &Value, name: &str) -> Result<Vec<f64>> {
 /// Inner `"` are escaped as `""`.
 fn fmt_csv_field(v: &Value, sep: char) -> String {
     let raw = match v {
-        Value::Text(s) => s.clone(),
+        Value::Text(s) => (**s).clone(),
         Value::Number(n) => {
             if *n == (*n as i64) as f64 {
                 format!("{}", *n as i64)
@@ -627,7 +627,7 @@ pub(crate) fn write_csv_tsv(rows: &[Value], sep: char) -> Result<String> {
             if i > 0 {
                 out.push(sep);
             }
-            out.push_str(&fmt_csv_field(&Value::Text(k.clone()), sep));
+            out.push_str(&fmt_csv_field(&Value::Text(Arc::new(k.clone())), sep));
         }
         out.push('\n');
     }
@@ -986,7 +986,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 } else {
                     format!("{}", n)
                 };
-                Ok(Value::Text(s))
+                Ok(Value::Text(Arc::new(s)))
             }
             other => Err(RuntimeError::new(
                 "ILO-R009",
@@ -1187,24 +1187,24 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         return match (&args[0], &args[1]) {
             (Value::Number(epoch), Value::Text(fmt_str)) => {
                 if !epoch.is_finite() {
-                    return Ok(Value::Err(Box::new(Value::Text(format!(
+                    return Ok(Value::Err(Box::new(Value::Text(Arc::new(format!(
                         "dtfmt: epoch is not finite ({epoch})"
-                    )))));
+                    ))))));
                 }
                 if *epoch < i64::MIN as f64 || *epoch > i64::MAX as f64 {
-                    return Ok(Value::Err(Box::new(Value::Text(format!(
+                    return Ok(Value::Err(Box::new(Value::Text(Arc::new(format!(
                         "dtfmt: epoch out of range ({epoch})"
-                    )))));
+                    ))))));
                 }
                 let secs = *epoch as i64;
                 match chrono::DateTime::<chrono::Utc>::from_timestamp(secs, 0) {
                     Some(dt) => {
                         let formatted = dt.format(fmt_str.as_str()).to_string();
-                        Ok(Value::Ok(Box::new(Value::Text(formatted))))
+                        Ok(Value::Ok(Box::new(Value::Text(Arc::new(formatted)))))
                     }
-                    None => Ok(Value::Err(Box::new(Value::Text(format!(
+                    None => Ok(Value::Err(Box::new(Value::Text(Arc::new(format!(
                         "dtfmt: timestamp out of range ({secs})"
-                    ))))),
+                    )))))),
                 }
             }
             _ => Err(RuntimeError::new(
@@ -1224,7 +1224,9 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                     });
                 match parsed {
                     Ok(n) => Ok(Value::Ok(Box::new(Value::Number(n)))),
-                    Err(e) => Ok(Value::Err(Box::new(Value::Text(format!("dtparse: {e}"))))),
+                    Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(format!(
+                        "dtparse: {e}"
+                    )))))),
                 }
             }
             _ => Err(RuntimeError::new(
@@ -1262,7 +1264,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             (Value::Text(s), Value::Text(sep)) => {
                 let parts: Vec<Value> = s
                     .split(sep.as_str())
-                    .map(|p| Value::Text(p.to_string()))
+                    .map(|p| Value::Text(Arc::new(p.to_string())))
                     .collect();
                 Ok(Value::List(Arc::new(parts)))
             }
@@ -1275,10 +1277,10 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
     if builtin == Some(Builtin::Cat) && args.len() == 2 {
         return match (&args[0], &args[1]) {
             (Value::List(items), Value::Text(sep)) => {
-                let mut parts = Vec::new();
+                let mut parts: Vec<String> = Vec::new();
                 for item in items.iter() {
                     match item {
-                        Value::Text(s) => parts.push(s.clone()),
+                        Value::Text(s) => parts.push((**s).clone()),
                         other => {
                             return Err(RuntimeError::new(
                                 "ILO-R009",
@@ -1287,7 +1289,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                         }
                     }
                 }
-                Ok(Value::Text(parts.join(sep.as_str())))
+                Ok(Value::Text(Arc::new(parts.join(sep.as_str()))))
             }
             _ => Err(RuntimeError::new(
                 "ILO-R009",
@@ -1324,7 +1326,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 if s.is_empty() {
                     Err(RuntimeError::new("ILO-R009", "hd: empty text".to_string()))
                 } else {
-                    Ok(Value::Text(s.chars().next().unwrap().to_string()))
+                    Ok(Value::Text(Arc::new(s.chars().next().unwrap().to_string())))
                 }
             }
             other => Err(RuntimeError::new(
@@ -1368,7 +1370,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 }
             }
             Value::Text(s) => match char_at_signed(s, i) {
-                CharAtResult::Found(c) => Ok(Value::Text(c.to_string())),
+                CharAtResult::Found(c) => Ok(Value::Text(Arc::new(c.to_string()))),
                 CharAtResult::OutOfRange { len } => Err(RuntimeError::new(
                     "ILO-R009",
                     format!("at: index {i} out of range for text of length {len}"),
@@ -1690,7 +1692,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 } else {
                     let mut chars = s.chars();
                     chars.next();
-                    Ok(Value::Text(chars.collect()))
+                    Ok(Value::Text(Arc::new(chars.collect())))
                 }
             }
             other => Err(RuntimeError::new(
@@ -1706,7 +1708,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 reversed.reverse();
                 Ok(Value::List(Arc::new(reversed)))
             }
-            Value::Text(s) => Ok(Value::Text(s.chars().rev().collect())),
+            Value::Text(s) => Ok(Value::Text(Arc::new(s.chars().rev().collect()))),
             other => Err(RuntimeError::new(
                 "ILO-R009",
                 format!("rev requires a list or text, got {:?}", other),
@@ -1751,7 +1753,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             Value::Text(s) => {
                 let mut chars: Vec<char> = s.chars().collect();
                 chars.sort();
-                Ok(Value::Text(chars.into_iter().collect()))
+                Ok(Value::Text(Arc::new(chars.into_iter().collect())))
             }
             other => Err(RuntimeError::new(
                 "ILO-R009",
@@ -1849,7 +1851,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             Value::Text(s) => {
                 let mut chars: Vec<char> = s.chars().collect();
                 chars.sort_by(|a, b| b.cmp(a));
-                Ok(Value::Text(chars.into_iter().collect()))
+                Ok(Value::Text(Arc::new(chars.into_iter().collect())))
             }
             other => Err(RuntimeError::new(
                 "ILO-R009",
@@ -1907,7 +1909,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 let len = chars.len();
                 let end = crate::builtins::resolve_slice_bound(end_raw, len);
                 let start = crate::builtins::resolve_slice_bound(start_raw, len).min(end);
-                Ok(Value::Text(chars[start..end].iter().collect()))
+                Ok(Value::Text(Arc::new(chars[start..end].iter().collect())))
             }
             other => Err(RuntimeError::new(
                 "ILO-R009",
@@ -1943,7 +1945,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             Value::Text(s) => {
                 let chars: Vec<char> = s.chars().collect();
                 let end = crate::builtins::resolve_take_count(n, chars.len());
-                Ok(Value::Text(chars[..end].iter().collect()))
+                Ok(Value::Text(Arc::new(chars[..end].iter().collect())))
             }
             other => Err(RuntimeError::new(
                 "ILO-R009",
@@ -1979,7 +1981,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             Value::Text(s) => {
                 let chars: Vec<char> = s.chars().collect();
                 let start = crate::builtins::resolve_drop_count(n, chars.len());
-                Ok(Value::Text(chars[start..].iter().collect()))
+                Ok(Value::Text(Arc::new(chars[start..].iter().collect())))
             }
             other => Err(RuntimeError::new(
                 "ILO-R009",
@@ -2002,8 +2004,8 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 Value::Map(m) => m
                     .iter()
                     .map(|(k, v)| {
-                        let vs = match v {
-                            Value::Text(s) => s.clone(),
+                        let vs: String = match v {
+                            Value::Text(s) => (**s).clone(),
                             other => format!("{other:?}"),
                         };
                         (k.to_display_string(), vs)
@@ -2028,12 +2030,14 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 }
                 match req.send() {
                     Ok(resp) => match resp.as_str() {
-                        Ok(body) => Ok(Value::Ok(Box::new(Value::Text(body.to_string())))),
-                        Err(e) => Ok(Value::Err(Box::new(Value::Text(format!(
+                        Ok(body) => {
+                            Ok(Value::Ok(Box::new(Value::Text(Arc::new(body.to_string())))))
+                        }
+                        Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(format!(
                             "response is not valid UTF-8: {e}"
-                        ))))),
+                        )))))),
                     },
-                    Err(e) => Ok(Value::Err(Box::new(Value::Text(e.to_string())))),
+                    Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(e.to_string()))))),
                 }
             }
             #[cfg(not(feature = "http"))]
@@ -2046,12 +2050,12 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         };
     }
     if builtin == Some(Builtin::GetMany) && args.len() == 1 {
-        let urls = match &args[0] {
+        let urls: Vec<String> = match &args[0] {
             Value::List(items) => {
                 let mut out = Vec::with_capacity(items.len());
                 for (i, v) in items.iter().enumerate() {
                     match v {
-                        Value::Text(s) => out.push(s.clone()),
+                        Value::Text(s) => out.push((**s).clone()),
                         other => {
                             return Err(RuntimeError::new(
                                 "ILO-R009",
@@ -2089,8 +2093,8 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 Value::Map(m) => m
                     .iter()
                     .map(|(k, v)| {
-                        let vs = match v {
-                            Value::Text(s) => s.clone(),
+                        let vs: String = match v {
+                            Value::Text(s) => (**s).clone(),
                             other => format!("{other:?}"),
                         };
                         (k.to_display_string(), vs)
@@ -2115,12 +2119,12 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 }
                 match req.send() {
                     Ok(resp) => match resp.as_str() {
-                        Ok(b) => Ok(Value::Ok(Box::new(Value::Text(b.to_string())))),
-                        Err(e) => Ok(Value::Err(Box::new(Value::Text(format!(
+                        Ok(b) => Ok(Value::Ok(Box::new(Value::Text(Arc::new(b.to_string()))))),
+                        Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(format!(
                             "response is not valid UTF-8: {e}"
-                        ))))),
+                        )))))),
                     },
-                    Err(e) => Ok(Value::Err(Box::new(Value::Text(e.to_string())))),
+                    Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(e.to_string()))))),
                 }
             }
             #[cfg(not(feature = "http"))]
@@ -2134,7 +2138,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
     }
     if builtin == Some(Builtin::Trm) && args.len() == 1 {
         return match &args[0] {
-            Value::Text(s) => Ok(Value::Text(s.trim().to_string())),
+            Value::Text(s) => Ok(Value::Text(Arc::new(s.trim().to_string()))),
             other => Err(RuntimeError::new(
                 "ILO-R009",
                 format!("trm requires text, got {:?}", other),
@@ -2143,7 +2147,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
     }
     if builtin == Some(Builtin::Upr) && args.len() == 1 {
         return match &args[0] {
-            Value::Text(s) => Ok(Value::Text(s.to_uppercase())),
+            Value::Text(s) => Ok(Value::Text(Arc::new(s.to_uppercase()))),
             other => Err(RuntimeError::new(
                 "ILO-R009",
                 format!("upr requires text, got {:?}", other),
@@ -2152,7 +2156,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
     }
     if builtin == Some(Builtin::Lwr) && args.len() == 1 {
         return match &args[0] {
-            Value::Text(s) => Ok(Value::Text(s.to_lowercase())),
+            Value::Text(s) => Ok(Value::Text(Arc::new(s.to_lowercase()))),
             other => Err(RuntimeError::new(
                 "ILO-R009",
                 format!("lwr requires text, got {:?}", other),
@@ -2167,7 +2171,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                     Some(c) => c.to_uppercase().collect::<String>() + chars.as_str(),
                     None => String::new(),
                 };
-                Ok(Value::Text(out))
+                Ok(Value::Text(Arc::new(out)))
             }
             other => Err(RuntimeError::new(
                 "ILO-R009",
@@ -2223,7 +2227,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         } else {
             format!("{s}{pad}")
         };
-        return Ok(Value::Text(out));
+        return Ok(Value::Text(Arc::new(out)));
     }
     if builtin == Some(Builtin::Ord) && args.len() == 1 {
         return match &args[0] {
@@ -2251,7 +2255,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 }
                 let cp = *n as u32;
                 match char::from_u32(cp) {
-                    Some(c) => Ok(Value::Text(c.to_string())),
+                    Some(c) => Ok(Value::Text(Arc::new(c.to_string()))),
                     None => Err(RuntimeError::new(
                         "ILO-R009",
                         format!("chr: {cp} is not a valid Unicode codepoint"),
@@ -2267,7 +2271,9 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
     if builtin == Some(Builtin::Chars) && args.len() == 1 {
         return match &args[0] {
             Value::Text(s) => Ok(Value::List(Arc::new(
-                s.chars().map(|c| Value::Text(c.to_string())).collect(),
+                s.chars()
+                    .map(|c| Value::Text(Arc::new(c.to_string())))
+                    .collect(),
             ))),
             other => Err(RuntimeError::new(
                 "ILO-R009",
@@ -2291,7 +2297,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             Value::Text(s) => {
                 let mut seen = std::collections::HashSet::new();
                 let deduped: String = s.chars().filter(|c| seen.insert(*c)).collect();
-                Ok(Value::Text(deduped))
+                Ok(Value::Text(Arc::new(deduped)))
             }
             other => Err(RuntimeError::new(
                 "ILO-R009",
@@ -2307,7 +2313,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 } else {
                     (*d as usize).min(20)
                 };
-                Ok(Value::Text(format!("{:.*}", digits, x)))
+                Ok(Value::Text(Arc::new(format!("{:.*}", digits, x))))
             }
             _ => Err(RuntimeError::new(
                 "ILO-R009",
@@ -2341,7 +2347,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 result.push(c);
             }
         }
-        return Ok(Value::Text(result));
+        return Ok(Value::Text(Arc::new(result)));
     }
     if builtin == Some(Builtin::Rd) && (args.len() == 1 || args.len() == 2) {
         let path = match &args[0] {
@@ -2365,17 +2371,17 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             }
         } else {
             // auto-detect from extension
-            std::path::Path::new(&path)
+            std::path::Path::new(path.as_str())
                 .extension()
                 .and_then(|e| e.to_str())
                 .unwrap_or("raw")
                 .to_lowercase()
         };
-        return match std::fs::read_to_string(&path) {
-            Err(e) => Ok(Value::Err(Box::new(Value::Text(e.to_string())))),
+        return match std::fs::read_to_string(path.as_str()) {
+            Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(e.to_string()))))),
             Ok(content) => match parse_format(&fmt, &content) {
                 Ok(v) => Ok(Value::Ok(Box::new(v))),
-                Err(e) => Ok(Value::Err(Box::new(Value::Text(e)))),
+                Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(e))))),
             },
         };
     }
@@ -2400,20 +2406,20 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         };
         return match parse_format(&fmt, &s) {
             Ok(v) => Ok(Value::Ok(Box::new(v))),
-            Err(e) => Ok(Value::Err(Box::new(Value::Text(e)))),
+            Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(e))))),
         };
     }
     if builtin == Some(Builtin::Rdl) && args.len() == 1 {
         return match &args[0] {
-            Value::Text(path) => match std::fs::read_to_string(path) {
+            Value::Text(path) => match std::fs::read_to_string(path.as_str()) {
                 Ok(content) => {
                     let lines: Vec<Value> = content
                         .lines()
-                        .map(|l| Value::Text(l.to_string()))
+                        .map(|l| Value::Text(Arc::new(l.to_string())))
                         .collect();
                     Ok(Value::Ok(Box::new(Value::List(Arc::new(lines)))))
                 }
-                Err(e) => Ok(Value::Err(Box::new(Value::Text(e.to_string())))),
+                Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(e.to_string()))))),
             },
             other => Err(RuntimeError::new(
                 "ILO-R009",
@@ -2443,7 +2449,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             };
             match fmt.as_str() {
                 "csv" | "tsv" => {
-                    let sep = if fmt == "csv" { ',' } else { '\t' };
+                    let sep = if fmt.as_str() == "csv" { ',' } else { '\t' };
                     let rows = match &args[1] {
                         Value::List(l) => l,
                         other => {
@@ -2490,7 +2496,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             }
         } else {
             match &args[1] {
-                Value::Text(s) => s.clone(),
+                Value::Text(s) => (**s).clone(),
                 other => {
                     return Err(RuntimeError::new(
                         "ILO-R009",
@@ -2499,9 +2505,9 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 }
             }
         };
-        return match std::fs::write(&path, &content) {
+        return match std::fs::write(path.as_str(), &content) {
             Ok(()) => Ok(Value::Ok(Box::new(Value::Text(path)))),
-            Err(e) => Ok(Value::Err(Box::new(Value::Text(e.to_string())))),
+            Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(e.to_string()))))),
         };
     }
     if builtin == Some(Builtin::Wrl) && args.len() == 2 {
@@ -2522,9 +2528,9 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                         }
                     }
                 }
-                match std::fs::write(path, &content) {
+                match std::fs::write(path.as_str(), &content) {
                     Ok(()) => Ok(Value::Ok(Box::new(Value::Text(path.clone())))),
-                    Err(e) => Ok(Value::Err(Box::new(Value::Text(e.to_string())))),
+                    Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(e.to_string()))))),
                 }
             }
             other => Err(RuntimeError::new(
@@ -2544,25 +2550,25 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                                 if let Some(v) = current.as_array().and_then(|a| a.get(idx)) {
                                     current = v;
                                 } else {
-                                    return Ok(Value::Err(Box::new(Value::Text(format!(
-                                        "key not found: {key}"
+                                    return Ok(Value::Err(Box::new(Value::Text(Arc::new(
+                                        format!("key not found: {key}"),
                                     )))));
                                 }
                             } else if let Some(v) = current.get(key) {
                                 current = v;
                             } else {
-                                return Ok(Value::Err(Box::new(Value::Text(format!(
+                                return Ok(Value::Err(Box::new(Value::Text(Arc::new(format!(
                                     "key not found: {key}"
-                                )))));
+                                ))))));
                             }
                         }
                         let result_str = match current {
                             serde_json::Value::String(s) => s.clone(),
                             other => other.to_string(),
                         };
-                        Ok(Value::Ok(Box::new(Value::Text(result_str))))
+                        Ok(Value::Ok(Box::new(Value::Text(Arc::new(result_str)))))
                     }
-                    Err(e) => Ok(Value::Err(Box::new(Value::Text(e.to_string())))),
+                    Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(e.to_string()))))),
                 }
             }
             _ => Err(RuntimeError::new(
@@ -2581,13 +2587,13 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
     }
     if builtin == Some(Builtin::Jdmp) && args.len() == 1 {
         let json_val = value_to_json(&args[0]);
-        return Ok(Value::Text(json_val.to_string()));
+        return Ok(Value::Text(Arc::new(json_val.to_string())));
     }
     if builtin == Some(Builtin::Jpar) && args.len() == 1 {
         return match &args[0] {
             Value::Text(s) => match serde_json::from_str::<serde_json::Value>(s) {
                 Ok(v) => Ok(Value::Ok(Box::new(serde_json_to_value(v)))),
-                Err(e) => Ok(Value::Err(Box::new(Value::Text(e.to_string())))),
+                Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(e.to_string()))))),
             },
             other => Err(RuntimeError::new(
                 "ILO-R009",
@@ -2597,7 +2603,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
     }
     if builtin == Some(Builtin::Rdjl) && args.len() == 1 {
         return match &args[0] {
-            Value::Text(path) => match std::fs::read_to_string(path) {
+            Value::Text(path) => match std::fs::read_to_string(path.as_str()) {
                 Ok(content) => {
                     let mut items: Vec<Value> = Vec::new();
                     for line in content.split('\n') {
@@ -2606,7 +2612,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                         }
                         let parsed = match serde_json::from_str::<serde_json::Value>(line) {
                             Ok(v) => Value::Ok(Box::new(serde_json_to_value(v))),
-                            Err(e) => Value::Err(Box::new(Value::Text(e.to_string()))),
+                            Err(e) => Value::Err(Box::new(Value::Text(Arc::new(e.to_string())))),
                         };
                         items.push(parsed);
                     }
@@ -2627,11 +2633,11 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
     if builtin == Some(Builtin::Env) && args.len() == 1 {
         return match &args[0] {
             Value::Text(key) => match std::env::var(key.as_str()) {
-                Ok(val) => Ok(Value::Ok(Box::new(Value::Text(val)))),
-                Err(_) => Ok(Value::Err(Box::new(Value::Text(format!(
+                Ok(val) => Ok(Value::Ok(Box::new(Value::Text(Arc::new(val))))),
+                Err(_) => Ok(Value::Err(Box::new(Value::Text(Arc::new(format!(
                     "env var '{}' not set",
                     key
-                ))))),
+                )))))),
             },
             other => Err(RuntimeError::new(
                 "ILO-R009",
@@ -2641,14 +2647,14 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
     }
 
     // Higher-order builtins: map, flt, fld
-    // A function reference can be Value::FnRef(name) or Value::Text(name) when the
+    // A function reference can be Value::FnRef(name) or Value::Text(Arc::new(name)) when the
     // function name was passed as a CLI string argument. Inline lambdas with
     // free-var capture produce Value::Closure, which carries the lifted fn
     // name plus by-value capture snapshots to append after the per-item args.
     fn resolve_fn_ref(val: &Value) -> Option<String> {
         match val {
             Value::FnRef(n) => Some(n.clone()),
-            Value::Text(n) => Some(n.clone()),
+            Value::Text(n) => Some((**n).clone()),
             Value::Closure { fn_name, .. } => Some(fn_name.clone()),
             _ => None,
         }
@@ -2944,7 +2950,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             call_args.extend(captures.iter().cloned());
             let key = call_function(env, &fn_name, call_args)?;
             let map_key = match &key {
-                Value::Text(s) => MapKey::Text(s.clone()),
+                Value::Text(s) => MapKey::Text((**s).clone()),
                 Value::Number(n) => {
                     if !n.is_finite() {
                         return Err(RuntimeError::new(
@@ -2991,7 +2997,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             // kept distinct — they were merged into a single key in the
             // pre-MapKey era.
             let map_key = match item {
-                Value::Text(s) => MapKey::Text(s.clone()),
+                Value::Text(s) => MapKey::Text((**s).clone()),
                 Value::Number(n) => {
                     if !n.is_finite() {
                         return Err(RuntimeError::new(
@@ -3537,14 +3543,17 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             re.captures(input)
                 .map(|caps| {
                     (1..caps.len())
-                        .filter_map(|i| caps.get(i).map(|m| Value::Text(m.as_str().to_string())))
+                        .filter_map(|i| {
+                            caps.get(i)
+                                .map(|m| Value::Text(Arc::new(m.as_str().to_string())))
+                        })
                         .collect()
                 })
                 .unwrap_or_default()
         } else {
             // No capture groups — return list of all matches
             re.find_iter(input)
-                .map(|m| Value::Text(m.as_str().to_string()))
+                .map(|m| Value::Text(Arc::new(m.as_str().to_string())))
                 .collect()
         };
         return Ok(Value::List(Arc::new(result)));
@@ -3590,14 +3599,21 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             re.captures_iter(input)
                 .map(|caps| {
                     let groups: Vec<Value> = (1..caps.len())
-                        .filter_map(|i| caps.get(i).map(|m| Value::Text(m.as_str().to_string())))
+                        .filter_map(|i| {
+                            caps.get(i)
+                                .map(|m| Value::Text(Arc::new(m.as_str().to_string())))
+                        })
                         .collect();
                     Value::List(Arc::new(groups))
                 })
                 .collect()
         } else {
             re.find_iter(input)
-                .map(|m| Value::List(Arc::new(vec![Value::Text(m.as_str().to_string())])))
+                .map(|m| {
+                    Value::List(Arc::new(vec![Value::Text(Arc::new(
+                        m.as_str().to_string(),
+                    ))]))
+                })
                 .collect()
         };
         return Ok(Value::List(Arc::new(result)));
@@ -3642,9 +3658,9 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         let re = regex::Regex::new(pattern).map_err(|e| {
             RuntimeError::new("ILO-R009", format!("rgxsub: invalid regex pattern: {e}"))
         })?;
-        return Ok(Value::Text(
+        return Ok(Value::Text(Arc::new(
             re.replace_all(subject, replacement).into_owned(),
-        ));
+        )));
     }
     if builtin == Some(Builtin::Flat) && args.len() == 1 {
         let items = match &args[0] {
@@ -3857,7 +3873,7 @@ fn value_to_json(val: &Value) -> serde_json::Value {
                     .unwrap_or(serde_json::Value::Null)
             }
         }
-        Value::Text(s) => serde_json::Value::String(s.clone()),
+        Value::Text(s) => serde_json::Value::String((**s).clone()),
         Value::Bool(b) => serde_json::Value::Bool(*b),
         Value::Nil => serde_json::Value::Null,
         Value::List(items) => serde_json::Value::Array(items.iter().map(value_to_json).collect()),
@@ -3899,7 +3915,7 @@ fn serde_json_to_value(v: serde_json::Value) -> Value {
         serde_json::Value::Array(arr) => {
             Value::List(Arc::new(arr.into_iter().map(serde_json_to_value).collect()))
         }
-        serde_json::Value::String(s) => Value::Text(s),
+        serde_json::Value::String(s) => Value::Text(Arc::new(s)),
         serde_json::Value::Number(n) => Value::Number(n.as_f64().unwrap_or(0.0)),
         serde_json::Value::Bool(b) => Value::Bool(b),
         serde_json::Value::Null => Value::Nil,
@@ -4419,7 +4435,9 @@ fn eval_expr(env: &mut Env, expr: &Expr) -> Result<Value> {
             // as the HOF call sites). FnRef/Text keep their original behaviour.
             let (callee, extra_captures) = match callee_from_scope {
                 Some(Value::FnRef(name)) => (name, Vec::new()),
-                Some(Value::Text(name)) if env.functions.contains_key(&name) => (name, Vec::new()),
+                Some(Value::Text(name)) if env.functions.contains_key(name.as_str()) => {
+                    ((*name).clone(), Vec::new())
+                }
                 Some(Value::Closure { fn_name, captures }) => (fn_name, captures),
                 _ => (function.clone(), Vec::new()),
             };
@@ -4591,7 +4609,7 @@ fn eval_expr(env: &mut Env, expr: &Expr) -> Result<Value> {
 fn eval_literal(lit: &Literal) -> Value {
     match lit {
         Literal::Number(n) => Value::Number(*n),
-        Literal::Text(s) => Value::Text(s.clone()),
+        Literal::Text(s) => Value::Text(Arc::new(s.clone())),
         Literal::Bool(b) => Value::Bool(*b),
         Literal::Nil => Value::Nil,
     }
@@ -4611,11 +4629,17 @@ fn eval_binop(op: &BinOp, left: &Value, right: &Value) -> Result<Value> {
             }
         }
         // String concatenation with +
+        //
+        // Slow path: `a` and `b` are borrowed (`&Arc<String>`), so we always
+        // allocate a fresh String here. The hot accumulator pattern
+        // `s = +s c` is short-circuited in eval_stmt via the self-rebind
+        // peephole, which owns the Arc and uses `Arc::make_mut` for O(1)
+        // amortised in-place push_str.
         (BinOp::Add, Value::Text(a), Value::Text(b)) => {
             let mut out = String::with_capacity(a.len() + b.len());
             out.push_str(a);
             out.push_str(b);
-            Ok(Value::Text(out))
+            Ok(Value::Text(Arc::new(out)))
         }
         // List concatenation with +
         (BinOp::Add, Value::List(a), Value::List(b)) => {
@@ -4837,17 +4861,21 @@ pub(crate) fn get_many_fetch(urls: &[String]) -> Vec<Value> {
                     let u = url.clone();
                     handles.push(s.spawn(move || match minreq::get(u.as_str()).send() {
                         Ok(resp) => match resp.as_str() {
-                            Ok(body) => Value::Ok(Box::new(Value::Text(body.to_string()))),
-                            Err(e) => Value::Err(Box::new(Value::Text(format!(
+                            Ok(body) => {
+                                Value::Ok(Box::new(Value::Text(Arc::new(body.to_string()))))
+                            }
+                            Err(e) => Value::Err(Box::new(Value::Text(Arc::new(format!(
                                 "response is not valid UTF-8: {e}"
-                            )))),
+                            ))))),
                         },
-                        Err(e) => Value::Err(Box::new(Value::Text(e.to_string()))),
+                        Err(e) => Value::Err(Box::new(Value::Text(Arc::new(e.to_string())))),
                     }));
                 }
                 for (i, h) in handles.into_iter().enumerate() {
                     let v = h.join().unwrap_or_else(|_| {
-                        Value::Err(Box::new(Value::Text("worker thread panicked".to_string())))
+                        Value::Err(Box::new(Value::Text(Arc::new(
+                            "worker thread panicked".to_string(),
+                        ))))
                     });
                     results[base + i] = v;
                 }
@@ -4931,36 +4959,48 @@ mod tests {
         // Braceless guards: early return
         let source = r#"cls sp:n>t;>=sp 1000 "gold";>=sp 500 "silver";"bronze""#;
         let result = run_str(source, Some("cls"), vec![Value::Number(1000.0)]);
-        assert_eq!(result, Value::Text("gold".to_string()));
+        assert_eq!(result, Value::Text(Arc::new("gold".to_string())));
     }
 
     #[test]
     fn interpret_cls_silver() {
         let source = r#"cls sp:n>t;>=sp 1000 "gold";>=sp 500 "silver";"bronze""#;
         let result = run_str(source, Some("cls"), vec![Value::Number(500.0)]);
-        assert_eq!(result, Value::Text("silver".to_string()));
+        assert_eq!(result, Value::Text(Arc::new("silver".to_string())));
     }
 
     #[test]
     fn interpret_cls_bronze() {
         let source = r#"cls sp:n>t;>=sp 1000 "gold";>=sp 500 "silver";"bronze""#;
         let result = run_str(source, Some("cls"), vec![Value::Number(100.0)]);
-        assert_eq!(result, Value::Text("bronze".to_string()));
+        assert_eq!(result, Value::Text(Arc::new("bronze".to_string())));
     }
 
     #[test]
     fn interpret_match_stmt() {
         let source = r#"f x:t>n;?x{"a":1;"b":2;_:0}"#;
         assert_eq!(
-            run_str(source, Some("f"), vec![Value::Text("a".to_string())]),
+            run_str(
+                source,
+                Some("f"),
+                vec![Value::Text(Arc::new("a".to_string()))]
+            ),
             Value::Number(1.0)
         );
         assert_eq!(
-            run_str(source, Some("f"), vec![Value::Text("b".to_string())]),
+            run_str(
+                source,
+                Some("f"),
+                vec![Value::Text(Arc::new("b".to_string()))]
+            ),
             Value::Number(2.0)
         );
         assert_eq!(
-            run_str(source, Some("f"), vec![Value::Text("z".to_string())]),
+            run_str(
+                source,
+                Some("f"),
+                vec![Value::Text(Arc::new("z".to_string()))]
+            ),
             Value::Number(0.0)
         );
     }
@@ -4976,7 +5016,10 @@ mod tests {
     fn interpret_err_constructor() {
         let source = r#"f x:n>R n t;^"bad""#;
         let result = run_str(source, Some("f"), vec![Value::Number(0.0)]);
-        assert_eq!(result, Value::Err(Box::new(Value::Text("bad".to_string()))));
+        assert_eq!(
+            result,
+            Value::Err(Box::new(Value::Text(Arc::new("bad".to_string()))))
+        );
     }
 
     #[test]
@@ -4992,7 +5035,9 @@ mod tests {
         let err_result = run_str(
             source,
             Some("f"),
-            vec![Value::Err(Box::new(Value::Text("oops".to_string())))],
+            vec![Value::Err(Box::new(Value::Text(Arc::new(
+                "oops".to_string(),
+            ))))],
         );
         assert_eq!(err_result, Value::Number(0.0));
     }
@@ -5003,11 +5048,11 @@ mod tests {
         let source = r#"f x:b>t;!x{"nope"}{"yes"}"#;
         assert_eq!(
             run_str(source, Some("f"), vec![Value::Bool(false)]),
-            Value::Text("nope".to_string())
+            Value::Text(Arc::new("nope".to_string()))
         );
         assert_eq!(
             run_str(source, Some("f"), vec![Value::Bool(true)]),
-            Value::Text("yes".to_string())
+            Value::Text(Arc::new("yes".to_string()))
         );
     }
 
@@ -5045,11 +5090,11 @@ mod tests {
             source,
             Some("f"),
             vec![
-                Value::Text("hello ".to_string()),
-                Value::Text("world".to_string()),
+                Value::Text(Arc::new("hello ".to_string())),
+                Value::Text(Arc::new("world".to_string())),
             ],
         );
-        assert_eq!(result, Value::Text("hello world".to_string()));
+        assert_eq!(result, Value::Text(Arc::new("hello world".to_string())));
     }
 
     #[test]
@@ -5059,7 +5104,10 @@ mod tests {
             run_str(
                 gt,
                 Some("f"),
-                vec![Value::Text("banana".into()), Value::Text("apple".into())]
+                vec![
+                    Value::Text(Arc::new("banana".to_string())),
+                    Value::Text(Arc::new("apple".to_string()))
+                ]
             ),
             Value::Bool(true)
         );
@@ -5067,7 +5115,10 @@ mod tests {
             run_str(
                 gt,
                 Some("f"),
-                vec![Value::Text("apple".into()), Value::Text("banana".into())]
+                vec![
+                    Value::Text(Arc::new("apple".to_string())),
+                    Value::Text(Arc::new("banana".to_string()))
+                ]
             ),
             Value::Bool(false)
         );
@@ -5077,7 +5128,10 @@ mod tests {
             run_str(
                 lt,
                 Some("f"),
-                vec![Value::Text("apple".into()), Value::Text("banana".into())]
+                vec![
+                    Value::Text(Arc::new("apple".to_string())),
+                    Value::Text(Arc::new("banana".to_string()))
+                ]
             ),
             Value::Bool(true)
         );
@@ -5087,7 +5141,10 @@ mod tests {
             run_str(
                 ge,
                 Some("f"),
-                vec![Value::Text("apple".into()), Value::Text("apple".into())]
+                vec![
+                    Value::Text(Arc::new("apple".to_string())),
+                    Value::Text(Arc::new("apple".to_string()))
+                ]
             ),
             Value::Bool(true)
         );
@@ -5097,7 +5154,10 @@ mod tests {
             run_str(
                 le,
                 Some("f"),
-                vec![Value::Text("zebra".into()), Value::Text("banana".into())]
+                vec![
+                    Value::Text(Arc::new("zebra".to_string())),
+                    Value::Text(Arc::new("banana".to_string()))
+                ]
             ),
             Value::Bool(false)
         );
@@ -5106,7 +5166,11 @@ mod tests {
     #[test]
     fn interpret_match_expr_in_let() {
         let source = r#"f x:t>n;y=?x{"a":1;"b":2;_:0};y"#;
-        let result = run_str(source, Some("f"), vec![Value::Text("b".to_string())]);
+        let result = run_str(
+            source,
+            Some("f"),
+            vec![Value::Text(Arc::new("b".to_string()))],
+        );
         assert_eq!(result, Value::Number(2.0));
     }
 
@@ -5133,7 +5197,12 @@ mod tests {
     fn interpret_sqrt_non_number_errors() {
         let source = "f x:t>n;sqrt x";
         let prog = parse_program(source);
-        let err = run(&prog, Some("f"), vec![Value::Text("nope".into())]).unwrap_err();
+        let err = run(
+            &prog,
+            Some("f"),
+            vec![Value::Text(Arc::new("nope".to_string()))],
+        )
+        .unwrap_err();
         assert!(
             err.to_string().contains("sqrt") && err.to_string().contains("requires a number"),
             "unexpected error: {err}"
@@ -5143,28 +5212,48 @@ mod tests {
     #[test]
     fn interpret_log_non_number_errors() {
         let prog = parse_program("f x:t>n;log x");
-        let err = run(&prog, Some("f"), vec![Value::Text("nope".into())]).unwrap_err();
+        let err = run(
+            &prog,
+            Some("f"),
+            vec![Value::Text(Arc::new("nope".to_string()))],
+        )
+        .unwrap_err();
         assert!(err.to_string().contains("log"), "unexpected error: {err}");
     }
 
     #[test]
     fn interpret_exp_non_number_errors() {
         let prog = parse_program("f x:t>n;exp x");
-        let err = run(&prog, Some("f"), vec![Value::Text("nope".into())]).unwrap_err();
+        let err = run(
+            &prog,
+            Some("f"),
+            vec![Value::Text(Arc::new("nope".to_string()))],
+        )
+        .unwrap_err();
         assert!(err.to_string().contains("exp"), "unexpected error: {err}");
     }
 
     #[test]
     fn interpret_sin_non_number_errors() {
         let prog = parse_program("f x:t>n;sin x");
-        let err = run(&prog, Some("f"), vec![Value::Text("nope".into())]).unwrap_err();
+        let err = run(
+            &prog,
+            Some("f"),
+            vec![Value::Text(Arc::new("nope".to_string()))],
+        )
+        .unwrap_err();
         assert!(err.to_string().contains("sin"), "unexpected error: {err}");
     }
 
     #[test]
     fn interpret_cos_non_number_errors() {
         let prog = parse_program("f x:t>n;cos x");
-        let err = run(&prog, Some("f"), vec![Value::Text("nope".into())]).unwrap_err();
+        let err = run(
+            &prog,
+            Some("f"),
+            vec![Value::Text(Arc::new("nope".to_string()))],
+        )
+        .unwrap_err();
         assert!(err.to_string().contains("cos"), "unexpected error: {err}");
     }
 
@@ -5174,7 +5263,10 @@ mod tests {
         let err = run(
             &prog,
             Some("f"),
-            vec![Value::Text("a".into()), Value::Text("b".into())],
+            vec![
+                Value::Text(Arc::new("a".to_string())),
+                Value::Text(Arc::new("b".to_string())),
+            ],
         )
         .unwrap_err();
         assert!(
@@ -5245,11 +5337,19 @@ mod tests {
     fn interpret_len_string() {
         let source = r#"f s:t>n;len s"#;
         assert_eq!(
-            run_str(source, Some("f"), vec![Value::Text("hello".to_string())]),
+            run_str(
+                source,
+                Some("f"),
+                vec![Value::Text(Arc::new("hello".to_string()))]
+            ),
             Value::Number(5.0)
         );
         assert_eq!(
-            run_str(source, Some("f"), vec![Value::Text("".to_string())]),
+            run_str(
+                source,
+                Some("f"),
+                vec![Value::Text(Arc::new("".to_string()))]
+            ),
             Value::Number(0.0)
         );
     }
@@ -5299,7 +5399,10 @@ mod tests {
     #[test]
     fn interpret_str_integer() {
         let source = "f>t;str 42";
-        assert_eq!(run_str(source, Some("f"), vec![]), Value::Text("42".into()));
+        assert_eq!(
+            run_str(source, Some("f"), vec![]),
+            Value::Text(Arc::new("42".to_string()))
+        );
     }
 
     #[test]
@@ -5307,7 +5410,7 @@ mod tests {
         let source = "f>t;str 3.14";
         assert_eq!(
             run_str(source, Some("f"), vec![]),
-            Value::Text("3.14".into())
+            Value::Text(Arc::new("3.14".to_string()))
         );
     }
 
@@ -5325,7 +5428,7 @@ mod tests {
         let source = "f>R n t;num \"abc\"";
         assert_eq!(
             run_str(source, Some("f"), vec![]),
-            Value::Err(Box::new(Value::Text("abc".into())))
+            Value::Err(Box::new(Value::Text(Arc::new("abc".to_string()))))
         );
     }
 
@@ -5370,7 +5473,7 @@ mod tests {
         let source = "f>t;xs=[\"hello\", \"world\"];xs.0";
         assert_eq!(
             run_str(source, Some("f"), vec![]),
-            Value::Text("hello".into())
+            Value::Text(Arc::new("hello".to_string()))
         );
     }
 
@@ -5450,7 +5553,10 @@ mod tests {
 
     #[test]
     fn display_text() {
-        assert_eq!(format!("{}", Value::Text("hello".into())), "hello");
+        assert_eq!(
+            format!("{}", Value::Text(Arc::new("hello".to_string()))),
+            "hello"
+        );
     }
 
     #[test]
@@ -5517,7 +5623,10 @@ mod tests {
     #[test]
     fn display_err() {
         assert_eq!(
-            format!("{}", Value::Err(Box::new(Value::Text("bad".into())))),
+            format!(
+                "{}",
+                Value::Err(Box::new(Value::Text(Arc::new("bad".to_string()))))
+            ),
             "^bad"
         );
     }
@@ -5565,7 +5674,7 @@ mod tests {
         let err = run_str_err(
             r#"f x:t>t;str x"#,
             Some("f"),
-            vec![Value::Text("hi".into())],
+            vec![Value::Text(Arc::new("hi".to_string()))],
         );
         assert!(err.contains("str requires a number"));
     }
@@ -5593,7 +5702,7 @@ mod tests {
         let err = run_str_err(
             r#"f x:t>n;abs x"#,
             Some("f"),
-            vec![Value::Text("hi".into())],
+            vec![Value::Text(Arc::new("hi".to_string()))],
         );
         assert!(err.contains("abs requires a number"));
     }
@@ -5603,7 +5712,10 @@ mod tests {
         let err = run_str_err(
             r#"f a:t b:t>n;min a b"#,
             Some("f"),
-            vec![Value::Text("a".into()), Value::Text("b".into())],
+            vec![
+                Value::Text(Arc::new("a".to_string())),
+                Value::Text(Arc::new("b".to_string())),
+            ],
         );
         assert!(err.contains("min requires two numbers"));
     }
@@ -5613,20 +5725,31 @@ mod tests {
         let err = run_str_err(
             r#"f a:t b:t>n;max a b"#,
             Some("f"),
-            vec![Value::Text("a".into()), Value::Text("b".into())],
+            vec![
+                Value::Text(Arc::new("a".to_string())),
+                Value::Text(Arc::new("b".to_string())),
+            ],
         );
         assert!(err.contains("max requires two numbers"));
     }
 
     #[test]
     fn err_flr_non_number() {
-        let err = run_str_err(r#"f x:t>n;flr x"#, Some("f"), vec![Value::Text("a".into())]);
+        let err = run_str_err(
+            r#"f x:t>n;flr x"#,
+            Some("f"),
+            vec![Value::Text(Arc::new("a".to_string()))],
+        );
         assert!(err.contains("flr requires a number"));
     }
 
     #[test]
     fn err_cel_non_number() {
-        let err = run_str_err(r#"f x:t>n;cel x"#, Some("f"), vec![Value::Text("a".into())]);
+        let err = run_str_err(
+            r#"f x:t>n;cel x"#,
+            Some("f"),
+            vec![Value::Text(Arc::new("a".to_string()))],
+        );
         assert!(err.contains("cel requires a number"));
     }
 
@@ -5768,7 +5891,10 @@ mod tests {
 
     #[test]
     fn values_equal_mismatched() {
-        assert!(!values_equal(&Value::Number(1.0), &Value::Text("1".into())));
+        assert!(!values_equal(
+            &Value::Number(1.0),
+            &Value::Text(Arc::new("1".to_string()))
+        ));
         assert!(!values_equal(&Value::Nil, &Value::Bool(false)));
     }
 
@@ -5790,8 +5916,8 @@ mod tests {
 
     #[test]
     fn is_truthy_text() {
-        assert!(!is_truthy(&Value::Text("".into())));
-        assert!(is_truthy(&Value::Text("hello".into())));
+        assert!(!is_truthy(&Value::Text(Arc::new("".to_string()))));
+        assert!(is_truthy(&Value::Text(Arc::new("hello".to_string()))));
     }
 
     #[test]
@@ -5969,14 +6095,14 @@ mod tests {
     fn interpret_match_expr_no_subject() {
         let source = r#"f>t;x=?{_:"always"};x"#;
         let result = run_str(source, Some("f"), vec![]);
-        assert_eq!(result, Value::Text("always".to_string()));
+        assert_eq!(result, Value::Text(Arc::new("always".to_string())));
     }
 
     #[test]
     fn interpret_pattern_ok_no_match() {
         let source = r#"f>t;x=^"err";?x{~v:v;_:"default"}"#;
         let result = run_str(source, Some("f"), vec![]);
-        assert_eq!(result, Value::Text("default".to_string()));
+        assert_eq!(result, Value::Text(Arc::new("default".to_string())));
     }
 
     #[test]
@@ -6097,7 +6223,7 @@ mod tests {
         let result = run(&prog, Some("outer"), vec![Value::Number(42.0)]).unwrap();
         assert_eq!(
             result,
-            Value::Err(Box::new(Value::Text("fail".to_string())))
+            Value::Err(Box::new(Value::Text(Arc::new("fail".to_string()))))
         );
     }
 
@@ -6158,7 +6284,7 @@ mod tests {
         let result = run(&prog, Some("a"), vec![Value::Number(1.0)]).unwrap();
         assert_eq!(
             result,
-            Value::Err(Box::new(Value::Text("deep".to_string())))
+            Value::Err(Box::new(Value::Text(Arc::new("deep".to_string()))))
         );
     }
 
@@ -6169,15 +6295,15 @@ mod tests {
         let source = r#"cls sp:n>t;>=sp 1000 "gold";>=sp 500 "silver";"bronze""#;
         assert_eq!(
             run_str(source, Some("cls"), vec![Value::Number(1500.0)]),
-            Value::Text("gold".to_string())
+            Value::Text(Arc::new("gold".to_string()))
         );
         assert_eq!(
             run_str(source, Some("cls"), vec![Value::Number(750.0)]),
-            Value::Text("silver".to_string())
+            Value::Text(Arc::new("silver".to_string()))
         );
         assert_eq!(
             run_str(source, Some("cls"), vec![Value::Number(100.0)]),
-            Value::Text("bronze".to_string())
+            Value::Text(Arc::new("bronze".to_string()))
         );
     }
 
@@ -6205,9 +6331,9 @@ mod tests {
         assert_eq!(
             run_str(source, Some("f"), vec![]),
             Value::List(Arc::new(vec![
-                Value::Text("a".to_string()),
-                Value::Text("b".to_string()),
-                Value::Text("c".to_string()),
+                Value::Text(Arc::new("a".to_string())),
+                Value::Text(Arc::new("b".to_string())),
+                Value::Text(Arc::new("c".to_string())),
             ]))
         );
     }
@@ -6217,7 +6343,7 @@ mod tests {
         let source = r#"f>L t;spl "" ",""#;
         assert_eq!(
             run_str(source, Some("f"), vec![]),
-            Value::List(Arc::new(vec![Value::Text("".to_string())]))
+            Value::List(Arc::new(vec![Value::Text(Arc::new("".to_string()))]))
         );
     }
 
@@ -6229,12 +6355,12 @@ mod tests {
                 source,
                 Some("f"),
                 vec![Value::List(Arc::new(vec![
-                    Value::Text("a".into()),
-                    Value::Text("b".into()),
-                    Value::Text("c".into()),
+                    Value::Text(Arc::new("a".to_string())),
+                    Value::Text(Arc::new("b".to_string())),
+                    Value::Text(Arc::new("c".to_string())),
                 ]))]
             ),
-            Value::Text("a,b,c".into())
+            Value::Text(Arc::new("a,b,c".to_string()))
         );
     }
 
@@ -6243,7 +6369,7 @@ mod tests {
         let source = "f items:L t>t;cat items \"-\"";
         assert_eq!(
             run_str(source, Some("f"), vec![Value::List(Arc::new(vec![]))]),
-            Value::Text("".into())
+            Value::Text(Arc::new("".to_string()))
         );
     }
 
@@ -6282,8 +6408,8 @@ mod tests {
                 source,
                 Some("f"),
                 vec![
-                    Value::Text("hello world".into()),
-                    Value::Text("world".into())
+                    Value::Text(Arc::new("hello world".to_string())),
+                    Value::Text(Arc::new("world".to_string()))
                 ]
             ),
             Value::Bool(true)
@@ -6309,8 +6435,12 @@ mod tests {
     fn interpret_hd_text() {
         let source = r#"f s:t>t;hd s"#;
         assert_eq!(
-            run_str(source, Some("f"), vec![Value::Text("hello".into())]),
-            Value::Text("h".into())
+            run_str(
+                source,
+                Some("f"),
+                vec![Value::Text(Arc::new("hello".to_string()))]
+            ),
+            Value::Text(Arc::new("h".to_string()))
         );
     }
 
@@ -6318,8 +6448,12 @@ mod tests {
     fn interpret_tl_text() {
         let source = r#"f s:t>t;tl s"#;
         assert_eq!(
-            run_str(source, Some("f"), vec![Value::Text("hello".into())]),
-            Value::Text("ello".into())
+            run_str(
+                source,
+                Some("f"),
+                vec![Value::Text(Arc::new("hello".to_string()))]
+            ),
+            Value::Text(Arc::new("ello".to_string()))
         );
     }
 
@@ -6341,7 +6475,7 @@ mod tests {
         let source = r#"f>t;rev "abc""#;
         assert_eq!(
             run_str(source, Some("f"), vec![]),
-            Value::Text("cba".into())
+            Value::Text(Arc::new("cba".to_string()))
         );
     }
 
@@ -6364,9 +6498,9 @@ mod tests {
         assert_eq!(
             run_str(source, Some("f"), vec![]),
             Value::List(Arc::new(vec![
-                Value::Text("a".into()),
-                Value::Text("b".into()),
-                Value::Text("c".into())
+                Value::Text(Arc::new("a".to_string())),
+                Value::Text(Arc::new("b".to_string())),
+                Value::Text(Arc::new("c".to_string()))
             ]))
         );
     }
@@ -6376,7 +6510,7 @@ mod tests {
         let source = r#"f>t;srt "cab""#;
         assert_eq!(
             run_str(source, Some("f"), vec![]),
-            Value::Text("abc".into())
+            Value::Text(Arc::new("abc".to_string()))
         );
     }
 
@@ -6394,7 +6528,7 @@ mod tests {
         let source = r#"f>t;slc "hello" 1 4"#;
         assert_eq!(
             run_str(source, Some("f"), vec![]),
-            Value::Text("ell".into())
+            Value::Text(Arc::new("ell".to_string()))
         );
     }
 
@@ -6412,7 +6546,7 @@ mod tests {
         let source = r#"f x:n>t;=x 1{"yes"}{"no"}"#;
         assert_eq!(
             run_str(source, Some("f"), vec![Value::Number(1.0)]),
-            Value::Text("yes".into())
+            Value::Text(Arc::new("yes".to_string()))
         );
     }
 
@@ -6421,7 +6555,7 @@ mod tests {
         let source = r#"f x:n>t;=x 1{"yes"}{"no"}"#;
         assert_eq!(
             run_str(source, Some("f"), vec![Value::Number(2.0)]),
-            Value::Text("no".into())
+            Value::Text(Arc::new("no".to_string()))
         );
     }
 
@@ -6512,11 +6646,11 @@ mod tests {
         let source = r#"f x:n>t;!=x 1{"not one"}{"one"}"#;
         assert_eq!(
             run_str(source, Some("f"), vec![Value::Number(1.0)]),
-            Value::Text("one".into())
+            Value::Text(Arc::new("one".to_string()))
         );
         assert_eq!(
             run_str(source, Some("f"), vec![Value::Number(2.0)]),
-            Value::Text("not one".into())
+            Value::Text(Arc::new("not one".to_string()))
         );
     }
 
@@ -6728,8 +6862,15 @@ mod tests {
             std::env::set_var("ILO_TEST_VAR", "hello");
         }
         let source = r#"f k:t>R t t;env k"#;
-        let result = run_str(source, Some("f"), vec![Value::Text("ILO_TEST_VAR".into())]);
-        assert_eq!(result, Value::Ok(Box::new(Value::Text("hello".into()))));
+        let result = run_str(
+            source,
+            Some("f"),
+            vec![Value::Text(Arc::new("ILO_TEST_VAR".to_string()))],
+        );
+        assert_eq!(
+            result,
+            Value::Ok(Box::new(Value::Text(Arc::new("hello".to_string()))))
+        );
         unsafe {
             std::env::remove_var("ILO_TEST_VAR");
         }
@@ -6742,7 +6883,7 @@ mod tests {
         let result = run_str(
             source,
             Some("f"),
-            vec![Value::Text("ILO_NONEXISTENT_12345".into())],
+            vec![Value::Text(Arc::new("ILO_NONEXISTENT_12345".to_string()))],
         );
         let Value::Err(inner) = result else {
             panic!("expected Err")
@@ -6763,9 +6904,12 @@ mod tests {
         let result = run_str(
             source,
             Some("f"),
-            vec![Value::Text("ILO_TEST_UNWRAP".into())],
+            vec![Value::Text(Arc::new("ILO_TEST_UNWRAP".to_string()))],
         );
-        assert_eq!(result, Value::Ok(Box::new(Value::Text("world".into()))));
+        assert_eq!(
+            result,
+            Value::Ok(Box::new(Value::Text(Arc::new("world".to_string()))))
+        );
         unsafe {
             std::env::remove_var("ILO_TEST_UNWRAP");
         }
@@ -6840,7 +6984,7 @@ mod tests {
         let err = run_str_err(
             "f x:n y:t>L t;spl x y",
             Some("f"),
-            vec![Value::Number(1.0), Value::Text("a".into())],
+            vec![Value::Number(1.0), Value::Text(Arc::new("a".to_string()))],
         );
         assert!(err.contains("spl requires two text args"), "got: {err}");
     }
@@ -6850,7 +6994,7 @@ mod tests {
         let err = run_str_err(
             "f x:t y:n>L t;spl x y",
             Some("f"),
-            vec![Value::Text("a-b".into()), Value::Number(1.0)],
+            vec![Value::Text(Arc::new("a-b".to_string())), Value::Number(1.0)],
         );
         assert!(err.contains("spl requires two text args"), "got: {err}");
     }
@@ -6879,7 +7023,10 @@ mod tests {
         let err = run_str_err(
             "f x:t y:n>b;has x y",
             Some("f"),
-            vec![Value::Text("hello".into()), Value::Number(1.0)],
+            vec![
+                Value::Text(Arc::new("hello".to_string())),
+                Value::Number(1.0),
+            ],
         );
         assert!(
             err.contains("text search requires text needle"),
@@ -6965,7 +7112,10 @@ mod tests {
         let err = run_str_err(
             "f x:t y:t>t;slc x y 1",
             Some("f"),
-            vec![Value::Text("hi".into()), Value::Text("a".into())],
+            vec![
+                Value::Text(Arc::new("hi".to_string())),
+                Value::Text(Arc::new("a".to_string())),
+            ],
         );
         assert!(
             err.contains("slc: start index must be a number"),
@@ -6978,7 +7128,10 @@ mod tests {
         let err = run_str_err(
             "f x:t y:t>t;slc x 0 y",
             Some("f"),
-            vec![Value::Text("hi".into()), Value::Text("a".into())],
+            vec![
+                Value::Text(Arc::new("hi".to_string())),
+                Value::Text(Arc::new("a".to_string())),
+            ],
         );
         assert!(
             err.contains("slc: end index must be a number"),
@@ -6998,7 +7151,10 @@ mod tests {
         let err = run_str_err(
             "f x:t y:t>n;rnd x y",
             Some("f"),
-            vec![Value::Text("a".into()), Value::Text("b".into())],
+            vec![
+                Value::Text(Arc::new("a".to_string())),
+                Value::Text(Arc::new("b".to_string())),
+            ],
         );
         assert!(err.contains("rnd requires two numbers"), "got: {err}");
     }
@@ -7038,7 +7194,7 @@ mod tests {
             "type usr{name:t;email:t} f>t;u=usr name:\"alice\" email:\"a@b\";{name;email}=u;name";
         assert_eq!(
             run_str(source, Some("f"), vec![]),
-            Value::Text("alice".to_string())
+            Value::Text(Arc::new("alice".to_string()))
         );
     }
 
@@ -7075,13 +7231,13 @@ mod tests {
             source,
             Some("f"),
             vec![
-                Value::Text(r#"{"name":"alice"}"#.to_string()),
-                Value::Text("name".to_string()),
+                Value::Text(Arc::new(r#"{"name":"alice"}"#.to_string())),
+                Value::Text(Arc::new("name".to_string())),
             ],
         );
         assert_eq!(
             result,
-            Value::Ok(Box::new(Value::Text("alice".to_string())))
+            Value::Ok(Box::new(Value::Text(Arc::new("alice".to_string()))))
         );
     }
 
@@ -7092,11 +7248,14 @@ mod tests {
             source,
             Some("f"),
             vec![
-                Value::Text(r#"{"user":{"name":"bob"}}"#.to_string()),
-                Value::Text("user.name".to_string()),
+                Value::Text(Arc::new(r#"{"user":{"name":"bob"}}"#.to_string())),
+                Value::Text(Arc::new("user.name".to_string())),
             ],
         );
-        assert_eq!(result, Value::Ok(Box::new(Value::Text("bob".to_string()))));
+        assert_eq!(
+            result,
+            Value::Ok(Box::new(Value::Text(Arc::new("bob".to_string()))))
+        );
     }
 
     #[test]
@@ -7106,11 +7265,14 @@ mod tests {
             source,
             Some("f"),
             vec![
-                Value::Text(r#"{"items":[10,20,30]}"#.to_string()),
-                Value::Text("items.1".to_string()),
+                Value::Text(Arc::new(r#"{"items":[10,20,30]}"#.to_string())),
+                Value::Text(Arc::new("items.1".to_string())),
             ],
         );
-        assert_eq!(result, Value::Ok(Box::new(Value::Text("20".to_string()))));
+        assert_eq!(
+            result,
+            Value::Ok(Box::new(Value::Text(Arc::new("20".to_string()))))
+        );
     }
 
     #[test]
@@ -7120,8 +7282,8 @@ mod tests {
             source,
             Some("f"),
             vec![
-                Value::Text(r#"{"a":1}"#.to_string()),
-                Value::Text("b".to_string()),
+                Value::Text(Arc::new(r#"{"a":1}"#.to_string())),
+                Value::Text(Arc::new("b".to_string())),
             ],
         );
         let Value::Err(e) = result else {
@@ -7137,8 +7299,8 @@ mod tests {
             source,
             Some("f"),
             vec![
-                Value::Text("not json".to_string()),
-                Value::Text("x".to_string()),
+                Value::Text(Arc::new("not json".to_string())),
+                Value::Text(Arc::new("x".to_string())),
             ],
         );
         assert!(matches!(result, Value::Err(_)));
@@ -7151,32 +7313,36 @@ mod tests {
             source,
             Some("f"),
             vec![
-                Value::Text(r#"{"x":"hello"}"#.to_string()),
-                Value::Text("x".to_string()),
+                Value::Text(Arc::new(r#"{"x":"hello"}"#.to_string())),
+                Value::Text(Arc::new("x".to_string())),
             ],
         );
-        assert_eq!(result, Value::Text("hello".to_string()));
+        assert_eq!(result, Value::Text(Arc::new("hello".to_string())));
     }
 
     #[test]
     fn interp_jd_number() {
         let source = "f x:n>t;jdmp x";
         let result = run_str(source, Some("f"), vec![Value::Number(42.0)]);
-        assert_eq!(result, Value::Text("42".to_string()));
+        assert_eq!(result, Value::Text(Arc::new("42".to_string())));
     }
 
     #[test]
     fn interp_jd_text() {
         let source = r#"f x:t>t;jdmp x"#;
-        let result = run_str(source, Some("f"), vec![Value::Text("hello".to_string())]);
-        assert_eq!(result, Value::Text(r#""hello""#.to_string()));
+        let result = run_str(
+            source,
+            Some("f"),
+            vec![Value::Text(Arc::new("hello".to_string()))],
+        );
+        assert_eq!(result, Value::Text(Arc::new(r#""hello""#.to_string())));
     }
 
     #[test]
     fn interp_jd_list() {
         let source = "f>t;xs=[1, 2, 3];jdmp xs";
         let result = run_str(source, Some("f"), vec![]);
-        assert_eq!(result, Value::Text("[1,2,3]".to_string()));
+        assert_eq!(result, Value::Text(Arc::new("[1,2,3]".to_string())));
     }
 
     #[test]
@@ -7198,7 +7364,7 @@ mod tests {
         let result = run_str(
             source,
             Some("f"),
-            vec![Value::Text(r#"{"a":1,"b":"two"}"#.to_string())],
+            vec![Value::Text(Arc::new(r#"{"a":1,"b":"two"}"#.to_string()))],
         );
         let Value::Ok(inner) = result else {
             panic!("expected Ok")
@@ -7208,13 +7374,20 @@ mod tests {
         };
         assert_eq!(type_name, "json");
         assert_eq!(fields.get("a"), Some(&Value::Number(1.0)));
-        assert_eq!(fields.get("b"), Some(&Value::Text("two".to_string())));
+        assert_eq!(
+            fields.get("b"),
+            Some(&Value::Text(Arc::new("two".to_string())))
+        );
     }
 
     #[test]
     fn interp_jparse_array() {
         let source = r#"f j:t>R t t;jpar j"#;
-        let result = run_str(source, Some("f"), vec![Value::Text("[1,2,3]".to_string())]);
+        let result = run_str(
+            source,
+            Some("f"),
+            vec![Value::Text(Arc::new("[1,2,3]".to_string()))],
+        );
         let Value::Ok(inner) = result else {
             panic!("expected Ok")
         };
@@ -7232,15 +7405,27 @@ mod tests {
     fn interp_jparse_scalar() {
         let source = r#"f j:t>R t t;jpar j"#;
         assert_eq!(
-            run_str(source, Some("f"), vec![Value::Text("42".to_string())]),
+            run_str(
+                source,
+                Some("f"),
+                vec![Value::Text(Arc::new("42".to_string()))]
+            ),
             Value::Ok(Box::new(Value::Number(42.0)))
         );
         assert_eq!(
-            run_str(source, Some("f"), vec![Value::Text("true".to_string())]),
+            run_str(
+                source,
+                Some("f"),
+                vec![Value::Text(Arc::new("true".to_string()))]
+            ),
             Value::Ok(Box::new(Value::Bool(true)))
         );
         assert_eq!(
-            run_str(source, Some("f"), vec![Value::Text("null".to_string())]),
+            run_str(
+                source,
+                Some("f"),
+                vec![Value::Text(Arc::new("null".to_string()))]
+            ),
             Value::Ok(Box::new(Value::Nil))
         );
     }
@@ -7248,7 +7433,11 @@ mod tests {
     #[test]
     fn interp_jparse_invalid() {
         let source = r#"f j:t>R t t;jpar j"#;
-        let result = run_str(source, Some("f"), vec![Value::Text("not json".to_string())]);
+        let result = run_str(
+            source,
+            Some("f"),
+            vec![Value::Text(Arc::new("not json".to_string()))],
+        );
         assert!(matches!(result, Value::Err(_)));
     }
 
@@ -7258,7 +7447,7 @@ mod tests {
         let result = run_str(
             source,
             Some("f"),
-            vec![Value::Text(r#"{"x":1}"#.to_string())],
+            vec![Value::Text(Arc::new(r#"{"x":1}"#.to_string()))],
         );
         let Value::Record { type_name, fields } = result else {
             panic!("expected record")
@@ -7273,7 +7462,7 @@ mod tests {
         let result = run_str(
             source,
             Some("f"),
-            vec![Value::Text(r#"{"x":42}"#.to_string())],
+            vec![Value::Text(Arc::new(r#"{"x":42}"#.to_string()))],
         );
         assert_eq!(result, Value::Number(42.0));
     }
@@ -7552,13 +7741,13 @@ mod tests {
         let result = run_str(
             source,
             Some("f"),
-            vec![Value::Text("abc 123 def 456".into())],
+            vec![Value::Text(Arc::new("abc 123 def 456".to_string()))],
         );
         assert_eq!(
             result,
             Value::List(Arc::new(vec![
-                Value::Text("123".into()),
-                Value::Text("456".into()),
+                Value::Text(Arc::new("123".to_string())),
+                Value::Text(Arc::new("456".to_string())),
             ]))
         );
     }
@@ -7570,14 +7759,14 @@ mod tests {
         let result = run_str(
             source,
             Some("f"),
-            vec![Value::Text("name=alice age=30".into())],
+            vec![Value::Text(Arc::new("name=alice age=30".to_string()))],
         );
         // Returns first match's groups
         assert_eq!(
             result,
             Value::List(Arc::new(vec![
-                Value::Text("name".into()),
-                Value::Text("alice".into()),
+                Value::Text(Arc::new("name".to_string())),
+                Value::Text(Arc::new("alice".to_string())),
             ]))
         );
     }
@@ -7588,7 +7777,7 @@ mod tests {
         let result = run_str(
             source,
             Some("f"),
-            vec![Value::Text("no numbers here".into())],
+            vec![Value::Text(Arc::new("no numbers here".to_string()))],
         );
         assert_eq!(result, Value::List(Arc::new(vec![])));
     }
@@ -7674,21 +7863,29 @@ mod tests {
         let result = run_str(
             "f s:t>t;trm s",
             Some("f"),
-            vec![Value::Text("  hello  ".into())],
+            vec![Value::Text(Arc::new("  hello  ".to_string()))],
         );
-        assert_eq!(result, Value::Text("hello".into()));
+        assert_eq!(result, Value::Text(Arc::new("hello".to_string())));
     }
 
     #[test]
     fn interpret_trm_no_whitespace() {
-        let result = run_str("f s:t>t;trm s", Some("f"), vec![Value::Text("hi".into())]);
-        assert_eq!(result, Value::Text("hi".into()));
+        let result = run_str(
+            "f s:t>t;trm s",
+            Some("f"),
+            vec![Value::Text(Arc::new("hi".to_string()))],
+        );
+        assert_eq!(result, Value::Text(Arc::new("hi".to_string())));
     }
 
     #[test]
     fn interpret_trm_only_whitespace() {
-        let result = run_str("f s:t>t;trm s", Some("f"), vec![Value::Text("   ".into())]);
-        assert_eq!(result, Value::Text("".into()));
+        let result = run_str(
+            "f s:t>t;trm s",
+            Some("f"),
+            vec![Value::Text(Arc::new("   ".to_string()))],
+        );
+        assert_eq!(result, Value::Text(Arc::new("".to_string())));
     }
 
     #[test]
@@ -7731,16 +7928,16 @@ mod tests {
             "f xs:L t>L t;unq xs",
             Some("f"),
             vec![Value::List(Arc::new(vec![
-                Value::Text("a".into()),
-                Value::Text("b".into()),
-                Value::Text("a".into()),
+                Value::Text(Arc::new("a".to_string())),
+                Value::Text(Arc::new("b".to_string())),
+                Value::Text(Arc::new("a".to_string())),
             ]))],
         );
         assert_eq!(
             result,
             Value::List(Arc::new(vec![
-                Value::Text("a".into()),
-                Value::Text("b".into())
+                Value::Text(Arc::new("a".to_string())),
+                Value::Text(Arc::new("b".to_string()))
             ]))
         );
     }
@@ -7750,9 +7947,9 @@ mod tests {
         let result = run_str(
             "f s:t>t;unq s",
             Some("f"),
-            vec![Value::Text("aabbc".into())],
+            vec![Value::Text(Arc::new("aabbc".to_string()))],
         );
-        assert_eq!(result, Value::Text("abc".into()));
+        assert_eq!(result, Value::Text(Arc::new("abc".to_string())));
     }
 
     #[test]
@@ -7795,15 +7992,18 @@ mod tests {
         let result = run_str(
             r#"f a:t b:t>t;fmt "{} + {}" a b"#,
             Some("f"),
-            vec![Value::Text("1".into()), Value::Text("2".into())],
+            vec![
+                Value::Text(Arc::new("1".to_string())),
+                Value::Text(Arc::new("2".to_string())),
+            ],
         );
-        assert_eq!(result, Value::Text("1 + 2".into()));
+        assert_eq!(result, Value::Text(Arc::new("1 + 2".to_string())));
     }
 
     #[test]
     fn interpret_fmt_template_only() {
         let result = run_str(r#"f>t;fmt "hello""#, Some("f"), vec![]);
-        assert_eq!(result, Value::Text("hello".into()));
+        assert_eq!(result, Value::Text(Arc::new("hello".to_string())));
     }
 
     #[test]
@@ -7811,9 +8011,9 @@ mod tests {
         let result = run_str(
             r#"f a:t>t;fmt "{} and {}" a"#,
             Some("f"),
-            vec![Value::Text("x".into())],
+            vec![Value::Text(Arc::new("x".to_string()))],
         );
-        assert_eq!(result, Value::Text("x and {}".into()));
+        assert_eq!(result, Value::Text(Arc::new("x and {}".to_string())));
     }
 
     #[test]
@@ -7823,7 +8023,7 @@ mod tests {
             Some("f"),
             vec![Value::Number(42.0)],
         );
-        assert_eq!(result, Value::Text("value: 42".into()));
+        assert_eq!(result, Value::Text(Arc::new("value: 42".to_string())));
     }
 
     // --- srt fn xs ---
@@ -7835,17 +8035,17 @@ mod tests {
             source,
             Some("main"),
             vec![Value::List(Arc::new(vec![
-                Value::Text("banana".into()),
-                Value::Text("a".into()),
-                Value::Text("cc".into()),
+                Value::Text(Arc::new("banana".to_string())),
+                Value::Text(Arc::new("a".to_string())),
+                Value::Text(Arc::new("cc".to_string())),
             ]))],
         );
         assert_eq!(
             result,
             Value::List(Arc::new(vec![
-                Value::Text("a".into()),
-                Value::Text("cc".into()),
-                Value::Text("banana".into()),
+                Value::Text(Arc::new("a".to_string())),
+                Value::Text(Arc::new("cc".to_string())),
+                Value::Text(Arc::new("banana".to_string())),
             ]))
         );
     }
@@ -7883,8 +8083,12 @@ mod tests {
 
     #[test]
     fn interpret_prnt_text_passthrough() {
-        let result = run_str("f s:t>t;prnt s", Some("f"), vec![Value::Text("hi".into())]);
-        assert_eq!(result, Value::Text("hi".into()));
+        let result = run_str(
+            "f s:t>t;prnt s",
+            Some("f"),
+            vec![Value::Text(Arc::new("hi".to_string()))],
+        );
+        assert_eq!(result, Value::Text(Arc::new("hi".to_string())));
     }
 
     // --- rdb ---
@@ -7894,7 +8098,7 @@ mod tests {
         let result = run_str(
             r#"f s:t>t;rdb s "csv""#,
             Some("f"),
-            vec![Value::Text("a,b\n1,2".into())],
+            vec![Value::Text(Arc::new("a,b\n1,2".to_string()))],
         );
         let Value::Ok(inner) = result else {
             panic!("expected Ok")
@@ -7911,7 +8115,7 @@ mod tests {
         let result = run_str(
             r#"f s:t>t;rdb s "json""#,
             Some("f"),
-            vec![Value::Text(r#"{"x":1}"#.into())],
+            vec![Value::Text(Arc::new(r#"{"x":1}"#.to_string()))],
         );
         assert!(
             matches!(result, Value::Ok(_)),
@@ -7925,7 +8129,7 @@ mod tests {
         let result = run_str(
             r#"f s:t>t;rdb s "json""#,
             Some("f"),
-            vec![Value::Text("not json".into())],
+            vec![Value::Text(Arc::new("not json".to_string()))],
         );
         assert!(
             matches!(result, Value::Err(_)),
@@ -7939,9 +8143,12 @@ mod tests {
         let result = run_str(
             r#"f s:t>t;rdb s "raw""#,
             Some("f"),
-            vec![Value::Text("hello".into())],
+            vec![Value::Text(Arc::new("hello".to_string()))],
         );
-        assert_eq!(result, Value::Ok(Box::new(Value::Text("hello".into()))));
+        assert_eq!(
+            result,
+            Value::Ok(Box::new(Value::Text(Arc::new("hello".to_string()))))
+        );
     }
 
     // --- rd (error paths not needing a real file) ---
@@ -7951,7 +8158,9 @@ mod tests {
         let result = run_str(
             "f p:t>t;rd p",
             Some("f"),
-            vec![Value::Text("/nonexistent/ilo_test_file.txt".into())],
+            vec![Value::Text(Arc::new(
+                "/nonexistent/ilo_test_file.txt".to_string(),
+            ))],
         );
         assert!(
             matches!(result, Value::Err(_)),
@@ -7970,7 +8179,7 @@ mod tests {
             Some("f"),
             vec![Value::Number(42.0)],
         );
-        assert_eq!(result, Value::Text("num".into()));
+        assert_eq!(result, Value::Text(Arc::new("num".to_string())));
     }
 
     #[test]
@@ -7979,9 +8188,9 @@ mod tests {
         let result = run_str(
             r#"f x:t>t;?x{t v:v;_:"other"}"#,
             Some("f"),
-            vec![Value::Text("hello".into())],
+            vec![Value::Text(Arc::new("hello".to_string()))],
         );
-        assert_eq!(result, Value::Text("hello".into()));
+        assert_eq!(result, Value::Text(Arc::new("hello".to_string())));
     }
 
     #[test]
@@ -7992,7 +8201,7 @@ mod tests {
             Some("f"),
             vec![Value::Bool(true)],
         );
-        assert_eq!(result, Value::Text("bool".into()));
+        assert_eq!(result, Value::Text(Arc::new("bool".to_string())));
     }
 
     #[test]
@@ -8003,7 +8212,7 @@ mod tests {
             Some("f"),
             vec![Value::Number(1.0)],
         );
-        assert_eq!(result, Value::Text("other".into()));
+        assert_eq!(result, Value::Text(Arc::new("other".to_string())));
     }
 
     #[test]
@@ -8014,7 +8223,7 @@ mod tests {
             Some("f"),
             vec![Value::Number(5.0)],
         );
-        assert_eq!(result, Value::Text("matched".into()));
+        assert_eq!(result, Value::Text(Arc::new("matched".to_string())));
     }
 
     // --- Text comparison operators ---
@@ -8024,7 +8233,10 @@ mod tests {
         let result = run_str(
             "f a:t b:t>b;>a b",
             Some("f"),
-            vec![Value::Text("b".into()), Value::Text("a".into())],
+            vec![
+                Value::Text(Arc::new("b".to_string())),
+                Value::Text(Arc::new("a".to_string())),
+            ],
         );
         assert_eq!(result, Value::Bool(true));
     }
@@ -8034,7 +8246,10 @@ mod tests {
         let result = run_str(
             "f a:t b:t>b;<a b",
             Some("f"),
-            vec![Value::Text("a".into()), Value::Text("b".into())],
+            vec![
+                Value::Text(Arc::new("a".to_string())),
+                Value::Text(Arc::new("b".to_string())),
+            ],
         );
         assert_eq!(result, Value::Bool(true));
     }
@@ -8044,7 +8259,10 @@ mod tests {
         let result = run_str(
             "f a:t b:t>b;>=a b",
             Some("f"),
-            vec![Value::Text("a".into()), Value::Text("a".into())],
+            vec![
+                Value::Text(Arc::new("a".to_string())),
+                Value::Text(Arc::new("a".to_string())),
+            ],
         );
         assert_eq!(result, Value::Bool(true));
     }
@@ -8054,7 +8272,10 @@ mod tests {
         let result = run_str(
             "f a:t b:t>b;<=a b",
             Some("f"),
-            vec![Value::Text("a".into()), Value::Text("b".into())],
+            vec![
+                Value::Text(Arc::new("a".to_string())),
+                Value::Text(Arc::new("b".to_string())),
+            ],
         );
         assert_eq!(result, Value::Bool(true));
     }
@@ -8093,12 +8314,12 @@ mod tests {
     #[test]
     fn values_equal_texts() {
         assert!(values_equal(
-            &Value::Text("a".into()),
-            &Value::Text("a".into())
+            &Value::Text(Arc::new("a".to_string())),
+            &Value::Text(Arc::new("a".to_string()))
         ));
         assert!(!values_equal(
-            &Value::Text("a".into()),
-            &Value::Text("b".into())
+            &Value::Text(Arc::new("a".to_string())),
+            &Value::Text(Arc::new("b".to_string()))
         ));
     }
 
@@ -8204,17 +8425,17 @@ mod tests {
             source,
             Some("main"),
             vec![Value::List(Arc::new(vec![
-                Value::Text("banana".into()),
-                Value::Text("apple".into()),
-                Value::Text("cherry".into()),
+                Value::Text(Arc::new("banana".to_string())),
+                Value::Text(Arc::new("apple".to_string())),
+                Value::Text(Arc::new("cherry".to_string())),
             ]))],
         );
         assert_eq!(
             result,
             Value::List(Arc::new(vec![
-                Value::Text("apple".into()),
-                Value::Text("banana".into()),
-                Value::Text("cherry".into()),
+                Value::Text(Arc::new("apple".to_string())),
+                Value::Text(Arc::new("banana".to_string())),
+                Value::Text(Arc::new("cherry".to_string())),
             ]))
         );
     }
@@ -8295,7 +8516,11 @@ mod tests {
         path.push("ilo_interp_rdl_test.txt");
         std::fs::write(&path, "line1\nline2\nline3").unwrap();
         let path_str = path.to_str().unwrap().to_string();
-        let result = run_str("f p:t>t;rdl p", Some("f"), vec![Value::Text(path_str)]);
+        let result = run_str(
+            "f p:t>t;rdl p",
+            Some("f"),
+            vec![Value::Text(Arc::new(path_str))],
+        );
         std::fs::remove_file(&path).ok();
         let Value::Ok(inner) = result else {
             panic!("expected Ok")
@@ -8304,7 +8529,7 @@ mod tests {
             panic!("expected list")
         };
         assert_eq!(lines.len(), 3);
-        assert_eq!(lines[0], Value::Text("line1".into()));
+        assert_eq!(lines[0], Value::Text(Arc::new("line1".to_string())));
     }
 
     // L779: rdl file not found
@@ -8313,7 +8538,9 @@ mod tests {
         let result = run_str(
             "f p:t>t;rdl p",
             Some("f"),
-            vec![Value::Text("/nonexistent/ilo_rdl_test.txt".into())],
+            vec![Value::Text(Arc::new(
+                "/nonexistent/ilo_rdl_test.txt".to_string(),
+            ))],
         );
         assert!(
             matches!(result, Value::Err(_)),
@@ -8338,7 +8565,7 @@ mod tests {
         let result = run_str(
             "f p:t>t;wr p \"hello\"",
             Some("f"),
-            vec![Value::Text(path_str.clone())],
+            vec![Value::Text(Arc::new(path_str.clone()))],
         );
         std::fs::remove_file(&path).ok();
         assert!(
@@ -8364,7 +8591,7 @@ mod tests {
         let result = run_str(
             "f p:t>t;wrl p [\"a\", \"b\", \"c\"]",
             Some("f"),
-            vec![Value::Text(path_str.clone())],
+            vec![Value::Text(Arc::new(path_str.clone()))],
         );
         std::fs::remove_file(&path).ok();
         assert!(
@@ -8385,9 +8612,9 @@ mod tests {
             &mut env,
             "wrl",
             vec![
-                Value::Text(path_str.clone()),
+                Value::Text(Arc::new(path_str.clone())),
                 Value::List(Arc::new(vec![
-                    Value::Text("ok".into()),
+                    Value::Text(Arc::new("ok".to_string())),
                     Value::Number(99.0),
                 ])),
             ],
@@ -8413,11 +8640,14 @@ mod tests {
             source,
             Some("f"),
             vec![
-                Value::Text(r#"[10,20,30]"#.to_string()),
-                Value::Text("1".to_string()),
+                Value::Text(Arc::new(r#"[10,20,30]"#.to_string())),
+                Value::Text(Arc::new("1".to_string())),
             ],
         );
-        assert_eq!(result, Value::Ok(Box::new(Value::Text("20".into()))));
+        assert_eq!(
+            result,
+            Value::Ok(Box::new(Value::Text(Arc::new("20".to_string()))))
+        );
     }
 
     // L839: jpth non-text/non-map args
@@ -8431,7 +8661,7 @@ mod tests {
     #[test]
     fn interp_jdmp_ok_value() {
         let result = run_str("f>t;jdmp ~42", Some("f"), vec![]);
-        assert_eq!(result, Value::Text("42".into()));
+        assert_eq!(result, Value::Text(Arc::new("42".to_string())));
     }
 
     // L869: jdmp on FnRef (goes through value_to_json FnRef branch)
@@ -8660,7 +8890,7 @@ mod tests {
     #[test]
     fn interp_jdmp_err_value() {
         let result = run_str("f>t;jdmp ^42", Some("f"), vec![]);
-        assert_eq!(result, Value::Text("42".into()));
+        assert_eq!(result, Value::Text(Arc::new("42".to_string())));
     }
 
     // L1379: value_to_json Map variant
@@ -8682,7 +8912,7 @@ mod tests {
             Some("f"),
             vec![Value::List(Arc::new(vec![Value::Number(1.0)]))],
         );
-        assert_eq!(result, Value::Text("list".into()));
+        assert_eq!(result, Value::Text(Arc::new("list".to_string())));
     }
 
     // L2376: Decl::TypeDef is not callable error (duplicate name avoided — already tested above)
@@ -8694,7 +8924,7 @@ mod tests {
         let result = run_str(
             r#"f s:t>t;rdb s "csv""#,
             Some("f"),
-            vec![Value::Text("a,b,c".into())],
+            vec![Value::Text(Arc::new("a,b,c".to_string()))],
         );
         let Value::Ok(inner) = result else {
             panic!("expected Ok")
@@ -8731,8 +8961,8 @@ mod tests {
         assert_eq!(
             result,
             Value::List(Arc::new(vec![
-                Value::Text("a".into()),
-                Value::Text("b".into())
+                Value::Text(Arc::new("a".to_string())),
+                Value::Text(Arc::new("b".to_string()))
             ]))
         );
     }
@@ -8797,7 +9027,7 @@ mod tests {
             source,
             Some("f"),
             vec![
-                Value::Text("sq".into()),
+                Value::Text(Arc::new("sq".to_string())),
                 Value::List(Arc::new(vec![Value::Number(3.0)])),
             ],
         );
@@ -8816,7 +9046,7 @@ mod tests {
         let Value::Ok(inner) = result else {
             panic!("expected Ok")
         };
-        assert_eq!(*inner, Value::Text("hello".into()));
+        assert_eq!(*inner, Value::Text(Arc::new("hello".to_string())));
     }
 
     #[test]
@@ -8921,7 +9151,9 @@ mod tests {
         let err = run_str_err(
             "f xs:L n>n;avg xs",
             Some("f"),
-            vec![Value::List(Arc::new(vec![Value::Text("x".into())]))],
+            vec![Value::List(Arc::new(vec![Value::Text(Arc::new(
+                "x".to_string(),
+            ))]))],
         );
         assert!(err.contains("avg"), "got: {err}");
     }
@@ -8940,14 +9172,14 @@ mod tests {
     fn interpret_jdmp_bool_value() {
         // value_to_json Bool branch (line 1179)
         let result = run_str("f>t;jdmp true", Some("f"), vec![]);
-        assert_eq!(result, Value::Text("true".into()));
+        assert_eq!(result, Value::Text(Arc::new("true".to_string())));
     }
 
     #[test]
     fn interpret_jdmp_nil_value() {
         // value_to_json Nil branch (line 1180) — mget on empty map returns Nil
         let result = run_str(r#"f>t;jdmp (mget mmap "k")"#, Some("f"), vec![]);
-        assert_eq!(result, Value::Text("null".into()));
+        assert_eq!(result, Value::Text(Arc::new("null".to_string())));
     }
 
     // ── wr json — text/bool/map/nil value types (lines 835-843) ───────────────
@@ -9187,7 +9419,7 @@ mod tests {
         let err = run_str_err(
             "f s:t>n;@i s..3{i}",
             Some("f"),
-            vec![Value::Text("a".into())],
+            vec![Value::Text(Arc::new("a".to_string()))],
         );
         assert!(
             err.contains("range") || err.contains("number") || err.contains("start"),
@@ -9201,7 +9433,7 @@ mod tests {
         let err = run_str_err(
             "f e:t>n;@i 0..e{i}",
             Some("f"),
-            vec![Value::Text("b".into())],
+            vec![Value::Text(Arc::new("b".to_string()))],
         );
         assert!(
             err.contains("range") || err.contains("number") || err.contains("end"),
@@ -9268,7 +9500,11 @@ mod tests {
     fn interpret_text_callee_from_scope() {
         // When a variable holds a Text naming a known function, it is used as the callee (L1470)
         let source = "sq x:n>n;*x x f cb:z>n;cb 3";
-        let result = run_str(source, Some("f"), vec![Value::Text("sq".into())]);
+        let result = run_str(
+            source,
+            Some("f"),
+            vec![Value::Text(Arc::new("sq".to_string()))],
+        );
         assert_eq!(result, Value::Number(9.0));
     }
 
@@ -9383,7 +9619,10 @@ mod tests {
         let err = run(
             &prog,
             Some("f"),
-            vec![Value::Text("a".into()), Value::Text("b".into())],
+            vec![
+                Value::Text(Arc::new("a".to_string())),
+                Value::Text(Arc::new("b".to_string())),
+            ],
         )
         .unwrap_err();
         assert!(
@@ -9435,7 +9674,7 @@ mod tests {
             Some("f"),
             vec![Value::Number(42.0)],
         );
-        assert_eq!(result, Value::Text("other".to_string()));
+        assert_eq!(result, Value::Text(Arc::new("other".to_string())));
     }
 
     // ── Tool call with provider but no async runtime (L1160-1162) ───────────
@@ -9448,7 +9687,7 @@ mod tests {
         let result = run_with_tools(
             &prog,
             Some("greet"),
-            vec![Value::Text("world".into())],
+            vec![Value::Text(Arc::new("world".to_string()))],
             provider,
         )
         .unwrap();
@@ -9475,7 +9714,7 @@ mod tests {
             None,
             vec![Value::Number(5.0)],
         );
-        assert_eq!(result, Value::Text("num".to_string()));
+        assert_eq!(result, Value::Text(Arc::new("num".to_string())));
     }
 
     #[test]
@@ -9483,9 +9722,9 @@ mod tests {
         let result = run_str(
             r#"f x:t>t;?x{t v:v;_:"other"}"#,
             None,
-            vec![Value::Text("hi".to_string())],
+            vec![Value::Text(Arc::new("hi".to_string()))],
         );
-        assert_eq!(result, Value::Text("hi".to_string()));
+        assert_eq!(result, Value::Text(Arc::new("hi".to_string())));
     }
 
     #[test]
@@ -9495,7 +9734,7 @@ mod tests {
             None,
             vec![Value::Bool(true)],
         );
-        assert_eq!(result, Value::Text("matched".to_string()));
+        assert_eq!(result, Value::Text(Arc::new("matched".to_string())));
     }
 
     // ── Coverage round 2: TypeIs pattern matching for less common types ──────
@@ -9514,7 +9753,7 @@ mod tests {
                 Value::Number(2.0),
             ]))],
         );
-        assert_eq!(result, Value::Text("list".to_string()));
+        assert_eq!(result, Value::Text(Arc::new("list".to_string())));
     }
 
     #[test]
@@ -9522,7 +9761,7 @@ mod tests {
         // TypeIs List pattern tested against a non-list value — falls through to wildcard
         let source = r#"f x:n>t;?x{l _:"list";_:"other"}"#;
         let result = run_str(source, Some("f"), vec![Value::Number(42.0)]);
-        assert_eq!(result, Value::Text("other".to_string()));
+        assert_eq!(result, Value::Text(Arc::new("other".to_string())));
     }
 
     // ── TypeIs with Map type → _ => false (L1727) ───────────────────────────
@@ -9540,7 +9779,7 @@ mod tests {
                 Value::Number(1.0),
             )])))],
         );
-        assert_eq!(result, Value::Text("other".to_string()));
+        assert_eq!(result, Value::Text(Arc::new("other".to_string())));
     }
 
     // ── TypeIs with Nil value → no match on any typed pattern (L1727) ───────
@@ -9550,7 +9789,7 @@ mod tests {
         // Nil value doesn't match n/t/b/l patterns — exercises _ => false (L1727)
         let source = r#"f x:O n>t;?x{n _:"num";_:"nil"}"#;
         let result = run_str(source, Some("f"), vec![Value::Nil]);
-        assert_eq!(result, Value::Text("nil".to_string()));
+        assert_eq!(result, Value::Text(Arc::new("nil".to_string())));
     }
 
     #[test]
@@ -9558,7 +9797,7 @@ mod tests {
         // Nil tested against text TypeIs pattern → falls through
         let source = r#"f x:O t>t;?x{t v:v;_:"none"}"#;
         let result = run_str(source, Some("f"), vec![Value::Nil]);
-        assert_eq!(result, Value::Text("none".to_string()));
+        assert_eq!(result, Value::Text(Arc::new("none".to_string())));
     }
 
     // ── `!` auto-unwrap on Optional: nil propagates as the function's return ──
@@ -9599,7 +9838,7 @@ mod tests {
     fn interp_at_text_negative_last() {
         let source = r#"f>t;at "abc" -1"#;
         let result = run_str(source, Some("f"), vec![]);
-        assert_eq!(result, Value::Text("c".to_string()));
+        assert_eq!(result, Value::Text(Arc::new("c".to_string())));
     }
 
     #[test]
@@ -9686,7 +9925,7 @@ mod tests {
         let result = call_function(
             &mut env,
             "fmt2",
-            vec![Value::Text("hi".to_string()), Value::Number(2.0)],
+            vec![Value::Text(Arc::new("hi".to_string())), Value::Number(2.0)],
         );
         let err = result.unwrap_err();
         assert_eq!(err.code, "ILO-R009");

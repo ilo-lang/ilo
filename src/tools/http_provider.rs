@@ -131,6 +131,7 @@ impl ToolProvider for HttpProvider {
 mod tests {
     use super::*;
     use crate::tools::ToolProvider;
+    use std::sync::Arc;
 
     #[test]
     fn from_file_missing_file() {
@@ -192,7 +193,10 @@ mod tests {
         let provider = HttpProvider::new(ToolsConfig {
             tools: HashMap::new(),
         });
-        let args = vec![Value::Text("ignored".into()), Value::Number(42.0)];
+        let args = vec![
+            Value::Text(Arc::new("ignored".to_string())),
+            Value::Number(42.0),
+        ];
         let result = provider.call("tool", args).await;
         assert_eq!(result.unwrap(), Value::Ok(Box::new(Value::Nil)));
     }

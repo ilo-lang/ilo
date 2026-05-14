@@ -226,11 +226,11 @@ impl ToolProvider for McpProvider {
                 .unwrap_or(false)
             {
                 let err_text = extract_text_content(&result);
-                return Ok(Value::Err(Box::new(Value::Text(err_text))));
+                return Ok(Value::Err(Box::new(Value::Text(Arc::new(err_text)))));
             }
 
             let text = extract_text_content(&result);
-            Ok(Value::Ok(Box::new(Value::Text(text))))
+            Ok(Value::Ok(Box::new(Value::Text(Arc::new(text)))))
         })
     }
 }

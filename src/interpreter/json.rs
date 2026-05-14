@@ -5,6 +5,7 @@
 
 use super::Value;
 use crate::ast::Type;
+use std::sync::Arc;
 
 #[allow(dead_code)] // used when `tools` feature is enabled and in tests
 impl Value {
@@ -28,7 +29,7 @@ impl Value {
                         .ok_or_else(|| format!("cannot serialize number {n} to JSON"))
                 }
             }
-            Value::Text(s) => Ok(serde_json::Value::String(s.clone())),
+            Value::Text(s) => Ok(serde_json::Value::String((**s).clone())),
             Value::Bool(b) => Ok(serde_json::Value::Bool(*b)),
             Value::Nil => Ok(serde_json::Value::Null),
             Value::List(items) => {
@@ -76,9 +77,9 @@ impl Value {
         // Type::Text escape hatch: coerce any JSON value to a text string.
         if matches!(type_hint, Some(Type::Text)) {
             if let serde_json::Value::String(s) = json {
-                return Ok(Value::Text(s.clone()));
+                return Ok(Value::Text(Arc::new(s.clone())));
             }
-            return Ok(Value::Text(json.to_string()));
+            return Ok(Value::Text(Arc::new(json.to_string())));
         }
 
         match json {
@@ -90,7 +91,7 @@ impl Value {
                     .unwrap_or(0.0);
                 Ok(Value::Number(f))
             }
-            serde_json::Value::String(s) => Ok(Value::Text(s.clone())),
+            serde_json::Value::String(s) => Ok(Value::Text(Arc::new(s.clone()))),
             serde_json::Value::Bool(b) => Ok(Value::Bool(*b)),
             serde_json::Value::Null => Ok(Value::Nil),
             serde_json::Value::Array(arr) => {
@@ -159,7 +160,7 @@ mod tests {
 
     #[test]
     fn to_json_text() {
-        let v = Value::Text("hello".to_string());
+        let v = Value::Text(Arc::new("hello".to_string()));
         assert_eq!(v.to_json().unwrap(), json!("hello"));
     }
 
@@ -178,7 +179,7 @@ mod tests {
     fn to_json_list() {
         let v = Value::List(Arc::new(vec![
             Value::Number(1.0),
-            Value::Text("a".to_string()),
+            Value::Text(Arc::new("a".to_string())),
         ]));
         assert_eq!(v.to_json().unwrap(), json!([1, "a"]));
     }
@@ -203,7 +204,7 @@ mod tests {
 
     #[test]
     fn to_json_err() {
-        let v = Value::Err(Box::new(Value::Text("oops".to_string())));
+        let v = Value::Err(Box::new(Value::Text(Arc::new("oops".to_string()))));
         assert_eq!(v.to_json().unwrap(), json!({"err": "oops"}));
     }
 
@@ -224,7 +225,7 @@ mod tests {
     #[test]
     fn from_json_string() {
         let v = Value::from_json(&json!("hi"), None).unwrap();
-        assert_eq!(v, Value::Text("hi".to_string()));
+        assert_eq!(v, Value::Text(Arc::new("hi".to_string())));
     }
 
     #[test]
@@ -260,7 +261,7 @@ mod tests {
             Value::Record { type_name, fields } => {
                 assert_eq!(type_name, "_");
                 assert_eq!(fields["a"], Value::Number(1.0));
-                assert_eq!(fields["b"], Value::Text("two".to_string()));
+                assert_eq!(fields["b"], Value::Text(Arc::new("two".to_string())));
             }
             other => panic!("expected Record, got {:?}", other),
         }
@@ -275,21 +276,24 @@ mod tests {
     #[test]
     fn from_json_err_wrapper() {
         let v = Value::from_json(&json!({"err": "bad"}), None).unwrap();
-        assert_eq!(v, Value::Err(Box::new(Value::Text("bad".to_string()))));
+        assert_eq!(
+            v,
+            Value::Err(Box::new(Value::Text(Arc::new("bad".to_string()))))
+        );
     }
 
     #[test]
     fn from_json_type_hint_text_coerces() {
         // A JSON number coerced to text when hint is Type::Text
         let v = Value::from_json(&json!(42), Some(&Type::Text)).unwrap();
-        assert_eq!(v, Value::Text("42".to_string()));
+        assert_eq!(v, Value::Text(Arc::new("42".to_string())));
     }
 
     #[test]
     fn from_json_type_hint_text_passthrough() {
         // A JSON string stays text when hint is Type::Text
         let v = Value::from_json(&json!("hello"), Some(&Type::Text)).unwrap();
-        assert_eq!(v, Value::Text("hello".to_string()));
+        assert_eq!(v, Value::Text(Arc::new("hello".to_string())));
     }
 
     // ── round-trips ──────────────────────────────────────────────────────
@@ -326,8 +330,8 @@ mod tests {
     #[test]
     fn round_trip_list_of_text() {
         let v = Value::List(Arc::new(vec![
-            Value::Text("a".to_string()),
-            Value::Text("b".to_string()),
+            Value::Text(Arc::new("a".to_string())),
+            Value::Text(Arc::new("b".to_string())),
         ]));
         let j = v.to_json().unwrap();
         let back = Value::from_json(&j, None).unwrap();
