@@ -1726,8 +1726,19 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         };
     }
     if builtin == Some(Builtin::Slc) && args.len() == 3 {
-        let start = match &args[1] {
-            Value::Number(n) => *n as usize,
+        // Both bounds accept negative integers Python-style:
+        // `slc xs -1 0` is empty, `slc xs 0 -1` drops the last element,
+        // `slc xs -2 (len xs)` returns the last two elements.
+        let start_raw = match &args[1] {
+            Value::Number(n) => {
+                if n.fract() != 0.0 {
+                    return Err(RuntimeError::new(
+                        "ILO-R009",
+                        "slc: start index must be an integer".to_string(),
+                    ));
+                }
+                *n as i64
+            }
             other => {
                 return Err(RuntimeError::new(
                     "ILO-R009",
@@ -1735,8 +1746,16 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 ));
             }
         };
-        let end = match &args[2] {
-            Value::Number(n) => *n as usize,
+        let end_raw = match &args[2] {
+            Value::Number(n) => {
+                if n.fract() != 0.0 {
+                    return Err(RuntimeError::new(
+                        "ILO-R009",
+                        "slc: end index must be an integer".to_string(),
+                    ));
+                }
+                *n as i64
+            }
             other => {
                 return Err(RuntimeError::new(
                     "ILO-R009",
@@ -1746,14 +1765,16 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         };
         return match &args[0] {
             Value::List(items) => {
-                let end = end.min(items.len());
-                let start = start.min(end);
+                let len = items.len();
+                let end = crate::builtins::resolve_slice_bound(end_raw, len);
+                let start = crate::builtins::resolve_slice_bound(start_raw, len).min(end);
                 Ok(Value::List(items[start..end].to_vec()))
             }
             Value::Text(s) => {
                 let chars: Vec<char> = s.chars().collect();
-                let end = end.min(chars.len());
-                let start = start.min(end);
+                let len = chars.len();
+                let end = crate::builtins::resolve_slice_bound(end_raw, len);
+                let start = crate::builtins::resolve_slice_bound(start_raw, len).min(end);
                 Ok(Value::Text(chars[start..end].iter().collect()))
             }
             other => Err(RuntimeError::new(
@@ -1763,6 +1784,8 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         };
     }
     if builtin == Some(Builtin::Take) && args.len() == 2 {
+        // Negative `n` means "all but the last |n|" (Python `xs[:n]`):
+        // `take -1 [1,2,3]` returns `[1,2]`.
         let n = match &args[0] {
             Value::Number(n) => {
                 if n.fract() != 0.0 {
@@ -1771,13 +1794,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                         "take: count must be an integer".to_string(),
                     ));
                 }
-                if *n < 0.0 {
-                    return Err(RuntimeError::new(
-                        "ILO-R009",
-                        "take: count must be a non-negative integer".to_string(),
-                    ));
-                }
-                *n as usize
+                *n as i64
             }
             other => {
                 return Err(RuntimeError::new(
@@ -1788,12 +1805,12 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         };
         return match &args[1] {
             Value::List(items) => {
-                let end = n.min(items.len());
+                let end = crate::builtins::resolve_take_count(n, items.len());
                 Ok(Value::List(items[..end].to_vec()))
             }
             Value::Text(s) => {
                 let chars: Vec<char> = s.chars().collect();
-                let end = n.min(chars.len());
+                let end = crate::builtins::resolve_take_count(n, chars.len());
                 Ok(Value::Text(chars[..end].iter().collect()))
             }
             other => Err(RuntimeError::new(
@@ -1803,6 +1820,8 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         };
     }
     if builtin == Some(Builtin::Drop) && args.len() == 2 {
+        // Negative `n` means "keep only the last |n|" (Python `xs[n:]`):
+        // `drop -1 [1,2,3]` returns `[3]`.
         let n = match &args[0] {
             Value::Number(n) => {
                 if n.fract() != 0.0 {
@@ -1811,13 +1830,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                         "drop: count must be an integer".to_string(),
                     ));
                 }
-                if *n < 0.0 {
-                    return Err(RuntimeError::new(
-                        "ILO-R009",
-                        "drop: count must be a non-negative integer".to_string(),
-                    ));
-                }
-                *n as usize
+                *n as i64
             }
             other => {
                 return Err(RuntimeError::new(
@@ -1828,12 +1841,12 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         };
         return match &args[1] {
             Value::List(items) => {
-                let start = n.min(items.len());
+                let start = crate::builtins::resolve_drop_count(n, items.len());
                 Ok(Value::List(items[start..].to_vec()))
             }
             Value::Text(s) => {
                 let chars: Vec<char> = s.chars().collect();
-                let start = n.min(chars.len());
+                let start = crate::builtins::resolve_drop_count(n, chars.len());
                 Ok(Value::Text(chars[start..].iter().collect()))
             }
             other => Err(RuntimeError::new(

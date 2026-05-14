@@ -7814,6 +7814,7 @@ impl<'a> VM<'a> {
                 }
                 OP_SLC => {
                     // Two-instruction sequence: OP_SLC A=result B=list C=start; data word A=end_reg
+                    // Bounds accept negative integers Python-style (`-1` = last element).
                     let a = ((inst >> 16) & 0xFF) as usize + base;
                     let b = ((inst >> 8) & 0xFF) as usize + base;
                     let c = (inst & 0xFF) as usize + base;
@@ -7827,8 +7828,13 @@ impl<'a> VM<'a> {
                     if !vc.is_number() || !vd.is_number() {
                         vm_err!(VmError::Type("slc: indices must be numbers"));
                     }
-                    let start = vc.as_number() as usize;
-                    let end = vd.as_number() as usize;
+                    let start_f = vc.as_number();
+                    let end_f = vd.as_number();
+                    if start_f.fract() != 0.0 || end_f.fract() != 0.0 {
+                        vm_err!(VmError::Type("slc: indices must be integers"));
+                    }
+                    let start_raw = start_f as i64;
+                    let end_raw = end_f as i64;
                     if vb.is_string() {
                         let s = unsafe {
                             match vb.as_heap_ref() {
@@ -7837,15 +7843,18 @@ impl<'a> VM<'a> {
                             }
                         };
                         let chars: Vec<char> = s.chars().collect();
-                        let end = end.min(chars.len());
-                        let start = start.min(end);
+                        let len = chars.len();
+                        let end = crate::builtins::resolve_slice_bound(end_raw, len);
+                        let start = crate::builtins::resolve_slice_bound(start_raw, len).min(end);
                         let result: String = chars[start..end].iter().collect();
                         reg_set!(a, NanVal::heap_string(result));
                     } else if vb.is_heap() {
                         match unsafe { vb.as_heap_ref() } {
                             HeapObj::List(items) => {
-                                let end = end.min(items.len());
-                                let start = start.min(end);
+                                let len = items.len();
+                                let end = crate::builtins::resolve_slice_bound(end_raw, len);
+                                let start =
+                                    crate::builtins::resolve_slice_bound(start_raw, len).min(end);
                                 let mut sliced = Vec::with_capacity(end - start);
                                 for v in &items[start..end] {
                                     v.clone_rc();
@@ -7988,6 +7997,7 @@ impl<'a> VM<'a> {
                     reg_set!(a, nv);
                 }
                 OP_TAKE => {
+                    // Negative count means "all but the last |n|" (Python `xs[:n]`).
                     let a = ((inst >> 16) & 0xFF) as usize + base;
                     let b = ((inst >> 8) & 0xFF) as usize + base;
                     let c = (inst & 0xFF) as usize + base;
@@ -8000,10 +8010,7 @@ impl<'a> VM<'a> {
                     if nf.fract() != 0.0 {
                         vm_err!(VmError::Type("take: count must be an integer"));
                     }
-                    if nf < 0.0 {
-                        vm_err!(VmError::Type("take: count must be a non-negative integer"));
-                    }
-                    let n = nf as usize;
+                    let n_raw = nf as i64;
                     if vc.is_string() {
                         let s = unsafe {
                             match vc.as_heap_ref() {
@@ -8012,13 +8019,13 @@ impl<'a> VM<'a> {
                             }
                         };
                         let chars: Vec<char> = s.chars().collect();
-                        let end = n.min(chars.len());
+                        let end = crate::builtins::resolve_take_count(n_raw, chars.len());
                         let result: String = chars[..end].iter().collect();
                         reg_set!(a, NanVal::heap_string(result));
                     } else if vc.is_heap() {
                         match unsafe { vc.as_heap_ref() } {
                             HeapObj::List(items) => {
-                                let end = n.min(items.len());
+                                let end = crate::builtins::resolve_take_count(n_raw, items.len());
                                 let mut sliced = Vec::with_capacity(end);
                                 for v in &items[..end] {
                                     v.clone_rc();
@@ -8033,6 +8040,7 @@ impl<'a> VM<'a> {
                     }
                 }
                 OP_DROP => {
+                    // Negative count means "keep only the last |n|" (Python `xs[n:]`).
                     let a = ((inst >> 16) & 0xFF) as usize + base;
                     let b = ((inst >> 8) & 0xFF) as usize + base;
                     let c = (inst & 0xFF) as usize + base;
@@ -8045,10 +8053,7 @@ impl<'a> VM<'a> {
                     if nf.fract() != 0.0 {
                         vm_err!(VmError::Type("drop: count must be an integer"));
                     }
-                    if nf < 0.0 {
-                        vm_err!(VmError::Type("drop: count must be a non-negative integer"));
-                    }
-                    let n = nf as usize;
+                    let n_raw = nf as i64;
                     if vc.is_string() {
                         let s = unsafe {
                             match vc.as_heap_ref() {
@@ -8057,13 +8062,13 @@ impl<'a> VM<'a> {
                             }
                         };
                         let chars: Vec<char> = s.chars().collect();
-                        let start = n.min(chars.len());
+                        let start = crate::builtins::resolve_drop_count(n_raw, chars.len());
                         let result: String = chars[start..].iter().collect();
                         reg_set!(a, NanVal::heap_string(result));
                     } else if vc.is_heap() {
                         match unsafe { vc.as_heap_ref() } {
                             HeapObj::List(items) => {
-                                let start = n.min(items.len());
+                                let start = crate::builtins::resolve_drop_count(n_raw, items.len());
                                 let mut sliced = Vec::with_capacity(items.len() - start);
                                 for v in &items[start..] {
                                     v.clone_rc();
@@ -10678,6 +10683,8 @@ pub(crate) extern "C" fn jit_rsrt(a: u64) -> u64 {
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn jit_slc(a: u64, start: u64, end: u64) -> u64 {
+    // Bounds accept negative integers Python-style; kept in lockstep with the
+    // tree-walker and OP_SLC by delegating to `resolve_slice_bound`.
     let vb = NanVal(a);
     let vc = NanVal(start);
     let vd = NanVal(end);
@@ -10685,10 +10692,13 @@ pub(crate) extern "C" fn jit_slc(a: u64, start: u64, end: u64) -> u64 {
         jit_set_runtime_error(VmError::Type("slc: indices must be numbers"));
         return TAG_NIL;
     }
-    // OOB is deliberately clamped on tree/VM (slc is documented to saturate),
-    // so do not surface a runtime error for out-of-range start/end.
-    let s_idx = vc.as_number() as usize;
-    let e_idx = vd.as_number() as usize;
+    let s_f = vc.as_number();
+    let e_f = vd.as_number();
+    if s_f.fract() != 0.0 || e_f.fract() != 0.0 {
+        return TAG_NIL;
+    }
+    let s_raw = s_f as i64;
+    let e_raw = e_f as i64;
     if vb.is_string() {
         let s = unsafe {
             match vb.as_heap_ref() {
@@ -10697,15 +10707,17 @@ pub(crate) extern "C" fn jit_slc(a: u64, start: u64, end: u64) -> u64 {
             }
         };
         let chars: Vec<char> = s.chars().collect();
-        let e = e_idx.min(chars.len());
-        let s = s_idx.min(e);
+        let len = chars.len();
+        let e = crate::builtins::resolve_slice_bound(e_raw, len);
+        let s = crate::builtins::resolve_slice_bound(s_raw, len).min(e);
         return NanVal::heap_string(chars[s..e].iter().collect()).0;
     }
     if vb.is_heap()
         && let HeapObj::List(items) = unsafe { vb.as_heap_ref() }
     {
-        let e = e_idx.min(items.len());
-        let s = s_idx.min(e);
+        let len = items.len();
+        let e = crate::builtins::resolve_slice_bound(e_raw, len);
+        let s = crate::builtins::resolve_slice_bound(s_raw, len).min(e);
         let mut sliced = Vec::with_capacity(e - s);
         for v in &items[s..e] {
             v.clone_rc();
@@ -10797,16 +10809,18 @@ pub(crate) extern "C" fn jit_rgxsub(pat_v: u64, repl_v: u64, subj_v: u64) -> u64
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn jit_take(n_val: u64, xs: u64) -> u64 {
+    // Negative count means "all but the last |n|" (Python `xs[:n]`); shares
+    // resolution with the tree-walker and OP_TAKE.
     let vn = NanVal(n_val);
     let vc = NanVal(xs);
     if !vn.is_number() {
         return TAG_NIL;
     }
     let nf = vn.as_number();
-    if nf.fract() != 0.0 || nf < 0.0 {
+    if nf.fract() != 0.0 {
         return TAG_NIL;
     }
-    let n = nf as usize;
+    let n_raw = nf as i64;
     if vc.is_string() {
         let s = unsafe {
             match vc.as_heap_ref() {
@@ -10815,13 +10829,13 @@ pub(crate) extern "C" fn jit_take(n_val: u64, xs: u64) -> u64 {
             }
         };
         let chars: Vec<char> = s.chars().collect();
-        let end = n.min(chars.len());
+        let end = crate::builtins::resolve_take_count(n_raw, chars.len());
         return NanVal::heap_string(chars[..end].iter().collect()).0;
     }
     if vc.is_heap()
         && let HeapObj::List(items) = unsafe { vc.as_heap_ref() }
     {
-        let end = n.min(items.len());
+        let end = crate::builtins::resolve_take_count(n_raw, items.len());
         let mut sliced = Vec::with_capacity(end);
         for v in &items[..end] {
             v.clone_rc();
@@ -10835,16 +10849,18 @@ pub(crate) extern "C" fn jit_take(n_val: u64, xs: u64) -> u64 {
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn jit_drop(n_val: u64, xs: u64) -> u64 {
+    // Negative count means "keep only the last |n|" (Python `xs[n:]`); shares
+    // resolution with the tree-walker and OP_DROP.
     let vn = NanVal(n_val);
     let vc = NanVal(xs);
     if !vn.is_number() {
         return TAG_NIL;
     }
     let nf = vn.as_number();
-    if nf.fract() != 0.0 || nf < 0.0 {
+    if nf.fract() != 0.0 {
         return TAG_NIL;
     }
-    let n = nf as usize;
+    let n_raw = nf as i64;
     if vc.is_string() {
         let s = unsafe {
             match vc.as_heap_ref() {
@@ -10853,13 +10869,13 @@ pub(crate) extern "C" fn jit_drop(n_val: u64, xs: u64) -> u64 {
             }
         };
         let chars: Vec<char> = s.chars().collect();
-        let start = n.min(chars.len());
+        let start = crate::builtins::resolve_drop_count(n_raw, chars.len());
         return NanVal::heap_string(chars[start..].iter().collect()).0;
     }
     if vc.is_heap()
         && let HeapObj::List(items) = unsafe { vc.as_heap_ref() }
     {
-        let start = n.min(items.len());
+        let start = crate::builtins::resolve_drop_count(n_raw, items.len());
         let mut sliced = Vec::with_capacity(items.len() - start);
         for v in &items[start..] {
             v.clone_rc();

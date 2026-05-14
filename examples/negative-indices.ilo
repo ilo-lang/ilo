@@ -1,0 +1,35 @@
+-- Negative indices on slice-shaped builtins count from the end of the
+-- list or text, matching Python semantics already in place for `at xs i`.
+--
+--   slc xs s e   accepts negative s and e. `slc xs -1 (len xs)` is the
+--                last element as a 1-element list; `slc xs 0 -1` drops
+--                the last element; bounds clamp, never wrap.
+--   take n xs    with n<0 keeps all but the last |n|. Equivalent to
+--                Python's xs[:n]. `take -1 [10,20,30]` is [10,20].
+--   drop n xs    with n<0 keeps only the last |n|. Equivalent to
+--                Python's xs[n:]. `drop -1 [10,20,30]` is [30].
+--
+-- Closes the quant-trader fencepost (`@i 1..np` loops produce np-1 results,
+-- so the equity curve ends at length np; `at eq np` errored, and the
+-- workaround was `npm=- np 1`). With negative indices everywhere, the same
+-- pattern is `slc eq 0 -1` — no separate binding, no off-by-one risk.
+
+last-element xs:L n>L n;slc xs -1 (len xs)
+drop-last xs:L n>L n;slc xs 0 -1
+keep-last-two xs:L n>L n;slc xs -2 (len xs)
+all-but-last xs:L n>L n;take -1 xs
+only-last-two xs:L n>L n;drop -2 xs
+trim-edges s:t>t;slc s 1 -1
+
+-- run: last-element [10,20,30,40,50]
+-- out: [50]
+-- run: drop-last [10,20,30,40,50]
+-- out: [10, 20, 30, 40]
+-- run: keep-last-two [10,20,30,40,50]
+-- out: [40, 50]
+-- run: all-but-last [10,20,30,40,50]
+-- out: [10, 20, 30, 40]
+-- run: only-last-two [10,20,30,40,50]
+-- out: [40, 50]
+-- run: trim-edges "(quoted)"
+-- out: quoted
