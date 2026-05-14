@@ -3479,40 +3479,73 @@ pub(crate) fn jit_arena_reset() {
 // `VmRuntimeError` and propagates it as a `Result::Err` instead of treating
 // the `TAG_NIL` return as a successful result.
 //
-// Spans/call-stacks are not yet carried through helpers (the JIT IR doesn't
-// thread the source span across the C ABI); cranelift JIT errors surface
-// without a precise span for now. Helpers continue to return `TAG_NIL` on the
-// error path so the generated IR doesn't need to special-case a sentinel.
+// Spans are carried through helpers by packing `Span { start, end }` into a
+// u64 immediate (high 32 bits = start, low 32 bits = end) at the cranelift
+// call site and passing it as an extra extern "C" arg. Helpers store the
+// `(VmError, Span)` pair in the TLS cell; the entry point surfaces both on
+// the resulting `VmRuntimeError` so cranelift errors render with a caret like
+// tree / VM.
 //
 // v1 scope: applied to `jit_hd`, `jit_at`, `jit_tl` only. Other helpers
 // (`jit_lst`, `jit_listget`, `jit_index`, `jit_jpth`, `jit_slc`, ...) keep
-// the existing permissive-nil semantics; harmonising them is parked.
+// the existing permissive-nil semantics; harmonising them is parked. Each
+// new erroring helper costs +1 u64 arg and +1 iconst at the call site.
 thread_local! {
-    static JIT_RUNTIME_ERROR: std::cell::RefCell<Option<VmError>> =
+    static JIT_RUNTIME_ERROR: std::cell::RefCell<Option<(VmError, Option<crate::ast::Span>)>> =
         const { std::cell::RefCell::new(None) };
 }
 
-/// Record a runtime error from inside a JIT helper. The entry point will
-/// pick this up after the JIT function returns and surface it as a
-/// `VmRuntimeError`. Helpers should still return `TAG_NIL` after calling
+/// Decode the (start, end) span bits packed by the cranelift call site.
+/// Returns `None` for `0` (the `Span::UNKNOWN` sentinel) so helpers can
+/// pass `0` from contexts where no span is available.
+#[cfg(feature = "cranelift")]
+#[inline]
+fn decode_span_bits(bits: u64) -> Option<crate::ast::Span> {
+    if bits == 0 {
+        None
+    } else {
+        let start = (bits >> 32) as usize;
+        let end = (bits & 0xFFFF_FFFF) as usize;
+        Some(crate::ast::Span { start, end })
+    }
+}
+
+/// Record a runtime error from inside a JIT helper, with the source span
+/// passed in as a packed `(start << 32) | end` u64 immediate. The entry
+/// point will pick this up after the JIT function returns and surface it as
+/// a `VmRuntimeError`. Helpers should still return `TAG_NIL` after calling
 /// this so the generated IR can carry on without a special-case sentinel.
 #[cfg(feature = "cranelift")]
-pub(crate) fn jit_set_runtime_error(err: VmError) {
+pub(crate) fn jit_set_runtime_error_with_span(err: VmError, span_bits: u64) {
+    let span = decode_span_bits(span_bits);
     JIT_RUNTIME_ERROR.with(|cell| {
         // Preserve the first error if a later helper also errors before the
         // entry point unwinds — keeps the surfaced message closest to root
         // cause.
         let mut slot = cell.borrow_mut();
         if slot.is_none() {
-            *slot = Some(err);
+            *slot = Some((err, span));
         }
     });
 }
 
-/// Pop any pending JIT runtime error. Called by the JIT entry point after
-/// the compiled function returns.
+/// Backwards-compatible wrapper for helpers that do not (yet) thread a
+/// source span. Passes `0` (decoded as `None`) so the surfaced
+/// `VmRuntimeError` carries `span: None`, matching pre-span-plumbing
+/// behaviour. New helpers should prefer `jit_set_runtime_error_with_span`
+/// and have the cranelift call site pack and pass the span bits.
 #[cfg(feature = "cranelift")]
-pub(crate) fn jit_take_runtime_error() -> Option<VmError> {
+#[inline]
+pub(crate) fn jit_set_runtime_error(err: VmError) {
+    jit_set_runtime_error_with_span(err, 0);
+}
+
+/// Pop any pending JIT runtime error. Called by the JIT entry point after
+/// the compiled function returns. Returns the `(VmError, Option<Span>)`
+/// pair so the entry point can attach the span to the surfaced
+/// `VmRuntimeError`.
+#[cfg(feature = "cranelift")]
+pub(crate) fn jit_take_runtime_error() -> Option<(VmError, Option<crate::ast::Span>)> {
     JIT_RUNTIME_ERROR.with(|cell| cell.borrow_mut().take())
 }
 
@@ -9741,7 +9774,7 @@ pub(crate) extern "C" fn jit_has(a: u64, b: u64) -> u64 {
 
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn jit_hd(a: u64) -> u64 {
+pub(crate) extern "C" fn jit_hd(a: u64, span_bits: u64) -> u64 {
     let v = NanVal(a);
     if v.is_string() {
         let s = unsafe {
@@ -9751,7 +9784,7 @@ pub(crate) extern "C" fn jit_hd(a: u64) -> u64 {
             }
         };
         if s.is_empty() {
-            jit_set_runtime_error(VmError::Type("hd: empty text"));
+            jit_set_runtime_error_with_span(VmError::Type("hd: empty text"), span_bits);
             return TAG_NIL;
         }
         return NanVal::heap_string(
@@ -9766,13 +9799,13 @@ pub(crate) extern "C" fn jit_hd(a: u64) -> u64 {
         && let HeapObj::List(items) = unsafe { v.as_heap_ref() }
     {
         if items.is_empty() {
-            jit_set_runtime_error(VmError::Type("hd: empty list"));
+            jit_set_runtime_error_with_span(VmError::Type("hd: empty list"), span_bits);
             return TAG_NIL;
         }
         items[0].clone_rc();
         return items[0].0;
     }
-    jit_set_runtime_error(VmError::Type("hd requires a list or text"));
+    jit_set_runtime_error_with_span(VmError::Type("hd requires a list or text"), span_bits);
     TAG_NIL
 }
 
@@ -9796,16 +9829,16 @@ pub(crate) extern "C" fn jit_fmt2(a: u64, b: u64) -> u64 {
 
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn jit_at(a: u64, b: u64) -> u64 {
+pub(crate) extern "C" fn jit_at(a: u64, b: u64, span_bits: u64) -> u64 {
     let v = NanVal(a);
     let i = NanVal(b);
     if !i.is_number() {
-        jit_set_runtime_error(VmError::Type("at: index must be a number"));
+        jit_set_runtime_error_with_span(VmError::Type("at: index must be a number"), span_bits);
         return TAG_NIL;
     }
     let n = i.as_number();
     if n.fract() != 0.0 {
-        jit_set_runtime_error(VmError::Type("at: index must be an integer"));
+        jit_set_runtime_error_with_span(VmError::Type("at: index must be an integer"), span_bits);
         return TAG_NIL;
     }
     let raw = n as i64;
@@ -9819,7 +9852,7 @@ pub(crate) extern "C" fn jit_at(a: u64, b: u64) -> u64 {
         return match char_at_signed(s, raw) {
             CharAtResult::Found(c) => NanVal::heap_string(c.to_string()).0,
             CharAtResult::OutOfRange { .. } => {
-                jit_set_runtime_error(VmError::Type("at: index out of range"));
+                jit_set_runtime_error_with_span(VmError::Type("at: index out of range"), span_bits);
                 TAG_NIL
             }
         };
@@ -9830,14 +9863,14 @@ pub(crate) extern "C" fn jit_at(a: u64, b: u64) -> u64 {
         let len = items.len() as i64;
         let adjusted = if raw < 0 { raw + len } else { raw };
         if adjusted < 0 || adjusted >= len {
-            jit_set_runtime_error(VmError::Type("at: index out of range"));
+            jit_set_runtime_error_with_span(VmError::Type("at: index out of range"), span_bits);
             return TAG_NIL;
         }
         let idx = adjusted as usize;
         items[idx].clone_rc();
         return items[idx].0;
     }
-    jit_set_runtime_error(VmError::Type("at requires a list or text"));
+    jit_set_runtime_error_with_span(VmError::Type("at requires a list or text"), span_bits);
     TAG_NIL
 }
 
@@ -10102,7 +10135,7 @@ pub(crate) extern "C" fn jit_chunks(a: u64, b: u64) -> u64 {
 
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn jit_tl(a: u64) -> u64 {
+pub(crate) extern "C" fn jit_tl(a: u64, span_bits: u64) -> u64 {
     let v = NanVal(a);
     if v.is_string() {
         let s = unsafe {
@@ -10112,7 +10145,7 @@ pub(crate) extern "C" fn jit_tl(a: u64) -> u64 {
             }
         };
         if s.is_empty() {
-            jit_set_runtime_error(VmError::Type("tl: empty text"));
+            jit_set_runtime_error_with_span(VmError::Type("tl: empty text"), span_bits);
             return TAG_NIL;
         }
         let mut chars = s.chars();
@@ -10123,7 +10156,7 @@ pub(crate) extern "C" fn jit_tl(a: u64) -> u64 {
         && let HeapObj::List(items) = unsafe { v.as_heap_ref() }
     {
         if items.is_empty() {
-            jit_set_runtime_error(VmError::Type("tl: empty list"));
+            jit_set_runtime_error_with_span(VmError::Type("tl: empty list"), span_bits);
             return TAG_NIL;
         }
         let tail: Vec<NanVal> = items[1..]
@@ -10135,7 +10168,7 @@ pub(crate) extern "C" fn jit_tl(a: u64) -> u64 {
             .collect();
         return NanVal::heap_list(tail).0;
     }
-    jit_set_runtime_error(VmError::Type("tl requires a list or text"));
+    jit_set_runtime_error_with_span(VmError::Type("tl requires a list or text"), span_bits);
     TAG_NIL
 }
 
@@ -17965,7 +17998,7 @@ mod tests {
 
         #[test]
         fn jit_hd_string_returns_first_char() {
-            let r = jit_hd(str_val("hello"));
+            let r = jit_hd(str_val("hello"), 0);
             let rv = NanVal(r);
             assert!(rv.is_string());
             let HeapObj::Str(s) = (unsafe { rv.as_heap_ref() }) else {
@@ -17977,7 +18010,7 @@ mod tests {
 
         #[test]
         fn jit_hd_empty_string_returns_nil() {
-            let r = jit_hd(str_val(""));
+            let r = jit_hd(str_val(""), 0);
             assert!(is_nil(r));
         }
 
@@ -17985,7 +18018,7 @@ mod tests {
         fn jit_hd_list_returns_first() {
             let items = vec![NanVal::number(10.0), NanVal::number(20.0)];
             let list = NanVal::heap_list(items);
-            let r = jit_hd(list.0);
+            let r = jit_hd(list.0, 0);
             assert!(is_num(r));
             assert_eq!(as_num(r), 10.0);
         }
@@ -17993,13 +18026,13 @@ mod tests {
         #[test]
         fn jit_hd_empty_list_returns_nil() {
             let list = NanVal::heap_list(vec![]);
-            let r = jit_hd(list.0);
+            let r = jit_hd(list.0, 0);
             assert!(is_nil(r));
         }
 
         #[test]
         fn jit_hd_non_string_non_list_returns_nil() {
-            let r = jit_hd(TAG_NIL);
+            let r = jit_hd(TAG_NIL, 0);
             assert!(is_nil(r));
         }
 
@@ -18007,7 +18040,7 @@ mod tests {
 
         #[test]
         fn jit_tl_string_returns_tail() {
-            let r = jit_tl(str_val("hello"));
+            let r = jit_tl(str_val("hello"), 0);
             let rv = NanVal(r);
             assert!(rv.is_string());
             let HeapObj::Str(s) = (unsafe { rv.as_heap_ref() }) else {
@@ -18019,7 +18052,7 @@ mod tests {
 
         #[test]
         fn jit_tl_empty_string_returns_nil() {
-            let r = jit_tl(str_val(""));
+            let r = jit_tl(str_val(""), 0);
             assert!(is_nil(r));
         }
 
@@ -18031,7 +18064,7 @@ mod tests {
                 NanVal::number(3.0),
             ];
             let list = NanVal::heap_list(items);
-            let r = jit_tl(list.0);
+            let r = jit_tl(list.0, 0);
             let rv = NanVal(r);
             assert!(rv.is_heap());
         }
@@ -18039,7 +18072,7 @@ mod tests {
         #[test]
         fn jit_tl_empty_list_returns_nil() {
             let list = NanVal::heap_list(vec![]);
-            let r = jit_tl(list.0);
+            let r = jit_tl(list.0, 0);
             assert!(is_nil(r));
         }
 
@@ -25739,7 +25772,7 @@ f>n;r=mk 10 20;+r.x r.y";
             NanVal::number(20.0),
             NanVal::number(30.0),
         ]);
-        let v = NanVal(jit_at(list.0, NanVal::number(-1.0).0));
+        let v = NanVal(jit_at(list.0, NanVal::number(-1.0).0, 0));
         assert!(v.is_number());
         assert_eq!(v.as_number(), 30.0);
     }
@@ -25752,7 +25785,7 @@ f>n;r=mk 10 20;+r.x r.y";
             NanVal::number(20.0),
             NanVal::number(30.0),
         ]);
-        let v = NanVal(jit_at(list.0, NanVal::number(-3.0).0));
+        let v = NanVal(jit_at(list.0, NanVal::number(-3.0).0, 0));
         assert!(v.is_number());
         assert_eq!(v.as_number(), 10.0);
     }
@@ -25761,7 +25794,7 @@ f>n;r=mk 10 20;+r.x r.y";
     #[test]
     fn jit_at_list_negative_out_of_range() {
         let list = NanVal::heap_list(vec![NanVal::number(1.0), NanVal::number(2.0)]);
-        let bits = jit_at(list.0, NanVal::number(-3.0).0);
+        let bits = jit_at(list.0, NanVal::number(-3.0).0, 0);
         assert_eq!(bits, TAG_NIL);
     }
 
@@ -25769,7 +25802,7 @@ f>n;r=mk 10 20;+r.x r.y";
     #[test]
     fn jit_at_text_negative_last() {
         let s = NanVal::heap_string("abc".to_string());
-        let v = NanVal(jit_at(s.0, NanVal::number(-1.0).0));
+        let v = NanVal(jit_at(s.0, NanVal::number(-1.0).0, 0));
         assert!(v.is_string());
         let got = unsafe {
             match v.as_heap_ref() {
@@ -25784,7 +25817,7 @@ f>n;r=mk 10 20;+r.x r.y";
     #[test]
     fn jit_at_text_negative_out_of_range() {
         let s = NanVal::heap_string("ab".to_string());
-        let bits = jit_at(s.0, NanVal::number(-3.0).0);
+        let bits = jit_at(s.0, NanVal::number(-3.0).0, 0);
         assert_eq!(bits, TAG_NIL);
     }
 
@@ -25792,7 +25825,7 @@ f>n;r=mk 10 20;+r.x r.y";
     #[test]
     fn jit_at_fractional_index_returns_nil() {
         let list = NanVal::heap_list(vec![NanVal::number(1.0)]);
-        let bits = jit_at(list.0, NanVal::number(0.5).0);
+        let bits = jit_at(list.0, NanVal::number(0.5).0, 0);
         assert_eq!(bits, TAG_NIL);
     }
 

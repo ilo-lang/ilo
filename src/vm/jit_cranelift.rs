@@ -181,6 +181,19 @@ struct HelperFuncs {
     call_builtin_tree: FuncId,
 }
 
+/// Pack a `Span { start, end }` into a single i64 immediate for passing to
+/// erroring JIT helpers. High 32 bits = start, low 32 bits = end. `start ==
+/// end == 0` (i.e. `Span::UNKNOWN`) round-trips to `0`, which helpers decode
+/// as `None`. Spans whose offsets exceed `u32::MAX` (i.e. source files
+/// larger than ~4 GiB) are clamped to `u32::MAX`; this only affects
+/// diagnostic rendering, never program correctness.
+#[inline]
+fn pack_span_bits(span: crate::ast::Span) -> i64 {
+    let start = span.start.min(u32::MAX as usize) as u64;
+    let end = span.end.min(u32::MAX as usize) as u64;
+    ((start << 32) | end) as i64
+}
+
 fn declare_helper(module: &mut JITModule, name: &str, n_params: usize, n_returns: usize) -> FuncId {
     let mut sig = module.make_signature();
     for _ in 0..n_params {
@@ -414,8 +427,12 @@ fn declare_all_helpers(module: &mut JITModule) -> HelperFuncs {
         spl: declare_helper(module, "jit_spl", 2, 1),
         cat: declare_helper(module, "jit_cat", 2, 1),
         has: declare_helper(module, "jit_has", 2, 1),
-        hd: declare_helper(module, "jit_hd", 1, 1),
-        at: declare_helper(module, "jit_at", 2, 1),
+        // jit_hd / jit_at / jit_tl take a packed (start<<32)|end span_bits
+        // immediate as their trailing arg so cranelift runtime errors carry
+        // a source span like tree / VM. See `vm/mod.rs` JIT runtime-error
+        // signalling section.
+        hd: declare_helper(module, "jit_hd", 2, 1),
+        at: declare_helper(module, "jit_at", 3, 1),
         fmt2: declare_helper(module, "jit_fmt2", 2, 1),
         zip: declare_helper(module, "jit_zip", 2, 1),
         enumerate: declare_helper(module, "jit_enumerate", 1, 1),
@@ -425,7 +442,7 @@ fn declare_all_helpers(module: &mut JITModule) -> HelperFuncs {
         setunion: declare_helper(module, "jit_setunion", 2, 1),
         setinter: declare_helper(module, "jit_setinter", 2, 1),
         setdiff: declare_helper(module, "jit_setdiff", 2, 1),
-        tl: declare_helper(module, "jit_tl", 1, 1),
+        tl: declare_helper(module, "jit_tl", 2, 1),
         rev: declare_helper(module, "jit_rev", 1, 1),
         srt: declare_helper(module, "jit_srt", 1, 1),
         rsrt: declare_helper(module, "jit_rsrt", 1, 1),
@@ -2206,16 +2223,20 @@ fn compile_function_body(
             }
             OP_HD => {
                 let bv = builder.use_var(vars[b_idx]);
+                let span_bits = pack_span_bits(chunk.spans[ip]);
+                let span_arg = builder.ins().iconst(I64, span_bits);
                 let fref = get_func_ref(&mut builder, module, helpers.hd);
-                let call_inst = builder.ins().call(fref, &[bv]);
+                let call_inst = builder.ins().call(fref, &[bv, span_arg]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
             }
             OP_AT => {
                 let bv = builder.use_var(vars[b_idx]);
                 let cv = builder.use_var(vars[c_idx]);
+                let span_bits = pack_span_bits(chunk.spans[ip]);
+                let span_arg = builder.ins().iconst(I64, span_bits);
                 let fref = get_func_ref(&mut builder, module, helpers.at);
-                let call_inst = builder.ins().call(fref, &[bv, cv]);
+                let call_inst = builder.ins().call(fref, &[bv, cv, span_arg]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
             }
@@ -2292,8 +2313,10 @@ fn compile_function_body(
             }
             OP_TL => {
                 let bv = builder.use_var(vars[b_idx]);
+                let span_bits = pack_span_bits(chunk.spans[ip]);
+                let span_arg = builder.ins().iconst(I64, span_bits);
                 let fref = get_func_ref(&mut builder, module, helpers.tl);
-                let call_inst = builder.ins().call(fref, &[bv]);
+                let call_inst = builder.ins().call(fref, &[bv, span_arg]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
             }
@@ -4307,10 +4330,10 @@ pub fn call(func: &JitFunction, args: &[u64]) -> Result<u64, JitCallError> {
     }
     jit_arena_reset();
 
-    if let Some(err) = jit_take_runtime_error() {
+    if let Some((err, span)) = jit_take_runtime_error() {
         return Err(JitCallError::Runtime(VmRuntimeError {
             error: err,
-            span: None,
+            span,
             call_stack: Vec::new(),
         }));
     }
