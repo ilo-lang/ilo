@@ -3970,6 +3970,124 @@ fn eval_self_rebind_mset(
     call_function(env, "mset", args)
 }
 
+/// Returns `true` if `expr` contains a `Ref(name)` anywhere in its subtree.
+/// Used by the self-rebind peepholes to detect aliasing: if the RHS reads the
+/// same binding we're about to take, the fast path would observe Nil and we
+/// must fall back to the general (cloning) path.
+fn expr_refers_to(name: &str, expr: &Expr) -> bool {
+    match expr {
+        Expr::Ref(n) => n == name,
+        Expr::Field { object, .. } => expr_refers_to(name, object),
+        Expr::Index { object, .. } => expr_refers_to(name, object),
+        Expr::Call { args, .. } => args.iter().any(|a| expr_refers_to(name, a)),
+        Expr::BinOp { left, right, .. } => {
+            expr_refers_to(name, left) || expr_refers_to(name, right)
+        }
+        Expr::UnaryOp { operand, .. } => expr_refers_to(name, operand),
+        Expr::Ok(inner) | Expr::Err(inner) => expr_refers_to(name, inner),
+        Expr::List(items) => items.iter().any(|e| expr_refers_to(name, e)),
+        Expr::Record { fields, .. } => fields.iter().any(|(_, e)| expr_refers_to(name, e)),
+        // Conservative: assume Match arms might reference `name`. Falls back
+        // to the general path, which is correct (just slower) in the rare
+        // case where a self-rebind RHS is wrapped in a match.
+        Expr::Match { .. } => true,
+        Expr::NilCoalesce { value, default } => {
+            expr_refers_to(name, value) || expr_refers_to(name, default)
+        }
+        Expr::With { object, updates } => {
+            expr_refers_to(name, object) || updates.iter().any(|(_, e)| expr_refers_to(name, e))
+        }
+        Expr::Ternary {
+            condition,
+            then_expr,
+            else_expr,
+        } => {
+            expr_refers_to(name, condition)
+                || expr_refers_to(name, then_expr)
+                || expr_refers_to(name, else_expr)
+        }
+        Expr::MakeClosure { captures, .. } => captures.iter().any(|c| expr_refers_to(name, c)),
+        Expr::Literal(_) => false,
+    }
+}
+
+/// If `value` is the self-rebind list-append shape `name = +=name v`, return
+/// `Some(val_expr)`. Returns `None` for any other shape (different target,
+/// different operator, wrong operand order, or RHS that aliases `name`),
+/// which falls through to the general path.
+fn match_self_rebind_append<'a>(name: &str, value: &'a Expr) -> Option<&'a Expr> {
+    if let Expr::BinOp { op, left, right } = value
+        && matches!(op, BinOp::Append)
+        && let Expr::Ref(left_name) = left.as_ref()
+        && left_name == name
+        && !expr_refers_to(name, right)
+    {
+        return Some(right.as_ref());
+    }
+    None
+}
+
+/// Fast-path executor for `xs = +=xs v`. Caller has taken the previous binding
+/// out of env (leaving Value::Nil), so the Arc<Vec<Value>> in `prev` is the
+/// sole reference. `Arc::make_mut` then mutates the inner Vec in place,
+/// turning the classic `xs = +=xs v` loop accumulator from O(n²) to O(n)
+/// amortised on the tree-walker.
+fn eval_self_rebind_append(env: &mut Env, val_expr: &Expr, prev: Value) -> Result<Value> {
+    let val_val = eval_expr(env, val_expr)?;
+    match prev {
+        Value::List(mut items) => {
+            let inner = Arc::make_mut(&mut items);
+            inner.push(val_val);
+            Ok(Value::List(items))
+        }
+        // Non-list `prev` is impossible in well-typed code, but if it occurs
+        // (e.g. the binding was previously nil) we surface the same error as
+        // the general BinOp::Append path would.
+        other => Err(RuntimeError::new(
+            "ILO-R004",
+            format!(
+                "unsupported operation: {:?} on {:?} and {:?}",
+                BinOp::Append,
+                other,
+                val_val
+            ),
+        )),
+    }
+}
+
+/// If `value` is the self-rebind list-concat shape `name = name + ys`, return
+/// `Some(rhs_expr)`. Returns `None` for any other shape, including any case
+/// where the rhs references `name` (e.g. `s = s + s` self-concat), which
+/// would observe Nil after the fast path takes the binding.
+fn match_self_rebind_concat<'a>(name: &str, value: &'a Expr) -> Option<&'a Expr> {
+    if let Expr::BinOp { op, left, right } = value
+        && matches!(op, BinOp::Add)
+        && let Expr::Ref(left_name) = left.as_ref()
+        && left_name == name
+        && !expr_refers_to(name, right)
+    {
+        return Some(right.as_ref());
+    }
+    None
+}
+
+/// Fast-path executor for `xs = xs + ys`. Caller has taken the previous
+/// binding out of env. If both sides are lists, we use `Arc::make_mut` on the
+/// prev (which now has refcount=1) and `extend` from ys, again giving O(n)
+/// amortised behaviour for repeated concatenation. If the values aren't both
+/// lists (e.g. numeric add), we fall back to `apply_binop` so semantics match
+/// the general path exactly.
+fn eval_self_rebind_concat(env: &mut Env, rhs_expr: &Expr, prev: Value) -> Result<Value> {
+    let rhs = eval_expr(env, rhs_expr)?;
+    match (prev, rhs) {
+        (Value::List(mut items), Value::List(other)) => {
+            let inner = Arc::make_mut(&mut items);
+            inner.extend(other.iter().cloned());
+            Ok(Value::List(items))
+        }
+        (prev, rhs) => eval_binop(&BinOp::Add, &prev, &rhs),
+    }
+}
 
 fn eval_stmt(env: &mut Env, stmt: &Stmt) -> Result<Option<BodyResult>> {
     match stmt {
@@ -3995,6 +4113,29 @@ fn eval_stmt(env: &mut Env, stmt: &Stmt) -> Result<Option<BodyResult>> {
                 // catch/recover form), so user code never observes the
                 // intermediate Nil.
                 let val = eval_self_rebind_mset(env, key_expr, val_expr, prev)?;
+                env.set(name, val);
+                return Ok(None);
+            }
+            // Peephole: `xs = +=xs v` self-rebind list append. Same trick as
+            // the Map mset peephole: take prev so Arc<Vec<Value>> refcount=1,
+            // then `Arc::make_mut` mutates the inner Vec in place. Turns the
+            // classic accumulator loop from O(n²) (clone-per-push) to O(n)
+            // amortised. Phase 2b.2 of the RC-aware mutation rollout.
+            if let Some(val_expr) = match_self_rebind_append(name, value)
+                && let Some(prev) = env.take(name)
+            {
+                let val = eval_self_rebind_append(env, val_expr, prev)?;
+                env.set(name, val);
+                return Ok(None);
+            }
+            // Peephole: `xs = xs + ys` self-rebind list concat. Mirrors the
+            // append peephole but extends from the rhs list. Falls back to the
+            // general apply_binop path if either side isn't a list (so numeric
+            // `x = x + y` works unchanged).
+            if let Some(rhs_expr) = match_self_rebind_concat(name, value)
+                && let Some(prev) = env.take(name)
+            {
+                let val = eval_self_rebind_concat(env, rhs_expr, prev)?;
                 env.set(name, val);
                 return Ok(None);
             }
