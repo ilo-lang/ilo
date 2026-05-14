@@ -377,9 +377,10 @@ pub(crate) const OP_PANIC_UNWRAP: u8 = 164;
 /// round-tripping is lossless. Adding a new entry here makes the builtin
 /// callable from `--run-vm` and `--run-cranelift` for free.
 ///
-/// HOFs (`map`, `flt`, `fld`, `grp`, `flatmap`, `uniqby`, `partition`,
-/// 2-arg `srt`, dynamic-fmt `wr`) are NOT eligible: their function-reference
-/// argument can't survive the round-trip until FnRef nan-tagging lands.
+/// HOFs (`flt`, `fld`, `grp`, `flatmap`, `uniqby`, `partition`,
+/// 2-arg `srt`, dynamic-fmt `wr`) are NOT eligible: they get native VM
+/// lifts in the HOF dispatch chain (PR 2+). `map` is already lifted —
+/// see the `(Builtin::Map, 2)` arm in the compiler.
 pub(crate) fn is_tree_bridge_eligible(b: crate::builtins::Builtin, argc: usize) -> bool {
     use crate::builtins::Builtin;
     match (b, argc) {
@@ -2652,12 +2653,102 @@ impl RegCompiler {
                             self.emit_abc(OP_MDEL, ra, rb, rc);
                             return ra;
                         }
+                        // map fn xs → native HOF loop using OP_CALL_DYN.
+                        // The FnRef plumbing from #274 means we can keep the
+                        // callee in a register (NanVal-tagged) and invoke it
+                        // per element without ever leaving bytecode land.
+                        // Emits, schematically:
+                        //   fn_reg    = compile(fn)         ; OP_LOADFN if Ref to user/builtin name
+                        //   xs_reg    = compile(xs)
+                        //   acc_reg   = OP_LISTNEW 0        ; empty result list
+                        //   idx_reg   = OP_LOADK 0.0
+                        //   item_reg  = OP_LOADK nil        ; loop binding (allocated)
+                        //   res_reg   = OP_LOADK nil        ; per-iteration call result
+                        //   arg_reg   = OP_LOADK nil        ; contiguous arg slot for OP_CALL_DYN
+                        //                                    (must be at res_reg + 1)
+                        //   loop_top: OP_FOREACHPREP item_reg, xs_reg, idx_reg
+                        //             JMP end                 (empty list)
+                        //   body:     OP_MOVE arg_reg, item_reg
+                        //             OP_CALL_DYN res_reg, fn_reg, 1
+                        //             OP_LISTAPPEND acc_reg, acc_reg, res_reg
+                        //             OP_FOREACHNEXT item_reg, xs_reg, idx_reg
+                        //             JMP end                 (out of bounds)
+                        //             JMP body
+                        //   end:
+                        //   ra = acc_reg
+                        (Builtin::Map, 2) => {
+                            let fn_reg = self.compile_expr(&args[0]);
+                            let xs_reg = self.compile_expr(&args[1]);
+
+                            // Result list — start empty, OP_LISTAPPEND grows it
+                            // in-place when acc == acc + item.
+                            let acc_reg = self.alloc_reg();
+                            self.emit_abx(OP_LISTNEW, acc_reg, 0);
+
+                            // Loop index (number, fits the FOREACHNEXT contract).
+                            let idx_reg = self.alloc_reg();
+                            let zero_ki = self.current.add_const(Value::Number(0.0));
+                            self.emit_abx(OP_LOADK, idx_reg, zero_ki);
+                            self.reg_is_num[idx_reg as usize] = true;
+
+                            // Loop binding — receives R[xs_reg][i].
+                            let item_reg = self.alloc_reg();
+                            let nil_ki = self.current.add_const(Value::Nil);
+                            self.emit_abx(OP_LOADK, item_reg, nil_ki);
+
+                            // OP_CALL_DYN reads args from R[result+1..=result+argc].
+                            // Reserve two contiguous regs (result, then arg) so the
+                            // single-arg callback layout is correct.
+                            let res_reg = self.alloc_reg();
+                            self.emit_abx(OP_LOADK, res_reg, nil_ki);
+                            let arg_reg = self.alloc_reg();
+                            assert!(
+                                arg_reg == res_reg + 1,
+                                "map HOF: arg reg must follow result reg contiguously"
+                            );
+                            self.emit_abx(OP_LOADK, arg_reg, nil_ki);
+
+                            // OP_FOREACHPREP validates xs is a list and loads xs[0]
+                            // into item_reg; on empty it falls through to the exit JMP.
+                            let _loop_top = self.current.code.len();
+                            self.emit_abc(OP_FOREACHPREP, item_reg, xs_reg, idx_reg);
+                            let exit_jump_a = self.emit_jmp_placeholder();
+
+                            // Body
+                            let body_top = self.current.code.len();
+                            self.emit_abc(OP_MOVE, arg_reg, item_reg, 0);
+                            self.emit_abc(OP_CALL_DYN, res_reg, fn_reg, 1);
+                            // acc_reg = acc_reg ++ [res_reg]. dst == src1 hits the
+                            // in-place RC=1 fast path in the dispatcher / cranelift.
+                            self.emit_abc(OP_LISTAPPEND, acc_reg, acc_reg, res_reg);
+
+                            // Advance and re-test
+                            self.emit_abc(OP_FOREACHNEXT, item_reg, xs_reg, idx_reg);
+                            let exit_jump_b = self.emit_jmp_placeholder();
+                            self.emit_jump_to(body_top);
+
+                            // Exit — patch both empty-list and end-of-list jumps
+                            self.current.patch_jump(exit_jump_a);
+                            self.current.patch_jump(exit_jump_b);
+
+                            // The bridge-style result fully boxes a list; reset the
+                            // numeric-tracking on the result register so downstream
+                            // arithmetic doesn't assume it's a raw f64.
+                            self.current_all_regs_numeric = false;
+                            self.reg_is_num[acc_reg as usize] = false;
+
+                            // Free the scratch regs above acc_reg so subsequent
+                            // expressions can reuse them. acc_reg stays live as
+                            // the call site's result.
+                            self.next_reg = acc_reg + 1;
+                            return acc_reg;
+                        }
                         // Builtins that fall through:
                         //   - tree-bridge eligible (rgx, rgxall, fmt-variadic, rd 2-arg, rdb)
                         //     → routed to OP_CALL_BUILTIN_TREE below
-                        //   - HOFs (map/flt/fld/grp/flatmap/uniqby/partition/srt 2-arg/wr 3-arg
-                        //     with dynamic fmt) → still error; FnRef args can't round-trip
-                        //     through the bridge until FnRef NaN-tagging lands
+                        //   - HOFs (flt/fld/grp/flatmap/uniqby/partition/srt 2-arg/wr 3-arg
+                        //     with dynamic fmt) → still error; their native lift lands
+                        //     in PR 3 of the HOF dispatch chain (PR 2 = `map` only)
                         _ => {}
                     }
                 }
