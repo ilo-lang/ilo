@@ -4188,7 +4188,7 @@ impl NanVal {
                 unsafe {
                     debug_assert!(self.is_heap());
                     match self.as_heap_ref() {
-                        HeapObj::Str(s) => Value::Text(s.clone()),
+                        HeapObj::Str(s) => Value::Text(Arc::new(s.clone())),
                         HeapObj::List(items) => Value::List(std::sync::Arc::new(
                             items
                                 .iter()
