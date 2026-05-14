@@ -2993,7 +2993,11 @@ fn run_default(
                 let nan_args: Vec<u64> = args.iter().map(|v| vm::NanVal::from_value(v).0).collect();
                 match vm::jit_cranelift::compile_and_call(chunk, nan_consts, &nan_args, &compiled) {
                     Ok(result_bits) => {
-                        let result = vm::NanVal(result_bits).to_value();
+                        // Use the program-aware bridge so a user-fn FnRef
+                        // returned at the top-level resolves to its source
+                        // name (`<fn:sq>`) rather than `<user_fn:0>`.
+                        let result =
+                            vm::NanVal(result_bits).to_value_with_program(&compiled.func_names);
                         print_value(&result, explicit_json, suppress);
                         return program_exit_code(&result);
                     }
@@ -3297,7 +3301,11 @@ fn run_bench(program: &ast::Program, func_name: Option<&str>, args: &[interprete
                 let ns = jit_dur.as_nanos() / iterations as u128;
                 jit_cranelift_ns = Some(ns);
 
-                let jit_result = vm::NanVal(jit_result_bits).to_value();
+                // Program-aware bridge so a benchmarked entry that returns
+                // a user-fn FnRef renders as `<fn:name>` instead of the
+                // synthetic `<user_fn:N>` placeholder.
+                let jit_result =
+                    vm::NanVal(jit_result_bits).to_value_with_program(&compiled.func_names);
                 println!("Cranelift JIT");
                 println!("  result:     {}", jit_result);
                 println!("  iterations: {}", iterations);
