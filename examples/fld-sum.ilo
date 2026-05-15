@@ -1,0 +1,11 @@
+-- fld fn xs init: left fold with an explicit initial accumulator. The fn
+-- takes (acc, item) and returns the new acc. Initial value carries the
+-- starting state. Returns the final acc, not a list.
+-- Signature: fld fn:F a b a xs:L b a init:a > a
+
+add a:n b:n>n;+a b
+
+main xs:L n>n;fld add xs 0
+
+-- run: main [1,2,3,4,5]
+-- out: 15

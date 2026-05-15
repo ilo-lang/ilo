@@ -1,0 +1,11 @@
+-- flt fn xs: keep only the elements where fn returns true. Predicate is a
+-- function reference (user-defined like `pos` or a pure builtin). Returns a
+-- fresh list. Predicates that return a non-bool value raise a runtime error.
+-- Signature: flt fn:F a b xs:L a > L a
+
+pos x:n>b;>x 0
+
+main xs:L n>L n;flt pos xs
+
+-- run: main [-3,-1,0,2,4]
+-- out: [2, 4]
