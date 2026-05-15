@@ -2071,7 +2071,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             {
                 let _ = (url, headers);
                 Ok(Value::Err(Box::new(Value::Text(
-                    "http feature not enabled".to_string(),
+                    "http feature not enabled".to_string().into(),
                 ))))
             }
         };
@@ -2158,7 +2158,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             {
                 let _ = (url, body, headers);
                 Ok(Value::Err(Box::new(Value::Text(
-                    "http feature not enabled".to_string(),
+                    "http feature not enabled".to_string().into(),
                 ))))
             }
         };
@@ -4926,7 +4926,7 @@ pub(crate) fn get_many_fetch(urls: &[String]) -> Vec<Value> {
     {
         for slot in results.iter_mut() {
             *slot = Value::Err(Box::new(Value::Text(
-                "http feature not enabled".to_string(),
+                "http feature not enabled".to_string().into(),
             )));
         }
     }
