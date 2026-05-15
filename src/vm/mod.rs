@@ -3022,14 +3022,69 @@ impl RegCompiler {
                     return self.emit_call_builtin_tree(builtin, args, *unwrap);
                 }
 
-                // NOTE: Dynamic call by FnRef-in-register (the `cb 3`
-                // pattern where `cb` is a parameter typed `F ...`) is
-                // recognised here in PR 2 onward — see OP_CALL_DYN. PR 1
-                // only ships the value-side plumbing (FnRef tag, LOADFN,
-                // dispatcher arms), so calling a FnRef-typed local still
-                // surfaces as UndefinedFunction below. The HOF call-site
-                // tests that depend on this are gated with `#[ignore]`
-                // and are unblocked together in PR 2's first HOF lift.
+                // Dynamic call by FnRef-in-register (PR 3d). When `function`
+                // resolves to a local variable, the callee is whatever value
+                // sits in that register at runtime — a FnRef NanVal, a Text
+                // naming a function, or (eventually) a Closure. We emit
+                // OP_CALL_DYN against the local's register and let the
+                // dispatcher resolve dynamically, matching the tree
+                // interpreter's `callee_from_scope` behaviour.
+                //
+                // Local shadowing wins over top-level fn names: `f=dbl; f 10`
+                // calls the value bound to `f`, not a top-level `f` if one
+                // happened to exist. This mirrors the tree interpreter.
+                if let Some(fn_reg) = self.resolve_local(function) {
+                    let arg_regs: Vec<u8> = args.iter().map(|a| self.compile_expr(a)).collect();
+
+                    // OP_CALL_DYN reads args from R[A+1..=A+argc] — contiguous
+                    // slot immediately after the result register.
+                    let a = self.alloc_reg();
+                    let args_base = self.next_reg;
+                    assert!(
+                        (self.next_reg as usize) + args.len() <= 255,
+                        "register overflow: dynamic call requires too many register slots"
+                    );
+                    self.next_reg += args.len() as u8;
+                    if self.next_reg > self.max_reg {
+                        self.max_reg = self.next_reg;
+                    }
+                    for (i, &arg_reg) in arg_regs.iter().enumerate() {
+                        let target = args_base + i as u8;
+                        if arg_reg != target {
+                            self.emit_abc(OP_MOVE, target, arg_reg, 0);
+                        }
+                    }
+
+                    assert!(
+                        args.len() <= 255,
+                        "dynamic call has {} args; OP_CALL_DYN argc field is 8 bits",
+                        args.len()
+                    );
+                    self.emit_abc(OP_CALL_DYN, a, fn_reg, args.len() as u8);
+
+                    // Result register tracking — unknown record type, not
+                    // statically numeric (the callee's return type isn't
+                    // known until dispatch).
+                    self.current_all_regs_numeric = false;
+                    self.reg_is_num[a as usize] = false;
+                    self.reg_record_type[a as usize] = u16::MAX;
+                    self.next_reg = a + 1;
+
+                    // Auto-unwrap (`!`, `!!`): callee return type is unknown
+                    // statically, so route through the Result-shaped unwrap
+                    // helper which handles Ok/Err and lets non-Result values
+                    // pass through. Optional-unwrap requires the static type
+                    // info we don't have here; tree semantics for `!` on a
+                    // dynamic callee return treat nil as a propagation, but
+                    // adding that requires a separate opcode pair and is out
+                    // of scope for PR 3d.
+                    if unwrap.is_any() {
+                        self.emit_result_unwrap(a, *unwrap);
+                        self.next_reg = a + 1;
+                    }
+
+                    return a;
+                }
 
                 let arg_regs: Vec<u8> = args.iter().map(|a| self.compile_expr(a)).collect();
                 let func_idx = self
@@ -4398,7 +4453,7 @@ impl NanVal {
     /// Like `from_value` but resolves user-function FnRefs against the
     /// supplied `func_names` slice. Used by the VM's bridge layer when
     /// crossing back into the tree interpreter and vice versa.
-    pub(crate) fn from_value_with_program(val: &Value, func_names: &[String]) -> Self {
+    pub fn from_value_with_program(val: &Value, func_names: &[String]) -> Self {
         match val {
             Value::List(items) => NanVal::heap_list(
                 items
@@ -4740,7 +4795,10 @@ impl<'a> VmState<'a> {
                 .ok_or_else(|| VmError::UndefinedFunction {
                     name: func_name.to_string(),
                 })?;
-        let nan_args: Vec<NanVal> = args.iter().map(NanVal::from_value).collect();
+        let nan_args: Vec<NanVal> = args
+            .iter()
+            .map(|v| NanVal::from_value_with_program(v, &self.vm.program.func_names))
+            .collect();
         self.vm.setup_call(func_idx, nan_args, 0);
         self.vm.execute() // returns VmError for bench compatibility
     }
@@ -4829,7 +4887,14 @@ impl<'a> VM<'a> {
     }
 
     fn call(&mut self, func_idx: u16, args: Vec<Value>) -> Result<Value, VmRuntimeError> {
-        let nan_args: Vec<NanVal> = args.iter().map(NanVal::from_value).collect();
+        // Program-aware NanVal encoding so a `Value::FnRef(user_fn)` arg
+        // becomes a real FnRef NanVal (not the `<fn:name>` sentinel that
+        // bare `from_value` falls back to). Required so OP_CALL_DYN sees a
+        // proper FnRef when callers pass a user-fn directly as an entry arg.
+        let nan_args: Vec<NanVal> = args
+            .iter()
+            .map(|v| NanVal::from_value_with_program(v, &self.program.func_names))
+            .collect();
         self.setup_call(func_idx, nan_args, 0);
         self.execute().map_err(|e| self.make_runtime_error(e))
     }
@@ -6410,7 +6475,29 @@ impl<'a> VM<'a> {
                     let a = ((inst >> 16) & 0xFF) as u8;
                     let b = ((inst >> 8) & 0xFF) as u8;
                     let n_args = (inst & 0xFF) as usize;
-                    let callee = reg!(base + b as usize);
+                    let mut callee = reg!(base + b as usize);
+                    // Text callee — resolve the name to a user fn or builtin
+                    // and re-shape into a FnRef NanVal. This mirrors the
+                    // tree interpreter's `Value::Text(name)` callee path
+                    // (`callee_from_scope`) so a function name held as a
+                    // string (e.g. read from argv) dispatches the same way
+                    // as a FnRef.
+                    if callee.is_string() && !callee.is_fnref() {
+                        let name_val = callee.to_value_with_program(&self.program.func_names);
+                        if let Value::Text(name) = name_val {
+                            if let Some(idx) =
+                                self.program.func_names.iter().position(|n| n == &*name)
+                            {
+                                callee = NanVal::fnref(FnRefKind::User, idx as u32);
+                            } else if let Some(b) = crate::builtins::Builtin::from_name(&name) {
+                                callee = NanVal::fnref(FnRefKind::Builtin, b.tag() as u32);
+                            } else {
+                                vm_err!(VmError::Type(
+                                    "dynamic call: text callee names no known function"
+                                ));
+                            }
+                        }
+                    }
                     if !callee.is_fnref() {
                         vm_err!(VmError::Type(
                             "dynamic call: callee is not a function reference"
@@ -11770,7 +11857,31 @@ pub(crate) extern "C" fn jit_call_builtin_tree(tag: u64, argc: u64, regs_ptr: u6
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn jit_call_dyn(callee_bits: u64, argc: u64, regs_ptr: u64) -> u64 {
-    let callee = NanVal(callee_bits);
+    let mut callee = NanVal(callee_bits);
+    // Text callee — resolve through the active program's func_names. Mirrors
+    // the OP_CALL_DYN dispatcher path so a function name held as a string
+    // works the same on every engine.
+    if callee.is_string() && !callee.is_fnref() {
+        let prog_ptr = ACTIVE_PROGRAM.with(|cell| cell.get());
+        if prog_ptr.is_null() {
+            return TAG_NIL;
+        }
+        // SAFETY: ACTIVE_PROGRAM is published by with_active_registry for
+        // the duration of the JIT entry, and cleared by its drop guard.
+        let program: &CompiledProgram = unsafe { &*prog_ptr };
+        let name_val = callee.to_value_with_program(&program.func_names);
+        if let Value::Text(name) = name_val {
+            if let Some(idx) = program.func_names.iter().position(|n| n == &*name) {
+                callee = NanVal::fnref(FnRefKind::User, idx as u32);
+            } else if let Some(b) = crate::builtins::Builtin::from_name(&name) {
+                callee = NanVal::fnref(FnRefKind::Builtin, b.tag() as u32);
+            } else {
+                return TAG_NIL;
+            }
+        } else {
+            return TAG_NIL;
+        }
+    }
     if !callee.is_fnref() {
         return TAG_NIL;
     }
@@ -23139,7 +23250,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // Direct FnRef-variable call (OP_CALL_DYN from Expr::Call) arrives in PR 3d.
     fn vm_map_with_text_fn_name() {
         let source = "sq x:n>n;*x x f cb:t xs:L n>L n;map cb xs";
         let result = vm_run(
@@ -24119,7 +24229,6 @@ mod tests {
     // ── FnRef callee from scope ─────────────────────────────────────────
 
     #[test]
-    #[ignore] // Direct FnRef-variable call (OP_CALL_DYN from Expr::Call) arrives in PR 3d.
     fn vm_fnref_callee_from_scope() {
         let source = "sq x:n>n;*x x f cb:z>n;cb 3";
         let result = vm_run(source, Some("f"), vec![Value::FnRef("sq".into())]);
@@ -24127,14 +24236,12 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // Direct FnRef-variable call (OP_CALL_DYN from Expr::Call) arrives in PR 3d.
     fn vm_fn_ref_via_ref_expr() {
         let source = "dbl x:n>n;*x 2 main>n;f=dbl;f 10";
         assert_eq!(vm_run(source, Some("main"), vec![]), Value::Number(20.0));
     }
 
     #[test]
-    #[ignore] // Direct FnRef-variable call (OP_CALL_DYN from Expr::Call) arrives in PR 3d.
     fn vm_text_callee_from_scope() {
         let source = "sq x:n>n;*x x f cb:z>n;cb 3";
         let result = vm_run(
@@ -24146,7 +24253,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // Direct FnRef-variable call (OP_CALL_DYN from Expr::Call) arrives in PR 3d.
     fn vm_user_hof_fn_type() {
         let source = "sq x:n>n;*x x apl f:F n n x:n>n;f x";
         let result = vm_run(
