@@ -1171,7 +1171,24 @@ impl RegCompiler {
                     }
                 } else {
                     let reg = self.compile_expr(value);
-                    self.add_local(name, reg);
+                    // Avoid register aliasing on shadow-rebind from a bare Ref.
+                    // `Expr::Ref(src)` returns `src`'s register directly with no
+                    // MOVE (free read). For `b = a` where `b` is a new binding,
+                    // that would make `b` and `a` share a register, so a later
+                    // `b = 99` would clobber `a` too. Detect when the compiled
+                    // RHS register is owned by an existing local and copy into
+                    // a fresh register so each user-visible binding has its own
+                    // slot. Type hints transfer to the new register.
+                    if self.locals.iter().any(|(_, r)| *r == reg) {
+                        let fresh = self.alloc_reg();
+                        self.emit_abc(OP_MOVE, fresh, reg, 0);
+                        self.reg_record_type[fresh as usize] = self.reg_record_type[reg as usize];
+                        self.reg_is_num[fresh as usize] = self.reg_is_num[reg as usize];
+                        self.reg_is_str[fresh as usize] = self.reg_is_str[reg as usize];
+                        self.add_local(name, fresh);
+                    } else {
+                        self.add_local(name, reg);
+                    }
                 }
                 None
             }
