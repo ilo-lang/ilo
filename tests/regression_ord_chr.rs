@@ -87,23 +87,15 @@ fn ord_multibyte_utf8_cross_engine() {
 }
 
 #[test]
-fn ord_empty_string_errors_tree_and_vm() {
-    // Tree and VM raise a runtime error on empty input. Cranelift returns
-    // nil to match the existing `at`/`hd`/`padl` precedent for invalid args
-    // (it cannot raise a typed runtime error from a JIT helper without
-    // unwinding through Cranelift).
+fn ord_empty_string_errors_on_every_engine() {
+    // All three engines (tree, VM, Cranelift) now raise a runtime error
+    // on empty input — the JIT helper previously returned nil silently;
+    // the JIT-nil-sweep batch 4 routes this failure path through the
+    // shared JIT_RUNTIME_ERROR TLS cell so diagnostics match tree/VM.
     let src = "f>n;ord \"\"";
-    for engine in &["--run-tree", "--run-vm"] {
+    for engine in ENGINES_ALL {
         run_expect_err(engine, src, "f");
     }
-}
-
-#[test]
-#[cfg(feature = "cranelift")]
-fn ord_empty_string_returns_nil_cranelift() {
-    let src = "f>n;ord \"\"";
-    let out = run("--run-cranelift", src, "f");
-    assert_eq!(out, "nil", "cranelift: ord(\"\") returns nil");
 }
 
 // ── chr ─────────────────────────────────────────────────────────────────
