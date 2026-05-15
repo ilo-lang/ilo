@@ -368,6 +368,33 @@ pub fn call_builtin_for_bridge(name: &str, args: Vec<Value>) -> Result<Value> {
     call_function(&mut env, name, args)
 }
 
+/// Program-aware variant of `call_builtin_for_bridge`.
+///
+/// HOF builtins (`grp`, `uniqby`, `partition`, 2-arg `srt`) invoke
+/// user-defined callbacks via `call_function(env, ...)`, which requires
+/// `env.functions` to be populated. The VM/Cranelift tree-bridge passes
+/// the active AST `Program` here so we can register every `Decl::Function`
+/// and `Decl::Tool` into the Env before dispatch, mirroring the prefix of
+/// `run_with_env`. Builtins that don't need an Env still work, so it's
+/// safe to route every bridge call through this entry point once the AST
+/// is available.
+pub fn call_builtin_for_bridge_with_program(
+    name: &str,
+    args: Vec<Value>,
+    program: &Program,
+) -> Result<Value> {
+    let mut env = Env::new();
+    for decl in &program.declarations {
+        match decl {
+            Decl::Function { name, .. } | Decl::Tool { name, .. } => {
+                env.functions.insert(name.clone(), decl.clone());
+            }
+            Decl::TypeDef { .. } | Decl::Alias { .. } | Decl::Use { .. } | Decl::Error { .. } => {}
+        }
+    }
+    call_function(&mut env, name, args)
+}
+
 pub fn run_with_tools(
     program: &Program,
     func_name: Option<&str>,
