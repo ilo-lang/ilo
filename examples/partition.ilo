@@ -7,8 +7,8 @@ split-pos xs:L n>L (L n);partition pos xs
 even x:n>b;=(mod x 2) 0
 split-even xs:L n>L (L n);partition even xs
 
--- vm/jit lack higher-order builtins (partition passes a function ref); tree-only.
--- engine-skip: vm cranelift
+-- HOF dispatch goes through the tree-bridge on every engine (PR 3b).
+-- engine-skip: jit
 -- run: split-pos [-1,2,-3,4]
 -- out: [[2, 4], [-1, -3]]
 -- run: split-even [1,2,3,4,5,6]
