@@ -378,11 +378,14 @@ pub(crate) const OP_PANIC_UNWRAP: u8 = 164;
 /// round-tripping is lossless. Adding a new entry here makes the builtin
 /// callable from `--run-vm` and `--run-cranelift` for free.
 ///
-/// HOFs (`grp`, `uniqby`, `partition`, 2-arg `srt`, dynamic-fmt `wr`)
-/// are NOT eligible: they get native VM lifts in the HOF dispatch chain
-/// (PR 3b+). `map`, `flt`, `fld`, and `flatmap` are already lifted — see
-/// the `(Builtin::Map, 2)` / `(Builtin::Flt, 2)` / `(Builtin::Fld, 3)` /
-/// `(Builtin::Flatmap, 2)` arms in the compiler.
+/// HOFs that have native VM lifts (`map 2`, `flt 2`, `fld 3`, `flatmap 2`)
+/// short-circuit before this check — see the matching arms in the compiler.
+/// The closure-bind ctx forms of those HOFs (`map fn ctx xs`, `flt fn ctx xs`,
+/// `fld fn ctx xs init`) are NOT lifted natively; they ride the same
+/// tree-bridge path as `grp`/`uniqby`/`partition`/`srt` because the ctx
+/// adds an extra OP_CALL_DYN arg the native emitters don't currently shape.
+/// Going through the bridge keeps cross-engine parity with the tree-walker
+/// for the same per-call cost as `srt 2` (PR 3b).
 pub(crate) fn is_tree_bridge_eligible(b: crate::builtins::Builtin, argc: usize) -> bool {
     use crate::builtins::Builtin;
     match (b, argc) {
@@ -397,12 +400,18 @@ pub(crate) fn is_tree_bridge_eligible(b: crate::builtins::Builtin, argc: usize) 
         (Builtin::Sleep, 1) => true,
         // HOFs that take a FnRef + list. The bridge routes them through the
         // tree interpreter, which dispatches user-fn callbacks via the
-        // Env populated from the ACTIVE_AST_PROGRAM TLS. Closure-captured
-        // (3-arg) shapes still error here; those land in PR 3c.
+        // Env populated from the ACTIVE_AST_PROGRAM TLS.
         (Builtin::Grp, 2) => true,
         (Builtin::Uniqby, 2) => true,
         (Builtin::Partition, 2) => true,
         (Builtin::Srt, 2) => true,
+        // Closure-bind ctx variants. The fn receives an extra ctx arg the
+        // native emitters don't shape today — bridge keeps semantics aligned
+        // with the tree interpreter and adds VM/Cranelift coverage in PR 3c.
+        (Builtin::Map, 3) => true,
+        (Builtin::Flt, 3) => true,
+        (Builtin::Fld, 4) => true,
+        (Builtin::Srt, 3) => true,
         _ => false,
     }
 }
@@ -2987,12 +2996,14 @@ impl RegCompiler {
                             return acc_reg;
                         }
                         // Builtins that fall through:
-                        //   - tree-bridge eligible (rgx, rgxall, fmt-variadic, rd 2-arg, rdb)
-                        //     → routed to OP_CALL_BUILTIN_TREE below
-                        //   - HOFs (grp/uniqby/partition/srt 2-arg/wr 3-arg with
-                        //     dynamic fmt) → still error; their native lift lands
-                        //     in PR 3b+ of the HOF dispatch chain. `map`, `flt`,
-                        //     `fld`, and `flatmap` are lifted above.
+                        //   - tree-bridge eligible (rgx, rgxall, fmt-variadic,
+                        //     rd 2-arg, rdb, sleep, grp/uniqby/partition/srt 2-arg
+                        //     from PR 3b, map/flt/fld/srt closure-bind ctx forms
+                        //     from PR 3c) → routed to OP_CALL_BUILTIN_TREE below.
+                        //   - Anything else (e.g. `wr` 3-arg with dynamic fmt)
+                        //     still errors here; the native lift lands later in
+                        //     the HOF dispatch chain. `map`, `flt`, `fld`, and
+                        //     `flatmap` 2-arg forms have native lifts above.
                         _ => {}
                     }
                 }

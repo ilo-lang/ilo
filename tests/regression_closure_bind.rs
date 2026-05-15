@@ -11,9 +11,11 @@
 //   flt fn xs       (2-arg) vs. flt fn ctx xs       (3-arg)
 //   fld fn xs init  (3-arg) vs. fld fn ctx xs init  (4-arg)
 //
-// VM and Cranelift JIT do not implement HOF dispatch at all (see
-// regression_builtins_as_hof.rs), so closure-bind is exercised on the
-// tree-walking interpreter only.
+// As of PR 3c, the closure-bind variants run on every engine. The VM and
+// Cranelift paths route through the tree-bridge (the same mechanism `grp`,
+// `uniqby`, `partition`, and 2-arg `srt` use from PR 3b). The bridge calls
+// back into the tree interpreter for the inner HOF loop, which is where the
+// user-function dispatch already works correctly.
 
 use std::process::Command;
 
@@ -31,10 +33,10 @@ fn write_src(name: &str, src: &str) -> std::path::PathBuf {
     path
 }
 
-fn run_ok(src: &str, entry: &str, args: &[&str]) -> String {
+fn run_ok_on(engine: &str, src: &str, entry: &str, args: &[&str]) -> String {
     let path = write_src(entry, src);
     let mut cmd = ilo();
-    cmd.arg(&path).arg("--run-tree").arg(entry);
+    cmd.arg(&path).arg(engine).arg(entry);
     for a in args {
         cmd.arg(a);
     }
@@ -42,10 +44,27 @@ fn run_ok(src: &str, entry: &str, args: &[&str]) -> String {
     let _ = std::fs::remove_file(&path);
     assert!(
         out.status.success(),
-        "ilo failed for `{src}`: stderr={}",
+        "ilo {engine} failed for `{src}`: stderr={}",
         String::from_utf8_lossy(&out.stderr)
     );
     String::from_utf8_lossy(&out.stdout).trim().to_string()
+}
+
+fn run_all(src: &str, entry: &str, args: &[&str], expected: &str) {
+    for engine in ["--run-tree", "--run-vm", "--run-cranelift"] {
+        let actual = run_ok_on(engine, src, entry, args);
+        assert_eq!(
+            actual, expected,
+            "engine {engine} produced {actual:?}, expected {expected:?} for src `{src}`"
+        );
+    }
+}
+
+// Tree-only variant kept for the verifier-error tests below — those produce
+// the same diagnostic on every engine, but the verifier runs before any
+// engine-specific dispatch, so we only need one path to confirm.
+fn run_ok(src: &str, entry: &str, args: &[&str]) -> String {
+    run_ok_on("--run-tree", src, entry, args)
 }
 
 fn run_err(src: &str, entry: &str) -> String {
@@ -84,7 +103,7 @@ fn srt_with_external_lookup() {
         "{SRT_BY_LOOKUP}\nmain>L t;m=mset mmap \"a\" 2;m=mset m \"b\" 3;m=mset m \"c\" 1;\
          top m [\"a\",\"b\",\"c\"]"
     );
-    assert_eq!(run_ok(&src, "main", &[]), "[c, a, b]");
+    run_all(&src, "main", &[], "[c, a, b]");
 }
 
 // ── map: enrich elements via external lookup ───────────────────────────────
@@ -99,7 +118,7 @@ fn map_with_lookup() {
         "{MAP_WITH_LOOKUP}\nmain>L n;m=mset mmap \"a\" 10;m=mset m \"b\" 20;\
          prices m [\"a\",\"b\",\"a\"]"
     );
-    assert_eq!(run_ok(&src, "main", &[]), "[10, 20, 10]");
+    run_all(&src, "main", &[], "[10, 20, 10]");
 }
 
 // ── flt: filter by external threshold ──────────────────────────────────────
@@ -110,13 +129,11 @@ above t:n xs:L n>L n;flt big t xs";
 
 #[test]
 fn flt_with_threshold() {
-    assert_eq!(
-        run_ok(
-            &format!("{FLT_WITH_THRESHOLD}\nmain>L n;above 4 [1,5,3,8,2]"),
-            "main",
-            &[]
-        ),
-        "[5, 8]"
+    run_all(
+        &format!("{FLT_WITH_THRESHOLD}\nmain>L n;above 4 [1,5,3,8,2]"),
+        "main",
+        &[],
+        "[5, 8]",
     );
 }
 
@@ -129,13 +146,11 @@ total k:n xs:L n>n;fld add-scaled k xs 0";
 #[test]
 fn fld_with_external_accumulator() {
     // sum of [1,2,3] each scaled by 10 → 60
-    assert_eq!(
-        run_ok(
-            &format!("{FLD_WITH_ACCUM}\nmain>n;total 10 [1,2,3]"),
-            "main",
-            &[]
-        ),
-        "60"
+    run_all(
+        &format!("{FLD_WITH_ACCUM}\nmain>n;total 10 [1,2,3]"),
+        "main",
+        &[],
+        "60",
     );
 }
 
