@@ -378,10 +378,11 @@ pub(crate) const OP_PANIC_UNWRAP: u8 = 164;
 /// round-tripping is lossless. Adding a new entry here makes the builtin
 /// callable from `--run-vm` and `--run-cranelift` for free.
 ///
-/// HOFs (`flt`, `fld`, `grp`, `flatmap`, `uniqby`, `partition`,
-/// 2-arg `srt`, dynamic-fmt `wr`) are NOT eligible: they get native VM
-/// lifts in the HOF dispatch chain (PR 2+). `map` is already lifted —
-/// see the `(Builtin::Map, 2)` arm in the compiler.
+/// HOFs (`grp`, `uniqby`, `partition`, 2-arg `srt`, dynamic-fmt `wr`)
+/// are NOT eligible: they get native VM lifts in the HOF dispatch chain
+/// (PR 3b+). `map`, `flt`, `fld`, and `flatmap` are already lifted — see
+/// the `(Builtin::Map, 2)` / `(Builtin::Flt, 2)` / `(Builtin::Fld, 3)` /
+/// `(Builtin::Flatmap, 2)` arms in the compiler.
 pub(crate) fn is_tree_bridge_eligible(b: crate::builtins::Builtin, argc: usize) -> bool {
     use crate::builtins::Builtin;
     match (b, argc) {
@@ -2746,12 +2747,238 @@ impl RegCompiler {
                             self.next_reg = acc_reg + 1;
                             return acc_reg;
                         }
+                        // flt fn xs → native HOF loop using OP_CALL_DYN.
+                        // Same shape as `map` but:
+                        //   - the call result drives a bool typecheck (OP_ISBOOL)
+                        //   - on bool: branch on truthiness, append item on true,
+                        //     skip on false (OP_LISTAPPEND only on the true arm)
+                        //   - on non-bool: raise a typed runtime error via
+                        //     OP_WRAPERR + OP_PANIC_UNWRAP so the message contains
+                        //     "flt" / "bool" (matches tree-walker semantics).
+                        // The FOREACHPREP error path covers the wrong-list-arg case
+                        // ("foreach requires a list").
+                        (Builtin::Flt, 2) => {
+                            let fn_reg = self.compile_expr(&args[0]);
+                            let xs_reg = self.compile_expr(&args[1]);
+
+                            let acc_reg = self.alloc_reg();
+                            self.emit_abx(OP_LISTNEW, acc_reg, 0);
+
+                            let idx_reg = self.alloc_reg();
+                            let zero_ki = self.current.add_const(Value::Number(0.0));
+                            self.emit_abx(OP_LOADK, idx_reg, zero_ki);
+                            self.reg_is_num[idx_reg as usize] = true;
+
+                            let item_reg = self.alloc_reg();
+                            let nil_ki = self.current.add_const(Value::Nil);
+                            self.emit_abx(OP_LOADK, item_reg, nil_ki);
+
+                            // res_reg + arg_reg contiguous for OP_CALL_DYN ABI.
+                            let res_reg = self.alloc_reg();
+                            self.emit_abx(OP_LOADK, res_reg, nil_ki);
+                            let arg_reg = self.alloc_reg();
+                            assert!(
+                                arg_reg == res_reg + 1,
+                                "flt HOF: arg reg must follow result reg contiguously"
+                            );
+                            self.emit_abx(OP_LOADK, arg_reg, nil_ki);
+
+                            // Scratch for the bool typecheck.
+                            let isb_reg = self.alloc_reg();
+                            self.emit_abx(OP_LOADK, isb_reg, nil_ki);
+
+                            let _loop_top = self.current.code.len();
+                            self.emit_abc(OP_FOREACHPREP, item_reg, xs_reg, idx_reg);
+                            let exit_jump_a = self.emit_jmp_placeholder();
+
+                            let body_top = self.current.code.len();
+                            self.emit_abc(OP_MOVE, arg_reg, item_reg, 0);
+                            self.emit_abc(OP_CALL_DYN, res_reg, fn_reg, 1);
+
+                            // Typecheck: predicate must return Bool. If ISBOOL is true,
+                            // skip the type-error block; else WRAPERR + PANIC_UNWRAP
+                            // with a message containing both "flt" and "bool".
+                            self.emit_abc(OP_ISBOOL, isb_reg, res_reg, 0);
+                            let typeok_jump = self.emit_jmpt(isb_reg);
+                            let err_text_ki = self.current.add_const(Value::Text(Arc::new(
+                                "flt: predicate must return bool".to_string(),
+                            )));
+                            // Reuse arg_reg as scratch (it will be re-loaded by the
+                            // OP_MOVE at the top of the next iteration if any).
+                            self.emit_abx(OP_LOADK, arg_reg, err_text_ki);
+                            self.emit_abc(OP_WRAPERR, arg_reg, arg_reg, 0);
+                            self.emit_abc(OP_PANIC_UNWRAP, 0, arg_reg, 0);
+                            self.current.patch_jump(typeok_jump);
+
+                            // Bool was true → append item to acc. Bool was false → skip.
+                            let skip_append_jump = self.emit_jmpf(res_reg);
+                            self.emit_abc(OP_LISTAPPEND, acc_reg, acc_reg, item_reg);
+                            self.current.patch_jump(skip_append_jump);
+
+                            self.emit_abc(OP_FOREACHNEXT, item_reg, xs_reg, idx_reg);
+                            let exit_jump_b = self.emit_jmp_placeholder();
+                            self.emit_jump_to(body_top);
+
+                            self.current.patch_jump(exit_jump_a);
+                            self.current.patch_jump(exit_jump_b);
+
+                            self.current_all_regs_numeric = false;
+                            self.reg_is_num[acc_reg as usize] = false;
+
+                            self.next_reg = acc_reg + 1;
+                            return acc_reg;
+                        }
+                        // fld fn xs init → native HOF loop using OP_CALL_DYN.
+                        // The accumulator carries the running value across
+                        // iterations. Per-iter call is 2-arg: fn(acc, item).
+                        // Result is the final acc, not a list.
+                        (Builtin::Fld, 3) => {
+                            let fn_reg = self.compile_expr(&args[0]);
+                            let xs_reg = self.compile_expr(&args[1]);
+                            let init_reg = self.compile_expr(&args[2]);
+
+                            // Accumulator reg starts as init. Each iter overwrites
+                            // it with the call result.
+                            let acc_reg = self.alloc_reg();
+                            self.emit_abc(OP_MOVE, acc_reg, init_reg, 0);
+                            // Acc can hold any value shape (the fn return type).
+                            self.reg_is_num[acc_reg as usize] = false;
+
+                            let idx_reg = self.alloc_reg();
+                            let zero_ki = self.current.add_const(Value::Number(0.0));
+                            self.emit_abx(OP_LOADK, idx_reg, zero_ki);
+                            self.reg_is_num[idx_reg as usize] = true;
+
+                            let item_reg = self.alloc_reg();
+                            let nil_ki = self.current.add_const(Value::Nil);
+                            self.emit_abx(OP_LOADK, item_reg, nil_ki);
+
+                            // OP_CALL_DYN reads R[A+1..=A+argc]; for 2 args we need
+                            // three contiguous regs: res, arg0 (acc), arg1 (item).
+                            let res_reg = self.alloc_reg();
+                            self.emit_abx(OP_LOADK, res_reg, nil_ki);
+                            let arg0_reg = self.alloc_reg();
+                            assert!(
+                                arg0_reg == res_reg + 1,
+                                "fld HOF: arg0 reg must follow result reg contiguously"
+                            );
+                            self.emit_abx(OP_LOADK, arg0_reg, nil_ki);
+                            let arg1_reg = self.alloc_reg();
+                            assert!(
+                                arg1_reg == arg0_reg + 1,
+                                "fld HOF: arg1 reg must follow arg0 reg contiguously"
+                            );
+                            self.emit_abx(OP_LOADK, arg1_reg, nil_ki);
+
+                            let _loop_top = self.current.code.len();
+                            self.emit_abc(OP_FOREACHPREP, item_reg, xs_reg, idx_reg);
+                            let exit_jump_a = self.emit_jmp_placeholder();
+
+                            let body_top = self.current.code.len();
+                            // arg0 = acc, arg1 = item
+                            self.emit_abc(OP_MOVE, arg0_reg, acc_reg, 0);
+                            self.emit_abc(OP_MOVE, arg1_reg, item_reg, 0);
+                            self.emit_abc(OP_CALL_DYN, res_reg, fn_reg, 2);
+                            // acc = res (refresh the accumulator)
+                            self.emit_abc(OP_MOVE, acc_reg, res_reg, 0);
+
+                            self.emit_abc(OP_FOREACHNEXT, item_reg, xs_reg, idx_reg);
+                            let exit_jump_b = self.emit_jmp_placeholder();
+                            self.emit_jump_to(body_top);
+
+                            self.current.patch_jump(exit_jump_a);
+                            self.current.patch_jump(exit_jump_b);
+
+                            self.current_all_regs_numeric = false;
+                            self.reg_is_num[acc_reg as usize] = false;
+
+                            self.next_reg = acc_reg + 1;
+                            return acc_reg;
+                        }
+                        // flatmap fn xs → native HOF loop. The fn returns a list
+                        // per element; we splice each result list into the accumulator
+                        // via an inner FOREACHPREP/NEXT over the call result.
+                        // Two nested loops share the same OP_CALL_DYN + LISTAPPEND
+                        // primitives as `map`. A non-list return raises through the
+                        // inner FOREACHPREP error path ("foreach requires a list"),
+                        // which the test asserts matches.
+                        (Builtin::Flatmap, 2) => {
+                            let fn_reg = self.compile_expr(&args[0]);
+                            let xs_reg = self.compile_expr(&args[1]);
+
+                            let acc_reg = self.alloc_reg();
+                            self.emit_abx(OP_LISTNEW, acc_reg, 0);
+
+                            // Outer loop state.
+                            let outer_idx_reg = self.alloc_reg();
+                            let zero_ki = self.current.add_const(Value::Number(0.0));
+                            self.emit_abx(OP_LOADK, outer_idx_reg, zero_ki);
+                            self.reg_is_num[outer_idx_reg as usize] = true;
+
+                            let outer_item_reg = self.alloc_reg();
+                            let nil_ki = self.current.add_const(Value::Nil);
+                            self.emit_abx(OP_LOADK, outer_item_reg, nil_ki);
+
+                            // OP_CALL_DYN result + arg slot (contiguous).
+                            let res_reg = self.alloc_reg();
+                            self.emit_abx(OP_LOADK, res_reg, nil_ki);
+                            let arg_reg = self.alloc_reg();
+                            assert!(
+                                arg_reg == res_reg + 1,
+                                "flatmap HOF: arg reg must follow result reg contiguously"
+                            );
+                            self.emit_abx(OP_LOADK, arg_reg, nil_ki);
+
+                            // Inner loop state — iterates over each call result.
+                            let inner_idx_reg = self.alloc_reg();
+                            self.emit_abx(OP_LOADK, inner_idx_reg, zero_ki);
+                            self.reg_is_num[inner_idx_reg as usize] = true;
+                            let inner_item_reg = self.alloc_reg();
+                            self.emit_abx(OP_LOADK, inner_item_reg, nil_ki);
+
+                            // ── Outer loop ──
+                            self.emit_abc(OP_FOREACHPREP, outer_item_reg, xs_reg, outer_idx_reg);
+                            let outer_exit_a = self.emit_jmp_placeholder();
+                            let outer_body_top = self.current.code.len();
+                            self.emit_abc(OP_MOVE, arg_reg, outer_item_reg, 0);
+                            self.emit_abc(OP_CALL_DYN, res_reg, fn_reg, 1);
+
+                            // Reset inner idx to 0 before each inner pass.
+                            self.emit_abx(OP_LOADK, inner_idx_reg, zero_ki);
+
+                            // ── Inner loop over res ──
+                            // OP_FOREACHPREP validates res is a list; that's where
+                            // non-list returns surface as "foreach requires a list".
+                            self.emit_abc(OP_FOREACHPREP, inner_item_reg, res_reg, inner_idx_reg);
+                            let inner_exit_a = self.emit_jmp_placeholder();
+                            let inner_body_top = self.current.code.len();
+                            self.emit_abc(OP_LISTAPPEND, acc_reg, acc_reg, inner_item_reg);
+                            self.emit_abc(OP_FOREACHNEXT, inner_item_reg, res_reg, inner_idx_reg);
+                            let inner_exit_b = self.emit_jmp_placeholder();
+                            self.emit_jump_to(inner_body_top);
+                            self.current.patch_jump(inner_exit_a);
+                            self.current.patch_jump(inner_exit_b);
+
+                            // ── End inner; back to outer ──
+                            self.emit_abc(OP_FOREACHNEXT, outer_item_reg, xs_reg, outer_idx_reg);
+                            let outer_exit_b = self.emit_jmp_placeholder();
+                            self.emit_jump_to(outer_body_top);
+                            self.current.patch_jump(outer_exit_a);
+                            self.current.patch_jump(outer_exit_b);
+
+                            self.current_all_regs_numeric = false;
+                            self.reg_is_num[acc_reg as usize] = false;
+
+                            self.next_reg = acc_reg + 1;
+                            return acc_reg;
+                        }
                         // Builtins that fall through:
                         //   - tree-bridge eligible (rgx, rgxall, fmt-variadic, rd 2-arg, rdb)
                         //     → routed to OP_CALL_BUILTIN_TREE below
-                        //   - HOFs (flt/fld/grp/flatmap/uniqby/partition/srt 2-arg/wr 3-arg
-                        //     with dynamic fmt) → still error; their native lift lands
-                        //     in PR 3 of the HOF dispatch chain (PR 2 = `map` only)
+                        //   - HOFs (grp/uniqby/partition/srt 2-arg/wr 3-arg with
+                        //     dynamic fmt) → still error; their native lift lands
+                        //     in PR 3b+ of the HOF dispatch chain. `map`, `flt`,
+                        //     `fld`, and `flatmap` are lifted above.
                         _ => {}
                     }
                 }
@@ -22710,7 +22937,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // Dynamic dispatch (OP_CALL_DYN emission) arrives in PR 2.
     fn vm_flt_positive() {
         let source = "pos x:n>b;>x 0 main xs:L n>L n;flt pos xs";
         let result = vm_run(
@@ -22732,7 +22958,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // Dynamic dispatch (OP_CALL_DYN emission) arrives in PR 2.
     fn vm_flt_predicate_returns_non_bool() {
         let source = "id x:n>n;x f xs:L n>L n;flt id xs";
         let err = vm_run_err(
@@ -22744,7 +22969,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // Dynamic dispatch (OP_CALL_DYN emission) arrives in PR 2.
     fn vm_flt_wrong_list_arg() {
         let source = "pos x:n>b;>x 0 f>t;flt pos 42";
         let err = vm_run_err(source, Some("f"), vec![]);
@@ -22765,7 +22989,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // VM missing builtin implementation
     fn vm_fld_sum() {
         let source = "add a:n b:n>n;+a b main xs:L n>n;fld add xs 0";
         let result = vm_run(
@@ -22791,7 +23014,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // Dynamic dispatch (OP_CALL_DYN emission) arrives in PR 2.
     fn vm_fld_wrong_list_arg() {
         let source = "add a:n b:n>n;+a b f>n;fld add 42 0";
         let err = vm_run_err(source, Some("f"), vec![]);
