@@ -1,0 +1,61 @@
+-- Pins the happy paths for the Group C collection helpers wired through
+-- JIT_RUNTIME_ERROR in PR-batch-5: spl, cat, has, range, window, zip,
+-- chunks, enumerate, setunion, setinter, setdiff, rev, srt, rsrt, cumsum.
+--
+-- The error paths now match tree/VM (raise VmError::Type with a specific
+-- message instead of silent nil). These happy paths are pinned across all
+-- engines via tests/examples_engines.rs so any future regression in the
+-- success cases is caught.
+
+spl-basic>L t;spl "a,b,c" ","
+cat-basic>t;cat ["a" "b" "c"] ","
+has-text>b;has "hello world" "world"
+has-list>b;has [1 2 3] 2
+range-basic>L n;range 0 4
+window-basic>L (L n);window 2 [1 2 3 4]
+zip-basic>L (L n);zip [1 2 3] [10 20 30]
+chunks-basic>L (L n);chunks 2 [1 2 3 4 5]
+enumerate-basic>L (L n);enumerate [10 20 30]
+setunion-basic>L n;setunion [1 2 3] [3 4 5]
+setinter-basic>L n;setinter [1 2 3 4] [3 4 5 6]
+setdiff-basic>L n;setdiff [1 2 3 4] [3 4 5]
+rev-string>t;rev "hello"
+rev-list>L n;rev [1 2 3]
+srt-numbers>L n;srt [3 1 2]
+rsrt-numbers>L n;rsrt [1 3 2]
+cumsum-basic>L n;cumsum [1 2 3 4]
+
+-- run: spl-basic
+-- out: [a, b, c]
+-- run: cat-basic
+-- out: a,b,c
+-- run: has-text
+-- out: true
+-- run: has-list
+-- out: true
+-- run: range-basic
+-- out: [0, 1, 2, 3]
+-- run: window-basic
+-- out: [[1, 2], [2, 3], [3, 4]]
+-- run: zip-basic
+-- out: [[1, 10], [2, 20], [3, 30]]
+-- run: chunks-basic
+-- out: [[1, 2], [3, 4], [5]]
+-- run: enumerate-basic
+-- out: [[0, 10], [1, 20], [2, 30]]
+-- run: setunion-basic
+-- out: [1, 2, 3, 4, 5]
+-- run: setinter-basic
+-- out: [3, 4]
+-- run: setdiff-basic
+-- out: [1, 2]
+-- run: rev-string
+-- out: olleh
+-- run: rev-list
+-- out: [3, 2, 1]
+-- run: srt-numbers
+-- out: [1, 2, 3]
+-- run: rsrt-numbers
+-- out: [3, 2, 1]
+-- run: cumsum-basic
+-- out: [1, 3, 6, 10]

@@ -10871,10 +10871,11 @@ pub(crate) extern "C" fn jit_getmany(a: u64) -> u64 {
 
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn jit_spl(a: u64, b: u64) -> u64 {
+pub(crate) extern "C" fn jit_spl(a: u64, b: u64, span_bits: u64) -> u64 {
     let av = NanVal(a);
     let bv = NanVal(b);
     if !av.is_string() || !bv.is_string() {
+        jit_set_runtime_error_with_span(VmError::Type("spl requires two strings"), span_bits);
         return TAG_NIL;
     }
     let text = unsafe {
@@ -10898,10 +10899,15 @@ pub(crate) extern "C" fn jit_spl(a: u64, b: u64) -> u64 {
 
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn jit_cat(a: u64, b: u64) -> u64 {
+pub(crate) extern "C" fn jit_cat(a: u64, b: u64, span_bits: u64) -> u64 {
     let av = NanVal(a);
     let bv = NanVal(b);
-    if !bv.is_string() || !av.is_heap() {
+    if !bv.is_string() {
+        jit_set_runtime_error_with_span(VmError::Type("cat requires a text separator"), span_bits);
+        return TAG_NIL;
+    }
+    if !av.is_heap() {
+        jit_set_runtime_error_with_span(VmError::Type("cat requires a list"), span_bits);
         return TAG_NIL;
     }
     let sep = unsafe {
@@ -10912,11 +10918,18 @@ pub(crate) extern "C" fn jit_cat(a: u64, b: u64) -> u64 {
     };
     let items = match unsafe { av.as_heap_ref() } {
         HeapObj::List(l) => l,
-        _ => return TAG_NIL,
+        _ => {
+            jit_set_runtime_error_with_span(VmError::Type("cat requires a list"), span_bits);
+            return TAG_NIL;
+        }
     };
     let mut parts = Vec::with_capacity(items.len());
     for item in items {
         if !item.is_string() {
+            jit_set_runtime_error_with_span(
+                VmError::Type("cat: list items must be text"),
+                span_bits,
+            );
             return TAG_NIL;
         }
         let s = unsafe {
@@ -10932,12 +10945,16 @@ pub(crate) extern "C" fn jit_cat(a: u64, b: u64) -> u64 {
 
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn jit_has(a: u64, b: u64) -> u64 {
+pub(crate) extern "C" fn jit_has(a: u64, b: u64, span_bits: u64) -> u64 {
     let collection = NanVal(a);
     let needle = NanVal(b);
     if collection.is_string() {
         if !needle.is_string() {
-            return TAG_FALSE;
+            jit_set_runtime_error_with_span(
+                VmError::Type("has: text search requires text needle"),
+                span_bits,
+            );
+            return TAG_NIL;
         }
         let found = unsafe {
             let haystack = match collection.as_heap_ref() {
@@ -10958,7 +10975,8 @@ pub(crate) extern "C" fn jit_has(a: u64, b: u64) -> u64 {
         let found = items.iter().any(|item| nanval_equal(*item, needle));
         return NanVal::boolean(found).0;
     }
-    TAG_FALSE
+    jit_set_runtime_error_with_span(VmError::Type("has requires a list or text"), span_bits);
+    TAG_NIL
 }
 
 #[cfg(feature = "cranelift")]
@@ -11104,14 +11122,16 @@ pub(crate) extern "C" fn jit_lst(list: u64, idx: u64, val: u64) -> u64 {
 
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn jit_range(a: u64, b: u64) -> u64 {
+pub(crate) extern "C" fn jit_range(a: u64, b: u64, span_bits: u64) -> u64 {
     let va = NanVal(a);
     let vb = NanVal(b);
     if !va.is_number() || !vb.is_number() {
+        jit_set_runtime_error_with_span(VmError::Type("range requires numbers"), span_bits);
         return TAG_NIL;
     }
     // Reject non-integer bounds rather than silently truncating.
     if va.as_number().fract() != 0.0 || vb.as_number().fract() != 0.0 {
+        jit_set_runtime_error_with_span(VmError::Type("range: bounds must be integers"), span_bits);
         return TAG_NIL;
     }
     let start = va.as_number() as i64;
@@ -11121,6 +11141,7 @@ pub(crate) extern "C" fn jit_range(a: u64, b: u64) -> u64 {
     }
     let len = (end - start) as u64;
     if len > 1_000_000 {
+        jit_set_runtime_error_with_span(VmError::Type("range too large (max 1000000)"), span_bits);
         return TAG_NIL;
     }
     let mut out: Vec<NanVal> = Vec::with_capacity(len as usize);
@@ -11132,23 +11153,35 @@ pub(crate) extern "C" fn jit_range(a: u64, b: u64) -> u64 {
 
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn jit_window(n_val: u64, xs_val: u64) -> u64 {
+pub(crate) extern "C" fn jit_window(n_val: u64, xs_val: u64, span_bits: u64) -> u64 {
     let vn = NanVal(n_val);
     let vxs = NanVal(xs_val);
     if !vn.is_number() {
+        jit_set_runtime_error_with_span(VmError::Type("window: size must be a number"), span_bits);
         return TAG_NIL;
     }
     let nf = vn.as_number();
     if !nf.is_finite() || nf <= 0.0 || nf.fract() != 0.0 {
+        jit_set_runtime_error_with_span(
+            VmError::Type("window: size must be a positive integer"),
+            span_bits,
+        );
         return TAG_NIL;
     }
     let n = nf as usize;
     if !vxs.is_heap() {
+        jit_set_runtime_error_with_span(VmError::Type("window arg 2 requires a list"), span_bits);
         return TAG_NIL;
     }
     let xs = match unsafe { vxs.as_heap_ref() } {
         HeapObj::List(items) => items,
-        _ => return TAG_NIL,
+        _ => {
+            jit_set_runtime_error_with_span(
+                VmError::Type("window arg 2 requires a list"),
+                span_bits,
+            );
+            return TAG_NIL;
+        }
     };
     if n > xs.len() {
         return NanVal::heap_list(Vec::new()).0;
@@ -11167,19 +11200,30 @@ pub(crate) extern "C" fn jit_window(n_val: u64, xs_val: u64) -> u64 {
 
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn jit_zip(a: u64, b: u64) -> u64 {
+pub(crate) extern "C" fn jit_zip(a: u64, b: u64, span_bits: u64) -> u64 {
     let va = NanVal(a);
     let vb = NanVal(b);
-    if !va.is_heap() || !vb.is_heap() {
+    if !va.is_heap() {
+        jit_set_runtime_error_with_span(VmError::Type("zip arg 1 requires a list"), span_bits);
+        return TAG_NIL;
+    }
+    if !vb.is_heap() {
+        jit_set_runtime_error_with_span(VmError::Type("zip arg 2 requires a list"), span_bits);
         return TAG_NIL;
     }
     let xs = match unsafe { va.as_heap_ref() } {
         HeapObj::List(items) => items,
-        _ => return TAG_NIL,
+        _ => {
+            jit_set_runtime_error_with_span(VmError::Type("zip arg 1 requires a list"), span_bits);
+            return TAG_NIL;
+        }
     };
     let ys = match unsafe { vb.as_heap_ref() } {
         HeapObj::List(items) => items,
-        _ => return TAG_NIL,
+        _ => {
+            jit_set_runtime_error_with_span(VmError::Type("zip arg 2 requires a list"), span_bits);
+            return TAG_NIL;
+        }
     };
     let n = xs.len().min(ys.len());
     let mut out: Vec<NanVal> = Vec::with_capacity(n);
@@ -11194,19 +11238,36 @@ pub(crate) extern "C" fn jit_zip(a: u64, b: u64) -> u64 {
 }
 
 #[cfg(feature = "cranelift")]
-fn jit_setop_impl(a: u64, b: u64, op: u8) -> u64 {
+fn jit_setop_impl(a: u64, b: u64, op: u8, span_bits: u64) -> u64 {
     let va = NanVal(a);
     let vb = NanVal(b);
-    if !va.is_heap() || !vb.is_heap() {
+    if !va.is_heap() {
+        jit_set_runtime_error_with_span(VmError::Type("setop arg 1 requires a list"), span_bits);
+        return TAG_NIL;
+    }
+    if !vb.is_heap() {
+        jit_set_runtime_error_with_span(VmError::Type("setop arg 2 requires a list"), span_bits);
         return TAG_NIL;
     }
     let xs = match unsafe { va.as_heap_ref() } {
         HeapObj::List(items) => items,
-        _ => return TAG_NIL,
+        _ => {
+            jit_set_runtime_error_with_span(
+                VmError::Type("setop arg 1 requires a list"),
+                span_bits,
+            );
+            return TAG_NIL;
+        }
     };
     let ys = match unsafe { vb.as_heap_ref() } {
         HeapObj::List(items) => items,
-        _ => return TAG_NIL,
+        _ => {
+            jit_set_runtime_error_with_span(
+                VmError::Type("setop arg 2 requires a list"),
+                span_bits,
+            );
+            return TAG_NIL;
+        }
     };
     let op_name = match op {
         OP_SETUNION => "setunion",
@@ -11219,7 +11280,13 @@ fn jit_setop_impl(a: u64, b: u64, op: u8) -> u64 {
     for x in xs {
         let k = match setops_key(*x, op_name) {
             Ok(k) => k,
-            Err(_) => return TAG_NIL,
+            Err(_) => {
+                jit_set_runtime_error_with_span(
+                    VmError::Type("setop: elements must be text, number, or bool"),
+                    span_bits,
+                );
+                return TAG_NIL;
+            }
         };
         if set_a.insert(k.clone()) {
             first_a.insert(k, *x);
@@ -11230,7 +11297,13 @@ fn jit_setop_impl(a: u64, b: u64, op: u8) -> u64 {
     for y in ys {
         let k = match setops_key(*y, op_name) {
             Ok(k) => k,
-            Err(_) => return TAG_NIL,
+            Err(_) => {
+                jit_set_runtime_error_with_span(
+                    VmError::Type("setop: elements must be text, number, or bool"),
+                    span_bits,
+                );
+                return TAG_NIL;
+            }
         };
         if set_b.insert(k.clone()) {
             first_b.insert(k, *y);
@@ -11255,32 +11328,36 @@ fn jit_setop_impl(a: u64, b: u64, op: u8) -> u64 {
 
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn jit_setunion(a: u64, b: u64) -> u64 {
-    jit_setop_impl(a, b, OP_SETUNION)
+pub(crate) extern "C" fn jit_setunion(a: u64, b: u64, span_bits: u64) -> u64 {
+    jit_setop_impl(a, b, OP_SETUNION, span_bits)
 }
 
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn jit_setinter(a: u64, b: u64) -> u64 {
-    jit_setop_impl(a, b, OP_SETINTER)
+pub(crate) extern "C" fn jit_setinter(a: u64, b: u64, span_bits: u64) -> u64 {
+    jit_setop_impl(a, b, OP_SETINTER, span_bits)
 }
 
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn jit_setdiff(a: u64, b: u64) -> u64 {
-    jit_setop_impl(a, b, OP_SETDIFF)
+pub(crate) extern "C" fn jit_setdiff(a: u64, b: u64, span_bits: u64) -> u64 {
+    jit_setop_impl(a, b, OP_SETDIFF, span_bits)
 }
 
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn jit_enumerate(a: u64) -> u64 {
+pub(crate) extern "C" fn jit_enumerate(a: u64, span_bits: u64) -> u64 {
     let va = NanVal(a);
     if !va.is_heap() {
+        jit_set_runtime_error_with_span(VmError::Type("enumerate requires a list"), span_bits);
         return TAG_NIL;
     }
     let xs = match unsafe { va.as_heap_ref() } {
         HeapObj::List(items) => items,
-        _ => return TAG_NIL,
+        _ => {
+            jit_set_runtime_error_with_span(VmError::Type("enumerate requires a list"), span_bits);
+            return TAG_NIL;
+        }
     };
     let mut out: Vec<NanVal> = Vec::with_capacity(xs.len());
     for (i, &v) in xs.iter().enumerate() {
@@ -11292,23 +11369,32 @@ pub(crate) extern "C" fn jit_enumerate(a: u64) -> u64 {
 
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn jit_chunks(a: u64, b: u64) -> u64 {
+pub(crate) extern "C" fn jit_chunks(a: u64, b: u64, span_bits: u64) -> u64 {
     let va = NanVal(a);
     let vb = NanVal(b);
     if !va.is_number() {
+        jit_set_runtime_error_with_span(VmError::Type("chunks: size must be a number"), span_bits);
         return TAG_NIL;
     }
     let n_raw = va.as_number();
     if n_raw.fract() != 0.0 || n_raw <= 0.0 {
+        jit_set_runtime_error_with_span(
+            VmError::Type("chunks: size must be a positive integer"),
+            span_bits,
+        );
         return TAG_NIL;
     }
     let n = n_raw as usize;
     if !vb.is_heap() {
+        jit_set_runtime_error_with_span(VmError::Type("chunks: requires a list"), span_bits);
         return TAG_NIL;
     }
     let xs = match unsafe { vb.as_heap_ref() } {
         HeapObj::List(items) => items,
-        _ => return TAG_NIL,
+        _ => {
+            jit_set_runtime_error_with_span(VmError::Type("chunks: requires a list"), span_bits);
+            return TAG_NIL;
+        }
     };
     let mut out: Vec<NanVal> = Vec::with_capacity(xs.len().div_ceil(n));
     for chunk in xs.chunks(n) {
@@ -11363,7 +11449,7 @@ pub(crate) extern "C" fn jit_tl(a: u64, span_bits: u64) -> u64 {
 
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn jit_rev(a: u64) -> u64 {
+pub(crate) extern "C" fn jit_rev(a: u64, span_bits: u64) -> u64 {
     let v = NanVal(a);
     if v.is_string() {
         let s = unsafe {
@@ -11387,12 +11473,13 @@ pub(crate) extern "C" fn jit_rev(a: u64) -> u64 {
         reversed.reverse();
         return NanVal::heap_list(reversed).0;
     }
+    jit_set_runtime_error_with_span(VmError::Type("rev requires a list or text"), span_bits);
     TAG_NIL
 }
 
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn jit_srt(a: u64) -> u64 {
+pub(crate) extern "C" fn jit_srt(a: u64, span_bits: u64) -> u64 {
     let v = NanVal(a);
     if v.is_string() {
         let s = unsafe {
@@ -11439,7 +11526,13 @@ pub(crate) extern "C" fn jit_srt(a: u64) -> u64 {
             sorted.sort_by(|a, b| unsafe { nanval_str_cmp(*a, *b) });
             return NanVal::heap_list(sorted).0;
         }
+        jit_set_runtime_error_with_span(
+            VmError::Type("srt: list must contain all numbers or all text"),
+            span_bits,
+        );
+        return TAG_NIL;
     }
+    jit_set_runtime_error_with_span(VmError::Type("srt requires a list or text"), span_bits);
     TAG_NIL
 }
 
@@ -11770,7 +11863,7 @@ pub(crate) extern "C" fn jit_ifft(a: u64, span_bits: u64) -> u64 {
 
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn jit_cumsum(a: u64) -> u64 {
+pub(crate) extern "C" fn jit_cumsum(a: u64, span_bits: u64) -> u64 {
     let v = NanVal(a);
     if v.is_heap()
         && let HeapObj::List(items) = unsafe { v.as_heap_ref() }
@@ -11779,6 +11872,10 @@ pub(crate) extern "C" fn jit_cumsum(a: u64) -> u64 {
         let mut out: Vec<NanVal> = Vec::with_capacity(items.len());
         for item in items {
             if !item.is_number() {
+                jit_set_runtime_error_with_span(
+                    VmError::Type("cumsum: list elements must be numbers"),
+                    span_bits,
+                );
                 return TAG_NIL;
             }
             total += item.as_number();
@@ -11786,12 +11883,16 @@ pub(crate) extern "C" fn jit_cumsum(a: u64) -> u64 {
         }
         return NanVal::heap_list(out).0;
     }
+    jit_set_runtime_error_with_span(
+        VmError::Type("cumsum requires a list of numbers"),
+        span_bits,
+    );
     TAG_NIL
 }
 
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn jit_rsrt(a: u64) -> u64 {
+pub(crate) extern "C" fn jit_rsrt(a: u64, span_bits: u64) -> u64 {
     let v = NanVal(a);
     if v.is_string() {
         let s = unsafe {
@@ -11839,7 +11940,13 @@ pub(crate) extern "C" fn jit_rsrt(a: u64) -> u64 {
             sorted.sort_by(|a, b| unsafe { nanval_str_cmp(*b, *a) });
             return NanVal::heap_list(sorted).0;
         }
+        jit_set_runtime_error_with_span(
+            VmError::Type("rsrt: list must contain all numbers or all text"),
+            span_bits,
+        );
+        return TAG_NIL;
     }
+    jit_set_runtime_error_with_span(VmError::Type("rsrt requires a list or text"), span_bits);
     TAG_NIL
 }
 
@@ -19957,7 +20064,7 @@ mod tests {
 
         #[test]
         fn jit_rev_string() {
-            let r = jit_rev(str_val("hello"));
+            let r = jit_rev(str_val("hello"), 0);
             let rv = NanVal(r);
             assert!(rv.is_string());
             let HeapObj::Str(s) = (unsafe { rv.as_heap_ref() }) else {
@@ -19975,22 +20082,28 @@ mod tests {
                 NanVal::number(3.0),
             ];
             let list = NanVal::heap_list(items);
-            let r = jit_rev(list.0);
+            let r = jit_rev(list.0, 0);
             let rv = NanVal(r);
             assert!(rv.is_heap());
         }
 
         #[test]
-        fn jit_rev_non_string_non_list_returns_nil() {
-            let r = jit_rev(TAG_NIL);
+        fn jit_rev_non_string_non_list_signals_runtime_error() {
+            // Type error on the slow path now signals via JIT_RUNTIME_ERROR
+            // and returns TAG_NIL, matching the tree/VM "rev requires a list
+            // or text" raise (sweep batch 5).
+            let _ = jit_take_runtime_error();
+            let r = jit_rev(TAG_NIL, 0);
             assert!(is_nil(r));
+            let err = jit_take_runtime_error().expect("expected pending error");
+            assert!(matches!(err.0, VmError::Type(msg) if msg.contains("rev")));
         }
 
         // ── jit_srt ────────────────────────────────────────────────────────
 
         #[test]
         fn jit_srt_string_sorts_chars() {
-            let r = jit_srt(str_val("cab"));
+            let r = jit_srt(str_val("cab"), 0);
             let rv = NanVal(r);
             assert!(rv.is_string());
             let HeapObj::Str(s) = (unsafe { rv.as_heap_ref() }) else {
@@ -20008,7 +20121,7 @@ mod tests {
                 NanVal::number(2.0),
             ];
             let list = NanVal::heap_list(items);
-            let r = jit_srt(list.0);
+            let r = jit_srt(list.0, 0);
             let rv = NanVal(r);
             assert!(rv.is_heap());
         }
@@ -20021,7 +20134,7 @@ mod tests {
                 NanVal::heap_string("b".into()),
             ];
             let list = NanVal::heap_list(items);
-            let r = jit_srt(list.0);
+            let r = jit_srt(list.0, 0);
             let rv = NanVal(r);
             assert!(rv.is_heap());
         }
@@ -20029,15 +20142,30 @@ mod tests {
         #[test]
         fn jit_srt_empty_list_returns_list() {
             let list = NanVal::heap_list(vec![]);
-            let r = jit_srt(list.0);
+            let r = jit_srt(list.0, 0);
             let rv = NanVal(r);
             assert!(rv.is_heap());
         }
 
         #[test]
-        fn jit_srt_non_string_non_list_returns_nil() {
-            let r = jit_srt(TAG_NIL);
+        fn jit_srt_non_string_non_list_signals_runtime_error() {
+            let _ = jit_take_runtime_error();
+            let r = jit_srt(TAG_NIL, 0);
             assert!(is_nil(r));
+            let err = jit_take_runtime_error().expect("expected pending error");
+            assert!(matches!(err.0, VmError::Type(msg) if msg.contains("srt")));
+        }
+
+        #[test]
+        fn jit_srt_mixed_list_signals_runtime_error() {
+            // Mixed numbers + strings is the historical silent-nil case.
+            let _ = jit_take_runtime_error();
+            let items = vec![NanVal::number(1.0), NanVal::heap_string("a".into())];
+            let list = NanVal::heap_list(items);
+            let r = jit_srt(list.0, 0);
+            assert!(is_nil(r));
+            let err = jit_take_runtime_error().expect("expected pending error");
+            assert!(matches!(err.0, VmError::Type(msg) if msg.contains("numbers or all text")));
         }
 
         // ── jit_slc ────────────────────────────────────────────────────────
@@ -20084,13 +20212,13 @@ mod tests {
 
         #[test]
         fn jit_has_text_found() {
-            let r = jit_has(str_val("hello world"), str_val("world"));
+            let r = jit_has(str_val("hello world"), str_val("world"), 0);
             assert!(as_bool(r));
         }
 
         #[test]
         fn jit_has_text_not_found() {
-            let r = jit_has(str_val("hello"), str_val("xyz"));
+            let r = jit_has(str_val("hello"), str_val("xyz"), 0);
             assert!(!as_bool(r));
         }
 
@@ -20102,7 +20230,7 @@ mod tests {
                 NanVal::number(3.0),
             ];
             let list = NanVal::heap_list(items);
-            let r = jit_has(list.0, num(2.0));
+            let r = jit_has(list.0, num(2.0), 0);
             assert!(as_bool(r));
         }
 
@@ -20110,28 +20238,34 @@ mod tests {
         fn jit_has_list_not_found() {
             let items = vec![NanVal::number(1.0), NanVal::number(2.0)];
             let list = NanVal::heap_list(items);
-            let r = jit_has(list.0, num(5.0));
+            let r = jit_has(list.0, num(5.0), 0);
             assert!(!as_bool(r));
         }
 
         #[test]
-        fn jit_has_text_non_string_needle_returns_false() {
-            // collection is string but needle is not string
-            let r = jit_has(str_val("hello"), TAG_NIL);
-            assert!(!as_bool(r));
+        fn jit_has_text_non_string_needle_signals_runtime_error() {
+            // Was TAG_FALSE; tree/VM raise "has: text search requires text needle".
+            let _ = jit_take_runtime_error();
+            let r = jit_has(str_val("hello"), TAG_NIL, 0);
+            assert!(is_nil(r));
+            let err = jit_take_runtime_error().expect("expected pending error");
+            assert!(matches!(err.0, VmError::Type(msg) if msg.contains("text needle")));
         }
 
         #[test]
-        fn jit_has_non_string_non_list_returns_false() {
-            let r = jit_has(TAG_NIL, num(1.0));
-            assert!(!as_bool(r));
+        fn jit_has_non_string_non_list_signals_runtime_error() {
+            let _ = jit_take_runtime_error();
+            let r = jit_has(TAG_NIL, num(1.0), 0);
+            assert!(is_nil(r));
+            let err = jit_take_runtime_error().expect("expected pending error");
+            assert!(matches!(err.0, VmError::Type(msg) if msg.contains("has requires")));
         }
 
         // ── jit_spl ────────────────────────────────────────────────────────
 
         #[test]
         fn jit_spl_string_splits() {
-            let r = jit_spl(str_val("a,b,c"), str_val(","));
+            let r = jit_spl(str_val("a,b,c"), str_val(","), 0);
             let rv = NanVal(r);
             assert!(rv.is_heap());
             let HeapObj::List(items) = (unsafe { rv.as_heap_ref() }) else {
@@ -20141,9 +20275,12 @@ mod tests {
         }
 
         #[test]
-        fn jit_spl_non_string_returns_nil() {
-            let r = jit_spl(TAG_NIL, str_val(","));
+        fn jit_spl_non_string_signals_runtime_error() {
+            let _ = jit_take_runtime_error();
+            let r = jit_spl(TAG_NIL, str_val(","), 0);
             assert!(is_nil(r));
+            let err = jit_take_runtime_error().expect("expected pending error");
+            assert!(matches!(err.0, VmError::Type(msg) if msg.contains("spl requires")));
         }
 
         // ── jit_cat ────────────────────────────────────────────────────────
@@ -20156,7 +20293,7 @@ mod tests {
                 NanVal::heap_string("c".into()),
             ];
             let list = NanVal::heap_list(items);
-            let r = jit_cat(list.0, str_val(","));
+            let r = jit_cat(list.0, str_val(","), 0);
             let rv = NanVal(r);
             assert!(rv.is_string());
             let HeapObj::Str(s) = (unsafe { rv.as_heap_ref() }) else {
@@ -20167,9 +20304,32 @@ mod tests {
         }
 
         #[test]
-        fn jit_cat_non_list_returns_nil() {
-            let r = jit_cat(TAG_NIL, str_val(","));
+        fn jit_cat_non_list_signals_runtime_error() {
+            let _ = jit_take_runtime_error();
+            let r = jit_cat(TAG_NIL, str_val(","), 0);
             assert!(is_nil(r));
+            let err = jit_take_runtime_error().expect("expected pending error");
+            assert!(matches!(err.0, VmError::Type(msg) if msg.contains("cat requires")));
+        }
+
+        #[test]
+        fn jit_cat_non_text_separator_signals_runtime_error() {
+            let _ = jit_take_runtime_error();
+            let list = NanVal::heap_list(vec![NanVal::heap_string("a".into())]);
+            let r = jit_cat(list.0, TAG_NIL, 0);
+            assert!(is_nil(r));
+            let err = jit_take_runtime_error().expect("expected pending error");
+            assert!(matches!(err.0, VmError::Type(msg) if msg.contains("text separator")));
+        }
+
+        #[test]
+        fn jit_cat_non_text_item_signals_runtime_error() {
+            let _ = jit_take_runtime_error();
+            let list = NanVal::heap_list(vec![NanVal::number(1.0)]);
+            let r = jit_cat(list.0, str_val(","), 0);
+            assert!(is_nil(r));
+            let err = jit_take_runtime_error().expect("expected pending error");
+            assert!(matches!(err.0, VmError::Type(msg) if msg.contains("items must be text")));
         }
 
         // ── jit_listappend ─────────────────────────────────────────────────
