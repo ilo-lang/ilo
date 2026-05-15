@@ -1,0 +1,23 @@
+-- AOT-compiled binaries match the in-process runners on Result-wrapper
+-- output. A program whose entry function returns `~v` prints `v` bare on
+-- stdout (exit 0); one that returns `^e` prints `^e` on stderr (exit 1).
+--
+-- Before PR #281 the in-process runners (tree, VM, Cranelift JIT) split
+-- top-level Result output as above, but `ilo compile main.ilo` still
+-- routed the result through the in-program `jit_prt` helper, so AOT
+-- binaries kept printing the wrapper and always exited 0 — even for `^e`.
+-- generate_main now uses a dedicated `jit_prt_main_result` helper that
+-- mirrors the in-process behaviour and returns the exit code.
+--
+-- This example pins the happy path. The failing path is exercised in the
+-- dedicated cross-engine regression test in
+-- tests/regression_aot_wrapper_strip.rs, which compiles each case to a
+-- real binary and compares byte-for-byte against all three in-process
+-- runners. (The example harness only drives the in-process runners, not
+-- AOT, so this `.ilo` file is the in-context learning artefact for the
+-- happy path; the regression test is the AOT contract.)
+
+m>R t t;~"hello"
+
+-- run:
+-- out: hello

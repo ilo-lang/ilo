@@ -137,6 +137,11 @@ struct HelperFuncs {
     mdel: FuncId,
     // Print, trim, uniq
     prt: FuncId,
+    /// AOT main-result printer: strips top-level `Value::Ok` wrapper on
+    /// stdout and routes `Value::Err` to stderr with exit 1. See
+    /// `jit_prt_main_result` in `src/vm/mod.rs`. Returns a u64 exit code
+    /// (0 or 1) that `generate_main` truncates to i32 for `main`.
+    prt_main: FuncId,
     trm: FuncId,
     upr: FuncId,
     lwr: FuncId,
@@ -318,6 +323,7 @@ fn declare_all_helpers(module: &mut ObjectModule) -> HelperFuncs {
         mdel: declare_helper(module, "jit_mdel", 2, 1),
         // Print, trim, uniq
         prt: declare_helper(module, "jit_prt", 1, 1),
+        prt_main: declare_helper(module, "jit_prt_main_result", 1, 1),
         trm: declare_helper(module, "jit_trm", 1, 1),
         upr: declare_helper(module, "jit_upr", 1, 1),
         lwr: declare_helper(module, "jit_lwr", 1, 1),
@@ -3729,15 +3735,20 @@ fn generate_main(
     let call_inst = builder.ins().call(user_fref, &call_args);
     let result = builder.inst_results(call_inst)[0];
 
-    // Print the result using jit_prt (handles all value types: numbers, strings, bools, etc.)
-    let prt_fref = module.declare_func_in_func(helpers.prt, builder.func);
-    builder.ins().call(prt_fref, &[result]);
+    // Print the top-level result. Use `jit_prt_main_result` (not `jit_prt`)
+    // so AOT binaries match the in-process runners' behaviour from PR #275:
+    // a top-level `~v` prints bare on stdout (exit 0); a top-level `^e`
+    // prints `^e` on stderr (exit 1). The helper returns the desired exit
+    // code packed in a u64; we truncate to i32 for `main`.
+    let prt_main_fref = module.declare_func_in_func(helpers.prt_main, builder.func);
+    let call_prt = builder.ins().call(prt_main_fref, &[result]);
+    let exit_u64 = builder.inst_results(call_prt)[0];
 
     // Call ilo_aot_fini() before returning
     let fini_fref = module.declare_func_in_func(helpers.aot_fini, builder.func);
     builder.ins().call(fini_fref, &[]);
-    let zero = builder.ins().iconst(I32, 0);
-    builder.ins().return_(&[zero]);
+    let exit_i32 = builder.ins().ireduce(I32, exit_u64);
+    builder.ins().return_(&[exit_i32]);
 
     builder.finalize();
 

@@ -13168,6 +13168,48 @@ pub(crate) extern "C" fn jit_prt(v: u64) -> u64 {
     v
 }
 
+/// AOT entry-point print: mirrors `print_value`'s top-level Result-wrapper
+/// treatment used by the in-process runners (tree/VM/Cranelift JIT). A
+/// top-level `Value::Ok(inner)` prints the inner value bare (no `~`) on
+/// stdout and exits 0. A top-level `Value::Err(_)` prints `^<inner>` on
+/// stderr and exits 1. Anything else prints via Display on stdout, exit 0.
+///
+/// The in-program `prnt` builtin keeps using `jit_prt` (which always shows
+/// the wrapper) — those callers are *inside* a program and genuinely want
+/// to see `~v`/`^e`.
+///
+/// Returns the desired process exit code (0 or 1) packed in a u64, which
+/// `generate_main` truncates to i32 and returns from `main`.
+#[cfg(feature = "cranelift")]
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn jit_prt_main_result(v: u64) -> u64 {
+    let nv = NanVal(v);
+    // Decide based on tag before reifying to a Value (cheap and avoids a
+    // pointless heap clone for the common Number/Bool/Nil case).
+    let tag = v & TAG_MASK;
+    if tag == TAG_ERR {
+        // `Value::Err(inner)` Displays as `^<inner>`.
+        eprintln!("{}", nv.to_value());
+        nv.clone_rc();
+        return 1;
+    }
+    if tag == TAG_OK {
+        // Strip the wrapper: print the inner value bare on stdout. `to_value`
+        // on a TAG_OK NanVal always produces `Value::Ok(inner)`; the explicit
+        // fallback to Display on the wrapped value is dead code in practice
+        // but keeps the helper total in the face of a future tag refactor.
+        match nv.to_value() {
+            Value::Ok(inner) => println!("{}", inner),
+            other => println!("{}", other),
+        }
+        nv.clone_rc();
+        return 0;
+    }
+    println!("{}", nv.to_value());
+    nv.clone_rc();
+    0
+}
+
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn jit_trm(v: u64) -> u64 {

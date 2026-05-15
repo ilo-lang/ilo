@@ -338,6 +338,7 @@ fn register_helpers(builder: &mut JITBuilder) {
         ("jit_mdel", jit_mdel as *const u8),
         // Print, trim, uniq
         ("jit_prt", jit_prt as *const u8),
+        ("jit_prt_main_result", jit_prt_main_result as *const u8),
         ("jit_trm", jit_trm as *const u8),
         ("jit_upr", jit_upr as *const u8),
         ("jit_lwr", jit_lwr as *const u8),
