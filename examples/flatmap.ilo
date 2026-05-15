@@ -8,8 +8,5 @@ rep n:n>L n;xs=[];@i 0..n{xs=+=xs n};xs
 -- Apply rep to every element and flatten one level.
 expand xs:L n>L n;flatmap rep xs
 
--- vm and cranelift do not yet implement HOF dispatch (FnRef resolution)
--- engine-skip: vm
--- engine-skip: cranelift
 -- run: expand [1,2,3]
 -- out: [1, 2, 2, 3, 3, 3]
