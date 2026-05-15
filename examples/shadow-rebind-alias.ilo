@@ -1,0 +1,35 @@
+-- `b = a` then `b = <new>` must NOT clobber `a`.
+--
+-- The VM compiler resolves `Expr::Ref(a)` to `a`'s register directly with
+-- no MOVE (free read). Pre-fix, the `Stmt::Let` new-binding path then
+-- aliased `b` to that same register, so a later `b = 99` reassignment
+-- overwrote the shared slot and corrupted `a`. Cranelift inherited the
+-- bug because it lowers VM bytecode. Tree-walker was always correct.
+--
+-- The fix: when the compiled RHS register is already owned by an existing
+-- local, allocate a fresh register and emit OP_MOVE so each user-visible
+-- binding has its own slot. One extra MOVE per shadow-from-ref, no impact
+-- on the common `b = +a 1` / `b = mset a k v` shapes (those already
+-- allocate fresh registers from the arithmetic/builtin ops).
+
+-- Number: the original repro from the Zipf-slope corruption report.
+number-shadow>L n;z=3.14;t=z;t = *t 2;[t z]
+
+-- Map: same shape, different value type. mset returns a fresh map but
+-- `b = a` first must give b its own slot.
+map-shadow>t;a=mset (mmap) "k" 1;b=a;b = mset b "k" 99;fmt "{}|{}" (mget a "k") (mget b "k")
+
+-- List: classic shadow followed by accumulator rebind.
+list-shadow>L L n;a=[1 2];b=a;b = +=b 99;[a b]
+
+-- Text: shadow followed by self-concat.
+text-shadow>t;a="x";b=a;b = +b "y";fmt "{}|{}" a b
+
+-- run: number-shadow
+-- out: [6.28, 3.14]
+-- run: map-shadow
+-- out: 1|99
+-- run: list-shadow
+-- out: [[1, 2], [1, 2, 99]]
+-- run: text-shadow
+-- out: x|xy
