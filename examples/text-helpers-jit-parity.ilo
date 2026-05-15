@@ -1,0 +1,58 @@
+-- Text helpers (trm, upr, lwr, cap, padl, padr, ord, chr, chars, unq,
+-- frq, fmt2) now error consistently on every engine (tree, VM, Cranelift
+-- JIT) when given wrong-type or invalid inputs. Previously the JIT
+-- helpers silently returned nil on these failure modes; tree and VM
+-- raised an ILO-R009 runtime error. All three engines now surface the
+-- same diagnostic via the new JIT thread-local error cell.
+
+-- Happy paths exercised across every engine via tests/examples_engines.rs.
+
+trim1>t;trm "  hi  "
+upper1>t;upr "hi"
+lower1>t;lwr "HI"
+capit1>t;cap "hello"
+padl1>t;padl "x" 4
+padr1>t;padr "x" 4
+ord1>n;ord "A"
+chr1>t;chr 65
+chars1>L t;chars "abc"
+uniqs1>t;unq "aabbc"
+fmt2of1>t;fmt2 3.14159 2
+unql1>L n;unq [1 2 2 3 1]
+frq1>M n n;frq [1 2 2 3 3 3]
+
+-- run: trim1
+-- out: hi
+
+-- run: upper1
+-- out: HI
+
+-- run: lower1
+-- out: hi
+
+-- run: capit1
+-- out: Hello
+
+-- run: padl1
+-- out:    x
+
+-- run: padr1
+-- out: x
+
+-- run: ord1
+-- out: 65
+
+-- run: chr1
+-- out: A
+
+-- run: chars1
+-- out: [a, b, c]
+
+-- run: uniqs1
+-- out: abc
+
+-- run: fmt2of1
+-- out: 3.14
+
+-- run: unql1
+-- out: [1, 2, 3]

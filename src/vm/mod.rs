@@ -11018,10 +11018,21 @@ pub(crate) extern "C" fn jit_hd(a: u64, span_bits: u64) -> u64 {
 
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn jit_fmt2(a: u64, b: u64) -> u64 {
+pub(crate) extern "C" fn jit_fmt2(a: u64, b: u64, span_bits: u64) -> u64 {
     let va = NanVal(a);
     let vb = NanVal(b);
-    if !va.is_number() || !vb.is_number() {
+    if !va.is_number() {
+        jit_set_runtime_error_with_span(
+            VmError::Type("fmt2 requires two numbers (x, digits)"),
+            span_bits,
+        );
+        return TAG_NIL;
+    }
+    if !vb.is_number() {
+        jit_set_runtime_error_with_span(
+            VmError::Type("fmt2 requires two numbers (x, digits)"),
+            span_bits,
+        );
         return TAG_NIL;
     }
     let x = va.as_number();
@@ -13610,9 +13621,10 @@ pub(crate) extern "C" fn jit_prt_main_result(v: u64) -> u64 {
 
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn jit_trm(v: u64) -> u64 {
+pub(crate) extern "C" fn jit_trm(v: u64, span_bits: u64) -> u64 {
     let nv = NanVal(v);
     if !nv.is_string() {
+        jit_set_runtime_error_with_span(VmError::Type("trm requires text"), span_bits);
         return TAG_NIL;
     }
     let s = unsafe {
@@ -13626,9 +13638,10 @@ pub(crate) extern "C" fn jit_trm(v: u64) -> u64 {
 
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn jit_upr(v: u64) -> u64 {
+pub(crate) extern "C" fn jit_upr(v: u64, span_bits: u64) -> u64 {
     let nv = NanVal(v);
     if !nv.is_string() {
+        jit_set_runtime_error_with_span(VmError::Type("upr requires text"), span_bits);
         return TAG_NIL;
     }
     let s = unsafe {
@@ -13642,9 +13655,10 @@ pub(crate) extern "C" fn jit_upr(v: u64) -> u64 {
 
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn jit_lwr(v: u64) -> u64 {
+pub(crate) extern "C" fn jit_lwr(v: u64, span_bits: u64) -> u64 {
     let nv = NanVal(v);
     if !nv.is_string() {
+        jit_set_runtime_error_with_span(VmError::Type("lwr requires text"), span_bits);
         return TAG_NIL;
     }
     let s = unsafe {
@@ -13658,9 +13672,10 @@ pub(crate) extern "C" fn jit_lwr(v: u64) -> u64 {
 
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn jit_cap(v: u64) -> u64 {
+pub(crate) extern "C" fn jit_cap(v: u64, span_bits: u64) -> u64 {
     let nv = NanVal(v);
     if !nv.is_string() {
+        jit_set_runtime_error_with_span(VmError::Type("cap requires text"), span_bits);
         return TAG_NIL;
     }
     let s = unsafe {
@@ -13681,25 +13696,52 @@ pub(crate) extern "C" fn jit_cap(v: u64) -> u64 {
 
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn jit_padl(sv: u64, wv: u64) -> u64 {
-    jit_pad_impl(sv, wv, true)
+pub(crate) extern "C" fn jit_padl(sv: u64, wv: u64, span_bits: u64) -> u64 {
+    jit_pad_impl(sv, wv, true, span_bits)
 }
 
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn jit_padr(sv: u64, wv: u64) -> u64 {
-    jit_pad_impl(sv, wv, false)
+pub(crate) extern "C" fn jit_padr(sv: u64, wv: u64, span_bits: u64) -> u64 {
+    jit_pad_impl(sv, wv, false, span_bits)
 }
 
 #[cfg(feature = "cranelift")]
-fn jit_pad_impl(sv: u64, wv: u64, left: bool) -> u64 {
+fn jit_pad_impl(sv: u64, wv: u64, left: bool, span_bits: u64) -> u64 {
     let s_nv = NanVal(sv);
     let w_nv = NanVal(wv);
-    if !s_nv.is_string() || !w_nv.is_number() {
+    if !s_nv.is_string() {
+        jit_set_runtime_error_with_span(
+            VmError::Type(if left {
+                "padl arg 1 requires text"
+            } else {
+                "padr arg 1 requires text"
+            }),
+            span_bits,
+        );
+        return TAG_NIL;
+    }
+    if !w_nv.is_number() {
+        jit_set_runtime_error_with_span(
+            VmError::Type(if left {
+                "padl arg 2 requires number"
+            } else {
+                "padr arg 2 requires number"
+            }),
+            span_bits,
+        );
         return TAG_NIL;
     }
     let wn = w_nv.as_number();
     if !wn.is_finite() || wn.fract() != 0.0 || wn < 0.0 {
+        jit_set_runtime_error_with_span(
+            VmError::Type(if left {
+                "padl width must be a non-negative integer"
+            } else {
+                "padr width must be a non-negative integer"
+            }),
+            span_bits,
+        );
         return TAG_NIL;
     }
     let w = wn as usize;
@@ -13725,9 +13767,10 @@ fn jit_pad_impl(sv: u64, wv: u64, left: bool) -> u64 {
 
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn jit_ord(v: u64) -> u64 {
+pub(crate) extern "C" fn jit_ord(v: u64, span_bits: u64) -> u64 {
     let nv = NanVal(v);
     if !nv.is_string() {
+        jit_set_runtime_error_with_span(VmError::Type("ord requires text"), span_bits);
         return TAG_NIL;
     }
     // SAFETY: is_string() confirmed heap-tagged string with live RC.
@@ -13735,7 +13778,13 @@ pub(crate) extern "C" fn jit_ord(v: u64) -> u64 {
         match nv.as_heap_ref() {
             HeapObj::Str(s) => match s.as_str().chars().next() {
                 Some(c) => c as u32,
-                None => return TAG_NIL,
+                None => {
+                    jit_set_runtime_error_with_span(
+                        VmError::Type("ord requires a non-empty string"),
+                        span_bits,
+                    );
+                    return TAG_NIL;
+                }
             },
             _ => unreachable!(),
         }
@@ -13745,27 +13794,39 @@ pub(crate) extern "C" fn jit_ord(v: u64) -> u64 {
 
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn jit_chr(v: u64) -> u64 {
+pub(crate) extern "C" fn jit_chr(v: u64, span_bits: u64) -> u64 {
     let nv = NanVal(v);
     if !nv.is_number() {
+        jit_set_runtime_error_with_span(VmError::Type("chr requires a number"), span_bits);
         return TAG_NIL;
     }
     let n = nv.as_number();
     if !n.is_finite() || n.fract() != 0.0 || n < 0.0 || n > u32::MAX as f64 {
+        jit_set_runtime_error_with_span(
+            VmError::Type("chr requires a non-negative integer codepoint"),
+            span_bits,
+        );
         return TAG_NIL;
     }
     let cp = n as u32;
     match char::from_u32(cp) {
         Some(c) => NanVal::heap_string(c.to_string()).0,
-        None => TAG_NIL,
+        None => {
+            jit_set_runtime_error_with_span(
+                VmError::Type("chr: not a valid Unicode codepoint"),
+                span_bits,
+            );
+            TAG_NIL
+        }
     }
 }
 
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn jit_chars(v: u64) -> u64 {
+pub(crate) extern "C" fn jit_chars(v: u64, span_bits: u64) -> u64 {
     let nv = NanVal(v);
     if !nv.is_string() {
+        jit_set_runtime_error_with_span(VmError::Type("chars requires text"), span_bits);
         return TAG_NIL;
     }
     // SAFETY: is_string() confirmed heap-tagged string with live RC.
@@ -13784,7 +13845,7 @@ pub(crate) extern "C" fn jit_chars(v: u64) -> u64 {
 
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn jit_unq(v: u64) -> u64 {
+pub(crate) extern "C" fn jit_unq(v: u64, span_bits: u64) -> u64 {
     let nv = NanVal(v);
     if nv.is_string() {
         let s = unsafe {
@@ -13813,6 +13874,7 @@ pub(crate) extern "C" fn jit_unq(v: u64) -> u64 {
         }
         return NanVal::heap_list(out).0;
     }
+    jit_set_runtime_error_with_span(VmError::Type("unq requires a list or text"), span_bits);
     TAG_NIL
 }
 
@@ -13836,23 +13898,38 @@ pub(crate) extern "C" fn jit_partition(_fn_ref: u64, _list: u64) -> u64 {
 
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn jit_frq(v: u64) -> u64 {
+pub(crate) extern "C" fn jit_frq(v: u64, span_bits: u64) -> u64 {
     let nv = NanVal(v);
     if (nv.0 & TAG_MASK) != TAG_LIST {
+        jit_set_runtime_error_with_span(VmError::Type("frq: arg must be a list"), span_bits);
         return TAG_NIL;
     }
     // SAFETY: TAG_LIST confirmed.
     let items = unsafe {
         match nv.as_heap_ref() {
             HeapObj::List(l) => l.clone(),
-            _ => return TAG_NIL,
+            _ => {
+                jit_set_runtime_error_with_span(
+                    VmError::Type("frq: arg must be a list"),
+                    span_bits,
+                );
+                return TAG_NIL;
+            }
         }
     };
     let mut counts: std::collections::HashMap<MapKey, usize> = std::collections::HashMap::new();
     for item in items {
         match nanval_to_grouping_key(item) {
             Some(k) => *counts.entry(k).or_insert(0) += 1,
-            None => return TAG_NIL,
+            None => {
+                jit_set_runtime_error_with_span(
+                    VmError::Type(
+                        "frq: list elements must be text, number, or bool (finite numbers only)",
+                    ),
+                    span_bits,
+                );
+                return TAG_NIL;
+            }
         }
     }
     let map: std::collections::HashMap<MapKey, NanVal> = counts
@@ -20664,7 +20741,7 @@ mod tests {
 
         #[test]
         fn jit_fmt2_basic() {
-            let r = jit_fmt2(num(3.14159), num(2.0));
+            let r = jit_fmt2(num(3.14159), num(2.0), 0);
             let rv = NanVal(r);
             assert!(rv.is_string());
             let HeapObj::Str(s) = (unsafe { rv.as_heap_ref() }) else {
@@ -20675,7 +20752,7 @@ mod tests {
 
         #[test]
         fn jit_fmt2_zero_digits() {
-            let r = jit_fmt2(num(1.0), num(0.0));
+            let r = jit_fmt2(num(1.0), num(0.0), 0);
             let rv = NanVal(r);
             assert!(rv.is_string());
             let HeapObj::Str(s) = (unsafe { rv.as_heap_ref() }) else {
@@ -20687,7 +20764,7 @@ mod tests {
         #[test]
         fn jit_fmt2_negative_digits_clamped_to_zero() {
             // d <= 0.0 branch — digits coerced to 0.
-            let r = jit_fmt2(num(2.7), num(-3.0));
+            let r = jit_fmt2(num(2.7), num(-3.0), 0);
             let rv = NanVal(r);
             assert!(rv.is_string());
             let HeapObj::Str(s) = (unsafe { rv.as_heap_ref() }) else {
@@ -20699,7 +20776,7 @@ mod tests {
         #[test]
         fn jit_fmt2_non_finite_digits_clamped_to_zero() {
             // !d.is_finite() branch.
-            let r = jit_fmt2(num(2.7), num(f64::NAN));
+            let r = jit_fmt2(num(2.7), num(f64::NAN), 0);
             let rv = NanVal(r);
             assert!(rv.is_string());
             let HeapObj::Str(s) = (unsafe { rv.as_heap_ref() }) else {
@@ -20709,21 +20786,27 @@ mod tests {
         }
 
         #[test]
-        fn jit_fmt2_non_number_first_arg_returns_nil() {
-            let r = jit_fmt2(str_val("oops"), num(2.0));
+        fn jit_fmt2_non_number_first_arg_signals_runtime_error() {
+            let _ = jit_take_runtime_error();
+            let r = jit_fmt2(str_val("oops"), num(2.0), 0);
             assert!(is_nil(r));
+            let err = jit_take_runtime_error().expect("expected pending error");
+            assert!(matches!(err.0, VmError::Type(msg) if msg.contains("fmt2 requires")));
         }
 
         #[test]
-        fn jit_fmt2_non_number_second_arg_returns_nil() {
-            let r = jit_fmt2(num(3.14), str_val("two"));
+        fn jit_fmt2_non_number_second_arg_signals_runtime_error() {
+            let _ = jit_take_runtime_error();
+            let r = jit_fmt2(num(3.14), str_val("two"), 0);
             assert!(is_nil(r));
+            let err = jit_take_runtime_error().expect("expected pending error");
+            assert!(matches!(err.0, VmError::Type(msg) if msg.contains("fmt2 requires")));
         }
 
         #[test]
         fn jit_fmt2_digits_clamped_to_twenty() {
             // digits >= 20 hits the .min(20) cap.
-            let r = jit_fmt2(num(1.0), num(50.0));
+            let r = jit_fmt2(num(1.0), num(50.0), 0);
             let rv = NanVal(r);
             assert!(rv.is_string());
             let HeapObj::Str(s) = (unsafe { rv.as_heap_ref() }) else {
@@ -21015,6 +21098,199 @@ mod tests {
             assert!(is_nil(r));
             let err = jit_take_runtime_error().expect("expected pending error");
             assert!(matches!(err.0, VmError::Type(msg) if msg.contains("vector length")));
+        }
+
+        // ── jit_trm / jit_upr / jit_lwr / jit_cap ─────────────────────────
+
+        #[test]
+        fn jit_trm_non_string_signals_runtime_error() {
+            let _ = jit_take_runtime_error();
+            let r = jit_trm(num(1.0), 0);
+            assert!(is_nil(r));
+            let err = jit_take_runtime_error().expect("expected pending error");
+            assert!(matches!(err.0, VmError::Type(msg) if msg.contains("trm requires")));
+        }
+
+        #[test]
+        fn jit_upr_non_string_signals_runtime_error() {
+            let _ = jit_take_runtime_error();
+            let r = jit_upr(num(1.0), 0);
+            assert!(is_nil(r));
+            let err = jit_take_runtime_error().expect("expected pending error");
+            assert!(matches!(err.0, VmError::Type(msg) if msg.contains("upr requires")));
+        }
+
+        #[test]
+        fn jit_lwr_non_string_signals_runtime_error() {
+            let _ = jit_take_runtime_error();
+            let r = jit_lwr(num(1.0), 0);
+            assert!(is_nil(r));
+            let err = jit_take_runtime_error().expect("expected pending error");
+            assert!(matches!(err.0, VmError::Type(msg) if msg.contains("lwr requires")));
+        }
+
+        #[test]
+        fn jit_cap_non_string_signals_runtime_error() {
+            let _ = jit_take_runtime_error();
+            let r = jit_cap(num(1.0), 0);
+            assert!(is_nil(r));
+            let err = jit_take_runtime_error().expect("expected pending error");
+            assert!(matches!(err.0, VmError::Type(msg) if msg.contains("cap requires")));
+        }
+
+        // Happy paths confirm no spurious error gets set.
+        #[test]
+        fn jit_trm_string_trims() {
+            let _ = jit_take_runtime_error();
+            let r = jit_trm(str_val("  hi  "), 0);
+            let rv = NanVal(r);
+            assert!(rv.is_string());
+            let HeapObj::Str(s) = (unsafe { rv.as_heap_ref() }) else {
+                panic!("expected Str")
+            };
+            assert_eq!(s.clone(), "hi");
+            assert!(jit_take_runtime_error().is_none());
+        }
+
+        // ── jit_padl / jit_padr ───────────────────────────────────────────
+
+        #[test]
+        fn jit_padl_non_string_first_signals_runtime_error() {
+            let _ = jit_take_runtime_error();
+            let r = jit_padl(num(1.0), num(5.0), 0);
+            assert!(is_nil(r));
+            let err = jit_take_runtime_error().expect("expected pending error");
+            assert!(matches!(err.0, VmError::Type(msg) if msg.contains("padl arg 1")));
+        }
+
+        #[test]
+        fn jit_padr_non_number_second_signals_runtime_error() {
+            let _ = jit_take_runtime_error();
+            let r = jit_padr(str_val("x"), str_val("bad"), 0);
+            assert!(is_nil(r));
+            let err = jit_take_runtime_error().expect("expected pending error");
+            assert!(matches!(err.0, VmError::Type(msg) if msg.contains("padr arg 2")));
+        }
+
+        #[test]
+        fn jit_padl_negative_width_signals_runtime_error() {
+            let _ = jit_take_runtime_error();
+            let r = jit_padl(str_val("x"), num(-1.0), 0);
+            assert!(is_nil(r));
+            let err = jit_take_runtime_error().expect("expected pending error");
+            assert!(matches!(err.0, VmError::Type(msg) if msg.contains("padl width")));
+        }
+
+        #[test]
+        fn jit_padl_pads_left() {
+            let _ = jit_take_runtime_error();
+            let r = jit_padl(str_val("hi"), num(5.0), 0);
+            let rv = NanVal(r);
+            let HeapObj::Str(s) = (unsafe { rv.as_heap_ref() }) else {
+                panic!("expected Str")
+            };
+            assert_eq!(s.clone(), "   hi");
+            assert!(jit_take_runtime_error().is_none());
+        }
+
+        // ── jit_ord / jit_chr / jit_chars ─────────────────────────────────
+
+        #[test]
+        fn jit_ord_non_string_signals_runtime_error() {
+            let _ = jit_take_runtime_error();
+            let r = jit_ord(num(1.0), 0);
+            assert!(is_nil(r));
+            let err = jit_take_runtime_error().expect("expected pending error");
+            assert!(matches!(err.0, VmError::Type(msg) if msg.contains("ord requires")));
+        }
+
+        #[test]
+        fn jit_ord_empty_string_signals_runtime_error() {
+            let _ = jit_take_runtime_error();
+            let r = jit_ord(str_val(""), 0);
+            assert!(is_nil(r));
+            let err = jit_take_runtime_error().expect("expected pending error");
+            assert!(matches!(err.0, VmError::Type(msg) if msg.contains("non-empty")));
+        }
+
+        #[test]
+        fn jit_chr_non_number_signals_runtime_error() {
+            let _ = jit_take_runtime_error();
+            let r = jit_chr(str_val("x"), 0);
+            assert!(is_nil(r));
+            let err = jit_take_runtime_error().expect("expected pending error");
+            assert!(matches!(err.0, VmError::Type(msg) if msg.contains("chr requires")));
+        }
+
+        #[test]
+        fn jit_chr_negative_codepoint_signals_runtime_error() {
+            let _ = jit_take_runtime_error();
+            let r = jit_chr(num(-1.0), 0);
+            assert!(is_nil(r));
+            let err = jit_take_runtime_error().expect("expected pending error");
+            assert!(matches!(err.0, VmError::Type(msg) if msg.contains("codepoint")));
+        }
+
+        #[test]
+        fn jit_chr_invalid_codepoint_signals_runtime_error() {
+            // 0xD800 is a surrogate, not a valid Unicode scalar value.
+            let _ = jit_take_runtime_error();
+            let r = jit_chr(num(0xD800 as f64), 0);
+            assert!(is_nil(r));
+            let err = jit_take_runtime_error().expect("expected pending error");
+            assert!(matches!(err.0, VmError::Type(msg) if msg.contains("Unicode")));
+        }
+
+        #[test]
+        fn jit_chars_non_string_signals_runtime_error() {
+            let _ = jit_take_runtime_error();
+            let r = jit_chars(num(1.0), 0);
+            assert!(is_nil(r));
+            let err = jit_take_runtime_error().expect("expected pending error");
+            assert!(matches!(err.0, VmError::Type(msg) if msg.contains("chars requires")));
+        }
+
+        // ── jit_unq / jit_frq ─────────────────────────────────────────────
+
+        #[test]
+        fn jit_unq_non_string_non_list_signals_runtime_error() {
+            let _ = jit_take_runtime_error();
+            let r = jit_unq(num(1.0), 0);
+            assert!(is_nil(r));
+            let err = jit_take_runtime_error().expect("expected pending error");
+            assert!(matches!(err.0, VmError::Type(msg) if msg.contains("unq requires")));
+        }
+
+        #[test]
+        fn jit_unq_string_dedupes() {
+            let _ = jit_take_runtime_error();
+            let r = jit_unq(str_val("aabbc"), 0);
+            let rv = NanVal(r);
+            let HeapObj::Str(s) = (unsafe { rv.as_heap_ref() }) else {
+                panic!("expected Str")
+            };
+            assert_eq!(s.clone(), "abc");
+            assert!(jit_take_runtime_error().is_none());
+        }
+
+        #[test]
+        fn jit_frq_non_list_signals_runtime_error() {
+            let _ = jit_take_runtime_error();
+            let r = jit_frq(num(1.0), 0);
+            assert!(is_nil(r));
+            let err = jit_take_runtime_error().expect("expected pending error");
+            assert!(matches!(err.0, VmError::Type(msg) if msg.contains("frq:")));
+        }
+
+        #[test]
+        fn jit_frq_non_finite_element_signals_runtime_error() {
+            let _ = jit_take_runtime_error();
+            let items = vec![NanVal::number(1.0), NanVal::number(f64::NAN)];
+            let list = NanVal::heap_list(items);
+            let r = jit_frq(list.0, 0);
+            assert!(is_nil(r));
+            let err = jit_take_runtime_error().expect("expected pending error");
+            assert!(matches!(err.0, VmError::Type(msg) if msg.contains("frq:")));
         }
     }
 
