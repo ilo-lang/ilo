@@ -21,9 +21,9 @@ prices pm:M t n syms:L t>L n;map look pm syms
 
 prices-demo>L n;m=mset mmap "a" 10;m=mset m "b" 20;prices m ["a","b","a"]
 
--- engine-skip: vm
+-- jit lacks HOF dispatch entirely (see regression_builtins_as_hof.rs).
+-- vm + cranelift route closure-bind through the tree-bridge from PR 3c.
 -- engine-skip: jit
--- engine-skip: cranelift
 -- run: main
 -- out: [c, a, b]
 -- run: prices-demo
