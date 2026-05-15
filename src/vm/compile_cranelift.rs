@@ -252,9 +252,9 @@ fn declare_all_helpers(module: &mut ObjectModule) -> HelperFuncs {
         log10: declare_helper(module, "jit_log10", 1, 1),
         log2: declare_helper(module, "jit_log2", 1, 1),
         atan2: declare_helper(module, "jit_atan2", 2, 1),
-        transpose: declare_helper(module, "jit_transpose", 1, 1),
-        matmul: declare_helper(module, "jit_matmul", 2, 1),
-        dot: declare_helper(module, "jit_dot", 2, 1),
+        transpose: declare_helper(module, "jit_transpose", 2, 1),
+        matmul: declare_helper(module, "jit_matmul", 3, 1),
+        dot: declare_helper(module, "jit_dot", 3, 1),
         rnd0: declare_helper(module, "jit_rnd0", 0, 1),
         rnd2: declare_helper(module, "jit_rnd2", 2, 1),
         rndn: declare_helper(module, "jit_rndn", 2, 1),
@@ -279,13 +279,13 @@ fn declare_all_helpers(module: &mut ObjectModule) -> HelperFuncs {
         rev: declare_helper(module, "jit_rev", 1, 1),
         srt: declare_helper(module, "jit_srt", 1, 1),
         rsrt: declare_helper(module, "jit_rsrt", 1, 1),
-        fft: declare_helper(module, "jit_fft", 1, 1),
-        ifft: declare_helper(module, "jit_ifft", 1, 1),
+        fft: declare_helper(module, "jit_fft", 2, 1),
+        ifft: declare_helper(module, "jit_ifft", 2, 1),
         cumsum: declare_helper(module, "jit_cumsum", 1, 1),
-        median: declare_helper(module, "jit_median", 1, 1),
-        quantile: declare_helper(module, "jit_quantile", 2, 1),
-        stdev: declare_helper(module, "jit_stdev", 1, 1),
-        variance: declare_helper(module, "jit_variance", 1, 1),
+        median: declare_helper(module, "jit_median", 2, 1),
+        quantile: declare_helper(module, "jit_quantile", 3, 1),
+        stdev: declare_helper(module, "jit_stdev", 2, 1),
+        variance: declare_helper(module, "jit_variance", 2, 1),
         slc: declare_helper(module, "jit_slc", 3, 1),
         rgxsub: declare_helper(module, "jit_rgxsub", 3, 1),
         take: declare_helper(module, "jit_take", 2, 1),
@@ -361,9 +361,9 @@ fn declare_all_helpers(module: &mut ObjectModule) -> HelperFuncs {
         aot_parse_arg: declare_helper(module, "ilo_aot_parse_arg", 1, 1),
         string_const: declare_helper(module, "jit_string_const", 1, 1),
         // Linear algebra
-        solve: declare_helper(module, "jit_solve", 2, 1),
-        inv: declare_helper(module, "jit_inv", 1, 1),
-        det: declare_helper(module, "jit_det", 1, 1),
+        solve: declare_helper(module, "jit_solve", 3, 1),
+        inv: declare_helper(module, "jit_inv", 2, 1),
+        det: declare_helper(module, "jit_det", 2, 1),
     }
 }
 
@@ -2062,24 +2062,30 @@ fn compile_function_body(
             }
             OP_TRANSPOSE => {
                 let bv = builder.use_var(vars[b_idx]);
+                let span_bits = super::jit_cranelift::pack_span_bits(chunk.spans[ip]);
+                let span_arg = builder.ins().iconst(I64, span_bits);
                 let fref = get_func_ref(&mut builder, module, helpers.transpose);
-                let call_inst = builder.ins().call(fref, &[bv]);
+                let call_inst = builder.ins().call(fref, &[bv, span_arg]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
             }
             OP_MATMUL => {
                 let bv = builder.use_var(vars[b_idx]);
                 let cv = builder.use_var(vars[c_idx]);
+                let span_bits = super::jit_cranelift::pack_span_bits(chunk.spans[ip]);
+                let span_arg = builder.ins().iconst(I64, span_bits);
                 let fref = get_func_ref(&mut builder, module, helpers.matmul);
-                let call_inst = builder.ins().call(fref, &[bv, cv]);
+                let call_inst = builder.ins().call(fref, &[bv, cv, span_arg]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
             }
             OP_DOT => {
                 let bv = builder.use_var(vars[b_idx]);
                 let cv = builder.use_var(vars[c_idx]);
+                let span_bits = super::jit_cranelift::pack_span_bits(chunk.spans[ip]);
+                let span_arg = builder.ins().iconst(I64, span_bits);
                 let fref = get_func_ref(&mut builder, module, helpers.dot);
-                let call_inst = builder.ins().call(fref, &[bv, cv]);
+                let call_inst = builder.ins().call(fref, &[bv, cv, span_arg]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
                 if a_idx < reg_count && reg_always_num[a_idx] {
@@ -2089,8 +2095,10 @@ fn compile_function_body(
             }
             OP_DET => {
                 let bv = builder.use_var(vars[b_idx]);
+                let span_bits = super::jit_cranelift::pack_span_bits(chunk.spans[ip]);
+                let span_arg = builder.ins().iconst(I64, span_bits);
                 let fref = get_func_ref(&mut builder, module, helpers.det);
-                let call_inst = builder.ins().call(fref, &[bv]);
+                let call_inst = builder.ins().call(fref, &[bv, span_arg]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
                 if a_idx < reg_count && reg_always_num[a_idx] {
@@ -2100,16 +2108,20 @@ fn compile_function_body(
             }
             OP_INV => {
                 let bv = builder.use_var(vars[b_idx]);
+                let span_bits = super::jit_cranelift::pack_span_bits(chunk.spans[ip]);
+                let span_arg = builder.ins().iconst(I64, span_bits);
                 let fref = get_func_ref(&mut builder, module, helpers.inv);
-                let call_inst = builder.ins().call(fref, &[bv]);
+                let call_inst = builder.ins().call(fref, &[bv, span_arg]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
             }
             OP_SOLVE => {
                 let bv = builder.use_var(vars[b_idx]);
                 let cv = builder.use_var(vars[c_idx]);
+                let span_bits = super::jit_cranelift::pack_span_bits(chunk.spans[ip]);
+                let span_arg = builder.ins().iconst(I64, span_bits);
                 let fref = get_func_ref(&mut builder, module, helpers.solve);
-                let call_inst = builder.ins().call(fref, &[bv, cv]);
+                let call_inst = builder.ins().call(fref, &[bv, cv, span_arg]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
             }
@@ -2332,15 +2344,19 @@ fn compile_function_body(
             }
             OP_FFT => {
                 let bv = builder.use_var(vars[b_idx]);
+                let span_bits = super::jit_cranelift::pack_span_bits(chunk.spans[ip]);
+                let span_arg = builder.ins().iconst(I64, span_bits);
                 let fref = get_func_ref(&mut builder, module, helpers.fft);
-                let call_inst = builder.ins().call(fref, &[bv]);
+                let call_inst = builder.ins().call(fref, &[bv, span_arg]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
             }
             OP_IFFT => {
                 let bv = builder.use_var(vars[b_idx]);
+                let span_bits = super::jit_cranelift::pack_span_bits(chunk.spans[ip]);
+                let span_arg = builder.ins().iconst(I64, span_bits);
                 let fref = get_func_ref(&mut builder, module, helpers.ifft);
-                let call_inst = builder.ins().call(fref, &[bv]);
+                let call_inst = builder.ins().call(fref, &[bv, span_arg]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
             }
@@ -2353,30 +2369,38 @@ fn compile_function_body(
             }
             OP_MEDIAN => {
                 let bv = builder.use_var(vars[b_idx]);
+                let span_bits = super::jit_cranelift::pack_span_bits(chunk.spans[ip]);
+                let span_arg = builder.ins().iconst(I64, span_bits);
                 let fref = get_func_ref(&mut builder, module, helpers.median);
-                let call_inst = builder.ins().call(fref, &[bv]);
+                let call_inst = builder.ins().call(fref, &[bv, span_arg]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
             }
             OP_QUANTILE => {
                 let bv = builder.use_var(vars[b_idx]);
                 let cv = builder.use_var(vars[c_idx]);
+                let span_bits = super::jit_cranelift::pack_span_bits(chunk.spans[ip]);
+                let span_arg = builder.ins().iconst(I64, span_bits);
                 let fref = get_func_ref(&mut builder, module, helpers.quantile);
-                let call_inst = builder.ins().call(fref, &[bv, cv]);
+                let call_inst = builder.ins().call(fref, &[bv, cv, span_arg]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
             }
             OP_STDEV => {
                 let bv = builder.use_var(vars[b_idx]);
+                let span_bits = super::jit_cranelift::pack_span_bits(chunk.spans[ip]);
+                let span_arg = builder.ins().iconst(I64, span_bits);
                 let fref = get_func_ref(&mut builder, module, helpers.stdev);
-                let call_inst = builder.ins().call(fref, &[bv]);
+                let call_inst = builder.ins().call(fref, &[bv, span_arg]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
             }
             OP_VARIANCE => {
                 let bv = builder.use_var(vars[b_idx]);
+                let span_bits = super::jit_cranelift::pack_span_bits(chunk.spans[ip]);
+                let span_arg = builder.ins().iconst(I64, span_bits);
                 let fref = get_func_ref(&mut builder, module, helpers.variance);
-                let call_inst = builder.ins().call(fref, &[bv]);
+                let call_inst = builder.ins().call(fref, &[bv, span_arg]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
             }
