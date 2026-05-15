@@ -2634,7 +2634,7 @@ fn run_cranelift_engine(
         let nan_consts = &compiled.nan_constants[func_idx];
         let nan_args: Vec<u64> = run_args
             .iter()
-            .map(|v| vm::NanVal::from_value(v).0)
+            .map(|v| vm::NanVal::from_value_with_program(v, &compiled.func_names).0)
             .collect();
         match vm::jit_cranelift::compile_and_call(chunk, nan_consts, &nan_args, &compiled) {
             Ok(result_bits) => {
@@ -2990,7 +2990,10 @@ fn run_default(
             if let Some(func_idx) = compiled.func_names.iter().position(|n| n == target) {
                 let chunk = &compiled.chunks[func_idx];
                 let nan_consts = &compiled.nan_constants[func_idx];
-                let nan_args: Vec<u64> = args.iter().map(|v| vm::NanVal::from_value(v).0).collect();
+                let nan_args: Vec<u64> = args
+                    .iter()
+                    .map(|v| vm::NanVal::from_value_with_program(v, &compiled.func_names).0)
+                    .collect();
                 match vm::jit_cranelift::compile_and_call(chunk, nan_consts, &nan_args, &compiled) {
                     Ok(result_bits) => {
                         // Use the program-aware bridge so a user-fn FnRef

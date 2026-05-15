@@ -1,0 +1,33 @@
+-- Calling a variable that holds a FnRef. Before PR 3d the VM compiler
+-- routed every `Expr::Call` through a static func-name lookup, so
+-- `f = dbl; f 10` errored with `UndefinedFunction: f` on the VM and
+-- Cranelift engines even though the tree interpreter resolved it via
+-- `callee_from_scope`. Now `Expr::Call` checks the locals first and
+-- emits `OP_CALL_DYN` against the local's register, dispatching at
+-- runtime based on the value (FnRef NanVal or Text-named function).
+--
+-- This example pins three shapes the fix unblocks, each exercised
+-- through the `examples_engines.rs` harness on every engine.
+
+-- User function used as a value, then invoked through a local.
+dbl x:n>n;*x 2
+
+-- 1. User-fn assigned to a local, then called.
+viaref>n;f=dbl;f 10
+
+-- 2. Builtin assigned to a local, then called.
+viabuiltin>n;f=abs;f -3
+
+-- 3. FnRef threaded through a function parameter (the canonical
+--    user-defined HOF shape: `apl` takes a callback and applies
+--    it to an argument).
+apl f:F n n x:n>n;f x
+
+viaparam>n;apl dbl 7
+
+-- run: viaref
+-- out: 20
+-- run: viabuiltin
+-- out: 3
+-- run: viaparam
+-- out: 14
