@@ -9503,7 +9503,7 @@ fn nanval_truthy(v: NanVal) -> bool {
 /// allocates fresh storage, never mutates the inputs. The Cranelift compiler
 /// picks this for non-rebind OP_ADD (the general `b = +a x` shape) so the
 /// caller's `a` is preserved.
-pub(crate) extern "C" fn jit_add(a: u64, b: u64) -> u64 {
+pub(crate) extern "C" fn jit_add(a: u64, b: u64, span_bits: u64) -> u64 {
     let av = NanVal(a);
     let bv = NanVal(b);
     if av.is_number() && bv.is_number() {
@@ -9544,7 +9544,8 @@ pub(crate) extern "C" fn jit_add(a: u64, b: u64) -> u64 {
             return NanVal::heap_list(new_items).0;
         }
     }
-    TAG_NIL // error fallback
+    jit_set_runtime_error_with_span(VmError::Type("cannot add non-matching types"), span_bits);
+    TAG_NIL
 }
 
 /// In-place add helper — for string inputs, mutates the left string when the
@@ -9565,7 +9566,7 @@ pub(crate) extern "C" fn jit_add(a: u64, b: u64) -> u64 {
 /// fixed for OP_ADD_SS via the jit_concat / jit_concat_inplace split.
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn jit_add_inplace(a: u64, b: u64) -> u64 {
+pub(crate) extern "C" fn jit_add_inplace(a: u64, b: u64, span_bits: u64) -> u64 {
     let av = NanVal(a);
     let bv = NanVal(b);
     if av.is_number() && bv.is_number() {
@@ -9627,7 +9628,8 @@ pub(crate) extern "C" fn jit_add_inplace(a: u64, b: u64) -> u64 {
             return NanVal::heap_list(new_items).0;
         }
     }
-    TAG_NIL // error fallback
+    jit_set_runtime_error_with_span(VmError::Type("cannot add non-matching types"), span_bits);
+    TAG_NIL
 }
 
 /// Clone-always concat helper — the safe path for OP_ADD_SS / OP_ADD when
@@ -9724,38 +9726,42 @@ pub(crate) extern "C" fn jit_concat_inplace(a: u64, b: u64) -> u64 {
 
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn jit_sub(a: u64, b: u64) -> u64 {
+pub(crate) extern "C" fn jit_sub(a: u64, b: u64, span_bits: u64) -> u64 {
     let av = NanVal(a);
     let bv = NanVal(b);
     if av.is_number() && bv.is_number() {
         return NanVal::number(av.as_number() - bv.as_number()).0;
     }
+    jit_set_runtime_error_with_span(VmError::Type("cannot subtract non-numbers"), span_bits);
     TAG_NIL
 }
 
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn jit_mul(a: u64, b: u64) -> u64 {
+pub(crate) extern "C" fn jit_mul(a: u64, b: u64, span_bits: u64) -> u64 {
     let av = NanVal(a);
     let bv = NanVal(b);
     if av.is_number() && bv.is_number() {
         return NanVal::number(av.as_number() * bv.as_number()).0;
     }
+    jit_set_runtime_error_with_span(VmError::Type("cannot multiply non-numbers"), span_bits);
     TAG_NIL
 }
 
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn jit_div(a: u64, b: u64) -> u64 {
+pub(crate) extern "C" fn jit_div(a: u64, b: u64, span_bits: u64) -> u64 {
     let av = NanVal(a);
     let bv = NanVal(b);
     if av.is_number() && bv.is_number() {
         let dv = bv.as_number();
         if dv == 0.0 {
+            jit_set_runtime_error_with_span(VmError::DivisionByZero, span_bits);
             return TAG_NIL;
         }
         return NanVal::number(av.as_number() / dv).0;
     }
+    jit_set_runtime_error_with_span(VmError::Type("cannot divide non-numbers"), span_bits);
     TAG_NIL
 }
 
@@ -9773,7 +9779,7 @@ pub(crate) extern "C" fn jit_ne(a: u64, b: u64) -> u64 {
 
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn jit_gt(a: u64, b: u64) -> u64 {
+pub(crate) extern "C" fn jit_gt(a: u64, b: u64, span_bits: u64) -> u64 {
     let av = NanVal(a);
     let bv = NanVal(b);
     if av.is_number() && bv.is_number() {
@@ -9782,12 +9788,16 @@ pub(crate) extern "C" fn jit_gt(a: u64, b: u64) -> u64 {
     if av.is_string() && bv.is_string() {
         return NanVal::boolean(unsafe { nanval_str_cmp(av, bv) == std::cmp::Ordering::Greater }).0;
     }
+    jit_set_runtime_error_with_span(
+        VmError::Type("cannot compare > : operands must be same type (n or t)"),
+        span_bits,
+    );
     TAG_FALSE
 }
 
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn jit_lt(a: u64, b: u64) -> u64 {
+pub(crate) extern "C" fn jit_lt(a: u64, b: u64, span_bits: u64) -> u64 {
     let av = NanVal(a);
     let bv = NanVal(b);
     if av.is_number() && bv.is_number() {
@@ -9796,12 +9806,16 @@ pub(crate) extern "C" fn jit_lt(a: u64, b: u64) -> u64 {
     if av.is_string() && bv.is_string() {
         return NanVal::boolean(unsafe { nanval_str_cmp(av, bv) == std::cmp::Ordering::Less }).0;
     }
+    jit_set_runtime_error_with_span(
+        VmError::Type("cannot compare < : operands must be same type (n or t)"),
+        span_bits,
+    );
     TAG_FALSE
 }
 
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn jit_ge(a: u64, b: u64) -> u64 {
+pub(crate) extern "C" fn jit_ge(a: u64, b: u64, span_bits: u64) -> u64 {
     let av = NanVal(a);
     let bv = NanVal(b);
     if av.is_number() && bv.is_number() {
@@ -9810,12 +9824,16 @@ pub(crate) extern "C" fn jit_ge(a: u64, b: u64) -> u64 {
     if av.is_string() && bv.is_string() {
         return NanVal::boolean(unsafe { nanval_str_cmp(av, bv) != std::cmp::Ordering::Less }).0;
     }
+    jit_set_runtime_error_with_span(
+        VmError::Type("cannot compare >= : operands must be same type (n or t)"),
+        span_bits,
+    );
     TAG_FALSE
 }
 
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn jit_le(a: u64, b: u64) -> u64 {
+pub(crate) extern "C" fn jit_le(a: u64, b: u64, span_bits: u64) -> u64 {
     let av = NanVal(a);
     let bv = NanVal(b);
     if av.is_number() && bv.is_number() {
@@ -9824,6 +9842,10 @@ pub(crate) extern "C" fn jit_le(a: u64, b: u64) -> u64 {
     if av.is_string() && bv.is_string() {
         return NanVal::boolean(unsafe { nanval_str_cmp(av, bv) != std::cmp::Ordering::Greater }).0;
     }
+    jit_set_runtime_error_with_span(
+        VmError::Type("cannot compare <= : operands must be same type (n or t)"),
+        span_bits,
+    );
     TAG_FALSE
 }
 
@@ -9835,11 +9857,12 @@ pub(crate) extern "C" fn jit_not(a: u64) -> u64 {
 
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn jit_neg(a: u64) -> u64 {
+pub(crate) extern "C" fn jit_neg(a: u64, span_bits: u64) -> u64 {
     let v = NanVal(a);
     if v.is_number() {
         return NanVal::number(-v.as_number()).0;
     }
+    jit_set_runtime_error_with_span(VmError::Type("cannot negate non-number"), span_bits);
     TAG_NIL
 }
 
@@ -9972,7 +9995,7 @@ pub(crate) extern "C" fn jit_drop_rc(v: u64) {
 
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn jit_len(a: u64) -> u64 {
+pub(crate) extern "C" fn jit_len(a: u64, span_bits: u64) -> u64 {
     let v = NanVal(a);
     if v.is_string() {
         let s = unsafe {
@@ -9988,14 +10011,25 @@ pub(crate) extern "C" fn jit_len(a: u64) -> u64 {
     {
         return NanVal::number(items.len() as f64).0;
     }
+    // Map support: tree/VM both accept maps in `len`. Mirror it here.
+    if v.is_heap()
+        && let HeapObj::Map(m) = unsafe { v.as_heap_ref() }
+    {
+        return NanVal::number(m.len() as f64).0;
+    }
+    jit_set_runtime_error_with_span(
+        VmError::Type("len requires string, list, or map"),
+        span_bits,
+    );
     TAG_NIL
 }
 
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn jit_str(a: u64) -> u64 {
+pub(crate) extern "C" fn jit_str(a: u64, span_bits: u64) -> u64 {
     let v = NanVal(a);
     if !v.is_number() {
+        jit_set_runtime_error_with_span(VmError::Type("str requires a number"), span_bits);
         return TAG_NIL;
     }
     let n = v.as_number();
@@ -10009,9 +10043,10 @@ pub(crate) extern "C" fn jit_str(a: u64) -> u64 {
 
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn jit_num(a: u64) -> u64 {
+pub(crate) extern "C" fn jit_num(a: u64, span_bits: u64) -> u64 {
     let v = NanVal(a);
     if !v.is_string() {
+        jit_set_runtime_error_with_span(VmError::Type("num requires a string"), span_bits);
         return TAG_NIL;
     }
     let s = unsafe {
@@ -10031,34 +10066,37 @@ pub(crate) extern "C" fn jit_num(a: u64) -> u64 {
 
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn jit_abs(a: u64) -> u64 {
+pub(crate) extern "C" fn jit_abs(a: u64, span_bits: u64) -> u64 {
     let v = NanVal(a);
     if v.is_number() {
         NanVal::number(v.as_number().abs()).0
     } else {
+        jit_set_runtime_error_with_span(VmError::Type("abs requires a number"), span_bits);
         TAG_NIL
     }
 }
 
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn jit_mod(a: u64, b: u64) -> u64 {
+pub(crate) extern "C" fn jit_mod(a: u64, b: u64, span_bits: u64) -> u64 {
     let av = NanVal(a);
     let bv = NanVal(b);
     if av.is_number() && bv.is_number() {
         let dv = bv.as_number();
         if dv == 0.0 {
+            jit_set_runtime_error_with_span(VmError::Type("modulo by zero"), span_bits);
             return TAG_NIL;
         }
         NanVal::number(av.as_number() % dv).0
     } else {
+        jit_set_runtime_error_with_span(VmError::Type("mod requires numbers"), span_bits);
         TAG_NIL
     }
 }
 
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn jit_clamp(x: u64, lo: u64, hi: u64) -> u64 {
+pub(crate) extern "C" fn jit_clamp(x: u64, lo: u64, hi: u64, span_bits: u64) -> u64 {
     let xv = NanVal(x);
     let lv = NanVal(lo);
     let hv = NanVal(hi);
@@ -10066,63 +10104,69 @@ pub(crate) extern "C" fn jit_clamp(x: u64, lo: u64, hi: u64) -> u64 {
         // result = max(lo, min(hi, x)); when lo > hi, result == lo.
         NanVal::number(xv.as_number().min(hv.as_number()).max(lv.as_number())).0
     } else {
+        jit_set_runtime_error_with_span(VmError::Type("clamp requires numbers"), span_bits);
         TAG_NIL
     }
 }
 
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn jit_min(a: u64, b: u64) -> u64 {
+pub(crate) extern "C" fn jit_min(a: u64, b: u64, span_bits: u64) -> u64 {
     let av = NanVal(a);
     let bv = NanVal(b);
     if av.is_number() && bv.is_number() {
         NanVal::number(av.as_number().min(bv.as_number())).0
     } else {
+        jit_set_runtime_error_with_span(VmError::Type("min/max require numbers"), span_bits);
         TAG_NIL
     }
 }
 
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn jit_max(a: u64, b: u64) -> u64 {
+pub(crate) extern "C" fn jit_max(a: u64, b: u64, span_bits: u64) -> u64 {
     let av = NanVal(a);
     let bv = NanVal(b);
     if av.is_number() && bv.is_number() {
         NanVal::number(av.as_number().max(bv.as_number())).0
     } else {
+        jit_set_runtime_error_with_span(VmError::Type("min/max require numbers"), span_bits);
         TAG_NIL
     }
 }
 
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn jit_flr(a: u64) -> u64 {
+pub(crate) extern "C" fn jit_flr(a: u64, span_bits: u64) -> u64 {
     let v = NanVal(a);
     if v.is_number() {
         NanVal::number(v.as_number().floor()).0
     } else {
+        jit_set_runtime_error_with_span(VmError::Type("flr/cel/rou requires a number"), span_bits);
         TAG_NIL
     }
 }
 
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn jit_cel(a: u64) -> u64 {
+pub(crate) extern "C" fn jit_cel(a: u64, span_bits: u64) -> u64 {
     let v = NanVal(a);
     if v.is_number() {
         NanVal::number(v.as_number().ceil()).0
     } else {
+        jit_set_runtime_error_with_span(VmError::Type("flr/cel/rou requires a number"), span_bits);
         TAG_NIL
     }
 }
 
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn jit_rou(a: u64) -> u64 {
+pub(crate) extern "C" fn jit_rou(a: u64, span_bits: u64) -> u64 {
     let v = NanVal(a);
     if v.is_number() {
         NanVal::number(v.as_number().round()).0
     } else {
+        jit_set_runtime_error_with_span(VmError::Type("flr/cel/rou requires a number"), span_bits);
         TAG_NIL
     }
 }
@@ -19147,36 +19191,45 @@ mod tests {
 
         #[test]
         fn jit_sub_numbers() {
-            let r = jit_sub(num(10.0), num(3.0));
+            let r = jit_sub(num(10.0), num(3.0), 0);
             assert!(is_num(r));
             assert_eq!(as_num(r), 7.0);
         }
 
         #[test]
-        fn jit_sub_non_numbers_returns_nil() {
+        fn jit_sub_non_numbers_signals_runtime_error() {
+            // Type error on the slow path now signals via JIT_RUNTIME_ERROR
+            // and returns TAG_NIL, matching the tree/VM "cannot subtract
+            // non-numbers" raise (sweep batch 3).
+            let _ = jit_take_runtime_error();
             let s = NanVal::heap_string("hello".into());
-            let r = jit_sub(s.0, num(1.0));
+            let r = jit_sub(s.0, num(1.0), 0);
             assert!(is_nil(r));
+            let err = jit_take_runtime_error().expect("expected pending error");
+            assert!(matches!(err.0, VmError::Type(msg) if msg.contains("subtract")));
         }
 
         #[test]
         fn jit_mul_numbers() {
-            let r = jit_mul(num(4.0), num(5.0));
+            let r = jit_mul(num(4.0), num(5.0), 0);
             assert!(is_num(r));
             assert_eq!(as_num(r), 20.0);
         }
 
         #[test]
         fn jit_div_numbers() {
-            let r = jit_div(num(10.0), num(4.0));
+            let r = jit_div(num(10.0), num(4.0), 0);
             assert!(is_num(r));
             assert_eq!(as_num(r), 2.5);
         }
 
         #[test]
-        fn jit_div_by_zero_returns_nil() {
-            let r = jit_div(num(5.0), num(0.0));
+        fn jit_div_by_zero_signals_runtime_error() {
+            let _ = jit_take_runtime_error();
+            let r = jit_div(num(5.0), num(0.0), 0);
             assert!(is_nil(r));
+            let err = jit_take_runtime_error().expect("expected pending error");
+            assert!(matches!(err.0, VmError::DivisionByZero));
         }
 
         #[test]
@@ -19201,28 +19254,28 @@ mod tests {
 
         #[test]
         fn jit_gt_numbers() {
-            assert!(as_bool(jit_gt(num(5.0), num(3.0))));
-            assert!(!as_bool(jit_gt(num(3.0), num(5.0))));
+            assert!(as_bool(jit_gt(num(5.0), num(3.0), 0)));
+            assert!(!as_bool(jit_gt(num(3.0), num(5.0), 0)));
         }
 
         #[test]
         fn jit_lt_numbers() {
-            assert!(as_bool(jit_lt(num(2.0), num(7.0))));
-            assert!(!as_bool(jit_lt(num(7.0), num(2.0))));
+            assert!(as_bool(jit_lt(num(2.0), num(7.0), 0)));
+            assert!(!as_bool(jit_lt(num(7.0), num(2.0), 0)));
         }
 
         #[test]
         fn jit_ge_numbers() {
-            assert!(as_bool(jit_ge(num(5.0), num(5.0))));
-            assert!(as_bool(jit_ge(num(6.0), num(5.0))));
-            assert!(!as_bool(jit_ge(num(4.0), num(5.0))));
+            assert!(as_bool(jit_ge(num(5.0), num(5.0), 0)));
+            assert!(as_bool(jit_ge(num(6.0), num(5.0), 0)));
+            assert!(!as_bool(jit_ge(num(4.0), num(5.0), 0)));
         }
 
         #[test]
         fn jit_le_numbers() {
-            assert!(as_bool(jit_le(num(3.0), num(3.0))));
-            assert!(as_bool(jit_le(num(2.0), num(3.0))));
-            assert!(!as_bool(jit_le(num(4.0), num(3.0))));
+            assert!(as_bool(jit_le(num(3.0), num(3.0), 0)));
+            assert!(as_bool(jit_le(num(2.0), num(3.0), 0)));
+            assert!(!as_bool(jit_le(num(4.0), num(3.0), 0)));
         }
 
         #[test]
@@ -19241,16 +19294,19 @@ mod tests {
 
         #[test]
         fn jit_neg_number() {
-            let r = jit_neg(num(5.0));
+            let r = jit_neg(num(5.0), 0);
             assert!(is_num(r));
             assert_eq!(as_num(r), -5.0);
         }
 
         #[test]
-        fn jit_neg_non_number_returns_nil() {
+        fn jit_neg_non_number_signals_runtime_error() {
+            let _ = jit_take_runtime_error();
             let s = NanVal::heap_string("x".into());
-            let r = jit_neg(s.0);
+            let r = jit_neg(s.0, 0);
             assert!(is_nil(r));
+            let err = jit_take_runtime_error().expect("expected pending error");
+            assert!(matches!(err.0, VmError::Type(msg) if msg.contains("negate")));
         }
 
         #[test]
@@ -19336,28 +19392,44 @@ mod tests {
         }
 
         #[test]
-        fn jit_gt_non_numbers_returns_false() {
-            // Non-number, non-string → returns TAG_FALSE
-            let r = jit_gt(TAG_NIL, TAG_NIL);
+        fn jit_gt_non_numbers_signals_runtime_error() {
+            // Mixed-type ordered comparison was previously permissive and
+            // returned TAG_FALSE. After sweep batch 3 it signals through
+            // JIT_RUNTIME_ERROR (return value remains TAG_FALSE so the IR
+            // can carry on until the JIT entry point surfaces the error,
+            // matching jit_gt/lt/ge/le contract).
+            let _ = jit_take_runtime_error();
+            let r = jit_gt(TAG_NIL, TAG_NIL, 0);
             assert!(!as_bool(r));
+            let err = jit_take_runtime_error().expect("expected pending error");
+            assert!(matches!(err.0, VmError::Type(msg) if msg.contains("compare >")));
         }
 
         #[test]
-        fn jit_lt_non_numbers_returns_false() {
-            let r = jit_lt(TAG_NIL, num(1.0));
+        fn jit_lt_non_numbers_signals_runtime_error() {
+            let _ = jit_take_runtime_error();
+            let r = jit_lt(TAG_NIL, num(1.0), 0);
             assert!(!as_bool(r));
+            let err = jit_take_runtime_error().expect("expected pending error");
+            assert!(matches!(err.0, VmError::Type(msg) if msg.contains("compare <")));
         }
 
         #[test]
-        fn jit_ge_non_numbers_returns_false() {
-            let r = jit_ge(TAG_NIL, num(1.0));
+        fn jit_ge_non_numbers_signals_runtime_error() {
+            let _ = jit_take_runtime_error();
+            let r = jit_ge(TAG_NIL, num(1.0), 0);
             assert!(!as_bool(r));
+            let err = jit_take_runtime_error().expect("expected pending error");
+            assert!(matches!(err.0, VmError::Type(msg) if msg.contains("compare >=")));
         }
 
         #[test]
-        fn jit_le_non_numbers_returns_false() {
-            let r = jit_le(TAG_NIL, num(1.0));
+        fn jit_le_non_numbers_signals_runtime_error() {
+            let _ = jit_take_runtime_error();
+            let r = jit_le(TAG_NIL, num(1.0), 0);
             assert!(!as_bool(r));
+            let err = jit_take_runtime_error().expect("expected pending error");
+            assert!(matches!(err.0, VmError::Type(msg) if msg.contains("compare <=")));
         }
 
         // ── String comparison ops ──────────────────────────────────────────
@@ -19368,31 +19440,31 @@ mod tests {
 
         #[test]
         fn jit_gt_strings_true() {
-            let r = jit_gt(str_val("b"), str_val("a"));
+            let r = jit_gt(str_val("b"), str_val("a"), 0);
             assert!(as_bool(r));
         }
 
         #[test]
         fn jit_gt_strings_false() {
-            let r = jit_gt(str_val("a"), str_val("b"));
+            let r = jit_gt(str_val("a"), str_val("b"), 0);
             assert!(!as_bool(r));
         }
 
         #[test]
         fn jit_lt_strings_true() {
-            let r = jit_lt(str_val("a"), str_val("b"));
+            let r = jit_lt(str_val("a"), str_val("b"), 0);
             assert!(as_bool(r));
         }
 
         #[test]
         fn jit_ge_strings_equal() {
-            let r = jit_ge(str_val("a"), str_val("a"));
+            let r = jit_ge(str_val("a"), str_val("a"), 0);
             assert!(as_bool(r));
         }
 
         #[test]
         fn jit_le_strings_less() {
-            let r = jit_le(str_val("a"), str_val("b"));
+            let r = jit_le(str_val("a"), str_val("b"), 0);
             assert!(as_bool(r));
         }
 
@@ -19400,7 +19472,7 @@ mod tests {
 
         #[test]
         fn jit_add_strings_concat() {
-            let r = jit_add(str_val("hello "), str_val("world"));
+            let r = jit_add(str_val("hello "), str_val("world"), 0);
             let rv = NanVal(r);
             assert!(rv.is_string());
             let HeapObj::Str(s) = (unsafe { rv.as_heap_ref() }) else {
@@ -19411,9 +19483,12 @@ mod tests {
         }
 
         #[test]
-        fn jit_add_non_numeric_non_string_returns_nil() {
-            let r = jit_add(TAG_NIL, num(1.0));
+        fn jit_add_non_numeric_non_string_signals_runtime_error() {
+            let _ = jit_take_runtime_error();
+            let r = jit_add(TAG_NIL, num(1.0), 0);
             assert!(is_nil(r));
+            let err = jit_take_runtime_error().expect("expected pending error");
+            assert!(matches!(err.0, VmError::Type(msg) if msg.contains("add non-matching")));
         }
 
         // RC=1 fast path: sole-owner left string is mutated in place.
@@ -19422,7 +19497,7 @@ mod tests {
             // str_val creates a fresh Rc with strong_count == 1.
             let lhs = str_val("foo");
             let rhs = str_val("bar");
-            let r = jit_add(lhs, rhs);
+            let r = jit_add(lhs, rhs, 0);
             let rv = NanVal(r);
             assert!(rv.is_string());
             let HeapObj::Str(s) = (unsafe { rv.as_heap_ref() }) else {
@@ -19438,7 +19513,7 @@ mod tests {
             let lhs_nan = NanVal::heap_string("hello ".to_string());
             lhs_nan.clone_rc(); // strong_count is now 2
             let rhs = str_val("world");
-            let r = jit_add(lhs_nan.0, rhs);
+            let r = jit_add(lhs_nan.0, rhs, 0);
             let rv = NanVal(r);
             assert!(rv.is_string());
             let HeapObj::Str(s) = (unsafe { rv.as_heap_ref() }) else {
@@ -19453,7 +19528,7 @@ mod tests {
 
         #[test]
         fn jit_len_string() {
-            let r = jit_len(str_val("hello"));
+            let r = jit_len(str_val("hello"), 0);
             assert!(is_num(r));
             assert_eq!(as_num(r), 5.0);
         }
@@ -19466,22 +19541,25 @@ mod tests {
                 NanVal::number(3.0),
             ];
             let list = NanVal::heap_list(items);
-            let r = jit_len(list.0);
+            let r = jit_len(list.0, 0);
             assert!(is_num(r));
             assert_eq!(as_num(r), 3.0);
         }
 
         #[test]
-        fn jit_len_non_string_non_list_returns_nil() {
-            let r = jit_len(TAG_NIL);
+        fn jit_len_non_string_non_list_signals_runtime_error() {
+            let _ = jit_take_runtime_error();
+            let r = jit_len(TAG_NIL, 0);
             assert!(is_nil(r));
+            let err = jit_take_runtime_error().expect("expected pending error");
+            assert!(matches!(err.0, VmError::Type(msg) if msg.contains("len requires")));
         }
 
         // ── jit_str ────────────────────────────────────────────────────────
 
         #[test]
         fn jit_str_number_to_string() {
-            let r = jit_str(num(42.0));
+            let r = jit_str(num(42.0), 0);
             let rv = NanVal(r);
             assert!(rv.is_string());
             let HeapObj::Str(s) = (unsafe { rv.as_heap_ref() }) else {
@@ -19493,15 +19571,18 @@ mod tests {
 
         #[test]
         fn jit_str_float_to_string() {
-            let r = jit_str(num(3.14));
+            let r = jit_str(num(3.14), 0);
             let rv = NanVal(r);
             assert!(rv.is_string());
         }
 
         #[test]
-        fn jit_str_non_number_returns_nil() {
-            let r = jit_str(TAG_NIL);
+        fn jit_str_non_number_signals_runtime_error() {
+            let _ = jit_take_runtime_error();
+            let r = jit_str(TAG_NIL, 0);
             assert!(is_nil(r));
+            let err = jit_take_runtime_error().expect("expected pending error");
+            assert!(matches!(err.0, VmError::Type(msg) if msg.contains("str requires")));
         }
 
         // ── jit_hd ────────────────────────────────────────────────────────
