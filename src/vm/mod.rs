@@ -395,6 +395,14 @@ pub(crate) fn is_tree_bridge_eligible(b: crate::builtins::Builtin, argc: usize) 
         // is lossless, so VM/Cranelift get it for free. The actual sleep is
         // delegated to `std::thread::sleep` inside the tree interpreter.
         (Builtin::Sleep, 1) => true,
+        // HOFs that take a FnRef + list. The bridge routes them through the
+        // tree interpreter, which dispatches user-fn callbacks via the
+        // Env populated from the ACTIVE_AST_PROGRAM TLS. Closure-captured
+        // (3-arg) shapes still error here; those land in PR 3c.
+        (Builtin::Grp, 2) => true,
+        (Builtin::Uniqby, 2) => true,
+        (Builtin::Partition, 2) => true,
+        (Builtin::Srt, 2) => true,
         _ => false,
     }
 }
@@ -559,6 +567,11 @@ pub struct CompiledProgram {
     pub type_registry: TypeRegistry,
     /// Parallel to `func_names`/`chunks`: true if the function slot is a `tool` declaration.
     pub is_tool: Vec<bool>,
+    /// Retained AST kept alive for the tree-bridge so it can resolve
+    /// user-fn callbacks when HOFs (grp/uniqby/partition/srt-2arg) are
+    /// dispatched via the bridge. Populated by `compile()`. Cheap clone
+    /// behind an `Arc`; the bridge only needs a read-only view.
+    pub ast: Option<std::sync::Arc<Program>>,
 }
 
 impl CompiledProgram {
@@ -1006,6 +1019,7 @@ impl RegCompiler {
             nan_constants: Vec::new(),
             type_registry: self.type_registry,
             is_tool,
+            ast: None,
         })
     }
 
@@ -3806,6 +3820,14 @@ thread_local! {
     /// bytecode program. Cleared by `with_active_registry`'s drop guard.
     static ACTIVE_PROGRAM: std::cell::Cell<*const CompiledProgram> =
         const { std::cell::Cell::new(std::ptr::null()) };
+    /// Active AST `Program` pointer, set by `VM::execute()` and by
+    /// `with_active_registry()` so the tree-bridge (`OP_CALL_BUILTIN_TREE`
+    /// + `jit_call_builtin_tree`) can hand the tree interpreter an Env
+    /// populated with all user functions and tools. Required for HOFs
+    /// (grp/uniqby/partition/srt-2arg) whose callbacks are user-defined.
+    /// Cleared by the same RAII guard that clears the other TLS slots.
+    static ACTIVE_AST_PROGRAM: std::cell::Cell<*const Program> =
+        const { std::cell::Cell::new(std::ptr::null()) };
 }
 
 /// Look up a user-fn name by index in the currently active `func_names`
@@ -3846,12 +3868,16 @@ pub fn with_active_registry<R>(program: &CompiledProgram, f: impl FnOnce() -> R)
             ACTIVE_REGISTRY.with(|r| r.set(std::ptr::null()));
             ACTIVE_FUNC_NAMES.with(|r| r.set(std::ptr::null()));
             ACTIVE_PROGRAM.with(|r| r.set(std::ptr::null()));
+            ACTIVE_AST_PROGRAM.with(|r| r.set(std::ptr::null()));
         }
     }
 
     ACTIVE_REGISTRY.with(|r| r.set(&program.type_registry as *const TypeRegistry));
     ACTIVE_FUNC_NAMES.with(|r| r.set(&program.func_names as *const Vec<String>));
     ACTIVE_PROGRAM.with(|r| r.set(program as *const CompiledProgram));
+    if let Some(ast) = &program.ast {
+        ACTIVE_AST_PROGRAM.with(|r| r.set(ast.as_ref() as *const Program));
+    }
     let _guard = ClearGuard;
     f()
 }
@@ -3885,6 +3911,18 @@ pub(crate) struct ActiveFuncNamesGuard;
 impl Drop for ActiveFuncNamesGuard {
     fn drop(&mut self) {
         ACTIVE_FUNC_NAMES.with(|r| r.set(std::ptr::null()));
+    }
+}
+
+/// RAII guard that clears `ACTIVE_AST_PROGRAM` on drop, paralleling the
+/// other VM-side TLS guards. Set by `VM::execute()` when the
+/// `CompiledProgram` retains its AST; cleared on return or panic so the
+/// pointer can never outlive the borrow.
+pub(crate) struct ActiveAstProgramGuard;
+
+impl Drop for ActiveAstProgramGuard {
+    fn drop(&mut self) {
+        ACTIVE_AST_PROGRAM.with(|r| r.set(std::ptr::null()));
     }
 }
 
@@ -4587,6 +4625,10 @@ pub fn compile(program: &Program) -> Result<CompiledProgram, CompileError> {
         .iter()
         .map(|chunk| chunk.constants.iter().map(NanVal::from_value).collect())
         .collect();
+    // Retain the AST so the tree-bridge can resolve user-fn callbacks for
+    // HOFs (grp/uniqby/partition/srt-2arg). One Arc; lives as long as the
+    // CompiledProgram.
+    prog.ast = Some(std::sync::Arc::new(program.clone()));
     Ok(prog)
 }
 
@@ -4818,6 +4860,13 @@ impl<'a> VM<'a> {
         // without threading the program reference through every helper.
         ACTIVE_FUNC_NAMES.with(|r| r.set(&self.program.func_names as *const Vec<String>));
         let _func_names_guard = ActiveFuncNamesGuard;
+
+        // Publish the retained AST (if any) for the tree-bridge's HOF
+        // dispatch path. Cleared on return/panic by the guard.
+        if let Some(ast) = &self.program.ast {
+            ACTIVE_AST_PROGRAM.with(|r| r.set(ast.as_ref() as *const Program));
+        }
+        let _ast_guard = ActiveAstProgramGuard;
         // SAFETY: execute() is only called from call() after setup_call() has pushed
         // a frame, so frames is non-empty.
         let frame = unsafe { self.frames.last().unwrap_unchecked() };
@@ -8752,16 +8801,35 @@ impl<'a> VM<'a> {
                     }
 
                     // Run the same dispatcher the tree interpreter uses.
-                    // No env is needed for the bridge-eligible set (no FnRef
-                    // args, no user-function callbacks), so we hand it an
-                    // empty `Program` shell.
-                    let result = match crate::interpreter::call_builtin_for_bridge(
-                        builtin.name(),
-                        value_args,
-                    ) {
-                        Ok(v) => v,
-                        Err(e) => {
-                            vm_err!(VmError::Runtime(e.message));
+                    // HOF builtins need an Env with user functions registered;
+                    // we pull the AST through the ACTIVE_AST_PROGRAM TLS that
+                    // VM::execute() publishes. Non-HOF builtins also work via
+                    // the program-aware variant (empty Env is a subset), so we
+                    // route uniformly when a program is available. Falls back
+                    // to the no-program bridge for callers (test shells) that
+                    // build CompiledProgram literals without an AST.
+                    let result = {
+                        let ast_ptr = ACTIVE_AST_PROGRAM.with(|c| c.get());
+                        let res = if ast_ptr.is_null() {
+                            crate::interpreter::call_builtin_for_bridge(builtin.name(), value_args)
+                        } else {
+                            // SAFETY: ast_ptr was set by VM::execute() to a
+                            // borrow of program.ast (an Arc<Program> owned by
+                            // self.program). It outlives every dispatcher
+                            // iteration and is cleared by ActiveAstProgramGuard
+                            // before that borrow ends.
+                            let program: &Program = unsafe { &*ast_ptr };
+                            crate::interpreter::call_builtin_for_bridge_with_program(
+                                builtin.name(),
+                                value_args,
+                                program,
+                            )
+                        };
+                        match res {
+                            Ok(v) => v,
+                            Err(e) => {
+                                vm_err!(VmError::Runtime(e.message));
+                            }
                         }
                     };
 
@@ -11598,7 +11666,20 @@ pub(crate) extern "C" fn jit_call_builtin_tree(tag: u64, argc: u64, regs_ptr: u6
     for nv in regs {
         value_args.push(nv.to_value());
     }
-    match crate::interpreter::call_builtin_for_bridge(builtin.name(), value_args) {
+    let ast_ptr = ACTIVE_AST_PROGRAM.with(|c| c.get());
+    let res = if ast_ptr.is_null() {
+        crate::interpreter::call_builtin_for_bridge(builtin.name(), value_args)
+    } else {
+        // SAFETY: published by `with_active_registry`, cleared by its drop
+        // guard. Lives for the duration of the Cranelift entry call.
+        let program: &Program = unsafe { &*ast_ptr };
+        crate::interpreter::call_builtin_for_bridge_with_program(
+            builtin.name(),
+            value_args,
+            program,
+        )
+    };
+    match res {
         Ok(v) => NanVal::from_value(&v).0,
         Err(_) => TAG_NIL,
     }
@@ -21596,6 +21677,7 @@ mod tests {
             nan_constants: vec![vec![]],
             type_registry: TypeRegistry::default(),
             is_tool: vec![false],
+            ast: None,
         };
         let result = run(&program, Some("f"), vec![]).expect("fallthrough should succeed");
         assert_eq!(result, Value::Nil);
@@ -21619,6 +21701,7 @@ mod tests {
             nan_constants: vec![vec![]],
             type_registry: TypeRegistry::default(),
             is_tool: vec![false],
+            ast: None,
         };
         let err = run(&program, Some("f"), vec![]).unwrap_err();
         // Error kind should be UnknownOpcode and span should be captured.
@@ -22922,7 +23005,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // Dynamic dispatch (OP_CALL_DYN emission) arrives in PR 2.
+    #[ignore] // Direct FnRef-variable call (OP_CALL_DYN from Expr::Call) arrives in PR 3d.
     fn vm_map_with_text_fn_name() {
         let source = "sq x:n>n;*x x f cb:t xs:L n>L n;map cb xs";
         let result = vm_run(
@@ -23021,7 +23104,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // Dynamic dispatch (OP_CALL_DYN emission) arrives in PR 2.
     fn vm_grp_by_string_key() {
         let source = r#"cl x:n>t;>x 5{"big"}{"small"} main xs:L n>M t L n;grp cl xs"#;
         let result = vm_run(
@@ -23053,7 +23135,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // Dynamic dispatch (OP_CALL_DYN emission) arrives in PR 2.
     fn vm_grp_by_numeric_key() {
         let source = "key x:n>t;str x main xs:L n>M t L n;grp key xs";
         let result = vm_run(
@@ -23089,7 +23170,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // Dynamic dispatch (OP_CALL_DYN emission) arrives in PR 2.
     fn vm_grp_empty_list() {
         let source = "id x:n>t;str x main xs:L n>M t L n;grp id xs";
         let result = vm_run(source, Some("main"), vec![Value::List(Arc::new(vec![]))]);
@@ -23109,14 +23189,12 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // Dynamic dispatch (OP_CALL_DYN emission) arrives in PR 2.
     fn vm_grp_wrong_list_arg() {
         let err = vm_run_err("id x:n>n;x f>t;grp id 42", Some("f"), vec![]);
         assert!(err.contains("grp") || err.contains("list"), "got: {err}");
     }
 
     #[test]
-    #[ignore] // Dynamic dispatch (OP_CALL_DYN emission) arrives in PR 2.
     fn vm_grp_number_key() {
         let source = "id x:n>n;x g xs:L n>_;grp id xs";
         let result = vm_run(
@@ -23135,7 +23213,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // Dynamic dispatch (OP_CALL_DYN emission) arrives in PR 2.
     fn vm_grp_bool_key() {
         let source = "pos x:n>b;>x 0 g xs:L n>_;grp pos xs";
         let result = vm_run(
@@ -23156,7 +23233,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // Dynamic dispatch (OP_CALL_DYN emission) arrives in PR 2.
     fn vm_grp_float_key() {
         let source = "half x:n>n;/x 2 g xs:L n>_;grp half xs";
         let result = vm_run(
@@ -23181,7 +23257,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // Dynamic dispatch (OP_CALL_DYN emission) arrives in PR 2.
     fn vm_grp_key_returns_list_error() {
         let source = "mk x:n>L n;[x] g xs:L n>_;grp mk xs";
         let err = vm_run_err(
@@ -23326,7 +23401,6 @@ mod tests {
     // ── srt with key fn ─────────────────────────────────────────────────
 
     #[test]
-    #[ignore] // Dynamic dispatch (OP_CALL_DYN emission) arrives in PR 2.
     fn vm_srt_fn_by_length() {
         let source = "ln s:t>n;len s main xs:L t>L t;srt ln xs";
         let result = vm_run(
@@ -23349,7 +23423,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // Dynamic dispatch (OP_CALL_DYN emission) arrives in PR 2.
     fn vm_srt_fn_numeric_key() {
         let source = "neg x:n>n;-x main xs:L n>L n;srt neg xs";
         let result = vm_run(
@@ -23372,7 +23445,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // Dynamic dispatch (OP_CALL_DYN emission) arrives in PR 2.
     fn vm_srt_key_fn_text_keys() {
         let source = "id x:t>t;x main xs:L t>L t;srt id xs";
         let result = vm_run(
@@ -23395,7 +23467,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // Dynamic dispatch (OP_CALL_DYN emission) arrives in PR 2.
     fn vm_srt_key_fn_wrong_second_arg() {
         let source = "sq x:n>n;*x x f>n;srt sq 42";
         let err = vm_run_err(source, Some("f"), vec![]);
@@ -23424,7 +23495,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // Dynamic dispatch (OP_CALL_DYN emission) arrives in PR 2.
     fn vm_srt_bool_key_equal_ordering() {
         let source = "pos x:n>b;> x 0 f>L n;srt pos [3,-1,2,-2]";
         let result = vm_run(source, Some("f"), vec![]);
@@ -23915,7 +23985,7 @@ mod tests {
     // ── FnRef callee from scope ─────────────────────────────────────────
 
     #[test]
-    #[ignore] // Dynamic dispatch (OP_CALL_DYN emission) arrives in PR 2.
+    #[ignore] // Direct FnRef-variable call (OP_CALL_DYN from Expr::Call) arrives in PR 3d.
     fn vm_fnref_callee_from_scope() {
         let source = "sq x:n>n;*x x f cb:z>n;cb 3";
         let result = vm_run(source, Some("f"), vec![Value::FnRef("sq".into())]);
@@ -23923,14 +23993,14 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // Dynamic dispatch (OP_CALL_DYN emission) arrives in PR 2.
+    #[ignore] // Direct FnRef-variable call (OP_CALL_DYN from Expr::Call) arrives in PR 3d.
     fn vm_fn_ref_via_ref_expr() {
         let source = "dbl x:n>n;*x 2 main>n;f=dbl;f 10";
         assert_eq!(vm_run(source, Some("main"), vec![]), Value::Number(20.0));
     }
 
     #[test]
-    #[ignore] // Dynamic dispatch (OP_CALL_DYN emission) arrives in PR 2.
+    #[ignore] // Direct FnRef-variable call (OP_CALL_DYN from Expr::Call) arrives in PR 3d.
     fn vm_text_callee_from_scope() {
         let source = "sq x:n>n;*x x f cb:z>n;cb 3";
         let result = vm_run(
@@ -23942,7 +24012,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // Dynamic dispatch (OP_CALL_DYN emission) arrives in PR 2.
+    #[ignore] // Direct FnRef-variable call (OP_CALL_DYN from Expr::Call) arrives in PR 3d.
     fn vm_user_hof_fn_type() {
         let source = "sq x:n>n;*x x apl f:F n n x:n>n;f x";
         let result = vm_run(
@@ -26471,6 +26541,7 @@ f>n;r=mk 10 20;+r.x r.y";
             ]],
             type_registry: TypeRegistry::default(),
             is_tool: vec![false],
+            ast: None,
         };
 
         let list_arg = Value::List(Arc::new(vec![
@@ -26523,6 +26594,7 @@ f>n;r=mk 10 20;+r.x r.y";
             nan_constants: vec![vec![NanVal::number(99.0), NanVal::nil()]],
             type_registry: TypeRegistry::default(),
             is_tool: vec![false],
+            ast: None,
         };
 
         let list_arg = Value::List(Arc::new(vec![
@@ -26571,6 +26643,7 @@ f>n;r=mk 10 20;+r.x r.y";
             nan_constants: vec![vec![NanVal::number(0.0), NanVal::nil()]],
             type_registry: TypeRegistry::default(),
             is_tool: vec![false],
+            ast: None,
         };
 
         // Pass a number as the collection arg → triggers "foreach requires a list"
@@ -26674,6 +26747,7 @@ f>n;r=mk 10 20;+r.x r.y";
             nan_constants: vec![vec![], vec![]],
             type_registry: TypeRegistry::default(),
             is_tool: vec![false, false],
+            ast: None,
         };
 
         // g falls through with no RET → returns nil; f returns that nil
@@ -26813,6 +26887,7 @@ f>n;r=mk 10 20;+r.x r.y";
             nan_constants: vec![vec![NanVal::nil()]],
             type_registry: TypeRegistry::default(),
             is_tool: vec![false],
+            ast: None,
         };
 
         let list_arg = Value::List(Arc::new(vec![Value::Number(1.0), Value::Number(2.0)]));
@@ -26889,6 +26964,7 @@ f>n;r=mk 10 20;+r.x r.y";
             nan_constants: vec![vec![NanVal::number(0.0), NanVal::nil()]],
             type_registry: TypeRegistry::default(),
             is_tool: vec![false],
+            ast: None,
         };
 
         // Pass a string as the collection → is_heap()=true but not a list → error
@@ -26965,6 +27041,7 @@ f>n;r=mk 10 20;+r.x r.y";
             nan_constants: vec![vec![NanVal::nil()]],
             type_registry: TypeRegistry::default(),
             is_tool: vec![false],
+            ast: None,
         };
         let result = run(&program, Some("f"), vec![]).expect("sqrt nil should not error");
         match result {
@@ -26992,6 +27069,7 @@ f>n;r=mk 10 20;+r.x r.y";
             nan_constants: vec![vec![NanVal::nil()]],
             type_registry: TypeRegistry::default(),
             is_tool: vec![false],
+            ast: None,
         };
         let result = run(&program, Some("f"), vec![]).expect("pow nil should not error");
         match result {
@@ -27020,6 +27098,7 @@ f>n;r=mk 10 20;+r.x r.y";
                 nan_constants: vec![vec![NanVal::nil()]],
                 type_registry: TypeRegistry::default(),
                 is_tool: vec![false],
+                ast: None,
             };
             let result = run(&program, Some("f"), vec![]).expect("math op on nil should not error");
             match result {
@@ -27059,6 +27138,7 @@ f>n;r=mk 10 20;+r.x r.y";
             nan_constants: vec![vec![NanVal::number(input)]],
             type_registry: TypeRegistry::default(),
             is_tool: vec![false],
+            ast: None,
         };
         match run(&program, Some("f"), vec![]).expect("unary math op should not error") {
             Value::Number(n) => n,
@@ -27096,6 +27176,7 @@ f>n;r=mk 10 20;+r.x r.y";
             nan_constants: vec![vec![NanVal::number(2.0), NanVal::number(10.0)]],
             type_registry: TypeRegistry::default(),
             is_tool: vec![false],
+            ast: None,
         };
         match run(&program, Some("f"), vec![]).expect("pow should not error") {
             Value::Number(n) => assert!((n - 1024.0).abs() < 1e-10, "got {n}"),
@@ -27235,6 +27316,7 @@ f>n;r=mk 10 20;+r.x r.y";
             nan_constants: vec![vec![NanVal::number(1.0), NanVal::number(0.0)]],
             type_registry: TypeRegistry::default(),
             is_tool: vec![false],
+            ast: None,
         };
         match run(&program, Some("f"), vec![]).expect("atan2 should not error") {
             Value::Number(n) => {
@@ -27273,6 +27355,7 @@ f>n;r=mk 10 20;+r.x r.y";
             nan_constants: vec![vec![NanVal::boolean(true), NanVal::number(0.0)]],
             type_registry: TypeRegistry::default(),
             is_tool: vec![false],
+            ast: None,
         };
         match run(&program, Some("f"), vec![]).expect("atan2 nan path") {
             Value::Number(n) => assert!(n.is_nan(), "expected NaN, got {n}"),
@@ -27619,6 +27702,7 @@ f>n;r=mk 10 20;+r.x r.y";
             nan_constants: vec![vec![NanVal::number(5.0), NanVal::number(0.0)]],
             type_registry: TypeRegistry::default(),
             is_tool: vec![false],
+            ast: None,
         };
         match run(&program, Some("f"), vec![]).expect("rndn should not error") {
             Value::Number(n) => assert_eq!(n, 5.0),
@@ -27655,6 +27739,7 @@ f>n;r=mk 10 20;+r.x r.y";
             nan_constants: vec![vec![NanVal::number(0.0), NanVal::number(1.0)]],
             type_registry: TypeRegistry::default(),
             is_tool: vec![false],
+            ast: None,
         };
         fastrand::seed(7);
         match run(&program, Some("f"), vec![]).expect("rndn should not error") {
@@ -27692,6 +27777,7 @@ f>n;r=mk 10 20;+r.x r.y";
             nan_constants: vec![vec![NanVal::boolean(true), NanVal::number(0.0)]],
             type_registry: TypeRegistry::default(),
             is_tool: vec![false],
+            ast: None,
         };
         let res = run(&program, Some("f"), vec![]);
         assert!(res.is_err(), "expected type error, got {res:?}");
