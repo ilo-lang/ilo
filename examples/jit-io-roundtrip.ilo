@@ -1,0 +1,33 @@
+-- Cross-engine I/O round-trip: write/read text and lines, parse JSONL,
+-- and format/parse a timestamp. Pins that the Cranelift JIT helpers
+-- jit_rd/jit_rdl/jit_wr/jit_wrl/jit_jpar/jit_rdjl/jit_dtfmt/jit_dtparse
+-- agree with tree/VM on success, and that their type-error paths now
+-- surface VmError::Type through JIT_RUNTIME_ERROR instead of silently
+-- returning nil. (The type-error paths are unit-tested directly; this
+-- file pins the happy paths so the examples harness exercises them on
+-- every engine.)
+
+text-roundtrip>t;w=wr!! "/tmp/ilo-jit-io-roundtrip-text.txt" "hello";rd!! "/tmp/ilo-jit-io-roundtrip-text.txt"
+
+lines-roundtrip>n;w=wrl!! "/tmp/ilo-jit-io-roundtrip-lines.txt" ["a" "b" "c"];es=rdl!! "/tmp/ilo-jit-io-roundtrip-lines.txt";len es
+
+jsonl-count>n;p="/tmp/ilo-jit-io-roundtrip.jsonl";w=wrl!! p ["{\"k\":1}" "{\"k\":2}"];es=rdjl p;len es
+
+dt-format>t;dtfmt!! 0 "%Y-%m-%d"
+
+dt-parse>n;dtparse!! "1970-01-01" "%Y-%m-%d"
+
+-- run: text-roundtrip
+-- out: hello
+
+-- run: lines-roundtrip
+-- out: 3
+
+-- run: jsonl-count
+-- out: 2
+
+-- run: dt-format
+-- out: 1970-01-01
+
+-- run: dt-parse
+-- out: 0
