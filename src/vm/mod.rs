@@ -10296,14 +10296,24 @@ pub(crate) extern "C" fn jit_atan2(a: u64, b: u64) -> u64 {
 
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn jit_transpose(a: u64) -> u64 {
+pub(crate) extern "C" fn jit_transpose(a: u64, span_bits: u64) -> u64 {
     let v = NanVal(a);
     if !v.is_heap() {
+        jit_set_runtime_error_with_span(
+            VmError::Type("transpose requires a list of lists"),
+            span_bits,
+        );
         return TAG_NIL;
     }
     let rows = match unsafe { v.as_heap_ref() } {
         HeapObj::List(items) => items,
-        _ => return TAG_NIL,
+        _ => {
+            jit_set_runtime_error_with_span(
+                VmError::Type("transpose requires a list of lists"),
+                span_bits,
+            );
+            return TAG_NIL;
+        }
     };
     if rows.is_empty() {
         return NanVal::heap_list(vec![]).0;
@@ -10312,15 +10322,22 @@ pub(crate) extern "C" fn jit_transpose(a: u64) -> u64 {
     let mut ncols: Option<usize> = None;
     for row in rows {
         if !row.is_heap() {
+            jit_set_runtime_error_with_span(VmError::Type("transpose: ragged rows"), span_bits);
             return TAG_NIL;
         }
         let r = match unsafe { row.as_heap_ref() } {
             HeapObj::List(items) => items,
-            _ => return TAG_NIL,
+            _ => {
+                jit_set_runtime_error_with_span(VmError::Type("transpose: ragged rows"), span_bits);
+                return TAG_NIL;
+            }
         };
         match ncols {
             None => ncols = Some(r.len()),
-            Some(n) if n != r.len() => return TAG_NIL,
+            Some(n) if n != r.len() => {
+                jit_set_runtime_error_with_span(VmError::Type("transpose: ragged rows"), span_bits);
+                return TAG_NIL;
+            }
             _ => {}
         }
         row_refs.push(r);
@@ -10341,38 +10358,68 @@ pub(crate) extern "C" fn jit_transpose(a: u64) -> u64 {
 
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn jit_matmul(a: u64, b: u64) -> u64 {
+pub(crate) extern "C" fn jit_matmul(a: u64, b: u64, span_bits: u64) -> u64 {
     let va = NanVal(a);
     let vb = NanVal(b);
     if !va.is_heap() || !vb.is_heap() {
+        jit_set_runtime_error_with_span(VmError::Type("matmul requires lists of lists"), span_bits);
         return TAG_NIL;
     }
     let a_rows_v = match unsafe { va.as_heap_ref() } {
         HeapObj::List(items) => items,
-        _ => return TAG_NIL,
+        _ => {
+            jit_set_runtime_error_with_span(
+                VmError::Type("matmul requires lists of lists"),
+                span_bits,
+            );
+            return TAG_NIL;
+        }
     };
     let b_rows_v = match unsafe { vb.as_heap_ref() } {
         HeapObj::List(items) => items,
-        _ => return TAG_NIL,
+        _ => {
+            jit_set_runtime_error_with_span(
+                VmError::Type("matmul requires lists of lists"),
+                span_bits,
+            );
+            return TAG_NIL;
+        }
     };
     let mut a_mat: Vec<Vec<f64>> = Vec::with_capacity(a_rows_v.len());
     let mut a_cols: Option<usize> = None;
     for row in a_rows_v {
         if !row.is_heap() {
+            jit_set_runtime_error_with_span(VmError::Type("matmul: rows must be lists"), span_bits);
             return TAG_NIL;
         }
         let r = match unsafe { row.as_heap_ref() } {
             HeapObj::List(items) => items,
-            _ => return TAG_NIL,
+            _ => {
+                jit_set_runtime_error_with_span(
+                    VmError::Type("matmul: rows must be lists"),
+                    span_bits,
+                );
+                return TAG_NIL;
+            }
         };
         match a_cols {
             None => a_cols = Some(r.len()),
-            Some(n) if n != r.len() => return TAG_NIL,
+            Some(n) if n != r.len() => {
+                jit_set_runtime_error_with_span(
+                    VmError::Type("matmul: ragged rows in first arg"),
+                    span_bits,
+                );
+                return TAG_NIL;
+            }
             _ => {}
         }
         let mut nums = Vec::with_capacity(r.len());
         for v in r {
             if !v.is_number() {
+                jit_set_runtime_error_with_span(
+                    VmError::Type("matmul: elements must be numbers"),
+                    span_bits,
+                );
                 return TAG_NIL;
             }
             nums.push(v.as_number());
@@ -10383,20 +10430,37 @@ pub(crate) extern "C" fn jit_matmul(a: u64, b: u64) -> u64 {
     let mut b_cols: Option<usize> = None;
     for row in b_rows_v {
         if !row.is_heap() {
+            jit_set_runtime_error_with_span(VmError::Type("matmul: rows must be lists"), span_bits);
             return TAG_NIL;
         }
         let r = match unsafe { row.as_heap_ref() } {
             HeapObj::List(items) => items,
-            _ => return TAG_NIL,
+            _ => {
+                jit_set_runtime_error_with_span(
+                    VmError::Type("matmul: rows must be lists"),
+                    span_bits,
+                );
+                return TAG_NIL;
+            }
         };
         match b_cols {
             None => b_cols = Some(r.len()),
-            Some(n) if n != r.len() => return TAG_NIL,
+            Some(n) if n != r.len() => {
+                jit_set_runtime_error_with_span(
+                    VmError::Type("matmul: ragged rows in second arg"),
+                    span_bits,
+                );
+                return TAG_NIL;
+            }
             _ => {}
         }
         let mut nums = Vec::with_capacity(r.len());
         for v in r {
             if !v.is_number() {
+                jit_set_runtime_error_with_span(
+                    VmError::Type("matmul: elements must be numbers"),
+                    span_bits,
+                );
                 return TAG_NIL;
             }
             nums.push(v.as_number());
@@ -10408,6 +10472,7 @@ pub(crate) extern "C" fn jit_matmul(a: u64, b: u64) -> u64 {
     let b_rows_n = b_mat.len();
     let b_cols_n = b_cols.unwrap_or(0);
     if a_cols_n != b_rows_n {
+        jit_set_runtime_error_with_span(VmError::Type("matmul: shape mismatch"), span_bits);
         return TAG_NIL;
     }
     let mut out: Vec<NanVal> = Vec::with_capacity(a_rows_n);
@@ -10428,27 +10493,39 @@ pub(crate) extern "C" fn jit_matmul(a: u64, b: u64) -> u64 {
 
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn jit_dot(a: u64, b: u64) -> u64 {
+pub(crate) extern "C" fn jit_dot(a: u64, b: u64, span_bits: u64) -> u64 {
     let va = NanVal(a);
     let vb = NanVal(b);
     if !va.is_heap() || !vb.is_heap() {
-        return NanVal::number(f64::NAN).0;
+        jit_set_runtime_error_with_span(VmError::Type("dot requires two lists"), span_bits);
+        return TAG_NIL;
     }
     let xs = match unsafe { va.as_heap_ref() } {
         HeapObj::List(items) => items,
-        _ => return NanVal::number(f64::NAN).0,
+        _ => {
+            jit_set_runtime_error_with_span(VmError::Type("dot requires two lists"), span_bits);
+            return TAG_NIL;
+        }
     };
     let ys = match unsafe { vb.as_heap_ref() } {
         HeapObj::List(items) => items,
-        _ => return NanVal::number(f64::NAN).0,
+        _ => {
+            jit_set_runtime_error_with_span(VmError::Type("dot requires two lists"), span_bits);
+            return TAG_NIL;
+        }
     };
     if xs.len() != ys.len() {
-        return NanVal::number(f64::NAN).0;
+        jit_set_runtime_error_with_span(VmError::Type("dot: length mismatch"), span_bits);
+        return TAG_NIL;
     }
     let mut total = 0.0_f64;
     for (x, y) in xs.iter().zip(ys.iter()) {
         if !x.is_number() || !y.is_number() {
-            return NanVal::number(f64::NAN).0;
+            jit_set_runtime_error_with_span(
+                VmError::Type("dot: list elements must be numbers"),
+                span_bits,
+            );
+            return TAG_NIL;
         }
         total += x.as_number() * y.as_number();
     }
@@ -10457,19 +10534,24 @@ pub(crate) extern "C" fn jit_dot(a: u64, b: u64) -> u64 {
 
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn jit_det(a: u64) -> u64 {
+pub(crate) extern "C" fn jit_det(a: u64, span_bits: u64) -> u64 {
     let v = NanVal(a);
     let mat = match nanval_to_matrix(v) {
         Ok(m) => m,
-        Err(_) => return NanVal::number(f64::NAN).0,
+        Err(e) => {
+            jit_set_runtime_error_with_span(VmError::Type(e), span_bits);
+            return TAG_NIL;
+        }
     };
     let n = mat.len();
     if n == 0 {
-        return NanVal::number(f64::NAN).0;
+        jit_set_runtime_error_with_span(VmError::Type("det: empty matrix"), span_bits);
+        return TAG_NIL;
     }
     for row in &mat {
         if row.len() != n {
-            return NanVal::number(f64::NAN).0;
+            jit_set_runtime_error_with_span(VmError::Type("det: matrix must be square"), span_bits);
+            return TAG_NIL;
         }
     }
     let (_lu, _piv, det, _singular) = crate::interpreter::lu_decompose(mat);
@@ -10478,23 +10560,29 @@ pub(crate) extern "C" fn jit_det(a: u64) -> u64 {
 
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn jit_inv(a: u64) -> u64 {
+pub(crate) extern "C" fn jit_inv(a: u64, span_bits: u64) -> u64 {
     let v = NanVal(a);
     let mat = match nanval_to_matrix(v) {
         Ok(m) => m,
-        Err(_) => return TAG_NIL,
+        Err(e) => {
+            jit_set_runtime_error_with_span(VmError::Type(e), span_bits);
+            return TAG_NIL;
+        }
     };
     let n = mat.len();
     if n == 0 {
+        jit_set_runtime_error_with_span(VmError::Type("inv: empty matrix"), span_bits);
         return TAG_NIL;
     }
     for row in &mat {
         if row.len() != n {
+            jit_set_runtime_error_with_span(VmError::Type("inv: matrix must be square"), span_bits);
             return TAG_NIL;
         }
     }
     let (lu, piv, _det, singular) = crate::interpreter::lu_decompose(mat);
     if singular {
+        jit_set_runtime_error_with_span(VmError::Type("inv: matrix is singular"), span_bits);
         return TAG_NIL;
     }
     let mut cols: Vec<Vec<f64>> = Vec::with_capacity(n);
@@ -10514,31 +10602,47 @@ pub(crate) extern "C" fn jit_inv(a: u64) -> u64 {
 
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn jit_solve(a: u64, b: u64) -> u64 {
+pub(crate) extern "C" fn jit_solve(a: u64, b: u64, span_bits: u64) -> u64 {
     let va = NanVal(a);
     let vb = NanVal(b);
     let mat = match nanval_to_matrix(va) {
         Ok(m) => m,
-        Err(_) => return TAG_NIL,
+        Err(e) => {
+            jit_set_runtime_error_with_span(VmError::Type(e), span_bits);
+            return TAG_NIL;
+        }
     };
     let vec_b = match nanval_to_vec(vb) {
         Ok(v) => v,
-        Err(_) => return TAG_NIL,
+        Err(e) => {
+            jit_set_runtime_error_with_span(VmError::Type(e), span_bits);
+            return TAG_NIL;
+        }
     };
     let n = mat.len();
     if n == 0 {
+        jit_set_runtime_error_with_span(VmError::Type("solve: empty matrix"), span_bits);
         return TAG_NIL;
     }
     for row in &mat {
         if row.len() != n {
+            jit_set_runtime_error_with_span(
+                VmError::Type("solve: matrix must be square"),
+                span_bits,
+            );
             return TAG_NIL;
         }
     }
     if vec_b.len() != n {
+        jit_set_runtime_error_with_span(
+            VmError::Type("solve: vector length must match matrix size"),
+            span_bits,
+        );
         return TAG_NIL;
     }
     let (lu, piv, _det, singular) = crate::interpreter::lu_decompose(mat);
     if singular {
+        jit_set_runtime_error_with_span(VmError::Type("solve: matrix is singular"), span_bits);
         return TAG_NIL;
     }
     let x = crate::interpreter::lu_solve(&lu, &piv, &vec_b);
@@ -11507,55 +11611,73 @@ fn vm_stdev(v: NanVal) -> Result<NanVal, &'static str> {
 
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn jit_median(a: u64) -> u64 {
+pub(crate) extern "C" fn jit_median(a: u64, span_bits: u64) -> u64 {
     match vm_median(NanVal(a)) {
         Ok(v) => v.0,
-        Err(_) => TAG_NIL,
+        Err(e) => {
+            jit_set_runtime_error_with_span(VmError::Type(e), span_bits);
+            TAG_NIL
+        }
     }
 }
 
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn jit_quantile(a: u64, b: u64) -> u64 {
+pub(crate) extern "C" fn jit_quantile(a: u64, b: u64, span_bits: u64) -> u64 {
     match vm_quantile(NanVal(a), NanVal(b)) {
         Ok(v) => v.0,
-        Err(_) => TAG_NIL,
+        Err(e) => {
+            jit_set_runtime_error_with_span(VmError::Type(e), span_bits);
+            TAG_NIL
+        }
     }
 }
 
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn jit_stdev(a: u64) -> u64 {
+pub(crate) extern "C" fn jit_stdev(a: u64, span_bits: u64) -> u64 {
     match vm_stdev(NanVal(a)) {
         Ok(v) => v.0,
-        Err(_) => TAG_NIL,
+        Err(e) => {
+            jit_set_runtime_error_with_span(VmError::Type(e), span_bits);
+            TAG_NIL
+        }
     }
 }
 
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn jit_variance(a: u64) -> u64 {
+pub(crate) extern "C" fn jit_variance(a: u64, span_bits: u64) -> u64 {
     match vm_variance(NanVal(a)) {
         Ok(v) => v.0,
-        Err(_) => TAG_NIL,
+        Err(e) => {
+            jit_set_runtime_error_with_span(VmError::Type(e), span_bits);
+            TAG_NIL
+        }
     }
 }
 
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn jit_fft(a: u64) -> u64 {
+pub(crate) extern "C" fn jit_fft(a: u64, span_bits: u64) -> u64 {
     match vm_fft_real_to_pairs(NanVal(a)) {
         Ok(v) => v.0,
-        Err(_) => TAG_NIL,
+        Err(e) => {
+            jit_set_runtime_error_with_span(VmError::Type(e), span_bits);
+            TAG_NIL
+        }
     }
 }
 
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn jit_ifft(a: u64) -> u64 {
+pub(crate) extern "C" fn jit_ifft(a: u64, span_bits: u64) -> u64 {
     match vm_ifft_pairs_to_real(NanVal(a)) {
         Ok(v) => v.0,
-        Err(_) => TAG_NIL,
+        Err(e) => {
+            jit_set_runtime_error_with_span(VmError::Type(e), span_bits);
+            TAG_NIL
+        }
     }
 }
 
@@ -20175,6 +20297,290 @@ mod tests {
             };
             // 20 zeros after the decimal point.
             assert_eq!(s.clone(), format!("1.{}", "0".repeat(20)));
+        }
+
+        // ── Batch 6: stats + linalg JIT-helper error-path coverage ────────
+        //
+        // Before this sweep, each helper below silently returned TAG_NIL
+        // (or NaN for jit_dot / jit_det) on the type-error path, diverging
+        // from tree/VM which both raise. The fix routes each failure path
+        // through the JIT_RUNTIME_ERROR TLS cell so the JIT entry point
+        // surfaces a VmRuntimeError matching tree/VM diagnostics.
+
+        fn list_of_nums(vs: &[f64]) -> u64 {
+            let items: Vec<NanVal> = vs.iter().copied().map(NanVal::number).collect();
+            NanVal::heap_list(items).0
+        }
+
+        // ── stats ────────────────────────────────────────────────────────
+
+        #[test]
+        fn jit_median_happy() {
+            let r = jit_median(list_of_nums(&[3.0, 1.0, 2.0]), 0);
+            assert!(is_num(r));
+            assert_eq!(as_num(r), 2.0);
+        }
+
+        #[test]
+        fn jit_median_non_list_signals_runtime_error() {
+            let _ = jit_take_runtime_error();
+            let r = jit_median(num(1.0), 0);
+            assert!(is_nil(r));
+            let err = jit_take_runtime_error().expect("expected pending error");
+            assert!(matches!(err.0, VmError::Type(msg) if msg.contains("median")));
+        }
+
+        #[test]
+        fn jit_quantile_happy() {
+            let r = jit_quantile(list_of_nums(&[1.0, 2.0, 3.0, 4.0]), num(0.5), 0);
+            assert!(is_num(r));
+            assert!((as_num(r) - 2.5).abs() < 1e-9);
+        }
+
+        #[test]
+        fn jit_quantile_non_number_p_signals_runtime_error() {
+            let _ = jit_take_runtime_error();
+            let r = jit_quantile(list_of_nums(&[1.0, 2.0]), TAG_NIL, 0);
+            assert!(is_nil(r));
+            let err = jit_take_runtime_error().expect("expected pending error");
+            assert!(matches!(err.0, VmError::Type(msg) if msg.contains("quantile")));
+        }
+
+        #[test]
+        fn jit_stdev_happy() {
+            let r = jit_stdev(list_of_nums(&[1.0, 2.0, 3.0, 4.0, 5.0]), 0);
+            assert!(is_num(r));
+            // sample stdev of [1..5] = sqrt(2.5)
+            assert!((as_num(r) - (2.5_f64).sqrt()).abs() < 1e-9);
+        }
+
+        #[test]
+        fn jit_stdev_single_sample_signals_runtime_error() {
+            let _ = jit_take_runtime_error();
+            let r = jit_stdev(list_of_nums(&[42.0]), 0);
+            assert!(is_nil(r));
+            let err = jit_take_runtime_error().expect("expected pending error");
+            assert!(matches!(err.0, VmError::Type(msg) if msg.contains("stdev")));
+        }
+
+        #[test]
+        fn jit_variance_happy() {
+            let r = jit_variance(list_of_nums(&[1.0, 2.0, 3.0, 4.0, 5.0]), 0);
+            assert!(is_num(r));
+            assert!((as_num(r) - 2.5).abs() < 1e-9);
+        }
+
+        #[test]
+        fn jit_variance_non_list_signals_runtime_error() {
+            let _ = jit_take_runtime_error();
+            let r = jit_variance(num(1.0), 0);
+            assert!(is_nil(r));
+            let err = jit_take_runtime_error().expect("expected pending error");
+            assert!(matches!(err.0, VmError::Type(msg) if msg.contains("variance")));
+        }
+
+        #[test]
+        fn jit_fft_happy() {
+            let r = jit_fft(list_of_nums(&[1.0, 0.0, 0.0, 0.0]), 0);
+            let rv = NanVal(r);
+            assert!(rv.is_heap());
+        }
+
+        #[test]
+        fn jit_fft_non_list_signals_runtime_error() {
+            let _ = jit_take_runtime_error();
+            let r = jit_fft(num(1.0), 0);
+            assert!(is_nil(r));
+            let err = jit_take_runtime_error().expect("expected pending error");
+            assert!(matches!(err.0, VmError::Type(msg) if msg.contains("fft")));
+        }
+
+        #[test]
+        fn jit_ifft_non_list_signals_runtime_error() {
+            let _ = jit_take_runtime_error();
+            let r = jit_ifft(num(1.0), 0);
+            assert!(is_nil(r));
+            let err = jit_take_runtime_error().expect("expected pending error");
+            assert!(matches!(err.0, VmError::Type(msg) if msg.contains("ifft")));
+        }
+
+        // ── linalg ───────────────────────────────────────────────────────
+
+        fn list_of_lists(rows: &[&[f64]]) -> u64 {
+            let inner: Vec<NanVal> = rows
+                .iter()
+                .map(|r| {
+                    let items: Vec<NanVal> = r.iter().copied().map(NanVal::number).collect();
+                    NanVal::heap_list(items)
+                })
+                .collect();
+            NanVal::heap_list(inner).0
+        }
+
+        #[test]
+        fn jit_transpose_happy() {
+            let r = jit_transpose(list_of_lists(&[&[1.0, 2.0], &[3.0, 4.0]]), 0);
+            let rv = NanVal(r);
+            assert!(rv.is_heap());
+        }
+
+        #[test]
+        fn jit_transpose_non_list_signals_runtime_error() {
+            let _ = jit_take_runtime_error();
+            let r = jit_transpose(num(1.0), 0);
+            assert!(is_nil(r));
+            let err = jit_take_runtime_error().expect("expected pending error");
+            assert!(matches!(err.0, VmError::Type(msg) if msg.contains("transpose")));
+        }
+
+        #[test]
+        fn jit_transpose_ragged_rows_signals_runtime_error() {
+            let _ = jit_take_runtime_error();
+            let r = jit_transpose(list_of_lists(&[&[1.0, 2.0], &[3.0]]), 0);
+            assert!(is_nil(r));
+            let err = jit_take_runtime_error().expect("expected pending error");
+            assert!(matches!(err.0, VmError::Type(msg) if msg.contains("ragged")));
+        }
+
+        #[test]
+        fn jit_matmul_happy() {
+            let a = list_of_lists(&[&[1.0, 2.0], &[3.0, 4.0]]);
+            let b = list_of_lists(&[&[5.0, 6.0], &[7.0, 8.0]]);
+            let r = jit_matmul(a, b, 0);
+            let rv = NanVal(r);
+            assert!(rv.is_heap());
+        }
+
+        #[test]
+        fn jit_matmul_shape_mismatch_signals_runtime_error() {
+            let _ = jit_take_runtime_error();
+            let a = list_of_lists(&[&[1.0, 2.0]]);
+            let b = list_of_lists(&[&[1.0, 2.0]]);
+            // a is 1x2, b is 1x2 → cannot multiply
+            let r = jit_matmul(a, b, 0);
+            assert!(is_nil(r));
+            let err = jit_take_runtime_error().expect("expected pending error");
+            assert!(matches!(err.0, VmError::Type(msg) if msg.contains("shape mismatch")));
+        }
+
+        #[test]
+        fn jit_matmul_non_list_signals_runtime_error() {
+            let _ = jit_take_runtime_error();
+            let r = jit_matmul(num(1.0), num(2.0), 0);
+            assert!(is_nil(r));
+            let err = jit_take_runtime_error().expect("expected pending error");
+            assert!(matches!(err.0, VmError::Type(msg) if msg.contains("matmul")));
+        }
+
+        #[test]
+        fn jit_dot_happy() {
+            let r = jit_dot(
+                list_of_nums(&[1.0, 2.0, 3.0]),
+                list_of_nums(&[4.0, 5.0, 6.0]),
+                0,
+            );
+            assert!(is_num(r));
+            assert_eq!(as_num(r), 32.0);
+        }
+
+        #[test]
+        fn jit_dot_length_mismatch_signals_runtime_error() {
+            let _ = jit_take_runtime_error();
+            let r = jit_dot(list_of_nums(&[1.0, 2.0]), list_of_nums(&[1.0, 2.0, 3.0]), 0);
+            assert!(is_nil(r));
+            let err = jit_take_runtime_error().expect("expected pending error");
+            assert!(matches!(err.0, VmError::Type(msg) if msg.contains("length mismatch")));
+        }
+
+        #[test]
+        fn jit_dot_non_list_signals_runtime_error() {
+            let _ = jit_take_runtime_error();
+            let r = jit_dot(num(1.0), num(2.0), 0);
+            assert!(is_nil(r));
+            let err = jit_take_runtime_error().expect("expected pending error");
+            assert!(matches!(err.0, VmError::Type(msg) if msg.contains("dot")));
+        }
+
+        #[test]
+        fn jit_det_happy() {
+            // det([[1,2],[3,4]]) = -2
+            let r = jit_det(list_of_lists(&[&[1.0, 2.0], &[3.0, 4.0]]), 0);
+            assert!(is_num(r));
+            assert!((as_num(r) - -2.0).abs() < 1e-9);
+        }
+
+        #[test]
+        fn jit_det_non_square_signals_runtime_error() {
+            let _ = jit_take_runtime_error();
+            let r = jit_det(list_of_lists(&[&[1.0, 2.0, 3.0], &[4.0, 5.0, 6.0]]), 0);
+            assert!(is_nil(r));
+            let err = jit_take_runtime_error().expect("expected pending error");
+            assert!(matches!(err.0, VmError::Type(msg) if msg.contains("det")));
+        }
+
+        #[test]
+        fn jit_inv_happy() {
+            // inv([[1,0],[0,1]]) = identity
+            let r = jit_inv(list_of_lists(&[&[1.0, 0.0], &[0.0, 1.0]]), 0);
+            let rv = NanVal(r);
+            assert!(rv.is_heap());
+        }
+
+        #[test]
+        fn jit_inv_singular_signals_runtime_error() {
+            let _ = jit_take_runtime_error();
+            // [[1,2],[2,4]] is singular
+            let r = jit_inv(list_of_lists(&[&[1.0, 2.0], &[2.0, 4.0]]), 0);
+            assert!(is_nil(r));
+            let err = jit_take_runtime_error().expect("expected pending error");
+            assert!(matches!(err.0, VmError::Type(msg) if msg.contains("singular")));
+        }
+
+        #[test]
+        fn jit_inv_non_square_signals_runtime_error() {
+            let _ = jit_take_runtime_error();
+            let r = jit_inv(list_of_lists(&[&[1.0, 2.0, 3.0]]), 0);
+            assert!(is_nil(r));
+            let err = jit_take_runtime_error().expect("expected pending error");
+            assert!(matches!(err.0, VmError::Type(msg) if msg.contains("inv")));
+        }
+
+        #[test]
+        fn jit_solve_happy() {
+            // Solve [[1,0],[0,1]] * x = [3, 4] → x = [3, 4]
+            let r = jit_solve(
+                list_of_lists(&[&[1.0, 0.0], &[0.0, 1.0]]),
+                list_of_nums(&[3.0, 4.0]),
+                0,
+            );
+            let rv = NanVal(r);
+            assert!(rv.is_heap());
+        }
+
+        #[test]
+        fn jit_solve_singular_signals_runtime_error() {
+            let _ = jit_take_runtime_error();
+            let r = jit_solve(
+                list_of_lists(&[&[1.0, 2.0], &[2.0, 4.0]]),
+                list_of_nums(&[1.0, 2.0]),
+                0,
+            );
+            assert!(is_nil(r));
+            let err = jit_take_runtime_error().expect("expected pending error");
+            assert!(matches!(err.0, VmError::Type(msg) if msg.contains("singular")));
+        }
+
+        #[test]
+        fn jit_solve_vector_size_mismatch_signals_runtime_error() {
+            let _ = jit_take_runtime_error();
+            let r = jit_solve(
+                list_of_lists(&[&[1.0, 0.0], &[0.0, 1.0]]),
+                list_of_nums(&[1.0, 2.0, 3.0]),
+                0,
+            );
+            assert!(is_nil(r));
+            let err = jit_take_runtime_error().expect("expected pending error");
+            assert!(matches!(err.0, VmError::Type(msg) if msg.contains("vector length")));
         }
     }
 
