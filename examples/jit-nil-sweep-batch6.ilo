@@ -1,0 +1,54 @@
+-- Positive paths for the batch-6 helpers (Group D: stats + linalg). The
+-- companion regression suite asserts that the error paths now route
+-- through JIT_RUNTIME_ERROR with packed span_bits; this example pins the
+-- happy paths cross-engine via the examples_engines harness so future
+-- codegen changes can't silently regress them.
+
+median-list>n;median [3 1 2]
+quantile-list>n;quantile [1 2 3 4] 0.5
+stdev-list>n;stdev [1 2 3 4 5]
+variance-list>n;variance [1 2 3 4 5]
+fft-list>L (L n);fft [1 0 0 0]
+ifft-list>L n;ifft [[1 0] [1 0] [1 0] [1 0]]
+transpose-mat>L (L n);transpose [[1 2] [3 4]]
+matmul-id>L (L n);matmul [[1 0] [0 1]] [[2 3] [4 5]]
+dot-vecs>n;dot [1 2 3] [4 5 6]
+det-2x2>n;det [[1 2] [3 4]]
+inv-id>L (L n);inv [[1 0] [0 1]]
+solve-id>L n;solve [[1 0] [0 1]] [3 4]
+
+-- run: median-list
+-- out: 2
+
+-- run: quantile-list
+-- out: 2.5
+
+-- run: stdev-list
+-- out: 1.5811388300841898
+
+-- run: variance-list
+-- out: 2.5
+
+-- run: fft-list
+-- out: [[1, 0], [1, 0], [1, 0], [1, 0]]
+
+-- run: ifft-list
+-- out: [1, 0, 0, 0]
+
+-- run: transpose-mat
+-- out: [[1, 3], [2, 4]]
+
+-- run: matmul-id
+-- out: [[2, 3], [4, 5]]
+
+-- run: dot-vecs
+-- out: 32
+
+-- run: det-2x2
+-- out: -2
+
+-- run: inv-id
+-- out: [[1, 0], [0, 1]]
+
+-- run: solve-id
+-- out: [3, 4]
