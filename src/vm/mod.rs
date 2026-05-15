@@ -13108,9 +13108,10 @@ pub(crate) extern "C" fn jit_jdmp(a: u64) -> u64 {
 
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn jit_jpar(a: u64) -> u64 {
+pub(crate) extern "C" fn jit_jpar(a: u64, span_bits: u64) -> u64 {
     let v = NanVal(a);
     if !v.is_string() {
+        jit_set_runtime_error_with_span(VmError::Type("jpar requires a string"), span_bits);
         return TAG_NIL;
     }
     let text = unsafe {
@@ -13127,9 +13128,10 @@ pub(crate) extern "C" fn jit_jpar(a: u64) -> u64 {
 
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn jit_rdjl(a: u64) -> u64 {
+pub(crate) extern "C" fn jit_rdjl(a: u64, span_bits: u64) -> u64 {
     let v = NanVal(a);
     if !v.is_string() {
+        jit_set_runtime_error_with_span(VmError::Type("rdjl requires a string path"), span_bits);
         return TAG_NIL;
     }
     let path = unsafe {
@@ -13153,20 +13155,31 @@ pub(crate) extern "C" fn jit_rdjl(a: u64) -> u64 {
             }
             NanVal::heap_list(items).0
         }
-        // On file-read failure JIT returns nil; the VM dispatch path raises a
-        // typed runtime error. JIT helper-callers don't have a runtime-error
-        // channel, so nil is the conventional signal here (matches jit_rd /
-        // jit_jpar conventions for non-string inputs).
-        Err(_) => TAG_NIL,
+        // Mirror the VM's OP_RDJL handler: a read failure raises VmError::Type
+        // rather than wrapping the io::Error in a result. The error path
+        // surfaces through the JIT_RUNTIME_ERROR channel so cranelift renders
+        // the same diagnostic as tree/VM.
+        Err(_) => {
+            jit_set_runtime_error_with_span(VmError::Type("rdjl failed to read file"), span_bits);
+            TAG_NIL
+        }
     }
 }
 
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn jit_dtfmt(epoch: u64, fmt: u64) -> u64 {
+pub(crate) extern "C" fn jit_dtfmt(epoch: u64, fmt: u64, span_bits: u64) -> u64 {
     let ev = NanVal(epoch);
     let fv = NanVal(fmt);
-    if !ev.is_number() || !fv.is_string() {
+    if !ev.is_number() {
+        jit_set_runtime_error_with_span(
+            VmError::Type("dtfmt requires a number (epoch)"),
+            span_bits,
+        );
+        return TAG_NIL;
+    }
+    if !fv.is_string() {
+        jit_set_runtime_error_with_span(VmError::Type("dtfmt requires a string format"), span_bits);
         return TAG_NIL;
     }
     let e_f = ev.as_number();
@@ -13202,10 +13215,11 @@ pub(crate) extern "C" fn jit_dtfmt(epoch: u64, fmt: u64) -> u64 {
 
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn jit_dtparse(text: u64, fmt: u64) -> u64 {
+pub(crate) extern "C" fn jit_dtparse(text: u64, fmt: u64, span_bits: u64) -> u64 {
     let tv = NanVal(text);
     let fv = NanVal(fmt);
     if !tv.is_string() || !fv.is_string() {
+        jit_set_runtime_error_with_span(VmError::Type("dtparse requires two strings"), span_bits);
         return TAG_NIL;
     }
     let t_str = unsafe {
@@ -13852,9 +13866,10 @@ pub(crate) extern "C" fn jit_frq(v: u64) -> u64 {
 
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn jit_rd(v: u64) -> u64 {
+pub(crate) extern "C" fn jit_rd(v: u64, span_bits: u64) -> u64 {
     let nv = NanVal(v);
     if !nv.is_string() {
+        jit_set_runtime_error_with_span(VmError::Type("rd requires a string path"), span_bits);
         return TAG_NIL;
     }
     let path = unsafe {
@@ -13879,9 +13894,10 @@ pub(crate) extern "C" fn jit_rd(v: u64) -> u64 {
 
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn jit_rdl(v: u64) -> u64 {
+pub(crate) extern "C" fn jit_rdl(v: u64, span_bits: u64) -> u64 {
     let nv = NanVal(v);
     if !nv.is_string() {
+        jit_set_runtime_error_with_span(VmError::Type("rdl requires a string path"), span_bits);
         return TAG_NIL;
     }
     let path = unsafe {
@@ -13904,10 +13920,15 @@ pub(crate) extern "C" fn jit_rdl(v: u64) -> u64 {
 
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn jit_wr(path_v: u64, content_v: u64) -> u64 {
+pub(crate) extern "C" fn jit_wr(path_v: u64, content_v: u64, span_bits: u64) -> u64 {
     let pv = NanVal(path_v);
     let cv = NanVal(content_v);
-    if !pv.is_string() || !cv.is_string() {
+    if !pv.is_string() {
+        jit_set_runtime_error_with_span(VmError::Type("wr arg 1 must be a string path"), span_bits);
+        return TAG_NIL;
+    }
+    if !cv.is_string() {
+        jit_set_runtime_error_with_span(VmError::Type("wr arg 2 must be a string"), span_bits);
         return TAG_NIL;
     }
     let path = unsafe {
@@ -13930,10 +13951,14 @@ pub(crate) extern "C" fn jit_wr(path_v: u64, content_v: u64) -> u64 {
 
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn jit_wrl(path_v: u64, list_v: u64) -> u64 {
+pub(crate) extern "C" fn jit_wrl(path_v: u64, list_v: u64, span_bits: u64) -> u64 {
     let pv = NanVal(path_v);
     let lv = NanVal(list_v);
     if !pv.is_string() {
+        jit_set_runtime_error_with_span(
+            VmError::Type("wrl arg 1 must be a string path"),
+            span_bits,
+        );
         return TAG_NIL;
     }
     let path = unsafe {
@@ -13943,6 +13968,7 @@ pub(crate) extern "C" fn jit_wrl(path_v: u64, list_v: u64) -> u64 {
         }
     };
     if (lv.0 & TAG_MASK) != TAG_LIST {
+        jit_set_runtime_error_with_span(VmError::Type("wrl arg 2 must be a list"), span_bits);
         return TAG_NIL;
     }
     let lines = unsafe {
@@ -13954,6 +13980,10 @@ pub(crate) extern "C" fn jit_wrl(path_v: u64, list_v: u64) -> u64 {
     let mut buf = String::new();
     for line in &lines {
         if !line.is_string() {
+            jit_set_runtime_error_with_span(
+                VmError::Type("wrl list elements must be strings"),
+                span_bits,
+            );
             return TAG_NIL;
         }
         let s = unsafe {
@@ -20394,14 +20424,14 @@ mod tests {
 
         #[test]
         fn jit_jpar_valid_json() {
-            let r = jit_jpar(str_val(r#"{"x":1}"#));
+            let r = jit_jpar(str_val(r#"{"x":1}"#), 0);
             let rv = NanVal(r);
             assert!(rv.is_heap());
         }
 
         #[test]
         fn jit_jpar_invalid_json() {
-            let r = jit_jpar(str_val("not json"));
+            let r = jit_jpar(str_val("not json"), 0);
             let rv = NanVal(r);
             assert!(rv.is_heap());
             let HeapObj::ErrVal(_) = (unsafe { rv.as_heap_ref() }) else {
@@ -20410,9 +20440,142 @@ mod tests {
         }
 
         #[test]
-        fn jit_jpar_non_string_returns_nil() {
-            let r = jit_jpar(TAG_NIL);
+        fn jit_jpar_non_string_signals_runtime_error() {
+            let _ = jit_take_runtime_error();
+            let r = jit_jpar(TAG_NIL, 0);
             assert!(is_nil(r));
+            let err = jit_take_runtime_error().expect("expected pending error");
+            assert!(matches!(err.0, VmError::Type(msg) if msg.contains("jpar")));
+        }
+
+        // ── jit_rdjl (batch 7) ─────────────────────────────────────────────
+
+        #[test]
+        fn jit_rdjl_non_string_signals_runtime_error() {
+            let _ = jit_take_runtime_error();
+            let r = jit_rdjl(TAG_NIL, 0);
+            assert!(is_nil(r));
+            let err = jit_take_runtime_error().expect("expected pending error");
+            assert!(matches!(err.0, VmError::Type(msg) if msg.contains("rdjl")));
+        }
+
+        #[test]
+        fn jit_rdjl_missing_file_signals_runtime_error() {
+            let _ = jit_take_runtime_error();
+            let r = jit_rdjl(str_val("/tmp/ilo-jit-batch7-does-not-exist.jsonl"), 0);
+            assert!(is_nil(r));
+            let err = jit_take_runtime_error().expect("expected pending error");
+            assert!(matches!(err.0, VmError::Type(msg) if msg.contains("rdjl")));
+        }
+
+        // ── jit_dtfmt (batch 7) ────────────────────────────────────────────
+
+        #[test]
+        fn jit_dtfmt_non_number_epoch_signals_runtime_error() {
+            let _ = jit_take_runtime_error();
+            let r = jit_dtfmt(str_val("not a number"), str_val("%Y"), 0);
+            assert!(is_nil(r));
+            let err = jit_take_runtime_error().expect("expected pending error");
+            assert!(
+                matches!(err.0, VmError::Type(msg) if msg.contains("dtfmt") && msg.contains("epoch"))
+            );
+        }
+
+        #[test]
+        fn jit_dtfmt_non_string_fmt_signals_runtime_error() {
+            let _ = jit_take_runtime_error();
+            let r = jit_dtfmt(num(0.0), TAG_NIL, 0);
+            assert!(is_nil(r));
+            let err = jit_take_runtime_error().expect("expected pending error");
+            assert!(
+                matches!(err.0, VmError::Type(msg) if msg.contains("dtfmt") && msg.contains("format"))
+            );
+        }
+
+        // ── jit_dtparse (batch 7) ──────────────────────────────────────────
+
+        #[test]
+        fn jit_dtparse_non_string_signals_runtime_error() {
+            let _ = jit_take_runtime_error();
+            let r = jit_dtparse(num(123.0), str_val("%Y"), 0);
+            assert!(is_nil(r));
+            let err = jit_take_runtime_error().expect("expected pending error");
+            assert!(matches!(err.0, VmError::Type(msg) if msg.contains("dtparse")));
+        }
+
+        // ── jit_rd / jit_rdl / jit_wr / jit_wrl (batch 7) ──────────────────
+
+        #[test]
+        fn jit_rd_non_string_signals_runtime_error() {
+            let _ = jit_take_runtime_error();
+            let r = jit_rd(num(42.0), 0);
+            assert!(is_nil(r));
+            let err = jit_take_runtime_error().expect("expected pending error");
+            assert!(matches!(err.0, VmError::Type(msg) if msg.contains("rd")));
+        }
+
+        #[test]
+        fn jit_rdl_non_string_signals_runtime_error() {
+            let _ = jit_take_runtime_error();
+            let r = jit_rdl(num(42.0), 0);
+            assert!(is_nil(r));
+            let err = jit_take_runtime_error().expect("expected pending error");
+            assert!(matches!(err.0, VmError::Type(msg) if msg.contains("rdl")));
+        }
+
+        #[test]
+        fn jit_wr_non_string_path_signals_runtime_error() {
+            let _ = jit_take_runtime_error();
+            let r = jit_wr(num(1.0), str_val("data"), 0);
+            assert!(is_nil(r));
+            let err = jit_take_runtime_error().expect("expected pending error");
+            assert!(
+                matches!(err.0, VmError::Type(msg) if msg.contains("wr") && msg.contains("path"))
+            );
+        }
+
+        #[test]
+        fn jit_wr_non_string_content_signals_runtime_error() {
+            let _ = jit_take_runtime_error();
+            let r = jit_wr(str_val("/tmp/ilo-batch7"), num(1.0), 0);
+            assert!(is_nil(r));
+            let err = jit_take_runtime_error().expect("expected pending error");
+            assert!(matches!(err.0, VmError::Type(msg) if msg.contains("wr arg 2")));
+        }
+
+        #[test]
+        fn jit_wrl_non_string_path_signals_runtime_error() {
+            let _ = jit_take_runtime_error();
+            let lst = NanVal::heap_list(vec![NanVal::heap_string("a".into())]);
+            let r = jit_wrl(num(1.0), lst.0, 0);
+            assert!(is_nil(r));
+            let err = jit_take_runtime_error().expect("expected pending error");
+            assert!(
+                matches!(err.0, VmError::Type(msg) if msg.contains("wrl") && msg.contains("path"))
+            );
+        }
+
+        #[test]
+        fn jit_wrl_non_list_signals_runtime_error() {
+            let _ = jit_take_runtime_error();
+            let r = jit_wrl(str_val("/tmp/ilo-batch7-wrl"), num(1.0), 0);
+            assert!(is_nil(r));
+            let err = jit_take_runtime_error().expect("expected pending error");
+            assert!(
+                matches!(err.0, VmError::Type(msg) if msg.contains("wrl") && msg.contains("list"))
+            );
+        }
+
+        #[test]
+        fn jit_wrl_non_string_element_signals_runtime_error() {
+            let _ = jit_take_runtime_error();
+            let lst = NanVal::heap_list(vec![NanVal::number(99.0)]);
+            let r = jit_wrl(str_val("/tmp/ilo-batch7-wrl"), lst.0, 0);
+            assert!(is_nil(r));
+            let err = jit_take_runtime_error().expect("expected pending error");
+            assert!(
+                matches!(err.0, VmError::Type(msg) if msg.contains("wrl") && msg.contains("strings"))
+            );
         }
 
         // ── jit_jpth ───────────────────────────────────────────────────────
