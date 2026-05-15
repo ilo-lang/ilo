@@ -167,6 +167,9 @@ struct HelperFuncs {
     call_builtin_tree: FuncId,
     // Dynamic-dispatch bridge for OP_CALL_DYN (HOF callbacks: `map`, ...)
     call_dyn: FuncId,
+    // `!!` panic-unwrap. Used by HOF lifts that emit a typed runtime error
+    // mid-loop (e.g. `flt` when the predicate returns a non-bool).
+    panic_unwrap: FuncId,
     // AOT-specific helpers
     get_arena_ptr: FuncId,
     get_registry_ptr: FuncId,
@@ -342,6 +345,7 @@ fn declare_all_helpers(module: &mut ObjectModule) -> HelperFuncs {
         dtparse: declare_helper(module, "jit_dtparse", 2, 1),
         call_builtin_tree: declare_helper(module, "jit_call_builtin_tree", 3, 1),
         call_dyn: declare_helper(module, "jit_call_dyn", 3, 1),
+        panic_unwrap: declare_helper(module, "jit_panic_unwrap", 1, 1),
         // AOT-specific helpers
         get_arena_ptr: declare_helper(module, "jit_get_arena_ptr", 0, 1),
         get_registry_ptr: declare_helper(module, "jit_get_registry_ptr", 0, 1),
@@ -1650,6 +1654,22 @@ fn compile_function_body(
                 let call_inst = builder.ins().call(fref, &[bv]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
+            }
+            // `!!` panic-unwrap. Mirrors the JIT lowering: the helper sets
+            // JIT_RUNTIME_ERROR (the post-call check in the caller surfaces
+            // it as a runtime error) and returns TAG_NIL. We emit an
+            // immediate `return` so subsequent instructions don't execute
+            // against the failed value, matching the VM dispatcher's
+            // `vm_err!` early-unwind contract. Without this AOT path the
+            // HOF lifts (`flt`'s non-bool predicate guard) would refuse
+            // to compile to a binary.
+            OP_PANIC_UNWRAP => {
+                let bv = builder.use_var(vars[b_idx]);
+                let fref = get_func_ref(&mut builder, module, helpers.panic_unwrap);
+                let call_inst = builder.ins().call(fref, &[bv]);
+                let nil_val = builder.inst_results(call_inst)[0];
+                builder.ins().return_(&[nil_val]);
+                block_terminated = true;
             }
             // ── Load constant ──
             OP_LOADK => {
