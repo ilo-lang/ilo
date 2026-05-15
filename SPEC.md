@@ -393,7 +393,7 @@ Called like functions, compiled to dedicated opcodes.
 | `det a` | determinant; errors on non-square | `n` |
 | `fft xs` | discrete FFT: real samples → `L [re, im]`; zero-padded to next power of 2 | `L (L n)` |
 | `ifft pairs` | inverse FFT; imaginary part dropped on return | `L n` |
-| `fmt2 tmpl args…` | format with `{:fmt}` spec strings (precision, padding, etc.) | `t` |
+| `fmt2 x digits` | format number `x` to `digits` decimal places (half-to-even rounding; `digits` clamped to `0..=20`). Compose with `fmt` for template + precision: `fmt "x={}" (fmt2 v 2)` | `t` |
 
 ### Datetime (`dtfmt` / `dtparse`)
 
