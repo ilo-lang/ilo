@@ -1,0 +1,102 @@
+-- Positive paths for the batch-3 helpers (Group A: arithmetic, comparison,
+-- numeric unary/binary). The companion regression suite asserts that the
+-- error paths now route through JIT_RUNTIME_ERROR with packed span_bits;
+-- this example pins the happy paths cross-engine via the examples_engines
+-- harness so future codegen changes can't silently regress them.
+
+add-nums>n;+2 3
+add-text>t;+"foo" "bar"
+sub-nums>n;- 10 3
+mul-nums>n;* 4 5
+div-nums>n;/ 10 4
+mod-nums>n;mod 10 3
+neg-num>n;- 5
+gt-nums>b;> 5 3
+lt-nums>b;< 2 7
+ge-nums>b;>= 5 5
+le-nums>b;<= 3 3
+gt-text>b;> "b" "a"
+abs-num>n;abs -7
+min-num>n;min 3 5
+max-num>n;max 3 5
+flr-num>n;flr 3.7
+cel-num>n;cel 3.2
+rou-num>n;rou 3.5
+clamp-mid>n;clamp 5 0 10
+clamp-hi>n;clamp 15 0 10
+clamp-lo>n;clamp -5 0 10
+len-text>n;len "hello"
+len-list>n;len [1 2 3]
+str-num>t;str 42
+
+-- run: add-nums
+-- out: 5
+
+-- run: add-text
+-- out: foobar
+
+-- run: sub-nums
+-- out: 7
+
+-- run: mul-nums
+-- out: 20
+
+-- run: div-nums
+-- out: 2.5
+
+-- run: mod-nums
+-- out: 1
+
+-- run: neg-num
+-- out: -5
+
+-- run: gt-nums
+-- out: true
+
+-- run: lt-nums
+-- out: true
+
+-- run: ge-nums
+-- out: true
+
+-- run: le-nums
+-- out: true
+
+-- run: gt-text
+-- out: true
+
+-- run: abs-num
+-- out: 7
+
+-- run: min-num
+-- out: 3
+
+-- run: max-num
+-- out: 5
+
+-- run: flr-num
+-- out: 3
+
+-- run: cel-num
+-- out: 4
+
+-- run: rou-num
+-- out: 4
+
+-- run: clamp-mid
+-- out: 5
+
+-- run: clamp-hi
+-- out: 10
+
+-- run: clamp-lo
+-- out: 0
+
+-- run: len-text
+-- out: 5
+
+-- run: len-list
+-- out: 3
+
+-- run: str-num
+-- out: 42
