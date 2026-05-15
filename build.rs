@@ -8,6 +8,7 @@
 
 fn main() {
     println!("cargo:rerun-if-changed=SPEC.md");
+    println!("cargo:rerun-if-changed=skills/ilo/SKILL.md");
     let spec = std::fs::read_to_string("SPEC.md").expect("SPEC.md not found");
     let compact = compact_spec(&spec);
 
@@ -19,6 +20,24 @@ fn main() {
     };
     if needs_write {
         std::fs::write(tracked_path, &compact).expect("failed to write ai.txt");
+    }
+
+    // Mirror the compact spec into skills/ilo/SKILL.md between marker comments so the
+    // Claude Code skill surface always carries the canonical reference. Without this,
+    // SKILL.md drifts behind SPEC.md whenever a new builtin or section lands and agents
+    // that load the skill never see the update unless they additionally run `ilo help ai`.
+    let skill_path = std::path::Path::new("skills/ilo/SKILL.md");
+    if let Ok(existing) = std::fs::read_to_string(skill_path) {
+        const BEGIN: &str = "<!-- BEGIN AI-SPEC (auto-generated from ai.txt by build.rs) -->";
+        const END: &str = "<!-- END AI-SPEC -->";
+        if let (Some(b), Some(e)) = (existing.find(BEGIN), existing.find(END)) {
+            let head = &existing[..b + BEGIN.len()];
+            let tail = &existing[e..];
+            let injected = format!("{head}\n\n```\n{compact}```\n\n{tail}");
+            if injected != existing {
+                std::fs::write(skill_path, injected).expect("failed to write SKILL.md");
+            }
+        }
     }
 }
 
