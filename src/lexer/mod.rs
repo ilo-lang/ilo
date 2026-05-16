@@ -330,6 +330,55 @@ pub fn lex(source: &str) -> Result<Vec<(Token, std::ops::Range<usize>)>, LexErro
                 // Detect uppercase mid-identifier: a single uppercase type sigil
                 // (L/R/F/O/M/S) sitting flush against a preceding ident.
                 if is_type_sigil(&token) {
+                    // Friendly hint for `OR`/`AND`/`NOT` from other languages
+                    // when the first letter happens to lex as a type sigil
+                    // (`O` → OptType, `S` → SumType, etc.). Without this the
+                    // parser surfaces a downstream `expected expression, got
+                    // OptType` that doesn't mention the actual mistake.
+                    // Detect by scanning forward in the source for an
+                    // uppercase-letter run starting at this sigil; if the
+                    // resulting word is a known logical keyword, error.
+                    // Only fires when the preceding token doesn't form an
+                    // ident-merge candidate (handled below) — i.e. fresh
+                    // expression position, not `xxxOR`.
+                    let prev_is_ident_flush = matches!(
+                        tokens.last(),
+                        Some((Token::Ident(_), s)) if s.end == span.start
+                    );
+                    // Type-context guard: in `:OR n n` the sigil run is a
+                    // compact form of `O R n n` (Optional of Result), which
+                    // is valid type syntax. The hint should only fire when
+                    // we're at expression/binding position, not in a type.
+                    // Type position is unambiguous via the previous token:
+                    // `:`, `>`, a type sigil itself, or a sum-type variant
+                    // (which follows another `S`-typed ident name).
+                    let prev_is_type_position = matches!(
+                        tokens.last().map(|(t, _)| t),
+                        Some(Token::Colon)
+                            | Some(Token::Greater)
+                            | Some(Token::ListType)
+                            | Some(Token::ResultType)
+                            | Some(Token::FnType)
+                            | Some(Token::OptType)
+                            | Some(Token::MapType)
+                            | Some(Token::SumType)
+                    );
+                    if !prev_is_ident_flush
+                        && !prev_token_is_dot_flush(&tokens, span.start)
+                        && !prev_is_type_position
+                        && let Some((word, end)) = scan_uppercase_run(&normalized, span.start)
+                        && word.len() >= 2
+                        && let Some((canonical, hint)) = logical_keyword_message(&word)
+                    {
+                        return Err(LexError {
+                            code: "ILO-L001",
+                            position: span.start,
+                            snippet: normalized[span.start..end].to_string(),
+                            suggestion: format!(
+                                "`{word}` is not an ilo keyword. ilo uses `{canonical}` ({hint})"
+                            ),
+                        });
+                    }
                     let prev_info = tokens.last().and_then(|(t, s)| match t {
                         Token::Ident(name) if s.end == span.start => {
                             Some((name.clone(), s.clone()))
@@ -434,6 +483,28 @@ pub fn lex(source: &str) -> Result<Vec<(Token, std::ops::Range<usize>)>, LexErro
                             continue;
                         }
                     }
+                }
+                // Detect uppercase logical-keyword attempts: `AND`, `OR`, `NOT`
+                // from other languages. Logos rejects the first capital letter
+                // as ILO-L001; without a friendlier hint the persona sees
+                // `unexpected token 'A'` and has to guess the actual mistake.
+                // We scan forward from the rejected single uppercase letter
+                // for an all-caps identifier-shaped run, then check whether it
+                // spells one of the known logical keywords. (qa-tester and
+                // scientific-researcher rerun3 both hit this.)
+                if bad.len() == 1
+                    && bad.chars().next().unwrap().is_ascii_uppercase()
+                    && let Some((word, end)) = scan_uppercase_run(&normalized, span.start)
+                    && let Some((canonical, hint)) = logical_keyword_message(&word)
+                {
+                    return Err(LexError {
+                        code: "ILO-L001",
+                        position: span.start,
+                        snippet: normalized[span.start..end].to_string(),
+                        suggestion: format!(
+                            "`{word}` is not an ilo keyword. ilo uses `{canonical}` ({hint})"
+                        ),
+                    });
                 }
                 let (code, suggestion) = lex_error_kind(bad);
                 return Err(LexError {
@@ -1011,6 +1082,33 @@ fn scan_camel_offenders(src: &str) -> Vec<CamelOffender> {
     out
 }
 
+/// Scan an all-uppercase identifier-shaped run starting at `start`.
+/// Returns `(word, end_offset)` if at least one uppercase letter is consumed.
+/// Used by the L001 path to detect logical-keyword attempts like `AND`/`OR`/`NOT`.
+fn scan_uppercase_run(source: &str, start: usize) -> Option<(String, usize)> {
+    let bytes = source.as_bytes();
+    let mut end = start;
+    while end < bytes.len() && bytes[end].is_ascii_uppercase() {
+        end += 1;
+    }
+    if end == start {
+        return None;
+    }
+    Some((source[start..end].to_string(), end))
+}
+
+/// Map an all-uppercase word to its ilo-canonical replacement, when it is a
+/// known logical-keyword attempt from another language. Returns
+/// `(canonical_form, descriptive_hint)`.
+fn logical_keyword_message(word: &str) -> Option<(&'static str, &'static str)> {
+    match word {
+        "AND" => Some(("&", "single `&` for logical and")),
+        "OR" => Some(("|", "single `|` for logical or")),
+        "NOT" => Some(("!", "prefix `!` for logical not")),
+        _ => None,
+    }
+}
+
 fn lex_error_kind(bad_token: &str) -> (&'static str, String) {
     if bad_token.contains('_') && bad_token.len() > 1 {
         (
@@ -1517,6 +1615,119 @@ mod tests {
         assert_eq!(
             normalize_newlines("cls sp:n>t\n  >=sp 1000{\n    \"gold\"\n  }\n  \"bronze\""),
             "cls sp:n>t;>=sp 1000{\"gold\"};\"bronze\""
+        );
+    }
+
+    // ── persona-diagnostic batch 2: logical-keyword friendly hints ────────
+
+    #[test]
+    fn lex_uppercase_and_emits_friendly_hint() {
+        // `AND` from other languages — the leading `A` lex-fails as L001.
+        let err = lex("main>b;AND a b").unwrap_err();
+        assert_eq!(err.code, "ILO-L001");
+        assert!(
+            err.suggestion.contains("AND"),
+            "suggestion: {}",
+            err.suggestion
+        );
+        assert!(
+            err.suggestion.contains("ilo uses `&`"),
+            "suggestion: {}",
+            err.suggestion
+        );
+        // Snippet should cover the full `AND` run, not just `A`.
+        assert_eq!(err.snippet, "AND");
+    }
+
+    #[test]
+    fn lex_uppercase_or_emits_friendly_hint() {
+        // `OR` — `O` is the OptType sigil so logos succeeds at lex; the
+        // friendly hint is gated on the sigil-emit path.
+        let err = lex("main>b;OR a b").unwrap_err();
+        assert_eq!(err.code, "ILO-L001");
+        assert!(
+            err.suggestion.contains("OR"),
+            "suggestion: {}",
+            err.suggestion
+        );
+        assert!(
+            err.suggestion.contains("ilo uses `|`"),
+            "suggestion: {}",
+            err.suggestion
+        );
+        assert_eq!(err.snippet, "OR");
+    }
+
+    #[test]
+    fn lex_uppercase_not_emits_friendly_hint() {
+        let err = lex("main>b;NOT a").unwrap_err();
+        assert_eq!(err.code, "ILO-L001");
+        assert!(
+            err.suggestion.contains("NOT"),
+            "suggestion: {}",
+            err.suggestion
+        );
+        assert!(
+            err.suggestion.contains("ilo uses `!`"),
+            "suggestion: {}",
+            err.suggestion
+        );
+    }
+
+    #[test]
+    fn lex_post_dot_uppercase_keyword_not_treated_as_logical() {
+        // `r.OR` is a JSON post-dot field access (the field happens to be
+        // named `OR`); the absorb-camel-at-dot path should still handle it.
+        // The new logical-keyword check must not pre-empt that case.
+        let tokens = lex("f r:R n t>n;r.OR").unwrap();
+        // The trailing `OR` should be absorbed as a post-dot Ident,
+        // not surface as a lex error.
+        assert!(
+            tokens
+                .iter()
+                .any(|(t, _)| matches!(t, Token::Ident(s) if s == "OR")),
+            "expected post-dot `OR` Ident; tokens: {:?}",
+            tokens
+        );
+    }
+
+    #[test]
+    fn lex_mid_ident_uppercase_keyword_still_l003() {
+        // `fooAND` should remain a mid-ident camelCase L003 (suggesting
+        // `foo-and`), not the new logical-keyword L001 — the new path is
+        // gated on fresh-position only.
+        let err = lex("main>b;fooAND a b").unwrap_err();
+        assert_eq!(err.code, "ILO-L003");
+    }
+
+    #[test]
+    fn lex_type_position_or_is_optional_result_not_logical() {
+        // `f x:OR n n>n` is the compact form of `O R n n` (Optional of
+        // Result). The logical-keyword hint must NOT fire in type position
+        // because that would reject valid type compositions.
+        let tokens = lex("f x:OR n n>n;??x 0").unwrap();
+        // Should lex as: Ident(f), Ident(x), Colon, OptType, ResultType,
+        // Ident(n), Ident(n), Greater, ...
+        assert!(
+            tokens.iter().any(|(t, _)| matches!(t, Token::OptType)),
+            "expected OptType in tokens: {:?}",
+            tokens
+        );
+        assert!(
+            tokens.iter().any(|(t, _)| matches!(t, Token::ResultType)),
+            "expected ResultType in tokens: {:?}",
+            tokens
+        );
+    }
+
+    #[test]
+    fn lex_type_position_after_greater_or_is_optional_result() {
+        // `f>OR n n;...` — return-type position after `>` also splits OR.
+        let tokens = lex("f>OR n n;~42").unwrap();
+        assert!(
+            tokens.iter().any(|(t, _)| matches!(t, Token::OptType)),
+            "expected OptType in tokens: {:?}",
+            tokens
         );
     }
 }
