@@ -1635,10 +1635,18 @@ fn walk_stmt_for_discarded_guard_result(stmt: &ast::Stmt) -> bool {
             braceless,
             ..
         } => {
+            // Only fire on the original target shape: a single-statement
+            // braced body whose sole expression is `^...` or `~...`. The
+            // single-statement requirement matters because multi-statement
+            // bodies like `{prnt "..."; ~"ok"}` legitimately use the trailing
+            // `~v` as the body's return value, the author knows the value
+            // is the guard's result, not a discarded early-return. Firing
+            // there is a false positive that erodes trust in the hint.
             if !*braceless
-                && let Some(last) = body.last()
+                && body.len() == 1
+                && let Some(only) = body.first()
                 && matches!(
-                    last.node,
+                    only.node,
                     ast::Stmt::Expr(ast::Expr::Err(_) | ast::Expr::Ok(_))
                 )
             {
@@ -4278,6 +4286,41 @@ mod tests {
         let hints = collect_hints_with_program(src, Some(&prog));
         assert!(
             hints
+                .iter()
+                .any(|h| h.contains("discard the body expression")),
+            "hints: {:?}",
+            hints
+        );
+    }
+
+    #[test]
+    fn collect_hints_multi_stmt_guard_body_with_trailing_ok_no_hint() {
+        // False-positive guard: a multi-statement braced body that ends with
+        // a `~v` is legitimately returning that value as the guard's result.
+        // The author is NOT discarding it. Compare to the single-stmt shape
+        // `{~v}` which IS the discard pattern. Source from interactive-cli
+        // persona rerun4: `f n:n>R t t;=n 0{prnt "empty";~"ok"};~"done"`.
+        let src = "f n:n>R t t;=n 0{prnt \"empty\";~\"ok\"};~\"done\"";
+        let prog = parse_program(src);
+        let hints = collect_hints_with_program(src, Some(&prog));
+        assert!(
+            !hints
+                .iter()
+                .any(|h| h.contains("discard the body expression")),
+            "hints: {:?}",
+            hints
+        );
+    }
+
+    #[test]
+    fn collect_hints_multi_stmt_guard_body_with_trailing_err_no_hint() {
+        // Symmetric: multi-statement body ending with `^...` is also a
+        // legitimate guard return, not a discard.
+        let src = "f x:n>R n t;<x 0{prnt \"neg\";^\"bad\"};~x";
+        let prog = parse_program(src);
+        let hints = collect_hints_with_program(src, Some(&prog));
+        assert!(
+            !hints
                 .iter()
                 .any(|h| h.contains("discard the body expression")),
             "hints: {:?}",
