@@ -1,0 +1,26 @@
+-- `xs.i` where `i` is a variable in scope. The parser builds an `Expr::Field`
+-- node, and a post-parse desugar pass rewrites it to `at xs i` when `i` is a
+-- bound variable. This collapses the 4-token `at xs i` walk to the 3-token
+-- `xs.i`, the single biggest token tax in list workloads on every analyst
+-- run before this landed.
+
+-- Variable index from a parameter.
+pick xs:L n i:n>n;xs.i
+
+-- Variable index from a let-binding.
+second xs:L n>n;i=1;xs.i
+
+-- Variable index inside a range loop.
+mysum xs:L n>n;s=0;@i 0..(len xs){v=xs.i;s=+s v};+s 0
+
+-- Variable index inside a foreach loop, taking the running index.
+ixsum xs:L n>n;s=0;k=0;@x xs{v=xs.k;s=+s v;k=+k 1};+s 0
+
+-- run: pick [10,20,30] 1
+-- out: 20
+-- run: second [100,200,300]
+-- out: 200
+-- run: mysum [10,20,30]
+-- out: 60
+-- run: ixsum [1,2,3,4,5]
+-- out: 15

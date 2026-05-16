@@ -1,10 +1,12 @@
--- Literal-int dot-index for lists: `xs.0` is sugar for `at xs 0`.
--- Use it when the index is a literal number known at parse time.
--- For a variable index, write `at xs i` instead.
+-- Dot-index for lists: `xs.0` is sugar for `at xs 0`.
+-- Works for literal indices (`xs.0`, `xs.2`) and variable indices (`xs.i`)
+-- when `i` is a bound variable in scope. The variable-index form desugars to
+-- `at xs i` after parse, so it works identically on every engine.
 
 frst xs:L n>n;xs.0
 thrd xs:L n>n;xs.2
 nest>n;xss=[[1,2],[3,4]];xss.0.1
+pick xs:L n i:n>n;xs.i
 
 -- run: frst [10,20,30]
 -- out: 10
@@ -12,3 +14,5 @@ nest>n;xss=[[1,2],[3,4]];xss.0.1
 -- out: 30
 -- run: nest
 -- out: 2
+-- run: pick [10,20,30] 1
+-- out: 20
