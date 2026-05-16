@@ -12553,20 +12553,52 @@ pub(crate) extern "C" fn jit_call_builtin_tree(tag: u64, argc: u64, regs_ptr: u6
     match res {
         Ok(v) => NanVal::from_value(&v).0,
         Err(e) => {
-            // Surface bridge errors from `fmt` through the JIT error channel
-            // so Cranelift renders the same ILO-R009 as tree/VM for the
-            // `{:06d}` / `{:.3f}` rejection. We scope this narrowly to `Fmt`
-            // for now to preserve the historical "swallow as nil" behaviour
-            // for every other bridge builtin (changing that uniformly is a
-            // larger nil-sweep follow-up). Without this, Cranelift would
-            // succeed-with-nil even though tree/VM raised, diverging the
-            // three engines.
-            if matches!(builtin, crate::builtins::Builtin::Fmt) {
+            // Surface bridge errors through the JIT error channel for builtins
+            // where tree/VM both raise on failure, so Cranelift renders the
+            // same ILO-R0xx instead of silently succeeding-with-nil and
+            // diverging the three engines.
+            //
+            // - `Fmt`: tree/VM reject printf-style specs (`{:06d}`/`{:.3f}`)
+            //   with ILO-R009. Without this, Cranelift swallowed as nil.
+            // - HOFs (`srt`, `rsrt`, `grp`, `uniqby`, `partition`, `flatmap`,
+            //   `mapr`): the user-supplied callback can fail at runtime
+            //   (out-of-range `at`, runtime type error, `^err` propagation).
+            //   Tree raises through the inner `call_function`, VM raises
+            //   through the native dispatch arm, but the legacy nil-sweep
+            //   bridge silently dropped these on Cranelift, masking real
+            //   bugs as `nil` returns. Allow-listing them here matches
+            //   tree/VM error-parity. Originating entry: ilo_assessment_
+            //   feedback.md "Promote tree-bridge errors from silent nil to
+            //   runtime errors for HOFs" (filed during #306 srt-cranelift-
+            //   nil P0).
+            if tree_bridge_propagates_error(builtin) {
                 jit_set_runtime_error(VmError::Runtime(e.message));
             }
             TAG_NIL
         }
     }
+}
+
+/// Builtins whose bridge errors must surface as JIT runtime errors instead
+/// of being swallowed as `TAG_NIL`. Tree and VM both raise on failure for
+/// these; this allow-list keeps Cranelift in lockstep. Shared by both
+/// `jit_call_builtin_tree` (direct bridge dispatch) and `jit_call_dyn`'s
+/// Builtin arm (callbacks invoked through OP_CALL_DYN, e.g. `flatmap`'s
+/// outer loop).
+#[cfg(feature = "cranelift")]
+pub(crate) fn tree_bridge_propagates_error(b: crate::builtins::Builtin) -> bool {
+    use crate::builtins::Builtin;
+    matches!(
+        b,
+        Builtin::Fmt
+            | Builtin::Srt
+            | Builtin::Rsrt
+            | Builtin::Grp
+            | Builtin::Uniqby
+            | Builtin::Partition
+            | Builtin::Flatmap
+            | Builtin::Mapr
+    )
 }
 
 /// Dynamic call helper for the Cranelift JIT's OP_CALL_DYN lowering.
@@ -12666,7 +12698,17 @@ pub(crate) extern "C" fn jit_call_dyn(callee_bits: u64, argc: u64, regs_ptr: u64
             }
             match crate::interpreter::call_builtin_for_bridge(builtin.name(), value_args) {
                 Ok(v) => NanVal::from_value(&v).0,
-                Err(_) => TAG_NIL,
+                Err(e) => {
+                    // Match `jit_call_builtin_tree`'s allow-list so callback
+                    // errors raised inside an OP_CALL_DYN dispatch reach the
+                    // JIT error channel instead of silently nilling out.
+                    // Required for HOFs whose native lowering invokes the
+                    // callback via OP_CALL_DYN (e.g. `flatmap`'s outer loop).
+                    if tree_bridge_propagates_error(builtin) {
+                        jit_set_runtime_error(VmError::Runtime(e.message));
+                    }
+                    TAG_NIL
+                }
             }
         }
         FnRefKind::User => {
@@ -12695,7 +12737,18 @@ pub(crate) extern "C" fn jit_call_dyn(callee_bits: u64, argc: u64, regs_ptr: u64
             let mut sub_vm = VM::new(program);
             match sub_vm.call(func_idx, value_args) {
                 Ok(v) => NanVal::from_value_with_program(&v, &program.func_names).0,
-                Err(_) => TAG_NIL,
+                Err(e) => {
+                    // Surface the inner VM error through the JIT error
+                    // channel so a user-fn callback (the common shape for
+                    // `flatmap`/native HOFs) reaches the same diagnostic
+                    // path as tree/VM instead of silently returning nil.
+                    // Pre-fix, every callback failure was masked as a TAG_NIL
+                    // sentinel, diverging Cranelift from the other two
+                    // engines. `VmRuntimeError.error` unwraps to the same
+                    // `VmError` that the outer JIT entry will re-render.
+                    jit_set_runtime_error(e.error);
+                    TAG_NIL
+                }
             }
         }
     }
