@@ -100,6 +100,8 @@ struct HelperFuncs {
     quantile: FuncId,
     stdev: FuncId,
     variance: FuncId,
+    sum: FuncId,
+    avg: FuncId,
     slc: FuncId,
     rgxsub: FuncId,
     take: FuncId,
@@ -286,6 +288,8 @@ fn declare_all_helpers(module: &mut ObjectModule) -> HelperFuncs {
         quantile: declare_helper(module, "jit_quantile", 3, 1),
         stdev: declare_helper(module, "jit_stdev", 2, 1),
         variance: declare_helper(module, "jit_variance", 2, 1),
+        sum: declare_helper(module, "jit_sum", 2, 1),
+        avg: declare_helper(module, "jit_avg", 2, 1),
         slc: declare_helper(module, "jit_slc", 3, 1),
         rgxsub: declare_helper(module, "jit_rgxsub", 3, 1),
         take: declare_helper(module, "jit_take", 2, 1),
@@ -1011,8 +1015,8 @@ fn compile_function_body(
                 | OP_MULK_N | OP_DIVK_N | OP_LEN | OP_ABS | OP_MIN | OP_MAX | OP_FLR | OP_CEL
                 | OP_ROU | OP_RND0 | OP_RND2 | OP_RNDN | OP_NOW | OP_MOD | OP_CLAMP | OP_POW
                 | OP_SQRT | OP_LOG | OP_EXP | OP_SIN | OP_COS | OP_TAN | OP_LOG10 | OP_LOG2
-                | OP_ATAN2 | OP_MEDIAN | OP_QUANTILE | OP_STDEV | OP_VARIANCE | OP_DOT | OP_DET
-                | OP_ORD => {
+                | OP_ATAN2 | OP_MEDIAN | OP_QUANTILE | OP_STDEV | OP_VARIANCE | OP_SUM | OP_AVG
+                | OP_DOT | OP_DET | OP_ORD => {
                     num_write[a] = true;
                 }
                 // LOADK: numeric only when the constant itself is a number.
@@ -2432,6 +2436,24 @@ fn compile_function_body(
                 let span_bits = super::jit_cranelift::pack_span_bits(chunk.spans[ip]);
                 let span_arg = builder.ins().iconst(I64, span_bits);
                 let fref = get_func_ref(&mut builder, module, helpers.variance);
+                let call_inst = builder.ins().call(fref, &[bv, span_arg]);
+                let result = builder.inst_results(call_inst)[0];
+                builder.def_var(vars[a_idx], result);
+            }
+            OP_SUM => {
+                let bv = builder.use_var(vars[b_idx]);
+                let span_bits = super::jit_cranelift::pack_span_bits(chunk.spans[ip]);
+                let span_arg = builder.ins().iconst(I64, span_bits);
+                let fref = get_func_ref(&mut builder, module, helpers.sum);
+                let call_inst = builder.ins().call(fref, &[bv, span_arg]);
+                let result = builder.inst_results(call_inst)[0];
+                builder.def_var(vars[a_idx], result);
+            }
+            OP_AVG => {
+                let bv = builder.use_var(vars[b_idx]);
+                let span_bits = super::jit_cranelift::pack_span_bits(chunk.spans[ip]);
+                let span_arg = builder.ins().iconst(I64, span_bits);
+                let fref = get_func_ref(&mut builder, module, helpers.avg);
                 let call_inst = builder.ins().call(fref, &[bv, span_arg]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);

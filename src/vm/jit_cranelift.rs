@@ -107,6 +107,8 @@ struct HelperFuncs {
     quantile: FuncId,
     stdev: FuncId,
     variance: FuncId,
+    sum: FuncId,
+    avg: FuncId,
     slc: FuncId,
     lst: FuncId,
     rgxsub: FuncId,
@@ -291,6 +293,8 @@ fn register_helpers(builder: &mut JITBuilder) {
         ("jit_quantile", jit_quantile as *const u8),
         ("jit_stdev", jit_stdev as *const u8),
         ("jit_variance", jit_variance as *const u8),
+        ("jit_sum", jit_sum as *const u8),
+        ("jit_avg", jit_avg as *const u8),
         ("jit_slc", jit_slc as *const u8),
         ("jit_lst", jit_lst as *const u8),
         ("jit_rgxsub", jit_rgxsub as *const u8),
@@ -460,6 +464,8 @@ fn declare_all_helpers(module: &mut JITModule) -> HelperFuncs {
         quantile: declare_helper(module, "jit_quantile", 3, 1),
         stdev: declare_helper(module, "jit_stdev", 2, 1),
         variance: declare_helper(module, "jit_variance", 2, 1),
+        sum: declare_helper(module, "jit_sum", 2, 1),
+        avg: declare_helper(module, "jit_avg", 2, 1),
         slc: declare_helper(module, "jit_slc", 3, 1),
         lst: declare_helper(module, "jit_lst", 3, 1),
         rgxsub: declare_helper(module, "jit_rgxsub", 3, 1),
@@ -1062,8 +1068,8 @@ fn compile_function_body(
                 | OP_FLR | OP_CEL | OP_ROU | OP_RND0 | OP_RND2 | OP_RNDN | OP_NOW
                 | OP_MOD | OP_CLAMP | OP_POW | OP_SQRT | OP_LOG | OP_EXP | OP_SIN | OP_COS
                 | OP_TAN | OP_LOG10 | OP_LOG2 | OP_ATAN2
-                | OP_MEDIAN | OP_QUANTILE | OP_STDEV | OP_VARIANCE | OP_DOT | OP_DET
-                | OP_ORD => {
+                | OP_MEDIAN | OP_QUANTILE | OP_STDEV | OP_VARIANCE | OP_SUM | OP_AVG | OP_DOT
+                | OP_DET | OP_ORD => {
                     num_write[a] = true;
                 }
                 // LOADK: numeric only when the constant itself is a number.
@@ -2523,6 +2529,15 @@ fn compile_function_body(
                 let call_inst = builder.ins().call(fref, &[bv, span_arg]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
+                // Stats helpers return a NaN-boxed number; the F64 shadow must be
+                // refreshed so a subsequent OP_*_NN fast-path reads the real
+                // result, not whatever stale value the shadow holds. Without
+                // this, e.g. `-(median xs) (median ys)` reads zero.
+                if a_idx < reg_count && reg_always_num[a_idx] {
+                    let mf = cranelift_codegen::ir::MemFlags::new();
+                    let rf = builder.ins().bitcast(F64, mf, result);
+                    builder.def_var(f64_vars[a_idx], rf);
+                }
             }
             OP_QUANTILE => {
                 let bv = builder.use_var(vars[b_idx]);
@@ -2533,6 +2548,11 @@ fn compile_function_body(
                 let call_inst = builder.ins().call(fref, &[bv, cv, span_arg]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
+                if a_idx < reg_count && reg_always_num[a_idx] {
+                    let mf = cranelift_codegen::ir::MemFlags::new();
+                    let rf = builder.ins().bitcast(F64, mf, result);
+                    builder.def_var(f64_vars[a_idx], rf);
+                }
             }
             OP_STDEV => {
                 let bv = builder.use_var(vars[b_idx]);
@@ -2542,6 +2562,11 @@ fn compile_function_body(
                 let call_inst = builder.ins().call(fref, &[bv, span_arg]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
+                if a_idx < reg_count && reg_always_num[a_idx] {
+                    let mf = cranelift_codegen::ir::MemFlags::new();
+                    let rf = builder.ins().bitcast(F64, mf, result);
+                    builder.def_var(f64_vars[a_idx], rf);
+                }
             }
             OP_VARIANCE => {
                 let bv = builder.use_var(vars[b_idx]);
@@ -2551,6 +2576,39 @@ fn compile_function_body(
                 let call_inst = builder.ins().call(fref, &[bv, span_arg]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
+                if a_idx < reg_count && reg_always_num[a_idx] {
+                    let mf = cranelift_codegen::ir::MemFlags::new();
+                    let rf = builder.ins().bitcast(F64, mf, result);
+                    builder.def_var(f64_vars[a_idx], rf);
+                }
+            }
+            OP_SUM => {
+                let bv = builder.use_var(vars[b_idx]);
+                let span_bits = pack_span_bits(chunk.spans[ip]);
+                let span_arg = builder.ins().iconst(I64, span_bits);
+                let fref = get_func_ref(&mut builder, module, helpers.sum);
+                let call_inst = builder.ins().call(fref, &[bv, span_arg]);
+                let result = builder.inst_results(call_inst)[0];
+                builder.def_var(vars[a_idx], result);
+                if a_idx < reg_count && reg_always_num[a_idx] {
+                    let mf = cranelift_codegen::ir::MemFlags::new();
+                    let rf = builder.ins().bitcast(F64, mf, result);
+                    builder.def_var(f64_vars[a_idx], rf);
+                }
+            }
+            OP_AVG => {
+                let bv = builder.use_var(vars[b_idx]);
+                let span_bits = pack_span_bits(chunk.spans[ip]);
+                let span_arg = builder.ins().iconst(I64, span_bits);
+                let fref = get_func_ref(&mut builder, module, helpers.avg);
+                let call_inst = builder.ins().call(fref, &[bv, span_arg]);
+                let result = builder.inst_results(call_inst)[0];
+                builder.def_var(vars[a_idx], result);
+                if a_idx < reg_count && reg_always_num[a_idx] {
+                    let mf = cranelift_codegen::ir::MemFlags::new();
+                    let rf = builder.ins().bitcast(F64, mf, result);
+                    builder.def_var(f64_vars[a_idx], rf);
+                }
             }
             OP_SLC => {
                 // slc(R[B], R[C], R[D]) — D in data word A field
