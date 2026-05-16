@@ -102,31 +102,42 @@ impl Parser {
         self.decl_boundary.get(self.pos).copied().flatten()
     }
 
-    /// Emit ILO-P020 if we've crossed a top-level declaration boundary while
-    /// still parsing the header of `fn_name`. The error span is anchored at
-    /// the offending function (preferring `header_start` if it points at a
-    /// real token; falling back to `prev_span()` otherwise) so the
-    /// diagnostic lands on the right line in multi-function files.
+    /// Emit ILO-P020 if we've crossed a top-level declaration boundary OR hit
+    /// EOF while still parsing the header of `fn_name`. The error span is
+    /// anchored at the offending function (preferring `header_start` if it
+    /// points at a real token; falling back to `prev_span()` otherwise) so
+    /// the diagnostic lands on the right line in multi-function files.
     ///
     /// `header_start` is the span of the function name token captured at the
     /// start of `parse_fn_decl`. Passing it through keeps the error pinned to
     /// the function name itself rather than whatever was last consumed
     /// (which can be a `>` on the same line — fine — but is cleaner this way).
+    ///
+    /// EOF is treated as a "soft boundary" here: a file that simply ends
+    /// inside a function header is the same class of bug as one that
+    /// continues into another decl, and the persona needs the same hint.
+    /// Without this branch, EOF mid-header falls through to the default
+    /// `peek_span()` error path which returns `Span::UNKNOWN` and renders
+    /// as line 1 col 1 — pre-existing infra-wide limitation we route around
+    /// here for the fn-header case specifically.
     fn check_fn_header_boundary(&self, fn_name: &str, header_start: Span) -> Result<()> {
-        if self.boundary_at_cursor().is_none() {
+        if self.boundary_at_cursor().is_none() && !self.at_end() {
             return Ok(());
         }
         let mut anchor = header_start;
         if anchor.start == anchor.end {
             anchor = self.prev_span();
         }
+        let trailing = if self.at_end() {
+            "header runs off the end of the file"
+        } else {
+            "header runs off the end of the line"
+        };
         Err(ParseError {
             code: "ILO-P020",
             position: self.pos,
             span: anchor,
-            message: format!(
-                "incomplete function header for `{fn_name}`: header runs off the end of the line"
-            ),
+            message: format!("incomplete function header for `{fn_name}`: {trailing}"),
             hint: Some(
                 "a function header is `name params>type;body` — finish it on the same line, or indent the continuation so the parser keeps it inside this function".to_string(),
             ),
@@ -779,20 +790,28 @@ impl Parser {
 
     fn parse_type(&mut self) -> Result<Type> {
         // Safety net: if we're about to read a type from across a top-level
-        // declaration boundary, the source is malformed (a nested type slot
-        // ran off the end of its line — e.g. `f2 a:n>R\nmain>...` where `R`
-        // expects an err-type that never arrives). Anchor the diagnostic at
-        // the previous token so it lands on the offending function's line
-        // rather than wherever the next declaration starts. Header-level
-        // callers (`parse_fn_decl`) catch this first and emit the friendlier
-        // ILO-P020; this guard only fires for nested type slots inside
-        // `R`/`M`/`F`/`L`/`O`/`S` where the header-level check can't see in.
-        if self.boundary_at_cursor().is_some() {
+        // declaration boundary or from past EOF, the source is malformed (a
+        // nested type slot ran off the end of its line — e.g.
+        // `f2 a:n>R\nmain>...` where `R` expects an err-type that never
+        // arrives, or `main a:n>R` where the file ends). Anchor the
+        // diagnostic at the previous token so it lands on the offending
+        // function's line rather than wherever the next declaration starts
+        // (or line 1 col 1 when EOF falls back to `Span::UNKNOWN`).
+        // Header-level callers (`parse_fn_decl`) catch this first and emit
+        // the friendlier ILO-P020; this guard only fires for nested type
+        // slots inside `R`/`M`/`F`/`L`/`O`/`S` where the header-level check
+        // can't see in.
+        if self.boundary_at_cursor().is_some() || self.at_end() {
+            let (code, msg): (&'static str, &str) = if self.at_end() {
+                ("ILO-P008", "expected type, got end of file")
+            } else {
+                ("ILO-P007", "expected type, got end of line")
+            };
             return Err(ParseError {
-                code: "ILO-P007",
+                code,
                 position: self.pos,
                 span: self.prev_span(),
-                message: "expected type, got end of line".to_string(),
+                message: msg.to_string(),
                 hint: None,
             });
         }
@@ -4607,13 +4626,18 @@ mod tests {
 
     #[test]
     fn eof_while_expecting_identifier() {
-        // `f x:n>n;y=` — incomplete let binding, hits EOF when expecting identifier or expression
+        // `f` alone hits EOF inside the function header (no params, no `>`,
+        // no return type). After the ILO-P020 boundary-anchor work, this
+        // surfaces as "incomplete function header" anchored at `f` rather
+        // than a generic EOF message with `Span::UNKNOWN`. Either shape is
+        // fine for the persona — the assertion just needs to confirm a
+        // real parse error fired, not pin the exact wording.
         let (_, errors) = parse_str_errors("f");
         assert!(!errors.is_empty(), "expected parse error");
         assert!(
-            errors
-                .iter()
-                .any(|e| e.message.contains("EOF") || e.message.contains("expected")),
+            errors.iter().any(|e| e.message.contains("EOF")
+                || e.message.contains("expected")
+                || e.message.contains("incomplete function header")),
             "unexpected error messages: {:?}",
             errors
         );
