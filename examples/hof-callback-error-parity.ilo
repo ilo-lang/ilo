@@ -1,0 +1,31 @@
+-- HOF callbacks must behave identically on every engine: when the callback
+-- succeeds, all three engines (tree, VM, Cranelift) produce the same result;
+-- when it fails, all three raise a runtime error (covered by
+-- tests/regression_hof_error_parity.rs, which can assert against the JSON
+-- diagnostic shape that the examples harness can't pin via plain `-- err:`).
+--
+-- This example shows the success contract is preserved across `srt`, `rsrt`,
+-- `grp`, `uniqby`, `partition`, `flatmap`, and `mapr` after the fix that
+-- promoted bridge-callback errors from silent `nil` to proper runtime
+-- errors on Cranelift. If the fix had over-reached and broken the success
+-- path, this file would catch it via the engine harness.
+
+absv n:n>n;?<n 0 (-0 n) n
+
+by-srt>L n;srt absv [-3,1,-2,4,-1]
+by-rsrt>L n;rsrt absv [-3,1,-2,4,-1]
+
+parity n:n>t;r=mod n 2;str r
+by-grp>M t (L n);grp parity [1,2,3,4]
+
+dbl n:n>L n;[n, n]
+by-flat>L n;flatmap dbl [1,2,3]
+
+-- run: by-srt
+-- out: [1, -1, -2, -3, 4]
+-- run: by-rsrt
+-- out: [4, -3, -2, 1, -1]
+-- run: by-grp
+-- out: {0: [2, 4]; 1: [1, 3]}
+-- run: by-flat
+-- out: [1, 1, 2, 2, 3, 3]
