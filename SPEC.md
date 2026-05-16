@@ -420,6 +420,7 @@ Called like functions, compiled to dedicated opcodes.
 | `flt fn xs` | keep elements where `fn x` is true | `L a` |
 | `fld fn xs init` | left fold: `fn (fn (fn init x0) x1) ...` | accumulator |
 | `flatmap fn xs` | map then flatten one level | `L b` |
+| `mapr fn xs` | map with short-circuit Result propagation: collects Ok values, returns first Err | `R (L b) e` |
 | `partition fn xs` | split list into `[passing, failing]` by predicate | `L (L a)` |
 | `chunks n xs` | non-overlapping chunks of size `n` (final chunk may be shorter) | `L (L a)` |
 | `window n xs` | sliding windows of size `n` (drops trailing partial; empty if n > len) | `L (L a)` |
