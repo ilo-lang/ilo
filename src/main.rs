@@ -1455,7 +1455,12 @@ fn strip_string_contents(source: &str) -> String {
 /// `tail` substring inside a comment line, a string literal, or a file path
 /// printed to stderr won't fire `hint: \`tail\` → \`tl\``. The text-based `==`
 /// scan strips both strings and comments first for the same reason.
+#[cfg(test)]
 fn collect_hints(source: &str) -> Vec<String> {
+    collect_hints_with_program(source, None)
+}
+
+fn collect_hints_with_program(source: &str, program: Option<&ast::Program>) -> Vec<String> {
     let mut hints = Vec::new();
     // Hint: == → = saves 1 character
     // Scan for `==` outside string literals and comments. We don't use the
@@ -1497,6 +1502,24 @@ fn collect_hints(source: &str) -> Vec<String> {
         // intuition and are skipped.
         if let Some(hint) = detect_prefix_precedence_trap(&tokens) {
             hints.push(hint);
+        }
+    }
+    // AST-aware hint: braced-conditional guard `cond{^"err"}` discards the
+    // body value, which is almost always not what the author intended.
+    // Personas (qa-tester, scientific-researcher rerun3) reach for this
+    // shape expecting early-return semantics. The braceless guard form
+    // `<k 1 ^"err"` or explicit `ret`/`!`-propagate covers the real intent.
+    if let Some(prog) = program {
+        for decl in &prog.declarations {
+            if let ast::Decl::Function { body, .. } = decl
+                && walk_for_discarded_guard_result(body)
+            {
+                hints.push(
+                    "hint: `cond{^\"err\"}` and `cond{~v}` discard the body expression. For early-return use the braceless form `cond ^\"err\"` or wrap the body in `{ret ^\"err\"}`."
+                        .to_string(),
+                );
+                break; // one hint per run is enough
+            }
         }
     }
     hints
@@ -1577,6 +1600,56 @@ fn is_value_yielding(tok: &lexer::Token) -> bool {
     )
 }
 
+/// Walk a body looking for a braced-conditional guard whose final body
+/// statement is an `Expr::Err(_)` or `Expr::Ok(_)` expression — a strong
+/// signal the author meant `ret ^...` / `ret ~...` but wrote `cond{^...}`,
+/// which silently discards the value.
+fn walk_for_discarded_guard_result(body: &[ast::Spanned<ast::Stmt>]) -> bool {
+    for s in body {
+        if walk_stmt_for_discarded_guard_result(&s.node) {
+            return true;
+        }
+    }
+    false
+}
+
+fn walk_stmt_for_discarded_guard_result(stmt: &ast::Stmt) -> bool {
+    match stmt {
+        ast::Stmt::Guard {
+            body,
+            else_body,
+            braceless,
+            ..
+        } => {
+            if !*braceless
+                && let Some(last) = body.last()
+                && matches!(
+                    last.node,
+                    ast::Stmt::Expr(ast::Expr::Err(_) | ast::Expr::Ok(_))
+                )
+            {
+                return true;
+            }
+            if walk_for_discarded_guard_result(body) {
+                return true;
+            }
+            if let Some(eb) = else_body
+                && walk_for_discarded_guard_result(eb)
+            {
+                return true;
+            }
+            false
+        }
+        ast::Stmt::Match { arms, .. } => arms
+            .iter()
+            .any(|a| walk_for_discarded_guard_result(&a.body)),
+        ast::Stmt::ForEach { body, .. }
+        | ast::Stmt::ForRange { body, .. }
+        | ast::Stmt::While { body, .. } => walk_for_discarded_guard_result(body),
+        _ => false,
+    }
+}
+
 /// Strip both string-literal contents and `--`-prefixed line comments,
 /// replacing their contents with spaces so byte offsets are preserved.
 /// Used by the text-based `==` scan so a literal `==` inside a string or
@@ -1637,9 +1710,11 @@ fn warn_cross_language_syntax(source: &str, mode: OutputMode) {
         ("//", "'//' — ilo uses '--' for comments"),
     ];
 
-    // Strip string literal contents so patterns inside "..." don't trigger warnings.
-    // This avoids false positives for URLs like "https://example.com".
-    let stripped = strip_string_contents(source);
+    // Strip string literal contents AND `--` comments so patterns inside
+    // `"..."` or `--` lines don't trigger warnings. Avoids false positives
+    // for URLs like `"https://example.com"` and for comments that mention
+    // cross-language syntax illustratively (e.g. `-- not: a -> b`).
+    let stripped = strip_string_and_comment_contents(source);
 
     let details: Vec<&str> = patterns
         .iter()
@@ -2680,7 +2755,7 @@ fn dispatch_run(r: cli::RunArgs, mode: OutputMode, explicit_json: bool, no_hints
 
     // Emit idiomatic hints after successful execution
     if exit_code == 0 && !no_hints {
-        let hints = collect_hints(&source);
+        let hints = collect_hints_with_program(&source, Some(&program));
         emit_hints(&hints, mode);
     }
 
@@ -4051,6 +4126,115 @@ mod tests {
     fn collect_hints_no_source_no_hint() {
         let hints = collect_hints("f x:n>n;+x 1");
         assert!(hints.is_empty());
+    }
+
+    /// Lex + parse a source snippet into a `Program` for AST-aware hint
+    /// tests. Asserts the parse succeeded.
+    fn parse_program(source: &str) -> ast::Program {
+        let tokens = lexer::lex(source).expect("lex failed");
+        let token_spans: Vec<(lexer::Token, ast::Span)> = tokens
+            .into_iter()
+            .map(|(t, r)| {
+                (
+                    t,
+                    ast::Span {
+                        start: r.start,
+                        end: r.end,
+                    },
+                )
+            })
+            .collect();
+        let (prog, errors) = parser::parse(token_spans);
+        assert!(errors.is_empty(), "parse errors: {:?}", errors);
+        prog
+    }
+
+    #[test]
+    fn collect_hints_discarded_err_in_guard_body() {
+        // `f x:n>R n t;<x 0{^"neg"};~x` — `^"neg"` is silently discarded.
+        let prog = parse_program("f x:n>R n t;<x 0{^\"neg\"};~x");
+        let hints = collect_hints_with_program("f x:n>R n t;<x 0{^\"neg\"};~x", Some(&prog));
+        assert!(
+            hints
+                .iter()
+                .any(|h| h.contains("discard the body expression")),
+            "hints: {:?}",
+            hints
+        );
+    }
+
+    #[test]
+    fn collect_hints_discarded_ok_in_guard_body() {
+        // Symmetric: braced-cond with `~v` in tail also discarded.
+        let prog = parse_program("f x:n>R n t;>x 0{~x};^\"neg\"");
+        let hints = collect_hints_with_program("f x:n>R n t;>x 0{~x};^\"neg\"", Some(&prog));
+        assert!(
+            hints
+                .iter()
+                .any(|h| h.contains("discard the body expression")),
+            "hints: {:?}",
+            hints
+        );
+    }
+
+    #[test]
+    fn collect_hints_braceless_guard_no_discard_hint() {
+        // Braceless guard `<x 0 ^"neg"` is the canonical early-return shape
+        // and must NOT trigger the hint.
+        let prog = parse_program("f x:n>R n t;<x 0 ^\"neg\";~x");
+        let hints = collect_hints_with_program("f x:n>R n t;<x 0 ^\"neg\";~x", Some(&prog));
+        assert!(
+            !hints
+                .iter()
+                .any(|h| h.contains("discard the body expression")),
+            "hints: {:?}",
+            hints
+        );
+    }
+
+    #[test]
+    fn collect_hints_explicit_ret_in_guard_no_discard_hint() {
+        // `<x 0{ret ^"neg"}` is the explicit-return form; no hint.
+        let prog = parse_program("f x:n>R n t;<x 0{ret ^\"neg\"};~x");
+        let hints = collect_hints_with_program("f x:n>R n t;<x 0{ret ^\"neg\"};~x", Some(&prog));
+        assert!(
+            !hints
+                .iter()
+                .any(|h| h.contains("discard the body expression")),
+            "hints: {:?}",
+            hints
+        );
+    }
+
+    #[test]
+    fn collect_hints_discarded_err_inside_foreach_body() {
+        // Nested-body coverage: discarded `^...` inside an `@k xs{}` body.
+        let prog = parse_program("f xs:L n>R n t;@k xs{<k 0{^\"neg\"}};~0");
+        let hints =
+            collect_hints_with_program("f xs:L n>R n t;@k xs{<k 0{^\"neg\"}};~0", Some(&prog));
+        assert!(
+            hints
+                .iter()
+                .any(|h| h.contains("discard the body expression")),
+            "hints: {:?}",
+            hints
+        );
+    }
+
+    #[test]
+    fn collect_hints_discarded_err_inside_match_arm_body() {
+        // Match-arm body contains a braced-cond guard whose tail discards
+        // an `^...` expression. Walker should recurse into match arms.
+        let src = "f r:R n t>R n t;?r{~v:<v 0{^\"neg\"};~v;^e:^e}";
+        let prog = parse_program(src);
+        let hints = collect_hints_with_program(src, Some(&prog));
+        assert!(
+            hints
+                .iter()
+                .any(|h| h.contains("discard the body expression")),
+            "hints: {:?}",
+            hints
+        );
     }
 
     // ── process_serv_request ─────────────────────────────────────────────────
