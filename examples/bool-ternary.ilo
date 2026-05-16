@@ -1,0 +1,64 @@
+-- Bare-bool ternary: `?subj{a}{b}` evaluates to `a` when subj is
+-- true, else `b`. Symmetric with the existing `=cond{a}{b}` form
+-- for comparison-led conditions — the `?` form is the natural
+-- shape when the condition is already a bool (param, comparison
+-- result, predicate call).
+--
+-- Previously this shape parsed as match-on-bool and errored with
+-- `expected Colon, got RBrace` because `a` was read as a pattern
+-- requiring `:body`. Workaround was the prefix ternary
+-- `?=h true a b`. Both forms still parse; the sugar saves ~5
+-- characters per occurrence on the highest-frequency conditional
+-- shape in agent-written ilo.
+
+basic h:b>n;?h{1}{0}
+strings h:b>t;?h{"yes"}{"no"}
+
+-- Arms can be calls, prefix-op expressions, or composed calls.
+calc h:b>n;?h{+1 2}{*3 4}
+
+-- Subject can be a comparison result bound to a local.
+pos x:n>t;c=>x 0;?c{"pos"}{"nonpos"}
+
+-- Assignment shape — ternary in RHS position.
+pick h:b>n;v=?h{10}{20};v
+
+-- Match on bool with explicit arms still works for cases where you
+-- want the symmetry of `true:` / `false:` arm labels.
+arms h:b>n;?h{true:10;false:20}
+
+-- run: basic true
+-- out: 1
+
+-- run: basic false
+-- out: 0
+
+-- run: strings true
+-- out: yes
+
+-- run: strings false
+-- out: no
+
+-- run: calc true
+-- out: 3
+
+-- run: calc false
+-- out: 12
+
+-- run: pos 5
+-- out: pos
+
+-- run: pos 0
+-- out: nonpos
+
+-- run: pick true
+-- out: 10
+
+-- run: pick false
+-- out: 20
+
+-- run: arms true
+-- out: 10
+
+-- run: arms false
+-- out: 20
