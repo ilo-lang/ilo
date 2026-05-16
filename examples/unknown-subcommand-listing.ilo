@@ -1,0 +1,21 @@
+-- Multi-fn file with `main` plus helpers. Pins that:
+--   * `ilo file.ilo`          auto-runs `main`
+--   * `ilo file.ilo dbl 21`   dispatches to the named function
+--   * `ilo file.ilo trp 4`    dispatches to the named function
+--
+-- The CLI-level guard for the unknown-subcommand case (e.g.
+-- `ilo file.ilo wibble x` should error with "no such function" and
+-- list available functions instead of silently routing to the first
+-- declared fn) is covered by tests/regression_cli_default.rs — the
+-- examples harness only exercises happy-path dispatch.
+
+dbl x:n>n;*x 2
+trp x:n>n;*x 3
+main>n;+(dbl 7)(trp 4)
+
+-- run: main
+-- out: 26
+-- run: dbl 21
+-- out: 42
+-- run: trp 4
+-- out: 12

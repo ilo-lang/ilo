@@ -2744,6 +2744,35 @@ fn dispatch_run(r: cli::RunArgs, mode: OutputMode, explicit_json: bool, no_hints
                     if func_names.contains(&first.as_str()) {
                         let fn_ref = Some(first.as_str());
                         (fn_ref, parse_cli_args_typed(&program, fn_ref, &rest[1..]))
+                    } else if is_file && func_names.len() > 1 && looks_like_subcommand_name(first) {
+                        // Multi-function file with an unknown leading
+                        // positional that LOOKS like an identifier
+                        // (alphabetic / underscore start, ident-shaped
+                        // tail): this is almost certainly a mistyped
+                        // subcommand, not a literal arg to the first
+                        // function. Silently routing to the first
+                        // declared function with `[unknown, ...]` as
+                        // args produced a misleading arity error far
+                        // from the cause (interactive-cli rerun5 P1).
+                        //
+                        // The ident-shaped guard preserves the existing
+                        // pass-through for numeric / sigil-shaped
+                        // leading args, which are clearly data, not a
+                        // subcommand attempt (e.g. `ilo file.ilo 42`
+                        // still routes `42` to the first fn — see
+                        // `tests/eval_inline.rs` unwrap_*_inline).
+                        //
+                        // Synthetic `__lit_*` decls are already filtered
+                        // out of `func_names` above (see #307), so the
+                        // listing here only shows user functions.
+                        eprintln!("error: no such function '{}' in {}", first, source_arg);
+                        eprintln!("available functions:");
+                        for n in &func_names {
+                            eprintln!("  {}", n);
+                        }
+                        eprintln!();
+                        eprintln!("  ilo {} <func> [args...]   run a function", source_arg);
+                        return 1;
                     } else {
                         (None, rest.iter().map(|a| parse_cli_arg(a)).collect())
                     }
@@ -3782,6 +3811,34 @@ fn split_top_level_commas(s: &str) -> Vec<&str> {
     parts
 }
 
+/// True iff `s` is shaped like an ilo function identifier (could plausibly
+/// have been intended as a subcommand name).
+///
+/// Used in the Default-engine CLI dispatch to distinguish `ilo f.ilo wibble`
+/// (a mistyped subcommand — should error with "no such function") from
+/// `ilo f.ilo 42` or `ilo f.ilo "hello"` (clearly a literal arg to the
+/// entry function — should pass through as before).
+///
+/// Rule: starts with an ASCII letter or underscore, and every subsequent
+/// char is alphanumeric or underscore. Anything else (a digit-prefixed
+/// number, a sigil, a quoted string, a bracketed list) is treated as data.
+///
+/// Reserved literal words (`true`, `false`, `nil`) are also exempt — they
+/// match the ident shape but `parse_cli_arg` already turns them into the
+/// corresponding `Bool` / `Nil` values, and passing them through to the
+/// entry function is the long-standing intent.
+fn looks_like_subcommand_name(s: &str) -> bool {
+    if matches!(s, "true" | "false" | "nil") {
+        return false;
+    }
+    let mut chars = s.chars();
+    match chars.next() {
+        Some(c) if c.is_ascii_alphabetic() || c == '_' => {}
+        _ => return false,
+    }
+    chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
 fn parse_cli_arg(s: &str) -> interpreter::Value {
     // Bracketed list: [1,2,3], ["apple","ant"], [[1,2],[3,4]] or [] — split
     // top-level commas, honoring quoted strings so commas inside strings don't
@@ -3937,6 +3994,45 @@ fn coerce_cli_args(
 mod tests {
     use super::*;
     use std::sync::Arc;
+
+    // ── looks_like_subcommand_name ────────────────────────────────────────────
+
+    #[test]
+    fn subcommand_shape_accepts_idents() {
+        assert!(looks_like_subcommand_name("wibble"));
+        assert!(looks_like_subcommand_name("helper"));
+        assert!(looks_like_subcommand_name("a"));
+        assert!(looks_like_subcommand_name("_priv"));
+        assert!(looks_like_subcommand_name("foo_bar"));
+        assert!(looks_like_subcommand_name("fn2"));
+    }
+
+    #[test]
+    fn subcommand_shape_rejects_data() {
+        // Numbers and number-looking strings
+        assert!(!looks_like_subcommand_name("42"));
+        assert!(!looks_like_subcommand_name("-1"));
+        assert!(!looks_like_subcommand_name("3.14"));
+        // Quoted strings, brackets, sigils
+        assert!(!looks_like_subcommand_name("\"hi\""));
+        assert!(!looks_like_subcommand_name("[1,2,3]"));
+        assert!(!looks_like_subcommand_name("--flag"));
+        // Empty and edge cases
+        assert!(!looks_like_subcommand_name(""));
+        assert!(!looks_like_subcommand_name("2x"));
+        assert!(!looks_like_subcommand_name("foo-bar"));
+    }
+
+    #[test]
+    fn subcommand_shape_exempts_reserved_literals() {
+        // `true` / `false` / `nil` are ident-shaped but `parse_cli_arg`
+        // already maps them to Bool/Nil values. Passing them through
+        // to the entry function on a multi-fn file is the long-standing
+        // intent, so they must not trip the unknown-subcommand error.
+        assert!(!looks_like_subcommand_name("true"));
+        assert!(!looks_like_subcommand_name("false"));
+        assert!(!looks_like_subcommand_name("nil"));
+    }
 
     // ── test helpers ──────────────────────────────────────────────────────────
 
