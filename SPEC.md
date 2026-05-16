@@ -212,6 +212,23 @@ Both prefix and infix notation are supported. **Prefix is preferred** — it is 
 -*a b *c d  -- (a * b) - (c * d)
 ```
 
+The outer prefix op binds the inner prefix subexpression as its **left** operand, regardless of operator precedence. With two same-precedence ops side by side this is easy to misread:
+
+```
+*/a b c     -- (a/b) * c   ← NOT (a*b)/c
+/*a b c     -- (a*b) / c   ← NOT (a/b)*c
++-a b c     -- (a-b) + c   ← NOT (a+b)-c
+-+a b c     -- (a+b) - c   ← NOT (a-b)+c
+```
+
+The runtime emits a `hint:` diagnostic when one of these four pairs appears at a prefix position, since the parse order disagrees with the natural left-to-right reading. To force the other grouping, swap the ops or bind the inner result first:
+
+```
+-- Want (a*b)/c with a=6, b=2, c=3:
+r=*a b;/r c    -- bind, then divide → 4
+/*a b c        -- equivalent, swapping the prefix-pair order
+```
+
 ### Infix precedence
 
 Standard mathematical precedence (higher binds tighter):

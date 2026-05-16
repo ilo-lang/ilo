@@ -52,6 +52,7 @@ For the full specification, read [SPEC.md](../../SPEC.md). For the compact AI sp
 
 - Prefix operators: `+a b`, `*a b`, `-a b`, `/a b`
 - Nesting is unambiguous: `+*a b c` means `(a*b)+c`
+- **Same-precedence trap:** the outer prefix op binds the inner one as its **left** operand. So `*/a b c` is `(a/b)*c`, NOT `(a*b)/c`. Same for `/*`, `+-`, `-+`. The runtime emits a `hint:` on these four shapes. Swap the pair or bind the inner result first if you wanted the other grouping.
 - `;` separates statements, last expression is the return value
 - No `return`, `if`, `let`, `fn` keywords — these are reserved words
 
