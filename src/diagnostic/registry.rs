@@ -678,6 +678,37 @@ never be executed.
 **Fix:** remove the unreachable code or move it before the `ret`/`brk`.
 "#,
     },
+    ErrorEntry {
+        code: "ILO-T032",
+        short: "bare 'fmt' result is discarded",
+        long: r#"## ILO-T032: bare 'fmt' result is discarded
+
+`fmt` (and `fmt2`) are pure-functional formatters — they build a string
+and return it. When called as a non-tail statement with no binding, the
+returned string is silently discarded on every engine (tree, VM, Cranelift).
+Nothing reaches stdout.
+
+The common mistake is treating `fmt` like Rust's `println!` or Python's
+`print` — but `fmt` does not perform any I/O.
+
+**Example (bug):**
+
+    report v:n>n;fmt "v={}" v;prnt "done";v
+    -- 'fmt "v={}" v' is evaluated and thrown away
+
+**Fix — print it:**
+
+    report v:n>n;prnt fmt "v={}" v;prnt "done";v
+
+**Fix — capture it:**
+
+    report v:n>n;line=fmt "v={}" v;prnt line;v
+
+`fmt` as the **tail** expression of a function is fine — that returns the
+string to the caller, which is the documented idiom (`say-x>t;fmt "x={}" 42`).
+This warning only fires when `fmt` is followed by another statement.
+"#,
+    },
     // ── Warnings ─────────────────────────────────────────────────────────────
     ErrorEntry {
         code: "ILO-W001",

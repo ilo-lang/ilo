@@ -471,6 +471,8 @@ Called like functions, compiled to dedicated opcodes.
 | `ifft pairs` | inverse FFT; imaginary part dropped on return | `L n` |
 | `fmt2 x digits` | format number `x` to `digits` decimal places (half-to-even rounding; `digits` clamped to `0..=20`). Compose with `fmt` for template + precision: `fmt "x={}" (fmt2 v 2)` | `t` |
 
+> **`fmt` does not print.** `fmt` and `fmt2` are pure-functional string builders, not `println!`. A bare `fmt "..." v` statement evaluates and discards the resulting text on every engine — nothing reaches stdout. Print with `prnt fmt "..." v` or capture with `line = fmt "..." v`. The verifier emits **ILO-T032** when `fmt`/`fmt2` is a non-tail statement with no binding. Tail position is fine: `say-x v:n>t;fmt "x={}" v` returns the string to the caller as documented.
+
 ### Datetime (`dtfmt` / `dtparse`)
 
 UTC only. Format strings follow strftime conventions (`%Y-%m-%d %H:%M:%S`, `%s`, etc).

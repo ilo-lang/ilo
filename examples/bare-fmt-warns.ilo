@@ -1,0 +1,26 @@
+-- `fmt` is pure-functional sprintf: it builds a string and returns it.
+-- A bare `fmt "..." v` as a non-tail statement is silently discarded on
+-- every engine (tree, VM, Cranelift). Nothing reaches stdout — the
+-- common mistake is treating `fmt` like Rust's `println!` / Python's print.
+--
+-- The verifier flags this with ILO-T032. This file pins the two idiomatic
+-- shapes that fix it. We wrap each `prnt` in a single-iteration foreach
+-- so the loop-tail auto-print suppression keeps stdout to exactly the
+-- intended line and `tests/examples_engines.rs` can assert it precisely.
+
+-- Idiom 1: print directly with `prnt fmt ...`
+report-print v:n>t;@i [v]{prnt fmt "v={}" v}
+
+-- Idiom 2: capture to a name, then print
+report-bind v:n>t;line=fmt "v={}" v;@i [v]{prnt line}
+
+-- Tail position is fine: `fmt` as the function's return value is
+-- exactly the documented idiom (no warning, no discard).
+say-x v:n>t;fmt "x={}" v
+
+-- run: report-print 7
+-- out: v=7
+-- run: report-bind 9
+-- out: v=9
+-- run: say-x 42
+-- out: x=42
