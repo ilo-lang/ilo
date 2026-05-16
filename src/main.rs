@@ -2756,10 +2756,30 @@ fn dispatch_run(r: cli::RunArgs, mode: OutputMode, explicit_json: bool, no_hints
                         }
                     }
                 } else {
-                    // Inline code with no func arg and no other mode flag:
-                    // legacy AST-dump path. Preserved for tooling and for
-                    // `ilo '<snippet>'` inspection. Documented since 0.x.
-                    return dump_ast_json(&program);
+                    // Inline code with no func arg and no other mode flag.
+                    //
+                    // SKILL.md documents: "Inline programs (`ilo 'code'`)
+                    // and single-function files run their entry function
+                    // with the remaining CLI args; no explicit function
+                    // name needed." Auto-run when there's a runnable
+                    // target: a function called `main`, or a single
+                    // user-defined function.
+                    //
+                    // Silently AST-dumping a runnable inline program was a
+                    // soundness hazard for piped consumers — they got
+                    // valid-looking JSON on stdout with exit code 0 that
+                    // was NOT the program result.
+                    //
+                    // Zero-fn or multi-fn-without-main inline snippets
+                    // still AST-dump, preserving the tooling escape hatch
+                    // from PR #178. `--ast` remains the explicit form for
+                    // pinning AST-dump output regardless of fn shape.
+                    match func_names.len() {
+                        0 => return dump_ast_json(&program),
+                        1 => (None, vec![]),
+                        _ if func_names.contains(&"main") => (Some("main"), vec![]),
+                        _ => return dump_ast_json(&program),
+                    }
                 };
 
                 run_default(&program, func_name, run_args, &source, mode, explicit_json)
