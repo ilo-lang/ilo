@@ -515,6 +515,8 @@ Called like functions, compiled to dedicated opcodes.
 
 > **`fmt` does not print.** `fmt` and `fmt2` are pure-functional string builders, not `println!`. A bare `fmt "..." v` statement evaluates and discards the resulting text on every engine — nothing reaches stdout. Print with `prnt fmt "..." v` or capture with `line = fmt "..." v`. The verifier emits **ILO-T032** when `fmt`/`fmt2` is a non-tail statement with no binding. Tail position is fine: `say-x v:n>t;fmt "x={}" v` returns the string to the caller as documented.
 
+> **`+=`, `mset`, and `mdel` return a new value, they do not mutate in place.** `+=xs v` returns a new list; `mset m k v` and `mdel m k` return a new map. As a bare statement (`@i 0..3{+=out i}`, `mset m "a" 1;m`) the result is silently discarded and the source binding is unchanged. The verifier emits **ILO-T033** when these calls appear at a discarded position — any non-tail statement, or anywhere inside a loop body. Fix is the assignment form: `out=+=out i`, `m=mset m k v`, `m=mdel m k`. Tail position in a function/`?{}` arm is fine — the value flows out as the return.
+
 ### Datetime (`dtfmt` / `dtparse`)
 
 UTC only. Format strings follow strftime conventions (`%Y-%m-%d %H:%M:%S`, `%s`, etc).
