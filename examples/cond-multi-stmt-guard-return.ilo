@@ -1,0 +1,25 @@
+-- Multi-statement braced-cond bodies that end with `~v` or `^e` should
+-- NOT trigger the `cond{^"err"}` / `cond{~v}` discarded-result hint.
+-- The hint targets the bare single-stmt shape `{^"err"}` / `{~v}` where
+-- the author almost certainly meant `ret ^...` / `ret ~...`. With a
+-- multi-statement body the author has clearly composed the block on
+-- purpose, so even though the trailing Result expression is technically
+-- discarded the hint is too noisy to be useful. See PR for context.
+--
+-- The guard body still runs (side effects fire), the trailing Result
+-- expression is computed and discarded, and execution falls through.
+
+-- Both functions exercise the multi-stmt-body shape. The cases where
+-- the guard does NOT fire are asserted below; their stdout is the
+-- single fall-through value, which keeps the example harness's single-
+-- line `-- out:` assertion happy. The hint-firing behaviour is pinned
+-- as a Rust unit test (collect_hints_multi_stmt_guard_body_*).
+
+multi n:n>R t t;=n 0{prnt "empty";~"ok"};~"done"
+
+multierr x:n>R n t;<x 0{prnt "neg";^"bad"};~x
+
+-- run: multi 1
+-- out: done
+-- run: multierr 5
+-- out: 5
