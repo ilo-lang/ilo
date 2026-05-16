@@ -184,6 +184,18 @@ xs >> flt pos >> map sq   -- chain transforms left-to-right
 
 Desugars to nested calls. Wrap in `()` for non-last functions in files.
 
+## List Indexing
+
+```
+xs.0                   -- literal index (first element)
+xs.i                   -- variable index (i bound in scope; desugars to `at xs i`)
+at xs i                -- equivalent, works anywhere expressions do
+```
+
+The `.i` form requires `i` to be a binding in the current scope (parameter,
+let, foreach, range, match-arm). If `i` also happens to be a declared field
+on a record type, the parser keeps the record-access semantics.
+
 ## Records
 
 ```

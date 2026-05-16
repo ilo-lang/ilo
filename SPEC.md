@@ -590,11 +590,19 @@ Elements are expressions in brackets, separated by spaces or commas. Variables a
 @x xs{+x 1}
 ```
 
-Index by integer literal (dot notation):
+Index by integer literal or variable (dot notation):
 ```
-xs.0     # first element
-xs.2     # third element
+xs.0     # first element (literal index)
+xs.2     # third element (literal index)
+xs.i     # i-th element when `i` is a bound variable in scope
 ```
+
+The variable-index form `xs.i` is sugar for `at xs i` — the parser builds
+a field-access node and a post-parse desugar pass rewrites it whenever the
+field identifier resolves to a binding in scope (parameter, let, foreach,
+range, match-arm). Record field access keeps working: if the identifier is
+also a declared field on any record type in the program, the rewrite is
+skipped and the strict `.field` semantics apply.
 
 **CLI list arguments:** Pass lists from the command line with commas (brackets also accepted):
 ```
