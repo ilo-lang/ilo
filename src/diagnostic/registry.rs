@@ -302,6 +302,46 @@ The parens make the `fmt` call self-contained, so the outer's arg counter
 treats it as a single operand.
 "#,
     },
+    ErrorEntry {
+        code: "ILO-P020",
+        short: "incomplete function header",
+        long: r#"## ILO-P020: incomplete function header
+
+A function header (`name params>type;body`) ran off the end of its line
+without supplying everything the parser needed. The most common shapes:
+
+**Missing return type after `>`:**
+
+    f1 a:n>n;+a 1
+    f2 a:n>R
+    main>n;0
+
+`f2`'s `R` (Result) needs an ok-type AND an err-type; here the line ends
+with just `R`.
+
+**Missing `>` entirely:**
+
+    f1 a:n>n;+a 1
+    f2 a:n
+    main>n;0
+
+Without `>` the parser cannot tell where the parameter list ends and the
+return type starts.
+
+**Fix:** finish the header on the same line as the function name. If you
+want to wrap a long header across multiple lines, indent the
+continuation:
+
+    f2 a:n
+      >R n t;...
+
+Indented lines are joined with `;` automatically; only an unindented
+line break ends a declaration.
+
+This diagnostic exists so the error span lands on the function whose
+header is incomplete, not on the next function in the file.
+"#,
+    },
     // ── Type / Verifier ──────────────────────────────────────────────────────
     ErrorEntry {
         code: "ILO-T001",

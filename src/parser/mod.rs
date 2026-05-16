@@ -6,6 +6,17 @@ use std::collections::HashMap;
 pub struct Parser {
     tokens: Vec<(Token, Span)>,
     pos: usize,
+    /// Parallel to `tokens` with length `tokens.len() + 1`. Entry `i` is
+    /// `Some(span)` iff at least one unindented `Token::Newline` (a top-level
+    /// declaration boundary, as produced by `lexer::normalize_newlines`) sat
+    /// immediately before token `i` in the pre-filter stream. The trailing
+    /// entry covers any newlines after the last surviving token. Populated in
+    /// `Parser::new` before newlines are filtered out, then consulted by
+    /// `parse_fn_decl`/`parse_params`/`parse_type` to keep header parsing from
+    /// walking off the end of one function and into the next. Without this,
+    /// a malformed header on line N reports its error span on line N+1 or
+    /// later, sending personas to bisect the wrong function.
+    decl_boundary: Vec<Option<Span>>,
     /// Known function arities, populated with builtins at construction
     /// and extended with user-function headers as they're parsed.
     fn_arity: HashMap<String, usize>,
@@ -40,21 +51,97 @@ type Result<T> = std::result::Result<T, ParseError>;
 
 impl Parser {
     pub fn new(tokens: Vec<(Token, Span)>) -> Self {
-        // Filter out newlines — idea9 uses ; as separator
-        let tokens: Vec<(Token, Span)> = tokens
-            .into_iter()
-            .filter(|(t, _)| *t != Token::Newline)
-            .collect();
+        // Filter out newlines — idea9 uses ; as separator. Each surviving
+        // `Token::Newline` came out of `lexer::normalize_newlines`, which
+        // converts indented continuations into `;` and only keeps a literal
+        // newline at column 0 (an unambiguous top-level decl boundary). We
+        // throw the tokens away to keep the rest of the parser simple, but
+        // remember WHERE they sat in `decl_boundary` so header parsing in
+        // `parse_fn_decl` can detect when it would walk past one and into
+        // the next function. Without that signal, error spans land on the
+        // wrong function in multi-function files.
+        let mut filtered: Vec<(Token, Span)> = Vec::with_capacity(tokens.len());
+        let mut decl_boundary: Vec<Option<Span>> = Vec::with_capacity(tokens.len() + 1);
+        let mut pending: Option<Span> = None;
+        for (tok, span) in tokens.into_iter() {
+            if tok == Token::Newline {
+                // Coalesce a run of consecutive newlines into the first one's
+                // span; either way the meaning ("a decl boundary sat here") is
+                // identical and one span is enough for diagnostics.
+                if pending.is_none() {
+                    pending = Some(span);
+                }
+                continue;
+            }
+            decl_boundary.push(pending.take());
+            filtered.push((tok, span));
+        }
+        // Trailing entry covers any newlines after the final surviving token.
+        decl_boundary.push(pending.take());
+        debug_assert_eq!(decl_boundary.len(), filtered.len() + 1);
         let (fn_arity, fn_param_is_fn) = builtin_arity_tables();
         Parser {
-            tokens,
+            tokens: filtered,
             pos: 0,
+            decl_boundary,
             fn_arity,
             fn_param_is_fn,
             no_whitespace_call: false,
             lifted_decls: Vec::new(),
             lambda_counter: 0,
         }
+    }
+
+    /// Returns `Some(span)` if an unindented newline (top-level declaration
+    /// boundary) sits immediately before the current token. The span points
+    /// at the newline byte itself, but for diagnostic anchoring callers
+    /// typically prefer `prev_span()` (the last token of the offending
+    /// function's line). Returns `None` if no boundary precedes `self.pos`
+    /// or the parser is at EOF beyond the recorded range.
+    fn boundary_at_cursor(&self) -> Option<Span> {
+        self.decl_boundary.get(self.pos).copied().flatten()
+    }
+
+    /// Emit ILO-P020 if we've crossed a top-level declaration boundary OR hit
+    /// EOF while still parsing the header of `fn_name`. The error span is
+    /// anchored at the offending function (preferring `header_start` if it
+    /// points at a real token; falling back to `prev_span()` otherwise) so
+    /// the diagnostic lands on the right line in multi-function files.
+    ///
+    /// `header_start` is the span of the function name token captured at the
+    /// start of `parse_fn_decl`. Passing it through keeps the error pinned to
+    /// the function name itself rather than whatever was last consumed
+    /// (which can be a `>` on the same line — fine — but is cleaner this way).
+    ///
+    /// EOF is treated as a "soft boundary" here: a file that simply ends
+    /// inside a function header is the same class of bug as one that
+    /// continues into another decl, and the persona needs the same hint.
+    /// Without this branch, EOF mid-header falls through to the default
+    /// `peek_span()` error path which returns `Span::UNKNOWN` and renders
+    /// as line 1 col 1 — pre-existing infra-wide limitation we route around
+    /// here for the fn-header case specifically.
+    fn check_fn_header_boundary(&self, fn_name: &str, header_start: Span) -> Result<()> {
+        if self.boundary_at_cursor().is_none() && !self.at_end() {
+            return Ok(());
+        }
+        let mut anchor = header_start;
+        if anchor.start == anchor.end {
+            anchor = self.prev_span();
+        }
+        let trailing = if self.at_end() {
+            "header runs off the end of the file"
+        } else {
+            "header runs off the end of the line"
+        };
+        Err(ParseError {
+            code: "ILO-P020",
+            position: self.pos,
+            span: anchor,
+            message: format!("incomplete function header for `{fn_name}`: {trailing}"),
+            hint: Some(
+                "a function header is `name params>type;body` — finish it on the same line, or indent the continuation so the parser keeps it inside this function".to_string(),
+            ),
+        })
     }
 
     fn peek(&self) -> Option<&Token> {
@@ -612,6 +699,12 @@ impl Parser {
             ));
         }
         let params = self.parse_params()?;
+        // After params, before we touch `>` and the return type, make sure we
+        // haven't crossed a top-level decl boundary. If we have, the header
+        // is incomplete — surface ILO-P020 anchored at this function's name
+        // rather than letting `expect(Greater)`/`parse_type` walk into the
+        // next function and report the error on the wrong line.
+        self.check_fn_header_boundary(&name, start)?;
         // Register arity + per-param fn-ref flags BEFORE parsing the body so
         // recursive self-references inside the body benefit from eager
         // call-arg expansion (e.g. `fac n:n>n;?=n 0{1}{*n fac -n 1}` —
@@ -637,6 +730,9 @@ impl Parser {
             ));
         }
         self.expect(&Token::Greater)?;
+        // Same check between `>` and the return type: `f2 a:n>\n` must report
+        // against `f2`, not against whatever ident starts the next line.
+        self.check_fn_header_boundary(&name, start)?;
         let return_type = self.parse_type()?;
         // The header/body boundary is normally a `;`, but a newline (filtered
         // out before parsing) leaves no separator. Accept either: consume a
@@ -693,6 +789,32 @@ impl Parser {
     // ---- Types ----
 
     fn parse_type(&mut self) -> Result<Type> {
+        // Safety net: if we're about to read a type from across a top-level
+        // declaration boundary or from past EOF, the source is malformed (a
+        // nested type slot ran off the end of its line — e.g.
+        // `f2 a:n>R\nmain>...` where `R` expects an err-type that never
+        // arrives, or `main a:n>R` where the file ends). Anchor the
+        // diagnostic at the previous token so it lands on the offending
+        // function's line rather than wherever the next declaration starts
+        // (or line 1 col 1 when EOF falls back to `Span::UNKNOWN`).
+        // Header-level callers (`parse_fn_decl`) catch this first and emit
+        // the friendlier ILO-P020; this guard only fires for nested type
+        // slots inside `R`/`M`/`F`/`L`/`O`/`S` where the header-level check
+        // can't see in.
+        if self.boundary_at_cursor().is_some() || self.at_end() {
+            let (code, msg): (&'static str, &str) = if self.at_end() {
+                ("ILO-P008", "expected type, got end of file")
+            } else {
+                ("ILO-P007", "expected type, got end of line")
+            };
+            return Err(ParseError {
+                code,
+                position: self.pos,
+                span: self.prev_span(),
+                message: msg.to_string(),
+                hint: None,
+            });
+        }
         match self.peek().cloned() {
             Some(Token::LParen) => {
                 self.advance();
@@ -814,9 +936,22 @@ impl Parser {
     }
 
     /// Parse parameter list: `name:type name:type ...`
+    ///
+    /// Stops at the first non-`Ident:type` shape, and also stops at a top-level
+    /// declaration boundary (an unindented newline in the source) so a
+    /// malformed header like `f2 a:n` missing its `>type` does not slurp the
+    /// next function's name (`main`) as another parameter.
     fn parse_params(&mut self) -> Result<Vec<Param>> {
         let mut params = Vec::new();
         while let Some(Token::Ident(_)) = self.peek() {
+            // A top-level newline before the next ident means the previous
+            // function's header ended without a `>type;body` — stop here and
+            // let `parse_fn_decl` surface a precise ILO-P020 against the
+            // offending function's line, instead of letting this loop drag
+            // tokens across the boundary.
+            if self.boundary_at_cursor().is_some() {
+                break;
+            }
             // Look ahead for colon to distinguish params from other constructs
             if self.pos + 1 < self.tokens.len()
                 && self.token_at(self.pos + 1) == Some(&Token::Colon)
@@ -4491,13 +4626,18 @@ mod tests {
 
     #[test]
     fn eof_while_expecting_identifier() {
-        // `f x:n>n;y=` — incomplete let binding, hits EOF when expecting identifier or expression
+        // `f` alone hits EOF inside the function header (no params, no `>`,
+        // no return type). After the ILO-P020 boundary-anchor work, this
+        // surfaces as "incomplete function header" anchored at `f` rather
+        // than a generic EOF message with `Span::UNKNOWN`. Either shape is
+        // fine for the persona — the assertion just needs to confirm a
+        // real parse error fired, not pin the exact wording.
         let (_, errors) = parse_str_errors("f");
         assert!(!errors.is_empty(), "expected parse error");
         assert!(
-            errors
-                .iter()
-                .any(|e| e.message.contains("EOF") || e.message.contains("expected")),
+            errors.iter().any(|e| e.message.contains("EOF")
+                || e.message.contains("expected")
+                || e.message.contains("incomplete function header")),
             "unexpected error messages: {:?}",
             errors
         );
