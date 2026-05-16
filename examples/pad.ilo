@@ -1,12 +1,19 @@
 -- padl x w: left-pad text x with spaces to width w.
 -- padr x w: right-pad text x with spaces to width w.
+-- padl x w pc / padr x w pc: same, but pad with a custom 1-character string.
 -- If x is already ≥ w characters, it's returned unchanged.
 
 pl x:t w:n>t;padl x w
 pr x:t w:n>t;padr x w
 
--- A tiny formatted table: left-align labels, right-align numbers.
-row label:t value:t>t;l=padr label 8;r=padl value 5;cat [l r] ""
+-- Zero-padded numeric key: useful for sortable log lines, IDs, fixed-column output.
+zp n:t>t;padl n 5 "0"
+
+-- Dot-leader right-padding: terminal-style "name . . . . value" alignment.
+dr s:t>t;padr s 6 "."
+
+-- A tiny formatted table: left-align labels, right-align numbers (zero-padded).
+row label:t value:t>t;l=padr label 8;r=padl value 5 "0";cat [l r] ""
 
 -- run: pl "hi" 5
 -- out:    hi
@@ -16,7 +23,13 @@ row label:t value:t>t;l=padr label 8;r=padl value 5;cat [l r] ""
 -- out: exact
 -- run: pr "already-wider" 4
 -- out: already-wider
+-- run: zp "42"
+-- out: 00042
+-- run: zp "1234567"
+-- out: 1234567
+-- run: dr "log"
+-- out: log...
 -- run: row "apples" "12"
--- out: apples     12
+-- out: apples  00012
 -- run: row "pears" "3"
--- out: pears       3
+-- out: pears   00003

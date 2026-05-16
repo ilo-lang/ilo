@@ -459,6 +459,8 @@ Called like functions, compiled to dedicated opcodes.
 | `cap s` | capitalise first char (ASCII) | `t` |
 | `padl s w` | left-pad to width `w` with spaces (no-op if already wider) | `t` |
 | `padr s w` | right-pad to width `w` with spaces (no-op if already wider) | `t` |
+| `padl s w pc` | left-pad to width `w` with 1-character string `pc` (e.g. `"0"` for sortable zero-padded keys) | `t` |
+| `padr s w pc` | right-pad to width `w` with 1-character string `pc` (e.g. `"."` for dot-leader alignment) | `t` |
 | `rgxall pat s` | every regex match as `L (L t)` (no-group: each match in a 1-elem list) | `L (L t)` |
 | `rgxsub pat repl s` | regex substitute all matches; `$1`, `$2`, ... reference capture groups | `t` |
 | `dtfmt epoch fmt` | format Unix epoch as text (strftime, UTC) | `R t t` |
