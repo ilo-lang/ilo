@@ -1258,6 +1258,22 @@ impl Parser {
         } else {
             Some(self.parse_atom()?)
         };
+        // Bare-bool ternary sugar: `?subj{a}{b}` → Ternary { subj, a, b }.
+        // Symmetric with the existing `=cond{a}{b}` brace-brace ternary, but
+        // for bool-valued conditions where no comparison operator is needed.
+        // Detected purely by shape (first brace has a single colon-and-semi-
+        // free expression and is followed immediately by another brace), so
+        // the `?h{a}{b}` muscle memory from every other curly-brace language
+        // parses cleanly instead of being read as a match-on-bool with `1`
+        // mis-interpreted as a pattern. Falls through to match-arm parsing
+        // for any shape that doesn't match — `?h{1:a;2:b}`, `?h{pat:body}`,
+        // etc. all keep working as match.
+        if let Some(subj) = &subject
+            && self.looks_like_brace_ternary()
+        {
+            let ternary = self.parse_brace_ternary_after_subject(subj.clone())?;
+            return Ok(Stmt::Expr(ternary));
+        }
         self.expect(&Token::LBrace)?;
         // Friendly hint: `?cond{body}` on a bare bool is a common slip — the
         // user reaches for braced-conditional execution but gets match syntax
@@ -1282,6 +1298,82 @@ impl Parser {
         let arms = self.parse_match_arms()?;
         self.expect(&Token::RBrace)?;
         Ok(Stmt::Match { subject, arms })
+    }
+
+    /// Shape check for the bare-bool ternary sugar `?subj{a}{b}`.
+    /// Assumes the current position is at the `{` immediately after the
+    /// subject. Walks forward over the first brace's contents tracking
+    /// brace/paren/bracket nesting; rejects on any `:` or `;` at the outer
+    /// brace depth (those belong to match-arm syntax). On a clean close,
+    /// requires the very next token to be `{` so we know a second brace
+    /// block follows. Pure lookahead — does not consume any tokens.
+    fn looks_like_brace_ternary(&self) -> bool {
+        if self.peek() != Some(&Token::LBrace) {
+            return false;
+        }
+        let mut pos = self.pos + 1; // skip the outer `{`
+        let mut brace_depth: usize = 1;
+        let mut paren_depth: usize = 0;
+        let mut bracket_depth: usize = 0;
+        // An empty first brace (`?subj{}{...}`) is not a valid ternary shape —
+        // there's no then-expression. Let match-arm parsing surface that.
+        if self.token_at(pos) == Some(&Token::RBrace) {
+            return false;
+        }
+        while let Some(tok) = self.token_at(pos) {
+            match tok {
+                Token::LBrace => brace_depth += 1,
+                Token::RBrace => {
+                    brace_depth -= 1;
+                    if brace_depth == 0 {
+                        // First brace closed. Require a `{` to follow for
+                        // the else-block.
+                        return self.token_at(pos + 1) == Some(&Token::LBrace);
+                    }
+                }
+                Token::LParen => paren_depth += 1,
+                Token::RParen => {
+                    if paren_depth == 0 {
+                        return false;
+                    }
+                    paren_depth -= 1;
+                }
+                Token::LBracket => bracket_depth += 1,
+                Token::RBracket => {
+                    if bracket_depth == 0 {
+                        return false;
+                    }
+                    bracket_depth -= 1;
+                }
+                // `:` or `;` at the outer brace level means match-arm syntax,
+                // not a ternary then-expression. Bail.
+                Token::Colon | Token::Semi
+                    if brace_depth == 1 && paren_depth == 0 && bracket_depth == 0 =>
+                {
+                    return false;
+                }
+                _ => {}
+            }
+            pos += 1;
+        }
+        false
+    }
+
+    /// Parse `?subj{a}{b}` ternary after the subject has been consumed and
+    /// `looks_like_brace_ternary` returned true. Consumes both brace blocks
+    /// and produces an `Expr::Ternary`.
+    fn parse_brace_ternary_after_subject(&mut self, subject: Expr) -> Result<Expr> {
+        self.expect(&Token::LBrace)?;
+        let then_expr = self.parse_expr()?;
+        self.expect(&Token::RBrace)?;
+        self.expect(&Token::LBrace)?;
+        let else_expr = self.parse_expr()?;
+        self.expect(&Token::RBrace)?;
+        Ok(Expr::Ternary {
+            condition: Box::new(subject),
+            then_expr: Box::new(then_expr),
+            else_expr: Box::new(else_expr),
+        })
     }
 
     /// After consuming `{` in a `?subject{...}` match, peek to see whether the
@@ -1973,7 +2065,9 @@ impl Parser {
         })
     }
 
-    /// Parse match as expression: `?expr{arms}` or `?{arms}`
+    /// Parse match as expression: `?expr{arms}` or `?{arms}`.
+    /// Also handles the bare-bool ternary sugar `?subj{a}{b}` in
+    /// expression position (e.g. `v=?h{1}{0}` or as a call argument).
     fn parse_match_expr(&mut self) -> Result<Expr> {
         self.expect(&Token::Question)?;
         let subject = if self.peek() == Some(&Token::LBrace) {
@@ -1981,6 +2075,13 @@ impl Parser {
         } else {
             Some(Box::new(self.parse_atom()?))
         };
+        // Bare-bool ternary sugar in expr position. See `parse_match_stmt`
+        // for the rationale and shape detection.
+        if let Some(subj) = &subject
+            && self.looks_like_brace_ternary()
+        {
+            return self.parse_brace_ternary_after_subject((**subj).clone());
+        }
         self.expect(&Token::LBrace)?;
         let arms = self.parse_match_arms()?;
         self.expect(&Token::RBrace)?;
