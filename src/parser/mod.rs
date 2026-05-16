@@ -183,8 +183,14 @@ impl Parser {
                     // body statements are collapsed to `;` by the lexer,
                     // so `@k kws\n  body` becomes `@k kws;body` and the
                     // foreach's required `{` lands on a `;` instead.
+                    //
+                    // Personas reach for python/swift-style indented bodies
+                    // and have learned to dense-pack single-line forms as a
+                    // workaround. Surface BOTH valid shapes (brace-block and
+                    // single-line `;`-separated) so the next attempt picks
+                    // one rather than re-trying indentation.
                     Some(
-                        "ilo bodies are single-line, `;`-separated. If you broke the body across lines, collapse it onto one line or wrap with `{ ... }`. For example `@k kws{body};...` not `@k kws;body`.".to_string()
+                        "ilo bodies are single-line, `;`-separated — not python/swift-style indented. Use either the brace-block form `name p:t>r;{body1;body2}` or the single-line form `name p:t>r;body1;body2`. For statements that require a block (`@k xs{...}`, `wh cond{...}`, `?subj{...}`), the `{...}` must be on the same line as the head.".to_string()
                     )
                 } else {
                     None
@@ -740,7 +746,21 @@ impl Parser {
         if self.peek() == Some(&Token::Semi) {
             self.advance();
         }
-        let body = self.parse_body_with(true)?;
+        // Two valid body shapes after the header:
+        //   (a) `;`-separated single-line / indented-continuation form
+        //   (b) brace-block form `{body1;body2}` — explicit braces wrap the
+        //       whole function body. This mirrors the brace-block grammar
+        //       already accepted by `=cond{block}`, match arms (`~v:{block}`)
+        //       and braced-conditional headings; surfacing it at fn-decl
+        //       position gives personas a python/swift-friendly escape from
+        //       the dense single-line workaround they've been settling for.
+        // Skip the brace-block path when the leading `{` is a destructure
+        // pattern (`f p:pt>n;{x}=p;...`) — that's a statement, not a wrap.
+        let body = if self.peek() == Some(&Token::LBrace) && !self.is_destructure_pattern() {
+            self.parse_brace_body()?
+        } else {
+            self.parse_body_with(true)?
+        };
         let end = self.prev_span();
         Ok(Decl::Function {
             name,
@@ -8259,7 +8279,9 @@ mod tests {
     #[test]
     fn lbrace_expected_got_semi_emits_multiline_body_hint() {
         // Foreach body without explicit `{`: `@k xs;+k 1` triggers
-        // `expected LBrace, got Semi`.
+        // `expected LBrace, got Semi`. The hint should mention both
+        // valid body shapes so personas pick one instead of re-trying
+        // python/swift-style indented bodies.
         let source = "main>n;xs=[1 2 3];@k xs;+k 1";
         let (_, errors) = parse_str_errors(source);
         let e = errors
@@ -8268,9 +8290,70 @@ mod tests {
             .expect("expected ILO-P003 LBrace error");
         let hint = e.hint.as_ref().expect("expected hint");
         assert!(
-            hint.contains("single-line") && hint.contains("`{ ... }`"),
+            hint.contains("single-line") && hint.contains("brace-block"),
             "hint: {}",
             hint
+        );
+        // Both alternative function-syntax forms should appear so the
+        // persona's next attempt picks one.
+        assert!(
+            hint.contains("name p:t>r;{body1;body2}"),
+            "brace-block form missing; hint: {}",
+            hint
+        );
+        assert!(
+            hint.contains("name p:t>r;body1;body2"),
+            "single-line `;`-separated form missing; hint: {}",
+            hint
+        );
+    }
+
+    #[test]
+    fn multiline_function_body_with_indented_foreach_emits_hint() {
+        // Repro: python-style indented body inside a function. After
+        // normalize_newlines: `foo xs:Ln>n;s=0;@k xs;s=+s k;s`.
+        // The foreach's expected `{` lands on a `;`.
+        let source = "foo xs:Ln>n\n  s=0\n  @k xs\n    s=+s k\n  s\n";
+        let (_, errors) = parse_str_errors(source);
+        let e = errors
+            .iter()
+            .find(|e| e.code == "ILO-P003" && e.message.contains("expected LBrace"))
+            .expect("expected ILO-P003 LBrace error");
+        let hint = e.hint.as_ref().expect("expected hint");
+        assert!(
+            hint.contains("name p:t>r;{body1;body2}"),
+            "expected brace-block form in hint; got: {}",
+            hint
+        );
+        assert!(
+            hint.contains("name p:t>r;body1;body2"),
+            "expected single-line form in hint; got: {}",
+            hint
+        );
+    }
+
+    #[test]
+    fn single_line_function_body_parses_without_hint() {
+        // Regression: the `;`-separated single-line form must still
+        // parse cleanly with no diagnostic.
+        let source = "foo xs:Ln>n;s=0;@k xs{s=+s k};s\nmain>n;foo lst 1 2 3";
+        let (_, errors) = parse_str_errors(source);
+        assert!(
+            errors.is_empty(),
+            "single-line body should parse cleanly; errors: {:?}",
+            errors
+        );
+    }
+
+    #[test]
+    fn braced_function_body_parses_without_hint() {
+        // Regression: the brace-block form must still parse cleanly.
+        let source = "foo xs:Ln>n;{s=0;@k xs{s=+s k};s}\nmain>n;foo lst 1 2 3";
+        let (_, errors) = parse_str_errors(source);
+        assert!(
+            errors.is_empty(),
+            "braced body should parse cleanly; errors: {:?}",
+            errors
         );
     }
 

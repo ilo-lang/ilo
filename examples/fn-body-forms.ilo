@@ -1,0 +1,25 @@
+-- ilo function bodies come in two valid shapes: single-line `;`-separated
+-- (`foo p:t>r;body1;body2`) and brace-block (`foo p:t>r;{body1;body2}`). The
+-- brace-block form survives indented continuations cleanly, which matters
+-- when personas reach for python/swift-style indented bodies. This file
+-- pins both shapes across every engine.
+
+-- Single-line `;`-separated form.
+suma xs:Ln>n;s=0;@k xs{s=+s k};s
+
+-- Brace-block form, same body, written on one line.
+sumb xs:Ln>n;{s=0;@k xs{s=+s k};s}
+
+-- Brace-block form with indented continuations inside the braces.
+sumc xs:Ln>n;{
+  s=0
+  @k xs{s=+s k}
+  s
+}
+
+-- run: suma [1,2,3]
+-- out: 6
+-- run: sumb [1,2,3]
+-- out: 6
+-- run: sumc [1,2,3]
+-- out: 6
