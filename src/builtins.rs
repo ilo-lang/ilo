@@ -115,6 +115,7 @@ pub enum Builtin {
     Fmt2,
     Rgx,
     Rgxall,
+    Rgxall1,
     Rgxsub,
 
     // JSON
@@ -242,6 +243,7 @@ impl Builtin {
             "fmt2" => Some(Builtin::Fmt2),
             "rgx" => Some(Builtin::Rgx),
             "rgxall" => Some(Builtin::Rgxall),
+            "rgxall1" => Some(Builtin::Rgxall1),
             "rgxsub" => Some(Builtin::Rgxsub),
             "jpth" => Some(Builtin::Jpth),
             "jdmp" => Some(Builtin::Jdmp),
@@ -362,6 +364,7 @@ impl Builtin {
             Builtin::Fmt2 => "fmt2",
             Builtin::Rgx => "rgx",
             Builtin::Rgxall => "rgxall",
+            Builtin::Rgxall1 => "rgxall1",
             Builtin::Rgxsub => "rgxsub",
             Builtin::Jpth => "jpth",
             Builtin::Jdmp => "jdmp",
@@ -506,6 +509,10 @@ impl Builtin {
         Builtin::Inv,
         Builtin::Det,
         Builtin::Sleep,
+        // Appended after Sleep to preserve every existing tag. Rgxall1 is a
+        // convenience over Rgxall (flat first-capture-group list); see the
+        // tree-bridge entry in src/vm/mod.rs for cross-engine dispatch.
+        Builtin::Rgxall1,
     ];
 
     /// On-wire 8-bit tag for cross-engine builtin dispatch. See `ALL`.
@@ -713,6 +720,7 @@ mod tests {
             "fmt2",
             "rgx",
             "rgxall",
+            "rgxall1",
             "rgxsub",
             "jpth",
             "jdmp",
@@ -931,6 +939,7 @@ mod tests {
             "fmt2",
             "rgx",
             "rgxall",
+            "rgxall1",
             "rgxsub",
             "jpth",
             "jdmp",

@@ -424,6 +424,9 @@ pub(crate) fn is_tree_bridge_eligible(b: crate::builtins::Builtin, argc: usize) 
     match (b, argc) {
         (Builtin::Rgx, 2) => true,
         (Builtin::Rgxall, 2) => true,
+        // rgxall1: flat first-capture-group convenience (L t) over rgxall.
+        // Bridge contract identical to rgxall.
+        (Builtin::Rgxall1, 2) => true,
         (Builtin::Fmt, _) if argc >= 1 => true,
         (Builtin::Rd, 2) => true,
         (Builtin::Rdb, 2) => true,
@@ -13090,6 +13093,11 @@ pub(crate) fn tree_bridge_propagates_error(b: crate::builtins::Builtin) -> bool 
             | Builtin::Partition
             | Builtin::Flatmap
             | Builtin::Mapr
+            // rgxall1 raises ILO-R009 on >1 capture groups — that's a
+            // programmer error (pattern arity mismatch), not a runtime
+            // input issue. Surface it on Cranelift in lockstep with
+            // tree/VM rather than silently degenerating to nil.
+            | Builtin::Rgxall1
     )
 }
 

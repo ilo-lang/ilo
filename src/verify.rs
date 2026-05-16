@@ -409,6 +409,7 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("dot", &["L n", "L n"], "n"),
     ("rgx", &["t", "t"], "L t"),
     ("rgxall", &["t", "t"], "L (L t)"),
+    ("rgxall1", &["t", "t"], "L t"),
     ("rgxsub", &["t", "t", "t"], "t"),
     // Map builtins (M k v type)
     ("mmap", &[], "map"),
