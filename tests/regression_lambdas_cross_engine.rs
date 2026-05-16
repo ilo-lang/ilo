@@ -176,3 +176,89 @@ fn lambda_fld_empty_list_returns_seed() {
     let src = "main xs:L n>n;fld (a:n x:n>n;+a x) xs 7";
     run_all(src, "main", &["[]"], "7");
 }
+
+// ── Sequential HOFs in the same function ────────────────────────────────
+//
+// Regression: prior to the TLS save-restore fix in `fix/srt-cranelift-nil`,
+// a tree-bridge HOF (srt-2arg / grp / uniqby / partition) running after a
+// native-dispatch HOF (map / flt / fld / flatmap) in the same Cranelift
+// entry returned `nil`. The native HOF's per-element callback re-entered
+// the VM via `jit_call_dyn → VM::new(program).call(...)`; the inner
+// execute()'s drop guards nulled `ACTIVE_FUNC_NAMES` / `ACTIVE_AST_PROGRAM`
+// on return, so the second HOF's FnRef arg deserialised to a
+// `<user_fn:N>` placeholder the tree-bridge couldn't dispatch, and the
+// bridge swallowed the failure as TAG_NIL. Tree/VM were fine; only the
+// Cranelift JIT path had the TLS desync. Pin every combination so this
+// can't drift back.
+
+#[test]
+fn lambda_map_then_srt_no_tls_desync() {
+    // Two inline lambdas in the same function body: one in `map`
+    // (native dispatch), then one in `srt` (tree-bridge). On Cranelift
+    // the second used to return nil; now must match tree/VM.
+    let src =
+        "main>L (L _);a=map (x:n>n;+x 1) [1 2 3];sk=srt (p:L _>n;p.0) [[2 \"a\"] [1 \"b\"]];sk";
+    run_all(src, "main", &[], "[[1, b], [2, a]]");
+}
+
+#[test]
+fn lambda_flt_then_srt_no_tls_desync() {
+    let src =
+        "main>L (L _);a=flt (x:n>b;>x 1) [1 2 3];sk=srt (p:L _>n;p.0) [[2 \"a\"] [1 \"b\"]];sk";
+    run_all(src, "main", &[], "[[1, b], [2, a]]");
+}
+
+#[test]
+fn lambda_fld_then_srt_no_tls_desync() {
+    let src = "main>L (L _);s=fld (a:n x:n>n;+a x) [1 2 3] 0;sk=srt (p:L _>n;p.0) [[2 \"a\"] [1 \"b\"]];sk";
+    run_all(src, "main", &[], "[[1, b], [2, a]]");
+}
+
+#[test]
+fn lambda_flatmap_then_srt_no_tls_desync() {
+    let src = "main>L (L _);a=flatmap (x:n>L n;[x x]) [1 2];sk=srt (p:L _>n;p.0) [[2 \"a\"] [1 \"b\"]];sk";
+    run_all(src, "main", &[], "[[1, b], [2, a]]");
+}
+
+#[test]
+fn lambda_map_then_srt_frq_mget_pairs() {
+    // The original pdf-analyst rerun4 shape: frq + mget loop builds
+    // `[count word]` pairs, then srt-by-count. Exercises the
+    // tree-bridge for frq AND srt with an intervening native HOF
+    // (map) earlier in the function body.
+    let src = "main>L (L _);ws=[\"apple\" \"apple\" \"banana\" \"apple\" \"cherry\" \"banana\"];dummy=map (w:t>n;len w) ws;fr=frq ws;ks=mkeys fr;pairs=[];@k ks{c=mget fr k;pairs=+=pairs [c k]};sk=srt (p:L _>n;p.0) pairs;sk";
+    run_all(src, "main", &[], "[[1, cherry], [2, banana], [3, apple]]");
+}
+
+#[test]
+fn lambda_map_then_grp_no_tls_desync() {
+    // grp is also tree-bridge for the 2-arg form (PR 3b). Confirm
+    // the TLS desync didn't only affect srt. Key returns the parity
+    // bucket as a string ("even" / "odd") so the grouped map keys
+    // are predictable across engines.
+    let src = "main>L n;a=map (x:n>n;*x 2) [1 2 3];g=grp (x:n>t;?>x 5 \"big\" \"small\") [1 6 2 7 3 8];mget g \"big\"";
+    run_all(src, "main", &[], "[6, 7, 8]");
+}
+
+#[test]
+fn lambda_map_then_uniqby_no_tls_desync() {
+    // uniqby key: parity via `?` ternary (`%` isn't an ilo operator;
+    // arithmetic mod isn't needed for this regression).
+    let src = "main>L n;a=map (x:n>n;+x 1) [1 2 3];uniqby (x:n>b;>x 3) [1 2 3 4 5]";
+    run_all(src, "main", &[], "[1, 4]");
+}
+
+#[test]
+fn lambda_map_then_partition_no_tls_desync() {
+    let src = "main>L (L n);a=map (x:n>n;+x 1) [1 2 3];partition (x:n>b;>x 2) [1 2 3 4 5]";
+    run_all(src, "main", &[], "[[3, 4, 5], [1, 2]]");
+}
+
+#[test]
+fn lambda_map_then_srt_then_map_no_tls_desync() {
+    // Three HOFs back-to-back across the native/bridge boundary in
+    // both directions: native → bridge → native. The post-bridge
+    // native call still needs the program-aware FnRef resolution.
+    let src = "main>L n;a=map (x:n>n;+x 1) [1 2 3];sk=srt (p:L _>n;p.0) [[2 \"a\"] [1 \"b\"]];map (x:n>n;*x 10) [4 5 6]";
+    run_all(src, "main", &[], "[40, 50, 60]");
+}

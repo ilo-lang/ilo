@@ -1,0 +1,27 @@
+-- Two inline lambdas in the same function body, where the first feeds a
+-- native-dispatch HOF (`map` / `flt` / `fld` / `flatmap`) and the second
+-- feeds a tree-bridge HOF (`srt` / `grp` / `uniqby` / `partition`). The
+-- pdf-analyst frq+srt shape is the canonical case: build [count word]
+-- pairs from `frq` + `mget`, then sort by count.
+--
+-- Regression note: before the TLS save-restore fix in #?? the second HOF
+-- on Cranelift JIT returned `nil` because the first HOF's per-element
+-- VM re-entry blanked the ACTIVE_FUNC_NAMES / ACTIVE_AST_PROGRAM
+-- thread-locals on exit. Tree/VM were unaffected. The cross-engine
+-- harness exercises this on every engine so the desync can't drift back.
+
+-- The frq+srt pdf-analyst shape: rank words by frequency.
+top-words ws:L t>L (L _);fr=frq ws;ks=mkeys fr;pairs=[];@k ks{c=mget fr k;pairs=+=pairs [c k]};srt (p:L _>n;p.0) pairs
+
+-- Native (map) → bridge (srt) in the same function body, no shared data.
+map-then-srt>L (L _);a=map (x:n>n;+x 1) [1 2 3];srt (p:L _>n;p.0) [[2 "a"] [1 "b"]]
+
+-- Native (flt) → bridge (srt) — also covers the desync.
+flt-then-srt>L (L _);a=flt (x:n>b;>x 1) [1 2 3];srt (p:L _>n;p.0) [[2 "a"] [1 "b"]]
+
+-- run: top-words ["apple","apple","banana","apple","cherry","banana"]
+-- out: [[1, cherry], [2, banana], [3, apple]]
+-- run: map-then-srt
+-- out: [[1, b], [2, a]]
+-- run: flt-then-srt
+-- out: [[1, b], [2, a]]
