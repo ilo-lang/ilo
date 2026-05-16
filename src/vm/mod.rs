@@ -8397,11 +8397,10 @@ impl<'a> VM<'a> {
                     if !i.is_number() {
                         vm_err!(VmError::Type("at: index must be a number"));
                     }
-                    let n = i.as_number();
-                    if n.fract() != 0.0 {
-                        vm_err!(VmError::Type("at: index must be an integer"));
-                    }
-                    let raw = n as i64;
+                    // Auto-floor: `at xs 1.7` → `at xs 1`, `at xs -1.5` → `at xs -2`.
+                    // Removes the `flr (/ ln 2)` ceremony when indexing with computed
+                    // floats. Negative-index resolution + bounds check below are unchanged.
+                    let raw = i.as_number().floor() as i64;
                     let result = if v.is_string() {
                         let s = unsafe {
                             match v.as_heap_ref() {
@@ -11224,12 +11223,10 @@ pub(crate) extern "C" fn jit_at(a: u64, b: u64, span_bits: u64) -> u64 {
         jit_set_runtime_error_with_span(VmError::Type("at: index must be a number"), span_bits);
         return TAG_NIL;
     }
-    let n = i.as_number();
-    if n.fract() != 0.0 {
-        jit_set_runtime_error_with_span(VmError::Type("at: index must be an integer"), span_bits);
-        return TAG_NIL;
-    }
-    let raw = n as i64;
+    // Auto-floor: `at xs 1.7` → `at xs 1`, `at xs -1.5` → `at xs -2`.
+    // Removes the `flr (/ ln 2)` ceremony when indexing with computed
+    // floats. Negative-index resolution + bounds check below are unchanged.
+    let raw = i.as_number().floor() as i64;
     if v.is_string() {
         let s = unsafe {
             match v.as_heap_ref() {
@@ -29291,10 +29288,44 @@ f>n;r=mk 10 20;+r.x r.y";
 
     #[cfg(feature = "cranelift")]
     #[test]
-    fn jit_at_fractional_index_returns_nil() {
-        let list = NanVal::heap_list(vec![NanVal::number(1.0)]);
-        let bits = jit_at(list.0, NanVal::number(0.5).0, 0);
-        assert_eq!(bits, TAG_NIL);
+    fn jit_at_fractional_index_floors() {
+        // 1.7 floors to 1 → second element.
+        let list = NanVal::heap_list(vec![
+            NanVal::number(10.0),
+            NanVal::number(20.0),
+            NanVal::number(30.0),
+        ]);
+        let v = NanVal(jit_at(list.0, NanVal::number(1.7).0, 0));
+        assert!(v.is_number());
+        assert_eq!(v.as_number(), 20.0);
+    }
+
+    #[cfg(feature = "cranelift")]
+    #[test]
+    fn jit_at_fractional_negative_index_floors() {
+        // -0.5 floors to -1 → last element (Python-style negative-index resolution).
+        let list = NanVal::heap_list(vec![
+            NanVal::number(10.0),
+            NanVal::number(20.0),
+            NanVal::number(30.0),
+        ]);
+        let v = NanVal(jit_at(list.0, NanVal::number(-0.5).0, 0));
+        assert!(v.is_number());
+        assert_eq!(v.as_number(), 30.0);
+    }
+
+    #[cfg(feature = "cranelift")]
+    #[test]
+    fn jit_at_fractional_negative_index_one_and_a_half_floors() {
+        // -1.5 floors to -2 → middle element on len-3 list.
+        let list = NanVal::heap_list(vec![
+            NanVal::number(10.0),
+            NanVal::number(20.0),
+            NanVal::number(30.0),
+        ]);
+        let v = NanVal(jit_at(list.0, NanVal::number(-1.5).0, 0));
+        assert!(v.is_number());
+        assert_eq!(v.as_number(), 20.0);
     }
 
     // ---- OP_LST VM dispatch + jit_lst helper coverage ----

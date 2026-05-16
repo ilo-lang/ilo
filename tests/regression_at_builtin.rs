@@ -3,8 +3,13 @@
 // Out-of-range / wrong-type is a runtime error on every engine: tree, VM, and
 // cranelift JIT. Cranelift's helper sets a thread-local error cell which the
 // JIT entry point picks up and surfaces as a `VmRuntimeError`, matching the
-// behaviour tree and VM already had. Prior to the fix, cranelift's helper
+// behaviour tree and VM already had. Prior to that fix, cranelift's helper
 // silently returned `TAG_NIL` on every failure mode.
+//
+// Float indices auto-floor at the `at` boundary (was: strict integer guard).
+// `at xs 1.7 == at xs 1`, `at xs -0.5` floors to `-1` (last element), etc.
+// Non-numeric still errors. See the FLOAT_* / NEG_*_FLOAT / COMPUTED_FLOAT
+// cases below for cross-engine coverage.
 
 use std::process::Command;
 
@@ -268,41 +273,168 @@ fn at_negative_oor_cranelift() {
     check_neg_oor_error("--run-cranelift");
 }
 
-// Non-integer negative index still errors (the integer guard is preserved).
-const NEG_FLOAT_SRC: &str = "f>n;xs=[10,20,30];at xs -0.5";
+// Float indices auto-floor at the `at` boundary. Removes the `flr (/ ln 2)`
+// ceremony when indexing with computed floats (e.g. `at xs (/ len 2)` for the
+// median bucket). Floor goes toward negative infinity, so negative fractional
+// indices land on the floor toward more-negative — `-0.5` floors to `-1` (last
+// element after negative-index resolution).
 
-fn check_neg_float_error(engine: &str) {
-    let out = ilo()
-        .args([NEG_FLOAT_SRC, engine, "f"])
-        .output()
-        .expect("failed to run ilo");
-    assert!(
-        !out.status.success(),
-        "engine={engine}: expected error for at xs -0.5, got stdout={}",
-        String::from_utf8_lossy(&out.stdout)
+// `at xs 1.0` — explicitly-typed float at an integer value.
+const FLOAT_INTEGRAL_SRC: &str = "f>n;xs=[10,20,30];at xs 1.0";
+fn check_float_integral(engine: &str) {
+    assert_eq!(
+        run(engine, FLOAT_INTEGRAL_SRC, "f"),
+        "20",
+        "engine={engine}"
     );
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(
-        stderr.contains("integer")
-            || stderr.contains("ILO-R009")
-            || stderr.contains("ILO-R004")
-            || stderr.contains("at"),
-        "engine={engine}: expected integer/at error, got stderr={stderr}"
-    );
+}
+
+#[test]
+fn at_float_integral_tree() {
+    check_float_integral("--run-tree");
+}
+
+#[test]
+fn at_float_integral_vm() {
+    check_float_integral("--run-vm");
+}
+
+#[test]
+#[cfg(feature = "cranelift")]
+fn at_float_integral_cranelift() {
+    check_float_integral("--run-cranelift");
+}
+
+// `at xs 1.7` floors to 1.
+const FLOAT_FRAC_SRC: &str = "f>n;xs=[10,20,30];at xs 1.7";
+fn check_float_frac(engine: &str) {
+    assert_eq!(run(engine, FLOAT_FRAC_SRC, "f"), "20", "engine={engine}");
+}
+
+#[test]
+fn at_float_frac_tree() {
+    check_float_frac("--run-tree");
+}
+
+#[test]
+fn at_float_frac_vm() {
+    check_float_frac("--run-vm");
+}
+
+#[test]
+#[cfg(feature = "cranelift")]
+fn at_float_frac_cranelift() {
+    check_float_frac("--run-cranelift");
+}
+
+// `at xs -1.5` on a len-3 list: floor(-1.5) = -2 → middle element (20).
+const NEG_FLOAT_SRC: &str = "f>n;xs=[10,20,30];at xs -1.5";
+fn check_neg_float(engine: &str) {
+    assert_eq!(run(engine, NEG_FLOAT_SRC, "f"), "20", "engine={engine}");
 }
 
 #[test]
 fn at_negative_float_tree() {
-    check_neg_float_error("--run-tree");
+    check_neg_float("--run-tree");
 }
 
 #[test]
 fn at_negative_float_vm() {
-    check_neg_float_error("--run-vm");
+    check_neg_float("--run-vm");
 }
 
 #[test]
 #[cfg(feature = "cranelift")]
 fn at_negative_float_cranelift() {
-    check_neg_float_error("--run-cranelift");
+    check_neg_float("--run-cranelift");
+}
+
+// `at xs -0.5` on a len-3 list: floor(-0.5) = -1 → last element (30).
+// (Was the previous "negative-float must error" case; now positive coverage.)
+const NEG_HALF_SRC: &str = "f>n;xs=[10,20,30];at xs -0.5";
+fn check_neg_half(engine: &str) {
+    assert_eq!(run(engine, NEG_HALF_SRC, "f"), "30", "engine={engine}");
+}
+
+#[test]
+fn at_negative_half_tree() {
+    check_neg_half("--run-tree");
+}
+
+#[test]
+fn at_negative_half_vm() {
+    check_neg_half("--run-vm");
+}
+
+#[test]
+#[cfg(feature = "cranelift")]
+fn at_negative_half_cranelift() {
+    check_neg_half("--run-cranelift");
+}
+
+// `at xs (len/2)` — the originating idiom from html-scraper rerun3 (median
+// bucket). `len xs` is 5, `/ k 2` is 2.5, auto-floor → 2 → returns 30 without
+// a `flr` wrap. (Bind-first because `/ len xs 2` would parse as a 3-arg call
+// to `/` due to parser greediness — unrelated to this fix.)
+const COMPUTED_FLOAT_SRC: &str = "f>n;xs=[10,20,30,40,50];k=len xs;i=/ k 2;at xs i";
+fn check_computed_float(engine: &str) {
+    assert_eq!(
+        run(engine, COMPUTED_FLOAT_SRC, "f"),
+        "30",
+        "engine={engine}"
+    );
+}
+
+#[test]
+fn at_computed_float_tree() {
+    check_computed_float("--run-tree");
+}
+
+#[test]
+fn at_computed_float_vm() {
+    check_computed_float("--run-vm");
+}
+
+#[test]
+#[cfg(feature = "cranelift")]
+fn at_computed_float_cranelift() {
+    check_computed_float("--run-cranelift");
+}
+
+// Non-numeric index still errors — the type guard is preserved.
+const NON_NUMERIC_SRC: &str = "f>n;xs=[10,20,30];at xs \"a\"";
+fn check_non_numeric_error(engine: &str) {
+    let out = ilo()
+        .args([NON_NUMERIC_SRC, engine, "f"])
+        .output()
+        .expect("failed to run ilo");
+    assert!(
+        !out.status.success(),
+        "engine={engine}: expected error for non-numeric index, got stdout={}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("number")
+            || stderr.contains("at")
+            || stderr.contains("ILO-R009")
+            || stderr.contains("ILO-T013"),
+        "engine={engine}: expected at/number error, got stderr={stderr}"
+    );
+}
+
+#[test]
+fn at_non_numeric_tree() {
+    check_non_numeric_error("--run-tree");
+}
+
+#[test]
+fn at_non_numeric_vm() {
+    check_non_numeric_error("--run-vm");
+}
+
+#[test]
+#[cfg(feature = "cranelift")]
+fn at_non_numeric_cranelift() {
+    check_non_numeric_error("--run-cranelift");
 }

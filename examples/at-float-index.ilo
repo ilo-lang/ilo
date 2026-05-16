@@ -1,0 +1,21 @@
+-- at xs i auto-floors numeric indices.
+-- Use case: indexing with a computed float (e.g. the median bucket
+-- via `len xs / 2`) no longer needs a `flr` wrap.
+
+-- Floor goes toward negative infinity, so:
+--   1.7 floors to 1, 1.0 stays 1, -0.5 floors to -1 (last after negative-index resolution),
+--   -1.5 floors to -2 (second-from-last on a len-3 list).
+
+frac xs:L n>n;at xs 1.7
+neghalf xs:L n>n;at xs -0.5
+neg32 xs:L n>n;at xs -1.5
+mid xs:L n>n;k=len xs;i=/ k 2;at xs i
+
+-- run: frac [10,20,30]
+-- out: 20
+-- run: neghalf [10,20,30]
+-- out: 30
+-- run: neg32 [10,20,30]
+-- out: 20
+-- run: mid [10,20,30,40,50]
+-- out: 30
