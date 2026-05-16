@@ -21,9 +21,12 @@ fn inline_single_func_bare_args() {
 }
 
 #[test]
-fn inline_no_args_outputs_ast() {
+fn inline_ast_flag_outputs_ast() {
+    // Inline snippets now auto-run when there's a runnable entry;
+    // `--ast` is the explicit form for AST inspection. This test pins
+    // parser+verifier acceptance of a many-arg function declaration.
     let out = ilo()
-        .args(["tot p:n q:n r:n>n;s=*p q;t=*s r;+s t"])
+        .args(["--ast", "tot p:n q:n r:n>n;s=*p q;t=*s r;+s t"])
         .output()
         .expect("failed to run ilo");
     assert!(out.status.success());
@@ -35,14 +38,13 @@ fn inline_no_args_outputs_ast() {
     );
 }
 
-// Inline-no-func AST-dump mode is an inspection path, not an execution path.
-// Verify errors on partial snippets (e.g. a function body that references
-// an undeclared name) should not gate the AST dump; the user is exploring
-// structure, not running code.
+// `--ast` inspection mode is structural, not executional. Verify errors
+// on partial snippets (e.g. a function body that references an undeclared
+// name) should not gate the AST dump; the user is exploring structure.
 #[test]
-fn inline_no_args_skips_verify_errors_on_partial_snippet() {
+fn inline_ast_flag_skips_verify_errors_on_partial_snippet() {
     let out = ilo()
-        .args(["f>n;slc xs 0 1"])
+        .args(["--ast", "f>n;slc xs 0 1"])
         .output()
         .expect("failed to run ilo");
     assert!(
@@ -1712,9 +1714,10 @@ fn get_verifier_wrong_type() {
 
 #[test]
 fn dollar_parses_inline() {
-    // $"url" should parse and verify without error (returns AST when no args)
+    // $"url" should parse and verify without error. Uses --ast to
+    // inspect the parsed shape without invoking the runtime.
     let out = ilo()
-        .args([r#"f url:t>R t t;$url"#])
+        .args(["--ast", r#"f url:t>R t t;$url"#])
         .output()
         .expect("failed to run ilo");
     assert!(
@@ -1723,7 +1726,6 @@ fn dollar_parses_inline() {
         String::from_utf8_lossy(&out.stderr)
     );
     let stdout = String::from_utf8_lossy(&out.stdout);
-    // No args → AST output
     assert!(
         stdout.contains("get"),
         "expected 'get' in AST output, got: {}",
@@ -1733,9 +1735,9 @@ fn dollar_parses_inline() {
 
 #[test]
 fn dollar_bang_parses_inline() {
-    // $!url should parse as get! url — enclosing function must return R t t for ! to verify
+    // $!url should parse as get! url — enclosing function must return R t t for ! to verify.
     let out = ilo()
-        .args([r#"f url:t>R t t;~($!url)"#])
+        .args(["--ast", r#"f url:t>R t t;~($!url)"#])
         .output()
         .expect("failed to run ilo");
     assert!(
@@ -1783,12 +1785,12 @@ fn post_verifier_wrong_type_body() {
 
 #[test]
 fn post_returns_result_type() {
-    // post url body should type-check as R t t
+    // post url body should type-check as R t t. Use --ast to inspect
+    // the parsed shape without invoking the network at runtime.
     let out = ilo()
-        .args([r#"f url:t body:t>R t t;post url body"#])
+        .args(["--ast", r#"f url:t body:t>R t t;post url body"#])
         .output()
         .expect("failed to run ilo");
-    // No args → AST output; should succeed verification
     assert!(
         out.status.success(),
         "stderr: {}",
@@ -1798,9 +1800,9 @@ fn post_returns_result_type() {
 
 #[test]
 fn post_appears_in_ast() {
-    // post url body — no runtime args → AST output; verify succeeds
+    // post url body — inspect AST via --ast; verify succeeds.
     let out = ilo()
-        .args([r#"f url:t body:t>R t t;post url body"#])
+        .args(["--ast", r#"f url:t body:t>R t t;post url body"#])
         .output()
         .expect("failed to run ilo");
     assert!(

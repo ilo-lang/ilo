@@ -1,0 +1,14 @@
+-- `ilo file.ilo` auto-runs `main` when a multi-function file
+-- defines one. SKILL.md: "Multi-function files require either a
+-- function name argument or a function called `main`."
+--
+-- This example also pins that explicit func args still work and
+-- that helpers can be called from main like any other fn.
+
+helper a:n>n;+a 1
+main>n;helper 41
+
+-- run: main
+-- out: 42
+-- run: helper 9
+-- out: 10

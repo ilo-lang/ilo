@@ -4,13 +4,19 @@
 //
 // New behaviour:
 //   * `ilo file.ilo`           with exactly one fn → runs that fn
-//   * `ilo file.ilo`           with multiple fns   → prints a friendly
-//                                                    listing and exits 1
+//   * `ilo file.ilo`           with `main` defined → runs main
+//   * `ilo file.ilo`           multi-fn without main → friendly listing,
+//                                                      exits 1
 //   * `ilo file.ilo func args` keeps working unchanged
 //   * `ilo --ast file.ilo`     dumps the AST as JSON (explicit flag,
 //                              works before or after the source)
-//   * `ilo '<code>'`           inline with no func arg still AST-dumps
-//                              (legacy contract from PR #178 preserved)
+//   * `ilo '<code>'`           inline auto-runs main or single fn;
+//                              falls back to AST-dump only when there's
+//                              no runnable target (zero fns, or multi-fn
+//                              snippets without main). Soundness fix:
+//                              `ilo 'f>n;42'` used to silently AST-dump
+//                              to stdout with exit 0, breaking piped
+//                              consumers expecting the program result.
 
 use std::process::Command;
 
@@ -156,15 +162,79 @@ fn ast_flag_on_inline_code() {
     assert!(stdout.contains("\"declarations\""));
 }
 
-// ── legacy inline-no-func AST dump preserved ──────────────────────────────────
+// ── multi-fn file with `main` auto-runs main ──────────────────────────────────
 
 #[test]
-fn inline_no_func_still_dumps_ast() {
-    let (ok, stdout, _stderr) = run(&["f>n;5"]);
+fn multi_fn_file_with_main_auto_runs_main() {
+    // SKILL.md documents: "Multi-function files require either a
+    // function name argument or a function called `main`." Before this
+    // fix the CLI errored with 'defines multiple functions' even when
+    // main was the obvious entry.
+    let (_dir, path) = write_temp("helper a:n>n;+a 1\nmain>n;helper 41\n");
+    let (ok, stdout, stderr) = run(&[path.to_str().unwrap()]);
+    assert!(ok, "expected success; stderr: {stderr}");
+    assert_eq!(stdout.trim(), "42");
+    assert!(
+        !stderr.contains("defines multiple functions"),
+        "no listing should fire when main is defined; stderr: {stderr}"
+    );
+}
+
+#[test]
+fn multi_fn_file_explicit_func_arg_overrides_main() {
+    // Explicit func arg still wins, even when main is defined.
+    let (_dir, path) = write_temp("helper>n;7\nmain>n;42\n");
+    let (ok, stdout, stderr) = run(&[path.to_str().unwrap(), "helper"]);
+    assert!(ok, "stderr: {stderr}");
+    assert_eq!(stdout.trim(), "7");
+}
+
+// ── inline code auto-runs runnable entries ────────────────────────────────────
+
+#[test]
+fn inline_single_fn_auto_runs() {
+    // Soundness fix: `ilo 'f>n;42'` used to AST-dump to stdout with
+    // exit 0. Piped consumers got valid-looking JSON that was not the
+    // program result. Now auto-runs the entry function per SKILL.md.
+    let (ok, stdout, stderr) = run(&["f>n;42"]);
+    assert!(ok, "expected success; stderr: {stderr}");
+    assert_eq!(stdout.trim(), "42");
+    assert!(
+        !stdout.contains("\"declarations\""),
+        "no AST dump expected for runnable inline snippet; got: {stdout}"
+    );
+}
+
+#[test]
+fn inline_multi_fn_with_main_auto_runs_main() {
+    let (ok, stdout, stderr) = run(&["helper a:n>n;+a 1\nmain>n;helper 41"]);
+    assert!(ok, "stderr: {stderr}");
+    assert_eq!(stdout.trim(), "42");
+}
+
+#[test]
+fn inline_multi_fn_without_main_still_dumps_ast() {
+    // Legacy contract from PR #178 preserved for non-runnable snippets:
+    // when there is no `main` and no single entry, the CLI can't pick
+    // one without guessing, so AST-dump remains the fallback. `--ast`
+    // is the explicit form for pinning this behaviour.
+    let (ok, stdout, _stderr) = run(&["foo>n;1\nbar>n;2"]);
     assert!(ok);
     assert!(
         stdout.contains("\"declarations\""),
-        "inline-no-func default AST dump should be preserved; got: {stdout}"
+        "non-runnable inline snippet should AST-dump; got: {stdout}"
+    );
+}
+
+#[test]
+fn inline_zero_fn_still_dumps_ast() {
+    // Comment-only inline snippets have zero declarations and nothing
+    // to run, so AST-dump is still the right fallback.
+    let (ok, stdout, _stderr) = run(&["-- comment only"]);
+    assert!(ok);
+    assert!(
+        stdout.contains("\"declarations\""),
+        "zero-fn inline snippet should AST-dump; got: {stdout}"
     );
 }
 
@@ -179,4 +249,26 @@ fn empty_file_dumps_ast() {
     let (ok, stdout, stderr) = run(&[path.to_str().unwrap()]);
     assert!(ok, "stderr: {stderr}");
     assert!(stdout.contains("\"declarations\""));
+}
+
+// ── synthetic inline-lambda decls hidden from listing ─────────────────────────
+
+#[test]
+fn synthetic_lambda_decls_hidden_from_multi_fn_listing() {
+    // Inline lambdas lift to synthetic `__lit_N` top-level decls. These
+    // are an implementation detail and must not surface in the
+    // "available functions" listing the CLI prints for a multi-fn file
+    // with no func arg and no main.
+    let (_dir, path) =
+        write_temp("sq xs:L n>L n;map (x:n>n;*x x) xs\nother xs:L n>L n;flt (x:n>b;>x 0) xs\n");
+    let (ok, _stdout, stderr) = run(&[path.to_str().unwrap()]);
+    assert!(!ok, "expected non-zero exit");
+    assert!(
+        !stderr.contains("__lit"),
+        "synthetic __lit_N names must not leak to user listing; stderr: {stderr}"
+    );
+    assert!(
+        stderr.contains("sq") && stderr.contains("other"),
+        "real fn names should still be listed; stderr: {stderr}"
+    );
 }

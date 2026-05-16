@@ -2693,12 +2693,22 @@ fn dispatch_run(r: cli::RunArgs, mode: OutputMode, explicit_json: bool, no_hints
                 )
             }
             cli::Engine::Default => {
-                // Default: func-name heuristic + Cranelift JIT with interpreter fallback
+                // Default: func-name heuristic + Cranelift JIT with interpreter fallback.
+                //
+                // Inline-lambda lifting emits synthetic `__lit_N` top-level
+                // decls (see parser/mod.rs ~line 2863). These are an
+                // implementation detail of HOF dispatch — they must not show
+                // up in the "available functions" listing, must not satisfy
+                // the auto-run heuristic, and must not be selectable as a
+                // CLI positional arg. The `__` prefix is reserved for the
+                // compiler; filtering on it is safe.
                 let func_names: Vec<&str> = program
                     .declarations
                     .iter()
                     .filter_map(|d| match d {
-                        ast::Decl::Function { name, .. } => Some(name.as_str()),
+                        ast::Decl::Function { name, .. } if !name.starts_with("__") => {
+                            Some(name.as_str())
+                        }
                         _ => None,
                     })
                     .collect();
@@ -2717,12 +2727,16 @@ fn dispatch_run(r: cli::RunArgs, mode: OutputMode, explicit_json: bool, no_hints
                     }
                 } else if is_file {
                     // File with no func arg: auto-run if there's exactly one
-                    // function, list available functions if there are
-                    // several, AST-dump if there are none (declarations-only
-                    // file — useful for inspecting type/alias-only modules).
+                    // function, auto-run `main` if a multi-fn file defines
+                    // one, list available functions if there are several
+                    // without a `main`, AST-dump if there are none
+                    // (declarations-only file — useful for inspecting
+                    // type/alias-only modules). SKILL.md documents the
+                    // main-as-default convention; see `[CLI invocation]`.
                     match func_names.len() {
                         0 => return dump_ast_json(&program),
                         1 => (None, vec![]),
+                        _ if func_names.contains(&"main") => (Some("main"), vec![]),
                         _ => {
                             eprintln!(
                                 "error: {} defines multiple functions, please specify one.",
@@ -2742,10 +2756,30 @@ fn dispatch_run(r: cli::RunArgs, mode: OutputMode, explicit_json: bool, no_hints
                         }
                     }
                 } else {
-                    // Inline code with no func arg and no other mode flag:
-                    // legacy AST-dump path. Preserved for tooling and for
-                    // `ilo '<snippet>'` inspection. Documented since 0.x.
-                    return dump_ast_json(&program);
+                    // Inline code with no func arg and no other mode flag.
+                    //
+                    // SKILL.md documents: "Inline programs (`ilo 'code'`)
+                    // and single-function files run their entry function
+                    // with the remaining CLI args; no explicit function
+                    // name needed." Auto-run when there's a runnable
+                    // target: a function called `main`, or a single
+                    // user-defined function.
+                    //
+                    // Silently AST-dumping a runnable inline program was a
+                    // soundness hazard for piped consumers — they got
+                    // valid-looking JSON on stdout with exit code 0 that
+                    // was NOT the program result.
+                    //
+                    // Zero-fn or multi-fn-without-main inline snippets
+                    // still AST-dump, preserving the tooling escape hatch
+                    // from PR #178. `--ast` remains the explicit form for
+                    // pinning AST-dump output regardless of fn shape.
+                    match func_names.len() {
+                        0 => return dump_ast_json(&program),
+                        1 => (None, vec![]),
+                        _ if func_names.contains(&"main") => (Some("main"), vec![]),
+                        _ => return dump_ast_json(&program),
+                    }
                 };
 
                 run_default(&program, func_name, run_args, &source, mode, explicit_json)
@@ -6670,23 +6704,21 @@ mod tests {
     fn dispatch_bare_args_minus_e_code_shorthand() {
         // -e as the inline code flag (not the --expanded flag here since engine_flag is None
         // and args[m] = -e triggers the expanded path, but -e as argv[1] triggers
-        // the "treat args[2] as code" path)
+        // the "treat args[2] as code" path).
+        //
+        // Inline auto-run: a zero-arg single fn runs with no extra args
+        // and exits 0. (Comment-only / no-fn snippets still AST-dump;
+        // covered in regression_cli_default.rs.)
         let global = cli::Global {
             ansi: false,
             text: false,
             json: false,
             no_hints: false,
         };
-        // dispatch_bare_args: args[1] == "-e" → args[2] is the code string
         let code = dispatch_bare_args(
-            vec![
-                "ilo".to_string(),
-                "-e".to_string(),
-                "f x:n>n;*x 2".to_string(),
-            ],
+            vec!["ilo".to_string(), "-e".to_string(), "f>n;42".to_string()],
             &global,
         );
-        // No args past the code: should dump AST JSON (exit 0)
         assert_eq!(code, 0);
     }
 
@@ -6773,9 +6805,11 @@ mod tests {
     }
 
     #[test]
-    fn dispatch_bare_args_emit_no_target_dumps_ast() {
+    fn dispatch_bare_args_emit_no_target_runs_default() {
         // --emit with no target arg: target = None → dispatch_run gets emit=None,
-        // falls through to default engine execution with no rest args → AST JSON dump (exit 0)
+        // falls through to default engine execution. With a zero-arg
+        // single-fn inline snippet, the default engine auto-runs it and
+        // exits 0. (See SKILL.md for the inline auto-run contract.)
         let global = cli::Global {
             ansi: false,
             text: false,
@@ -6785,12 +6819,11 @@ mod tests {
         let code = dispatch_bare_args(
             vec![
                 "ilo".to_string(),
-                "f x:n>n;*x 2".to_string(),
+                "f>n;42".to_string(),
                 "--emit".to_string(),
             ],
             &global,
         );
-        // None emit → falls to default engine with no rest → AST JSON dump → exit 0
         assert_eq!(code, 0);
     }
 
@@ -7470,13 +7503,16 @@ mod tests {
         assert_eq!(code, 1);
     }
 
-    // ── dispatch_run: no args → AST JSON dump ────────────────────────────────
+    // ── dispatch_run: no rest args → auto-runs the inline entry ──────────────
 
     #[test]
-    fn dispatch_run_no_rest_args_dumps_ast_json() {
-        // When rest is empty and func_name not found → dumps AST JSON
+    fn dispatch_run_no_rest_args_auto_runs_inline() {
+        // Inline auto-run: with rest empty and a runnable inline entry
+        // (single zero-arg fn) the default engine runs it and exits 0.
+        // The legacy "always AST-dump" inline contract is preserved
+        // only for non-runnable shapes; see regression_cli_default.rs.
         let run_args = cli::RunArgs {
-            source: "f x:n>n;*x 2".to_string(),
+            source: "f>n;42".to_string(),
             engine: cli::Engine::Default,
             run_tree: false,
             run: false,
