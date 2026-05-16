@@ -698,6 +698,7 @@ Match replaces `switch`. There is no fall-through — each arm is independent. T
 | `cond{body}` | conditional execution: run body if cond true (no early return) |
 | `cond expr` | braceless guard: early return expr if cond true |
 | `cond{then}{else}` | ternary: evaluate then or else (no early return) |
+| `?bool{then}{else}` | bare-bool ternary: `?h{1}{0}` (no early return) |
 | `?cond then else` | prefix ternary: `?=x 0 10 20` (no early return) |
 | `!cond{body}` | negated conditional execution (no early return) |
 | `!cond expr` | braceless negated guard (early return) |
@@ -801,6 +802,15 @@ f x:n>n;=x 0{10}{20};+x 1   -- always returns x+1, ternary value is discarded
 ```
 
 Negated ternary: `!=x 1{"not one"}{"one"}`.
+
+**Bare-bool ternary** uses `?` with a bool-valued expression as the condition — no comparison operator required:
+
+```
+f h:b>n;?h{1}{0}             -- if h then 1 else 0
+f x:n>t;c=>x 0;?c{"pos"}{"nonpos"}   -- bool from comparison, then ternary
+```
+
+This is the natural shape when the condition is already a bool (function param, comparison result, predicate call) and saves the explicit `=h true` step that the `=cond{a}{b}` form would otherwise require. Detected purely by shape: `?subj{a}{b}` where both braces contain a single colon-and-semi-free expression. Match-arm forms (`?x{1:a;2:b;_:c}`, `?h{true:a;false:b}`) are unaffected — the colon or semicolon at the outer brace level routes them to match parsing.
 
 **Prefix ternary** uses `?` with a comparison operator for a fully prefix-style conditional:
 
