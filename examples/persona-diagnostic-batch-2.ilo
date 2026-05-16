@@ -1,0 +1,52 @@
+-- Persona-diagnostic batch 2: canonical ilo forms for the shapes personas
+-- reach for from other languages. Each declaration names the friction and
+-- shows the form that the parser now suggests via a friendly hint:
+--
+--   AND a b / OR a b / NOT a       canonical: &a b / |a b / !a
+--   =<a b / =>a b / !<a b          canonical: <=a b / >=a b / >=a b
+--   fn p:t>r;body at expression    canonical: (p:t>r;body) inline lambda
+--   main:>n;body                   canonical: main>n;body (no : before >)
+--   multi-line foreach body        canonical: @k xs{body} on one line
+--   cond{^"err"} braced-cond       canonical: braceless cond ^"err" for early return
+--
+-- This file exercises the corrected forms end-to-end so the examples
+-- harness pins them as cross-engine regression coverage.
+
+-- Comparisons: single-token forms, not compound prefix.
+lte a:n b:n>b;<=a b
+gte a:n b:n>b;>=a b
+
+-- Inline lambda is parenthesised; `fn` is not an expression-position keyword.
+plus-one xs:L n>L n;map (x:n>n;+x 1) xs
+
+-- No-param fn signature: `name>return;body`, no colon before `>`.
+forty-two>n;42
+
+-- Foreach body must be braced on one line.
+sum-plus-one xs:L n>n;t=0;@k xs{t=+t +k 1};t
+
+-- Early return: braceless guard `cond expr` returns, not `cond{expr}`.
+abs-or-err x:n>R n t;<x 0 ^"negative";~x
+
+main>n;
+  a=sum-plus-one [10 20 30];
+  b=forty-two();
+  c=hd (plus-one [4 5 6]);
+  +a +b c
+
+abs-check x:n>R n t;abs-or-err x
+
+-- run: main
+-- out: 110
+
+-- run: abs-check 7
+-- out: 7
+
+-- run: abs-check -3
+-- err: ^negative
+
+-- run: lte 3 5
+-- out: true
+
+-- run: gte 3 5
+-- out: false
