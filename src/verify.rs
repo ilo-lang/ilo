@@ -3045,6 +3045,45 @@ impl VerifyContext {
                         );
                         return Ty::Unknown;
                     }
+                    // Literal-template check for `fmt`: if the template is a
+                    // string literal and contains a `{:...}` printf-style
+                    // spec, fail fast — fmt only supports bare `{}` and the
+                    // runtime would otherwise either silently emit the
+                    // literal (pre-fix) or surface ILO-R009 (post-fix).
+                    if callee == "fmt"
+                        && let Some(Expr::Literal(Literal::Text(tmpl))) = args.first()
+                    {
+                        let mut iter = tmpl.chars().peekable();
+                        let mut bad: Option<String> = None;
+                        while let Some(c) = iter.next() {
+                            if c == '{' && iter.peek() == Some(&':') {
+                                let mut spec = String::from("{");
+                                for sc in iter.by_ref() {
+                                    spec.push(sc);
+                                    if sc == '}' {
+                                        break;
+                                    }
+                                }
+                                bad = Some(spec);
+                                break;
+                            }
+                        }
+                        if let Some(spec) = bad {
+                            self.err(
+                                "ILO-T013",
+                                func,
+                                format!(
+                                    "'fmt' only supports bare `{{}}` placeholders, got `{spec}`"
+                                ),
+                                Some(
+                                    "for decimal precision use `fmt \"...{}\" (fmt2 v 2)`; \
+                                     for width / padding use `padl (str n) 6` (space-pad)"
+                                        .to_string(),
+                                ),
+                                Some(span),
+                            );
+                        }
+                    }
                     // Literal-format check for 3-arg `wr path data fmt`:
                     // if fmt is a string literal, fail fast on unsupported values.
                     if callee == "wr"
