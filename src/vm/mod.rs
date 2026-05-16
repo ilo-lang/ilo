@@ -251,6 +251,8 @@ pub(crate) const OP_CUMSUM: u8 = 145; // R[A] = cumsum(R[B])
 // modeled on `OP_FFT` (1-arg list -> value). `OP_QUANTILE` is the 2-arg
 // variant: R[A] = quantile(R[B]=list, R[C]=p in [0,1] with linear interp).
 pub(crate) const OP_MEDIAN: u8 = 141; // R[A] = median(R[B])
+pub(crate) const OP_MIN_LST: u8 = 167; // R[A] = min(R[B] (list of numbers))
+pub(crate) const OP_MAX_LST: u8 = 168; // R[A] = max(R[B] (list of numbers))
 pub(crate) const OP_QUANTILE: u8 = 142; // R[A] = quantile(R[B], R[C])
 pub(crate) const OP_STDEV: u8 = 143; // R[A] = stdev(R[B])
 pub(crate) const OP_VARIANCE: u8 = 144; // R[A] = variance(R[B])
@@ -2000,6 +2002,20 @@ impl RegCompiler {
                                 OP_MAX
                             };
                             self.emit_abc(op, ra, rb, rc);
+                            self.reg_is_num[ra as usize] = true;
+                            return ra;
+                        }
+                        (Builtin::Min | Builtin::Max, 1) => {
+                            // 1-arg list form: reduces list of numbers to min/max element.
+                            // Mirrors OP_MEDIAN dispatch shape.
+                            let rb = self.compile_expr(&args[0]);
+                            let ra = self.alloc_reg();
+                            let op = if builtin == Builtin::Min {
+                                OP_MIN_LST
+                            } else {
+                                OP_MAX_LST
+                            };
+                            self.emit_abc(op, ra, rb, 0);
                             self.reg_is_num[ra as usize] = true;
                             return ra;
                         }
@@ -8741,6 +8757,24 @@ impl<'a> VM<'a> {
                         Err(msg) => vm_err!(VmError::Type(msg)),
                     }
                 }
+                OP_MIN_LST => {
+                    let a = ((inst >> 16) & 0xFF) as usize + base;
+                    let b = ((inst >> 8) & 0xFF) as usize + base;
+                    let v = reg!(b);
+                    match vm_min_max_lst(v, true) {
+                        Ok(out) => reg_set!(a, out),
+                        Err(msg) => vm_err!(VmError::Type(msg)),
+                    }
+                }
+                OP_MAX_LST => {
+                    let a = ((inst >> 16) & 0xFF) as usize + base;
+                    let b = ((inst >> 8) & 0xFF) as usize + base;
+                    let v = reg!(b);
+                    match vm_min_max_lst(v, false) {
+                        Ok(out) => reg_set!(a, out),
+                        Err(msg) => vm_err!(VmError::Type(msg)),
+                    }
+                }
                 OP_QUANTILE => {
                     let a = ((inst >> 16) & 0xFF) as usize + base;
                     let b = ((inst >> 8) & 0xFF) as usize + base;
@@ -11901,6 +11935,62 @@ fn vm_stdev(v: NanVal) -> Result<NanVal, &'static str> {
     Ok(NanVal::number((sse / (n - 1) as f64).sqrt()))
 }
 
+/// 1-arg list form of `min`/`max`: returns the smallest/largest element of a
+/// list of numbers. Mirrors `vm_median`'s shape but with min/max reduction
+/// and tailored error messages so verifier hints stay accurate.
+fn vm_min_max_lst(v: NanVal, is_min: bool) -> Result<NanVal, &'static str> {
+    if !v.is_heap() {
+        return Err(if is_min {
+            "min: arg must be a list of numbers"
+        } else {
+            "max: arg must be a list of numbers"
+        });
+    }
+    let items = match unsafe { v.as_heap_ref() } {
+        HeapObj::List(items) => items,
+        _ => {
+            return Err(if is_min {
+                "min: arg must be a list of numbers"
+            } else {
+                "max: arg must be a list of numbers"
+            });
+        }
+    };
+    if items.is_empty() {
+        return Err(if is_min {
+            "min: cannot take min of an empty list"
+        } else {
+            "max: cannot take max of an empty list"
+        });
+    }
+    // NaN-propagation contract: any NaN input → NaN output. Matches median/stdev.
+    let mut best: Option<f64> = None;
+    for item in items {
+        if !item.is_number() {
+            return Err(if is_min {
+                "min: list elements must be numbers"
+            } else {
+                "max: list elements must be numbers"
+            });
+        }
+        let n = item.as_number();
+        if n.is_nan() {
+            return Ok(NanVal::number(f64::NAN));
+        }
+        best = Some(match best {
+            None => n,
+            Some(cur) => {
+                if is_min {
+                    cur.min(n)
+                } else {
+                    cur.max(n)
+                }
+            }
+        });
+    }
+    Ok(NanVal::number(best.unwrap()))
+}
+
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn jit_median(a: u64, span_bits: u64) -> u64 {
@@ -11929,6 +12019,30 @@ pub(crate) extern "C" fn jit_sum(a: u64, span_bits: u64) -> u64 {
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn jit_avg(a: u64, span_bits: u64) -> u64 {
     match vm_avg(NanVal(a)) {
+        Ok(v) => v.0,
+        Err(e) => {
+            jit_set_runtime_error_with_span(VmError::Type(e), span_bits);
+            TAG_NIL
+        }
+    }
+}
+
+#[cfg(feature = "cranelift")]
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn jit_min_lst(a: u64, span_bits: u64) -> u64 {
+    match vm_min_max_lst(NanVal(a), true) {
+        Ok(v) => v.0,
+        Err(e) => {
+            jit_set_runtime_error_with_span(VmError::Type(e), span_bits);
+            TAG_NIL
+        }
+    }
+}
+
+#[cfg(feature = "cranelift")]
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn jit_max_lst(a: u64, span_bits: u64) -> u64 {
+    match vm_min_max_lst(NanVal(a), false) {
         Ok(v) => v.0,
         Err(e) => {
             jit_set_runtime_error_with_span(VmError::Type(e), span_bits);
@@ -24734,6 +24848,126 @@ mod tests {
             ))]))],
         );
         assert!(err.contains("avg") || err.contains("number"), "got: {err}");
+    }
+
+    // ── min / max (1-arg list form) ─────────────────────────────────────
+
+    #[test]
+    fn vm_min_lst_basic() {
+        let source = "f xs:L n>n;min xs";
+        let result = vm_run(
+            source,
+            Some("f"),
+            vec![Value::List(Arc::new(
+                vec![3.0, 1.0, 4.0, 1.0, 5.0, 9.0, 2.0, 6.0]
+                    .into_iter()
+                    .map(Value::Number)
+                    .collect(),
+            ))],
+        );
+        assert_eq!(result, Value::Number(1.0));
+    }
+
+    #[test]
+    fn vm_max_lst_basic() {
+        let source = "f xs:L n>n;max xs";
+        let result = vm_run(
+            source,
+            Some("f"),
+            vec![Value::List(Arc::new(
+                vec![3.0, 1.0, 4.0, 1.0, 5.0, 9.0, 2.0, 6.0]
+                    .into_iter()
+                    .map(Value::Number)
+                    .collect(),
+            ))],
+        );
+        assert_eq!(result, Value::Number(9.0));
+    }
+
+    #[test]
+    fn vm_min_lst_empty_errors() {
+        let err = vm_run_err("f>n;min []", Some("f"), vec![]);
+        assert!(err.contains("min") && err.contains("empty"), "got: {err}");
+    }
+
+    #[test]
+    fn vm_max_lst_empty_errors() {
+        let err = vm_run_err("f>n;max []", Some("f"), vec![]);
+        assert!(err.contains("max") && err.contains("empty"), "got: {err}");
+    }
+
+    #[test]
+    fn vm_min_lst_non_list_arg() {
+        let err = vm_run_err("f>n;min 42", Some("f"), vec![]);
+        assert!(err.contains("min"), "got: {err}");
+    }
+
+    #[test]
+    fn vm_max_lst_non_list_arg() {
+        let err = vm_run_err("f>n;max 42", Some("f"), vec![]);
+        assert!(err.contains("max"), "got: {err}");
+    }
+
+    #[test]
+    fn vm_min_lst_non_number_element() {
+        let err = vm_run_err(
+            "f xs:L n>n;min xs",
+            Some("f"),
+            vec![Value::List(Arc::new(vec![Value::Text(Arc::new(
+                "x".to_string(),
+            ))]))],
+        );
+        assert!(err.contains("min") || err.contains("number"), "got: {err}");
+    }
+
+    #[test]
+    fn vm_max_lst_non_number_element() {
+        let err = vm_run_err(
+            "f xs:L n>n;max xs",
+            Some("f"),
+            vec![Value::List(Arc::new(vec![Value::Text(Arc::new(
+                "x".to_string(),
+            ))]))],
+        );
+        assert!(err.contains("max") || err.contains("number"), "got: {err}");
+    }
+
+    #[test]
+    fn vm_min_lst_nan_propagates() {
+        let source = "f xs:L n>n;min xs";
+        let result = vm_run(
+            source,
+            Some("f"),
+            vec![Value::List(Arc::new(vec![
+                Value::Number(1.0),
+                Value::Number(2.0),
+                Value::Number(f64::NAN),
+                Value::Number(4.0),
+            ]))],
+        );
+        match result {
+            Value::Number(n) => assert!(n.is_nan(), "expected NaN, got {n}"),
+            other => panic!("expected Number(NaN), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn vm_max_lst_nan_propagates() {
+        let source = "f xs:L n>n;max xs";
+        let result = vm_run(
+            source,
+            Some("f"),
+            vec![Value::List(Arc::new(vec![
+                Value::Number(1.0),
+                Value::Number(2.0),
+                Value::Number(f64::NAN),
+                Value::Number(4.0),
+            ]))],
+        );
+        match result {
+            Value::Number(n) => assert!(n.is_nan(), "expected NaN, got {n}"),
+            other => panic!("expected Number(NaN), got {other:?}"),
+        }
     }
 
     // ── flat ────────────────────────────────────────────────────────────
