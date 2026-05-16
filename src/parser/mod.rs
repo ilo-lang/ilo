@@ -89,6 +89,16 @@ impl Parser {
                     && self.token_at(self.pos + 1) == Some(&Token::Greater)
                 {
                     Some("ilo uses '>' not '->' for the return type separator".to_string())
+                } else if *expected == Token::LBrace && *tok == Token::Semi {
+                    // Multi-line function-body / loop-body / guard-body from
+                    // other-language indentation (qa-tester, devops-sre,
+                    // pdf-analyst, html-scraper rerun3). Newlines between
+                    // body statements are collapsed to `;` by the lexer,
+                    // so `@k kws\n  body` becomes `@k kws;body` and the
+                    // foreach's required `{` lands on a `;` instead.
+                    Some(
+                        "ilo bodies are single-line, `;`-separated. If you broke the body across lines, collapse it onto one line or wrap with `{ ... }`. For example `@k kws{body};...` not `@k kws;body`.".to_string()
+                    )
                 } else {
                     None
                 };
@@ -607,6 +617,25 @@ impl Parser {
         // call-arg expansion (e.g. `fac n:n>n;?=n 0{1}{*n fac -n 1}` —
         // `fac -n 1` is parsed as a single nested call).
         self.register_user_fn(&name, &params);
+        // Friendly hint for `name:>R` from other-language signature shapes
+        // (qa-tester rerun3, `main:>n`). ilo's no-param signature is
+        // `name>return;body` — no `:` between the name and `>`. The default
+        // `expect(Greater)` would surface a bare `ILO-P003: expected Greater,
+        // got Colon` which doesn't mention the actual fix.
+        if params.is_empty()
+            && self.peek() == Some(&Token::Colon)
+            && self.token_at(self.pos + 1) == Some(&Token::Greater)
+        {
+            return Err(self.error_hint(
+                "ILO-P003",
+                format!(
+                    "unexpected `:>` after `{name}` — ilo signatures don't put a colon before the return-type separator"
+                ),
+                format!(
+                    "write `{name}>return;body` for a no-param function, or `{name} p:t>return;body` if params were intended"
+                ),
+            ));
+        }
         self.expect(&Token::Greater)?;
         let return_type = self.parse_type()?;
         // The header/body boundary is normally a `;`, but a newline (filtered
@@ -1839,6 +1868,27 @@ impl Parser {
     }
 
     fn parse_prefix_binop(&mut self) -> Result<Expr> {
+        // Reject compound-comparison prefix from other languages: `=<a b`
+        // (intended as ≤), `=>a b` (intended as ≥). ilo already has the
+        // single-token forms `<=` / `>=`; the multi-token compound is a
+        // common slip from agents that learnt operator precedence
+        // elsewhere (qa-tester rerun3, `=<d 0{...}`). Surface a friendly
+        // hint before consuming the leading op.
+        if let Some(tok) = self.peek().cloned()
+            && matches!(tok, Token::Eq)
+            && let Some(next) = self.token_at(self.pos + 1).cloned()
+            && let Some((compound, replacement)) = compound_comparison_replacement(&tok, &next)
+        {
+            return Err(self.error_hint(
+                "ILO-P003",
+                format!(
+                    "`{compound}` is not an ilo operator; compound prefix forms don't compose"
+                ),
+                format!(
+                    "use `{replacement}` (single token) instead, e.g. `{replacement}a b` for the comparison"
+                ),
+            ));
+        }
         let op = match self.advance() {
             Some(Token::Plus) => BinOp::Add,
             Some(Token::Star) => BinOp::Multiply,
@@ -2573,7 +2623,16 @@ or write `({fmt_name} \"...\" ...)` so its args are grouped."
                 }
                 Ok(expr)
             }
-            Some(tok) => Err(self.error("ILO-P009", format!("expected expression, got {:?}", tok))),
+            Some(tok) => {
+                // Friendly hint for `fn`/`def`/`lambda`-style lambda attempts
+                // from other languages at expression position. ilo's inline
+                // lambda syntax is parenthesised: `(p:t>r;body)`. (qa-tester
+                // and scientific-researcher rerun3 both reached for `fn`.)
+                if let Some((msg, hint)) = lambda_keyword_message(&tok) {
+                    return Err(self.error_hint("ILO-P009", msg, hint));
+                }
+                Err(self.error("ILO-P009", format!("expected expression, got {:?}", tok)))
+            }
             None => Err(self.error("ILO-P010", "expected expression, got EOF".into())),
         }
     }
@@ -3109,6 +3168,45 @@ fn wrap_body_as_let(name: &str, mut body: Vec<Spanned<Stmt>>) -> Vec<Spanned<Stm
         }
     }
     body
+}
+
+/// Map a lambda-introducer keyword from another language to a friendly
+/// ilo-equivalent hint. Returns `(message, hint)`. Used at expression
+/// position when `fn`/`def` appears where an operand is expected.
+fn lambda_keyword_message(tok: &Token) -> Option<(String, String)> {
+    let kw = match tok {
+        Token::KwFn => "fn",
+        Token::KwDef => "def",
+        _ => return None,
+    };
+    Some((
+        format!(
+            "`{kw}` is a reserved word and cannot start an expression"
+        ),
+        "ilo's inline lambda syntax is `(p:t>r;body)`, e.g. `map (x:n>n;+x 1) xs`. For a named function use `name params>return;body` at the top level.".to_string(),
+    ))
+}
+
+/// Map a compound-comparison prefix attempt (`=<`, `=>`) to its single-token
+/// ilo equivalent. Returns `(rendered, replacement)`. Used by
+/// `parse_prefix_binop` to surface ILO-P003 with a friendly hint before the
+/// `Eq` is consumed as its own prefix op (which would then fail on the
+/// second operand and surface a misleading "expected expression, got
+/// LBrace" deep into the expression).
+///
+/// `!<` / `!>` are deliberately NOT covered here: `!` at statement position
+/// is the negated-guard form (`!cond{body}`), so `!<d 0` parses as
+/// "negated guard whose condition is `<d 0`", which is valid ilo and would
+/// be incorrectly rejected by the hint.
+fn compound_comparison_replacement(
+    first: &Token,
+    second: &Token,
+) -> Option<(&'static str, &'static str)> {
+    match (first, second) {
+        (Token::Eq, Token::Less) => Some(("=<", "<=")),
+        (Token::Eq, Token::Greater) => Some(("=>", ">=")),
+        _ => None,
+    }
 }
 
 /// Identifier-keywords intercepted by `parse_stmt` as control-flow forms.
@@ -7839,5 +7937,168 @@ mod tests {
         assert_eq!(args.len(), 2);
         assert!(matches!(&args[0], Expr::Ref(n) if n == "dbl"));
         assert!(matches!(&args[1], Expr::Ref(n) if n == "xs"));
+    }
+
+    // ── persona-diagnostic batch 2 ────────────────────────────────────────
+
+    #[test]
+    fn compound_prefix_eq_less_emits_hint() {
+        // `f d:n>n;=<d 0{ret 0};d` — the compound `=<` is a slip for `<=`.
+        let source = "f d:n>n;=<d 0{ret 0};d";
+        let (_, errors) = parse_str_errors(source);
+        let e = errors
+            .iter()
+            .find(|e| e.code == "ILO-P003")
+            .expect("expected ILO-P003 for compound prefix");
+        assert!(
+            e.message.contains("`=<` is not an ilo operator"),
+            "message: {}",
+            e.message
+        );
+        let hint = e.hint.as_ref().expect("expected hint");
+        assert!(
+            hint.contains("<=") && hint.contains("single token"),
+            "hint: {}",
+            hint
+        );
+    }
+
+    #[test]
+    fn compound_prefix_eq_greater_emits_hint() {
+        let source = "f d:n>n;=>d 0{ret 0};d";
+        let (_, errors) = parse_str_errors(source);
+        let e = errors
+            .iter()
+            .find(|e| e.code == "ILO-P003")
+            .expect("expected ILO-P003");
+        assert!(e.message.contains("`=>`"), "message: {}", e.message);
+        assert!(
+            e.hint.as_ref().unwrap().contains(">="),
+            "hint: {:?}",
+            e.hint
+        );
+    }
+
+    #[test]
+    fn compound_prefix_bang_less_is_negated_guard_not_compound() {
+        // `!<d 0{ret 0}` is a VALID negated guard: `!` + condition `<d 0`
+        // + body `{ret 0}`. The compound-prefix hint must not fire here
+        // because `!<` is not a compound-comparison ambiguity in ilo.
+        let source = "f d:n>n;!<d 0{ret 0};d";
+        let (_, errors) = parse_str_errors(source);
+        assert!(
+            !errors
+                .iter()
+                .any(|e| e.message.contains("`!<` is not an ilo operator")),
+            "should not fire compound-prefix hint for `!<`; errors: {:?}",
+            errors
+        );
+    }
+
+    #[test]
+    fn fn_at_expression_position_emits_lambda_hint() {
+        let source = "main>n;f=fn x:n>n;+x 1;f 5";
+        let (_, errors) = parse_str_errors(source);
+        // First error should be the lambda hint, not a downstream cascade.
+        let e = errors
+            .iter()
+            .find(|e| e.code == "ILO-P009" && e.message.contains("`fn` is a reserved word"))
+            .expect("expected ILO-P009 with `fn` lambda message");
+        let hint = e.hint.as_ref().expect("expected hint");
+        assert!(
+            hint.contains("(p:t>r;body)") && hint.contains("inline lambda"),
+            "hint: {}",
+            hint
+        );
+    }
+
+    #[test]
+    fn def_at_expression_position_emits_lambda_hint() {
+        let source = "main>n;f=def x:n>n;+x 1;f 5";
+        let (_, errors) = parse_str_errors(source);
+        let e = errors
+            .iter()
+            .find(|e| e.code == "ILO-P009" && e.message.contains("`def` is a reserved word"))
+            .expect("expected ILO-P009 with `def` lambda message");
+        assert!(e.hint.as_ref().unwrap().contains("(p:t>r;body)"));
+    }
+
+    #[test]
+    fn fn_decl_colon_before_greater_emits_signature_hint() {
+        // `main:>n;42` — the `:` before `>` is a slip from other-language
+        // type-annotation shapes. Surface the canonical signature form.
+        let source = "main:>n;42";
+        let (_, errors) = parse_str_errors(source);
+        let e = errors
+            .iter()
+            .find(|e| e.code == "ILO-P003")
+            .expect("expected ILO-P003");
+        assert!(
+            e.message.contains(":>") && e.message.contains("main"),
+            "message: {}",
+            e.message
+        );
+        let hint = e.hint.as_ref().expect("expected hint");
+        assert!(hint.contains("main>return;body"), "hint: {}", hint);
+    }
+
+    #[test]
+    fn fn_decl_with_params_still_errors_normally_on_stray_colon() {
+        // With actual params (`f x:n:>n`), the new hint must NOT fire; the
+        // generic `expected Greater, got Colon` path is correct because
+        // params are non-empty and the colon position is post-params.
+        let source = "f x:n:>n;42";
+        let (_, errors) = parse_str_errors(source);
+        let e = errors
+            .iter()
+            .find(|e| e.code == "ILO-P003")
+            .expect("expected ILO-P003");
+        // Must not contain the new `:>` signature-shape hint.
+        assert!(
+            !e.message.contains(":>"),
+            "should not fire signature hint with non-empty params; got: {}",
+            e.message
+        );
+    }
+
+    #[test]
+    fn lbrace_expected_got_semi_emits_multiline_body_hint() {
+        // Foreach body without explicit `{`: `@k xs;+k 1` triggers
+        // `expected LBrace, got Semi`.
+        let source = "main>n;xs=[1 2 3];@k xs;+k 1";
+        let (_, errors) = parse_str_errors(source);
+        let e = errors
+            .iter()
+            .find(|e| e.code == "ILO-P003" && e.message.contains("expected LBrace"))
+            .expect("expected ILO-P003 LBrace error");
+        let hint = e.hint.as_ref().expect("expected hint");
+        assert!(
+            hint.contains("single-line") && hint.contains("`{ ... }`"),
+            "hint: {}",
+            hint
+        );
+    }
+
+    #[test]
+    fn lbrace_expected_got_other_token_no_multiline_hint() {
+        // `type foo bar` — expected LBrace got Ident("bar"). The new hint
+        // should NOT fire here; it's specific to the `;` after-statement
+        // shape, not arbitrary non-`{` tokens.
+        let source = "type foo bar";
+        let (_, errors) = parse_str_errors(source);
+        let e = errors
+            .iter()
+            .find(|e| e.code == "ILO-P003")
+            .expect("expected ILO-P003");
+        let hint_contains_multiline = e
+            .hint
+            .as_ref()
+            .map(|h| h.contains("single-line"))
+            .unwrap_or(false);
+        assert!(
+            !hint_contains_multiline,
+            "should not fire multi-line hint here; hint: {:?}",
+            e.hint
+        );
     }
 }
