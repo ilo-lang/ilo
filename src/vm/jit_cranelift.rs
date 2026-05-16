@@ -111,6 +111,7 @@ struct HelperFuncs {
     variance: FuncId,
     sum: FuncId,
     avg: FuncId,
+    flat: FuncId,
     slc: FuncId,
     lst: FuncId,
     rgxsub: FuncId,
@@ -301,6 +302,7 @@ fn register_helpers(builder: &mut JITBuilder) {
         ("jit_variance", jit_variance as *const u8),
         ("jit_sum", jit_sum as *const u8),
         ("jit_avg", jit_avg as *const u8),
+        ("jit_flat", jit_flat as *const u8),
         ("jit_slc", jit_slc as *const u8),
         ("jit_lst", jit_lst as *const u8),
         ("jit_rgxsub", jit_rgxsub as *const u8),
@@ -476,6 +478,7 @@ fn declare_all_helpers(module: &mut JITModule) -> HelperFuncs {
         variance: declare_helper(module, "jit_variance", 2, 1),
         sum: declare_helper(module, "jit_sum", 2, 1),
         avg: declare_helper(module, "jit_avg", 2, 1),
+        flat: declare_helper(module, "jit_flat", 2, 1),
         slc: declare_helper(module, "jit_slc", 3, 1),
         lst: declare_helper(module, "jit_lst", 3, 1),
         rgxsub: declare_helper(module, "jit_rgxsub", 3, 1),
@@ -1124,7 +1127,7 @@ fn compile_function_body(
                 | OP_PRT | OP_RD | OP_RDL | OP_WR | OP_WRL | OP_TRM | OP_UPR | OP_LWR | OP_CAP
                 | OP_PADL | OP_PADR | OP_PADLC | OP_PADRC | OP_CHR | OP_CHARS | OP_UNQ | OP_UNIQBY | OP_PARTITION | OP_FRQ | OP_NUM
                 | OP_RGXSUB | OP_TRANSPOSE | OP_MATMUL | OP_DTFMT | OP_DTPARSE
-                | OP_CALL_BUILTIN_TREE | OP_LOADFN | OP_CALL_DYN => {
+                | OP_FLAT | OP_CALL_BUILTIN_TREE | OP_LOADFN | OP_CALL_DYN => {
                     non_num_write[a] = true;
                     non_bool_write[a] = true;
                 }
@@ -2656,6 +2659,16 @@ fn compile_function_body(
                     let rf = builder.ins().bitcast(F64, mf, result);
                     builder.def_var(f64_vars[a_idx], rf);
                 }
+            }
+            OP_FLAT => {
+                // flat returns a list, no F64-shadow refresh.
+                let bv = builder.use_var(vars[b_idx]);
+                let span_bits = pack_span_bits(chunk.spans[ip]);
+                let span_arg = builder.ins().iconst(I64, span_bits);
+                let fref = get_func_ref(&mut builder, module, helpers.flat);
+                let call_inst = builder.ins().call(fref, &[bv, span_arg]);
+                let result = builder.inst_results(call_inst)[0];
+                builder.def_var(vars[a_idx], result);
             }
             OP_SLC => {
                 // slc(R[B], R[C], R[D]) — D in data word A field
