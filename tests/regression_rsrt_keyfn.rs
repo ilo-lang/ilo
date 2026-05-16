@@ -47,10 +47,7 @@ fn check_all(src: &str, expected: &str) {
 #[test]
 fn rsrt_numeric_key_desc_cross_engine() {
     // sort numbers descending by themselves (identity key)
-    check_all(
-        "idk x:n>n;x f>L n;rsrt idk [1,3,2,5,4]",
-        "[5, 4, 3, 2, 1]",
-    );
+    check_all("idk x:n>n;x f>L n;rsrt idk [1,3,2,5,4]", "[5, 4, 3, 2, 1]");
 }
 
 #[test]
