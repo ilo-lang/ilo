@@ -999,6 +999,20 @@ fn builtin_check_args(
                     is_warning: false,
                 });
             }
+            // Optional pad-char arg (3-arg overload): must be text (a 1-character
+            // string at runtime — char-count is checked by the executor).
+            if let Some(arg) = arg_types.get(2)
+                && !compatible(arg, &Ty::Text)
+            {
+                errors.push(VerifyError {
+                    code: "ILO-T013",
+                    function: func_ctx.to_string(),
+                    message: format!("'{name}' arg 3 (pad char) expects t, got {arg}"),
+                    hint: None,
+                    span,
+                    is_warning: false,
+                });
+            }
             (Ty::Text, errors)
         }
         "ord" => {
@@ -3076,6 +3090,9 @@ impl VerifyContext {
                         args.len() == 1 || args.len() == 2
                     } else if callee == "post" {
                         args.len() == 2 || args.len() == 3
+                    } else if callee == "padl" || callee == "padr" {
+                        // padl s w  /  padl s w padchar
+                        args.len() == 2 || args.len() == 3
                     } else if callee == "fmt" {
                         !args.is_empty() // variadic: template + 0 or more args
                     } else {
@@ -3092,7 +3109,7 @@ impl VerifyContext {
                             "3 or 4".to_string()
                         } else if callee == "rd" || callee == "get" {
                             "1 or 2".to_string()
-                        } else if callee == "post" || callee == "wr" {
+                        } else if matches!(callee.as_str(), "post" | "wr" | "padl" | "padr") {
                             "2 or 3".to_string()
                         } else if callee == "min" || callee == "max" {
                             "1 or 2".to_string()
