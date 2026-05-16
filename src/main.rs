@@ -2693,12 +2693,22 @@ fn dispatch_run(r: cli::RunArgs, mode: OutputMode, explicit_json: bool, no_hints
                 )
             }
             cli::Engine::Default => {
-                // Default: func-name heuristic + Cranelift JIT with interpreter fallback
+                // Default: func-name heuristic + Cranelift JIT with interpreter fallback.
+                //
+                // Inline-lambda lifting emits synthetic `__lit_N` top-level
+                // decls (see parser/mod.rs ~line 2863). These are an
+                // implementation detail of HOF dispatch — they must not show
+                // up in the "available functions" listing, must not satisfy
+                // the auto-run heuristic, and must not be selectable as a
+                // CLI positional arg. The `__` prefix is reserved for the
+                // compiler; filtering on it is safe.
                 let func_names: Vec<&str> = program
                     .declarations
                     .iter()
                     .filter_map(|d| match d {
-                        ast::Decl::Function { name, .. } => Some(name.as_str()),
+                        ast::Decl::Function { name, .. } if !name.starts_with("__") => {
+                            Some(name.as_str())
+                        }
                         _ => None,
                     })
                     .collect();
