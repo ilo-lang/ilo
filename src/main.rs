@@ -1541,6 +1541,13 @@ fn collect_hints_with_program(source: &str, program: Option<&ast::Program>) -> V
 /// pattern — the negative literal absorbs the minus. Spelt-out `*- 5 b c`
 /// (with a space) does lex as `Star, Minus, Number, Ident`, and is a true
 /// prefix-pair: fire.
+///
+/// Suppression: when the immediate predecessor of `op1` is `LParen`, the
+/// author has explicitly grouped the prefix expression. The parenthesised
+/// form is the recommended shape (the hint itself suggests grouping as the
+/// canonical disambiguation), so flagging it would be self-contradictory.
+/// Nested parens are covered too because the immediate predecessor of `op1`
+/// is still `LParen` in `((/ *a b c))`.
 fn detect_prefix_precedence_trap(
     tokens: &[(lexer::Token, std::ops::Range<usize>)],
 ) -> Option<String> {
@@ -1564,6 +1571,13 @@ fn detect_prefix_precedence_trap(
         };
         // Prefix-position check: the previous token must not be value-yielding.
         if i > 0 && is_value_yielding(&tokens[i - 1].0) {
+            continue;
+        }
+        // Parenthesised-form suppression: if op1 sits directly after `(`, the
+        // author has explicitly grouped the prefix expression. That IS the
+        // recommended shape, so don't nag. Covers nested parens too because
+        // the immediate predecessor is still `LParen`.
+        if i > 0 && matches!(&tokens[i - 1].0, LParen) {
             continue;
         }
         // The pair must be followed by at least one value-yielding token to
@@ -7308,6 +7322,80 @@ mod tests {
         // ({*,/} and {+,-}), so it should NOT fire — `*` and `-` are
         // different precedence. Verify.
         assert!(detect_prefix_precedence_trap(&tokens).is_none());
+    }
+
+    #[test]
+    fn collect_hints_paren_grouped_prefix_pair_does_not_fire() {
+        // The parenthesised form `(/ *errs 100 tot)` is the canonical
+        // disambiguation — the hint itself recommends grouping. Flagging it
+        // would contradict the advice and spam every rate-calc program.
+        // Streaming-tail rerun4 friction: bare `(/ *errs 100 tot)` should
+        // be silent.
+        let hints = collect_hints("f errs:n tot:n>n;(/ *errs 100 tot)");
+        assert!(
+            !has_prefix_trap_hint(&hints),
+            "parenthesised prefix pair `(/ *errs 100 tot)` should not fire prefix-trap hint, got: {:?}",
+            hints
+        );
+        // All four pair shapes should be suppressed inside parens.
+        for src in [
+            "f a:n b:n c:n>n;(*/ a b c)",
+            "f a:n b:n c:n>n;(/* a b c)",
+            "f a:n b:n c:n>n;(+- a b c)",
+            "f a:n b:n c:n>n;(-+ a b c)",
+        ] {
+            let hints = collect_hints(src);
+            assert!(
+                !has_prefix_trap_hint(&hints),
+                "paren-grouped pair in `{src}` should be silent, got: {:?}",
+                hints
+            );
+        }
+    }
+
+    #[test]
+    fn collect_hints_nested_parens_prefix_pair_does_not_fire() {
+        // Nested parens: predecessor of op1 is still `LParen`, so suppression
+        // applies. Pins that the immediate-predecessor check is sufficient.
+        let hints = collect_hints("f a:n b:n c:n>n;((*/ a b c))");
+        assert!(
+            !has_prefix_trap_hint(&hints),
+            "doubly-parenthesised pair should be silent, got: {:?}",
+            hints
+        );
+    }
+
+    #[test]
+    fn collect_hints_bare_prefix_pair_still_fires_after_paren_suppression() {
+        // Regression-safety: the bare unparenthesised form must still fire.
+        // The suppression only kicks in on `LParen` predecessor, not on a
+        // generic non-value-yielding token.
+        let hints = collect_hints("f a:n b:n c:n>n;*/a b c");
+        assert!(
+            has_prefix_trap_hint(&hints),
+            "bare `*/a b c` must still fire after paren-suppression added, got: {:?}",
+            hints
+        );
+    }
+
+    #[test]
+    fn collect_hints_paren_grouped_pair_unit_check() {
+        // Unit-level pin on the detector: `LParen Star Slash Ident Ident Ident RParen`
+        // must return `None`.
+        use lexer::Token::*;
+        let tokens = vec![
+            (LParen, 0..1),
+            (Star, 1..2),
+            (Slash, 2..3),
+            (Ident("a".to_string()), 4..5),
+            (Ident("b".to_string()), 6..7),
+            (Ident("c".to_string()), 8..9),
+            (RParen, 9..10),
+        ];
+        assert!(
+            detect_prefix_precedence_trap(&tokens).is_none(),
+            "detector must suppress when immediate predecessor is LParen"
+        );
     }
 
     // ── tools_cmd: error paths ────────────────────────────────────────────────
