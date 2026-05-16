@@ -1,5 +1,7 @@
--- flat xs:L (L a) > L a — flatten a list one level.
--- Non-list elements pass through unchanged.
+-- flat xs:L (L a) > L a, flatten a list one level. Inner lists are
+-- spliced into the result; non-list elements pass through unchanged.
+-- Works identically on the tree-walking interpreter, the bytecode VM,
+-- and the Cranelift JIT.
 
 -- Basic nested flatten
 basic>L n;flat [[1, 2], [3, 4]]
@@ -13,9 +15,9 @@ gaps>L n;flat [[1], [], [2]]
 -- Mixed: non-list items pass through
 mixed>L n;flat [[1, 2], 3, [4, 5]]
 
--- flat is tree-only (vm/cranelift don't implement it)
--- engine-skip: vm
--- engine-skip: cranelift
+-- Composes with sum so the result feeds a numeric reducer
+total>n;sum (flat [[1, 2], [3, 4]])
+
 -- run: basic
 -- out: [1, 2, 3, 4]
 -- run: empty
@@ -24,3 +26,5 @@ mixed>L n;flat [[1, 2], 3, [4, 5]]
 -- out: [1, 2]
 -- run: mixed
 -- out: [1, 2, 3, 4, 5]
+-- run: total
+-- out: 10

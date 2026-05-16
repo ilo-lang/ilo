@@ -1,7 +1,11 @@
-// Regression tests for the `flat` builtin: flatten a list one level.
-// Signature: `flat xs:L (L a) > L a`. Non-list elements pass through
-// unchanged. `flat` is currently tree-engine only; vm/cranelift report
-// an "undefined function" compile error.
+// Tree-engine regression tests for the `flat` builtin: flatten a list one
+// level. Signature: `flat xs:L (L a) > L a`. Non-list elements pass through
+// unchanged.
+//
+// Cross-engine coverage (tree + VM + Cranelift) lives in
+// `tests/regression_flat_cross_engine.rs`. The two `*_undefined` tests
+// that used to live here were removed when `flat` was wired through VM
+// and Cranelift in `fix/flat-cross-engine`.
 
 use std::process::Command;
 
@@ -20,19 +24,6 @@ fn run_ok(engine: &str, src: &str) -> String {
         String::from_utf8_lossy(&out.stderr)
     );
     String::from_utf8_lossy(&out.stdout).trim().to_string()
-}
-
-fn run_err(engine: &str, src: &str) -> String {
-    let out = ilo()
-        .args([src, engine, "f"])
-        .output()
-        .expect("failed to run ilo");
-    assert!(
-        !out.status.success(),
-        "ilo {engine} unexpectedly succeeded for `{src}`: stdout={}",
-        String::from_utf8_lossy(&out.stdout)
-    );
-    String::from_utf8_lossy(&out.stderr).to_string() + &String::from_utf8_lossy(&out.stdout)
 }
 
 #[test]
@@ -67,28 +58,5 @@ fn flat_mixed_passes_non_list_through_tree() {
     assert_eq!(
         run_ok("--run-tree", "f>L n;flat [[1, 2], 3, [4, 5]]"),
         "[1, 2, 3, 4, 5]"
-    );
-}
-
-// vm/cranelift do not implement `flat` yet — they should reject the
-// program at compile time with an "undefined function" error rather
-// than producing a wrong answer silently.
-
-#[test]
-fn flat_vm_undefined() {
-    let err = run_err("--run-vm", "f>L n;flat [[1, 2], [3, 4]]");
-    assert!(
-        err.contains("flat") || err.contains("undefined"),
-        "expected vm to report missing flat, got: {err}"
-    );
-}
-
-#[cfg(feature = "cranelift")]
-#[test]
-fn flat_cranelift_undefined() {
-    let err = run_err("--run-cranelift", "f>L n;flat [[1, 2], [3, 4]]");
-    assert!(
-        err.contains("flat") || err.contains("undefined"),
-        "expected cranelift to report missing flat, got: {err}"
     );
 }
