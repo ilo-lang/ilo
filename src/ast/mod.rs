@@ -627,6 +627,230 @@ fn resolve_aliases_expr(expr: &mut Expr) {
     }
 }
 
+/// Desugar `xs.i` where `i` is a variable in scope into `at xs i`.
+///
+/// The parser builds `Expr::Field { object, field: "i" }` for `xs.i` because
+/// at parse time we can't tell whether `xs` is a record (field access) or a
+/// list (indexed access). If `i` is a bound variable in scope, the user almost
+/// certainly meant indexed access, so we rewrite to a `Call` to the `at`
+/// builtin. Record field access keeps working because record field names are
+/// usually not also locals: we additionally guard against collisions by
+/// refusing to rewrite when `field` matches a declared field on any record
+/// type in the program.
+///
+/// Only rewrites the strict `.field` form, not the safe `.?field` form.
+/// Multiple personas have flagged the resulting "field access on non-record
+/// type L _" error as the single biggest token tax in list workloads.
+pub fn desugar_dot_var_index(program: &mut Program) {
+    // Collect every field name declared on any record type. These names act
+    // as static field identifiers and must keep record-access semantics even
+    // when shadowed by a local binding.
+    let mut record_fields: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for decl in &program.declarations {
+        if let Decl::TypeDef { fields, .. } = decl {
+            for p in fields {
+                record_fields.insert(p.name.clone());
+            }
+        }
+    }
+
+    for decl in &mut program.declarations {
+        if let Decl::Function { params, body, .. } = decl {
+            let mut scope: Vec<String> = params.iter().map(|p| p.name.clone()).collect();
+            for stmt in body {
+                desugar_stmt(&mut stmt.node, &mut scope, &record_fields);
+            }
+        }
+    }
+}
+
+fn desugar_stmt(stmt: &mut Stmt, scope: &mut Vec<String>, rf: &std::collections::HashSet<String>) {
+    match stmt {
+        Stmt::Let { name, value } => {
+            desugar_expr(value, scope, rf);
+            scope.push(name.clone());
+        }
+        Stmt::Expr(expr) => desugar_expr(expr, scope, rf),
+        Stmt::Return(expr) => desugar_expr(expr, scope, rf),
+        Stmt::Break(opt) => {
+            if let Some(e) = opt {
+                desugar_expr(e, scope, rf);
+            }
+        }
+        Stmt::Continue => {}
+        Stmt::Guard {
+            condition,
+            body,
+            else_body,
+            ..
+        } => {
+            desugar_expr(condition, scope, rf);
+            let depth = scope.len();
+            for s in body {
+                desugar_stmt(&mut s.node, scope, rf);
+            }
+            scope.truncate(depth);
+            if let Some(eb) = else_body {
+                let depth = scope.len();
+                for s in eb {
+                    desugar_stmt(&mut s.node, scope, rf);
+                }
+                scope.truncate(depth);
+            }
+        }
+        Stmt::Match { subject, arms } => {
+            if let Some(e) = subject {
+                desugar_expr(e, scope, rf);
+            }
+            for arm in arms {
+                let depth = scope.len();
+                match &arm.pattern {
+                    Pattern::Err(b) | Pattern::Ok(b) => scope.push(b.clone()),
+                    Pattern::TypeIs { binding, .. } => scope.push(binding.clone()),
+                    _ => {}
+                }
+                for s in &mut arm.body {
+                    desugar_stmt(&mut s.node, scope, rf);
+                }
+                scope.truncate(depth);
+            }
+        }
+        Stmt::ForEach {
+            binding,
+            collection,
+            body,
+        } => {
+            desugar_expr(collection, scope, rf);
+            let depth = scope.len();
+            scope.push(binding.clone());
+            for s in body {
+                desugar_stmt(&mut s.node, scope, rf);
+            }
+            scope.truncate(depth);
+        }
+        Stmt::ForRange {
+            binding,
+            start,
+            end,
+            body,
+        } => {
+            desugar_expr(start, scope, rf);
+            desugar_expr(end, scope, rf);
+            let depth = scope.len();
+            scope.push(binding.clone());
+            for s in body {
+                desugar_stmt(&mut s.node, scope, rf);
+            }
+            scope.truncate(depth);
+        }
+        Stmt::While { condition, body } => {
+            desugar_expr(condition, scope, rf);
+            let depth = scope.len();
+            for s in body {
+                desugar_stmt(&mut s.node, scope, rf);
+            }
+            scope.truncate(depth);
+        }
+        Stmt::Destructure { bindings, value } => {
+            desugar_expr(value, scope, rf);
+            for b in bindings {
+                scope.push(b.clone());
+            }
+        }
+    }
+}
+
+fn desugar_expr(expr: &mut Expr, scope: &[String], rf: &std::collections::HashSet<String>) {
+    // First, recurse into children. We do this before checking the current
+    // node so nested `xs.i.j` chains get rewritten bottom-up.
+    match expr {
+        Expr::Field { object, .. } => desugar_expr(object, scope, rf),
+        Expr::Index { object, .. } => desugar_expr(object, scope, rf),
+        Expr::Call { args, .. } => {
+            for a in args {
+                desugar_expr(a, scope, rf);
+            }
+        }
+        Expr::BinOp { left, right, .. } => {
+            desugar_expr(left, scope, rf);
+            desugar_expr(right, scope, rf);
+        }
+        Expr::UnaryOp { operand, .. } => desugar_expr(operand, scope, rf),
+        Expr::Ok(inner) | Expr::Err(inner) => desugar_expr(inner, scope, rf),
+        Expr::NilCoalesce { value, default } => {
+            desugar_expr(value, scope, rf);
+            desugar_expr(default, scope, rf);
+        }
+        Expr::List(items) => {
+            for it in items {
+                desugar_expr(it, scope, rf);
+            }
+        }
+        Expr::Record { fields, .. } => {
+            for (_, v) in fields {
+                desugar_expr(v, scope, rf);
+            }
+        }
+        Expr::Match { subject, arms } => {
+            if let Some(s) = subject {
+                desugar_expr(s, scope, rf);
+            }
+            for arm in arms {
+                // Arms get their own scope frame via desugar_stmt.
+                let mut local_scope: Vec<String> = scope.to_vec();
+                match &arm.pattern {
+                    Pattern::Err(b) | Pattern::Ok(b) => local_scope.push(b.clone()),
+                    Pattern::TypeIs { binding, .. } => local_scope.push(binding.clone()),
+                    _ => {}
+                }
+                for s in &mut arm.body {
+                    desugar_stmt(&mut s.node, &mut local_scope, rf);
+                }
+            }
+        }
+        Expr::With { object, updates } => {
+            desugar_expr(object, scope, rf);
+            for (_, v) in updates {
+                desugar_expr(v, scope, rf);
+            }
+        }
+        Expr::Ternary {
+            condition,
+            then_expr,
+            else_expr,
+        } => {
+            desugar_expr(condition, scope, rf);
+            desugar_expr(then_expr, scope, rf);
+            desugar_expr(else_expr, scope, rf);
+        }
+        Expr::MakeClosure { captures, .. } => {
+            for c in captures {
+                desugar_expr(c, scope, rf);
+            }
+        }
+        Expr::Literal(_) | Expr::Ref(_) => {}
+    }
+
+    // Now check if this Field node is `obj.<var>` where `<var>` is in scope
+    // and not also a record field name. If so, rewrite to `at obj var`.
+    if let Expr::Field {
+        object,
+        field,
+        safe,
+    } = expr
+    {
+        if !*safe && scope.iter().any(|b| b == field) && !rf.contains(field) {
+            let obj = std::mem::replace(object.as_mut(), Expr::Literal(Literal::Nil));
+            let field_name = field.clone();
+            *expr = Expr::Call {
+                function: "at".to_string(),
+                args: vec![obj, Expr::Ref(field_name)],
+                unwrap: UnwrapMode::None,
+            };
+        }
+    }
+}
+
 #[cfg(test)]
 #[allow(clippy::approx_constant)]
 mod tests {
@@ -1143,6 +1367,130 @@ mod tests {
         assert!(
             matches!(&body[0].node, Stmt::Expr(Expr::Match { subject: None, arms }) if arms.len() == 1),
             "expected Expr::Match{{None}} after resolve_aliases"
+        );
+    }
+
+    fn parse_one(src: &str) -> Program {
+        let tokens = crate::lexer::lex(src).unwrap();
+        let token_spans: Vec<(crate::lexer::Token, Span)> = tokens
+            .into_iter()
+            .map(|(t, r)| {
+                (
+                    t,
+                    Span {
+                        start: r.start,
+                        end: r.end,
+                    },
+                )
+            })
+            .collect();
+        let (mut prog, errors) = crate::parser::parse(token_spans);
+        assert!(errors.is_empty(), "parse errors: {:?}", errors);
+        resolve_aliases(&mut prog);
+        prog
+    }
+
+    #[test]
+    fn desugar_rewrites_xs_dot_i_when_i_is_param() {
+        let mut prog = parse_one("pick xs:L n i:n>n;xs.i\n");
+        desugar_dot_var_index(&mut prog);
+        let Decl::Function { body, .. } = &prog.declarations[0] else {
+            panic!()
+        };
+        // `xs.i` should now be `at xs i`.
+        let Stmt::Expr(Expr::Call { function, args, .. }) = &body[0].node else {
+            panic!("expected Call after desugar, got {:?}", body[0].node)
+        };
+        assert_eq!(function, "at");
+        assert_eq!(args.len(), 2);
+        assert!(matches!(&args[0], Expr::Ref(n) if n == "xs"));
+        assert!(matches!(&args[1], Expr::Ref(n) if n == "i"));
+    }
+
+    #[test]
+    fn desugar_leaves_xs_dot_0_alone() {
+        let mut prog = parse_one("first xs:L n>n;xs.0\n");
+        desugar_dot_var_index(&mut prog);
+        let Decl::Function { body, .. } = &prog.declarations[0] else {
+            panic!()
+        };
+        // Literal index stays as Expr::Index (parser already handles this).
+        assert!(matches!(
+            &body[0].node,
+            Stmt::Expr(Expr::Index { index: 0, .. })
+        ));
+    }
+
+    #[test]
+    fn desugar_preserves_record_field_when_field_is_param() {
+        // `name` is both a parameter and a declared field on `person`.
+        // The collision guard must keep `p.name` as a Field access.
+        let mut prog = parse_one(
+            "type person{name:t;age:n}\n\ngreet name:t>t;p=person name:\"Alice\" age:30;p.name\n",
+        );
+        desugar_dot_var_index(&mut prog);
+        let Decl::Function { body, .. } = &prog.declarations[1] else {
+            panic!(
+                "expected greet at index 1, declarations: {:?}",
+                prog.declarations.len()
+            )
+        };
+        // Last stmt is `p.name`, must still be Expr::Field.
+        let last = &body[body.len() - 1].node;
+        assert!(
+            matches!(last, Stmt::Expr(Expr::Field { field, .. }) if field == "name"),
+            "expected Field after desugar, got {last:?}"
+        );
+    }
+
+    #[test]
+    fn desugar_rewrites_inside_range_loop_body() {
+        let mut prog = parse_one("mysum xs:L n>n;s=0;@i 0..(len xs){v=xs.i;s=+s v};+s 0\n");
+        desugar_dot_var_index(&mut prog);
+        let Decl::Function { body, .. } = &prog.declarations[0] else {
+            panic!()
+        };
+        // Find the @i loop and inspect its body for the rewritten Call.
+        let mut found_at_call = false;
+        for stmt in body {
+            if let Stmt::ForRange {
+                body: loop_body, ..
+            } = &stmt.node
+            {
+                for ls in loop_body {
+                    if let Stmt::Let {
+                        value: Expr::Call { function, args, .. },
+                        ..
+                    } = &ls.node
+                    {
+                        if function == "at"
+                            && args.len() == 2
+                            && matches!(&args[0], Expr::Ref(n) if n == "xs")
+                            && matches!(&args[1], Expr::Ref(n) if n == "i")
+                        {
+                            found_at_call = true;
+                        }
+                    }
+                }
+            }
+        }
+        assert!(found_at_call, "expected `at xs i` rewrite inside loop body");
+    }
+
+    #[test]
+    fn desugar_leaves_field_when_field_not_in_scope() {
+        // `name` is not a param, not a binding, not a declared field.
+        // The parser leaves it as Field; desugar should also leave it
+        // (verifier will then flag as expected for the user's program).
+        let mut prog = parse_one("f x:n>n;p=x;p.name\n");
+        desugar_dot_var_index(&mut prog);
+        let Decl::Function { body, .. } = &prog.declarations[0] else {
+            panic!()
+        };
+        let last = &body[body.len() - 1].node;
+        assert!(
+            matches!(last, Stmt::Expr(Expr::Field { field, .. }) if field == "name"),
+            "expected Field unchanged when field name not in scope, got {last:?}"
         );
     }
 }

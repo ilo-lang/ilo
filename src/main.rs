@@ -394,6 +394,7 @@ fn graph_cmd(args: &[String]) -> i32 {
         .collect();
     let (mut program, _) = parser::parse(token_spans);
     ast::resolve_aliases(&mut program);
+    ast::desugar_dot_var_index(&mut program);
     program.source = Some(source);
 
     let pg = graph::build_graph(&program);
@@ -620,6 +621,7 @@ fn process_serv_request(
         .collect();
     let (mut program, parse_errors) = parser::parse(token_spans);
     ast::resolve_aliases(&mut program);
+    ast::desugar_dot_var_index(&mut program);
     program.source = Some(source.clone());
 
     if !parse_errors.is_empty() {
@@ -981,6 +983,7 @@ fn repl_cmd() {
             .collect();
         let (mut full_program, parse_errors) = parser::parse(token_spans);
         ast::resolve_aliases(&mut full_program);
+        ast::desugar_dot_var_index(&mut full_program);
         full_program.source = Some(full_source.clone());
 
         if !parse_errors.is_empty() {
@@ -1104,6 +1107,7 @@ fn compile_cmd(args: &[String]) -> i32 {
         }
         return 1;
     }
+    ast::desugar_dot_var_index(&mut program);
 
     // Resolve imports
     let base_dir: Option<std::path::PathBuf> = if std::path::Path::new(source_arg).is_file() {
@@ -1751,6 +1755,7 @@ fn resolve_imports(
 
             let (mut imported_prog, parse_errors) = parser::parse(token_spans);
             ast::resolve_aliases(&mut imported_prog);
+            ast::desugar_dot_var_index(&mut imported_prog);
             for e in &parse_errors {
                 diagnostics.push(Diagnostic::from(e));
             }
@@ -2406,6 +2411,7 @@ fn dispatch_run(r: cli::RunArgs, mode: OutputMode, explicit_json: bool, no_hints
 
     let (mut program, parse_errors) = parser::parse(token_spans);
     ast::resolve_aliases(&mut program);
+    ast::desugar_dot_var_index(&mut program);
     program.source = Some(source.clone());
 
     // MCP injection

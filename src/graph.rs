@@ -679,6 +679,7 @@ mod tests {
             .collect();
         let (mut prog, _) = parser::parse(token_spans);
         ast::resolve_aliases(&mut prog);
+        ast::desugar_dot_var_index(&mut prog);
         prog
     }
 
