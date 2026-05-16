@@ -424,7 +424,7 @@ Called like functions, compiled to dedicated opcodes.
 | `mkeys m` | sorted list of keys | `L t` |
 | `mvals m` | values sorted by key | `L v` |
 | `mdel m k` | new map with key k removed | `M k v` |
-| `at xs i` | i-th element of list or text (0-indexed; negative counts from end) | element |
+| `at xs i` | i-th element of list or text (0-indexed; negative counts from end; float `i` auto-floors) | element |
 | `lst xs i v` | new list with index `i` set to `v` (list update; alias: `lset`) | `L a` |
 | `take n xs` | first `n` elements/chars of list or text (n>=0 truncates if n>len; n<0 keeps all but the last `abs n`, Python `xs[:n]`) | same type |
 | `drop n xs` | skip first `n` elements/chars (n>=0 returns the rest; n<0 keeps only the last `abs n`, Python `xs[n:]`) | same type |
