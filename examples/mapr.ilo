@@ -1,0 +1,43 @@
+-- mapr fn xs : R (L b) e — short-circuiting Result-aware map.
+--
+-- For each item, fn must return R b e. Encounter an Ok value (~v) and
+-- mapr accumulates v; encounter an Err value (^e) and the whole call
+-- returns ^e immediately, skipping the rest of the list. Pair with `!`
+-- to thread the err up into a Result-returning caller without per-item
+-- match boilerplate.
+--
+-- Before mapr, the persona idiom was:
+--   ton s:t>n;r=num s;?r{~v:v;^_:0}    -- swallow-err helper, ~30 tokens
+--   ns=map ton xs                      -- and the error is lost
+-- mapr replaces both with three tokens and preserves the err shape:
+--   ns=mapr num xs                     -- R (L n) t
+
+-- Happy path: every string parses cleanly, returns ~[1,2,3].
+ok>R (L n) t;mapr num ["1","2","3"]
+
+-- Short-circuit on the first Err: parsing "bad" surfaces ^bad and the
+-- trailing "3" is never visited. Matches Rust's
+-- collect::<Result<Vec<_>, _>>() semantics.
+bail>R (L n) t;mapr num ["1","bad","3"]
+
+-- Pair with `!` to keep a fallible pipeline flat. Caller's return type
+-- must accept Err so the propagation is well-typed.
+total xs:L t>R n t;ns=mapr! num xs;~len ns
+
+-- Empty input is the trivial Ok case.
+none>R (L n) t;mapr num []
+
+-- run: ok
+-- out: [1, 2, 3]
+
+-- run: bail
+-- err: ^bad
+
+-- run: total ["1","2","3"]
+-- out: 3
+
+-- run: total ["1","bad","3"]
+-- err: ^bad
+
+-- run: none
+-- out: []
