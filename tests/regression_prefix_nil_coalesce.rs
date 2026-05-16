@@ -58,6 +58,22 @@ const PREFIX_INFIX_DEFAULT_VAL: &str = "f>n;a=3;b=4;c=5;?? c a+b";
 // Nested prefix nil-coalesce — confirm right-associativity matches infix.
 const PREFIX_NESTED_NIL: &str = "f>n;c=nil;d=nil;??c ??d 0";
 const PREFIX_NESTED_INNER: &str = "f>n;c=nil;d=9;??c ??d 0";
+// Prefix `??` where the value side is a CALL expression. Previously the
+// value side used `parse_operand` (atom-only), so `??mget m "k" 0` mis-parsed:
+// `mget` was taken as the value atom and `m "k" 0` as the default expression
+// (which then failed because `m` is a Map, not a function). With the arity-cap
+// fix, the value side is parsed via `parse_call_arg`, so a known-arity
+// function consumes exactly its declared arity and the remaining tokens
+// become the default. Workarounds (`??(mget m "k") 0`, bind-first) keep
+// working; the new shape is purely additive.
+const PREFIX_CALL_HIT: &str = "f>n;m=mset mmap \"k\" 42;??mget m \"k\" 0";
+const PREFIX_CALL_MISS: &str = "f>n;m=mset mmap \"k\" 42;??mget m \"missing\" 99";
+// Chained prefix `??` with two call value-sides:
+// `??mget m "x" ??mget m "a" 0` reads as `??(mget m "x") (??(mget m "a") 0)`,
+// first miss, second hit, expect `1`.
+const PREFIX_CALL_CHAIN: &str = "f>n;m=mset mmap \"a\" 1;??mget m \"x\" ??mget m \"a\" 0";
+// Paren workaround still parses correctly post-fix.
+const PREFIX_CALL_PAREN: &str = "f>n;m=mset mmap \"k\" 42;??(mget m \"k\") 0";
 
 fn check_all(engine: &str) {
     assert_eq!(
@@ -109,6 +125,26 @@ fn check_all(engine: &str) {
         run(engine, PREFIX_NESTED_INNER, "f"),
         "9",
         "prefix nested inner engine={engine}"
+    );
+    assert_eq!(
+        run(engine, PREFIX_CALL_HIT, "f"),
+        "42",
+        "prefix call hit engine={engine}"
+    );
+    assert_eq!(
+        run(engine, PREFIX_CALL_MISS, "f"),
+        "99",
+        "prefix call miss engine={engine}"
+    );
+    assert_eq!(
+        run(engine, PREFIX_CALL_CHAIN, "f"),
+        "1",
+        "prefix call chain engine={engine}"
+    );
+    assert_eq!(
+        run(engine, PREFIX_CALL_PAREN, "f"),
+        "42",
+        "prefix call paren workaround engine={engine}"
     );
 }
 

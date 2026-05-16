@@ -1898,10 +1898,15 @@ impl Parser {
             | Some(Token::Amp)
             | Some(Token::Pipe)
             | Some(Token::PlusEq) => self.parse_prefix_binop(),
-            // Prefix nil-coalesce: ??a b — mirror of infix `a ?? b`
+            // Prefix nil-coalesce: ??a b, mirror of infix `a ?? b`.
+            // The value side uses `parse_call_arg` (not `parse_operand`) so
+            // a known-arity function with args expands into a call expression,
+            // consuming exactly its declared arity. This lets `??mget m "k" 0`
+            // parse as `??(mget m "k") 0` without forcing parens or a bind-first
+            // line. The most common nil-coalesce site is `??mget ... default`.
             Some(Token::NilCoalesce) => {
                 self.advance();
-                let value = self.parse_operand()?;
+                let value = self.parse_call_arg(false, None)?;
                 let default = self.parse_expr_inner()?;
                 Ok(Expr::NilCoalesce {
                     value: Box::new(value),
@@ -2571,8 +2576,11 @@ or write `({fmt_name} \"...\" ...)` so its args are grouped."
             | Some(Token::Pipe)
             | Some(Token::PlusEq) => self.parse_prefix_binop(),
             Some(Token::NilCoalesce) => {
+                // See `parse_expr_inner` for the rationale: `parse_call_arg`
+                // expands a known-arity function into a call so `??mget m "k" 0`
+                // parses as `??(mget m "k") 0`.
                 self.advance();
-                let value = self.parse_operand()?;
+                let value = self.parse_call_arg(false, None)?;
                 let default = self.parse_expr_inner()?;
                 Ok(Expr::NilCoalesce {
                     value: Box::new(value),
