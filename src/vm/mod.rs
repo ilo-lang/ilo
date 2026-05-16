@@ -650,6 +650,15 @@ impl Drop for CompiledProgram {
 
 // ── Register Compiler ────────────────────────────────────────────────
 
+/// Discriminator for `compile_fused_window_hof` — selects between the `flt`
+/// (predicate + conditional-append) and `map` (mapper + always-append) shapes
+/// when emitting the fused stride-1 window loop.
+#[derive(Clone, Copy)]
+enum FusedWindowOp {
+    Flt,
+    Map,
+}
+
 struct LoopContext {
     loop_top: usize,
     /// `None` = use loop_top for continue (while loops).
@@ -1832,6 +1841,157 @@ impl RegCompiler {
         }
     }
 
+    /// Emit a fused `flt fn (window n xs)` or `map fn (window n xs)` HOF loop.
+    /// Returns the register holding the accumulated result list.
+    ///
+    /// The emitted bytecode walks `xs` with stride 1, materialising each
+    /// window into a scratch list register via `OP_WINDOW_VIEW`. The scratch
+    /// list's strong count drives in-place Vec reuse: on iterations where the
+    /// window doesn't escape (every map iter, every flt drop iter) the same
+    /// allocation is recycled.
+    ///
+    /// Empty/short-input cases: when `len(xs) < n`, the computed `limit`
+    /// register holds a value <= 0 and the loop's `OP_LT idx, limit` test
+    /// fails on the first iteration, producing an empty accumulator — same
+    /// semantics as `flt _ (window n [])` or `flt _ (window 99 [1,2])` under
+    /// the unfused path.
+    fn compile_fused_window_hof(
+        &mut self,
+        fn_expr: &Expr,
+        n_expr: &Expr,
+        xs_expr: &Expr,
+        kind: FusedWindowOp,
+    ) -> u8 {
+        let fn_reg = self.compile_expr(fn_expr);
+        let xs_reg = self.compile_expr(xs_expr);
+        let n_reg = self.compile_expr(n_expr);
+
+        // limit = len(xs) + 1 - n. Numbers throughout; reg_is_num so the
+        // OP_LT path stays on the fast numeric arm.
+        let len_reg = self.alloc_reg();
+        self.emit_abc(OP_LEN, len_reg, xs_reg, 0);
+        self.reg_is_num[len_reg as usize] = true;
+
+        let one_ki = self.current.add_const(Value::Number(1.0));
+
+        let len_plus_one = self.alloc_reg();
+        if one_ki <= 255 {
+            self.emit_abc(OP_ADDK_N, len_plus_one, len_reg, one_ki as u8);
+        } else {
+            let one_reg = self.alloc_reg();
+            self.emit_abx(OP_LOADK, one_reg, one_ki);
+            self.reg_is_num[one_reg as usize] = true;
+            self.emit_abc(OP_ADD, len_plus_one, len_reg, one_reg);
+        }
+        self.reg_is_num[len_plus_one as usize] = true;
+
+        let limit_reg = self.alloc_reg();
+        self.emit_abc(OP_SUB, limit_reg, len_plus_one, n_reg);
+        self.reg_is_num[limit_reg as usize] = true;
+
+        // Accumulator result list (the value of the whole HOF expression).
+        let acc_reg = self.alloc_reg();
+        self.emit_abx(OP_LISTNEW, acc_reg, 0);
+
+        // Scratch window list. Allocated empty; OP_WINDOW_VIEW fills (and
+        // re-fills) it each iteration. Strong count starts at 1 so the very
+        // first iteration takes the in-place reuse path.
+        let win_reg = self.alloc_reg();
+        self.emit_abx(OP_LISTNEW, win_reg, 0);
+
+        // Loop index = 0.
+        let idx_reg = self.alloc_reg();
+        let zero_ki = self.current.add_const(Value::Number(0.0));
+        self.emit_abx(OP_LOADK, idx_reg, zero_ki);
+        self.reg_is_num[idx_reg as usize] = true;
+
+        // res_reg + arg_reg contiguous for OP_CALL_DYN ABI.
+        let nil_ki = self.current.add_const(Value::Nil);
+        let res_reg = self.alloc_reg();
+        self.emit_abx(OP_LOADK, res_reg, nil_ki);
+        let arg_reg = self.alloc_reg();
+        assert!(
+            arg_reg == res_reg + 1,
+            "fused window HOF: arg reg must follow result reg contiguously"
+        );
+        self.emit_abx(OP_LOADK, arg_reg, nil_ki);
+
+        // Scratch for the flt bool typecheck (allocated unconditionally so
+        // the register layout doesn't depend on `kind`; cheap, one reg).
+        let isb_reg = self.alloc_reg();
+        self.emit_abx(OP_LOADK, isb_reg, nil_ki);
+
+        // Compare register used by the loop test.
+        let cmp_reg = self.alloc_reg();
+        self.emit_abx(OP_LOADK, cmp_reg, nil_ki);
+
+        // ── loop top ──
+        let loop_top = self.current.code.len();
+        self.emit_abc(OP_LT, cmp_reg, idx_reg, limit_reg);
+        let exit_jump = self.emit_jmpf(cmp_reg);
+
+        // win_reg = view(xs[idx..idx+n])  — 2-word op
+        self.emit_abc(OP_WINDOW_VIEW, win_reg, xs_reg, idx_reg);
+        // Data word: A field = n_reg, B/C fields zero. Mirrors the
+        // `OP_WINDOW_VIEW` 2-word encoding consumed by the VM dispatcher.
+        let data_inst = (n_reg as u32) << 16;
+        self.current.emit(data_inst, self.current_span);
+
+        // arg_reg = win_reg; call predicate/mapper.
+        self.emit_abc(OP_MOVE, arg_reg, win_reg, 0);
+        self.emit_abc(OP_CALL_DYN, res_reg, fn_reg, 1);
+
+        match kind {
+            FusedWindowOp::Flt => {
+                // typecheck: predicate must return bool — matches the
+                // unfused (Builtin::Flt, 2) arm's error message exactly.
+                self.emit_abc(OP_ISBOOL, isb_reg, res_reg, 0);
+                let typeok_jump = self.emit_jmpt(isb_reg);
+                let err_text_ki = self.current.add_const(Value::Text(Arc::new(
+                    "flt: predicate must return bool".to_string(),
+                )));
+                self.emit_abx(OP_LOADK, arg_reg, err_text_ki);
+                self.emit_abc(OP_WRAPERR, arg_reg, arg_reg, 0);
+                self.emit_abc(OP_PANIC_UNWRAP, 0, arg_reg, 0);
+                self.current.patch_jump(typeok_jump);
+
+                // pred true → append win to acc (clone_rc bumps win's RC
+                // so next iter's OP_WINDOW_VIEW will allocate fresh);
+                // pred false → skip append (win's RC stays at 1, next iter
+                // reuses the same Vec).
+                let skip_append_jump = self.emit_jmpf(res_reg);
+                self.emit_abc(OP_LISTAPPEND, acc_reg, acc_reg, win_reg);
+                self.current.patch_jump(skip_append_jump);
+            }
+            FusedWindowOp::Map => {
+                // Append the mapper's return value to acc. The window
+                // itself is never retained; win_reg's RC stays at 1, so
+                // every iteration reuses the scratch Vec — one allocation
+                // total for the entire walk.
+                self.emit_abc(OP_LISTAPPEND, acc_reg, acc_reg, res_reg);
+            }
+        }
+
+        // idx += 1.
+        if one_ki <= 255 {
+            self.emit_abc(OP_ADDK_N, idx_reg, idx_reg, one_ki as u8);
+        } else {
+            let one_reg = self.alloc_reg();
+            self.emit_abx(OP_LOADK, one_reg, one_ki);
+            self.reg_is_num[one_reg as usize] = true;
+            self.emit_abc(OP_ADD, idx_reg, idx_reg, one_reg);
+        }
+        self.emit_jump_to(loop_top);
+
+        // ── exit ──
+        self.current.patch_jump(exit_jump);
+
+        self.current_all_regs_numeric = false;
+        self.reg_is_num[acc_reg as usize] = false;
+        self.next_reg = acc_reg + 1;
+        acc_reg
+    }
+
     fn compile_expr(&mut self, expr: &Expr) -> u8 {
         // Try constant folding for BinOp/UnaryOp expressions
         if matches!(expr, Expr::BinOp { .. } | Expr::UnaryOp { .. })
@@ -2827,6 +2987,29 @@ impl RegCompiler {
                         //   end:
                         //   ra = acc_reg
                         (Builtin::Map, 2) => {
+                            // Fused `map fn (window n xs)` — see the long
+                            // comment on the Flt arm above. The mapper consumes
+                            // the window by value (its return is what gets
+                            // appended), so the scratch list's RC stays at 1
+                            // across every iteration and OP_WINDOW_VIEW reuses
+                            // the same Vec for the entire walk — one allocation
+                            // total, vs n-k+1 in the unfused form.
+                            if let Expr::Call {
+                                function: ref win_fn,
+                                args: ref win_args,
+                                unwrap: window_unwrap,
+                            } = args[1]
+                                && win_args.len() == 2
+                                && matches!(window_unwrap, UnwrapMode::None)
+                                && matches!(Builtin::from_name(win_fn), Some(Builtin::Window))
+                            {
+                                return self.compile_fused_window_hof(
+                                    &args[0],
+                                    &win_args[0],
+                                    &win_args[1],
+                                    FusedWindowOp::Map,
+                                );
+                            }
                             let fn_reg = self.compile_expr(&args[0]);
                             let xs_reg = self.compile_expr(&args[1]);
 
@@ -2904,6 +3087,45 @@ impl RegCompiler {
                         // The FOREACHPREP error path covers the wrong-list-arg case
                         // ("foreach requires a list").
                         (Builtin::Flt, 2) => {
+                            // Fused `flt fn (window n xs)` pattern. Walks xs
+                            // with stride 1, reusing a single scratch list as
+                            // the per-iteration window. Without this fusion,
+                            // `flt all-hydro (window 15 chars-list)` over an
+                            // 11.4M-residue input allocates ~170M small lists
+                            // (one per stride) and runs ~6x slower than the
+                            // hand-rolled imperative form (bioinformatics
+                            // rerun5).
+                            //
+                            // The scratch list's strong count stays at 1 across
+                            // drop iterations (predicate returns false) so
+                            // OP_WINDOW_VIEW reuses its Vec in place. On keep
+                            // iterations OP_LISTAPPEND clone_rc's the window
+                            // into the accumulator (RC -> 2); the next
+                            // iteration's OP_WINDOW_VIEW sees RC > 1 and
+                            // allocates a fresh list, after which the scratch
+                            // is back to RC=1 and reuse resumes.
+                            //
+                            // Tree-walker keeps the eager `window` path (it's
+                            // the reference impl); the VM dispatcher owns the
+                            // reuse semantics; Cranelift (JIT and AOT) calls a
+                            // helper that allocates fresh per stride (no RC
+                            // gymnastics at the cranelift register level).
+                            if let Expr::Call {
+                                function: ref win_fn,
+                                args: ref win_args,
+                                unwrap: window_unwrap,
+                            } = args[1]
+                                && win_args.len() == 2
+                                && matches!(window_unwrap, UnwrapMode::None)
+                                && matches!(Builtin::from_name(win_fn), Some(Builtin::Window))
+                            {
+                                return self.compile_fused_window_hof(
+                                    &args[0],
+                                    &win_args[0],
+                                    &win_args[1],
+                                    FusedWindowOp::Flt,
+                                );
+                            }
                             let fn_reg = self.compile_expr(&args[0]);
                             let xs_reg = self.compile_expr(&args[1]);
 
