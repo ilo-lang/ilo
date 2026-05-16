@@ -4667,10 +4667,53 @@ fn call_raw(func: &JitFunction, args: &[u64]) -> Option<u64> {
 /// Callers should NOT fall back on `Runtime` — the program executed but
 /// hit a defined error condition, which is the same shape tree and VM
 /// surface for the same input.
+///
+/// `Panic` means the Cranelift JIT itself panicked during compilation or
+/// finalisation — most notably the AArch64 near-call relocation assertion
+/// (`compiled_blob.rs:90` — `(diff >> 26 == -1) || (diff >> 26 == 0)`) in
+/// cranelift-jit 0.116 when the JIT code-cache and runtime memory end up
+/// more than ±64 MB apart. The compilation never produced runnable code,
+/// so it is safe — and required — for the caller to fall back to a
+/// non-JIT engine. Callers should surface a stderr breadcrumb so the
+/// upstream issue stays visible rather than degrading silently.
 #[derive(Debug)]
 pub enum JitCallError {
     NotEligible,
     Runtime(VmRuntimeError),
+    Panic { msg: String },
+}
+
+// Debug-build-only test hook: when set, `compile_and_call` raises a
+// synthetic panic from inside the catch_unwind region. Exercises the
+// panic-fallback path without depending on the AArch64-specific upstream
+// bug. Gated on `cfg(debug_assertions)` so release binaries don't carry
+// the per-thread bool or the eligibility check; tests run debug builds.
+#[cfg(debug_assertions)]
+thread_local! {
+    #[doc(hidden)]
+    pub static FORCE_PANIC_FOR_TEST: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Debug-build-only env-var hook: when `ILO_FORCE_JIT_PANIC=1`,
+/// `compile_and_call` raises a synthetic panic on its first call so
+/// integration tests can exercise the binary's stderr breadcrumb and
+/// fallback dispatch without depending on the AArch64-specific upstream
+/// bug. Disabled in release builds: the assertion that controls the hook
+/// is `cfg(debug_assertions)`-gated and trips out entirely when optimised.
+#[cfg(debug_assertions)]
+fn check_force_panic_env() {
+    if std::env::var("ILO_FORCE_JIT_PANIC").as_deref() == Ok("1") {
+        // Single-shot: clear the env var so a subsequent dispatch (e.g.
+        // a recursive call from within the same process) runs normally.
+        // Tests run a fresh subprocess each time so this is just defence.
+        // SAFETY: `remove_var` is called before any threads are spawned in
+        // the JIT dispatch path; cranelift's compile/finalize all runs on
+        // the calling thread, so there's no concurrent env-var access.
+        unsafe {
+            std::env::remove_var("ILO_FORCE_JIT_PANIC");
+        }
+        panic!("synthetic cranelift panic (ILO_FORCE_JIT_PANIC)");
+    }
 }
 
 /// Call a compiled NanVal JIT function with u64 args.
@@ -4707,17 +4750,125 @@ pub fn call(func: &JitFunction, args: &[u64]) -> Result<u64, JitCallError> {
     Ok(result)
 }
 
+thread_local! {
+    /// Set while a JIT dispatch is in progress on the current thread. The
+    /// process-global panic hook installed by `install_jit_panic_suppressor`
+    /// reads this and elides the default stderr backtrace only when set,
+    /// so panics on other threads (and panics outside the JIT entry) keep
+    /// their normal rendering.
+    static IN_JIT_DISPATCH: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// One-shot installer: chains a wrapper hook onto the previous one that
+/// suppresses output when `IN_JIT_DISPATCH` is true. Using `Once` makes
+/// this safe to call from any thread and avoids racing global `set_hook`
+/// calls across concurrent JIT dispatches.
+fn install_jit_panic_suppressor() {
+    use std::sync::Once;
+    static INSTALL: Once = Once::new();
+    INSTALL.call_once(|| {
+        let prev = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            if IN_JIT_DISPATCH.with(|c| c.get()) {
+                // Inside JIT dispatch: caller emits a single-line breadcrumb
+                // with the panic payload, so we drop the default backtrace.
+                return;
+            }
+            prev(info);
+        }));
+    });
+}
+
 /// Compile and call in one shot (convenience wrapper).
+///
+/// The whole dispatch is wrapped in `std::panic::catch_unwind` so an upstream
+/// cranelift panic (e.g. the AArch64 near-call relocation assertion in
+/// cranelift-jit 0.116 — `compiled_blob.rs:90`) becomes a recoverable
+/// `JitCallError::Panic` instead of crashing the user's program. The release
+/// profile uses default unwind (`panic = "unwind"`); if a downstream consumer
+/// ever switches to `panic = "abort"`, the catch is a no-op and the original
+/// crash returns — that's a deliberate trade since `abort` semantics are
+/// chosen for explicit reasons (binary size / no-std) and the operator opts
+/// into them knowingly.
+///
+/// We chain a panic hook onto the process-global chain on first call (via
+/// `Once`) that suppresses the noisy default stderr backtrace *only* when
+/// the current thread is inside this function, scoped by a thread-local
+/// `IN_JIT_DISPATCH` flag. The caller emits a single-line breadcrumb
+/// instead. This is concurrency-safe — concurrent JIT dispatches on other
+/// threads do not race on `set_hook` / `take_hook`.
 pub fn compile_and_call(
     chunk: &Chunk,
     nan_consts: &[NanVal],
     args: &[u64],
     program: &CompiledProgram,
 ) -> Result<u64, JitCallError> {
-    with_active_registry(program, || {
-        let func = compile(chunk, nan_consts, program).ok_or(JitCallError::NotEligible)?;
-        call(&func, args)
-    })
+    // Install a process-global panic hook *once* that suppresses stderr
+    // output only when the calling thread is inside a JIT dispatch. The
+    // thread-local `IN_JIT_DISPATCH` flag is set for the duration of the
+    // catch_unwind region and cleared by `InJitGuard::drop`, so any other
+    // thread's panic during this time still gets the chain's default
+    // rendering. This avoids the global `set_hook` race that would
+    // otherwise occur if two threads called `compile_and_call`
+    // concurrently — a real concern when ilo is embedded as a library
+    // and a sound concern for our own multi-threaded `cargo test`.
+    install_jit_panic_suppressor();
+    // Save-restore (not set-then-clear) so a nested `compile_and_call`
+    // doesn't blank the outer's flag on return. Currently there is no
+    // nested call site, but the JIT helpers can run arbitrary Rust which
+    // is permitted to re-enter the JIT entry; keeping this nest-safe
+    // avoids a footgun for future call sites.
+    struct InJitGuard(bool);
+    impl Drop for InJitGuard {
+        fn drop(&mut self) {
+            IN_JIT_DISPATCH.with(|c| c.set(self.0));
+        }
+    }
+    let prev_in_jit = IN_JIT_DISPATCH.with(|c| c.replace(true));
+    let _in_jit = InJitGuard(prev_in_jit);
+
+    // `AssertUnwindSafe` is sound here: `with_active_registry` clears its TLS
+    // on return (its own Drop guard handles this), `JitRuntimeErrorGuard`
+    // inside `call` clears the runtime-error cell on drop, and the chunk +
+    // program references are immutable. No shared mutable state survives an
+    // unwind in a corrupted state.
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        with_active_registry(program, || {
+            #[cfg(debug_assertions)]
+            {
+                if FORCE_PANIC_FOR_TEST.with(|c| c.get()) {
+                    FORCE_PANIC_FOR_TEST.with(|c| c.set(false));
+                    panic!("synthetic cranelift panic for test");
+                }
+                check_force_panic_env();
+            }
+            let func = compile(chunk, nan_consts, program).ok_or(JitCallError::NotEligible)?;
+            call(&func, args)
+        })
+    }));
+
+    match result {
+        Ok(inner) => inner,
+        Err(payload) => {
+            // Defensively reset the JIT bump arena and clear the runtime-
+            // error TLS cell: if the panic fired mid-`call()` after some
+            // helper allocations but before the normal tail reset, those
+            // allocations would otherwise leak into the next invocation.
+            // The runtime-error cell already has a Drop-based guard inside
+            // `call`, but if the panic fired in `compile()` no guard ever
+            // installed — drain defensively here.
+            super::jit_arena_reset();
+            let _ = jit_take_runtime_error();
+            let msg = if let Some(s) = payload.downcast_ref::<&'static str>() {
+                (*s).to_string()
+            } else if let Some(s) = payload.downcast_ref::<String>() {
+                s.clone()
+            } else {
+                "cranelift JIT panicked (non-string payload)".to_string()
+            };
+            Err(JitCallError::Panic { msg })
+        }
+    }
 }
 
 #[cfg(test)]
@@ -6804,5 +6955,53 @@ mod tests {
             }
             other => panic!("expected a Record, got {:?}", other),
         }
+    }
+
+    // ── panic catch-and-return (upstream cranelift-jit AArch64 reloc bug) ────
+
+    /// `compile_and_call` must catch a panic raised from inside the JIT
+    /// dispatch and surface it as `JitCallError::Panic` rather than
+    /// unwinding into the caller. Exercised here via the test-only
+    /// `FORCE_PANIC_FOR_TEST` flag so we don't depend on the AArch64
+    /// near-call relocation bug actually firing. The hook is gated on
+    /// `cfg(debug_assertions)` (so release binaries never carry it), and
+    /// this test follows the same gate.
+    #[cfg(debug_assertions)]
+    #[test]
+    fn cranelift_compile_and_call_catches_panic() {
+        let tokens: Vec<crate::lexer::Token> = lexer::lex("f x:n>n;*x 2")
+            .unwrap()
+            .into_iter()
+            .map(|(t, _)| t)
+            .collect();
+        let prog = parser::parse_tokens(tokens).unwrap();
+        let compiled = crate::vm::compile(&prog).unwrap();
+        let idx = compiled.func_names.iter().position(|n| n == "f").unwrap();
+        let chunk = &compiled.chunks[idx];
+        let nan_consts = &compiled.nan_constants[idx];
+        let nan_args: Vec<u64> = [Value::Number(5.0)]
+            .iter()
+            .map(|v| NanVal::from_value(v).0)
+            .collect();
+
+        FORCE_PANIC_FOR_TEST.with(|c| c.set(true));
+        let result = compile_and_call(chunk, nan_consts, &nan_args, &compiled);
+
+        match result {
+            Err(JitCallError::Panic { msg }) => {
+                assert!(
+                    msg.contains("synthetic cranelift panic"),
+                    "panic msg should include payload, got {:?}",
+                    msg
+                );
+            }
+            other => panic!("expected JitCallError::Panic, got {:?}", other),
+        }
+
+        // Flag must be cleared so the next call dispatches normally.
+        assert!(!FORCE_PANIC_FOR_TEST.with(|c| c.get()));
+        let result2 = compile_and_call(chunk, nan_consts, &nan_args, &compiled);
+        assert!(result2.is_ok(), "post-panic JIT call should succeed");
+        assert_eq!(NanVal(result2.unwrap()).to_value(), Value::Number(10.0));
     }
 }
