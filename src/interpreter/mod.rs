@@ -1414,16 +1414,12 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         };
     }
     if builtin == Some(Builtin::At) && args.len() == 2 {
+        // Index auto-floors numeric values: `at xs 1.7` is `at xs 1`,
+        // `at xs -1.5` floors to `-2` (then resolved against length).
+        // Removes the `flr (/ ln 2)` ceremony when indexing with computed
+        // floats. Non-numeric still errors.
         let i = match &args[1] {
-            Value::Number(n) => {
-                if n.fract() != 0.0 {
-                    return Err(RuntimeError::new(
-                        "ILO-R009",
-                        "at: index must be an integer".to_string(),
-                    ));
-                }
-                *n as i64
-            }
+            Value::Number(n) => n.floor() as i64,
             other => {
                 return Err(RuntimeError::new(
                     "ILO-R009",
@@ -10176,11 +10172,29 @@ mod tests {
     }
 
     #[test]
-    fn interp_at_fractional_index_errors() {
+    fn interp_at_fractional_index_floors() {
+        // Fractional indices auto-floor (was: strict integer guard).
+        // 1.5 → 1 → middle element.
         let prog = parse_program("f>n;xs=[10,20,30];at xs 1.5");
+        let v = run(&prog, Some("f"), vec![]).unwrap();
+        assert_eq!(v, Value::Number(20.0));
+    }
+
+    #[test]
+    fn interp_at_fractional_negative_index_floors() {
+        // -0.5 floors to -1 → last element after negative-index resolution.
+        let prog = parse_program("f>n;xs=[10,20,30];at xs -0.5");
+        let v = run(&prog, Some("f"), vec![]).unwrap();
+        assert_eq!(v, Value::Number(30.0));
+    }
+
+    #[test]
+    fn interp_at_non_numeric_index_errors() {
+        // Non-numeric index still errors (the type guard is preserved).
+        let prog = parse_program("f>n;xs=[10,20,30];at xs \"a\"");
         let err = run(&prog, Some("f"), vec![]).unwrap_err();
         let msg = format!("{err:?}");
-        assert!(msg.contains("integer"), "got {msg}");
+        assert!(msg.contains("number") || msg.contains("at"), "got {msg}");
     }
 
     // ---- lst xs i v: replace element at index, returning a new list ----
