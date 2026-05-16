@@ -1,0 +1,27 @@
+-- `sum` and `avg` over a list of numbers. Both are 1-arg reducers and
+-- work identically on the tree-walking interpreter, the bytecode VM, and
+-- the Cranelift JIT.
+--
+-- sum xs:L n > n  -- total of xs; empty list returns 0
+-- avg xs:L n > n  -- arithmetic mean; empty list errors
+
+-- Total of a small list of integers.
+total>n;sum [1, 2, 3, 4]
+
+-- Empty list sums to zero (matches the tree-walker; no special-case needed).
+empty-total>n;sum []
+
+-- Arithmetic mean of a list of integers; result is a float when not exact.
+mean>n;avg [1, 2, 3, 4]
+
+-- Mean of a singleton list is the element itself.
+mean-one>n;avg [42]
+
+-- run: total
+-- out: 10
+-- run: empty-total
+-- out: 0
+-- run: mean
+-- out: 2.5
+-- run: mean-one
+-- out: 42
