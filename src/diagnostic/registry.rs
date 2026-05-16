@@ -749,6 +749,52 @@ string to the caller, which is the documented idiom (`say-x>t;fmt "x={}" 42`).
 This warning only fires when `fmt` is followed by another statement.
 "#,
     },
+    ErrorEntry {
+        code: "ILO-T033",
+        short: "bare mutation-shaped builtin result is discarded",
+        long: r#"## ILO-T033: bare mutation-shaped builtin result is discarded
+
+`+=xs v`, `mset m k v`, and `mdel m k` look like in-place mutation but
+ilo's functional semantics return a **new** value. The source binding
+is only updated when the call is written as an assignment:
+
+    xs = +=xs v
+    m  = mset m k v
+    m  = mdel m k
+
+As a bare statement with no rebind, the result is silently discarded on
+every engine (tree, VM, Cranelift) and the original binding is unchanged.
+The fix is to assign the result back, or to use it in a larger expression.
+
+**Example (bug):** bare `+=` inside a loop body
+
+    f>L n;out=[];@i 0..3{+=out i};out
+    -- returns [], not [0, 1, 2]; +=out i throws its result away each pass
+
+**Fix — rebind:**
+
+    f>L n;out=[];@i 0..3{out=+=out i};out
+    -- returns [0, 1, 2]
+
+**Example (bug):** bare `mset` before returning the map
+
+    f>M t n;m=mmap;mset m "a" 1;m
+    -- returns {}, not {a: 1}; mset's result is thrown away
+
+**Fix — rebind:**
+
+    f>M t n;m=mmap;m=mset m "a" 1;m
+    -- returns {a: 1}
+
+This warning fires when any of these calls appear at a position whose
+value is discarded:
+- a non-tail statement in a function/if/match body, OR
+- anywhere inside a loop body (each iteration discards its tail).
+
+Tail position in a function body, `if` arm, or `?{}` arm is fine — the
+value flows out as the function/branch result.
+"#,
+    },
     // ── Warnings ─────────────────────────────────────────────────────────────
     ErrorEntry {
         code: "ILO-W001",

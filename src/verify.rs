@@ -2701,6 +2701,7 @@ impl VerifyContext {
     fn verify_body(&mut self, func: &str, scope: &mut Scope, stmts: &[Spanned<Stmt>]) -> Ty {
         let mut last_ty = Ty::Nil;
         for (i, spanned) in stmts.iter().enumerate() {
+            let is_tail = i + 1 == stmts.len();
             // ILO-T032: bare `fmt`/`fmt2` at non-tail position is almost always a bug.
             // `fmt` is pure-functional sprintf — it builds a string and returns it.
             // When used as a non-tail statement with no binding, the string is silently
@@ -2709,7 +2710,7 @@ impl VerifyContext {
             // Fix: bind via `name=fmt ...` or print via `prnt fmt ...`.
             // We only warn at non-tail position so the idiomatic `say-x>t;fmt "x={}" 42`
             // pattern (fmt as the function's return value) stays clean.
-            if i + 1 < stmts.len()
+            if !is_tail
                 && let Stmt::Expr(Expr::Call { function, .. }) = &spanned.node
                 && let Some(b) = Builtin::from_name(function)
                 && matches!(b, Builtin::Fmt | Builtin::Fmt2)
@@ -2728,6 +2729,80 @@ impl VerifyContext {
                     )),
                     Some(spanned.span),
                 );
+            }
+            // ILO-T033: bare `+=xs v` / `mset m k v` / `mdel m k` at a position
+            // whose value is discarded is almost always a bug. These shapes look
+            // like in-place mutation but ilo's functional semantics return a new
+            // value and only bind it back when written as `name = +=xs v` /
+            // `name = mset m k v` / `name = mdel m k`. As a bare statement with
+            // no rebind, the result is silently discarded on every engine and
+            // the source binding is unchanged.
+            //
+            // Discarded positions: any non-tail statement, plus EVERY statement
+            // inside a loop body (the loop discards each iteration's tail).
+            // Tail position in a function/if/match body is legitimate (returns
+            // the appended value to the caller / produces the branch value).
+            if !is_tail || self.in_loop {
+                // Hint helpers: extract the source binding name from the first
+                // operand so the rebind shape we suggest matches the user's
+                // local variable, not a generic placeholder.
+                let ref_name = |e: &Expr| match e {
+                    Expr::Ref(n) => Some(n.clone()),
+                    _ => None,
+                };
+                let warning = match &spanned.node {
+                    Stmt::Expr(Expr::BinOp {
+                        op: BinOp::Append,
+                        left,
+                        ..
+                    }) => {
+                        let lhs = ref_name(left).unwrap_or_else(|| "xs".to_string());
+                        Some((
+                            "+=",
+                            format!(
+                                "`+=xs v` returns a new list — rebind with `{lhs}=+={lhs} v` to mutate, or use the result"
+                            ),
+                        ))
+                    }
+                    Stmt::Expr(Expr::Call { function, args, .. })
+                        if Builtin::from_name(function) == Some(Builtin::Mset) =>
+                    {
+                        let lhs = args
+                            .first()
+                            .and_then(ref_name)
+                            .unwrap_or_else(|| "m".to_string());
+                        Some((
+                            "mset",
+                            format!(
+                                "`mset m k v` returns a new map — rebind with `{lhs}=mset {lhs} k v` to mutate, or use the result"
+                            ),
+                        ))
+                    }
+                    Stmt::Expr(Expr::Call { function, args, .. })
+                        if Builtin::from_name(function) == Some(Builtin::Mdel) =>
+                    {
+                        let lhs = args
+                            .first()
+                            .and_then(ref_name)
+                            .unwrap_or_else(|| "m".to_string());
+                        Some((
+                            "mdel",
+                            format!(
+                                "`mdel m k` returns a new map — rebind with `{lhs}=mdel {lhs} k` to mutate, or use the result"
+                            ),
+                        ))
+                    }
+                    _ => None,
+                };
+                if let Some((name, hint)) = warning {
+                    self.warn(
+                        "ILO-T033",
+                        func,
+                        format!("bare '{name}' result is discarded"),
+                        Some(hint),
+                        Some(spanned.span),
+                    );
+                }
             }
             last_ty = self.verify_stmt(func, scope, &spanned.node, spanned.span);
             if matches!(spanned.node, Stmt::Return(_) | Stmt::Break(_)) && i + 1 < stmts.len() {
@@ -5941,6 +6016,171 @@ mod tests {
             .filter(|w| w.code == "ILO-T032")
             .collect();
         assert_eq!(t032.len(), 3);
+    }
+
+    // ---- Bare mutation-shaped builtin discard warnings (ILO-T033) ----
+
+    #[test]
+    fn bare_append_in_loop_warns() {
+        // The persona's exact repro: `+=out i` inside `@` loop body is the
+        // single biggest correctness footgun. Logged across three consecutive
+        // db-analyst sessions. Must warn.
+        let result = parse_and_verify_full(r#"f>L n;out=[];@i 0..3{+=out i};out"#);
+        assert!(result.errors.is_empty());
+        let t033: Vec<_> = result
+            .warnings
+            .iter()
+            .filter(|w| w.code == "ILO-T033")
+            .collect();
+        assert_eq!(
+            t033.len(),
+            1,
+            "expected one ILO-T033 warning, got {:?}",
+            result.warnings
+        );
+        assert!(t033[0].message.contains("+="));
+        assert!(
+            t033[0]
+                .hint
+                .as_ref()
+                .is_some_and(|h| h.contains("out=+=out"))
+        );
+    }
+
+    #[test]
+    fn bare_mset_non_tail_warns() {
+        let result = parse_and_verify_full(r#"f>M t n;m=mmap;mset m "a" 1;m"#);
+        assert!(result.errors.is_empty());
+        let t033: Vec<_> = result
+            .warnings
+            .iter()
+            .filter(|w| w.code == "ILO-T033")
+            .collect();
+        assert_eq!(t033.len(), 1);
+        assert!(t033[0].message.contains("mset"));
+        assert!(
+            t033[0]
+                .hint
+                .as_ref()
+                .is_some_and(|h| h.contains("m=mset m"))
+        );
+    }
+
+    #[test]
+    fn bare_mdel_non_tail_warns() {
+        let result = parse_and_verify_full(r#"f>M t n;m=mset mmap "a" 1;mdel m "a";m"#);
+        assert!(result.errors.is_empty());
+        let t033: Vec<_> = result
+            .warnings
+            .iter()
+            .filter(|w| w.code == "ILO-T033")
+            .collect();
+        assert_eq!(t033.len(), 1);
+        assert!(t033[0].message.contains("mdel"));
+    }
+
+    #[test]
+    fn append_rebind_no_warning() {
+        // The canonical fix shape. Must NOT warn.
+        let result = parse_and_verify_full(r#"f>L n;out=[];@i 0..3{out=+=out i};out"#);
+        assert!(result.errors.is_empty());
+        let t033: Vec<_> = result
+            .warnings
+            .iter()
+            .filter(|w| w.code == "ILO-T033")
+            .collect();
+        assert_eq!(
+            t033.len(),
+            0,
+            "rebind shape should not warn, got {:?}",
+            result.warnings
+        );
+    }
+
+    #[test]
+    fn mset_rebind_no_warning() {
+        let result = parse_and_verify_full(r#"f>M t n;m=mmap;m=mset m "a" 1;m"#);
+        assert!(result.errors.is_empty());
+        let t033: Vec<_> = result
+            .warnings
+            .iter()
+            .filter(|w| w.code == "ILO-T033")
+            .collect();
+        assert_eq!(t033.len(), 0);
+    }
+
+    #[test]
+    fn append_in_function_tail_no_warning() {
+        // `+=xs v` as the function's last statement returns the new list
+        // to the caller. That's a legitimate idiom, must NOT warn.
+        let result = parse_and_verify_full(r#"f>L n;xs=[1 2 3];+=xs 99"#);
+        assert!(result.errors.is_empty());
+        let t033: Vec<_> = result
+            .warnings
+            .iter()
+            .filter(|w| w.code == "ILO-T033")
+            .collect();
+        assert_eq!(t033.len(), 0);
+    }
+
+    #[test]
+    fn mset_in_function_tail_no_warning() {
+        let result = parse_and_verify_full(r#"f>M t n;m=mmap;mset m "a" 1"#);
+        assert!(result.errors.is_empty());
+        let t033: Vec<_> = result
+            .warnings
+            .iter()
+            .filter(|w| w.code == "ILO-T033")
+            .collect();
+        assert_eq!(t033.len(), 0);
+    }
+
+    #[test]
+    fn append_inside_if_inside_loop_warns() {
+        // `>i 1{+=out i}` — the guard body is a single-stmt block inside a
+        // loop, so its tail is still discarded by the loop. Must warn.
+        let result = parse_and_verify_full(r#"f>L n;out=[];@i 0..3{>i 1{+=out i}};out"#);
+        assert!(result.errors.is_empty());
+        let t033: Vec<_> = result
+            .warnings
+            .iter()
+            .filter(|w| w.code == "ILO-T033")
+            .collect();
+        assert_eq!(
+            t033.len(),
+            1,
+            "expected one ILO-T033 warning inside guard in loop, got {:?}",
+            result.warnings
+        );
+    }
+
+    #[test]
+    fn append_as_expr_arg_no_warning() {
+        // `+=xs v` nested inside another call is not a bare statement,
+        // its result is consumed. Must NOT warn.
+        let result = parse_and_verify_full(r#"f>n;xs=[1 2];ys=+=xs 3;len ys"#);
+        assert!(result.errors.is_empty());
+        let t033: Vec<_> = result
+            .warnings
+            .iter()
+            .filter(|w| w.code == "ILO-T033")
+            .collect();
+        assert_eq!(t033.len(), 0);
+    }
+
+    #[test]
+    fn multiple_bare_mutations_each_warn() {
+        // Three bare mset calls in a row — each must warn so the agent sees
+        // them all in one pass.
+        let result =
+            parse_and_verify_full(r#"f>M t n;m=mmap;mset m "a" 1;mset m "b" 2;mset m "c" 3;m"#);
+        assert!(result.errors.is_empty());
+        let t033: Vec<_> = result
+            .warnings
+            .iter()
+            .filter(|w| w.code == "ILO-T033")
+            .collect();
+        assert_eq!(t033.len(), 3);
     }
 
     // ---- rnd builtin ----
