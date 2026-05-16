@@ -211,6 +211,9 @@ pub(crate) const OP_CAP: u8 = 120; // R[A] = capitalise(R[B])
 pub(crate) const OP_LOG10: u8 = 106; // R[A] = log10(R[B])
 pub(crate) const OP_LOG2: u8 = 107; // R[A] = log2(R[B])
 pub(crate) const OP_ATAN2: u8 = 108; // R[A] = atan2(R[B], R[C])  (y first, x second)
+pub(crate) const OP_ASIN: u8 = 171; // R[A] = asin(R[B])
+pub(crate) const OP_ACOS: u8 = 172; // R[A] = acos(R[B])
+pub(crate) const OP_ATAN: u8 = 173; // R[A] = atan(R[B])
 pub(crate) const OP_SRTDESC: u8 = 117; // R[A] = rsrt(R[B])  (descending sort of list)
 pub(crate) const OP_RGXSUB: u8 = 115; // R[A] = rgxsub(R[B], R[C], R[D])  (pattern, replacement, subject; D in data word A field)
 pub(crate) const OP_ZIP: u8 = 111; // R[A] = zip(R[B], R[C])  (list of [x,y] pairs, truncated)
@@ -2064,7 +2067,10 @@ impl RegCompiler {
                             | Builtin::Cos
                             | Builtin::Tan
                             | Builtin::Log10
-                            | Builtin::Log2,
+                            | Builtin::Log2
+                            | Builtin::Asin
+                            | Builtin::Acos
+                            | Builtin::Atan,
                             1,
                         ) => {
                             let rb = self.compile_expr(&args[0]);
@@ -2077,7 +2083,10 @@ impl RegCompiler {
                                 Builtin::Cos => OP_COS,
                                 Builtin::Tan => OP_TAN,
                                 Builtin::Log10 => OP_LOG10,
-                                _ => OP_LOG2,
+                                Builtin::Log2 => OP_LOG2,
+                                Builtin::Asin => OP_ASIN,
+                                Builtin::Acos => OP_ACOS,
+                                _ => OP_ATAN,
                             };
                             self.emit_abc(op, ra, rb, 0);
                             self.reg_is_num[ra as usize] = true;
@@ -7467,7 +7476,8 @@ impl<'a> VM<'a> {
                     };
                     reg_set!(a, NanVal::number(result));
                 }
-                OP_SQRT | OP_LOG | OP_EXP | OP_SIN | OP_COS | OP_TAN | OP_LOG10 | OP_LOG2 => {
+                OP_SQRT | OP_LOG | OP_EXP | OP_SIN | OP_COS | OP_TAN | OP_LOG10 | OP_LOG2
+                | OP_ASIN | OP_ACOS | OP_ATAN => {
                     let a = ((inst >> 16) & 0xFF) as usize + base;
                     let b = ((inst >> 8) & 0xFF) as usize + base;
                     let v = reg!(b);
@@ -7481,7 +7491,10 @@ impl<'a> VM<'a> {
                             OP_COS => n.cos(),
                             OP_TAN => n.tan(),
                             OP_LOG10 => n.log10(),
-                            _ => n.log2(),
+                            OP_LOG2 => n.log2(),
+                            OP_ASIN => n.asin(),
+                            OP_ACOS => n.acos(),
+                            _ => n.atan(),
                         }
                     } else {
                         f64::NAN
@@ -10590,6 +10603,39 @@ pub(crate) extern "C" fn jit_log2(a: u64) -> u64 {
     let v = NanVal(a);
     if v.is_number() {
         NanVal::number(v.as_number().log2()).0
+    } else {
+        NanVal::number(f64::NAN).0
+    }
+}
+
+#[cfg(feature = "cranelift")]
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn jit_asin(a: u64) -> u64 {
+    let v = NanVal(a);
+    if v.is_number() {
+        NanVal::number(v.as_number().asin()).0
+    } else {
+        NanVal::number(f64::NAN).0
+    }
+}
+
+#[cfg(feature = "cranelift")]
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn jit_acos(a: u64) -> u64 {
+    let v = NanVal(a);
+    if v.is_number() {
+        NanVal::number(v.as_number().acos()).0
+    } else {
+        NanVal::number(f64::NAN).0
+    }
+}
+
+#[cfg(feature = "cranelift")]
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn jit_atan(a: u64) -> u64 {
+    let v = NanVal(a);
+    if v.is_number() {
+        NanVal::number(v.as_number().atan()).0
     } else {
         NanVal::number(f64::NAN).0
     }
