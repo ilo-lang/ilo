@@ -1458,15 +1458,17 @@ mod tests {
             } = &stmt.node
             {
                 for ls in loop_body {
-                    if let Stmt::Let { value, .. } = &ls.node {
-                        if let Expr::Call { function, args, .. } = value {
-                            if function == "at"
-                                && args.len() == 2
-                                && matches!(&args[0], Expr::Ref(n) if n == "xs")
-                                && matches!(&args[1], Expr::Ref(n) if n == "i")
-                            {
-                                found_at_call = true;
-                            }
+                    if let Stmt::Let {
+                        value: Expr::Call { function, args, .. },
+                        ..
+                    } = &ls.node
+                    {
+                        if function == "at"
+                            && args.len() == 2
+                            && matches!(&args[0], Expr::Ref(n) if n == "xs")
+                            && matches!(&args[1], Expr::Ref(n) if n == "i")
+                        {
+                            found_at_call = true;
                         }
                     }
                 }
