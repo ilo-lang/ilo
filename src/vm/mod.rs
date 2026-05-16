@@ -12188,7 +12188,20 @@ pub(crate) extern "C" fn jit_call_builtin_tree(tag: u64, argc: u64, regs_ptr: u6
     };
     match res {
         Ok(v) => NanVal::from_value(&v).0,
-        Err(_) => TAG_NIL,
+        Err(e) => {
+            // Surface bridge errors from `fmt` through the JIT error channel
+            // so Cranelift renders the same ILO-R009 as tree/VM for the
+            // `{:06d}` / `{:.3f}` rejection. We scope this narrowly to `Fmt`
+            // for now to preserve the historical "swallow as nil" behaviour
+            // for every other bridge builtin (changing that uniformly is a
+            // larger nil-sweep follow-up). Without this, Cranelift would
+            // succeed-with-nil even though tree/VM raised, diverging the
+            // three engines.
+            if matches!(builtin, crate::builtins::Builtin::Fmt) {
+                jit_set_runtime_error(VmError::Runtime(e.message));
+            }
+            TAG_NIL
+        }
     }
 }
 
