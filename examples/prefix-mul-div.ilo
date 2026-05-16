@@ -1,0 +1,25 @@
+-- Same-precedence prefix-pair trap.
+-- The outer prefix op binds the inner prefix subexpression as its LEFT operand,
+-- so `*/a b c` parses as `*(/a b) c == (a/b)*c`, NOT (a*b)/c. With a=6, b=2,
+-- c=3 the value is (6/2)*3 = 9.
+--
+-- The runtime emits a `hint:` line on this and the three sibling shapes (/*,
+-- +-, -+) because the parse order disagrees with the left-to-right reading.
+-- To force the other grouping: either swap the prefix-pair order or bind the
+-- inner result first.
+
+-- Surprising form: parses as (a/b)*c
+mul-div-trap a:n b:n c:n>n;*/a b c
+
+-- Swap the pair to get (a*b)/c
+mul-div-flip a:n b:n c:n>n;/*a b c
+
+-- Bind to make the order explicit
+mul-then-div a:n b:n c:n>n;r=*a b;/r c
+
+-- run: mul-div-trap 6 2 3
+-- out: 9
+-- run: mul-div-flip 6 2 3
+-- out: 4
+-- run: mul-then-div 6 2 3
+-- out: 4
