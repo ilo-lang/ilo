@@ -381,7 +381,7 @@ Called like functions, compiled to dedicated opcodes.
 | `wrl path xs` | write list of lines to file (joins with `\n`) | `R t t` |
 | `trm s` | trim leading and trailing whitespace | `t` |
 | `spl t sep` | split text by separator | `L t` |
-| `fmt tmpl args…` | format string — `{}` placeholders filled left-to-right | `t` |
+| `fmt tmpl args…` | format string — bare `{}` placeholders only, filled left-to-right. Printf-style specs (`{:06d}`, `{:.3f}`) are rejected; compose `fmt2` for decimal precision and `padl` for width/padding | `t` |
 | `cat xs sep` | join list of text with separator | `t` |
 | `has xs v` | membership test (list: element, text: substring) | `b` |
 | `hd xs` | head (first element/char) of list or text | element / `t` |
