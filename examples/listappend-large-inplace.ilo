@@ -1,0 +1,38 @@
+-- Demonstrates the in-place OP_LISTAPPEND fast path on the in-process
+-- Cranelift JIT (the default engine).
+--
+-- The rebind shape `xs = += xs item` is the canonical foreach-build
+-- accumulator. Every engine has a peephole that emits OP_LISTAPPEND with
+-- destination register == source register, which the runtime then handles
+-- via an RC=1 in-place mutation (amortised O(1) per push) instead of
+-- cloning the whole list (O(n) per push, O(n²) total).
+--
+-- The cloning helper still exists for the non-rebind shape `ys = += xs item`,
+-- where the source must be preserved across the call. See
+-- examples/listappend-non-rebind-alias.ilo for that contract.
+--
+-- A v0.11.3 regression had the in-process Cranelift JIT calling the cloning
+-- helper unconditionally — the a_idx == b_idx peephole was added to the AOT
+-- path in 74668bb but missed in jit_cranelift.rs. A 210k-line workload then
+-- OOM-killed at ~51 GB RSS. The fix ports the peephole into the in-process
+-- JIT verbatim. This example pins the now-correct shape with a list big
+-- enough that an accidental return to the cloning path would balloon memory
+-- on every engine.
+
+-- Build [0, 1, ..., n-1] by repeated `+=` rebind. The result is just the
+-- length so the test harness compares cheaply on every engine.
+build n:n>n;xs=[];@i 0..n{xs=+=xs i};len xs
+
+-- A 5k-element accumulator. Pre-fix on the in-process JIT this allocated
+-- roughly sum(k for k in 0..5000) = ~12.5M NanVals of transient memory.
+-- Post-fix the Vec grows in place, peak memory stays at ~5k slots.
+demo-5k>n;build 5000
+
+-- A 10k-element accumulator for an even firmer regression catch. Tree and
+-- VM have always handled this in O(n); the in-process JIT now matches.
+demo-10k>n;build 10000
+
+-- run: demo-5k
+-- out: 5000
+-- run: demo-10k
+-- out: 10000

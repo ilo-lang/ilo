@@ -2749,7 +2749,23 @@ fn compile_function_body(
             OP_LISTAPPEND => {
                 let bv = builder.use_var(vars[b_idx]);
                 let cv = builder.use_var(vars[c_idx]);
-                let fref = get_func_ref(&mut builder, module, helpers.listappend);
+                // Pick the in-place helper only when the destination and source
+                // registers are the same SSA variable. The compiler peephole
+                // `name = += name item` emits a == b, which guarantees that
+                // returning the same Rc pointer at RC=1 is balanced. When a != b
+                // the in-place path would alias the result through both slots
+                // and silently mutate the caller's source list (see
+                // jit_listappend_inplace docs and the OP_MSET split in #249).
+                // Mirrors the same dispatch in compile_cranelift.rs (AOT). The
+                // peephole was added there in 74668bb but missed here, causing
+                // a foreach-build O(n²) memory blow-up on the default in-process
+                // JIT engine (210k-line log forensics OOM-killed at ~51 GB).
+                let helper_fn = if a_idx == b_idx {
+                    helpers.listappend_inplace
+                } else {
+                    helpers.listappend
+                };
+                let fref = get_func_ref(&mut builder, module, helper_fn);
                 let call_inst = builder.ins().call(fref, &[bv, cv]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
