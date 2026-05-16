@@ -4004,15 +4004,33 @@ fn active_func_name(id: u32) -> Option<String> {
 /// still get correct FnRef name resolution in jdmp / Display /
 /// to_value paths.
 pub fn with_active_registry<R>(program: &CompiledProgram, f: impl FnOnce() -> R) -> R {
-    struct ClearGuard;
-    impl Drop for ClearGuard {
+    // Save-restore the four TLS slots so a nested `with_active_registry`
+    // (e.g. `jit_call_dyn` re-entering the VM on a user-fn callback during
+    // a HOF call) doesn't clobber the outer JIT's TLS state when the inner
+    // call returns. Without this, a second tree-bridge HOF in the same
+    // outer Cranelift entry would see null pointers and the FnRef arg
+    // would deserialise to a synthetic `<user_fn:N>` placeholder, producing
+    // a silent miscompile (cf. the pdf-analyst rerun4 srt-after-map repro
+    // and `fix/srt-cranelift-nil`).
+    struct RestoreGuard {
+        registry: *const TypeRegistry,
+        func_names: *const Vec<String>,
+        program: *const CompiledProgram,
+        ast_program: *const Program,
+    }
+    impl Drop for RestoreGuard {
         fn drop(&mut self) {
-            ACTIVE_REGISTRY.with(|r| r.set(std::ptr::null()));
-            ACTIVE_FUNC_NAMES.with(|r| r.set(std::ptr::null()));
-            ACTIVE_PROGRAM.with(|r| r.set(std::ptr::null()));
-            ACTIVE_AST_PROGRAM.with(|r| r.set(std::ptr::null()));
+            ACTIVE_REGISTRY.with(|r| r.set(self.registry));
+            ACTIVE_FUNC_NAMES.with(|r| r.set(self.func_names));
+            ACTIVE_PROGRAM.with(|r| r.set(self.program));
+            ACTIVE_AST_PROGRAM.with(|r| r.set(self.ast_program));
         }
     }
+
+    let prev_registry = ACTIVE_REGISTRY.with(|r| r.get());
+    let prev_func_names = ACTIVE_FUNC_NAMES.with(|r| r.get());
+    let prev_program = ACTIVE_PROGRAM.with(|r| r.get());
+    let prev_ast_program = ACTIVE_AST_PROGRAM.with(|r| r.get());
 
     ACTIVE_REGISTRY.with(|r| r.set(&program.type_registry as *const TypeRegistry));
     ACTIVE_FUNC_NAMES.with(|r| r.set(&program.func_names as *const Vec<String>));
@@ -4020,51 +4038,85 @@ pub fn with_active_registry<R>(program: &CompiledProgram, f: impl FnOnce() -> R)
     if let Some(ast) = &program.ast {
         ACTIVE_AST_PROGRAM.with(|r| r.set(ast.as_ref() as *const Program));
     }
-    let _guard = ClearGuard;
+    let _guard = RestoreGuard {
+        registry: prev_registry,
+        func_names: prev_func_names,
+        program: prev_program,
+        ast_program: prev_ast_program,
+    };
     f()
 }
 
 /// Clear the active `TypeRegistry` pointer.
 ///
-/// Called at the end of `VM::execute()` where wrapping in a closure is
-/// impractical. The `execute` method also uses `ActiveRegistryGuard` to ensure
-/// the pointer is cleared on early return or panic.
+/// Called from the AOT runtime tear-down where the program is going away
+/// and there is no prior pointer to restore. `VM::execute()` uses the
+/// save-restore `ActiveRegistryGuard` instead so nested executions don't
+/// clobber the outer JIT's TLS state.
 fn clear_active_registry() {
     ACTIVE_REGISTRY.with(|r| r.set(std::ptr::null()));
 }
 
-/// RAII guard that clears `ACTIVE_REGISTRY` on drop.
+/// RAII guard that restores `ACTIVE_REGISTRY` to its previous value on drop.
 ///
-/// Used inside `VM::execute()` to guarantee cleanup even on `?` early returns
-/// or panics.
-pub(crate) struct ActiveRegistryGuard;
+/// Used inside `VM::execute()` to guarantee the slot is restored even on
+/// `?` early returns or panics. Save-restore (not clear-to-null) so a
+/// nested VM run inside an outer Cranelift JIT entry doesn't blank the
+/// outer's pointer when the inner returns — see `fix/srt-cranelift-nil`
+/// for the silent-miscompile this prevents.
+pub(crate) struct ActiveRegistryGuard {
+    prev: *const TypeRegistry,
+}
+
+impl ActiveRegistryGuard {
+    pub(crate) fn new(prev: *const TypeRegistry) -> Self {
+        Self { prev }
+    }
+}
 
 impl Drop for ActiveRegistryGuard {
     fn drop(&mut self) {
-        clear_active_registry();
+        ACTIVE_REGISTRY.with(|r| r.set(self.prev));
     }
 }
 
-/// RAII guard that clears `ACTIVE_FUNC_NAMES` on drop, paralleling
-/// `ActiveRegistryGuard`. Set by `VM::execute()` so jdmp / error paths
-/// can resolve user-fn FnRef ids to names without a Program reference.
-pub(crate) struct ActiveFuncNamesGuard;
+/// RAII guard that restores `ACTIVE_FUNC_NAMES` to its previous value on
+/// drop, paralleling `ActiveRegistryGuard`. Set by `VM::execute()` so
+/// jdmp / error paths can resolve user-fn FnRef ids to names without
+/// threading the program reference through every helper.
+pub(crate) struct ActiveFuncNamesGuard {
+    prev: *const Vec<String>,
+}
+
+impl ActiveFuncNamesGuard {
+    pub(crate) fn new(prev: *const Vec<String>) -> Self {
+        Self { prev }
+    }
+}
 
 impl Drop for ActiveFuncNamesGuard {
     fn drop(&mut self) {
-        ACTIVE_FUNC_NAMES.with(|r| r.set(std::ptr::null()));
+        ACTIVE_FUNC_NAMES.with(|r| r.set(self.prev));
     }
 }
 
-/// RAII guard that clears `ACTIVE_AST_PROGRAM` on drop, paralleling the
-/// other VM-side TLS guards. Set by `VM::execute()` when the
-/// `CompiledProgram` retains its AST; cleared on return or panic so the
-/// pointer can never outlive the borrow.
-pub(crate) struct ActiveAstProgramGuard;
+/// RAII guard that restores `ACTIVE_AST_PROGRAM` to its previous value on
+/// drop, paralleling the other VM-side TLS guards. Set by `VM::execute()`
+/// when the `CompiledProgram` retains its AST; restored on return or
+/// panic so a nested VM run can't blank an outer JIT's pointer.
+pub(crate) struct ActiveAstProgramGuard {
+    prev: *const Program,
+}
+
+impl ActiveAstProgramGuard {
+    pub(crate) fn new(prev: *const Program) -> Self {
+        Self { prev }
+    }
+}
 
 impl Drop for ActiveAstProgramGuard {
     fn drop(&mut self) {
-        ACTIVE_AST_PROGRAM.with(|r| r.set(std::ptr::null()));
+        ACTIVE_AST_PROGRAM.with(|r| r.set(self.prev));
     }
 }
 
@@ -5003,22 +5055,27 @@ impl<'a> VM<'a> {
     fn execute(&mut self) -> VmResult<Value> {
         // Set active registry for arena record promotion in nanval_to_json and JIT callbacks.
         // `self.program` is owned by the VM and outlives `execute()`.
-        // The guard ensures the pointer is cleared on return or panic.
+        // The guard restores the previous pointer on return or panic — not
+        // null — so a nested execute() (e.g. `jit_call_dyn` re-entering on a
+        // user-fn HOF callback) leaves the outer JIT's TLS state intact.
+        let prev_registry = ACTIVE_REGISTRY.with(|r| r.get());
         ACTIVE_REGISTRY.with(|r| r.set(&self.program.type_registry as *const TypeRegistry));
-        let _registry_guard = ActiveRegistryGuard;
+        let _registry_guard = ActiveRegistryGuard::new(prev_registry);
 
         // Same shape for func_names: VM-side serialisation paths
         // (jdmp, errors) need to resolve user-fn FnRef ids back to names
         // without threading the program reference through every helper.
+        let prev_func_names = ACTIVE_FUNC_NAMES.with(|r| r.get());
         ACTIVE_FUNC_NAMES.with(|r| r.set(&self.program.func_names as *const Vec<String>));
-        let _func_names_guard = ActiveFuncNamesGuard;
+        let _func_names_guard = ActiveFuncNamesGuard::new(prev_func_names);
 
         // Publish the retained AST (if any) for the tree-bridge's HOF
-        // dispatch path. Cleared on return/panic by the guard.
+        // dispatch path. Restored on return/panic by the guard.
+        let prev_ast_program = ACTIVE_AST_PROGRAM.with(|r| r.get());
         if let Some(ast) = &self.program.ast {
             ACTIVE_AST_PROGRAM.with(|r| r.set(ast.as_ref() as *const Program));
         }
-        let _ast_guard = ActiveAstProgramGuard;
+        let _ast_guard = ActiveAstProgramGuard::new(prev_ast_program);
         // SAFETY: execute() is only called from call() after setup_call() has pushed
         // a frame, so frames is non-empty.
         let frame = unsafe { self.frames.last().unwrap_unchecked() };
