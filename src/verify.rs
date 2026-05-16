@@ -2651,6 +2651,34 @@ impl VerifyContext {
     fn verify_body(&mut self, func: &str, scope: &mut Scope, stmts: &[Spanned<Stmt>]) -> Ty {
         let mut last_ty = Ty::Nil;
         for (i, spanned) in stmts.iter().enumerate() {
+            // ILO-T032: bare `fmt`/`fmt2` at non-tail position is almost always a bug.
+            // `fmt` is pure-functional sprintf — it builds a string and returns it.
+            // When used as a non-tail statement with no binding, the string is silently
+            // discarded on every engine (tree/VM/Cranelift), and nothing reaches stdout.
+            // The common mistake is treating `fmt` like Rust's `println!` / Python's print.
+            // Fix: bind via `name=fmt ...` or print via `prnt fmt ...`.
+            // We only warn at non-tail position so the idiomatic `say-x>t;fmt "x={}" 42`
+            // pattern (fmt as the function's return value) stays clean.
+            if i + 1 < stmts.len()
+                && let Stmt::Expr(Expr::Call { function, .. }) = &spanned.node
+                && let Some(b) = Builtin::from_name(function)
+                && matches!(b, Builtin::Fmt | Builtin::Fmt2)
+            {
+                let name = match b {
+                    Builtin::Fmt => "fmt",
+                    Builtin::Fmt2 => "fmt2",
+                    _ => unreachable!(),
+                };
+                self.warn(
+                    "ILO-T032",
+                    func,
+                    format!("bare '{name}' result is discarded"),
+                    Some(format!(
+                        "did you mean `prnt {name} ...` to print, or `name = {name} ...` to capture?"
+                    )),
+                    Some(spanned.span),
+                );
+            }
             last_ty = self.verify_stmt(func, scope, &spanned.node, spanned.span);
             if matches!(spanned.node, Stmt::Return(_) | Stmt::Break(_)) && i + 1 < stmts.len() {
                 let first_unreachable = stmts[i + 1].span;
@@ -5666,6 +5694,107 @@ mod tests {
         assert!(result.errors.is_empty());
         assert_eq!(result.warnings.len(), 1);
         assert_eq!(result.warnings[0].code, "ILO-T029");
+    }
+
+    // ---- Bare fmt/fmt2 discard warnings (ILO-T032) ----
+
+    #[test]
+    fn bare_fmt_non_tail_warns() {
+        // The classic persona pain: `fmt "..." v` as a non-tail stmt is
+        // silently discarded. Should warn.
+        let result = parse_and_verify_full(r#"f v:n>n;fmt "v={}" v;v"#);
+        assert!(result.errors.is_empty());
+        let t032: Vec<_> = result
+            .warnings
+            .iter()
+            .filter(|w| w.code == "ILO-T032")
+            .collect();
+        assert_eq!(
+            t032.len(),
+            1,
+            "expected one ILO-T032 warning, got {:?}",
+            result.warnings
+        );
+        assert!(t032[0].message.contains("fmt"));
+        assert!(
+            t032[0]
+                .hint
+                .as_ref()
+                .is_some_and(|h| h.contains("prnt fmt"))
+        );
+    }
+
+    #[test]
+    fn bare_fmt2_non_tail_warns() {
+        let result = parse_and_verify_full(r#"f v:n>n;fmt2 v 2;v"#);
+        assert!(result.errors.is_empty());
+        let t032: Vec<_> = result
+            .warnings
+            .iter()
+            .filter(|w| w.code == "ILO-T032")
+            .collect();
+        assert_eq!(t032.len(), 1);
+        assert!(t032[0].message.contains("fmt2"));
+    }
+
+    #[test]
+    fn fmt_in_tail_position_no_warning() {
+        // `fmt` as the return value of a function is the documented idiom.
+        // Must NOT warn.
+        let result = parse_and_verify_full(r#"say-x v:n>t;fmt "x={}" v"#);
+        assert!(result.errors.is_empty());
+        let t032: Vec<_> = result
+            .warnings
+            .iter()
+            .filter(|w| w.code == "ILO-T032")
+            .collect();
+        assert_eq!(
+            t032.len(),
+            0,
+            "tail fmt should not warn, got {:?}",
+            result.warnings
+        );
+    }
+
+    #[test]
+    fn fmt_bound_to_name_no_warning() {
+        // `name = fmt ...` is the captured form. Must NOT warn.
+        let result = parse_and_verify_full(r#"f v:n>t;line=fmt "v={}" v;prnt line;line"#);
+        assert!(result.errors.is_empty());
+        let t032: Vec<_> = result
+            .warnings
+            .iter()
+            .filter(|w| w.code == "ILO-T032")
+            .collect();
+        assert_eq!(t032.len(), 0);
+    }
+
+    #[test]
+    fn fmt_inside_prnt_no_warning() {
+        // `prnt fmt ...` is the print form. The `fmt` is nested inside the
+        // prnt call, not a bare statement. Must NOT warn.
+        let result = parse_and_verify_full(r#"f v:n>n;prnt fmt "v={}" v;v"#);
+        assert!(result.errors.is_empty());
+        let t032: Vec<_> = result
+            .warnings
+            .iter()
+            .filter(|w| w.code == "ILO-T032")
+            .collect();
+        assert_eq!(t032.len(), 0);
+    }
+
+    #[test]
+    fn multiple_bare_fmts_each_warn() {
+        // The persona's actual file had 13 such lines. Each should warn
+        // independently so the agent sees them all in one pass.
+        let result = parse_and_verify_full(r#"f v:n>n;fmt "a={}" v;fmt "b={}" v;fmt "c={}" v;v"#);
+        assert!(result.errors.is_empty());
+        let t032: Vec<_> = result
+            .warnings
+            .iter()
+            .filter(|w| w.code == "ILO-T032")
+            .collect();
+        assert_eq!(t032.len(), 3);
     }
 
     // ---- rnd builtin ----
