@@ -2593,6 +2593,26 @@ fn dispatch_run(r: cli::RunArgs, mode: OutputMode, explicit_json: bool, no_hints
     // false-positive errors on builtins or partial snippets that users want to
     // explore via the AST dump. Parse errors still gate (we can't dump an AST
     // we couldn't parse).
+    //
+    // Auto-run carve-out (PR #257-era regression fix): commit c9e1ed0 made
+    // inline `ilo '<code>'` auto-run when there's a runnable entry (`main`
+    // or a single user-defined fn). Those runs MUST go through verify, or
+    // shapes like bare-ident bang (`x=42;x!`) reach the interpreter
+    // unverified and silently return nil. Only suppress verify when the
+    // snippet will actually AST-dump: zero user fns, or multi-fns without
+    // a `main`. Mirror the auto-run heuristic at the dispatch site below.
+    let user_fn_names: Vec<&str> = program
+        .declarations
+        .iter()
+        .filter_map(|d| match d {
+            ast::Decl::Function { name, .. } if !name.starts_with("__") => Some(name.as_str()),
+            _ => None,
+        })
+        .collect();
+    let inline_will_auto_run = !is_file
+        && r.rest.is_empty()
+        && matches!(r.effective_engine(), cli::Engine::Default)
+        && (user_fn_names.len() == 1 || user_fn_names.contains(&"main"));
     let ast_dump_mode = r.ast
         || (!is_file
             && r.rest.is_empty()
@@ -2601,7 +2621,8 @@ fn dispatch_run(r: cli::RunArgs, mode: OutputMode, explicit_json: bool, no_hints
             && r.emit.is_none()
             && !r.dense
             && !r.expanded
-            && matches!(r.effective_engine(), cli::Engine::Default));
+            && matches!(r.effective_engine(), cli::Engine::Default)
+            && !inline_will_auto_run);
 
     if !ast_dump_mode {
         let verify_result = verify::verify(&program);

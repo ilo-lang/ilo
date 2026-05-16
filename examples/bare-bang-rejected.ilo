@@ -1,0 +1,40 @@
+-- `!` is the auto-unwrap operator and only applies to function CALLS.
+-- It takes the Result or Optional returned by a call and unwraps it:
+--   Ok(v)/non-nil → v
+--   Err(e)/nil   → propagate (`!`) or abort (`!!`)
+--
+-- When `!` is attached to a bare ident that resolves to a plain value
+-- (a local binding, a parameter, a destructured field), there is no
+-- call for the operator to act on. Pre-fix, the inline default-engine
+-- path skipped verify and the interpreter silently returned `nil` for
+-- this shape — a soundness hazard. The verifier now rejects it with
+-- ILO-T034 and points at the two canonical fixes.
+
+-- The two correct shapes are:
+--
+-- (1) Match on a Result-valued binding to inspect Ok / Err:
+--       ?score{~v:v;^e:0}
+--
+-- (2) Auto-unwrap at the producer's call site, then reference the
+--     resulting value without `!`:
+--       scs = producer! ...
+--       use-scs scs
+
+-- Happy path A: match on a Result-valued local.
+inspect-result>R n t;score=lookup-score 1;?score{~v:~v;^e:^e}
+
+-- Helper used by `inspect-result` — returns a Result, exercised by the
+-- engine harness through `inspect-result` rather than directly. Braceless
+-- guard form is used so the body's early-return surfaces without the
+-- discarded-result hint that the braced `cond{^"err"}` shape triggers.
+lookup-score id:n>R n t;<id 1 ^"id must be positive";~*id 10
+
+-- Happy path B: unwrap at the producer's call site, reference the
+-- resulting plain Number afterwards (no `!` on the local).
+double-unwrapped>R n t;v=lookup-score! 4;~*v 2
+
+-- run: inspect-result
+-- out: 10
+
+-- run: double-unwrapped
+-- out: 80
