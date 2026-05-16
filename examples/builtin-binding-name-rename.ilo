@@ -1,0 +1,20 @@
+-- Builtin names like flat, frq, map, flt, cat, len, ord are reserved and
+-- cannot be reused as local binding names. Binding `flat=cat ls " "` and
+-- then writing `spl flat ". "` would silently dispatch the `flat` operand
+-- to the 1-arg flatten builtin (not the local binding), surfacing as a
+-- misleading ILO-T006 arity mismatch on `flat`.
+--
+-- The parser now rejects builtin-named binding LHS with a friendly
+-- ILO-P011 + rename hint, mirroring the existing user-function-name
+-- precedent. So the agent's first retry is the right one.
+--
+-- Correct shape: pick a non-builtin name (here `body` for a joined string).
+
+main>n
+  ls=["one" "two" "three"]
+  body=cat ls " "
+  parts=spl body " "
+  len parts
+
+-- run: main
+-- out: 3
