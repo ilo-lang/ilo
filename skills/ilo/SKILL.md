@@ -225,7 +225,6 @@ Keys are typed: text (`t`) or integer (`n`). Numeric keys work directly — `mse
 **Stats**: `median` `quantile` `stdev` `variance` `cumsum` `frq`
 **Linalg**: `transpose` `matmul` `dot` `solve` `inv` `det` `fft` `ifft`
 **Text**: `len` `str` `num` `trm` `spl` `cat` `fmt` `fmt2` `has` `rgx` `rgxall` `rgxsub`
-  - `fmt tmpl args…` uses bare `{}` placeholders only — printf-style specs (`{:06d}`, `{:.3f}`) are rejected (ILO-T013 / ILO-R009). Compose `fmt2` for decimal precision (`fmt "x={}" (fmt2 v 2)`) and `padl` for width/padding.
 **Text case**: `upr` `lwr` `cap` `padl` `padr` `chars` `ord` `chr`
 **List**: `hd` `tl` `at` `lst` `take` `drop` `rev` `srt` `rsrt` `unq` `uniqby` `slc` `flat` `grp` `zip` `enumerate` `range` `chunks` `window` `flatmap` `partition`
 **Set ops**: `setunion` `setinter` `setdiff`
