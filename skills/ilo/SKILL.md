@@ -220,7 +220,7 @@ Keys are typed: text (`t`) or integer (`n`). Numeric keys work directly — `mse
 **JSON**: `jpth` `jdmp` `jpar`
 **Map**: `mmap` `mget` `mset` `mhas` `mkeys` `mvals` `mdel`
 **HOF**: `map` `flt` `fld`
-**Time**: `now` `sleep` `dtfmt` `dtparse`
+**Time**: `now` `sleep` `dtfmt` `dtparse` (note: `dtparse s fmt > R n t`, `dtfmt ts fmt > R t t`, both Result-wrapped)
 
 ## Naming Convention
 
