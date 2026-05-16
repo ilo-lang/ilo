@@ -11,7 +11,14 @@ fn run_err(src: &str) -> String {
 }
 
 fn run_ok(src: &str) {
-    let out = ilo().arg(src).output().expect("failed to run ilo");
+    // These regressions pin parser/verifier acceptance. Since inline
+    // single-fn snippets now auto-run (and would fail arity without
+    // positional args), inspect via `--ast` instead to keep the
+    // parse-acceptance signal cleanly decoupled from runtime semantics.
+    let out = ilo()
+        .args(["--ast", src])
+        .output()
+        .expect("failed to run ilo");
     assert!(
         out.status.success(),
         "expected success for {src:?}, stderr: {}",

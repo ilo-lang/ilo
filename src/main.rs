@@ -6704,23 +6704,21 @@ mod tests {
     fn dispatch_bare_args_minus_e_code_shorthand() {
         // -e as the inline code flag (not the --expanded flag here since engine_flag is None
         // and args[m] = -e triggers the expanded path, but -e as argv[1] triggers
-        // the "treat args[2] as code" path)
+        // the "treat args[2] as code" path).
+        //
+        // Inline auto-run: a zero-arg single fn runs with no extra args
+        // and exits 0. (Comment-only / no-fn snippets still AST-dump;
+        // covered in regression_cli_default.rs.)
         let global = cli::Global {
             ansi: false,
             text: false,
             json: false,
             no_hints: false,
         };
-        // dispatch_bare_args: args[1] == "-e" → args[2] is the code string
         let code = dispatch_bare_args(
-            vec![
-                "ilo".to_string(),
-                "-e".to_string(),
-                "f x:n>n;*x 2".to_string(),
-            ],
+            vec!["ilo".to_string(), "-e".to_string(), "f>n;42".to_string()],
             &global,
         );
-        // No args past the code: should dump AST JSON (exit 0)
         assert_eq!(code, 0);
     }
 
@@ -6807,9 +6805,11 @@ mod tests {
     }
 
     #[test]
-    fn dispatch_bare_args_emit_no_target_dumps_ast() {
+    fn dispatch_bare_args_emit_no_target_runs_default() {
         // --emit with no target arg: target = None → dispatch_run gets emit=None,
-        // falls through to default engine execution with no rest args → AST JSON dump (exit 0)
+        // falls through to default engine execution. With a zero-arg
+        // single-fn inline snippet, the default engine auto-runs it and
+        // exits 0. (See SKILL.md for the inline auto-run contract.)
         let global = cli::Global {
             ansi: false,
             text: false,
@@ -6819,12 +6819,11 @@ mod tests {
         let code = dispatch_bare_args(
             vec![
                 "ilo".to_string(),
-                "f x:n>n;*x 2".to_string(),
+                "f>n;42".to_string(),
                 "--emit".to_string(),
             ],
             &global,
         );
-        // None emit → falls to default engine with no rest → AST JSON dump → exit 0
         assert_eq!(code, 0);
     }
 
@@ -7504,13 +7503,16 @@ mod tests {
         assert_eq!(code, 1);
     }
 
-    // ── dispatch_run: no args → AST JSON dump ────────────────────────────────
+    // ── dispatch_run: no rest args → auto-runs the inline entry ──────────────
 
     #[test]
-    fn dispatch_run_no_rest_args_dumps_ast_json() {
-        // When rest is empty and func_name not found → dumps AST JSON
+    fn dispatch_run_no_rest_args_auto_runs_inline() {
+        // Inline auto-run: with rest empty and a runnable inline entry
+        // (single zero-arg fn) the default engine runs it and exits 0.
+        // The legacy "always AST-dump" inline contract is preserved
+        // only for non-runnable shapes; see regression_cli_default.rs.
         let run_args = cli::RunArgs {
-            source: "f x:n>n;*x 2".to_string(),
+            source: "f>n;42".to_string(),
             engine: cli::Engine::Default,
             run_tree: false,
             run: false,

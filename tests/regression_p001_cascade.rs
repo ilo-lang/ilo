@@ -26,7 +26,13 @@ fn run_err(src: &str) -> String {
 }
 
 fn run_ok(src: &str) {
-    let out = ilo().arg(src).output().expect("failed to run ilo");
+    // Use --ast so inline single-fn snippets with required params don't
+    // trip the new auto-run contract on a sanity-check (we only want
+    // parser/verifier acceptance, not runtime).
+    let out = ilo()
+        .args(["--ast", src])
+        .output()
+        .expect("failed to run ilo");
     assert!(
         out.status.success(),
         "expected success for {src:?}, stderr: {}",
