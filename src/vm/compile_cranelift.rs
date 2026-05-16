@@ -5825,30 +5825,20 @@ f a:t b:t>t;join a b"#,
         // Exercise the OP_SUM AOT codegen block (helper-call, F64-shadow
         // refresh). Doesn't need libilo.a; just verifies IR generation.
         let bytes = compile_to_object_bytes("f>n;sum [1, 2, 3, 4]");
-        assert!(
-            bytes.is_ok(),
-            "OP_SUM codegen failed: {:?}",
-            bytes.err()
-        );
+        assert!(bytes.is_ok(), "OP_SUM codegen failed: {:?}", bytes.err());
     }
 
     #[test]
     fn codegen_cov_op_avg() {
         let bytes = compile_to_object_bytes("f>n;avg [1, 2, 3, 4]");
-        assert!(
-            bytes.is_ok(),
-            "OP_AVG codegen failed: {:?}",
-            bytes.err()
-        );
+        assert!(bytes.is_ok(), "OP_AVG codegen failed: {:?}", bytes.err());
     }
 
     #[test]
     fn codegen_cov_op_sum_avg_arithmetic() {
         // Sum/avg results feeding into an OP_SUB_NN — exercises the F64
         // shadow refresh path in the AOT compiler.
-        let bytes = compile_to_object_bytes(
-            "f>n;a=avg [10, 20, 30];s=sum [1, 2, 3];-a s",
-        );
+        let bytes = compile_to_object_bytes("f>n;a=avg [10, 20, 30];s=sum [1, 2, 3];-a s");
         assert!(
             bytes.is_ok(),
             "OP_SUM/OP_AVG + OP_SUB_NN codegen failed: {:?}",
