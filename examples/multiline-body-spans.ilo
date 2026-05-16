@@ -1,0 +1,55 @@
+-- Multi-line function bodies preserve source spans for diagnostics.
+--
+-- `lexer::normalize_newlines` rewrites the source before lexing — newlines
+-- become `;`, indentation is stripped, `--` comments are erased entirely —
+-- so token byte offsets in the normalized string drift from the original
+-- file. Before the offset-map fix, a parse error inside a multi-line body
+-- (especially below a few comment lines) would report a line several
+-- lines away from the actual fault, often on a downstream `;`.
+--
+-- This example exercises the fixed path end-to-end: multi-line bodies
+-- mixed with `--` comment lines, indented continuations, nested guards,
+-- and a foreach loop. If a future change to `normalize_newlines` ever
+-- stops emitting the offset map (or stops `lex` from applying it), the
+-- engine harness will still parse and execute these correctly — but any
+-- regression in body normalization itself will surface here before it
+-- reaches a persona.
+
+-- Sum of integers 1..=n, multi-line body with an inline comment line.
+sumto n:n>n
+  -- accumulator pattern, mirrors the canonical persona shape
+  acc = 0
+  @i 1..(+n 1){
+    acc = +acc i
+  }
+  acc
+
+-- Guard body with multiple statements above the tail return. The
+-- braceless guard `>v 100 (+s "big")` early-returns; the trailing
+-- expression handles the small case.
+classify v:n>t
+  -- pre-bind work that the discarded-result hint must not flag
+  s = "val: "
+  >v 100 (+s "big")
+  +s "small"
+
+-- Nested foreach inside a guard body, lots of indent to compress.
+gridsum n:n>n
+  total = 0
+  >n 0{
+    @i 0..n{
+      @j 0..n{
+        total = +total (+i j)
+      }
+    }
+  }
+  total
+
+-- run: sumto 5
+-- out: 15
+-- run: classify 200
+-- out: val: big
+-- run: classify 5
+-- out: val: small
+-- run: gridsum 3
+-- out: 18
