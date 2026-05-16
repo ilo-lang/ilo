@@ -152,6 +152,8 @@ struct HelperFuncs {
     cap: FuncId,
     padl: FuncId,
     padr: FuncId,
+    padlc: FuncId,
+    padrc: FuncId,
     ord: FuncId,
     chr: FuncId,
     chars: FuncId,
@@ -338,6 +340,8 @@ fn declare_all_helpers(module: &mut ObjectModule) -> HelperFuncs {
         cap: declare_helper(module, "jit_cap", 2, 1),
         padl: declare_helper(module, "jit_padl", 3, 1),
         padr: declare_helper(module, "jit_padr", 3, 1),
+        padlc: declare_helper(module, "jit_padlc", 4, 1),
+        padrc: declare_helper(module, "jit_padrc", 4, 1),
         ord: declare_helper(module, "jit_ord", 2, 1),
         chr: declare_helper(module, "jit_chr", 2, 1),
         chars: declare_helper(module, "jit_chars", 2, 1),
@@ -1049,12 +1053,12 @@ fn compile_function_body(
                 | OP_JPAR | OP_RDJL | OP_MAPNEW | OP_MGET | OP_MSET | OP_MDEL | OP_MKEYS
                 | OP_MVALS | OP_LISTNEW | OP_LISTAPPEND | OP_RECNEW | OP_RECWITH
                 | OP_RECNEW_EMPTY | OP_RECCOPY | OP_PRT | OP_RD | OP_RDL | OP_WR | OP_WRL
-                | OP_TRM | OP_UPR | OP_LWR | OP_CAP | OP_PADL | OP_PADR | OP_CHR | OP_CHARS
-                | OP_UNQ | OP_UNIQBY | OP_PARTITION | OP_FRQ | OP_NUM | OP_RGXSUB | OP_ZIP
-                | OP_ENUMERATE | OP_RANGE | OP_WINDOW | OP_CHUNKS | OP_CUMSUM | OP_SETUNION
-                | OP_SETINTER | OP_SETDIFF | OP_FFT | OP_IFFT | OP_TRANSPOSE | OP_MATMUL
-                | OP_INV | OP_SOLVE | OP_DTFMT | OP_DTPARSE | OP_CALL_BUILTIN_TREE | OP_LOADFN
-                | OP_CALL_DYN => {
+                | OP_TRM | OP_UPR | OP_LWR | OP_CAP | OP_PADL | OP_PADR | OP_PADLC | OP_PADRC
+                | OP_CHR | OP_CHARS | OP_UNQ | OP_UNIQBY | OP_PARTITION | OP_FRQ | OP_NUM
+                | OP_RGXSUB | OP_ZIP | OP_ENUMERATE | OP_RANGE | OP_WINDOW | OP_CHUNKS
+                | OP_CUMSUM | OP_SETUNION | OP_SETINTER | OP_SETDIFF | OP_FFT | OP_IFFT
+                | OP_TRANSPOSE | OP_MATMUL | OP_INV | OP_SOLVE | OP_DTFMT | OP_DTPARSE
+                | OP_CALL_BUILTIN_TREE | OP_LOADFN | OP_CALL_DYN => {
                     non_num_write[a] = true;
                     non_bool_write[a] = true;
                 }
@@ -3676,6 +3680,26 @@ fn compile_function_body(
                 let span_arg = builder.ins().iconst(I64, span_bits);
                 let fref = get_func_ref(&mut builder, module, helpers.padr);
                 let call_inst = builder.ins().call(fref, &[bv, cv, span_arg]);
+                let result = builder.inst_results(call_inst)[0];
+                builder.def_var(vars[a_idx], result);
+            }
+            OP_PADLC | OP_PADRC => {
+                // pad-with-char(R[B]=s, R[C]=w, R[D]=pc) — D in data word A field
+                let bv = builder.use_var(vars[b_idx]);
+                let cv = builder.use_var(vars[c_idx]);
+                let data_inst = chunk.code[ip + 1];
+                skip_next = true;
+                let d_idx = ((data_inst >> 16) & 0xFF) as usize;
+                let dv = builder.use_var(vars[d_idx]);
+                let span_bits = super::jit_cranelift::pack_span_bits(chunk.spans[ip]);
+                let span_arg = builder.ins().iconst(I64, span_bits);
+                let helper = if op == OP_PADLC {
+                    helpers.padlc
+                } else {
+                    helpers.padrc
+                };
+                let fref = get_func_ref(&mut builder, module, helper);
+                let call_inst = builder.ins().call(fref, &[bv, cv, dv, span_arg]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
             }
