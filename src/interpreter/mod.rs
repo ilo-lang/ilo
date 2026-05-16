@@ -2370,6 +2370,27 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 } else {
                     result.push_str("{}");
                 }
+            } else if c == '{' && chars.peek() == Some(&':') {
+                // Reject printf-style format specs explicitly so callers don't
+                // silently get the literal template back. `fmt` only supports
+                // bare `{}` placeholders; richer formatting composes from
+                // smaller builtins instead.
+                let mut spec = String::from("{");
+                for sc in chars.by_ref() {
+                    spec.push(sc);
+                    if sc == '}' {
+                        break;
+                    }
+                }
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!(
+                        "fmt only supports bare `{{}}` placeholders, got `{}`. \
+                         For decimal precision use `fmt \"...{{}}\" (fmt2 v 2)`; \
+                         for width / padding use `padl (str n) 6` (space-pad).",
+                        spec
+                    ),
+                ));
             } else {
                 result.push(c);
             }
