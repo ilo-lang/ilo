@@ -261,7 +261,7 @@ pub(crate) const OP_STDEV: u8 = 143; // R[A] = stdev(R[B])
 pub(crate) const OP_VARIANCE: u8 = 144; // R[A] = variance(R[B])
 pub(crate) const OP_SUM: u8 = 165; // R[A] = sum(R[B])  — empty list = 0
 pub(crate) const OP_AVG: u8 = 166; // R[A] = avg(R[B])  — empty list errors
-pub(crate) const OP_FLAT: u8 = 171; // R[A] = flat(R[B]) — flatten one level, non-list elements pass through
+pub(crate) const OP_FLAT: u8 = 174; // R[A] = flat(R[B]) — flatten one level, non-list elements pass through
 // Higher-order: uniqby fn xs — pre-allocated, HOF dispatch not yet wired in VM.
 pub(crate) const OP_UNIQBY: u8 = 116; // R[A] = uniqby(R[B] (fn-ref), R[C] (list))
 // Higher-order: partition fn xs — pre-allocated, HOF dispatch not yet wired in VM.
