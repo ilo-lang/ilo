@@ -1,0 +1,22 @@
+-- Prefix `??` accepts a CALL expression as its value side.
+-- Common case: nil-coalesce on a map lookup with a default.
+-- `??mget m "k" 0` parses as `??(mget m "k") 0`, the arity-aware
+-- parser stops after `mget`'s 2 args and leaves `0` for the default.
+-- Previously you had to write `??(mget m "k") 0` or bind first; now
+-- the bare form Just Works, which is the most common nil-coalesce
+-- shape in agent-written ilo (mget lookups with a fallback).
+
+hit>n;m=mset mmap "k" 42;??mget m "k" 0
+miss>n;m=mset mmap "k" 42;??mget m "missing" 99
+
+-- Chained: first non-nil wins, mirroring infix chaining.
+chain>n;m=mset mmap "a" 1;??mget m "x" ??mget m "a" 0
+
+-- run: hit
+-- out: 42
+
+-- run: miss
+-- out: 99
+
+-- run: chain
+-- out: 1
