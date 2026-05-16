@@ -1,0 +1,27 @@
+-- 1-arg list form of min/max — returns the smallest / largest element of a
+-- list of numbers. Mirrors avg/median ergonomics so `max [3 1 4 1 5]` is 5,
+-- not a 2-arg arity error. The 2-arg numeric form is preserved.
+--
+-- min xs:L n > n         -- list form
+-- min a:n b:n > n        -- numeric pair form (unchanged)
+-- max xs:L n > n
+-- max a:n b:n > n
+
+-- 1-arg list form on inline literals.
+lo>n;min [3, 1, 4, 1, 5, 9, 2, 6]
+hi>n;max [3, 1, 4, 1, 5, 9, 2, 6]
+
+-- 1-arg list form on a bound list.
+range-of xs:L n>n;hi=max xs;lo=min xs;-hi lo
+
+-- 2-arg numeric form still works.
+biggest a:n b:n>n;max a b
+
+-- run: lo
+-- out: 1
+-- run: hi
+-- out: 9
+-- run: range-of [10,4,22,7]
+-- out: 18
+-- run: biggest 3 7
+-- out: 7

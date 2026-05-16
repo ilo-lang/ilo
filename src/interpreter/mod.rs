@@ -1098,6 +1098,57 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             )),
         };
     }
+    if matches!(builtin, Some(Builtin::Min | Builtin::Max)) && args.len() == 1 {
+        // 1-arg list form: returns the min/max element of a list of numbers.
+        // Mirrors `avg`/`median` ergonomics so `max [1 2 3]` == 3.
+        let items = match &args[0] {
+            Value::List(l) => l,
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("{name}: arg must be a list, got {:?}", other),
+                ));
+            }
+        };
+        if items.is_empty() {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!("{name}: cannot take {name} of an empty list"),
+            ));
+        }
+        let is_min = builtin == Some(Builtin::Min);
+        // NaN-propagation contract: any NaN element → NaN result. Matches
+        // median/stdev/variance and the VM helper `vm_min_max_lst`. Avoids
+        // silently mis-comparing NaNs via `f64::min`/`max`, which return the
+        // non-NaN argument and would mask NaN inputs entirely.
+        let mut best: Option<f64> = None;
+        for item in items.iter() {
+            match item {
+                Value::Number(n) => {
+                    if n.is_nan() {
+                        return Ok(Value::Number(f64::NAN));
+                    }
+                    best = Some(match best {
+                        None => *n,
+                        Some(cur) => {
+                            if is_min {
+                                cur.min(*n)
+                            } else {
+                                cur.max(*n)
+                            }
+                        }
+                    });
+                }
+                other => {
+                    return Err(RuntimeError::new(
+                        "ILO-R009",
+                        format!("{name}: list elements must be numbers, got {:?}", other),
+                    ));
+                }
+            }
+        }
+        return Ok(Value::Number(best.unwrap()));
+    }
     if matches!(builtin, Some(Builtin::Flr | Builtin::Cel | Builtin::Rou)) && args.len() == 1 {
         return match &args[0] {
             Value::Number(n) => {
@@ -7791,6 +7842,124 @@ mod tests {
     fn interp_avg_wrong_arg() {
         let err = run_str_err("f>n;avg 42", Some("f"), vec![]);
         assert!(err.contains("avg"), "got: {err}");
+    }
+
+    #[test]
+    fn interp_min_lst_basic() {
+        let source = "f xs:L n>n;min xs";
+        let result = run_str(
+            source,
+            Some("f"),
+            vec![Value::List(Arc::new(
+                vec![3.0, 1.0, 4.0, 1.0, 5.0, 9.0, 2.0, 6.0]
+                    .into_iter()
+                    .map(Value::Number)
+                    .collect(),
+            ))],
+        );
+        assert_eq!(result, Value::Number(1.0));
+    }
+
+    #[test]
+    fn interp_max_lst_basic() {
+        let source = "f xs:L n>n;max xs";
+        let result = run_str(
+            source,
+            Some("f"),
+            vec![Value::List(Arc::new(
+                vec![3.0, 1.0, 4.0, 1.0, 5.0, 9.0, 2.0, 6.0]
+                    .into_iter()
+                    .map(Value::Number)
+                    .collect(),
+            ))],
+        );
+        assert_eq!(result, Value::Number(9.0));
+    }
+
+    #[test]
+    fn interp_min_lst_empty_errors() {
+        let err = run_str_err("f>n;min []", Some("f"), vec![]);
+        assert!(err.contains("min") && err.contains("empty"), "got: {err}");
+    }
+
+    #[test]
+    fn interp_max_lst_empty_errors() {
+        let err = run_str_err("f>n;max []", Some("f"), vec![]);
+        assert!(err.contains("max") && err.contains("empty"), "got: {err}");
+    }
+
+    #[test]
+    fn interp_min_lst_non_list_arg() {
+        // Runtime path (verifier would also catch this, but the interpreter
+        // arm must error cleanly if reached via a generic `_` typed input).
+        let err = run_str_err("f x:_>n;min x", Some("f"), vec![Value::Number(42.0)]);
+        assert!(err.contains("min"), "got: {err}");
+    }
+
+    #[test]
+    fn interp_max_lst_non_list_arg() {
+        let err = run_str_err("f x:_>n;max x", Some("f"), vec![Value::Number(42.0)]);
+        assert!(err.contains("max"), "got: {err}");
+    }
+
+    #[test]
+    fn interp_min_lst_non_number_element() {
+        let err = run_str_err(
+            "f xs:L n>n;min xs",
+            Some("f"),
+            vec![Value::List(Arc::new(vec![Value::Text(Arc::new(
+                "x".to_string(),
+            ))]))],
+        );
+        assert!(err.contains("min"), "got: {err}");
+    }
+
+    #[test]
+    fn interp_max_lst_non_number_element() {
+        let err = run_str_err(
+            "f xs:L n>n;max xs",
+            Some("f"),
+            vec![Value::List(Arc::new(vec![Value::Text(Arc::new(
+                "x".to_string(),
+            ))]))],
+        );
+        assert!(err.contains("max"), "got: {err}");
+    }
+
+    #[test]
+    fn interp_min_lst_nan_propagates() {
+        let result = run_str(
+            "f xs:L n>n;min xs",
+            Some("f"),
+            vec![Value::List(Arc::new(vec![
+                Value::Number(1.0),
+                Value::Number(2.0),
+                Value::Number(f64::NAN),
+                Value::Number(4.0),
+            ]))],
+        );
+        match result {
+            Value::Number(n) => assert!(n.is_nan(), "expected NaN, got {n}"),
+            other => panic!("expected Number(NaN), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn interp_max_lst_nan_propagates() {
+        let result = run_str(
+            "f xs:L n>n;max xs",
+            Some("f"),
+            vec![Value::List(Arc::new(vec![
+                Value::Number(1.0),
+                Value::Number(2.0),
+                Value::Number(f64::NAN),
+                Value::Number(4.0),
+            ]))],
+        );
+        match result {
+            Value::Number(n) => assert!(n.is_nan(), "expected NaN, got {n}"),
+            other => panic!("expected Number(NaN), got {other:?}"),
+        }
     }
 
     #[test]

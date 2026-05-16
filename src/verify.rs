@@ -308,7 +308,9 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("cel", &["n"], "n"),
     ("rou", &["n"], "n"),
     ("min", &["n", "n"], "n"),
+    ("min", &["list"], "n"),
     ("max", &["n", "n"], "n"),
+    ("max", &["list"], "n"),
     ("mod", &["n", "n"], "n"),
     ("clamp", &["n", "n", "n"], "n"),
     ("pow", &["n", "n"], "n"),
@@ -535,6 +537,37 @@ fn builtin_check_args(
                     span,
                     is_warning: false,
                 });
+            }
+            (Ty::Number, errors)
+        }
+        "min" | "max" if arg_types.len() == 1 => {
+            // 1-arg list form: returns min/max element of a list of numbers
+            if let Some(arg) = arg_types.first() {
+                match arg {
+                    Ty::List(inner) => {
+                        if !compatible(inner, &Ty::Number) {
+                            errors.push(VerifyError {
+                                code: "ILO-T013",
+                                function: func_ctx.to_string(),
+                                message: format!("'{name}' expects L n, got L {inner}"),
+                                hint: None,
+                                span,
+                                is_warning: false,
+                            });
+                        }
+                    }
+                    Ty::Unknown => {}
+                    other => errors.push(VerifyError {
+                        code: "ILO-T013",
+                        function: func_ctx.to_string(),
+                        message: format!("'{name}' expects L n, got {other}"),
+                        hint: Some(format!(
+                            "use `{name} xs` for the list form or `{name} a b` for two numbers"
+                        )),
+                        span,
+                        is_warning: false,
+                    }),
+                }
             }
             (Ty::Number, errors)
         }
@@ -3026,6 +3059,9 @@ impl VerifyContext {
                     } else if callee == "srt" {
                         // srt xs / srt fn xs / srt fn ctx xs
                         args.len() == 1 || args.len() == 2 || args.len() == 3
+                    } else if callee == "min" || callee == "max" {
+                        // min xs (list form, returns min element) / min a b (number pair)
+                        args.len() == 1 || args.len() == 2
                     } else if callee == "map" || callee == "flt" {
                         // map fn xs / map fn ctx xs   (closure-bind variant)
                         args.len() == 2 || args.len() == 3
@@ -3058,6 +3094,8 @@ impl VerifyContext {
                             "1 or 2".to_string()
                         } else if callee == "post" || callee == "wr" {
                             "2 or 3".to_string()
+                        } else if callee == "min" || callee == "max" {
+                            "1 or 2".to_string()
                         } else {
                             expected_arity.to_string()
                         };
@@ -4056,13 +4094,101 @@ mod tests {
 
     #[test]
     fn builtin_arity_mismatch() {
-        let result = parse_and_verify("f x:n>n;min x");
+        // `min` accepts 1 (list form) or 2 (numeric pair) args. Three args
+        // is the smallest clear arity violation.
+        let result = parse_and_verify("f a:n b:n c:n>n;min a b c");
         assert!(result.is_err());
         let errors = result.unwrap_err();
         assert!(
             errors
                 .iter()
-                .any(|e| e.message.contains("arity mismatch") && e.message.contains("min"))
+                .any(|e| e.message.contains("arity mismatch") && e.message.contains("min")),
+            "errors: {:?}",
+            errors
+        );
+    }
+
+    #[test]
+    fn min_max_one_arg_list_form_accepted() {
+        // `min xs` / `max xs` (1-arg list form) must verify cleanly against
+        // a list-of-numbers argument; only the 2-arg form requires `n n`.
+        assert!(parse_and_verify("f xs:L n>n;min xs").is_ok());
+        assert!(parse_and_verify("f xs:L n>n;max xs").is_ok());
+    }
+
+    #[test]
+    fn min_max_one_arg_rejects_non_list() {
+        // 1-arg form on a plain number must be rejected with a type error
+        // mentioning the builtin so the verifier hint stays useful.
+        let result = parse_and_verify("f x:n>n;min x");
+        assert!(result.is_err(), "expected type error, got Ok");
+        let errors = result.unwrap_err();
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.code == "ILO-T013" && e.message.contains("min")),
+            "errors: {:?}",
+            errors
+        );
+    }
+
+    #[test]
+    fn min_max_one_arg_rejects_list_of_text() {
+        // 1-arg form on `L t` (list of text) hits the inner-non-number branch
+        // and must surface ILO-T013 mentioning `L n` so the hint stays useful.
+        let result = parse_and_verify(r#"f xs:L t>n;min xs"#);
+        assert!(result.is_err(), "expected type error, got Ok");
+        let errors = result.unwrap_err();
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.code == "ILO-T013" && e.message.contains("min")),
+            "errors: {:?}",
+            errors
+        );
+
+        let result = parse_and_verify(r#"f xs:L t>n;max xs"#);
+        assert!(result.is_err(), "expected type error, got Ok");
+        let errors = result.unwrap_err();
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.code == "ILO-T013" && e.message.contains("max")),
+            "errors: {:?}",
+            errors
+        );
+    }
+
+    #[test]
+    fn min_max_one_arg_max_rejects_non_list() {
+        // Symmetric to min_max_one_arg_rejects_non_list, exercising `max`
+        // through the same arm so the hint string ("use `max xs` ...")
+        // gets covered too.
+        let result = parse_and_verify("f x:n>n;max x");
+        assert!(result.is_err(), "expected type error, got Ok");
+        let errors = result.unwrap_err();
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.code == "ILO-T013" && e.message.contains("max")),
+            "errors: {:?}",
+            errors
+        );
+    }
+
+    #[test]
+    fn min_max_arity_three_args_errors() {
+        // arity-ok branch returns false for args.len() == 3, which routes
+        // through the dedicated `1 or 2` arity-desc string.
+        let result = parse_and_verify("f a:n b:n c:n>n;min a b c");
+        assert!(result.is_err(), "expected arity error, got Ok");
+        let errors = result.unwrap_err();
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.message.contains("1 or 2") && e.message.contains("min")),
+            "errors: {:?}",
+            errors
         );
     }
 
