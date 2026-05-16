@@ -165,19 +165,40 @@ fn error_on_first_function_stays_on_first_function() {
 }
 
 #[test]
-fn error_on_last_function_with_body_attribution() {
-    // Fault on the final function, but with content after it on the same
-    // line so the parser hits an in-line boundary, not EOF. (The pure-EOF
-    // case `... main a:n>R` falls back to ILO-P008 with a `Span::UNKNOWN`
-    // anchor — a pre-existing limitation unrelated to this fix.) Here
-    // `main a:n` with no `>type;body` is a same-shape fault as `f2 a:n`
-    // earlier in the file: ILO-P020 must anchor at line 3.
-    let src = "f1 a:n>n;+a 1\nf2 a:n>n;-a 1\nmain a:n\n";
+fn error_on_last_function_stays_on_last_function() {
+    // Fault on the final function: nothing after it for the parser to bleed
+    // into. The parse hits EOF mid-header rather than a decl boundary, but
+    // the attribution must still land on the right line. The header-level
+    // check in `parse_fn_decl` treats EOF as a soft boundary and the
+    // `parse_type` safety net anchors EOF errors at `prev_span()` rather
+    // than the default `Span::UNKNOWN` (which renders as line 1 col 1).
+    let src = "f1 a:n>n;+a 1\nf2 a:n>n;-a 1\nmain a:n>R";
     let err = run_err_json(src);
     assert_eq!(
         first_error_line(&err),
         3,
         "error must land on line 3 (main), got stderr:\n{err}"
+    );
+}
+
+#[test]
+fn last_function_missing_arrow_at_eof_attributes_to_offending_function() {
+    // Sibling of `missing_arrow_attributes_to_offending_function` but with
+    // the fault on the final function and the file ending immediately
+    // after. Without the EOF branch in `check_fn_header_boundary` this
+    // would fall through to ILO-P004 (`expected Greater, got EOF`) with
+    // `Span::UNKNOWN` and land at line 1 col 1.
+    let src = "f1 a:n>n;+a 1\nf2 a:n>n;-a 1\nmain a:n";
+    let err = run_err_json(src);
+    assert_eq!(
+        first_error_line(&err),
+        3,
+        "error must land on line 3 (main), got stderr:\n{err}"
+    );
+    assert_eq!(
+        first_error_code(&err),
+        "ILO-P020",
+        "expected ILO-P020 for incomplete header at EOF, got stderr:\n{err}"
     );
 }
 
