@@ -1,0 +1,13 @@
+-- Parenthesised prefix pair is the recommended disambiguation form.
+-- `(/ *errs 100 tot)` makes grouping explicit, so the runtime stays silent
+-- (no precedence-trap hint). With errs=3, tot=12 the result is 25 (a percent
+-- rate: errs*100/tot).
+--
+-- The hint only fires on the bare form (`*/a b c`) where the parse order
+-- disagrees with the left-to-right reading. Once you wrap it in parens, you
+-- have already taken the canonical advice, so the hint would be redundant.
+
+rate errs:n tot:n>n;(/ *errs 100 tot)
+
+-- run: rate 3 12
+-- out: 25
