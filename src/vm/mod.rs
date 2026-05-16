@@ -219,6 +219,27 @@ pub(crate) const OP_RGXSUB: u8 = 115; // R[A] = rgxsub(R[B], R[C], R[D])  (patte
 pub(crate) const OP_ZIP: u8 = 111; // R[A] = zip(R[B], R[C])  (list of [x,y] pairs, truncated)
 pub(crate) const OP_ENUMERATE: u8 = 139; // R[A] = enumerate(R[B])  (list of [i, v] pairs)
 pub(crate) const OP_WINDOW: u8 = 146; // R[A] = window(R[B] (n), R[C] (list))  → list of n-sized sublists
+// Stride-1 window view used by the fused `flt fn (window n xs)` / `map fn (window n xs)`
+// emitter paths. Two-word instruction:
+//   word 0 (ABC): A = dest list reg, B = source list reg, C = start-index reg
+//   word 1 (data, A field): A = window-size reg (n)
+//
+// Semantics: write a length-n list containing xs[idx..idx+n] into R[A]. If R[A]
+// currently holds a `HeapObj::List` whose strong count is 1, the existing Vec is
+// reused (`clear` + `extend`) instead of allocating a fresh one. Otherwise a new
+// list is allocated and the old value is drop_rc'd. Items are clone_rc'd into the
+// destination so the source list keeps its ownership.
+//
+// The fused emitter only emits this op inside a tightly-controlled loop where:
+//   - the predicate/mapper sees the window as `R[A]`
+//   - on `flt` keep iterations the window is appended to the accumulator
+//     (RC bumps to 2, next iter falls back to fresh-allocation) and a new list
+//     is allocated for the next call
+//   - on `flt` drop iterations and on `map` (which doesn't retain the window)
+//     RC stays at 1 and the next iter mutates the same Vec in place
+// Cranelift returns `None` on this opcode (unknown), so a function containing it
+// falls back cleanly to the VM dispatcher.
+pub(crate) const OP_WINDOW_VIEW: u8 = 175;
 pub(crate) const OP_TAKE: u8 = 113; // R[A] = take(R[B], R[C])  (first B elements of C; B=n_reg, C=list_reg)
 pub(crate) const OP_DROP: u8 = 114; // R[A] = drop(R[B], R[C])  (skip first B elements of C)
 pub(crate) const OP_DTFMT: u8 = 131; // R[A] = dtfmt(R[B] epoch, R[C] fmt) → t
@@ -3758,8 +3779,8 @@ fn chunk_is_all_numeric(chunk: &Chunk) -> bool {
             | OP_LISTAPPEND | OP_JPAR | OP_JDMP | OP_CSVDMP | OP_ENV | OP_GET | OP_GETH
             | OP_GETMANY | OP_POST | OP_POSTH | OP_RD | OP_RDL | OP_RDJL | OP_WR | OP_WRL
             | OP_MAPNEW | OP_MGET | OP_MSET | OP_MKEYS | OP_MVALS | OP_HD | OP_AT | OP_LST
-            | OP_TL | OP_FMT2 | OP_RGXSUB | OP_ZIP | OP_ENUMERATE | OP_WINDOW | OP_FFT
-            | OP_IFFT | OP_RANGE | OP_CHUNKS | OP_CUMSUM | OP_SETUNION | OP_SETINTER
+            | OP_TL | OP_FMT2 | OP_RGXSUB | OP_ZIP | OP_ENUMERATE | OP_WINDOW | OP_WINDOW_VIEW
+            | OP_FFT | OP_IFFT | OP_RANGE | OP_CHUNKS | OP_CUMSUM | OP_SETUNION | OP_SETINTER
             | OP_SETDIFF | OP_TRANSPOSE | OP_MATMUL | OP_INV | OP_SOLVE | OP_DTFMT | OP_DTPARSE
             | OP_FLAT | OP_CALL_BUILTIN_TREE | OP_LOADFN | OP_CALL_DYN => {
                 return false;
@@ -8640,6 +8661,121 @@ impl<'a> VM<'a> {
                         acc
                     };
                     reg_set!(a, NanVal::heap_list(out));
+                }
+                OP_WINDOW_VIEW => {
+                    // Stride-1 window materialiser used by the fused
+                    // `flt fn (window n xs)` / `map fn (window n xs)` emitter.
+                    //
+                    //   word 0 (ABC): A = dest list reg, B = xs reg, C = idx reg
+                    //   word 1 (data, A field): A = n reg
+                    //
+                    // Writes xs[idx..idx+n] into the list at R[A]. Reuses the
+                    // existing Vec when R[A] holds a `HeapObj::List` with strong
+                    // count == 1; otherwise allocates a fresh list.
+                    let a = ((inst >> 16) & 0xFF) as usize + base;
+                    let b = ((inst >> 8) & 0xFF) as usize + base;
+                    let c = (inst & 0xFF) as usize + base;
+                    // SAFETY: compiler always emits the data word immediately
+                    // after OP_WINDOW_VIEW. ip currently points at the data word.
+                    let data_inst = unsafe { *code.get_unchecked(ip) };
+                    ip += 1;
+                    let nreg = ((data_inst >> 16) & 0xFF) as usize + base;
+
+                    let vxs = reg!(b);
+                    let vidx = reg!(c);
+                    let vn = reg!(nreg);
+
+                    if !vn.is_number() {
+                        vm_err!(VmError::Type("window: size must be a number"));
+                    }
+                    let nf = vn.as_number();
+                    if !nf.is_finite() || nf <= 0.0 || nf.fract() != 0.0 {
+                        vm_err!(VmError::Type("window: size must be a positive integer"));
+                    }
+                    let n = nf as usize;
+
+                    if !vidx.is_number() {
+                        vm_err!(VmError::Type("window: index must be a number"));
+                    }
+                    let idxf = vidx.as_number();
+                    if !idxf.is_finite() || idxf < 0.0 || idxf.fract() != 0.0 {
+                        vm_err!(VmError::Type(
+                            "window: index must be a non-negative integer"
+                        ));
+                    }
+                    let idx = idxf as usize;
+
+                    let xs_items: &[NanVal] = if vxs.is_heap() {
+                        match unsafe { vxs.as_heap_ref() } {
+                            HeapObj::List(items) => items.as_slice(),
+                            _ => vm_err!(VmError::Type("window arg 2 requires a list")),
+                        }
+                    } else {
+                        vm_err!(VmError::Type("window arg 2 requires a list"));
+                    };
+
+                    // The fused emitter guarantees `idx + n <= xs.len()` via its
+                    // loop bound, but defend the dispatcher anyway in case of a
+                    // hand-rolled program manipulating the index reg.
+                    if idx.checked_add(n).is_none_or(|end| end > xs_items.len()) {
+                        vm_err!(VmError::Type(
+                            "window: stride window out of range (idx+n > len)"
+                        ));
+                    }
+
+                    // Try the in-place fast path: R[A] holds a HeapObj::List with
+                    // strong count 1. Reuse its Vec.
+                    let cur = reg!(a);
+                    let mut reused = false;
+                    if cur.is_heap() && (cur.0 & TAG_MASK) == TAG_LIST {
+                        let ptr_a = (cur.0 & PTR_MASK) as *const HeapObj;
+                        // SAFETY: TAG_LIST + is_heap() guarantee a live List Rc.
+                        let rc_count = {
+                            let rc_peek = unsafe { Rc::from_raw(ptr_a) };
+                            let count = Rc::strong_count(&rc_peek);
+                            std::mem::forget(rc_peek);
+                            count
+                        };
+                        if rc_count == 1 {
+                            // Sole owner — mutate Vec in place. Drop old items'
+                            // RCs (window scratch is full of NanVals from the
+                            // previous iteration; they were never published
+                            // anywhere else because the predicate either
+                            // returned a bool or the mapper consumed its arg by
+                            // value). Then clone_rc + push the new items.
+                            //
+                            // SAFETY: rc_count == 1 means no other reference
+                            // exists; the cast to *mut is sound. We never alias
+                            // ptr_a elsewhere during this block.
+                            let heap_mut = unsafe { &mut *(ptr_a as *mut HeapObj) };
+                            match heap_mut {
+                                HeapObj::List(items) => {
+                                    for v in items.iter() {
+                                        v.drop_rc();
+                                    }
+                                    items.clear();
+                                    items.reserve(n);
+                                    for v in &xs_items[idx..idx + n] {
+                                        v.clone_rc();
+                                        items.push(*v);
+                                    }
+                                    reused = true;
+                                }
+                                _ => unreachable!(),
+                            }
+                        }
+                    }
+
+                    if !reused {
+                        // Allocate fresh. drop_rc the previous value so the new
+                        // list takes its slot cleanly.
+                        let mut sub = Vec::with_capacity(n);
+                        for v in &xs_items[idx..idx + n] {
+                            v.clone_rc();
+                            sub.push(*v);
+                        }
+                        reg_set!(a, NanVal::heap_list(sub));
+                    }
                 }
                 OP_CHUNKS => {
                     let a = ((inst >> 16) & 0xFF) as usize + base;
@@ -14964,7 +15100,8 @@ pub(crate) fn find_block_leaders(code: &[u32]) -> Vec<usize> {
                 leaders.insert(i + 2);
                 leaders.insert(i + 3);
             }
-            OP_SLC | OP_LST | OP_MSET | OP_POSTH | OP_RGXSUB | OP_CLAMP | OP_PADLC | OP_PADRC => {
+            OP_SLC | OP_LST | OP_MSET | OP_POSTH | OP_RGXSUB | OP_CLAMP | OP_PADLC | OP_PADRC
+            | OP_WINDOW_VIEW => {
                 // 2-word instructions: the following word is data, not an instruction.
                 // Skip it so its bits aren't mis-decoded as an opcode that might mark
                 // bogus leaders. The instruction after the data word is a normal leader
