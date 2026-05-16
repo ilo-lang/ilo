@@ -2727,12 +2727,16 @@ fn dispatch_run(r: cli::RunArgs, mode: OutputMode, explicit_json: bool, no_hints
                     }
                 } else if is_file {
                     // File with no func arg: auto-run if there's exactly one
-                    // function, list available functions if there are
-                    // several, AST-dump if there are none (declarations-only
-                    // file — useful for inspecting type/alias-only modules).
+                    // function, auto-run `main` if a multi-fn file defines
+                    // one, list available functions if there are several
+                    // without a `main`, AST-dump if there are none
+                    // (declarations-only file — useful for inspecting
+                    // type/alias-only modules). SKILL.md documents the
+                    // main-as-default convention; see `[CLI invocation]`.
                     match func_names.len() {
                         0 => return dump_ast_json(&program),
                         1 => (None, vec![]),
+                        _ if func_names.contains(&"main") => (Some("main"), vec![]),
                         _ => {
                             eprintln!(
                                 "error: {} defines multiple functions, please specify one.",
