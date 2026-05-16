@@ -275,8 +275,12 @@ pub(crate) const OP_MATMUL: u8 = 124; // R[A] = matmul(R[B], R[C])
 pub(crate) const OP_DOT: u8 = 125; // R[A] = dot(R[B], R[C])  (vector dot product -> n)
 
 // ABC mode — string padding
-pub(crate) const OP_PADL: u8 = 121; // R[A] = pad_left(R[B], R[C])  (text, width → text)
-pub(crate) const OP_PADR: u8 = 122; // R[A] = pad_right(R[B], R[C]) (text, width → text)
+pub(crate) const OP_PADL: u8 = 121; // R[A] = pad_left(R[B], R[C])  (text, width → text; pad char ' ')
+pub(crate) const OP_PADR: u8 = 122; // R[A] = pad_right(R[B], R[C]) (text, width → text; pad char ' ')
+// Pad-with-char: 2-instruction sequence (data word A = pad-char reg). Pad char
+// must be a 1-Unicode-scalar string at runtime; anything else is a Type error.
+pub(crate) const OP_PADLC: u8 = 169; // R[A] = pad_left(R[B], R[C], R[D])  (text, width, padchar → text)
+pub(crate) const OP_PADRC: u8 = 170; // R[A] = pad_right(R[B], R[C], R[D]) (text, width, padchar → text)
 
 // Per-char codepoint round-trip — t->n and n->t (Unicode scalar, 1-arg each).
 pub(crate) const OP_ORD: u8 = 153; // R[A] = first-char codepoint of R[B]
@@ -2561,6 +2565,23 @@ impl RegCompiler {
                                 OP_PADR
                             };
                             self.emit_abc(op, ra, rb, rc);
+                            return ra;
+                        }
+                        (Builtin::Padl | Builtin::Padr, 3) => {
+                            // padl/padr s w pc — two-instruction sequence:
+                            //   OP_PADLC A=result  B=s  C=w
+                            //   data word: A=pad_char_reg (consumed by dispatch; ip advances past it)
+                            let rb = self.compile_expr(&args[0]);
+                            let rc = self.compile_expr(&args[1]);
+                            let rd = self.compile_expr(&args[2]);
+                            let ra = self.alloc_reg();
+                            let op = if builtin == Builtin::Padl {
+                                OP_PADLC
+                            } else {
+                                OP_PADRC
+                            };
+                            self.emit_abc(op, ra, rb, rc);
+                            self.emit_abc(0, rd, 0, 0);
                             return ra;
                         }
                         (Builtin::Unq, 1) => {
@@ -5875,6 +5896,64 @@ impl<'a> VM<'a> {
                     } else {
                         let pad = " ".repeat(w - cc);
                         if op_byte == OP_PADL {
+                            format!("{pad}{s}")
+                        } else {
+                            format!("{s}{pad}")
+                        }
+                    };
+                    reg_set!(a, NanVal::heap_string(out));
+                }
+                OP_PADLC | OP_PADRC => {
+                    // Two-instruction sequence: OP_PADLC/OP_PADRC A=result B=s C=w; data word A=pad_char_reg
+                    let op_byte = (inst >> 24) as u8;
+                    let a = ((inst >> 16) & 0xFF) as usize + base;
+                    let b = ((inst >> 8) & 0xFF) as usize + base;
+                    let c = (inst & 0xFF) as usize + base;
+                    // SAFETY: compiler always emits the data word immediately after OP_PADLC/OP_PADRC.
+                    let data_inst = unsafe { *code.get_unchecked(ip) };
+                    ip += 1;
+                    let d = ((data_inst >> 16) & 0xFF) as usize + base;
+                    let sv = reg!(b);
+                    let wv = reg!(c);
+                    let pv = reg!(d);
+                    if !sv.is_string() {
+                        vm_err!(VmError::Type("pad requires a string"));
+                    }
+                    if !wv.is_number() {
+                        vm_err!(VmError::Type("pad width must be a number"));
+                    }
+                    let wn = wv.as_number();
+                    if !wn.is_finite() || wn.fract() != 0.0 || wn < 0.0 {
+                        vm_err!(VmError::Type("pad width must be a non-negative integer"));
+                    }
+                    if !pv.is_string() {
+                        vm_err!(VmError::Type("pad char must be a 1-character string"));
+                    }
+                    let w = wn as usize;
+                    // SAFETY: is_string() confirmed for both sv and pv.
+                    let s = unsafe {
+                        match sv.as_heap_ref() {
+                            HeapObj::Str(s) => s.as_str().to_owned(),
+                            _ => unreachable!(),
+                        }
+                    };
+                    let pc_str = unsafe {
+                        match pv.as_heap_ref() {
+                            HeapObj::Str(s) => s.as_str().to_owned(),
+                            _ => unreachable!(),
+                        }
+                    };
+                    let mut pc_chars = pc_str.chars();
+                    let pc = match (pc_chars.next(), pc_chars.next()) {
+                        (Some(c), None) => c,
+                        _ => vm_err!(VmError::Type("pad char must be a 1-character string")),
+                    };
+                    let cc = s.chars().count();
+                    let out = if cc >= w {
+                        s
+                    } else {
+                        let pad: String = std::iter::repeat_n(pc, w - cc).collect();
+                        if op_byte == OP_PADLC {
                             format!("{pad}{s}")
                         } else {
                             format!("{s}{pad}")
@@ -13949,17 +14028,29 @@ pub(crate) extern "C" fn jit_cap(v: u64, span_bits: u64) -> u64 {
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn jit_padl(sv: u64, wv: u64, span_bits: u64) -> u64 {
-    jit_pad_impl(sv, wv, true, span_bits)
+    jit_pad_impl(sv, wv, None, true, span_bits)
 }
 
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn jit_padr(sv: u64, wv: u64, span_bits: u64) -> u64 {
-    jit_pad_impl(sv, wv, false, span_bits)
+    jit_pad_impl(sv, wv, None, false, span_bits)
 }
 
 #[cfg(feature = "cranelift")]
-fn jit_pad_impl(sv: u64, wv: u64, left: bool, span_bits: u64) -> u64 {
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn jit_padlc(sv: u64, wv: u64, pv: u64, span_bits: u64) -> u64 {
+    jit_pad_impl(sv, wv, Some(pv), true, span_bits)
+}
+
+#[cfg(feature = "cranelift")]
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn jit_padrc(sv: u64, wv: u64, pv: u64, span_bits: u64) -> u64 {
+    jit_pad_impl(sv, wv, Some(pv), false, span_bits)
+}
+
+#[cfg(feature = "cranelift")]
+fn jit_pad_impl(sv: u64, wv: u64, pv: Option<u64>, left: bool, span_bits: u64) -> u64 {
     let s_nv = NanVal(sv);
     let w_nv = NanVal(wv);
     if !s_nv.is_string() {
@@ -14003,11 +14094,52 @@ fn jit_pad_impl(sv: u64, wv: u64, left: bool, span_bits: u64) -> u64 {
             _ => unreachable!(),
         }
     };
+    // Resolve pad character: explicit arg validated as a 1-Unicode-scalar string,
+    // or ' ' when omitted (2-arg form).
+    let pc: char = match pv {
+        None => ' ',
+        Some(pv) => {
+            let p_nv = NanVal(pv);
+            if !p_nv.is_string() {
+                jit_set_runtime_error_with_span(
+                    VmError::Type(if left {
+                        "padl pad char must be a 1-character string"
+                    } else {
+                        "padr pad char must be a 1-character string"
+                    }),
+                    span_bits,
+                );
+                return TAG_NIL;
+            }
+            // SAFETY: `p_nv.is_string()` confirmed above — heap tag is a live string.
+            let p_str = unsafe {
+                match p_nv.as_heap_ref() {
+                    HeapObj::Str(s) => s.as_str().to_owned(),
+                    _ => unreachable!(),
+                }
+            };
+            let mut iter = p_str.chars();
+            match (iter.next(), iter.next()) {
+                (Some(c), None) => c,
+                _ => {
+                    jit_set_runtime_error_with_span(
+                        VmError::Type(if left {
+                            "padl pad char must be a 1-character string"
+                        } else {
+                            "padr pad char must be a 1-character string"
+                        }),
+                        span_bits,
+                    );
+                    return TAG_NIL;
+                }
+            }
+        }
+    };
     let cc = s.chars().count();
     let out = if cc >= w {
         s
     } else {
-        let pad = " ".repeat(w - cc);
+        let pad: String = std::iter::repeat_n(pc, w - cc).collect();
         if left {
             format!("{pad}{s}")
         } else {
@@ -14608,7 +14740,7 @@ pub(crate) fn find_block_leaders(code: &[u32]) -> Vec<usize> {
                 leaders.insert(i + 2);
                 leaders.insert(i + 3);
             }
-            OP_SLC | OP_LST | OP_MSET | OP_POSTH | OP_RGXSUB | OP_CLAMP => {
+            OP_SLC | OP_LST | OP_MSET | OP_POSTH | OP_RGXSUB | OP_CLAMP | OP_PADLC | OP_PADRC => {
                 // 2-word instructions: the following word is data, not an instruction.
                 // Skip it so its bits aren't mis-decoded as an opcode that might mark
                 // bogus leaders. The instruction after the data word is a normal leader
@@ -21442,6 +21574,60 @@ mod tests {
                 panic!("expected Str")
             };
             assert_eq!(s.clone(), "   hi");
+            assert!(jit_take_runtime_error().is_none());
+        }
+
+        #[test]
+        fn jit_padlc_pads_with_custom_char() {
+            let _ = jit_take_runtime_error();
+            let r = jit_padlc(str_val("42"), num(5.0), str_val("0"), 0);
+            let rv = NanVal(r);
+            let HeapObj::Str(s) = (unsafe { rv.as_heap_ref() }) else {
+                panic!("expected Str")
+            };
+            assert_eq!(s.clone(), "00042");
+            assert!(jit_take_runtime_error().is_none());
+        }
+
+        #[test]
+        fn jit_padrc_pads_with_custom_char() {
+            let _ = jit_take_runtime_error();
+            let r = jit_padrc(str_val("x"), num(4.0), str_val("."), 0);
+            let rv = NanVal(r);
+            let HeapObj::Str(s) = (unsafe { rv.as_heap_ref() }) else {
+                panic!("expected Str")
+            };
+            assert_eq!(s.clone(), "x...");
+            assert!(jit_take_runtime_error().is_none());
+        }
+
+        #[test]
+        fn jit_padlc_multichar_pad_signals_runtime_error() {
+            let _ = jit_take_runtime_error();
+            let r = jit_padlc(str_val("x"), num(5.0), str_val("ab"), 0);
+            assert!(is_nil(r));
+            let err = jit_take_runtime_error().expect("expected pending error");
+            assert!(matches!(err.0, VmError::Type(msg) if msg.contains("1-character")));
+        }
+
+        #[test]
+        fn jit_padlc_non_string_pad_signals_runtime_error() {
+            let _ = jit_take_runtime_error();
+            let r = jit_padlc(str_val("x"), num(5.0), num(0.0), 0);
+            assert!(is_nil(r));
+            let err = jit_take_runtime_error().expect("expected pending error");
+            assert!(matches!(err.0, VmError::Type(msg) if msg.contains("1-character")));
+        }
+
+        #[test]
+        fn jit_padlc_unicode_pad_char() {
+            let _ = jit_take_runtime_error();
+            let r = jit_padlc(str_val("hi"), num(5.0), str_val("·"), 0);
+            let rv = NanVal(r);
+            let HeapObj::Str(s) = (unsafe { rv.as_heap_ref() }) else {
+                panic!("expected Str")
+            };
+            assert_eq!(s.clone(), "···hi");
             assert!(jit_take_runtime_error().is_none());
         }
 
