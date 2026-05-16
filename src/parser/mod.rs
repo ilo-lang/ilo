@@ -3220,6 +3220,10 @@ fn builtin_arity_tables() -> (HashMap<String, usize>, HashMap<String, Vec<bool>>
         // follows. The 0th slot is a fn-ref position so `srt xs` keeps
         // `xs` as a bare ref and doesn't try to expand it.
         ("srt", 2, &[0]),
+        // rsrt mirrors srt: 1-arg descending sort plus `rsrt fn xs` and
+        // `rsrt fn ctx xs` closure-bind variant. Slot 0 is a fn-ref so the
+        // bare `rsrt xs` form keeps `xs` as a ref and doesn't try to expand.
+        ("rsrt", 2, &[0]),
         // Higher-order
         ("map", 2, &[0]),
         ("flt", 2, &[0]),

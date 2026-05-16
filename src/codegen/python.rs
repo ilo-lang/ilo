@@ -681,6 +681,11 @@ fn emit_expr(out: &mut String, level: usize, expr: &Expr) -> String {
                 let xs = emit_expr(out, level, &args[1]);
                 return format!("sorted({}, key={})", xs, key_fn);
             }
+            if function == "rsrt" && args.len() == 2 {
+                let key_fn = emit_expr(out, level, &args[0]);
+                let xs = emit_expr(out, level, &args[1]);
+                return format!("sorted({}, key={}, reverse=True)", xs, key_fn);
+            }
             if function == "trm" && args.len() == 1 {
                 return format!("{}.strip()", emit_expr(out, level, &args[0]));
             }

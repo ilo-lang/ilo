@@ -417,6 +417,10 @@ pub(crate) fn is_tree_bridge_eligible(b: crate::builtins::Builtin, argc: usize) 
         (Builtin::Uniqby, 2) => true,
         (Builtin::Partition, 2) => true,
         (Builtin::Srt, 2) => true,
+        // rsrt fn xs — descending sort by key. Same bridge contract as
+        // srt 2-arg: tree interpreter does the user-fn callback, bridge
+        // round-trips the result list. Cross-engine parity with srt.
+        (Builtin::Rsrt, 2) => true,
         // mapr fn xs: short-circuit Result-aware map. Tree bridge routes
         // through the tree interpreter's Mapr arm, which handles the
         // ~v/^e dispatch and ACTIVE_AST_PROGRAM user-fn callbacks the same
@@ -430,6 +434,9 @@ pub(crate) fn is_tree_bridge_eligible(b: crate::builtins::Builtin, argc: usize) 
         (Builtin::Flt, 3) => true,
         (Builtin::Fld, 4) => true,
         (Builtin::Srt, 3) => true,
+        // rsrt fn ctx xs — closure-bind descending sort. Same bridge
+        // contract as srt 3-arg.
+        (Builtin::Rsrt, 3) => true,
         _ => false,
     }
 }

@@ -1,0 +1,26 @@
+-- rsrt fn xs: descending sort by key. Mirrors `srt fn xs` but reverses
+-- the comparator, so the largest key comes first.
+-- One-step alternative to `rev (srt fn xs)` or `srt (-0 key) xs`.
+-- Signature: rsrt fn:F a k xs:L a > L a
+
+-- Key: absolute value, largest first.
+absv n:n>n;?<n 0 (-0 n) n
+
+worst-by-abs xs:L n>L n;rsrt absv xs
+
+-- Key: string length, longest first — the canonical persona case for
+-- "top-N by some derived score".
+slen s:t>n;len s
+
+longest-words ws:L t>L t;rsrt slen ws
+
+-- 3-arg closure-bind form: fn receives (elem, ctx).
+score-with x:n c:n>n;*x c
+top-scaled xs:L n>L n;rsrt score-with 2 xs
+
+-- run: worst-by-abs [-3,1,-2,4,-1]
+-- out: [4, -3, -2, 1, -1]
+-- run: longest-words ["fig","banana","apple"]
+-- out: [banana, apple, fig]
+-- run: top-scaled [1,3,2,5,4]
+-- out: [5, 4, 3, 2, 1]
