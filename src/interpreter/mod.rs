@@ -2257,7 +2257,9 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             )),
         };
     }
-    if (builtin == Some(Builtin::Padl) || builtin == Some(Builtin::Padr)) && args.len() == 2 {
+    if (builtin == Some(Builtin::Padl) || builtin == Some(Builtin::Padr))
+        && (args.len() == 2 || args.len() == 3)
+    {
         let name = if builtin == Some(Builtin::Padl) {
             "padl"
         } else {
@@ -2295,11 +2297,44 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 ));
             }
         };
+        // Resolve pad char: explicit arg validated as a 1-Unicode-scalar string,
+        // or ' ' when omitted (2-arg form). Single-char enforcement keeps width-in-chars
+        // semantics meaningful — a multi-char pad would make the output not line up to `w`.
+        let pad_char: char = if args.len() == 3 {
+            match &args[2] {
+                Value::Text(t) => {
+                    let mut iter = t.chars();
+                    match (iter.next(), iter.next()) {
+                        (Some(c), None) => c,
+                        _ => {
+                            return Err(RuntimeError::new(
+                                "ILO-R009",
+                                format!(
+                                    "{name} pad char must be a 1-character string, got {:?}",
+                                    t.as_str()
+                                ),
+                            ));
+                        }
+                    }
+                }
+                other => {
+                    return Err(RuntimeError::new(
+                        "ILO-R009",
+                        format!(
+                            "{name} pad char must be a 1-character string, got {:?}",
+                            other
+                        ),
+                    ));
+                }
+            }
+        } else {
+            ' '
+        };
         let char_count = s.chars().count();
         if char_count >= w {
             return Ok(Value::Text(s));
         }
-        let pad = " ".repeat(w - char_count);
+        let pad: String = std::iter::repeat_n(pad_char, w - char_count).collect();
         let out = if builtin == Some(Builtin::Padl) {
             format!("{pad}{s}")
         } else {
