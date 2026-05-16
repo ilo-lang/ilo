@@ -2741,7 +2741,7 @@ or write `({fmt_name} \"...\" ...)` so its args are grouped."
                     });
                 }
                 // Check for field access chain: ident.field.field...
-                let mut expr = Expr::Ref(name);
+                let mut expr = Expr::Ref(name.clone());
                 while matches!(self.peek(), Some(Token::Dot) | Some(Token::DotQuestion)) {
                     let safe = self.peek() == Some(&Token::DotQuestion);
                     self.advance();
@@ -2753,6 +2753,25 @@ or write `({fmt_name} \"...\" ...)` so its args are grouped."
                                 index: n as usize,
                                 safe,
                             };
+                        }
+                        // `xs.(expr)` — parenthesised expression after `.`
+                        // is a common reach for variable-position indexing
+                        // (ml-engineer rerun4). PR #298 desugars `xs.i` to
+                        // `at xs i` when `i` is bound, but `xs.(i+1)` never
+                        // even parses. Emit a hint pointing at the correct
+                        // shape rather than the bare "expected identifier"
+                        // error from expect_ident().
+                        Some(Token::LParen) => {
+                            return Err(self.error_hint(
+                                "ILO-P005",
+                                "expected identifier, got LParen".into(),
+                                format!(
+                                    "field access requires an identifier after `.`. \
+For variable-position list indexing use `at {n} (expr)`, \
+or bind the index to a name first: `i:expr;{n}.i`.",
+                                    n = name
+                                ),
+                            ));
                         }
                         _ => {
                             let field = self.expect_ident()?;
@@ -3742,6 +3761,30 @@ mod tests {
             panic!("expected index access")
         };
         assert_eq!(*index, 0);
+    }
+
+    #[test]
+    fn dot_followed_by_paren_emits_at_hint() {
+        // `xs.(expr)` is a common reach for variable-position indexing
+        // (ml-engineer rerun4). PR #298 desugars `xs.i` to `at xs i` when
+        // `i` is bound, but `xs.(i+1)` never parses. The parser should
+        // emit a friendly hint pointing at `at xs (expr)` rather than the
+        // bare ILO-P005 "expected identifier" with no suggestion.
+        let (_, errors) = parse_str_errors("f xs:L n i:n>n;xs.(i + 1)");
+        assert!(!errors.is_empty(), "expected parse error");
+        let err = errors
+            .iter()
+            .find(|e| e.code == "ILO-P005")
+            .expect("expected ILO-P005 error");
+        let hint = err.hint.as_deref().unwrap_or("");
+        assert!(
+            hint.contains("at xs (expr)"),
+            "hint should point at `at xs (expr)`; got: {hint:?}"
+        );
+        assert!(
+            hint.contains("bind") || hint.contains("xs.i"),
+            "hint should suggest binding the index to a name first; got: {hint:?}"
+        );
     }
 
     #[test]

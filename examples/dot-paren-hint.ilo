@@ -1,0 +1,23 @@
+-- `xs.(expr)` (parenthesised expression after `.`) is not valid ilo syntax,
+-- but it's a common reach for variable-position indexing when the index is a
+-- computed expression rather than a bare name. PR #298 desugars `xs.i` to
+-- `at xs i` when `i` is a bound variable, so the natural extension to
+-- `xs.(i+1)` is a reasonable guess, hence the friendly parser hint
+-- pointing at `at xs (expr)` or the bind-first idiom.
+--
+-- This example demonstrates the two correct shapes the hint suggests.
+
+-- Shape 1: `at xs (expr)` — the direct form. Three tokens plus the parens.
+plus1 xs:L n i:n>n;at xs (+i 1)
+
+-- Shape 2: bind to a name first, then use `xs.i` (PR #298 desugar path).
+plus1bind xs:L n i:n>n;j=+i 1;xs.j
+
+-- run: plus1 [10,20,30] 0
+-- out: 20
+-- run: plus1 [10,20,30] 1
+-- out: 30
+-- run: plus1bind [10,20,30] 0
+-- out: 20
+-- run: plus1bind [10,20,30] 1
+-- out: 30
