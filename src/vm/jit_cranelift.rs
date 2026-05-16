@@ -72,6 +72,9 @@ struct HelperFuncs {
     tan: FuncId,
     log10: FuncId,
     log2: FuncId,
+    asin: FuncId,
+    acos: FuncId,
+    atan: FuncId,
     atan2: FuncId,
     transpose: FuncId,
     matmul: FuncId,
@@ -262,6 +265,9 @@ fn register_helpers(builder: &mut JITBuilder) {
         ("jit_tan", jit_tan as *const u8),
         ("jit_log10", jit_log10 as *const u8),
         ("jit_log2", jit_log2 as *const u8),
+        ("jit_asin", jit_asin as *const u8),
+        ("jit_acos", jit_acos as *const u8),
+        ("jit_atan", jit_atan as *const u8),
         ("jit_atan2", jit_atan2 as *const u8),
         ("jit_transpose", jit_transpose as *const u8),
         ("jit_matmul", jit_matmul as *const u8),
@@ -433,6 +439,9 @@ fn declare_all_helpers(module: &mut JITModule) -> HelperFuncs {
         tan: declare_helper(module, "jit_tan", 1, 1),
         log10: declare_helper(module, "jit_log10", 1, 1),
         log2: declare_helper(module, "jit_log2", 1, 1),
+        asin: declare_helper(module, "jit_asin", 1, 1),
+        acos: declare_helper(module, "jit_acos", 1, 1),
+        atan: declare_helper(module, "jit_atan", 1, 1),
         atan2: declare_helper(module, "jit_atan2", 2, 1),
         transpose: declare_helper(module, "jit_transpose", 2, 1),
         matmul: declare_helper(module, "jit_matmul", 3, 1),
@@ -1079,7 +1088,7 @@ fn compile_function_body(
                 | OP_LEN | OP_ABS | OP_MIN | OP_MAX
                 | OP_FLR | OP_CEL | OP_ROU | OP_RND0 | OP_RND2 | OP_RNDN | OP_NOW
                 | OP_MOD | OP_CLAMP | OP_POW | OP_SQRT | OP_LOG | OP_EXP | OP_SIN | OP_COS
-                | OP_TAN | OP_LOG10 | OP_LOG2 | OP_ATAN2
+                | OP_TAN | OP_LOG10 | OP_LOG2 | OP_ASIN | OP_ACOS | OP_ATAN | OP_ATAN2
                 | OP_MEDIAN | OP_MIN_LST | OP_MAX_LST | OP_QUANTILE
                 | OP_STDEV | OP_VARIANCE | OP_SUM | OP_AVG | OP_DOT
                 | OP_DET | OP_ORD => {
@@ -2249,7 +2258,8 @@ fn compile_function_body(
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
             }
-            OP_SQRT | OP_LOG | OP_EXP | OP_SIN | OP_COS | OP_TAN | OP_LOG10 | OP_LOG2 => {
+            OP_SQRT | OP_LOG | OP_EXP | OP_SIN | OP_COS | OP_TAN | OP_LOG10 | OP_LOG2 | OP_ASIN
+            | OP_ACOS | OP_ATAN => {
                 let bv = builder.use_var(vars[b_idx]);
                 let fref = match op {
                     OP_SQRT => helpers.sqrt,
@@ -2259,7 +2269,10 @@ fn compile_function_body(
                     OP_COS => helpers.cos,
                     OP_TAN => helpers.tan,
                     OP_LOG10 => helpers.log10,
-                    _ => helpers.log2,
+                    OP_LOG2 => helpers.log2,
+                    OP_ASIN => helpers.asin,
+                    OP_ACOS => helpers.acos,
+                    _ => helpers.atan,
                 };
                 let fref = get_func_ref(&mut builder, module, fref);
                 let call_inst = builder.ins().call(fref, &[bv]);
