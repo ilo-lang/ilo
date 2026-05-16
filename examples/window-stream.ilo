@@ -1,0 +1,36 @@
+-- `flt fn (window n xs)` and `map fn (window n xs)` are *fused* at the
+-- bytecode emitter: the VM walks xs once with stride 1, reusing a single
+-- scratch list as the window for each call into the predicate / mapper.
+-- Without this fusion, an idiomatic `flt all-hydro (window 15 (chars s))`
+-- over an 11.4M-residue string would allocate ~170M small lists and run ~6x
+-- slower than the hand-rolled imperative form (bioinformatics rerun5).
+-- Tree, VM, and Cranelift all return the same output; the in-place reuse
+-- fast path lives in the VM dispatcher's `OP_WINDOW_VIEW` arm (and the
+-- corresponding Cranelift helper).
+
+hassum w:L n>b;>(sum w) 5
+
+-- flt keeps the windows whose elements sum > 5. Only [3,4] qualifies.
+keep>L (L n);flt hassum (window 2 [1, 2, 3, 4])
+
+-- map applies the mapper to each window. Stride-1 windows of [1..5] are
+-- [1,2,3], [2,3,4], [3,4,5]; their sums are 6, 9, 12.
+sums>L n;map sum (window 3 [1, 2, 3, 4, 5])
+
+-- An empty source list, an n larger than the list, and an unrelated `window`
+-- call (whose result escapes, so fusion can't fire) must all still produce
+-- the right answer.
+empty>L (L n);flt hassum (window 3 [])
+toobig>L n;map sum (window 10 [1, 2, 3])
+escape>L (L n);window 3 [10, 20, 30, 40]
+
+-- run: keep
+-- out: [[3, 4]]
+-- run: sums
+-- out: [6, 9, 12]
+-- run: empty
+-- out: []
+-- run: toobig
+-- out: []
+-- run: escape
+-- out: [[10, 20, 30], [20, 30, 40]]
