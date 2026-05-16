@@ -364,6 +364,7 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("srt", &["list_or_text"], "list_or_text"),
     ("srt", &["fn", "list"], "list"),
     ("rsrt", &["list_or_text"], "list_or_text"),
+    ("rsrt", &["fn", "list"], "list"),
     ("unq", &["list_or_text"], "list_or_text"),
     ("slc", &["list_or_text", "n", "n"], "list_or_text"),
     ("lst", &["list", "n", "any"], "list"),
@@ -1191,6 +1192,61 @@ fn builtin_check_args(
             (Ty::Unknown, errors)
         }
         "rsrt" => {
+            if arg_types.len() == 3 {
+                // rsrt key-fn ctx xs — closure-bind variant: fn takes (elem, ctx)
+                if let Some(fn_ty) = arg_types.first()
+                    && !matches!(fn_ty, Ty::Fn(_, _) | Ty::Unknown)
+                {
+                    errors.push(VerifyError {
+                        code: "ILO-T013",
+                        function: func_ctx.to_string(),
+                        message: format!("'rsrt' key arg must be a function (F ...), got {fn_ty}"),
+                        hint: Some("pass a function name: rsrt key-fn ctx xs".to_string()),
+                        span,
+                        is_warning: false,
+                    });
+                }
+                if let Some(Ty::Fn(params, _)) = arg_types.first()
+                    && params.len() != 2
+                {
+                    errors.push(VerifyError {
+                        code: "ILO-T013",
+                        function: func_ctx.to_string(),
+                        message: format!(
+                            "'rsrt' key fn must take 2 args (elem, ctx) for closure-bind variant, got {} args",
+                            params.len()
+                        ),
+                        hint: Some("for rsrt fn ctx xs, fn must be: F a c b".to_string()),
+                        span,
+                        is_warning: false,
+                    });
+                }
+                let ret = match arg_types.get(2) {
+                    Some(ty @ Ty::List(_)) => ty.clone(),
+                    _ => Ty::Unknown,
+                };
+                return (ret, errors);
+            }
+            if arg_types.len() == 2 {
+                // rsrt key-fn xs — descending sort by key function
+                if let Some(fn_ty) = arg_types.first()
+                    && !matches!(fn_ty, Ty::Fn(_, _) | Ty::Unknown)
+                {
+                    errors.push(VerifyError {
+                        code: "ILO-T013",
+                        function: func_ctx.to_string(),
+                        message: format!("'rsrt' key arg must be a function (F ...), got {fn_ty}"),
+                        hint: Some("pass a function name: rsrt key-fn xs".to_string()),
+                        span,
+                        is_warning: false,
+                    });
+                }
+                let ret = match arg_types.get(1) {
+                    Some(ty @ Ty::List(_)) => ty.clone(),
+                    _ => Ty::Unknown,
+                };
+                return (ret, errors);
+            }
             if let Some(arg) = arg_types.first() {
                 match arg {
                     Ty::List(inner) => return (Ty::List(inner.clone()), errors),
@@ -3148,8 +3204,8 @@ impl VerifyContext {
                         builtin_arity(callee).expect("is_builtin guarantees arity exists");
                     let arity_ok = if callee == "rnd" {
                         args.is_empty() || args.len() == 2
-                    } else if callee == "srt" {
-                        // srt xs / srt fn xs / srt fn ctx xs
+                    } else if callee == "srt" || callee == "rsrt" {
+                        // srt xs / srt fn xs / srt fn ctx xs (and rsrt mirrors)
                         args.len() == 1 || args.len() == 2 || args.len() == 3
                     } else if callee == "min" || callee == "max" {
                         // min xs (list form, returns min element) / min a b (number pair)
@@ -3179,7 +3235,7 @@ impl VerifyContext {
                     if !arity_ok {
                         let arity_desc = if callee == "rnd" {
                             "0 or 2".to_string()
-                        } else if callee == "srt" {
+                        } else if callee == "srt" || callee == "rsrt" {
                             "1, 2, or 3".to_string()
                         } else if callee == "map" || callee == "flt" {
                             "2 or 3".to_string()
