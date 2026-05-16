@@ -196,51 +196,100 @@ pub enum Token {
 ///   start, so this is unambiguous. Other operators (`+`, `-`, `*`, ...) are
 ///   valid prefix-call statement heads and are NOT special-cased.
 pub fn normalize_newlines(source: &str) -> String {
+    normalize_newlines_with_map(source).0
+}
+
+/// Normalize newlines and also produce a byte-level mapping from each
+/// normalized-offset back to the corresponding original-source offset.
+///
+/// `map[i]` is the original-source byte index that produced the byte at
+/// position `i` of the returned `String`. The mapping has length
+/// `normalized.len() + 1`, with `map[normalized.len()]` equal to
+/// `source.len()` so that a token span's `end` index can be remapped the
+/// same way as its `start`.
+///
+/// Used by `lex` so that token spans emitted by logos against the
+/// rewritten source are translated back to the user's actual source
+/// before any diagnostic surfaces them. Without this, parse-error spans
+/// inside multi-line function bodies drift onto downstream statements
+/// because `;` characters that replace `\n` (and indentation that gets
+/// stripped) shift every following byte.
+pub fn normalize_newlines_with_map(source: &str) -> (String, Vec<u32>) {
     if !source.contains('\n') {
-        return source.to_string();
+        // Identity case: the lexer sees exactly the source bytes, so the
+        // map is the identity over `0..=source.len()`.
+        let len = source.len();
+        let mut map = Vec::with_capacity(len + 1);
+        for i in 0..=len {
+            map.push(i as u32);
+        }
+        return (source.to_string(), map);
     }
 
     let mut out = String::with_capacity(source.len());
-    let mut chars = source.chars().peekable();
+    // `map[i]` = original byte offset producing normalized byte `i`.
+    let mut map: Vec<u32> = Vec::with_capacity(source.len() + 1);
     // Track the last non-whitespace char pushed to `out` to avoid O(n) trim_end scans.
     let mut last_significant: Option<char> = None;
     // Depth of open `(` and `[` we're currently inside. `{` is tracked
     // separately by `last_significant` (existing precedent).
     let mut bracket_depth: u32 = 0;
 
-    while let Some(c) = chars.next() {
+    // Char-indexed iterator yielding `(byte_offset, char)`. We need
+    // explicit byte offsets so the map can record where each emitted
+    // byte came from in the original source.
+    let mut iter = source.char_indices().peekable();
+
+    /// Push every byte of `s` to `out` and record `orig` as the source
+    /// offset for each.
+    fn push_str_with(out: &mut String, map: &mut Vec<u32>, s: &str, orig: usize) {
+        for _ in 0..s.len() {
+            map.push(orig as u32);
+        }
+        out.push_str(s);
+    }
+
+    /// Push a single char to `out` recording `orig` as the source offset
+    /// for each of the char's UTF-8 bytes.
+    fn push_char_with(out: &mut String, map: &mut Vec<u32>, c: char, orig: usize) {
+        let mut buf = [0u8; 4];
+        let s = c.encode_utf8(&mut buf);
+        push_str_with(out, map, s, orig);
+    }
+
+    while let Some((i, c)) = iter.next() {
         if c == '"' {
             // Pass through string literal content verbatim so `--` inside a
             // string isn't mistaken for a comment, `\n` (if ever present
             // inside a string) isn't rewritten to `;`, and `(`/`[` inside
             // text don't bump bracket depth. Mirrors logos's string regex:
             // closing quote terminates unless escaped.
-            out.push(c);
+            push_char_with(&mut out, &mut map, c, i);
             last_significant = Some(c);
-            while let Some(sc) = chars.next() {
-                out.push(sc);
+            while let Some((si, sc)) = iter.next() {
+                push_char_with(&mut out, &mut map, sc, si);
                 if sc == '\\' {
-                    if let Some(esc) = chars.next() {
-                        out.push(esc);
+                    if let Some((ei, esc)) = iter.next() {
+                        push_char_with(&mut out, &mut map, esc, ei);
                     }
                 } else if sc == '"' {
                     last_significant = Some(sc);
                     break;
                 }
             }
-        } else if c == '-' && chars.peek() == Some(&'-') {
+        } else if c == '-' && iter.peek().map(|(_, ch)| *ch) == Some('-') {
             // `--` starts a line comment. Drop the comment content (including
             // both dashes) up to but not including the next `\n`, so the
             // following `\n` is handled normally by the loop. This matches the
             // logos `--[^\n]*` skip rule but runs BEFORE newline normalization,
             // so an indented comment line doesn't bleed `;` separators into
             // the comment body where the logos regex would then swallow them.
-            chars.next(); // consume second '-'
-            while let Some(&nc) = chars.peek() {
+            iter.next(); // consume second '-'
+            while let Some(&(_, nc)) = iter.peek() {
                 if nc == '\n' {
                     break;
                 }
-                chars.next();
+                iter.next();
             }
             // Do not push anything; do not update last_significant. The
             // surrounding `\n` handling on the next loop iteration emits the
@@ -251,18 +300,18 @@ pub fn normalize_newlines(source: &str) -> String {
             // adjacent lines don't get glued together (e.g. `(+x\n  1)`
             // must not become `(+x1)`). Then skip indent on the next line.
             if bracket_depth > 0 {
-                out.push(' ');
-                while matches!(chars.peek(), Some(' ') | Some('\t')) {
-                    chars.next();
+                push_char_with(&mut out, &mut map, ' ', i);
+                while matches!(iter.peek().map(|(_, ch)| *ch), Some(' ') | Some('\t')) {
+                    iter.next();
                 }
                 continue;
             }
             // Check if next line is indented (starts with space or tab)
-            if matches!(chars.peek(), Some(' ') | Some('\t')) {
+            if matches!(iter.peek().map(|(_, ch)| *ch), Some(' ') | Some('\t')) {
                 // Peek past indent at the first real char on the next line
                 // so we can decide whether to emit a `;` before it.
-                let mut lookahead = chars.clone();
-                while matches!(lookahead.peek(), Some(' ') | Some('\t')) {
+                let mut lookahead = iter.clone();
+                while matches!(lookahead.peek().map(|(_, ch)| *ch), Some(' ') | Some('\t')) {
                     lookahead.next();
                 }
                 // `>>` (pipe operator) at the start of a continuation line is
@@ -272,7 +321,8 @@ pub fn normalize_newlines(source: &str) -> String {
                 // statement starts and must NOT trigger this.
                 let next_is_pipe = {
                     let mut probe = lookahead.clone();
-                    probe.next() == Some('>') && probe.next() == Some('>')
+                    probe.next().map(|(_, c)| c) == Some('>')
+                        && probe.next().map(|(_, c)| c) == Some('>')
                 };
                 // Indented continuation → emit `;` and skip the whitespace
                 // But first check if the last non-whitespace char was `{` — if so, skip the `;`
@@ -282,25 +332,28 @@ pub fn normalize_newlines(source: &str) -> String {
                 if last_significant == Some('{') || out.ends_with(';') || next_is_pipe {
                     // Don't emit `;`
                 } else {
-                    out.push(';');
+                    push_char_with(&mut out, &mut map, ';', i);
                 }
                 // Skip leading whitespace on the continuation line
-                while matches!(chars.peek(), Some(' ') | Some('\t')) {
-                    chars.next();
+                while matches!(iter.peek().map(|(_, ch)| *ch), Some(' ') | Some('\t')) {
+                    iter.next();
                 }
                 // If the continuation line starts with `}`, don't add `;` before it
-                if chars.peek() == Some(&'}') && last_significant != Some('{') && out.ends_with(';')
+                if iter.peek().map(|(_, ch)| *ch) == Some('}')
+                    && last_significant != Some('{')
+                    && out.ends_with(';')
                 {
                     out.pop(); // remove the `;` we just pushed
+                    map.pop();
                 }
-            } else if chars.peek() == Some(&'}') {
+            } else if iter.peek().map(|(_, ch)| *ch) == Some('}') {
                 // Non-indented `}` closes a block — don't emit newline
             } else {
                 // Not indented → keep newline (declaration boundary)
-                out.push('\n');
+                push_char_with(&mut out, &mut map, '\n', i);
             }
         } else {
-            out.push(c);
+            push_char_with(&mut out, &mut map, c, i);
             if !c.is_ascii_whitespace() {
                 last_significant = Some(c);
             }
@@ -314,13 +367,52 @@ pub fn normalize_newlines(source: &str) -> String {
         }
     }
 
-    out
+    // Sentinel for one-past-end so that token spans can remap `end`.
+    map.push(source.len() as u32);
+    debug_assert_eq!(map.len(), out.len() + 1);
+
+    (out, map)
 }
 
 /// Lex source code into a stream of tokens with positions.
+///
+/// All token spans (and lex-error positions) returned by this function
+/// are byte offsets into the *original* `source`, not the normalized
+/// rewrite that logos actually scans. The remap is built by
+/// `normalize_newlines_with_map` and applied as the final step before
+/// return, so callers can slice the original source by these spans and
+/// `SourceMap::lookup` resolves the right line/col.
 pub fn lex(source: &str) -> Result<Vec<(Token, std::ops::Range<usize>)>, LexError> {
-    let normalized = normalize_newlines(source);
-    let mut lexer = Token::lexer(&normalized);
+    let (normalized, span_map) = normalize_newlines_with_map(source);
+    // Map a normalized byte offset back to an original-source byte
+    // offset. Out-of-range offsets clamp to `source.len()` defensively
+    // (should never happen given the `+1` sentinel in the map).
+    let remap = |off: usize| -> usize {
+        span_map
+            .get(off)
+            .copied()
+            .map(|x| x as usize)
+            .unwrap_or(source.len())
+    };
+    match lex_normalized(&normalized) {
+        Ok(mut tokens) => {
+            for (_, sp) in tokens.iter_mut() {
+                *sp = remap(sp.start)..remap(sp.end);
+            }
+            Ok(tokens)
+        }
+        Err(mut e) => {
+            e.position = remap(e.position);
+            Err(e)
+        }
+    }
+}
+
+/// Inner lex that operates on already-normalized source. All token
+/// spans and `LexError.position` are byte offsets into `normalized`.
+/// `lex` calls this and remaps spans back to the original source.
+fn lex_normalized(normalized: &str) -> Result<Vec<(Token, std::ops::Range<usize>)>, LexError> {
+    let mut lexer = Token::lexer(normalized);
     let mut tokens: Vec<(Token, std::ops::Range<usize>)> = Vec::new();
 
     while let Some(result) = lexer.next() {
@@ -366,7 +458,7 @@ pub fn lex(source: &str) -> Result<Vec<(Token, std::ops::Range<usize>)>, LexErro
                     if !prev_is_ident_flush
                         && !prev_token_is_dot_flush(&tokens, span.start)
                         && !prev_is_type_position
-                        && let Some((word, end)) = scan_uppercase_run(&normalized, span.start)
+                        && let Some((word, end)) = scan_uppercase_run(normalized, span.start)
                         && word.len() >= 2
                         && let Some((canonical, hint)) = logical_keyword_message(&word)
                     {
@@ -394,7 +486,7 @@ pub fn lex(source: &str) -> Result<Vec<(Token, std::ops::Range<usize>)>, LexErro
                         // bindings (no preceding Dot/DotQuestion).
                         if prev_ident_is_post_dot(&tokens) {
                             if let Some(_consumed) = absorb_camel_tail(
-                                &normalized,
+                                normalized,
                                 span.start,
                                 span.end,
                                 &mut lexer,
@@ -409,7 +501,7 @@ pub fn lex(source: &str) -> Result<Vec<(Token, std::ops::Range<usize>)>, LexErro
                             sigil_char,
                             &normalized[span.end..],
                             prev_span.start,
-                            Some(&normalized),
+                            Some(normalized),
                         ));
                     }
                     // Leading-uppercase JSON key flush after a Dot/DotQuestion
@@ -419,7 +511,7 @@ pub fn lex(source: &str) -> Result<Vec<(Token, std::ops::Range<usize>)>, LexErro
                     // Ident covering the whole identifier-shaped run.
                     if prev_token_is_dot_flush(&tokens, span.start) {
                         if let Some(_consumed) = emit_ident_at_dot(
-                            &normalized,
+                            normalized,
                             span.start,
                             span.end,
                             &mut lexer,
@@ -449,7 +541,7 @@ pub fn lex(source: &str) -> Result<Vec<(Token, std::ops::Range<usize>)>, LexErro
                         // below). Bindings still error normally.
                         if prev_ident_is_post_dot(&tokens) {
                             if let Some(_consumed) = absorb_camel_tail(
-                                &normalized,
+                                normalized,
                                 span.start,
                                 span.end,
                                 &mut lexer,
@@ -464,7 +556,7 @@ pub fn lex(source: &str) -> Result<Vec<(Token, std::ops::Range<usize>)>, LexErro
                             c,
                             &normalized[span.end..],
                             prev_span.start,
-                            Some(&normalized),
+                            Some(normalized),
                         ));
                     }
                     // Leading-uppercase JSON key flush after `.` or `.?`
@@ -474,7 +566,7 @@ pub fn lex(source: &str) -> Result<Vec<(Token, std::ops::Range<usize>)>, LexErro
                     // whole identifier-shaped run.
                     if prev_token_is_dot_flush(&tokens, span.start) {
                         if let Some(_consumed) = emit_ident_at_dot(
-                            &normalized,
+                            normalized,
                             span.start,
                             span.end,
                             &mut lexer,
@@ -494,7 +586,7 @@ pub fn lex(source: &str) -> Result<Vec<(Token, std::ops::Range<usize>)>, LexErro
                 // scientific-researcher rerun3 both hit this.)
                 if bad.len() == 1
                     && bad.chars().next().unwrap().is_ascii_uppercase()
-                    && let Some((word, end)) = scan_uppercase_run(&normalized, span.start)
+                    && let Some((word, end)) = scan_uppercase_run(normalized, span.start)
                     && let Some((canonical, hint)) = logical_keyword_message(&word)
                 {
                     return Err(LexError {
