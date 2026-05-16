@@ -1939,6 +1939,59 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             )),
         };
     }
+    if builtin == Some(Builtin::Rsrt) && (args.len() == 2 || args.len() == 3) {
+        // rsrt fn xs / rsrt fn ctx xs — descending sort by key function.
+        // Mirrors the srt 2/3-arg path: compute keys for each element, then
+        // sort by key using the REVERSED comparator (b.cmp(a) for text,
+        // b.partial_cmp(a) for numbers). Element type is preserved.
+        let fn_name = resolve_fn_ref(&args[0]).ok_or_else(|| {
+            RuntimeError::new(
+                "ILO-R009",
+                format!(
+                    "rsrt: key arg must be a function reference, got {:?}",
+                    args[0]
+                ),
+            )
+        })?;
+        let captures = closure_captures(&args[0]);
+        let (ctx, list_arg) = if args.len() == 3 {
+            (Some(args[1].clone()), &args[2])
+        } else {
+            (None, &args[1])
+        };
+        let items = match list_arg {
+            Value::List(l) => l.clone(),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("rsrt: list arg must be a list, got {:?}", other),
+                ));
+            }
+        };
+        let owned_items: Vec<Value> = Arc::try_unwrap(items).unwrap_or_else(|arc| (*arc).clone());
+        let mut keyed: Vec<(Value, Value)> = owned_items
+            .into_iter()
+            .map(|item| {
+                let mut call_args = match &ctx {
+                    Some(c) => vec![item.clone(), c.clone()],
+                    None => vec![item.clone()],
+                };
+                call_args.extend(captures.iter().cloned());
+                let key = call_function(env, &fn_name, call_args)?;
+                Ok((key, item))
+            })
+            .collect::<Result<_>>()?;
+        keyed.sort_by(|(ka, _), (kb, _)| match (ka, kb) {
+            (Value::Number(a), Value::Number(b)) => {
+                b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal)
+            }
+            (Value::Text(a), Value::Text(b)) => b.cmp(a),
+            _ => std::cmp::Ordering::Equal,
+        });
+        return Ok(Value::List(Arc::new(
+            keyed.into_iter().map(|(_, v)| v).collect(),
+        )));
+    }
     if builtin == Some(Builtin::Slc) && args.len() == 3 {
         // Both bounds accept negative integers Python-style:
         // `slc xs -1 0` is empty, `slc xs 0 -1` drops the last element,
