@@ -1,0 +1,55 @@
+-- Standard C-style escape sequences inside `"..."` literals decode to
+-- their control characters, not literal backslash-letter pairs. This is
+-- what every PDF/log/ANSI-aware pipeline depends on:
+--   \f  form feed   (0x0C, pdftotext page separator)
+--   \b  backspace   (0x08, ANSI cursor edits)
+--   \v  vertical tab (0x0B)
+--   \a  bell        (0x07)
+--   \0  null        (0x00, null-terminated formats)
+--   \/  forward slash (JSON-style passthrough)
+-- plus the long-standing \n \t \r \" \\ pair.
+
+-- Original pdf-analyst case: count PDF pages by splitting on form-feed.
+pages>n;len (spl "page1\fpage2\fpage3" "\f")
+
+-- Every single-char escape is exactly one scalar:
+formfeed-len>n;len "\f"
+backspace-len>n;len "\b"
+null-len>n;len "\0"
+vtab-len>n;len "\v"
+bell-len>n;len "\a"
+slash-len>n;len "\/"
+
+-- Mixed escapes in one literal all decode (six escapes, six chars):
+mixed>n;len "\n\t\f\r\b\0"
+
+-- Unknown escapes (e.g. \z) keep the pre-fix passthrough so existing
+-- programs that put bare backslashes in strings are unaffected:
+unknown-len>n;len "\z"
+
+-- run: pages
+-- out: 3
+
+-- run: formfeed-len
+-- out: 1
+
+-- run: backspace-len
+-- out: 1
+
+-- run: null-len
+-- out: 1
+
+-- run: vtab-len
+-- out: 1
+
+-- run: bell-len
+-- out: 1
+
+-- run: slash-len
+-- out: 1
+
+-- run: mixed
+-- out: 6
+
+-- run: unknown-len
+-- out: 2
