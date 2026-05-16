@@ -11641,6 +11641,140 @@ pub(crate) extern "C" fn jit_window(n_val: u64, xs_val: u64, span_bits: u64) -> 
     NanVal::heap_list(acc).0
 }
 
+/// Helper for the fused `flt fn (window n xs)` / `map fn (window n xs)` path
+/// when compiled via the Cranelift JIT or AOT pipeline. Mirrors the
+/// `OP_WINDOW_VIEW` VM dispatcher arm: writes xs[idx..idx+n] into a list,
+/// reusing the existing list's Vec when the destination's strong count == 1.
+///
+/// RC discipline (Cranelift context): Cranelift register slots are SSA
+/// Variables. `def_var` rebinds without dropping the previous value (per the
+/// existing helper-call convention used by `jit_window`, `jit_range`, etc.) —
+/// helpers always return a *fresh* heap value with strong count 1, and the
+/// caller's previous value is abandoned. We extend that convention here: on
+/// the in-place reuse path the helper returns the *same* NanVal bits it
+/// received as `cur_val`, with the underlying Vec mutated in place. Strong
+/// count stays at 1; the caller's `def_var` writes the same bits back.
+///
+/// Args:
+///   cur_val:    current value in the destination register (raw u64 bits)
+///   xs_val:     source list (raw u64 bits)
+///   idx_val:    window start index (NanVal number, raw u64 bits)
+///   n_val:      window size (NanVal number, raw u64 bits)
+///   span_bits:  packed span for runtime error reporting
+///
+/// Returns: NanVal bits of the destination list (either reused or fresh).
+#[cfg(feature = "cranelift")]
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn jit_window_view(
+    cur_val: u64,
+    xs_val: u64,
+    idx_val: u64,
+    n_val: u64,
+    span_bits: u64,
+) -> u64 {
+    let cur = NanVal(cur_val);
+    let vxs = NanVal(xs_val);
+    let vidx = NanVal(idx_val);
+    let vn = NanVal(n_val);
+
+    if !vn.is_number() {
+        jit_set_runtime_error_with_span(VmError::Type("window: size must be a number"), span_bits);
+        return TAG_NIL;
+    }
+    let nf = vn.as_number();
+    if !nf.is_finite() || nf <= 0.0 || nf.fract() != 0.0 {
+        jit_set_runtime_error_with_span(
+            VmError::Type("window: size must be a positive integer"),
+            span_bits,
+        );
+        return TAG_NIL;
+    }
+    let n = nf as usize;
+
+    if !vidx.is_number() {
+        jit_set_runtime_error_with_span(VmError::Type("window: index must be a number"), span_bits);
+        return TAG_NIL;
+    }
+    let idxf = vidx.as_number();
+    if !idxf.is_finite() || idxf < 0.0 || idxf.fract() != 0.0 {
+        jit_set_runtime_error_with_span(
+            VmError::Type("window: index must be a non-negative integer"),
+            span_bits,
+        );
+        return TAG_NIL;
+    }
+    let idx = idxf as usize;
+
+    if !vxs.is_heap() {
+        jit_set_runtime_error_with_span(VmError::Type("window arg 2 requires a list"), span_bits);
+        return TAG_NIL;
+    }
+    // SAFETY: is_heap() confirmed live heap pointer. Re-borrow as slice for
+    // the index range; if range is out of bounds we error explicitly below.
+    let xs_items: &[NanVal] = match unsafe { vxs.as_heap_ref() } {
+        HeapObj::List(items) => items.as_slice(),
+        _ => {
+            jit_set_runtime_error_with_span(
+                VmError::Type("window arg 2 requires a list"),
+                span_bits,
+            );
+            return TAG_NIL;
+        }
+    };
+
+    if idx.checked_add(n).is_none_or(|end| end > xs_items.len()) {
+        jit_set_runtime_error_with_span(
+            VmError::Type("window: stride window out of range (idx+n > len)"),
+            span_bits,
+        );
+        return TAG_NIL;
+    }
+
+    // In-place reuse fast path: cur is a TAG_LIST with strong count == 1.
+    // The previous value never escaped (the fused emitter holds the only
+    // reference), so we can mutate its Vec and return the same NanVal bits;
+    // the caller's `def_var` is a no-op write of the same value.
+    if cur.is_heap() && (cur.0 & TAG_MASK) == TAG_LIST {
+        let ptr_a = (cur.0 & PTR_MASK) as *const HeapObj;
+        // SAFETY: TAG_LIST + is_heap() guarantee a live List Rc.
+        let rc_count = {
+            let rc_peek = unsafe { Rc::from_raw(ptr_a) };
+            let count = Rc::strong_count(&rc_peek);
+            std::mem::forget(rc_peek);
+            count
+        };
+        if rc_count == 1 {
+            // SAFETY: sole owner — no other reference can observe the
+            // mutation. Mirrors the OP_WINDOW_VIEW VM dispatcher's reuse
+            // arm exactly.
+            let heap_mut = unsafe { &mut *(ptr_a as *mut HeapObj) };
+            match heap_mut {
+                HeapObj::List(items) => {
+                    for v in items.iter() {
+                        v.drop_rc();
+                    }
+                    items.clear();
+                    items.reserve(n);
+                    for v in &xs_items[idx..idx + n] {
+                        v.clone_rc();
+                        items.push(*v);
+                    }
+                    return cur.0;
+                }
+                _ => unreachable!(),
+            }
+        }
+    }
+
+    // Fresh-allocation fallback.
+    let mut sub: Vec<NanVal> = Vec::with_capacity(n);
+    for v in &xs_items[idx..idx + n] {
+        v.clone_rc();
+        sub.push(*v);
+    }
+    NanVal::heap_list(sub).0
+}
+
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn jit_zip(a: u64, b: u64, span_bits: u64) -> u64 {

@@ -95,6 +95,7 @@ struct HelperFuncs {
     enumerate: FuncId,
     range: FuncId,
     window: FuncId,
+    window_view: FuncId,
     chunks: FuncId,
     setunion: FuncId,
     setinter: FuncId,
@@ -289,6 +290,7 @@ fn register_helpers(builder: &mut JITBuilder) {
         ("jit_enumerate", jit_enumerate as *const u8),
         ("jit_range", jit_range as *const u8),
         ("jit_window", jit_window as *const u8),
+        ("jit_window_view", jit_window_view as *const u8),
         ("jit_chunks", jit_chunks as *const u8),
         ("jit_setunion", jit_setunion as *const u8),
         ("jit_setinter", jit_setinter as *const u8),
@@ -468,6 +470,7 @@ fn declare_all_helpers(module: &mut JITModule) -> HelperFuncs {
         enumerate: declare_helper(module, "jit_enumerate", 2, 1),
         range: declare_helper(module, "jit_range", 3, 1),
         window: declare_helper(module, "jit_window", 3, 1),
+        window_view: declare_helper(module, "jit_window_view", 5, 1),
         chunks: declare_helper(module, "jit_chunks", 3, 1),
         setunion: declare_helper(module, "jit_setunion", 3, 1),
         setinter: declare_helper(module, "jit_setinter", 3, 1),
@@ -1125,7 +1128,7 @@ fn compile_function_body(
                 | OP_STR | OP_HD | OP_AT | OP_FMT2 | OP_TL | OP_REV | OP_SRT | OP_SRTDESC
                 | OP_FFT | OP_IFFT
                 | OP_SLC | OP_LST | OP_ZIP | OP_TAKE | OP_DROP | OP_ENUMERATE | OP_RANGE
-                | OP_WINDOW | OP_CHUNKS | OP_CUMSUM
+                | OP_WINDOW | OP_WINDOW_VIEW | OP_CHUNKS | OP_CUMSUM
                 | OP_SETUNION | OP_SETINTER | OP_SETDIFF
                 | OP_INV | OP_SOLVE
                 | OP_SPL | OP_CAT | OP_GET | OP_POST | OP_GETH | OP_POSTH | OP_GETMANY
@@ -2444,6 +2447,28 @@ fn compile_function_body(
                 let span_arg = builder.ins().iconst(I64, span_bits);
                 let fref = get_func_ref(&mut builder, module, helpers.window);
                 let call_inst = builder.ins().call(fref, &[bv, cv, span_arg]);
+                let result = builder.inst_results(call_inst)[0];
+                builder.def_var(vars[a_idx], result);
+            }
+            OP_WINDOW_VIEW => {
+                // Fused-window helper. 2-word: word 0 ABC = dest, xs, idx;
+                // word 1 A field = n reg. Cranelift register lifetimes aren't
+                // RC-balanced the way the VM dispatcher is, so the helper
+                // allocates fresh per stride. The in-place reuse fast path
+                // lives in the OP_WINDOW_VIEW arm of the VM dispatcher.
+                let data_inst = chunk.code[ip + 1];
+                skip_next = true;
+                let n_idx = ((data_inst >> 16) & 0xFF) as usize;
+                let cur_v = builder.use_var(vars[a_idx]);
+                let xs_v = builder.use_var(vars[b_idx]);
+                let idx_v = builder.use_var(vars[c_idx]);
+                let n_v = builder.use_var(vars[n_idx]);
+                let span_bits = pack_span_bits(chunk.spans[ip]);
+                let span_arg = builder.ins().iconst(I64, span_bits);
+                let fref = get_func_ref(&mut builder, module, helpers.window_view);
+                let call_inst = builder
+                    .ins()
+                    .call(fref, &[cur_v, xs_v, idx_v, n_v, span_arg]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
             }

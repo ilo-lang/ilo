@@ -88,6 +88,7 @@ struct HelperFuncs {
     enumerate: FuncId,
     range: FuncId,
     window: FuncId,
+    window_view: FuncId,
     chunks: FuncId,
     setunion: FuncId,
     setinter: FuncId,
@@ -284,6 +285,7 @@ fn declare_all_helpers(module: &mut ObjectModule) -> HelperFuncs {
         enumerate: declare_helper(module, "jit_enumerate", 2, 1),
         range: declare_helper(module, "jit_range", 3, 1),
         window: declare_helper(module, "jit_window", 3, 1),
+        window_view: declare_helper(module, "jit_window_view", 5, 1),
         chunks: declare_helper(module, "jit_chunks", 3, 1),
         setunion: declare_helper(module, "jit_setunion", 3, 1),
         setinter: declare_helper(module, "jit_setinter", 3, 1),
@@ -1064,10 +1066,10 @@ fn compile_function_body(
                 | OP_RECNEW_EMPTY | OP_RECCOPY | OP_PRT | OP_RD | OP_RDL | OP_WR | OP_WRL
                 | OP_TRM | OP_UPR | OP_LWR | OP_CAP | OP_PADL | OP_PADR | OP_PADLC | OP_PADRC
                 | OP_CHR | OP_CHARS | OP_UNQ | OP_UNIQBY | OP_PARTITION | OP_FRQ | OP_NUM
-                | OP_RGXSUB | OP_ZIP | OP_ENUMERATE | OP_RANGE | OP_WINDOW | OP_CHUNKS
-                | OP_CUMSUM | OP_SETUNION | OP_SETINTER | OP_SETDIFF | OP_FFT | OP_IFFT
-                | OP_TRANSPOSE | OP_MATMUL | OP_INV | OP_SOLVE | OP_DTFMT | OP_DTPARSE
-                | OP_FLAT | OP_CALL_BUILTIN_TREE | OP_LOADFN | OP_CALL_DYN => {
+                | OP_RGXSUB | OP_ZIP | OP_ENUMERATE | OP_RANGE | OP_WINDOW | OP_WINDOW_VIEW
+                | OP_CHUNKS | OP_CUMSUM | OP_SETUNION | OP_SETINTER | OP_SETDIFF | OP_FFT
+                | OP_IFFT | OP_TRANSPOSE | OP_MATMUL | OP_INV | OP_SOLVE | OP_DTFMT
+                | OP_DTPARSE | OP_FLAT | OP_CALL_BUILTIN_TREE | OP_LOADFN | OP_CALL_DYN => {
                     non_num_write[a] = true;
                     non_bool_write[a] = true;
                 }
@@ -2320,6 +2322,27 @@ fn compile_function_body(
                 let span_arg = builder.ins().iconst(I64, span_bits);
                 let fref = get_func_ref(&mut builder, module, helpers.window);
                 let call_inst = builder.ins().call(fref, &[bv, cv, span_arg]);
+                let result = builder.inst_results(call_inst)[0];
+                builder.def_var(vars[a_idx], result);
+            }
+            OP_WINDOW_VIEW => {
+                // 2-word instruction. word 0: A=dest, B=xs, C=idx; word 1: A=n_reg.
+                // AOT path allocates fresh per stride (no in-place reuse, see
+                // `jit_window_view` doc comment). The VM-fallback path retains
+                // the reuse fast path.
+                let data_inst = chunk.code[ip + 1];
+                skip_next = true;
+                let n_idx = ((data_inst >> 16) & 0xFF) as usize;
+                let cur_v = builder.use_var(vars[a_idx]);
+                let xs_v = builder.use_var(vars[b_idx]);
+                let idx_v = builder.use_var(vars[c_idx]);
+                let n_v = builder.use_var(vars[n_idx]);
+                let span_bits = super::jit_cranelift::pack_span_bits(chunk.spans[ip]);
+                let span_arg = builder.ins().iconst(I64, span_bits);
+                let fref = get_func_ref(&mut builder, module, helpers.window_view);
+                let call_inst = builder
+                    .ins()
+                    .call(fref, &[cur_v, xs_v, idx_v, n_v, span_arg]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
             }
