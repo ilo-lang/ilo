@@ -795,6 +795,41 @@ Tail position in a function body, `if` arm, or `?{}` arm is fine — the
 value flows out as the function/branch result.
 "#,
     },
+    ErrorEntry {
+        code: "ILO-T034",
+        short: "'!' / '!!' used on a non-callable value",
+        long: r#"## ILO-T034: '!' / '!!' used on a non-callable value
+
+`!` and `!!` are the **auto-unwrap operators**, and they only apply to
+function calls. They take the Result or Optional returned by a call
+and unwrap it: `~v` / non-nil flows through as the inner value, while
+`^e` / nil either propagates (`!`) or aborts (`!!`).
+
+When the operator is attached to a bare identifier that resolves to a
+value (a local binding, a parameter, a destructured field), there is
+no call for the operator to act on. In v0.11.4 and earlier this shape
+silently returned `nil` on the default-engine inline path; the verifier
+now catches it.
+
+**Example (bug):**
+
+    main>R n t;x=42;x!
+    -- 'x' is a Number, not a function — '!' has nothing to unwrap
+
+**Fix — match on a Result-valued binding:**
+
+    ?x{~v:v;^e:^e}
+
+**Fix — auto-unwrap a producer's return at the assignment:**
+
+    scs = producer! ...
+    -- now 'scs' holds the unwrapped value; reference it directly
+
+This error fires only when the bang is adjacent to the ident (`x!`,
+`y!!`). Bang inside a call argument (`f !x`) is the logical-NOT prefix
+and is unaffected.
+"#,
+    },
     // ── Warnings ─────────────────────────────────────────────────────────────
     ErrorEntry {
         code: "ILO-W001",

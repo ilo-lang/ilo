@@ -3409,24 +3409,52 @@ impl VerifyContext {
                     // is not callable (i.e. not Ty::Fn). Do NOT fuzzy-match against
                     // builtins — the name is already a valid in-scope binding, just
                     // not a function. Produce a targeted error instead.
-                    self.err(
-                        "ILO-T005",
-                        func,
-                        format!(
-                            "'{callee}' is a {bound_ty}, not a function (called with {} args)",
-                            args.len()
-                        ),
-                        Some(format!(
-                            "'{callee}' is bound as {bound_ty} in this scope; only functions can be called"
-                        )),
-                        Some(span),
-                    );
+                    //
+                    // ILO-T034 carve-out: a bare ident with a postfix bang
+                    // (`x!` / `x!!`) parses as `Call { function: "x", args: [],
+                    // unwrap: Propagate|Panic }`. The shape is a common
+                    // mistake from agents reaching for `!` as a Rust-style
+                    // `Result::unwrap` on a Result-typed local. In ilo `!` is
+                    // strictly the auto-unwrap operator on a function CALL.
+                    // Steer to the two canonical alternatives: match
+                    // (`?x{~v:v;^e:^e}`) for inspecting a Result value, or
+                    // rebinding from the producer (`y = producer! ...`).
+                    if args.is_empty() && unwrap.is_any() {
+                        let op = if unwrap.is_panic() { "!!" } else { "!" };
+                        self.err(
+                            "ILO-T034",
+                            func,
+                            format!(
+                                "'{op}' is the auto-unwrap operator and only applies to function calls — '{callee}' is a {bound_ty} value"
+                            ),
+                            Some(format!(
+                                "to inspect a Result value use match: `?{callee}{{~v:v;^e:^e}}`; to auto-unwrap a producer use `{callee} = producer! ...` and reference `{callee}` afterwards"
+                            )),
+                            Some(span),
+                        );
+                    } else {
+                        self.err(
+                            "ILO-T005",
+                            func,
+                            format!(
+                                "'{callee}' is a {bound_ty}, not a function (called with {} args)",
+                                args.len()
+                            ),
+                            Some(format!(
+                                "'{callee}' is bound as {bound_ty} in this scope; only functions can be called"
+                            )),
+                            Some(span),
+                        );
+                    }
                     Ty::Unknown
                 } else {
                     // Suggest in-scope variables/params first, then user functions, then
                     // builtins. closest_match picks the shortest distance, but when the
                     // name truly is undefined we still want a useful suggestion across
                     // all categories.
+                    // Undefined-with-bang stays as ILO-T005 — the name doesn't
+                    // resolve at all, so the fundamental error is the missing
+                    // binding, not the postfix operator. Suggestions still help.
                     let mut candidates: Vec<String> = scope
                         .iter()
                         .flat_map(|frame| frame.keys().cloned())
