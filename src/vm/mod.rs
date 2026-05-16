@@ -254,6 +254,8 @@ pub(crate) const OP_MEDIAN: u8 = 141; // R[A] = median(R[B])
 pub(crate) const OP_QUANTILE: u8 = 142; // R[A] = quantile(R[B], R[C])
 pub(crate) const OP_STDEV: u8 = 143; // R[A] = stdev(R[B])
 pub(crate) const OP_VARIANCE: u8 = 144; // R[A] = variance(R[B])
+pub(crate) const OP_SUM: u8 = 165; // R[A] = sum(R[B])  — empty list = 0
+pub(crate) const OP_AVG: u8 = 166; // R[A] = avg(R[B])  — empty list errors
 // Higher-order: uniqby fn xs — pre-allocated, HOF dispatch not yet wired in VM.
 pub(crate) const OP_UNIQBY: u8 = 116; // R[A] = uniqby(R[B] (fn-ref), R[C] (list))
 // Higher-order: partition fn xs — pre-allocated, HOF dispatch not yet wired in VM.
@@ -2277,6 +2279,20 @@ impl RegCompiler {
                             let rb = self.compile_expr(&args[0]);
                             let ra = self.alloc_reg();
                             self.emit_abc(OP_VARIANCE, ra, rb, 0);
+                            self.reg_is_num[ra as usize] = true;
+                            return ra;
+                        }
+                        (Builtin::Sum, 1) => {
+                            let rb = self.compile_expr(&args[0]);
+                            let ra = self.alloc_reg();
+                            self.emit_abc(OP_SUM, ra, rb, 0);
+                            self.reg_is_num[ra as usize] = true;
+                            return ra;
+                        }
+                        (Builtin::Avg, 1) => {
+                            let rb = self.compile_expr(&args[0]);
+                            let ra = self.alloc_reg();
+                            self.emit_abc(OP_AVG, ra, rb, 0);
                             self.reg_is_num[ra as usize] = true;
                             return ra;
                         }
@@ -8748,6 +8764,24 @@ impl<'a> VM<'a> {
                         Err(msg) => vm_err!(VmError::Type(msg)),
                     }
                 }
+                OP_SUM => {
+                    let a = ((inst >> 16) & 0xFF) as usize + base;
+                    let b = ((inst >> 8) & 0xFF) as usize + base;
+                    let v = reg!(b);
+                    match vm_sum(v) {
+                        Ok(out) => reg_set!(a, out),
+                        Err(msg) => vm_err!(VmError::Type(msg)),
+                    }
+                }
+                OP_AVG => {
+                    let a = ((inst >> 16) & 0xFF) as usize + base;
+                    let b = ((inst >> 8) & 0xFF) as usize + base;
+                    let v = reg!(b);
+                    match vm_avg(v) {
+                        Ok(out) => reg_set!(a, out),
+                        Err(msg) => vm_err!(VmError::Type(msg)),
+                    }
+                }
                 OP_SLC => {
                     // Two-instruction sequence: OP_SLC A=result B=list C=start; data word A=end_reg
                     // Bounds accept negative integers Python-style (`-1` = last element).
@@ -11803,6 +11837,50 @@ fn vm_variance(v: NanVal) -> Result<NanVal, &'static str> {
     Ok(NanVal::number(sse / (n - 1) as f64))
 }
 
+/// `sum xs` — total of a list of numbers. Empty list returns 0 (matches
+/// tree-walker semantics in `src/interpreter/mod.rs`). NaN-propagation:
+/// any NaN element yields NaN.
+fn vm_sum(v: NanVal) -> Result<NanVal, &'static str> {
+    if !v.is_heap() {
+        return Err("sum requires a list of numbers");
+    }
+    let items = match unsafe { v.as_heap_ref() } {
+        HeapObj::List(items) => items,
+        _ => return Err("sum requires a list of numbers"),
+    };
+    let mut total = 0.0_f64;
+    for item in items {
+        if !item.is_number() {
+            return Err("sum: list elements must be numbers");
+        }
+        total += item.as_number();
+    }
+    Ok(NanVal::number(total))
+}
+
+/// `avg xs` — arithmetic mean of a list of numbers. Empty list is an error
+/// (matches tree-walker semantics in `src/interpreter/mod.rs`).
+fn vm_avg(v: NanVal) -> Result<NanVal, &'static str> {
+    if !v.is_heap() {
+        return Err("avg requires a list of numbers");
+    }
+    let items = match unsafe { v.as_heap_ref() } {
+        HeapObj::List(items) => items,
+        _ => return Err("avg requires a list of numbers"),
+    };
+    if items.is_empty() {
+        return Err("avg: cannot average an empty list");
+    }
+    let mut total = 0.0_f64;
+    for item in items {
+        if !item.is_number() {
+            return Err("avg: list elements must be numbers");
+        }
+        total += item.as_number();
+    }
+    Ok(NanVal::number(total / items.len() as f64))
+}
+
 fn vm_stdev(v: NanVal) -> Result<NanVal, &'static str> {
     let nums = vm_collect_numbers(v, "stdev")?;
     let n = nums.len();
@@ -11821,6 +11899,30 @@ fn vm_stdev(v: NanVal) -> Result<NanVal, &'static str> {
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn jit_median(a: u64, span_bits: u64) -> u64 {
     match vm_median(NanVal(a)) {
+        Ok(v) => v.0,
+        Err(e) => {
+            jit_set_runtime_error_with_span(VmError::Type(e), span_bits);
+            TAG_NIL
+        }
+    }
+}
+
+#[cfg(feature = "cranelift")]
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn jit_sum(a: u64, span_bits: u64) -> u64 {
+    match vm_sum(NanVal(a)) {
+        Ok(v) => v.0,
+        Err(e) => {
+            jit_set_runtime_error_with_span(VmError::Type(e), span_bits);
+            TAG_NIL
+        }
+    }
+}
+
+#[cfg(feature = "cranelift")]
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn jit_avg(a: u64, span_bits: u64) -> u64 {
+    match vm_avg(NanVal(a)) {
         Ok(v) => v.0,
         Err(e) => {
             jit_set_runtime_error_with_span(VmError::Type(e), span_bits);
@@ -24542,7 +24644,6 @@ mod tests {
     // ── sum, avg ────────────────────────────────────────────────────────
 
     #[test]
-    #[ignore] // VM missing builtin implementation
     fn vm_sum_basic() {
         let source = "f xs:L n>n;sum xs";
         let result = vm_run(
@@ -24559,7 +24660,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // VM missing builtin implementation
     fn vm_sum_empty() {
         let source = "f xs:L n>n;sum xs";
         assert_eq!(
@@ -24581,7 +24681,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // VM missing builtin implementation
     fn vm_avg_basic() {
         let source = "f xs:L n>n;avg xs";
         let result = vm_run(
