@@ -1,0 +1,33 @@
+-- `+=xs v`, `mset m k v`, and `mdel m k` look like in-place mutation but
+-- ilo's functional semantics return a NEW value. The source binding is
+-- only updated when you write the rebind form: `xs=+=xs v`, `m=mset m k v`,
+-- `m=mdel m k`. As a bare statement, the result is silently discarded on
+-- every engine and the original binding is unchanged.
+--
+-- The verifier flags this with ILO-T033. This file pins the canonical
+-- rebind shapes that fix it. `tests/examples_engines.rs` runs every
+-- function under each engine and asserts the output matches.
+
+-- Append: rebind back to `out` so the new list sticks across iterations.
+build-list>L n;out=[];@i 0..3{out=+=out i};out
+
+-- Map set: rebind back to `m` so each key-value pair sticks.
+build-map>M t n;m=mmap;m=mset m "a" 1;m=mset m "b" 2;m
+
+-- Map delete: rebind back to `m` so the deletion sticks.
+trim-map>M t n;m=mset mmap "a" 1;m=mset m "b" 2;m=mdel m "a";m
+
+-- Tail position in a function body is fine — `+=` as the function's
+-- return value flows out to the caller, no warning, no discard.
+-- Demonstrated here by appending inside a single-iteration loop and
+-- returning the rebound list as the tail.
+push-one>L n;xs=[1 2];@k [0]{xs=+=xs 99};xs
+
+-- run: build-list
+-- out: [0, 1, 2]
+-- run: build-map
+-- out: {a: 1; b: 2}
+-- run: trim-map
+-- out: {b: 2}
+-- run: push-one
+-- out: [1, 2, 99]
