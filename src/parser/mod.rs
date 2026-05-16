@@ -354,6 +354,22 @@ impl Parser {
                 "pick a different name like `field` or `folder`".into(),
             ));
         }
+        // Any other builtin name used as binding LHS: `flat=...`, `frq=...`,
+        // `map=...`, etc. Personas hit this constantly (pdf-analyst rerun3 #6:
+        // `flat=cat ls " "` then `spl flat ". "` mis-dispatched to the builtin
+        // and surfaced as `arity mismatch: 'flat' expects 1 args, got 0`).
+        // Mirrors `parse_fn_decl`'s existing `Builtin::is_builtin` rejection.
+        if let Some(Token::Ident(name)) = self.peek()
+            && self.token_at(self.pos + 1) == Some(&Token::Eq)
+            && Builtin::is_builtin(name)
+        {
+            let name = name.clone();
+            return Err(self.error_hint(
+                "ILO-P011",
+                format!("`{name}` is a builtin and cannot be used as a binding name"),
+                format!("rename to something like `my{name}` or `{name}v`. Builtins shadow local bindings in call position, so reusing the name silently mis-dispatches."),
+            ));
+        }
         match self.peek() {
             Some(Token::Type) => self.parse_type_decl(),
             Some(Token::Tool) => self.parse_tool_decl(),
@@ -909,6 +925,23 @@ impl Parser {
                 if self.pos + 1 < self.tokens.len()
                     && self.token_at(self.pos + 1) == Some(&Token::Eq)
                 {
+                    // Reject builtin-named binding LHS: `flat=...`, `frq=...`,
+                    // `map=...`, etc. Without this, the local binding is
+                    // silently accepted but any later use in operand position
+                    // resolves to the builtin (the verifier checks
+                    // `is_builtin` before locals), surfacing as a misleading
+                    // `ILO-T006 arity mismatch` (pdf-analyst rerun3 #6).
+                    // Mirrors `parse_fn_decl`'s precedent (PR #245).
+                    if let Some(Token::Ident(name)) = self.peek()
+                        && Builtin::is_builtin(name)
+                    {
+                        let name = name.clone();
+                        return Err(self.error_hint(
+                            "ILO-P011",
+                            format!("`{name}` is a builtin and cannot be used as a binding name"),
+                            format!("rename to something like `my{name}` or `{name}v`. Builtins shadow local bindings in call position, so reusing the name silently mis-dispatches."),
+                        ));
+                    }
                     self.parse_let()
                 } else {
                     // Could be a guard or an expression statement

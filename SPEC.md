@@ -178,6 +178,18 @@ The following identifiers are reserved and cannot be used as names: `if`, `retur
 -- ERROR: `fn`/`def` is a reserved word. Use: name param:type > rettype; body
 ```
 
+Builtin names (`flat`, `frq`, `map`, `flt`, `cat`, `len`, `srt`, `hd`, `tl`, `ord`, `fld`, `lst`, ...) are also rejected as user-function names and as local-binding LHS. Without this, calls to the user fn or use sites of the local binding silently mis-dispatch to the builtin and surface as a confusing `ILO-T006` arity mismatch. The parser intercepts at the declaration site with ILO-P011 and a rename hint:
+
+```
+flat n:n>n;n
+-- ERROR ILO-P011: `flat` is a builtin and cannot be used as a function name
+-- hint: rename to something like `myflat` or `flatof`.
+
+main>n;flat=cat ls " ";spl flat ". "
+-- ERROR ILO-P011: `flat` is a builtin and cannot be used as a binding name
+-- hint: rename to something like `myflat` or `flatv`.
+```
+
 ---
 
 ## Comments
