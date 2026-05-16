@@ -104,6 +104,8 @@ struct HelperFuncs {
     ifft: FuncId,
     cumsum: FuncId,
     median: FuncId,
+    min_lst: FuncId,
+    max_lst: FuncId,
     quantile: FuncId,
     stdev: FuncId,
     variance: FuncId,
@@ -290,6 +292,8 @@ fn register_helpers(builder: &mut JITBuilder) {
         ("jit_ifft", jit_ifft as *const u8),
         ("jit_cumsum", jit_cumsum as *const u8),
         ("jit_median", jit_median as *const u8),
+        ("jit_min_lst", jit_min_lst as *const u8),
+        ("jit_max_lst", jit_max_lst as *const u8),
         ("jit_quantile", jit_quantile as *const u8),
         ("jit_stdev", jit_stdev as *const u8),
         ("jit_variance", jit_variance as *const u8),
@@ -461,6 +465,8 @@ fn declare_all_helpers(module: &mut JITModule) -> HelperFuncs {
         ifft: declare_helper(module, "jit_ifft", 2, 1),
         cumsum: declare_helper(module, "jit_cumsum", 2, 1),
         median: declare_helper(module, "jit_median", 2, 1),
+        min_lst: declare_helper(module, "jit_min_lst", 2, 1),
+        max_lst: declare_helper(module, "jit_max_lst", 2, 1),
         quantile: declare_helper(module, "jit_quantile", 3, 1),
         stdev: declare_helper(module, "jit_stdev", 2, 1),
         variance: declare_helper(module, "jit_variance", 2, 1),
@@ -1068,7 +1074,8 @@ fn compile_function_body(
                 | OP_FLR | OP_CEL | OP_ROU | OP_RND0 | OP_RND2 | OP_RNDN | OP_NOW
                 | OP_MOD | OP_CLAMP | OP_POW | OP_SQRT | OP_LOG | OP_EXP | OP_SIN | OP_COS
                 | OP_TAN | OP_LOG10 | OP_LOG2 | OP_ATAN2
-                | OP_MEDIAN | OP_QUANTILE | OP_STDEV | OP_VARIANCE | OP_SUM | OP_AVG | OP_DOT
+                | OP_MEDIAN | OP_MIN_LST | OP_MAX_LST | OP_QUANTILE
+                | OP_STDEV | OP_VARIANCE | OP_SUM | OP_AVG | OP_DOT
                 | OP_DET | OP_ORD => {
                     num_write[a] = true;
                 }
@@ -2533,6 +2540,40 @@ fn compile_function_body(
                 // refreshed so a subsequent OP_*_NN fast-path reads the real
                 // result, not whatever stale value the shadow holds. Without
                 // this, e.g. `-(median xs) (median ys)` reads zero.
+                if a_idx < reg_count && reg_always_num[a_idx] {
+                    let mf = cranelift_codegen::ir::MemFlags::new();
+                    let rf = builder.ins().bitcast(F64, mf, result);
+                    builder.def_var(f64_vars[a_idx], rf);
+                }
+            }
+            OP_MIN_LST => {
+                let bv = builder.use_var(vars[b_idx]);
+                let span_bits = pack_span_bits(chunk.spans[ip]);
+                let span_arg = builder.ins().iconst(I64, span_bits);
+                let fref = get_func_ref(&mut builder, module, helpers.min_lst);
+                let call_inst = builder.ins().call(fref, &[bv, span_arg]);
+                let result = builder.inst_results(call_inst)[0];
+                builder.def_var(vars[a_idx], result);
+                // Keep the F64 shadow in sync so downstream arithmetic that
+                // reads `reg_always_num[a]` regs gets the fresh value, not a
+                // stale shadow from an earlier write. OP_MEDIAN is bug-free
+                // here only by coincidence (its result is rarely fed into
+                // arithmetic in tests); min/max lists feed into common
+                // patterns like `max xs - min xs` so the bug surfaces.
+                if a_idx < reg_count && reg_always_num[a_idx] {
+                    let mf = cranelift_codegen::ir::MemFlags::new();
+                    let rf = builder.ins().bitcast(F64, mf, result);
+                    builder.def_var(f64_vars[a_idx], rf);
+                }
+            }
+            OP_MAX_LST => {
+                let bv = builder.use_var(vars[b_idx]);
+                let span_bits = pack_span_bits(chunk.spans[ip]);
+                let span_arg = builder.ins().iconst(I64, span_bits);
+                let fref = get_func_ref(&mut builder, module, helpers.max_lst);
+                let call_inst = builder.ins().call(fref, &[bv, span_arg]);
+                let result = builder.inst_results(call_inst)[0];
+                builder.def_var(vars[a_idx], result);
                 if a_idx < reg_count && reg_always_num[a_idx] {
                     let mf = cranelift_codegen::ir::MemFlags::new();
                     let rf = builder.ins().bitcast(F64, mf, result);
