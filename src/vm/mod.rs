@@ -258,6 +258,7 @@ pub(crate) const OP_STDEV: u8 = 143; // R[A] = stdev(R[B])
 pub(crate) const OP_VARIANCE: u8 = 144; // R[A] = variance(R[B])
 pub(crate) const OP_SUM: u8 = 165; // R[A] = sum(R[B])  — empty list = 0
 pub(crate) const OP_AVG: u8 = 166; // R[A] = avg(R[B])  — empty list errors
+pub(crate) const OP_FLAT: u8 = 171; // R[A] = flat(R[B]) — flatten one level, non-list elements pass through
 // Higher-order: uniqby fn xs — pre-allocated, HOF dispatch not yet wired in VM.
 pub(crate) const OP_UNIQBY: u8 = 116; // R[A] = uniqby(R[B] (fn-ref), R[C] (list))
 // Higher-order: partition fn xs — pre-allocated, HOF dispatch not yet wired in VM.
@@ -2322,6 +2323,15 @@ impl RegCompiler {
                             self.reg_is_num[ra as usize] = true;
                             return ra;
                         }
+                        (Builtin::Flat, 1) => {
+                            // flat xs — flatten a list one level. Non-list
+                            // elements pass through unchanged. Returns a list,
+                            // so reg_is_num stays false.
+                            let rb = self.compile_expr(&args[0]);
+                            let ra = self.alloc_reg();
+                            self.emit_abc(OP_FLAT, ra, rb, 0);
+                            return ra;
+                        }
                         (Builtin::Slc, 3) => {
                             // slc list start end — two-instruction sequence:
                             //   OP_SLC   A=result  B=list  C=start
@@ -3735,7 +3745,7 @@ fn chunk_is_all_numeric(chunk: &Chunk) -> bool {
             | OP_TL | OP_FMT2 | OP_RGXSUB | OP_ZIP | OP_ENUMERATE | OP_WINDOW | OP_FFT
             | OP_IFFT | OP_RANGE | OP_CHUNKS | OP_CUMSUM | OP_SETUNION | OP_SETINTER
             | OP_SETDIFF | OP_TRANSPOSE | OP_MATMUL | OP_INV | OP_SOLVE | OP_DTFMT | OP_DTPARSE
-            | OP_CALL_BUILTIN_TREE | OP_LOADFN | OP_CALL_DYN => {
+            | OP_FLAT | OP_CALL_BUILTIN_TREE | OP_LOADFN | OP_CALL_DYN => {
                 return false;
             }
             _ => {}
@@ -8957,6 +8967,15 @@ impl<'a> VM<'a> {
                         Err(msg) => vm_err!(VmError::Type(msg)),
                     }
                 }
+                OP_FLAT => {
+                    let a = ((inst >> 16) & 0xFF) as usize + base;
+                    let b = ((inst >> 8) & 0xFF) as usize + base;
+                    let v = reg!(b);
+                    match vm_flat(v) {
+                        Ok(out) => reg_set!(a, out),
+                        Err(msg) => vm_err!(VmError::Type(msg)),
+                    }
+                }
                 OP_SLC => {
                     // Two-instruction sequence: OP_SLC A=result B=list C=start; data word A=end_reg
                     // Bounds accept negative integers Python-style (`-1` = last element).
@@ -12031,6 +12050,39 @@ fn vm_sum(v: NanVal) -> Result<NanVal, &'static str> {
     Ok(NanVal::number(total))
 }
 
+/// `flat xs` — flatten a list one level. Inner lists are spliced into the
+/// result; non-list elements pass through unchanged. Matches the tree-walker
+/// semantics in `src/interpreter/mod.rs`.
+fn vm_flat(v: NanVal) -> Result<NanVal, &'static str> {
+    if !v.is_heap() {
+        return Err("flat: arg must be a list");
+    }
+    let items = match unsafe { v.as_heap_ref() } {
+        HeapObj::List(items) => items,
+        _ => return Err("flat: arg must be a list"),
+    };
+    let mut result: Vec<NanVal> = Vec::with_capacity(items.len());
+    for item in items {
+        if item.is_heap() {
+            match unsafe { item.as_heap_ref() } {
+                HeapObj::List(inner) => {
+                    for v in inner {
+                        v.clone_rc();
+                        result.push(*v);
+                    }
+                }
+                _ => {
+                    item.clone_rc();
+                    result.push(*item);
+                }
+            }
+        } else {
+            result.push(*item);
+        }
+    }
+    Ok(NanVal::heap_list(result))
+}
+
 /// `avg xs` — arithmetic mean of a list of numbers. Empty list is an error
 /// (matches tree-walker semantics in `src/interpreter/mod.rs`).
 fn vm_avg(v: NanVal) -> Result<NanVal, &'static str> {
@@ -12140,6 +12192,18 @@ pub(crate) extern "C" fn jit_median(a: u64, span_bits: u64) -> u64 {
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn jit_sum(a: u64, span_bits: u64) -> u64 {
     match vm_sum(NanVal(a)) {
+        Ok(v) => v.0,
+        Err(e) => {
+            jit_set_runtime_error_with_span(VmError::Type(e), span_bits);
+            TAG_NIL
+        }
+    }
+}
+
+#[cfg(feature = "cranelift")]
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn jit_flat(a: u64, span_bits: u64) -> u64 {
+    match vm_flat(NanVal(a)) {
         Ok(v) => v.0,
         Err(e) => {
             jit_set_runtime_error_with_span(VmError::Type(e), span_bits);
@@ -25213,7 +25277,6 @@ mod tests {
     // ── flat ────────────────────────────────────────────────────────────
 
     #[test]
-    #[ignore] // VM missing builtin implementation
     fn vm_flat_nested() {
         let source = "f>L n;flat [[1, 2], [3], [4, 5]]";
         let result = vm_run(source, Some("f"), vec![]);
@@ -25229,7 +25292,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // VM missing builtin implementation
     fn vm_flat_mixed() {
         let source = "f>L n;flat [[1, 2], 3]";
         let result = vm_run(source, Some("f"), vec![]);
@@ -25242,7 +25304,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // VM missing builtin implementation
     fn vm_flat_empty() {
         assert_eq!(
             vm_run("f>L n;flat []", Some("f"), vec![]),

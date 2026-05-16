@@ -104,6 +104,7 @@ struct HelperFuncs {
     variance: FuncId,
     sum: FuncId,
     avg: FuncId,
+    flat: FuncId,
     slc: FuncId,
     rgxsub: FuncId,
     take: FuncId,
@@ -296,6 +297,7 @@ fn declare_all_helpers(module: &mut ObjectModule) -> HelperFuncs {
         variance: declare_helper(module, "jit_variance", 2, 1),
         sum: declare_helper(module, "jit_sum", 2, 1),
         avg: declare_helper(module, "jit_avg", 2, 1),
+        flat: declare_helper(module, "jit_flat", 2, 1),
         slc: declare_helper(module, "jit_slc", 3, 1),
         rgxsub: declare_helper(module, "jit_rgxsub", 3, 1),
         take: declare_helper(module, "jit_take", 2, 1),
@@ -1058,7 +1060,7 @@ fn compile_function_body(
                 | OP_RGXSUB | OP_ZIP | OP_ENUMERATE | OP_RANGE | OP_WINDOW | OP_CHUNKS
                 | OP_CUMSUM | OP_SETUNION | OP_SETINTER | OP_SETDIFF | OP_FFT | OP_IFFT
                 | OP_TRANSPOSE | OP_MATMUL | OP_INV | OP_SOLVE | OP_DTFMT | OP_DTPARSE
-                | OP_CALL_BUILTIN_TREE | OP_LOADFN | OP_CALL_DYN => {
+                | OP_FLAT | OP_CALL_BUILTIN_TREE | OP_LOADFN | OP_CALL_DYN => {
                     non_num_write[a] = true;
                     non_bool_write[a] = true;
                 }
@@ -2480,6 +2482,16 @@ fn compile_function_body(
                 let span_bits = super::jit_cranelift::pack_span_bits(chunk.spans[ip]);
                 let span_arg = builder.ins().iconst(I64, span_bits);
                 let fref = get_func_ref(&mut builder, module, helpers.avg);
+                let call_inst = builder.ins().call(fref, &[bv, span_arg]);
+                let result = builder.inst_results(call_inst)[0];
+                builder.def_var(vars[a_idx], result);
+            }
+            OP_FLAT => {
+                // flat returns a list, no F64-shadow refresh needed.
+                let bv = builder.use_var(vars[b_idx]);
+                let span_bits = super::jit_cranelift::pack_span_bits(chunk.spans[ip]);
+                let span_arg = builder.ins().iconst(I64, span_bits);
+                let fref = get_func_ref(&mut builder, module, helpers.flat);
                 let call_inst = builder.ins().call(fref, &[bv, span_arg]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
@@ -5878,6 +5890,13 @@ f a:t b:t>t;join a b"#,
     fn codegen_cov_op_avg() {
         let bytes = compile_to_object_bytes("f>n;avg [1, 2, 3, 4]");
         assert!(bytes.is_ok(), "OP_AVG codegen failed: {:?}", bytes.err());
+    }
+
+    #[test]
+    fn codegen_cov_op_flat() {
+        // Exercise the OP_FLAT AOT codegen block (helper-call, list return).
+        let bytes = compile_to_object_bytes("f>L n;flat [[1, 2], [3, 4]]");
+        assert!(bytes.is_ok(), "OP_FLAT codegen failed: {:?}", bytes.err());
     }
 
     #[test]
