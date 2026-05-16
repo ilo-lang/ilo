@@ -407,6 +407,12 @@ pub(crate) fn is_tree_bridge_eligible(b: crate::builtins::Builtin, argc: usize) 
         (Builtin::Uniqby, 2) => true,
         (Builtin::Partition, 2) => true,
         (Builtin::Srt, 2) => true,
+        // mapr fn xs: short-circuit Result-aware map. Tree bridge routes
+        // through the tree interpreter's Mapr arm, which handles the
+        // ~v/^e dispatch and ACTIVE_AST_PROGRAM user-fn callbacks the same
+        // way grp/uniqby/partition/srt do (PR 3b precedent). Returns
+        // R (L b) e; the bridge unwrap epilogue handles `!` propagation.
+        (Builtin::Mapr, 2) => true,
         // Closure-bind ctx variants. The fn receives an extra ctx arg the
         // native emitters don't shape today — bridge keeps semantics aligned
         // with the tree interpreter and adds VM/Cranelift coverage in PR 3c.
@@ -422,7 +428,7 @@ pub(crate) fn is_tree_bridge_eligible(b: crate::builtins::Builtin, argc: usize) 
 /// the auto-unwrap (`!`) protocol when called via the tree bridge.
 pub(crate) fn tree_bridge_returns_result(b: crate::builtins::Builtin) -> bool {
     use crate::builtins::Builtin;
-    matches!(b, Builtin::Rd | Builtin::Rdb)
+    matches!(b, Builtin::Rd | Builtin::Rdb | Builtin::Mapr)
 }
 
 pub(crate) const OP_GETMANY: u8 = 136; // R[A] = get_many(R[B])  (L t → L (R t t), concurrent fan-out)

@@ -380,6 +380,7 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("rdjl", &["t"], "L (R ? t)"),
     // Higher-order: map/flt/fld take a function ref as first arg (special-cased in builtin_check_args)
     ("map", &["fn", "list"], "list"),
+    ("mapr", &["fn", "list"], "result"),
     ("flt", &["fn", "list"], "list"),
     ("fld", &["fn", "list", "any"], "any"),
     ("grp", &["fn", "list"], "map"),
@@ -1654,6 +1655,59 @@ fn builtin_check_args(
                 _ => Ty::Unknown,
             };
             (Ty::List(Box::new(ret_elem)), errors)
+        }
+        "mapr" => {
+            // mapr fn:F a (R b e) xs:L a → R (L b) e
+            //
+            // Short-circuiting parallel to `map`. The fn must return a Result;
+            // on the first ^err encountered the whole call returns that ^err,
+            // otherwise the unwrapped Ok values are collected into a list and
+            // wrapped in a single outer ~. Pairs with `!` to thread the err
+            // up into a Result-returning caller without per-item match noise.
+            // Retires the persona-written `ton s:t>n;r=num s;?r{~v:v;^_:0}`
+            // helper that html-scraper + CSV-parsing rerun3s kept writing.
+            if let Some(fn_ty) = arg_types.first()
+                && !matches!(fn_ty, Ty::Fn(_, _) | Ty::Unknown)
+            {
+                errors.push(VerifyError {
+                    code: "ILO-T013",
+                    function: func_ctx.to_string(),
+                    message: format!("'mapr' first arg must be a function (F ...), got {fn_ty}"),
+                    hint: Some("pass a function name: mapr num xs".to_string()),
+                    span,
+                    is_warning: false,
+                });
+            }
+            // fn must return a Result. Catches the obvious misuse where the
+            // caller picked `mapr` over `map` for a non-fallible fn.
+            if let Some(Ty::Fn(_, ret)) = arg_types.first()
+                && !matches!(ret.as_ref(), Ty::Result(_, _) | Ty::Unknown)
+            {
+                errors.push(VerifyError {
+                    code: "ILO-T013",
+                    function: func_ctx.to_string(),
+                    message: format!(
+                        "'mapr' fn must return a Result (R _ _), got {ret}; use 'map' for non-fallible fns"
+                    ),
+                    hint: Some(
+                        "mapr short-circuits on the first ^err; for non-fallible fns use map".to_string(),
+                    ),
+                    span,
+                    is_warning: false,
+                });
+            }
+            // Return type: R (L b) e from fn's R b e, or R (L Unknown) Unknown.
+            let (ok_elem, err_ty) = match arg_types.first() {
+                Some(Ty::Fn(_, ret)) => match ret.as_ref() {
+                    Ty::Result(ok, err) => ((**ok).clone(), (**err).clone()),
+                    _ => (Ty::Unknown, Ty::Unknown),
+                },
+                _ => (Ty::Unknown, Ty::Unknown),
+            };
+            (
+                Ty::Result(Box::new(Ty::List(Box::new(ok_elem))), Box::new(err_ty)),
+                errors,
+            )
         }
         "flt" => {
             // flt fn:F a b xs:L a → L a

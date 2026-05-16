@@ -2732,6 +2732,59 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         }
         return Ok(Value::List(Arc::new(result)));
     }
+    // mapr fn xs: short-circuiting Result-aware map.
+    //
+    // The callee must return R b e. On each item:
+    //   ~v  → unwrap to v and accumulate
+    //   ^e  → return ^e immediately (whole call short-circuits)
+    //   any → runtime error (callee broke its contract)
+    //
+    // Final return on the all-Ok path is ~(L b). Pair with `!` to thread
+    // the err up into a Result-returning caller. Retires the
+    // `ton s:t>n;r=num s;?r{~v:v;^_:0}` helper that html-scraper and
+    // CSV-parsing personas kept writing. See ilo_assessment_feedback.md
+    // line 2541 for the originating entry.
+    //
+    // Deliberately 2-arity only: no closure-bind ctx variant yet. If a
+    // workload turns up that needs it, add it the same way `Map`/`Flt`
+    // have it. Keeping the surface tight until a real need surfaces.
+    if builtin == Some(Builtin::Mapr) && args.len() == 2 {
+        let fn_name = resolve_fn_ref(&args[0]).ok_or_else(|| {
+            RuntimeError::new(
+                "ILO-R009",
+                format!(
+                    "mapr: first arg must be a function reference, got {:?}",
+                    args[0]
+                ),
+            )
+        })?;
+        let captures = closure_captures(&args[0]);
+        let items = match &args[1] {
+            Value::List(l) => l.clone(),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("mapr: list arg must be a list, got {:?}", other),
+                ));
+            }
+        };
+        let mut result = Vec::with_capacity(items.len());
+        for item in items.iter().cloned() {
+            let mut call_args = vec![item];
+            call_args.extend(captures.iter().cloned());
+            match call_function(env, &fn_name, call_args)? {
+                Value::Ok(inner) => result.push(*inner),
+                Value::Err(e) => return Ok(Value::Err(e)),
+                other => {
+                    return Err(RuntimeError::new(
+                        "ILO-R009",
+                        format!("mapr: fn must return a Result (~v or ^e), got {:?}", other),
+                    ));
+                }
+            }
+        }
+        return Ok(Value::Ok(Box::new(Value::List(Arc::new(result)))));
+    }
     if builtin == Some(Builtin::Flt) && (args.len() == 2 || args.len() == 3) {
         let fn_name = resolve_fn_ref(&args[0]).ok_or_else(|| {
             RuntimeError::new(
