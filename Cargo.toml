@@ -1,6 +1,6 @@
 [package]
 name = "ilo"
-version = "0.11.4"
+version = "0.11.3"
 edition = "2024"
 rust-version = "1.85"
 description = "ilo — a programming language for AI agents"
