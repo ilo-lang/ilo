@@ -5868,6 +5868,43 @@ f a:t b:t>t;join a b"#,
         );
     }
 
+    // ── OP_MIN_LST / OP_MAX_LST codegen ──────────────────────────────────────
+
+    #[test]
+    fn codegen_cov_op_min_lst() {
+        // Exercise the OP_MIN_LST AOT codegen block (helper-call, F64-shadow
+        // refresh). Doesn't need libilo.a; just verifies IR generation.
+        let bytes = compile_to_object_bytes("f>n;min [3, 1, 4, 1, 5, 9, 2, 6]");
+        assert!(
+            bytes.is_ok(),
+            "OP_MIN_LST codegen failed: {:?}",
+            bytes.err()
+        );
+    }
+
+    #[test]
+    fn codegen_cov_op_max_lst() {
+        let bytes = compile_to_object_bytes("f>n;max [3, 1, 4, 1, 5, 9, 2, 6]");
+        assert!(
+            bytes.is_ok(),
+            "OP_MAX_LST codegen failed: {:?}",
+            bytes.err()
+        );
+    }
+
+    #[test]
+    fn codegen_cov_op_min_max_arithmetic() {
+        // min/max results feeding into an OP_SUB_NN — exercises the F64
+        // shadow refresh path. This is the `range = max xs - min xs` shape
+        // that revealed the missing shadow during pre-#295 development.
+        let bytes = compile_to_object_bytes("f xs:L n>n;hi=max xs;lo=min xs;-hi lo");
+        assert!(
+            bytes.is_ok(),
+            "OP_MIN_LST/OP_MAX_LST + OP_SUB_NN codegen failed: {:?}",
+            bytes.err()
+        );
+    }
+
     // ── OP_LOADK with heap value (list constant) ─────────────────────────────
 
     #[test]
