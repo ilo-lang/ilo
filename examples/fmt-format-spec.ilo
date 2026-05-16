@@ -1,0 +1,19 @@
+-- `fmt` only supports bare `{}` placeholders. Printf-style format specs
+-- inside the braces (`{:06d}`, `{:.3f}`, etc.) used to silently emit the
+-- literal template (e.g. `fmt "{:06d}" 42` → `"{:06d}"`), which was a
+-- silent-wrong-output footgun. Both verify and runtime now reject them.
+--
+-- Idiomatic substitutes:
+--   precision   →  fmt "...{}" (fmt2 v 2)
+--   padding     →  padl (str n) 6   (space-pad; today)
+
+-- decimal precision via fmt2 composed inside the {} slot
+pct r:n>t;fmt "{}%" (fmt2 (* r 100) 1)
+
+-- width / padding via padl
+sort-key n:n>t;padl (str n) 6
+
+-- run: pct 0.12345
+-- out: 12.3%
+-- run: sort-key 42
+-- out:     42
