@@ -1176,6 +1176,9 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 | Builtin::Tan
                 | Builtin::Log10
                 | Builtin::Log2
+                | Builtin::Asin
+                | Builtin::Acos
+                | Builtin::Atan
         )
     ) && args.len() == 1
     {
@@ -1189,7 +1192,10 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                     Some(Builtin::Cos) => n.cos(),
                     Some(Builtin::Tan) => n.tan(),
                     Some(Builtin::Log10) => n.log10(),
-                    _ => n.log2(),
+                    Some(Builtin::Log2) => n.log2(),
+                    Some(Builtin::Asin) => n.asin(),
+                    Some(Builtin::Acos) => n.acos(),
+                    _ => n.atan(),
                 };
                 Ok(Value::Number(result))
             }

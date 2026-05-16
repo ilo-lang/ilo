@@ -499,6 +499,9 @@ Called like functions, compiled to dedicated opcodes.
 | `sin n` | sine (radians) | `n` |
 | `cos n` | cosine (radians) | `n` |
 | `tan n` | tangent (radians) | `n` |
+| `asin n` | arcsine, returns radians in `[-pi/2, pi/2]`; NaN outside `[-1, 1]` | `n` |
+| `acos n` | arccosine, returns radians in `[0, pi]`; NaN outside `[-1, 1]` | `n` |
+| `atan n` | arctangent, returns radians in `[-pi/2, pi/2]` | `n` |
 | `atan2 y x` | two-argument arctangent (y, x order; radians) | `n` |
 | `transpose m` | transpose row-major matrix | `L (L n)` |
 | `matmul a b` | matrix product | `L (L n)` |

@@ -1,0 +1,36 @@
+-- Inverse trig builtins (asin, acos, atan) used in real geospatial work.
+-- Before this lived in the language, every persona hand-rolled a 6-term
+-- Taylor series for asin to compute great-circle distance.
+
+-- Degrees to radians.
+d2r d:n>n;*d 0.017453292519943295
+
+-- Great-circle distance in km using the haversine formula.
+-- Inputs are decimal degrees. Earth radius 6371 km.
+hav lat1:n lon1:n lat2:n lon2:n>n;
+  p1=d2r lat1;
+  p2=d2r lat2;
+  dp=d2r -lat2 lat1;
+  dl=d2r -lon2 lon1;
+  sp=sin /dp 2;
+  sl=sin /dl 2;
+  cp1=cos p1;
+  cp2=cos p2;
+  a=+*sp sp ***cp1 cp2 sl sl;
+  s=sqrt a;
+  as=asin s;
+  c=*2 as;
+  *6371 c
+
+-- arctan reconstruction sanity: tan(atan(x)) = x.
+roundtrip x:n>n;a=atan x;tan a
+
+-- arccos of cos. acos(cos(1)) = 1.
+acc x:n>n;c=cos x;acos c
+
+-- run: hav 51.5074 -0.1278 48.8566 2.3522
+-- out: 343.55606034104164
+-- run: roundtrip 0.7
+-- out: 0.7
+-- run: acc 1
+-- out: 0.9999999999999999
