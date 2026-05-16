@@ -1,0 +1,38 @@
+-- `+=xs v` is pure-shaped: returns a new list, does not mutate `xs` in
+-- the caller's scope. There is no separate `push` builtin because `+=`
+-- already covers every shape one would reach for. Adding `push` would
+-- mean two ways to spell the same operation, costing reasoning tokens
+-- and surface area.
+--
+-- This example pins the three shapes a persona is likely to want:
+--   1. Rebind accumulator      xs = +=xs v        (canonical foreach build)
+--   2. Non-rebind assignment   ys = +=xs v        (xs preserved)
+--   3. Pipeline / argument     len +=xs v         (composes in arg position)
+--
+-- The rebind shape uses an in-place fast path when the binding is RC=1
+-- (amortised O(1) per push). The non-rebind shape always allocates a
+-- fresh list and leaves the source untouched, so source aliases are
+-- safe. To any caller, both shapes are functional.
+
+-- 1. Canonical accumulator: build [0, 1, 2, 3, 4] by repeated rebind.
+accumulator>L n;xs=[];@i 0..5{xs=+=xs i};xs
+
+-- 2. Non-rebind: ys gets the appended list, xs is untouched. Returning
+-- both lengths in one text pins the aliasing contract on every engine.
+no-mutation>t;xs=[1,2,3];ys=+=xs 99;fmt "{};{}" (len xs) (len ys)
+
+-- 3. Pipeline-arg form: `+=xs v` is a value, so it composes wherever a
+-- value is expected. No need for a `push` alias or a temporary binding.
+arg-position>n;xs=[1,2,3];len +=xs 99
+
+-- 4. Sum over the appended list. Another argument-position composition.
+arg-sum>n;xs=[10,20,30];sum +=xs 40
+
+-- run: accumulator
+-- out: [0, 1, 2, 3, 4]
+-- run: no-mutation
+-- out: 3;4
+-- run: arg-position
+-- out: 4
+-- run: arg-sum
+-- out: 100

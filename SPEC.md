@@ -237,7 +237,7 @@ Both prefix and infix notation are supported. **Prefix is preferred** — it is 
 | Prefix | Infix | Meaning | Types |
 |--------|-------|---------|-------|
 | `+a b` | `a + b` | add / concat / list concat | `n`, `t`, `L` |
-| `+=a v` | | append to list | `L` |
+| `+=a v` | | append to list (returns new list, see [Append semantics](#append-semantics-+=)) | `L` |
 | `-a b` | `a - b` | subtract | `n` |
 | `*a b` | `a * b` | multiply | `n` |
 | `/a b` | `a / b` | divide | `n` |
@@ -249,6 +249,26 @@ Both prefix and infix notation are supported. **Prefix is preferred** — it is 
 | `<=a b` | `a <= b` | less or equal | `n`, `t` |
 | `&a b` | `a & b` | logical AND (short-circuit) | any (truthy) |
 | `\|a b` | `a \| b` | logical OR (short-circuit) | any (truthy) |
+
+### Append semantics (`+=`)
+
+`+=xs v` is **pure-shaped**, despite the imperative-looking syntax. It returns a new list with `v` appended and does **not** mutate `xs` in the caller's scope. It works in every position a value-producing expression works:
+
+```
+-- 1. Rebind (canonical accumulator pattern)
+xs=[];@i 0..3{xs=+=xs i};xs        -- [0, 1, 2]
+
+-- 2. Non-rebind assignment (xs preserved)
+xs=[1, 2, 3];ys=+=xs 99            -- xs is still [1, 2, 3]; ys is [1, 2, 3, 99]
+
+-- 3. Pipeline / argument position
+len +=xs 99                        -- length of [xs..., 99]
+sum +=xs 99                        -- sum of [xs..., 99]
+```
+
+The rebind shape `xs = +=xs v` is the standard foreach-build accumulator. When the binding is RC=1 the engines mutate the underlying buffer in place (amortised O(1) per push) — but this is a behind-the-scenes optimisation. To any observer the operation is still functional: nothing outside the rebind sees the old `xs`. The non-rebind shape `ys = +=xs v` always allocates a fresh list and leaves `xs` untouched, so source aliases are safe.
+
+There is no separate `push` builtin. `+=` covers every use case and is shorter; adding an alias would mean two ways to spell the same operation, costing reasoning tokens and surface area.
 
 ### Unary
 
