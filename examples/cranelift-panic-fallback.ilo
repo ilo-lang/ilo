@@ -1,0 +1,26 @@
+-- Cross-engine regression marker for the Cranelift JIT panic-fallback.
+--
+-- On AArch64 (macOS arm64) the cranelift-jit 0.116 near-call relocation
+-- assertion at `compiled_blob.rs:90` could fire non-deterministically on
+-- the first run after a fresh `cargo build`, crashing the process. The
+-- JIT entry point is now wrapped in `std::panic::catch_unwind`, so any
+-- such panic becomes a stderr breadcrumb plus an engine fallback:
+--   * default engine → tree interpreter
+--   * `--run-cranelift` → bytecode VM
+--
+-- This example pins that a numeric pipeline of the shape that triggered
+-- the original repro keeps producing the same result on every engine.
+-- The actual panic-capture is exercised in `tests/regression_cranelift_panic_fallback.rs`
+-- via the debug-build `ILO_FORCE_JIT_PANIC=1` env-var hook.
+
+double x:n>n;*x 2
+inc x:n>n;+x 1
+
+main>n;inc (double 20)
+
+-- run: main
+-- out: 41
+-- run: double 21
+-- out: 42
+-- run: inc 99
+-- out: 100
