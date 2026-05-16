@@ -63,7 +63,7 @@ Sum types are compatible with `t` — a sum value can be passed to any `t` param
 
 ### Map type (`M k v`)
 
-Dynamic key-value collection. Keys are always text at runtime.
+Dynamic key-value collection. Keys are typed: text (`t`) or integer (`n`). `Int(1)` and `Text("1")` are distinct keys.
 
 ```
 mmap                      -- empty map
@@ -75,6 +75,18 @@ mvals m                  -- L v: values sorted by key
 mdel m k                 -- return new map with key k removed
 len m                     -- number of entries
 ```
+
+Numeric keys work directly — no `str` conversion needed. Float keys floor to `i64` at the builtin boundary (matching `at xs i`); NaN/Infinity raise at runtime.
+
+```
+idx=mmap
+idx=mset idx 7 "seven"     -- M n t, integer key
+mget idx 7                 -- "seven"
+mhas idx 7                 -- true
+mhas idx "7"               -- false (Int and Text are distinct)
+```
+
+`jdmp` stringifies numeric keys for JSON output (JSON object keys are always strings). The round-trip via `jpar` is lossy — numeric keys come back as text.
 
 Example:
 
@@ -96,6 +108,28 @@ apply f:F a a x:a>a;f x
 ```
 
 Type variables provide weak generics — the verifier accepts any type for `a` without consistency checking across call sites.
+
+### Inline lambdas
+
+Pass a function literal directly to a HOF instead of defining a one-off top-level helper:
+
+```
+by-dist xs:L n>L n;srt (x:n>n;abs x) xs
+nonempty ws:L t>L t;flt (s:t>b;>(len s) 0) ws
+sumsq xs:L n>n;fld (a:n x:n>n;+a *x x) xs 0
+```
+
+Syntax: `(<param>:<type> ...><return-type>;<body>)`. Same shape as a top-level function declaration, wrapped in parens, no name.
+
+**Phase 1 (no captures)** lifts the literal to a synthetic top-level decl and works across every engine (tree, VM, Cranelift JIT, AOT). The body's free variables must all be params, locals defined inside the lambda body, or known top-level fns.
+
+**Phase 2 (closure capture)** lets the body reference variables from the enclosing scope:
+
+```
+f xs:L n thr:n>L n;flt (x:n>b;>x thr) xs   -- captures `thr`
+```
+
+Phase 2 is **tree-only**. The VM and Cranelift engines surface `ILO-R012` (unsupported closure capture) and the default runner falls through to the tree interpreter automatically. The ctx-arg form (`srt fn ctx xs`) is the cross-engine alternative for capturing state.
 
 ---
 
@@ -318,7 +352,7 @@ Called like functions, compiled to dedicated opcodes.
 | `srt xs` | sort list (all-number or all-text) or text chars | same type |
 | `srt fn xs` | sort list by key function (returns number or text key) | `L` |
 | `unq xs` | remove duplicates, preserve order (list or text chars) | same type |
-| `slc xs a b` | slice list or text from index a to b | same type |
+| `slc xs a b` | slice list or text from index a to b (a, b accept negative indices counting from end; bounds clamp) | same type |
 | `jpth json path` | JSON path lookup (dot-separated keys, array indices) | `R t t` |
 | `jdmp value` | serialise ilo value to JSON text | `t` |
 | `prnt value` | print value to stdout, return it unchanged (passthrough) | same type |
@@ -337,13 +371,16 @@ Called like functions, compiled to dedicated opcodes.
 | `mdel m k` | new map with key k removed | `M k v` |
 | `at xs i` | i-th element of list or text (0-indexed; negative counts from end) | element |
 | `lst xs i v` | new list with index `i` set to `v` (list update; alias: `lset`) | `L a` |
-| `take n xs` | first `n` elements/chars of list or text (truncates if n > len) | same type |
-| `drop n xs` | skip first `n` elements/chars; return the rest | same type |
+| `take n xs` | first `n` elements/chars of list or text (n>=0 truncates if n>len; n<0 keeps all but the last `abs n`, Python `xs[:n]`) | same type |
+| `drop n xs` | skip first `n` elements/chars (n>=0 returns the rest; n<0 keeps only the last `abs n`, Python `xs[n:]`) | same type |
 | `rsrt xs` | sort descending (list or text chars) | same type |
 | `uniqby fn xs` | dedupe by key function (first occurrence wins) | `L a` |
 | `zip xs ys` | pairwise pairs of two lists; truncates to shorter input | `L (L _)` |
 | `enumerate xs` | pair each element with its index → `[[i, v], ...]` | `L (L _)` |
 | `range a b` | half-open numeric range `[a, a+1, ..., b-1]`; empty when `a >= b` | `L n` |
+| `map fn xs` | apply `fn` to each element | `L b` |
+| `flt fn xs` | keep elements where `fn x` is true | `L a` |
+| `fld fn xs init` | left fold: `fn (fn (fn init x0) x1) ...` | accumulator |
 | `flatmap fn xs` | map then flatten one level | `L b` |
 | `partition fn xs` | split list into `[passing, failing]` by predicate | `L (L a)` |
 | `chunks n xs` | non-overlapping chunks of size `n` (final chunk may be shorter) | `L (L a)` |
@@ -1179,7 +1216,7 @@ In `--json` mode the value is always wrapped (`{"ok": v}` / `{"error": {...}}`) 
 
 `Display` on `Value::Ok` / `Value::Err` still renders `~v` / `^e` in every other context (nested values, `prnt`, REPL prompts, error messages, debug output) — only the top-level program-return print path is split.
 
-The contract above applies to the in-process runners (`ilo prog.ilo`, `--run-tree`, `--run-vm`, `--run-cranelift`). AOT-compiled standalone binaries from `ilo compile` emit their final value through the same runtime helper as the `prnt` builtin and therefore still print `~v` / `^e`; the split is tracked as a follow-up.
+The contract applies uniformly to in-process runners (`ilo prog.ilo`, `--run-tree`, `--run-vm`, `--run-cranelift`) and to AOT-compiled standalone binaries from `ilo compile`. Both strip the top-level `~`/`^` wrapper on stdout, route `^e` to stderr, and use the same exit codes — output is byte-for-byte identical across every backend.
 
 ### Idiomatic hints
 
