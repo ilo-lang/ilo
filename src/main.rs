@@ -2879,6 +2879,35 @@ fn run_cranelift_engine(
                 eprintln!("Cranelift JIT: compilation failed");
                 1
             }
+            Err(vm::jit_cranelift::JitCallError::Panic { msg }) => {
+                // Upstream cranelift-jit 0.116 has an AArch64 near-call
+                // relocation assertion (`compiled_blob.rs:90`) that fires
+                // non-deterministically when the JIT code-cache and runtime
+                // memory get laid out >±64 MB apart. Converting the process
+                // crash to a single-line stderr breadcrumb + VM fallback
+                // preserves the working pipeline while keeping the upstream
+                // issue visible. The user asked for Cranelift explicitly, so
+                // we note the engine swap; we fall back to the bytecode VM
+                // (the closest non-JIT performance tier) rather than the
+                // tree interpreter.
+                eprintln!(
+                    "ilo: Cranelift JIT panicked ({}); falling back to bytecode VM",
+                    msg
+                );
+                match vm::run(&compiled, func_name, run_args) {
+                    Ok(val) => {
+                        print_value(&val, explicit_json, suppress);
+                        program_exit_code(&val)
+                    }
+                    Err(e) => {
+                        report_diagnostic(
+                            &Diagnostic::from(&e).with_source(source.to_string()),
+                            mode,
+                        );
+                        1
+                    }
+                }
+            }
         }
     }
     #[cfg(not(feature = "cranelift"))]
@@ -3243,6 +3272,20 @@ fn run_default(
                     Err(vm::jit_cranelift::JitCallError::NotEligible) => {
                         // JIT couldn't dispatch this function — fall through
                         // to the tree interpreter as before.
+                    }
+                    Err(vm::jit_cranelift::JitCallError::Panic { msg }) => {
+                        // Upstream cranelift-jit 0.116 AArch64 near-call
+                        // relocation assertion (`compiled_blob.rs:90`) fires
+                        // non-deterministically. The JIT never produced
+                        // runnable code, so falling through to the tree
+                        // interpreter is sound and preserves the user's
+                        // pipeline. We emit a one-line breadcrumb so the
+                        // upstream issue stays measurable rather than
+                        // degrading silently into the slower engine.
+                        eprintln!(
+                            "ilo: Cranelift JIT panicked ({}); falling back to interpreter",
+                            msg
+                        );
                     }
                 }
             }
@@ -7975,6 +8018,48 @@ mod tests {
         );
         // Cranelift JIT may succeed (0) or fail (1) depending on platform
         assert!(code == 0 || code == 1);
+    }
+
+    /// `run_cranelift_engine` must catch an upstream cranelift panic and
+    /// fall back to the bytecode VM so the user's program still completes.
+    /// Exercised via the test-only `FORCE_PANIC_FOR_TEST` flag (gated on
+    /// `cfg(debug_assertions)` to keep the hook out of release binaries).
+    #[test]
+    #[cfg(all(feature = "cranelift", debug_assertions))]
+    fn run_cranelift_engine_panic_falls_back_to_vm() {
+        let program = make_program("f x:n>n;*x 2");
+        vm::jit_cranelift::FORCE_PANIC_FOR_TEST.with(|c| c.set(true));
+        let code = run_cranelift_engine(
+            &program,
+            &["f".to_string(), "5".to_string()],
+            "",
+            OutputMode::Text,
+            false,
+        );
+        // VM fallback ran the program → exit 0. A crash would have aborted
+        // the test process; an unhandled error would have returned 1.
+        assert_eq!(code, 0);
+        assert!(!vm::jit_cranelift::FORCE_PANIC_FOR_TEST.with(|c| c.get()));
+    }
+
+    /// `run_default` must catch an upstream cranelift panic and fall through
+    /// to the tree interpreter (the same path used for `NotEligible`).
+    #[test]
+    #[cfg(all(feature = "cranelift", debug_assertions))]
+    fn run_default_cranelift_panic_falls_back_to_interpreter() {
+        let program = make_program("f x:n>n;*x 2");
+        vm::jit_cranelift::FORCE_PANIC_FOR_TEST.with(|c| c.set(true));
+        let code = run_default(
+            &program,
+            Some("f"),
+            vec![interpreter::Value::Number(5.0)],
+            "",
+            OutputMode::Text,
+            false,
+        );
+        // Tree interpreter fallback ran the program → exit 0.
+        assert_eq!(code, 0);
+        assert!(!vm::jit_cranelift::FORCE_PANIC_FOR_TEST.with(|c| c.get()));
     }
 
     #[test]
