@@ -312,16 +312,25 @@ Text values are written in double quotes. Escape sequences:
 
 | Sequence | Meaning |
 |----------|---------|
-| `\n` | newline |
-| `\t` | tab |
-| `\r` | carriage return |
+| `\n` | newline (0x0A) |
+| `\t` | tab (0x09) |
+| `\r` | carriage return (0x0D) |
+| `\f` | form feed (0x0C, PDF page separator) |
+| `\b` | backspace (0x08) |
+| `\v` | vertical tab (0x0B) |
+| `\a` | bell (0x07) |
+| `\0` | null (0x00) |
 | `\"` | literal double quote |
 | `\\` | literal backslash |
+| `\/` | literal forward slash (JSON passthrough) |
+
+Unknown escapes (e.g. `\z`) preserve the backslash + char verbatim.
 
 ```
 "hello\nworld"      -- two-line string
 "col1\tcol2"        -- tab-separated
-spl "\n" text       -- split file content into lines
+spl text "\n"       -- split file content into lines
+spl pdf  "\f"       -- split pdftotext output into pages
 ```
 
 ---

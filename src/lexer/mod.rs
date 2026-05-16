@@ -155,6 +155,12 @@ pub enum Token {
                     Some('r') => out.push('\r'),
                     Some('"') => out.push('"'),
                     Some('\\') => out.push('\\'),
+                    Some('f') => out.push('\u{000C}'),
+                    Some('b') => out.push('\u{0008}'),
+                    Some('v') => out.push('\u{000B}'),
+                    Some('a') => out.push('\u{0007}'),
+                    Some('0') => out.push('\u{0000}'),
+                    Some('/') => out.push('/'),
                     Some(other) => { out.push('\\'); out.push(other); }
                     None => {}
                 }
@@ -1119,6 +1125,51 @@ mod tests {
         let source = r#""hello world""#;
         let tokens = lex(source).unwrap();
         assert_eq!(tokens[0].0, Token::Text("hello world".to_string()));
+    }
+
+    /// Standard C-style escape sequences must decode to their control
+    /// characters inside `"..."` literals, not pass through as literal
+    /// backslash-letter pairs. pdf-analyst rerun3 hit this on `\f` (the
+    /// form-feed character `pdftotext` writes between PDF pages): `spl raw
+    /// "\f"` returned 1 because the lexer was emitting two chars `\` `f`
+    /// instead of `0x0C`. Cover the full escape table here so future
+    /// regressions trip the unit test, not a persona running real data.
+    #[test]
+    fn lex_string_escapes_full_set() {
+        let cases = [
+            (r#""\n""#, "\n"),
+            (r#""\t""#, "\t"),
+            (r#""\r""#, "\r"),
+            (r#""\"""#, "\""),
+            (r#""\\""#, "\\"),
+            (r#""\f""#, "\u{000C}"),
+            (r#""\b""#, "\u{0008}"),
+            (r#""\v""#, "\u{000B}"),
+            (r#""\a""#, "\u{0007}"),
+            (r#""\0""#, "\u{0000}"),
+            (r#""\/""#, "/"),
+            // Mixed: pdftotext-style page separator (`page1\fpage2`).
+            (r#""page1\fpage2""#, "page1\u{000C}page2"),
+        ];
+        for (src, expected) in cases {
+            let tokens = lex(src).unwrap();
+            assert_eq!(
+                tokens[0].0,
+                Token::Text(expected.to_string()),
+                "escape decode mismatch for {src}"
+            );
+        }
+    }
+
+    /// Unknown escapes preserve the backslash + char verbatim so existing
+    /// programs that abuse `\` in strings (e.g. Windows paths in test data)
+    /// don't suddenly change meaning. This is the long-standing fallback
+    /// behaviour, locked in by test so future escape additions don't drop
+    /// it.
+    #[test]
+    fn lex_string_unknown_escape_passes_through() {
+        let tokens = lex(r#""\z""#).unwrap();
+        assert_eq!(tokens[0].0, Token::Text("\\z".to_string()));
     }
 
     #[test]
