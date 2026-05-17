@@ -1573,11 +1573,17 @@ fn detect_prefix_precedence_trap(
         if i > 0 && is_value_yielding(&tokens[i - 1].0) {
             continue;
         }
-        // Parenthesised-form suppression: if op1 sits directly after `(`, the
-        // author has explicitly grouped the prefix expression. That IS the
-        // recommended shape, so don't nag. Covers nested parens too because
-        // the immediate predecessor is still `LParen`.
-        if i > 0 && matches!(&tokens[i - 1].0, LParen) {
+        // Explicit-grouping suppression: if op1 sits directly after an
+        // opening delimiter (`(`, `[`, `{`), the author has bounded the
+        // prefix subexpression with explicit grouping. The hint suggests
+        // grouping as the canonical disambiguation, so firing here would be
+        // self-contradictory. Includes `[` for list literals (`[*/a b c]`)
+        // and `{` for block bodies / braced conditionals (`cond{*/a b c}`),
+        // both of which several rerun7 personas (content-mod, ab-tester,
+        // logs-forensics, scientific-researcher) hit as a false positive.
+        // Nested delimiters are covered too because the immediate
+        // predecessor remains the innermost opener.
+        if i > 0 && matches!(&tokens[i - 1].0, LParen | LBracket | LBrace) {
             continue;
         }
         // The pair must be followed by at least one value-yielding token to
@@ -7761,6 +7767,65 @@ mod tests {
             detect_prefix_precedence_trap(&tokens).is_none(),
             "detector must suppress when immediate predecessor is LParen"
         );
+    }
+
+    #[test]
+    fn collect_hints_bracket_grouped_prefix_pair_does_not_fire() {
+        // List-literal grouping: `[*/a b c]` is an explicit subexpression
+        // boundary. Same intent as the paren-grouped form — author has
+        // bounded the prefix pair. content-mod / ab-tester / logs-forensics /
+        // scientific-researcher rerun7 hit this as a false positive.
+        let hints = collect_hints("f a:n b:n c:n>n;hd [*/a b c]");
+        assert!(
+            !has_prefix_trap_hint(&hints),
+            "bracket-grouped pair `[*/a b c]` should not fire prefix-trap hint, got: {:?}",
+            hints
+        );
+        for src in [
+            "f a:n b:n c:n>n;hd [/* a b c]",
+            "f a:n b:n c:n>n;hd [+- a b c]",
+            "f a:n b:n c:n>n;hd [-+ a b c]",
+        ] {
+            let hints = collect_hints(src);
+            assert!(
+                !has_prefix_trap_hint(&hints),
+                "bracket-grouped pair in `{src}` should be silent, got: {:?}",
+                hints
+            );
+        }
+    }
+
+    #[test]
+    fn collect_hints_paren_inside_brackets_prefix_pair_does_not_fire() {
+        // Nested: `[(*/a b c)]` — predecessor of `*` is still `LParen`, the
+        // innermost opener. Pins that the immediate-predecessor check
+        // composes through bracket nesting.
+        let hints = collect_hints("f a:n b:n c:n>n;hd [(*/a b c)]");
+        assert!(
+            !has_prefix_trap_hint(&hints),
+            "`[(*/a b c)]` should be silent (paren is the immediate predecessor), got: {:?}",
+            hints
+        );
+    }
+
+    #[test]
+    fn collect_hints_bracket_brace_pair_unit_check() {
+        // Unit-level pin on the detector for both new predecessors.
+        use lexer::Token::*;
+        for opener in [LBracket, LBrace] {
+            let tokens = vec![
+                (opener.clone(), 0..1),
+                (Star, 1..2),
+                (Slash, 2..3),
+                (Ident("a".to_string()), 4..5),
+                (Ident("b".to_string()), 6..7),
+                (Ident("c".to_string()), 8..9),
+            ];
+            assert!(
+                detect_prefix_precedence_trap(&tokens).is_none(),
+                "detector must suppress when immediate predecessor is {opener:?}"
+            );
+        }
     }
 
     // ── tools_cmd: error paths ────────────────────────────────────────────────
