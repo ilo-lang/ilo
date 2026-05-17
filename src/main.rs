@@ -3785,14 +3785,15 @@ fn run_bench(program: &ast::Program, func_name: Option<&str>, args: &[interprete
         let nan_args: Vec<u64> = args.iter().map(|v| vm::NanVal::from_value(v).0).collect();
         vm::with_active_registry(&compiled, || {
             if let Some(jit_func) = vm::jit_cranelift::compile(chunk, nan_consts, &compiled) {
+                let entry_name = compiled.func_names.get(fi).map(|s| s.as_str());
                 for _ in 0..100 {
-                    let _ = vm::jit_cranelift::call(&jit_func, &nan_args);
+                    let _ = vm::jit_cranelift::call(&jit_func, &nan_args, entry_name);
                 }
 
                 let start = Instant::now();
                 let mut jit_result_bits = 0u64;
                 for _ in 0..iterations {
-                    jit_result_bits = vm::jit_cranelift::call(&jit_func, &nan_args)
+                    jit_result_bits = vm::jit_cranelift::call(&jit_func, &nan_args, entry_name)
                         .expect("Cranelift JIT error during benchmark");
                 }
                 let jit_dur = start.elapsed();
