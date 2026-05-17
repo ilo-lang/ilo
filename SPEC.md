@@ -340,11 +340,19 @@ Disambiguation: `-` followed by one atom is unary negate, followed by two atoms 
 
 ### Operands
 
-Operator operands are **atoms** (literals, refs, field access) or **nested prefix operators**. Function calls are NOT operands — bind call results to a variable first:
+Operator operands are **atoms** (literals, refs, field access), **nested prefix operators**, or **known-arity function calls**. The prefix-binop operand parser dispatches to call parsing when the ident at the cursor is a known-arity user fn or builtin AND the next token can start another operand:
 
 ```
--- DON'T: *n fac p  →  parses as Multiply(n, fac) with p dangling
--- DO:    r=fac p;*n r
+wh >len q 0{body}        -- parses as wh > (len q) 0 { body }
++f g h                   -- if f is 1-arity: BinOp(+, Call(f, [g]), h)
+```
+
+This parallels the `??` precedent: `??x default` accepts a call expression on the value side. Bare locals that shadow a user fn name still resolve via `Ref` rather than expanding into a zero-arg call, so `&e f{...}` where `f` is a local still parses as the bool operator with two refs.
+
+When the call expansion isn't available (the ident is a local that shadows a fn name, or the call's arity doesn't fit the remaining tokens), bind the call result first:
+
+```
+r=fac p;*n r   -- bind, then operate — always unambiguous
 ```
 
 **Negative literals vs binary minus**: the lexer greedily includes a leading `-` into number tokens. `-1`, `-7`, `-0` are all number literals. To subtract from zero, use a space: `- 0 v` (Minus token, then `0`, then `v`).
