@@ -1,0 +1,45 @@
+-- Runtime errors carry the source span across every engine.
+--
+-- v0.11.5 fixed parse-time span drift (#318). This example pins the
+-- follow-on win: every Cranelift JIT helper that can raise a runtime
+-- error now packs the offending statement's span into the surfaced
+-- diagnostic, so `ilo --json` consumers (and the ANSI renderer) get
+-- file/line/caret on every failure shape — not just parse errors.
+--
+-- The success paths below run identically on tree, VM, AOT cranelift,
+-- and in-process JIT. The example harness exercises every engine, so a
+-- future regression that drops the span on one helper would fail this
+-- file at compile-time-parity rather than waiting for a persona to
+-- file another `"labels":[]` report.
+
+-- xs.N (literal postfix index) on an in-bounds element returns the value.
+postfix-index xs:L n>n;xs.0
+
+-- Dynamic indexing via `at` auto-floors; in-bounds returns the value.
+dyn-index xs:L n i:n>n;at xs i
+
+-- lst xs i v returns a new list with index i replaced; in-bounds works.
+replace-at xs:L n>L n;lst xs 1 99
+
+-- mget on a present key returns the value (Option-shaped: present → value).
+m-present>n;m=mset mmap "a" 7;??mget m "a" 0
+
+-- mget on a missing key returns nil — the canonical Optional empty.
+-- We default through `??` so the example asserts a numeric result.
+m-missing>n;m=mset mmap "a" 7;??mget m "z" 0
+
+-- jpth on a well-formed JSON string + path returns Ok(value).
+json-extract>R t t;jpth "{\"a\":1}" "a"
+
+-- run: postfix-index [10,20,30]
+-- out: 10
+-- run: dyn-index [10,20,30] 1
+-- out: 20
+-- run: replace-at [1,2,3]
+-- out: [1, 99, 3]
+-- run: m-present
+-- out: 7
+-- run: m-missing
+-- out: 0
+-- run: json-extract
+-- out: 1
