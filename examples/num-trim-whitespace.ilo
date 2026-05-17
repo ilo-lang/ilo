@@ -1,0 +1,17 @@
+-- `num` trims leading/trailing ASCII whitespace before parsing, so CSV cells
+-- like " 77516" (with a leading space after the comma) parse cleanly without
+-- silently becoming Err. Internal whitespace still fails the parse.
+
+leading>n;num!! " 77516"
+trailing>n;num!! "77516 "
+both>n;num!! "  -3.14  "
+sci>n;num!! " 1e10 "
+
+-- run: leading
+-- out: 77516
+-- run: trailing
+-- out: 77516
+-- run: both
+-- out: -3.14
+-- run: sci
+-- out: 10000000000

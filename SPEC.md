@@ -431,7 +431,7 @@ Called like functions, compiled to dedicated opcodes.
 |------|---------|---------|
 | `len x` | length of string (bytes) or list (elements) | `n` |
 | `str n` | number to text (integers format without `.0`) | `t` |
-| `num t` | text to number (Err if unparseable) | `R n t` |
+| `num t` | text to number; trims leading/trailing ASCII whitespace before parsing (Err if unparseable) | `R n t` |
 | `abs n` | absolute value | `n` |
 | `min a b` | minimum of two numbers | `n` |
 | `min xs` | minimum element of a numeric list (error if empty) | `n` |
