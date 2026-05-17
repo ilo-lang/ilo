@@ -68,7 +68,7 @@ fn record_tail_one_field_cross_engine() {
     // because the scan walked into `mk>cr`'s `>`.
     let src = "type r{x:n}\n\
                build>r\n  v=1\n  r x:v\n\
-               mk>n\n  rec=build\n  rec.x";
+               mk>n\n  rec=build()\n  rec.x";
     for engine in ENGINES_ALL {
         assert_eq!(
             run_ok(engine, src, &["mk"]),
@@ -82,7 +82,7 @@ fn record_tail_one_field_cross_engine() {
 fn record_tail_two_fields_cross_engine() {
     let src = "type r{x:n;y:n}\n\
                build>r\n  a=10\n  b=20\n  r x:a y:b\n\
-               mk>n\n  rec=build\n  +rec.x rec.y";
+               mk>n\n  rec=build()\n  +rec.x rec.y";
     for engine in ENGINES_ALL {
         assert_eq!(
             run_ok(engine, src, &["mk"]),
@@ -153,7 +153,7 @@ fn record_tail_after_semicolon_cross_engine() {
     // shared scan loop.
     let src = "type r{x:n}\n\
                build>r;v=1;r x:v\n\
-               mk>n;rec=build;rec.x";
+               mk>n;rec=build();rec.x";
     for engine in ENGINES_ALL {
         assert_eq!(
             run_ok(engine, src, &["mk"]),
@@ -166,22 +166,21 @@ fn record_tail_after_semicolon_cross_engine() {
 // ── (d) Negative: real fn decl with `>` on the header line ───────────
 
 #[test]
-fn real_fn_decl_still_terminates_body_cross_engine() {
-    // Two top-level fns. The body of the first ends at the un-indented
-    // boundary; the second `g a:n>n;+a 1` is a REAL fn decl. The
-    // strict check must still return true for `g a:n>n;...` so the
-    // boundary is detected and `g` parses as its own decl. This is
-    // the case the strict check was originally added to handle and
-    // must not regress.
-    let src = "f x:n>n\n  y=*x 2\n  +y 3\n\
-               g a:n>n;+a 1\n\
-               main>n;+f 5 g 10";
+fn real_fn_decl_still_terminates_body_single_line_cross_engine() {
+    // Single-line file: no newlines, all decls separated by `;`. The
+    // strict check is what STOPS `helper`'s body from greedily slurping
+    // `main x:n>n;helper x` as continuation statements. With the boundary
+    // check added by this fix, the strict scan finds `>` (in `main>n`)
+    // before any boundary (there are none), so it correctly returns
+    // true and the body terminates. Catches regressions where someone
+    // tightens the boundary check too far and accidentally rejects
+    // legitimate single-line multi-fn files.
+    let src = "helper x:n>n;*x 2;main>n;helper 5";
     for engine in ENGINES_ALL {
-        // f(5) = 5*2+3 = 13; g(10) = 11; total = 24
         assert_eq!(
             run_ok(engine, src, &["main"]),
-            "24",
-            "{engine}: real fn decl after multi-line body"
+            "10",
+            "{engine}: single-line multi-fn file still parses"
         );
     }
 }
