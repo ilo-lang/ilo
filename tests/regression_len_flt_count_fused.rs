@@ -188,7 +188,8 @@ fn len_flt_count_inlineable_predicate() {
 // `branchy` is intentionally large (multi-statement body with a `?`
 // expression) so the inliner rejects it and the OP_CALL_DYN path
 // inside the fused counter takes over. The count must still be right.
-const COUNT_BRANCHY: &str = "branchy x:n>b;d=*x 2;e=+d 1;f=*e e;>f 10\nmain xs:L n>n;len (flt branchy xs)";
+const COUNT_BRANCHY: &str =
+    "branchy x:n>b;d=*x 2;e=+d 1;f=*e e;>f 10\nmain xs:L n>n;len (flt branchy xs)";
 
 #[test]
 fn len_flt_count_non_inlineable_predicate() {
@@ -225,7 +226,8 @@ fn len_flt_count_nonbool_predicate_errors_vm() {
 // path explicitly refuses to intercept that shape; this test just
 // pins that the value is still correct, regardless of which emitter
 // fires.
-const COUNT_WINDOW_INNER: &str = "has-pos w:L n>b;>(sum w) 0\nmain xs:L n>n;len (flt has-pos (window 2 xs))";
+const COUNT_WINDOW_INNER: &str =
+    "has-pos w:L n>b;>(sum w) 0\nmain xs:L n>n;len (flt has-pos (window 2 xs))";
 
 #[test]
 fn len_flt_count_window_inner_correct() {
@@ -257,7 +259,12 @@ fn len_flt_count_escape_to_list_consumer() {
     // The `keep` form returns the filtered list (no fusion). If our
     // emitter accidentally fused-counter'd that site, the result would
     // be a number — assertion below catches that drift.
-    run_all(COUNT_VS_LIST_KEEP, "main", &["[-3,-1,0,2,4,7]"], "[2, 4, 7]");
+    run_all(
+        COUNT_VS_LIST_KEEP,
+        "main",
+        &["[-3,-1,0,2,4,7]"],
+        "[2, 4, 7]",
+    );
     // The `count` form takes the fused-counter path.
     run_all(COUNT_VS_LIST_COUNT, "main", &["[-3,-1,0,2,4,7]"], "3");
 }
@@ -331,5 +338,10 @@ fn phase2_inlined_alongside_other_call_sites() {
     // (next_reg / max_reg / window_base bookkeeping). Tree-walker
     // produces the reference; VM and Cranelift must match.
     let src = "is-hydro c:t>b;has \"AI\" c\nall-h xs:L t>b;n=len (flt is-hydro xs);=n 2\nmain xs:L (L t)>n;a=len (flt all-h xs);b=len (flt all-h xs);+a b";
-    run_all(src, "main", &["[[\"A\",\"I\"],[\"A\",\"X\"],[\"I\",\"I\"]]"], "4");
+    run_all(
+        src,
+        "main",
+        &["[[\"A\",\"I\"],[\"A\",\"X\"],[\"I\",\"I\"]]"],
+        "4",
+    );
 }

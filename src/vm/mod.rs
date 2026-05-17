@@ -2433,9 +2433,9 @@ impl RegCompiler {
     /// body and skip OP_CALL_DYN entirely; falls back on any rejection.
     fn compile_len_flt_count(&mut self, pred_expr: &Expr, xs_expr: &Expr) -> u8 {
         // Predicate-inline fast path (mirrors the (Flt, 2) arm).
-        let inline_body = self.resolve_user_fn_idx(pred_expr).and_then(|idx| {
-            self.try_inline_predicate_body(idx, 1, INLINE_OP_BUDGET)
-        });
+        let inline_body = self
+            .resolve_user_fn_idx(pred_expr)
+            .and_then(|idx| self.try_inline_predicate_body(idx, 1, INLINE_OP_BUDGET));
 
         let fn_reg = if inline_body.is_some() {
             u8::MAX
@@ -2893,10 +2893,7 @@ impl RegCompiler {
                                     false
                                 };
                                 if !is_window_inner {
-                                    return self.compile_len_flt_count(
-                                        &flt_args[0],
-                                        &flt_args[1],
-                                    );
+                                    return self.compile_len_flt_count(&flt_args[0], &flt_args[1]);
                                 }
                             }
 
