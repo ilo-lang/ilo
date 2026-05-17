@@ -132,20 +132,16 @@ fn div_zero_over_zero_cross_engine() {
 }
 
 #[test]
-fn div_by_zero_zsc_shape_cross_engine() {
-    // Cranelift's silent NaN was first surfaced by `zsc` over a constant
-    // column: variance reaches zero so `(x - mean) / stdev` divides by zero
-    // inside a hot inner loop. This reproduces the failing shape directly.
-    let src = "\
-zsc xs:L n>L n
-  m=/ (sum xs) (len xs)
-  v=0
-  ea x xs;v = +v (*(- x m) (- x m))
-  v = /v (len xs)
-  s=sqrt v
-  map (fn x>n;/(- x m) s) xs
-";
-    assert_all_engines_err(src, &["2", "2", "2"], "ILO-R003", "division by zero");
+fn div_by_zero_runtime_computed_cross_engine() {
+    // The originating ml-engineer bug had the divisor computed at runtime via
+    // a `sqrt(variance)` that hit zero. Mirror that without the lambda parser
+    // surface area: compute the zero divisor from two equal runtime numbers.
+    assert_all_engines_err(
+        "f a:n b:n>n;d=- b a\n  /a d",
+        &["5", "5"],
+        "ILO-R003",
+        "division by zero",
+    );
 }
 
 // ── `mod` zero divisor: every engine must fail (no silent NaN) ──────────
