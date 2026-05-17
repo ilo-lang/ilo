@@ -1487,9 +1487,7 @@ fn collect_hints_with_program(source: &str, program: Option<&ast::Program>) -> V
             if let lexer::Token::Ident(word) = tok
                 && let Some(canonical) = ast::resolve_alias(word)
             {
-                hints.push(format!(
-                    "hint: `{word}` → `{canonical}` (canonical form)"
-                ));
+                hints.push(format!("hint: `{word}` → `{canonical}` (canonical form)"));
                 break; // one hint per run is enough
             }
         }
