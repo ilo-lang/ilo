@@ -335,8 +335,9 @@ impl Global {
 /// `--word-with-dashes`) UNLESS it appears after a `--` literal separator.
 ///
 /// Background: `Cli::args` and `RunArgs::rest` use `trailing_var_arg = true`
-/// + `allow_hyphen_values = true` so clap collects unrecognised hyphen-prefixed
-/// tokens as positional. Without this guard, `ilo main.ilo --engine tree`
+/// with `allow_hyphen_values = true` so clap collects unrecognised
+/// hyphen-prefixed tokens as positional. Without this guard,
+/// `ilo main.ilo --engine tree`
 /// silently consumes `--engine` as a positional and the program runs with
 /// the wrong arity, surfacing as misleading `ILO-R012 no functions defined`
 /// or `ILO-R004 main: expected N args, got N+1`. Six rerun8 personas
