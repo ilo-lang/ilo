@@ -692,18 +692,6 @@ enum FusedWindowOp {
 // no jumps (forward or backward), no opcodes whose data lives in a
 // follow-on word, no opcodes that write upvalues / mutate shared state.
 
-/// Description of a single instruction's register/const usage that the
-/// inliner needs to know in order to rewrite it. `kind` only encodes what
-/// the inliner depends on; the actual opcode byte stays unchanged on
-/// emission. Field semantics:
-///   - `Abc` — A, B, C are all register fields (regs ≤ reg_count).
-///   - `AbcAReg`     — A is a reg, B and C are immediates / type-tag bits.
-///   - `AbcARegBReg` — A and B are regs, C is unused or an immediate.
-///   - `AbxReg`      — A is a reg, Bx is a 16-bit value (NOT a const idx).
-///   - `AbxLoadK`    — A is a reg, Bx is a constant-pool index (needs remap).
-///   - `AbxLoadFn`   — A is a reg, Bx is a FnRef encoding (no remap).
-///   - `Ret`         — terminal: A is the return-value reg.
-///   - `Reject`      — any opcode not on the whitelist; inliner bails.
 /// Maximum body length (in opcodes) we'll consider for inlining a
 /// predicate/mapper into a HOF dispatcher. Picked to comfortably cover
 /// the bio canonical's `is-hydro` (3 ops) and similar single-predicate
@@ -711,6 +699,19 @@ enum FusedWindowOp {
 /// dispatch cost is amortised across more useful work.
 pub(crate) const INLINE_OP_BUDGET: usize = 8;
 
+/// Description of a single instruction's register/const usage that the
+/// inliner needs to know in order to rewrite it. `kind` only encodes what
+/// the inliner depends on; the actual opcode byte stays unchanged on
+/// emission. Field semantics:
+///
+/// - `Abc` — A, B, C are all register fields (regs ≤ reg_count).
+/// - `AbcAReg` — A is a reg, B and C are immediates / type-tag bits.
+/// - `AbcARegBReg` — A and B are regs, C is unused or an immediate.
+/// - `AbxReg` — A is a reg, Bx is a 16-bit value (NOT a const idx).
+/// - `AbxLoadK` — A is a reg, Bx is a constant-pool index (needs remap).
+/// - `AbxLoadFn` — A is a reg, Bx is a FnRef encoding (no remap).
+/// - `Ret` — terminal: A is the return-value reg.
+/// - `Reject` — any opcode not on the whitelist; inliner bails.
 #[derive(Clone, Copy)]
 enum InlineOpKind {
     /// Plain ABC: A, B, C are all register fields.
@@ -741,8 +742,8 @@ enum InlineOpKind {
 fn inline_kind_for_opcode(op: u8) -> InlineOpKind {
     match op {
         // Numeric / generic arithmetic — ABC, three reg fields.
-        OP_ADD | OP_SUB | OP_MUL | OP_DIV | OP_EQ | OP_NE | OP_GT | OP_LT
-        | OP_GE | OP_LE | OP_MOD => InlineOpKind::Abc,
+        OP_ADD | OP_SUB | OP_MUL | OP_DIV | OP_EQ | OP_NE | OP_GT | OP_LT | OP_GE | OP_LE
+        | OP_MOD => InlineOpKind::Abc,
         OP_ADD_NN | OP_SUB_NN | OP_MUL_NN | OP_DIV_NN => InlineOpKind::Abc,
 
         // _Reg-and-Const_ shape: A and B are regs, C is a constant-pool
@@ -751,17 +752,21 @@ fn inline_kind_for_opcode(op: u8) -> InlineOpKind {
         // perspective but must rewrite it through the const map. Handled
         // specially in `rewrite_inst`.
         OP_ADDK_N | OP_SUBK_N | OP_MULK_N | OP_DIVK_N => InlineOpKind::AbcARegBReg,
-        OP_CMPK_GE_N | OP_CMPK_GT_N | OP_CMPK_LT_N | OP_CMPK_LE_N
-        | OP_CMPK_EQ_N | OP_CMPK_NE_N => InlineOpKind::AbcAReg,
+        OP_CMPK_GE_N | OP_CMPK_GT_N | OP_CMPK_LT_N | OP_CMPK_LE_N | OP_CMPK_EQ_N | OP_CMPK_NE_N => {
+            InlineOpKind::AbcAReg
+        }
 
         // String concat (both operands known text) — ABC, three regs.
         OP_ADD_SS => InlineOpKind::Abc,
 
-        // Membership / structural — single-word, three reg fields.
-        OP_HAS | OP_HD | OP_TL | OP_REV | OP_LEN | OP_MOVE | OP_NOT | OP_NEG
-        | OP_AT | OP_LISTGET | OP_INDEX | OP_MGET | OP_MHAS | OP_ABS
-        | OP_FLR | OP_CEL | OP_MIN | OP_MAX | OP_STR | OP_NUM | OP_CHR
-        | OP_ORD | OP_UPR | OP_LWR | OP_CAP | OP_CHARS | OP_TRM | OP_ROU
+        // Membership / structural — single-word, all reg fields.
+        // NOTE: OP_INDEX is deliberately excluded — its C field is an 8-bit
+        // literal index, NOT a register, so the generic "shift by window_base"
+        // rewrite in `emit_inlined_body` would corrupt it. If a predicate
+        // uses literal indexing it falls back to OP_CALL_DYN.
+        OP_HAS | OP_HD | OP_TL | OP_REV | OP_LEN | OP_MOVE | OP_NOT | OP_NEG | OP_AT
+        | OP_LISTGET | OP_MGET | OP_MHAS | OP_ABS | OP_FLR | OP_CEL | OP_MIN | OP_MAX | OP_STR
+        | OP_NUM | OP_CHR | OP_ORD | OP_UPR | OP_LWR | OP_CAP | OP_CHARS | OP_TRM | OP_ROU
         | OP_ISNUM | OP_ISTEXT | OP_ISBOOL | OP_ISLIST => InlineOpKind::Abc,
 
         // Wrappers — ABC, A and B are regs (C unused / discriminator).
@@ -806,10 +811,12 @@ struct InlinedBody {
 
 impl RegCompiler {
     /// Resolve `fn_expr` to a user-function chunk index if (and only if):
-    ///   - it is a bare `Expr::Ref(name)`,
-    ///   - `name` is not shadowed by a local binding (a local would mean a
-    ///     value-typed FnRef whose target is runtime-determined),
-    ///   - `name` resolves to a declared user function (not a builtin).
+    ///
+    /// - it is a bare `Expr::Ref(name)`,
+    /// - `name` is not shadowed by a local binding (a local would mean a
+    ///   value-typed FnRef whose target is runtime-determined),
+    /// - `name` resolves to a declared user function (not a builtin).
+    ///
     /// Returns `None` for builtin callees, inline lambdas with captures
     /// (`Expr::MakeClosure`), or any indirection — those cases stay on the
     /// OP_CALL_DYN path.
@@ -956,10 +963,9 @@ impl RegCompiler {
             if matches!(
                 inline_kind_for_opcode(op),
                 InlineOpKind::AbcAReg | InlineOpKind::AbcARegBReg
-            ) {
-                if (c as usize) < needs_8bit_const.len() {
-                    needs_8bit_const[c as usize] = true;
-                }
+            ) && (c as usize) < needs_8bit_const.len()
+            {
+                needs_8bit_const[c as usize] = true;
             }
         }
 
@@ -3472,10 +3478,9 @@ impl RegCompiler {
                             }
                             // Predicate-inline fast path. See the matching
                             // comment in the `flt` arm.
-                            let inline_body =
-                                self.resolve_user_fn_idx(&args[0]).and_then(|idx| {
-                                    self.try_inline_predicate_body(idx, 1, INLINE_OP_BUDGET)
-                                });
+                            let inline_body = self.resolve_user_fn_idx(&args[0]).and_then(|idx| {
+                                self.try_inline_predicate_body(idx, 1, INLINE_OP_BUDGET)
+                            });
 
                             let fn_reg = if inline_body.is_some() {
                                 u8::MAX
@@ -3608,10 +3613,9 @@ impl RegCompiler {
                             // skip OP_CALL_DYN entirely and run the body
                             // inline against a fresh scratch reg window.
                             // Falls through to OP_CALL_DYN on any rejection.
-                            let inline_body =
-                                self.resolve_user_fn_idx(&args[0]).and_then(|idx| {
-                                    self.try_inline_predicate_body(idx, 1, INLINE_OP_BUDGET)
-                                });
+                            let inline_body = self.resolve_user_fn_idx(&args[0]).and_then(|idx| {
+                                self.try_inline_predicate_body(idx, 1, INLINE_OP_BUDGET)
+                            });
 
                             let fn_reg = if inline_body.is_some() {
                                 // Skip materialising the FnRef — we won't dispatch through it.
@@ -31902,6 +31906,35 @@ main>n
         let v = vm_run_main_for_test(src);
         // windows: [1,2]=3 (no), [2,3]=5 (yes), [3,4]=7 (yes), [4,5]=9 (yes) → 3.
         assert_eq!(format!("{:?}", v), format!("{:?}", Value::Number(3.0)));
+    }
+
+    /// A predicate whose body uses literal-index lookup (`x[0]`-style)
+    /// must fall back to OP_CALL_DYN. OP_INDEX encodes its index as an
+    /// 8-bit literal in the C field — NOT a register — so a naive
+    /// rewrite that shifts every C field by `window_base` would corrupt
+    /// the index. The inliner's whitelist deliberately excludes OP_INDEX
+    /// so the fallback path keeps the predicate correct.
+    #[test]
+    fn predicate_inline_rejects_op_index_literal_c_field() {
+        // `xs.0` desugars to Expr::Index, which emits OP_INDEX with C=0
+        // as an 8-bit literal index (NOT a register). If the inliner's
+        // whitelist accepted OP_INDEX and rewrote C as a register field,
+        // the index would become whatever NanVal sits at register
+        // `window_base` — a silent miscompile. This test guards the
+        // boundary by exercising a predicate whose body uses `xs.0` and
+        // asserting the output is correct.
+        let src = r#"
+first-pos xs:L n>b;>xs.0 0
+main>L (L n)
+  flt first-pos [[1, 2], [-1, 3], [5, 6], [0, 7]]
+"#;
+        let v = vm_run_main_for_test(src);
+        // Lists where first element > 0: [1,2] and [5,6].
+        let expected = Value::List(Arc::new(vec![
+            Value::List(Arc::new(vec![Value::Number(1.0), Value::Number(2.0)])),
+            Value::List(Arc::new(vec![Value::Number(5.0), Value::Number(6.0)])),
+        ]));
+        assert_eq!(format!("{:?}", v), format!("{:?}", expected));
     }
 
     /// The bio canonical end-to-end shape: outer `flt all-h (window n cs)`
