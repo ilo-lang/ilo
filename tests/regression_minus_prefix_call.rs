@@ -55,18 +55,18 @@ fn run(engine: &str, src: &str, entry: &str) -> String {
 // probe used `lnx` but the parser failure is identical for any 1-arg
 // user fn, so test with `dbl x = x*2` for exact cross-engine integer
 // answers: `-dbl 5 dbl 3` = 10 - 6 = 4.
-const MINUS_BOTH_CALLS: &str = "dbl>x:n>n\n;ret *x 2\nmain>n\n;-dbl 5 dbl 3";
+const MINUS_BOTH_CALLS: &str = "dbl x:n>n\n;ret *x 2\nmain>n\n;-dbl 5 dbl 3";
 
 // Unary negation of a call: `-dbl 5` should be `-(dbl 5)` = -10. This
 // is the disambiguation test — `parse_prefix_binop_operand` consumes
 // `dbl 5` as one call, `can_start_operand` is false, Negate fires.
-const NEGATE_CALL: &str = "dbl>x:n>n\n;ret *x 2\nmain>n\n;- dbl 5";
+const NEGATE_CALL: &str = "dbl x:n>n\n;ret *x 2\nmain>n\n;- dbl 5";
 
 // Left operand is a call, right is a literal: `-dbl 5 3` = 10 - 3 = 7.
-const MINUS_LEFT_CALL: &str = "dbl>x:n>n\n;ret *x 2\nmain>n\n;-dbl 5 3";
+const MINUS_LEFT_CALL: &str = "dbl x:n>n\n;ret *x 2\nmain>n\n;-dbl 5 3";
 
 // Left operand is a literal, right is a call: `-10 dbl 3` = 10 - 6 = 4.
-const MINUS_RIGHT_CALL: &str = "dbl>x:n>n\n;ret *x 2\nmain>n\n;-10 dbl 3";
+const MINUS_RIGHT_CALL: &str = "dbl x:n>n\n;ret *x 2\nmain>n\n;-10 dbl 3";
 
 // Negative regression: bare locals on both sides must keep working.
 // `a=5;b=3;-a b` = 2. No fn_arity entry for `a`/`b`, falls through to
@@ -79,7 +79,7 @@ const NEGATE_BARE_LOCAL: &str = "main>n\n;a=5\n;- a";
 // `*` mixed with `-`: prove the call-arg expansion plays nicely when
 // nested inside a `*` left operand. `*-dbl 5 3 2` should parse as
 // `(dbl 5 - 3) * 2` = 7 * 2 = 14 via the prefix arithmetic chain.
-const MINUS_INSIDE_STAR: &str = "dbl>x:n>n\n;ret *x 2\nmain>n\n;*-dbl 5 3 2";
+const MINUS_INSIDE_STAR: &str = "dbl x:n>n\n;ret *x 2\nmain>n\n;*-dbl 5 3 2";
 
 fn check_all(engine: &str) {
     assert_eq!(
