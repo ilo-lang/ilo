@@ -1,0 +1,11 @@
+-- Peephole-fused `len (flt has-K-pred xs)` (bio canonical inner loop).
+-- The predicate body `has K c` collapses the entire count to a single
+-- VM dispatch, matching the bioinformatics persona's `is-hydro` shape.
+
+is-hydro c:t>b;has "AILMFWVYC" c
+
+main>n
+  cs=chars "ACDEFGHIKLMNPQRSTVWY"
+  len (flt is-hydro cs)
+-- run: main
+-- out: 9

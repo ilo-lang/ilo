@@ -1,0 +1,52 @@
+-- Canonical interactive-cli tasks tracker, with the save-echo fix
+-- applied. Originating in interactive-cli rerun8: `add`, `done`, and
+-- `clear` were printing `tasks.txt` to stdout on every successful
+-- mutation because `save` returned `wrl`'s `~"tasks.txt"`. Agents
+-- piping output had to strip the leading state-file path on every
+-- successful command. The shape was:
+--
+--   save xs:L t>R t t;wrl "tasks.txt" xs
+--
+-- Here `save xs` returns whatever `wrl` returns, which is the
+-- ok-wrapped path. Fix: match on `wrl`'s result, discard the path
+-- on success, and return `~"ok"` as a clean status string. Errors
+-- still propagate via the `^e:^e` arm.
+--
+-- The fixed shape is:
+--
+--   save xs:L t>R t t;r=wrl "..." xs;?r{~_:~"ok";^e:^e}
+--
+-- This example pins the contract across every engine: mutations
+-- now print "ok", and the underlying state still round-trips
+-- through the file on disk so `load` sees what `save` wrote.
+
+path>t;"/tmp/ilo-cli-tasks-save-ok.txt"
+
+load>L t;r=rdl path();?r{~v:v;^e:[]}
+
+save xs:L t>R t t;r=wrl path() xs;?r{~_:~"ok";^e:^e}
+
+addtask txt:t>R t t;xs=load();ln=fmt "[ ] {}" txt;xs=+=xs ln;save xs
+
+mark1 ln:t>t;n=len ln;rst=slc ln 3 n;+"[x]" rst
+
+domark k:n>R t t;xs=load();n=len xs;<k 1 ^"index out of range";>k n ^"index out of range";out=[];tgt=- k 1;@j 0..n{ln=at xs j;nl=mark1 ln;new=?=j tgt nl ln;out=+=out new};save out
+
+donetask idx:t>R t t;r=num idx;?r{~v:domark v;^e:^"bad index"}
+
+cleartask>R t t;save []
+
+-- Single-shot lifecycle: clear, add two tasks, mark the first done,
+-- then read the file back. Each mutation step would have echoed the
+-- state-file path before the fix; now each returns "ok" silently
+-- and only the final `load`+`cat` produces visible output.
+lifecycle>R t t;a=cleartask!;b=addtask! "buy milk";c=addtask! "ship it";d=donetask! "1";xs=load();~cat xs " | "
+
+-- run: addtask hello
+-- out: ok
+
+-- run: cleartask
+-- out: ok
+
+-- run: lifecycle
+-- out: [x] buy milk | [ ] ship it
