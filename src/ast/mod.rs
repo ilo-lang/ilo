@@ -594,6 +594,17 @@ fn resolve_aliases_expr(expr: &mut Expr) {
                 resolve_aliases_expr(arg);
             }
         }
+        Expr::Ref(name) => {
+            // Bare alias-as-value reference (e.g. `map rng xs` if a future
+            // workload reaches for it). Rewrite to the canonical name so the
+            // verifier sees the same fn-ref it would for a canonical builtin.
+            // The dominant alias-as-call path is handled in the Call arm
+            // above; this arm is the safety net for HOF arg positions and
+            // any parser path that builds a `Ref` for an alias name.
+            if let Some(canonical) = resolve_alias(name) {
+                *name = canonical.to_string();
+            }
+        }
         Expr::BinOp { left, right, .. } => {
             resolve_aliases_expr(left);
             resolve_aliases_expr(right);
