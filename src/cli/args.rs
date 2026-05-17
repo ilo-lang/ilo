@@ -329,6 +329,89 @@ impl Global {
     }
 }
 
+// ── Unknown-flag guard ─────────────────────────────────────────────────────────
+
+/// Reject any token in `args` that looks like a clean long flag (`--word`,
+/// `--word-with-dashes`) UNLESS it appears after a `--` literal separator.
+///
+/// Background: `Cli::args` and `RunArgs::rest` use `trailing_var_arg = true`
+/// + `allow_hyphen_values = true` so clap collects unrecognised hyphen-prefixed
+/// tokens as positional. Without this guard, `ilo main.ilo --engine tree`
+/// silently consumes `--engine` as a positional and the program runs with
+/// the wrong arity, surfacing as misleading `ILO-R012 no functions defined`
+/// or `ILO-R004 main: expected N args, got N+1`. Six rerun8 personas
+/// (ab-tester, routing-tsp, content-mod, qa-tester, interactive-cli,
+/// security-researcher) independently burned minutes on this trap.
+///
+/// To pass a hyphen-prefixed token as a literal arg, separate with `--` first:
+/// `ilo main.ilo -- --foo`. Anything after the first `--` is data.
+///
+/// Shape match: `^--[a-z][a-z0-9]*(-[a-z0-9]+)*$`. Tokens containing `=`,
+/// digits-first, or non-ASCII are NOT flagged as flags — they're data.
+/// Short flags (`-x`, `-V`) are NOT flagged here either — clap rejects
+/// unknown short flags upfront at parse time; only the long-flag shape
+/// slips through the trailing_var_arg sink.
+pub fn reject_unknown_flags(args: &[String]) -> Result<(), String> {
+    reject_unknown_flags_with_allowlist(args, &[])
+}
+
+/// Same as `reject_unknown_flags`, but tokens listed in `allowlist` (exact
+/// match, including the leading `--`) are accepted as known flags and pass
+/// through. Used by the bare-arg dispatcher where some known long flags
+/// (e.g. `--bench`, `--emit`, `--tools`) are still present in the positional
+/// vec at the point of the guard call because they're consumed by later
+/// position-based dispatch logic, not by clap.
+pub fn reject_unknown_flags_with_allowlist(
+    args: &[String],
+    allowlist: &[&str],
+) -> Result<(), String> {
+    for a in args {
+        if a == "--" {
+            // Separator reached: everything after is data.
+            return Ok(());
+        }
+        if looks_like_clean_long_flag(a) && !allowlist.contains(&a.as_str()) {
+            return Err(format!(
+                "error: unrecognised flag '{a}'. Use 'ilo --help' for valid flags. To pass it as a literal arg, separate with '--' first."
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Return true iff `s` matches the clean long-flag shape `--word(-word)*`:
+/// starts with `--`, then `[a-z]`, then `[a-z0-9-]*`, no trailing or
+/// doubled dash, no `=`, no other chars. Anything else is data.
+fn looks_like_clean_long_flag(s: &str) -> bool {
+    let Some(rest) = s.strip_prefix("--") else {
+        return false;
+    };
+    if rest.is_empty() {
+        return false; // bare `--` is the separator, handled by caller.
+    }
+    // First char must be `[a-z]`.
+    let bytes = rest.as_bytes();
+    if !bytes[0].is_ascii_lowercase() {
+        return false;
+    }
+    let mut prev_dash = false;
+    for (i, &b) in bytes.iter().enumerate() {
+        if b == b'-' {
+            if prev_dash || i + 1 == bytes.len() {
+                // Doubled dash or trailing dash → not a clean flag (data).
+                return false;
+            }
+            prev_dash = true;
+        } else if b.is_ascii_lowercase() || b.is_ascii_digit() {
+            prev_dash = false;
+        } else {
+            // Anything else (=, !, /, ., quote, uppercase, etc.) is data.
+            return false;
+        }
+    }
+    true
+}
+
 // ── Tests ──────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -773,6 +856,98 @@ mod tests {
     }
 
     // ── RunArgs: mcp_path field ───────────────────────────────────────────────
+
+    // ── reject_unknown_flags ──────────────────────────────────────────────────
+
+    #[test]
+    fn unknown_long_flag_rejected() {
+        let args = vec!["main.ilo".to_string(), "--engine".to_string(), "tree".to_string()];
+        let err = reject_unknown_flags(&args).unwrap_err();
+        assert!(err.contains("--engine"), "msg={err}");
+        assert!(err.contains("unrecognised flag"));
+        assert!(err.contains("'--' first"));
+    }
+
+    #[test]
+    fn unknown_long_flag_no_value_rejected() {
+        let args = vec!["main.ilo".to_string(), "--foo".to_string()];
+        assert!(reject_unknown_flags(&args).is_err());
+    }
+
+    #[test]
+    fn unknown_hyphenated_flag_rejected() {
+        let args = vec!["main.ilo".to_string(), "--some-long-flag".to_string()];
+        assert!(reject_unknown_flags(&args).is_err());
+    }
+
+    #[test]
+    fn dash_dash_separator_escapes_subsequent_flags() {
+        let args = vec![
+            "main.ilo".to_string(),
+            "--".to_string(),
+            "--foo".to_string(),
+            "--engine".to_string(),
+        ];
+        assert!(reject_unknown_flags(&args).is_ok());
+    }
+
+    #[test]
+    fn plain_positional_args_accepted() {
+        let args = vec!["main.ilo".to_string(), "func".to_string(), "42".to_string()];
+        assert!(reject_unknown_flags(&args).is_ok());
+    }
+
+    #[test]
+    fn negative_number_not_treated_as_flag() {
+        let args = vec!["main.ilo".to_string(), "-1".to_string(), "-3.14".to_string()];
+        assert!(reject_unknown_flags(&args).is_ok());
+    }
+
+    #[test]
+    fn equals_form_not_treated_as_flag() {
+        // `--key=val` shape is data, not a clean flag. We err on the side of
+        // accepting it so users who paste config strings aren't surprised;
+        // clap's recognised `--key=val` flags are bound by clap before this
+        // guard runs.
+        let args = vec!["main.ilo".to_string(), "--foo=bar".to_string()];
+        assert!(reject_unknown_flags(&args).is_ok());
+    }
+
+    #[test]
+    fn trailing_dash_not_treated_as_flag() {
+        let args = vec!["main.ilo".to_string(), "--foo-".to_string()];
+        assert!(reject_unknown_flags(&args).is_ok());
+    }
+
+    #[test]
+    fn doubled_dash_inside_not_treated_as_flag() {
+        let args = vec!["main.ilo".to_string(), "--foo--bar".to_string()];
+        assert!(reject_unknown_flags(&args).is_ok());
+    }
+
+    #[test]
+    fn empty_args_ok() {
+        let args: Vec<String> = vec![];
+        assert!(reject_unknown_flags(&args).is_ok());
+    }
+
+    #[test]
+    fn looks_like_clean_long_flag_shapes() {
+        assert!(looks_like_clean_long_flag("--foo"));
+        assert!(looks_like_clean_long_flag("--engine"));
+        assert!(looks_like_clean_long_flag("--some-long-flag"));
+        assert!(looks_like_clean_long_flag("--a1"));
+        // Not flags:
+        assert!(!looks_like_clean_long_flag("--"));
+        assert!(!looks_like_clean_long_flag("-x"));
+        assert!(!looks_like_clean_long_flag("--Foo"));
+        assert!(!looks_like_clean_long_flag("--foo=bar"));
+        assert!(!looks_like_clean_long_flag("--foo-"));
+        assert!(!looks_like_clean_long_flag("--foo--bar"));
+        assert!(!looks_like_clean_long_flag("--1foo"));
+        assert!(!looks_like_clean_long_flag("foo"));
+        assert!(!looks_like_clean_long_flag("-1"));
+    }
 
     #[test]
     fn run_with_mcp_path() {

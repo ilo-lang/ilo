@@ -2238,6 +2238,21 @@ fn dispatch_bare_args(raw_args: Vec<String>, global: &cli::Global) -> i32 {
         return 0;
     }
 
+    // Guard: if args[1] is an unrecognised clean long flag (e.g. `--engine`,
+    // `--foo`), reject it with a clear "unrecognised flag" message instead
+    // of silently treating it as inline code (which surfaces later as a
+    // mystery lex error). `--version`, `--help`, `--explain`, `--ast`,
+    // `--run-*`, mode flags etc. are already handled or stripped above this
+    // point, so anything reaching here with `--word` shape is genuinely
+    // unknown. Position-based mode flags (`--bench`, `--emit`, `--dense`,
+    // `--expanded`, `--fmt`, `--fmt-expanded`, `--tools`, `--mcp`) sit at
+    // args[m..] not args[1] so they're not affected by this guard. Final
+    // tail validation happens in `dispatch_run` on `r.rest`.
+    if let Err(msg) = cli::reject_unknown_flags(std::slice::from_ref(&args[1])) {
+        eprintln!("{msg}");
+        return 1;
+    }
+
     // Determine source: file path, `-e <code>`, or inline code.
     // We pass the source *identifier* to RunArgs.source — dispatch_run handles
     // file-vs-inline detection and reading.
@@ -2524,6 +2539,25 @@ fn resolve_engine_func_name<'a>(
 
 /// Dispatch the `run` subcommand via parsed RunArgs.  Returns exit code.
 fn dispatch_run(r: cli::RunArgs, mode: OutputMode, explicit_json: bool, no_hints: bool) -> i32 {
+    // Reject unknown `--flag` tokens in the positional tail. `RunArgs::rest`
+    // uses trailing_var_arg + allow_hyphen_values so clap collects any
+    // unrecognised long flag as positional; without this guard
+    // `ilo main.ilo --engine tree` silently runs main with two extra
+    // args and surfaces as misleading ILO-R012/ILO-R004. Use `--` to pass
+    // a literal hyphen-prefixed arg: `ilo main.ilo -- --foo`.
+    if let Err(msg) = cli::reject_unknown_flags(&r.rest) {
+        eprintln!("{msg}");
+        return 1;
+    }
+
+    // Consume the first `--` separator (if present). It exists only to
+    // disambiguate hyphen-prefixed literal args from flags; it's not data
+    // itself, so it must not reach the program as a positional arg.
+    let mut r = r;
+    if let Some(idx) = r.rest.iter().position(|s| s == "--") {
+        r.rest.remove(idx);
+    }
+
     let source_arg = &r.source;
 
     // Read source from file or treat as inline code
