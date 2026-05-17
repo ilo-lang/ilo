@@ -1030,7 +1030,7 @@ fn compile_function_body(
             match op {
                 // Guaranteed numeric outputs.
                 OP_ADD_NN | OP_SUB_NN | OP_MUL_NN | OP_DIV_NN | OP_ADDK_N | OP_SUBK_N
-                | OP_MULK_N | OP_DIVK_N | OP_LEN | OP_ABS | OP_MIN | OP_MAX | OP_FLR | OP_CEL
+                | OP_MULK_N | OP_DIVK_N | OP_LEN | OP_LEN_HAS_K_COUNT | OP_ABS | OP_MIN | OP_MAX | OP_FLR | OP_CEL
                 | OP_ROU | OP_RND0 | OP_RND2 | OP_RNDN | OP_NOW | OP_MOD | OP_CLAMP | OP_POW
                 | OP_SQRT | OP_LOG | OP_EXP | OP_SIN | OP_COS | OP_TAN | OP_LOG10 | OP_LOG2
                 | OP_ASIN | OP_ACOS | OP_ATAN | OP_ATAN2 | OP_MEDIAN | OP_MIN_LST | OP_MAX_LST
