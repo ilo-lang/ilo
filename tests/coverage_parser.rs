@@ -262,12 +262,12 @@ fn fn_decl_indented_body_hint() {
 
 #[test]
 fn type_named_user_type() {
-    ok("type p{x:n};f x:p>n;42");
+    ok("type p{x:n}\nf x:p>n;42");
 }
 
 #[test]
 fn type_optional() {
-    ok("f x:?n>n;42");
+    ok("f x:O n>n;42");
 }
 
 #[test]
@@ -347,17 +347,17 @@ fn stmt_let_map_literal_with_text() {
 
 #[test]
 fn stmt_let_ternary_brace_brace() {
-    ok("f x:n>n;y==x 0{1}{2};y");
+    ok("f x:n>n;y=>x 0{1}{2};y");
 }
 
 #[test]
 fn stmt_let_conditional_brace() {
-    ok("f x:n>n;y==x 0{42};y");
+    ok("f x:n>n;y=>x 0{42};y");
 }
 
 #[test]
 fn stmt_destructure() {
-    ok("type p{a:n;b:n};f x:p>n;{a;b}=x;+a b");
+    ok("type p{a:n;b:n}\nf x:p>n;{a;b}=x;+a b");
 }
 
 #[test]
@@ -527,7 +527,7 @@ fn pattern_bool_true() {
 
 #[test]
 fn pattern_nil() {
-    ok("f x:?n>n;?x{nil:0;n v:v}");
+    ok("f x:O n>n;?x{nil:0;n v:v}");
 }
 
 #[test]
@@ -577,7 +577,7 @@ fn expr_literal_bool() {
 
 #[test]
 fn expr_nil() {
-    ok("f>?n;nil");
+    ok("f>O n;nil");
 }
 
 #[test]
@@ -632,12 +632,12 @@ fn expr_zero_arg_call_bangbang() {
 
 #[test]
 fn expr_field_access() {
-    ok("type p{x:n};f q:p>n;q.x");
+    ok("type p{x:n}\nf q:p>n;q.x");
 }
 
 #[test]
 fn expr_safe_field_access() {
-    ok("type p{x:n};f q:?p>?n;q.?x");
+    ok("type p{x:n}\nf q:O p>O n;q.?x");
 }
 
 #[test]
@@ -747,7 +747,7 @@ fn expr_infix_comparison() {
 
 #[test]
 fn expr_nil_coalesce_infix() {
-    ok("f x:?n>n;x??0");
+    ok("f x:O n>n;x??0");
 }
 
 #[test]
@@ -757,7 +757,7 @@ fn expr_nil_coalesce_prefix() {
 
 #[test]
 fn expr_with_update() {
-    ok("type p{x:n;y:n};f q:p>p;q with x:1");
+    ok("type p{x:n;y:n}\nf q:p>p;q with x:1");
 }
 
 #[test]
@@ -772,12 +772,12 @@ fn expr_pipe_with_args() {
 
 #[test]
 fn expr_dollar_get() {
-    ok("f m:Mt n k:t>?n;$mget m k");
+    ok("f m:M t n k:t>O n;mget m k");
 }
 
 #[test]
 fn expr_dollar_bang() {
-    ok("f m:Mt n k:t>n;$!mget m k");
+    ok("f m:M t n k:t>n;$!(mget m k)");
 }
 
 #[test]
@@ -812,7 +812,7 @@ fn expr_call_with_known_arity() {
 
 #[test]
 fn expr_record_construction() {
-    ok("type p{x:n;y:n};f>p;p x:1 y:2");
+    ok("type p{x:n;y:n}\nf>p;p x:1 y:2");
 }
 
 #[test]
@@ -867,12 +867,12 @@ fn expr_eof_mid_expression() {
 
 #[test]
 fn expr_call_chain_with_bang() {
-    ok("f x:?n>n;x!");
+    ok("f x:O n>n;x!");
 }
 
 #[test]
 fn expr_call_chain_with_bangbang() {
-    ok("f x:?n>n;x!!");
+    ok("f x:O n>n;x!!");
 }
 
 #[test]
@@ -1010,22 +1010,22 @@ fn use_decl_unclosed_brackets() {
 
 #[test]
 fn expr_safe_field_chain() {
-    ok("type p{x:n};f q:?p>?n;q.?x");
+    ok("type p{x:n}\nf q:O p>O n;q.?x");
 }
 
 #[test]
 fn expr_field_chain_two_deep() {
-    ok("type a{x:n};type b{a:a};f q:b>n;q.a.x");
+    ok("type a{x:n}\ntype b{a:a}\nf q:b>n;q.a.x");
 }
 
 #[test]
 fn fn_decl_with_optional_result_param() {
-    ok("f x:?n>?n;x");
+    ok("f x:O n>O n;x");
 }
 
 #[test]
 fn type_nested_list_optional() {
-    ok("f x:L?n>?n;hd x");
+    ok("f x:L (O n)>O n;hd x");
 }
 
 #[test]
@@ -1050,17 +1050,17 @@ fn expr_err_in_expr() {
 
 #[test]
 fn expr_with_zero_updates() {
-    ok("type p{x:n};f q:p>p;q with");
+    ok("type p{x:n}\nf q:p>p;q with");
 }
 
 #[test]
 fn expr_with_multiple_updates() {
-    ok("type p{x:n;y:n};f q:p>p;q with x:1 y:2");
+    ok("type p{x:n;y:n}\nf q:p>p;q with x:1 y:2");
 }
 
 #[test]
 fn expr_nil_coalesce_chained() {
-    ok("f a:?n b:?n>?n;a??b??0");
+    ok("f a:O n b:O n>O n;a??b??0");
 }
 
 #[test]
@@ -1075,7 +1075,7 @@ fn expr_call_then_infix() {
 
 #[test]
 fn expr_record_in_record() {
-    ok("type a{x:n};type b{inner:a};f>b;b inner:(a x:1)");
+    ok("type a{x:n}\ntype b{inner:a}\nf>b;b inner:(a x:1)");
 }
 
 #[test]
@@ -1090,7 +1090,7 @@ fn expr_list_of_known_calls_whitespace() {
 
 #[test]
 fn stmt_destructure_one_field() {
-    ok("type p{a:n};f x:p>n;{a}=x;a");
+    ok("type p{a:n}\nf x:p>n;{a}=x;a");
 }
 
 #[test]
@@ -1190,7 +1190,7 @@ fn lambda_with_while_inside() {
 
 #[test]
 fn lambda_with_destructure() {
-    ok("type p{a:n;b:n};f xs:Lp>Ln;map (q:p>n;{a;b}=q;+a b) xs");
+    ok("type p{a:n;b:n}\nf xs:L p>L n;map (q:p>n;{a;b}=q;+a b) xs");
 }
 
 #[test]
@@ -1225,7 +1225,7 @@ fn pattern_bool_false_arm() {
 
 #[test]
 fn expr_ternary_in_let() {
-    ok("f x:n>n;y==x 0{1}{2};y");
+    ok("f x:n>n;y=>x 0{1}{2};y");
 }
 
 #[test]
@@ -1240,7 +1240,8 @@ fn expr_negated_unary_not() {
 
 #[test]
 fn expr_double_not() {
-    ok("f x:b>b;!!x");
+    // `!!` lexes as a single BangBang panic-unwrap token, so write `! !x` with a space.
+    ok("f x:b>b;! !x");
 }
 
 #[test]
@@ -1260,7 +1261,7 @@ fn use_decl_after_use_path_extra_tokens_ok() {
 
 #[test]
 fn fn_decl_recursive_arity_registered() {
-    ok("fac n:n>n;?=n 0{1}{*n fac -n 1}");
+    ok("fac n:n>n;?=n 0 1 (*n fac -n 1)");
 }
 
 #[test]
@@ -1300,8 +1301,8 @@ fn tool_decl_eof_after_timeout_colon() {
 
 #[test]
 fn fn_decl_with_optional_decl_in_body() {
-    // Just parse — verifier may complain about types but parser should accept.
-    let (_, errs) = try_parse("g x:n>?n;x;f y:n>n;g y!");
+    // Two decls separated by a top-level newline. Parser should accept.
+    let (_, errs) = try_parse("g x:n>O n;x\nf y:n>n;g y");
     assert!(errs.is_empty(), "errors: {errs:?}");
 }
 
@@ -1317,7 +1318,7 @@ fn nested_braced_guards() {
 
 #[test]
 fn many_consecutive_dots() {
-    ok("type a{b:_};type c{a:a};f q:c>_;q.a.b");
+    ok("type a{b:_}\ntype c{a:a}\nf q:c>_;q.a.b");
 }
 
 #[test]
@@ -1327,5 +1328,5 @@ fn paren_in_argument() {
 
 #[test]
 fn record_in_arg_position() {
-    ok("type p{x:n};id q:p>p;q;f>p;id (p x:1)");
+    ok("type p{x:n}\nid q:p>p;q\nf>p;id (p x:1)");
 }
