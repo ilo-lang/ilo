@@ -1050,9 +1050,9 @@ impl RegCompiler {
                         return None;
                     }
                 }
-                InlineOpKind::DataWord => unreachable!(
-                    "data words are handled in the is_data_word branch above"
-                ),
+                InlineOpKind::DataWord => {
+                    unreachable!("data words are handled in the is_data_word branch above")
+                }
                 InlineOpKind::Ret => {
                     if i != code.len() - 1 {
                         // OP_RET in the middle of a body would skip the

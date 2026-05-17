@@ -109,7 +109,8 @@ fn run_all(src: &str, entry: &str, args: &[&str], expected: &str) {
     }
 }
 
-const BIO_SHAPE: &str = "is-hydro c:t>b;has \"AILMFWVYC\" c\nmain s:t>n;cs=chars s;len (flt is-hydro cs)";
+const BIO_SHAPE: &str =
+    "is-hydro c:t>b;has \"AILMFWVYC\" c\nmain s:t>n;cs=chars s;len (flt is-hydro cs)";
 
 #[test]
 fn bio_canonical_inner_shape_full_alphabet() {
@@ -192,7 +193,8 @@ fn predicate_with_nonconst_haystack_falls_through() {
     let src = "hk h:t c:t>b;has h c\nmain>n;cs=chars \"AILM\";len (flt hk cs)";
     // `flt hk cs` would error because `hk` is arity 2; rather than
     // assert on the typed-error path, validate a single-arg wrapper.
-    let src2 = "hk h:t c:t>b;has h c\nis-h c:t>b;hk \"AIL\" c\nmain>n;cs=chars \"AILM\";len (flt is-h cs)";
+    let src2 =
+        "hk h:t c:t>b;has h c\nis-h c:t>b;hk \"AIL\" c\nmain>n;cs=chars \"AILM\";len (flt is-h cs)";
     run_all(src2, "main", &[], "3");
     let _ = src;
 }
@@ -236,7 +238,8 @@ fn escape_to_list_consumer_keeps_filter_path() {
     // len). The new opcode only fires through the `compile_len_flt_count`
     // gating; this path stays on the existing flt emitter and must
     // return the actual filtered list, not a count.
-    let src = "is-hydro c:t>b;has \"AILMFWVYC\" c\nmain>n;cs=chars \"ACDE\";xs=flt is-hydro cs;len xs";
+    let src =
+        "is-hydro c:t>b;has \"AILMFWVYC\" c\nmain>n;cs=chars \"ACDE\";xs=flt is-hydro cs;len xs";
     run_all(src, "main", &[], "2");
 }
 
@@ -247,7 +250,8 @@ fn const_pool_haystack_text_round_trip() {
     // bytes exactly and the dispatcher's `haystack.contains(needle)`
     // compares the same bytes that the unfused `OP_HAS` would.
     // Single-char ascii needles inside the haystack.
-    let src = "is-special c:t>b;has \"!@#$%\" c\nmain>n;cs=chars \"a!b@c#d\";len (flt is-special cs)";
+    let src =
+        "is-special c:t>b;has \"!@#$%\" c\nmain>n;cs=chars \"a!b@c#d\";len (flt is-special cs)";
     run_all(src, "main", &[], "3");
 }
 
