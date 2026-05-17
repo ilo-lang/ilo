@@ -2792,6 +2792,18 @@ or write `({fmt_name} \"...\" ...)` so its args are grouped."
                 let has_comma = self.list_has_top_level_comma();
                 let mut items = Vec::new();
                 while self.peek() != Some(&Token::RBracket) {
+                    // List literals separate elements with whitespace (or
+                    // optional commas). A `;` inside `[...]` is almost
+                    // always someone reaching for Python/JS/Rust list
+                    // syntax — point at it directly instead of falling
+                    // through to the generic "expected expression" error.
+                    if self.peek() == Some(&Token::Semi) {
+                        return Err(self.error_hint(
+                            "ILO-P009",
+                            "`;` is not a list separator inside `[...]`".into(),
+                            "ilo list literals use whitespace: `[1 2 3]` (commas optional: `[1, 2, 3]`)".into(),
+                        ));
+                    }
                     if has_comma {
                         items.push(self.parse_list_element_call_ok()?);
                     } else {
