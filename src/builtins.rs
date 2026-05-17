@@ -77,6 +77,7 @@ pub enum Builtin {
     Map,
     Flt,
     Fld,
+    Ct,
     Grp,
     Uniqby,
     Partition,
@@ -211,6 +212,7 @@ impl Builtin {
             "map" => Some(Builtin::Map),
             "flt" => Some(Builtin::Flt),
             "fld" => Some(Builtin::Fld),
+            "ct" => Some(Builtin::Ct),
             "grp" => Some(Builtin::Grp),
             "uniqby" => Some(Builtin::Uniqby),
             "partition" => Some(Builtin::Partition),
@@ -332,6 +334,7 @@ impl Builtin {
             Builtin::Map => "map",
             Builtin::Flt => "flt",
             Builtin::Fld => "fld",
+            Builtin::Ct => "ct",
             Builtin::Grp => "grp",
             Builtin::Uniqby => "uniqby",
             Builtin::Partition => "partition",
@@ -513,6 +516,11 @@ impl Builtin {
         // convenience over Rgxall (flat first-capture-group list); see the
         // tree-bridge entry in src/vm/mod.rs for cross-engine dispatch.
         Builtin::Rgxall1,
+        // Ct fn xs -> n: count-by-predicate. Tree-bridge eligible alongside
+        // its HOF peers (Flt, Map, Grp); see is_tree_bridge_eligible.
+        // Named `ct` (not `cnt`) because `cnt` is reserved as the loop
+        // continue keyword — see src/parser/mod.rs:3507.
+        Builtin::Ct,
     ];
 
     /// On-wire 8-bit tag for cross-engine builtin dispatch. See `ALL`.
@@ -692,6 +700,7 @@ mod tests {
             "map",
             "flt",
             "fld",
+            "ct",
             "grp",
             "uniqby",
             "partition",
@@ -908,6 +917,7 @@ mod tests {
             "map",
             "flt",
             "fld",
+            "ct",
             "grp",
             "uniqby",
             "partition",

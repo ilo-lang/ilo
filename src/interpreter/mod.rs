@@ -2992,6 +2992,59 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         }
         return Ok(Value::List(Arc::new(result)));
     }
+    if builtin == Some(Builtin::Ct) && (args.len() == 2 || args.len() == 3) {
+        // ct fn xs / ct fn ctx xs  → number of elements where fn returns true.
+        // Mirrors flt's predicate semantics exactly; only the accumulator
+        // shape differs (counter instead of pushing onto a result list).
+        // Motivating shape: bioinformatics rerun6 `tm=ct has-tm seqs` saves
+        // the L b allocation that `len (flt has-tm seqs)` pays for.
+        //
+        // Named `ct` (not `cnt`) because `cnt` is reserved as the loop
+        // continue keyword — see src/parser/mod.rs:3507.
+        let fn_name = resolve_fn_ref(&args[0]).ok_or_else(|| {
+            RuntimeError::new(
+                "ILO-R009",
+                format!(
+                    "ct: first arg must be a function reference, got {:?}",
+                    args[0]
+                ),
+            )
+        })?;
+        let captures = closure_captures(&args[0]);
+        let (ctx, list_arg) = if args.len() == 3 {
+            (Some(args[1].clone()), &args[2])
+        } else {
+            (None, &args[1])
+        };
+        let items = match list_arg {
+            Value::List(l) => l.clone(),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("ct: list arg must be a list, got {:?}", other),
+                ));
+            }
+        };
+        let mut count: i64 = 0;
+        for item in items.iter() {
+            let mut call_args = match &ctx {
+                Some(c) => vec![item.clone(), c.clone()],
+                None => vec![item.clone()],
+            };
+            call_args.extend(captures.iter().cloned());
+            match call_function(env, &fn_name, call_args)? {
+                Value::Bool(true) => count += 1,
+                Value::Bool(false) => {}
+                other => {
+                    return Err(RuntimeError::new(
+                        "ILO-R009",
+                        format!("ct: predicate must return bool, got {:?}", other),
+                    ));
+                }
+            }
+        }
+        return Ok(Value::Number(count as f64));
+    }
     if builtin == Some(Builtin::Fld) && (args.len() == 3 || args.len() == 4) {
         let fn_name = resolve_fn_ref(&args[0]).ok_or_else(|| {
             RuntimeError::new(

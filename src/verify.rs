@@ -388,6 +388,7 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("map", &["fn", "list"], "list"),
     ("mapr", &["fn", "list"], "result"),
     ("flt", &["fn", "list"], "list"),
+    ("ct", &["fn", "list"], "n"),
     ("fld", &["fn", "list", "any"], "any"),
     ("grp", &["fn", "list"], "map"),
     ("uniqby", &["fn", "list"], "list"),
@@ -1855,6 +1856,48 @@ fn builtin_check_args(
             };
             (ret, errors)
         }
+        "ct" => {
+            // ct fn:F a b xs:L a → n  (count elements where fn returns true)
+            // ct fn:F a c b ctx:c xs:L a → n   (closure-bind variant)
+            //
+            // Same predicate signature as flt; returns number directly
+            // instead of allocating the filtered list. Motivating shape from
+            // bioinformatics rerun6: `tm=ct has-tm seqs` over 20k proteins.
+            //
+            // Named `ct` (not `cnt`) because `cnt` is reserved as the loop
+            // continue keyword — see src/parser/mod.rs:3507. Persona log
+            // wrote the wish as `cnt`; `ct` is two chars instead of three,
+            // which is a strict manifesto-aligned improvement on that ask.
+            if let Some(fn_ty) = arg_types.first()
+                && !matches!(fn_ty, Ty::Fn(_, _) | Ty::Unknown)
+            {
+                errors.push(VerifyError {
+                    code: "ILO-T013",
+                    function: func_ctx.to_string(),
+                    message: format!("'ct' first arg must be a function (F ...), got {fn_ty}"),
+                    hint: Some("pass a function name: ct pred xs".to_string()),
+                    span,
+                    is_warning: false,
+                });
+            }
+            if arg_types.len() == 3
+                && let Some(Ty::Fn(params, _)) = arg_types.first()
+                && params.len() != 2
+            {
+                errors.push(VerifyError {
+                    code: "ILO-T013",
+                    function: func_ctx.to_string(),
+                    message: format!(
+                        "'ct' fn must take 2 args (elem, ctx) for closure-bind variant, got {} args",
+                        params.len()
+                    ),
+                    hint: Some("for ct fn ctx xs, fn must be: F a c b".to_string()),
+                    span,
+                    is_warning: false,
+                });
+            }
+            (Ty::Number, errors)
+        }
         "fld" => {
             // fld fn:F a b b xs:L a init:b → b
             // fld fn:F a c b b ctx:c xs:L a init:b → b   (closure-bind variant)
@@ -3211,8 +3254,10 @@ impl VerifyContext {
                     } else if callee == "min" || callee == "max" {
                         // min xs (list form, returns min element) / min a b (number pair)
                         args.len() == 1 || args.len() == 2
-                    } else if callee == "map" || callee == "flt" {
+                    } else if callee == "map" || callee == "flt" || callee == "ct" {
                         // map fn xs / map fn ctx xs   (closure-bind variant)
+                        // ct mirrors flt: 2-arg standard plus 3-arg closure-
+                        // bind. Predicate signature matches flt's (returns b).
                         args.len() == 2 || args.len() == 3
                     } else if callee == "fld" {
                         // fld fn xs init / fld fn ctx xs init  (closure-bind variant)
@@ -3238,7 +3283,7 @@ impl VerifyContext {
                             "0 or 2".to_string()
                         } else if callee == "srt" || callee == "rsrt" {
                             "1, 2, or 3".to_string()
-                        } else if callee == "map" || callee == "flt" {
+                        } else if callee == "map" || callee == "flt" || callee == "ct" {
                             "2 or 3".to_string()
                         } else if callee == "fld" {
                             "3 or 4".to_string()
