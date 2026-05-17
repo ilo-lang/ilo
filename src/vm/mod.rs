@@ -668,6 +668,441 @@ enum FusedWindowOp {
     Map,
 }
 
+// ── Predicate-body inliner ──────────────────────────────────────────
+//
+// When the predicate (or mapper) passed to a fused HOF is a small user fn
+// with a strictly-local, side-effect-free body, we can inline its body into
+// the HOF dispatcher's loop instead of paying a full OP_CALL_DYN per element.
+//
+// For the bio canonical (`flt is-hydro xs` over a sliding 15-window applied
+// to an 11.4M-residue protein dataset), the inner predicate fires ~165M
+// times. Each OP_CALL_DYN pays for frame allocation, arg marshalling, RC
+// touches on the arg, an IP roundtrip, and the OP_RET teardown (stack
+// truncate + frames.pop). At ~60 ns per dispatch that's the ~10 s tail
+// remaining after the window-listview reshape (#336). Inlining a 3-op
+// predicate (LOADK + HAS + RET) collapses to three direct opcodes against
+// the loop's existing scratch regs.
+//
+// SOUNDNESS — the inliner is strict by design. Anything that would touch
+// state outside the predicate's own reg window, observe RC identity, or
+// transfer control across the inlined boundary is rejected and the call
+// site falls through to OP_CALL_DYN. The accepted whitelist below is
+// "predicates that read their arg and a constant, run pure arithmetic /
+// type-tests / membership, and return". No CALL_DYN nesting, no foreach,
+// no jumps (forward or backward), no opcodes whose data lives in a
+// follow-on word, no opcodes that write upvalues / mutate shared state.
+
+/// Description of a single instruction's register/const usage that the
+/// inliner needs to know in order to rewrite it. `kind` only encodes what
+/// the inliner depends on; the actual opcode byte stays unchanged on
+/// emission. Field semantics:
+///   - `Abc` — A, B, C are all register fields (regs ≤ reg_count).
+///   - `AbcAReg`     — A is a reg, B and C are immediates / type-tag bits.
+///   - `AbcARegBReg` — A and B are regs, C is unused or an immediate.
+///   - `AbxReg`      — A is a reg, Bx is a 16-bit value (NOT a const idx).
+///   - `AbxLoadK`    — A is a reg, Bx is a constant-pool index (needs remap).
+///   - `AbxLoadFn`   — A is a reg, Bx is a FnRef encoding (no remap).
+///   - `Ret`         — terminal: A is the return-value reg.
+///   - `Reject`      — any opcode not on the whitelist; inliner bails.
+/// Maximum body length (in opcodes) we'll consider for inlining a
+/// predicate/mapper into a HOF dispatcher. Picked to comfortably cover
+/// the bio canonical's `is-hydro` (3 ops) and similar single-predicate
+/// utilities while staying well clear of larger fns where the per-call
+/// dispatch cost is amortised across more useful work.
+pub(crate) const INLINE_OP_BUDGET: usize = 8;
+
+#[derive(Clone, Copy)]
+enum InlineOpKind {
+    /// Plain ABC: A, B, C are all register fields.
+    Abc,
+    /// ABC but only A is a register; B and C are immediate.
+    AbcAReg,
+    /// ABC where A and B are registers; C is an immediate (e.g. INDEX).
+    AbcARegBReg,
+    /// ABx where A is a reg and Bx is a non-const immediate (e.g. LISTNEW size).
+    AbxReg,
+    /// ABx OP_LOADK — A is a reg, Bx is a constant-pool index (needs remap).
+    AbxLoadK,
+    /// ABx OP_LOADFN — A is a reg, Bx is a FnRef encoding (no remap).
+    AbxLoadFn,
+    /// OP_RET — terminal; A is the value reg.
+    Ret,
+    /// Not whitelisted for inlining.
+    Reject,
+}
+
+/// Returns the kind for a given opcode byte. Only safe single-word
+/// opcodes are on the whitelist; everything else is `Reject` (forces the
+/// inliner to bail). When adding new opcodes to the whitelist, audit
+/// for: (a) is this a single-word encoding (no follow-on data word),
+/// (b) does it read or write any state beyond R[A]/R[B]/R[C], (c) could
+/// it transfer control or trigger a GC/RC mutation that would change
+/// observable semantics if hoisted into the caller's frame.
+fn inline_kind_for_opcode(op: u8) -> InlineOpKind {
+    match op {
+        // Numeric / generic arithmetic — ABC, three reg fields.
+        OP_ADD | OP_SUB | OP_MUL | OP_DIV | OP_EQ | OP_NE | OP_GT | OP_LT
+        | OP_GE | OP_LE | OP_MOD => InlineOpKind::Abc,
+        OP_ADD_NN | OP_SUB_NN | OP_MUL_NN | OP_DIV_NN => InlineOpKind::Abc,
+
+        // _Reg-and-Const_ shape: A and B are regs, C is a constant-pool
+        // index that needs remapping. Encode as AbcAReg and remap C as a
+        // const idx; we treat the C field as an immediate from a register
+        // perspective but must rewrite it through the const map. Handled
+        // specially in `rewrite_inst`.
+        OP_ADDK_N | OP_SUBK_N | OP_MULK_N | OP_DIVK_N => InlineOpKind::AbcARegBReg,
+        OP_CMPK_GE_N | OP_CMPK_GT_N | OP_CMPK_LT_N | OP_CMPK_LE_N
+        | OP_CMPK_EQ_N | OP_CMPK_NE_N => InlineOpKind::AbcAReg,
+
+        // String concat (both operands known text) — ABC, three regs.
+        OP_ADD_SS => InlineOpKind::Abc,
+
+        // Membership / structural — single-word, three reg fields.
+        OP_HAS | OP_HD | OP_TL | OP_REV | OP_LEN | OP_MOVE | OP_NOT | OP_NEG
+        | OP_AT | OP_LISTGET | OP_INDEX | OP_MGET | OP_MHAS | OP_ABS
+        | OP_FLR | OP_CEL | OP_MIN | OP_MAX | OP_STR | OP_NUM | OP_CHR
+        | OP_ORD | OP_UPR | OP_LWR | OP_CAP | OP_CHARS | OP_TRM | OP_ROU
+        | OP_ISNUM | OP_ISTEXT | OP_ISBOOL | OP_ISLIST => InlineOpKind::Abc,
+
+        // Wrappers — ABC, A and B are regs (C unused / discriminator).
+        OP_WRAPOK | OP_WRAPERR | OP_ISOK | OP_ISERR => InlineOpKind::Abc,
+
+        // ABx — A reg, Bx is a constant-pool index.
+        OP_LOADK => InlineOpKind::AbxLoadK,
+        // ABx — A reg, Bx is a FnRef encoding (no remap).
+        OP_LOADFN => InlineOpKind::AbxLoadFn,
+        // ABx — A reg, Bx is a literal size (LISTNEW: size; MAPNEW: 0).
+        OP_LISTNEW | OP_MAPNEW => InlineOpKind::AbxReg,
+
+        // Terminal — A is the value reg.
+        OP_RET => InlineOpKind::Ret,
+
+        // Everything else (jumps, calls, foreach, panic-unwrap, anything
+        // with a 2-word encoding, anything that mutates outside the
+        // predicate frame) is rejected. The bias is "be conservative —
+        // a false negative just falls back to OP_CALL_DYN".
+        _ => InlineOpKind::Reject,
+    }
+}
+
+/// Pre-decoded inlinable body. `instructions[i].0` is the original
+/// 32-bit instruction word (still encoded against callee regs); `.1` is
+/// its `InlineOpKind`; `.2` is the original span. The body is only
+/// non-empty if the analyser cleared the chunk; the caller still owns
+/// the constant remap and reg rebase.
+struct InlinedBody {
+    /// (instruction word, decoded kind, span)
+    instructions: Vec<(u32, InlineOpKind, crate::ast::Span)>,
+    /// Number of registers used by the callee chunk (we'll allocate
+    /// `reg_count - 1` fresh scratch regs above the arg slot).
+    reg_count: u8,
+    /// Remap from callee const-pool index → outer const-pool index. Indexed
+    /// by callee const idx.
+    const_remap: Vec<u16>,
+    /// Reg index of the predicate's return value (RA of the OP_RET).
+    /// Always strictly less than `reg_count`.
+    ret_reg: u8,
+}
+
+impl RegCompiler {
+    /// Resolve `fn_expr` to a user-function chunk index if (and only if):
+    ///   - it is a bare `Expr::Ref(name)`,
+    ///   - `name` is not shadowed by a local binding (a local would mean a
+    ///     value-typed FnRef whose target is runtime-determined),
+    ///   - `name` resolves to a declared user function (not a builtin).
+    /// Returns `None` for builtin callees, inline lambdas with captures
+    /// (`Expr::MakeClosure`), or any indirection — those cases stay on the
+    /// OP_CALL_DYN path.
+    fn resolve_user_fn_idx(&self, fn_expr: &Expr) -> Option<usize> {
+        match fn_expr {
+            Expr::Ref(name) => {
+                if self.resolve_local(name).is_some() {
+                    return None;
+                }
+                self.func_names.iter().position(|n| n == name)
+            }
+            _ => None,
+        }
+    }
+
+    /// Analyse a candidate callee chunk and either return an `InlinedBody`
+    /// ready to emit, or `None` if the chunk doesn't fit the inliner's
+    /// strict whitelist. Caller is responsible for falling back to
+    /// OP_CALL_DYN on `None`.
+    ///
+    /// Conditions enforced here (any failure → `None`):
+    /// - `param_count` matches the HOF's expected callee arity (1 for
+    ///   flt/map).
+    /// - `reg_count` ≤ 32. Hard cap so we don't blow the 255-reg budget
+    ///   when inlined into a HOF that already has its own state.
+    /// - Body length ≤ `budget` instructions (default 8).
+    /// - Exactly one terminal OP_RET, as the *last* instruction.
+    /// - No JMP / JMPF / JMPT / JMPNN of any direction (no branches).
+    /// - No CALL / CALL_DYN / CALL_BUILTIN_TREE / FOREACHPREP / FOREACHNEXT
+    ///   / PANIC_UNWRAP / any non-whitelisted opcode.
+    /// - All register fields stay within `[0, reg_count)`.
+    /// - All LOADK const indices remap cleanly (callee constants are
+    ///   merged into the outer chunk's const pool).
+    fn try_inline_predicate_body(
+        &mut self,
+        callee_chunk_idx: usize,
+        expected_arity: u8,
+        budget: usize,
+    ) -> Option<InlinedBody> {
+        // Forward-reference safety: if the callee chunk hasn't been
+        // emitted yet (mutual recursion, etc.), the slot is still empty.
+        // `chunks` is grown in declaration order during the second pass.
+        let callee = self.chunks.get(callee_chunk_idx)?;
+        if callee.param_count != expected_arity {
+            return None;
+        }
+        if callee.reg_count > 32 {
+            return None;
+        }
+        let code = &callee.code;
+        if code.is_empty() || code.len() > budget {
+            return None;
+        }
+
+        // Scan: classify each opcode, ensure all reg fields are in-range,
+        // and check that OP_RET appears exactly once as the final
+        // instruction. Build the const-remap as we go (only LOADK Bx is
+        // a const idx; the C field of OP_*K_N / OP_CMPK_*_N is also a
+        // const idx — see InlineOpKind::AbcARegBReg / AbcAReg handling
+        // in `rewrite_inst`).
+        let reg_count = callee.reg_count;
+        let mut instructions: Vec<(u32, InlineOpKind, crate::ast::Span)> =
+            Vec::with_capacity(code.len());
+        let mut ret_reg: Option<u8> = None;
+
+        for (i, &inst) in code.iter().enumerate() {
+            let op = (inst >> 24) as u8;
+            let a = ((inst >> 16) & 0xFF) as u8;
+            let b = ((inst >> 8) & 0xFF) as u8;
+            let c = (inst & 0xFF) as u8;
+            let bx = (inst & 0xFFFF) as u16;
+            let kind = inline_kind_for_opcode(op);
+
+            match kind {
+                InlineOpKind::Reject => return None,
+                InlineOpKind::Ret => {
+                    if i != code.len() - 1 {
+                        // OP_RET in the middle of a body would skip the
+                        // remaining ops at runtime; the inliner doesn't
+                        // model that yet.
+                        return None;
+                    }
+                    if a >= reg_count {
+                        return None;
+                    }
+                    ret_reg = Some(a);
+                }
+                InlineOpKind::Abc => {
+                    if a >= reg_count || b >= reg_count || c >= reg_count {
+                        return None;
+                    }
+                }
+                InlineOpKind::AbcAReg => {
+                    // A is a reg; B may be unused (we still bound-check
+                    // for safety since the field is in the encoding);
+                    // C is a constant-pool index.
+                    if a >= reg_count {
+                        return None;
+                    }
+                    if b != 0 && b >= reg_count {
+                        return None;
+                    }
+                }
+                InlineOpKind::AbcARegBReg => {
+                    if a >= reg_count || b >= reg_count {
+                        return None;
+                    }
+                    // C is a const idx; deferred to rewrite step.
+                }
+                InlineOpKind::AbxReg => {
+                    if a >= reg_count {
+                        return None;
+                    }
+                }
+                InlineOpKind::AbxLoadK | InlineOpKind::AbxLoadFn => {
+                    if a >= reg_count {
+                        return None;
+                    }
+                    // Bx is consumed at rewrite time.
+                    let _ = bx;
+                }
+            }
+
+            let span = callee
+                .spans
+                .get(i)
+                .copied()
+                .unwrap_or(crate::ast::Span::UNKNOWN);
+            instructions.push((inst, kind, span));
+        }
+
+        let ret_reg = ret_reg?;
+
+        // Pre-scan for the OP_*K_N / OP_CMPK_*_N families: those encode
+        // the const idx in the 8-bit C field, so the remapped const idx
+        // must fit in u8. If any one of them WOULD have a remapped idx
+        // ≥ 256 once we merge the callee's pool into ours, we'd silently
+        // truncate at emit time. Refuse the inline now so the call site
+        // falls through to OP_CALL_DYN.
+        let mut needs_8bit_const: Vec<bool> = vec![false; callee.constants.len()];
+        for &inst in code {
+            let op = (inst >> 24) as u8;
+            let c = (inst & 0xFF) as u8;
+            if matches!(
+                inline_kind_for_opcode(op),
+                InlineOpKind::AbcAReg | InlineOpKind::AbcARegBReg
+            ) {
+                if (c as usize) < needs_8bit_const.len() {
+                    needs_8bit_const[c as usize] = true;
+                }
+            }
+        }
+
+        // Build the const remap: every callee constant gets merged into
+        // the outer chunk's pool (`add_const` is dedup-aware so we don't
+        // bloat the pool on identical literals).
+        let mut const_remap: Vec<u16> = Vec::with_capacity(callee.constants.len());
+        // SAFETY note: cloning the callee's constants is cheap (small
+        // Arcs / numeric / nil); these go straight into self.current.add_const
+        // which Rc-shares Text payloads via Arc::clone semantics already.
+        let consts_clone: Vec<Value> = callee.constants.clone();
+        for (i, v) in consts_clone.into_iter().enumerate() {
+            let outer_idx = self.current.add_const(v);
+            if needs_8bit_const[i] && outer_idx > 255 {
+                return None;
+            }
+            const_remap.push(outer_idx);
+        }
+
+        Some(InlinedBody {
+            instructions,
+            reg_count,
+            const_remap,
+            ret_reg,
+        })
+    }
+
+    /// Emit the body into the outer chunk against a freshly-allocated
+    /// register window. The caller has already placed the predicate's
+    /// argument into `arg_reg`; this function:
+    ///
+    ///   1. Allocates a contiguous reg window `[base, base + reg_count)`
+    ///      where `base + 0` corresponds to callee R0 (= the arg).
+    ///   2. Emits an OP_MOVE to copy `arg_reg` into the callee's arg
+    ///      slot (since arg_reg sits where OP_CALL_DYN expects it, and
+    ///      the inlined body wants its own scratch window above the
+    ///      HOF's existing state).
+    ///   3. Rewrites every instruction: register fields get the base
+    ///      offset added; OP_LOADK and the *K_N families have their
+    ///      const idx remapped; OP_RET becomes an OP_MOVE that lands
+    ///      the predicate's return value in `result_reg` (mirroring
+    ///      OP_CALL_DYN's contract that R[A] holds the result).
+    ///
+    /// `result_reg` is the register that OP_CALL_DYN would have written
+    /// — i.e. the same `res_reg` already allocated in the HOF emitter.
+    fn emit_inlined_body(&mut self, result_reg: u8, arg_reg: u8, body: &InlinedBody) {
+        // Allocate the callee's reg window above whatever the HOF
+        // emitter has already pinned. R0 in the callee == arg slot;
+        // we move arg_reg → window_base, then run the body, then move
+        // window[ret_reg] → result_reg.
+        let window_base = self.next_reg;
+        // Reserve reg_count slots so subsequent emit_inlined_body calls
+        // (none in v1) wouldn't collide. The assertion mirrors
+        // alloc_reg's overflow check.
+        assert!(
+            (window_base as usize) + (body.reg_count as usize) <= 255,
+            "predicate-inline: register overflow (would need {} regs)",
+            (window_base as usize) + (body.reg_count as usize)
+        );
+        self.next_reg = self.next_reg.saturating_add(body.reg_count);
+        if self.next_reg > self.max_reg {
+            self.max_reg = self.next_reg;
+        }
+        // Reset any inherited reg-type tracking on the new window — the
+        // inlined body owns its register typing.
+        for r in window_base..window_base.saturating_add(body.reg_count) {
+            self.reg_is_num[r as usize] = false;
+            self.reg_is_str[r as usize] = false;
+            self.reg_record_type[r as usize] = u16::MAX;
+        }
+
+        // Copy arg → callee R0.
+        self.emit_abc(OP_MOVE, window_base, arg_reg, 0);
+
+        // Walk and rewrite. We avoid the dedup `add_const` here because
+        // const_remap was already built in try_inline_predicate_body.
+        for &(inst, kind, span) in &body.instructions {
+            let op = (inst >> 24) as u8;
+            let new_inst = match kind {
+                InlineOpKind::Ret => {
+                    // Translate OP_RET into OP_MOVE result_reg ← window[ret_reg].
+                    encode_abc(OP_MOVE, result_reg, window_base + body.ret_reg, 0)
+                }
+                InlineOpKind::Abc => {
+                    let a = ((inst >> 16) & 0xFF) as u8;
+                    let b = ((inst >> 8) & 0xFF) as u8;
+                    let c = (inst & 0xFF) as u8;
+                    encode_abc(op, window_base + a, window_base + b, window_base + c)
+                }
+                InlineOpKind::AbcAReg => {
+                    // A reg; B preserved as-is (may be 0); C remapped as const idx.
+                    // The analyser pre-checked that this remap fits in 8 bits
+                    // (see needs_8bit_const in try_inline_predicate_body).
+                    let a = ((inst >> 16) & 0xFF) as u8;
+                    let b = ((inst >> 8) & 0xFF) as u8;
+                    let c = (inst & 0xFF) as u8;
+                    let mapped_c = body.const_remap[c as usize];
+                    debug_assert!(mapped_c <= 255, "analyser invariant: 8-bit const fits");
+                    encode_abc(op, window_base + a, b, mapped_c as u8)
+                }
+                InlineOpKind::AbcARegBReg => {
+                    // OP_*K_N: R[A] = R[B] op K[C]. Const fits 8 bits
+                    // (analyser pre-checked).
+                    let a = ((inst >> 16) & 0xFF) as u8;
+                    let b = ((inst >> 8) & 0xFF) as u8;
+                    let c = (inst & 0xFF) as u8;
+                    let mapped_c = body.const_remap[c as usize];
+                    debug_assert!(mapped_c <= 255, "analyser invariant: 8-bit const fits");
+                    encode_abc(op, window_base + a, window_base + b, mapped_c as u8)
+                }
+                InlineOpKind::AbxReg => {
+                    let a = ((inst >> 16) & 0xFF) as u8;
+                    let bx = (inst & 0xFFFF) as u16;
+                    encode_abx(op, window_base + a, bx)
+                }
+                InlineOpKind::AbxLoadK => {
+                    let a = ((inst >> 16) & 0xFF) as u8;
+                    let bx = (inst & 0xFFFF) as u16;
+                    let mapped_bx = body.const_remap[bx as usize];
+                    encode_abx(op, window_base + a, mapped_bx)
+                }
+                InlineOpKind::AbxLoadFn => {
+                    let a = ((inst >> 16) & 0xFF) as u8;
+                    let bx = (inst & 0xFFFF) as u16;
+                    encode_abx(op, window_base + a, bx)
+                }
+                InlineOpKind::Reject => unreachable!(
+                    "predicate-inline: Reject in emitted body; analyser invariant violated"
+                ),
+            };
+            self.current.emit(new_inst, span);
+        }
+
+        // Shrink next_reg back to the pre-window value. `result_reg` is
+        // OUTSIDE the window (it was allocated by the HOF emitter
+        // before deciding to inline), so the body's terminal-translated
+        // OP_MOVE has already published the predicate's return value
+        // into a stable reg. Reusing the inlined window for the next
+        // call site (if any) is sound.
+        self.next_reg = window_base;
+    }
+}
+
 struct LoopContext {
     loop_top: usize,
     /// `None` = use loop_top for continue (while loops).
@@ -1871,7 +2306,19 @@ impl RegCompiler {
         xs_expr: &Expr,
         kind: FusedWindowOp,
     ) -> u8 {
-        let fn_reg = self.compile_expr(fn_expr);
+        // Predicate-inline fast path. When the callee resolves to a small
+        // whitelisted user fn, we skip OP_CALL_DYN inside the stride-1
+        // window loop and run the body inline. Falls through to the
+        // OP_CALL_DYN path on any rejection.
+        let inline_body = self
+            .resolve_user_fn_idx(fn_expr)
+            .and_then(|idx| self.try_inline_predicate_body(idx, 1, INLINE_OP_BUDGET));
+
+        let fn_reg = if inline_body.is_some() {
+            u8::MAX
+        } else {
+            self.compile_expr(fn_expr)
+        };
         let xs_reg = self.compile_expr(xs_expr);
         let n_reg = self.compile_expr(n_expr);
 
@@ -1946,9 +2393,13 @@ impl RegCompiler {
         let data_inst = (n_reg as u32) << 16;
         self.current.emit(data_inst, self.current_span);
 
-        // arg_reg = win_reg; call predicate/mapper.
+        // arg_reg = win_reg; call predicate/mapper (inlined or OP_CALL_DYN).
         self.emit_abc(OP_MOVE, arg_reg, win_reg, 0);
-        self.emit_abc(OP_CALL_DYN, res_reg, fn_reg, 1);
+        if let Some(body) = inline_body.as_ref() {
+            self.emit_inlined_body(res_reg, arg_reg, body);
+        } else {
+            self.emit_abc(OP_CALL_DYN, res_reg, fn_reg, 1);
+        }
 
         match kind {
             FusedWindowOp::Flt => {
@@ -3019,7 +3470,18 @@ impl RegCompiler {
                                     FusedWindowOp::Map,
                                 );
                             }
-                            let fn_reg = self.compile_expr(&args[0]);
+                            // Predicate-inline fast path. See the matching
+                            // comment in the `flt` arm.
+                            let inline_body =
+                                self.resolve_user_fn_idx(&args[0]).and_then(|idx| {
+                                    self.try_inline_predicate_body(idx, 1, INLINE_OP_BUDGET)
+                                });
+
+                            let fn_reg = if inline_body.is_some() {
+                                u8::MAX
+                            } else {
+                                self.compile_expr(&args[0])
+                            };
                             let xs_reg = self.compile_expr(&args[1]);
 
                             // Result list — start empty, OP_LISTAPPEND grows it
@@ -3059,7 +3521,11 @@ impl RegCompiler {
                             // Body
                             let body_top = self.current.code.len();
                             self.emit_abc(OP_MOVE, arg_reg, item_reg, 0);
-                            self.emit_abc(OP_CALL_DYN, res_reg, fn_reg, 1);
+                            if let Some(body) = inline_body.as_ref() {
+                                self.emit_inlined_body(res_reg, arg_reg, body);
+                            } else {
+                                self.emit_abc(OP_CALL_DYN, res_reg, fn_reg, 1);
+                            }
                             // acc_reg = acc_reg ++ [res_reg]. dst == src1 hits the
                             // in-place RC=1 fast path in the dispatcher / cranelift.
                             self.emit_abc(OP_LISTAPPEND, acc_reg, acc_reg, res_reg);
@@ -3135,7 +3601,24 @@ impl RegCompiler {
                                     FusedWindowOp::Flt,
                                 );
                             }
-                            let fn_reg = self.compile_expr(&args[0]);
+
+                            // Predicate-inline fast path. When the predicate
+                            // resolves to a small whitelisted user fn (e.g.
+                            // bio canonical's `is-hydro`, 3 opcodes), we
+                            // skip OP_CALL_DYN entirely and run the body
+                            // inline against a fresh scratch reg window.
+                            // Falls through to OP_CALL_DYN on any rejection.
+                            let inline_body =
+                                self.resolve_user_fn_idx(&args[0]).and_then(|idx| {
+                                    self.try_inline_predicate_body(idx, 1, INLINE_OP_BUDGET)
+                                });
+
+                            let fn_reg = if inline_body.is_some() {
+                                // Skip materialising the FnRef — we won't dispatch through it.
+                                u8::MAX
+                            } else {
+                                self.compile_expr(&args[0])
+                            };
                             let xs_reg = self.compile_expr(&args[1]);
 
                             let acc_reg = self.alloc_reg();
@@ -3151,6 +3634,9 @@ impl RegCompiler {
                             self.emit_abx(OP_LOADK, item_reg, nil_ki);
 
                             // res_reg + arg_reg contiguous for OP_CALL_DYN ABI.
+                            // (Same layout regardless of whether we inline;
+                            // inlining just elides the OP_CALL_DYN itself,
+                            // not the surrounding loop scaffolding.)
                             let res_reg = self.alloc_reg();
                             self.emit_abx(OP_LOADK, res_reg, nil_ki);
                             let arg_reg = self.alloc_reg();
@@ -3170,7 +3656,11 @@ impl RegCompiler {
 
                             let body_top = self.current.code.len();
                             self.emit_abc(OP_MOVE, arg_reg, item_reg, 0);
-                            self.emit_abc(OP_CALL_DYN, res_reg, fn_reg, 1);
+                            if let Some(body) = inline_body.as_ref() {
+                                self.emit_inlined_body(res_reg, arg_reg, body);
+                            } else {
+                                self.emit_abc(OP_CALL_DYN, res_reg, fn_reg, 1);
+                            }
 
                             // Typecheck: predicate must return Bool. If ISBOOL is true,
                             // skip the type-error block; else WRAPERR + PANIC_UNWRAP
@@ -31121,6 +31611,21 @@ f>n;r=mk 10 20;+r.x r.y";
         run(&compiled, None, vec![]).unwrap()
     }
 
+    /// Variant of `vm_run_for_test` that explicitly invokes `main` rather
+    /// than the first declared function. Required when the test source
+    /// declares helper functions ahead of `main` (e.g. inliner tests with
+    /// a predicate fn defined before `main`).
+    fn vm_run_main_for_test(src: &str) -> Value {
+        let tokens: Vec<crate::lexer::Token> = crate::lexer::lex(src)
+            .unwrap()
+            .into_iter()
+            .map(|(t, _)| t)
+            .collect();
+        let prog = crate::parser::parse_tokens(tokens).unwrap();
+        let compiled = compile(&prog).unwrap();
+        run(&compiled, Some("main"), vec![]).unwrap()
+    }
+
     /// PR-2: numeric window walk produces the same Value::List shape the
     /// pre-PR-2 eager path produced. Regression target for the existing
     /// #325 numeric win.
@@ -31210,5 +31715,215 @@ f>n;r=mk 10 20;+r.x r.y";
         let v = vm_run_for_test("main>L n;hd (window 2 [1, 2, 3, 4])");
         let expected = Value::List(Arc::new(vec![Value::Number(1.0), Value::Number(2.0)]));
         assert_eq!(format!("{:?}", v), format!("{:?}", expected));
+    }
+
+    // ── predicate-inline regression tests ────────────────────────
+    //
+    // These exercise the inliner path wired into `compile_fused_window_hof`
+    // and the unfused `(Builtin::Flt, 2)` / `(Builtin::Map, 2)` arms. The
+    // assertion shape mirrors the existing window tests: compute the same
+    // workload through ilo and check the Value matches the hand-computed
+    // expected output. Output bit-identity is the contract — if the inlined
+    // body produced a different Value the suite would catch it here.
+
+    /// Bio-shape predicate inlined inside `flt fn xs`:
+    /// `is-hydro c = has "AILMFWVYC" c` — the bio canonical's actual
+    /// 3-opcode predicate (LOADK + HAS + RET). Walks a flat char list
+    /// produced by `chars`, no window.
+    #[test]
+    fn predicate_inline_flt_text_bio_shape() {
+        let src = r#"
+is-hydro c:t>b;has "AILMFWVYC" c
+main>L t
+  flt is-hydro (chars "AILMXY")
+"#;
+        let v = vm_run_main_for_test(src);
+        // "A","I","L","M" hydrophobic; "X","Y" → only "Y" is.
+        let expected = Value::List(Arc::new(vec![
+            Value::Text(Arc::new("A".to_string())),
+            Value::Text(Arc::new("I".to_string())),
+            Value::Text(Arc::new("L".to_string())),
+            Value::Text(Arc::new("M".to_string())),
+            Value::Text(Arc::new("Y".to_string())),
+        ]));
+        assert_eq!(format!("{:?}", v), format!("{:?}", expected));
+    }
+
+    /// Same predicate via the let-bound shape (`cs = chars s; flt ... cs`).
+    /// The inliner should fire identically because resolution of the
+    /// predicate FnRef is name-based, not shape-based.
+    #[test]
+    fn predicate_inline_flt_let_bound_form() {
+        let src = r#"
+is-hydro c:t>b;has "AILMFWVYC" c
+main>L t
+  cs=chars "AILMXY"
+  flt is-hydro cs
+"#;
+        let v = vm_run_main_for_test(src);
+        let expected = Value::List(Arc::new(vec![
+            Value::Text(Arc::new("A".to_string())),
+            Value::Text(Arc::new("I".to_string())),
+            Value::Text(Arc::new("L".to_string())),
+            Value::Text(Arc::new("M".to_string())),
+            Value::Text(Arc::new("Y".to_string())),
+        ]));
+        assert_eq!(format!("{:?}", v), format!("{:?}", expected));
+    }
+
+    /// Numeric `flt fn xs` with a comparison predicate. The body is
+    /// LOADK + GT + RET — three opcodes, well inside the inline budget.
+    /// Output must match the OP_CALL_DYN path bit-for-bit.
+    #[test]
+    fn predicate_inline_flt_numeric() {
+        let src = r#"
+gt5 x:n>b;>x 5
+main>L n
+  flt gt5 [1, 5, 6, 10, 3, 9]
+"#;
+        let v = vm_run_main_for_test(src);
+        let expected = Value::List(Arc::new(vec![
+            Value::Number(6.0),
+            Value::Number(10.0),
+            Value::Number(9.0),
+        ]));
+        assert_eq!(format!("{:?}", v), format!("{:?}", expected));
+    }
+
+    /// Same predicate as above used as a mapper. The result reg holds
+    /// the bool return; `map gt5 xs` materialises a list of bools.
+    #[test]
+    fn predicate_inline_map_bool_predicate() {
+        let src = r#"
+gt5 x:n>b;>x 5
+main>L b
+  map gt5 [1, 6, 3, 9]
+"#;
+        let v = vm_run_main_for_test(src);
+        let expected = Value::List(Arc::new(vec![
+            Value::Bool(false),
+            Value::Bool(true),
+            Value::Bool(false),
+            Value::Bool(true),
+        ]));
+        assert_eq!(format!("{:?}", v), format!("{:?}", expected));
+    }
+
+    /// A predicate that returns a non-bool must still raise the
+    /// "flt"/"bool" runtime error on the inlined path. The error message
+    /// shape is what the verifier's tree-walker emits, mirrored by the
+    /// HOF's typecheck branch — independent of whether we inlined or
+    /// dispatched.
+    #[test]
+    fn predicate_inline_flt_nonbool_predicate_errors() {
+        // `id` returns its arg unchanged (a number), so the bool typecheck
+        // inside the HOF dispatcher fires and PANIC_UNWRAPs with the
+        // expected message.
+        let src = r#"
+id x:n>n;x
+main>L n
+  flt id [1, 2, 3]
+"#;
+        let tokens: Vec<crate::lexer::Token> = crate::lexer::lex(src)
+            .unwrap()
+            .into_iter()
+            .map(|(t, _)| t)
+            .collect();
+        let prog = crate::parser::parse_tokens(tokens).unwrap();
+        let compiled = compile(&prog).unwrap();
+        let result = run(&compiled, Some("main"), vec![]);
+        let err = result.unwrap_err();
+        let msg = format!("{err:?}");
+        assert!(
+            msg.contains("flt") && msg.contains("bool"),
+            "expected flt/bool runtime error, got: {msg}"
+        );
+    }
+
+    /// A predicate with a CALL inside its body is too big / wrong shape
+    /// for the inliner. Fall through to OP_CALL_DYN must still produce
+    /// correct output.
+    #[test]
+    fn predicate_inline_rejects_predicate_with_nested_call() {
+        // `outer` calls `inner` — the inliner rejects `outer` (because
+        // its body contains an OP_CALL) and falls back. Result must
+        // still be the expected filtered list.
+        let src = r#"
+inner x:n>n;+x 1
+outer x:n>b;>(inner x) 3
+main>L n
+  flt outer [1, 2, 3, 4]
+"#;
+        let v = vm_run_main_for_test(src);
+        // inner adds 1; outer keeps n where n+1 > 3, i.e. n > 2 → [3, 4].
+        let expected = Value::List(Arc::new(vec![Value::Number(3.0), Value::Number(4.0)]));
+        assert_eq!(format!("{:?}", v), format!("{:?}", expected));
+    }
+
+    /// `map fn xs` where fn is too large to inline. Falls back to OP_CALL_DYN.
+    /// Sanity-check that the OP_CALL_DYN path didn't break.
+    #[test]
+    fn predicate_inline_rejects_large_mapper() {
+        // 9 ops worth of body — over the budget — forces fallback.
+        // Plus a CALL ensures rejection even if budget allowed it.
+        let src = r#"
+big x:n>n
+  a=+x 1
+  b=*a 2
+  c=-b 1
+  d=/c 1
+  e=+d 1
+  f=*e 1
+  g=-f 0
+  h=+g 0
+  +h 1
+main>L n
+  map big [1, 2]
+"#;
+        let v = vm_run_main_for_test(src);
+        // ((((((((x+1)*2 -1)/1)+1)*1)-0)+0)+1 = (x+1)*2 - 1 + 1 + 1 = 2x+3
+        // For x=1: 5, for x=2: 7.
+        let expected = Value::List(Arc::new(vec![Value::Number(5.0), Value::Number(7.0)]));
+        assert_eq!(format!("{:?}", v), format!("{:?}", expected));
+    }
+
+    /// Fused-window inliner: predicate whose body uses OP_SUM is NOT
+    /// inlinable (SUM is not on the whitelist), so the call goes through
+    /// OP_CALL_DYN. Verifies the fallback path inside the fused emitter
+    /// still produces the correct output.
+    #[test]
+    fn predicate_inline_fused_window_rejects_sum_predicate() {
+        let src = r#"
+sum-ge-5 w:L n>b;>=(sum w) 5
+main>n
+  ms=flt sum-ge-5 (window 2 [1, 2, 3, 4, 5])
+  len ms
+"#;
+        let v = vm_run_main_for_test(src);
+        // windows: [1,2]=3 (no), [2,3]=5 (yes), [3,4]=7 (yes), [4,5]=9 (yes) → 3.
+        assert_eq!(format!("{:?}", v), format!("{:?}", Value::Number(3.0)));
+    }
+
+    /// The bio canonical end-to-end shape: outer `flt all-h (window n cs)`
+    /// uses the fused window emitter; `all-h` itself contains an inner
+    /// `flt is-hydro xs` which is the unfused-flt arm. The inner `flt
+    /// is-hydro xs` is the hot path the inliner targets — `is-hydro` is
+    /// 3 opcodes and fits comfortably under the 8-op budget. This test
+    /// verifies the inliner produces output that matches a hand-computed
+    /// reference.
+    #[test]
+    fn predicate_inline_nested_flt_bio_canonical_shape() {
+        let src = r#"
+is-hydro c:t>b;has "AILMFWVYC" c
+all-h xs:L t>b;n=len (flt is-hydro xs);=n 2
+main>n
+  ws=flt all-h (window 2 (chars "AILX"))
+  len ws
+"#;
+        let v = vm_run_main_for_test(src);
+        // chars = ["A","I","L","X"]
+        // windows of 2: [A,I] (both hydro), [I,L] (both hydro), [L,X] (X not hydro)
+        // → 2 windows pass.
+        assert_eq!(format!("{:?}", v), format!("{:?}", Value::Number(2.0)));
     }
 }
