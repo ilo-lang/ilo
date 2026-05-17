@@ -199,6 +199,7 @@ Common shapes reached for from other languages. The parser and lexer surface eac
 | `AND a b`, `OR a b`, `NOT a`     | `&a b`, `\|a b`, `!a`                    | `ILO-L001`  |
 | `=<a b`, `=>a b`                 | `<=a b`, `>=a b` (single token)          | `ILO-P003`  |
 | `f=fn x:n>n;+x 1` (lambda)       | `(x:n>n;+x 1)` (parenthesised lambda)    | `ILO-P009`  |
+| `\x{+x 1}` (Haskell/Rust lambda) | `(x:n>n;+x 1)` (parenthesised lambda)    | `ILO-L001`  |
 | `main:>n;body`                   | `main>n;body` (no `:` before `>`)        | `ILO-P003`  |
 | Multi-line body without braces   | `@k xs{body}`, `cond{body}` on one line  | `ILO-P003`  |
 | `cond{^"err"}` braced-cond       | Braceless `cond ^"err"` for early return | hint only   |

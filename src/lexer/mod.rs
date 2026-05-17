@@ -598,6 +598,23 @@ fn lex_normalized(normalized: &str) -> Result<Vec<(Token, std::ops::Range<usize>
                         ),
                     });
                 }
+                // Haskell/Rust-style lambda shorthand: `\x{body}` or
+                // `\x -> body`. Reached for by personas coming from Haskell
+                // (`\x -> ...`) and Rust closure mental models. Logos rejects
+                // the leading `\` and the persona sees a bare ILO-L001
+                // "unexpected token '\\'" with no path forward. Point at the
+                // canonical parenthesised-lambda form so the first retry is
+                // the right one. (quant-trader rerun7.)
+                if bad == "\\"
+                    && let Some(hint) = backslash_lambda_hint(normalized, span.end)
+                {
+                    return Err(LexError {
+                        code: "ILO-L001",
+                        position: span.start,
+                        snippet: bad.to_string(),
+                        suggestion: hint,
+                    });
+                }
                 let (code, suggestion) = lex_error_kind(bad);
                 return Err(LexError {
                     code,
@@ -1172,6 +1189,56 @@ fn scan_camel_offenders(src: &str) -> Vec<CamelOffender> {
         }
     }
     out
+}
+
+/// Detect the Haskell/Rust backslash-lambda shorthand `\x{body}` or
+/// `\x -> body`. Returns a hint pointing at the canonical parenthesised
+/// lambda form when the source after a rejected `\` looks like one of those
+/// shapes; `None` otherwise (so we fall back to the generic ILO-L001 hint).
+///
+/// The shape we match is `\` + one identifier-shaped run + (`{` or `->` or
+/// space-then-ident-then-`->`). Single-param case covers the common reach
+/// (`map \x{+x 1} xs`, `flt \x -> >x 0 xs`); multi-param Haskell is rare
+/// from agents, so we keep the hint focused.
+fn backslash_lambda_hint(source: &str, after_backslash: usize) -> Option<String> {
+    let bytes = source.as_bytes();
+    let mut i = after_backslash;
+    // Skip a single optional space between `\` and the param name.
+    if i < bytes.len() && bytes[i] == b' ' {
+        i += 1;
+    }
+    // Param must be an identifier-shaped run (`[a-z][a-z0-9-]*`). If the
+    // first char isn't a lowercase ASCII letter, this isn't a lambda
+    // attempt and we leave it to the generic handler.
+    if i >= bytes.len() || !bytes[i].is_ascii_lowercase() {
+        return None;
+    }
+    let param_start = i;
+    while i < bytes.len()
+        && (bytes[i].is_ascii_lowercase() || bytes[i].is_ascii_digit() || bytes[i] == b'-')
+    {
+        i += 1;
+    }
+    let param = &source[param_start..i];
+    if param.is_empty() {
+        return None;
+    }
+    // Skip optional spaces between param and the following delimiter.
+    while i < bytes.len() && bytes[i] == b' ' {
+        i += 1;
+    }
+    if i >= bytes.len() {
+        return None;
+    }
+    // Accept `{body}` (the user-targeted shape) or `-> body` (Haskell).
+    let looks_like_lambda =
+        bytes[i] == b'{' || (i + 1 < bytes.len() && bytes[i] == b'-' && bytes[i + 1] == b'>');
+    if !looks_like_lambda {
+        return None;
+    }
+    Some(format!(
+        "`\\{param}{{body}}` is a Haskell/Rust lambda shorthand. ilo lambdas are parenthesised: `({param}:t>r;body)` (substitute the param type and return type). Example: `map (x:n>n;+x 1) xs`."
+    ))
 }
 
 /// Scan an all-uppercase identifier-shaped run starting at `start`.
@@ -1809,6 +1876,79 @@ mod tests {
             tokens.iter().any(|(t, _)| matches!(t, Token::ResultType)),
             "expected ResultType in tokens: {:?}",
             tokens
+        );
+    }
+
+    #[test]
+    fn lex_backslash_lambda_brace_emits_hint() {
+        // Haskell/Rust-style `\x{body}` shorthand. quant-trader rerun7
+        // reached for it inside `map`. Without the targeted hint the agent
+        // sees only `unexpected token '\'`.
+        let err = lex("f xs:L n>L n;map \\x{+x 1} xs").unwrap_err();
+        assert_eq!(err.code, "ILO-L001");
+        assert_eq!(err.snippet, "\\");
+        assert!(
+            err.suggestion.contains("Haskell/Rust"),
+            "suggestion should call out the source language: {}",
+            err.suggestion
+        );
+        assert!(
+            err.suggestion.contains("(x:t>r;body)"),
+            "suggestion should point at the canonical parenthesised lambda form: {}",
+            err.suggestion
+        );
+    }
+
+    #[test]
+    fn lex_backslash_lambda_arrow_emits_hint() {
+        // Haskell's `\x -> body` form should also trigger the hint — same
+        // mental model, just different delimiter after the param.
+        let err = lex("f xs:L n>L n;map \\x -> +x 1 xs").unwrap_err();
+        assert_eq!(err.code, "ILO-L001");
+        assert!(
+            err.suggestion.contains("Haskell/Rust"),
+            "suggestion: {}",
+            err.suggestion
+        );
+    }
+
+    #[test]
+    fn lex_backslash_lambda_space_param_emits_hint() {
+        // Tolerate a single space between `\` and the param name
+        // (Haskell-style `\ x -> ...`).
+        let err = lex("f xs:L n>L n;map \\ x{+x 1} xs").unwrap_err();
+        assert_eq!(err.code, "ILO-L001");
+        assert!(
+            err.suggestion.contains("(x:t>r;body)"),
+            "suggestion: {}",
+            err.suggestion
+        );
+    }
+
+    #[test]
+    fn lex_lone_backslash_no_lambda_hint() {
+        // A bare `\` with no following ident+brace/arrow should fall back to
+        // the generic ILO-L001 hint — we only want the lambda hint when the
+        // shape is unambiguously a lambda attempt.
+        let err = lex("f x:n>n;\\").unwrap_err();
+        assert_eq!(err.code, "ILO-L001");
+        assert!(
+            !err.suggestion.contains("Haskell/Rust"),
+            "lone `\\` should not surface the lambda hint, got: {}",
+            err.suggestion
+        );
+    }
+
+    #[test]
+    fn lex_backslash_followed_by_ident_no_brace_no_hint() {
+        // `\foo` with no `{` or `->` after the param isn't a lambda shape —
+        // could be anything (escape attempt, typo). Fall back to generic.
+        let err = lex("f x:n>n;\\foo bar").unwrap_err();
+        assert_eq!(err.code, "ILO-L001");
+        assert!(
+            !err.suggestion.contains("Haskell/Rust"),
+            "`\\foo bar` (no brace/arrow) should not surface the lambda hint, got: {}",
+            err.suggestion
         );
     }
 
