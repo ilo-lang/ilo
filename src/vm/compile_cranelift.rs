@@ -3012,6 +3012,16 @@ fn compile_function_body(
                 //   [ptr + 16] Vec.data_ptr  (*mut NanVal, each slot is u64/8 bytes)
                 //   [ptr + 24] Vec.cap  (usize)
                 // Layout confirmed with a runtime probe in jit_cranelift.rs.
+                //
+                // ListView audit (PR-1 foundation, #325 follow-up):
+                //   HeapObj also has a `ListView` variant (discriminant = 2)
+                //   sharing TAG_LIST. PR-1 emits no views; every publish site
+                //   in src/vm/mod.rs materialises them away before they can
+                //   reach AOT-compiled code paths. PR-2 (OP_WINDOW reshape)
+                //   will need a `[ptr+0] == 1` guard before this Vec-layout
+                //   load, or an eager materialise at the producer side. See
+                //   the parallel comment on OP_FOREACHPREP in jit_cranelift.rs
+                //   for the full audit reasoning.
                 let bv = builder.use_var(vars[b_idx]);
                 let cv = builder.use_var(vars[c_idx]);
                 let mf_plain = cranelift_codegen::ir::MemFlags::new();
