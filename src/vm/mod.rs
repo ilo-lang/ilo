@@ -424,6 +424,9 @@ pub(crate) fn is_tree_bridge_eligible(b: crate::builtins::Builtin, argc: usize) 
     match (b, argc) {
         (Builtin::Rgx, 2) => true,
         (Builtin::Rgxall, 2) => true,
+        // rgxall1: flat first-capture-group convenience (L t) over rgxall.
+        // Bridge contract identical to rgxall.
+        (Builtin::Rgxall1, 2) => true,
         (Builtin::Fmt, _) if argc >= 1 => true,
         (Builtin::Rd, 2) => true,
         (Builtin::Rdb, 2) => true,
@@ -437,6 +440,12 @@ pub(crate) fn is_tree_bridge_eligible(b: crate::builtins::Builtin, argc: usize) 
         (Builtin::Grp, 2) => true,
         (Builtin::Uniqby, 2) => true,
         (Builtin::Partition, 2) => true,
+        // ct fn xs / ct fn ctx xs — count by predicate. Same bridge
+        // contract as flt 2/3; tree interpreter handles the user-fn
+        // callback via ACTIVE_AST_PROGRAM. Named `ct` to avoid
+        // `cnt`-as-continue keyword reservation.
+        (Builtin::Ct, 2) => true,
+        (Builtin::Ct, 3) => true,
         (Builtin::Srt, 2) => true,
         // rsrt fn xs — descending sort by key. Same bridge contract as
         // srt 2-arg: tree interpreter does the user-fn callback, bridge
@@ -13090,6 +13099,14 @@ pub(crate) fn tree_bridge_propagates_error(b: crate::builtins::Builtin) -> bool 
             | Builtin::Partition
             | Builtin::Flatmap
             | Builtin::Mapr
+            // rgxall1 raises ILO-R009 on >1 capture groups — that's a
+            // programmer error (pattern arity mismatch), not a runtime
+            // input issue. Surface it on Cranelift in lockstep with
+            // tree/VM rather than silently degenerating to nil.
+            | Builtin::Rgxall1
+            // ct raises ILO-R009 on non-bool predicate returns. Same
+            // class as srt/rsrt key-fn type errors that already propagate.
+            | Builtin::Ct
     )
 }
 

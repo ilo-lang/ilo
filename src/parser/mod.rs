@@ -3553,6 +3553,7 @@ fn builtin_arity_tables() -> (HashMap<String, usize>, HashMap<String, Vec<bool>>
         ("map", 2, &[0]),
         ("flt", 2, &[0]),
         ("fld", 3, &[0]),
+        ("ct", 2, &[0]),
         ("grp", 2, &[0]),
         ("uniqby", 2, &[0]),
         ("partition", 2, &[0]),
@@ -3577,6 +3578,7 @@ fn builtin_arity_tables() -> (HashMap<String, usize>, HashMap<String, Vec<bool>>
         // Regex
         ("rgx", 2, &[]),
         ("rgxall", 2, &[]),
+        ("rgxall1", 2, &[]),
         ("rgxsub", 3, &[]),
         // Map (associative)
         ("mget", 2, &[]),

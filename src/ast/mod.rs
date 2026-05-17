@@ -458,6 +458,11 @@ const BUILTIN_ALIASES: &[(&str, &str)] = &[
     ("unique", "unq"),
     ("filter", "flt"),
     ("fold", "fld"),
+    // Note: no `count` → `ct` alias. `count` is a common user-fn name
+    // (see examples/unq-numbers.ilo); aliasing it would trample on the
+    // existing user code that defines `count` as a per-program helper.
+    // Users wanting a long form can keep their own `count` function and
+    // call `ct` directly when they want the builtin.
     ("flatten", "flat"),
     ("concat", "cat"),
     ("contains", "has"),

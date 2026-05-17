@@ -77,6 +77,7 @@ pub enum Builtin {
     Map,
     Flt,
     Fld,
+    Ct,
     Grp,
     Uniqby,
     Partition,
@@ -115,6 +116,7 @@ pub enum Builtin {
     Fmt2,
     Rgx,
     Rgxall,
+    Rgxall1,
     Rgxsub,
 
     // JSON
@@ -210,6 +212,7 @@ impl Builtin {
             "map" => Some(Builtin::Map),
             "flt" => Some(Builtin::Flt),
             "fld" => Some(Builtin::Fld),
+            "ct" => Some(Builtin::Ct),
             "grp" => Some(Builtin::Grp),
             "uniqby" => Some(Builtin::Uniqby),
             "partition" => Some(Builtin::Partition),
@@ -242,6 +245,7 @@ impl Builtin {
             "fmt2" => Some(Builtin::Fmt2),
             "rgx" => Some(Builtin::Rgx),
             "rgxall" => Some(Builtin::Rgxall),
+            "rgxall1" => Some(Builtin::Rgxall1),
             "rgxsub" => Some(Builtin::Rgxsub),
             "jpth" => Some(Builtin::Jpth),
             "jdmp" => Some(Builtin::Jdmp),
@@ -330,6 +334,7 @@ impl Builtin {
             Builtin::Map => "map",
             Builtin::Flt => "flt",
             Builtin::Fld => "fld",
+            Builtin::Ct => "ct",
             Builtin::Grp => "grp",
             Builtin::Uniqby => "uniqby",
             Builtin::Partition => "partition",
@@ -362,6 +367,7 @@ impl Builtin {
             Builtin::Fmt2 => "fmt2",
             Builtin::Rgx => "rgx",
             Builtin::Rgxall => "rgxall",
+            Builtin::Rgxall1 => "rgxall1",
             Builtin::Rgxsub => "rgxsub",
             Builtin::Jpth => "jpth",
             Builtin::Jdmp => "jdmp",
@@ -506,6 +512,15 @@ impl Builtin {
         Builtin::Inv,
         Builtin::Det,
         Builtin::Sleep,
+        // Appended after Sleep to preserve every existing tag. Rgxall1 is a
+        // convenience over Rgxall (flat first-capture-group list); see the
+        // tree-bridge entry in src/vm/mod.rs for cross-engine dispatch.
+        Builtin::Rgxall1,
+        // Ct fn xs -> n: count-by-predicate. Tree-bridge eligible alongside
+        // its HOF peers (Flt, Map, Grp); see is_tree_bridge_eligible.
+        // Named `ct` (not `cnt`) because `cnt` is reserved as the loop
+        // continue keyword — see src/parser/mod.rs:3507.
+        Builtin::Ct,
     ];
 
     /// On-wire 8-bit tag for cross-engine builtin dispatch. See `ALL`.
@@ -685,6 +700,7 @@ mod tests {
             "map",
             "flt",
             "fld",
+            "ct",
             "grp",
             "uniqby",
             "partition",
@@ -713,6 +729,7 @@ mod tests {
             "fmt2",
             "rgx",
             "rgxall",
+            "rgxall1",
             "rgxsub",
             "jpth",
             "jdmp",
@@ -900,6 +917,7 @@ mod tests {
             "map",
             "flt",
             "fld",
+            "ct",
             "grp",
             "uniqby",
             "partition",
@@ -931,6 +949,7 @@ mod tests {
             "fmt2",
             "rgx",
             "rgxall",
+            "rgxall1",
             "rgxsub",
             "jpth",
             "jdmp",

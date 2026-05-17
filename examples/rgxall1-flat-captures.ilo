@@ -1,0 +1,30 @@
+-- rgxall1 pat s -> L t: flat first-capture-group convenience.
+--
+-- rgxall returns L (L t) (each match is a list of capture groups, or a
+-- 1-element list of the whole match when there are no groups). For the
+-- common "extract every match of a single capture group" shape, this
+-- forces a `flat` or a `map (xs:L t>t;hd xs)` step. rgxall1 returns the
+-- flat L t directly.
+--
+-- This is the canonical html-scrape shape that the html-scraper persona's
+-- 5-rerun history kept paying ~30 tokens on (the `ext` helper). PR for
+-- rerun6 lands this builtin.
+
+-- 0 groups: every whole match, flat. Parallel to `rgx` no-group except
+-- rgx silently returns ONLY the first match when given a captureless
+-- pattern; rgxall1 returns them all.
+digits>L t;rgxall1 "\d+" "a1 b22 c333"
+
+-- 1 group: capture-1 for every match, flat. The HN-frontpage shape from
+-- the html-scraper persona collapses to one call.
+titles>L t;rgxall1 "<h2>([^<]+)</h2>" "<h2>Foo</h2><h2>Bar</h2><h2>Baz</h2>"
+
+-- Empty input: empty list, no error.
+none>L t;rgxall1 "\d+" "no digits here"
+
+-- run: digits
+-- out: [1, 22, 333]
+-- run: titles
+-- out: [Foo, Bar, Baz]
+-- run: none
+-- out: []

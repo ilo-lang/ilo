@@ -2992,6 +2992,59 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         }
         return Ok(Value::List(Arc::new(result)));
     }
+    if builtin == Some(Builtin::Ct) && (args.len() == 2 || args.len() == 3) {
+        // ct fn xs / ct fn ctx xs  → number of elements where fn returns true.
+        // Mirrors flt's predicate semantics exactly; only the accumulator
+        // shape differs (counter instead of pushing onto a result list).
+        // Motivating shape: bioinformatics rerun6 `tm=ct has-tm seqs` saves
+        // the L b allocation that `len (flt has-tm seqs)` pays for.
+        //
+        // Named `ct` (not `cnt`) because `cnt` is reserved as the loop
+        // continue keyword — see src/parser/mod.rs:3507.
+        let fn_name = resolve_fn_ref(&args[0]).ok_or_else(|| {
+            RuntimeError::new(
+                "ILO-R009",
+                format!(
+                    "ct: first arg must be a function reference, got {:?}",
+                    args[0]
+                ),
+            )
+        })?;
+        let captures = closure_captures(&args[0]);
+        let (ctx, list_arg) = if args.len() == 3 {
+            (Some(args[1].clone()), &args[2])
+        } else {
+            (None, &args[1])
+        };
+        let items = match list_arg {
+            Value::List(l) => l.clone(),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("ct: list arg must be a list, got {:?}", other),
+                ));
+            }
+        };
+        let mut count: i64 = 0;
+        for item in items.iter() {
+            let mut call_args = match &ctx {
+                Some(c) => vec![item.clone(), c.clone()],
+                None => vec![item.clone()],
+            };
+            call_args.extend(captures.iter().cloned());
+            match call_function(env, &fn_name, call_args)? {
+                Value::Bool(true) => count += 1,
+                Value::Bool(false) => {}
+                other => {
+                    return Err(RuntimeError::new(
+                        "ILO-R009",
+                        format!("ct: predicate must return bool, got {:?}", other),
+                    ));
+                }
+            }
+        }
+        return Ok(Value::Number(count as f64));
+    }
     if builtin == Some(Builtin::Fld) && (args.len() == 3 || args.len() == 4) {
         let fn_name = resolve_fn_ref(&args[0]).ok_or_else(|| {
             RuntimeError::new(
@@ -3856,6 +3909,66 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                         m.as_str().to_string(),
                     ))]))
                 })
+                .collect()
+        };
+        return Ok(Value::List(Arc::new(result)));
+    }
+    if builtin == Some(Builtin::Rgxall1) && args.len() == 2 {
+        let pattern = match &args[0] {
+            Value::Text(s) => s.as_str(),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!(
+                        "rgxall1: first arg must be a string pattern, got {:?}",
+                        other
+                    ),
+                ));
+            }
+        };
+        let input = match &args[1] {
+            Value::Text(s) => s.as_str(),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("rgxall1: second arg must be a string, got {:?}", other),
+                ));
+            }
+        };
+        let re = regex::Regex::new(pattern).map_err(|e| {
+            RuntimeError::new("ILO-R009", format!("rgxall1: invalid regex pattern: {e}"))
+        })?;
+        // Single-capture-group convenience over rgxall.
+        // - 0 groups: returns the flat list of whole matches (L t).
+        // - 1 group: returns the flat list of capture-1 strings (L t),
+        //   skipping any match where group 1 did not participate
+        //   (parallels rgxall's filter_map semantics for non-participating
+        //   groups under alternation).
+        // - 2+ groups: runtime error pointing the user back at rgxall, which
+        //   returns L (L t) and preserves every group on every match.
+        //   We surface this at runtime rather than verify time because the
+        //   group-count check requires inspecting the literal pattern, and
+        //   patterns often arrive as values from bindings; the verifier
+        //   doesn't track regex group arity.
+        let group_count = re.captures_len().saturating_sub(1);
+        if group_count >= 2 {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!(
+                    "rgxall1: pattern has {group_count} capture groups; rgxall1 only supports 0 or 1. Use rgxall for L (L t) with every group preserved."
+                ),
+            ));
+        }
+        let result: Vec<Value> = if group_count == 1 {
+            re.captures_iter(input)
+                .filter_map(|caps| {
+                    caps.get(1)
+                        .map(|m| Value::Text(Arc::new(m.as_str().to_string())))
+                })
+                .collect()
+        } else {
+            re.find_iter(input)
+                .map(|m| Value::Text(Arc::new(m.as_str().to_string())))
                 .collect()
         };
         return Ok(Value::List(Arc::new(result)));

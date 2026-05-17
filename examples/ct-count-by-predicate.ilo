@@ -1,0 +1,31 @@
+-- ct fn xs -> n: count elements where predicate returns true.
+--
+-- Token-equivalent to `len (flt fn xs)` but skips the intermediate L b
+-- filter-result allocation. Motivating workload: bioinformatics rerun6
+-- ran `tm=ct has-tm seqs` over 20k proteins, replacing
+-- `tm=len (flt has-tm seqs)` and saving an L b alloc the size of the
+-- whole keepers list.
+--
+-- Named `ct` (not `cnt`) because `cnt` is reserved as the loop continue
+-- keyword. Two chars beats the three-char ask in the persona log on
+-- token economy.
+
+pos x:n>b;>x 0
+
+-- Count positives in a mixed list.
+pcount>n;ct pos [-3,0,2,4,-1,5]
+
+-- Closure-bind variant: count elements above a threshold.
+gt x:n c:n>b;>x c
+
+abovec>n;ct gt 4 [1,5,3,8,2,7]
+
+-- Empty list returns 0; no allocation, no error.
+empty>n;ct pos []
+
+-- run: pcount
+-- out: 3
+-- run: abovec
+-- out: 3
+-- run: empty
+-- out: 0
