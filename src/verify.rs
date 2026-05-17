@@ -2237,6 +2237,18 @@ fn builtin_check_args(
             // mget map key → O value_type. The key type must be compatible
             // with the declared map key type (text or number); we no longer
             // hard-code "must be text" — see PR #257 for the MapKey rollout.
+            if let Some(first) = arg_types.first()
+                && !matches!(first, Ty::Map(_, _) | Ty::Unknown)
+            {
+                errors.push(VerifyError {
+                    code: "ILO-T013",
+                    function: func_ctx.to_string(),
+                    message: format!("'mget' expects a map, got {first}"),
+                    hint: None,
+                    span,
+                    is_warning: false,
+                });
+            }
             let (key_ty_decl, val_ty) = match arg_types.first() {
                 Some(Ty::Map(k, v)) => (*k.clone(), *v.clone()),
                 _ => (Ty::Unknown, Ty::Unknown),
@@ -2260,6 +2272,18 @@ fn builtin_check_args(
         "mset" => {
             // mset map key val → map (same key type as input map, value type
             // inferred from the third arg if not previously known).
+            if let Some(first) = arg_types.first()
+                && !matches!(first, Ty::Map(_, _) | Ty::Unknown)
+            {
+                errors.push(VerifyError {
+                    code: "ILO-T013",
+                    function: func_ctx.to_string(),
+                    message: format!("'mset' expects a map, got {first}"),
+                    hint: None,
+                    span,
+                    is_warning: false,
+                });
+            }
             let (key_ty_decl, val_ty_decl) = match arg_types.first() {
                 Some(Ty::Map(k, v)) => (Some(*k.clone()), Some(*v.clone())),
                 _ => (None, None),
@@ -2342,6 +2366,18 @@ fn builtin_check_args(
             (Ty::List(Box::new(key_ty)), errors)
         }
         "mvals" => {
+            if let Some(first) = arg_types.first()
+                && !matches!(first, Ty::Map(_, _) | Ty::Unknown)
+            {
+                errors.push(VerifyError {
+                    code: "ILO-T013",
+                    function: func_ctx.to_string(),
+                    message: format!("'mvals' expects a map, got {first}"),
+                    hint: None,
+                    span,
+                    is_warning: false,
+                });
+            }
             let val_ty = match arg_types.first() {
                 Some(Ty::Map(_, v)) => *v.clone(),
                 _ => Ty::Unknown,
@@ -2349,6 +2385,18 @@ fn builtin_check_args(
             (Ty::List(Box::new(val_ty)), errors)
         }
         "mdel" => {
+            if let Some(first) = arg_types.first()
+                && !matches!(first, Ty::Map(_, _) | Ty::Unknown)
+            {
+                errors.push(VerifyError {
+                    code: "ILO-T013",
+                    function: func_ctx.to_string(),
+                    message: format!("'mdel' expects a map, got {first}"),
+                    hint: None,
+                    span,
+                    is_warning: false,
+                });
+            }
             let key_ty_decl = match arg_types.first() {
                 Some(Ty::Map(k, _)) => *k.clone(),
                 _ => Ty::Unknown,
@@ -7329,18 +7377,26 @@ mod tests {
         assert!(parse_and_verify("add x:n y:n>n;+x y   f xs:L n init:z>n;fld add xs init").is_ok());
     }
 
-    // ── mvals/mdel with non-map first arg (lines 935, 942) ───────────────────
+    // ── mvals/mdel with non-map first arg now error at verify ────────────────
 
     #[test]
-    fn mvals_non_map_returns_unknown_list() {
-        // mvals n → L Unknown; compatible with L n (line 935: _ => Ty::Unknown)
-        assert!(parse_and_verify("f x:n>L n;mvals x").is_ok());
+    fn mvals_non_map_first_arg_error() {
+        // mvals n → ILO-T013 'mvals' expects a map, got n
+        let errs = parse_and_verify("f x:n>L n;mvals x").unwrap_err();
+        assert!(
+            errs.iter()
+                .any(|e| e.code == "ILO-T013" && e.message.contains("mvals"))
+        );
     }
 
     #[test]
-    fn mdel_non_map_returns_generic_map() {
-        // mdel n "k" → M Unknown Unknown; compatible with M t n (line 942)
-        assert!(parse_and_verify(r#"f x:n>M t n;mdel x "k""#).is_ok());
+    fn mdel_non_map_first_arg_error() {
+        // mdel n "k" → ILO-T013 'mdel' expects a map, got n
+        let errs = parse_and_verify(r#"f x:n>M t n;mdel x "k""#).unwrap_err();
+        assert!(
+            errs.iter()
+                .any(|e| e.code == "ILO-T013" && e.message.contains("mdel"))
+        );
     }
 
     // ── Decl::Use skip in verify (line 1055) ─────────────────────────────────
@@ -7487,21 +7543,26 @@ mod tests {
         assert!(parse_and_verify("f x:n>n;y=x??0;y").is_ok());
     }
 
-    // ── mget with non-Map first arg (line 875-877) ───────────────────────────
+    // ── mget/mset with non-Map first arg now error at verify ─────────────────
 
     #[test]
-    fn mget_non_map_first_arg_returns_unknown() {
-        // mget n "k" — first arg not a map → val_ty = Unknown (line 877: _ => Unknown)
-        // Returns O Unknown, compatible with O n
-        assert!(parse_and_verify(r#"f x:n>O n;mget x "k""#).is_ok());
+    fn mget_non_map_first_arg_error() {
+        // mget n "k" → ILO-T013 'mget' expects a map, got n
+        let errs = parse_and_verify(r#"f x:n>O n;mget x "k""#).unwrap_err();
+        assert!(
+            errs.iter()
+                .any(|e| e.code == "ILO-T013" && e.message.contains("mget"))
+        );
     }
 
-    // ── mset non-Map first arg (line 898) ────────────────────────────────────
-
     #[test]
-    fn mset_non_map_first_arg_returns_generic_map() {
-        // mset n "k" "v" — first arg not map → returns M Unknown Unknown (line 898)
-        assert!(parse_and_verify(r#"f x:n>M t t;mset x "k" "v""#).is_ok());
+    fn mset_non_map_first_arg_error() {
+        // mset n "k" "v" → ILO-T013 'mset' expects a map, got n
+        let errs = parse_and_verify(r#"f x:n>M t t;mset x "k" "v""#).unwrap_err();
+        assert!(
+            errs.iter()
+                .any(|e| e.code == "ILO-T013" && e.message.contains("mset"))
+        );
     }
 
     // ── rev/unq return Unknown (lines 498, 534) ───────────────────────────────
