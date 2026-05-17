@@ -1327,6 +1327,8 @@ NO_COLOR=1      Disable colour (same as --text)
 
 JSON error output follows a structured schema with `severity`, `code`, `message`, `labels` (with spans), `notes`, and `suggestion` fields.
 
+Runtime errors raised from the Cranelift JIT (default engine and `--run-cranelift`) populate `labels` with the source span of the failing operation, matching tree and VM behaviour. Span coverage threads through every JIT runtime helper (unwrap, panic-unwrap, list-get, slice, index, jpth, mget, record-field strict access, builtin dispatch, dynamic call); AOT-compiled binaries inherit the same coverage. Pre-v0.11.6 builds surfaced `{"labels":[]}` for these shapes — if you see an empty labels array on a runtime error, the binary is out of date.
+
 ### Top-level program output
 
 For a program whose entry function returns a Result, the `~`/`^` wrapper is split across streams and exit codes so shell callers do not have to strip a prefix:
