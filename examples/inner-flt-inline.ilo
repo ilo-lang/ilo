@@ -1,0 +1,34 @@
+-- Inner-flt closure-call inlining (bio canonical, #336 follow-up).
+--
+-- After the window-listview reshape (#336) the remaining ~10s on the
+-- 11.4M-residue Swiss-Prot bio canonical was 165M `OP_CALL_DYN`
+-- invocations into the inner `flt is-hydro xs` predicate. This example
+-- mirrors the bio shape at CI scale and exercises both:
+--
+--   - the fused `flt fn (window n xs)` emitter (outer `flt all-h ...`)
+--   - the unfused `flt fn xs` emitter (inner `flt is-hydro xs`), which is
+--     where the inliner kicks in — `is-hydro` is a 3-opcode body
+--     (LOADK + HAS + RET) and fits comfortably inside the 8-op budget.
+--
+-- All three engines must agree on output: tree-walker is the reference
+-- (no inliner — always calls via the tree HOF dispatcher); the VM is
+-- where the inliner lives; Cranelift bails on OP_WINDOW_VIEW and falls
+-- back to the VM dispatcher, so it sees the inlined output too.
+
+is-hydro c:t>b;has "AILMFWVYC" c
+all-h xs:L t>b;n=len (flt is-hydro xs);=n 5
+
+count-hydro-windows s:t>n
+  cs=chars s
+  ws=window 5 cs
+  ms=flt all-h ws
+  len ms
+
+main>n
+  -- 10 chars total. Each 5-wide window of all-hydrophobic chars matches:
+  -- positions 0..5 inclusive (6 windows) are all hydro. After the K
+  -- everything containing it fails. Expected: 6.
+  count-hydro-windows "AILMFWVYCAKAILMF"
+
+-- run: main
+-- out: 7
