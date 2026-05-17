@@ -4662,8 +4662,11 @@ fn slice_of(obj: &HeapObj) -> &[NanVal] {
         HeapObj::List(items) => items.as_slice(),
         // Non-list variants: slice_of is contractually list-only, but explicit
         // arms keep rustc audit-enforced if HeapObj grows new variants later.
-        HeapObj::Str(_) | HeapObj::Map(_) | HeapObj::Record { .. }
-        | HeapObj::OkVal(_) | HeapObj::ErrVal(_) => {
+        HeapObj::Str(_)
+        | HeapObj::Map(_)
+        | HeapObj::Record { .. }
+        | HeapObj::OkVal(_)
+        | HeapObj::ErrVal(_) => {
             debug_assert!(false, "slice_of called on non-list HeapObj variant");
             &[]
         }
@@ -4767,8 +4770,8 @@ impl NanVal {
     /// In debug builds, panics if `src` is not a TAG_LIST or if
     /// `start + len > parent.len()`.
     #[allow(dead_code)] // wired up in PR-2 (OP_WINDOW reshape); kept here so the
-                       // foundation lands in one PR. Test-only intrinsic in PR-1
-                       // tests exercises the read path.
+    // foundation lands in one PR. Test-only intrinsic in PR-1
+    // tests exercises the read path.
     fn heap_list_view(src: NanVal, start: usize, len: usize) -> Self {
         // No view-of-view: src must reference HeapObj::List, not another view.
         // Both layouts share TAG_LIST, so we discriminate via the HeapObj
