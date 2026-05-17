@@ -3865,9 +3865,9 @@ impl VerifyContext {
                     Ty::Unknown => Ty::Unknown,
                     other => {
                         let hint = match other {
-                            Ty::Map(_, _) => Some(format!(
-                                "use 'mget m \"{field}\"' which returns Option"
-                            )),
+                            Ty::Map(_, _) => {
+                                Some(format!("use 'mget m \"{field}\"' which returns Option"))
+                            }
                             _ => None,
                         };
                         self.err(
