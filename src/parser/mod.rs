@@ -3255,6 +3255,24 @@ results first: `r={first_op}a b;…r` keeps each step explicit."
                 Ok(Expr::Err(Box::new(inner)))
             }
             Some(Token::Dollar) => self.parse_dollar(),
+            // Zero-arg builtins (`now`, `now-ms`) in operand position auto-expand
+            // to a zero-arg Call. Without this, `>now-ms 0` parses `now-ms` as
+            // a bare Ref and the verifier emits ILO-T004 ("undefined variable
+            // 'now-ms'"). `mmap` is handled in `parse_atom` because it has no
+            // arity overload — `now` and `now-ms` are only kept out of
+            // `parse_atom` so the statement-head greedy-call shape `now x`
+            // still parses as `now(x)` and the verifier can surface its usual
+            // arity-mismatch error instead of a confusing ILO-P020 from a
+            // bare `x` at the next statement boundary.
+            Some(Token::Ident(name)) if name == "now" || name == "now-ms" => {
+                let name = name.clone();
+                self.advance();
+                Ok(Expr::Call {
+                    function: name,
+                    args: vec![],
+                    unwrap: UnwrapMode::None,
+                })
+            }
             _ => self.parse_atom(),
         }
     }
