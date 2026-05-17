@@ -1,0 +1,55 @@
+-- `?h cond a b` — general prefix-ternary keyword with three
+-- operand atoms. Reads as `if cond then a else b`. The literal
+-- `h` is the keyword (analogous to `=`/`>`/`<` in `?=`/`?>`/`?<`)
+-- and `cond` can be any bool-valued expression-as-atom: a ref,
+-- a comparison-derived bool, a predicate-call result.
+--
+-- This complements PR #330's bool-subject `?h a b` shape (which
+-- takes exactly two operand atoms — there the `h` is a bool
+-- variable, not the keyword). The disambiguator is operand
+-- count: two atoms after `?h` → bool-subject; three atoms → the
+-- general keyword form below.
+--
+-- Use case: a let-RHS where the condition is a local bool you
+-- already named something other than `h` — typically a
+-- comparison result (`cn=eq x 0`) or a predicate call. The
+-- brace shape `?cn{a}{b}` works too, but the prefix shape is
+-- two characters cheaper per occurrence.
+
+-- Comparison-derived bool as the condition.
+clf x:n>t;cn=>x 0;?h cn "pos" "nonpos"
+
+-- Predicate result as the condition.
+known t:t>t;ok=has ["a" "b" "c"] t;?h ok "yes" "no"
+
+-- The originating security-researcher use case: pick a JSON key
+-- to read based on whether a tag matches a known string.
+sev mn:t>t;cn=(=mn "v40");sc1=?h cn "metrics:nil" "metrics:ok";sc1
+
+-- Coexistence: PR #330's 2-operand bool-subject form still wins
+-- when only two operands follow.
+pr330 h:b>n;?h 7 9
+
+-- run: clf 5
+-- out: pos
+
+-- run: clf 0
+-- out: nonpos
+
+-- run: known b
+-- out: yes
+
+-- run: known z
+-- out: no
+
+-- run: sev v40
+-- out: metrics:nil
+
+-- run: sev v31
+-- out: metrics:ok
+
+-- run: pr330 true
+-- out: 7
+
+-- run: pr330 false
+-- out: 9
