@@ -222,6 +222,8 @@ Keys are typed: text (`t`) or integer (`n`). Numeric keys work directly — `mse
 
 **Math**: `abs` `min` `max` `mod` `flr` `cel` `rou` `rnd` `rndn` `clamp` `sum` `avg`
 **Math (transcendental)**: `sqrt` `pow` `exp` `log` `log10` `log2` `sin` `cos` `tan` `asin` `acos` `atan` `atan2`
+
+> **`asin` / `acos` return NaN silently for out-of-range input.** `asin x` and `acos x` are defined only on `[-1, 1]`. Outside that range they return `NaN` rather than raising an error, and NaN propagates through every subsequent arithmetic op (`+`, `*`, `sum`, `avg`, comparisons return false) until it surfaces somewhere far from the cause — typically as a bad numeric output or an unexpected `false` branch. If your input may exceed `[-1, 1]` (e.g. floating-point drift in haversine, dot-product clamps), wrap with `clamp x -1 1` before the call: `asin (clamp x -1 1)`. The same applies to `sqrt` on negatives and `log` on non-positives — both return NaN silently. Validate the domain at the boundary, not in the consumer.
 **Stats**: `median` `quantile` `stdev` `variance` `cumsum` `frq`
 **Linalg**: `transpose` `matmul` `dot` `solve` `inv` `det` `fft` `ifft`
 **Text**: `len` `str` `num` `trm` `spl` `cat` `fmt` `fmt2` `has` `rgx` `rgxall` `rgxsub`

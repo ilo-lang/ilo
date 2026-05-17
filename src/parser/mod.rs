@@ -2871,6 +2871,18 @@ or write `({fmt_name} \"...\" ...)` so its args are grouped."
                 let has_comma = self.list_has_top_level_comma();
                 let mut items = Vec::new();
                 while self.peek() != Some(&Token::RBracket) {
+                    // List literals separate elements with whitespace (or
+                    // optional commas). A `;` inside `[...]` is almost
+                    // always someone reaching for Python/JS/Rust list
+                    // syntax — point at it directly instead of falling
+                    // through to the generic "expected expression" error.
+                    if self.peek() == Some(&Token::Semi) {
+                        return Err(self.error_hint(
+                            "ILO-P009",
+                            "`;` is not a list separator inside `[...]`".into(),
+                            "ilo list literals use whitespace: `[1 2 3]` (commas optional: `[1, 2, 3]`)".into(),
+                        ));
+                    }
                     if has_comma {
                         items.push(self.parse_list_element_call_ok()?);
                     } else {
@@ -3068,6 +3080,22 @@ or bind the index to a name first: `i:expr;{n}.i`.",
         let body = self.parse_lambda_body()?;
         self.no_whitespace_call = prev_no_ws;
         let end = self.peek_span();
+        // If the body completed but the next token is an Ident, the body
+        // greedily consumed a prefix-call (`+a kc`) and the remaining
+        // idents (`body k`) look like dangling args from the parser's
+        // point of view but were meant as part of a chained call
+        // (`+a (kc (body k))`). Surface the parens hint instead of the
+        // generic "expected RParen, got Ident" surface (pdf-analyst).
+        if let Some(Token::Ident(_)) = self.peek() {
+            return Err(self.error_hint(
+                "ILO-P003",
+                format!(
+                    "expected `)` to close inline lambda body, got {:?}",
+                    self.peek().unwrap()
+                ),
+                "chained calls inside an inline-lambda body need explicit parens: `(a:n x:t>n;+a (kc (body x)))`. The body parses a single prefix call greedily and the trailing idents look like a malformed lambda close.".into(),
+            ));
+        }
         self.expect(&Token::RParen)?;
 
         // Free-variable analysis. Phase 1 rejected any free var with ILO-P017;

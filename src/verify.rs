@@ -435,6 +435,48 @@ fn is_builtin(name: &str) -> bool {
     Builtin::is_builtin(name)
 }
 
+/// Detect the common param-order mistake in closure-bind HOFs like
+/// `srt fn ctx xs`, `rsrt fn ctx xs`, `map fn ctx xs`, `flt fn ctx xs`.
+/// The fn must take `(element, ctx)` in that order. Personas frequently
+/// write `(ctx, element)` because the call-site lists `fn ctx xs` and
+/// the lambda's first param looks like it should match the ctx slot.
+///
+/// We detect the swap when:
+///   - the fn's first param type matches the ctx slot's type, and
+///   - the fn's second param type matches the list element type, and
+///   - those two types are distinct (otherwise we can't tell)
+///
+/// Returns a hint string when the swap is detected, else None.
+fn detect_ctx_param_swap(fn_ty: &Ty, ctx_ty: &Ty, xs_ty: &Ty) -> Option<String> {
+    let Ty::Fn(params, _) = fn_ty else {
+        return None;
+    };
+    if params.len() != 2 {
+        return None;
+    }
+    let p0 = &params[0];
+    let p1 = &params[1];
+    let elem_ty = match xs_ty {
+        Ty::List(inner) => (**inner).clone(),
+        _ => return None,
+    };
+    if matches!(p0, Ty::Unknown) || matches!(p1, Ty::Unknown) {
+        return None;
+    }
+    if matches!(ctx_ty, Ty::Unknown) || matches!(elem_ty, Ty::Unknown) {
+        return None;
+    }
+    if p0 == p1 {
+        return None;
+    }
+    if p0 == ctx_ty && *p1 == elem_ty && *ctx_ty != elem_ty {
+        return Some(format!(
+            "param order is `(element, ctx)`, not `(ctx, element)` — your fn takes `({p0}, {p1})` but the list element is `{elem_ty}` and the ctx is `{ctx_ty}`; swap the params to `({p1}, {p0})`"
+        ));
+    }
+    None
+}
+
 /// If `name` is a pure builtin that's safe to pass as a higher-order argument,
 /// return its function type. Returns None for IO/HTTP/Map builtins, for HOFs
 /// themselves (map/flt/fld/grp), and for builtins with ambiguous/polymorphic
@@ -1148,6 +1190,20 @@ fn builtin_check_args(
                         is_warning: false,
                     });
                 }
+                if let (Some(fn_ty), Some(ctx_ty), Some(xs_ty)) =
+                    (arg_types.first(), arg_types.get(1), arg_types.get(2))
+                    && let Some(hint) = detect_ctx_param_swap(fn_ty, ctx_ty, xs_ty)
+                {
+                    errors.push(VerifyError {
+                        code: "ILO-T013",
+                        function: func_ctx.to_string(),
+                        message: "'srt' fn params look swapped for closure-bind variant"
+                            .to_string(),
+                        hint: Some(hint),
+                        span,
+                        is_warning: false,
+                    });
+                }
                 let ret = match arg_types.get(2) {
                     Some(ty @ Ty::List(_)) => ty.clone(),
                     _ => Ty::Unknown,
@@ -1217,6 +1273,20 @@ fn builtin_check_args(
                             params.len()
                         ),
                         hint: Some("for rsrt fn ctx xs, fn must be: F a c b".to_string()),
+                        span,
+                        is_warning: false,
+                    });
+                }
+                if let (Some(fn_ty), Some(ctx_ty), Some(xs_ty)) =
+                    (arg_types.first(), arg_types.get(1), arg_types.get(2))
+                    && let Some(hint) = detect_ctx_param_swap(fn_ty, ctx_ty, xs_ty)
+                {
+                    errors.push(VerifyError {
+                        code: "ILO-T013",
+                        function: func_ctx.to_string(),
+                        message: "'rsrt' fn params look swapped for closure-bind variant"
+                            .to_string(),
+                        hint: Some(hint),
                         span,
                         is_warning: false,
                     });
@@ -1755,6 +1825,20 @@ fn builtin_check_args(
                     is_warning: false,
                 });
             }
+            if arg_types.len() == 3
+                && let (Some(fn_ty), Some(ctx_ty), Some(xs_ty)) =
+                    (arg_types.first(), arg_types.get(1), arg_types.get(2))
+                && let Some(hint) = detect_ctx_param_swap(fn_ty, ctx_ty, xs_ty)
+            {
+                errors.push(VerifyError {
+                    code: "ILO-T013",
+                    function: func_ctx.to_string(),
+                    message: "'map' fn params look swapped for closure-bind variant".to_string(),
+                    hint: Some(hint),
+                    span,
+                    is_warning: false,
+                });
+            }
             // Return type: L of the function's return type, or L Unknown
             let ret_elem = match arg_types.first() {
                 Some(Ty::Fn(_, ret)) => *ret.clone(),
@@ -1842,6 +1926,20 @@ fn builtin_check_args(
                         params.len()
                     ),
                     hint: Some("for flt fn ctx xs, fn must be: F a c b".to_string()),
+                    span,
+                    is_warning: false,
+                });
+            }
+            if arg_types.len() == 3
+                && let (Some(fn_ty), Some(ctx_ty), Some(xs_ty)) =
+                    (arg_types.first(), arg_types.get(1), arg_types.get(2))
+                && let Some(hint) = detect_ctx_param_swap(fn_ty, ctx_ty, xs_ty)
+            {
+                errors.push(VerifyError {
+                    code: "ILO-T013",
+                    function: func_ctx.to_string(),
+                    message: "'flt' fn params look swapped for closure-bind variant".to_string(),
+                    hint: Some(hint),
                     span,
                     is_warning: false,
                 });
