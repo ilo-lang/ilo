@@ -455,6 +455,7 @@ Called like functions, compiled to dedicated opcodes.
 | `range a b` | half-open numeric range `[a, a+1, ..., b-1]`; empty when `a >= b` | `L n` |
 | `map fn xs` | apply `fn` to each element | `L b` |
 | `flt fn xs` | keep elements where `fn x` is true | `L a` |
+| `ct fn xs` | count elements where `fn x` is true (avoids `len (flt fn xs)`'s intermediate list alloc) | `n` |
 | `fld fn xs init` | left fold: `fn (fn (fn init x0) x1) ...` | accumulator |
 | `flatmap fn xs` | map then flatten one level | `L b` |
 | `mapr fn xs` | map with short-circuit Result propagation: collects Ok values, returns first Err | `R (L b) e` |
@@ -482,6 +483,7 @@ Called like functions, compiled to dedicated opcodes.
 | `padl s w pc` | left-pad to width `w` with 1-character string `pc` (e.g. `"0"` for sortable zero-padded keys) | `t` |
 | `padr s w pc` | right-pad to width `w` with 1-character string `pc` (e.g. `"."` for dot-leader alignment) | `t` |
 | `rgxall pat s` | every regex match as `L (L t)` (no-group: each match in a 1-elem list) | `L (L t)` |
+| `rgxall1 pat s` | flat first-capture-group convenience: 0 groups → `L t` of whole matches; 1 group → `L t` of capture-1 strings; 2+ groups errors | `L t` |
 | `rgxsub pat repl s` | regex substitute all matches; `$1`, `$2`, ... reference capture groups | `t` |
 | `dtfmt epoch fmt` | format Unix epoch as text (strftime, UTC) | `R t t` |
 | `dtparse s fmt` | parse text to Unix epoch (strftime, UTC) | `R n t` |
