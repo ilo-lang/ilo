@@ -425,3 +425,158 @@ fn multi_fn_file_bracketed_list_leading_arg_passes_through() {
     );
     assert_eq!(stdout.trim(), "7");
 }
+
+// ── engine-flag auto-pick-main (rerun6 P1) ────────────────────────────────────
+//
+// PR #307 fixed the Default-engine branch to auto-run `main` on a
+// multi-fn file when no func arg is given. The explicit-engine paths
+// (`--run-tree`, `--run-vm`, `--run-cranelift`) kept the pre-307
+// behaviour of treating the first declared fn as the entry, which
+// surfaced as:
+//   * Tree     → misleading arity error (`helper: expected 1 args, got 0`)
+//   * VM       → silent `nil` result, exit 0
+//   * Cranelift→ bare "Cranelift JIT: compilation failed" string
+// Reported across four rerun6 personas (ml-engineer, routing-tsp,
+// devops-sre, html-scraper). Fix mirrors the #307 heuristic in
+// `resolve_engine_func_name`, exercised here across all four engines.
+
+fn run_engine_picks_main(engine_flag: &str) {
+    let (_dir, path) = write_temp("helper a:n>n;+a 1\nmain>n;helper 41\n");
+    let (ok, stdout, stderr) = run(&[engine_flag, path.to_str().unwrap()]);
+    assert!(
+        ok,
+        "{engine_flag}: expected main to auto-run; stderr: {stderr}"
+    );
+    assert_eq!(
+        stdout.trim(),
+        "42",
+        "{engine_flag}: expected main result 42; stdout: {stdout}"
+    );
+    assert!(
+        !stderr.contains("expected 1 args, got 0"),
+        "{engine_flag}: must not leak helper arity error; stderr: {stderr}"
+    );
+    assert!(
+        !stderr.contains("Cranelift JIT: compilation failed"),
+        "{engine_flag}: must not leak bare JIT-failed string; stderr: {stderr}"
+    );
+}
+
+#[test]
+fn run_tree_flag_auto_picks_main_on_multi_fn_file() {
+    run_engine_picks_main("--run-tree");
+}
+
+#[test]
+fn run_vm_flag_auto_picks_main_on_multi_fn_file() {
+    run_engine_picks_main("--run-vm");
+}
+
+#[test]
+#[cfg(feature = "cranelift")]
+fn run_cranelift_flag_auto_picks_main_on_multi_fn_file() {
+    run_engine_picks_main("--run-cranelift");
+}
+
+#[test]
+fn run_default_flag_auto_picks_main_on_multi_fn_file() {
+    // Pin the pre-existing #307 behaviour here too, so all four engines
+    // are exercised in one place. If the default-branch heuristic ever
+    // drifts, this test will catch it alongside the engine-flag set.
+    let (_dir, path) = write_temp("helper a:n>n;+a 1\nmain>n;helper 41\n");
+    let (ok, stdout, stderr) = run(&[path.to_str().unwrap()]);
+    assert!(ok, "default: expected main to auto-run; stderr: {stderr}");
+    assert_eq!(stdout.trim(), "42");
+}
+
+fn run_engine_explicit_func_overrides_main(engine_flag: &str) {
+    let (_dir, path) = write_temp("helper>n;7\nmain>n;42\n");
+    let (ok, stdout, stderr) = run(&[engine_flag, path.to_str().unwrap(), "helper"]);
+    assert!(
+        ok,
+        "{engine_flag}: expected explicit helper to run; stderr: {stderr}"
+    );
+    assert_eq!(stdout.trim(), "7");
+}
+
+#[test]
+fn run_tree_flag_explicit_func_overrides_main() {
+    run_engine_explicit_func_overrides_main("--run-tree");
+}
+
+#[test]
+fn run_vm_flag_explicit_func_overrides_main() {
+    run_engine_explicit_func_overrides_main("--run-vm");
+}
+
+#[test]
+#[cfg(feature = "cranelift")]
+fn run_cranelift_flag_explicit_func_overrides_main() {
+    run_engine_explicit_func_overrides_main("--run-cranelift");
+}
+
+fn run_engine_undefined_func_arg_still_errors(engine_flag: &str) {
+    // Companion regression: when the caller passes an explicit
+    // positional that doesn't match any function, the engine must
+    // still surface `undefined function: <name>` (or an equivalent
+    // diagnostic). This pins the pre-existing contract that the
+    // narrow auto-pick-main fix did NOT touch — we only auto-pick
+    // `main` when `rest` is empty, so positional pass-through (and
+    // its typo-detection) is preserved verbatim.
+    let (_dir, path) = write_temp("helper a:n>n;+a 1\nmain>n;helper 41\n");
+    let (ok, _stdout, stderr) = run(&[engine_flag, path.to_str().unwrap(), "wibble"]);
+    assert!(!ok, "{engine_flag}: undefined fn arg must fail");
+    assert!(
+        stderr.contains("undefined")
+            || stderr.contains("no such function")
+            || stderr.contains("wibble"),
+        "{engine_flag}: expected fn-not-found-style error; stderr: {stderr}"
+    );
+}
+
+#[test]
+fn run_tree_flag_undefined_func_arg_still_errors() {
+    run_engine_undefined_func_arg_still_errors("--run-tree");
+}
+
+#[test]
+fn run_vm_flag_undefined_func_arg_still_errors() {
+    run_engine_undefined_func_arg_still_errors("--run-vm");
+}
+
+#[test]
+#[cfg(feature = "cranelift")]
+fn run_cranelift_flag_undefined_func_arg_still_errors() {
+    run_engine_undefined_func_arg_still_errors("--run-cranelift");
+}
+
+fn run_engine_single_fn_no_args_still_runs(engine_flag: &str) {
+    // Auto-run contract for single-fn files with no positional args
+    // must keep working under every engine flag — the single-fn
+    // dispatch path already handles `func_name = None` by running
+    // the sole declared fn. The fix preserves that path unchanged.
+    // (Single-fn + positional-args on engine flags is a pre-existing
+    // limitation: positional args are still parsed as the func name
+    // first, so `--run-tree file.ilo 21` errors with `undefined
+    // function: 21` on main. Out of scope for this fix.)
+    let (_dir, path) = write_temp("entry>n;42\n");
+    let (ok, stdout, stderr) = run(&[engine_flag, path.to_str().unwrap()]);
+    assert!(ok, "{engine_flag}: expected success; stderr: {stderr}");
+    assert_eq!(stdout.trim(), "42");
+}
+
+#[test]
+fn run_tree_flag_single_fn_no_args_still_runs() {
+    run_engine_single_fn_no_args_still_runs("--run-tree");
+}
+
+#[test]
+fn run_vm_flag_single_fn_no_args_still_runs() {
+    run_engine_single_fn_no_args_still_runs("--run-vm");
+}
+
+#[test]
+#[cfg(feature = "cranelift")]
+fn run_cranelift_flag_single_fn_no_args_still_runs() {
+    run_engine_single_fn_no_args_still_runs("--run-cranelift");
+}
