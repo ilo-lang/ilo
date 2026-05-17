@@ -2756,6 +2756,17 @@ fn dispatch_run(r: cli::RunArgs, mode: OutputMode, explicit_json: bool, no_hints
             cli::Engine::Vm => {
                 let (func_name, raw) = resolve_engine_func_name(&program, rest);
                 let run_args = parse_cli_args_typed(&program, func_name, raw);
+                // CLI-boundary arity guard. The bytecode VM's `setup_call`
+                // pads missing args with `NanVal::nil()` and silently
+                // ignores extras (vm/mod.rs:5996), so without this gate the
+                // user gets a `nil` result for a missing positional. See
+                // `check_cli_arity` doc + run_default for the regression
+                // history.
+                if let Err(code) =
+                    check_cli_arity(&program, func_name, run_args.len(), &source, mode)
+                {
+                    return code;
+                }
                 let compiled = match vm::compile(&program) {
                     Ok(c) => c,
                     Err(e) => {
@@ -2782,6 +2793,18 @@ fn dispatch_run(r: cli::RunArgs, mode: OutputMode, explicit_json: bool, no_hints
             cli::Engine::Tree => {
                 let (func_name, raw) = resolve_engine_func_name(&program, rest);
                 let run_args = parse_cli_args_typed(&program, func_name, raw);
+                // CLI-boundary arity guard. The tree interpreter already
+                // enforces this at dispatch (interpreter/mod.rs:4152), but
+                // running it here keeps the diagnostic shape consistent
+                // across every engine and avoids a one-off code path
+                // where the engine surfaces an ILO-R012 ("undefined
+                // function") for inline programs with a typoed entry
+                // while the others use ILO-R004.
+                if let Err(code) =
+                    check_cli_arity(&program, func_name, run_args.len(), &source, mode)
+                {
+                    return code;
+                }
                 run_interp_with_provider(
                     &program,
                     func_name,
@@ -2959,6 +2982,12 @@ fn run_cranelift_engine(
 ) -> i32 {
     let (func_name, raw) = resolve_engine_func_name(program, rest);
     let run_args = parse_cli_args_typed(program, func_name, raw);
+    // CLI-boundary arity guard (mirrors run_default). See the comment there
+    // for the regression history; same contract applies to the explicit
+    // --run-cranelift dispatch path.
+    if let Err(code) = check_cli_arity(program, func_name, run_args.len(), source, mode) {
+        return code;
+    }
     let suppress = program_result_should_suppress(program, func_name);
 
     #[cfg(feature = "cranelift")]
@@ -3378,6 +3407,18 @@ fn run_default(
     mode: OutputMode,
     explicit_json: bool,
 ) -> i32 {
+    // CLI-boundary arity guard. Restores the strict arity contract the tree
+    // interpreter has enforced since v0.11.5 (interpreter/mod.rs:4152) at the
+    // dispatch boundary, so missing or extra CLI args produce a loud
+    // ILO-R004 regardless of which engine the dispatcher picks. Pre-#336
+    // this happened to fire (via the JIT-NotEligible -> error path); after
+    // #336 the JIT silently falls back to the VM and the VM didn't check,
+    // leaving missing args nil-padded -- the regression that surfaced as
+    // `[ ] nil` writes from the interactive-cli tracker. Checking here
+    // makes the engine choice irrelevant to the error contract.
+    if let Err(code) = check_cli_arity(program, func_name, args.len(), source, mode) {
+        return code;
+    }
     let suppress = program_result_should_suppress(program, func_name);
     // Try Cranelift JIT first — all functions are now eligible
     #[cfg(feature = "cranelift")]
@@ -4133,6 +4174,80 @@ fn lookup_param_types<'a>(
         } if n == name => Some(params.as_slice()),
         _ => None,
     })
+}
+
+/// Resolve the entry function that the engines would dispatch to.
+///
+/// Mirrors the resolution every engine entry uses internally: if the caller
+/// supplied `func_name`, use it; otherwise pick the first declared function
+/// (matching `vm::run` / `interpreter::run_with_env` / `run_default`).
+///
+/// Returned name is the canonical target so the CLI-boundary arity check can
+/// report a faithful function name in the diagnostic, regardless of whether
+/// the auto-resolution kicked in.
+fn resolve_entry_func_name<'a>(
+    program: &'a ast::Program,
+    func_name: Option<&'a str>,
+) -> Option<&'a str> {
+    if func_name.is_some() {
+        return func_name;
+    }
+    program.declarations.iter().find_map(|d| match d {
+        ast::Decl::Function { name, .. } => Some(name.as_str()),
+        _ => None,
+    })
+}
+
+/// CLI-boundary arity guard. Compares the number of CLI args against the
+/// resolved entry function's declared parameter count and, on mismatch,
+/// reports an ILO-R004 diagnostic exactly matching the tree interpreter's
+/// existing check (`{name}: expected {n} args, got {m}`).
+///
+/// Returns `Err(1)` so the caller can short-circuit with `?`-style dispatch
+/// before handing off to the VM, JIT, or tree engine. The same diagnostic
+/// fires regardless of which engine the user picked, so missing-arg silent
+/// nil-padding can't sneak past the JIT-NotEligible -> VM fallback (the
+/// regression that produced `[ ] nil` writes in v0.11.6).
+///
+/// `Ok(())` for inline snippets whose entry function isn't a `Decl::Function`
+/// we can resolve — the engines will surface ILO-R012 themselves. Same for
+/// the cases where `lookup_param_types` returns None: we don't have a
+/// contract to enforce.
+fn check_cli_arity(
+    program: &ast::Program,
+    func_name: Option<&str>,
+    args_len: usize,
+    source: &str,
+    mode: OutputMode,
+) -> Result<(), i32> {
+    let target = match resolve_entry_func_name(program, func_name) {
+        Some(t) => t,
+        None => return Ok(()),
+    };
+    let params = match lookup_param_types(program, Some(target)) {
+        Some(p) => p,
+        None => return Ok(()),
+    };
+    if args_len == params.len() {
+        return Ok(());
+    }
+    let err = interpreter::RuntimeError {
+        code: "ILO-R004",
+        message: format!(
+            "{}: expected {} args, got {}",
+            target,
+            params.len(),
+            args_len
+        ),
+        span: None,
+        call_stack: Vec::new(),
+        propagate_value: None,
+    };
+    report_diagnostic(
+        &Diagnostic::from(&err).with_source(source.to_string()),
+        mode,
+    );
+    Err(1)
 }
 
 /// Parse and coerce CLI args against a function's declared parameter types.

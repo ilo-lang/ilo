@@ -19,6 +19,21 @@ pub enum VmError {
     UnknownOpcode { op: u8 },
     #[error("{0}")]
     Type(&'static str),
+    /// Caller passed the wrong number of args to the entry function.
+    ///
+    /// Belt-and-braces backstop for the CLI-boundary arity check in
+    /// `main::check_cli_arity`: if any future engine path reaches
+    /// `vm::run` / `vm::run_with_tools` without going through the
+    /// CLI guard (e.g. a future JIT-NotEligible fallback chain),
+    /// the VM itself refuses to silently nil-pad and surfaces the
+    /// same ILO-R004 diagnostic the tree interpreter has always
+    /// emitted (interpreter/mod.rs:4152).
+    #[error("{name}: expected {expected} args, got {got}")]
+    Arity {
+        name: String,
+        expected: usize,
+        got: usize,
+    },
     /// Dynamic runtime message produced by helpers (used by the tree-bridge
     /// dispatcher to surface interpreter errors with their original wording).
     #[error("{0}")]
@@ -5850,7 +5865,37 @@ pub fn run(
         span: None,
         call_stack: Vec::new(),
     })?;
+    check_entry_arity(compiled, func_idx, &target, args.len())?;
     VM::new(compiled).call(func_idx, args)
+}
+
+/// Backstop arity check at the VM entry boundary. `setup_call` itself
+/// pre-allocates register slots with `NanVal::nil()`, which silently nil-pads
+/// when caller args are missing. Catching the mismatch here turns the silent
+/// corruption into a loud ILO-R004 — matching the tree interpreter's
+/// `args.len() != params.len()` guard at `interpreter/mod.rs:4152` and
+/// the CLI-boundary check in `main::check_cli_arity`. Keeps the internal
+/// `VM::call` callers (JIT bridge, builtin re-entry) free to dispatch
+/// without paying this check on every nested call.
+fn check_entry_arity(
+    compiled: &CompiledProgram,
+    func_idx: u16,
+    target: &str,
+    args_len: usize,
+) -> Result<(), VmRuntimeError> {
+    let expected = compiled.chunks[func_idx as usize].param_count as usize;
+    if args_len != expected {
+        return Err(VmRuntimeError {
+            error: VmError::Arity {
+                name: target.to_string(),
+                expected,
+                got: args_len,
+            },
+            span: None,
+            call_stack: Vec::new(),
+        });
+    }
+    Ok(())
 }
 
 pub fn run_with_tools(
@@ -5879,6 +5924,7 @@ pub fn run_with_tools(
         span: None,
         call_stack: Vec::new(),
     })?;
+    check_entry_arity(compiled, func_idx, &target, args.len())?;
     VM::new_with_tools(
         compiled,
         provider,
@@ -5923,6 +5969,16 @@ impl<'a> VmState<'a> {
                 .ok_or_else(|| VmError::UndefinedFunction {
                     name: func_name.to_string(),
                 })?;
+        // Same arity backstop as `vm::run`: setup_call nil-pads missing args,
+        // so the entry boundary has to reject the mismatch explicitly.
+        let expected = self.vm.program.chunks[func_idx as usize].param_count as usize;
+        if args.len() != expected {
+            return Err(VmError::Arity {
+                name: func_name.to_string(),
+                expected,
+                got: args.len(),
+            });
+        }
         let nan_args: Vec<NanVal> = args
             .iter()
             .map(|v| NanVal::from_value_with_program(v, &self.vm.program.func_names))
@@ -31958,5 +32014,93 @@ main>n
         // windows of 2: [A,I] (both hydro), [I,L] (both hydro), [L,X] (X not hydro)
         // → 2 windows pass.
         assert_eq!(format!("{:?}", v), format!("{:?}", Value::Number(2.0)));
+    }
+
+    // ── VM entry-boundary arity guard ─────────────────────────────────────
+    //
+    // Belt-and-braces backstop for the CLI-boundary `check_cli_arity` in
+    // main.rs. The CLI guard fires first in normal use, so these tests
+    // exercise the VM-internal check directly via `vm::run` (which the
+    // CLI dispatcher routes through after JIT-NotEligible fallback).
+    // If anyone ever bypasses the CLI guard — e.g. embeds the VM, or
+    // adds a new dispatch entry — the VM still refuses to silently
+    // nil-pad missing args and surfaces an ILO-R004-shaped Arity error.
+
+    #[test]
+    fn vm_run_entry_arity_too_few_args() {
+        let src = "f x:n>n;+x 1";
+        let prog = parse_program(src);
+        let compiled = compile(&prog).expect("compile");
+        let err = run(&compiled, Some("f"), vec![]).expect_err("expected arity error");
+        match err.error {
+            VmError::Arity {
+                name,
+                expected,
+                got,
+            } => {
+                assert_eq!(name, "f");
+                assert_eq!(expected, 1);
+                assert_eq!(got, 0);
+            }
+            other => panic!("expected VmError::Arity, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn vm_run_entry_arity_too_many_args() {
+        let src = "f x:n>n;+x 1";
+        let prog = parse_program(src);
+        let compiled = compile(&prog).expect("compile");
+        let err = run(
+            &compiled,
+            Some("f"),
+            vec![Value::Number(1.0), Value::Number(2.0)],
+        )
+        .expect_err("expected arity error");
+        match err.error {
+            VmError::Arity {
+                name,
+                expected,
+                got,
+            } => {
+                assert_eq!(name, "f");
+                assert_eq!(expected, 1);
+                assert_eq!(got, 2);
+            }
+            other => panic!("expected VmError::Arity, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn vm_run_entry_arity_exact_succeeds() {
+        let src = "f x:n>n;+x 1";
+        let prog = parse_program(src);
+        let compiled = compile(&prog).expect("compile");
+        let v = run(&compiled, Some("f"), vec![Value::Number(5.0)]).expect("ok");
+        assert_eq!(format!("{:?}", v), format!("{:?}", Value::Number(6.0)));
+    }
+
+    #[test]
+    fn vm_state_call_arity_check() {
+        // VmState is the bench-mode reusable handle. It has its own
+        // arity check in `VmState::call` (parallel to `vm::run`'s) so a
+        // bench / embedding caller can't accidentally nil-pad either.
+        let src = "f x:n>n;+x 1";
+        let prog = parse_program(src);
+        let compiled = compile(&prog).expect("compile");
+        let mut state = VmState::new(&compiled);
+        let err = state.call("f", vec![]).expect_err("expected arity error");
+        match err {
+            VmError::Arity {
+                name,
+                expected,
+                got,
+            } => {
+                assert_eq!(name, "f");
+                assert_eq!(expected, 1);
+                assert_eq!(got, 0);
+            }
+            other => panic!("expected VmError::Arity, got {other:?}"),
+        }
     }
 }
