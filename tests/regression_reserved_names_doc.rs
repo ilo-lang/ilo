@@ -14,6 +14,7 @@
 // names the offending builtin and quotes the AGENTS.md "Adding builtins"
 // rule the maintainer should follow.
 
+use ilo::ast::all_builtin_aliases;
 use ilo::builtins::Builtin;
 use std::collections::BTreeSet;
 use std::fs;
@@ -88,6 +89,20 @@ fn spec_reserved_short_names_match_builtin_registry() {
         }
         if n.len() <= 3 {
             registry_short.insert(n.to_string());
+        }
+    }
+    // Short-form builtin aliases (e.g. `rng` → `range`) are reserved with the
+    // same shadow-prevention semantics as canonical builtin names: the parser
+    // rejects them as binding / user-fn names with ILO-P011. They must
+    // therefore appear in the SPEC enumeration alongside canonical short names
+    // so the published surface stays accurate.
+    for (alias, _canonical) in all_builtin_aliases() {
+        if alias.len() <= 3
+            && alias
+                .chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
+        {
+            registry_short.insert(alias.to_string());
         }
     }
 
