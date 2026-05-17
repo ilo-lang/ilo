@@ -35,6 +35,11 @@ struct HelperFuncs {
     sub: FuncId,
     mul: FuncId,
     div: FuncId,
+    /// Tiny extern called on the zero edge of an inline-fdiv guard. Sets
+    /// `VmError::DivisionByZero` on the per-thread cell and returns TAG_NIL.
+    /// Lets fast-path division emit `fcmp == 0.0 -> brif -> helper-call` with
+    /// a one-instruction extern instead of falling back to `helpers.div`.
+    raise_divzero: FuncId,
     eq: FuncId,
     ne: FuncId,
     gt: FuncId,
@@ -230,6 +235,7 @@ fn register_helpers(builder: &mut JITBuilder) {
         ("jit_sub", jit_sub as *const u8),
         ("jit_mul", jit_mul as *const u8),
         ("jit_div", jit_div as *const u8),
+        ("jit_raise_divzero", jit_raise_divzero as *const u8),
         ("jit_eq", jit_eq as *const u8),
         ("jit_ne", jit_ne as *const u8),
         ("jit_gt", jit_gt as *const u8),
@@ -406,6 +412,7 @@ fn declare_all_helpers(module: &mut JITModule) -> HelperFuncs {
         sub: declare_helper(module, "jit_sub", 3, 1),
         mul: declare_helper(module, "jit_mul", 3, 1),
         div: declare_helper(module, "jit_div", 3, 1),
+        raise_divzero: declare_helper(module, "jit_raise_divzero", 1, 1),
         eq: declare_helper(module, "jit_eq", 2, 1),
         ne: declare_helper(module, "jit_ne", 2, 1),
         gt: declare_helper(module, "jit_gt", 3, 1),
@@ -604,8 +611,20 @@ fn is_inlinable(chunk: &Chunk, nan_consts: &[NanVal]) -> bool {
                     return false;
                 }
             }
-            OP_ADD_NN | OP_SUB_NN | OP_MUL_NN | OP_DIV_NN | OP_ADDK_N | OP_SUBK_N | OP_MULK_N
-            | OP_DIVK_N => {}
+            OP_ADD_NN | OP_SUB_NN | OP_MUL_NN | OP_ADDK_N | OP_SUBK_N | OP_MULK_N => {}
+            // Division opcodes need a runtime zero check to raise ILO-R003 to
+            // match tree + VM; the leaf-inline emitter is a small fast-path
+            // helper without helper-call / span plumbing, so push any chunk
+            // containing division through the main compile path which carries
+            // the guard. For OP_DIVK_N we can prove safety statically when the
+            // constant divisor is non-zero, so those chunks stay inlinable.
+            OP_DIV_NN => return false,
+            OP_DIVK_N => {
+                let ki = (inst & 0xFF) as usize;
+                if ki >= nan_consts.len() || nan_consts[ki].as_number() == 0.0 {
+                    return false;
+                }
+            }
             _ => return false,
         }
     }
@@ -1347,11 +1366,45 @@ fn compile_function_body(
                     let cv = builder.use_var(vars[c_idx]);
                     builder.ins().bitcast(F64, mf, cv)
                 };
+                // Guard: fcmp == 0.0 -> brif -> raise helper (ILO-R003) /
+                // fall through to fdiv. Matches tree + VM semantics; previously
+                // this path produced silent NaN / inf when the divisor was zero.
+                let span_bits = pack_span_bits(chunk.spans[ip]);
+                let span_arg = builder.ins().iconst(I64, span_bits);
+                let zero = builder.ins().f64const(0.0);
+                let is_zero =
+                    builder
+                        .ins()
+                        .fcmp(cranelift_codegen::ir::condcodes::FloatCC::Equal, cf, zero);
+                let zero_block = builder.create_block();
+                let safe_block = builder.create_block();
+                let merge_block = builder.create_block();
+                builder.append_block_param(merge_block, I64);
+                builder
+                    .ins()
+                    .brif(is_zero, zero_block, &[], safe_block, &[]);
+
+                builder.switch_to_block(zero_block);
+                let fref = get_func_ref(&mut builder, module, helpers.raise_divzero);
+                let call_inst = builder.ins().call(fref, &[span_arg]);
+                let nil_res = builder.inst_results(call_inst)[0];
+                builder.ins().jump(merge_block, &[nil_res]);
+
+                builder.switch_to_block(safe_block);
                 let result_f = builder.ins().fdiv(bf, cf);
-                let result = builder.ins().bitcast(I64, mf, result_f);
+                let safe_result = builder.ins().bitcast(I64, mf, result_f);
+                builder.ins().jump(merge_block, &[safe_result]);
+
+                builder.switch_to_block(merge_block);
+                let result = builder.block_params(merge_block)[0];
                 builder.def_var(vars[a_idx], result);
                 if a_idx < reg_count && reg_always_num[a_idx] {
-                    builder.def_var(f64_vars[a_idx], result_f);
+                    // Keep the f64 shadow in sync. On the zero path the result
+                    // is the QNAN bit pattern of TAG_NIL; the entry-point error
+                    // check fires before any downstream consumer reads the
+                    // shadow, so the cast is harmless.
+                    let result_f64 = builder.ins().bitcast(F64, mf, result);
+                    builder.def_var(f64_vars[a_idx], result_f64);
                 }
             }
             OP_ADDK_N => {
@@ -1414,12 +1467,29 @@ fn compile_function_body(
                     let bv = builder.use_var(vars[b_idx]);
                     builder.ins().bitcast(F64, mf, bv)
                 };
-                let kval = builder.ins().f64const(kv);
-                let result_f = builder.ins().fdiv(bf, kval);
-                let result = builder.ins().bitcast(I64, mf, result_f);
-                builder.def_var(vars[a_idx], result);
-                if a_idx < reg_count && reg_always_num[a_idx] {
-                    builder.def_var(f64_vars[a_idx], result_f);
+                if kv == 0.0 {
+                    // Constant divisor is zero: raise ILO-R003 unconditionally
+                    // (the bytecode-emit pass keeps the literal so we surface
+                    // the same error as tree + VM for `x / 0` etc.).
+                    let span_bits = pack_span_bits(chunk.spans[ip]);
+                    let span_arg = builder.ins().iconst(I64, span_bits);
+                    let fref = get_func_ref(&mut builder, module, helpers.raise_divzero);
+                    let call_inst = builder.ins().call(fref, &[span_arg]);
+                    let result = builder.inst_results(call_inst)[0];
+                    builder.def_var(vars[a_idx], result);
+                    if a_idx < reg_count && reg_always_num[a_idx] {
+                        let rf = builder.ins().bitcast(F64, mf, result);
+                        builder.def_var(f64_vars[a_idx], rf);
+                    }
+                } else {
+                    // Non-zero constant: fdiv is always defined, no guard needed.
+                    let kval = builder.ins().f64const(kv);
+                    let result_f = builder.ins().fdiv(bf, kval);
+                    let result = builder.ins().bitcast(I64, mf, result_f);
+                    builder.def_var(vars[a_idx], result);
+                    if a_idx < reg_count && reg_always_num[a_idx] {
+                        builder.def_var(f64_vars[a_idx], result_f);
+                    }
                 }
             }
             OP_ADD | OP_SUB | OP_MUL | OP_DIV => {
@@ -1446,17 +1516,56 @@ fn compile_function_body(
                         let cv = builder.use_var(vars[c_idx]);
                         builder.ins().bitcast(F64, mf, cv)
                     };
-                    let result_f = match op {
-                        OP_ADD => builder.ins().fadd(bf, cf),
-                        OP_SUB => builder.ins().fsub(bf, cf),
-                        OP_MUL => builder.ins().fmul(bf, cf),
-                        OP_DIV => builder.ins().fdiv(bf, cf),
-                        _ => unreachable!(),
-                    };
-                    let result = builder.ins().bitcast(I64, mf, result_f);
-                    builder.def_var(vars[a_idx], result);
-                    if a_idx < reg_count && reg_always_num[a_idx] {
-                        builder.def_var(f64_vars[a_idx], result_f);
+                    if op == OP_DIV {
+                        // Divisor zero raises ILO-R003 via the raise helper to
+                        // match tree + VM. Other ops (add/sub/mul) are total
+                        // on f64 and keep the unguarded fast path.
+                        let span_bits = pack_span_bits(chunk.spans[ip]);
+                        let span_arg = builder.ins().iconst(I64, span_bits);
+                        let zero = builder.ins().f64const(0.0);
+                        let is_zero = builder.ins().fcmp(
+                            cranelift_codegen::ir::condcodes::FloatCC::Equal,
+                            cf,
+                            zero,
+                        );
+                        let zero_block = builder.create_block();
+                        let safe_block = builder.create_block();
+                        let merge_div = builder.create_block();
+                        builder.append_block_param(merge_div, I64);
+                        builder
+                            .ins()
+                            .brif(is_zero, zero_block, &[], safe_block, &[]);
+
+                        builder.switch_to_block(zero_block);
+                        let fref = get_func_ref(&mut builder, module, helpers.raise_divzero);
+                        let call_inst = builder.ins().call(fref, &[span_arg]);
+                        let nil_res = builder.inst_results(call_inst)[0];
+                        builder.ins().jump(merge_div, &[nil_res]);
+
+                        builder.switch_to_block(safe_block);
+                        let result_f = builder.ins().fdiv(bf, cf);
+                        let safe_result = builder.ins().bitcast(I64, mf, result_f);
+                        builder.ins().jump(merge_div, &[safe_result]);
+
+                        builder.switch_to_block(merge_div);
+                        let result = builder.block_params(merge_div)[0];
+                        builder.def_var(vars[a_idx], result);
+                        if a_idx < reg_count && reg_always_num[a_idx] {
+                            let rf = builder.ins().bitcast(F64, mf, result);
+                            builder.def_var(f64_vars[a_idx], rf);
+                        }
+                    } else {
+                        let result_f = match op {
+                            OP_ADD => builder.ins().fadd(bf, cf),
+                            OP_SUB => builder.ins().fsub(bf, cf),
+                            OP_MUL => builder.ins().fmul(bf, cf),
+                            _ => unreachable!(),
+                        };
+                        let result = builder.ins().bitcast(I64, mf, result_f);
+                        builder.def_var(vars[a_idx], result);
+                        if a_idx < reg_count && reg_always_num[a_idx] {
+                            builder.def_var(f64_vars[a_idx], result_f);
+                        }
                     }
                 } else {
                     let bv = builder.use_var(vars[b_idx]);
@@ -1482,20 +1591,48 @@ fn compile_function_body(
                         .ins()
                         .brif(both_num, num_block, &[], slow_block, &[]);
 
-                    // Fast path: inline float arithmetic
+                    // Fast path: inline float arithmetic. For OP_DIV the
+                    // divisor must be checked against 0.0 to raise ILO-R003
+                    // instead of silently producing NaN / inf.
                     builder.switch_to_block(num_block);
                     let mf = cranelift_codegen::ir::MemFlags::new();
                     let bf = builder.ins().bitcast(F64, mf, bv);
                     let cf = builder.ins().bitcast(F64, mf, cv);
-                    let result_f = match op {
-                        OP_ADD => builder.ins().fadd(bf, cf),
-                        OP_SUB => builder.ins().fsub(bf, cf),
-                        OP_MUL => builder.ins().fmul(bf, cf),
-                        OP_DIV => builder.ins().fdiv(bf, cf),
-                        _ => unreachable!(),
-                    };
-                    let fast_result = builder.ins().bitcast(I64, mf, result_f);
-                    builder.ins().jump(merge_block, &[fast_result]);
+                    if op == OP_DIV {
+                        let span_bits = pack_span_bits(chunk.spans[ip]);
+                        let span_arg = builder.ins().iconst(I64, span_bits);
+                        let zero = builder.ins().f64const(0.0);
+                        let is_zero = builder.ins().fcmp(
+                            cranelift_codegen::ir::condcodes::FloatCC::Equal,
+                            cf,
+                            zero,
+                        );
+                        let zero_block_div = builder.create_block();
+                        let safe_block_div = builder.create_block();
+                        builder
+                            .ins()
+                            .brif(is_zero, zero_block_div, &[], safe_block_div, &[]);
+
+                        builder.switch_to_block(zero_block_div);
+                        let fref = get_func_ref(&mut builder, module, helpers.raise_divzero);
+                        let call_inst = builder.ins().call(fref, &[span_arg]);
+                        let nil_res = builder.inst_results(call_inst)[0];
+                        builder.ins().jump(merge_block, &[nil_res]);
+
+                        builder.switch_to_block(safe_block_div);
+                        let result_f = builder.ins().fdiv(bf, cf);
+                        let fast_result = builder.ins().bitcast(I64, mf, result_f);
+                        builder.ins().jump(merge_block, &[fast_result]);
+                    } else {
+                        let result_f = match op {
+                            OP_ADD => builder.ins().fadd(bf, cf),
+                            OP_SUB => builder.ins().fsub(bf, cf),
+                            OP_MUL => builder.ins().fmul(bf, cf),
+                            _ => unreachable!(),
+                        };
+                        let fast_result = builder.ins().bitcast(I64, mf, result_f);
+                        builder.ins().jump(merge_block, &[fast_result]);
+                    }
 
                     // Slow path: call helper (handles string concat, etc.)
                     builder.switch_to_block(slow_block);

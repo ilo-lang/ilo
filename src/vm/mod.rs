@@ -11667,6 +11667,24 @@ pub(crate) extern "C" fn jit_mul(a: u64, b: u64, span_bits: u64) -> u64 {
     TAG_NIL
 }
 
+/// Helper called from the Cranelift fast path when an inline fdiv divisor is
+/// zero. Sets `VmError::DivisionByZero` on the per-thread error cell with the
+/// call-site span and returns TAG_NIL so the JIT IR can carry on without a
+/// dedicated unwind path; the entry point picks the error up after the
+/// compiled function returns.
+///
+/// Both the JIT (`jit_cranelift.rs`) and the AOT (`compile_cranelift.rs`)
+/// pipelines emit a one-branch `fcmp == 0.0` guard before each inline
+/// fdiv: on the zero edge they call this helper, on the non-zero edge they
+/// fall through to `fdiv` as before. Constant-divisor sites resolve at
+/// compile time so non-zero `OP_DIVK_N` keeps the unconditional fast path.
+#[cfg(feature = "cranelift")]
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn jit_raise_divzero(span_bits: u64) -> u64 {
+    jit_set_runtime_error_with_span(VmError::DivisionByZero, span_bits);
+    TAG_NIL
+}
+
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn jit_div(a: u64, b: u64, span_bits: u64) -> u64 {
