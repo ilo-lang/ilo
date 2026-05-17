@@ -200,9 +200,11 @@ Short builtin names are precious surface and ilo reserves a stable subset of the
 2-char  at hd tl rd wr ct
 3-char  abs avg cap cat cel chr cos det dot env exp fft fld flr flt fmt
         frq get grp has inv len log lst lwr map max min mod now num ord
-        pow rdb rdl rev rgx rnd rou sin slc spl srt str sum tan trm unq
+        pow rdb rdl rev rgx rng rnd rou sin slc spl srt str sum tan trm unq
         upr wrl zip
 ```
+
+`rng` is the short-form alias for the canonical `range` builtin; it is reserved with the same shadow-prevention semantics as a canonical builtin name (binding `rng=...` or declaring `rng x:...` fires `ILO-P011`).
 
 Longer builtin names (`acos`, `asin`, `atan`, `flat`, `take`, `drop`, `mget`, `mset`, `mmap`, `prnt`, `mapr`, `solve`, `clamp`, `cumsum`, `median`, `matmul`, `range`, `window`, `chunks`, …) are also reserved and rejected by `ILO-P011`, but the short-name namespace above is where carry-forward scripts most often collide, so it gets explicit enumeration.
 
@@ -371,9 +373,11 @@ Operator operands are **atoms** (literals, refs, field access), **nested prefix 
 ```
 wh >len q 0{body}        -- parses as wh > (len q) 0 { body }
 +f g h                   -- if f is 1-arity: BinOp(+, Call(f, [g]), h)
+-lnx 5 lnx 3             -- BinOp(-, Call(lnx, [5]), Call(lnx, [3]))
+- dbl 5                  -- Negate(Call(dbl, [5])) — unary on a call
 ```
 
-This parallels the `??` precedent: `??x default` accepts a call expression on the value side. Bare locals that shadow a user fn name still resolve via `Ref` rather than expanding into a zero-arg call, so `&e f{...}` where `f` is a local still parses as the bool operator with two refs.
+This parallels the `??` precedent: `??x default` accepts a call expression on the value side. Applies to every prefix-binop family member — `+`, `-`, `*`, `/`, comparisons, `&`, `|`, `+=` — and to unary negate when the call consumes the only operand. Bare locals that shadow a user fn name still resolve via `Ref` rather than expanding into a zero-arg call, so `&e f{...}` where `f` is a local still parses as the bool operator with two refs.
 
 When the call expansion isn't available (the ident is a local that shadows a fn name, or the call's arity doesn't fit the remaining tokens), bind the call result first:
 
@@ -582,14 +586,15 @@ dtfmt! e "%H:%M:%S"                   -- auto-unwrap inside R-returning fn
 
 ### Builtin aliases
 
-All builtins accept long-form names that resolve to the canonical short form after parsing. Using a long form triggers a hint suggesting the short form. This lets newcomers write readable code while learning the canonical names.
+All builtins accept one or more alias names that resolve to the canonical name after parsing. Using an alias triggers a hint suggesting the canonical form. Most aliases go from a familiar long form (e.g. `length`) to the canonical short (`len`), letting newcomers write readable code while learning the canonical names. A small number go the other direction: where the canonical name is already 4+ characters and there is a natural short form with no plausible-user-binding collision, the short form is carved out as a permanent ergonomic alias.
 
-| Long form | → | Short |
-|-----------|---|-------|
+| Alias | → | Canonical |
+|-------|---|-----------|
 | `floor` | → | `flr` |
 | `ceil` | → | `cel` |
 | `round` | → | `rou` |
 | `random` | → | `rnd` |
+| `rng` | → | `range` |
 | `lset` | → | `lst` |
 | `regex_all` | → | `rgxall` |
 | `regex_sub` | → | `rgxsub` |
@@ -621,9 +626,14 @@ All builtins accept long-form names that resolve to the canonical short form aft
 | `writelines` | → | `wrl` |
 
 ```
-length xs   -- works, but emits: hint: `length` → `len` (canonical short form)
+length xs   -- works, but emits: hint: `length` → `len` (canonical form)
 len xs      -- canonical — no hint
+
+rng 0 10    -- works, but emits: hint: `rng` → `range` (canonical form)
+range 0 10  -- canonical — no hint
 ```
+
+Short-form aliases (where the alias is shorter than the canonical) follow the same shadow-prevention rule as canonical builtins: `rng=...` as a binding or function name is rejected at parse time with `ILO-P011` so the call-site rewrite cannot silently mis-dispatch.
 
 `get` and `post` return `Ok(body)` on success, `Err(message)` on failure (connection error, timeout, DNS failure, etc). `$` is a terse alias for `get`:
 
@@ -1260,6 +1270,7 @@ A non-last function body's **final expression must not be a bare variable refere
 | Match block | `?v{…}` | ✓ | ends with `}` |
 | ForEach block | `@x xs{…}` | ✓ | ends with `}` |
 | Parenthesised expr | `(x>>f>>g)` | ✓ | ends with `)` |
+| Record constructor | `point x:1 y:2` | ✓ | parses as `Expr::Record`, not `Ref` |
 | Text/number literal | `"ok"`, `42` | ✓ | literal, not `Ref` |
 | Bare variable (`Ref`) | `n`, `result` | ✗ | greedy loop fires |
 | Bare function call | `len xs`, `f a` | ✗ | greedy loop fires |
