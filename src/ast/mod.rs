@@ -433,14 +433,30 @@ pub struct Program {
     pub source: Option<String>,
 }
 
-// Long-form aliases for builtins. Each maps (long_name, canonical_short_name).
-// Programs using long forms work identically but emit a hint toward the short form.
+// Builtin aliases. Each maps (alias, canonical_name). Programs using the
+// alias work identically and emit a hint toward the canonical form.
+//
+// Most entries are long-form aliases (`length` → `len`) so an agent reaching
+// for the verbose form from another language gets the canonical short name
+// after one run. A small number of entries go the other direction
+// (canonical name is the longer form) where the canonical is multi-char
+// and a natural short-form has been carved out as a permanent ergonomic alias
+// — see `rng` → `range` (nlp-engineer rerun8). Short-form aliases only land
+// when the short doesn't shadow a plausible user binding, per the
+// 3+ char-first convention published in AGENTS.md.
 const BUILTIN_ALIASES: &[(&str, &str)] = &[
     // Math
     ("floor", "flr"),
     ("ceil", "cel"),
     ("round", "rou"),
     ("random", "rnd"),
+    // `rng` is a short-form alias for the canonical `range` builtin. Personas
+    // working in numeric / simulation / regression code reach for it first
+    // because `range a b` is load-bearing and the 5-char hit is paid
+    // repeatedly. Survey across examples and persona artifacts found zero
+    // user bindings called `rng`, so this clears the PR #343 short-alias
+    // guard (no plausible-user-binding shadow).
+    ("rng", "range"),
     // Conversion
     ("string", "str"),
     ("number", "num"),
