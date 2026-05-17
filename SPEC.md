@@ -202,8 +202,11 @@ Common shapes reached for from other languages. The parser and lexer surface eac
 | `main:>n;body`                   | `main>n;body` (no `:` before `>`)        | `ILO-P003`  |
 | Multi-line body without braces   | `@k xs{body}`, `cond{body}` on one line  | `ILO-P003`  |
 | `cond{^"err"}` braced-cond       | Braceless `cond ^"err"` for early return | hint only   |
+| `- -*a b *c d` (double-minus)    | `- 0 +*a b *c d` (negate the sum)        | `ILO-P021`  |
 
 Each case fires a hint pointing at the canonical form; the agent's first retry should be the right one. Identifier-shaped collisions with builtin names (`len=...`, `sin=...`) are rejected with `ILO-P011` plus a rename suggestion.
+
+The double-minus trap (`ILO-P021`) catches the silent-miscompile shape `- -<op> a b <op> c d` for `<op>` in `{+,*,/}`. Read intuitively as `-(a*b) - (c*d)` but parses as `-((a*b) - (c*d)) = -(a*b) + (c*d)` because the inner `-` greedily consumes both prefix-binop groups as binary subtract and the outer `-` falls back to unary negate. Fix by negating the sum (`- 0 +*a b *c d`) or binding first (`p=*a b;q=*c d;- 0 +p q`). Single-atom variants like `- -a b` remain accepted since they're unambiguous.
 
 ---
 

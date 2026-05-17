@@ -338,5 +338,6 @@ count p:t>R n t;ls=rdl! p;~(len ls)
 10. **`cond{^"err"}` braced-conditional discards the body** — for early return use the braceless form `cond ^"err"`, or wrap with `{ret ^"err"}`. Post-parse hint surfaces this.
 11. **Multi-line function/loop bodies** — bodies are single-line, `;`-separated. Newlines inside a body collapse to `;`, so `@k xs\n body` becomes `@k xs;body` which fails with `expected LBrace, got Semi`. Write `@k xs{body}` on one line. Parser emits ILO-P003 with a hint.
 12. **`ILO-P020 incomplete function header`** — a function header (`name params>type;body`) must finish on its own line. `f a:n` with no `>type;body` after it, or `f a:n>R` with no err-type, surfaces ILO-P020 anchored at the offending function — fix the header you wrote, not the function the error span happens to be near.
+13. **`ILO-P021 double-minus prefix-binop trap`** — `- -*a b *c d` reads intuitively as `-(a*b) - (c*d)` but parses as `-(a*b) + (c*d)` because the inner `-` greedily consumes both prefix-binop groups as binary subtract. The parser rejects this shape across `{+,*,/}` to avoid the silent miscompile. Fix by negating the sum: `- 0 +*a b *c d`, or by binding first: `p=*a b;q=*c d;- 0 +p q`. Single-atom variants like `- -a b` are unambiguous and still accepted.
 
 $ARGUMENTS
