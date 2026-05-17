@@ -2320,6 +2320,131 @@ impl RegCompiler {
     /// fails on the first iteration, producing an empty accumulator — same
     /// semantics as `flt _ (window n [])` or `flt _ (window 99 [1,2])` under
     /// the unfused path.
+    /// Fused emitter for `len (flt p xs)` — counts truthy results without
+    /// materialising an accumulator list. Shape mirrors the `(Builtin::Flt, 2)`
+    /// emitter but replaces `OP_LISTNEW` + per-truthy `OP_LISTAPPEND` +
+    /// post-loop `OP_LEN` with a single numeric counter that increments on
+    /// each truthy predicate result.
+    ///
+    /// Originating workload: bio canonical `all-h xs : n = len (flt is-hydro
+    /// xs) ; =n 15` runs 11.4M times per pass. Pre-fusion each call
+    /// allocates a fresh `HeapObj::List` accumulator, appends 0-15 items
+    /// (with RC bumps on each), reads its length, and drops it on RET —
+    /// dominating the wall-time post-#340 (where the inner predicate
+    /// dispatch was already inlined away).
+    ///
+    /// Soundness: the counter is a pure numeric register, the loop reads
+    /// `xs` non-destructively via OP_FOREACHPREP/NEXT (the same machinery
+    /// the unfused emitter uses), and the predicate result is type-checked
+    /// for bool the same way as the unfused path. The only difference vs
+    /// unfused is "increment a number" replacing "append to a list" —
+    /// fewer side effects, identical traversal.
+    ///
+    /// Predicate inlining: same fast path as `(Builtin::Flt, 2)`. When the
+    /// predicate resolves to a small whitelisted user fn we inline its
+    /// body and skip OP_CALL_DYN entirely; falls back on any rejection.
+    fn compile_len_flt_count(&mut self, pred_expr: &Expr, xs_expr: &Expr) -> u8 {
+        // Predicate-inline fast path (mirrors the (Flt, 2) arm).
+        let inline_body = self.resolve_user_fn_idx(pred_expr).and_then(|idx| {
+            self.try_inline_predicate_body(idx, 1, INLINE_OP_BUDGET)
+        });
+
+        let fn_reg = if inline_body.is_some() {
+            u8::MAX
+        } else {
+            self.compile_expr(pred_expr)
+        };
+        let xs_reg = self.compile_expr(xs_expr);
+
+        // Counter holds the running truthy-count. Numeric throughout.
+        let counter_reg = self.alloc_reg();
+        let zero_ki = self.current.add_const(Value::Number(0.0));
+        self.emit_abx(OP_LOADK, counter_reg, zero_ki);
+        self.reg_is_num[counter_reg as usize] = true;
+
+        // Constant `1` for the increment. Must fit 8 bits for OP_ADDK_N's
+        // C field; if the const pool already has >255 entries we fall
+        // through to a register-based add below.
+        let one_ki = self.current.add_const(Value::Number(1.0));
+
+        let idx_reg = self.alloc_reg();
+        self.emit_abx(OP_LOADK, idx_reg, zero_ki);
+        self.reg_is_num[idx_reg as usize] = true;
+
+        let item_reg = self.alloc_reg();
+        let nil_ki = self.current.add_const(Value::Nil);
+        self.emit_abx(OP_LOADK, item_reg, nil_ki);
+
+        // res_reg + arg_reg contiguous for OP_CALL_DYN ABI (same layout
+        // regardless of whether we inline; the inliner expects an arg slot
+        // immediately after res).
+        let res_reg = self.alloc_reg();
+        self.emit_abx(OP_LOADK, res_reg, nil_ki);
+        let arg_reg = self.alloc_reg();
+        assert!(
+            arg_reg == res_reg + 1,
+            "len(flt) fused: arg reg must follow result reg contiguously"
+        );
+        self.emit_abx(OP_LOADK, arg_reg, nil_ki);
+
+        // Scratch reg for the bool typecheck.
+        let isb_reg = self.alloc_reg();
+        self.emit_abx(OP_LOADK, isb_reg, nil_ki);
+
+        let _loop_top = self.current.code.len();
+        self.emit_abc(OP_FOREACHPREP, item_reg, xs_reg, idx_reg);
+        let exit_jump_a = self.emit_jmp_placeholder();
+
+        let body_top = self.current.code.len();
+        self.emit_abc(OP_MOVE, arg_reg, item_reg, 0);
+        if let Some(body) = inline_body.as_ref() {
+            self.emit_inlined_body(res_reg, arg_reg, body);
+        } else {
+            self.emit_abc(OP_CALL_DYN, res_reg, fn_reg, 1);
+        }
+
+        // Typecheck: predicate must return bool. Identical message + shape
+        // to the (Flt, 2) unfused arm so existing tests that pin the error
+        // text keep passing on this path too.
+        self.emit_abc(OP_ISBOOL, isb_reg, res_reg, 0);
+        let typeok_jump = self.emit_jmpt(isb_reg);
+        let err_text_ki = self.current.add_const(Value::Text(Arc::new(
+            "flt: predicate must return bool".to_string(),
+        )));
+        self.emit_abx(OP_LOADK, arg_reg, err_text_ki);
+        self.emit_abc(OP_WRAPERR, arg_reg, arg_reg, 0);
+        self.emit_abc(OP_PANIC_UNWRAP, 0, arg_reg, 0);
+        self.current.patch_jump(typeok_jump);
+
+        // Bool was true → counter += 1. Bool was false → skip.
+        let skip_inc_jump = self.emit_jmpf(res_reg);
+        if one_ki <= 255 {
+            self.emit_abc(OP_ADDK_N, counter_reg, counter_reg, one_ki as u8);
+        } else {
+            // Const pool ran out of 8-bit slots — fall back to a heap-load
+            // increment. Rare in practice (we'd need >255 distinct
+            // constants in the same chunk) but the compiler must remain
+            // correct.
+            let one_reg = self.alloc_reg();
+            self.emit_abx(OP_LOADK, one_reg, one_ki);
+            self.emit_abc(OP_ADD_NN, counter_reg, counter_reg, one_reg);
+        }
+        self.current.patch_jump(skip_inc_jump);
+
+        self.emit_abc(OP_FOREACHNEXT, item_reg, xs_reg, idx_reg);
+        let exit_jump_b = self.emit_jmp_placeholder();
+        self.emit_jump_to(body_top);
+
+        self.current.patch_jump(exit_jump_a);
+        self.current.patch_jump(exit_jump_b);
+
+        // Result is the counter; clamp next_reg back to release the
+        // loop's scratch regs (idx/item/res/arg/isb) for the next emit.
+        self.next_reg = counter_reg + 1;
+        self.reg_is_num[counter_reg as usize] = true;
+        counter_reg
+    }
+
     fn compile_fused_window_hof(
         &mut self,
         fn_expr: &Expr,
@@ -2632,6 +2757,61 @@ impl RegCompiler {
                     let nargs = args.len();
                     match (builtin, nargs) {
                         (Builtin::Len, 1) => {
+                            // Fused `len (flt p xs)` counter fast path. Bio canonical
+                            // `all-h xs : n = len (flt is-hydro xs) ; =n 15` runs this
+                            // pattern 11.4M times per pass; the unfused form materialises
+                            // a fresh scratch list per call (OP_LISTNEW + per-truthy
+                            // OP_LISTAPPEND + post-loop OP_LEN + drop on RET), which
+                            // dominates the wall-time post-#340. Fused emitter walks
+                            // `xs` once with a numeric counter — no acc list ever
+                            // materialised. Reuses the predicate-inline machinery so
+                            // small predicates like `is-hydro` fold into the loop body.
+                            //
+                            // Fires only when:
+                            //   - `args[0]` is a direct call to `flt` (or its alias)
+                            //   - `flt` has exactly 2 args (predicate, xs)
+                            //   - no unwrap on either the flt call or the predicate
+                            //   - the inner xs argument is NOT a fused-window source
+                            //     (we keep `len (flt p (window n ys))` on the existing
+                            //     fused-window emitter; that path already avoids the
+                            //     per-stride allocation and we don't want to re-tangle
+                            //     two specialised pipelines).
+                            if let Expr::Call {
+                                function: ref flt_fn,
+                                args: ref flt_args,
+                                unwrap: flt_unwrap,
+                            } = args[0]
+                                && flt_args.len() == 2
+                                && matches!(flt_unwrap, UnwrapMode::None)
+                                && matches!(Builtin::from_name(flt_fn), Some(Builtin::Flt))
+                            {
+                                // Don't intercept `len (flt p (window n ys))`: the
+                                // fused-window emitter at the (Flt, 2) arm already
+                                // does its own scratch-list reuse and we'd lose that
+                                // win by counter-fusing on top.
+                                let is_window_inner = if let Expr::Call {
+                                    function: ref win_fn,
+                                    args: ref win_args,
+                                    unwrap: window_unwrap,
+                                } = flt_args[1]
+                                {
+                                    win_args.len() == 2
+                                        && matches!(window_unwrap, UnwrapMode::None)
+                                        && matches!(
+                                            Builtin::from_name(win_fn),
+                                            Some(Builtin::Window)
+                                        )
+                                } else {
+                                    false
+                                };
+                                if !is_window_inner {
+                                    return self.compile_len_flt_count(
+                                        &flt_args[0],
+                                        &flt_args[1],
+                                    );
+                                }
+                            }
+
                             let rb = self.compile_expr(&args[0]);
                             let ra = self.alloc_reg();
                             self.emit_abc(OP_LEN, ra, rb, 0);
