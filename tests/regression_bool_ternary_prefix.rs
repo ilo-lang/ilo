@@ -93,7 +93,11 @@ fn bool_prefix_ternary_assign_cross_engine() {
     let src = "f h:b>n;v=?h 10 20;v";
     for engine in ENGINES_ALL {
         assert_eq!(run_ok(engine, src, &["f", "true"]), "10", "{engine}: true");
-        assert_eq!(run_ok(engine, src, &["f", "false"]), "20", "{engine}: false");
+        assert_eq!(
+            run_ok(engine, src, &["f", "false"]),
+            "20",
+            "{engine}: false"
+        );
     }
 }
 

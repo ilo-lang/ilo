@@ -27,6 +27,20 @@ pick h:b>n;v=?h{10}{20};v
 -- want the symmetry of `true:` / `false:` arm labels.
 arms h:b>n;?h{true:10;false:20}
 
+-- Unbraced prefix form on a bare-bool subject: `?h a b`.
+-- Symmetric with the existing `?=cond a b` prefix ternary (which
+-- requires a comparison op after `?`). Cheapest shape when both
+-- arms are bare atoms — 6 chars for `?h 1 0` vs 8 for `?h{1}{0}`
+-- vs 12 for the older workaround `?=h true 1 0`.
+unbraced h:b>n;?h 1 0
+unbraced-t h:b>t;?h "yes" "no"
+
+-- Unbraced form in expression position (let RHS).
+unbraced-pick h:b>n;v=?h 10 20;v
+
+-- Unbraced form with prefix-op arms (`+1 2` / `*3 4`).
+unbraced-calc h:b>n;?h +1 2 *3 4
+
 -- run: basic true
 -- out: 1
 
@@ -62,3 +76,27 @@ arms h:b>n;?h{true:10;false:20}
 
 -- run: arms false
 -- out: 20
+
+-- run: unbraced true
+-- out: 1
+
+-- run: unbraced false
+-- out: 0
+
+-- run: unbraced-t true
+-- out: yes
+
+-- run: unbraced-t false
+-- out: no
+
+-- run: unbraced-pick true
+-- out: 10
+
+-- run: unbraced-pick false
+-- out: 20
+
+-- run: unbraced-calc true
+-- out: 3
+
+-- run: unbraced-calc false
+-- out: 12
