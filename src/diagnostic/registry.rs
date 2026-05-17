@@ -613,8 +613,12 @@ A field in a record literal was given a value of the wrong type.
         short: "field access on non-record type",
         long: r#"## ILO-T018: field access on non-record type
 
-A field access (`value.field`) was attempted on a value that is not
-a record type. Field access is only valid on named `type` instances.
+A field access (`value.field` or `value.?field`) was attempted on a
+value that is not a record type. Field access (including the safe
+`.?` form) is only valid on named `type` instances.
+
+**Fix:** if the receiver is a map (`M _ _`), use `mget m "key"`, which
+returns an Option you can match on or default with `??`.
 "#,
     },
     ErrorEntry {

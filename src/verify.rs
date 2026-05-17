@@ -3864,11 +3864,17 @@ impl VerifyContext {
                     }
                     Ty::Unknown => Ty::Unknown,
                     other => {
+                        let hint = match other {
+                            Ty::Map(_, _) => {
+                                Some(format!("use 'mget m \"{field}\"' which returns Option"))
+                            }
+                            _ => None,
+                        };
                         self.err(
                             "ILO-T018",
                             func,
                             format!("field access on non-record type {other}"),
-                            None,
+                            hint,
                             Some(span),
                         );
                         Ty::Unknown
