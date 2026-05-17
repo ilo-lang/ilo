@@ -5229,8 +5229,7 @@ pub(crate) fn jit_arena_reset() {
 // instant the helper recorded the error. Aliased so the TLS RefCell
 // type below stays inside clippy's type-complexity budget.
 #[cfg(feature = "cranelift")]
-pub(crate) type JitRuntimeErrorPayload =
-    (VmError, Option<crate::ast::Span>, Vec<String>);
+pub(crate) type JitRuntimeErrorPayload = (VmError, Option<crate::ast::Span>, Vec<String>);
 
 thread_local! {
     // JIT helpers raise errors but do not unwind native frames — the
