@@ -4033,6 +4033,21 @@ const TAG_NIL: u64 = QNAN;
 const TAG_TRUE: u64 = QNAN | 1;
 const TAG_FALSE: u64 = QNAN | 2;
 const TAG_STRING: u64 = 0x7FFD_0000_0000_0000;
+// TAG_LIST covers BOTH `HeapObj::List(Vec<NanVal>)` and
+// `HeapObj::ListView { src, start, len }`. Discrimination between the two
+// happens via the `HeapObj` enum variant (read by `as_heap_ref()`), not at
+// the NanVal tag layer. This avoids burning one of the scarce 16-bit tag
+// slots (all eight QNAN-compatible slots are already taken by
+// STRING/LIST/RECORD/OK/ERR/MAP/ARENA_REC + QNAN itself), and it keeps
+// `& TAG_MASK == TAG_LIST` checks uniformly true for both layouts so VM
+// read-side code paths handle them identically through `slice_of`.
+//
+// Cranelift consequence: the inlined LISTGET/FOREACHPREP/FOREACHNEXT fast
+// paths assume the `Vec<NanVal>` byte layout at fixed offsets. Once views
+// can be produced (PR-2), Cranelift must add a one-byte discriminant load
+// (`*[ptr+0]`) in FOREACHPREP to detect ListView and either fall back to
+// the VM helper or eager-materialise. In PR-1 no opcode produces a view,
+// so this is documented but not yet wired.
 const TAG_LIST: u64 = 0x7FFE_0000_0000_0000;
 const TAG_RECORD: u64 = 0x7FFF_0000_0000_0000;
 const TAG_OK: u64 = 0xFFFC_0000_0000_0000;
@@ -4519,9 +4534,38 @@ impl Drop for JitRuntimeErrorGuard {
     }
 }
 
+// Why a separate tag for ListView
+// ───────────────────────────────
+// Both `HeapObj::List` and `HeapObj::ListView` live in the same `HeapObj` enum,
+// but at the NanVal layer they get distinct tags (`TAG_LIST` vs `TAG_LIST_VIEW`).
+// This is deliberate: Cranelift inlines the `HeapObj::List` Vec layout at fixed
+// byte offsets after a `TAG_LIST` check (see jit_cranelift.rs LISTGET / FOREACH).
+// A shared tag would force a runtime discriminant check inside every inner-loop
+// iteration to disambiguate List from View. A separate tag lets the existing
+// tag check act as the discriminator at zero extra cost: views fall through to
+// the VM fallback path automatically, while real Lists keep the fast path.
+//
+// Invariants (maintained by constructors and materialise-on-publish hooks):
+//  - `TAG_LIST` NanVal ⇒ heap pointer always references `HeapObj::List(Vec<_>)`.
+//  - `TAG_LIST_VIEW` NanVal ⇒ heap pointer always references `HeapObj::ListView{..}`.
+//  - `ListView::src` is itself a `TAG_LIST` NanVal (not a view of a view —
+//    PR-1 keeps the chain at depth 1; nested windowing would re-root the view).
+//  - `start + len <= slice_of(src).len()` when the view is constructed.
+//
+// Read sites use `slice(&HeapObj)` so the same code handles both variants.
+// Mutation/publish sites must materialise: see `materialize_list_view` and the
+// hooks at OP_LISTAPPEND / OP_MAPSET / OP_MKRECORD / OP_RETURN.
 enum HeapObj {
     Str(String),
     List(Vec<NanVal>),
+    /// Aliasing view into a parent `HeapObj::List`. Holds an owned RC on `src`
+    /// so the parent cannot drop while the view is live. Read-only at the
+    /// HeapObj layer; any mutation/publish materialises into an owned `List`.
+    ListView {
+        src: NanVal,
+        start: usize,
+        len: usize,
+    },
     Map(HashMap<MapKey, NanVal>),
     Record {
         type_info: Rc<TypeInfo>,
@@ -4540,6 +4584,13 @@ impl Drop for HeapObj {
                     item.drop_rc();
                 }
             }
+            // ListView holds exactly one strong ref on `src` (taken at construction).
+            // We must drop_rc the src exactly once — the parent's elements stay alive
+            // through the parent's own Drop, not through ours. Dropping individual
+            // elements here would double-decrement their RCs and cause UB.
+            HeapObj::ListView { src, .. } => {
+                src.drop_rc();
+            }
             HeapObj::Map(m) => {
                 for val in m.values() {
                     val.drop_rc();
@@ -4552,6 +4603,137 @@ impl Drop for HeapObj {
             }
             HeapObj::OkVal(inner) | HeapObj::ErrVal(inner) => {
                 inner.drop_rc();
+            }
+        }
+    }
+}
+
+/// If `v` is a TAG_LIST NanVal pointing at a `HeapObj::ListView`, returns a
+/// freshly-allocated `HeapObj::List` NanVal containing the same elements
+/// (each with its RC bumped). The caller is responsible for dropping the
+/// original view NanVal. If `v` is already a real List (or anything else),
+/// returns `v` unchanged — the caller can keep using it as-is.
+///
+/// This is the materialise-on-publish helper. Call it at every site that
+/// stores a list into a long-lived container (another list via OP_LISTAPPEND,
+/// a map via OP_MSET, a record via OP_RECNEW/SETFIELD, or returns it from a
+/// function via OP_RET). Materialisation makes the published value
+/// self-contained — no dangling RC on the view's parent, no surprise
+/// re-allocations when callers mutate the parent.
+///
+/// # Safety
+/// Caller must hold a live RC on `v`. The returned NanVal owns a fresh RC
+/// (independent of `v`'s), so callers must drop one or the other.
+#[inline]
+fn materialize_list_view(v: NanVal) -> NanVal {
+    if !v.is_heap() || (v.0 & TAG_MASK) != TAG_LIST {
+        return v;
+    }
+    // SAFETY: tag check above + is_heap.
+    let heap = unsafe { v.as_heap_ref() };
+    match heap {
+        HeapObj::List(_) => v,
+        HeapObj::ListView { .. } => {
+            let items: Vec<NanVal> = slice_of(heap)
+                .iter()
+                .map(|nv| {
+                    nv.clone_rc();
+                    *nv
+                })
+                .collect();
+            NanVal::heap_list(items)
+        }
+        // Tag-checked above, so unreachable; explicit arms for audit.
+        HeapObj::Str(_)
+        | HeapObj::Map(_)
+        | HeapObj::Record { .. }
+        | HeapObj::OkVal(_)
+        | HeapObj::ErrVal(_) => {
+            debug_assert!(false, "TAG_LIST NanVal pointed at non-list HeapObj variant");
+            v
+        }
+    }
+}
+
+/// Materialise-on-publish in-place on a register slot. If the value currently
+/// at `slot` is a ListView, replaces it with a freshly-allocated owned List
+/// (RC-balanced: drops the view's RC, slot now holds the new list's RC).
+/// Returns `true` if a materialisation occurred (test/debug observation
+/// hook), `false` if `slot` was already a real List or a non-list value.
+///
+/// This is the small primitive every publish-site hook in the dispatcher
+/// calls. Extracting it keeps the hook logic unit-testable without spinning
+/// up a real VM frame.
+#[inline]
+fn materialize_at_slot(slot: &mut NanVal) -> bool {
+    let cur = *slot;
+    let mat = materialize_list_view(cur);
+    if mat.0 != cur.0 {
+        *slot = mat;
+        cur.drop_rc();
+        true
+    } else {
+        false
+    }
+}
+
+/// Read-only slice view into a list-like HeapObj. Returns the visible window:
+/// the full Vec for `HeapObj::List`, or `parent[start..start+len]` for
+/// `HeapObj::ListView`. Used by every read-side op so it can be backend-agnostic.
+///
+/// # Safety
+/// For `ListView`, this dereferences the parent's heap pointer. The caller
+/// must ensure the view's `src` RC is still live (the view itself holds an RC
+/// on `src`, so as long as the caller has a live reference to the view's
+/// HeapObj, the parent is live too). The returned slice is borrowed from the
+/// parent's Vec, so it must not outlive the view.
+#[inline]
+fn slice_of(obj: &HeapObj) -> &[NanVal] {
+    match obj {
+        HeapObj::List(items) => items.as_slice(),
+        // Non-list variants: slice_of is contractually list-only, but explicit
+        // arms keep rustc audit-enforced if HeapObj grows new variants later.
+        HeapObj::Str(_)
+        | HeapObj::Map(_)
+        | HeapObj::Record { .. }
+        | HeapObj::OkVal(_)
+        | HeapObj::ErrVal(_) => {
+            debug_assert!(false, "slice_of called on non-list HeapObj variant");
+            &[]
+        }
+        HeapObj::ListView { src, start, len } => {
+            debug_assert!(
+                src.is_heap() && (src.0 & TAG_MASK) == TAG_LIST,
+                "ListView::src must be a TAG_LIST NanVal, got {:#018x}",
+                src.0
+            );
+            // SAFETY: ListView's Drop only decrements `src`'s RC, so as long as
+            // `obj` is borrowed, the view (and through it, `src`) is alive.
+            let parent = unsafe { src.as_heap_ref() };
+            match parent {
+                HeapObj::List(items) => {
+                    debug_assert!(
+                        *start + *len <= items.len(),
+                        "ListView out of bounds: start={} len={} parent_len={}",
+                        start,
+                        len,
+                        items.len()
+                    );
+                    &items[*start..*start + *len]
+                }
+                // Invariant: ListView::src is always a TAG_LIST → HeapObj::List.
+                // Reaching any other variant means the invariant was violated;
+                // we keep all arms explicit so a future enum addition forces
+                // a re-audit of this site rather than silently extending it.
+                HeapObj::Str(_)
+                | HeapObj::ListView { .. }
+                | HeapObj::Map(_)
+                | HeapObj::Record { .. }
+                | HeapObj::OkVal(_)
+                | HeapObj::ErrVal(_) => {
+                    debug_assert!(false, "ListView::src does not reference HeapObj::List");
+                    &[]
+                }
             }
         }
     }
@@ -4607,6 +4789,60 @@ impl NanVal {
     fn heap_list(items: Vec<NanVal>) -> Self {
         let rc = Rc::new(HeapObj::List(items));
         let ptr = Rc::into_raw(rc) as u64;
+        NanVal(TAG_LIST | (ptr & PTR_MASK))
+    }
+
+    /// Construct an aliasing view into an existing TAG_LIST NanVal.
+    ///
+    /// Bumps `src`'s RC by one (which ListView's Drop will release). Caller
+    /// retains its own RC on `src`; the view owns an independent one.
+    ///
+    /// # Panics
+    /// In debug builds, panics if `src` is not a TAG_LIST or if
+    /// `start + len > parent.len()`.
+    #[allow(dead_code)] // wired up in PR-2 (OP_WINDOW reshape); kept here so the
+    // foundation lands in one PR. Test-only intrinsic in PR-1
+    // tests exercises the read path.
+    fn heap_list_view(src: NanVal, start: usize, len: usize) -> Self {
+        // No view-of-view: src must reference HeapObj::List, not another view.
+        // Both layouts share TAG_LIST, so we discriminate via the HeapObj
+        // variant rather than via the NanVal tag.
+        debug_assert!(
+            src.is_heap() && (src.0 & TAG_MASK) == TAG_LIST,
+            "heap_list_view src must be a TAG_LIST NanVal, got {:#018x}",
+            src.0
+        );
+        // SAFETY: as_heap_ref requires (a) is_heap() and (b) a live Rc. The
+        // debug_assert above confirms (a) for the tag check, and the caller
+        // contract for heap_list_view is that `src` is a NanVal the caller
+        // already owns an RC on, which gives us (b). The borrow lives only
+        // long enough to inspect the variant for the matches! check below;
+        // we don't mutate or drop src in between.
+        let src_obj = unsafe { src.as_heap_ref() };
+        debug_assert!(
+            matches!(src_obj, HeapObj::List(_)),
+            "heap_list_view src must reference HeapObj::List, not a view of a view"
+        );
+        #[cfg(debug_assertions)]
+        {
+            let parent_len = match src_obj {
+                HeapObj::List(items) => items.len(),
+                _ => unreachable!("matched on List above"),
+            };
+            debug_assert!(
+                start.saturating_add(len) <= parent_len,
+                "ListView out of bounds: start={} len={} parent_len={}",
+                start,
+                len,
+                parent_len
+            );
+        }
+        // Bump src's RC: the view's Drop will release it. Caller's RC stays.
+        src.clone_rc();
+        let rc = Rc::new(HeapObj::ListView { src, start, len });
+        let ptr = Rc::into_raw(rc) as u64;
+        // ListView shares TAG_LIST with real Lists; discrimination is via the
+        // HeapObj variant. See the TAG_LIST docs above for why.
         NanVal(TAG_LIST | (ptr & PTR_MASK))
     }
 
@@ -4971,11 +5207,14 @@ impl NanVal {
                     "to_value: unexpected non-heap NanVal tag {:#018x}",
                     self.0
                 );
-                match self.as_heap_ref() {
+                let heap = self.as_heap_ref();
+                match heap {
                     HeapObj::Str(s) => Value::Text(Arc::new(s.clone())),
-                    HeapObj::List(items) => Value::List(std::sync::Arc::new(
-                        items.iter().map(|v| v.to_value()).collect(),
-                    )),
+                    // List and ListView share the same Value::List surface — slice_of
+                    // hides the layout difference so a view round-trips identically.
+                    HeapObj::List(_) | HeapObj::ListView { .. } => Value::List(
+                        std::sync::Arc::new(slice_of(heap).iter().map(|v| v.to_value()).collect()),
+                    ),
                     HeapObj::Map(m) => Value::Map(std::sync::Arc::new(
                         m.iter().map(|(k, v)| (k.clone(), v.to_value())).collect(),
                     )),
@@ -5026,14 +5265,17 @@ impl NanVal {
                 }
                 unsafe {
                     debug_assert!(self.is_heap());
-                    match self.as_heap_ref() {
+                    let heap = self.as_heap_ref();
+                    match heap {
                         HeapObj::Str(s) => Value::Text(Arc::new(s.clone())),
-                        HeapObj::List(items) => Value::List(std::sync::Arc::new(
-                            items
-                                .iter()
-                                .map(|v| v.to_value_with_program(func_names))
-                                .collect(),
-                        )),
+                        HeapObj::List(_) | HeapObj::ListView { .. } => {
+                            Value::List(std::sync::Arc::new(
+                                slice_of(heap)
+                                    .iter()
+                                    .map(|v| v.to_value_with_program(func_names))
+                                    .collect(),
+                            ))
+                        }
                         HeapObj::Map(m) => Value::Map(std::sync::Arc::new(
                             m.iter()
                                 .map(|(k, v)| (k.clone(), v.to_value_with_program(func_names)))
@@ -5771,6 +6013,15 @@ impl<'a> VM<'a> {
                     let data_inst = unsafe { *code.get_unchecked(ip) };
                     ip += 1;
                     let d = ((data_inst >> 16) & 0xFF) as usize + base;
+                    // Materialise-on-publish: if the value being inserted is a
+                    // ListView, swap it for a real List so the map stays
+                    // self-contained. materialize_at_slot drops the view's RC
+                    // and installs the materialised list in the register.
+                    // SAFETY: d is the data-instruction's A field plus base,
+                    // always an in-range stack slot.
+                    unsafe {
+                        materialize_at_slot(&mut *self.stack.as_mut_ptr().add(d));
+                    }
                     let map_v = reg!(b);
                     let key_v = reg!(c);
                     let val_v = reg!(d);
@@ -6610,8 +6861,10 @@ impl<'a> VM<'a> {
                     let obj = reg!(b);
                     debug_assert!(obj.is_heap(), "OP_INDEX on non-heap value");
                     let item = unsafe {
-                        match obj.as_heap_ref() {
-                            HeapObj::List(items) => {
+                        let heap = obj.as_heap_ref();
+                        match heap {
+                            HeapObj::List(_) | HeapObj::ListView { .. } => {
+                                let items = slice_of(heap);
                                 if c < items.len() {
                                     let v = items[c];
                                     v.clone_rc();
@@ -6620,7 +6873,13 @@ impl<'a> VM<'a> {
                                     vm_err!(VmError::Type("list index out of bounds"));
                                 }
                             }
-                            _ => vm_err!(VmError::Type("index access on non-list")),
+                            HeapObj::Str(_)
+                            | HeapObj::Map(_)
+                            | HeapObj::Record { .. }
+                            | HeapObj::OkVal(_)
+                            | HeapObj::ErrVal(_) => {
+                                vm_err!(VmError::Type("index access on non-list"))
+                            }
                         }
                     };
                     reg_set!(a, item);
@@ -6640,8 +6899,10 @@ impl<'a> VM<'a> {
                         // without any dereference of a different type.
                         debug_assert!(list.is_heap(), "OP_LISTGET on non-heap value");
                         unsafe {
-                            match list.as_heap_ref() {
-                                HeapObj::List(items) => {
+                            let heap = list.as_heap_ref();
+                            match heap {
+                                HeapObj::List(_) | HeapObj::ListView { .. } => {
+                                    let items = slice_of(heap);
                                     let i = idx_val.as_number() as usize;
                                     if i < items.len() {
                                         let item = items[i];
@@ -6651,7 +6912,13 @@ impl<'a> VM<'a> {
                                     }
                                     // else: fall through to JMP exit
                                 }
-                                _ => vm_err!(VmError::Type("foreach requires a list")),
+                                HeapObj::Str(_)
+                                | HeapObj::Map(_)
+                                | HeapObj::Record { .. }
+                                | HeapObj::OkVal(_)
+                                | HeapObj::ErrVal(_) => {
+                                    vm_err!(VmError::Type("foreach requires a list"))
+                                }
                             }
                         }
                     } else {
@@ -6674,8 +6941,10 @@ impl<'a> VM<'a> {
                     // SAFETY: is_heap() verified above.
                     debug_assert!(list.is_heap(), "OP_FOREACHPREP on non-heap value");
                     unsafe {
-                        match list.as_heap_ref() {
-                            HeapObj::List(items) => {
+                        let heap = list.as_heap_ref();
+                        match heap {
+                            HeapObj::List(_) | HeapObj::ListView { .. } => {
+                                let items = slice_of(heap);
                                 if !items.is_empty() {
                                     let item = items[0];
                                     item.clone_rc();
@@ -6684,7 +6953,13 @@ impl<'a> VM<'a> {
                                 }
                                 // else: empty list → fall through to JMP exit
                             }
-                            _ => vm_err!(VmError::Type("foreach requires a list")),
+                            HeapObj::Str(_)
+                            | HeapObj::Map(_)
+                            | HeapObj::Record { .. }
+                            | HeapObj::OkVal(_)
+                            | HeapObj::ErrVal(_) => {
+                                vm_err!(VmError::Type("foreach requires a list"))
+                            }
                         }
                     }
                 }
@@ -6707,8 +6982,10 @@ impl<'a> VM<'a> {
                     // SAFETY: list is the same heap List validated by FOREACHPREP on entry.
                     debug_assert!(list.is_heap(), "OP_FOREACHNEXT on non-heap value");
                     unsafe {
-                        match list.as_heap_ref() {
-                            HeapObj::List(items) => {
+                        let heap = list.as_heap_ref();
+                        match heap {
+                            HeapObj::List(_) | HeapObj::ListView { .. } => {
+                                let items = slice_of(heap);
                                 let i = new_idx as usize;
                                 if i < items.len() {
                                     let item = items[i];
@@ -6718,7 +6995,11 @@ impl<'a> VM<'a> {
                                 }
                                 // else: out of bounds → fall through to JMP exit
                             }
-                            _ => {
+                            HeapObj::Str(_)
+                            | HeapObj::Map(_)
+                            | HeapObj::Record { .. }
+                            | HeapObj::OkVal(_)
+                            | HeapObj::ErrVal(_) => {
                                 // Should never happen: list was validated by FOREACHPREP.
                                 vm_err!(VmError::Type("foreach requires a list"))
                             }
@@ -7059,6 +7340,23 @@ impl<'a> VM<'a> {
                 }
                 OP_RET => {
                     let a = ((inst >> 16) & 0xFF) as usize + base;
+                    // Materialise-on-publish: a ListView crossing the call
+                    // boundary into the caller's register would keep its
+                    // parent alive through its RC, which is sound, but later
+                    // calls that mutate or rebind the parent in the caller
+                    // would force the view onto a stale snapshot. The
+                    // simpler invariant — function results are always
+                    // self-contained Lists — costs one tag-check on the no-op
+                    // path (PR-1 produces no views) and avoids a class of
+                    // surprise-aliasing bugs once PR-2 wires producers.
+                    // SAFETY: `a` is in-frame; the upcoming drop_rc loop will
+                    // release whatever's in the slot (the now-materialised
+                    // list, or unchanged if already real). We read `result`
+                    // back AFTER the materialise so it reflects the slot's
+                    // final value.
+                    unsafe {
+                        materialize_at_slot(&mut *self.stack.as_mut_ptr().add(a));
+                    }
                     let mut result = reg!(a);
 
                     // SAFETY: frames is non-empty while execute() is running.
@@ -7122,6 +7420,20 @@ impl<'a> VM<'a> {
                     let bx = (inst & 0xFFFF) as usize;
                     let type_id = (bx >> 8) as u16;
                     let n_fields = bx & 0xFF;
+
+                    // Materialise-on-publish: any field that is a ListView gets
+                    // promoted to a real List before being captured into the
+                    // record. Records can persist across many call boundaries
+                    // so we don't want them holding views whose parents might
+                    // get materialised, mutated, or COW'd elsewhere.
+                    // SAFETY: a + 1 + i indexes into the stack within the
+                    // current frame; the compiler emits n_fields field
+                    // registers contiguously after the destination register.
+                    unsafe {
+                        for i in 0..n_fields {
+                            materialize_at_slot(&mut *self.stack.as_mut_ptr().add(a + 1 + i));
+                        }
+                    }
 
                     // Try arena allocation first (fast path)
                     if let Some(rec_ptr) = self.arena.alloc_record(type_id, n_fields) {
@@ -7621,10 +7933,17 @@ impl<'a> VM<'a> {
                         s.len() as f64
                     } else if v.is_heap() {
                         // SAFETY: is_heap() confirmed heap-tagged with live RC.
-                        match unsafe { v.as_heap_ref() } {
+                        let heap = unsafe { v.as_heap_ref() };
+                        match heap {
                             HeapObj::List(items) => items.len() as f64,
+                            HeapObj::ListView { len, .. } => *len as f64,
                             HeapObj::Map(m) => m.len() as f64,
-                            _ => vm_err!(VmError::Type("len requires string, list, or map")),
+                            HeapObj::Str(_)
+                            | HeapObj::Record { .. }
+                            | HeapObj::OkVal(_)
+                            | HeapObj::ErrVal(_) => {
+                                vm_err!(VmError::Type("len requires string, list, or map"))
+                            }
                         }
                     } else {
                         vm_err!(VmError::Type("len requires string, list, or map"));
@@ -9661,6 +9980,18 @@ impl<'a> VM<'a> {
                         let promoted = reg!(c).promote_arena_to_heap(&self.program.type_registry);
                         reg_set!(c, promoted);
                     }
+                    // Materialise-on-publish: if R[B] (the destination list) or
+                    // R[C] (the appended item) is a ListView, replace it with a
+                    // fresh List so the published container only ever holds
+                    // Vec-backed lists. materialize_at_slot drops the view's RC
+                    // and installs the materialised list in the register.
+                    // SAFETY: b and c are computed from the instruction's
+                    // 8-bit register fields plus the frame base; the compiler
+                    // ensures they're in-range stack slots.
+                    unsafe {
+                        materialize_at_slot(&mut *self.stack.as_mut_ptr().add(b));
+                        materialize_at_slot(&mut *self.stack.as_mut_ptr().add(c));
+                    }
                     let list_val = reg!(b);
                     let item_val = reg!(c);
                     if !list_val.is_heap() {
@@ -10054,10 +10385,17 @@ fn nanval_to_json(v: NanVal) -> serde_json::Value {
         _ if v.is_heap() => {
             // SAFETY: is_heap() confirmed heap-tagged with live RC.
             unsafe {
-                match v.as_heap_ref() {
+                let heap = v.as_heap_ref();
+                match heap {
                     HeapObj::Str(s) => serde_json::Value::String(s.clone()),
-                    HeapObj::List(items) => {
-                        serde_json::Value::Array(items.iter().map(|i| nanval_to_json(*i)).collect())
+                    HeapObj::List(_) | HeapObj::ListView { .. } => {
+                        // jdmp / nanval_to_json is a publish boundary: a view here
+                        // would serialise its visible window identically to the
+                        // equivalent owned List, so slice_of is sufficient. No
+                        // need to materialise — the JSON tree owns nothing of ours.
+                        serde_json::Value::Array(
+                            slice_of(heap).iter().map(|i| nanval_to_json(*i)).collect(),
+                        )
                     }
                     HeapObj::Record { type_info, fields } => {
                         let map: serde_json::Map<String, serde_json::Value> = type_info
@@ -30372,5 +30710,345 @@ f>n;r=mk 10 20;+r.x r.y";
         assert_eq!(bits, TAG_NIL);
         let bits = jit_rndn(NanVal::number(0.0).0, NanVal::boolean(true).0);
         assert_eq!(bits, TAG_NIL);
+    }
+
+    // ── HeapObj::ListView foundation tests (PR-1) ───────────────────────
+    //
+    // These pin the bit-level and RC invariants the ListView variant relies
+    // on. PR-1 introduces the variant + Drop + slice_of helper but does not
+    // yet wire any opcode to emit one. The tests construct views synthetically
+    // via `NanVal::heap_list_view` and assert that read paths see them
+    // identically to the equivalent owned List.
+
+    /// ListView shares TAG_LIST with real Lists. Discrimination happens at
+    /// the HeapObj variant layer, not the tag layer. This test pins that the
+    /// shared-tag invariant holds: a view NanVal passes the same tag checks
+    /// a real List would, so VM read paths (which dispatch on tag then
+    /// `as_heap_ref()`) treat both layouts uniformly via `slice_of`.
+    #[test]
+    fn listview_shares_tag_list() {
+        let parent = NanVal::heap_list(vec![NanVal::number(1.0)]);
+        let view = NanVal::heap_list_view(parent, 0, 1);
+
+        // Both pass the tag-only TAG_LIST check.
+        assert_eq!(parent.0 & TAG_MASK, TAG_LIST);
+        assert_eq!(view.0 & TAG_MASK, TAG_LIST);
+        // Both pass is_heap.
+        assert!(parent.is_heap());
+        assert!(view.is_heap());
+        // Neither looks like a FnRef.
+        assert!(!parent.is_fnref());
+        assert!(!view.is_fnref());
+
+        // Variant-layer discrimination:
+        unsafe {
+            assert!(matches!(parent.as_heap_ref(), HeapObj::List(_)));
+            assert!(matches!(view.as_heap_ref(), HeapObj::ListView { .. }));
+        }
+
+        view.drop_rc();
+        parent.drop_rc();
+    }
+
+    /// A view bumps src's RC at construction and releases it exactly once on
+    /// Drop. After both NanVals go out of scope the parent's RC returns to
+    /// zero and its elements get dropped.
+    #[test]
+    fn listview_drop_releases_src_exactly_once() {
+        // Use an Rc<()> as a drop sentinel embedded via a HeapObj::Str so we
+        // can observe the parent's Drop count indirectly. Simplest: track the
+        // Rc strong count on the parent via Rc reconstitution.
+        let parent = NanVal::heap_list(vec![
+            NanVal::number(1.0),
+            NanVal::number(2.0),
+            NanVal::number(3.0),
+        ]);
+        // Parent NanVal owns 1 strong ref.
+        let parent_ptr = (parent.0 & PTR_MASK) as *const HeapObj;
+        // SAFETY: parent is alive (we hold the NanVal).
+        let count_before = unsafe {
+            let rc = Rc::from_raw(parent_ptr);
+            let c = Rc::strong_count(&rc);
+            std::mem::forget(rc);
+            c
+        };
+        assert_eq!(count_before, 1, "parent should have 1 strong ref");
+
+        // Create a view — should bump parent to 2.
+        let view = NanVal::heap_list_view(parent, 0, 2);
+        let count_after_view = unsafe {
+            let rc = Rc::from_raw(parent_ptr);
+            let c = Rc::strong_count(&rc);
+            std::mem::forget(rc);
+            c
+        };
+        assert_eq!(count_after_view, 2, "view should bump parent RC to 2");
+
+        // Drop the view — parent goes back to 1.
+        view.drop_rc();
+        let count_after_view_drop = unsafe {
+            let rc = Rc::from_raw(parent_ptr);
+            let c = Rc::strong_count(&rc);
+            std::mem::forget(rc);
+            c
+        };
+        assert_eq!(
+            count_after_view_drop, 1,
+            "dropping view should release exactly one parent RC"
+        );
+
+        // Cleanup: drop the parent NanVal.
+        parent.drop_rc();
+    }
+
+    /// `slice_of` returns the visible window for both List and ListView so
+    /// every downstream read op stays identical between the two layouts.
+    #[test]
+    fn listview_slice_matches_owned_list() {
+        let parent = NanVal::heap_list(vec![
+            NanVal::number(10.0),
+            NanVal::number(20.0),
+            NanVal::number(30.0),
+            NanVal::number(40.0),
+            NanVal::number(50.0),
+        ]);
+
+        // Full-range view: same as the parent slice.
+        let full = NanVal::heap_list_view(parent, 0, 5);
+        unsafe {
+            let p_slice: Vec<f64> = slice_of(parent.as_heap_ref())
+                .iter()
+                .map(|v| v.as_number())
+                .collect();
+            let v_slice: Vec<f64> = slice_of(full.as_heap_ref())
+                .iter()
+                .map(|v| v.as_number())
+                .collect();
+            assert_eq!(p_slice, v_slice);
+            assert_eq!(p_slice, vec![10.0, 20.0, 30.0, 40.0, 50.0]);
+        }
+        full.drop_rc();
+
+        // Middle window: indices 1..4.
+        let mid = NanVal::heap_list_view(parent, 1, 3);
+        unsafe {
+            let v_slice: Vec<f64> = slice_of(mid.as_heap_ref())
+                .iter()
+                .map(|v| v.as_number())
+                .collect();
+            assert_eq!(v_slice, vec![20.0, 30.0, 40.0]);
+        }
+        mid.drop_rc();
+
+        // Zero-length view at offset.
+        let empty = NanVal::heap_list_view(parent, 2, 0);
+        unsafe {
+            assert_eq!(slice_of(empty.as_heap_ref()).len(), 0);
+        }
+        empty.drop_rc();
+
+        parent.drop_rc();
+    }
+
+    /// The view's tag round-trips through is_heap and TAG_MASK extraction so
+    /// downstream is_heap-guarded code paths recognise it correctly.
+    #[test]
+    fn listview_nanval_tagging() {
+        let parent = NanVal::heap_list(vec![NanVal::number(1.0)]);
+        let view = NanVal::heap_list_view(parent, 0, 1);
+
+        assert!(view.is_heap(), "ListView NanVal should pass is_heap");
+        // Views share TAG_LIST with real Lists (variant-level discrimination).
+        assert_eq!(view.0 & TAG_MASK, TAG_LIST);
+        assert!(!view.is_fnref(), "ListView must not look like an FnRef");
+        // The underlying HeapObj is ListView, not List.
+        unsafe {
+            assert!(matches!(view.as_heap_ref(), HeapObj::ListView { .. }));
+        }
+
+        view.drop_rc();
+        parent.drop_rc();
+    }
+
+    /// Exercises the OP_INDEX / OP_FOREACHPREP / OP_FOREACHNEXT / OP_LEN
+    /// migrated arms by stepping through the same match logic the VM uses,
+    /// confirming a ListView produces identical results to the equivalent
+    /// owned List. PR-2 will exercise the same paths under the real opcode
+    /// dispatcher once OP_WINDOW emits views.
+    #[test]
+    fn listview_hot_path_ops_match_owned_list() {
+        let parent = NanVal::heap_list(vec![
+            NanVal::number(100.0),
+            NanVal::number(200.0),
+            NanVal::number(300.0),
+            NanVal::number(400.0),
+            NanVal::number(500.0),
+        ]);
+        let view = NanVal::heap_list_view(parent, 1, 3); // [200, 300, 400]
+
+        unsafe {
+            let view_heap = view.as_heap_ref();
+
+            // OP_LEN-equivalent on a ListView.
+            let len = match view_heap {
+                HeapObj::List(items) => items.len() as f64,
+                HeapObj::ListView { len, .. } => *len as f64,
+                _ => panic!("not a list"),
+            };
+            assert_eq!(len, 3.0);
+
+            // OP_INDEX-equivalent: bounded index reads through slice_of.
+            let items = slice_of(view_heap);
+            assert_eq!(items[0].as_number(), 200.0);
+            assert_eq!(items[1].as_number(), 300.0);
+            assert_eq!(items[2].as_number(), 400.0);
+
+            // OP_FOREACHPREP / OP_FOREACHNEXT equivalent: iterate via slice_of.
+            let mut sum = 0.0;
+            for v in slice_of(view_heap) {
+                sum += v.as_number();
+            }
+            assert_eq!(sum, 200.0 + 300.0 + 400.0);
+        }
+
+        view.drop_rc();
+        parent.drop_rc();
+    }
+
+    /// materialize_list_view promotes a ListView to a freshly-allocated List
+    /// with the same visible elements, each element's RC bumped. The original
+    /// view NanVal is unchanged (caller responsible for dropping it).
+    #[test]
+    fn materialize_list_view_promotes_views_to_real_lists() {
+        let parent = NanVal::heap_list(vec![
+            NanVal::number(10.0),
+            NanVal::number(20.0),
+            NanVal::number(30.0),
+            NanVal::number(40.0),
+        ]);
+        let view = NanVal::heap_list_view(parent, 1, 2); // [20, 30]
+
+        let materialised = materialize_list_view(view);
+        // Different NanVal — fresh allocation.
+        assert_ne!(materialised.0, view.0);
+        // Materialised value is a real TAG_LIST → HeapObj::List.
+        assert_eq!(materialised.0 & TAG_MASK, TAG_LIST);
+        unsafe {
+            assert!(matches!(materialised.as_heap_ref(), HeapObj::List(_)));
+            // Same visible contents.
+            let m_slice = slice_of(materialised.as_heap_ref());
+            assert_eq!(m_slice.len(), 2);
+            assert_eq!(m_slice[0].as_number(), 20.0);
+            assert_eq!(m_slice[1].as_number(), 30.0);
+        }
+
+        // Calling materialize_list_view on a real List returns the same NanVal.
+        let already_real = NanVal::heap_list(vec![NanVal::number(1.0)]);
+        let unchanged = materialize_list_view(already_real);
+        assert_eq!(unchanged.0, already_real.0);
+
+        materialised.drop_rc();
+        view.drop_rc();
+        parent.drop_rc();
+        already_real.drop_rc();
+    }
+
+    /// materialize_at_slot rewrites a register holding a view into the
+    /// materialised real-List equivalent, drops the view's RC, and returns
+    /// true. This is the primitive every publish-site hook
+    /// (LISTAPPEND / MSET / RECNEW / RET) calls.
+    #[test]
+    fn materialize_at_slot_replaces_views_in_place() {
+        let parent = NanVal::heap_list(vec![
+            NanVal::number(1.0),
+            NanVal::number(2.0),
+            NanVal::number(3.0),
+        ]);
+        let view = NanVal::heap_list_view(parent, 0, 2);
+
+        // Plant the view in a "register" (just a NanVal slot).
+        let mut slot = view;
+        let replaced = materialize_at_slot(&mut slot);
+        assert!(replaced, "view-bearing slot should materialise");
+        // Slot now holds a real TAG_LIST → HeapObj::List, not the view.
+        assert_eq!(slot.0 & TAG_MASK, TAG_LIST);
+        unsafe {
+            assert!(matches!(slot.as_heap_ref(), HeapObj::List(_)));
+            let items = slice_of(slot.as_heap_ref());
+            assert_eq!(items.len(), 2);
+            assert_eq!(items[0].as_number(), 1.0);
+            assert_eq!(items[1].as_number(), 2.0);
+        }
+
+        slot.drop_rc();
+        parent.drop_rc();
+    }
+
+    /// materialize_at_slot is a no-op on slots that already hold real Lists
+    /// or any non-list value. Returns false in both cases so the publish-site
+    /// hooks pay only a tag-check on the common no-op path.
+    #[test]
+    fn materialize_at_slot_is_noop_on_real_lists_and_non_lists() {
+        let mut real_list = NanVal::heap_list(vec![NanVal::number(1.0)]);
+        let saved_bits = real_list.0;
+        assert!(!materialize_at_slot(&mut real_list));
+        assert_eq!(real_list.0, saved_bits, "real list slot unchanged");
+        real_list.drop_rc();
+
+        let mut number = NanVal::number(42.0);
+        let saved = number.0;
+        assert!(!materialize_at_slot(&mut number));
+        assert_eq!(number.0, saved);
+
+        let mut nil = NanVal::nil();
+        let saved = nil.0;
+        assert!(!materialize_at_slot(&mut nil));
+        assert_eq!(nil.0, saved);
+
+        let mut s = NanVal::heap_string("hi".to_string());
+        let saved = s.0;
+        assert!(!materialize_at_slot(&mut s));
+        assert_eq!(s.0, saved);
+        s.drop_rc();
+    }
+
+    /// Non-list NanVals pass through materialize_list_view unchanged so
+    /// every publish site can call it unconditionally without special-casing
+    /// numbers, strings, maps, etc.
+    #[test]
+    fn materialize_list_view_passes_through_non_lists() {
+        let n = NanVal::number(42.0);
+        assert_eq!(materialize_list_view(n).0, n.0);
+
+        let s = NanVal::heap_string("hi".to_string());
+        assert_eq!(materialize_list_view(s).0, s.0);
+        s.drop_rc();
+
+        let nil = NanVal::nil();
+        assert_eq!(materialize_list_view(nil).0, nil.0);
+
+        let bt = NanVal::boolean(true);
+        assert_eq!(materialize_list_view(bt).0, bt.0);
+    }
+
+    /// to_value flattens a ListView into the same Value::List shape an owned
+    /// List would produce, so the publish boundary into the tree interpreter
+    /// and JSON output sees no layout difference.
+    #[test]
+    fn listview_to_value_matches_owned() {
+        let parent = NanVal::heap_list(vec![
+            NanVal::number(1.0),
+            NanVal::number(2.0),
+            NanVal::number(3.0),
+            NanVal::number(4.0),
+        ]);
+        let view = NanVal::heap_list_view(parent, 1, 2);
+
+        let v_val = view.to_value();
+        let expected = Value::List(Arc::new(vec![Value::Number(2.0), Value::Number(3.0)]));
+        assert_eq!(format!("{:?}", v_val), format!("{:?}", expected));
+
+        view.drop_rc();
+        parent.drop_rc();
     }
 }

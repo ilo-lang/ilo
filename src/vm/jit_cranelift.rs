@@ -3580,6 +3580,14 @@ fn compile_function_body(
                 // runtime probing with a multi-variant enum that prevents niche opt).
                 // NOTE: earlier code incorrectly read +8 as "len"; that is actually cap.
                 //
+                // ListView audit (PR-1 foundation, #325 follow-up):
+                //   HeapObj now also has a `ListView` variant (discriminant = 2)
+                //   sharing TAG_LIST. PR-1 emits no views; every publish site
+                //   materialises them away. PR-2 will need either a
+                //   `[ptr+0] == 1` discriminant guard here or an eager
+                //   materialise at the producer site. See FOREACHPREP for the
+                //   full audit note.
+                //
                 // Fast path (bv is TAG_LIST and cv is a number):
                 //   idx_u = fcvt_to_uint_sat(bitcast_f64(cv))  // NaN/neg → 0
                 //   if idx_u < [ptr+24]:                       // compare vs Vec.len
@@ -3709,6 +3717,33 @@ fn compile_function_body(
                 //   The multi-variant HeapObj enum places discriminant first,
                 //   then Vec fields in their natural [cap, ptr, len] order.
                 //   We read Vec.len at ptr+24 for the bounds check.
+                //
+                // ListView audit (PR-1 foundation, #325 follow-up):
+                //   `HeapObj::ListView` shares the TAG_LIST tag with
+                //   `HeapObj::List` (variant-level discrimination — see the
+                //   TAG_LIST docs in src/vm/mod.rs). If a view ever reached
+                //   this inline it would misread the ListView fields as
+                //   Vec metadata (View::src as Vec.cap, View::start as
+                //   Vec.data_ptr, View::len as Vec.len), and the elem load
+                //   would dereference `start` as a pointer ⇒ UB.
+                //
+                //   PR-1 is safe because no opcode produces a ListView; the
+                //   variant exists for the test-only `heap_list_view`
+                //   constructor and otherwise lies dormant. Every publish
+                //   site (OP_LISTAPPEND / OP_MSET / OP_RECNEW / OP_RET) calls
+                //   `materialize_list_view`, so a view cannot persist into a
+                //   register the optimiser would route into a Cranelift loop.
+                //
+                //   PR-2 (OP_WINDOW reshape) will start emitting views from
+                //   the window opcodes. At that point this inline must gain
+                //   a discriminant check at [ptr+0] before the Vec.len load,
+                //   OR the eager OP_WINDOW must materialise at FOREACHPREP
+                //   entry. The predecessor's perf analysis approved the
+                //   second option (eager materialise only when Cranelift is
+                //   the active engine) because the one-byte discriminant
+                //   load + cmp + branch on every FOREACHPREP would erase
+                //   part of the perf win we're chasing on text-typed
+                //   bioinformatics workloads.
                 //
                 // ptr, data_ptr, vec_len, and int_idx=0 are stored in per-loop
                 // Cranelift vars (see foreach_loop_map) so FOREACHNEXT can reuse them.
