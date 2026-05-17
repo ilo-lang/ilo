@@ -2453,6 +2453,49 @@ fn dispatch_bare_args(raw_args: Vec<String>, global: &cli::Global) -> i32 {
     dispatch_run(run_args, mode, explicit_json, no_hints)
 }
 
+/// Resolve the function name + remaining args for an explicit engine flag
+/// (`--run-tree`, `--run-vm`, `--run-cranelift`).
+///
+/// Mirrors the auto-pick-main heuristic from the Default engine branch
+/// (PR #307): when no positional func arg is supplied, prefer a function
+/// called `main` so multi-fn files don't surface as misleading arity
+/// errors (Tree), silent `nil` results (VM), or bare
+/// "Cranelift JIT: compilation failed" strings (Cranelift). Reported by
+/// the ml-engineer / routing-tsp / devops-sre / html-scraper personas in
+/// rerun6 P1.
+///
+/// Synthetic `__lit_N` decls emitted by inline-lambda lifting are
+/// filtered out — same convention as the Default branch — so they
+/// never become a default entry point.
+///
+/// Scope is deliberately narrow: only the no-positional case gets the
+/// auto-pick treatment. When `rest` has any positional, we preserve
+/// the long-standing "first arg is the func name" contract verbatim —
+/// the engine then errors with `undefined function: <name>` if the
+/// caller mistyped a subcommand (pinned by
+/// `tests/cli_integration.rs::cli_cov_run_vm_fn_not_found` and
+/// friends). Tightening that pass-through is a separate, larger
+/// follow-up; this change is the minimal fix for the rerun6 P1 repro.
+fn resolve_engine_func_name<'a>(
+    program: &ast::Program,
+    rest: &'a [String],
+) -> (Option<&'a str>, &'a [String]) {
+    if let Some(first) = rest.first() {
+        return (Some(first.as_str()), &rest[1..]);
+    }
+
+    let has_main = program.declarations.iter().any(|d| {
+        matches!(
+            d,
+            ast::Decl::Function { name, .. } if !name.starts_with("__") && name == "main"
+        )
+    });
+    if has_main {
+        return (Some("main"), &[][..]);
+    }
+    (None, &[][..])
+}
+
 /// Dispatch the `run` subcommand via parsed RunArgs.  Returns exit code.
 fn dispatch_run(r: cli::RunArgs, mode: OutputMode, explicit_json: bool, no_hints: bool) -> i32 {
     let source_arg = &r.source;
@@ -2691,8 +2734,7 @@ fn dispatch_run(r: cli::RunArgs, mode: OutputMode, explicit_json: bool, no_hints
             }
             cli::Engine::Llvm => run_llvm_engine(&program, rest),
             cli::Engine::Vm => {
-                let func_name = rest.first().map(|s| s.as_str());
-                let raw = if rest.len() > 1 { &rest[1..] } else { &[][..] };
+                let (func_name, raw) = resolve_engine_func_name(&program, rest);
                 let run_args = parse_cli_args_typed(&program, func_name, raw);
                 let compiled = match vm::compile(&program) {
                     Ok(c) => c,
@@ -2718,8 +2760,7 @@ fn dispatch_run(r: cli::RunArgs, mode: OutputMode, explicit_json: bool, no_hints
                 )
             }
             cli::Engine::Tree => {
-                let func_name = rest.first().map(|s| s.as_str());
-                let raw = if rest.len() > 1 { &rest[1..] } else { &[][..] };
+                let (func_name, raw) = resolve_engine_func_name(&program, rest);
                 let run_args = parse_cli_args_typed(&program, func_name, raw);
                 run_interp_with_provider(
                     &program,
@@ -2876,8 +2917,7 @@ fn run_cranelift_engine(
     mode: OutputMode,
     explicit_json: bool,
 ) -> i32 {
-    let func_name = rest.first().map(|s| s.as_str());
-    let raw = if rest.len() > 1 { &rest[1..] } else { &[][..] };
+    let (func_name, raw) = resolve_engine_func_name(program, rest);
     let run_args = parse_cli_args_typed(program, func_name, raw);
     let suppress = program_result_should_suppress(program, func_name);
 
