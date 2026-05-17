@@ -2738,6 +2738,23 @@ or write `({fmt_name} \"...\" ...)` so its args are grouped."
                 });
             }
 
+            // Zero-arg user functions: `f` with arity 0 → Call with empty args.
+            // Without this, `r=mk` where `mk` is a zero-arg user fn leaves `r`
+            // as a function reference (Ty::Fn), so `?r{~v:v;^e:e}` matches on
+            // a function value instead of the intended Result — wildcard fires
+            // and ILO-T024 demands a wildcard the user shouldn't need. This
+            // mirrors the now/now-ms precedent above and the analogous handling
+            // in parse_atom's operand position.
+            if !self.can_start_operand()
+                && self.fn_arity.get(&name).copied() == Some(0)
+            {
+                return Ok(Expr::Call {
+                    function: name,
+                    args: vec![],
+                    unwrap: UnwrapMode::None,
+                });
+            }
+
             // Inside a list literal, `[a b c]` must yield three list
             // elements rather than `[Call(a, [b, c])]`. Bare refs to locals
             // stay as elements. But a known function (in `fn_arity` with
