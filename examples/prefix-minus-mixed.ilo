@@ -1,0 +1,26 @@
+-- Binary `-` nests cleanly inside prefix expressions.
+--
+-- scientific-researcher rerun3 (assessment doc line 2803) wrote
+-- `per=*2 - tcr2 tcr` as part of a damped-pendulum RK4 run and
+-- believed it failed to parse. It does parse — as `2 * (tcr2 - tcr)`,
+-- the textbook period-from-zero-crossings formula. The drift the
+-- persona experienced was a separate latent bug: a *different* parse
+-- error elsewhere in the giant single-line `main` body was anchoring
+-- on line 1 col 1 (because the parser hit EOF mid-expression and
+-- `peek_span()` returned `Span::UNKNOWN`), which made the localisation
+-- iterate-and-bisect rather than read-and-fix.
+--
+-- This example pins the well-formed prefix shape so agents reading
+-- the examples corpus see the correct nesting. The span-anchoring
+-- fix itself is covered by `tests/regression_prefix_op_eof_span.rs`.
+
+-- Period from two zero-crossing times: 2 * (tcr2 - tcr).
+period tcr:n tcr2:n>n;*2 - tcr2 tcr
+
+-- Same shape with division — also nests correctly.
+half-diff a:n b:n>n;/ - a b 2
+
+-- run: period 1.0 3.5
+-- out: 5
+-- run: half-diff 10 4
+-- out: 3

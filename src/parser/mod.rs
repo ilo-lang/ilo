@@ -155,6 +155,23 @@ impl Parser {
             .unwrap_or(Span::UNKNOWN)
     }
 
+    /// Span suitable for an error that fires at the current cursor position,
+    /// falling back to the previously-consumed token's span when the cursor
+    /// is at EOF. Without this fallback, EOF-time `peek_span()` returns
+    /// `Span::UNKNOWN` and the diagnostic renders as line 1 col 1, which
+    /// drifts arbitrarily far from the real cause (e.g. a dangling prefix
+    /// operator at the tail of a long file). Mirrors the same
+    /// `peek_span() → prev_span()` pattern already used by
+    /// `check_fn_header_boundary` for function headers.
+    fn here_or_prev_span(&self) -> Span {
+        let span = self.peek_span();
+        if span == Span::UNKNOWN {
+            self.prev_span()
+        } else {
+            span
+        }
+    }
+
     fn advance(&mut self) -> Option<&Token> {
         let tok = self.tokens.get(self.pos).map(|(t, _)| t);
         if tok.is_some() {
@@ -3104,7 +3121,13 @@ or bind the index to a name first: `i:expr;{n}.i`.",
                 }
                 Err(self.error("ILO-P009", format!("expected expression, got {:?}", tok)))
             }
-            None => Err(self.error("ILO-P010", "expected expression, got EOF".into())),
+            None => Err(ParseError {
+                code: "ILO-P010",
+                position: self.pos,
+                span: self.here_or_prev_span(),
+                message: "expected expression, got EOF".into(),
+                hint: None,
+            }),
         }
     }
 
