@@ -2986,8 +2986,28 @@ fn run_cranelift_engine(
                 1
             }
             Err(vm::jit_cranelift::JitCallError::NotEligible) => {
-                eprintln!("Cranelift JIT: compilation failed");
-                1
+                // The JIT bailed on this function — typically because it
+                // contains an opcode the JIT cannot or should not compile
+                // (e.g. OP_WINDOW / OP_WINDOW_VIEW after the PR-2 listview
+                // reshape, see jit_cranelift.rs:2443). Fall back to the
+                // bytecode VM, which is the closest-performance tier and
+                // remains sound for the VM-only opcodes the JIT bailed on.
+                // The user asked for Cranelift but the program doesn't fit
+                // the JIT's input language; failing outright would be a
+                // worse experience than silently running on the VM.
+                match vm::run(&compiled, func_name, run_args) {
+                    Ok(val) => {
+                        print_value(&val, explicit_json, suppress);
+                        program_exit_code(&val)
+                    }
+                    Err(e) => {
+                        report_diagnostic(
+                            &Diagnostic::from(&e).with_source(source.to_string()),
+                            mode,
+                        );
+                        1
+                    }
+                }
             }
             Err(vm::jit_cranelift::JitCallError::Panic { msg }) => {
                 // Upstream cranelift-jit 0.116 has an AArch64 near-call
@@ -3380,8 +3400,25 @@ fn run_default(
                         return 1;
                     }
                     Err(vm::jit_cranelift::JitCallError::NotEligible) => {
-                        // JIT couldn't dispatch this function — fall through
-                        // to the tree interpreter as before.
+                        // JIT couldn't dispatch this function (e.g. it contains
+                        // an opcode the JIT bails on, like OP_WINDOW after the
+                        // PR-2 listview reshape). The bytecode VM dispatcher is
+                        // the closest-performance fallback and remains sound
+                        // for views — try it before the tree interpreter.
+                        match vm::run(&compiled, func_name, args.clone()) {
+                            Ok(val) => {
+                                print_value(&val, explicit_json, suppress);
+                                return program_exit_code(&val);
+                            }
+                            Err(_e) => {
+                                // Fall through to the tree interpreter — the
+                                // VM's error reporting may not match the
+                                // interpreter's diagnostics, and the
+                                // interpreter is the canonical reference
+                                // semantics. Preserves prior behaviour for
+                                // any program the bytecode VM rejects.
+                            }
+                        }
                     }
                     Err(vm::jit_cranelift::JitCallError::Panic { msg }) => {
                         // Upstream cranelift-jit 0.116 AArch64 near-call

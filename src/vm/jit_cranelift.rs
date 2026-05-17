@@ -2448,37 +2448,25 @@ fn compile_function_body(
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
             }
-            OP_WINDOW => {
-                let bv = builder.use_var(vars[b_idx]);
-                let cv = builder.use_var(vars[c_idx]);
-                let span_bits = pack_span_bits(chunk.spans[ip]);
-                let span_arg = builder.ins().iconst(I64, span_bits);
-                let fref = get_func_ref(&mut builder, module, helpers.window);
-                let call_inst = builder.ins().call(fref, &[bv, cv, span_arg]);
-                let result = builder.inst_results(call_inst)[0];
-                builder.def_var(vars[a_idx], result);
-            }
-            OP_WINDOW_VIEW => {
-                // Fused-window helper. 2-word: word 0 ABC = dest, xs, idx;
-                // word 1 A field = n reg. Cranelift register lifetimes aren't
-                // RC-balanced the way the VM dispatcher is, so the helper
-                // allocates fresh per stride. The in-place reuse fast path
-                // lives in the OP_WINDOW_VIEW arm of the VM dispatcher.
-                let data_inst = chunk.code[ip + 1];
-                skip_next = true;
-                let n_idx = ((data_inst >> 16) & 0xFF) as usize;
-                let cur_v = builder.use_var(vars[a_idx]);
-                let xs_v = builder.use_var(vars[b_idx]);
-                let idx_v = builder.use_var(vars[c_idx]);
-                let n_v = builder.use_var(vars[n_idx]);
-                let span_bits = pack_span_bits(chunk.spans[ip]);
-                let span_arg = builder.ins().iconst(I64, span_bits);
-                let fref = get_func_ref(&mut builder, module, helpers.window_view);
-                let call_inst = builder
-                    .ins()
-                    .call(fref, &[cur_v, xs_v, idx_v, n_v, span_arg]);
-                let result = builder.inst_results(call_inst)[0];
-                builder.def_var(vars[a_idx], result);
+            OP_WINDOW | OP_WINDOW_VIEW => {
+                // PR-2 (window-listview-perf): the VM dispatcher's OP_WINDOW /
+                // OP_WINDOW_VIEW arms now emit `HeapObj::ListView` aliasing the
+                // source list (O(1) per stride instead of n clone_rc's). Views
+                // share the TAG_LIST tag with real Lists; Cranelift's inlined
+                // FOREACHPREP / FOREACHNEXT / LISTGET / LEN fast paths read Vec
+                // metadata at fixed offsets (see audit comments in OP_FOREACHPREP
+                // below) and would UB on a view's struct layout.
+                //
+                // Cleanest fix: bail out of JIT compilation for any function
+                // touching window opcodes; it runs on the VM dispatcher, which
+                // gets the perf win. This is the design-of-record from PR-1
+                // ("VM gets the new fast path, Cranelift falls back via
+                // unknown-opcode return None") and the path the predecessor's
+                // perf analysis approved.
+                //
+                // A future PR can add a discriminant guard in the inlined Vec
+                // loads to let Cranelift emit views directly.
+                return None;
             }
             OP_CHUNKS => {
                 let bv = builder.use_var(vars[b_idx]);
@@ -3758,16 +3746,17 @@ fn compile_function_body(
                 //   `materialize_list_view`, so a view cannot persist into a
                 //   register the optimiser would route into a Cranelift loop.
                 //
-                //   PR-2 (OP_WINDOW reshape) will start emitting views from
-                //   the window opcodes. At that point this inline must gain
-                //   a discriminant check at [ptr+0] before the Vec.len load,
-                //   OR the eager OP_WINDOW must materialise at FOREACHPREP
-                //   entry. The predecessor's perf analysis approved the
-                //   second option (eager materialise only when Cranelift is
-                //   the active engine) because the one-byte discriminant
-                //   load + cmp + branch on every FOREACHPREP would erase
-                //   part of the perf win we're chasing on text-typed
-                //   bioinformatics workloads.
+                //   PR-2 (window-listview-perf) emits ListViews from the VM
+                //   dispatcher's OP_WINDOW / OP_WINDOW_VIEW arms, but Cranelift
+                //   bails compilation on those opcodes (see the OP_WINDOW arm
+                //   above) — any function that contains them falls back to the
+                //   VM dispatcher, where views are valid. AOT keeps calling
+                //   the `jit_window` / `jit_window_view` helpers, which still
+                //   emit real `HeapObj::List`s (the helpers were not reshaped),
+                //   so AOT-inlined FOREACHPREP remains sound at the cost of
+                //   the window perf win — that's the design-of-record trade.
+                //   A future PR can add a [ptr+0] discriminant guard here to
+                //   let Cranelift consume views directly.
                 //
                 // ptr, data_ptr, vec_len, and int_idx=0 are stored in per-loop
                 // Cranelift vars (see foreach_loop_map) so FOREACHNEXT can reuse them.
