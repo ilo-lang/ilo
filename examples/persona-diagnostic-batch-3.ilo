@@ -1,0 +1,59 @@
+-- Persona-diagnostic batch 3: canonical ilo forms for the shapes that
+-- the parser/verifier now flag with sharper hints. Each declaration
+-- shows the corrected form for one of the diagnostic improvements:
+--
+--   Inline-lambda body greediness    canonical: wrap chained calls in parens.
+--                                    fld (a:n k:t>n;+a (kc (body k))) kws 0
+--   rsrt fn ctx xs swap              canonical: fn binds (element, ctx),
+--                                    not (ctx, element).
+--                                    by-len e:t c:n>n;+c (len e)
+--   list-literal `;`                 canonical: whitespace or commas:
+--                                    [1 2 3] or [1, 2, 3], never [1;2;3]
+--
+-- This file exercises the canonical shapes end-to-end so the examples
+-- harness pins them as cross-engine regression coverage.
+
+-- Chained calls inside an inline lambda need explicit parens: the body
+-- parses one prefix call greedily and the trailing idents look like a
+-- malformed lambda close otherwise.
+kc x:t>n;len x
+body k:t>t;k
+sum-kws kws:L t>n;fld (a:n k:t>n;+a (kc (body k))) kws 0
+
+-- rsrt/srt fn ctx xs: the lambda binds the list element FIRST, then
+-- the ctx slot. Writing `(c:ctx e:elem>k;...)` is the persona reflex
+-- and now surfaces a hint at verify time.
+by-len-with-offset e:t c:n>n;+c (len e)
+top-strings xs:L t off:n>L t;rsrt by-len-with-offset off xs
+
+-- List literals use whitespace (commas optional). `;` is the
+-- statement-separator and is not valid inside `[...]`.
+totals-ws>n;sum [1 2 3]
+totals-comma>n;sum [1, 2, 3]
+
+main>n;
+  a=sum-kws ["hi" "there"];
+  b=hd (top-strings ["bb" "a" "ccc"] 100);
+  c=+totals-ws() totals-comma();
+  +a +(len b) c
+
+-- The examples harness invokes each `-- run:` line via the CLI, which
+-- splits on whitespace, so list-literal args don't pass cleanly. We
+-- give each case a no-arg wrapper so the harness can pin the shape.
+check-sum-kws>n;sum-kws ["one" "two" "three"]
+check-top>t;hd (top-strings ["bb" "a" "ccc"] 0)
+
+-- run: main
+-- out: 22
+
+-- run: check-sum-kws
+-- out: 11
+
+-- run: check-top
+-- out: ccc
+
+-- run: totals-ws
+-- out: 6
+
+-- run: totals-comma
+-- out: 6
