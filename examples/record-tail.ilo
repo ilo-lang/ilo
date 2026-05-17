@@ -1,0 +1,41 @@
+-- Multi-line function bodies can end with a bare record-constructor
+-- tail: `cr field:val field:val` at the start of a continuation line
+-- is parsed as the body's tail expression, not as a new function
+-- declaration.
+--
+-- Before this fix, the parser saw `cr country:name revenue:rv` after
+-- the indented body had been folded into `;`-separated statements,
+-- mistook it for a fresh fn header (`cr` followed by ident+colon
+-- looks like `name param:type ...`), terminated the current body, and
+-- then tripped ILO-P020 because no `>` exists on the `cr ...` line.
+-- The workaround was wrapping the constructor in parens
+-- (`(cr country:name revenue:rv)`), a four-character tax on every
+-- multi-line function returning a record — a very common JSON / API
+-- shape.
+
+type cr{country:t;revenue:n}
+
+build-country-rec p:L _>cr
+  name=p.0
+  rv=p.1
+  cr country:name revenue:rv
+
+-- Drive the multi-line record-tail builder and pick out a single
+-- field so the example's expected output is deterministic across
+-- engines (record-field iteration order is implementation-defined
+-- on the tree-walker; reading `.revenue` sidesteps that and still
+-- proves the record was built correctly).
+mk-revenue>n
+  p=[ "uk", 100 ]
+  rec=build-country-rec p
+  rec.revenue
+
+mk-country>t
+  p=[ "fr", 250 ]
+  rec=build-country-rec p
+  rec.country
+
+-- run: mk-revenue
+-- out: 100
+-- run: mk-country
+-- out: fr
