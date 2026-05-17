@@ -1,0 +1,24 @@
+-- `fn` is reserved (marks function-typed parameters in declarations) and
+-- cannot be used as a local binding name. The parser rejects `fn=...` at
+-- the declaration site with ILO-P011 + a rename-shaped hint, so the agent
+-- doesn't waste a retry pattern-matching on the wrong fix.
+--
+-- WOULD ERROR — `fn` used as a binding name:
+--   main>n;fn=5;fn
+--   -- ERROR ILO-P011: `fn` is a reserved word and cannot be used as an identifier
+--   -- hint: `fn` is reserved (it marks function-typed parameters in
+--   --       declarations); rename the binding to e.g. `fv`, `func`, or
+--   --       `callback`
+--
+-- The hint deliberately does NOT restate `use name=expr for bindings`
+-- (ml-engineer rerun8 #fn-hint): the user already wrote `name=expr` shape,
+-- so the actionable fix is picking a different identifier.
+--
+-- This example uses `fv` as the rename - 2-char ident, not reserved.
+
+main>n
+  fv=5
+  fv
+
+-- run: main
+-- out: 5

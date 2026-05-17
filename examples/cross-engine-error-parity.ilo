@@ -1,0 +1,40 @@
+-- Cross-engine error parity: at-OOB now reports the same rich message,
+-- code (ILO-R009), and call-stack notes on tree, VM, and Cranelift.
+--
+-- Pre-fix (v0.11.7 db-analyst rerun8):
+--   tree:      ILO-R009 "at: index 99 out of range for list of length 3"
+--              notes: ["called from 'main'", "called from 'g'"]
+--   VM:        ILO-R004 "at: index out of range" (no values)
+--              notes: ["called from 'main'", "called from 'g'"]
+--   Cranelift: ILO-R004 "at: index out of range" (no values)
+--              notes: []   <-- empty
+--
+-- Post-fix: all three engines produce the tree shape bit-equal. An agent
+-- that filters by code (e.g. retry-on-R009-only) now sees consistent
+-- behaviour regardless of which engine the runner picked.
+--
+-- This file only exercises the *positive* paths so the examples harness
+-- can pin against `-- out:` directly. The cross-engine error-shape
+-- contracts (rich message, R009, call-stack notes) are asserted in
+-- tests/regression_cross_engine_error_parity.rs which spawns the binary
+-- and inspects --json stderr on every engine.
+
+-- Safe `at`: positive index inside bounds works the same way on every engine.
+safe-at>n;at [10,20,30] 1
+
+-- Safe `lst`: replacing an in-bounds element works the same way too.
+safe-lst>L n;lst [10,20,30] 1 99
+
+-- Nested call: when this errors, all three engines now report
+-- ["called from 'main'", "called from 'g'"] in notes. We don't assert
+-- the error path here (harness limitation), but the test in
+-- regression_cross_engine_error_parity.rs covers it.
+g xs:L n>n;at xs 0
+deepest>n;g [42]
+
+-- run: safe-at
+-- out: 20
+-- run: safe-lst
+-- out: [10, 99, 30]
+-- run: deepest
+-- out: 42
