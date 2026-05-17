@@ -834,6 +834,15 @@ f x:n>n;v=?>x 100 1 0;v   -- assign result to v
 
 The condition must start with a comparison operator (`=`, `>`, `<`, `>=`, `<=`, `!=`).
 
+**Bare-bool prefix ternary** uses `?` with a bool-valued subject (param, comparison result, predicate call) followed by two operand atoms — the parens-free, brace-free shape:
+
+```
+f h:b>n;?h 1 0            -- if h then 1 else 0
+f h:b>n;v=?h 1 0;v        -- assign result to v
+```
+
+This is the cheapest shape when the condition is already a bool — 6 chars for `?h 1 0` vs 8 for the brace form `?h{1}{0}` and 12 for the eq-prefix form `?=h true 1 0`. The match-vs-ternary disambiguator routes `?subj{arms-with-colon-or-semi}` to match parsing, `?subj{a}{b}` to brace bare-bool ternary, and `?subj a b` (two bare operands at the cursor, no leading brace) to bare-bool prefix ternary. `?subj` alone with no following operand still errors the same way as before.
+
 ### Early Return
 
 `ret expr` explicitly returns from the current function:
