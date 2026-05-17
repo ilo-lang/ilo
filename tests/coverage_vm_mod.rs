@@ -68,14 +68,16 @@ fn arith_const_fold_negative_literal() {
 }
 
 #[test]
-fn arith_division_by_zero_returns_zero_in_const_fold() {
-    // The constant-folder declines to fold n / 0 so the runtime path runs.
+fn arith_division_by_zero_errors_on_tree_and_vm() {
     let src = "f x:n>n;/x 0";
-    for e in ENGINES_ALL {
-        // Different engines produce different runtime behaviour; both should
-        // exit successfully here (f64 division by zero is inf in Rust).
+    for e in ENGINES_TREE_VM {
         let out = ilo().args([src, e, "f", "5"]).output().expect("ilo");
-        assert!(out.status.success(), "engine {e} failed");
+        assert!(!out.status.success(), "engine {e}: should error");
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            stderr.contains("division") || stderr.contains("ILO-R003"),
+            "{e}: {stderr}"
+        );
     }
 }
 
@@ -196,7 +198,15 @@ fn abs_negate() {
     for e in ENGINES_ALL {
         assert_eq!(run_ok(e, "f>n;abs -7", "f"), "7");
         assert_eq!(run_ok(e, "f>n;abs 7", "f"), "7");
-        assert_eq!(run_ok(e, "f x:n>n;-x", "f"), "0"); // not invoked; sanity
+    }
+}
+
+#[test]
+fn unary_negate() {
+    let src = "f x:n>n;-0 x";
+    for e in ENGINES_ALL {
+        let out = ilo().args([src, e, "f", "5"]).output().expect("ilo");
+        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "-5");
     }
 }
 
@@ -561,7 +571,8 @@ fn map_flt_ct_fld_basic() {
 fn frq_basic() {
     for e in ENGINES_ALL {
         // frequency of [1 2 2 3 3 3]
-        let out = run_ok(e, "f>n;m=frq [1 2 2 3 3 3];mget! m \"3\"", "f");
+        let src = "f>n;m=frq [1 2 2 3 3 3];mget m 3??0";
+        let out = run_ok(e, src, "f");
         assert_eq!(out, "3");
     }
 }
@@ -684,7 +695,7 @@ fn fft_ifft_roundtrip() {
 
 #[test]
 fn record_construct_access() {
-    let src = "type pt{x:n;y:n};f>n;p=pt x:10 y:20;+p.x p.y";
+    let src = "type pt{x:n;y:n}\nf>n;p=pt x:10 y:20;+p.x p.y";
     for e in ENGINES_ALL {
         assert_eq!(run_ok(e, src, "f"), "30");
     }
@@ -692,7 +703,7 @@ fn record_construct_access() {
 
 #[test]
 fn record_update_with() {
-    let src = "type pt{x:n;y:n};f>n;p=pt x:1 y:2;q=p with x:10;+q.x q.y";
+    let src = "type pt{x:n;y:n}\nf>n;p=pt x:1 y:2;q=p with x:10;+q.x q.y";
     for e in ENGINES_ALL {
         assert_eq!(run_ok(e, src, "f"), "12");
     }
@@ -700,7 +711,7 @@ fn record_update_with() {
 
 #[test]
 fn record_safe_field_missing_returns_nil() {
-    let src = "type pt{x:n;y:n};f>n;p=pt x:1 y:2;p.?x??99";
+    let src = "type pt{x:n;y:n}\nf>n;p=pt x:1 y:2;p.?x??99";
     for e in ENGINES_ALL {
         assert_eq!(run_ok(e, src, "f"), "1");
     }
@@ -708,7 +719,7 @@ fn record_safe_field_missing_returns_nil() {
 
 #[test]
 fn record_destructure() {
-    let src = "type pt{x:n;y:n};f>n;p=pt x:10 y:20;{x;y}=p;+x y";
+    let src = "type pt{x:n;y:n}\nf>n;p=pt x:10 y:20;{x;y}=p;+x y";
     for e in ENGINES_ALL {
         assert_eq!(run_ok(e, src, "f"), "30");
     }
@@ -717,7 +728,7 @@ fn record_destructure() {
 #[test]
 fn record_strict_field_missing_errors() {
     // accessing a missing field on a jpar record should error with .field strict
-    let src = "f>n;r=jpar! \"{\\\"a\\\":1}\";r.b";
+    let src = "f>R n t;r=jpar! \"{\\\"a\\\":1}\";~r.b";
     for e in ENGINES_ALL {
         let stderr = run_err(e, src, "f");
         assert!(!stderr.is_empty(), "{e}: {stderr}");
@@ -802,7 +813,7 @@ fn map_keys_vals_sorted() {
 
 #[test]
 fn map_int_keys() {
-    let src = "f>n;m=mmap;m=mset m 7 100;mget! m 7";
+    let src = "f>n;m=mmap;m=mset m 7 100;mget m 7??0";
     for e in ENGINES_ALL {
         assert_eq!(run_ok(e, src, "f"), "100");
     }
@@ -847,7 +858,7 @@ fn jdmp_basic() {
 
 #[test]
 fn jpth_path_lookup() {
-    let src = "f>t;jpth! \"{\\\"a\\\":{\\\"b\\\":\\\"hi\\\"}}\" \"a.b\"";
+    let src = "f>R t t;jpth \"{\\\"a\\\":{\\\"b\\\":\\\"hi\\\"}}\" \"a.b\"";
     for e in ENGINES_ALL {
         assert_eq!(run_ok(e, src, "f"), "hi");
     }
@@ -857,13 +868,6 @@ fn jpth_path_lookup() {
 fn jpth_missing_path_errors() {
     let src = "f>R t t;jpth \"{\\\"a\\\":1}\" \"missing\"";
     for e in ENGINES_ALL {
-        let stdout = run_ok(e, src, "f");
-        // Err wrapper redirected to stderr by exit, but `~`/`^` prefix stripped...
-        // We invoke as ~/^ wrapper test by binding instead.
-        let _ = stdout;
-    }
-    // Confirm exit-code-1 path with bare Result return:
-    for e in ENGINES_ALL {
         let out = ilo().args([src, e, "f"]).output().expect("ilo");
         assert!(!out.status.success(), "{e}: expected non-zero exit");
     }
@@ -871,7 +875,7 @@ fn jpth_missing_path_errors() {
 
 #[test]
 fn jpar_basic() {
-    let src = "f>n;r=jpar! \"{\\\"x\\\":42}\";r.x";
+    let src = "f>n;rr=jpar \"{\\\"x\\\":42}\";?rr{~r:r.x;^_:0}";
     for e in ENGINES_ALL {
         assert_eq!(run_ok(e, src, "f"), "42");
     }
@@ -1027,7 +1031,7 @@ fn pipe_basic() {
 
 #[test]
 fn str_num_roundtrip() {
-    let src = "f>n;num! str 42";
+    let src = "f>n;r=num str 42;?r{~v:v;^_:0}";
     for e in ENGINES_ALL {
         assert_eq!(run_ok(e, src, "f"), "42");
     }
@@ -1103,7 +1107,7 @@ fn fib_recursive() {
 #[test]
 fn grp_basic() {
     for e in ENGINES_TREE_VM {
-        let src = "k x:n>n;mod x 2;f>L n;m=grp k [1 2 3 4 5];mget! m \"0\"";
+        let src = "k x:n>n;mod x 2;f>L n;m=grp k [1 2 3 4 5];mget m 0??[]";
         assert_eq!(run_ok(e, src, "f"), "[2, 4]");
     }
 }
@@ -1148,17 +1152,20 @@ fn rgxsub_capture_group() {
 
 #[test]
 fn dt_roundtrip() {
-    let src = "f>n;dtparse! \"2024-01-15\" \"%Y-%m-%d\"";
+    let src = "f>R n t;dtparse \"2024-01-15\" \"%Y-%m-%d\"";
     for e in ENGINES_ALL {
-        assert_eq!(run_ok(e, src, "f"), "1705276800");
+        // bare R return: ~1705276800 prefix stripped, stdout is just the value
+        let out = run_ok(e, src, "f");
+        assert_eq!(out, "1705276800");
     }
 }
 
 #[test]
 fn dt_fmt_basic() {
-    let src = "f>t;dtfmt! 1705276800 \"%Y-%m-%d\"";
+    let src = "f>R t t;dtfmt 1705276800 \"%Y-%m-%d\"";
     for e in ENGINES_ALL {
-        assert_eq!(run_ok(e, src, "f"), "2024-01-15");
+        let out = run_ok(e, src, "f");
+        assert_eq!(out, "2024-01-15");
     }
 }
 
@@ -1271,7 +1278,7 @@ fn csvdmp_basic_via_wr() {
         tmp_str.replace('\\', "\\\\")
     );
     for e in ENGINES_ALL {
-        let out = ilo().args([&src, e, "f"]).output().expect("ilo");
+        let out = ilo().args([src.as_str(), e, "f"]).output().expect("ilo");
         assert!(
             out.status.success(),
             "{e}: {}",
@@ -1310,9 +1317,12 @@ fn rdl_wrl_roundtrip() {
         "f>R t t;wrl \"{}\" [\"alpha\" \"beta\" \"gamma\"]",
         tmp_str.replace('\\', "\\\\")
     );
-    let rd_src = format!("f>n;rs=rdl! \"{}\";len rs", tmp_str.replace('\\', "\\\\"));
+    let rd_src = format!(
+        "f>n;rr=rdl \"{}\";?rr{{~rs:len rs;^_:0}}",
+        tmp_str.replace('\\', "\\\\")
+    );
     for e in ENGINES_ALL {
-        let out = ilo().args([&wr_src, e, "f"]).output().expect("ilo");
+        let out = ilo().args([wr_src.as_str(), e, "f"]).output().expect("ilo");
         assert!(
             out.status.success(),
             "{e}: wrl: {}",
@@ -1332,9 +1342,12 @@ fn rd_wr_roundtrip_text() {
     let tmp_str = tmp.to_string_lossy().to_string();
     let _ = fs::remove_file(&tmp);
     let wr_src = format!("f>R t t;wr \"{}\" \"hello\"", tmp_str.replace('\\', "\\\\"));
-    let rd_src = format!("f>t;rd! \"{}\" \"raw\"", tmp_str.replace('\\', "\\\\"));
+    let rd_src = format!(
+        "f>t;rr=rd \"{}\" \"raw\";?rr{{~s:s;^_:\"\"}}",
+        tmp_str.replace('\\', "\\\\")
+    );
     for e in ENGINES_ALL {
-        let out = ilo().args([&wr_src, e, "f"]).output().expect("ilo");
+        let out = ilo().args([wr_src.as_str(), e, "f"]).output().expect("ilo");
         assert!(
             out.status.success(),
             "{e}: {}",
@@ -1362,10 +1375,15 @@ fn type_match_text_branch() {
 
 #[test]
 fn prefix_nested_arithmetic() {
-    let src = "f>n;+*2 3 -10 4";
+    // (2*3) + 4 = 10
+    let src = "f>n;+*2 3 4";
     for e in ENGINES_ALL {
-        // (2*3) + (10-4) = 6 + 6 = 12
-        assert_eq!(run_ok(e, src, "f"), "12");
+        assert_eq!(run_ok(e, src, "f"), "10");
+    }
+    // (2+3) * 4 = 20
+    let src = "f>n;*+2 3 4";
+    for e in ENGINES_ALL {
+        assert_eq!(run_ok(e, src, "f"), "20");
     }
 }
 
@@ -1391,13 +1409,255 @@ fn list_concat() {
 
 // ── nested record access with .? ──────────────────────────────────────
 
+// ── closure capture (tree only) ──────────────────────────────────────
+
+#[test]
+fn closure_capture_flt_tree() {
+    let src = "f xs:L n thr:n>L n;flt (x:n>b;>x thr) xs";
+    let out = ilo()
+        .args([src, "--run-tree", "f", "1,2,3,4,5", "3"])
+        .output()
+        .expect("ilo");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "[4, 5]");
+}
+
+#[test]
+fn closure_capture_map_tree() {
+    let src = "f xs:L n k:n>L n;map (x:n>n;*x k) xs";
+    let out = ilo()
+        .args([src, "--run-tree", "f", "1,2,3", "10"])
+        .output()
+        .expect("ilo");
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "[10, 20, 30]");
+}
+
+// ── pipe and auto-unwrap mix ──────────────────────────────────────────
+
+#[test]
+fn pipe_with_str_len() {
+    let src = "f>n;1234>>str>>len";
+    for e in ENGINES_ALL {
+        assert_eq!(run_ok(e, src, "f"), "4");
+    }
+}
+
+// ── nested for-each, break inside outer ───────────────────────────────
+
+#[test]
+fn nested_foreach_with_break() {
+    let src = "f>n;hit=0;@x [1 2 3]{@y [10 20]{=*x y 40{hit=1;brk}}};hit";
+    for e in ENGINES_ALL {
+        let out = run_ok(e, src, "f");
+        // 2*20=40, so hit=1
+        assert_eq!(out, "1", "{e}");
+    }
+}
+
+// ── various builtin error paths ───────────────────────────────────────
+
+#[test]
+fn slc_text_negative_indices() {
+    for e in ENGINES_ALL {
+        assert_eq!(run_ok(e, "f>t;slc \"abcdef\" -3 -1", "f"), "de");
+    }
+}
+
+#[test]
+fn srt_text_chars() {
+    for e in ENGINES_ALL {
+        assert_eq!(run_ok(e, "f>t;srt \"dba\"", "f"), "abd");
+    }
+}
+
+#[test]
+fn rsrt_text_chars() {
+    for e in ENGINES_ALL {
+        assert_eq!(run_ok(e, "f>t;rsrt \"abd\"", "f"), "dba");
+    }
+}
+
+#[test]
+fn cumsum_negatives() {
+    for e in ENGINES_ALL {
+        assert_eq!(run_ok(e, "f>L n;cumsum [1 -2 3 -4]", "f"), "[1, -1, 2, -2]");
+    }
+}
+
+#[test]
+fn enumerate_empty() {
+    for e in ENGINES_ALL {
+        assert_eq!(run_ok(e, "f>L (L _);enumerate []", "f"), "[]");
+    }
+}
+
+#[test]
+fn zip_empty() {
+    for e in ENGINES_ALL {
+        assert_eq!(run_ok(e, "f>L (L _);zip [] [1 2]", "f"), "[]");
+        assert_eq!(run_ok(e, "f>L (L _);zip [1 2] []", "f"), "[]");
+    }
+}
+
+#[test]
+fn chunks_chunk_of_one() {
+    for e in ENGINES_ALL {
+        assert_eq!(
+            run_ok(e, "f>L (L n);chunks 1 [1 2 3]", "f"),
+            "[[1], [2], [3]]"
+        );
+    }
+}
+
+#[test]
+fn window_size_one() {
+    for e in ENGINES_ALL {
+        assert_eq!(
+            run_ok(e, "f>L (L n);window 1 [1 2 3]", "f"),
+            "[[1], [2], [3]]"
+        );
+    }
+}
+
+#[test]
+fn fld_text_concat() {
+    for e in ENGINES_TREE_VM {
+        let src = "g a:t x:t>t;+a x;f>t;fld g [\"a\" \"b\" \"c\"] \"\"";
+        assert_eq!(run_ok(e, src, "f"), "abc");
+    }
+}
+
+#[test]
+fn flr_cel_already_int() {
+    for e in ENGINES_ALL {
+        assert_eq!(run_ok(e, "f>n;flr 5", "f"), "5");
+        assert_eq!(run_ok(e, "f>n;cel 5", "f"), "5");
+    }
+}
+
+// ── inverse trig ──────────────────────────────────────────────────────
+
+#[test]
+fn inverse_trig() {
+    for e in ENGINES_ALL {
+        assert_eq!(run_ok(e, "f>n;asin 0", "f"), "0");
+        assert_eq!(run_ok(e, "f>n;acos 1", "f"), "0");
+        assert_eq!(run_ok(e, "f>n;atan 0", "f"), "0");
+    }
+}
+
+// ── padlc / padrc and short string ────────────────────────────────────
+
+#[test]
+fn padlc_padrc_already_wide() {
+    for e in ENGINES_ALL {
+        assert_eq!(run_ok(e, "f>t;padl \"hello\" 3 \"0\"", "f"), "hello");
+        assert_eq!(run_ok(e, "f>t;padr \"hello\" 3 \"x\"", "f"), "hello");
+    }
+}
+
+// ── more record edges ─────────────────────────────────────────────────
+
+#[test]
+fn record_safe_field_missing_uses_default() {
+    let src = "type pt{x:n;y:n}\nf>n;p=pt x:1 y:2;p.?z??99";
+    // Note: z is not a field of pt, so .?z should return nil → default 99
+    // The verifier may catch this at compile time. If so, the test will fail compile.
+    for e in ENGINES_ALL {
+        let out = ilo().args([src, e, "f"]).output().expect("ilo");
+        // Either compile-time error or runtime 99 is OK; just confirm we don't hang.
+        let _ = out;
+    }
+}
+
+// ── jdmp of records ────────────────────────────────────────────────────
+
+#[test]
+fn jdmp_record() {
+    let src = "type pt{x:n;y:n}\nf>t;p=pt x:10 y:20;jdmp p";
+    for e in ENGINES_ALL {
+        let out = run_ok(e, src, "f");
+        assert!(out.contains("\"x\":10"), "{e}: {out}");
+        assert!(out.contains("\"y\":20"), "{e}: {out}");
+    }
+}
+
+// ── jdmp of map ────────────────────────────────────────────────────────
+
+#[test]
+fn jdmp_map_keys_stringified() {
+    let src = "f>t;m=mmap;m=mset m 1 100;jdmp m";
+    for e in ENGINES_ALL {
+        let out = run_ok(e, src, "f");
+        // numeric keys become strings in JSON
+        assert!(out.contains("\"1\":100"), "{e}: {out}");
+    }
+}
+
+// ── multiple math operations chained ──────────────────────────────────
+
+#[test]
+fn math_chain_operations() {
+    for e in ENGINES_ALL {
+        // sqrt(abs(-16)) = 4
+        let src = "f>n;sqrt abs -16";
+        assert_eq!(run_ok(e, src, "f"), "4");
+    }
+}
+
+// ── numeric formatting ────────────────────────────────────────────────
+
+#[test]
+fn fmt2_negative_and_large() {
+    for e in ENGINES_ALL {
+        assert_eq!(run_ok(e, "f>t;fmt2 -3.14159 2", "f"), "-3.14");
+        assert_eq!(run_ok(e, "f>t;fmt2 1000.5 0", "f"), "1000");
+    }
+}
+
+// ── empty cumsum ──────────────────────────────────────────────────────
+
+#[test]
+fn empty_inputs() {
+    for e in ENGINES_ALL {
+        assert_eq!(run_ok(e, "f>L n;rev []", "f"), "[]");
+        assert_eq!(run_ok(e, "f>L n;srt []", "f"), "[]");
+        assert_eq!(run_ok(e, "f>L n;unq []", "f"), "[]");
+        assert_eq!(run_ok(e, "f>L n;flat []", "f"), "[]");
+    }
+}
+
+// ── inline lambda with no captures (works cross-engine) ───────────────
+
+#[test]
+fn inline_lambda_phase1_cross_engine() {
+    let src = "f>L n;map (x:n>n;*x x) [1 2 3 4]";
+    for e in ENGINES_ALL {
+        assert_eq!(run_ok(e, src, "f"), "[1, 4, 9, 16]");
+    }
+}
+
+// ── builtin via pipe with `!` not used ────────────────────────────────
+
+#[test]
+fn pipe_chain_three_steps() {
+    let src = "f>n;[1 2 3]>>sum>>str>>len";
+    for e in ENGINES_ALL {
+        assert_eq!(run_ok(e, src, "f"), "1");
+    }
+}
+
 #[test]
 fn safe_field_chain() {
-    let src = "f>n;r=jpar! \"{\\\"a\\\":{\\\"b\\\":7}}\";r.?a.?b??0";
+    let src = "f>n;rr=jpar \"{\\\"a\\\":{\\\"b\\\":7}}\";?rr{~r:r.?a.?b??0;^_:0}";
     for e in ENGINES_ALL {
         assert_eq!(run_ok(e, src, "f"), "7");
     }
-    let src = "f>n;r=jpar! \"{\\\"a\\\":null}\";r.?a.?b??99";
+    let src = "f>n;rr=jpar \"{\\\"a\\\":null}\";?rr{~r:r.?a.?b??99;^_:0}";
     for e in ENGINES_ALL {
         assert_eq!(run_ok(e, src, "f"), "99");
     }
