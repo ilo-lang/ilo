@@ -96,9 +96,11 @@ fn ct_non_bool_predicate_errors() {
             "engine={engine}: expected failure when predicate returns non-bool"
         );
         let stderr = String::from_utf8_lossy(&out.stderr);
+        // Use the literal "ct:" prefix (the builtin-name anchor in the
+        // ILO-R009 message); bare "ct" matches "expected" and others.
         assert!(
-            stderr.contains("ct") && stderr.contains("bool"),
-            "engine={engine}: stderr should mention ct + bool, got `{stderr}`"
+            stderr.contains("ct:") && stderr.contains("bool"),
+            "engine={engine}: stderr should mention 'ct:' + bool, got `{stderr}`"
         );
     }
 }
