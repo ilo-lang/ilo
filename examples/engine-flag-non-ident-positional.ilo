@@ -1,0 +1,24 @@
+-- Engine flags (--run-tree / --run-vm / --run-cranelift) now mirror the
+-- default engine's #328 heuristic: when the first positional after the
+-- source path is NOT ident-shaped (e.g. `paper.txt`, `/tmp/x.json`, a
+-- number, anything with a `.` or `/` in it) and `main` is defined, the
+-- engine routes to `main` and passes the positional through as arg #1.
+--
+-- Before the fix, `ilo --run-tree main.ilo paper.txt` errored with
+-- `ILO-R002: undefined function: paper.txt` while default-engine
+-- `ilo main.ilo paper.txt` correctly ran `main "paper.txt"`. Three
+-- rerun7 personas (pdf-analyst, devops-sre, qa-tester) flagged it
+-- independently. PR follow-up to #329, which only covered the
+-- no-positional case.
+
+helper a:n>n;+a 1
+main p:t>n;+(len p) 1
+
+-- run: main paper.txt
+-- out: 10
+-- run: paper.txt
+-- out: 10
+-- run: /tmp/x.json
+-- out: 12
+-- run: helper 41
+-- out: 42

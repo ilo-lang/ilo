@@ -2480,16 +2480,36 @@ fn resolve_engine_func_name<'a>(
     program: &ast::Program,
     rest: &'a [String],
 ) -> (Option<&'a str>, &'a [String]) {
-    if let Some(first) = rest.first() {
-        return (Some(first.as_str()), &rest[1..]);
-    }
-
     let has_main = program.declarations.iter().any(|d| {
         matches!(
             d,
             ast::Decl::Function { name, .. } if !name.starts_with("__") && name == "main"
         )
     });
+
+    if let Some(first) = rest.first() {
+        // Mirror the default-engine non-ident-positional -> main heuristic
+        // (PR #328 / src/main.rs ~2838). If the first positional does NOT
+        // look like a subcommand name (e.g. `paper.txt`, `/tmp/x.json`, `42`)
+        // and the program defines `main`, route to `main` and pass the whole
+        // `rest` slice through as call args. Without this, the engine sees
+        // `paper.txt` as a function name and emits `ILO-R002: undefined
+        // function: paper.txt` while the default engine on the same
+        // invocation runs `main` correctly.
+        //
+        // Ident-shaped first positionals are still treated as the function
+        // name, so typo detection ("undefined function: helpr") and explicit
+        // routing (`--run-tree file.ilo main path`) are preserved verbatim.
+        //
+        // Originating reports: pdf-analyst rerun7 P2 (assessment doc line
+        // 6736), devops-sre rerun7 P2 (line 7009), qa-tester rerun7 P2
+        // (line 6961, inline variant).
+        if has_main && !looks_like_subcommand_name(first) {
+            return (Some("main"), rest);
+        }
+        return (Some(first.as_str()), &rest[1..]);
+    }
+
     if has_main {
         return (Some("main"), &[][..]);
     }
