@@ -758,3 +758,222 @@ fn known_func_name_overrides_main_routing() {
     assert!(ok, "stderr: {stderr}");
     assert_eq!(stdout.trim(), "42");
 }
+
+// ── engine-flag non-ident-positional -> main (rerun7 P2, three personas) ──────
+//
+// PR #329 wired `resolve_engine_func_name` to auto-pick `main` when there
+// is NO positional after the engine flag, mirroring half of #328. The
+// other half (#328: non-ident first positional routes to `main` with the
+// positional as arg #1) didn't get propagated, so the default-engine path
+// `ilo main.ilo paper.txt` correctly runs `main "paper.txt"` but every
+// explicit-engine variant (`--run-tree`, `--run-vm`, `--run-cranelift`)
+// hard-failed with `ILO-R002: undefined function: paper.txt`.
+//
+// Reported in rerun7 by three independent personas:
+//   * pdf-analyst (assessment doc line 6736)
+//   * devops-sre  (line 7009)
+//   * qa-tester   (line 6961, inline variant — `--run-tree '...' 10 0`)
+//
+// This block locks the asymmetry shut across every engine.
+
+fn run_engine_non_ident_positional_routes_to_main(engine_flag: &str) {
+    // `paper.txt` contains a `.` so `looks_like_subcommand_name` rejects
+    // it. With `main` defined, the engine flag should route to `main`
+    // and pass `paper.txt` through as the first positional arg.
+    let (_dir, path) = write_temp("helper>n;7\nmain p:t>n;+(len p) 1\n");
+    let (ok, stdout, stderr) = run(&[engine_flag, path.to_str().unwrap(), "paper.txt"]);
+    assert!(
+        ok,
+        "{engine_flag}: expected main to absorb non-ident positional; stderr: {stderr}"
+    );
+    assert_eq!(
+        stdout.trim(),
+        "10",
+        "{engine_flag}: expected len('paper.txt')+1 = 10; stdout: {stdout}"
+    );
+    assert!(
+        !stderr.contains("undefined function"),
+        "{engine_flag}: must not leak undefined-function diagnostic; stderr: {stderr}"
+    );
+}
+
+#[test]
+fn run_tree_flag_non_ident_positional_routes_to_main() {
+    run_engine_non_ident_positional_routes_to_main("--run-tree");
+}
+
+#[test]
+fn run_vm_flag_non_ident_positional_routes_to_main() {
+    run_engine_non_ident_positional_routes_to_main("--run-vm");
+}
+
+#[test]
+#[cfg(feature = "cranelift")]
+fn run_cranelift_flag_non_ident_positional_routes_to_main() {
+    run_engine_non_ident_positional_routes_to_main("--run-cranelift");
+}
+
+#[test]
+fn run_default_non_ident_positional_routes_to_main_pin() {
+    // Pin the default-engine behaviour alongside the engine flags so a
+    // future drift between default and explicit engines is caught in one
+    // file, the same way the #329 set pins all four engines.
+    let (_dir, path) = write_temp("helper>n;7\nmain p:t>n;+(len p) 1\n");
+    let (ok, stdout, stderr) = run(&[path.to_str().unwrap(), "paper.txt"]);
+    assert!(ok, "default: stderr: {stderr}");
+    assert_eq!(stdout.trim(), "10");
+}
+
+fn run_engine_path_shaped_positional_routes_to_main(engine_flag: &str) {
+    // Repro from devops-sre rerun7: `/tmp/x.json` as a literal CLI arg.
+    // `/` is not a legal ident char so the heuristic must catch it.
+    let (_dir, path) = write_temp("helper>n;7\nmain p:t>n;len p\n");
+    let (ok, stdout, stderr) = run(&[engine_flag, path.to_str().unwrap(), "/tmp/x.json"]);
+    assert!(
+        ok,
+        "{engine_flag}: expected main to absorb path-shaped positional; stderr: {stderr}"
+    );
+    assert_eq!(
+        stdout.trim(),
+        "11",
+        "{engine_flag}: len('/tmp/x.json') = 11"
+    );
+}
+
+#[test]
+fn run_tree_flag_path_shaped_positional_routes_to_main() {
+    run_engine_path_shaped_positional_routes_to_main("--run-tree");
+}
+
+#[test]
+fn run_vm_flag_path_shaped_positional_routes_to_main() {
+    run_engine_path_shaped_positional_routes_to_main("--run-vm");
+}
+
+#[test]
+#[cfg(feature = "cranelift")]
+fn run_cranelift_flag_path_shaped_positional_routes_to_main() {
+    run_engine_path_shaped_positional_routes_to_main("--run-cranelift");
+}
+
+fn run_engine_numeric_positional_routes_to_main(engine_flag: &str) {
+    // Numbers are non-ident-shaped (looks_like_subcommand_name rejects
+    // "42") so they should also route to `main`. This exercises the
+    // same code path as the qa-tester rerun7 case, where positional
+    // numeric args were swallowed as a function-name attempt.
+    let (_dir, path) = write_temp("helper>n;7\nmain a:n b:n>n;+a b\n");
+    let (ok, stdout, stderr) = run(&[engine_flag, path.to_str().unwrap(), "10", "32"]);
+    assert!(
+        ok,
+        "{engine_flag}: expected main to absorb numeric positionals; stderr: {stderr}"
+    );
+    assert_eq!(stdout.trim(), "42");
+}
+
+#[test]
+fn run_tree_flag_numeric_positional_routes_to_main() {
+    run_engine_numeric_positional_routes_to_main("--run-tree");
+}
+
+#[test]
+fn run_vm_flag_numeric_positional_routes_to_main() {
+    run_engine_numeric_positional_routes_to_main("--run-vm");
+}
+
+#[test]
+#[cfg(feature = "cranelift")]
+fn run_cranelift_flag_numeric_positional_routes_to_main() {
+    run_engine_numeric_positional_routes_to_main("--run-cranelift");
+}
+
+fn run_engine_explicit_main_keyword_still_works(engine_flag: &str) {
+    // Explicit `main` before the non-ident positional must still route
+    // to `main` and produce the same result — the heuristic must not
+    // double-consume the positional or otherwise re-shape the args.
+    let (_dir, path) = write_temp("helper>n;7\nmain p:t>n;+(len p) 1\n");
+    let (ok, stdout, stderr) = run(&[engine_flag, path.to_str().unwrap(), "main", "paper.txt"]);
+    assert!(
+        ok,
+        "{engine_flag}: explicit `main` + non-ident positional; stderr: {stderr}"
+    );
+    assert_eq!(stdout.trim(), "10");
+}
+
+#[test]
+fn run_tree_flag_explicit_main_with_non_ident_arg() {
+    run_engine_explicit_main_keyword_still_works("--run-tree");
+}
+
+#[test]
+fn run_vm_flag_explicit_main_with_non_ident_arg() {
+    run_engine_explicit_main_keyword_still_works("--run-vm");
+}
+
+#[test]
+#[cfg(feature = "cranelift")]
+fn run_cranelift_flag_explicit_main_with_non_ident_arg() {
+    run_engine_explicit_main_keyword_still_works("--run-cranelift");
+}
+
+fn run_engine_explicit_helper_overrides_main_heuristic(engine_flag: &str) {
+    // Even when `main` exists, passing an explicit ident-shaped helper
+    // name still routes to that helper. The non-ident heuristic must
+    // only fire when the first positional is itself non-ident — it must
+    // NOT override the user's explicit function selection.
+    let (_dir, path) = write_temp("helper p:t>n;len p\nmain p:t>n;+(len p) 100\n");
+    let (ok, stdout, stderr) = run(&[engine_flag, path.to_str().unwrap(), "helper", "paper.txt"]);
+    assert!(
+        ok,
+        "{engine_flag}: explicit helper override; stderr: {stderr}"
+    );
+    assert_eq!(
+        stdout.trim(),
+        "9",
+        "{engine_flag}: expected len('paper.txt') = 9 from helper, not 109 from main; stdout: {stdout}"
+    );
+}
+
+#[test]
+fn run_tree_flag_explicit_helper_overrides_main_heuristic() {
+    run_engine_explicit_helper_overrides_main_heuristic("--run-tree");
+}
+
+#[test]
+fn run_vm_flag_explicit_helper_overrides_main_heuristic() {
+    run_engine_explicit_helper_overrides_main_heuristic("--run-vm");
+}
+
+#[test]
+#[cfg(feature = "cranelift")]
+fn run_cranelift_flag_explicit_helper_overrides_main_heuristic() {
+    run_engine_explicit_helper_overrides_main_heuristic("--run-cranelift");
+}
+
+fn run_engine_unknown_ident_no_main_still_errors(engine_flag: &str) {
+    // No `main` defined + ident-shaped unknown positional must still
+    // surface a clear `undefined function` diagnostic. The heuristic
+    // is gated on `has_main`, so this path is unchanged.
+    let (_dir, path) = write_temp("helper a:n>n;+a 1\n");
+    let (ok, _stdout, stderr) = run(&[engine_flag, path.to_str().unwrap(), "wibble"]);
+    assert!(!ok, "{engine_flag}: unknown ident must fail");
+    assert!(
+        stderr.contains("undefined") || stderr.contains("wibble"),
+        "{engine_flag}: expected fn-not-found diagnostic; stderr: {stderr}"
+    );
+}
+
+#[test]
+fn run_tree_flag_unknown_ident_no_main_still_errors() {
+    run_engine_unknown_ident_no_main_still_errors("--run-tree");
+}
+
+#[test]
+fn run_vm_flag_unknown_ident_no_main_still_errors() {
+    run_engine_unknown_ident_no_main_still_errors("--run-vm");
+}
+
+#[test]
+#[cfg(feature = "cranelift")]
+fn run_cranelift_flag_unknown_ident_no_main_still_errors() {
+    run_engine_unknown_ident_no_main_still_errors("--run-cranelift");
+}
