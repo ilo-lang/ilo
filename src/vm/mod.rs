@@ -4599,6 +4599,53 @@ impl Drop for HeapObj {
     }
 }
 
+/// If `v` is a TAG_LIST NanVal pointing at a `HeapObj::ListView`, returns a
+/// freshly-allocated `HeapObj::List` NanVal containing the same elements
+/// (each with its RC bumped). The caller is responsible for dropping the
+/// original view NanVal. If `v` is already a real List (or anything else),
+/// returns `v` unchanged — the caller can keep using it as-is.
+///
+/// This is the materialise-on-publish helper. Call it at every site that
+/// stores a list into a long-lived container (another list via OP_LISTAPPEND,
+/// a map via OP_MSET, a record via OP_RECNEW/SETFIELD, or returns it from a
+/// function via OP_RET). Materialisation makes the published value
+/// self-contained — no dangling RC on the view's parent, no surprise
+/// re-allocations when callers mutate the parent.
+///
+/// # Safety
+/// Caller must hold a live RC on `v`. The returned NanVal owns a fresh RC
+/// (independent of `v`'s), so callers must drop one or the other.
+#[inline]
+fn materialize_list_view(v: NanVal) -> NanVal {
+    if !v.is_heap() || (v.0 & TAG_MASK) != TAG_LIST {
+        return v;
+    }
+    // SAFETY: tag check above + is_heap.
+    let heap = unsafe { v.as_heap_ref() };
+    match heap {
+        HeapObj::List(_) => v,
+        HeapObj::ListView { .. } => {
+            let items: Vec<NanVal> = slice_of(heap)
+                .iter()
+                .map(|nv| {
+                    nv.clone_rc();
+                    *nv
+                })
+                .collect();
+            NanVal::heap_list(items)
+        }
+        // Tag-checked above, so unreachable; explicit arms for audit.
+        HeapObj::Str(_)
+        | HeapObj::Map(_)
+        | HeapObj::Record { .. }
+        | HeapObj::OkVal(_)
+        | HeapObj::ErrVal(_) => {
+            debug_assert!(false, "TAG_LIST NanVal pointed at non-list HeapObj variant");
+            v
+        }
+    }
+}
+
 /// Read-only slice view into a list-like HeapObj. Returns the visible window:
 /// the full Vec for `HeapObj::List`, or `parent[start..start+len]` for
 /// `HeapObj::ListView`. Used by every read-side op so it can be backend-agnostic.
@@ -5929,6 +5976,18 @@ impl<'a> VM<'a> {
                     let data_inst = unsafe { *code.get_unchecked(ip) };
                     ip += 1;
                     let d = ((data_inst >> 16) & 0xFF) as usize + base;
+                    // Materialise-on-publish: if the value being inserted is a
+                    // ListView, swap it for a real List so the map stays
+                    // self-contained. The original view's RC is released; the
+                    // materialised list is what flows into the map slot.
+                    {
+                        let cur = reg!(d);
+                        let mat = materialize_list_view(cur);
+                        if mat.0 != cur.0 {
+                            reg_set!(d, mat);
+                            cur.drop_rc();
+                        }
+                    }
                     let map_v = reg!(b);
                     let key_v = reg!(c);
                     let val_v = reg!(d);
@@ -7248,6 +7307,30 @@ impl<'a> VM<'a> {
                 OP_RET => {
                     let a = ((inst >> 16) & 0xFF) as usize + base;
                     let mut result = reg!(a);
+                    // Materialise-on-publish: a ListView crossing the call
+                    // boundary into the caller's register would keep its
+                    // parent alive through its RC, which is sound, but later
+                    // calls that mutate or rebind the parent in the caller
+                    // would force the view onto a stale snapshot. The
+                    // simpler invariant — function results are always
+                    // self-contained Lists — costs one tag-check on the no-op
+                    // path (PR-1 produces no views) and avoids a class of
+                    // surprise-aliasing bugs once PR-2 wires producers.
+                    {
+                        let mat = materialize_list_view(result);
+                        if mat.0 != result.0 {
+                            // Replace the register with the materialised list so
+                            // the upcoming drop_rc loop (which drains the callee
+                            // frame) releases the view rather than the
+                            // materialised list. Then keep `result` pointing at
+                            // the materialised value for the caller.
+                            unsafe {
+                                *self.stack.as_mut_ptr().add(a) = mat;
+                            }
+                            result.drop_rc();
+                            result = mat;
+                        }
+                    }
 
                     // SAFETY: frames is non-empty while execute() is running.
                     let frame = unsafe { self.frames.last().unwrap_unchecked() };
@@ -7310,6 +7393,20 @@ impl<'a> VM<'a> {
                     let bx = (inst & 0xFFFF) as usize;
                     let type_id = (bx >> 8) as u16;
                     let n_fields = bx & 0xFF;
+
+                    // Materialise-on-publish: any field that is a ListView gets
+                    // promoted to a real List before being captured into the
+                    // record. Records can persist across many call boundaries
+                    // so we don't want them holding views whose parents might
+                    // get materialised, mutated, or COW'd elsewhere.
+                    for i in 0..n_fields {
+                        let cur = reg!(a + 1 + i);
+                        let mat = materialize_list_view(cur);
+                        if mat.0 != cur.0 {
+                            reg_set!(a + 1 + i, mat);
+                            cur.drop_rc();
+                        }
+                    }
 
                     // Try arena allocation first (fast path)
                     if let Some(rec_ptr) = self.arena.alloc_record(type_id, n_fields) {
@@ -9855,6 +9952,27 @@ impl<'a> VM<'a> {
                     if reg!(c).is_arena_record() {
                         let promoted = reg!(c).promote_arena_to_heap(&self.program.type_registry);
                         reg_set!(c, promoted);
+                    }
+                    // Materialise-on-publish: if R[B] (the destination list) or
+                    // R[C] (the appended item) is a ListView, replace it with a
+                    // fresh List so the published container only ever holds
+                    // Vec-backed lists. Drops the view's RC and installs the
+                    // materialised list in the register.
+                    {
+                        let cur = reg!(b);
+                        let mat = materialize_list_view(cur);
+                        if mat.0 != cur.0 {
+                            reg_set!(b, mat);
+                            cur.drop_rc();
+                        }
+                    }
+                    {
+                        let cur = reg!(c);
+                        let mat = materialize_list_view(cur);
+                        if mat.0 != cur.0 {
+                            reg_set!(c, mat);
+                            cur.drop_rc();
+                        }
                     }
                     let list_val = reg!(b);
                     let item_val = reg!(c);
@@ -30769,6 +30887,63 @@ f>n;r=mk 10 20;+r.x r.y";
 
         view.drop_rc();
         parent.drop_rc();
+    }
+
+    /// materialize_list_view promotes a ListView to a freshly-allocated List
+    /// with the same visible elements, each element's RC bumped. The original
+    /// view NanVal is unchanged (caller responsible for dropping it).
+    #[test]
+    fn materialize_list_view_promotes_views_to_real_lists() {
+        let parent = NanVal::heap_list(vec![
+            NanVal::number(10.0),
+            NanVal::number(20.0),
+            NanVal::number(30.0),
+            NanVal::number(40.0),
+        ]);
+        let view = NanVal::heap_list_view(parent, 1, 2); // [20, 30]
+
+        let materialised = materialize_list_view(view);
+        // Different NanVal — fresh allocation.
+        assert_ne!(materialised.0, view.0);
+        // Materialised value is a real TAG_LIST → HeapObj::List.
+        assert_eq!(materialised.0 & TAG_MASK, TAG_LIST);
+        unsafe {
+            assert!(matches!(materialised.as_heap_ref(), HeapObj::List(_)));
+            // Same visible contents.
+            let m_slice = slice_of(materialised.as_heap_ref());
+            assert_eq!(m_slice.len(), 2);
+            assert_eq!(m_slice[0].as_number(), 20.0);
+            assert_eq!(m_slice[1].as_number(), 30.0);
+        }
+
+        // Calling materialize_list_view on a real List returns the same NanVal.
+        let already_real = NanVal::heap_list(vec![NanVal::number(1.0)]);
+        let unchanged = materialize_list_view(already_real);
+        assert_eq!(unchanged.0, already_real.0);
+
+        materialised.drop_rc();
+        view.drop_rc();
+        parent.drop_rc();
+        already_real.drop_rc();
+    }
+
+    /// Non-list NanVals pass through materialize_list_view unchanged so
+    /// every publish site can call it unconditionally without special-casing
+    /// numbers, strings, maps, etc.
+    #[test]
+    fn materialize_list_view_passes_through_non_lists() {
+        let n = NanVal::number(42.0);
+        assert_eq!(materialize_list_view(n).0, n.0);
+
+        let s = NanVal::heap_string("hi".to_string());
+        assert_eq!(materialize_list_view(s).0, s.0);
+        s.drop_rc();
+
+        let nil = NanVal::nil();
+        assert_eq!(materialize_list_view(nil).0, nil.0);
+
+        let bt = NanVal::boolean(true);
+        assert_eq!(materialize_list_view(bt).0, bt.0);
     }
 
     /// to_value flattens a ListView into the same Value::List shape an owned
