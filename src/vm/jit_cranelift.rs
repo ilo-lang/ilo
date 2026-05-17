@@ -198,6 +198,9 @@ struct HelperFuncs {
     call_builtin_tree: FuncId,
     // Dynamic-dispatch bridge for OP_CALL_DYN (HOF callbacks: `map`, ...)
     call_dyn: FuncId,
+    // Per-thread call-stack tracking for cross-engine error parity.
+    push_call_frame: FuncId,
+    pop_call_frame: FuncId,
 }
 
 /// Pack a `Span { start, end }` into a single i64 immediate for passing to
@@ -397,6 +400,17 @@ fn register_helpers(builder: &mut JITBuilder) {
         ("jit_dtparse", jit_dtparse as *const u8),
         ("jit_call_builtin_tree", jit_call_builtin_tree as *const u8),
         ("jit_call_dyn", jit_call_dyn as *const u8),
+        // Call-stack tracking for VmRuntimeError.call_stack parity with
+        // VM/tree. See `jit_push_call_frame` / `jit_pop_call_frame` in
+        // src/vm/mod.rs for the rationale.
+        (
+            "jit_push_call_frame",
+            crate::vm::jit_push_call_frame as *const u8,
+        ),
+        (
+            "jit_pop_call_frame",
+            crate::vm::jit_pop_call_frame as *const u8,
+        ),
     ];
     for &(name, ptr) in helpers {
         builder.symbol(name, ptr);
@@ -572,6 +586,8 @@ fn declare_all_helpers(module: &mut JITModule) -> HelperFuncs {
         dtparse: declare_helper(module, "jit_dtparse", 3, 1),
         call_builtin_tree: declare_helper(module, "jit_call_builtin_tree", 4, 1),
         call_dyn: declare_helper(module, "jit_call_dyn", 4, 1),
+        push_call_frame: declare_helper(module, "jit_push_call_frame", 2, 1),
+        pop_call_frame: declare_helper(module, "jit_pop_call_frame", 0, 1),
     }
 }
 
@@ -4283,9 +4299,46 @@ fn compile_function_body(
                         for i in 0..n_args {
                             call_args.push(builder.use_var(vars[a_idx_call + 1 + i]));
                         }
+
+                        // Push the callee's name onto the per-thread JIT
+                        // call stack so a runtime error surfaced from
+                        // inside the callee carries call_stack notes
+                        // matching VM/tree output. We only push for
+                        // non-inlined calls because inlined callees fuse
+                        // into the caller's IR — they do not constitute
+                        // a separate frame in the VM/tree model either
+                        // (the inliner mirrors what the tree walker
+                        // would have called the caller, not the
+                        // callee).
+                        let push_call_emitted = if let Some(name) = program.func_names.get(func_idx)
+                            && !name.is_empty()
+                        {
+                            let name_ptr = builder.ins().iconst(I64, name.as_ptr() as i64);
+                            let name_len = builder.ins().iconst(I64, name.len() as i64);
+                            let push_fref =
+                                get_func_ref(&mut builder, module, helpers.push_call_frame);
+                            builder.ins().call(push_fref, &[name_ptr, name_len]);
+                            true
+                        } else {
+                            false
+                        };
+
                         let call_inst = builder.ins().call(target_fref, &call_args);
                         call_result = builder.inst_results(call_inst)[0];
                         builder.def_var(vars[a_idx_call], call_result);
+
+                        // Pop on the success path. On the error path the
+                        // post-call check in `jit_cranelift::call` will
+                        // snapshot the stack before unwinding, so we do
+                        // not need to pop in that case. (The callee
+                        // returned normally here: any helper-set error
+                        // is the *caller's* responsibility to propagate
+                        // via its own RET sequence.)
+                        if push_call_emitted {
+                            let pop_fref =
+                                get_func_ref(&mut builder, module, helpers.pop_call_frame);
+                            builder.ins().call(pop_fref, &[]);
+                        }
                     } // end else (not inlined)
                 } else {
                     // Fallback: use jit_call helper for out-of-range func indices
@@ -4998,8 +5051,22 @@ fn check_force_panic_env() {
 /// cleared on drop even if Rust-side code panics later. Returns `Runtime`
 /// when a helper set the error cell, else `Ok` with the raw NanVal bits.
 /// Resets the JIT arena after each call (promoting the result if arena-tagged).
-pub fn call(func: &JitFunction, args: &[u64]) -> Result<u64, JitCallError> {
+pub fn call(
+    func: &JitFunction,
+    args: &[u64],
+    entry_name: Option<&str>,
+) -> Result<u64, JitCallError> {
     let _err_guard = JitRuntimeErrorGuard::new();
+
+    // Seed the per-thread JIT call stack with the entry function name so
+    // a surfaced `VmRuntimeError` carries `call_stack: ["<entry>"]` at
+    // minimum, matching what the VM produces via `make_runtime_error`.
+    // Nested OP_CALLs push/pop on top of this seed. The
+    // `JitRuntimeErrorGuard` cleared the stack on entry; on a clean
+    // return we drain it below so it doesn't leak into the next call.
+    if let Some(name) = entry_name {
+        crate::vm::JIT_CALL_STACK.with(|c| c.borrow_mut().push(name.to_owned()));
+    }
 
     let mut result = call_raw(func, args).ok_or(JitCallError::NotEligible)?;
 
@@ -5014,13 +5081,30 @@ pub fn call(func: &JitFunction, args: &[u64]) -> Result<u64, JitCallError> {
     }
     jit_arena_reset();
 
-    if let Some((err, span)) = jit_take_runtime_error() {
+    if let Some((err, span, call_stack)) = jit_take_runtime_error() {
+        // The call_stack was snapshotted at error-set time inside the
+        // JIT helper (see `jit_set_runtime_error_with_span`). That is
+        // the only place the deepest frame chain is observable: JIT
+        // helpers do not unwind on error — the post-call `pop_call_frame`
+        // emitted on each direct OP_CALL still fires on the native
+        // return path — so by the time we get here the live stack has
+        // already shrunk back to the entry seed. Tree/VM order frames
+        // outermost-to-innermost; `with_note` walks them in order, so
+        // `["main", "g"]` becomes `notes: ["called from 'main'",
+        // "called from 'g'"]`, bit-equal to VM/tree output.
         return Err(JitCallError::Runtime(VmRuntimeError {
             error: err,
             span,
-            call_stack: Vec::new(),
+            call_stack,
         }));
     }
+
+    // Clean return: drop the seeded entry name so a subsequent dispatch
+    // on the same thread starts from an empty stack. The guard's Drop
+    // would clear it on scope exit anyway, but draining here keeps the
+    // invariant tight against any future code added between this point
+    // and the guard's drop.
+    crate::vm::jit_clear_call_stack();
 
     Ok(result)
 }
@@ -5107,6 +5191,21 @@ pub fn compile_and_call(
     // inside `call` clears the runtime-error cell on drop, and the chunk +
     // program references are immutable. No shared mutable state survives an
     // unwind in a corrupted state.
+    // Identify the entry function's name so the surfaced call_stack
+    // matches what the VM and tree interpreters produce. Tree/VM include
+    // the entry frame in their walk (see `VM::make_runtime_error`), so
+    // the `Diagnostic` notes contain `"called from '<entry>'"`. We seed
+    // the JIT's per-thread call stack with the same entry name; the
+    // push/pop helpers maintain depth from there. Falls back to the
+    // empty entry-name on the (impossible-in-practice) case where the
+    // chunk pointer doesn't match any program slot — better to emit no
+    // entry note than to invent one.
+    let entry_name: Option<String> = program
+        .chunks
+        .iter()
+        .position(|c| std::ptr::eq(c, chunk))
+        .and_then(|idx| program.func_names.get(idx).cloned());
+
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         with_active_registry(program, || {
             #[cfg(debug_assertions)]
@@ -5118,7 +5217,7 @@ pub fn compile_and_call(
                 check_force_panic_env();
             }
             let func = compile(chunk, nan_consts, program).ok_or(JitCallError::NotEligible)?;
-            call(&func, args)
+            call(&func, args, entry_name.as_deref())
         })
     }));
 
@@ -5299,7 +5398,7 @@ mod tests {
         let nan_consts = &compiled.nan_constants[idx];
         if let Some(func) = compile(chunk, nan_consts, &compiled) {
             let args: Vec<u64> = (1..=9).map(|i| NanVal::number(i as f64).0).collect();
-            let result = call(&func, &args);
+            let result = call(&func, &args, None);
             assert!(matches!(result, Err(JitCallError::NotEligible)));
         }
     }
@@ -5988,7 +6087,7 @@ mod tests {
         let func = compile(chunk, nan_consts, &compiled);
         // If it compiled, try calling it (should call g() and return 42).
         if let Some(f) = func {
-            let result = call(&f, &[]);
+            let result = call(&f, &[], None);
             assert_eq!(result.ok(), Some(NanVal::number(42.0).0));
         }
     }
@@ -6118,7 +6217,7 @@ mod tests {
         crate::vm::with_active_registry(&compiled, || {
             if let Some(jit_func) = compile(chunk, nan_consts, &compiled) {
                 for i in 0..10_100u32 {
-                    let result = call(&jit_func, &nan_args).expect("JIT call failed");
+                    let result = call(&jit_func, &nan_args, None).expect("JIT call failed");
                     let val = crate::vm::NanVal(result).to_value();
                     assert_eq!(val, Value::Number(4950.0), "failed on iteration {}", i);
                 }
