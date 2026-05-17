@@ -213,6 +213,42 @@ fn t018_field_access_on_number() {
     assert_error("f x:n>n;x.field", "ILO-T018");
 }
 
+#[test]
+fn t018_safe_field_on_map_hints_mget() {
+    // `.?x` on a typed map errors with ILO-T018. The verifier should
+    // suggest `mget m "x"` (which returns Option) rather than leaving the
+    // agent stuck with a bare "field access on non-record type" message.
+    let code = "f>n;m=mset mmap \"x\" 1;mx=m.?x;mx??0";
+    let (ok, stderr) = run(code);
+    assert!(!ok, "expected failure for snippet {code:?}");
+    assert!(
+        stderr.contains("ILO-T018"),
+        "expected ILO-T018 in stderr, got:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("mget m \"x\""),
+        "expected mget hint in stderr, got:\n{stderr}"
+    );
+}
+
+#[test]
+fn t018_strict_field_on_map_hints_mget() {
+    // Same hint should fire for the strict `.field` form on a map, since the
+    // shape mistake is identical — agents reaching for record-syntax on a
+    // map deserve the same nudge whether they wrote `.x` or `.?x`.
+    let code = "f>n;m=mset mmap \"x\" 1;mx=m.x;mx";
+    let (ok, stderr) = run(code);
+    assert!(!ok, "expected failure for snippet {code:?}");
+    assert!(
+        stderr.contains("ILO-T018"),
+        "expected ILO-T018 in stderr, got:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("mget m \"x\""),
+        "expected mget hint in stderr, got:\n{stderr}"
+    );
+}
+
 // ---- ILO-T019: no such field on record ----
 
 #[test]
