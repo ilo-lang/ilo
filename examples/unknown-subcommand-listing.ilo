@@ -1,16 +1,21 @@
 -- Multi-fn file with `main` plus helpers. Pins that:
---   * `ilo file.ilo`          auto-runs `main`
---   * `ilo file.ilo dbl 21`   dispatches to the named function
---   * `ilo file.ilo trp 4`    dispatches to the named function
+--   * `ilo file.ilo`             auto-runs `main`
+--   * `ilo file.ilo dbl 21`      dispatches to the named function
+--   * `ilo file.ilo trp 4`       dispatches to the named function
+--   * `ilo file.ilo list-pair 3` dispatches to a hyphenated function
+--     (per SPEC ident shape `[a-z][a-z0-9]*(-[a-z0-9]+)*`)
 --
 -- The CLI-level guard for the unknown-subcommand case (e.g.
 -- `ilo file.ilo wibble x` should error with "no such function" and
 -- list available functions instead of silently routing to the first
 -- declared fn) is covered by tests/regression_cli_default.rs — the
--- examples harness only exercises happy-path dispatch.
+-- examples harness only exercises happy-path dispatch. The same file
+-- also pins the hyphenated-ident error case (`list-orders` typo) and
+-- the bug-2 main-routing case (`ilo file.ilo top200.csv`).
 
 dbl x:n>n;*x 2
 trp x:n>n;*x 3
+list-pair x:n>L n;[x,*x 2]
 main>n;+(dbl 7)(trp 4)
 
 -- run: main
@@ -19,3 +24,5 @@ main>n;+(dbl 7)(trp 4)
 -- out: 42
 -- run: trp 4
 -- out: 12
+-- run: list-pair 3
+-- out: [3, 6]
