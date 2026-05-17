@@ -2183,13 +2183,77 @@ impl Parser {
             Some(Token::PlusEq) => BinOp::Append,
             _ => unreachable!(),
         };
-        let left = self.parse_operand()?;
-        let right = self.parse_operand()?;
+        // Prefer `parse_call_arg` over `parse_operand` so a known-arity ident
+        // followed by enough operands expands into a call expression,
+        // consuming exactly its declared arity. Without this, `>len q 0`
+        // parses as `BinOp(>, Ref(len), Ref(q))` and orphans `0` — fatal in
+        // a `wh` header where the surrounding context immediately expects
+        // `{`. Mirrors the prefix-`??` fix in #310 (parse_expr_inner
+        // NilCoalesce arm) which made the same swap for the same reason.
+        //
+        // Guard: only opt in when the next token after the ident is itself
+        // operand-startable. A bare ident-then-terminator (e.g. `&e f{...}`
+        // where `f` is a local that shadows a user fn named `f`) must stay
+        // a bare `Ref` so the local resolves at runtime — otherwise
+        // `parse_call_arg` would expand the shadowed name into a zero-arg
+        // call and trigger ILO-T006 (regression caught by
+        // `vm_and_does_not_clobber_left_operand`'s FizzBuzz fixture).
+        let left = self.parse_prefix_binop_operand()?;
+        let right = self.parse_prefix_binop_operand()?;
         Ok(Expr::BinOp {
             op,
             left: Box::new(left),
             right: Box::new(right),
         })
+    }
+
+    /// Parse one operand of a prefix-binary operator (`>a b`, `&a b`, etc.).
+    ///
+    /// Dispatches to `parse_call_arg` when the ident at `self.pos` is a
+    /// known-arity function AND the next token can start another operand —
+    /// so `>len q 0` expands `len q` into a call and leaves `0` as the
+    /// right operand. Falls back to `parse_operand` otherwise, preserving
+    /// bare-ident semantics for locals that shadow user fn names
+    /// (`&e f{...}` where `f` is a local — must stay `Ref(f)`).
+    fn parse_prefix_binop_operand(&mut self) -> Result<Expr> {
+        if let Some(Token::Ident(name)) = self.peek()
+            && let Some(&arity) = self.fn_arity.get(name)
+            && arity > 0
+        {
+            // Mirror the suppression set in `parse_call_arg`'s expansion
+            // arm: record-construction, field access, zero-arg paren-call,
+            // and postfix-bang adjacency all turn the ident into something
+            // other than a plain call and must take the `parse_operand`
+            // path.
+            let next = self.token_at(self.pos + 1);
+            let is_record = matches!(next, Some(Token::Ident(_)))
+                && self.token_at(self.pos + 2) == Some(&Token::Colon);
+            let is_field = matches!(next, Some(Token::Dot) | Some(Token::DotQuestion));
+            let is_zero_arg_call =
+                next == Some(&Token::LParen) && self.token_at(self.pos + 2) == Some(&Token::RParen);
+            let is_unwrap = matches!(next, Some(&Token::Bang) | Some(&Token::BangBang)) && {
+                let ident_span = self.peek_span();
+                let bang_span = self
+                    .tokens
+                    .get(self.pos + 1)
+                    .map(|(_, s)| *s)
+                    .unwrap_or(Span::UNKNOWN);
+                ident_span.end > 0 && bang_span.start == ident_span.end
+            };
+            // Probe whether the ident is followed by another operand without
+            // consuming anything. `can_start_operand` is a pure peek.
+            let next_starts_operand = {
+                let saved = self.pos;
+                self.pos = saved + 1;
+                let result = self.can_start_operand();
+                self.pos = saved;
+                result
+            };
+            if !(is_record || is_field || is_zero_arg_call || is_unwrap) && next_starts_operand {
+                return self.parse_call_arg(false, None);
+            }
+        }
+        self.parse_operand()
     }
 
     /// Register a user function's arity and per-param fn-ref flags so that
