@@ -161,7 +161,10 @@ fn recognised_run_tree_flag_still_works() {
     let p = temp_main("known_run_tree");
     let path_str = p.to_str().unwrap();
     let (code, _, stderr) = run_args(&["--run-tree", path_str]);
-    assert_eq!(code, 0, "--run-tree should still parse and run; stderr={stderr}");
+    assert_eq!(
+        code, 0,
+        "--run-tree should still parse and run; stderr={stderr}"
+    );
 }
 
 #[test]
@@ -182,10 +185,7 @@ fn recognised_bench_flag_still_works() {
 fn unknown_flag_rejected_under_run_tree() {
     let p = temp_main("eng_tree");
     let path_str = p.to_str().unwrap();
-    assert_unrecognised(
-        run_args(&["--run-tree", path_str, "--foo"]),
-        "--foo",
-    );
+    assert_unrecognised(run_args(&["--run-tree", path_str, "--foo"]), "--foo");
 }
 
 #[test]
@@ -200,20 +200,14 @@ fn unknown_flag_rejected_under_run_vm() {
 fn unknown_flag_rejected_under_run_cranelift() {
     let p = temp_main("eng_cl");
     let path_str = p.to_str().unwrap();
-    assert_unrecognised(
-        run_args(&["--run-cranelift", path_str, "--foo"]),
-        "--foo",
-    );
+    assert_unrecognised(run_args(&["--run-cranelift", path_str, "--foo"]), "--foo");
 }
 
 #[test]
 fn unknown_flag_rejected_under_run_subcmd_run_vm() {
     let p = temp_main("subcmd_vm");
     let path_str = p.to_str().unwrap();
-    assert_unrecognised(
-        run_args(&["run", path_str, "--run-vm", "--foo"]),
-        "--foo",
-    );
+    assert_unrecognised(run_args(&["run", path_str, "--run-vm", "--foo"]), "--foo");
 }
 
 // ── (f) inline source path also guarded ──────────────────────────────────────

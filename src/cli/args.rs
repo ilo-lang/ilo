@@ -861,7 +861,11 @@ mod tests {
 
     #[test]
     fn unknown_long_flag_rejected() {
-        let args = vec!["main.ilo".to_string(), "--engine".to_string(), "tree".to_string()];
+        let args = vec![
+            "main.ilo".to_string(),
+            "--engine".to_string(),
+            "tree".to_string(),
+        ];
         let err = reject_unknown_flags(&args).unwrap_err();
         assert!(err.contains("--engine"), "msg={err}");
         assert!(err.contains("unrecognised flag"));
@@ -899,7 +903,11 @@ mod tests {
 
     #[test]
     fn negative_number_not_treated_as_flag() {
-        let args = vec!["main.ilo".to_string(), "-1".to_string(), "-3.14".to_string()];
+        let args = vec![
+            "main.ilo".to_string(),
+            "-1".to_string(),
+            "-3.14".to_string(),
+        ];
         assert!(reject_unknown_flags(&args).is_ok());
     }
 
