@@ -306,6 +306,33 @@ pub fn normalize_newlines_with_map(source: &str) -> (String, Vec<u32>) {
                 }
                 continue;
             }
+            // Skip blank lines (lines that are empty or whitespace-only)
+            // before deciding declaration-boundary vs continuation. Without
+            // this, a blank line between two indented statements inside a
+            // function body emits a literal `\n` that the parser interprets
+            // as a top-level declaration boundary, breaking parsing with a
+            // misleading ILO-P009 cascade. Scan ahead through any run of
+            // whitespace-only lines; the *next* non-blank line's indentation
+            // is what determines whether this `\n` boundary continues the
+            // current block or starts a new declaration.
+            loop {
+                let mut probe = iter.clone();
+                // Skip whitespace on the current candidate "next" line.
+                while matches!(probe.peek().map(|(_, ch)| *ch), Some(' ') | Some('\t')) {
+                    probe.next();
+                }
+                // If the line is empty (immediate `\n`), consume the
+                // whitespace + the trailing `\n` from the real iterator
+                // and continue scanning. Otherwise stop.
+                if probe.peek().map(|(_, ch)| *ch) == Some('\n') {
+                    while matches!(iter.peek().map(|(_, ch)| *ch), Some(' ') | Some('\t')) {
+                        iter.next();
+                    }
+                    iter.next(); // consume the trailing `\n`
+                } else {
+                    break;
+                }
+            }
             // Check if next line is indented (starts with space or tab)
             if matches!(iter.peek().map(|(_, ch)| *ch), Some(' ') | Some('\t')) {
                 // Peek past indent at the first real char on the next line
@@ -1960,6 +1987,121 @@ mod tests {
             tokens.iter().any(|(t, _)| matches!(t, Token::OptType)),
             "expected OptType in tokens: {:?}",
             tokens
+        );
+    }
+
+    // --- blank-line continuation tests (nlp-engineer rerun7 P0) ---
+    //
+    // A blank line between indented statements inside a function body must
+    // be treated as a continuation, not a declaration boundary. Without the
+    // fix, a literal `\n` is emitted mid-body and the parser interprets the
+    // next indented statement as a new top-level declaration, producing a
+    // misleading ILO-P009 / T002 / T004 cascade.
+
+    #[test]
+    fn normalize_blank_line_between_indented_statements_is_continuation() {
+        let src = "main>n;\n  x=42;\n\n  prnt x;\n  0\n";
+        let got = normalize_newlines(src);
+        // Must NOT contain a `\n` mid-body — that would be a declaration
+        // boundary. All statements collapse to a single `main>n;...` line.
+        assert!(
+            !got.trim_end_matches('\n').contains('\n'),
+            "blank line should not produce mid-body newline: {:?}",
+            got
+        );
+        assert_eq!(got, "main>n;x=42;prnt x;0\n");
+    }
+
+    #[test]
+    fn normalize_multiple_consecutive_blank_lines_collapse() {
+        let src = "main>n;\n  x=42;\n\n\n\n  prnt x;\n  0\n";
+        let got = normalize_newlines(src);
+        assert_eq!(got, "main>n;x=42;prnt x;0\n");
+    }
+
+    #[test]
+    fn normalize_blank_line_with_trailing_whitespace_is_continuation() {
+        // Blank lines that contain only spaces/tabs must also be treated
+        // as continuation, not declaration boundary.
+        let src = "main>n;\n  x=42;\n   \n\t\n  prnt x;\n  0\n";
+        let got = normalize_newlines(src);
+        assert_eq!(got, "main>n;x=42;prnt x;0\n");
+    }
+
+    #[test]
+    fn normalize_blank_line_before_non_indented_keeps_decl_boundary() {
+        // Blank line followed by a NON-indented line is still a declaration
+        // boundary (the blank lines just separate top-level declarations).
+        let src = "f>n;1\n\ng>n;2\n";
+        let got = normalize_newlines(src);
+        assert!(
+            got.contains('\n'),
+            "blank line before top-level decl must keep newline: {:?}",
+            got
+        );
+        // The two declarations must end up separated by a single `\n`.
+        assert_eq!(got, "f>n;1\ng>n;2\n");
+    }
+
+    #[test]
+    fn normalize_blank_lines_at_start_of_function_body() {
+        // Blank line *immediately* after the function header, before the
+        // first indented statement, must be tolerated.
+        let src = "main>n;\n\n  x=42;\n  prnt x;\n  0\n";
+        let got = normalize_newlines(src);
+        assert_eq!(got, "main>n;x=42;prnt x;0\n");
+    }
+
+    #[test]
+    fn normalize_trailing_blank_lines_at_eof() {
+        // Trailing blank lines must not crash and must not corrupt the
+        // final declaration boundary.
+        let src = "main>n;\n  x=42;\n  0\n\n\n";
+        let got = normalize_newlines(src);
+        assert!(got.starts_with("main>n;x=42;0"));
+    }
+
+    #[test]
+    fn normalize_prnt_fmt_then_blank_line_parses() {
+        // The exact nlp-engineer rerun7 repro shape: `prnt fmt "tmpl" arg;`
+        // followed by a blank line and another statement. The variadic
+        // arg-list must NOT swallow tokens across the blank line.
+        let src = "main>n;\n  x=42;\n  prnt fmt \"x={}\" x;\n\n  y=99;\n  prnt y;\n  0\n";
+        let got = normalize_newlines(src);
+        assert!(
+            !got.trim_end_matches('\n').contains('\n'),
+            "prnt fmt + blank line + next stmt must collapse: {:?}",
+            got
+        );
+        // End-to-end parse + lex sanity check on the same shape.
+        let tokens = lex(src).unwrap();
+        assert!(!tokens.is_empty(), "lex must produce tokens");
+    }
+
+    #[test]
+    fn normalize_blank_line_offset_map_preserves_span_fidelity() {
+        // Span integrity: an error on a line that comes *after* a blank
+        // line must remap to its original-source byte offset, not to
+        // wherever the normalized rewrite landed. Without a faithful map,
+        // ILO-P009 (and any other diagnostic emitted on post-blank lines)
+        // would anchor at the wrong column.
+        let src = "main>n;\n  x=42;\n\n  y=99;\n  prnt y;\n  0\n";
+        let (normalized, map) = normalize_newlines_with_map(src);
+        // The sentinel +1 byte at the end of map covers one-past-end.
+        assert_eq!(map.len(), normalized.len() + 1);
+        // Every map entry must point inside the original source.
+        let src_len = src.len() as u32;
+        for &off in &map {
+            assert!(off <= src_len, "map offset {} > src.len() {}", off, src_len);
+        }
+        // The first `y` in the normalized output must remap to the `y` on
+        // line 4 of the original source (after the blank line on line 3).
+        let y_pos_normalized = normalized.find("y=99").expect("y=99 in normalized");
+        let y_pos_original = map[y_pos_normalized] as usize;
+        assert_eq!(
+            &src[y_pos_original..y_pos_original + 4],
+            "y=99",
+            "span remap landed at wrong original byte"
         );
     }
 }
