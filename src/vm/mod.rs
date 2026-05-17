@@ -4489,17 +4489,6 @@ pub(crate) fn jit_set_runtime_error_with_span(err: VmError, span_bits: u64) {
     });
 }
 
-/// Backwards-compatible wrapper for helpers that do not (yet) thread a
-/// source span. Passes `0` (decoded as `None`) so the surfaced
-/// `VmRuntimeError` carries `span: None`, matching pre-span-plumbing
-/// behaviour. New helpers should prefer `jit_set_runtime_error_with_span`
-/// and have the cranelift call site pack and pass the span bits.
-#[cfg(feature = "cranelift")]
-#[inline]
-pub(crate) fn jit_set_runtime_error(err: VmError) {
-    jit_set_runtime_error_with_span(err, 0);
-}
-
 /// Pop any pending JIT runtime error. Called by the JIT entry point after
 /// the compiled function returns. Returns the `(VmError, Option<Span>)`
 /// pair so the entry point can attach the span to the surfaced
@@ -10974,7 +10963,7 @@ pub(crate) extern "C" fn jit_iserr(v: u64) -> u64 {
 
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn jit_unwrap(v: u64) -> u64 {
+pub(crate) extern "C" fn jit_unwrap(v: u64, span_bits: u64) -> u64 {
     let nv = NanVal(v);
     // Defensive: OP_UNWRAP is only emitted by the compiler immediately after
     // a passed OP_ISOK / OP_ISERR branch, which guarantees the value is a
@@ -10983,7 +10972,7 @@ pub(crate) extern "C" fn jit_unwrap(v: u64) -> u64 {
     // matches the tree interpreter's defensive `vm_err!` arm at the
     // equivalent OP_UNWRAP site and protects against future codegen bugs.
     if !nv.is_heap() {
-        jit_set_runtime_error(VmError::Type("unwrap on non-Ok/Err"));
+        jit_set_runtime_error_with_span(VmError::Type("unwrap on non-Ok/Err"), span_bits);
         return TAG_NIL;
     }
     unsafe {
@@ -10993,7 +10982,7 @@ pub(crate) extern "C" fn jit_unwrap(v: u64) -> u64 {
                 inner.0
             }
             _ => {
-                jit_set_runtime_error(VmError::Type("unwrap on non-Ok/Err"));
+                jit_set_runtime_error_with_span(VmError::Type("unwrap on non-Ok/Err"), span_bits);
                 TAG_NIL
             }
         }
@@ -11008,12 +10997,13 @@ pub(crate) extern "C" fn jit_unwrap(v: u64) -> u64 {
 /// the runtime error to the caller, matching the contract established by #254.
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn jit_panic_unwrap(v: u64) -> u64 {
+pub(crate) extern "C" fn jit_panic_unwrap(v: u64, span_bits: u64) -> u64 {
     let nv = NanVal(v);
     if nv.0 == TAG_NIL {
-        jit_set_runtime_error(VmError::Runtime(
-            "panic-unwrap: expected value, got nil".to_string(),
-        ));
+        jit_set_runtime_error_with_span(
+            VmError::Runtime("panic-unwrap: expected value, got nil".to_string()),
+            span_bits,
+        );
         return TAG_NIL;
     }
     if nv.is_heap() {
@@ -11025,19 +11015,24 @@ pub(crate) extern "C" fn jit_panic_unwrap(v: u64) -> u64 {
         };
         match inner_val {
             Some(val) => {
-                jit_set_runtime_error(VmError::Runtime(format!("panic-unwrap: {val}")));
+                jit_set_runtime_error_with_span(
+                    VmError::Runtime(format!("panic-unwrap: {val}")),
+                    span_bits,
+                );
             }
             None => {
-                jit_set_runtime_error(VmError::Runtime(
-                    "panic-unwrap: unexpected value".to_string(),
-                ));
+                jit_set_runtime_error_with_span(
+                    VmError::Runtime("panic-unwrap: unexpected value".to_string()),
+                    span_bits,
+                );
             }
         }
         return TAG_NIL;
     }
-    jit_set_runtime_error(VmError::Runtime(
-        "panic-unwrap: unexpected value".to_string(),
-    ));
+    jit_set_runtime_error_with_span(
+        VmError::Runtime("panic-unwrap: unexpected value".to_string()),
+        span_bits,
+    );
     TAG_NIL
 }
 
@@ -12095,17 +12090,20 @@ pub(crate) extern "C" fn jit_at(a: u64, b: u64, span_bits: u64) -> u64 {
 
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn jit_lst(list: u64, idx: u64, val: u64) -> u64 {
+pub(crate) extern "C" fn jit_lst(list: u64, idx: u64, val: u64, span_bits: u64) -> u64 {
     let v = NanVal(list);
     let i = NanVal(idx);
     let new_val = NanVal(val);
     if !i.is_number() {
-        jit_set_runtime_error(VmError::Type("lst: index must be a number"));
+        jit_set_runtime_error_with_span(VmError::Type("lst: index must be a number"), span_bits);
         return TAG_NIL;
     }
     let n = i.as_number();
     if n < 0.0 || n.fract() != 0.0 {
-        jit_set_runtime_error(VmError::Type("lst: index must be a non-negative integer"));
+        jit_set_runtime_error_with_span(
+            VmError::Type("lst: index must be a non-negative integer"),
+            span_bits,
+        );
         return TAG_NIL;
     }
     let pos = n as usize;
@@ -12113,7 +12111,7 @@ pub(crate) extern "C" fn jit_lst(list: u64, idx: u64, val: u64) -> u64 {
         && let HeapObj::List(items) = unsafe { v.as_heap_ref() }
     {
         if pos >= items.len() {
-            jit_set_runtime_error(VmError::Type("lst: index out of range"));
+            jit_set_runtime_error_with_span(VmError::Type("lst: index out of range"), span_bits);
             return TAG_NIL;
         }
         let mut new_items: Vec<NanVal> = Vec::with_capacity(items.len());
@@ -12128,7 +12126,7 @@ pub(crate) extern "C" fn jit_lst(list: u64, idx: u64, val: u64) -> u64 {
         }
         return NanVal::heap_list(new_items).0;
     }
-    jit_set_runtime_error(VmError::Type("lst requires a list"));
+    jit_set_runtime_error_with_span(VmError::Type("lst requires a list"), span_bits);
     TAG_NIL
 }
 
@@ -13291,14 +13289,14 @@ pub(crate) extern "C" fn jit_rsrt(a: u64, span_bits: u64) -> u64 {
 
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn jit_slc(a: u64, start: u64, end: u64) -> u64 {
+pub(crate) extern "C" fn jit_slc(a: u64, start: u64, end: u64, span_bits: u64) -> u64 {
     // Bounds accept negative integers Python-style; kept in lockstep with the
     // tree-walker and OP_SLC by delegating to `resolve_slice_bound`.
     let vb = NanVal(a);
     let vc = NanVal(start);
     let vd = NanVal(end);
     if !vc.is_number() || !vd.is_number() {
-        jit_set_runtime_error(VmError::Type("slc: indices must be numbers"));
+        jit_set_runtime_error_with_span(VmError::Type("slc: indices must be numbers"), span_bits);
         return TAG_NIL;
     }
     let s_f = vc.as_number();
@@ -13334,7 +13332,7 @@ pub(crate) extern "C" fn jit_slc(a: u64, start: u64, end: u64) -> u64 {
         }
         return NanVal::heap_list(sliced).0;
     }
-    jit_set_runtime_error(VmError::Type("slc requires a list or text"));
+    jit_set_runtime_error_with_span(VmError::Type("slc requires a list or text"), span_bits);
     TAG_NIL
 }
 
@@ -13356,7 +13354,12 @@ pub(crate) extern "C" fn jit_slc(a: u64, start: u64, end: u64) -> u64 {
 /// immediately before the call instruction.
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn jit_call_builtin_tree(tag: u64, argc: u64, regs_ptr: u64) -> u64 {
+pub(crate) extern "C" fn jit_call_builtin_tree(
+    tag: u64,
+    argc: u64,
+    regs_ptr: u64,
+    span_bits: u64,
+) -> u64 {
     let tag = tag as u8;
     let argc = argc as usize;
     let builtin = match crate::builtins::Builtin::from_tag(tag) {
@@ -13411,7 +13414,7 @@ pub(crate) extern "C" fn jit_call_builtin_tree(tag: u64, argc: u64, regs_ptr: u6
             //   runtime errors for HOFs" (filed during #306 srt-cranelift-
             //   nil P0).
             if tree_bridge_propagates_error(builtin) {
-                jit_set_runtime_error(VmError::Runtime(e.message));
+                jit_set_runtime_error_with_span(VmError::Runtime(e.message), span_bits);
             }
             TAG_NIL
         }
@@ -13477,7 +13480,12 @@ pub(crate) fn tree_bridge_propagates_error(b: crate::builtins::Builtin) -> bool 
 /// stack slot immediately before the call, mirroring `jit_call_builtin_tree`.
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn jit_call_dyn(callee_bits: u64, argc: u64, regs_ptr: u64) -> u64 {
+pub(crate) extern "C" fn jit_call_dyn(
+    callee_bits: u64,
+    argc: u64,
+    regs_ptr: u64,
+    span_bits: u64,
+) -> u64 {
     let mut callee = NanVal(callee_bits);
     // Text callee — resolve through the active program's func_names. Mirrors
     // the OP_CALL_DYN dispatcher path so a function name held as a string
@@ -13552,7 +13560,7 @@ pub(crate) extern "C" fn jit_call_dyn(callee_bits: u64, argc: u64, regs_ptr: u64
                     // Required for HOFs whose native lowering invokes the
                     // callback via OP_CALL_DYN (e.g. `flatmap`'s outer loop).
                     if tree_bridge_propagates_error(builtin) {
-                        jit_set_runtime_error(VmError::Runtime(e.message));
+                        jit_set_runtime_error_with_span(VmError::Runtime(e.message), span_bits);
                     }
                     TAG_NIL
                 }
@@ -13593,7 +13601,16 @@ pub(crate) extern "C" fn jit_call_dyn(callee_bits: u64, argc: u64, regs_ptr: u64
                     // sentinel, diverging Cranelift from the other two
                     // engines. `VmRuntimeError.error` unwraps to the same
                     // `VmError` that the outer JIT entry will re-render.
-                    jit_set_runtime_error(e.error);
+                    // Prefer the inner sub-VM's span (more precise — points
+                    // at the failing statement inside the callee) and fall
+                    // back to the OP_CALL_DYN call-site span when the inner
+                    // path didn't record one.
+                    let inner_span_bits = e
+                        .span
+                        .map(|s| jit_cranelift::pack_span_bits(s) as u64)
+                        .filter(|b| *b != 0)
+                        .unwrap_or(span_bits);
+                    jit_set_runtime_error_with_span(e.error, inner_span_bits);
                     TAG_NIL
                 }
             }
@@ -13847,11 +13864,11 @@ pub(crate) extern "C" fn jit_listappend_inplace(a: u64, b: u64) -> u64 {
 
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn jit_index(a: u64, idx: u64) -> u64 {
+pub(crate) extern "C" fn jit_index(a: u64, idx: u64, span_bits: u64) -> u64 {
     let obj = NanVal(a);
     let i = idx as usize;
     if !obj.is_heap() {
-        jit_set_runtime_error(VmError::Type("index access on non-list"));
+        jit_set_runtime_error_with_span(VmError::Type("index access on non-list"), span_bits);
         return TAG_NIL;
     }
     match unsafe { obj.as_heap_ref() } {
@@ -13860,12 +13877,15 @@ pub(crate) extern "C" fn jit_index(a: u64, idx: u64) -> u64 {
                 items[i].clone_rc();
                 items[i].0
             } else {
-                jit_set_runtime_error(VmError::Type("list index out of bounds"));
+                jit_set_runtime_error_with_span(
+                    VmError::Type("list index out of bounds"),
+                    span_bits,
+                );
                 TAG_NIL
             }
         }
         _ => {
-            jit_set_runtime_error(VmError::Type("index access on non-list"));
+            jit_set_runtime_error_with_span(VmError::Type("index access on non-list"), span_bits);
             TAG_NIL
         }
     }
@@ -13964,7 +13984,7 @@ pub extern "C" fn jit_recfld_name(rec: u64, field_name_ptr: u64, registry_ptr: u
 /// `jit_recfld`. See PR #248 for the safe/strict split.
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn jit_recfld_strict(rec: u64, field_idx: u64) -> u64 {
+pub(crate) extern "C" fn jit_recfld_strict(rec: u64, field_idx: u64, span_bits: u64) -> u64 {
     let rv = NanVal(rec);
     let idx = field_idx as usize;
 
@@ -13978,14 +13998,17 @@ pub(crate) extern "C" fn jit_recfld_strict(rec: u64, field_idx: u64) -> u64 {
                 return v.0;
             }
         }
-        jit_set_runtime_error(VmError::FieldNotFound {
-            field: format!("index {}", idx),
-        });
+        jit_set_runtime_error_with_span(
+            VmError::FieldNotFound {
+                field: format!("index {}", idx),
+            },
+            span_bits,
+        );
         return TAG_NIL;
     }
 
     if !rv.is_heap() {
-        jit_set_runtime_error(VmError::Type("field access on non-record"));
+        jit_set_runtime_error_with_span(VmError::Type("field access on non-record"), span_bits);
         return TAG_NIL;
     }
     match unsafe { rv.as_heap_ref() } {
@@ -13996,14 +14019,17 @@ pub(crate) extern "C" fn jit_recfld_strict(rec: u64, field_idx: u64) -> u64 {
                 val.0
             } else {
                 let name = type_info.fields.get(idx).map(|s| s.as_str()).unwrap_or("?");
-                jit_set_runtime_error(VmError::FieldNotFound {
-                    field: name.to_string(),
-                });
+                jit_set_runtime_error_with_span(
+                    VmError::FieldNotFound {
+                        field: name.to_string(),
+                    },
+                    span_bits,
+                );
                 TAG_NIL
             }
         }
         _ => {
-            jit_set_runtime_error(VmError::Type("field access on non-record"));
+            jit_set_runtime_error_with_span(VmError::Type("field access on non-record"), span_bits);
             TAG_NIL
         }
     }
@@ -14015,7 +14041,12 @@ pub(crate) extern "C" fn jit_recfld_strict(rec: u64, field_idx: u64) -> u64 {
 /// permissive `jit_recfld_name`.
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
-pub extern "C" fn jit_recfld_name_strict(rec: u64, field_name_ptr: u64, registry_ptr: u64) -> u64 {
+pub extern "C" fn jit_recfld_name_strict(
+    rec: u64,
+    field_name_ptr: u64,
+    registry_ptr: u64,
+    span_bits: u64,
+) -> u64 {
     // SAFETY: field_name_ptr is a null-terminated C string created by the JIT
     // compiler (leaked CString) or AOT compiler (data section). It remains
     // valid for the call duration.
@@ -14041,14 +14072,17 @@ pub extern "C" fn jit_recfld_name_strict(rec: u64, field_name_ptr: u64, registry
                 return v.0;
             }
         }
-        jit_set_runtime_error(VmError::FieldNotFound {
-            field: field_name.to_string(),
-        });
+        jit_set_runtime_error_with_span(
+            VmError::FieldNotFound {
+                field: field_name.to_string(),
+            },
+            span_bits,
+        );
         return TAG_NIL;
     }
 
     if !rv.is_heap() {
-        jit_set_runtime_error(VmError::Type("field access on non-record"));
+        jit_set_runtime_error_with_span(VmError::Type("field access on non-record"), span_bits);
         return TAG_NIL;
     }
     // SAFETY: is_heap() confirmed the NanVal is a heap pointer.
@@ -14061,13 +14095,16 @@ pub extern "C" fn jit_recfld_name_strict(rec: u64, field_name_ptr: u64, registry
                 val.clone_rc();
                 return val.0;
             }
-            jit_set_runtime_error(VmError::FieldNotFound {
-                field: field_name.to_string(),
-            });
+            jit_set_runtime_error_with_span(
+                VmError::FieldNotFound {
+                    field: field_name.to_string(),
+                },
+                span_bits,
+            );
             TAG_NIL
         }
         _ => {
-            jit_set_runtime_error(VmError::Type("field access on non-record"));
+            jit_set_runtime_error_with_span(VmError::Type("field access on non-record"), span_bits);
             TAG_NIL
         }
     }
@@ -14425,15 +14462,15 @@ pub(crate) extern "C" fn jit_listnew(regs: *const u64, n: u64) -> u64 {
 /// to match tree/VM behaviour.
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn jit_listget(list: u64, idx: u64) -> u64 {
+pub(crate) extern "C" fn jit_listget(list: u64, idx: u64, span_bits: u64) -> u64 {
     let lv = NanVal(list);
     let iv = NanVal(idx);
     if !lv.is_heap() {
-        jit_set_runtime_error(VmError::Type("foreach requires a list"));
+        jit_set_runtime_error_with_span(VmError::Type("foreach requires a list"), span_bits);
         return TAG_NIL;
     }
     if !iv.is_number() {
-        jit_set_runtime_error(VmError::Type("list index must be a number"));
+        jit_set_runtime_error_with_span(VmError::Type("list index must be a number"), span_bits);
         return TAG_NIL;
     }
     let i = iv.as_number() as usize;
@@ -14448,7 +14485,7 @@ pub(crate) extern "C" fn jit_listget(list: u64, idx: u64) -> u64 {
             }
         }
         _ => {
-            jit_set_runtime_error(VmError::Type("foreach requires a list"));
+            jit_set_runtime_error_with_span(VmError::Type("foreach requires a list"), span_bits);
             TAG_NIL
         }
     }
@@ -14456,11 +14493,11 @@ pub(crate) extern "C" fn jit_listget(list: u64, idx: u64) -> u64 {
 
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn jit_jpth(a: u64, b: u64) -> u64 {
+pub(crate) extern "C" fn jit_jpth(a: u64, b: u64, span_bits: u64) -> u64 {
     let av = NanVal(a);
     let bv = NanVal(b);
     if !av.is_string() || !bv.is_string() {
-        jit_set_runtime_error(VmError::Type("jpth requires two strings"));
+        jit_set_runtime_error_with_span(VmError::Type("jpth requires two strings"), span_bits);
         return TAG_NIL;
     }
     let json_str = unsafe {
@@ -14736,20 +14773,23 @@ pub(crate) extern "C" fn jit_mapnew() -> u64 {
 
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn jit_mget(map: u64, key: u64) -> u64 {
+pub(crate) extern "C" fn jit_mget(map: u64, key: u64, span_bits: u64) -> u64 {
     let map_v = NanVal(map);
     let key_v = NanVal(key);
     // Wrong-type paths must error to match the tree/VM `OP_MGET`
     // semantics. Missing-key returns `TAG_NIL` — that is the correct
     // `O _` (Optional) shape, not a failure.
     if (map_v.0 & TAG_MASK) != TAG_MAP {
-        jit_set_runtime_error(VmError::Type("mget: first arg must be a map"));
+        jit_set_runtime_error_with_span(VmError::Type("mget: first arg must be a map"), span_bits);
         return TAG_NIL;
     }
     let mk = match nanval_to_map_key(key_v) {
         Some(k) => k,
         None => {
-            jit_set_runtime_error(VmError::Type("mget: key must be text or number"));
+            jit_set_runtime_error_with_span(
+                VmError::Type("mget: key must be text or number"),
+                span_bits,
+            );
             return TAG_NIL;
         }
     };
@@ -21335,7 +21375,7 @@ mod tests {
         #[test]
         fn jit_unwrap_ok_value() {
             let ok_val = NanVal::from_value(&Value::Ok(Box::new(Value::Number(3.14))));
-            let r = jit_unwrap(ok_val.0);
+            let r = jit_unwrap(ok_val.0, 0);
             assert!(is_num(r));
             assert!((as_num(r) - 3.14).abs() < 1e-9);
         }
@@ -21735,7 +21775,7 @@ mod tests {
 
         #[test]
         fn jit_slc_string_slice() {
-            let r = jit_slc(str_val("hello"), num(1.0), num(3.0));
+            let r = jit_slc(str_val("hello"), num(1.0), num(3.0), 0);
             let rv = NanVal(r);
             assert!(rv.is_string());
             let HeapObj::Str(s) = (unsafe { rv.as_heap_ref() }) else {
@@ -21754,20 +21794,20 @@ mod tests {
                 NanVal::number(3.0),
             ];
             let list = NanVal::heap_list(items);
-            let r = jit_slc(list.0, num(1.0), num(3.0));
+            let r = jit_slc(list.0, num(1.0), num(3.0), 0);
             let rv = NanVal(r);
             assert!(rv.is_heap());
         }
 
         #[test]
         fn jit_slc_non_number_indices_returns_nil() {
-            let r = jit_slc(str_val("hello"), TAG_NIL, num(3.0));
+            let r = jit_slc(str_val("hello"), TAG_NIL, num(3.0), 0);
             assert!(is_nil(r));
         }
 
         #[test]
         fn jit_slc_non_string_non_list_returns_nil() {
-            let r = jit_slc(TAG_NIL, num(0.0), num(2.0));
+            let r = jit_slc(TAG_NIL, num(0.0), num(2.0), 0);
             assert!(is_nil(r));
         }
 
@@ -21927,7 +21967,7 @@ mod tests {
             ];
             let list = NanVal::heap_list(items);
             // jit_index takes a raw usize cast as u64, not a NaN-boxed number
-            let r = jit_index(list.0, 1u64);
+            let r = jit_index(list.0, 1u64, 0);
             assert!(is_num(r));
             assert_eq!(as_num(r), 20.0);
         }
@@ -21936,13 +21976,13 @@ mod tests {
         fn jit_index_out_of_bounds_returns_nil() {
             let items = vec![NanVal::number(1.0)];
             let list = NanVal::heap_list(items);
-            let r = jit_index(list.0, 5u64);
+            let r = jit_index(list.0, 5u64, 0);
             assert!(is_nil(r));
         }
 
         #[test]
         fn jit_index_non_list_returns_nil() {
-            let r = jit_index(TAG_NIL, num(0.0));
+            let r = jit_index(TAG_NIL, num(0.0), 0);
             assert!(is_nil(r));
         }
 
@@ -22115,7 +22155,7 @@ mod tests {
 
         #[test]
         fn jit_jpth_object_key() {
-            let r = jit_jpth(str_val(r#"{"x":"hello"}"#), str_val("x"));
+            let r = jit_jpth(str_val(r#"{"x":"hello"}"#), str_val("x"), 0);
             let rv = NanVal(r);
             assert!(rv.is_heap());
             let HeapObj::OkVal(inner) = (unsafe { rv.as_heap_ref() }) else {
@@ -22126,7 +22166,7 @@ mod tests {
 
         #[test]
         fn jit_jpth_missing_key() {
-            let r = jit_jpth(str_val(r#"{"a":1}"#), str_val("b"));
+            let r = jit_jpth(str_val(r#"{"a":1}"#), str_val("b"), 0);
             let rv = NanVal(r);
             let HeapObj::ErrVal(_) = (unsafe { rv.as_heap_ref() }) else {
                 panic!("expected ErrVal")
@@ -22135,7 +22175,7 @@ mod tests {
 
         #[test]
         fn jit_jpth_invalid_json() {
-            let r = jit_jpth(str_val("not json"), str_val("x"));
+            let r = jit_jpth(str_val("not json"), str_val("x"), 0);
             let rv = NanVal(r);
             let HeapObj::ErrVal(_) = (unsafe { rv.as_heap_ref() }) else {
                 panic!("expected ErrVal")
@@ -22144,7 +22184,7 @@ mod tests {
 
         #[test]
         fn jit_jpth_non_string_args_returns_nil() {
-            let r = jit_jpth(TAG_NIL, str_val("x"));
+            let r = jit_jpth(TAG_NIL, str_val("x"), 0);
             assert!(is_nil(r));
         }
 
@@ -22163,7 +22203,7 @@ mod tests {
         fn jit_listget_in_bounds() {
             let items = vec![NanVal::number(10.0), NanVal::number(20.0)];
             let list = NanVal::heap_list(items);
-            let r = jit_listget(list.0, num(0.0));
+            let r = jit_listget(list.0, num(0.0), 0);
             let rv = NanVal(r);
             let HeapObj::OkVal(inner) = (unsafe { rv.as_heap_ref() }) else {
                 panic!("expected OkVal")
@@ -22175,13 +22215,13 @@ mod tests {
         fn jit_listget_out_of_bounds_returns_nil() {
             let items = vec![NanVal::number(1.0)];
             let list = NanVal::heap_list(items);
-            let r = jit_listget(list.0, num(10.0));
+            let r = jit_listget(list.0, num(10.0), 0);
             assert!(is_nil(r));
         }
 
         #[test]
         fn jit_listget_non_list_returns_nil() {
-            let r = jit_listget(str_val("hello"), num(0.0));
+            let r = jit_listget(str_val("hello"), num(0.0), 0);
             assert!(is_nil(r));
         }
 
@@ -22189,7 +22229,7 @@ mod tests {
         fn jit_listget_non_number_idx_returns_nil() {
             let items = vec![NanVal::number(1.0)];
             let list = NanVal::heap_list(items);
-            let r = jit_listget(list.0, TAG_NIL);
+            let r = jit_listget(list.0, TAG_NIL, 0);
             assert!(is_nil(r));
         }
 
@@ -30457,6 +30497,7 @@ f>n;r=mk 10 20;+r.x r.y";
             list.0,
             NanVal::number(1.0).0,
             NanVal::number(99.0).0,
+            0,
         ));
         assert!(v.is_heap());
         let items = unsafe {
@@ -30485,7 +30526,7 @@ f>n;r=mk 10 20;+r.x r.y";
     fn jit_lst_out_of_range_errors() {
         let _g = JitRuntimeErrorGuard::new();
         let list = NanVal::heap_list(vec![NanVal::number(1.0), NanVal::number(2.0)]);
-        let bits = jit_lst(list.0, NanVal::number(5.0).0, NanVal::number(99.0).0);
+        let bits = jit_lst(list.0, NanVal::number(5.0).0, NanVal::number(99.0).0, 0);
         assert_eq!(bits, TAG_NIL);
         let err = jit_take_runtime_error().expect("expected runtime error");
         assert!(format!("{err:?}").contains("out of range"), "got: {err:?}");
@@ -30496,7 +30537,7 @@ f>n;r=mk 10 20;+r.x r.y";
     fn jit_lst_negative_index_errors() {
         let _g = JitRuntimeErrorGuard::new();
         let list = NanVal::heap_list(vec![NanVal::number(1.0), NanVal::number(2.0)]);
-        let bits = jit_lst(list.0, NanVal::number(-1.0).0, NanVal::number(99.0).0);
+        let bits = jit_lst(list.0, NanVal::number(-1.0).0, NanVal::number(99.0).0, 0);
         assert_eq!(bits, TAG_NIL);
         let err = jit_take_runtime_error().expect("expected runtime error");
         assert!(format!("{err:?}").contains("non-negative"), "got: {err:?}");
@@ -30507,7 +30548,7 @@ f>n;r=mk 10 20;+r.x r.y";
     fn jit_lst_fractional_index_errors() {
         let _g = JitRuntimeErrorGuard::new();
         let list = NanVal::heap_list(vec![NanVal::number(1.0), NanVal::number(2.0)]);
-        let bits = jit_lst(list.0, NanVal::number(0.5).0, NanVal::number(99.0).0);
+        let bits = jit_lst(list.0, NanVal::number(0.5).0, NanVal::number(99.0).0, 0);
         assert_eq!(bits, TAG_NIL);
         let err = jit_take_runtime_error().expect("expected runtime error");
         assert!(format!("{err:?}").contains("integer"), "got: {err:?}");
@@ -30518,7 +30559,7 @@ f>n;r=mk 10 20;+r.x r.y";
     fn jit_lst_non_number_index_errors() {
         let _g = JitRuntimeErrorGuard::new();
         let list = NanVal::heap_list(vec![NanVal::number(1.0)]);
-        let bits = jit_lst(list.0, NanVal::boolean(true).0, NanVal::number(99.0).0);
+        let bits = jit_lst(list.0, NanVal::boolean(true).0, NanVal::number(99.0).0, 0);
         assert_eq!(bits, TAG_NIL);
         let err = jit_take_runtime_error().expect("expected runtime error");
         assert!(format!("{err:?}").contains("number"), "got: {err:?}");
@@ -30529,7 +30570,7 @@ f>n;r=mk 10 20;+r.x r.y";
     fn jit_lst_non_list_errors() {
         let _g = JitRuntimeErrorGuard::new();
         let s = NanVal::heap_string("abc".to_string());
-        let bits = jit_lst(s.0, NanVal::number(0.0).0, NanVal::number(99.0).0);
+        let bits = jit_lst(s.0, NanVal::number(0.0).0, NanVal::number(99.0).0, 0);
         assert_eq!(bits, TAG_NIL);
         let err = jit_take_runtime_error().expect("expected runtime error");
         assert!(format!("{err:?}").contains("list"), "got: {err:?}");
