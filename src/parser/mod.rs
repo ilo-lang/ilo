@@ -2262,6 +2262,27 @@ impl Parser {
                 ),
             ));
         }
+        // Detect a malformed prefix chain that would otherwise unwind into a
+        // bare ILO-P010 "expected expression, got EOF" at col 1. A run of K
+        // prefix-binop tokens needs K+1 leaf operands; if the input doesn't
+        // supply them, surface a clear arity-or-bind-first hint pointing at
+        // the chain start. (qa-tester P1 rerun: `+++a b c` exited silently.)
+        //
+        // We only emit when `scan_prefix_binary_end` says the chain won't
+        // parse; valid forms like `+a b`, `++a b c`, `+*a b c` are unaffected
+        // because their scan returns Some(end). Skip when the leading pair is
+        // `&&` or `||` — those have their own dedicated hint downstream and
+        // shouldn't be re-diagnosed as an arity issue.
+        let is_double_logical = matches!(
+            (self.token_at(self.pos), self.token_at(self.pos + 1)),
+            (Some(Token::Amp), Some(Token::Amp)) | (Some(Token::Pipe), Some(Token::Pipe))
+        );
+        if !is_double_logical
+            && self.scan_prefix_binary_end(self.pos).is_none()
+            && let Some(diag) = self.prefix_chain_arity_diagnostic()
+        {
+            return Err(diag);
+        }
         let op = match self.advance() {
             Some(Token::Plus) => BinOp::Add,
             Some(Token::Star) => BinOp::Multiply,
@@ -2802,6 +2823,221 @@ or write `({fmt_name} \"...\" ...)` so its args are grouped."
             }
         }
         if count >= 2 { Some(look) } else { None }
+    }
+
+    /// Is `tok` a prefix-binary operator token (one that `parse_prefix_binop`
+    /// recognises as a leading op)? Used by the prefix-chain arity detector.
+    fn is_prefix_binop_token(tok: &Token) -> bool {
+        matches!(
+            tok,
+            Token::Plus
+                | Token::Star
+                | Token::Slash
+                | Token::Greater
+                | Token::Less
+                | Token::GreaterEq
+                | Token::LessEq
+                | Token::Eq
+                | Token::NotEq
+                | Token::Amp
+                | Token::Pipe
+                | Token::PlusEq
+        )
+    }
+
+    /// Build a friendly diagnostic for a malformed prefix-operator chain that
+    /// would otherwise unwind into a bare ILO-P010 EOF error far from the
+    /// real problem. Counts the leading prefix-op run (K) starting at
+    /// `self.pos`, then counts atoms that follow up to a statement boundary.
+    /// If K >= 2 and atoms < K + 1, returns an arity hint pointing at the
+    /// chain start; otherwise returns `None` so the caller falls through to
+    /// the normal parse path.
+    ///
+    /// Only deep chains (K >= 2) are diagnosed here. Single-op forms like
+    /// `+a b` have well-established parser handling and atoms can carry rich
+    /// postfix structure (`p.x`, `xs[i]`, `r with f:v`) that this lightweight
+    /// scanner can't enumerate without re-implementing half of operand
+    /// parsing. The qa-tester P1 bug is specifically about deep prefix chains
+    /// (`+++a b c` and friends), so keep the heuristic narrow.
+    fn prefix_chain_arity_diagnostic(&self) -> Option<ParseError> {
+        // Count leading prefix-binop tokens.
+        let mut k = 0usize;
+        let mut p = self.pos;
+        while let Some(tok) = self.token_at(p)
+            && Self::is_prefix_binop_token(tok)
+        {
+            k += 1;
+            p += 1;
+        }
+        if k < 2 {
+            return None;
+        }
+        // Count atom-starting tokens up to a statement boundary. Each prefix-
+        // binop in the chain is one operator, not an atom. Unary-only wrappers
+        // (`!`, `~`, `^`, `$`) and a unary `-` count as part of the next atom,
+        // not as standalone atoms — so `&!x y` reads as `&` plus two atoms
+        // (`!x`, `y`), matching how `parse_operand` would consume them.
+        //
+        // `total_binops` starts at the leading chain count `k`; nested prefix-
+        // binop tokens that appear among the operand positions also each
+        // require their own operand pair, so we increment as we discover them.
+        let mut atoms = 0usize;
+        let mut total_binops = k;
+        let mut q = p;
+        while let Some(tok) = self.token_at(q) {
+            match tok {
+                Token::Semi | Token::Newline | Token::RBrace | Token::RParen | Token::RBracket => {
+                    break;
+                }
+                // Unary wrappers don't add an atom on their own — they need
+                // an operand which is consumed below in the same iteration.
+                // Skip the wrapper and keep going; the next non-wrapper token
+                // becomes the atom.
+                Token::Bang | Token::Tilde | Token::Caret | Token::Dollar | Token::Minus => {
+                    q += 1;
+                    continue;
+                }
+                Token::Ident(_)
+                | Token::Number(_)
+                | Token::Text(_)
+                | Token::True
+                | Token::False
+                | Token::Nil
+                | Token::Underscore => {
+                    atoms += 1;
+                    q += 1;
+                    // Skip postfix continuations attached to this atom so
+                    // they don't count as separate operands or trip the
+                    // unknown-token guard below. Field access (`.x`,
+                    // `.?x`, `.0`), index/call groups (`[...]`, `(...)`),
+                    // unwrap suffixes (`!`, `!!`), nil-coalesce (`??`),
+                    // and record update (`with f:v ...`) all extend an
+                    // atom rather than starting a new one.
+                    loop {
+                        match self.token_at(q) {
+                            Some(Token::Dot) | Some(Token::DotQuestion) => {
+                                q += 1;
+                                // Consume the field/index token.
+                                if matches!(
+                                    self.token_at(q),
+                                    Some(Token::Ident(_)) | Some(Token::Number(_))
+                                ) {
+                                    q += 1;
+                                }
+                            }
+                            Some(Token::Bang) | Some(Token::BangBang) => {
+                                q += 1;
+                            }
+                            Some(Token::LParen) | Some(Token::LBracket) => {
+                                let open = self.token_at(q).cloned().unwrap();
+                                let close = if matches!(open, Token::LParen) {
+                                    Token::RParen
+                                } else {
+                                    Token::RBracket
+                                };
+                                let mut depth = 1usize;
+                                q += 1;
+                                while let Some(inner) = self.token_at(q) {
+                                    if *inner == open {
+                                        depth += 1;
+                                    } else if *inner == close {
+                                        depth -= 1;
+                                        if depth == 0 {
+                                            q += 1;
+                                            break;
+                                        }
+                                    }
+                                    q += 1;
+                                }
+                            }
+                            Some(Token::With) => {
+                                // `r with f:v g:v2 ...` — skip the `with`
+                                // and the pairs that follow. Stop at the
+                                // first token that doesn't look like an
+                                // `ident:value` continuation. Be permissive:
+                                // bail out of the diagnostic entirely if
+                                // we can't cleanly trace the shape.
+                                return None;
+                            }
+                            _ => break,
+                        }
+                    }
+                }
+                Token::LParen | Token::LBracket => {
+                    atoms += 1;
+                    let open = tok.clone();
+                    let close = if matches!(open, Token::LParen) {
+                        Token::RParen
+                    } else {
+                        Token::RBracket
+                    };
+                    let mut depth = 1usize;
+                    q += 1;
+                    while let Some(inner) = self.token_at(q) {
+                        if *inner == open {
+                            depth += 1;
+                        } else if *inner == close {
+                            depth -= 1;
+                            if depth == 0 {
+                                q += 1;
+                                break;
+                            }
+                        }
+                        q += 1;
+                    }
+                }
+                // Another prefix-binop token mid-stream: don't count it as an
+                // atom, but keep scanning so we can see operands beyond it.
+                // Each such mid-stream prefix-binop also takes 2 operands, so
+                // it raises the operand requirement by 1 (consumes 2, yields 1).
+                t if Self::is_prefix_binop_token(t) => {
+                    total_binops += 1;
+                    q += 1;
+                }
+                // Unknown token in operand area — bail out conservatively
+                // rather than risk a false positive. The original parser
+                // path will produce its usual diagnostic; we only want to
+                // upgrade the message when we're confident the chain is
+                // arity-broken.
+                _ => return None,
+            }
+        }
+        let needed = total_binops + 1;
+        if atoms >= needed {
+            return None;
+        }
+        // Render the chain glyph for the hint, e.g. `+++` for three Plus
+        // tokens, or `+*-` for a mixed run.
+        let chain: String = (self.pos..self.pos + k)
+            .filter_map(|i| self.token_at(i).map(prefix_binop_token_glyph))
+            .collect();
+        // Build an example with `needed` operands using `a b c d …`.
+        let example_operands: String = (0..needed)
+            .map(|i| {
+                let c = (b'a' + (i as u8 % 26)) as char;
+                if i == 0 {
+                    c.to_string()
+                } else {
+                    format!(" {c}")
+                }
+            })
+            .collect();
+        // First op of the chain for the bind-first example.
+        let first_op = self
+            .token_at(self.pos)
+            .map(prefix_binop_token_glyph)
+            .unwrap_or("+");
+        Some(ParseError {
+            code: "ILO-P003",
+            position: self.pos,
+            span: self.peek_span(),
+            message: format!("prefix chain `{chain}` needs {needed} operands but found {atoms}"),
+            hint: Some(format!(
+                "a run of {k} prefix operators takes {needed} operands. Add operands \
+(e.g. `{chain}{example_operands}`), shorten the chain, or bind intermediate \
+results first: `r={first_op}a b;…r` keeps each step explicit."
+            )),
+        })
     }
 
     /// Can the current token start an atom?
@@ -3699,6 +3935,28 @@ fn compound_comparison_replacement(
         (Token::Eq, Token::Less) => Some(("=<", "<=")),
         (Token::Eq, Token::Greater) => Some(("=>", ">=")),
         _ => None,
+    }
+}
+
+/// Render a prefix-binop token as the source glyph for error messages.
+/// Used by the prefix-chain arity detector when echoing `+++` etc. back at
+/// the user. Returns `?` for unexpected tokens, but callers only pass
+/// tokens that `is_prefix_binop_token` accepts so this fallback is unreached.
+fn prefix_binop_token_glyph(tok: &Token) -> &'static str {
+    match tok {
+        Token::Plus => "+",
+        Token::Star => "*",
+        Token::Slash => "/",
+        Token::Greater => ">",
+        Token::Less => "<",
+        Token::GreaterEq => ">=",
+        Token::LessEq => "<=",
+        Token::Eq => "=",
+        Token::NotEq => "!=",
+        Token::Amp => "&",
+        Token::Pipe => "|",
+        Token::PlusEq => "+=",
+        _ => "?",
     }
 }
 
@@ -5526,6 +5784,106 @@ mod tests {
         let e = errors.iter().find(|e| e.code == "ILO-P003").unwrap();
         let hint = e.hint.as_ref().unwrap();
         assert!(hint.contains("'|'"));
+    }
+
+    // Regression: qa-tester P1 rerun. A run of N prefix operators followed by
+    // only N operands used to unwind into a bare ILO-P010 "expected
+    // expression, got EOF" at line 1 col 1 — the user had no signal at all
+    // about what went wrong or where. The fix surfaces an arity diagnostic
+    // pointing at the chain start with the actual chain glyph and the
+    // shortfall (e.g. `+++` needs 4 operands, found 3).
+    //
+    // Depths 2/3/4 are covered to confirm the heuristic scales rather than
+    // pattern-matching on a single arity.
+    #[test]
+    fn prefix_chain_arity_depth_2() {
+        let (_, errors) = parse_str_errors("f>n;a=1;b=2;++a b");
+        let e = errors
+            .iter()
+            .find(|e| e.code == "ILO-P003")
+            .expect("expected ILO-P003 for depth-2 underfilled prefix chain");
+        assert!(
+            e.message.contains("prefix chain `++`"),
+            "message should name the chain glyph, got: {}",
+            e.message
+        );
+        assert!(
+            e.message.contains("needs 3 operands"),
+            "message should state K+1 operand requirement, got: {}",
+            e.message
+        );
+        let hint = e.hint.as_ref().unwrap();
+        assert!(hint.contains("bind intermediate results"));
+    }
+
+    #[test]
+    fn prefix_chain_arity_depth_3() {
+        // qa-tester P1: `+++a b c` exited silently with bare ILO-P010 at col 1.
+        let (_, errors) = parse_str_errors("f>n;a=1;b=2;c=3;+++a b c");
+        let e = errors
+            .iter()
+            .find(|e| e.code == "ILO-P003")
+            .expect("expected ILO-P003 for depth-3 underfilled prefix chain");
+        assert!(
+            e.message.contains("prefix chain `+++`"),
+            "message should name `+++`, got: {}",
+            e.message
+        );
+        assert!(e.message.contains("needs 4 operands"));
+        assert!(e.message.contains("found 3"));
+    }
+
+    #[test]
+    fn prefix_chain_arity_depth_4() {
+        let (_, errors) = parse_str_errors("f>n;a=1;b=2;c=3;d=4;++++a b c d");
+        let e = errors
+            .iter()
+            .find(|e| e.code == "ILO-P003")
+            .expect("expected ILO-P003 for depth-4 underfilled prefix chain");
+        assert!(e.message.contains("prefix chain `++++`"));
+        assert!(e.message.contains("needs 5 operands"));
+        assert!(e.message.contains("found 4"));
+    }
+
+    #[test]
+    fn prefix_chain_arity_mixed_ops() {
+        // Mixed prefix-binop chain still trips the detector and the chain
+        // glyph in the message reflects the actual operators used.
+        let (_, errors) = parse_str_errors("f>n;a=1;b=2;c=3;+*>a b c");
+        let e = errors
+            .iter()
+            .find(|e| e.code == "ILO-P003")
+            .expect("expected ILO-P003 for mixed underfilled prefix chain");
+        assert!(
+            e.message.contains("prefix chain `+*>`"),
+            "message should echo mixed chain, got: {}",
+            e.message
+        );
+    }
+
+    #[test]
+    fn prefix_chain_valid_depth_2_still_parses() {
+        // `++a b c` — 2 ops, 3 operands — was and remains a valid form.
+        // The new arity detector must not regress it.
+        let (program, errors) = parse_str_errors("f>n;a=1;b=2;c=3;++a b c");
+        assert!(
+            errors.is_empty(),
+            "depth-2 valid prefix chain should parse cleanly, got errors: {:?}",
+            errors
+        );
+        assert!(!program.declarations.is_empty());
+    }
+
+    #[test]
+    fn prefix_chain_valid_depth_3_still_parses() {
+        // `+++a b c d` — 3 ops, 4 operands — valid.
+        let (program, errors) = parse_str_errors("f>n;a=1;b=2;c=3;d=4;+++a b c d");
+        assert!(
+            errors.is_empty(),
+            "depth-3 valid prefix chain should parse cleanly, got errors: {:?}",
+            errors
+        );
+        assert!(!program.declarations.is_empty());
     }
 
     #[test]
