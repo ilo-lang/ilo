@@ -1029,10 +1029,17 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             ));
         }
         return match &args[0] {
-            Value::Text(s) => match s.parse::<f64>() {
-                Ok(n) => Ok(Value::Ok(Box::new(Value::Number(n)))),
-                Err(_) => Ok(Value::Err(Box::new(Value::Text(s.clone())))),
-            },
+            Value::Text(s) => {
+                // Trim leading/trailing ASCII whitespace before parsing so CSV
+                // cells like " 77516" (space after the comma) round-trip
+                // through `num` without silently becoming Err. Internal
+                // whitespace ("1 2") still fails the parse.
+                let trimmed = s.trim_matches(|c: char| c.is_ascii_whitespace());
+                match trimmed.parse::<f64>() {
+                    Ok(n) => Ok(Value::Ok(Box::new(Value::Number(n)))),
+                    Err(_) => Ok(Value::Err(Box::new(Value::Text(s.clone())))),
+                }
+            }
             other => Err(RuntimeError::new(
                 "ILO-R009",
                 format!("num requires text, got {:?}", other),
@@ -6063,6 +6070,58 @@ mod tests {
     fn err_abs_wrong_arg_count() {
         let err = run_str_err("f>n;abs 1 2", Some("f"), vec![]);
         assert!(err.contains("abs: expected 1 arg"));
+    }
+
+    // ── num trims leading/trailing ASCII whitespace ────────────────────────
+    #[test]
+    fn num_trims_leading_whitespace() {
+        let result = run_str(r#"f>R n t;num " 77516""#, Some("f"), vec![]);
+        assert_eq!(result, Value::Ok(Box::new(Value::Number(77516.0))));
+    }
+
+    #[test]
+    fn num_trims_trailing_whitespace() {
+        let result = run_str(r#"f>R n t;num "77516 ""#, Some("f"), vec![]);
+        assert_eq!(result, Value::Ok(Box::new(Value::Number(77516.0))));
+    }
+
+    #[test]
+    fn num_trims_both_sides_signed_float() {
+        let result = run_str(r#"f>R n t;num "  -3.14  ""#, Some("f"), vec![]);
+        assert_eq!(result, Value::Ok(Box::new(Value::Number(-3.14))));
+    }
+
+    #[test]
+    fn num_trims_scientific_notation() {
+        let result = run_str(r#"f>R n t;num " 1e10 ""#, Some("f"), vec![]);
+        assert_eq!(result, Value::Ok(Box::new(Value::Number(1e10))));
+    }
+
+    #[test]
+    fn num_internal_whitespace_still_errors() {
+        let result = run_str(r#"f>R n t;num "1 2""#, Some("f"), vec![]);
+        match result {
+            Value::Err(_) => {}
+            other => panic!("expected Err for internal whitespace, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn num_empty_string_errors() {
+        let result = run_str(r#"f>R n t;num """#, Some("f"), vec![]);
+        match result {
+            Value::Err(_) => {}
+            other => panic!("expected Err for empty string, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn num_whitespace_only_errors() {
+        let result = run_str(r#"f>R n t;num "   ""#, Some("f"), vec![]);
+        match result {
+            Value::Err(_) => {}
+            other => panic!("expected Err for whitespace-only, got {:?}", other),
+        }
     }
 
     #[test]

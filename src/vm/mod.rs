@@ -8770,7 +8770,11 @@ impl<'a> VM<'a> {
                             _ => unreachable!(),
                         }
                     };
-                    let result = match s.parse::<f64>() {
+                    // Trim leading/trailing ASCII whitespace before parsing so
+                    // CSV cells like " 77516" round-trip cleanly. Internal
+                    // whitespace ("1 2") still fails the parse.
+                    let trimmed = s.trim_matches(|c: char| c.is_ascii_whitespace());
+                    let result = match trimmed.parse::<f64>() {
                         Ok(n) => NanVal::heap_ok(NanVal::number(n)),
                         Err(_) => {
                             v.clone_rc();
@@ -11980,7 +11984,10 @@ pub(crate) extern "C" fn jit_num(a: u64, span_bits: u64) -> u64 {
             _ => unreachable!(),
         }
     };
-    match s.parse::<f64>() {
+    // Trim leading/trailing ASCII whitespace before parsing so CSV cells like
+    // " 77516" round-trip cleanly. Internal whitespace ("1 2") still fails.
+    let trimmed = s.trim_matches(|c: char| c.is_ascii_whitespace());
+    match trimmed.parse::<f64>() {
         Ok(n) => NanVal::heap_ok(NanVal::number(n)).0,
         Err(_) => {
             v.clone_rc();
@@ -30009,6 +30016,58 @@ f>n;r=mk 10 20;+r.x r.y";
         let result = vm_run(r#"f>R n t;num "abc""#, Some("f"), vec![]);
         match result {
             Value::Err(_) => {} // expected
+            other => panic!("expected Err, got {:?}", other),
+        }
+    }
+
+    // ── OP_NUM trims leading/trailing ASCII whitespace ────────────────────
+    #[test]
+    fn vm_num_trims_leading_whitespace() {
+        let result = vm_run(r#"f>R n t;num " 77516""#, Some("f"), vec![]);
+        assert_eq!(result, Value::Ok(Box::new(Value::Number(77516.0))));
+    }
+
+    #[test]
+    fn vm_num_trims_trailing_whitespace() {
+        let result = vm_run(r#"f>R n t;num "77516 ""#, Some("f"), vec![]);
+        assert_eq!(result, Value::Ok(Box::new(Value::Number(77516.0))));
+    }
+
+    #[test]
+    fn vm_num_trims_both_sides_signed_float() {
+        let result = vm_run(r#"f>R n t;num "  -3.14  ""#, Some("f"), vec![]);
+        assert_eq!(result, Value::Ok(Box::new(Value::Number(-3.14))));
+    }
+
+    #[test]
+    fn vm_num_trims_scientific_notation() {
+        let result = vm_run(r#"f>R n t;num " 1e10 ""#, Some("f"), vec![]);
+        assert_eq!(result, Value::Ok(Box::new(Value::Number(1e10))));
+    }
+
+    #[test]
+    fn vm_num_internal_whitespace_still_errors() {
+        let result = vm_run(r#"f>R n t;num "1 2""#, Some("f"), vec![]);
+        match result {
+            Value::Err(_) => {}
+            other => panic!("expected Err, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn vm_num_empty_string_errors() {
+        let result = vm_run(r#"f>R n t;num """#, Some("f"), vec![]);
+        match result {
+            Value::Err(_) => {}
+            other => panic!("expected Err, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn vm_num_whitespace_only_errors() {
+        let result = vm_run(r#"f>R n t;num "   ""#, Some("f"), vec![]);
+        match result {
+            Value::Err(_) => {}
             other => panic!("expected Err, got {:?}", other),
         }
     }
