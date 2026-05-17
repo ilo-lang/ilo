@@ -2222,9 +2222,20 @@ impl Parser {
         // Surface it as a hard error with a bind-first suggestion. See ILO-P021.
         self.check_double_minus_trap()?;
         self.advance(); // consume `-`
-        let first = self.parse_operand()?;
+        // Mirror the prefix-binop family in `parse_prefix_binop`: use
+        // `parse_prefix_binop_operand` so a known-arity ident followed by
+        // enough operands expands into a call expression, consuming
+        // exactly its declared arity. Without this, `-lnx a lnx b` parses
+        // as `BinOp(-, Ref(lnx), Ref(a))` and leaves `lnx b` orphaned,
+        // identical to the `>len q 0` failure mode fixed in #332.
+        // Unary-negation of a call (`-lnx 5`) also works: the helper
+        // consumes `lnx 5` as a single call operand and `can_start_operand`
+        // returns false, so we fall into the Negate arm with the call as
+        // the operand (`Negate(Call(lnx, [5]))`), which is the intended
+        // meaning of `-lnx 5` either way.
+        let first = self.parse_prefix_binop_operand()?;
         if self.can_start_operand() {
-            let second = self.parse_operand()?;
+            let second = self.parse_prefix_binop_operand()?;
             Ok(Expr::BinOp {
                 op: BinOp::Subtract,
                 left: Box::new(first),
