@@ -5224,18 +5224,24 @@ pub(crate) fn jit_arena_reset() {
 // (`jit_lst`, `jit_listget`, `jit_index`, `jit_jpth`, `jit_slc`, ...) keep
 // the existing permissive-nil semantics; harmonising them is parked. Each
 // new erroring helper costs +1 u64 arg and +1 iconst at the call site.
+// Payload stored in the JIT_RUNTIME_ERROR cell: the error itself, the
+// optional source span, and the call-stack snapshot captured at the
+// instant the helper recorded the error. Aliased so the TLS RefCell
+// type below stays inside clippy's type-complexity budget.
+#[cfg(feature = "cranelift")]
+pub(crate) type JitRuntimeErrorPayload =
+    (VmError, Option<crate::ast::Span>, Vec<String>);
+
 thread_local! {
-    // The stack snapshot at error-set time is stored alongside the
-    // error itself: JIT helpers raise errors but do not unwind native
-    // frames, so the JIT continues executing post-call OP code (the
-    // pop_call_frame emitted by direct OP_CALL fires on what the
-    // native ABI sees as a normal return). By snapshotting here we
-    // capture the deepest stack — exactly the chain
-    // [entry, caller, ..., callee_that_errored] the VM/tree builds
-    // when it walks live frames at error time.
-    static JIT_RUNTIME_ERROR: std::cell::RefCell<
-        Option<(VmError, Option<crate::ast::Span>, Vec<String>)>,
-    > = const { std::cell::RefCell::new(None) };
+    // JIT helpers raise errors but do not unwind native frames — the
+    // pop_call_frame emitted after each direct OP_CALL still fires on
+    // the native return path. So by the time the entry returns, the
+    // live call stack has shrunk back to the seed. Capturing the chain
+    // here, at the instant the helper sets the error, is the only way
+    // to record [entry, caller, ..., callee_that_errored] — the same
+    // shape VM and tree build by walking live frames at error time.
+    static JIT_RUNTIME_ERROR: std::cell::RefCell<Option<JitRuntimeErrorPayload>> =
+        const { std::cell::RefCell::new(None) };
 }
 
 /// Decode the (start, end) span bits packed by the cranelift call site.
@@ -5283,7 +5289,7 @@ pub(crate) fn jit_set_runtime_error_with_span(err: VmError, span_bits: u64) {
 /// build a `VmRuntimeError` whose `notes` match what the VM and tree
 /// interpreters produce for the same repro.
 #[cfg(feature = "cranelift")]
-pub(crate) fn jit_take_runtime_error() -> Option<(VmError, Option<crate::ast::Span>, Vec<String>)> {
+pub(crate) fn jit_take_runtime_error() -> Option<JitRuntimeErrorPayload> {
     JIT_RUNTIME_ERROR.with(|cell| cell.borrow_mut().take())
 }
 
