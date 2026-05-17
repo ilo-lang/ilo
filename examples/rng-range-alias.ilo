@@ -1,0 +1,11 @@
+-- `rng` is a short-form alias for the canonical `range` builtin.
+-- nlp-engineer rerun8 reached for `rng` first when working with
+-- numeric ranges; the 5-char canonical name paid a repeated token
+-- tax in tight scripting code. The alias resolves to `range` after
+-- parsing, so this file and an equivalent one using `range` are
+-- behaviourally identical on every engine.
+
+main>n;sum rng 0 10
+
+-- run: main
+-- out: 45
