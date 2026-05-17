@@ -2835,6 +2835,26 @@ fn dispatch_run(r: cli::RunArgs, mode: OutputMode, explicit_json: bool, no_hints
                         eprintln!();
                         eprintln!("  ilo {} <func> [args...]   run a function", source_arg);
                         return 1;
+                    } else if is_file && func_names.contains(&"main") {
+                        // Multi-function file with an unknown leading
+                        // positional that does NOT look ident-shaped (a
+                        // path like `top200.csv`, a digit-prefixed
+                        // string, a sigil, etc.) and the file defines
+                        // `main`: route to `main` with the positional as
+                        // arg #1. Previously this fell through to the
+                        // "first declared function" path, so
+                        // `ilo main_v5.ilo top200.csv` ran the first
+                        // alphabetical/declared function (e.g. `hav`)
+                        // with `top200.csv` as its first arg — a
+                        // misleading silent mis-dispatch when the user
+                        // clearly intended `main` as the entry point
+                        // (gis-analyst rerun6, devops-sre rerun6 —
+                        // independent personas, same root cause). The
+                        // presence of `main` is the strong intent
+                        // signal; we use it wherever the user has not
+                        // explicitly named a different function.
+                        let fn_ref = Some("main");
+                        (fn_ref, parse_cli_args_typed(&program, fn_ref, rest))
                     } else {
                         (None, rest.iter().map(|a| parse_cli_arg(a)).collect())
                     }
@@ -3924,8 +3944,17 @@ fn split_top_level_commas(s: &str) -> Vec<&str> {
 /// entry function — should pass through as before).
 ///
 /// Rule: starts with an ASCII letter or underscore, and every subsequent
-/// char is alphanumeric or underscore. Anything else (a digit-prefixed
-/// number, a sigil, a quoted string, a bracketed list) is treated as data.
+/// char is alphanumeric, underscore, or `-`. `-` is legal mid-ident per
+/// the SPEC's canonical `[a-z][a-z0-9]*(-[a-z0-9]+)*` shape (so
+/// `list-orders`, `wibble-x`, `parse-csv` all read as plausible
+/// subcommand names rather than mystery data) but must not appear at the
+/// very end of the string, and may not be doubled — `foo-` and `foo--bar`
+/// fall through as data, as does anything starting with `-` (which is
+/// already excluded by the alpha/underscore first-char rule and keeps
+/// `--flag` and `-1` out).
+///
+/// Anything else (a digit-prefixed number, a sigil, a quoted string, a
+/// bracketed list, a path with a dot) is treated as data.
 ///
 /// Reserved literal words (`true`, `false`, `nil`) are also exempt — they
 /// match the ident shape but `parse_cli_arg` already turns them into the
@@ -3935,12 +3964,28 @@ fn looks_like_subcommand_name(s: &str) -> bool {
     if matches!(s, "true" | "false" | "nil") {
         return false;
     }
-    let mut chars = s.chars();
-    match chars.next() {
-        Some(c) if c.is_ascii_alphabetic() || c == '_' => {}
+    let bytes = s.as_bytes();
+    match bytes.first() {
+        Some(&c) if c.is_ascii_alphabetic() || c == b'_' => {}
         _ => return false,
     }
-    chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+    // No trailing `-` (e.g. `foo-`).
+    if bytes.last() == Some(&b'-') {
+        return false;
+    }
+    let mut prev_dash = false;
+    for &c in &bytes[1..] {
+        let ok = c.is_ascii_alphanumeric() || c == b'_' || c == b'-';
+        if !ok {
+            return false;
+        }
+        // No doubled `-` (e.g. `foo--bar`).
+        if c == b'-' && prev_dash {
+            return false;
+        }
+        prev_dash = c == b'-';
+    }
+    true
 }
 
 fn parse_cli_arg(s: &str) -> interpreter::Value {
@@ -4109,6 +4154,16 @@ mod tests {
         assert!(looks_like_subcommand_name("_priv"));
         assert!(looks_like_subcommand_name("foo_bar"));
         assert!(looks_like_subcommand_name("fn2"));
+        // Hyphenated idents — SPEC canonical shape
+        // `[a-z][a-z0-9]*(-[a-z0-9]+)*`. Used to be rejected, which
+        // routed `ilo file.ilo list-orders` to the first declared
+        // function with `["list-orders", ...]` as args and produced
+        // misleading arity errors (interactive-cli rerun6 P1).
+        assert!(looks_like_subcommand_name("list-orders"));
+        assert!(looks_like_subcommand_name("wibble-x"));
+        assert!(looks_like_subcommand_name("parse-csv"));
+        assert!(looks_like_subcommand_name("a-b-c"));
+        assert!(looks_like_subcommand_name("foo-bar"));
     }
 
     #[test]
@@ -4124,7 +4179,17 @@ mod tests {
         // Empty and edge cases
         assert!(!looks_like_subcommand_name(""));
         assert!(!looks_like_subcommand_name("2x"));
-        assert!(!looks_like_subcommand_name("foo-bar"));
+        // File-shaped args (a dot is not a legal ident char) still fall
+        // through as data — this is what routes `ilo main.ilo data.csv`
+        // to `main` with `data.csv` as its first positional rather than
+        // erroring with `no such function 'data.csv'`.
+        assert!(!looks_like_subcommand_name("top200.csv"));
+        assert!(!looks_like_subcommand_name("data.csv"));
+        assert!(!looks_like_subcommand_name("path/to/file"));
+        // `-` is legal mid-ident but not at the end or doubled.
+        assert!(!looks_like_subcommand_name("foo-"));
+        assert!(!looks_like_subcommand_name("foo--bar"));
+        assert!(!looks_like_subcommand_name("-foo"));
     }
 
     #[test]

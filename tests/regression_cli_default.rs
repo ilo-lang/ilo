@@ -580,3 +580,181 @@ fn run_vm_flag_single_fn_no_args_still_runs() {
 fn run_cranelift_flag_single_fn_no_args_still_runs() {
     run_engine_single_fn_no_args_still_runs("--run-cranelift");
 }
+
+// ── hyphenated unknown subcommand: friendly error (PR #320 follow-up) ─────────
+//
+// Originating bug (interactive-cli rerun6 P1): `ilo file.ilo list-orders`
+// on a multi-fn file silently routed to the FIRST declared function with
+// `["list-orders"]` as positional args, producing a misleading
+// `load: expected 0 args` error. PR #320 added the unknown-subcommand
+// error but its `looks_like_subcommand_name` helper rejected anything
+// containing `-`, so hyphenated idents fell through to the old greedy
+// dispatch.
+//
+// Per SPEC the canonical ilo ident shape is
+// `[a-z][a-z0-9]*(-[a-z0-9]+)*` so `-` is a legal mid-ident character
+// and `list-orders` / `wibble-x` / `parse-csv` are all plausible
+// subcommand names.
+
+#[test]
+fn hyphenated_unknown_subcommand_errors_with_listing() {
+    // Pre-fix: routed to `load` (first declared) with `["list-orders"]`
+    // as args, producing a misleading type / arity error. Post-fix: the
+    // helper accepts `-` as a tail char so `list-orders` is recognised
+    // as an ident shape, falls into the unknown-subcommand branch, and
+    // emits the friendly "no such function" listing.
+    let (_dir, path) = write_temp("load x:n>n;*x 2\nmain>n;load 21\n");
+    let (ok, _stdout, stderr) = run(&[path.to_str().unwrap(), "list-orders"]);
+    assert!(!ok, "unknown hyphenated subcommand should exit non-zero");
+    assert!(
+        stderr.contains("no such function 'list-orders'"),
+        "expected 'no such function' error for hyphenated name; stderr: {stderr}"
+    );
+    assert!(
+        stderr.contains("available functions"),
+        "expected available-functions listing; stderr: {stderr}"
+    );
+    assert!(
+        stderr.contains("load") && stderr.contains("main"),
+        "expected both fn names listed; stderr: {stderr}"
+    );
+    // The dispatch must NOT have invoked the first-declared `load` with
+    // the typo as a positional. If it had, we'd see a `load` arity/type
+    // error rather than the listing.
+    assert!(
+        !stderr.contains("'load' arg"),
+        "must not leak first-fn dispatch; stderr: {stderr}"
+    );
+}
+
+#[test]
+fn hyphenated_unknown_subcommand_wibble_x() {
+    // Tail-hyphenated form (`wibble-x`) from the bug report. Same
+    // diagnostic shape as the `list-orders` case.
+    let (_dir, path) = write_temp("helper a:n>n;+a 1\nmain>n;helper 41\n");
+    let (ok, _stdout, stderr) = run(&[path.to_str().unwrap(), "wibble-x"]);
+    assert!(!ok);
+    assert!(
+        stderr.contains("no such function 'wibble-x'"),
+        "expected no-such-function for `wibble-x`; stderr: {stderr}"
+    );
+}
+
+#[test]
+fn trailing_dash_falls_through_as_data() {
+    // `-` is legal mid-ident but not at the end. `foo-` is not a valid
+    // ident shape, so it must NOT trip the unknown-subcommand error;
+    // it routes to `main` if defined, otherwise passes through to the
+    // first declared function.
+    let (_dir, path) = write_temp("first s:t>t;s\nother s:t>t;s\n");
+    let (ok, stdout, stderr) = run(&[path.to_str().unwrap(), "foo-"]);
+    assert!(
+        ok,
+        "trailing-dash positional should pass through, not error; stderr: {stderr}"
+    );
+    assert_eq!(stdout.trim().trim_matches('"'), "foo-");
+}
+
+// ── non-ident leading arg with `main` defined: route to `main` ─────────────────
+//
+// Originating bug (gis-analyst rerun6): `ilo main_v5.ilo top200.csv` on
+// a multi-fn file used to silently route the non-ident-shaped arg
+// `top200.csv` to the FIRST declared function (e.g. `hav`) rather than
+// to `main`. The presence of `main` is a strong intent signal that the
+// user wants `main` as the entry point; positional args after the file
+// path should flow into `main`'s arg list, not into whichever function
+// happens to be declared first.
+
+#[test]
+fn non_ident_arg_routes_to_main_when_main_exists() {
+    // First-declared function is `hav` (3 args), `main` is the real
+    // entry. Pre-fix: `top200.csv` routed to `hav` and produced an
+    // arity error (`hav: expected 3 args, got 1`). Post-fix: `main`
+    // receives `top200.csv` as its sole arg and echoes it back.
+    let (_dir, path) = write_temp("hav lat:n lon:n r:n>n;+lat lon\nmain path:t>t;path\n");
+    let (ok, stdout, stderr) = run(&[path.to_str().unwrap(), "top200.csv"]);
+    assert!(ok, "non-ident arg should route to main; stderr: {stderr}");
+    assert_eq!(stdout.trim().trim_matches('"'), "top200.csv");
+    // The pre-fix arity error from the first declared function must
+    // not appear.
+    assert!(
+        !stderr.contains("hav:"),
+        "must not invoke `hav` (first declared); stderr: {stderr}"
+    );
+}
+
+#[test]
+fn non_ident_arg_routes_to_main_with_multiple_positionals() {
+    // Same routing rule must extend to multi-positional invocations:
+    // every positional flows into `main`'s arg list, in order.
+    let (_dir, path) = write_temp("hav lat:n lon:n>n;+lat lon\nmain a:t b:t>L t;[a,b]\n");
+    let (ok, stdout, stderr) = run(&[path.to_str().unwrap(), "data.csv", "out.txt"]);
+    assert!(ok, "expected success; stderr: {stderr}");
+    // Both positionals routed to main, in order.
+    assert!(stdout.contains("data.csv"), "stdout: {stdout}");
+    assert!(stdout.contains("out.txt"), "stdout: {stdout}");
+}
+
+#[test]
+fn non_ident_arg_routes_to_main_numeric() {
+    // A numeric leading positional is also non-ident-shaped (`42`
+    // starts with a digit). When `main` exists it should route to
+    // `main`, not to whichever function happens to be declared first.
+    let (_dir, path) = write_temp("hav x:n>n;+x 1\nmain x:n>n;*x 2\n");
+    let (ok, stdout, stderr) = run(&[path.to_str().unwrap(), "21"]);
+    assert!(ok, "expected success; stderr: {stderr}");
+    assert_eq!(stdout.trim(), "42");
+}
+
+#[test]
+fn non_ident_arg_without_main_keeps_legacy_passthrough() {
+    // Companion check: when there is NO `main`, the legacy
+    // pass-through-to-first-fn behaviour is preserved. This is the
+    // contract `multi_fn_file_numeric_leading_arg_passes_through_to_entry_fn`
+    // already pins; restated here as an explicit guard against the
+    // new bug-2 branch over-firing.
+    let (_dir, path) = write_temp("outer x:n>n;+x 1\ninner x:n>n;*x 2\n");
+    let (ok, stdout, stderr) = run(&[path.to_str().unwrap(), "41"]);
+    assert!(ok, "stderr: {stderr}");
+    assert_eq!(stdout.trim(), "42");
+}
+
+#[test]
+fn non_ident_path_arg_routes_to_main_devops_sre_shape() {
+    // devops-sre rerun6: same root cause as gis-analyst rerun6,
+    // independently surfaced via a different persona workload. A
+    // multi-fn file with a named-helper field-access (`gs i:_>...`
+    // taking a struct/record and reading `i.field`) and a `main` taking
+    // a JSON path. Pre-fix: `ilo probe.ilo /tmp/inc.json` routed the
+    // path positional (`/` + `.` make it non-ident-shaped) to the
+    // first-declared `gs`, hitting a field-access type mismatch on a
+    // raw text arg. Post-fix: the path flows into `main` as intended.
+    let (_dir, path) = write_temp("gs i:_>t;i.host\nmain p:t>t;p\n");
+    let (ok, stdout, stderr) = run(&[path.to_str().unwrap(), "/tmp/inc.json"]);
+    assert!(
+        ok,
+        "non-ident path arg should route to main, not gs; stderr: {stderr}"
+    );
+    assert_eq!(stdout.trim().trim_matches('"'), "/tmp/inc.json");
+    // Pre-fix symptom: invoking `gs` on the text arg would surface a
+    // field-access type error referencing `gs` or `i.host`.
+    assert!(
+        !stderr.contains("'gs'"),
+        "must not invoke first-declared `gs`; stderr: {stderr}"
+    );
+    assert!(
+        !stderr.contains("i.host"),
+        "must not surface gs's field-access path; stderr: {stderr}"
+    );
+}
+
+#[test]
+fn known_func_name_overrides_main_routing() {
+    // Bug-2 fix must NOT shadow explicit function selection: when the
+    // leading positional matches a declared function name, that
+    // function still wins even if `main` is defined.
+    let (_dir, path) = write_temp("hav x:n>n;+x 1\nmain x:n>n;*x 2\n");
+    let (ok, stdout, stderr) = run(&[path.to_str().unwrap(), "hav", "41"]);
+    assert!(ok, "stderr: {stderr}");
+    assert_eq!(stdout.trim(), "42");
+}
