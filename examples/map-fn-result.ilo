@@ -1,0 +1,33 @@
+-- Calling a map-returning user function before using map builtins.
+--
+-- Common pitfall: writing `tg=mkmap` binds the function reference
+-- itself (F M t n), not its result. Then `mget tg "a"` is a verifier
+-- error (ILO-T013 'mget' expects a map, got F M t n). The fix is to
+-- call the function with `mkmap()` so `tg` holds the map.
+--
+-- This example demonstrates the correct shape across mget, mset,
+-- mhas, mdel and mvals, all chained off a user-fn that returns a map.
+
+mkmap>M t n;m=mset mmap "a" 1;mset m "b" 2
+
+look>n
+ tg=mkmap()
+ v=mget!! tg "a"
+ v
+
+upd>L n
+ tg=mkmap()
+ tg=mset tg "c" 3
+ mvals tg
+
+drop>b
+ tg=mkmap()
+ tg=mdel tg "a"
+ mhas tg "a"
+
+-- run: look
+-- out: 1
+-- run: upd
+-- out: [1, 2, 3]
+-- run: drop
+-- out: false
