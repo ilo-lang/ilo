@@ -1372,9 +1372,10 @@ fn compile_function_body(
                 let span_bits = pack_span_bits(chunk.spans[ip]);
                 let span_arg = builder.ins().iconst(I64, span_bits);
                 let zero = builder.ins().f64const(0.0);
-                let is_zero = builder
-                    .ins()
-                    .fcmp(cranelift_codegen::ir::condcodes::FloatCC::Equal, cf, zero);
+                let is_zero =
+                    builder
+                        .ins()
+                        .fcmp(cranelift_codegen::ir::condcodes::FloatCC::Equal, cf, zero);
                 let zero_block = builder.create_block();
                 let safe_block = builder.create_block();
                 let merge_block = builder.create_block();

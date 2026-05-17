@@ -104,12 +104,7 @@ fn assert_all_engines_fail(src: &str, args: &[&str], msg: &str) {
 #[test]
 fn div_by_literal_zero_cross_engine() {
     // OP_DIVK_N path: literal zero constant divisor. Compile-time check fires.
-    assert_all_engines_err(
-        "f a:n>n;/a 0",
-        &["10"],
-        "ILO-R003",
-        "division by zero",
-    );
+    assert_all_engines_err("f a:n>n;/a 0", &["10"], "ILO-R003", "division by zero");
 }
 
 #[test]
@@ -160,11 +155,7 @@ fn mod_by_zero_cross_engine_fails() {
     // Tree returns R003, VM/Cranelift return R004 (pre-existing parity gap).
     // The point of this test is that Cranelift no longer silently NaN's
     // through the AOT-inlined fdiv/trunc/fmul/fsub expansion.
-    assert_all_engines_fail(
-        "f a:n b:n>n;mod a b",
-        &["10", "0"],
-        "modulo by zero",
-    );
+    assert_all_engines_fail("f a:n b:n>n;mod a b", &["10", "0"], "modulo by zero");
 }
 
 // ── Sanity: safe-divisor fast paths still produce correct results ───────
@@ -178,8 +169,7 @@ fn div_safe_runtime_divisor_cross_engine_agrees() {
     }
     #[cfg(feature = "cranelift")]
     {
-        let (stdout, _, ec) =
-            run_engine("--run-cranelift", "f a:n b:n>n;/a b", &["10", "4"]);
+        let (stdout, _, ec) = run_engine("--run-cranelift", "f a:n b:n>n;/a b", &["10", "4"]);
         assert_eq!(ec, 0, "engine=cranelift unexpected error");
         assert_eq!(stdout.trim(), "2.5");
     }
