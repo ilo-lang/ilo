@@ -2835,6 +2835,26 @@ fn dispatch_run(r: cli::RunArgs, mode: OutputMode, explicit_json: bool, no_hints
                         eprintln!();
                         eprintln!("  ilo {} <func> [args...]   run a function", source_arg);
                         return 1;
+                    } else if is_file && func_names.contains(&"main") {
+                        // Multi-function file with an unknown leading
+                        // positional that does NOT look ident-shaped (a
+                        // path like `top200.csv`, a digit-prefixed
+                        // string, a sigil, etc.) and the file defines
+                        // `main`: route to `main` with the positional as
+                        // arg #1. Previously this fell through to the
+                        // "first declared function" path, so
+                        // `ilo main_v5.ilo top200.csv` ran the first
+                        // alphabetical/declared function (e.g. `hav`)
+                        // with `top200.csv` as its first arg — a
+                        // misleading silent mis-dispatch when the user
+                        // clearly intended `main` as the entry point
+                        // (gis-analyst rerun6, devops-sre rerun6 —
+                        // independent personas, same root cause). The
+                        // presence of `main` is the strong intent
+                        // signal; we use it wherever the user has not
+                        // explicitly named a different function.
+                        let fn_ref = Some("main");
+                        (fn_ref, parse_cli_args_typed(&program, fn_ref, rest))
                     } else {
                         (None, rest.iter().map(|a| parse_cli_arg(a)).collect())
                     }
