@@ -419,8 +419,8 @@ fn declare_all_helpers(module: &mut JITModule) -> HelperFuncs {
         wraperr: declare_helper(module, "jit_wraperr", 1, 1),
         isok: declare_helper(module, "jit_isok", 1, 1),
         iserr: declare_helper(module, "jit_iserr", 1, 1),
-        unwrap: declare_helper(module, "jit_unwrap", 1, 1),
-        panic_unwrap: declare_helper(module, "jit_panic_unwrap", 1, 1),
+        unwrap: declare_helper(module, "jit_unwrap", 2, 1),
+        panic_unwrap: declare_helper(module, "jit_panic_unwrap", 2, 1),
         jit_move: declare_helper(module, "jit_move", 1, 1),
         drop_rc: declare_helper(module, "jit_drop_rc", 1, 0),
         len: declare_helper(module, "jit_len", 2, 1),
@@ -491,18 +491,18 @@ fn declare_all_helpers(module: &mut JITModule) -> HelperFuncs {
         sum: declare_helper(module, "jit_sum", 2, 1),
         avg: declare_helper(module, "jit_avg", 2, 1),
         flat: declare_helper(module, "jit_flat", 2, 1),
-        slc: declare_helper(module, "jit_slc", 3, 1),
-        lst: declare_helper(module, "jit_lst", 3, 1),
+        slc: declare_helper(module, "jit_slc", 4, 1),
+        lst: declare_helper(module, "jit_lst", 4, 1),
         rgxsub: declare_helper(module, "jit_rgxsub", 3, 1),
         take: declare_helper(module, "jit_take", 2, 1),
         drop_fn: declare_helper(module, "jit_drop", 2, 1),
         listappend: declare_helper(module, "jit_listappend", 2, 1),
         listappend_inplace: declare_helper(module, "jit_listappend_inplace", 2, 1),
-        index: declare_helper(module, "jit_index", 2, 1),
+        index: declare_helper(module, "jit_index", 3, 1),
         recfld: declare_helper(module, "jit_recfld", 2, 1),
-        recfld_strict: declare_helper(module, "jit_recfld_strict", 2, 1),
+        recfld_strict: declare_helper(module, "jit_recfld_strict", 3, 1),
         recfld_name: declare_helper(module, "jit_recfld_name", 3, 1),
-        recfld_name_strict: declare_helper(module, "jit_recfld_name_strict", 3, 1),
+        recfld_name_strict: declare_helper(module, "jit_recfld_name_strict", 4, 1),
         recnew: declare_helper(module, "jit_recnew", 4, 1),
         recnew_empty: declare_helper(module, "jit_recnew_empty", 3, 1),
         reccopy: declare_helper(module, "jit_reccopy", 3, 1),
@@ -510,8 +510,8 @@ fn declare_all_helpers(module: &mut JITModule) -> HelperFuncs {
         recwith: declare_helper(module, "jit_recwith", 4, 1),
         recwith_arena: declare_helper(module, "jit_recwith_arena", 5, 1),
         listnew: declare_helper(module, "jit_listnew", 2, 1),
-        listget: declare_helper(module, "jit_listget", 2, 1),
-        jpth: declare_helper(module, "jit_jpth", 2, 1),
+        listget: declare_helper(module, "jit_listget", 3, 1),
+        jpth: declare_helper(module, "jit_jpth", 3, 1),
         jdmp: declare_helper(module, "jit_jdmp", 1, 1),
         jpar: declare_helper(module, "jit_jpar", 2, 1),
         rdjl: declare_helper(module, "jit_rdjl", 2, 1),
@@ -523,7 +523,7 @@ fn declare_all_helpers(module: &mut JITModule) -> HelperFuncs {
         islist: declare_helper(module, "jit_islist", 1, 1),
         // Map operations
         mapnew: declare_helper(module, "jit_mapnew", 0, 1),
-        mget: declare_helper(module, "jit_mget", 2, 1),
+        mget: declare_helper(module, "jit_mget", 3, 1),
         mset: declare_helper(module, "jit_mset", 3, 1),
         mset_inplace: declare_helper(module, "jit_mset_inplace", 3, 1),
         mhas: declare_helper(module, "jit_mhas", 2, 1),
@@ -563,8 +563,8 @@ fn declare_all_helpers(module: &mut JITModule) -> HelperFuncs {
         det: declare_helper(module, "jit_det", 2, 1),
         dtfmt: declare_helper(module, "jit_dtfmt", 3, 1),
         dtparse: declare_helper(module, "jit_dtparse", 3, 1),
-        call_builtin_tree: declare_helper(module, "jit_call_builtin_tree", 3, 1),
-        call_dyn: declare_helper(module, "jit_call_dyn", 3, 1),
+        call_builtin_tree: declare_helper(module, "jit_call_builtin_tree", 4, 1),
+        call_dyn: declare_helper(module, "jit_call_dyn", 4, 1),
     }
 }
 
@@ -1792,8 +1792,10 @@ fn compile_function_body(
             }
             OP_UNWRAP => {
                 let bv = builder.use_var(vars[b_idx]);
+                let span_bits = pack_span_bits(chunk.spans[ip]);
+                let span_arg = builder.ins().iconst(I64, span_bits);
                 let fref = get_func_ref(&mut builder, module, helpers.unwrap);
-                let call_inst = builder.ins().call(fref, &[bv]);
+                let call_inst = builder.ins().call(fref, &[bv, span_arg]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
             }
@@ -1805,8 +1807,10 @@ fn compile_function_body(
                 // doesn't execute against the failed value, matching the VM
                 // dispatcher's `vm_err!` early-unwind contract.
                 let bv = builder.use_var(vars[b_idx]);
+                let span_bits = pack_span_bits(chunk.spans[ip]);
+                let span_arg = builder.ins().iconst(I64, span_bits);
                 let fref = get_func_ref(&mut builder, module, helpers.panic_unwrap);
-                let call_inst = builder.ins().call(fref, &[bv]);
+                let call_inst = builder.ins().call(fref, &[bv, span_arg]);
                 let nil_val = builder.inst_results(call_inst)[0];
                 builder.ins().return_(&[nil_val]);
                 block_terminated = true;
@@ -1879,8 +1883,12 @@ fn compile_function_body(
                     builder.ins().stack_addr(I64, slot, 0)
                 };
 
+                let span_bits = pack_span_bits(chunk.spans[ip]);
+                let span_arg = builder.ins().iconst(I64, span_bits);
                 let fref = get_func_ref(&mut builder, module, helpers.call_dyn);
-                let call_inst = builder.ins().call(fref, &[callee_val, argc_val, regs_ptr]);
+                let call_inst = builder
+                    .ins()
+                    .call(fref, &[callee_val, argc_val, regs_ptr, span_arg]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
             }
@@ -2716,8 +2724,10 @@ fn compile_function_body(
                 skip_next = true;
                 let d_idx = ((data_inst >> 16) & 0xFF) as usize;
                 let dv = builder.use_var(vars[d_idx]);
+                let span_bits = pack_span_bits(chunk.spans[ip]);
+                let span_arg = builder.ins().iconst(I64, span_bits);
                 let fref = get_func_ref(&mut builder, module, helpers.slc);
-                let call_inst = builder.ins().call(fref, &[bv, cv, dv]);
+                let call_inst = builder.ins().call(fref, &[bv, cv, dv, span_arg]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
             }
@@ -2729,8 +2739,10 @@ fn compile_function_body(
                 skip_next = true;
                 let d_idx = ((data_inst >> 16) & 0xFF) as usize;
                 let dv = builder.use_var(vars[d_idx]);
+                let span_bits = pack_span_bits(chunk.spans[ip]);
+                let span_arg = builder.ins().iconst(I64, span_bits);
                 let fref = get_func_ref(&mut builder, module, helpers.lst);
-                let call_inst = builder.ins().call(fref, &[bv, cv, dv]);
+                let call_inst = builder.ins().call(fref, &[bv, cv, dv, span_arg]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
             }
@@ -2776,8 +2788,12 @@ fn compile_function_body(
                     builder.ins().stack_addr(I64, slot, 0)
                 };
 
+                let span_bits = pack_span_bits(chunk.spans[ip]);
+                let span_arg = builder.ins().iconst(I64, span_bits);
                 let fref = get_func_ref(&mut builder, module, helpers.call_builtin_tree);
-                let call_inst = builder.ins().call(fref, &[tag_val, argc_val, regs_ptr]);
+                let call_inst = builder
+                    .ins()
+                    .call(fref, &[tag_val, argc_val, regs_ptr, span_arg]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
             }
@@ -2825,8 +2841,10 @@ fn compile_function_body(
                 // R[A] = R[B][C] where C is a literal index
                 let bv = builder.use_var(vars[b_idx]);
                 let idx_val = builder.ins().iconst(I64, c_idx as i64);
+                let span_bits = pack_span_bits(chunk.spans[ip]);
+                let span_arg = builder.ins().iconst(I64, span_bits);
                 let fref = get_func_ref(&mut builder, module, helpers.index);
-                let call_inst = builder.ins().call(fref, &[bv, idx_val]);
+                let call_inst = builder.ins().call(fref, &[bv, idx_val, span_arg]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
             }
@@ -2912,8 +2930,10 @@ fn compile_function_body(
                 // arena-fast-path contract.
                 builder.switch_to_block(heap_block);
                 let field_idx_val = builder.ins().iconst(I64, c_idx as i64);
+                let span_bits = pack_span_bits(chunk.spans[ip]);
+                let span_arg = builder.ins().iconst(I64, span_bits);
                 let fref = get_func_ref(&mut builder, module, helpers.recfld_strict);
-                let call_inst = builder.ins().call(fref, &[bv, field_idx_val]);
+                let call_inst = builder.ins().call(fref, &[bv, field_idx_val, span_arg]);
                 let heap_result = builder.inst_results(call_inst)[0];
                 builder.ins().jump(merge_block, &[heap_result]);
 
@@ -2942,10 +2962,12 @@ fn compile_function_body(
                 // Strict variant: missing-name / non-record surfaces as a
                 // JIT_RUNTIME_ERROR. OP_RECFLD_NAME_SAFE below keeps using
                 // the permissive `jit_recfld_name` for `.?field` semantics.
+                let span_bits = pack_span_bits(chunk.spans[ip]);
+                let span_arg = builder.ins().iconst(I64, span_bits);
                 let fref = get_func_ref(&mut builder, module, helpers.recfld_name_strict);
                 let call_inst = builder
                     .ins()
-                    .call(fref, &[bv, field_name_val, registry_val]);
+                    .call(fref, &[bv, field_name_val, registry_val, span_arg]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
             }
@@ -3696,8 +3718,10 @@ fn compile_function_body(
                 } else {
                     // Fallback: call the extern helper when block_map doesn't have the
                     // expected successor blocks (should not occur in normal foreach).
+                    let span_bits = pack_span_bits(chunk.spans[ip]);
+                    let span_arg = builder.ins().iconst(I64, span_bits);
                     let fref = get_func_ref(&mut builder, module, helpers.listget);
-                    let call_inst = builder.ins().call(fref, &[bv, cv]);
+                    let call_inst = builder.ins().call(fref, &[bv, cv, span_arg]);
                     let result = builder.inst_results(call_inst)[0];
                     builder.def_var(vars[a_idx], result);
                 }
@@ -3820,8 +3844,10 @@ fn compile_function_body(
                     builder.ins().jump(bb, &[]);
                     block_terminated = true;
                 } else {
+                    let span_bits = pack_span_bits(chunk.spans[ip]);
+                    let span_arg = builder.ins().iconst(I64, span_bits);
                     let fref = get_func_ref(&mut builder, module, helpers.listget);
-                    let call_inst = builder.ins().call(fref, &[bv, cv]);
+                    let call_inst = builder.ins().call(fref, &[bv, cv, span_arg]);
                     let result = builder.inst_results(call_inst)[0];
                     builder.def_var(vars[a_idx], result);
                 }
@@ -3948,8 +3974,10 @@ fn compile_function_body(
                     let new_idx = builder.ins().bitcast(I64, mf_plain, new_idx_f64);
                     builder.def_var(vars[c_idx], new_idx);
                     let bv = builder.use_var(vars[b_idx]);
+                    let span_bits = pack_span_bits(chunk.spans[ip]);
+                    let span_arg = builder.ins().iconst(I64, span_bits);
                     let fref = get_func_ref(&mut builder, module, helpers.listget);
-                    let call_inst = builder.ins().call(fref, &[bv, new_idx]);
+                    let call_inst = builder.ins().call(fref, &[bv, new_idx, span_arg]);
                     let result = builder.inst_results(call_inst)[0];
                     builder.def_var(vars[a_idx], result);
                 }
@@ -4182,8 +4210,10 @@ fn compile_function_body(
             OP_JPTH => {
                 let bv = builder.use_var(vars[b_idx]);
                 let cv = builder.use_var(vars[c_idx]);
+                let span_bits = pack_span_bits(chunk.spans[ip]);
+                let span_arg = builder.ins().iconst(I64, span_bits);
                 let fref = get_func_ref(&mut builder, module, helpers.jpth);
-                let call_inst = builder.ins().call(fref, &[bv, cv]);
+                let call_inst = builder.ins().call(fref, &[bv, cv, span_arg]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
             }
@@ -4271,8 +4301,10 @@ fn compile_function_body(
             OP_MGET => {
                 let bv = builder.use_var(vars[b_idx]);
                 let cv = builder.use_var(vars[c_idx]);
+                let span_bits = pack_span_bits(chunk.spans[ip]);
+                let span_arg = builder.ins().iconst(I64, span_bits);
                 let fref = get_func_ref(&mut builder, module, helpers.mget);
-                let call_inst = builder.ins().call(fref, &[bv, cv]);
+                let call_inst = builder.ins().call(fref, &[bv, cv, span_arg]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
             }

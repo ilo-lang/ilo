@@ -240,7 +240,7 @@ fn declare_all_helpers(module: &mut ObjectModule) -> HelperFuncs {
         wraperr: declare_helper(module, "jit_wraperr", 1, 1),
         isok: declare_helper(module, "jit_isok", 1, 1),
         iserr: declare_helper(module, "jit_iserr", 1, 1),
-        unwrap: declare_helper(module, "jit_unwrap", 1, 1),
+        unwrap: declare_helper(module, "jit_unwrap", 2, 1),
         jit_move: declare_helper(module, "jit_move", 1, 1),
         drop_rc: declare_helper(module, "jit_drop_rc", 1, 0),
         len: declare_helper(module, "jit_len", 2, 1),
@@ -306,13 +306,13 @@ fn declare_all_helpers(module: &mut ObjectModule) -> HelperFuncs {
         sum: declare_helper(module, "jit_sum", 2, 1),
         avg: declare_helper(module, "jit_avg", 2, 1),
         flat: declare_helper(module, "jit_flat", 2, 1),
-        slc: declare_helper(module, "jit_slc", 3, 1),
+        slc: declare_helper(module, "jit_slc", 4, 1),
         rgxsub: declare_helper(module, "jit_rgxsub", 3, 1),
         take: declare_helper(module, "jit_take", 2, 1),
         drop_fn: declare_helper(module, "jit_drop", 2, 1),
         listappend: declare_helper(module, "jit_listappend", 2, 1),
         listappend_inplace: declare_helper(module, "jit_listappend_inplace", 2, 1),
-        index: declare_helper(module, "jit_index", 2, 1),
+        index: declare_helper(module, "jit_index", 3, 1),
         recfld: declare_helper(module, "jit_recfld", 2, 1),
         recfld_name: declare_helper(module, "jit_recfld_name", 3, 1),
         recnew: declare_helper(module, "jit_recnew", 4, 1),
@@ -321,8 +321,8 @@ fn declare_all_helpers(module: &mut ObjectModule) -> HelperFuncs {
         recsetfield: declare_helper(module, "jit_recsetfield", 3, 0),
         recwith: declare_helper(module, "jit_recwith", 4, 1),
         listnew: declare_helper(module, "jit_listnew", 2, 1),
-        listget: declare_helper(module, "jit_listget", 2, 1),
-        jpth: declare_helper(module, "jit_jpth", 2, 1),
+        listget: declare_helper(module, "jit_listget", 3, 1),
+        jpth: declare_helper(module, "jit_jpth", 3, 1),
         jdmp: declare_helper(module, "jit_jdmp", 1, 1),
         jpar: declare_helper(module, "jit_jpar", 2, 1),
         rdjl: declare_helper(module, "jit_rdjl", 2, 1),
@@ -334,7 +334,7 @@ fn declare_all_helpers(module: &mut ObjectModule) -> HelperFuncs {
         islist: declare_helper(module, "jit_islist", 1, 1),
         // Map operations
         mapnew: declare_helper(module, "jit_mapnew", 0, 1),
-        mget: declare_helper(module, "jit_mget", 2, 1),
+        mget: declare_helper(module, "jit_mget", 3, 1),
         mset: declare_helper(module, "jit_mset", 3, 1),
         mset_inplace: declare_helper(module, "jit_mset_inplace", 3, 1),
         mhas: declare_helper(module, "jit_mhas", 2, 1),
@@ -371,9 +371,9 @@ fn declare_all_helpers(module: &mut ObjectModule) -> HelperFuncs {
         getmany: declare_helper(module, "jit_getmany", 1, 1),
         dtfmt: declare_helper(module, "jit_dtfmt", 3, 1),
         dtparse: declare_helper(module, "jit_dtparse", 3, 1),
-        call_builtin_tree: declare_helper(module, "jit_call_builtin_tree", 3, 1),
-        call_dyn: declare_helper(module, "jit_call_dyn", 3, 1),
-        panic_unwrap: declare_helper(module, "jit_panic_unwrap", 1, 1),
+        call_builtin_tree: declare_helper(module, "jit_call_builtin_tree", 4, 1),
+        call_dyn: declare_helper(module, "jit_call_dyn", 4, 1),
+        panic_unwrap: declare_helper(module, "jit_panic_unwrap", 2, 1),
         // AOT-specific helpers
         get_arena_ptr: declare_helper(module, "jit_get_arena_ptr", 0, 1),
         get_registry_ptr: declare_helper(module, "jit_get_registry_ptr", 0, 1),
@@ -1689,8 +1689,10 @@ fn compile_function_body(
             }
             OP_UNWRAP => {
                 let bv = builder.use_var(vars[b_idx]);
+                let span_bits = super::jit_cranelift::pack_span_bits(chunk.spans[ip]);
+                let span_arg = builder.ins().iconst(I64, span_bits);
                 let fref = get_func_ref(&mut builder, module, helpers.unwrap);
-                let call_inst = builder.ins().call(fref, &[bv]);
+                let call_inst = builder.ins().call(fref, &[bv, span_arg]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
             }
@@ -1704,8 +1706,10 @@ fn compile_function_body(
             // to compile to a binary.
             OP_PANIC_UNWRAP => {
                 let bv = builder.use_var(vars[b_idx]);
+                let span_bits = super::jit_cranelift::pack_span_bits(chunk.spans[ip]);
+                let span_arg = builder.ins().iconst(I64, span_bits);
                 let fref = get_func_ref(&mut builder, module, helpers.panic_unwrap);
-                let call_inst = builder.ins().call(fref, &[bv]);
+                let call_inst = builder.ins().call(fref, &[bv, span_arg]);
                 let nil_val = builder.inst_results(call_inst)[0];
                 builder.ins().return_(&[nil_val]);
                 block_terminated = true;
@@ -1804,8 +1808,12 @@ fn compile_function_body(
                     builder.ins().stack_addr(I64, slot, 0)
                 };
 
+                let span_bits = super::jit_cranelift::pack_span_bits(chunk.spans[ip]);
+                let span_arg = builder.ins().iconst(I64, span_bits);
                 let fref = get_func_ref(&mut builder, module, helpers.call_dyn);
-                let call_inst = builder.ins().call(fref, &[callee_val, argc_val, regs_ptr]);
+                let call_inst = builder
+                    .ins()
+                    .call(fref, &[callee_val, argc_val, regs_ptr, span_arg]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
             }
@@ -2538,8 +2546,10 @@ fn compile_function_body(
                 skip_next = true;
                 let d_idx = ((data_inst >> 16) & 0xFF) as usize;
                 let dv = builder.use_var(vars[d_idx]);
+                let span_bits = super::jit_cranelift::pack_span_bits(chunk.spans[ip]);
+                let span_arg = builder.ins().iconst(I64, span_bits);
                 let fref = get_func_ref(&mut builder, module, helpers.slc);
-                let call_inst = builder.ins().call(fref, &[bv, cv, dv]);
+                let call_inst = builder.ins().call(fref, &[bv, cv, dv, span_arg]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
             }
@@ -2580,8 +2590,12 @@ fn compile_function_body(
                     builder.ins().stack_addr(I64, slot, 0)
                 };
 
+                let span_bits = super::jit_cranelift::pack_span_bits(chunk.spans[ip]);
+                let span_arg = builder.ins().iconst(I64, span_bits);
                 let fref = get_func_ref(&mut builder, module, helpers.call_builtin_tree);
-                let call_inst = builder.ins().call(fref, &[tag_val, argc_val, regs_ptr]);
+                let call_inst = builder
+                    .ins()
+                    .call(fref, &[tag_val, argc_val, regs_ptr, span_arg]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
             }
@@ -2624,8 +2638,10 @@ fn compile_function_body(
             OP_INDEX => {
                 let bv = builder.use_var(vars[b_idx]);
                 let idx_val = builder.ins().iconst(I64, c_idx as i64);
+                let span_bits = super::jit_cranelift::pack_span_bits(chunk.spans[ip]);
+                let span_arg = builder.ins().iconst(I64, span_bits);
                 let fref = get_func_ref(&mut builder, module, helpers.index);
-                let call_inst = builder.ins().call(fref, &[bv, idx_val]);
+                let call_inst = builder.ins().call(fref, &[bv, idx_val, span_arg]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
             }
@@ -3111,8 +3127,10 @@ fn compile_function_body(
                 } else {
                     // Fallback: call the extern helper when block_map doesn't have the
                     // expected successor blocks (should not occur in normal foreach).
+                    let span_bits = super::jit_cranelift::pack_span_bits(chunk.spans[ip]);
+                    let span_arg = builder.ins().iconst(I64, span_bits);
                     let fref = get_func_ref(&mut builder, module, helpers.listget);
-                    let call_inst = builder.ins().call(fref, &[bv, cv]);
+                    let call_inst = builder.ins().call(fref, &[bv, cv, span_arg]);
                     let result = builder.inst_results(call_inst)[0];
                     builder.def_var(vars[a_idx], result);
                 }
@@ -3204,8 +3222,10 @@ fn compile_function_body(
                     block_terminated = true;
                 } else {
                     // Fallback: use listget helper (should not occur in normal foreach)
+                    let span_bits = super::jit_cranelift::pack_span_bits(chunk.spans[ip]);
+                    let span_arg = builder.ins().iconst(I64, span_bits);
                     let fref = get_func_ref(&mut builder, module, helpers.listget);
-                    let call_inst = builder.ins().call(fref, &[bv, cv]);
+                    let call_inst = builder.ins().call(fref, &[bv, cv, span_arg]);
                     let result = builder.inst_results(call_inst)[0];
                     builder.def_var(vars[a_idx], result);
                 }
@@ -3279,8 +3299,10 @@ fn compile_function_body(
                     block_terminated = true;
                 } else {
                     // Fallback: use listget helper with the new index
+                    let span_bits = super::jit_cranelift::pack_span_bits(chunk.spans[ip]);
+                    let span_arg = builder.ins().iconst(I64, span_bits);
                     let fref = get_func_ref(&mut builder, module, helpers.listget);
-                    let call_inst = builder.ins().call(fref, &[bv, new_idx]);
+                    let call_inst = builder.ins().call(fref, &[bv, new_idx, span_arg]);
                     let result = builder.inst_results(call_inst)[0];
                     builder.def_var(vars[a_idx], result);
                 }
@@ -3500,8 +3522,10 @@ fn compile_function_body(
             OP_JPTH => {
                 let bv = builder.use_var(vars[b_idx]);
                 let cv = builder.use_var(vars[c_idx]);
+                let span_bits = super::jit_cranelift::pack_span_bits(chunk.spans[ip]);
+                let span_arg = builder.ins().iconst(I64, span_bits);
                 let fref = get_func_ref(&mut builder, module, helpers.jpth);
-                let call_inst = builder.ins().call(fref, &[bv, cv]);
+                let call_inst = builder.ins().call(fref, &[bv, cv, span_arg]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
             }
@@ -3589,8 +3613,10 @@ fn compile_function_body(
             OP_MGET => {
                 let bv = builder.use_var(vars[b_idx]);
                 let cv = builder.use_var(vars[c_idx]);
+                let span_bits = super::jit_cranelift::pack_span_bits(chunk.spans[ip]);
+                let span_arg = builder.ins().iconst(I64, span_bits);
                 let fref = get_func_ref(&mut builder, module, helpers.mget);
-                let call_inst = builder.ins().call(fref, &[bv, cv]);
+                let call_inst = builder.ins().call(fref, &[bv, cv, span_arg]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
             }
