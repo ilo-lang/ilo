@@ -1368,7 +1368,9 @@ ilo help ai                      -- compact AI spec to stdout (= contents of ai.
 ilo serv                          -- long-lived JSON request/response loop
 ```
 
-**Default-run.** Inline programs (`ilo 'code'`) and single-function files run their entry function with the remaining CLI args; no explicit function name needed. Multi-function files require either a function name argument or a function called `main`.
+**Default-run.** Inline programs (`ilo 'code'`) and single-function files run their entry function with the remaining CLI args; no explicit function name needed. Multi-function files auto-pick a function called `main` when no positional func arg is supplied. The same heuristic applies to the explicit engine flags — `--run-tree`, `--run-vm`, and `--run-cranelift` all auto-pick `main` on multi-fn files, matching the default-engine behaviour. With no `main` declared, supply a function-name argument.
+
+**Subcommand dispatch.** The first positional argument is interpreted as a function name when it has the shape of an ilo identifier — `[a-z][a-z0-9]*(-[a-z0-9]+)*` — so `ilo file.ilo list-orders` routes to the `list-orders` function. Args that don't match the ident shape (file paths like `/tmp/data.json`, numbers, sigils, bracketed lists, anything with a `.` or `/`) route to `main` (or the entry function) as a positional CLI arg instead. Trailing dashes (`foo-`), doubled dashes (`foo--bar`), and leading dashes (`--flag`, `-1`) are not idents and pass through as data.
 
 **Text-typed params.** When the entry function declares a parameter of type `t`, the CLI passes the raw arg through without numeric coercion. `ilo 'f x:t>t;x' 42` returns the string `"42"`, not the number 42.
 

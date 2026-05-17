@@ -258,11 +258,18 @@ The only place capital letters and underscores are accepted is **after `.` or `.
 ```bash
 ilo 'tot p:n q:n r:n>n;s=*p q;t=*s r;+s t' 10 20 30    # inline
 ilo program.ilo funcname args                             # from file
+ilo program.ilo list-orders                              # hyphenated ident dispatches to fn list-orders
+ilo program.ilo /tmp/data.json                           # non-ident arg routes to main as positional
+ilo program.ilo --run-tree                               # engine flag; auto-picks main on multi-fn files
+ilo program.ilo --run-vm                                 # same
+ilo program.ilo --run-cranelift                          # same
 ilo 'f xs:L n>n;len xs' 1,2,3                            # list args
 ilo --explain ILO-T004                                    # explain error
 ilo help ai                                               # compact spec
 ilo compile program.ilo                                   # AOT-compile to native binary
 ```
+
+The first positional arg dispatches to a function when it has the ilo ident shape `[a-z][a-z0-9]*(-[a-z0-9]+)*` (so `list-orders`, `parse-csv`, `a-b-c` all read as subcommands). Anything else — file paths, numbers, sigils, bracketed lists, `--flag`s, trailing-dash `foo-`, doubled-dash `foo--bar` — routes to `main` (or the single declared fn) as a positional CLI arg. The explicit engine flags `--run-tree` / `--run-vm` / `--run-cranelift` follow the same auto-pick-main rule as the default engine; pre-v0.11.6 they treated the first declared fn as the entry and surfaced misleading arity errors on multi-fn files.
 
 ### Top-level output
 
