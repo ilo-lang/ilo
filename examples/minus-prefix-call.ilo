@@ -1,0 +1,30 @@
+-- -fn x fn y — prefix-minus where one or both operands are known-arity
+-- calls. Companion to wh-prefix-call (#332). Pre-fix `-dbl 5 dbl 3`
+-- mis-parsed as `BinOp(-, Ref(dbl), Ref(5))` with `dbl 3` orphaned,
+-- because parse_minus called parse_operand directly instead of the
+-- parse_prefix_binop_operand helper. Post-fix, the natural shape
+-- parses directly.
+
+-- dbl x = x*2. Used so cross-engine answers are exact integers.
+dbl x:n>n;ret *x 2
+
+-- both-calls: subtract two calls. `-dbl 5 dbl 3` = 10 - 6 = 4.
+both-calls a:n b:n>n;-dbl a dbl b
+
+-- left-call: call on the left, literal on the right.
+left-call a:n b:n>n;-dbl a b
+
+-- right-call: literal on the left, call on the right.
+right-call a:n b:n>n;-a dbl b
+
+-- negate-call: unary negation of a call. `- dbl 5` = -10.
+negate-call x:n>n;- dbl x
+
+-- run: both-calls 5 3
+-- out: 4
+-- run: left-call 5 3
+-- out: 7
+-- run: right-call 10 3
+-- out: 4
+-- run: negate-call 5
+-- out: -10

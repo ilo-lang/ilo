@@ -5224,8 +5224,22 @@ pub(crate) fn jit_arena_reset() {
 // (`jit_lst`, `jit_listget`, `jit_index`, `jit_jpth`, `jit_slc`, ...) keep
 // the existing permissive-nil semantics; harmonising them is parked. Each
 // new erroring helper costs +1 u64 arg and +1 iconst at the call site.
+// Payload stored in the JIT_RUNTIME_ERROR cell: the error itself, the
+// optional source span, and the call-stack snapshot captured at the
+// instant the helper recorded the error. Aliased so the TLS RefCell
+// type below stays inside clippy's type-complexity budget.
+#[cfg(feature = "cranelift")]
+pub(crate) type JitRuntimeErrorPayload = (VmError, Option<crate::ast::Span>, Vec<String>);
+
 thread_local! {
-    static JIT_RUNTIME_ERROR: std::cell::RefCell<Option<(VmError, Option<crate::ast::Span>)>> =
+    // JIT helpers raise errors but do not unwind native frames — the
+    // pop_call_frame emitted after each direct OP_CALL still fires on
+    // the native return path. So by the time the entry returns, the
+    // live call stack has shrunk back to the seed. Capturing the chain
+    // here, at the instant the helper sets the error, is the only way
+    // to record [entry, caller, ..., callee_that_errored] — the same
+    // shape VM and tree build by walking live frames at error time.
+    static JIT_RUNTIME_ERROR: std::cell::RefCell<Option<JitRuntimeErrorPayload>> =
         const { std::cell::RefCell::new(None) };
 }
 
@@ -5258,17 +5272,23 @@ pub(crate) fn jit_set_runtime_error_with_span(err: VmError, span_bits: u64) {
         // cause.
         let mut slot = cell.borrow_mut();
         if slot.is_none() {
-            *slot = Some((err, span));
+            // Snapshot the call stack at this exact instant. The JIT
+            // does not unwind on helper errors — post-call pops still
+            // fire on the native return path — so capturing here is
+            // the only way to record the deepest live frame chain.
+            let stack = JIT_CALL_STACK.with(|c| c.borrow().clone());
+            *slot = Some((err, span, stack));
         }
     });
 }
 
 /// Pop any pending JIT runtime error. Called by the JIT entry point after
-/// the compiled function returns. Returns the `(VmError, Option<Span>)`
-/// pair so the entry point can attach the span to the surfaced
-/// `VmRuntimeError`.
+/// the compiled function returns. Returns the error, its span, and the
+/// call-stack snapshot captured at error-set time so the entry point can
+/// build a `VmRuntimeError` whose `notes` match what the VM and tree
+/// interpreters produce for the same repro.
 #[cfg(feature = "cranelift")]
-pub(crate) fn jit_take_runtime_error() -> Option<(VmError, Option<crate::ast::Span>)> {
+pub(crate) fn jit_take_runtime_error() -> Option<JitRuntimeErrorPayload> {
     JIT_RUNTIME_ERROR.with(|cell| cell.borrow_mut().take())
 }
 
@@ -5284,6 +5304,7 @@ impl JitRuntimeErrorGuard {
         JIT_RUNTIME_ERROR.with(|cell| {
             *cell.borrow_mut() = None;
         });
+        jit_clear_call_stack();
         JitRuntimeErrorGuard
     }
 }
@@ -5294,7 +5315,81 @@ impl Drop for JitRuntimeErrorGuard {
         JIT_RUNTIME_ERROR.with(|cell| {
             *cell.borrow_mut() = None;
         });
+        jit_clear_call_stack();
     }
+}
+
+// Per-thread call stack for the Cranelift JIT.
+//
+// Tree/VM build `VmRuntimeError.call_stack` by walking their frame stack
+// when an error fires (see `VM::make_runtime_error`). Cranelift compiles
+// every function to a real native function and dispatches through direct
+// native `call` instructions, so by the time `jit_take_runtime_error`
+// surfaces the error we have no software frame stack to walk — without
+// extra bookkeeping the surfaced `call_stack` is always empty.
+//
+// This TLS Vec is pushed by `jit_push_call_frame` immediately before a
+// direct OP_CALL in JIT IR and popped by `jit_pop_call_frame` immediately
+// after the call returns. If the callee surfaces an error, the pop is
+// still emitted on the success branch only via post-call check — the
+// stack snapshot fires before the unwind so we capture the deepest live
+// frame name. Inlined OP_CALLs (the `is_inlinable` fast path) skip the
+// push/pop entirely: their work is fused into the caller's IR, so they
+// belong to the caller's frame anyway and any error in their body reports
+// the caller's name, matching the VM/tree semantics for inlined helpers.
+//
+// Cost: two `extern "C"` calls per non-inlined OP_CALL. The hottest
+// dispatch path (inlinable numeric guards, see PR #340 / #346) is
+// unaffected. Non-inlined calls already pay direct call ABI cost; an
+// extra TLS append/pop is dominated by that.
+#[cfg(feature = "cranelift")]
+thread_local! {
+    pub(crate) static JIT_CALL_STACK: std::cell::RefCell<Vec<String>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Push a function name onto the JIT call-stack. Emitted by Cranelift
+/// just before a direct `OP_CALL` to a known function. `name_ptr` and
+/// `name_len` describe a `&'static str` (the entry in
+/// `program.func_names`) — Cranelift owns the program for the duration
+/// of the JIT dispatch, so the slice is valid until the call returns.
+#[cfg(feature = "cranelift")]
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn jit_push_call_frame(name_ptr: *const u8, name_len: u64) -> u64 {
+    if name_ptr.is_null() || name_len == 0 {
+        return 0;
+    }
+    // SAFETY: name_ptr / name_len come from a CompiledProgram.func_names
+    // String borrow that outlives the JIT dispatch (held by
+    // `with_active_registry`). UTF-8 validity is guaranteed because the
+    // source is a Rust `String`.
+    let name = unsafe {
+        let slice = std::slice::from_raw_parts(name_ptr, name_len as usize);
+        std::str::from_utf8_unchecked(slice).to_owned()
+    };
+    JIT_CALL_STACK.with(|cell| cell.borrow_mut().push(name));
+    0
+}
+
+/// Pop the most-recent JIT call-stack entry. Emitted after a successful
+/// return from `OP_CALL`. Skipped implicitly on the error path because
+/// JIT runtime errors short-circuit before reaching this opcode boundary.
+#[cfg(feature = "cranelift")]
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn jit_pop_call_frame() -> u64 {
+    JIT_CALL_STACK.with(|cell| {
+        let mut s = cell.borrow_mut();
+        s.pop();
+    });
+    0
+}
+
+/// Clear the JIT call stack. Called from the `JitRuntimeErrorGuard`
+/// install path so a stale partial stack from a previous panic-recovered
+/// dispatch cannot leak into the next call. Idempotent.
+#[cfg(feature = "cranelift")]
+pub(crate) fn jit_clear_call_stack() {
+    JIT_CALL_STACK.with(|cell| cell.borrow_mut().clear());
 }
 
 // Why a separate tag for ListView
@@ -9847,8 +9942,10 @@ impl<'a> VM<'a> {
                         };
                         match char_at_signed(s, raw) {
                             CharAtResult::Found(c) => NanVal::heap_string(c.to_string()),
-                            CharAtResult::OutOfRange { .. } => {
-                                vm_err!(VmError::Type("at: index out of range"))
+                            CharAtResult::OutOfRange { len } => {
+                                vm_err!(VmError::Runtime(format!(
+                                    "at: index {raw} out of range for text of length {len}"
+                                )))
                             }
                         }
                     } else if v.is_heap() {
@@ -9858,7 +9955,9 @@ impl<'a> VM<'a> {
                                 let len = items.len() as i64;
                                 let adjusted = if raw < 0 { raw + len } else { raw };
                                 if adjusted < 0 || adjusted >= len {
-                                    vm_err!(VmError::Type("at: index out of range"));
+                                    vm_err!(VmError::Runtime(format!(
+                                        "at: index {raw} out of range for list of length {len}"
+                                    )));
                                 }
                                 let idx = adjusted as usize;
                                 items[idx].clone_rc();
@@ -10592,7 +10691,10 @@ impl<'a> VM<'a> {
                             h @ (HeapObj::List(_) | HeapObj::ListView { .. }) => {
                                 let items = slice_of(h);
                                 if idx >= items.len() {
-                                    vm_err!(VmError::Type("lst: index out of range"));
+                                    let len = items.len();
+                                    vm_err!(VmError::Runtime(format!(
+                                        "lst: index {idx} out of range for list of length {len}"
+                                    )));
                                 }
                                 let mut new_items: Vec<NanVal> = Vec::with_capacity(items.len());
                                 for (i, v) in items.iter().enumerate() {
@@ -11668,6 +11770,24 @@ pub(crate) extern "C" fn jit_mul(a: u64, b: u64, span_bits: u64) -> u64 {
         return NanVal::number(av.as_number() * bv.as_number()).0;
     }
     jit_set_runtime_error_with_span(VmError::Type("cannot multiply non-numbers"), span_bits);
+    TAG_NIL
+}
+
+/// Helper called from the Cranelift fast path when an inline fdiv divisor is
+/// zero. Sets `VmError::DivisionByZero` on the per-thread error cell with the
+/// call-site span and returns TAG_NIL so the JIT IR can carry on without a
+/// dedicated unwind path; the entry point picks the error up after the
+/// compiled function returns.
+///
+/// Both the JIT (`jit_cranelift.rs`) and the AOT (`compile_cranelift.rs`)
+/// pipelines emit a one-branch `fcmp == 0.0` guard before each inline
+/// fdiv: on the zero edge they call this helper, on the non-zero edge they
+/// fall through to `fdiv` as before. Constant-divisor sites resolve at
+/// compile time so non-zero `OP_DIVK_N` keeps the unconditional fast path.
+#[cfg(feature = "cranelift")]
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn jit_raise_divzero(span_bits: u64) -> u64 {
+    jit_set_runtime_error_with_span(VmError::DivisionByZero, span_bits);
     TAG_NIL
 }
 
@@ -12934,8 +13054,13 @@ pub(crate) extern "C" fn jit_at(a: u64, b: u64, span_bits: u64) -> u64 {
         };
         return match char_at_signed(s, raw) {
             CharAtResult::Found(c) => NanVal::heap_string(c.to_string()).0,
-            CharAtResult::OutOfRange { .. } => {
-                jit_set_runtime_error_with_span(VmError::Type("at: index out of range"), span_bits);
+            CharAtResult::OutOfRange { len } => {
+                jit_set_runtime_error_with_span(
+                    VmError::Runtime(format!(
+                        "at: index {raw} out of range for text of length {len}"
+                    )),
+                    span_bits,
+                );
                 TAG_NIL
             }
         };
@@ -12946,7 +13071,12 @@ pub(crate) extern "C" fn jit_at(a: u64, b: u64, span_bits: u64) -> u64 {
         let len = items.len() as i64;
         let adjusted = if raw < 0 { raw + len } else { raw };
         if adjusted < 0 || adjusted >= len {
-            jit_set_runtime_error_with_span(VmError::Type("at: index out of range"), span_bits);
+            jit_set_runtime_error_with_span(
+                VmError::Runtime(format!(
+                    "at: index {raw} out of range for list of length {len}"
+                )),
+                span_bits,
+            );
             return TAG_NIL;
         }
         let idx = adjusted as usize;
@@ -12980,7 +13110,13 @@ pub(crate) extern "C" fn jit_lst(list: u64, idx: u64, val: u64, span_bits: u64) 
         && let HeapObj::List(items) = unsafe { v.as_heap_ref() }
     {
         if pos >= items.len() {
-            jit_set_runtime_error_with_span(VmError::Type("lst: index out of range"), span_bits);
+            let len = items.len();
+            jit_set_runtime_error_with_span(
+                VmError::Runtime(format!(
+                    "lst: index {pos} out of range for list of length {len}"
+                )),
+                span_bits,
+            );
             return TAG_NIL;
         }
         let mut new_items: Vec<NanVal> = Vec::with_capacity(items.len());
