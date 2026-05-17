@@ -4764,6 +4764,63 @@ pub enum JitCallError {
     Panic { msg: String },
 }
 
+/// Process-global counter of Cranelift JIT panics that fell back to a
+/// non-JIT engine. Incremented once per panic; the first increment also
+/// emits a single-line breadcrumb to stderr (with explicit flush) so
+/// harnesses that merge or buffer streams still see the engine swap.
+/// Subsequent panics bump the counter silently to avoid spamming stderr
+/// when a hot loop hits the upstream assertion repeatedly. Tests can
+/// read the counter via [`jit_panic_fallback_count`] to assert the
+/// fallback path actually ran.
+static JIT_PANIC_FALLBACK_COUNT: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+
+/// Stable grep-anchor prefix for the JIT-fallback breadcrumb. Tagging
+/// makes the line trivially detectable by harnesses (CI grep, persona
+/// timing wrappers) that would otherwise have to parse free-form text.
+pub const JIT_FALLBACK_TAG: &str = "[ilo:jit-fallback]";
+
+/// Emit a single-line stderr breadcrumb the first time a Cranelift JIT
+/// panic is converted into a non-JIT fallback in this process. `target`
+/// is the engine the caller will fall back to (e.g. `"bytecode VM"` or
+/// `"interpreter"`). Returns the total fallback count *after* this call
+/// so the caller can include it in richer diagnostics if desired.
+///
+/// Flushes stderr explicitly: some persona harnesses buffer the stream
+/// and would otherwise drop the breadcrumb when the process exits
+/// before the final flush. Once-per-process semantics (via
+/// `fetch_add` + compare) keep tight loops from spamming the user.
+pub fn note_jit_panic_fallback(msg: &str, target: &str) -> usize {
+    use std::io::Write;
+    let prev = JIT_PANIC_FALLBACK_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    if prev == 0 {
+        let mut err = std::io::stderr().lock();
+        let _ = writeln!(
+            err,
+            "{} Cranelift JIT panicked ({}); falling back to {}. Subsequent fallbacks in this process will be silent (count reported on exit).",
+            JIT_FALLBACK_TAG, msg, target
+        );
+        let _ = err.flush();
+    }
+    prev + 1
+}
+
+/// Read the current JIT-panic-fallback counter. Used by tests to assert
+/// the fallback breadcrumb path ran; also useful for end-of-run
+/// diagnostics in long-lived processes.
+pub fn jit_panic_fallback_count() -> usize {
+    JIT_PANIC_FALLBACK_COUNT.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Reset the JIT-panic-fallback counter. Test-only: production callers
+/// should treat the counter as monotonic. The counter is process-global,
+/// so tests that exercise the fallback path must reset before asserting
+/// to remain order-independent under `cargo test`'s parallel runner.
+#[cfg(any(test, debug_assertions))]
+pub fn reset_jit_panic_fallback_count() {
+    JIT_PANIC_FALLBACK_COUNT.store(0, std::sync::atomic::Ordering::Relaxed);
+}
+
 // Debug-build-only test hook: when set, `compile_and_call` raises a
 // synthetic panic from inside the catch_unwind region. Exercises the
 // panic-fallback path without depending on the AArch64-specific upstream
