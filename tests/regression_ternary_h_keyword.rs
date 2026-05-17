@@ -76,7 +76,7 @@ fn h_keyword_ternary_false_cross_engine() {
 fn h_keyword_ternary_in_let_rhs_cross_engine() {
     // The security-researcher rerun8 probe: assign the conditional to a
     // local in a let-RHS, with text arms and a comparison-derived bool.
-    let src = "f mn:t>t;cn=eq mn \"ok\";sc1=?h cn \"metrics:nil\" \"metrics:ok\";sc1";
+    let src = "f mn:t>t;cn=(=mn \"ok\");sc1=?h cn \"metrics:nil\" \"metrics:ok\";sc1";
     for engine in ENGINES_ALL {
         assert_eq!(
             run_ok(engine, src, &["f", "ok"]),
