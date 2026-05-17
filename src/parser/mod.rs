@@ -474,6 +474,23 @@ impl Parser {
                 "pick a different name like `field` or `folder`".into(),
             ));
         }
+        // Short-form alias `rng` (resolves to canonical `range`) used as
+        // binding name: `rng=5`. Without this guard the assignment is allowed
+        // but a later `rng args` call gets rewritten by the alias resolver to
+        // `range args`, silently mis-dispatching to the builtin. Same shape as
+        // the canonical-builtin-binding rejection below; surfaced separately
+        // because `Builtin::is_builtin("rng")` returns false (rng is an alias,
+        // not a canonical name).
+        if let Some(Token::Ident(name)) = self.peek()
+            && name == "rng"
+            && self.token_at(self.pos + 1) == Some(&Token::Eq)
+        {
+            return Err(self.error_hint(
+                "ILO-P011",
+                "`rng` is a short-form alias for the `range` builtin and cannot be used as a binding name".into(),
+                "pick a different name like `rg` or `myrng`. Aliases shadow local bindings in call position, so reusing the name silently mis-dispatches.".into(),
+            ));
+        }
         // Any other builtin name used as binding LHS: `flat=...`, `frq=...`,
         // `map=...`, etc. Personas hit this constantly (pdf-analyst rerun3 #6:
         // `flat=cat ls " "` then `spl flat ". "` mis-dispatched to the builtin
@@ -719,6 +736,16 @@ impl Parser {
                 format!(
                     "rename to something like `my{name}` or `{name}of` — builtins shadow user functions in calls, so reusing the name silently breaks dispatch"
                 ),
+            ));
+        }
+        // Short-form builtin alias (`rng` → `range`): same shadow-in-call-position
+        // problem as a canonical builtin name, surfaced here because
+        // `Builtin::is_builtin` doesn't include aliases.
+        if name == "rng" {
+            return Err(self.error_hint(
+                "ILO-P011",
+                "`rng` is a short-form alias for the `range` builtin and cannot be used as a function name".into(),
+                "rename to something like `myrng` or `rg`. Aliases shadow user functions in calls, so reusing the name silently breaks dispatch.".into(),
             ));
         }
         let params = self.parse_params()?;
@@ -1141,6 +1168,18 @@ impl Parser {
                             "ILO-P011",
                             format!("`{name}` is a builtin and cannot be used as a binding name"),
                             format!("rename to something like `my{name}` or `{name}v`. Builtins shadow local bindings in call position, so reusing the name silently mis-dispatches."),
+                        ));
+                    }
+                    // Short-form alias for a builtin (`rng` → `range`): same
+                    // shadow problem as a canonical builtin name. `Builtin::is_builtin`
+                    // returns false for aliases, so this needs its own check.
+                    if let Some(Token::Ident(name)) = self.peek()
+                        && name == "rng"
+                    {
+                        return Err(self.error_hint(
+                            "ILO-P011",
+                            "`rng` is a short-form alias for the `range` builtin and cannot be used as a binding name".into(),
+                            "rename to something like `rg` or `myrng`. Aliases shadow local bindings in call position, so reusing the name silently mis-dispatches.".into(),
                         ));
                     }
                     self.parse_let()
