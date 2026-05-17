@@ -1,0 +1,14 @@
+-- len (flt p xs) counter fusion: bio canonical's `n = len (flt is-hydro xs); =n 15` shape.
+-- The fused emitter walks xs once with a numeric counter, no per-call scratch list materialised.
+-- Predicate is small and gets inlined into the counter loop too (PR #340 machinery).
+
+is-hydro c:t>b;has "AILMFWVYC" c
+all4-h xs:L t>b;n=len (flt is-hydro xs);=n 4
+
+main>n
+  cs=chars "AAIIXXAAIIII"
+  ws=window 4 cs
+  ms=flt all4-h ws
+  len ms
+-- run: main
+-- out: 4
