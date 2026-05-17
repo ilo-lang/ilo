@@ -35,6 +35,11 @@ struct HelperFuncs {
     sub: FuncId,
     mul: FuncId,
     div: FuncId,
+    /// Tiny extern called on the zero edge of an inline-fdiv guard. Sets
+    /// `VmError::DivisionByZero` on the per-thread cell and returns TAG_NIL.
+    /// Lets fast-path division emit `fcmp == 0.0 -> brif -> helper-call` with
+    /// a one-instruction extern instead of falling back to `helpers.div`.
+    raise_divzero: FuncId,
     eq: FuncId,
     ne: FuncId,
     gt: FuncId,
@@ -193,6 +198,9 @@ struct HelperFuncs {
     call_builtin_tree: FuncId,
     // Dynamic-dispatch bridge for OP_CALL_DYN (HOF callbacks: `map`, ...)
     call_dyn: FuncId,
+    // Per-thread call-stack tracking for cross-engine error parity.
+    push_call_frame: FuncId,
+    pop_call_frame: FuncId,
 }
 
 /// Pack a `Span { start, end }` into a single i64 immediate for passing to
@@ -230,6 +238,7 @@ fn register_helpers(builder: &mut JITBuilder) {
         ("jit_sub", jit_sub as *const u8),
         ("jit_mul", jit_mul as *const u8),
         ("jit_div", jit_div as *const u8),
+        ("jit_raise_divzero", jit_raise_divzero as *const u8),
         ("jit_eq", jit_eq as *const u8),
         ("jit_ne", jit_ne as *const u8),
         ("jit_gt", jit_gt as *const u8),
@@ -391,6 +400,17 @@ fn register_helpers(builder: &mut JITBuilder) {
         ("jit_dtparse", jit_dtparse as *const u8),
         ("jit_call_builtin_tree", jit_call_builtin_tree as *const u8),
         ("jit_call_dyn", jit_call_dyn as *const u8),
+        // Call-stack tracking for VmRuntimeError.call_stack parity with
+        // VM/tree. See `jit_push_call_frame` / `jit_pop_call_frame` in
+        // src/vm/mod.rs for the rationale.
+        (
+            "jit_push_call_frame",
+            crate::vm::jit_push_call_frame as *const u8,
+        ),
+        (
+            "jit_pop_call_frame",
+            crate::vm::jit_pop_call_frame as *const u8,
+        ),
     ];
     for &(name, ptr) in helpers {
         builder.symbol(name, ptr);
@@ -406,6 +426,7 @@ fn declare_all_helpers(module: &mut JITModule) -> HelperFuncs {
         sub: declare_helper(module, "jit_sub", 3, 1),
         mul: declare_helper(module, "jit_mul", 3, 1),
         div: declare_helper(module, "jit_div", 3, 1),
+        raise_divzero: declare_helper(module, "jit_raise_divzero", 1, 1),
         eq: declare_helper(module, "jit_eq", 2, 1),
         ne: declare_helper(module, "jit_ne", 2, 1),
         gt: declare_helper(module, "jit_gt", 3, 1),
@@ -565,6 +586,8 @@ fn declare_all_helpers(module: &mut JITModule) -> HelperFuncs {
         dtparse: declare_helper(module, "jit_dtparse", 3, 1),
         call_builtin_tree: declare_helper(module, "jit_call_builtin_tree", 4, 1),
         call_dyn: declare_helper(module, "jit_call_dyn", 4, 1),
+        push_call_frame: declare_helper(module, "jit_push_call_frame", 2, 1),
+        pop_call_frame: declare_helper(module, "jit_pop_call_frame", 0, 1),
     }
 }
 
@@ -604,8 +627,20 @@ fn is_inlinable(chunk: &Chunk, nan_consts: &[NanVal]) -> bool {
                     return false;
                 }
             }
-            OP_ADD_NN | OP_SUB_NN | OP_MUL_NN | OP_DIV_NN | OP_ADDK_N | OP_SUBK_N | OP_MULK_N
-            | OP_DIVK_N => {}
+            OP_ADD_NN | OP_SUB_NN | OP_MUL_NN | OP_ADDK_N | OP_SUBK_N | OP_MULK_N => {}
+            // Division opcodes need a runtime zero check to raise ILO-R003 to
+            // match tree + VM; the leaf-inline emitter is a small fast-path
+            // helper without helper-call / span plumbing, so push any chunk
+            // containing division through the main compile path which carries
+            // the guard. For OP_DIVK_N we can prove safety statically when the
+            // constant divisor is non-zero, so those chunks stay inlinable.
+            OP_DIV_NN => return false,
+            OP_DIVK_N => {
+                let ki = (inst & 0xFF) as usize;
+                if ki >= nan_consts.len() || nan_consts[ki].as_number() == 0.0 {
+                    return false;
+                }
+            }
             _ => return false,
         }
     }
@@ -1091,7 +1126,7 @@ fn compile_function_body(
                 // Guaranteed numeric outputs.
                 OP_ADD_NN | OP_SUB_NN | OP_MUL_NN | OP_DIV_NN
                 | OP_ADDK_N | OP_SUBK_N | OP_MULK_N | OP_DIVK_N
-                | OP_LEN | OP_ABS | OP_MIN | OP_MAX
+                | OP_LEN | OP_LEN_HAS_K_COUNT | OP_ABS | OP_MIN | OP_MAX
                 | OP_FLR | OP_CEL | OP_ROU | OP_RND0 | OP_RND2 | OP_RNDN | OP_NOW
                 | OP_MOD | OP_CLAMP | OP_POW | OP_SQRT | OP_LOG | OP_EXP | OP_SIN | OP_COS
                 | OP_TAN | OP_LOG10 | OP_LOG2 | OP_ASIN | OP_ACOS | OP_ATAN | OP_ATAN2
@@ -1347,11 +1382,45 @@ fn compile_function_body(
                     let cv = builder.use_var(vars[c_idx]);
                     builder.ins().bitcast(F64, mf, cv)
                 };
+                // Guard: fcmp == 0.0 -> brif -> raise helper (ILO-R003) /
+                // fall through to fdiv. Matches tree + VM semantics; previously
+                // this path produced silent NaN / inf when the divisor was zero.
+                let span_bits = pack_span_bits(chunk.spans[ip]);
+                let span_arg = builder.ins().iconst(I64, span_bits);
+                let zero = builder.ins().f64const(0.0);
+                let is_zero =
+                    builder
+                        .ins()
+                        .fcmp(cranelift_codegen::ir::condcodes::FloatCC::Equal, cf, zero);
+                let zero_block = builder.create_block();
+                let safe_block = builder.create_block();
+                let merge_block = builder.create_block();
+                builder.append_block_param(merge_block, I64);
+                builder
+                    .ins()
+                    .brif(is_zero, zero_block, &[], safe_block, &[]);
+
+                builder.switch_to_block(zero_block);
+                let fref = get_func_ref(&mut builder, module, helpers.raise_divzero);
+                let call_inst = builder.ins().call(fref, &[span_arg]);
+                let nil_res = builder.inst_results(call_inst)[0];
+                builder.ins().jump(merge_block, &[nil_res]);
+
+                builder.switch_to_block(safe_block);
                 let result_f = builder.ins().fdiv(bf, cf);
-                let result = builder.ins().bitcast(I64, mf, result_f);
+                let safe_result = builder.ins().bitcast(I64, mf, result_f);
+                builder.ins().jump(merge_block, &[safe_result]);
+
+                builder.switch_to_block(merge_block);
+                let result = builder.block_params(merge_block)[0];
                 builder.def_var(vars[a_idx], result);
                 if a_idx < reg_count && reg_always_num[a_idx] {
-                    builder.def_var(f64_vars[a_idx], result_f);
+                    // Keep the f64 shadow in sync. On the zero path the result
+                    // is the QNAN bit pattern of TAG_NIL; the entry-point error
+                    // check fires before any downstream consumer reads the
+                    // shadow, so the cast is harmless.
+                    let result_f64 = builder.ins().bitcast(F64, mf, result);
+                    builder.def_var(f64_vars[a_idx], result_f64);
                 }
             }
             OP_ADDK_N => {
@@ -1414,12 +1483,29 @@ fn compile_function_body(
                     let bv = builder.use_var(vars[b_idx]);
                     builder.ins().bitcast(F64, mf, bv)
                 };
-                let kval = builder.ins().f64const(kv);
-                let result_f = builder.ins().fdiv(bf, kval);
-                let result = builder.ins().bitcast(I64, mf, result_f);
-                builder.def_var(vars[a_idx], result);
-                if a_idx < reg_count && reg_always_num[a_idx] {
-                    builder.def_var(f64_vars[a_idx], result_f);
+                if kv == 0.0 {
+                    // Constant divisor is zero: raise ILO-R003 unconditionally
+                    // (the bytecode-emit pass keeps the literal so we surface
+                    // the same error as tree + VM for `x / 0` etc.).
+                    let span_bits = pack_span_bits(chunk.spans[ip]);
+                    let span_arg = builder.ins().iconst(I64, span_bits);
+                    let fref = get_func_ref(&mut builder, module, helpers.raise_divzero);
+                    let call_inst = builder.ins().call(fref, &[span_arg]);
+                    let result = builder.inst_results(call_inst)[0];
+                    builder.def_var(vars[a_idx], result);
+                    if a_idx < reg_count && reg_always_num[a_idx] {
+                        let rf = builder.ins().bitcast(F64, mf, result);
+                        builder.def_var(f64_vars[a_idx], rf);
+                    }
+                } else {
+                    // Non-zero constant: fdiv is always defined, no guard needed.
+                    let kval = builder.ins().f64const(kv);
+                    let result_f = builder.ins().fdiv(bf, kval);
+                    let result = builder.ins().bitcast(I64, mf, result_f);
+                    builder.def_var(vars[a_idx], result);
+                    if a_idx < reg_count && reg_always_num[a_idx] {
+                        builder.def_var(f64_vars[a_idx], result_f);
+                    }
                 }
             }
             OP_ADD | OP_SUB | OP_MUL | OP_DIV => {
@@ -1446,17 +1532,56 @@ fn compile_function_body(
                         let cv = builder.use_var(vars[c_idx]);
                         builder.ins().bitcast(F64, mf, cv)
                     };
-                    let result_f = match op {
-                        OP_ADD => builder.ins().fadd(bf, cf),
-                        OP_SUB => builder.ins().fsub(bf, cf),
-                        OP_MUL => builder.ins().fmul(bf, cf),
-                        OP_DIV => builder.ins().fdiv(bf, cf),
-                        _ => unreachable!(),
-                    };
-                    let result = builder.ins().bitcast(I64, mf, result_f);
-                    builder.def_var(vars[a_idx], result);
-                    if a_idx < reg_count && reg_always_num[a_idx] {
-                        builder.def_var(f64_vars[a_idx], result_f);
+                    if op == OP_DIV {
+                        // Divisor zero raises ILO-R003 via the raise helper to
+                        // match tree + VM. Other ops (add/sub/mul) are total
+                        // on f64 and keep the unguarded fast path.
+                        let span_bits = pack_span_bits(chunk.spans[ip]);
+                        let span_arg = builder.ins().iconst(I64, span_bits);
+                        let zero = builder.ins().f64const(0.0);
+                        let is_zero = builder.ins().fcmp(
+                            cranelift_codegen::ir::condcodes::FloatCC::Equal,
+                            cf,
+                            zero,
+                        );
+                        let zero_block = builder.create_block();
+                        let safe_block = builder.create_block();
+                        let merge_div = builder.create_block();
+                        builder.append_block_param(merge_div, I64);
+                        builder
+                            .ins()
+                            .brif(is_zero, zero_block, &[], safe_block, &[]);
+
+                        builder.switch_to_block(zero_block);
+                        let fref = get_func_ref(&mut builder, module, helpers.raise_divzero);
+                        let call_inst = builder.ins().call(fref, &[span_arg]);
+                        let nil_res = builder.inst_results(call_inst)[0];
+                        builder.ins().jump(merge_div, &[nil_res]);
+
+                        builder.switch_to_block(safe_block);
+                        let result_f = builder.ins().fdiv(bf, cf);
+                        let safe_result = builder.ins().bitcast(I64, mf, result_f);
+                        builder.ins().jump(merge_div, &[safe_result]);
+
+                        builder.switch_to_block(merge_div);
+                        let result = builder.block_params(merge_div)[0];
+                        builder.def_var(vars[a_idx], result);
+                        if a_idx < reg_count && reg_always_num[a_idx] {
+                            let rf = builder.ins().bitcast(F64, mf, result);
+                            builder.def_var(f64_vars[a_idx], rf);
+                        }
+                    } else {
+                        let result_f = match op {
+                            OP_ADD => builder.ins().fadd(bf, cf),
+                            OP_SUB => builder.ins().fsub(bf, cf),
+                            OP_MUL => builder.ins().fmul(bf, cf),
+                            _ => unreachable!(),
+                        };
+                        let result = builder.ins().bitcast(I64, mf, result_f);
+                        builder.def_var(vars[a_idx], result);
+                        if a_idx < reg_count && reg_always_num[a_idx] {
+                            builder.def_var(f64_vars[a_idx], result_f);
+                        }
                     }
                 } else {
                     let bv = builder.use_var(vars[b_idx]);
@@ -1482,20 +1607,48 @@ fn compile_function_body(
                         .ins()
                         .brif(both_num, num_block, &[], slow_block, &[]);
 
-                    // Fast path: inline float arithmetic
+                    // Fast path: inline float arithmetic. For OP_DIV the
+                    // divisor must be checked against 0.0 to raise ILO-R003
+                    // instead of silently producing NaN / inf.
                     builder.switch_to_block(num_block);
                     let mf = cranelift_codegen::ir::MemFlags::new();
                     let bf = builder.ins().bitcast(F64, mf, bv);
                     let cf = builder.ins().bitcast(F64, mf, cv);
-                    let result_f = match op {
-                        OP_ADD => builder.ins().fadd(bf, cf),
-                        OP_SUB => builder.ins().fsub(bf, cf),
-                        OP_MUL => builder.ins().fmul(bf, cf),
-                        OP_DIV => builder.ins().fdiv(bf, cf),
-                        _ => unreachable!(),
-                    };
-                    let fast_result = builder.ins().bitcast(I64, mf, result_f);
-                    builder.ins().jump(merge_block, &[fast_result]);
+                    if op == OP_DIV {
+                        let span_bits = pack_span_bits(chunk.spans[ip]);
+                        let span_arg = builder.ins().iconst(I64, span_bits);
+                        let zero = builder.ins().f64const(0.0);
+                        let is_zero = builder.ins().fcmp(
+                            cranelift_codegen::ir::condcodes::FloatCC::Equal,
+                            cf,
+                            zero,
+                        );
+                        let zero_block_div = builder.create_block();
+                        let safe_block_div = builder.create_block();
+                        builder
+                            .ins()
+                            .brif(is_zero, zero_block_div, &[], safe_block_div, &[]);
+
+                        builder.switch_to_block(zero_block_div);
+                        let fref = get_func_ref(&mut builder, module, helpers.raise_divzero);
+                        let call_inst = builder.ins().call(fref, &[span_arg]);
+                        let nil_res = builder.inst_results(call_inst)[0];
+                        builder.ins().jump(merge_block, &[nil_res]);
+
+                        builder.switch_to_block(safe_block_div);
+                        let result_f = builder.ins().fdiv(bf, cf);
+                        let fast_result = builder.ins().bitcast(I64, mf, result_f);
+                        builder.ins().jump(merge_block, &[fast_result]);
+                    } else {
+                        let result_f = match op {
+                            OP_ADD => builder.ins().fadd(bf, cf),
+                            OP_SUB => builder.ins().fsub(bf, cf),
+                            OP_MUL => builder.ins().fmul(bf, cf),
+                            _ => unreachable!(),
+                        };
+                        let fast_result = builder.ins().bitcast(I64, mf, result_f);
+                        builder.ins().jump(merge_block, &[fast_result]);
+                    }
 
                     // Slow path: call helper (handles string concat, etc.)
                     builder.switch_to_block(slow_block);
@@ -4146,9 +4299,46 @@ fn compile_function_body(
                         for i in 0..n_args {
                             call_args.push(builder.use_var(vars[a_idx_call + 1 + i]));
                         }
+
+                        // Push the callee's name onto the per-thread JIT
+                        // call stack so a runtime error surfaced from
+                        // inside the callee carries call_stack notes
+                        // matching VM/tree output. We only push for
+                        // non-inlined calls because inlined callees fuse
+                        // into the caller's IR — they do not constitute
+                        // a separate frame in the VM/tree model either
+                        // (the inliner mirrors what the tree walker
+                        // would have called the caller, not the
+                        // callee).
+                        let push_call_emitted = if let Some(name) = program.func_names.get(func_idx)
+                            && !name.is_empty()
+                        {
+                            let name_ptr = builder.ins().iconst(I64, name.as_ptr() as i64);
+                            let name_len = builder.ins().iconst(I64, name.len() as i64);
+                            let push_fref =
+                                get_func_ref(&mut builder, module, helpers.push_call_frame);
+                            builder.ins().call(push_fref, &[name_ptr, name_len]);
+                            true
+                        } else {
+                            false
+                        };
+
                         let call_inst = builder.ins().call(target_fref, &call_args);
                         call_result = builder.inst_results(call_inst)[0];
                         builder.def_var(vars[a_idx_call], call_result);
+
+                        // Pop on the success path. On the error path the
+                        // post-call check in `jit_cranelift::call` will
+                        // snapshot the stack before unwinding, so we do
+                        // not need to pop in that case. (The callee
+                        // returned normally here: any helper-set error
+                        // is the *caller's* responsibility to propagate
+                        // via its own RET sequence.)
+                        if push_call_emitted {
+                            let pop_fref =
+                                get_func_ref(&mut builder, module, helpers.pop_call_frame);
+                            builder.ins().call(pop_fref, &[]);
+                        }
                     } // end else (not inlined)
                 } else {
                     // Fallback: use jit_call helper for out-of-range func indices
@@ -4764,6 +4954,63 @@ pub enum JitCallError {
     Panic { msg: String },
 }
 
+/// Process-global counter of Cranelift JIT panics that fell back to a
+/// non-JIT engine. Incremented once per panic; the first increment also
+/// emits a single-line breadcrumb to stderr (with explicit flush) so
+/// harnesses that merge or buffer streams still see the engine swap.
+/// Subsequent panics bump the counter silently to avoid spamming stderr
+/// when a hot loop hits the upstream assertion repeatedly. Tests can
+/// read the counter via [`jit_panic_fallback_count`] to assert the
+/// fallback path actually ran.
+static JIT_PANIC_FALLBACK_COUNT: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+
+/// Stable grep-anchor prefix for the JIT-fallback breadcrumb. Tagging
+/// makes the line trivially detectable by harnesses (CI grep, persona
+/// timing wrappers) that would otherwise have to parse free-form text.
+pub const JIT_FALLBACK_TAG: &str = "[ilo:jit-fallback]";
+
+/// Emit a single-line stderr breadcrumb the first time a Cranelift JIT
+/// panic is converted into a non-JIT fallback in this process. `target`
+/// is the engine the caller will fall back to (e.g. `"bytecode VM"` or
+/// `"interpreter"`). Returns the total fallback count *after* this call
+/// so the caller can include it in richer diagnostics if desired.
+///
+/// Flushes stderr explicitly: some persona harnesses buffer the stream
+/// and would otherwise drop the breadcrumb when the process exits
+/// before the final flush. Once-per-process semantics (via
+/// `fetch_add` + compare) keep tight loops from spamming the user.
+pub fn note_jit_panic_fallback(msg: &str, target: &str) -> usize {
+    use std::io::Write;
+    let prev = JIT_PANIC_FALLBACK_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    if prev == 0 {
+        let mut err = std::io::stderr().lock();
+        let _ = writeln!(
+            err,
+            "{} Cranelift JIT panicked ({}); falling back to {}. Subsequent fallbacks in this process will be silent (count reported on exit).",
+            JIT_FALLBACK_TAG, msg, target
+        );
+        let _ = err.flush();
+    }
+    prev + 1
+}
+
+/// Read the current JIT-panic-fallback counter. Used by tests to assert
+/// the fallback breadcrumb path ran; also useful for end-of-run
+/// diagnostics in long-lived processes.
+pub fn jit_panic_fallback_count() -> usize {
+    JIT_PANIC_FALLBACK_COUNT.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Reset the JIT-panic-fallback counter. Test-only: production callers
+/// should treat the counter as monotonic. The counter is process-global,
+/// so tests that exercise the fallback path must reset before asserting
+/// to remain order-independent under `cargo test`'s parallel runner.
+#[cfg(any(test, debug_assertions))]
+pub fn reset_jit_panic_fallback_count() {
+    JIT_PANIC_FALLBACK_COUNT.store(0, std::sync::atomic::Ordering::Relaxed);
+}
+
 // Debug-build-only test hook: when set, `compile_and_call` raises a
 // synthetic panic from inside the catch_unwind region. Exercises the
 // panic-fallback path without depending on the AArch64-specific upstream
@@ -4804,8 +5051,22 @@ fn check_force_panic_env() {
 /// cleared on drop even if Rust-side code panics later. Returns `Runtime`
 /// when a helper set the error cell, else `Ok` with the raw NanVal bits.
 /// Resets the JIT arena after each call (promoting the result if arena-tagged).
-pub fn call(func: &JitFunction, args: &[u64]) -> Result<u64, JitCallError> {
+pub fn call(
+    func: &JitFunction,
+    args: &[u64],
+    entry_name: Option<&str>,
+) -> Result<u64, JitCallError> {
     let _err_guard = JitRuntimeErrorGuard::new();
+
+    // Seed the per-thread JIT call stack with the entry function name so
+    // a surfaced `VmRuntimeError` carries `call_stack: ["<entry>"]` at
+    // minimum, matching what the VM produces via `make_runtime_error`.
+    // Nested OP_CALLs push/pop on top of this seed. The
+    // `JitRuntimeErrorGuard` cleared the stack on entry; on a clean
+    // return we drain it below so it doesn't leak into the next call.
+    if let Some(name) = entry_name {
+        crate::vm::JIT_CALL_STACK.with(|c| c.borrow_mut().push(name.to_owned()));
+    }
 
     let mut result = call_raw(func, args).ok_or(JitCallError::NotEligible)?;
 
@@ -4820,13 +5081,30 @@ pub fn call(func: &JitFunction, args: &[u64]) -> Result<u64, JitCallError> {
     }
     jit_arena_reset();
 
-    if let Some((err, span)) = jit_take_runtime_error() {
+    if let Some((err, span, call_stack)) = jit_take_runtime_error() {
+        // The call_stack was snapshotted at error-set time inside the
+        // JIT helper (see `jit_set_runtime_error_with_span`). That is
+        // the only place the deepest frame chain is observable: JIT
+        // helpers do not unwind on error — the post-call `pop_call_frame`
+        // emitted on each direct OP_CALL still fires on the native
+        // return path — so by the time we get here the live stack has
+        // already shrunk back to the entry seed. Tree/VM order frames
+        // outermost-to-innermost; `with_note` walks them in order, so
+        // `["main", "g"]` becomes `notes: ["called from 'main'",
+        // "called from 'g'"]`, bit-equal to VM/tree output.
         return Err(JitCallError::Runtime(VmRuntimeError {
             error: err,
             span,
-            call_stack: Vec::new(),
+            call_stack,
         }));
     }
+
+    // Clean return: drop the seeded entry name so a subsequent dispatch
+    // on the same thread starts from an empty stack. The guard's Drop
+    // would clear it on scope exit anyway, but draining here keeps the
+    // invariant tight against any future code added between this point
+    // and the guard's drop.
+    crate::vm::jit_clear_call_stack();
 
     Ok(result)
 }
@@ -4913,6 +5191,21 @@ pub fn compile_and_call(
     // inside `call` clears the runtime-error cell on drop, and the chunk +
     // program references are immutable. No shared mutable state survives an
     // unwind in a corrupted state.
+    // Identify the entry function's name so the surfaced call_stack
+    // matches what the VM and tree interpreters produce. Tree/VM include
+    // the entry frame in their walk (see `VM::make_runtime_error`), so
+    // the `Diagnostic` notes contain `"called from '<entry>'"`. We seed
+    // the JIT's per-thread call stack with the same entry name; the
+    // push/pop helpers maintain depth from there. Falls back to the
+    // empty entry-name on the (impossible-in-practice) case where the
+    // chunk pointer doesn't match any program slot — better to emit no
+    // entry note than to invent one.
+    let entry_name: Option<String> = program
+        .chunks
+        .iter()
+        .position(|c| std::ptr::eq(c, chunk))
+        .and_then(|idx| program.func_names.get(idx).cloned());
+
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         with_active_registry(program, || {
             #[cfg(debug_assertions)]
@@ -4924,7 +5217,7 @@ pub fn compile_and_call(
                 check_force_panic_env();
             }
             let func = compile(chunk, nan_consts, program).ok_or(JitCallError::NotEligible)?;
-            call(&func, args)
+            call(&func, args, entry_name.as_deref())
         })
     }));
 
@@ -5105,7 +5398,7 @@ mod tests {
         let nan_consts = &compiled.nan_constants[idx];
         if let Some(func) = compile(chunk, nan_consts, &compiled) {
             let args: Vec<u64> = (1..=9).map(|i| NanVal::number(i as f64).0).collect();
-            let result = call(&func, &args);
+            let result = call(&func, &args, None);
             assert!(matches!(result, Err(JitCallError::NotEligible)));
         }
     }
@@ -5794,7 +6087,7 @@ mod tests {
         let func = compile(chunk, nan_consts, &compiled);
         // If it compiled, try calling it (should call g() and return 42).
         if let Some(f) = func {
-            let result = call(&f, &[]);
+            let result = call(&f, &[], None);
             assert_eq!(result.ok(), Some(NanVal::number(42.0).0));
         }
     }
@@ -5924,7 +6217,7 @@ mod tests {
         crate::vm::with_active_registry(&compiled, || {
             if let Some(jit_func) = compile(chunk, nan_consts, &compiled) {
                 for i in 0..10_100u32 {
-                    let result = call(&jit_func, &nan_args).expect("JIT call failed");
+                    let result = call(&jit_func, &nan_args, None).expect("JIT call failed");
                     let val = crate::vm::NanVal(result).to_value();
                     assert_eq!(val, Value::Number(4950.0), "failed on iteration {}", i);
                 }

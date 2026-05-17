@@ -1,0 +1,23 @@
+-- Cranelift JIT now raises ILO-R003 on division by zero, matching tree + VM.
+-- Before this fix the inline fdiv fast path produced silent NaN / inf when the
+-- divisor reached zero at runtime, so a misclassified result (e.g. zsc over a
+-- constant column) could pass as "real numbers" all the way to the output and
+-- evade detection without ground truth. Now every engine errors with R003.
+--
+-- The runnable assertions below exercise the safe divisor path on every engine
+-- to lock in the fast path's correctness. Division-by-zero is regression-tested
+-- separately in tests/regression_cl_divzero_parity.rs (cross-engine, exit-code
+-- + ILO-R003 message). We do not assert the error here because the examples
+-- harness expects -- out: lines to compare equal across engines.
+
+safediv a:n b:n>n;/a b
+safemod a:n b:n>n;mod a b
+
+-- run: safediv 10 2
+-- out: 5
+
+-- run: safediv 0 5
+-- out: 0
+
+-- run: safemod 10 3
+-- out: 1

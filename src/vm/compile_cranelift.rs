@@ -30,6 +30,13 @@ struct HelperFuncs {
     sub: FuncId,
     mul: FuncId,
     div: FuncId,
+    /// Raises `VmError::DivisionByZero` (ILO-R003) from the inline-fdiv
+    /// fast-path zero edge. Mirrors `jit_cranelift::HelperFuncs::raise_divzero`.
+    raise_divzero: FuncId,
+    /// Modulo helper. The AOT path used to inline mod via fdiv/trunc/fmul/fsub,
+    /// which silently produced NaN on a zero divisor; routing through the
+    /// helper restores tree + VM parity.
+    mod_fn: FuncId,
     eq: FuncId,
     ne: FuncId,
     gt: FuncId,
@@ -227,6 +234,8 @@ fn declare_all_helpers(module: &mut ObjectModule) -> HelperFuncs {
         sub: declare_helper(module, "jit_sub", 3, 1),
         mul: declare_helper(module, "jit_mul", 3, 1),
         div: declare_helper(module, "jit_div", 3, 1),
+        raise_divzero: declare_helper(module, "jit_raise_divzero", 1, 1),
+        mod_fn: declare_helper(module, "jit_mod", 3, 1),
         eq: declare_helper(module, "jit_eq", 2, 1),
         ne: declare_helper(module, "jit_ne", 2, 1),
         gt: declare_helper(module, "jit_gt", 3, 1),
@@ -612,8 +621,18 @@ fn is_inlinable(chunk: &Chunk, nan_consts: &[NanVal]) -> bool {
                     return false;
                 }
             }
-            OP_ADD_NN | OP_SUB_NN | OP_MUL_NN | OP_DIV_NN | OP_ADDK_N | OP_SUBK_N | OP_MULK_N
-            | OP_DIVK_N => {}
+            OP_ADD_NN | OP_SUB_NN | OP_MUL_NN | OP_ADDK_N | OP_SUBK_N | OP_MULK_N => {}
+            // Mirror of `jit_cranelift::is_inlinable`: the AOT leaf-inline
+            // emitter has no helper / span plumbing, so any chunk with raw
+            // OP_DIV_NN falls back to the main compile path. OP_DIVK_N keeps
+            // its inlinable status when the constant divisor is non-zero.
+            OP_DIV_NN => return false,
+            OP_DIVK_N => {
+                let ki = (inst & 0xFF) as usize;
+                if ki >= nan_consts.len() || nan_consts[ki].as_number() == 0.0 {
+                    return false;
+                }
+            }
             _ => return false,
         }
     }
@@ -1030,12 +1049,12 @@ fn compile_function_body(
             match op {
                 // Guaranteed numeric outputs.
                 OP_ADD_NN | OP_SUB_NN | OP_MUL_NN | OP_DIV_NN | OP_ADDK_N | OP_SUBK_N
-                | OP_MULK_N | OP_DIVK_N | OP_LEN | OP_ABS | OP_MIN | OP_MAX | OP_FLR | OP_CEL
-                | OP_ROU | OP_RND0 | OP_RND2 | OP_RNDN | OP_NOW | OP_MOD | OP_CLAMP | OP_POW
-                | OP_SQRT | OP_LOG | OP_EXP | OP_SIN | OP_COS | OP_TAN | OP_LOG10 | OP_LOG2
-                | OP_ASIN | OP_ACOS | OP_ATAN | OP_ATAN2 | OP_MEDIAN | OP_MIN_LST | OP_MAX_LST
-                | OP_QUANTILE | OP_STDEV | OP_VARIANCE | OP_SUM | OP_AVG | OP_DOT | OP_DET
-                | OP_ORD => {
+                | OP_MULK_N | OP_DIVK_N | OP_LEN | OP_LEN_HAS_K_COUNT | OP_ABS | OP_MIN
+                | OP_MAX | OP_FLR | OP_CEL | OP_ROU | OP_RND0 | OP_RND2 | OP_RNDN | OP_NOW
+                | OP_MOD | OP_CLAMP | OP_POW | OP_SQRT | OP_LOG | OP_EXP | OP_SIN | OP_COS
+                | OP_TAN | OP_LOG10 | OP_LOG2 | OP_ASIN | OP_ACOS | OP_ATAN | OP_ATAN2
+                | OP_MEDIAN | OP_MIN_LST | OP_MAX_LST | OP_QUANTILE | OP_STDEV | OP_VARIANCE
+                | OP_SUM | OP_AVG | OP_DOT | OP_DET | OP_ORD => {
                     num_write[a] = true;
                 }
                 // LOADK: numeric only when the constant itself is a number.
@@ -1258,11 +1277,40 @@ fn compile_function_body(
                     let cv = builder.use_var(vars[c_idx]);
                     builder.ins().bitcast(F64, mf, cv)
                 };
+                // Divisor zero raises ILO-R003 to match tree + VM. Previously
+                // produced silent NaN / inf on the AOT path.
+                let span_bits = super::jit_cranelift::pack_span_bits(chunk.spans[ip]);
+                let span_arg = builder.ins().iconst(I64, span_bits);
+                let zero = builder.ins().f64const(0.0);
+                let is_zero =
+                    builder
+                        .ins()
+                        .fcmp(cranelift_codegen::ir::condcodes::FloatCC::Equal, cf, zero);
+                let zero_block = builder.create_block();
+                let safe_block = builder.create_block();
+                let merge_block = builder.create_block();
+                builder.append_block_param(merge_block, I64);
+                builder
+                    .ins()
+                    .brif(is_zero, zero_block, &[], safe_block, &[]);
+
+                builder.switch_to_block(zero_block);
+                let fref = get_func_ref(&mut builder, module, helpers.raise_divzero);
+                let call_inst = builder.ins().call(fref, &[span_arg]);
+                let nil_res = builder.inst_results(call_inst)[0];
+                builder.ins().jump(merge_block, &[nil_res]);
+
+                builder.switch_to_block(safe_block);
                 let result_f = builder.ins().fdiv(bf, cf);
-                let result = builder.ins().bitcast(I64, mf, result_f);
+                let safe_result = builder.ins().bitcast(I64, mf, result_f);
+                builder.ins().jump(merge_block, &[safe_result]);
+
+                builder.switch_to_block(merge_block);
+                let result = builder.block_params(merge_block)[0];
                 builder.def_var(vars[a_idx], result);
                 if a_idx < reg_count && reg_always_num[a_idx] {
-                    builder.def_var(f64_vars[a_idx], result_f);
+                    let rf = builder.ins().bitcast(F64, mf, result);
+                    builder.def_var(f64_vars[a_idx], rf);
                 }
             }
             OP_ADDK_N | OP_SUBK_N | OP_MULK_N | OP_DIVK_N => {
@@ -1273,18 +1321,32 @@ fn compile_function_body(
                     builder.ins().bitcast(F64, mf, bv)
                 };
                 let kv = nan_consts[c_idx].as_number();
-                let kval = builder.ins().f64const(kv);
-                let result_f = match op {
-                    OP_ADDK_N => builder.ins().fadd(bf, kval),
-                    OP_SUBK_N => builder.ins().fsub(bf, kval),
-                    OP_MULK_N => builder.ins().fmul(bf, kval),
-                    OP_DIVK_N => builder.ins().fdiv(bf, kval),
-                    _ => unreachable!(),
-                };
-                let result = builder.ins().bitcast(I64, mf, result_f);
-                builder.def_var(vars[a_idx], result);
-                if a_idx < reg_count && reg_always_num[a_idx] {
-                    builder.def_var(f64_vars[a_idx], result_f);
+                if op == OP_DIVK_N && kv == 0.0 {
+                    // Constant zero divisor: raise ILO-R003 unconditionally.
+                    let span_bits = super::jit_cranelift::pack_span_bits(chunk.spans[ip]);
+                    let span_arg = builder.ins().iconst(I64, span_bits);
+                    let fref = get_func_ref(&mut builder, module, helpers.raise_divzero);
+                    let call_inst = builder.ins().call(fref, &[span_arg]);
+                    let result = builder.inst_results(call_inst)[0];
+                    builder.def_var(vars[a_idx], result);
+                    if a_idx < reg_count && reg_always_num[a_idx] {
+                        let rf = builder.ins().bitcast(F64, mf, result);
+                        builder.def_var(f64_vars[a_idx], rf);
+                    }
+                } else {
+                    let kval = builder.ins().f64const(kv);
+                    let result_f = match op {
+                        OP_ADDK_N => builder.ins().fadd(bf, kval),
+                        OP_SUBK_N => builder.ins().fsub(bf, kval),
+                        OP_MULK_N => builder.ins().fmul(bf, kval),
+                        OP_DIVK_N => builder.ins().fdiv(bf, kval),
+                        _ => unreachable!(),
+                    };
+                    let result = builder.ins().bitcast(I64, mf, result_f);
+                    builder.def_var(vars[a_idx], result);
+                    if a_idx < reg_count && reg_always_num[a_idx] {
+                        builder.def_var(f64_vars[a_idx], result_f);
+                    }
                 }
             }
             // ── Generic arithmetic with inline numeric fast path + helper slow path ──
@@ -1309,17 +1371,53 @@ fn compile_function_body(
                         let cv = builder.use_var(vars[c_idx]);
                         builder.ins().bitcast(F64, mf, cv)
                     };
-                    let result_f = match op {
-                        OP_ADD => builder.ins().fadd(bf, cf),
-                        OP_SUB => builder.ins().fsub(bf, cf),
-                        OP_MUL => builder.ins().fmul(bf, cf),
-                        OP_DIV => builder.ins().fdiv(bf, cf),
-                        _ => unreachable!(),
-                    };
-                    let result = builder.ins().bitcast(I64, mf, result_f);
-                    builder.def_var(vars[a_idx], result);
-                    if a_idx < reg_count && reg_always_num[a_idx] {
-                        builder.def_var(f64_vars[a_idx], result_f);
+                    if op == OP_DIV {
+                        let span_bits = super::jit_cranelift::pack_span_bits(chunk.spans[ip]);
+                        let span_arg = builder.ins().iconst(I64, span_bits);
+                        let zero = builder.ins().f64const(0.0);
+                        let is_zero = builder.ins().fcmp(
+                            cranelift_codegen::ir::condcodes::FloatCC::Equal,
+                            cf,
+                            zero,
+                        );
+                        let zero_block = builder.create_block();
+                        let safe_block = builder.create_block();
+                        let merge_div = builder.create_block();
+                        builder.append_block_param(merge_div, I64);
+                        builder
+                            .ins()
+                            .brif(is_zero, zero_block, &[], safe_block, &[]);
+
+                        builder.switch_to_block(zero_block);
+                        let fref = get_func_ref(&mut builder, module, helpers.raise_divzero);
+                        let call_inst = builder.ins().call(fref, &[span_arg]);
+                        let nil_res = builder.inst_results(call_inst)[0];
+                        builder.ins().jump(merge_div, &[nil_res]);
+
+                        builder.switch_to_block(safe_block);
+                        let result_f = builder.ins().fdiv(bf, cf);
+                        let safe_result = builder.ins().bitcast(I64, mf, result_f);
+                        builder.ins().jump(merge_div, &[safe_result]);
+
+                        builder.switch_to_block(merge_div);
+                        let result = builder.block_params(merge_div)[0];
+                        builder.def_var(vars[a_idx], result);
+                        if a_idx < reg_count && reg_always_num[a_idx] {
+                            let rf = builder.ins().bitcast(F64, mf, result);
+                            builder.def_var(f64_vars[a_idx], rf);
+                        }
+                    } else {
+                        let result_f = match op {
+                            OP_ADD => builder.ins().fadd(bf, cf),
+                            OP_SUB => builder.ins().fsub(bf, cf),
+                            OP_MUL => builder.ins().fmul(bf, cf),
+                            _ => unreachable!(),
+                        };
+                        let result = builder.ins().bitcast(I64, mf, result_f);
+                        builder.def_var(vars[a_idx], result);
+                        if a_idx < reg_count && reg_always_num[a_idx] {
+                            builder.def_var(f64_vars[a_idx], result_f);
+                        }
                     }
                 } else {
                     let bv = builder.use_var(vars[b_idx]);
@@ -1344,19 +1442,47 @@ fn compile_function_body(
                         .ins()
                         .brif(both_num, num_block, &[], slow_block, &[]);
 
-                    // Fast path: inline float arithmetic
+                    // Fast path: inline float arithmetic. OP_DIV gets the
+                    // divisor-zero guard to raise ILO-R003 instead of silently
+                    // producing NaN / inf.
                     builder.switch_to_block(num_block);
                     let bf = builder.ins().bitcast(F64, mf, bv);
                     let cf = builder.ins().bitcast(F64, mf, cv);
-                    let result_f = match op {
-                        OP_ADD => builder.ins().fadd(bf, cf),
-                        OP_SUB => builder.ins().fsub(bf, cf),
-                        OP_MUL => builder.ins().fmul(bf, cf),
-                        OP_DIV => builder.ins().fdiv(bf, cf),
-                        _ => unreachable!(),
-                    };
-                    let fast_result = builder.ins().bitcast(I64, mf, result_f);
-                    builder.ins().jump(merge_block, &[fast_result]);
+                    if op == OP_DIV {
+                        let span_bits = super::jit_cranelift::pack_span_bits(chunk.spans[ip]);
+                        let span_arg = builder.ins().iconst(I64, span_bits);
+                        let zero = builder.ins().f64const(0.0);
+                        let is_zero = builder.ins().fcmp(
+                            cranelift_codegen::ir::condcodes::FloatCC::Equal,
+                            cf,
+                            zero,
+                        );
+                        let zero_block_div = builder.create_block();
+                        let safe_block_div = builder.create_block();
+                        builder
+                            .ins()
+                            .brif(is_zero, zero_block_div, &[], safe_block_div, &[]);
+
+                        builder.switch_to_block(zero_block_div);
+                        let fref = get_func_ref(&mut builder, module, helpers.raise_divzero);
+                        let call_inst = builder.ins().call(fref, &[span_arg]);
+                        let nil_res = builder.inst_results(call_inst)[0];
+                        builder.ins().jump(merge_block, &[nil_res]);
+
+                        builder.switch_to_block(safe_block_div);
+                        let result_f = builder.ins().fdiv(bf, cf);
+                        let fast_result = builder.ins().bitcast(I64, mf, result_f);
+                        builder.ins().jump(merge_block, &[fast_result]);
+                    } else {
+                        let result_f = match op {
+                            OP_ADD => builder.ins().fadd(bf, cf),
+                            OP_SUB => builder.ins().fsub(bf, cf),
+                            OP_MUL => builder.ins().fmul(bf, cf),
+                            _ => unreachable!(),
+                        };
+                        let fast_result = builder.ins().bitcast(I64, mf, result_f);
+                        builder.ins().jump(merge_block, &[fast_result]);
+                    }
 
                     // Slow path: call helper
                     builder.switch_to_block(slow_block);
@@ -1625,18 +1751,21 @@ fn compile_function_body(
                 }
             }
             OP_MOD => {
+                // Route through the `jit_mod` helper so a zero divisor raises
+                // the same error tree + VM produce, rather than silently
+                // producing NaN through the previously-inlined fdiv/trunc/fmul/fsub
+                // expansion. Mirrors the JIT path (`jit_cranelift::OP_MOD`).
                 let bv = builder.use_var(vars[b_idx]);
                 let cv = builder.use_var(vars[c_idx]);
-                let bf = builder.ins().bitcast(F64, mf, bv);
-                let cf = builder.ins().bitcast(F64, mf, cv);
-                let div = builder.ins().fdiv(bf, cf);
-                let trunc = builder.ins().trunc(div);
-                let prod = builder.ins().fmul(trunc, cf);
-                let result_f = builder.ins().fsub(bf, prod);
-                let result = builder.ins().bitcast(I64, mf, result_f);
+                let span_bits = super::jit_cranelift::pack_span_bits(chunk.spans[ip]);
+                let span_arg = builder.ins().iconst(I64, span_bits);
+                let fref = get_func_ref(&mut builder, module, helpers.mod_fn);
+                let call_inst = builder.ins().call(fref, &[bv, cv, span_arg]);
+                let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
                 if a_idx < reg_count && reg_always_num[a_idx] {
-                    builder.def_var(f64_vars[a_idx], result_f);
+                    let rf = builder.ins().bitcast(F64, mf, result);
+                    builder.def_var(f64_vars[a_idx], rf);
                 }
             }
             OP_CLAMP => {

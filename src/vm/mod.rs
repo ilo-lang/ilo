@@ -255,6 +255,30 @@ pub(crate) const OP_WINDOW: u8 = 146; // R[A] = window(R[B] (n), R[C] (list))  �
 // Cranelift returns `None` on this opcode (unknown), so a function containing it
 // falls back cleanly to the VM dispatcher.
 pub(crate) const OP_WINDOW_VIEW: u8 = 175;
+
+// Peephole-fused `len (flt has-K-pred xs)` count. Bio canonical
+// `all-h xs : n = len (flt is-hydro xs) ; =n 15` runs this pattern
+// ~165M times over the 11.4M-residue dataset. Post-#346 the predicate body
+// (`has "AILMFWVYC" c`, 3 opcodes) is already inlined into the
+// `compile_len_flt_count` counter loop, but the per-residue bytecode
+// dispatch (FOREACHPREP/MOVE/LOADK/HAS/ISBOOL/JMPT/JMPF/ADDK_N/FOREACHNEXT/JMP
+// — ~8-10 opcode dispatches per element) is now the dominant cost.
+//
+// `OP_LEN_HAS_K_COUNT` collapses the entire count into a single 2-word VM
+// dispatch:
+//   word 0 (ABC): A = result reg, B = xs reg, C = 0
+//   word 1: full u32 = constant-pool index of the haystack text K
+// Semantics: `count = xs.iter().filter(|c| K.contains(c_text)).count()`.
+// Per-iteration work shrinks to the same Rust haystack.contains check the
+// inlined loop already does, but with zero VM dispatch overhead between
+// elements.
+//
+// Cranelift returns `None` on this opcode (unknown), so a function
+// containing it falls back cleanly to the VM dispatcher. This matches
+// the existing fallback path for OP_WINDOW_VIEW (bio canonical already
+// runs on the VM tier post-#336).
+pub(crate) const OP_LEN_HAS_K_COUNT: u8 = 176;
+
 pub(crate) const OP_TAKE: u8 = 113; // R[A] = take(R[B], R[C])  (first B elements of C; B=n_reg, C=list_reg)
 pub(crate) const OP_DROP: u8 = 114; // R[A] = drop(R[B], R[C])  (skip first B elements of C)
 pub(crate) const OP_DTFMT: u8 = 131; // R[A] = dtfmt(R[B] epoch, R[C] fmt) → t
@@ -761,6 +785,16 @@ enum InlineOpKind {
     JmpReg,
     /// OP_RET — terminal; A is the value reg.
     Ret,
+    /// 2-word opcode whose first word has A and B as registers (remap)
+    /// with C unused; the following word is a const-pool index that the
+    /// emitter remaps via `const_remap`. Currently only used by
+    /// `OP_LEN_HAS_K_COUNT`.
+    AbcRegPlusDataK,
+    /// Marker for the trailing data word of a 2-word opcode. The
+    /// analyser pre-scans the body to flag these so the classifier
+    /// doesn't try to decode them as opcodes; the emitter rewrites the
+    /// index through `const_remap` and emits the raw word.
+    DataWord,
     /// Not whitelisted for inlining.
     Reject,
 }
@@ -838,6 +872,15 @@ fn inline_kind_for_opcode(op: u8) -> InlineOpKind {
 
         // Terminal — A is the value reg.
         OP_RET => InlineOpKind::Ret,
+
+        // 2-word peephole-fused HOF: A and B are regs (remap), C unused,
+        // and the next word in the chunk is a const-pool index. The
+        // analyser's pre-scan flags the data word as `DataWord` so the
+        // classifier doesn't mis-decode the const-idx as an opcode.
+        // Crucial for letting `all-h xs:L t>b; n=len (flt is-hydro xs); =n N`
+        // bodies inline into the outer `flt all-h ws` after the
+        // OP_LEN_HAS_K_COUNT fast path fires.
+        OP_LEN_HAS_K_COUNT => InlineOpKind::AbcRegPlusDataK,
 
         // Everything else (jumps, calls, foreach, panic-unwrap, anything
         // with a 2-word encoding, anything that mutates outside the
@@ -944,7 +987,51 @@ impl RegCompiler {
             Vec::with_capacity(code.len());
         let mut ret_reg: Option<u8> = None;
 
+        // Pre-scan: mark data words of any 2-word opcodes so the classifier
+        // doesn't mistakenly try to decode a const-pool index as an opcode.
+        // Currently only OP_LEN_HAS_K_COUNT is a 2-word op on the inliner's
+        // whitelist; if more 2-word ops gain inline support, extend this
+        // arm (or refactor into a `is_two_word_op` helper paired with the
+        // basic-block leader pass).
+        let mut is_data_word: Vec<bool> = vec![false; code.len()];
+        {
+            let mut i = 0;
+            while i < code.len() {
+                let op = (code[i] >> 24) as u8;
+                if matches!(op, OP_LEN_HAS_K_COUNT) {
+                    if i + 1 >= code.len() {
+                        // Malformed body: trailing 2-word op without its
+                        // data word. Shouldn't happen for compiler-emitted
+                        // bytecode, but bail rather than risk inlining a
+                        // corrupted chunk.
+                        return None;
+                    }
+                    is_data_word[i + 1] = true;
+                    i += 2;
+                } else {
+                    i += 1;
+                }
+            }
+        }
+
         for (i, &inst) in code.iter().enumerate() {
+            if is_data_word[i] {
+                // Carry the data word into the instruction stream as-is.
+                // Const-idx remap (callee → outer) is applied at emit time
+                // via the const_remap built below; the analyser only needs
+                // to validate the index is in range.
+                let k_idx = inst as usize;
+                if k_idx >= callee.constants.len() {
+                    return None;
+                }
+                let span = callee
+                    .spans
+                    .get(i)
+                    .copied()
+                    .unwrap_or(crate::ast::Span::UNKNOWN);
+                instructions.push((inst, InlineOpKind::DataWord, span));
+                continue;
+            }
             let op = (inst >> 24) as u8;
             let a = ((inst >> 16) & 0xFF) as u8;
             let b = ((inst >> 8) & 0xFF) as u8;
@@ -954,6 +1041,18 @@ impl RegCompiler {
 
             match kind {
                 InlineOpKind::Reject => return None,
+                InlineOpKind::AbcRegPlusDataK => {
+                    // 2-word op: word 0 has A and B as regs, C unused; the
+                    // following word (already marked as data above) carries
+                    // the const idx. Validate reg fields here; the data
+                    // word is validated in the data-word branch above.
+                    if a >= reg_count || b >= reg_count {
+                        return None;
+                    }
+                }
+                InlineOpKind::DataWord => {
+                    unreachable!("data words are handled in the is_data_word branch above")
+                }
                 InlineOpKind::Ret => {
                     if i != code.len() - 1 {
                         // OP_RET in the middle of a body would skip the
@@ -1004,10 +1103,15 @@ impl RegCompiler {
                     // Bx is a SIGNED i16 PC-relative offset; the target
                     // PC is `i + 1 + offset`. Must land inside the body
                     // so we don't introduce control-flow into the
-                    // outer chunk's surrounding code by accident.
+                    // outer chunk's surrounding code by accident, and
+                    // must NOT land on a data word (that would dispatch
+                    // a const-pool index as an opcode at runtime).
                     let offset = bx as i16 as i32;
                     let target = i as i32 + 1 + offset;
                     if target < 0 || target >= code.len() as i32 {
+                        return None;
+                    }
+                    if is_data_word[target as usize] {
                         return None;
                     }
                 }
@@ -1016,10 +1120,14 @@ impl RegCompiler {
                     if a >= reg_count {
                         return None;
                     }
-                    // Same target validation as Jmp.
+                    // Same target validation as Jmp, plus the data-word
+                    // exclusion above.
                     let offset = bx as i16 as i32;
                     let target = i as i32 + 1 + offset;
                     if target < 0 || target >= code.len() as i32 {
+                        return None;
+                    }
+                    if is_data_word[target as usize] {
                         return None;
                     }
                 }
@@ -1042,7 +1150,13 @@ impl RegCompiler {
         // truncate at emit time. Refuse the inline now so the call site
         // falls through to OP_CALL_DYN.
         let mut needs_8bit_const: Vec<bool> = vec![false; callee.constants.len()];
-        for &inst in code {
+        for (i, &inst) in code.iter().enumerate() {
+            // Skip data words — their high byte could spuriously match a
+            // whitelisted opcode for large const-pool indices, falsely
+            // forcing an 8-bit fit on an unrelated const slot.
+            if is_data_word[i] {
+                continue;
+            }
             let op = (inst >> 24) as u8;
             let c = (inst & 0xFF) as u8;
             if matches!(
@@ -1194,6 +1308,21 @@ impl RegCompiler {
                     let a = ((inst >> 16) & 0xFF) as u8;
                     let bx = (inst & 0xFFFF) as u16;
                     encode_abx(op, window_base + a, bx)
+                }
+                InlineOpKind::AbcRegPlusDataK => {
+                    // Word 0: A=reg(remap), B=reg(remap), C=0. Word 1 is
+                    // emitted in the next iteration by the DataWord arm.
+                    let a = ((inst >> 16) & 0xFF) as u8;
+                    let b = ((inst >> 8) & 0xFF) as u8;
+                    encode_abc(op, window_base + a, window_base + b, 0)
+                }
+                InlineOpKind::DataWord => {
+                    // Trailing data word of the preceding 2-word opcode.
+                    // Remap the const-pool index through const_remap; the
+                    // analyser validated it's in range.
+                    let k_idx = inst as usize;
+                    let mapped = body.const_remap[k_idx];
+                    mapped as u32
                 }
                 InlineOpKind::Reject => unreachable!(
                     "predicate-inline: Reject in emitted body; analyser invariant violated"
@@ -2408,6 +2537,90 @@ impl RegCompiler {
     /// fails on the first iteration, producing an empty accumulator — same
     /// semantics as `flt _ (window n [])` or `flt _ (window 99 [1,2])` under
     /// the unfused path.
+    /// Recognise predicates whose entire body is `has K x` (single-arg user
+    /// fn returning the result of `has` against a constant text haystack
+    /// `K` and the param). Returns the outer-chunk const-pool index of `K`
+    /// on a hit, `None` on any rejection.
+    ///
+    /// Originating shape: bio canonical's `is-hydro c:t>b; has "AILMFWVYC" c`
+    /// compiles to exactly three opcodes — `OP_LOADK haystack_reg, K_idx`;
+    /// `OP_HAS res_reg, haystack_reg, arg_reg(=R0)`; `OP_RET res_reg`. Any
+    /// shape that doesn't match this exactly (different arity, body that
+    /// reads the haystack from a register the caller passed, body with
+    /// additional ops, predicate that operates on the param in any other
+    /// way) is rejected — the caller falls back to the existing
+    /// predicate-body inliner.
+    ///
+    /// On match we merge the callee's text constant into the outer chunk's
+    /// const pool (the dispatcher reads the constant from the outer chunk
+    /// at runtime, not the callee) and return its outer index.
+    fn try_match_has_k_predicate(&mut self, pred_expr: &Expr) -> Option<u16> {
+        let callee_idx = self.resolve_user_fn_idx(pred_expr)?;
+        // Forward-reference safety: if the callee chunk hasn't been emitted
+        // yet, the slot is still empty.
+        let callee = self.chunks.get(callee_idx)?;
+        if callee.param_count != 1 {
+            return None;
+        }
+        // The shape we target is exactly 3 instructions: LOADK, HAS, RET.
+        // Anything else (larger body, different ops, multi-statement
+        // bodies that fold the result through extra registers) is the
+        // existing inliner's job.
+        if callee.code.len() != 3 {
+            return None;
+        }
+        let inst0 = callee.code[0];
+        let inst1 = callee.code[1];
+        let inst2 = callee.code[2];
+
+        let op0 = (inst0 >> 24) as u8;
+        let op1 = (inst1 >> 24) as u8;
+        let op2 = (inst2 >> 24) as u8;
+        if op0 != OP_LOADK || op1 != OP_HAS || op2 != OP_RET {
+            return None;
+        }
+
+        // OP_LOADK A=haystack_reg, Bx=const_idx
+        let haystack_reg = ((inst0 >> 16) & 0xFF) as u8;
+        let k_idx = (inst0 & 0xFFFF) as u16;
+
+        // OP_HAS A=res_reg, B=collection_reg, C=needle_reg.
+        // For `has K c`, the collection is K (the haystack const), the
+        // needle is the parameter c (at R0 by ABI). Anything else (e.g.
+        // `has c K`) is rejected — the runtime contract of OP_HAS swaps
+        // semantics on the operand types and we want the dispatcher's
+        // tight loop to be the only thing reading constants.
+        let res_reg = ((inst1 >> 16) & 0xFF) as u8;
+        let collection_reg = ((inst1 >> 8) & 0xFF) as u8;
+        let needle_reg = (inst1 & 0xFF) as u8;
+        if collection_reg != haystack_reg || needle_reg != 0 {
+            return None;
+        }
+
+        // OP_RET A=value_reg — must return the HAS result.
+        let ret_reg = ((inst2 >> 16) & 0xFF) as u8;
+        if ret_reg != res_reg {
+            return None;
+        }
+
+        // Confirm the loaded constant is actually a text. `has` will error
+        // at runtime on a non-text haystack anyway, but the dispatcher's
+        // tight loop assumes `Value::Text` — we want to bail to the
+        // inlined path (which carries the runtime type check) rather than
+        // baking the assumption in.
+        let const_val = callee.constants.get(k_idx as usize)?;
+        let haystack_text = match const_val {
+            Value::Text(t) => t.clone(),
+            _ => return None,
+        };
+
+        // Merge into the outer chunk's const pool. `add_const` dedupes
+        // by text equality so two `is-hydro`-shaped predicates with the
+        // same haystack share the slot.
+        let outer_k_idx = self.current.add_const(Value::Text(haystack_text));
+        Some(outer_k_idx)
+    }
+
     /// Fused emitter for `len (flt p xs)` — counts truthy results without
     /// materialising an accumulator list. Shape mirrors the `(Builtin::Flt, 2)`
     /// emitter but replaces `OP_LISTNEW` + per-truthy `OP_LISTAPPEND` +
@@ -2432,6 +2645,29 @@ impl RegCompiler {
     /// predicate resolves to a small whitelisted user fn we inline its
     /// body and skip OP_CALL_DYN entirely; falls back on any rejection.
     fn compile_len_flt_count(&mut self, pred_expr: &Expr, xs_expr: &Expr) -> u8 {
+        // Peephole `OP_LEN_HAS_K_COUNT` fast path. When the predicate is a
+        // user fn whose entire body is `LOADK K; OP_HAS res, K, arg; OP_RET res`
+        // — the exact shape of bio canonical's `is-hydro c:t>b; has "AILMFWVYC" c`
+        // — collapse the whole `len(flt is-hydro xs)` count into a single
+        // 2-word VM dispatch. The fast path eliminates ~8 opcode dispatches
+        // per element (FOREACHPREP/MOVE/LOADK/HAS/ISBOOL/JMPT/JMPF/ADDK_N/
+        // FOREACHNEXT/JMP) which dominate the wall-time post-#346 on the
+        // bioinformatics workload (~165M residues × 8 dispatches = ~1.3B
+        // opcode dispatches). On rejection, falls through to the normal
+        // counter-loop emitter with predicate-body inlining (the path #346
+        // shipped).
+        if let Some(haystack_idx) = self.try_match_has_k_predicate(pred_expr) {
+            let xs_reg = self.compile_expr(xs_expr);
+            let counter_reg = self.alloc_reg();
+            // word 0 (ABC): A = result reg, B = xs reg, C = 0
+            self.emit_abc(OP_LEN_HAS_K_COUNT, counter_reg, xs_reg, 0);
+            // word 1: full u32 = const-pool index of the haystack text
+            self.current.emit(haystack_idx as u32, self.current_span);
+            self.reg_is_num[counter_reg as usize] = true;
+            self.next_reg = counter_reg + 1;
+            return counter_reg;
+        }
+
         // Predicate-inline fast path (mirrors the (Flt, 2) arm).
         let inline_body = self
             .resolve_user_fn_idx(pred_expr)
@@ -5224,8 +5460,22 @@ pub(crate) fn jit_arena_reset() {
 // (`jit_lst`, `jit_listget`, `jit_index`, `jit_jpth`, `jit_slc`, ...) keep
 // the existing permissive-nil semantics; harmonising them is parked. Each
 // new erroring helper costs +1 u64 arg and +1 iconst at the call site.
+// Payload stored in the JIT_RUNTIME_ERROR cell: the error itself, the
+// optional source span, and the call-stack snapshot captured at the
+// instant the helper recorded the error. Aliased so the TLS RefCell
+// type below stays inside clippy's type-complexity budget.
+#[cfg(feature = "cranelift")]
+pub(crate) type JitRuntimeErrorPayload = (VmError, Option<crate::ast::Span>, Vec<String>);
+
 thread_local! {
-    static JIT_RUNTIME_ERROR: std::cell::RefCell<Option<(VmError, Option<crate::ast::Span>)>> =
+    // JIT helpers raise errors but do not unwind native frames — the
+    // pop_call_frame emitted after each direct OP_CALL still fires on
+    // the native return path. So by the time the entry returns, the
+    // live call stack has shrunk back to the seed. Capturing the chain
+    // here, at the instant the helper sets the error, is the only way
+    // to record [entry, caller, ..., callee_that_errored] — the same
+    // shape VM and tree build by walking live frames at error time.
+    static JIT_RUNTIME_ERROR: std::cell::RefCell<Option<JitRuntimeErrorPayload>> =
         const { std::cell::RefCell::new(None) };
 }
 
@@ -5258,17 +5508,23 @@ pub(crate) fn jit_set_runtime_error_with_span(err: VmError, span_bits: u64) {
         // cause.
         let mut slot = cell.borrow_mut();
         if slot.is_none() {
-            *slot = Some((err, span));
+            // Snapshot the call stack at this exact instant. The JIT
+            // does not unwind on helper errors — post-call pops still
+            // fire on the native return path — so capturing here is
+            // the only way to record the deepest live frame chain.
+            let stack = JIT_CALL_STACK.with(|c| c.borrow().clone());
+            *slot = Some((err, span, stack));
         }
     });
 }
 
 /// Pop any pending JIT runtime error. Called by the JIT entry point after
-/// the compiled function returns. Returns the `(VmError, Option<Span>)`
-/// pair so the entry point can attach the span to the surfaced
-/// `VmRuntimeError`.
+/// the compiled function returns. Returns the error, its span, and the
+/// call-stack snapshot captured at error-set time so the entry point can
+/// build a `VmRuntimeError` whose `notes` match what the VM and tree
+/// interpreters produce for the same repro.
 #[cfg(feature = "cranelift")]
-pub(crate) fn jit_take_runtime_error() -> Option<(VmError, Option<crate::ast::Span>)> {
+pub(crate) fn jit_take_runtime_error() -> Option<JitRuntimeErrorPayload> {
     JIT_RUNTIME_ERROR.with(|cell| cell.borrow_mut().take())
 }
 
@@ -5284,6 +5540,7 @@ impl JitRuntimeErrorGuard {
         JIT_RUNTIME_ERROR.with(|cell| {
             *cell.borrow_mut() = None;
         });
+        jit_clear_call_stack();
         JitRuntimeErrorGuard
     }
 }
@@ -5294,7 +5551,81 @@ impl Drop for JitRuntimeErrorGuard {
         JIT_RUNTIME_ERROR.with(|cell| {
             *cell.borrow_mut() = None;
         });
+        jit_clear_call_stack();
     }
+}
+
+// Per-thread call stack for the Cranelift JIT.
+//
+// Tree/VM build `VmRuntimeError.call_stack` by walking their frame stack
+// when an error fires (see `VM::make_runtime_error`). Cranelift compiles
+// every function to a real native function and dispatches through direct
+// native `call` instructions, so by the time `jit_take_runtime_error`
+// surfaces the error we have no software frame stack to walk — without
+// extra bookkeeping the surfaced `call_stack` is always empty.
+//
+// This TLS Vec is pushed by `jit_push_call_frame` immediately before a
+// direct OP_CALL in JIT IR and popped by `jit_pop_call_frame` immediately
+// after the call returns. If the callee surfaces an error, the pop is
+// still emitted on the success branch only via post-call check — the
+// stack snapshot fires before the unwind so we capture the deepest live
+// frame name. Inlined OP_CALLs (the `is_inlinable` fast path) skip the
+// push/pop entirely: their work is fused into the caller's IR, so they
+// belong to the caller's frame anyway and any error in their body reports
+// the caller's name, matching the VM/tree semantics for inlined helpers.
+//
+// Cost: two `extern "C"` calls per non-inlined OP_CALL. The hottest
+// dispatch path (inlinable numeric guards, see PR #340 / #346) is
+// unaffected. Non-inlined calls already pay direct call ABI cost; an
+// extra TLS append/pop is dominated by that.
+#[cfg(feature = "cranelift")]
+thread_local! {
+    pub(crate) static JIT_CALL_STACK: std::cell::RefCell<Vec<String>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Push a function name onto the JIT call-stack. Emitted by Cranelift
+/// just before a direct `OP_CALL` to a known function. `name_ptr` and
+/// `name_len` describe a `&'static str` (the entry in
+/// `program.func_names`) — Cranelift owns the program for the duration
+/// of the JIT dispatch, so the slice is valid until the call returns.
+#[cfg(feature = "cranelift")]
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn jit_push_call_frame(name_ptr: *const u8, name_len: u64) -> u64 {
+    if name_ptr.is_null() || name_len == 0 {
+        return 0;
+    }
+    // SAFETY: name_ptr / name_len come from a CompiledProgram.func_names
+    // String borrow that outlives the JIT dispatch (held by
+    // `with_active_registry`). UTF-8 validity is guaranteed because the
+    // source is a Rust `String`.
+    let name = unsafe {
+        let slice = std::slice::from_raw_parts(name_ptr, name_len as usize);
+        std::str::from_utf8_unchecked(slice).to_owned()
+    };
+    JIT_CALL_STACK.with(|cell| cell.borrow_mut().push(name));
+    0
+}
+
+/// Pop the most-recent JIT call-stack entry. Emitted after a successful
+/// return from `OP_CALL`. Skipped implicitly on the error path because
+/// JIT runtime errors short-circuit before reaching this opcode boundary.
+#[cfg(feature = "cranelift")]
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn jit_pop_call_frame() -> u64 {
+    JIT_CALL_STACK.with(|cell| {
+        let mut s = cell.borrow_mut();
+        s.pop();
+    });
+    0
+}
+
+/// Clear the JIT call stack. Called from the `JitRuntimeErrorGuard`
+/// install path so a stale partial stack from a previous panic-recovered
+/// dispatch cannot leak into the next call. Idempotent.
+#[cfg(feature = "cranelift")]
+pub(crate) fn jit_clear_call_stack() {
+    JIT_CALL_STACK.with(|cell| cell.borrow_mut().clear());
 }
 
 // Why a separate tag for ListView
@@ -9843,8 +10174,10 @@ impl<'a> VM<'a> {
                         };
                         match char_at_signed(s, raw) {
                             CharAtResult::Found(c) => NanVal::heap_string(c.to_string()),
-                            CharAtResult::OutOfRange { .. } => {
-                                vm_err!(VmError::Type("at: index out of range"))
+                            CharAtResult::OutOfRange { len } => {
+                                vm_err!(VmError::Runtime(format!(
+                                    "at: index {raw} out of range for text of length {len}"
+                                )))
                             }
                         }
                     } else if v.is_heap() {
@@ -9854,7 +10187,9 @@ impl<'a> VM<'a> {
                                 let len = items.len() as i64;
                                 let adjusted = if raw < 0 { raw + len } else { raw };
                                 if adjusted < 0 || adjusted >= len {
-                                    vm_err!(VmError::Type("at: index out of range"));
+                                    vm_err!(VmError::Runtime(format!(
+                                        "at: index {raw} out of range for list of length {len}"
+                                    )));
                                 }
                                 let idx = adjusted as usize;
                                 items[idx].clone_rc();
@@ -10122,6 +10457,77 @@ impl<'a> VM<'a> {
                         // slot value cleanly.
                         reg_set!(a, NanVal::heap_list_view(src_list, idx, n));
                     }
+                }
+                OP_LEN_HAS_K_COUNT => {
+                    // Peephole-fused `len (flt has-K-pred xs)`.
+                    //   word 0 (ABC): A = result reg, B = xs reg, C = 0
+                    //   word 1: full u32 = constant-pool index of haystack
+                    // Counts elements of xs for which `K.contains(x_text)` is
+                    // true, i.e. each element is a single-char text contained
+                    // in the haystack. Mirrors the `OP_HAS` text-text path's
+                    // semantics exactly so error-shape and result-shape match
+                    // the unfused emission.
+                    let a = ((inst >> 16) & 0xFF) as usize + base;
+                    let b = ((inst >> 8) & 0xFF) as usize + base;
+                    // SAFETY: emitter always writes the data word immediately
+                    // after the opcode word; ip currently points at it.
+                    let k_idx = unsafe { *code.get_unchecked(ip) } as usize;
+                    ip += 1;
+
+                    // SAFETY: k_idx is the const-pool index encoded by
+                    // try_match_has_k_predicate; the matcher only ever emits
+                    // indices that round-tripped through `current.add_const`,
+                    // which returns indices < constants.len().
+                    let hay_val = unsafe { *nan_consts.get_unchecked(k_idx) };
+                    let haystack = if hay_val.is_string() {
+                        // SAFETY: is_string() guarantees a live HeapObj::Str.
+                        unsafe {
+                            match hay_val.as_heap_ref() {
+                                HeapObj::Str(s) => s,
+                                _ => unreachable!(),
+                            }
+                        }
+                    } else {
+                        // Shouldn't fire — the matcher gates on Value::Text —
+                        // but stay defensive in case a hand-rolled program
+                        // patches the const slot. Matches the OP_HAS error
+                        // shape on a non-text haystack.
+                        vm_err!(VmError::Type("has: text search requires text needle"));
+                    };
+
+                    let vxs = reg!(b);
+                    if !vxs.is_heap() || (vxs.0 & TAG_MASK) != TAG_LIST {
+                        // Match the existing fused-flt path's error shape
+                        // (the unfused emitter emits OP_FOREACHPREP which
+                        // surfaces this same message on a non-list xs).
+                        vm_err!(VmError::Type("foreach requires a list"));
+                    }
+                    // SAFETY: TAG_LIST + is_heap() → live List/View Rc.
+                    let items: &[NanVal] = slice_of(unsafe { vxs.as_heap_ref() });
+
+                    let mut count: f64 = 0.0;
+                    for &item in items {
+                        if !item.is_string() {
+                            // The fused emission is gated on the predicate
+                            // being `has K x` with x a parameter typed `t`,
+                            // so a non-text element shouldn't reach here
+                            // under sound programs. Surface the same error
+                            // OP_HAS would on a non-text needle so the
+                            // diagnostic isn't surprising.
+                            vm_err!(VmError::Type("has: text search requires text needle"));
+                        }
+                        // SAFETY: is_string() → live HeapObj::Str.
+                        let needle = unsafe {
+                            match item.as_heap_ref() {
+                                HeapObj::Str(s) => s,
+                                _ => unreachable!(),
+                            }
+                        };
+                        if haystack.contains(needle.as_str()) {
+                            count += 1.0;
+                        }
+                    }
+                    reg_set!(a, NanVal::number(count));
                 }
                 OP_CHUNKS => {
                     let a = ((inst >> 16) & 0xFF) as usize + base;
@@ -10588,7 +10994,10 @@ impl<'a> VM<'a> {
                             h @ (HeapObj::List(_) | HeapObj::ListView { .. }) => {
                                 let items = slice_of(h);
                                 if idx >= items.len() {
-                                    vm_err!(VmError::Type("lst: index out of range"));
+                                    let len = items.len();
+                                    vm_err!(VmError::Runtime(format!(
+                                        "lst: index {idx} out of range for list of length {len}"
+                                    )));
                                 }
                                 let mut new_items: Vec<NanVal> = Vec::with_capacity(items.len());
                                 for (i, v) in items.iter().enumerate() {
@@ -11664,6 +12073,24 @@ pub(crate) extern "C" fn jit_mul(a: u64, b: u64, span_bits: u64) -> u64 {
         return NanVal::number(av.as_number() * bv.as_number()).0;
     }
     jit_set_runtime_error_with_span(VmError::Type("cannot multiply non-numbers"), span_bits);
+    TAG_NIL
+}
+
+/// Helper called from the Cranelift fast path when an inline fdiv divisor is
+/// zero. Sets `VmError::DivisionByZero` on the per-thread error cell with the
+/// call-site span and returns TAG_NIL so the JIT IR can carry on without a
+/// dedicated unwind path; the entry point picks the error up after the
+/// compiled function returns.
+///
+/// Both the JIT (`jit_cranelift.rs`) and the AOT (`compile_cranelift.rs`)
+/// pipelines emit a one-branch `fcmp == 0.0` guard before each inline
+/// fdiv: on the zero edge they call this helper, on the non-zero edge they
+/// fall through to `fdiv` as before. Constant-divisor sites resolve at
+/// compile time so non-zero `OP_DIVK_N` keeps the unconditional fast path.
+#[cfg(feature = "cranelift")]
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn jit_raise_divzero(span_bits: u64) -> u64 {
+    jit_set_runtime_error_with_span(VmError::DivisionByZero, span_bits);
     TAG_NIL
 }
 
@@ -12927,8 +13354,13 @@ pub(crate) extern "C" fn jit_at(a: u64, b: u64, span_bits: u64) -> u64 {
         };
         return match char_at_signed(s, raw) {
             CharAtResult::Found(c) => NanVal::heap_string(c.to_string()).0,
-            CharAtResult::OutOfRange { .. } => {
-                jit_set_runtime_error_with_span(VmError::Type("at: index out of range"), span_bits);
+            CharAtResult::OutOfRange { len } => {
+                jit_set_runtime_error_with_span(
+                    VmError::Runtime(format!(
+                        "at: index {raw} out of range for text of length {len}"
+                    )),
+                    span_bits,
+                );
                 TAG_NIL
             }
         };
@@ -12939,7 +13371,12 @@ pub(crate) extern "C" fn jit_at(a: u64, b: u64, span_bits: u64) -> u64 {
         let len = items.len() as i64;
         let adjusted = if raw < 0 { raw + len } else { raw };
         if adjusted < 0 || adjusted >= len {
-            jit_set_runtime_error_with_span(VmError::Type("at: index out of range"), span_bits);
+            jit_set_runtime_error_with_span(
+                VmError::Runtime(format!(
+                    "at: index {raw} out of range for list of length {len}"
+                )),
+                span_bits,
+            );
             return TAG_NIL;
         }
         let idx = adjusted as usize;
@@ -12973,7 +13410,13 @@ pub(crate) extern "C" fn jit_lst(list: u64, idx: u64, val: u64, span_bits: u64) 
         && let HeapObj::List(items) = unsafe { v.as_heap_ref() }
     {
         if pos >= items.len() {
-            jit_set_runtime_error_with_span(VmError::Type("lst: index out of range"), span_bits);
+            let len = items.len();
+            jit_set_runtime_error_with_span(
+                VmError::Runtime(format!(
+                    "lst: index {pos} out of range for list of length {len}"
+                )),
+                span_bits,
+            );
             return TAG_NIL;
         }
         let mut new_items: Vec<NanVal> = Vec::with_capacity(items.len());
@@ -16669,7 +17112,7 @@ pub(crate) fn find_block_leaders(code: &[u32]) -> Vec<usize> {
                 leaders.insert(i + 3);
             }
             OP_SLC | OP_LST | OP_MSET | OP_POSTH | OP_RGXSUB | OP_CLAMP | OP_PADLC | OP_PADRC
-            | OP_WINDOW_VIEW => {
+            | OP_WINDOW_VIEW | OP_LEN_HAS_K_COUNT => {
                 // 2-word instructions: the following word is data, not an instruction.
                 // Skip it so its bits aren't mis-decoded as an opcode that might mark
                 // bogus leaders. The instruction after the data word is a normal leader
