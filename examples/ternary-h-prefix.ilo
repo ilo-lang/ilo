@@ -24,7 +24,7 @@ known t:t>t;ok=has ["a" "b" "c"] t;?h ok "yes" "no"
 
 -- The originating security-researcher use case: pick a JSON key
 -- to read based on whether a tag matches a known string.
-sev mn:t>t;cn=eq mn "v40";sc1=?h cn "metrics:nil" "metrics:ok";sc1
+sev mn:t>t;cn=(=mn "v40");sc1=?h cn "metrics:nil" "metrics:ok";sc1
 
 -- Coexistence: PR #330's 2-operand bool-subject form still wins
 -- when only two operands follow.

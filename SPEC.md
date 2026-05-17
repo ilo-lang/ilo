@@ -875,7 +875,7 @@ This is the cheapest shape when the condition is already a bool — 6 chars for 
 ```
 f x:n>t;cn=>x 0;?h cn "pos" "nonpos"             -- comparison-derived bool as condition
 f t:t>t;ok=has ["a" "b" "c"] t;?h ok "yes" "no"   -- predicate result as condition
-f mn:t>t;cn=eq mn "v40";sc1=?h cn "v4" "v3";sc1   -- in let-RHS
+f mn:t>t;cn=(=mn "v40");sc1=?h cn "v4" "v3";sc1   -- in let-RHS
 ```
 
 The disambiguator is operand count: **two** operand atoms after `?h` keeps the bool-subject reading above (`?h a b` → `if h then a else b`); **three** operand atoms promotes `?h` to the fixed keyword form (`?h cond a b` → `if cond then a else b`). The keyword reading triggers only for the literal ident `h`, so every other bool-named subject (`?ready a b`, `?ok 1 0`, …) keeps the PR #330 semantics regardless of how many operands follow. Use the keyword form when the condition is a more complex bool expression than a single ref and you want the cheapest prefix shape; the brace form `?cond{a}{b}` works too but is two characters longer per occurrence.
