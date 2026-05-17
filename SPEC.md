@@ -190,6 +190,31 @@ main>n;flat=cat ls " ";spl flat ". "
 -- hint: rename to something like `myflat` or `flatv`.
 ```
 
+### Reserved namespaces
+
+Short builtin names are precious surface and ilo reserves a stable subset of them. To save agents (and their carry-forward scripts) from "what got reserved this release?" debugging cycles, the language publishes the full short-name reserve list plus a forward-compatibility rule for future builtins.
+
+**Currently reserved short names (1-3 characters).** Every name in this list is a builtin today and triggers `ILO-P011` if used as a binding or user-function name:
+
+```
+2-char  at hd tl rd wr ct
+3-char  abs avg cap cat cel chr cos det dot env exp fft fld flr flt fmt
+        frq get grp has inv len log lst lwr map max min mod now num ord
+        pow rdb rdl rev rgx rnd rou sin slc spl srt str sum tan trm unq
+        upr wrl zip
+```
+
+Longer builtin names (`acos`, `asin`, `atan`, `flat`, `take`, `drop`, `mget`, `mset`, `mmap`, `prnt`, `mapr`, `solve`, `clamp`, `cumsum`, `median`, `matmul`, `range`, `window`, `chunks`, …) are also reserved and rejected by `ILO-P011`, but the short-name namespace above is where carry-forward scripts most often collide, so it gets explicit enumeration.
+
+**Forward-compatibility rule.** Future ilo releases add new builtins under names **4 characters or longer**. A 2-character name that is not on this list today is safe to use as a binding or function name and stays safe across releases. A 3-character name that is not on this list is _highly likely_ to stay safe but is not a hard promise — the 3-char surface is already dense, and a rare ergonomic win may justify an addition, called out in the changelog.
+
+This gives agents a deterministic safe-name strategy:
+- **2 chars**: any unreserved 2-char name is permanently fine for bindings (`ce` for "category", `ix` for index, `mn` for "mean", `pq` for "priority queue", …). Names on the reserved list above never get removed.
+- **3 chars**: prefer unreserved 3-char names where possible. If a future release reserves one, the migration is a 1-character rename plus a changelog entry.
+- **4+ chars**: always safe. New builtins land here first; any short alias is added later only if the long name is unambiguous and the short doesn't shadow a plausible user binding.
+
+When a collision does happen, `ILO-P011` surfaces it at the binding site with a rename suggestion — never silently mis-dispatches at the call site (see the `flat=cat ls " "` example above). Combined with the reserve list, that turns every name-collision incident into a single-character rename instead of a debugging spiral.
+
 ### Cross-language gotchas
 
 Common shapes reached for from other languages. The parser and lexer surface each with a friendly hint:
