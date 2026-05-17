@@ -1,0 +1,16 @@
+-- Blank lines inside an indented function body are treated as continuation,
+-- not declaration boundary. Paragraph-separated multi-line bodies parse
+-- cleanly across every engine. Before this fix, the blank line below would
+-- emit a literal `\n` mid-body, the parser would see the next statement as
+-- a new top-level declaration, and bail with ILO-P009 plus a cascade of
+-- misleading T002/T004 errors.
+sum-with-blanks>n;
+  x=10;
+
+  y=20;
+
+  z=12;
+  +x +y z
+
+-- run: sum-with-blanks
+-- out: 42
