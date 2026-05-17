@@ -21,6 +21,19 @@ if command -v ilo >/dev/null 2>&1; then
     exit 0
   fi
 
+  # Only update when the local version is older than the published latest.
+  # Without this, a dev build ahead of the latest release (e.g. local 0.11.6
+  # vs published 0.11.5) would "update" downwards to the older binary. Use
+  # `sort -V` (version sort) and check that LATEST sorts strictly after
+  # CURRENT_VER. If sort -V isn't available, skip the upgrade to be safe.
+  if command -v sort >/dev/null 2>&1; then
+    NEWER=$(printf '%s\n%s\n' "$CURRENT_VER" "$LATEST" | sort -V | tail -1)
+    if [ "$NEWER" != "$LATEST" ] || [ "$CURRENT_VER" = "$LATEST" ]; then
+      echo "ilo is ahead of the published release (${CURRENT_VER} > ${LATEST}), keeping local build"
+      exit 0
+    fi
+  fi
+
   echo "Updating ilo from ${CURRENT_VER} to ${LATEST}..."
 else
   echo "Installing ilo..."
