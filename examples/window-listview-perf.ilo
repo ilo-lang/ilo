@@ -1,0 +1,35 @@
+-- Bio-shaped window walk — exercises the eager `window n xs` path on a
+-- `chars`-derived list (Text typed, heap-string elements). PR-2 reshapes
+-- the dispatcher to emit `L (ListView)` aliasing the source: each stride
+-- is O(1) instead of O(n) clone_rcs. Microbenches that previously took
+-- 4-6 seconds finish in 0.2s on the same machine.
+--
+-- The shape mirrors the bioinformatics `has-tm` predicate that surfaced
+-- the original perf cliff:
+--   `cs = chars s; ws = window 15 cs; flt all-h ws`
+-- This file walks a smaller variant so it can run in CI alongside every
+-- engine (tree-walker, VM dispatcher, Cranelift JIT). All three must
+-- agree: the producer reshape is VM-side, the AOT helper still emits real
+-- Lists, and Cranelift bails the OP_WINDOW arm to the VM dispatcher.
+
+-- A 15-element predicate over a small char run. The window consumer is a
+-- closure that reads via `len`, indices, and `flt`+`is-hydro` — all read
+-- paths that PR-1 migrated to handle ListView.
+is-hydro c:t>b;has "AILMFWVYC" c
+all-h xs:L t>b;n=len (flt is-hydro xs);=n 15
+
+count-hydro-windows s:t>n
+  cs=chars s
+  ws=window 15 cs
+  ms=flt all-h ws
+  len ms
+
+main>n
+  -- 30 chars, all hydrophobic in `AILMFWVYC`. The 15-wide window hits the
+  -- all-hydrophobic predicate at every stride (30 - 15 + 1 = 16 of them).
+  -- 25 hydrophobic chars then a non-hydrophobic K. Each 15-wide window
+  -- that excludes K (positions 0..10 inclusive) matches; the rest fail.
+  count-hydro-windows "AAAAAAAAAAAAAAAILMFWVYCAK"
+
+-- run: main
+-- out: 10

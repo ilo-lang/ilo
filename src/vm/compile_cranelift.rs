@@ -3031,13 +3031,16 @@ fn compile_function_body(
                 //
                 // ListView audit (PR-1 foundation, #325 follow-up):
                 //   HeapObj also has a `ListView` variant (discriminant = 2)
-                //   sharing TAG_LIST. PR-1 emits no views; every publish site
-                //   in src/vm/mod.rs materialises them away before they can
-                //   reach AOT-compiled code paths. PR-2 (OP_WINDOW reshape)
-                //   will need a `[ptr+0] == 1` guard before this Vec-layout
-                //   load, or an eager materialise at the producer side. See
-                //   the parallel comment on OP_FOREACHPREP in jit_cranelift.rs
-                //   for the full audit reasoning.
+                //   sharing TAG_LIST. PR-2 (window-listview-perf) emits views
+                //   from the VM dispatcher's OP_WINDOW / OP_WINDOW_VIEW arms,
+                //   but the Cranelift JIT bails on those opcodes and AOT keeps
+                //   calling the unchanged `jit_window` / `jit_window_view`
+                //   helpers (which emit real `HeapObj::List`s). Every publish
+                //   site in src/vm/mod.rs also materialises views away. So no
+                //   view can reach this inlined Vec-layout load. A future PR
+                //   can add a `[ptr+0] == 1` discriminant guard here to let
+                //   AOT consume views directly. See the parallel comment on
+                //   OP_FOREACHPREP in jit_cranelift.rs for full reasoning.
                 let bv = builder.use_var(vars[b_idx]);
                 let cv = builder.use_var(vars[c_idx]);
                 let mf_plain = cranelift_codegen::ir::MemFlags::new();
