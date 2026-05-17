@@ -6768,8 +6768,10 @@ impl<'a> VM<'a> {
                     let obj = reg!(b);
                     debug_assert!(obj.is_heap(), "OP_INDEX on non-heap value");
                     let item = unsafe {
-                        match obj.as_heap_ref() {
-                            HeapObj::List(items) => {
+                        let heap = obj.as_heap_ref();
+                        match heap {
+                            HeapObj::List(_) | HeapObj::ListView { .. } => {
+                                let items = slice_of(heap);
                                 if c < items.len() {
                                     let v = items[c];
                                     v.clone_rc();
@@ -6778,7 +6780,13 @@ impl<'a> VM<'a> {
                                     vm_err!(VmError::Type("list index out of bounds"));
                                 }
                             }
-                            _ => vm_err!(VmError::Type("index access on non-list")),
+                            HeapObj::Str(_)
+                            | HeapObj::Map(_)
+                            | HeapObj::Record { .. }
+                            | HeapObj::OkVal(_)
+                            | HeapObj::ErrVal(_) => {
+                                vm_err!(VmError::Type("index access on non-list"))
+                            }
                         }
                     };
                     reg_set!(a, item);
@@ -6798,8 +6806,10 @@ impl<'a> VM<'a> {
                         // without any dereference of a different type.
                         debug_assert!(list.is_heap(), "OP_LISTGET on non-heap value");
                         unsafe {
-                            match list.as_heap_ref() {
-                                HeapObj::List(items) => {
+                            let heap = list.as_heap_ref();
+                            match heap {
+                                HeapObj::List(_) | HeapObj::ListView { .. } => {
+                                    let items = slice_of(heap);
                                     let i = idx_val.as_number() as usize;
                                     if i < items.len() {
                                         let item = items[i];
@@ -6809,7 +6819,13 @@ impl<'a> VM<'a> {
                                     }
                                     // else: fall through to JMP exit
                                 }
-                                _ => vm_err!(VmError::Type("foreach requires a list")),
+                                HeapObj::Str(_)
+                                | HeapObj::Map(_)
+                                | HeapObj::Record { .. }
+                                | HeapObj::OkVal(_)
+                                | HeapObj::ErrVal(_) => {
+                                    vm_err!(VmError::Type("foreach requires a list"))
+                                }
                             }
                         }
                     } else {
@@ -6832,8 +6848,10 @@ impl<'a> VM<'a> {
                     // SAFETY: is_heap() verified above.
                     debug_assert!(list.is_heap(), "OP_FOREACHPREP on non-heap value");
                     unsafe {
-                        match list.as_heap_ref() {
-                            HeapObj::List(items) => {
+                        let heap = list.as_heap_ref();
+                        match heap {
+                            HeapObj::List(_) | HeapObj::ListView { .. } => {
+                                let items = slice_of(heap);
                                 if !items.is_empty() {
                                     let item = items[0];
                                     item.clone_rc();
@@ -6842,7 +6860,13 @@ impl<'a> VM<'a> {
                                 }
                                 // else: empty list → fall through to JMP exit
                             }
-                            _ => vm_err!(VmError::Type("foreach requires a list")),
+                            HeapObj::Str(_)
+                            | HeapObj::Map(_)
+                            | HeapObj::Record { .. }
+                            | HeapObj::OkVal(_)
+                            | HeapObj::ErrVal(_) => {
+                                vm_err!(VmError::Type("foreach requires a list"))
+                            }
                         }
                     }
                 }
@@ -6865,8 +6889,10 @@ impl<'a> VM<'a> {
                     // SAFETY: list is the same heap List validated by FOREACHPREP on entry.
                     debug_assert!(list.is_heap(), "OP_FOREACHNEXT on non-heap value");
                     unsafe {
-                        match list.as_heap_ref() {
-                            HeapObj::List(items) => {
+                        let heap = list.as_heap_ref();
+                        match heap {
+                            HeapObj::List(_) | HeapObj::ListView { .. } => {
+                                let items = slice_of(heap);
                                 let i = new_idx as usize;
                                 if i < items.len() {
                                     let item = items[i];
@@ -6876,7 +6902,11 @@ impl<'a> VM<'a> {
                                 }
                                 // else: out of bounds → fall through to JMP exit
                             }
-                            _ => {
+                            HeapObj::Str(_)
+                            | HeapObj::Map(_)
+                            | HeapObj::Record { .. }
+                            | HeapObj::OkVal(_)
+                            | HeapObj::ErrVal(_) => {
                                 // Should never happen: list was validated by FOREACHPREP.
                                 vm_err!(VmError::Type("foreach requires a list"))
                             }
@@ -7779,10 +7809,17 @@ impl<'a> VM<'a> {
                         s.len() as f64
                     } else if v.is_heap() {
                         // SAFETY: is_heap() confirmed heap-tagged with live RC.
-                        match unsafe { v.as_heap_ref() } {
+                        let heap = unsafe { v.as_heap_ref() };
+                        match heap {
                             HeapObj::List(items) => items.len() as f64,
+                            HeapObj::ListView { len, .. } => *len as f64,
                             HeapObj::Map(m) => m.len() as f64,
-                            _ => vm_err!(VmError::Type("len requires string, list, or map")),
+                            HeapObj::Str(_)
+                            | HeapObj::Record { .. }
+                            | HeapObj::OkVal(_)
+                            | HeapObj::ErrVal(_) => {
+                                vm_err!(VmError::Type("len requires string, list, or map"))
+                            }
                         }
                     } else {
                         vm_err!(VmError::Type("len requires string, list, or map"));
@@ -30683,6 +30720,51 @@ f>n;r=mk 10 20;+r.x r.y";
         // The underlying HeapObj is ListView, not List.
         unsafe {
             assert!(matches!(view.as_heap_ref(), HeapObj::ListView { .. }));
+        }
+
+        view.drop_rc();
+        parent.drop_rc();
+    }
+
+    /// Exercises the OP_INDEX / OP_FOREACHPREP / OP_FOREACHNEXT / OP_LEN
+    /// migrated arms by stepping through the same match logic the VM uses,
+    /// confirming a ListView produces identical results to the equivalent
+    /// owned List. PR-2 will exercise the same paths under the real opcode
+    /// dispatcher once OP_WINDOW emits views.
+    #[test]
+    fn listview_hot_path_ops_match_owned_list() {
+        let parent = NanVal::heap_list(vec![
+            NanVal::number(100.0),
+            NanVal::number(200.0),
+            NanVal::number(300.0),
+            NanVal::number(400.0),
+            NanVal::number(500.0),
+        ]);
+        let view = NanVal::heap_list_view(parent, 1, 3); // [200, 300, 400]
+
+        unsafe {
+            let view_heap = view.as_heap_ref();
+
+            // OP_LEN-equivalent on a ListView.
+            let len = match view_heap {
+                HeapObj::List(items) => items.len() as f64,
+                HeapObj::ListView { len, .. } => *len as f64,
+                _ => panic!("not a list"),
+            };
+            assert_eq!(len, 3.0);
+
+            // OP_INDEX-equivalent: bounded index reads through slice_of.
+            let items = slice_of(view_heap);
+            assert_eq!(items[0].as_number(), 200.0);
+            assert_eq!(items[1].as_number(), 300.0);
+            assert_eq!(items[2].as_number(), 400.0);
+
+            // OP_FOREACHPREP / OP_FOREACHNEXT equivalent: iterate via slice_of.
+            let mut sum = 0.0;
+            for v in slice_of(view_heap) {
+                sum += v.as_number();
+            }
+            assert_eq!(sum, 200.0 + 300.0 + 400.0);
         }
 
         view.drop_rc();
