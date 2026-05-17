@@ -521,6 +521,14 @@ fn emit_expr(out: &mut String, level: usize, expr: &Expr) -> String {
             if function == "now" && args.is_empty() {
                 return "(__import__('time').time())".to_string();
             }
+            if function == "now-ms" && args.is_empty() {
+                // Mirrors `Builtin::NowMs` across the other engines.
+                // `time.time()` returns seconds-as-float; multiply by
+                // 1000 and floor to match `as_millis() as f64` truncation
+                // so cross-engine output agrees.
+                return "(__import__('math').floor(__import__('time').time() * 1000.0))"
+                    .to_string();
+            }
             if function == "sleep" && args.len() == 1 {
                 // sleep ms — emit a Python expression that blocks for ms
                 // milliseconds and evaluates to None (the ilo Nil sentinel).

@@ -148,6 +148,7 @@ pub(crate) const OP_SLC: u8 = 55; // R[A] = slc(R[B], R[C], R[D])  (slice; D in 
 pub(crate) const OP_RND0: u8 = 57; // R[A] = random float in [0,1)
 pub(crate) const OP_RND2: u8 = 58; // R[A] = random int in [R[B], R[C]]
 pub(crate) const OP_NOW: u8 = 59; // R[A] = current unix timestamp (seconds, float)
+pub(crate) const OP_NOWMS: u8 = 177; // R[A] = current unix timestamp (milliseconds, float)
 pub(crate) const OP_ENV: u8 = 60; // R[A] = env(R[B])  (returns R t t)
 pub(crate) const OP_JPTH: u8 = 61; // R[A] = jpth(R[B], R[C])  (JSON path lookup → R t t)
 pub(crate) const OP_JDMP: u8 = 62; // R[A] = jdmp(R[B])  (value to JSON string → t)
@@ -3571,6 +3572,12 @@ impl RegCompiler {
                         (Builtin::Now, 0) => {
                             let ra = self.alloc_reg();
                             self.emit_abc(OP_NOW, ra, 0, 0);
+                            self.reg_is_num[ra as usize] = true;
+                            return ra;
+                        }
+                        (Builtin::NowMs, 0) => {
+                            let ra = self.alloc_reg();
+                            self.emit_abc(OP_NOWMS, ra, 0, 0);
                             self.reg_is_num[ra as usize] = true;
                             return ra;
                         }
@@ -9532,6 +9539,14 @@ impl<'a> VM<'a> {
                         .as_secs_f64();
                     reg_set!(a, NanVal::number(ts));
                 }
+                OP_NOWMS => {
+                    let a = ((inst >> 16) & 0xFF) as usize + base;
+                    let ms = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap()
+                        .as_millis() as f64;
+                    reg_set!(a, NanVal::number(ms));
+                }
                 OP_DTFMT => {
                     let a = ((inst >> 16) & 0xFF) as usize + base;
                     let b = ((inst >> 8) & 0xFF) as usize + base;
@@ -13076,6 +13091,16 @@ pub(crate) extern "C" fn jit_now() -> u64 {
         .unwrap()
         .as_secs_f64();
     NanVal::number(ts).0
+}
+
+#[cfg(feature = "cranelift")]
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn jit_now_ms() -> u64 {
+    let ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as f64;
+    NanVal::number(ms).0
 }
 
 #[cfg(feature = "cranelift")]

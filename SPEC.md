@@ -443,6 +443,7 @@ Called like functions, compiled to dedicated opcodes.
 | `rnd` | random float in [0, 1) | `n` |
 | `rnd a b` | random integer in [a, b] (inclusive) | `n` |
 | `now` | current Unix timestamp (seconds) | `n` |
+| `now-ms` | current Unix timestamp (milliseconds) | `n` |
 | `get url` | HTTP GET | `R t t` |
 | `get url headers` | HTTP GET with custom headers (`M t t` map) | `R t t` |
 | `post url body` | HTTP POST with text body | `R t t` |

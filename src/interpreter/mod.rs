@@ -1237,6 +1237,17 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             .as_secs_f64();
         return Ok(Value::Number(ts));
     }
+    if builtin == Some(Builtin::NowMs) && args.is_empty() {
+        // Unix epoch in milliseconds as f64. Paired with `now` (seconds)
+        // for perf-bisection workloads where seconds is too coarse to
+        // see a sub-second phase delta. f64 keeps integer precision
+        // for ms timestamps well past year 10000.
+        let ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as f64;
+        return Ok(Value::Number(ms));
+    }
     if builtin == Some(Builtin::Sleep) && args.len() == 1 {
         // sleep ms — blocks the current thread for `ms` milliseconds.
         // Returns Nil so it composes as a statement inside loop bodies

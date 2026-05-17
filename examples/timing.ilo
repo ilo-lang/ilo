@@ -1,0 +1,19 @@
+-- Per-phase timing with `now-ms`: bisect a perf regression in one run
+-- instead of trimming the program and re-running. Pairs with `sleep` for
+-- deterministic phase boundaries. Reports milliseconds since Unix epoch
+-- as f64 (integer-precise for any realistic timestamp).
+
+-- phase delta: how many ms did the call to `sleep ms` actually take?
+delta ms:n>n;t0=now-ms;sleep ms;t1=now-ms;-t1 t0
+
+-- Two-phase bisection helper: returns 1 if phase2 dominated phase1.
+slower>n;a=delta 5;b=delta 20;c=>b a;?c{1}{0}
+
+-- `now-ms` is always positive (epoch starts 1970), so this is a cheap
+-- smoke test that gives a deterministic assertion target.
+positive>b;>now-ms 0
+
+-- run: positive
+-- out: true
+-- run: slower
+-- out: 1
