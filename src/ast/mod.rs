@@ -655,7 +655,7 @@ fn resolve_aliases_expr(expr: &mut Expr) {
                 resolve_aliases_expr(cap);
             }
         }
-        Expr::Literal(_) | Expr::Ref(_) | Expr::Field { .. } | Expr::Index { .. } => {}
+        Expr::Literal(_) | Expr::Field { .. } | Expr::Index { .. } => {}
     }
 }
 
