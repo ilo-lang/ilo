@@ -4781,14 +4781,17 @@ impl NanVal {
             "heap_list_view src must be a TAG_LIST NanVal, got {:#018x}",
             src.0
         );
-        // SAFETY: tag check above plus is_heap. We borrow src to inspect the
-        // variant; the caller's NanVal still owns its RC.
+        // SAFETY: as_heap_ref requires (a) is_heap() and (b) a live Rc. The
+        // debug_assert above confirms (a) for the tag check, and the caller
+        // contract for heap_list_view is that `src` is a NanVal the caller
+        // already owns an RC on, which gives us (b). The borrow lives only
+        // long enough to inspect the variant for the matches! check below;
+        // we don't mutate or drop src in between.
         let src_obj = unsafe { src.as_heap_ref() };
         debug_assert!(
             matches!(src_obj, HeapObj::List(_)),
             "heap_list_view src must reference HeapObj::List, not a view of a view"
         );
-        // Bump src's RC: the view's Drop will release it. Caller's RC stays.
         #[cfg(debug_assertions)]
         {
             let parent_len = match src_obj {
