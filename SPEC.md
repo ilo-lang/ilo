@@ -560,6 +560,8 @@ Called like functions, compiled to dedicated opcodes.
 
 > **`+=`, `mset`, and `mdel` return a new value, they do not mutate in place.** `+=xs v` returns a new list; `mset m k v` and `mdel m k` return a new map. As a bare statement (`@i 0..3{+=out i}`, `mset m "a" 1;m`) the result is silently discarded and the source binding is unchanged. The verifier emits **ILO-T033** when these calls appear at a discarded position — any non-tail statement, or anywhere inside a loop body. Fix is the assignment form: `out=+=out i`, `m=mset m k v`, `m=mdel m k`. Tail position in a function/`?{}` arm is fine — the value flows out as the return.
 
+> **`wr` and `wrl` return the written path, not a status.** Both succeed with `~path` (the file path you passed in), not `~"ok"` or nil. A `save` helper that ends with a bare `wrl "tasks.txt" xs` therefore returns `~"tasks.txt"`, and every successful mutation echoes the state-file path to stdout — noise for any caller piping output. Discard the path and return a clean status string instead: `save xs:L t>R t t;r=wrl "tasks.txt" xs;?r{~_:~"ok";^e:^e}`. The error arm still propagates `wrl`'s message. See [`examples/cli-tasks-save-ok.ilo`](examples/cli-tasks-save-ok.ilo) for the full shape.
+
 ### Datetime (`dtfmt` / `dtparse`)
 
 UTC only. Format strings follow strftime conventions (`%Y-%m-%d %H:%M:%S`, `%s`, etc).

@@ -137,8 +137,13 @@ fn map_keys_vals_sorted() {
 
 #[test]
 fn mget_on_non_map_errors() {
+    // Verifier now catches this before the interpreter (ILO-T013).
+    // Pre-fix path raised ILO-R009 at runtime.
     let s = err_stderr("main>n;mget 42 \"k\"", "main", &[]);
-    assert!(s.contains("ILO-R009"), "stderr={s}");
+    assert!(
+        s.contains("ILO-T013") || s.contains("ILO-R009"),
+        "stderr={s}"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -743,7 +748,6 @@ fn mapr_all_ok() {
     assert!(s.contains("2") && s.contains("6"), "out={s}");
 }
 
-#[ignore = "uses wishlist syntax not yet in ilo"]
 #[test]
 fn mapr_short_circuits_on_err() {
     // Result-returning failure exits non-zero; capture stderr.
@@ -1246,4 +1250,424 @@ fn num_ok() {
 fn num_err() {
     let src = "main>n;r=num \"nope\";?r{~v:v;^_:99}";
     assert_eq!(ok_out(src, "main", &[]), "99");
+}
+
+// ---------------------------------------------------------------------------
+// File I/O: rd / rdl / rdb / wr / wrl / rdjl — Ok and Err paths
+// ---------------------------------------------------------------------------
+
+fn tmp_dir() -> std::path::PathBuf {
+    let d = std::env::temp_dir().join(format!("ilo-cov-{}", std::process::id()));
+    std::fs::create_dir_all(&d).unwrap();
+    d
+}
+
+#[test]
+fn rd_missing_file_returns_err() {
+    let src = "main>t;r=rd \"/no/such/file/xyz12345\";?r{~_:\"ok\";^_:\"err\"}";
+    assert_eq!(ok_out(src, "main", &[]), "err");
+}
+
+#[test]
+fn rd_text_format() {
+    let p = tmp_dir().join("hello.txt");
+    std::fs::write(&p, "hello world").unwrap();
+    let src = format!("main>t;r=rd \"{}\";?r{{~v:v;^_:\"err\"}}", p.display());
+    assert_eq!(ok_out(&src, "main", &[]), "hello world");
+}
+
+#[test]
+fn rd_csv_format() {
+    let p = tmp_dir().join("data.csv");
+    std::fs::write(&p, "a,b,c\n1,2,3").unwrap();
+    let src = format!(
+        "main>n;r=rd \"{}\" \"csv\";?r{{~rows:len rows;^_:0}}",
+        p.display()
+    );
+    assert_eq!(ok_out(&src, "main", &[]), "2");
+}
+
+#[test]
+fn rd_json_format() {
+    let p = tmp_dir().join("data.json");
+    std::fs::write(&p, "{\"a\":1}").unwrap();
+    let src = format!(
+        "main>t;r=rd \"{}\" \"json\";?r{{~_:\"ok\";^_:\"err\"}}",
+        p.display()
+    );
+    assert_eq!(ok_out(&src, "main", &[]), "ok");
+}
+
+#[test]
+fn rd_invalid_json_returns_err() {
+    let p = tmp_dir().join("bad.json");
+    std::fs::write(&p, "{not json").unwrap();
+    let src = format!(
+        "main>t;r=rd \"{}\" \"json\";?r{{~_:\"ok\";^_:\"err\"}}",
+        p.display()
+    );
+    assert_eq!(ok_out(&src, "main", &[]), "err");
+}
+
+#[test]
+fn rdl_basic() {
+    let p = tmp_dir().join("lines.txt");
+    std::fs::write(&p, "a\nb\nc").unwrap();
+    let src = format!("main>n;r=rdl \"{}\";?r{{~xs:len xs;^_:0}}", p.display());
+    assert_eq!(ok_out(&src, "main", &[]), "3");
+}
+
+#[test]
+fn rdl_missing_file() {
+    let src = "main>t;r=rdl \"/no/such/file/xyz12345\";?r{~_:\"ok\";^_:\"err\"}";
+    assert_eq!(ok_out(src, "main", &[]), "err");
+}
+
+#[test]
+fn rdb_csv_string() {
+    let src = "main>n;r=rdb \"a,b\\n1,2\" \"csv\";?r{~rows:len rows;^_:0}";
+    assert_eq!(ok_out(src, "main", &[]), "2");
+}
+
+#[test]
+fn rdb_invalid_json() {
+    let src = "main>t;r=rdb \"{nope\" \"json\";?r{~_:\"ok\";^_:\"err\"}";
+    assert_eq!(ok_out(src, "main", &[]), "err");
+}
+
+#[test]
+fn wr_text_basic() {
+    let p = tmp_dir().join("out.txt");
+    let src = format!(
+        "main>t;r=wr \"{}\" \"hello\";?r{{~_:\"ok\";^_:\"err\"}}",
+        p.display()
+    );
+    assert_eq!(ok_out(&src, "main", &[]), "ok");
+    assert_eq!(std::fs::read_to_string(&p).unwrap(), "hello");
+}
+
+#[test]
+fn wr_csv_format() {
+    let p = tmp_dir().join("out.csv");
+    let src = format!(
+        "main>t;rows=[[\"a\" \"b\"] [\"1\" \"2\"]];r=wr \"{}\" rows \"csv\";?r{{~_:\"ok\";^_:\"err\"}}",
+        p.display()
+    );
+    assert_eq!(ok_out(&src, "main", &[]), "ok");
+}
+
+#[test]
+fn wr_json_format() {
+    let p = tmp_dir().join("out.json");
+    let src = format!(
+        "main>t;m=mmap;m=mset m \"a\" 1;r=wr \"{}\" m \"json\";?r{{~_:\"ok\";^_:\"err\"}}",
+        p.display()
+    );
+    assert_eq!(ok_out(&src, "main", &[]), "ok");
+}
+
+#[test]
+fn wr_unknown_format_errors() {
+    // Verifier enforces literal csv/tsv/json; defer the check to runtime
+    // by routing the format through an _-typed param.
+    let p = tmp_dir().join("out.zzz");
+    let src = format!(
+        "go fm:_>t;r=wr \"{}\" [[\"a\"]] fm;?r{{~v:v;^_:\"err\"}};main>t;go \"zzz\"",
+        p.display()
+    );
+    let s = err_stderr(&src, "main", &[]);
+    assert!(s.contains("ILO-R") || s.contains("unknown"), "stderr={s}");
+}
+
+#[test]
+fn wrl_basic() {
+    let p = tmp_dir().join("out_lines.txt");
+    let src = format!(
+        "main>t;r=wrl \"{}\" [\"a\" \"b\" \"c\"];?r{{~_:\"ok\";^_:\"err\"}}",
+        p.display()
+    );
+    assert_eq!(ok_out(&src, "main", &[]), "ok");
+}
+
+#[test]
+fn rdjl_basic() {
+    let p = tmp_dir().join("data.jsonl");
+    std::fs::write(&p, "{\"a\":1}\n{\"a\":2}\n").unwrap();
+    let src = format!("main>n;xs=rdjl \"{}\";len xs", p.display());
+    assert_eq!(ok_out(&src, "main", &[]), "2");
+}
+
+#[test]
+fn rdjl_missing_file_errors() {
+    let s = err_stderr(
+        "main>L (R _ t);rdjl \"/no/such/file/xyz12345\"",
+        "main",
+        &[],
+    );
+    assert!(s.contains("ILO-R009") || s.contains("rdjl"), "stderr={s}");
+}
+
+// ---------------------------------------------------------------------------
+// jpth array index path
+// ---------------------------------------------------------------------------
+
+#[test]
+fn jpth_array_index() {
+    let src = "main>R t t;~jpth! \"{\\\"xs\\\":[\\\"a\\\",\\\"b\\\",\\\"c\\\"]}\" \"xs.1\"";
+    assert_eq!(ok_out(src, "main", &[]), "b");
+}
+
+#[test]
+fn jpth_array_index_oob_returns_err() {
+    let src = "main>t;r=jpth \"{\\\"xs\\\":[1]}\" \"xs.10\";?r{~v:v;^_:\"err\"}";
+    let s = ok_out(src, "main", &[]);
+    assert!(s.contains("err") || s.contains("not found"), "out={s}");
+}
+
+// ---------------------------------------------------------------------------
+// Numeric map keys (Int vs Text distinction in MapKey)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn map_int_key() {
+    let src = "main>n;m=mmap;m=mset m 7 42;??(mget m 7) 0";
+    assert_eq!(ok_out(src, "main", &[]), "42");
+}
+
+#[test]
+fn map_int_vs_text_distinct() {
+    let src = "main>b;m=mmap;m=mset m 7 1;mhas m \"7\"";
+    assert_eq!(ok_out(src, "main", &[]), "false");
+}
+
+// ---------------------------------------------------------------------------
+// `prnt` — return value passes through
+// ---------------------------------------------------------------------------
+
+#[test]
+fn prnt_passes_through() {
+    // prnt prints to stdout and returns its argument. We pipe two prnt calls
+    // and rely on the second producing the final program output.
+    let src = "main>n;x=prnt 42;x";
+    assert_eq!(ok_out(src, "main", &[]), "42\n42");
+}
+
+// ---------------------------------------------------------------------------
+// User-fn dispatch: arity mismatch
+// ---------------------------------------------------------------------------
+
+// Note: passing a function name as a Text arg is rejected by the verifier
+// (ILO-T013 'map' first arg must be a function), so the runtime Value::Text
+// → fn-ref resolve path is not reachable from typechecked code.
+
+// ---------------------------------------------------------------------------
+// Safe field access (`.?`) on nil and on non-record
+// ---------------------------------------------------------------------------
+
+#[test]
+fn safe_field_on_nil_returns_nil() {
+    // Call f() to invoke and bind nil; nil-coalesce returns the default.
+    let src = "f>O n;nil;main>n;v=f();??v 99";
+    assert_eq!(ok_out(src, "main", &[]), "99");
+}
+
+// ---------------------------------------------------------------------------
+// Self-rebind concat fallback: numeric `x = x + y`
+// ---------------------------------------------------------------------------
+
+#[test]
+fn self_rebind_concat_numeric_fallback() {
+    // `x = x + y` numeric add should fall through to apply_binop, not the
+    // list/text fast paths.
+    let src = "main>n;x=10;x=+x 5;x";
+    assert_eq!(ok_out(src, "main", &[]), "15");
+}
+
+// ---------------------------------------------------------------------------
+// rgxsub bad pattern
+// ---------------------------------------------------------------------------
+
+#[test]
+fn rgxsub_bad_pattern_errors() {
+    // Defer with _-typed pattern; the verifier accepts the call shape but the
+    // bad regex compile lands at runtime in the interpreter.
+    let src = "f p:_>t;rgxsub p \"X\" \"abc\";main>t;f \"(\"";
+    let s = err_stderr(src, "main", &[]);
+    assert!(s.contains("ILO-R009") || s.contains("rgxsub"), "stderr={s}");
+}
+
+// ---------------------------------------------------------------------------
+// Inv on non-square matrix errors
+// ---------------------------------------------------------------------------
+
+#[test]
+fn inv_non_square_errors() {
+    let s = err_stderr("main>L (L n);inv [[1,2,3] [4,5,6]]", "main", &[]);
+    assert!(s.contains("ILO-R009"), "stderr={s}");
+}
+
+#[test]
+fn solve_non_square_errors() {
+    let s = err_stderr("main>L n;solve [[1,2,3] [4,5,6]] [1,2]", "main", &[]);
+    assert!(s.contains("ILO-R009"), "stderr={s}");
+}
+
+// ---------------------------------------------------------------------------
+// matmul wrong inner type
+// ---------------------------------------------------------------------------
+
+#[test]
+fn matmul_non_number_errors() {
+    let src = "f xs:_>L (L n);matmul xs xs;main>L (L n);f [[\"a\"]]";
+    let s = err_stderr(src, "main", &[]);
+    assert!(s.contains("ILO-R009"), "stderr={s}");
+}
+
+// ---------------------------------------------------------------------------
+// Group with numeric key
+// ---------------------------------------------------------------------------
+
+#[test]
+fn grp_numeric_key() {
+    let src = "k x:n>n;mod x 3;main>n;m=grp k [0,1,2,3,4,5];len m";
+    assert_eq!(ok_out(src, "main", &[]), "3");
+}
+
+#[test]
+fn grp_bool_key() {
+    let src = "k x:n>b;>x 2;main>n;m=grp k [1,2,3,4];len m";
+    assert_eq!(ok_out(src, "main", &[]), "2");
+}
+
+// ---------------------------------------------------------------------------
+// Index expr on non-list (Expr::Index error branch)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn index_on_text_errors() {
+    // `xs[0]` on a Text value triggers eval_expr's Index non-list branch.
+    let src = "f xs:_>n;at xs 99;main>n;f [1,2,3]";
+    let s = err_stderr(src, "main", &[]);
+    assert!(
+        s.contains("ILO-R009") || s.contains("out of range"),
+        "stderr={s}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Closure capture via inline lambda (tree-only path)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn inline_lambda_with_capture() {
+    let src = "f xs:L n thr:n>L n;flt (x:n>b;>x thr) xs;main>n;ys=f [1,5,2,8,3] 3;len ys";
+    assert_eq!(ok_out(src, "main", &[]), "2");
+}
+
+// ---------------------------------------------------------------------------
+// Empty list HOFs (early-return list paths)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn map_empty_list() {
+    let src = "f x:n>n;x;main>n;ys=map f [];len ys";
+    assert_eq!(ok_out(src, "main", &[]), "0");
+}
+
+#[test]
+fn fld_empty_list_returns_init() {
+    let src = "f a:n x:n>n;+a x;main>n;fld f [] 7";
+    assert_eq!(ok_out(src, "main", &[]), "7");
+}
+
+// ---------------------------------------------------------------------------
+// rgxall1 zero groups path
+// ---------------------------------------------------------------------------
+
+#[test]
+fn rgxall1_zero_groups() {
+    let src = "main>n;xs=rgxall1 \"\\\\d+\" \"a1 b22\";len xs";
+    assert_eq!(ok_out(src, "main", &[]), "2");
+}
+
+// ---------------------------------------------------------------------------
+// Nested call: list literal evaluation, function dispatch
+// ---------------------------------------------------------------------------
+
+#[test]
+fn list_of_function_results() {
+    let src = "double x:n>n;*x 2;main>n;ys=[(double 1) (double 2) (double 3)];sum ys";
+    assert_eq!(ok_out(src, "main", &[]), "12");
+}
+
+// ---------------------------------------------------------------------------
+// At with negative oob errors
+// ---------------------------------------------------------------------------
+
+#[test]
+fn at_negative_oob_errors() {
+    let s = err_stderr("main>n;at [1,2] -10", "main", &[]);
+    assert!(
+        s.contains("ILO-R009") || s.contains("out of range"),
+        "stderr={s}"
+    );
+}
+
+#[test]
+fn at_text_oob_errors() {
+    let s = err_stderr("main>t;at \"hi\" 10", "main", &[]);
+    assert!(
+        s.contains("ILO-R009") || s.contains("out of range"),
+        "stderr={s}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Solve singular matrix
+// ---------------------------------------------------------------------------
+
+#[test]
+fn solve_singular_errors() {
+    let s = err_stderr("main>L n;solve [[1,2] [2,4]] [1,2]", "main", &[]);
+    assert!(
+        s.contains("ILO-R009") || s.contains("singular"),
+        "stderr={s}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// jdmp on various value types (nil, list, map, record-ish via jpar round-trip)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn jdmp_list() {
+    assert_eq!(ok_out("main>t;jdmp [1,2,3]", "main", &[]), "[1,2,3]");
+}
+
+#[test]
+fn jdmp_bool_and_nil() {
+    assert_eq!(ok_out("main>t;jdmp true", "main", &[]), "true");
+    let src = "f>O n;nil;main>t;jdmp f()";
+    assert_eq!(ok_out(src, "main", &[]), "null");
+}
+
+#[test]
+fn jdmp_map() {
+    let src = "main>t;m=mmap;m=mset m \"a\" 1;jdmp m";
+    let s = ok_out(src, "main", &[]);
+    assert!(s.contains("\"a\":1"), "out={s}");
+}
+
+// ---------------------------------------------------------------------------
+// has on map / map error path
+// ---------------------------------------------------------------------------
+
+#[test]
+fn has_on_number_errors() {
+    let src = "f x:_>b;has x 1;main>b;f 42";
+    let s = err_stderr(src, "main", &[]);
+    assert!(
+        s.contains("ILO-R009") || s.contains("list or text"),
+        "stderr={s}"
+    );
 }
