@@ -1294,6 +1294,25 @@ impl Parser {
             let ternary = self.parse_brace_ternary_after_subject(subj.clone())?;
             return Ok(Stmt::Expr(ternary));
         }
+        // Bare-bool prefix ternary: `?h a b` on a bool subject, symmetric
+        // with the existing `?=cond a b` comparison-led prefix ternary. After
+        // the subject is consumed, if the next token is not `{` but can start
+        // an operand, parse two operands and desugar to `Expr::Ternary`. The
+        // brace-form `?h{a}{b}` is handled above; this closes the asymmetry
+        // for the unbraced shape (the cheapest token cost on a bool subject:
+        // `?h 1 0` is 6 chars vs `?=h true 1 0` at 12 or `?h{1}{0}` at 8).
+        if let Some(subj) = &subject
+            && self.peek() != Some(&Token::LBrace)
+            && self.can_start_operand()
+        {
+            let then_expr = self.parse_operand()?;
+            let else_expr = self.parse_operand()?;
+            return Ok(Stmt::Expr(Expr::Ternary {
+                condition: Box::new(subj.clone()),
+                then_expr: Box::new(then_expr),
+                else_expr: Box::new(else_expr),
+            }));
+        }
         self.expect(&Token::LBrace)?;
         // Friendly hint: `?cond{body}` on a bare bool is a common slip — the
         // user reaches for braced-conditional execution but gets match syntax
@@ -2101,6 +2120,20 @@ impl Parser {
             && self.looks_like_brace_ternary()
         {
             return self.parse_brace_ternary_after_subject((**subj).clone());
+        }
+        // Bare-bool prefix ternary in expr position: `?h a b` symmetric with
+        // `?=cond a b`. See `parse_match_stmt` for the rationale.
+        if let Some(subj) = &subject
+            && self.peek() != Some(&Token::LBrace)
+            && self.can_start_operand()
+        {
+            let then_expr = self.parse_operand()?;
+            let else_expr = self.parse_operand()?;
+            return Ok(Expr::Ternary {
+                condition: Box::new((**subj).clone()),
+                then_expr: Box::new(then_expr),
+                else_expr: Box::new(else_expr),
+            });
         }
         self.expect(&Token::LBrace)?;
         let arms = self.parse_match_arms()?;
@@ -3868,6 +3901,96 @@ mod tests {
         };
         assert_eq!(name, "v");
         assert!(matches!(value, Expr::Ternary { .. }));
+    }
+
+    #[test]
+    fn parse_bare_bool_prefix_ternary_stmt() {
+        // `?h 1 0` on a bool subject — symmetric with `?=cond a b`.
+        let prog = parse_str("f h:b>n;?h 1 0");
+        let Decl::Function { body, .. } = &prog.declarations[0] else {
+            panic!("expected function")
+        };
+        let Stmt::Expr(Expr::Ternary {
+            condition,
+            then_expr,
+            else_expr,
+        }) = &body[0].node
+        else {
+            panic!("expected ternary, got {:?}", body[0])
+        };
+        assert!(matches!(condition.as_ref(), Expr::Ref(n) if n == "h"));
+        assert!(matches!(then_expr.as_ref(), Expr::Literal(Literal::Number(n)) if *n == 1.0));
+        assert!(matches!(else_expr.as_ref(), Expr::Literal(Literal::Number(n)) if *n == 0.0));
+    }
+
+    #[test]
+    fn parse_bare_bool_prefix_ternary_in_let() {
+        // `v=?h 10 20` — bare-bool ternary in expression position.
+        let prog = parse_str("f h:b>n;v=?h 10 20;v");
+        let Decl::Function { body, .. } = &prog.declarations[0] else {
+            panic!("expected function")
+        };
+        let Stmt::Let { name, value, .. } = &body[0].node else {
+            panic!("expected let, got {:?}", body[0])
+        };
+        assert_eq!(name, "v");
+        let Expr::Ternary {
+            condition,
+            then_expr,
+            else_expr,
+        } = value
+        else {
+            panic!("expected ternary, got {:?}", value)
+        };
+        assert!(matches!(condition.as_ref(), Expr::Ref(n) if n == "h"));
+        assert!(matches!(then_expr.as_ref(), Expr::Literal(Literal::Number(n)) if *n == 10.0));
+        assert!(matches!(else_expr.as_ref(), Expr::Literal(Literal::Number(n)) if *n == 20.0));
+    }
+
+    #[test]
+    fn parse_bare_bool_prefix_ternary_does_not_break_match() {
+        // `?h{true:1;false:0}` — explicit-arm match still parses as match.
+        let prog = parse_str("f h:b>n;?h{true:1;false:0}");
+        let Decl::Function { body, .. } = &prog.declarations[0] else {
+            panic!("expected function")
+        };
+        let Stmt::Match { subject, arms } = &body[0].node else {
+            panic!("expected match, got {:?}", body[0])
+        };
+        assert!(subject.is_some());
+        assert_eq!(arms.len(), 2);
+    }
+
+    #[test]
+    fn parse_bare_bool_prefix_ternary_does_not_break_brace_sugar() {
+        // `?h{1}{0}` — brace sugar from #323 still parses as ternary.
+        let prog = parse_str("f h:b>n;?h{1}{0}");
+        let Decl::Function { body, .. } = &prog.declarations[0] else {
+            panic!("expected function")
+        };
+        let Stmt::Expr(Expr::Ternary { condition, .. }) = &body[0].node else {
+            panic!("expected ternary, got {:?}", body[0])
+        };
+        assert!(matches!(condition.as_ref(), Expr::Ref(n) if n == "h"));
+    }
+
+    #[test]
+    fn parse_bare_bool_prefix_ternary_with_paren_subject() {
+        // `?(=>x 0) 1 0` — paren-grouped comparison as bool subject.
+        let prog = parse_str("f x:n>n;?(=x 0) 1 0");
+        let Decl::Function { body, .. } = &prog.declarations[0] else {
+            panic!("expected function")
+        };
+        let Stmt::Expr(Expr::Ternary { condition, .. }) = &body[0].node else {
+            panic!("expected ternary, got {:?}", body[0])
+        };
+        assert!(matches!(
+            condition.as_ref(),
+            Expr::BinOp {
+                op: BinOp::Equals,
+                ..
+            }
+        ));
     }
 
     #[test]
