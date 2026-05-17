@@ -371,9 +371,11 @@ Operator operands are **atoms** (literals, refs, field access), **nested prefix 
 ```
 wh >len q 0{body}        -- parses as wh > (len q) 0 { body }
 +f g h                   -- if f is 1-arity: BinOp(+, Call(f, [g]), h)
+-lnx 5 lnx 3             -- BinOp(-, Call(lnx, [5]), Call(lnx, [3]))
+- dbl 5                  -- Negate(Call(dbl, [5])) — unary on a call
 ```
 
-This parallels the `??` precedent: `??x default` accepts a call expression on the value side. Bare locals that shadow a user fn name still resolve via `Ref` rather than expanding into a zero-arg call, so `&e f{...}` where `f` is a local still parses as the bool operator with two refs.
+This parallels the `??` precedent: `??x default` accepts a call expression on the value side. Applies to every prefix-binop family member — `+`, `-`, `*`, `/`, comparisons, `&`, `|`, `+=` — and to unary negate when the call consumes the only operand. Bare locals that shadow a user fn name still resolve via `Ref` rather than expanding into a zero-arg call, so `&e f{...}` where `f` is a local still parses as the bool operator with two refs.
 
 When the call expansion isn't available (the ident is a local that shadows a fn name, or the call's arity doesn't fit the remaining tokens), bind the call result first:
 
