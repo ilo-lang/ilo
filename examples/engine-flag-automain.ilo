@@ -1,0 +1,17 @@
+-- `ilo --run-tree file.ilo`, `--run-vm`, `--run-cranelift`, and the
+-- default engine all auto-run `main` on a multi-fn file when no func
+-- name is supplied. Before the fix, only the default engine did:
+--   * --run-tree     -> arity error (`helper: expected 1 args, got 0`)
+--   * --run-vm       -> silent `nil`, exit 0
+--   * --run-cranelift-> bare "Cranelift JIT: compilation failed"
+-- All four are now consistent with the documented auto-pick-main
+-- behaviour (SKILL.md: "Multi-function files require either a
+-- function name argument or a function called `main`.").
+
+helper a:n>n;+a 1
+main>n;helper 41
+
+-- run: main
+-- out: 42
+-- run: helper 9
+-- out: 10
