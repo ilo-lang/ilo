@@ -1,0 +1,18 @@
+-- Unknown `--flag` shapes in the positional tail are rejected upfront
+-- with a clear "unrecognised flag" error and exit 1, instead of being
+-- silently consumed as positional args (which used to surface as
+-- misleading ILO-R012 "no functions defined" or ILO-R004
+-- "main: expected N args, got N+1"). Six rerun8 personas independently
+-- burned minutes on the old trap.
+--
+-- To pass a hyphen-prefixed token as a literal arg, separate with `--`
+-- first: `ilo main.ilo -- --foo`. Anything after the first `--` is data.
+--
+-- The happy-path example below is exercised via the engine harness so
+-- the unknown-flag guard's no-op behaviour on plain positional args
+-- stays under cross-engine regression coverage.
+
+main x:n>n;+x 1
+
+-- run: main 41
+-- out: 42

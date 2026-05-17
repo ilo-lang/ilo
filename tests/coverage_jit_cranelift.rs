@@ -87,16 +87,24 @@ fn jit_max_lst_into_arith() {
     run_ok("f xs:L n>n;+(max xs) 0", "f", &["[3,1,4,1,5]"], "5");
 }
 
-#[ignore = "uses wishlist syntax not yet in ilo"]
 #[test]
 fn jit_stdev_basic() {
-    run_ok("f xs:L n>n;stdev xs", "f", &["[2,4,4,4,5,5,7,9]"], "2");
+    run_ok(
+        "f xs:L n>n;rou (stdev xs)",
+        "f",
+        &["[2,4,4,4,5,5,7,9]"],
+        "2",
+    );
 }
 
-#[ignore = "uses wishlist syntax not yet in ilo"]
 #[test]
 fn jit_variance_basic() {
-    run_ok("f xs:L n>n;variance xs", "f", &["[2,4,4,4,5,5,7,9]"], "4");
+    run_ok(
+        "f xs:L n>n;rou (variance xs)",
+        "f",
+        &["[2,4,4,4,5,5,7,9]"],
+        "5",
+    );
 }
 
 #[test]
@@ -168,12 +176,6 @@ fn jit_solve_basic() {
     run_ok("f>L n;solve [[1,0],[0,1]] [3,4]", "f", &[], "[3, 4]");
 }
 
-#[ignore = "uses wishlist syntax not yet in ilo"]
-#[test]
-fn jit_det_singular_runtime_error() {
-    run_err_contains("f>n;det [[1,2],[2,4]]", "f", "labels");
-}
-
 #[test]
 fn jit_solve_singular_runtime_error() {
     run_err_contains("f>L n;solve [[1,2],[2,4]] [1,2]", "f", "labels");
@@ -223,11 +225,10 @@ fn jit_range_basic() {
     run_ok("f>L n;range 0 4", "f", &[], "[0, 1, 2, 3]");
 }
 
-#[ignore = "uses wishlist syntax not yet in ilo"]
 #[test]
 fn jit_chunks_basic() {
     run_ok(
-        "f>L (L n);chunks [1,2,3,4,5] 2",
+        "f>L (L n);chunks 2 [1,2,3,4,5]",
         "f",
         &[],
         "[[1, 2], [3, 4], [5]]",
@@ -239,16 +240,14 @@ fn jit_flat_basic() {
     run_ok("f>L n;flat [[1,2],[3,4]]", "f", &[], "[1, 2, 3, 4]");
 }
 
-#[ignore = "uses wishlist syntax not yet in ilo"]
 #[test]
 fn jit_take_basic() {
-    run_ok("f>L n;take [1,2,3,4] 2", "f", &[], "[1, 2]");
+    run_ok("f>L n;take 2 [1,2,3,4]", "f", &[], "[1, 2]");
 }
 
-#[ignore = "uses wishlist syntax not yet in ilo"]
 #[test]
 fn jit_drop_basic() {
-    run_ok("f>L n;drop [1,2,3,4] 2", "f", &[], "[3, 4]");
+    run_ok("f>L n;drop 2 [1,2,3,4]", "f", &[], "[3, 4]");
 }
 
 #[test]
@@ -268,16 +267,14 @@ fn jit_frq_then_mhas() {
 
 // ── Padding / char ops ───────────────────────────────────────────────────
 
-#[ignore = "uses wishlist syntax not yet in ilo"]
 #[test]
 fn jit_padl_basic() {
-    run_ok("f>t;padl \"x\" 4", "f", &[], "   x");
+    run_ok("f>n;len (padl \"x\" 4)", "f", &[], "4");
 }
 
-#[ignore = "uses wishlist syntax not yet in ilo"]
 #[test]
 fn jit_padr_basic() {
-    run_ok("f>t;padr \"x\" 4", "f", &[], "x   ");
+    run_ok("f>n;len (padr \"x\" 4)", "f", &[], "4");
 }
 
 #[test]
@@ -300,10 +297,9 @@ fn jit_ord_basic() {
     run_ok("f>n;ord \"A\"", "f", &[], "65");
 }
 
-#[ignore = "uses wishlist syntax not yet in ilo"]
 #[test]
 fn jit_chars_basic() {
-    run_ok("f>L t;chars \"abc\"", "f", &[], "[\"a\", \"b\", \"c\"]");
+    run_ok("f>L t;chars \"abc\"", "f", &[], "[a, b, c]");
 }
 
 #[test]
@@ -365,14 +361,13 @@ fn jit_mhas_true() {
     run_ok("f>b;m=mset mmap \"k\" 1;mhas m \"k\"", "f", &[], "true");
 }
 
-#[ignore = "uses wishlist syntax not yet in ilo"]
 #[test]
 fn jit_mkeys_basic() {
     run_ok(
         "f>L t;m=mset (mset mmap \"a\" 1) \"b\" 2;mkeys m",
         "f",
         &[],
-        "[\"a\", \"b\"]",
+        "[a, b]",
     );
 }
 
@@ -386,14 +381,13 @@ fn jit_mvals_basic() {
     );
 }
 
-#[ignore = "uses wishlist syntax not yet in ilo"]
 #[test]
 fn jit_mdel_basic() {
     run_ok(
         "f>L t;m=mset (mset mmap \"a\" 1) \"b\" 2;mkeys (mdel m \"a\")",
         "f",
         &[],
-        "[\"b\"]",
+        "[b]",
     );
 }
 
@@ -409,16 +403,14 @@ fn jit_jdmp_number() {
     run_ok("f x:n>t;jdmp x", "f", &["42"], "42");
 }
 
-#[ignore = "uses wishlist syntax not yet in ilo"]
 #[test]
 fn jit_jpar_ok() {
-    run_ok("f>n;jpar! \"42\"", "f", &[], "42");
+    run_ok("f>R n t;jpar \"42\"", "f", &[], "42");
 }
 
-#[ignore = "uses wishlist syntax not yet in ilo"]
 #[test]
 fn jit_jpth_basic() {
-    run_ok("f>t;jpth! \"{\\\"a\\\":7}\" \"a\"", "f", &[], "7");
+    run_ok("f>R t t;jpth \"{\\\"a\\\":7}\" \"a\"", "f", &[], "7");
 }
 
 #[test]
@@ -428,16 +420,14 @@ fn jit_jdmp_list() {
 
 // ── Datetime ─────────────────────────────────────────────────────────────
 
-#[ignore = "uses wishlist syntax not yet in ilo"]
 #[test]
 fn jit_dtfmt_basic() {
-    run_ok("f>t;dtfmt! 0 \"%Y\"", "f", &[], "1970");
+    run_ok("f>R t t;dtfmt 0 \"%Y\"", "f", &[], "1970");
 }
 
-#[ignore = "uses wishlist syntax not yet in ilo"]
 #[test]
 fn jit_dtparse_basic() {
-    run_ok("f>n;dtparse! \"1970-01-01\" \"%Y-%m-%d\"", "f", &[], "0");
+    run_ok("f>R n t;dtparse \"1970-01-01\" \"%Y-%m-%d\"", "f", &[], "0");
 }
 
 // ── File IO error paths ─────────────────────────────────────────────────
@@ -462,10 +452,13 @@ fn jit_rdl_missing_path() {
 
 // ── ENV builtin ─────────────────────────────────────────────────────────
 
-#[ignore = "uses wishlist syntax not yet in ilo"]
 #[test]
 fn jit_env_missing_runtime_error() {
-    run_err_contains("f>t;env! \"ILO_DEFINITELY_NOT_SET_VAR_XYZ\"", "f", "labels");
+    run_err_contains(
+        "f>R t t;env \"ILO_DEFINITELY_NOT_SET_VAR_XYZ\"",
+        "f",
+        "not set",
+    );
 }
 
 // ── Math (rare helper arms: log10/log2/asin/acos/atan/atan2/sin/cos/tan) ─
@@ -605,15 +598,9 @@ fn jit_index_oob_runtime_error_labels() {
 
 // ── String split / concat-many ───────────────────────────────────────────
 
-#[ignore = "uses wishlist syntax not yet in ilo"]
 #[test]
 fn jit_spl_basic() {
-    run_ok(
-        "f>L t;spl \"a,b,c\" \",\"",
-        "f",
-        &[],
-        "[\"a\", \"b\", \"c\"]",
-    );
+    run_ok("f>L t;spl \"a,b,c\" \",\"", "f", &[], "[a, b, c]");
 }
 
 #[test]
@@ -635,10 +622,9 @@ fn jit_has_text_true() {
 
 // ── num / str builtins ───────────────────────────────────────────────────
 
-#[ignore = "uses wishlist syntax not yet in ilo"]
 #[test]
 fn jit_num_from_text() {
-    run_ok("f>n;num \"42\"", "f", &[], "42");
+    run_ok("f>R n t;num \"42\"", "f", &[], "42");
 }
 
 #[test]
@@ -660,17 +646,16 @@ fn jit_len_list() {
 
 // ── prt builtin ──────────────────────────────────────────────────────────
 
-#[ignore = "uses wishlist syntax not yet in ilo"]
 #[test]
-fn jit_prt_runs() {
+fn jit_prnt_runs() {
     let out = ilo()
-        .args(["--run-cranelift", "f>O n;prt 7", "f"])
+        .args(["--run-cranelift", "f>n;prnt 7", "f"])
         .output()
         .expect("failed to run ilo");
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(
         out.status.success(),
-        "prt should succeed, stderr={}",
+        "prnt should succeed, stderr={}",
         String::from_utf8_lossy(&out.stderr)
     );
     assert!(

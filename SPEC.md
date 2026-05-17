@@ -431,7 +431,7 @@ Called like functions, compiled to dedicated opcodes.
 |------|---------|---------|
 | `len x` | length of string (bytes) or list (elements) | `n` |
 | `str n` | number to text (integers format without `.0`) | `t` |
-| `num t` | text to number (Err if unparseable) | `R n t` |
+| `num t` | text to number; trims leading/trailing ASCII whitespace before parsing (Err if unparseable) | `R n t` |
 | `abs n` | absolute value | `n` |
 | `min a b` | minimum of two numbers | `n` |
 | `min xs` | minimum element of a numeric list (error if empty) | `n` |
@@ -751,6 +751,7 @@ Match replaces `switch`. There is no fall-through — each arm is independent. T
 | `cond{then}{else}` | ternary: evaluate then or else (no early return) |
 | `?bool{then}{else}` | bare-bool ternary: `?h{1}{0}` (no early return) |
 | `?cond then else` | prefix ternary: `?=x 0 10 20` (no early return) |
+| `?h cond a b` | general prefix-ternary keyword: `?h cn "y" "n"` (3 operand atoms after literal `?h`) |
 | `!cond{body}` | negated conditional execution (no early return) |
 | `!cond expr` | braceless negated guard (early return) |
 | `!cond{then}{else}` | negated ternary |
@@ -880,6 +881,16 @@ f h:b>n;v=?h 1 0;v        -- assign result to v
 ```
 
 This is the cheapest shape when the condition is already a bool — 6 chars for `?h 1 0` vs 8 for the brace form `?h{1}{0}` and 12 for the eq-prefix form `?=h true 1 0`. The match-vs-ternary disambiguator routes `?subj{arms-with-colon-or-semi}` to match parsing, `?subj{a}{b}` to brace bare-bool ternary, and `?subj a b` (two bare operands at the cursor, no leading brace) to bare-bool prefix ternary. `?subj` alone with no following operand still errors the same way as before.
+
+**`?h cond a b` general prefix-ternary keyword** uses the literal subject ident `h` plus three operand atoms — the condition is the first operand and `a`/`b` are the arms, analogous to the `?=`/`?>`/`?<` family of comparison-prefix-ternaries but with the condition as an arbitrary bool-valued atom rather than a comparison expression:
+
+```
+f x:n>t;cn=>x 0;?h cn "pos" "nonpos"             -- comparison-derived bool as condition
+f t:t>t;ok=has ["a" "b" "c"] t;?h ok "yes" "no"   -- predicate result as condition
+f mn:t>t;cn=(=mn "v40");sc1=?h cn "v4" "v3";sc1   -- in let-RHS
+```
+
+The disambiguator is operand count: **two** operand atoms after `?h` keeps the bool-subject reading above (`?h a b` → `if h then a else b`); **three** operand atoms promotes `?h` to the fixed keyword form (`?h cond a b` → `if cond then a else b`). The keyword reading triggers only for the literal ident `h`, so every other bool-named subject (`?ready a b`, `?ok 1 0`, …) keeps the PR #330 semantics regardless of how many operands follow. Use the keyword form when the condition is a more complex bool expression than a single ref and you want the cheapest prefix shape; the brace form `?cond{a}{b}` works too but is two characters longer per occurrence.
 
 ### Early Return
 
@@ -1409,7 +1420,9 @@ ilo serv                          -- long-lived JSON request/response loop
 
 **Default-run.** Inline programs (`ilo 'code'`) and single-function files run their entry function with the remaining CLI args; no explicit function name needed. Multi-function files auto-pick a function called `main` when no positional func arg is supplied. The same heuristic applies to the explicit engine flags — `--run-tree`, `--run-vm`, and `--run-cranelift` all auto-pick `main` on multi-fn files, matching the default-engine behaviour. With no `main` declared, supply a function-name argument.
 
-**Subcommand dispatch.** The first positional argument is interpreted as a function name when it has the shape of an ilo identifier — `[a-z][a-z0-9]*(-[a-z0-9]+)*` — so `ilo file.ilo list-orders` routes to the `list-orders` function. Args that don't match the ident shape (file paths like `/tmp/data.json`, numbers, sigils, bracketed lists, anything with a `.` or `/`) route to `main` (or the entry function) as a positional CLI arg instead. Trailing dashes (`foo-`), doubled dashes (`foo--bar`), and leading dashes (`--flag`, `-1`) are not idents and pass through as data.
+**Subcommand dispatch.** The first positional argument is interpreted as a function name when it has the shape of an ilo identifier — `[a-z][a-z0-9]*(-[a-z0-9]+)*` — so `ilo file.ilo list-orders` routes to the `list-orders` function. Args that don't match the ident shape (file paths like `/tmp/data.json`, numbers, sigils, bracketed lists, anything with a `.` or `/`) route to `main` (or the entry function) as a positional CLI arg instead. Trailing dashes (`foo-`), doubled dashes (`foo--bar`), and negative numbers (`-1`) are not idents and pass through as data.
+
+**Unknown `--flag` guard.** Any token in the positional tail matching the clean long-flag shape `--word` or `--word-with-dashes` that isn't a recognised flag is rejected upfront with `error: unrecognised flag '--<name>'. Use 'ilo --help' for valid flags. To pass it as a literal arg, separate with '--' first.` and exit 1. This prevents `ilo main.ilo --engine tree` from silently consuming `--engine` as a positional arg (which used to surface as misleading `ILO-R012 no functions defined` or `ILO-R004 main: expected N args, got N+1`). To pass a hyphen-prefixed token through as literal data, place the `--` separator first: `ilo main.ilo -- --foo`. Anything after the first `--` is data. Tokens with `=` (`--key=val`), trailing or doubled dashes (`--foo-`, `--foo--bar`), and negative numbers (`-1`) are not clean flag shapes and pass through unchanged.
 
 **Text-typed params.** When the entry function declares a parameter of type `t`, the CLI passes the raw arg through without numeric coercion. `ilo 'f x:t>t;x' 42` returns the string `"42"`, not the number 42.
 

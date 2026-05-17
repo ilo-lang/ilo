@@ -6705,6 +6705,85 @@ mod tests {
         assert_eq!(result, Some(Value::Ok(Box::new(Value::Number(3.14)))));
     }
 
+    #[test]
+    fn cranelift_num_trims_leading_whitespace() {
+        let result = jit_run(
+            r#"f s:t>R n t;num s"#,
+            "f",
+            &[Value::Text(Arc::new(" 77516".to_string()))],
+        );
+        assert_eq!(result, Some(Value::Ok(Box::new(Value::Number(77516.0)))));
+    }
+
+    #[test]
+    fn cranelift_num_trims_trailing_whitespace() {
+        let result = jit_run(
+            r#"f s:t>R n t;num s"#,
+            "f",
+            &[Value::Text(Arc::new("77516 ".to_string()))],
+        );
+        assert_eq!(result, Some(Value::Ok(Box::new(Value::Number(77516.0)))));
+    }
+
+    #[test]
+    fn cranelift_num_trims_both_sides_signed_float() {
+        let result = jit_run(
+            r#"f s:t>R n t;num s"#,
+            "f",
+            &[Value::Text(Arc::new("  -3.14  ".to_string()))],
+        );
+        assert_eq!(result, Some(Value::Ok(Box::new(Value::Number(-3.14)))));
+    }
+
+    #[test]
+    fn cranelift_num_trims_scientific_notation() {
+        let result = jit_run(
+            r#"f s:t>R n t;num s"#,
+            "f",
+            &[Value::Text(Arc::new(" 1e10 ".to_string()))],
+        );
+        assert_eq!(result, Some(Value::Ok(Box::new(Value::Number(1e10)))));
+    }
+
+    #[test]
+    fn cranelift_num_internal_whitespace_still_errors() {
+        let result = jit_run(
+            r#"f s:t>R n t;num s"#,
+            "f",
+            &[Value::Text(Arc::new("1 2".to_string()))],
+        );
+        match result {
+            Some(Value::Err(_)) => {}
+            other => panic!("expected Err, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn cranelift_num_empty_string_errors() {
+        let result = jit_run(
+            r#"f s:t>R n t;num s"#,
+            "f",
+            &[Value::Text(Arc::new("".to_string()))],
+        );
+        match result {
+            Some(Value::Err(_)) => {}
+            other => panic!("expected Err, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn cranelift_num_whitespace_only_errors() {
+        let result = jit_run(
+            r#"f s:t>R n t;num s"#,
+            "f",
+            &[Value::Text(Arc::new("   ".to_string()))],
+        );
+        match result {
+            Some(Value::Err(_)) => {}
+            other => panic!("expected Err, got {:?}", other),
+        }
+    }
+
     // ── map mset key with number value ───────────────────────────────────────
 
     #[test]

@@ -1376,12 +1376,28 @@ impl Parser {
             && self.peek() != Some(&Token::LBrace)
             && self.can_start_operand()
         {
-            let then_expr = self.parse_operand()?;
-            let else_expr = self.parse_operand()?;
+            let first = self.parse_operand()?;
+            let second = self.parse_operand()?;
+            // `?h` general prefix-ternary: when the subject ident is literally
+            // `h` and a third operand follows, reinterpret `?h` as a fixed
+            // prefix-ternary keyword (analogous to `?=`/`?>`/`?<` etc.) with
+            // three operand atoms: `?h cond then else` → `if cond then a b`.
+            // The 2-operand `?h a b` bool-subject form (PR #330) still wins
+            // when only two operands follow. Restricting the keyword reading
+            // to the literal ident `h` keeps every other bool-named subject
+            // (`?ready a b`, `?ok 1 0`, …) unambiguous and unchanged.
+            if matches!(subj, Expr::Ref(n) if n == "h") && self.can_start_operand() {
+                let third = self.parse_operand()?;
+                return Ok(Stmt::Expr(Expr::Ternary {
+                    condition: Box::new(first),
+                    then_expr: Box::new(second),
+                    else_expr: Box::new(third),
+                }));
+            }
             return Ok(Stmt::Expr(Expr::Ternary {
                 condition: Box::new(subj.clone()),
-                then_expr: Box::new(then_expr),
-                else_expr: Box::new(else_expr),
+                then_expr: Box::new(first),
+                else_expr: Box::new(second),
             }));
         }
         self.expect(&Token::LBrace)?;
@@ -2198,12 +2214,27 @@ impl Parser {
             && self.peek() != Some(&Token::LBrace)
             && self.can_start_operand()
         {
-            let then_expr = self.parse_operand()?;
-            let else_expr = self.parse_operand()?;
+            let first = self.parse_operand()?;
+            let second = self.parse_operand()?;
+            // `?h` general prefix-ternary in expr position. See the matching
+            // block in `parse_match_stmt` for the rationale: literal subject
+            // ident `h` followed by three operand atoms is reinterpreted as
+            // `?h cond then else` → `if cond then a b`, allowing the persona
+            // to write `x=?h cn "a" "b"` without falling back to a helper or
+            // the brace form when the condition is an expression rather than
+            // a bare bool ref.
+            if matches!(subj.as_ref(), Expr::Ref(n) if n == "h") && self.can_start_operand() {
+                let third = self.parse_operand()?;
+                return Ok(Expr::Ternary {
+                    condition: Box::new(first),
+                    then_expr: Box::new(second),
+                    else_expr: Box::new(third),
+                });
+            }
             return Ok(Expr::Ternary {
                 condition: Box::new((**subj).clone()),
-                then_expr: Box::new(then_expr),
-                else_expr: Box::new(else_expr),
+                then_expr: Box::new(first),
+                else_expr: Box::new(second),
             });
         }
         self.expect(&Token::LBrace)?;
@@ -4455,6 +4486,107 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn parse_h_keyword_ternary_stmt() {
+        // `?h cn a b` — literal subject `h` + 3 operand atoms reads as the
+        // fixed prefix-ternary keyword form: `if cn then a else b`.
+        let prog = parse_str("f x:n>t;cn=>x 0;?h cn \"pos\" \"nonpos\"");
+        let Decl::Function { body, .. } = &prog.declarations[0] else {
+            panic!("expected function")
+        };
+        let Stmt::Expr(Expr::Ternary {
+            condition,
+            then_expr,
+            else_expr,
+        }) = &body[1].node
+        else {
+            panic!("expected ternary, got {:?}", body[1])
+        };
+        assert!(
+            matches!(condition.as_ref(), Expr::Ref(n) if n == "cn"),
+            "condition should be `cn` (the comparison-derived bool), not `h`"
+        );
+        assert!(matches!(then_expr.as_ref(), Expr::Literal(Literal::Text(s)) if s == "pos"));
+        assert!(matches!(else_expr.as_ref(), Expr::Literal(Literal::Text(s)) if s == "nonpos"));
+    }
+
+    #[test]
+    fn parse_h_keyword_ternary_in_let_rhs() {
+        // `sc1=?h cn "a" "b"` — the originating security-researcher probe.
+        // The let-RHS must produce a Ternary with `cn` as condition (not
+        // `h` as subject) and the third operand consumed as the else arm.
+        let prog =
+            parse_str("f mn:t>t;cn=eq mn \"ok\";sc1=?h cn \"metrics:nil\" \"metrics:ok\";sc1");
+        let Decl::Function { body, .. } = &prog.declarations[0] else {
+            panic!("expected function")
+        };
+        let Stmt::Let { name, value, .. } = &body[1].node else {
+            panic!("expected let, got {:?}", body[1])
+        };
+        assert_eq!(name, "sc1");
+        let Expr::Ternary {
+            condition,
+            then_expr,
+            else_expr,
+        } = value
+        else {
+            panic!("expected ternary, got {:?}", value)
+        };
+        assert!(matches!(condition.as_ref(), Expr::Ref(n) if n == "cn"));
+        assert!(
+            matches!(then_expr.as_ref(), Expr::Literal(Literal::Text(s)) if s == "metrics:nil")
+        );
+        assert!(matches!(else_expr.as_ref(), Expr::Literal(Literal::Text(s)) if s == "metrics:ok"));
+    }
+
+    #[test]
+    fn parse_h_keyword_only_triggers_for_literal_h() {
+        // Other subject idents never promote to the 3-arg keyword form
+        // even if a third operand atom is lying around — the PR #330 path
+        // consumes the first two and falls through, so the third operand
+        // would surface as a stray token at the statement boundary. This
+        // test pins the keyword reading to literal `h` only.
+        //
+        // Use a 2-operand call (PR #330 shape) on a non-`h` subject and
+        // confirm subject identity is preserved.
+        let prog = parse_str("f ready:b>n;?ready 1 0");
+        let Decl::Function { body, .. } = &prog.declarations[0] else {
+            panic!("expected function")
+        };
+        let Stmt::Expr(Expr::Ternary { condition, .. }) = &body[0].node else {
+            panic!("expected ternary, got {:?}", body[0])
+        };
+        assert!(
+            matches!(condition.as_ref(), Expr::Ref(n) if n == "ready"),
+            "condition should be `ready` (the bool subject), not the first operand"
+        );
+    }
+
+    #[test]
+    fn parse_h_keyword_does_not_break_pr330_two_operand() {
+        // `?h 7 9` — exactly two operand atoms after literal `h`. The
+        // keyword form requires three operands, so this must keep the
+        // PR #330 bool-subject reading (`if h then 7 else 9`).
+        let prog = parse_str("f h:b>n;?h 7 9");
+        let Decl::Function { body, .. } = &prog.declarations[0] else {
+            panic!("expected function")
+        };
+        let Stmt::Expr(Expr::Ternary {
+            condition,
+            then_expr,
+            else_expr,
+        }) = &body[0].node
+        else {
+            panic!("expected ternary, got {:?}", body[0])
+        };
+        assert!(
+            matches!(condition.as_ref(), Expr::Ref(n) if n == "h"),
+            "two-operand form keeps `h` as the bool subject"
+        );
+        assert!(matches!(then_expr.as_ref(), Expr::Literal(Literal::Number(n)) if *n == 7.0));
+        assert!(matches!(else_expr.as_ref(), Expr::Literal(Literal::Number(n)) if *n == 9.0));
     }
 
     #[test]
