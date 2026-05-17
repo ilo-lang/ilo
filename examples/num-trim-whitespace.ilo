@@ -2,10 +2,10 @@
 -- like " 77516" (with a leading space after the comma) parse cleanly without
 -- silently becoming Err. Internal whitespace still fails the parse.
 
-leading>n;num! " 77516"
-trailing>n;num! "77516 "
-both>n;num! "  -3.14  "
-sci>n;num! " 1e10 "
+leading>n;num!! " 77516"
+trailing>n;num!! "77516 "
+both>n;num!! "  -3.14  "
+sci>n;num!! " 1e10 "
 
 -- run: leading
 -- out: 77516
