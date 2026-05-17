@@ -1,0 +1,28 @@
+-- Backslash-lambda shorthand (`\x{body}`, `\x -> body`) from Haskell/Rust
+-- is NOT valid ilo. Reaching for it surfaces ILO-L001 with a hint pointing
+-- at the canonical parenthesised-lambda form:
+--
+--     `\x{body}` is a Haskell/Rust lambda shorthand.
+--     ilo lambdas are parenthesised: `(x:t>r;body)`...
+--
+-- The right ilo shape is the same parenthesised lambda used everywhere else:
+-- `(<param>:<type> ...><return-type>;<body>)`. Param and return types are
+-- explicit (no inference at the lambda boundary).
+
+-- Map every number to itself + 1.
+inc-all xs:L n>L n;map (x:n>n;+x 1) xs
+
+-- Filter to positives. The Haskell shape `flt \x -> >x 0 xs` is the
+-- common reach; the right form keeps the lambda parenthesised.
+positives xs:L n>L n;flt (x:n>b;>x 0) xs
+
+-- Sort by length. `srt \s -> len s ws` would be the Haskell reach;
+-- ilo writes the lambda inline with explicit types.
+by-len ws:L t>L t;srt (s:t>n;len s) ws
+
+-- run: inc-all [1,2,3]
+-- out: [2, 3, 4]
+-- run: positives [-2,3,-1,4,0]
+-- out: [3, 4]
+-- run: by-len ["banana","fig","apple","kiwi"]
+-- out: [fig, kiwi, apple, banana]
