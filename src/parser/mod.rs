@@ -2745,9 +2745,7 @@ or write `({fmt_name} \"...\" ...)` so its args are grouped."
             // and ILO-T024 demands a wildcard the user shouldn't need. This
             // mirrors the now/now-ms precedent above and the analogous handling
             // in parse_atom's operand position.
-            if !self.can_start_operand()
-                && self.fn_arity.get(&name).copied() == Some(0)
-            {
+            if !self.can_start_operand() && self.fn_arity.get(&name).copied() == Some(0) {
                 return Ok(Expr::Call {
                     function: name,
                     args: vec![],
