@@ -4646,6 +4646,28 @@ fn materialize_list_view(v: NanVal) -> NanVal {
     }
 }
 
+/// Materialise-on-publish in-place on a register slot. If the value currently
+/// at `slot` is a ListView, replaces it with a freshly-allocated owned List
+/// (RC-balanced: drops the view's RC, slot now holds the new list's RC).
+/// Returns `true` if a materialisation occurred (test/debug observation
+/// hook), `false` if `slot` was already a real List or a non-list value.
+///
+/// This is the small primitive every publish-site hook in the dispatcher
+/// calls. Extracting it keeps the hook logic unit-testable without spinning
+/// up a real VM frame.
+#[inline]
+fn materialize_at_slot(slot: &mut NanVal) -> bool {
+    let cur = *slot;
+    let mat = materialize_list_view(cur);
+    if mat.0 != cur.0 {
+        *slot = mat;
+        cur.drop_rc();
+        true
+    } else {
+        false
+    }
+}
+
 /// Read-only slice view into a list-like HeapObj. Returns the visible window:
 /// the full Vec for `HeapObj::List`, or `parent[start..start+len]` for
 /// `HeapObj::ListView`. Used by every read-side op so it can be backend-agnostic.
@@ -5984,15 +6006,12 @@ impl<'a> VM<'a> {
                     let d = ((data_inst >> 16) & 0xFF) as usize + base;
                     // Materialise-on-publish: if the value being inserted is a
                     // ListView, swap it for a real List so the map stays
-                    // self-contained. The original view's RC is released; the
-                    // materialised list is what flows into the map slot.
-                    {
-                        let cur = reg!(d);
-                        let mat = materialize_list_view(cur);
-                        if mat.0 != cur.0 {
-                            reg_set!(d, mat);
-                            cur.drop_rc();
-                        }
+                    // self-contained. materialize_at_slot drops the view's RC
+                    // and installs the materialised list in the register.
+                    // SAFETY: d is the data-instruction's A field plus base,
+                    // always an in-range stack slot.
+                    unsafe {
+                        materialize_at_slot(&mut *self.stack.as_mut_ptr().add(d));
                     }
                     let map_v = reg!(b);
                     let key_v = reg!(c);
@@ -7312,7 +7331,6 @@ impl<'a> VM<'a> {
                 }
                 OP_RET => {
                     let a = ((inst >> 16) & 0xFF) as usize + base;
-                    let mut result = reg!(a);
                     // Materialise-on-publish: a ListView crossing the call
                     // boundary into the caller's register would keep its
                     // parent alive through its RC, which is sound, but later
@@ -7322,21 +7340,15 @@ impl<'a> VM<'a> {
                     // self-contained Lists — costs one tag-check on the no-op
                     // path (PR-1 produces no views) and avoids a class of
                     // surprise-aliasing bugs once PR-2 wires producers.
-                    {
-                        let mat = materialize_list_view(result);
-                        if mat.0 != result.0 {
-                            // Replace the register with the materialised list so
-                            // the upcoming drop_rc loop (which drains the callee
-                            // frame) releases the view rather than the
-                            // materialised list. Then keep `result` pointing at
-                            // the materialised value for the caller.
-                            unsafe {
-                                *self.stack.as_mut_ptr().add(a) = mat;
-                            }
-                            result.drop_rc();
-                            result = mat;
-                        }
+                    // SAFETY: `a` is in-frame; the upcoming drop_rc loop will
+                    // release whatever's in the slot (the now-materialised
+                    // list, or unchanged if already real). We read `result`
+                    // back AFTER the materialise so it reflects the slot's
+                    // final value.
+                    unsafe {
+                        materialize_at_slot(&mut *self.stack.as_mut_ptr().add(a));
                     }
+                    let mut result = reg!(a);
 
                     // SAFETY: frames is non-empty while execute() is running.
                     let frame = unsafe { self.frames.last().unwrap_unchecked() };
@@ -7405,12 +7417,12 @@ impl<'a> VM<'a> {
                     // record. Records can persist across many call boundaries
                     // so we don't want them holding views whose parents might
                     // get materialised, mutated, or COW'd elsewhere.
-                    for i in 0..n_fields {
-                        let cur = reg!(a + 1 + i);
-                        let mat = materialize_list_view(cur);
-                        if mat.0 != cur.0 {
-                            reg_set!(a + 1 + i, mat);
-                            cur.drop_rc();
+                    // SAFETY: a + 1 + i indexes into the stack within the
+                    // current frame; the compiler emits n_fields field
+                    // registers contiguously after the destination register.
+                    unsafe {
+                        for i in 0..n_fields {
+                            materialize_at_slot(&mut *self.stack.as_mut_ptr().add(a + 1 + i));
                         }
                     }
 
@@ -9962,23 +9974,14 @@ impl<'a> VM<'a> {
                     // Materialise-on-publish: if R[B] (the destination list) or
                     // R[C] (the appended item) is a ListView, replace it with a
                     // fresh List so the published container only ever holds
-                    // Vec-backed lists. Drops the view's RC and installs the
-                    // materialised list in the register.
-                    {
-                        let cur = reg!(b);
-                        let mat = materialize_list_view(cur);
-                        if mat.0 != cur.0 {
-                            reg_set!(b, mat);
-                            cur.drop_rc();
-                        }
-                    }
-                    {
-                        let cur = reg!(c);
-                        let mat = materialize_list_view(cur);
-                        if mat.0 != cur.0 {
-                            reg_set!(c, mat);
-                            cur.drop_rc();
-                        }
+                    // Vec-backed lists. materialize_at_slot drops the view's RC
+                    // and installs the materialised list in the register.
+                    // SAFETY: b and c are computed from the instruction's
+                    // 8-bit register fields plus the frame base; the compiler
+                    // ensures they're in-range stack slots.
+                    unsafe {
+                        materialize_at_slot(&mut *self.stack.as_mut_ptr().add(b));
+                        materialize_at_slot(&mut *self.stack.as_mut_ptr().add(c));
                     }
                     let list_val = reg!(b);
                     let item_val = reg!(c);
@@ -30931,6 +30934,65 @@ f>n;r=mk 10 20;+r.x r.y";
         view.drop_rc();
         parent.drop_rc();
         already_real.drop_rc();
+    }
+
+    /// materialize_at_slot rewrites a register holding a view into the
+    /// materialised real-List equivalent, drops the view's RC, and returns
+    /// true. This is the primitive every publish-site hook
+    /// (LISTAPPEND / MSET / RECNEW / RET) calls.
+    #[test]
+    fn materialize_at_slot_replaces_views_in_place() {
+        let parent = NanVal::heap_list(vec![
+            NanVal::number(1.0),
+            NanVal::number(2.0),
+            NanVal::number(3.0),
+        ]);
+        let view = NanVal::heap_list_view(parent, 0, 2);
+
+        // Plant the view in a "register" (just a NanVal slot).
+        let mut slot = view;
+        let replaced = materialize_at_slot(&mut slot);
+        assert!(replaced, "view-bearing slot should materialise");
+        // Slot now holds a real TAG_LIST → HeapObj::List, not the view.
+        assert_eq!(slot.0 & TAG_MASK, TAG_LIST);
+        unsafe {
+            assert!(matches!(slot.as_heap_ref(), HeapObj::List(_)));
+            let items = slice_of(slot.as_heap_ref());
+            assert_eq!(items.len(), 2);
+            assert_eq!(items[0].as_number(), 1.0);
+            assert_eq!(items[1].as_number(), 2.0);
+        }
+
+        slot.drop_rc();
+        parent.drop_rc();
+    }
+
+    /// materialize_at_slot is a no-op on slots that already hold real Lists
+    /// or any non-list value. Returns false in both cases so the publish-site
+    /// hooks pay only a tag-check on the common no-op path.
+    #[test]
+    fn materialize_at_slot_is_noop_on_real_lists_and_non_lists() {
+        let mut real_list = NanVal::heap_list(vec![NanVal::number(1.0)]);
+        let saved_bits = real_list.0;
+        assert!(!materialize_at_slot(&mut real_list));
+        assert_eq!(real_list.0, saved_bits, "real list slot unchanged");
+        real_list.drop_rc();
+
+        let mut number = NanVal::number(42.0);
+        let saved = number.0;
+        assert!(!materialize_at_slot(&mut number));
+        assert_eq!(number.0, saved);
+
+        let mut nil = NanVal::nil();
+        let saved = nil.0;
+        assert!(!materialize_at_slot(&mut nil));
+        assert_eq!(nil.0, saved);
+
+        let mut s = NanVal::heap_string("hi".to_string());
+        let saved = s.0;
+        assert!(!materialize_at_slot(&mut s));
+        assert_eq!(s.0, saved);
+        s.drop_rc();
     }
 
     /// Non-list NanVals pass through materialize_list_view unchanged so
