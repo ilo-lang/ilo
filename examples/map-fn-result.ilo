@@ -20,7 +20,7 @@ upd>L n
  tg=mset tg "c" 3
  mvals tg
 
-drop>b
+dropof>b
  tg=mkmap()
  tg=mdel tg "a"
  mhas tg "a"
@@ -29,5 +29,5 @@ drop>b
 -- out: 1
 -- run: upd
 -- out: [1, 2, 3]
--- run: drop
+-- run: dropof
 -- out: false
