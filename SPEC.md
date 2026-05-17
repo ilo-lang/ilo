@@ -202,8 +202,11 @@ Common shapes reached for from other languages. The parser and lexer surface eac
 | `main:>n;body`                   | `main>n;body` (no `:` before `>`)        | `ILO-P003`  |
 | Multi-line body without braces   | `@k xs{body}`, `cond{body}` on one line  | `ILO-P003`  |
 | `cond{^"err"}` braced-cond       | Braceless `cond ^"err"` for early return | hint only   |
+| `- -*a b *c d` (double-minus)    | `- 0 +*a b *c d` (negate the sum)        | `ILO-P021`  |
 
 Each case fires a hint pointing at the canonical form; the agent's first retry should be the right one. Identifier-shaped collisions with builtin names (`len=...`, `sin=...`) are rejected with `ILO-P011` plus a rename suggestion.
+
+The double-minus trap (`ILO-P021`) catches the silent-miscompile shape `- -<op> a b <op> c d` for `<op>` in `{+,*,/}`. Read intuitively as `-(a*b) - (c*d)` but parses as `-((a*b) - (c*d)) = -(a*b) + (c*d)` because the inner `-` greedily consumes both prefix-binop groups as binary subtract and the outer `-` falls back to unary negate. Fix by negating the sum (`- 0 +*a b *c d`) or binding first (`p=*a b;q=*c d;- 0 +p q`). Single-atom variants like `- -a b` remain accepted since they're unambiguous.
 
 ---
 
@@ -337,11 +340,19 @@ Disambiguation: `-` followed by one atom is unary negate, followed by two atoms 
 
 ### Operands
 
-Operator operands are **atoms** (literals, refs, field access) or **nested prefix operators**. Function calls are NOT operands — bind call results to a variable first:
+Operator operands are **atoms** (literals, refs, field access), **nested prefix operators**, or **known-arity function calls**. The prefix-binop operand parser dispatches to call parsing when the ident at the cursor is a known-arity user fn or builtin AND the next token can start another operand:
 
 ```
--- DON'T: *n fac p  →  parses as Multiply(n, fac) with p dangling
--- DO:    r=fac p;*n r
+wh >len q 0{body}        -- parses as wh > (len q) 0 { body }
++f g h                   -- if f is 1-arity: BinOp(+, Call(f, [g]), h)
+```
+
+This parallels the `??` precedent: `??x default` accepts a call expression on the value side. Bare locals that shadow a user fn name still resolve via `Ref` rather than expanding into a zero-arg call, so `&e f{...}` where `f` is a local still parses as the bool operator with two refs.
+
+When the call expansion isn't available (the ident is a local that shadows a fn name, or the call's arity doesn't fit the remaining tokens), bind the call result first:
+
+```
+r=fac p;*n r   -- bind, then operate — always unambiguous
 ```
 
 **Negative literals vs binary minus**: the lexer greedily includes a leading `-` into number tokens. `-1`, `-7`, `-0` are all number literals. To subtract from zero, use a space: `- 0 v` (Minus token, then `0`, then `v`).
@@ -822,6 +833,15 @@ f x:n>n;v=?>x 100 1 0;v   -- assign result to v
 ```
 
 The condition must start with a comparison operator (`=`, `>`, `<`, `>=`, `<=`, `!=`).
+
+**Bare-bool prefix ternary** uses `?` with a bool-valued subject (param, comparison result, predicate call) followed by two operand atoms — the parens-free, brace-free shape:
+
+```
+f h:b>n;?h 1 0            -- if h then 1 else 0
+f h:b>n;v=?h 1 0;v        -- assign result to v
+```
+
+This is the cheapest shape when the condition is already a bool — 6 chars for `?h 1 0` vs 8 for the brace form `?h{1}{0}` and 12 for the eq-prefix form `?=h true 1 0`. The match-vs-ternary disambiguator routes `?subj{arms-with-colon-or-semi}` to match parsing, `?subj{a}{b}` to brace bare-bool ternary, and `?subj a b` (two bare operands at the cursor, no leading brace) to bare-bool prefix ternary. `?subj` alone with no following operand still errors the same way as before.
 
 ### Early Return
 
@@ -1307,6 +1327,8 @@ NO_COLOR=1      Disable colour (same as --text)
 
 JSON error output follows a structured schema with `severity`, `code`, `message`, `labels` (with spans), `notes`, and `suggestion` fields.
 
+Runtime errors raised from the Cranelift JIT (default engine and `--run-cranelift`) populate `labels` with the source span of the failing operation, matching tree and VM behaviour. Span coverage threads through every JIT runtime helper (unwrap, panic-unwrap, list-get, slice, index, jpth, mget, record-field strict access, builtin dispatch, dynamic call); AOT-compiled binaries inherit the same coverage. Pre-v0.11.6 builds surfaced `{"labels":[]}` for these shapes — if you see an empty labels array on a runtime error, the binary is out of date.
+
 ### Top-level program output
 
 For a program whose entry function returns a Result, the `~`/`^` wrapper is split across streams and exit codes so shell callers do not have to strip a prefix:
@@ -1346,7 +1368,9 @@ ilo help ai                      -- compact AI spec to stdout (= contents of ai.
 ilo serv                          -- long-lived JSON request/response loop
 ```
 
-**Default-run.** Inline programs (`ilo 'code'`) and single-function files run their entry function with the remaining CLI args; no explicit function name needed. Multi-function files require either a function name argument or a function called `main`.
+**Default-run.** Inline programs (`ilo 'code'`) and single-function files run their entry function with the remaining CLI args; no explicit function name needed. Multi-function files auto-pick a function called `main` when no positional func arg is supplied. The same heuristic applies to the explicit engine flags — `--run-tree`, `--run-vm`, and `--run-cranelift` all auto-pick `main` on multi-fn files, matching the default-engine behaviour. With no `main` declared, supply a function-name argument.
+
+**Subcommand dispatch.** The first positional argument is interpreted as a function name when it has the shape of an ilo identifier — `[a-z][a-z0-9]*(-[a-z0-9]+)*` — so `ilo file.ilo list-orders` routes to the `list-orders` function. Args that don't match the ident shape (file paths like `/tmp/data.json`, numbers, sigils, bracketed lists, anything with a `.` or `/`) route to `main` (or the entry function) as a positional CLI arg instead. Trailing dashes (`foo-`), doubled dashes (`foo--bar`), and leading dashes (`--flag`, `-1`) are not idents and pass through as data.
 
 **Text-typed params.** When the entry function declares a parameter of type `t`, the CLI passes the raw arg through without numeric coercion. `ilo 'f x:t>t;x' 42` returns the string `"42"`, not the number 42.
 
