@@ -2169,9 +2169,7 @@ impl Parser {
             // to write `x=?h cn "a" "b"` without falling back to a helper or
             // the brace form when the condition is an expression rather than
             // a bare bool ref.
-            if matches!(subj.as_ref(), Expr::Ref(n) if n == "h")
-                && self.can_start_operand()
-            {
+            if matches!(subj.as_ref(), Expr::Ref(n) if n == "h") && self.can_start_operand() {
                 let third = self.parse_operand()?;
                 return Ok(Expr::Ternary {
                     condition: Box::new(first),
@@ -4393,12 +4391,8 @@ mod tests {
             matches!(condition.as_ref(), Expr::Ref(n) if n == "cn"),
             "condition should be `cn` (the comparison-derived bool), not `h`"
         );
-        assert!(
-            matches!(then_expr.as_ref(), Expr::Literal(Literal::Text(s)) if s == "pos")
-        );
-        assert!(
-            matches!(else_expr.as_ref(), Expr::Literal(Literal::Text(s)) if s == "nonpos")
-        );
+        assert!(matches!(then_expr.as_ref(), Expr::Literal(Literal::Text(s)) if s == "pos"));
+        assert!(matches!(else_expr.as_ref(), Expr::Literal(Literal::Text(s)) if s == "nonpos"));
     }
 
     #[test]
@@ -4406,9 +4400,8 @@ mod tests {
         // `sc1=?h cn "a" "b"` — the originating security-researcher probe.
         // The let-RHS must produce a Ternary with `cn` as condition (not
         // `h` as subject) and the third operand consumed as the else arm.
-        let prog = parse_str(
-            "f mn:t>t;cn=eq mn \"ok\";sc1=?h cn \"metrics:nil\" \"metrics:ok\";sc1",
-        );
+        let prog =
+            parse_str("f mn:t>t;cn=eq mn \"ok\";sc1=?h cn \"metrics:nil\" \"metrics:ok\";sc1");
         let Decl::Function { body, .. } = &prog.declarations[0] else {
             panic!("expected function")
         };
@@ -4428,9 +4421,7 @@ mod tests {
         assert!(
             matches!(then_expr.as_ref(), Expr::Literal(Literal::Text(s)) if s == "metrics:nil")
         );
-        assert!(
-            matches!(else_expr.as_ref(), Expr::Literal(Literal::Text(s)) if s == "metrics:ok")
-        );
+        assert!(matches!(else_expr.as_ref(), Expr::Literal(Literal::Text(s)) if s == "metrics:ok"));
     }
 
     #[test]
