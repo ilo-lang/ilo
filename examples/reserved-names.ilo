@@ -1,0 +1,32 @@
+-- Reserved short builtin names cannot be reused as binding or function
+-- names. The parser rejects `ct=...`, `avg=...`, `flat=...`, etc. at the
+-- declaration site with ILO-P011 + a rename hint, so the agent's first
+-- retry is the right one (rather than a silent mis-dispatch surfacing as
+-- a confusing ILO-T006 arity error at the use site).
+--
+-- WOULD ERROR — `ct` is a v0.11.6 builtin (count-where):
+--   main>n;ct=10;ct
+--   -- ERROR ILO-P011: `ct` is a builtin and cannot be used as a binding name
+--   -- hint: rename to something like `myct` or `ctv`.
+--
+-- WOULD ERROR — `avg` is a builtin (mean of a list):
+--   main>n;avg=/sumd n;avg
+--   -- ERROR ILO-P011: `avg` is a builtin and cannot be used as a binding name
+--   -- hint: rename to something like `myavg` or `avgv`.
+--
+-- Safe strategies (full list + forecast: SPEC.md > Reserved namespaces):
+--   * pick an unreserved 2-char name (`cty`, `mn`, `ix`, `pq`, ...)
+--   * append a vowel or suffix (`ctv`, `avgv`)
+--   * use a 4+ char name (always safe across future releases)
+--
+-- This example uses 4-char `mycnt` as the local count accumulator —
+-- guaranteed forward-compatible because new ilo builtins land under
+-- names of 4 characters or longer.
+
+main>n
+  xs=[1 2 3 4 5]
+  mycnt=ct (x:n>b;>x 2) xs
+  mycnt
+
+-- run: main
+-- out: 3
