@@ -137,8 +137,13 @@ fn map_keys_vals_sorted() {
 
 #[test]
 fn mget_on_non_map_errors() {
+    // Verifier now catches this before the interpreter (ILO-T013).
+    // Pre-fix path raised ILO-R009 at runtime.
     let s = err_stderr("main>n;mget 42 \"k\"", "main", &[]);
-    assert!(s.contains("ILO-R009"), "stderr={s}");
+    assert!(
+        s.contains("ILO-T013") || s.contains("ILO-R009"),
+        "stderr={s}"
+    );
 }
 
 // ---------------------------------------------------------------------------
