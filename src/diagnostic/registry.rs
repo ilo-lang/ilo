@@ -342,6 +342,50 @@ This diagnostic exists so the error span lands on the function whose
 header is incomplete, not on the next function in the file.
 "#,
     },
+    ErrorEntry {
+        code: "ILO-P021",
+        short: "ambiguous double-minus prefix-binop chain",
+        long: r#"## ILO-P021: ambiguous double-minus prefix-binop chain
+
+A statement of the shape `- -<op> a b <op> c d`, where each `<op>` is a
+prefix binop in `{+, *, /}` and is followed by two atoms, is rejected
+because it parses in a way that almost always disagrees with the
+intuitive reading.
+
+**Example that triggers this (damped pendulum, natural form):**
+
+    f gl:n s:n b:n om:n>n;- -*gl s *b om
+
+The author wants `-g*s - b*om`. The parser instead reads it as:
+
+1. Inner `-` is a binary subtract: `(g*s) - (b*om)`.
+2. Outer `-` has only one operand left, so it becomes unary negate.
+3. Final expression: `-((g*s) - (b*om)) = -g*s + b*om`.
+
+The sign of the second product is flipped. The verifier sees a valid
+expression and the evaluator runs it, so the bug is silent — only
+domain knowledge surfaces it.
+
+**Fixes**
+
+Negate the sum of both products (cheapest):
+
+    - 0 +*gl s *b om            -- = 0 - (g*s + b*om) = -g*s - b*om
+
+Or bind first, then operate:
+
+    p=*gl s; q=*b om; - 0 +p q  -- = -(p + q)
+
+If you really do want `-((a OP1 b) - (c OP2 d))`, bind the inner
+subtract and negate it explicitly:
+
+    p=*a b; q=*c d; r=- p q; - 0 r
+
+This diagnostic exists to catch a specific silent-miscompile shape;
+single-atom variants like `- -a b` (negate of subtract over atoms) are
+unambiguous and remain accepted.
+"#,
+    },
     // ── Type / Verifier ──────────────────────────────────────────────────────
     ErrorEntry {
         code: "ILO-T001",

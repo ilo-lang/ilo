@@ -1,0 +1,24 @@
+-- Double-minus prefix-binop trap (ILO-P021).
+-- The intuitive transcription of `-g*s - b*om` into prefix form is
+--   - -*gl s *b om
+-- but that parses as `-((g*s) - (b*om)) = -g*s + b*om` — the sign of the
+-- second product gets flipped. The parser now rejects that shape outright
+-- with ILO-P021 so the silent miscompile can't happen. Two safe forms:
+
+-- Form 1: subtract the SUM of both products from zero. Cheapest.
+--   = 0 - (g*s + b*om) = -g*s - b*om
+damped-a gl:n s:n b:n om:n>n;- 0 +*gl s *b om
+
+-- Form 2: bind each product, then subtract one from the negation of the
+-- other (or any other unambiguous combination).
+--   nbom = -b*om ; result = -g*s + nbom = -g*s - b*om
+damped-b gl:n s:n b:n om:n>n;p=*gl s;q=*b om;- 0 +p q
+
+-- run: damped-a 1 1 0.5 1
+-- out: -1.5
+-- run: damped-b 1 1 0.5 1
+-- out: -1.5
+-- run: damped-a 2 1 0.25 3
+-- out: -2.75
+-- run: damped-b 2 1 0.25 3
+-- out: -2.75

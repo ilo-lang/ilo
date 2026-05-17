@@ -2111,6 +2111,12 @@ impl Parser {
     /// Parse `-`: unary negation (`-x`) when one atom follows,
     /// binary subtract (`-a b`) when two atoms follow.
     fn parse_minus(&mut self) -> Result<Expr> {
+        // Reject the double-minus prefix-binop trap before consuming anything:
+        //   `- -*a b *c d`  parses as `-(a*b - c*d) = -a*b + c*d`,
+        // not the intuitive `-a*b - c*d`. Verifier sees a valid expression,
+        // evaluator produces a sign-flipped second term — silent miscompile.
+        // Surface it as a hard error with a bind-first suggestion. See ILO-P021.
+        self.check_double_minus_trap()?;
         self.advance(); // consume `-`
         let first = self.parse_operand()?;
         if self.can_start_operand() {
@@ -2126,6 +2132,79 @@ impl Parser {
                 operand: Box::new(first),
             })
         }
+    }
+
+    /// Detect the `- -<op> a b <op> c d` shape where both inner `<op>`s are
+    /// prefix binops in `{+, *, /}` and each is followed by two atoms. This
+    /// shape parses as `-((a OP1 b) - (c OP2 d))`, flipping the sign of the
+    /// second product vs the natural reading `-(a OP1 b) - (c OP2 d)`. It's a
+    /// silent miscompile from the agent's point of view (e.g. damped-pendulum
+    /// `-g*s - b*om` written as `- -*gl s *b om`).
+    ///
+    /// We deliberately do NOT trip on shapes that aren't this trap:
+    /// - `- -a b`  (negate of subtract — single atoms, well-defined)
+    /// - `- -a b c` (no inner prefix-binop — well-defined)
+    /// - `+*a b c`, `-+a b c` (single leading `-` family, documented)
+    /// - `- - -*a b *c d` (triple leading minus — different shape)
+    fn check_double_minus_trap(&self) -> Result<()> {
+        // pos: `-`, pos+1: `-`, pos+2: one of {+,*,/}, pos+3..4: atoms,
+        // pos+5: one of {+,*,/}, pos+6..7: atoms.
+        let is_prefix_arith = |t: Option<&Token>| {
+            matches!(
+                t,
+                Some(Token::Plus) | Some(Token::Star) | Some(Token::Slash)
+            )
+        };
+        let is_atom_start = |t: Option<&Token>| {
+            matches!(
+                t,
+                Some(Token::Ident(_))
+                    | Some(Token::Number(_))
+                    | Some(Token::Text(_))
+                    | Some(Token::True)
+                    | Some(Token::False)
+                    | Some(Token::Nil)
+                    | Some(Token::Underscore)
+                    | Some(Token::LParen)
+                    | Some(Token::LBracket)
+            )
+        };
+        if !matches!(self.token_at(self.pos), Some(Token::Minus)) {
+            return Ok(());
+        }
+        if !matches!(self.token_at(self.pos + 1), Some(Token::Minus)) {
+            return Ok(());
+        }
+        if !is_prefix_arith(self.token_at(self.pos + 2)) {
+            return Ok(());
+        }
+        if !is_atom_start(self.token_at(self.pos + 3)) {
+            return Ok(());
+        }
+        if !is_atom_start(self.token_at(self.pos + 4)) {
+            return Ok(());
+        }
+        if !is_prefix_arith(self.token_at(self.pos + 5)) {
+            return Ok(());
+        }
+        if !is_atom_start(self.token_at(self.pos + 6)) {
+            return Ok(());
+        }
+        if !is_atom_start(self.token_at(self.pos + 7)) {
+            return Ok(());
+        }
+        Err(self.error_hint(
+            "ILO-P021",
+            "ambiguous double-minus prefix-binop chain: parses as \
+             `-((a OP1 b) - (c OP2 d))`, sign-flipping the second product \
+             vs the natural reading `-(a OP1 b) - (c OP2 d)`"
+                .to_string(),
+            "to negate the sum of both products write `- 0 +OP1 a b OP2 c d` \
+             (subtract the sum from zero); to subtract them write \
+             `p=OP1 a b; q=OP2 c d; - p q`. \
+             e.g. `-g*s - b*om` becomes `- 0 +*gl s *b om`"
+                .to_string(),
+        ))
     }
 
     fn parse_prefix_binop(&mut self) -> Result<Expr> {
