@@ -1,0 +1,36 @@
+-- wh >len q 0{...} — prefix-binop condition with a known-arity call on the
+-- left operand. Six-rerun standing P1: pre-fix this errored on first
+-- attempt across every persona, forcing bind-first or paren workarounds.
+-- Post-fix, the natural shape parses directly because parse_prefix_binop
+-- expands known-arity idents into calls (mirroring the prefix-`??` fix
+-- in #310).
+
+-- drain-tail: shrink a list until empty, count the iterations.
+drain-tail xs:L n>n;c=0;wh >len xs 0{xs=tl xs;c=+c 1};c
+
+-- bound-by-other: shrink until length matches a reference list's length.
+bound-by-other xs:L n ys:L n>n;wh >len xs len ys{xs=tl xs};len xs
+
+-- guard form: `>len q 1{...}` — the same prefix-call shape in a guard
+-- header (not just `wh`).
+guard-len q:L n>n;>len q 1{ret 42};0
+
+-- prefix-ternary form: `?>len q 0 a b` — condition is a prefix-call.
+ternary-len q:L n>n;?>len q 0 100 0
+
+-- run: drain-tail [1,2,3]
+-- out: 3
+-- run: drain-tail []
+-- out: 0
+-- run: bound-by-other [1,2,3,4,5] [1,2]
+-- out: 2
+-- run: bound-by-other [1] [1,2,3]
+-- out: 1
+-- run: guard-len [1,2]
+-- out: 42
+-- run: guard-len []
+-- out: 0
+-- run: ternary-len [1,2,3]
+-- out: 100
+-- run: ternary-len []
+-- out: 0
