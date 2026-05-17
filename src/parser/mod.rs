@@ -363,7 +363,17 @@ impl Parser {
     /// always has `>` followed by a return type before the body's first `;`,
     /// while a record `Outer a:1 b:2` never has a `>` before its terminator.
     /// Returns true only when a `>` is visible before the next `;`/`}`/`{`/EOF
-    /// at the same bracket depth.
+    /// at the same bracket depth, AND before the next top-level declaration
+    /// boundary (an un-indented newline that the lexer recorded in
+    /// `decl_boundary`).
+    ///
+    /// The decl-boundary stop is what makes a record-constructor tail like
+    /// `cr country:name revenue:rv` on the last line of a multi-line function
+    /// body not get mis-classified as a fn header just because the NEXT
+    /// top-level function happens to have a `>` in its own header. Without
+    /// this stop, the scan walks across the boundary into the next decl and
+    /// returns `true`, which terminates the current body and then trips
+    /// ILO-P020 when `parse_fn_decl` tries to read `cr ...` as a header.
     fn is_fn_decl_start_strict(&self, pos: usize) -> bool {
         if !self.is_fn_decl_start(pos) {
             return false;
@@ -376,6 +386,13 @@ impl Parser {
         let mut i = pos + 1;
         let mut depth: i32 = 0;
         while let Some(tok) = self.token_at(i) {
+            // A top-level declaration boundary (un-indented newline) ends the
+            // current logical statement, just like `;`/`}`. A real fn header
+            // always has its `>` on the same line as the name, so finding a
+            // boundary before `>` means this Ident is not a fn-decl start.
+            if self.decl_boundary.get(i).copied().flatten().is_some() {
+                return false;
+            }
             match tok {
                 Token::LParen | Token::LBracket | Token::LBrace => depth += 1,
                 Token::RParen | Token::RBracket => depth -= 1,
