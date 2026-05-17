@@ -1,0 +1,46 @@
+-- Strict CLI arity: every engine errors with ILO-R004 when the number
+-- of CLI positionals doesn't match the entry function's declared
+-- parameter count.
+--
+-- Before this fix (v0.11.6 regression introduced by PR #336), calling
+-- `ilo 'f x:n>n;+x 1'` with no positional arg returned `nil` and exit
+-- 0 silently on the default engine, --run-vm, and --run-cranelift. The
+-- tree interpreter alone caught it. The mechanism was that PR #336
+-- made `JitCallError::NotEligible` fall through to `vm::run`, but the
+-- VM's `setup_call` had never checked arity — it pre-allocated
+-- register slots with `NanVal::nil()`, so a missing arg silently bound
+-- the parameter to nil. The interactive-cli tracker persona surfaced
+-- the worst-case shape: `ilo main.ilo add` (missing the task text)
+-- wrote the literal string `[ ] nil` to tasks.txt on disk and
+-- returned exit 0 — silent on-disk corruption.
+--
+-- The fix lives in `src/main.rs::check_cli_arity` (CLI-boundary guard
+-- at every engine entry: `run_default`, `run_cranelift_engine`,
+-- `Engine::Vm`, `Engine::Tree`) and `src/vm/mod.rs::check_entry_arity`
+-- (belt-and-braces backstop at `vm::run` / `vm::run_with_tools`). The
+-- diagnostic message matches the tree interpreter's existing form:
+-- `{name}: expected {n} args, got {m}`.
+--
+-- The harness only exercises the happy path here — sub/super-arity
+-- errors are covered by `tests/regression_cli_arity_silent_corruption.rs`
+-- which shells out to the binary and checks exit codes + diagnostic
+-- shape. Both arms together pin the contract:
+--   - exact arity         -> runs, expected output
+--   - sub-arity (missing) -> exit 1 + ILO-R004, NEVER nil
+--   - super-arity (extra) -> exit 1 + ILO-R004, NEVER silently dropped
+
+-- Single-param entry. Engines must accept exactly 1 CLI positional.
+inc x:n>n;+x 1
+
+-- Two-param entry. Tests the `main: expected 2 args, got N` shape that
+-- the interactive-cli regression actually hit.
+add-two x:n y:n>n;+x y
+
+-- run: inc 5
+-- out: 6
+-- run: inc 0
+-- out: 1
+-- run: add-two 3 4
+-- out: 7
+-- run: add-two 10 0
+-- out: 10
