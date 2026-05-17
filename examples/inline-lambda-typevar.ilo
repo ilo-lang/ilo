@@ -1,0 +1,24 @@
+-- Inline lambdas accept type-variable params at every position.
+-- A single lowercase letter that isn't `n`/`t`/`b` is a type variable
+-- (compatible with anything), exactly like in top-level fn signatures.
+--
+-- The canonical agent-tripping shape is `rsrt (r:L a>n;at r 0) rows` —
+-- sort a list-of-records by the 0th column without pinning the cell type.
+-- All three forms below exercise type vars in different slots: param,
+-- return, list element, and accumulator.
+
+-- Identity lambda — `a` as both param and return type.
+id-map xs:L n>L n;map (x:a>a;x) xs
+
+-- List-of-anything sort by first column.
+by-first rows:L (L n)>L (L n);rsrt (r:L a>n;at r 0) rows
+
+-- Two same-named-type-var lambdas in one function — must not collide.
+twice xs:L n>L n;a=map (x:a>a;x) xs;map (y:a>a;y) a
+
+-- run: id-map [1,2,3]
+-- out: [1, 2, 3]
+-- run: by-first [[1,2],[3,4],[2,5]]
+-- out: [[3, 4], [2, 5], [1, 2]]
+-- run: twice [4,5,6]
+-- out: [4, 5, 6]
