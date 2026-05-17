@@ -363,7 +363,17 @@ impl Parser {
     /// always has `>` followed by a return type before the body's first `;`,
     /// while a record `Outer a:1 b:2` never has a `>` before its terminator.
     /// Returns true only when a `>` is visible before the next `;`/`}`/`{`/EOF
-    /// at the same bracket depth.
+    /// at the same bracket depth, AND before the next top-level declaration
+    /// boundary (an un-indented newline that the lexer recorded in
+    /// `decl_boundary`).
+    ///
+    /// The decl-boundary stop is what makes a record-constructor tail like
+    /// `cr country:name revenue:rv` on the last line of a multi-line function
+    /// body not get mis-classified as a fn header just because the NEXT
+    /// top-level function happens to have a `>` in its own header. Without
+    /// this stop, the scan walks across the boundary into the next decl and
+    /// returns `true`, which terminates the current body and then trips
+    /// ILO-P020 when `parse_fn_decl` tries to read `cr ...` as a header.
     fn is_fn_decl_start_strict(&self, pos: usize) -> bool {
         if !self.is_fn_decl_start(pos) {
             return false;
@@ -376,6 +386,13 @@ impl Parser {
         let mut i = pos + 1;
         let mut depth: i32 = 0;
         while let Some(tok) = self.token_at(i) {
+            // A top-level declaration boundary (un-indented newline) ends the
+            // current logical statement, just like `;`/`}`. A real fn header
+            // always has its `>` on the same line as the name, so finding a
+            // boundary before `>` means this Ident is not a fn-decl start.
+            if self.decl_boundary.get(i).copied().flatten().is_some() {
+                return false;
+            }
             match tok {
                 Token::LParen | Token::LBracket | Token::LBrace => depth += 1,
                 Token::RParen | Token::RBracket => depth -= 1,
@@ -434,16 +451,15 @@ impl Parser {
     fn parse_decl(&mut self) -> Result<Decl> {
         // Reserved-keyword binding attempts: `var=5`, `let=5`, `if=5`, ...
         // Surface the friendly ILO-P011 message before any expression-level
-        // cascade fires.
+        // cascade fires. Use the binding-context hint (rename to a non-reserved
+        // identifier), not the top-level decl hint - the user is already
+        // writing `name=expr` shape, so the actionable fix is picking a
+        // different name (ml-engineer rerun8 #fn-hint).
         if self.token_at(self.pos + 1) == Some(&Token::Eq)
             && let Some(tok) = self.peek()
-            && let Some((msg, _)) = reserved_keyword_message(tok)
+            && let Some((msg, hint)) = reserved_keyword_binding_message(tok)
         {
-            return Err(self.error_hint(
-                "ILO-P011",
-                msg,
-                "use `name=expr` for bindings (e.g. `count=5`)".to_string(),
-            ));
+            return Err(self.error_hint("ILO-P011", msg, hint));
         }
         // Loop-control words `cnt`/`brk` used as binding names: `cnt=5`.
         if let Some(Token::Ident(name)) = self.peek()
@@ -1048,16 +1064,15 @@ impl Parser {
     fn parse_stmt(&mut self) -> Result<Stmt> {
         // Reserved-keyword binding attempts inside a function body: `var=5`,
         // `let=5`, `if=5`, ... Surface the friendly ILO-P011 message before
-        // `parse_atom` cascades into a cryptic ILO-P009.
+        // `parse_atom` cascades into a cryptic ILO-P009. Use binding-context
+        // hints (rename to a non-reserved identifier) - the user is already
+        // writing `name=expr` shape, so suggesting it back is wrong-shaped
+        // (ml-engineer rerun8 #fn-hint).
         if self.token_at(self.pos + 1) == Some(&Token::Eq)
             && let Some(tok) = self.peek()
-            && let Some((msg, _)) = reserved_keyword_message(tok)
+            && let Some((msg, hint)) = reserved_keyword_binding_message(tok)
         {
-            return Err(self.error_hint(
-                "ILO-P011",
-                msg,
-                "use `name=expr` for bindings (e.g. `count=5`)".to_string(),
-            ));
+            return Err(self.error_hint("ILO-P011", msg, hint));
         }
         match self.peek() {
             Some(Token::Question) => {
@@ -3990,6 +4005,50 @@ fn prefix_binop_token_glyph(tok: &Token) -> &'static str {
 /// and routing-tsp persona reports).
 fn is_reserved_stmt_keyword(name: &str) -> bool {
     matches!(name, "wh" | "ret" | "brk" | "cnt")
+}
+
+/// Map a reserved-keyword token to a binding-context `(message, hint)` pair
+/// for ILO-P011. Used when the parser sees `<kw>=expr` — the user is already
+/// in `name=expr` shape, so the actionable hint is "rename to a non-reserved
+/// identifier", not a restatement of the binding syntax (ml-engineer rerun8
+/// #fn-hint: `fn=pnum fnl 0` previously got `use name=expr for bindings`,
+/// which told the user to do what they were already doing).
+fn reserved_keyword_binding_message(tok: &Token) -> Option<(String, String)> {
+    let (name, hint) = match tok {
+        Token::KwFn => (
+            "fn",
+            "`fn` is reserved (it marks function-typed parameters in declarations); rename the binding to e.g. `fv`, `func`, or `callback`",
+        ),
+        Token::KwDef => (
+            "def",
+            "`def` is reserved (function-declaration keyword in other languages, kept out of identifier space); rename the binding to e.g. `d`, `defn`, or `defv`",
+        ),
+        Token::KwIf => (
+            "if",
+            "`if` is reserved; rename the binding to e.g. `cond`, `flag`, or `iff`",
+        ),
+        Token::KwReturn => (
+            "return",
+            "`return` is reserved; rename the binding to e.g. `result`, `out`, or `ret_val`",
+        ),
+        Token::KwLet => (
+            "let",
+            "`let` is reserved; rename the binding to e.g. `l`, `lv`, or `letv`",
+        ),
+        Token::KwVar => (
+            "var",
+            "`var` is reserved; rename the binding to e.g. `v`, `value`, or `varv`",
+        ),
+        Token::KwConst => (
+            "const",
+            "`const` is reserved; rename the binding to e.g. `c`, `k`, or `constv`",
+        ),
+        _ => return None,
+    };
+    Some((
+        format!("`{name}` is a reserved word and cannot be used as an identifier"),
+        hint.to_string(),
+    ))
 }
 
 /// Map a reserved-keyword token to its `(message, hint)` pair for ILO-P011.
@@ -9133,6 +9192,131 @@ mod tests {
             "braced body should parse cleanly; errors: {:?}",
             errors
         );
+    }
+
+    // ---- Reserved-word binding-context hints (ILO-P011, ml-engineer rerun8) ----
+    //
+    // When the user writes `<kw>=expr` (already in name=expr shape), the hint
+    // must tell them to RENAME, not to use name=expr - they're already doing
+    // that. Regression for the report where `fn=pnum fnl 0` got the
+    // wrong-shaped suggestion `use name=expr for bindings (e.g. count=5)`.
+
+    #[test]
+    fn reserved_fn_as_binding_name_hints_rename_not_rebind_shape() {
+        let source = "fn=5";
+        let (_, errors) = parse_str_errors(source);
+        let e = errors
+            .iter()
+            .find(|e| e.code == "ILO-P011")
+            .expect("expected ILO-P011");
+        assert!(
+            e.message.contains("`fn` is a reserved word"),
+            "message: {}",
+            e.message
+        );
+        let hint = e.hint.as_ref().expect("expected hint");
+        // Must NOT restate `name=expr` - that's what the user is already doing.
+        assert!(
+            !hint.contains("name=expr"),
+            "hint should not restate `name=expr`; got: {hint}"
+        );
+        // Must explain WHY `fn` is special (function-typed parameters) and
+        // suggest renaming with concrete alternatives.
+        assert!(
+            hint.contains("rename") && hint.contains("function-typed"),
+            "hint should mention rename + function-typed-parameter reason; got: {hint}"
+        );
+    }
+
+    #[test]
+    fn reserved_fn_as_binding_in_fn_body_hints_rename() {
+        // Same scenario but inside a function body so parse_stmt fires.
+        let source = "f>i;fn=5\n fn";
+        let (_, errors) = parse_str_errors(source);
+        let e = errors
+            .iter()
+            .find(|e| e.code == "ILO-P011")
+            .expect("expected ILO-P011 from parse_stmt");
+        assert!(
+            e.message.contains("`fn` is a reserved word"),
+            "message: {}",
+            e.message
+        );
+        let hint = e.hint.as_ref().expect("expected hint");
+        assert!(
+            !hint.contains("name=expr"),
+            "hint should not restate `name=expr`; got: {hint}"
+        );
+        assert!(
+            hint.contains("rename"),
+            "hint should suggest rename; got: {hint}"
+        );
+    }
+
+    #[test]
+    fn reserved_if_as_binding_name_hints_rename() {
+        let source = "if=5";
+        let (_, errors) = parse_str_errors(source);
+        let e = errors
+            .iter()
+            .find(|e| e.code == "ILO-P011")
+            .expect("expected ILO-P011");
+        assert!(
+            e.message.contains("`if` is a reserved word"),
+            "message: {}",
+            e.message
+        );
+        let hint = e.hint.as_ref().expect("expected hint");
+        assert!(
+            !hint.contains("name=expr"),
+            "hint should not restate `name=expr`; got: {hint}"
+        );
+        assert!(
+            hint.contains("rename"),
+            "hint should suggest rename; got: {hint}"
+        );
+    }
+
+    #[test]
+    fn reserved_return_as_binding_name_hints_rename() {
+        let source = "return=5";
+        let (_, errors) = parse_str_errors(source);
+        let e = errors
+            .iter()
+            .find(|e| e.code == "ILO-P011")
+            .expect("expected ILO-P011");
+        let hint = e.hint.as_ref().expect("expected hint");
+        assert!(
+            !hint.contains("name=expr"),
+            "hint should not restate `name=expr`; got: {hint}"
+        );
+        assert!(
+            hint.contains("rename"),
+            "hint should suggest rename; got: {hint}"
+        );
+    }
+
+    #[test]
+    fn reserved_var_let_const_as_binding_name_still_errors() {
+        // These were the original cases handled by the generic hint - keep
+        // them passing but with rename-shaped hints.
+        for source in ["var=5", "let=5", "const=5"] {
+            let (_, errors) = parse_str_errors(source);
+            let e = errors
+                .iter()
+                .find(|e| e.code == "ILO-P011")
+                .unwrap_or_else(|| panic!("expected ILO-P011 for {source}"));
+            assert!(
+                e.message.contains("is a reserved word"),
+                "{source}: {}",
+                e.message
+            );
+            let hint = e.hint.as_ref().expect("expected hint");
+            assert!(
+                hint.contains("rename"),
+                "{source} hint should suggest rename; got: {hint}"
+            );
+        }
     }
 
     #[test]

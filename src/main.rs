@@ -3108,11 +3108,11 @@ fn run_cranelift_engine(
                 // issue visible. The user asked for Cranelift explicitly, so
                 // we note the engine swap; we fall back to the bytecode VM
                 // (the closest non-JIT performance tier) rather than the
-                // tree interpreter.
-                eprintln!(
-                    "ilo: Cranelift JIT panicked ({}); falling back to bytecode VM",
-                    msg
-                );
+                // tree interpreter. `note_jit_panic_fallback` emits a
+                // tagged, flushed, once-per-process breadcrumb that
+                // persona harnesses can grep for reliably even when they
+                // merge or buffer stderr.
+                vm::jit_cranelift::note_jit_panic_fallback(&msg, "bytecode VM");
                 match vm::run(&compiled, func_name, run_args) {
                     Ok(val) => {
                         print_value(&val, explicit_json, suppress);
@@ -3527,13 +3527,12 @@ fn run_default(
                         // non-deterministically. The JIT never produced
                         // runnable code, so falling through to the tree
                         // interpreter is sound and preserves the user's
-                        // pipeline. We emit a one-line breadcrumb so the
-                        // upstream issue stays measurable rather than
+                        // pipeline. The shared `note_jit_panic_fallback`
+                        // helper emits a tagged, flushed, once-per-process
+                        // breadcrumb so the upstream issue stays measurable
+                        // (and detectable by harnesses) rather than
                         // degrading silently into the slower engine.
-                        eprintln!(
-                            "ilo: Cranelift JIT panicked ({}); falling back to interpreter",
-                            msg
-                        );
+                        vm::jit_cranelift::note_jit_panic_fallback(&msg, "interpreter");
                     }
                 }
             }
@@ -3819,14 +3818,15 @@ fn run_bench(program: &ast::Program, func_name: Option<&str>, args: &[interprete
         let nan_args: Vec<u64> = args.iter().map(|v| vm::NanVal::from_value(v).0).collect();
         vm::with_active_registry(&compiled, || {
             if let Some(jit_func) = vm::jit_cranelift::compile(chunk, nan_consts, &compiled) {
+                let entry_name = compiled.func_names.get(fi).map(|s| s.as_str());
                 for _ in 0..100 {
-                    let _ = vm::jit_cranelift::call(&jit_func, &nan_args);
+                    let _ = vm::jit_cranelift::call(&jit_func, &nan_args, entry_name);
                 }
 
                 let start = Instant::now();
                 let mut jit_result_bits = 0u64;
                 for _ in 0..iterations {
-                    jit_result_bits = vm::jit_cranelift::call(&jit_func, &nan_args)
+                    jit_result_bits = vm::jit_cranelift::call(&jit_func, &nan_args, entry_name)
                         .expect("Cranelift JIT error during benchmark");
                 }
                 let jit_dur = start.elapsed();
@@ -8513,6 +8513,14 @@ mod tests {
         assert!(code == 0 || code == 1);
     }
 
+    // Serialise the three JIT-panic-fallback tests in this module so the
+    // process-global panic counter and `FORCE_PANIC_FOR_TEST` interact
+    // deterministically under `cargo test`'s parallel runner. Without
+    // this lock, one test's `reset_jit_panic_fallback_count` can blank
+    // another's just-incremented counter and the assertion flakes.
+    #[cfg(all(feature = "cranelift", debug_assertions))]
+    static JIT_PANIC_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     /// `run_cranelift_engine` must catch an upstream cranelift panic and
     /// fall back to the bytecode VM so the user's program still completes.
     /// Exercised via the test-only `FORCE_PANIC_FOR_TEST` flag (gated on
@@ -8520,7 +8528,11 @@ mod tests {
     #[test]
     #[cfg(all(feature = "cranelift", debug_assertions))]
     fn run_cranelift_engine_panic_falls_back_to_vm() {
+        let _guard = JIT_PANIC_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
         let program = make_program("f x:n>n;*x 2");
+        vm::jit_cranelift::reset_jit_panic_fallback_count();
         vm::jit_cranelift::FORCE_PANIC_FOR_TEST.with(|c| c.set(true));
         let code = run_cranelift_engine(
             &program,
@@ -8533,6 +8545,14 @@ mod tests {
         // the test process; an unhandled error would have returned 1.
         assert_eq!(code, 0);
         assert!(!vm::jit_cranelift::FORCE_PANIC_FOR_TEST.with(|c| c.get()));
+        // The fallback path must increment the panic-fallback counter so
+        // the breadcrumb is visible (counter is the test-side proxy for
+        // the once-per-process stderr line; we can't easily capture
+        // stderr in-process under cargo test).
+        assert!(
+            vm::jit_cranelift::jit_panic_fallback_count() >= 1,
+            "expected panic-fallback counter to increment on JIT panic"
+        );
     }
 
     /// `run_default` must catch an upstream cranelift panic and fall through
@@ -8540,7 +8560,11 @@ mod tests {
     #[test]
     #[cfg(all(feature = "cranelift", debug_assertions))]
     fn run_default_cranelift_panic_falls_back_to_interpreter() {
+        let _guard = JIT_PANIC_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
         let program = make_program("f x:n>n;*x 2");
+        vm::jit_cranelift::reset_jit_panic_fallback_count();
         vm::jit_cranelift::FORCE_PANIC_FOR_TEST.with(|c| c.set(true));
         let code = run_default(
             &program,
@@ -8553,6 +8577,37 @@ mod tests {
         // Tree interpreter fallback ran the program → exit 0.
         assert_eq!(code, 0);
         assert!(!vm::jit_cranelift::FORCE_PANIC_FOR_TEST.with(|c| c.get()));
+        // Same visibility contract as the cranelift-engine path: the
+        // fallback must bump the counter so harnesses can detect that a
+        // JIT panic happened even when stderr is buffered or merged.
+        assert!(
+            vm::jit_cranelift::jit_panic_fallback_count() >= 1,
+            "expected panic-fallback counter to increment on JIT panic"
+        );
+    }
+
+    /// Multiple JIT panics in the same process must only emit ONE stderr
+    /// breadcrumb (verified by the panic-suppression contract documented
+    /// on `note_jit_panic_fallback`); the counter still increments per
+    /// panic so end-of-run diagnostics can report the total. Without
+    /// once-per-process semantics, a hot loop that hits the upstream
+    /// assertion repeatedly would spam stderr until the user's terminal
+    /// buffer is full. Tests guard the contract because the cost of
+    /// regression (silent spam) is high and hard to spot in CI logs.
+    #[test]
+    #[cfg(all(feature = "cranelift", debug_assertions))]
+    fn jit_panic_fallback_counter_increments_per_panic() {
+        let _guard = JIT_PANIC_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        vm::jit_cranelift::reset_jit_panic_fallback_count();
+        assert_eq!(vm::jit_cranelift::jit_panic_fallback_count(), 0);
+        vm::jit_cranelift::note_jit_panic_fallback("synthetic", "bytecode VM");
+        assert_eq!(vm::jit_cranelift::jit_panic_fallback_count(), 1);
+        vm::jit_cranelift::note_jit_panic_fallback("synthetic", "interpreter");
+        assert_eq!(vm::jit_cranelift::jit_panic_fallback_count(), 2);
+        vm::jit_cranelift::note_jit_panic_fallback("synthetic", "bytecode VM");
+        assert_eq!(vm::jit_cranelift::jit_panic_fallback_count(), 3);
     }
 
     #[test]
