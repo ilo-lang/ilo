@@ -2631,8 +2631,10 @@ or write `({fmt_name} \"...\" ...)` so its args are grouped."
                 return self.parse_record(name);
             }
 
-            // Zero-arg builtins: `rnd`/`now`/`mmap` with no args → Call with empty args
-            if (name == "rnd" || name == "now" || name == "mmap") && !self.can_start_operand() {
+            // Zero-arg builtins: `rnd`/`now`/`now-ms`/`mmap` with no args → Call with empty args
+            if (name == "rnd" || name == "now" || name == "now-ms" || name == "mmap")
+                && !self.can_start_operand()
+            {
                 return Ok(Expr::Call {
                     function: name,
                     args: vec![],

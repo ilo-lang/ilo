@@ -255,6 +255,7 @@ pub(crate) const OP_WINDOW: u8 = 146; // R[A] = window(R[B] (n), R[C] (list))  â
 // Cranelift returns `None` on this opcode (unknown), so a function containing it
 // falls back cleanly to the VM dispatcher.
 pub(crate) const OP_WINDOW_VIEW: u8 = 175;
+pub(crate) const OP_NOW_MS: u8 = 176; // R[A] = current unix timestamp (milliseconds, float)
 pub(crate) const OP_TAKE: u8 = 113; // R[A] = take(R[B], R[C])  (first B elements of C; B=n_reg, C=list_reg)
 pub(crate) const OP_DROP: u8 = 114; // R[A] = drop(R[B], R[C])  (skip first B elements of C)
 pub(crate) const OP_DTFMT: u8 = 131; // R[A] = dtfmt(R[B] epoch, R[C] fmt) â†’ t
@@ -3335,6 +3336,12 @@ impl RegCompiler {
                         (Builtin::Now, 0) => {
                             let ra = self.alloc_reg();
                             self.emit_abc(OP_NOW, ra, 0, 0);
+                            self.reg_is_num[ra as usize] = true;
+                            return ra;
+                        }
+                        (Builtin::NowMs, 0) => {
+                            let ra = self.alloc_reg();
+                            self.emit_abc(OP_NOW_MS, ra, 0, 0);
                             self.reg_is_num[ra as usize] = true;
                             return ra;
                         }
@@ -9197,6 +9204,14 @@ impl<'a> VM<'a> {
                         .as_secs_f64();
                     reg_set!(a, NanVal::number(ts));
                 }
+                OP_NOW_MS => {
+                    let a = ((inst >> 16) & 0xFF) as usize + base;
+                    let ms = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap()
+                        .as_millis() as f64;
+                    reg_set!(a, NanVal::number(ms));
+                }
                 OP_DTFMT => {
                     let a = ((inst >> 16) & 0xFF) as usize + base;
                     let b = ((inst >> 8) & 0xFF) as usize + base;
@@ -12642,6 +12657,18 @@ pub(crate) extern "C" fn jit_now() -> u64 {
         .unwrap()
         .as_secs_f64();
     NanVal::number(ts).0
+}
+
+#[cfg(feature = "cranelift")]
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn jit_now_ms() -> u64 {
+    // Mirror of `jit_now` returning ms. Paired with `now-ms` builtin for
+    // sub-second perf bisection in agent workloads.
+    let ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as f64;
+    NanVal::number(ms).0
 }
 
 #[cfg(feature = "cranelift")]

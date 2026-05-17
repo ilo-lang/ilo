@@ -204,7 +204,7 @@ Short builtin names are precious surface and ilo reserves a stable subset of the
         upr wrl zip
 ```
 
-Longer builtin names (`acos`, `asin`, `atan`, `flat`, `take`, `drop`, `mget`, `mset`, `mmap`, `prnt`, `mapr`, `solve`, `clamp`, `cumsum`, `median`, `matmul`, `range`, `window`, `chunks`, …) are also reserved and rejected by `ILO-P011`, but the short-name namespace above is where carry-forward scripts most often collide, so it gets explicit enumeration.
+Longer builtin names (`acos`, `asin`, `atan`, `flat`, `take`, `drop`, `mget`, `mset`, `mmap`, `prnt`, `mapr`, `solve`, `clamp`, `cumsum`, `median`, `matmul`, `range`, `window`, `chunks`, `now-ms`, …) are also reserved and rejected by `ILO-P011`, but the short-name namespace above is where carry-forward scripts most often collide, so it gets explicit enumeration.
 
 **Forward-compatibility rule.** Future ilo releases add new builtins under names **4 characters or longer**. A 2-character name that is not on this list today is safe to use as a binding or function name and stays safe across releases. A 3-character name that is not on this list is _highly likely_ to stay safe but is not a hard promise — the 3-char surface is already dense, and a rare ergonomic win may justify an addition, called out in the changelog.
 
@@ -439,6 +439,7 @@ Called like functions, compiled to dedicated opcodes.
 | `rnd` | random float in [0, 1) | `n` |
 | `rnd a b` | random integer in [a, b] (inclusive) | `n` |
 | `now` | current Unix timestamp (seconds) | `n` |
+| `now-ms` | current Unix timestamp (milliseconds, f64) | `n` |
 | `get url` | HTTP GET | `R t t` |
 | `get url headers` | HTTP GET with custom headers (`M t t` map) | `R t t` |
 | `post url body` | HTTP POST with text body | `R t t` |

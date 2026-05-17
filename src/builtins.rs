@@ -89,6 +89,7 @@ pub enum Builtin {
     Rnd,
     Rndn,
     Now,
+    NowMs,
     Dtfmt,
     Dtparse,
     Sleep,
@@ -222,6 +223,7 @@ impl Builtin {
             "rnd" => Some(Builtin::Rnd),
             "rndn" => Some(Builtin::Rndn),
             "now" => Some(Builtin::Now),
+            "now-ms" => Some(Builtin::NowMs),
             "dtfmt" => Some(Builtin::Dtfmt),
             "dtparse" => Some(Builtin::Dtparse),
             "sleep" => Some(Builtin::Sleep),
@@ -344,6 +346,7 @@ impl Builtin {
             Builtin::Rnd => "rnd",
             Builtin::Rndn => "rndn",
             Builtin::Now => "now",
+            Builtin::NowMs => "now-ms",
             Builtin::Dtfmt => "dtfmt",
             Builtin::Dtparse => "dtparse",
             Builtin::Sleep => "sleep",
@@ -521,6 +524,11 @@ impl Builtin {
         // Named `ct` (not `cnt`) because `cnt` is reserved as the loop
         // continue keyword — see src/parser/mod.rs:3507.
         Builtin::Ct,
+        // Appended last to preserve existing on-wire tags. now-ms returns
+        // the current Unix epoch in milliseconds as f64 — paired with `now`
+        // (seconds) so per-phase timing has no rounding loss in agent
+        // perf-bisection workloads.
+        Builtin::NowMs,
     ];
 
     /// On-wire 8-bit tag for cross-engine builtin dispatch. See `ALL`.
@@ -709,6 +717,7 @@ mod tests {
             "mapr",
             "rnd",
             "now",
+            "now-ms",
             "rd",
             "rdl",
             "rdb",
@@ -927,6 +936,7 @@ mod tests {
             "rnd",
             "rndn",
             "now",
+            "now-ms",
             "dtfmt",
             "dtparse",
             "rd",

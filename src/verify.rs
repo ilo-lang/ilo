@@ -373,6 +373,7 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("rnd", &[], "n"),
     ("rndn", &["n", "n"], "n"),
     ("now", &[], "n"),
+    ("now-ms", &[], "n"),
     ("sleep", &["n"], "_"),
     ("dtfmt", &["n", "t"], "R t t"),
     ("dtparse", &["t", "t"], "R n t"),

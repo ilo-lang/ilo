@@ -83,6 +83,7 @@ struct HelperFuncs {
     rnd2: FuncId,
     rndn: FuncId,
     now: FuncId,
+    now_ms: FuncId,
     env: FuncId,
     get: FuncId,
     spl: FuncId,
@@ -278,6 +279,7 @@ fn register_helpers(builder: &mut JITBuilder) {
         ("jit_rnd2", jit_rnd2 as *const u8),
         ("jit_rndn", jit_rndn as *const u8),
         ("jit_now", jit_now as *const u8),
+        ("jit_now_ms", jit_now_ms as *const u8),
         ("jit_env", jit_env as *const u8),
         ("jit_get", jit_get as *const u8),
         ("jit_spl", jit_spl as *const u8),
@@ -454,6 +456,7 @@ fn declare_all_helpers(module: &mut JITModule) -> HelperFuncs {
         rnd2: declare_helper(module, "jit_rnd2", 2, 1),
         rndn: declare_helper(module, "jit_rndn", 2, 1),
         now: declare_helper(module, "jit_now", 0, 1),
+        now_ms: declare_helper(module, "jit_now_ms", 0, 1),
         env: declare_helper(module, "jit_env", 1, 1),
         get: declare_helper(module, "jit_get", 1, 1),
         spl: declare_helper(module, "jit_spl", 3, 1),
@@ -1092,7 +1095,7 @@ fn compile_function_body(
                 OP_ADD_NN | OP_SUB_NN | OP_MUL_NN | OP_DIV_NN
                 | OP_ADDK_N | OP_SUBK_N | OP_MULK_N | OP_DIVK_N
                 | OP_LEN | OP_ABS | OP_MIN | OP_MAX
-                | OP_FLR | OP_CEL | OP_ROU | OP_RND0 | OP_RND2 | OP_RNDN | OP_NOW
+                | OP_FLR | OP_CEL | OP_ROU | OP_RND0 | OP_RND2 | OP_RNDN | OP_NOW | OP_NOW_MS
                 | OP_MOD | OP_CLAMP | OP_POW | OP_SQRT | OP_LOG | OP_EXP | OP_SIN | OP_COS
                 | OP_TAN | OP_LOG10 | OP_LOG2 | OP_ASIN | OP_ACOS | OP_ATAN | OP_ATAN2
                 | OP_MEDIAN | OP_MIN_LST | OP_MAX_LST | OP_QUANTILE
@@ -2337,6 +2340,17 @@ fn compile_function_body(
             }
             OP_NOW => {
                 let fref = get_func_ref(&mut builder, module, helpers.now);
+                let call_inst = builder.ins().call(fref, &[]);
+                let result = builder.inst_results(call_inst)[0];
+                builder.def_var(vars[a_idx], result);
+                if a_idx < reg_count && reg_always_num[a_idx] {
+                    let mf = cranelift_codegen::ir::MemFlags::new();
+                    let rf = builder.ins().bitcast(F64, mf, result);
+                    builder.def_var(f64_vars[a_idx], rf);
+                }
+            }
+            OP_NOW_MS => {
+                let fref = get_func_ref(&mut builder, module, helpers.now_ms);
                 let call_inst = builder.ins().call(fref, &[]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
