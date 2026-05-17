@@ -84,25 +84,30 @@ pub struct RunArgs {
     /// Source file or inline code.
     pub source: String,
 
-    /// Execution engine.
-    #[arg(long, value_enum, default_value_t = Engine::Default)]
+    /// Execution engine. Not exposed as `--engine` on the CLI surface: the
+    /// six rerun8 personas typed `--engine tree` expecting it to work and
+    /// hit silent-consume / wrong-arity traps. The supported surface is the
+    /// `--run-*` convenience flags below; `--engine` is rejected by the
+    /// unknown-flag guard. The field is kept so internal construction sites
+    /// still compile.
+    #[arg(skip = Engine::Default)]
     pub engine: Engine,
 
-    // Convenience aliases for --engine (mutually exclusive via conflicts_with).
+    // ── Engine selection flags ─────────────────────────────────────────────
     /// Tree-walking interpreter.
-    #[arg(long = "run-tree", conflicts_with_all = ["engine", "run", "run_vm", "run_cranelift", "run_llvm"])]
+    #[arg(long = "run-tree", conflicts_with_all = ["run", "run_vm", "run_cranelift", "run_llvm"])]
     pub run_tree: bool,
     /// Alias for --run-tree.
-    #[arg(long = "run", conflicts_with_all = ["engine", "run_tree", "run_vm", "run_cranelift", "run_llvm"])]
+    #[arg(long = "run", conflicts_with_all = ["run_tree", "run_vm", "run_cranelift", "run_llvm"])]
     pub run: bool,
     /// Register VM.
-    #[arg(long = "run-vm", conflicts_with_all = ["engine", "run", "run_tree", "run_cranelift", "run_llvm"])]
+    #[arg(long = "run-vm", conflicts_with_all = ["run", "run_tree", "run_cranelift", "run_llvm"])]
     pub run_vm: bool,
     /// Cranelift JIT.
-    #[arg(long = "run-cranelift", conflicts_with_all = ["engine", "run", "run_tree", "run_vm", "run_llvm"])]
+    #[arg(long = "run-cranelift", conflicts_with_all = ["run", "run_tree", "run_vm", "run_llvm"])]
     pub run_cranelift: bool,
     /// LLVM JIT.
-    #[arg(long = "run-llvm", conflicts_with_all = ["engine", "run", "run_tree", "run_vm", "run_cranelift"])]
+    #[arg(long = "run-llvm", conflicts_with_all = ["run", "run_tree", "run_vm", "run_cranelift"])]
     pub run_llvm: bool,
 
     /// Benchmark mode.
