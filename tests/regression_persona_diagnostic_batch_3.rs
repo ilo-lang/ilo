@@ -48,44 +48,15 @@ fn run_inline(engine: &str, src: &str, entry: &str) -> (bool, String) {
 }
 
 // ---------------------------------------------------------------------------
-// 1. Inline-lambda body greediness
+// 1. Inline-lambda body greediness — RESOLVED by #332 (parse_prefix_binop now
+// expands known-arity calls), so the previously-cascading shape parses cleanly:
+//
+//   kc x:t>n;len x;body k:t>t;k;main>n;kws=["hi" "there"];fld (a:n k:t>n;+a kc body k) kws 0
+//
+// returns 7 across all engines. The diagnostic-only hints that this test
+// originally checked no longer fire because the parse failure that motivated
+// them no longer occurs.  Tests removed; the parser fix is the better outcome.
 // ---------------------------------------------------------------------------
-
-const LAMBDA_GREEDY: &str =
-    "kc x:t>n;len x;body k:t>t;k;main>n;kws=[\"hi\" \"there\"];fld (a:n k:t>n;+a kc body k) kws 0";
-
-fn check_lambda_greedy(engine: &str) {
-    let (ok, stderr) = run_inline(engine, LAMBDA_GREEDY, "main");
-    assert!(!ok, "engine={engine}: expected parse failure");
-    assert!(
-        stderr.contains("close inline lambda body"),
-        "engine={engine}: missing specific lambda-close message, stderr={stderr}"
-    );
-    assert!(
-        stderr.contains("chained calls inside an inline-lambda body"),
-        "engine={engine}: missing chained-calls hint, stderr={stderr}"
-    );
-    assert!(
-        stderr.contains("explicit parens"),
-        "engine={engine}: missing parens-hint, stderr={stderr}"
-    );
-}
-
-#[test]
-fn lambda_greedy_tree() {
-    check_lambda_greedy("--run-tree");
-}
-
-#[test]
-fn lambda_greedy_vm() {
-    check_lambda_greedy("--run-vm");
-}
-
-#[test]
-#[cfg(feature = "cranelift")]
-fn lambda_greedy_cranelift() {
-    check_lambda_greedy("--run-cranelift");
-}
 
 // Sanity: well-formed inline lambda with parens still works.
 #[test]
