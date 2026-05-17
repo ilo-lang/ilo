@@ -276,3 +276,60 @@ fn len_flt_count_nested_bio_canonical_shape() {
     // → 2 all-hydro windows.
     run_all(BIO_NESTED, "main", &["AAIBBBAAI"], "2");
 }
+
+// ── Phase 2: FOREACH-in-body inliner relaxation ──────────────────────────
+
+// Post-Phase 1, `all-h`'s body is a counter-walk over `xs`, plus a
+// terminal `=n K` bool comparison and a RET. ~25 opcodes including
+// OP_FOREACHPREP, OP_FOREACHNEXT, OP_JMP, OP_JMPF, OP_JMPT, OP_ADDK_N,
+// OP_ISBOOL, OP_PANIC_UNWRAP, OP_WRAPERR, OP_EQ. With the inliner
+// whitelist extended to cover these (and the body budget raised from 8
+// to 40), `flt all-h ws` inlines the whole `all-h` body at the
+// dispatch site — removing the per-window OP_CALL_DYN frame setup and
+// keeping the inner residue walk in-frame.
+//
+// The cross-engine assertion below pins that this inlined version
+// produces bit-identical output to the unfused reference on tree (which
+// has no inliner at all), VM (where the inline fires), and Cranelift
+// (which falls back to the VM dispatcher on OP_WINDOW workloads). Any
+// register-remap drift on the inner FOREACH state — confusing the
+// outer dispatcher's `idx` / `item` slots with the inlined body's own
+// FOREACH state regs — would surface as a wrong count here.
+
+const PHASE2_BIO_FULL: &str = "is-hydro c:t>b;has \"AILMFWVYC\" c\nall-h xs:L t>b;n=len (flt is-hydro xs);=n 4\nmain s:t>n;cs=chars s;ws=window 4 cs;ms=flt all-h ws;len ms";
+
+#[test]
+fn phase2_all_h_inlined_bio_full() {
+    // Identical input to the BIO_ALL4_H source above but emphasising
+    // that the outer `flt all-h ws` is where the Phase 2 inliner now
+    // fires. Same expected output is the cross-engine bit-identity check.
+    run_all(PHASE2_BIO_FULL, "main", &["AAIIXXAAIIII"], "4");
+}
+
+#[test]
+fn phase2_all_h_inlined_empty_input() {
+    // Short input → no windows produced → outer flt sees an empty list
+    // → 0. Sanity that the inliner emits FOREACHPREP whose initial
+    // bounds check correctly short-circuits even when ws is empty.
+    run_all(PHASE2_BIO_FULL, "main", &["AAA"], "0");
+}
+
+#[test]
+fn phase2_all_h_inlined_all_pass() {
+    // Every window is all-hydro → outer flt keeps every window → result
+    // = len(windows). chars "AILMFW" → 6 chars, window 4 → 3 windows,
+    // all all-hydro. Pins that the inliner doesn't drop windows on the
+    // truthy branch by mis-remapping the counter or branch offsets.
+    run_all(PHASE2_BIO_FULL, "main", &["AILMFW"], "3");
+}
+
+#[test]
+fn phase2_inlined_alongside_other_call_sites() {
+    // Composition test: the same `all-h` is referenced twice in the
+    // same fn, so the inliner emits the body twice. Pins that emitting
+    // the inlined body twice doesn't trample state between sites
+    // (next_reg / max_reg / window_base bookkeeping). Tree-walker
+    // produces the reference; VM and Cranelift must match.
+    let src = "is-hydro c:t>b;has \"AI\" c\nall-h xs:L t>b;n=len (flt is-hydro xs);=n 2\nmain xs:L (L t)>n;a=len (flt all-h xs);b=len (flt all-h xs);+a b";
+    run_all(src, "main", &["[[\"A\",\"I\"],[\"A\",\"X\"],[\"I\",\"I\"]]"], "4");
+}
