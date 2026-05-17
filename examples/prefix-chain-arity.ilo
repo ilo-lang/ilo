@@ -1,0 +1,27 @@
+-- N prefix operators take N+1 operands, not N. The qa-tester P1 rerun
+-- used the wrong arity, e.g. `+++a b c` with three operators but only
+-- three operands. That used to unwind silently into a bare ILO-P010
+-- "expected expression, got EOF" at line 1 col 1, leaving the agent no
+-- signal about where to look. The parser now emits a clean ILO-P003
+-- pointing at the chain head with the actual glyph and the shortfall,
+-- so the next attempt can supply the missing operand or reshape.
+--
+-- Two canonical fixes when an agent reaches for a deep prefix chain:
+--
+--   1. Provide K+1 operands. `+++a b c d` (depth 3, 4 operands) parses
+--      to ((a+b) + c) + d.
+--
+--   2. Bind intermediate results, which is also more token-efficient
+--      once a chain gets past two ops: `s=+a b;t=+s c;+t d` builds the
+--      same value left-to-right and reads obviously.
+--
+-- The example below uses both forms so an agent encountering this file
+-- has a working template for either approach.
+
+deeparity a:n b:n c:n d:n>n;+++a b c d
+deepbind  a:n b:n c:n d:n>n;s=+a b;t=+s c;+t d
+
+-- run: deeparity 1 2 3 4
+-- out: 10
+-- run: deepbind 1 2 3 4
+-- out: 10
