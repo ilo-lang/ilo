@@ -1258,6 +1258,7 @@ A non-last function body's **final expression must not be a bare variable refere
 | Match block | `?v{…}` | ✓ | ends with `}` |
 | ForEach block | `@x xs{…}` | ✓ | ends with `}` |
 | Parenthesised expr | `(x>>f>>g)` | ✓ | ends with `)` |
+| Record constructor | `point x:1 y:2` | ✓ | parses as `Expr::Record`, not `Ref` |
 | Text/number literal | `"ok"`, `42` | ✓ | literal, not `Ref` |
 | Bare variable (`Ref`) | `n`, `result` | ✗ | greedy loop fires |
 | Bare function call | `len xs`, `f a` | ✗ | greedy loop fires |
