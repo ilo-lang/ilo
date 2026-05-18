@@ -76,6 +76,28 @@ pub enum CompileError {
     /// than panicking partway through codegen.
     #[error("inline lambda capture for `{fn_name}` is tree-only")]
     UnsupportedClosureCapture { fn_name: String },
+    /// The register-VM byte-encoded instruction set is capped at 256 live
+    /// registers per function (8-bit register field). When codegen for a
+    /// function would require more, we surface this with the offending
+    /// function name + decl span so the user can pinpoint where to refactor
+    /// rather than getting a bare backtrace.
+    #[error("function `{fn_name}` uses more than 255 registers (VM cap)")]
+    RegisterOverflow {
+        fn_name: String,
+        #[allow(dead_code)]
+        span: crate::ast::Span,
+    },
+    /// A function call needs result-reg + N contiguous arg slots, but the
+    /// total would exceed the 256-register cap of the calling function.
+    /// `callee` may be empty when the callee is dynamic (FnRef-in-register).
+    #[error("call in function `{fn_name}`{callee_disp} requires too many register slots (VM cap is 256)",
+        callee_disp = if callee.is_empty() { String::new() } else { format!(" to `{}`", callee) })]
+    CallRegisterOverflow {
+        fn_name: String,
+        callee: String,
+        #[allow(dead_code)]
+        span: crate::ast::Span,
+    },
 }
 
 #[cfg(feature = "cranelift")]
@@ -1367,6 +1389,14 @@ struct RegCompiler {
     type_registry: TypeRegistry,
     func_return_types: Vec<Type>, // parallel to func_names
     current_all_regs_numeric: bool,
+    /// Name of the function currently being lowered. Used so that
+    /// register-cap overflow errors can pinpoint the offending function
+    /// (`CompileError::RegisterOverflow` / `CallRegisterOverflow`) instead
+    /// of bubbling up as a bare backtrace.
+    current_fn_name: String,
+    /// Decl span of the function currently being lowered, used as the
+    /// fallback label location for register-cap overflow errors.
+    current_fn_span: crate::ast::Span,
 }
 
 impl RegCompiler {
@@ -1387,14 +1417,27 @@ impl RegCompiler {
             type_registry: TypeRegistry::default(),
             func_return_types: Vec::new(),
             current_all_regs_numeric: true,
+            current_fn_name: String::new(),
+            current_fn_span: crate::ast::Span::UNKNOWN,
         }
     }
 
     fn alloc_reg(&mut self) -> u8 {
-        assert!(
-            self.next_reg < 255,
-            "register overflow: function uses more than 255 registers"
-        );
+        if self.next_reg == 255 {
+            // Latch a structured error attributed to the current function and
+            // its decl span, then return a sentinel so compilation can
+            // continue collecting downstream diagnostics. compile_program
+            // will surface this before returning a chunk.
+            self.first_error
+                .get_or_insert_with(|| CompileError::RegisterOverflow {
+                    fn_name: self.current_fn_name.clone(),
+                    span: self.current_fn_span,
+                });
+            // Saturate so further alloc_reg calls don't wrap u8.
+            self.next_reg = 255;
+            self.max_reg = 255;
+            return 254;
+        }
         let r = self.next_reg;
         self.next_reg += 1;
         if self.next_reg > self.max_reg {
@@ -1683,7 +1726,14 @@ impl RegCompiler {
         }
 
         for decl in &program.declarations {
-            if let Decl::Function { params, body, .. } = decl {
+            if let Decl::Function {
+                name,
+                params,
+                body,
+                span,
+                ..
+            } = decl
+            {
                 assert!(
                     params.len() <= 255,
                     "function has {} parameters; maximum is 255",
@@ -1693,6 +1743,8 @@ impl RegCompiler {
                 self.locals.clear();
                 self.next_reg = params.len() as u8;
                 self.max_reg = self.next_reg;
+                self.current_fn_name = name.clone();
+                self.current_fn_span = *span;
 
                 self.reg_is_num = [false; 256];
                 self.reg_is_str = [false; 256];
@@ -4473,10 +4525,25 @@ impl RegCompiler {
                 let a = self.alloc_reg(); // result register
                 // Reserve slots for args
                 let args_base = self.next_reg;
-                assert!(
-                    (self.next_reg as usize) + args.len() <= 255,
-                    "register overflow: call requires too many register slots"
-                );
+                if (self.next_reg as usize) + args.len() > 255 {
+                    // Structured attribution: name the offending call site so
+                    // the user can refactor at the source level rather than
+                    // staring at a backtrace through the compiler.
+                    self.first_error
+                        .get_or_insert_with(|| CompileError::CallRegisterOverflow {
+                            fn_name: self.current_fn_name.clone(),
+                            callee: function.clone(),
+                            span: self.current_span,
+                        });
+                    // Saturate so subsequent codegen doesn't wrap u8, then
+                    // bail before emitting MOVEs / OP_CALL. The arg-slot
+                    // targets would overflow u8 in debug builds, and the
+                    // bytecode is dead anyway — compile_program will surface
+                    // the latched error before any chunk is returned.
+                    self.next_reg = 255;
+                    self.max_reg = 255;
+                    return a;
+                }
                 self.next_reg += args.len() as u8;
                 if self.next_reg > self.max_reg {
                     self.max_reg = self.next_reg;
