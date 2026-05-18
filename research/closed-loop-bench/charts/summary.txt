@@ -1,0 +1,9 @@
+# Closed-loop benchmark — text summary
+
+Rows: 100
+
+Aggregate by variant:
+  ilo-post-phase-1          avg_tokens=     788 avg_usd=0.0005 success=1.00
+  ilo-pre-phase-1           avg_tokens=    1572 avg_usd=0.0011 success=1.00
+  python-baseline           avg_tokens=     486 avg_usd=0.0004 success=1.00
+  zero                      avg_tokens=     861 avg_usd=0.0008 success=1.00
