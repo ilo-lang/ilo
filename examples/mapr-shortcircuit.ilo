@@ -1,0 +1,26 @@
+-- mapr 2 with short-circuit on first Err: Phase 2 PR3b native dispatch.
+--
+-- Pre-PR3b the closure callback re-entered the tree interpreter on every
+-- element via the OP_CALL_BUILTIN_TREE bridge, costing a NanVal-to-Value
+-- round-trip per call and depending on ACTIVE_AST_PROGRAM TLS being live.
+-- PR3b emits an OP_FOREACHPREP/NEXT loop with per-element OP_CALL_DYN
+-- against the closure NanVal, an ISERR check for short-circuit, and a
+-- final OP_WRAPOK on the acc list. The whole pass runs natively on the
+-- VM and Cranelift.
+
+-- Named fn-ref: square every element, fail if any input is negative.
+chk x:n>R n t;<x 0 ^"negative";~*x x
+sq-all xs:L n>R (L n) t;mapr chk xs
+
+-- Capturing lambda: bound each element by `lim`, fail if any exceeds.
+cap-all xs:L n lim:n>R (L n) t;mapr (x:n>R n t;>x lim ^"too big";~*x 2) xs
+
+-- Empty input: vacuously Ok with empty list.
+sq-empty>R (L n) t;mapr chk []
+
+-- run: sq-all [1,2,3]
+-- out: [1, 4, 9]
+-- run: cap-all [1,2,3] 5
+-- out: [2, 4, 6]
+-- run: sq-empty
+-- out: []

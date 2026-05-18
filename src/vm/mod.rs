@@ -528,12 +528,10 @@ pub(crate) fn is_tree_bridge_eligible(b: crate::builtins::Builtin, argc: usize) 
         // srt 2-arg: tree interpreter does the user-fn callback, bridge
         // round-trips the result list. Cross-engine parity with srt.
         (Builtin::Rsrt, 2) => true,
-        // mapr fn xs: short-circuit Result-aware map. Tree bridge routes
-        // through the tree interpreter's Mapr arm, which handles the
-        // ~v/^e dispatch and ACTIVE_AST_PROGRAM user-fn callbacks the same
-        // way grp/uniqby/partition/srt do (PR 3b precedent). Returns
-        // R (L b) e; the bridge unwrap epilogue handles `!` propagation.
-        (Builtin::Mapr, 2) => true,
+        // mapr fn xs was on the bridge through Phase 2 PR3; PR 3b lifts it
+        // natively via OP_CALL_DYN + OP_ISERR short-circuit + OP_WRAPOK so
+        // closure callbacks dispatch without a tree re-entry. See the
+        // matching arm in the compiler.
         // Closure-bind ctx variants. The fn receives an extra ctx arg the
         // native emitters don't shape today — bridge keeps semantics aligned
         // with the tree interpreter and adds VM/Cranelift coverage in PR 3c.
@@ -4518,6 +4516,126 @@ impl RegCompiler {
                             self.reg_is_num[out_reg as usize] = false;
 
                             self.next_reg = out_reg + 1;
+                            return out_reg;
+                        }
+                        // mapr fn xs → Result-aware map with short-circuit on
+                        // first Err. Per-element: OP_CALL_DYN, then ISERR check.
+                        // On Err: short-circuit and return that Err Result as-is.
+                        // On Ok: OP_UNWRAP the inner and OP_LISTAPPEND to acc.
+                        // After the loop, OP_WRAPOK the acc list to form the
+                        // final `Ok(L T)`. Non-Result callback returns raise
+                        // through OP_PANIC_UNWRAP with a "mapr"+"Result" message
+                        // (same shape as flt/partition's predicate typecheck).
+                        //
+                        // Phase 2 PR3b: lift off the tree-bridge so closure
+                        // callbacks dispatch natively. Mirrors the partition
+                        // lift from #387; the new shape here is the
+                        // ISERR-then-UNWRAP short-circuit pattern, plus a final
+                        // OP_WRAPOK to assemble the Result. No new finalizer
+                        // opcode is needed because the wrap step is a single
+                        // existing OP_WRAPOK.
+                        (Builtin::Mapr, 2) => {
+                            let fn_reg = self.compile_expr(&args[0]);
+                            let xs_reg = self.compile_expr(&args[1]);
+
+                            // Single accumulator list for the unwrapped Ok
+                            // inners. On short-circuit we never wrap this.
+                            let acc_reg = self.alloc_reg();
+                            self.emit_abx(OP_LISTNEW, acc_reg, 0);
+
+                            let idx_reg = self.alloc_reg();
+                            let zero_ki = self.current.add_const(Value::Number(0.0));
+                            self.emit_abx(OP_LOADK, idx_reg, zero_ki);
+                            self.reg_is_num[idx_reg as usize] = true;
+
+                            let item_reg = self.alloc_reg();
+                            let nil_ki = self.current.add_const(Value::Nil);
+                            self.emit_abx(OP_LOADK, item_reg, nil_ki);
+
+                            // res_reg + arg_reg contiguous for OP_CALL_DYN ABI.
+                            let res_reg = self.alloc_reg();
+                            self.emit_abx(OP_LOADK, res_reg, nil_ki);
+                            let arg_reg = self.alloc_reg();
+                            assert!(
+                                arg_reg == res_reg + 1,
+                                "mapr HOF: arg reg must follow result reg contiguously"
+                            );
+                            self.emit_abx(OP_LOADK, arg_reg, nil_ki);
+
+                            // Scratch for ISERR / ISOK typechecks.
+                            let chk_reg = self.alloc_reg();
+                            self.emit_abx(OP_LOADK, chk_reg, nil_ki);
+
+                            // Final output register. On the short-circuit path
+                            // we move res_reg here; on the happy path we WRAPOK
+                            // acc_reg here.
+                            let out_reg = self.alloc_reg();
+                            self.emit_abx(OP_LOADK, out_reg, nil_ki);
+
+                            let _loop_top = self.current.code.len();
+                            self.emit_abc(OP_FOREACHPREP, item_reg, xs_reg, idx_reg);
+                            let exit_jump_a = self.emit_jmp_placeholder();
+
+                            let body_top = self.current.code.len();
+                            self.emit_abc(OP_MOVE, arg_reg, item_reg, 0);
+                            self.emit_abc(OP_CALL_DYN, res_reg, fn_reg, 1);
+
+                            // Short-circuit on Err: ISERR → if true, jump to
+                            // the short-circuit emitter past the wrap-acc tail.
+                            self.emit_abc(OP_ISERR, chk_reg, res_reg, 0);
+                            let shortcircuit_jump = self.emit_jmpt(chk_reg);
+
+                            // Non-Err path: must be Ok. ISOK typecheck — if the
+                            // callback returned something that isn't a Result
+                            // at all, raise a runtime error mirroring the tree
+                            // walker's "mapr: fn must return a Result" message.
+                            self.emit_abc(OP_ISOK, chk_reg, res_reg, 0);
+                            let isok_jump = self.emit_jmpt(chk_reg);
+                            let err_text_ki = self.current.add_const(Value::Text(Arc::new(
+                                "mapr: fn must return a Result (~v or ^e)".to_string(),
+                            )));
+                            self.emit_abx(OP_LOADK, arg_reg, err_text_ki);
+                            self.emit_abc(OP_WRAPERR, arg_reg, arg_reg, 0);
+                            self.emit_abc(OP_PANIC_UNWRAP, 0, arg_reg, 0);
+                            self.current.patch_jump(isok_jump);
+
+                            // Ok path: UNWRAP into arg_reg (free scratch) then
+                            // append to acc.
+                            self.emit_abc(OP_UNWRAP, arg_reg, res_reg, 0);
+                            self.emit_abc(OP_LISTAPPEND, acc_reg, acc_reg, arg_reg);
+
+                            self.emit_abc(OP_FOREACHNEXT, item_reg, xs_reg, idx_reg);
+                            let exit_jump_b = self.emit_jmp_placeholder();
+                            self.emit_jump_to(body_top);
+
+                            // Short-circuit path: out_reg = res_reg, then jump
+                            // past the WRAPOK happy-path tail.
+                            self.current.patch_jump(shortcircuit_jump);
+                            self.emit_abc(OP_MOVE, out_reg, res_reg, 0);
+                            let done_jump = self.emit_jmp_placeholder();
+
+                            // Loop fall-through (both natural exits): wrap acc.
+                            self.current.patch_jump(exit_jump_a);
+                            self.current.patch_jump(exit_jump_b);
+                            self.emit_abc(OP_WRAPOK, out_reg, acc_reg, 0);
+
+                            self.current.patch_jump(done_jump);
+
+                            self.current_all_regs_numeric = false;
+                            self.reg_is_num[out_reg as usize] = false;
+
+                            self.next_reg = out_reg + 1;
+
+                            // Handle `mapr!` / `mapr!!` auto-unwrap exactly the
+                            // same way emit_call_builtin_tree did before the
+                            // native lift. verify already rejects `!`/`!!` on
+                            // non-Result builtins, so this stays cross-engine
+                            // consistent.
+                            if unwrap.is_any() {
+                                self.emit_result_unwrap(out_reg, *unwrap);
+                                self.next_reg = out_reg + 1;
+                            }
+
                             return out_reg;
                         }
                         // Builtins that fall through:
