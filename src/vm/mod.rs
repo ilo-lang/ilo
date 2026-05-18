@@ -394,6 +394,19 @@ pub(crate) const OP_CHARS: u8 = 158; // R[A] = chars(R[B])
 // heap allocation, so OP_LOADFN compiles to a single register write.
 pub(crate) const OP_LOADFN: u8 = 159;
 
+// ABC OP_MAKE_CLOSURE: build a HeapObj::Closure capturing N values.
+//   A = destination register (closure NanVal)
+//   B = source register holding a FnRef NanVal (kind + id come from there)
+//   C = capture count N, 0..=255
+// Followed by ceil(N / 4) inline data words holding the source register
+// indices to capture from, packed 4 per 32-bit word in little-endian
+// byte order: word[0] = idx0 | (idx1<<8) | (idx2<<16) | (idx3<<24).
+// Captures are snapshot by value at construction time (RC-bumped on
+// the way into the closure); subsequent rebinding of the source
+// registers leaves the closure unchanged. Mirrors the by-value
+// semantics of Value::Closure in the tree interpreter.
+pub(crate) const OP_MAKE_CLOSURE: u8 = 178;
+
 // Dynamic call by function reference. The callee is a FnRef NanVal sitting
 // in a register; we decode its (kind, id), then either push a VM frame
 // (user fn) or invoke the builtin dispatch path (builtin).
@@ -5049,19 +5062,72 @@ impl RegCompiler {
                     a
                 }
             }
-            Expr::MakeClosure { fn_name, .. } => {
-                // VM/Cranelift HOF dispatch is the parked FnRef NaN-tagging
-                // effort. Inline lambdas with captures only run on the tree
-                // interpreter. Surface a compile error via `first_error` so
-                // `vm::compile` returns `Err(UnsupportedClosureCapture)`; the
-                // default runner in main.rs treats a failed `vm::compile` as
-                // "skip JIT, run on the tree" — which is exactly what we want
-                // until the FnRef NaN-tagging follow-up lands.
-                self.first_error
-                    .get_or_insert(CompileError::UnsupportedClosureCapture {
-                        fn_name: fn_name.clone(),
-                    });
-                0
+            Expr::MakeClosure { fn_name, captures } => {
+                // PR1 Phase 2 closure capture: emit a fn-ref load + OP_MAKE_CLOSURE
+                // that snapshots N capture values into a HeapObj::Closure NanVal.
+                // OP_CALL_DYN at dispatch time detects the closure variant and
+                // prepends captures onto the call frame's arg slice before
+                // entering the lifted function. Cranelift JIT inherits this on
+                // PR2 via its existing jit_call_dyn re-entry into the VM.
+                if captures.len() > 255 {
+                    self.first_error
+                        .get_or_insert(CompileError::UnsupportedClosureCapture {
+                            fn_name: fn_name.clone(),
+                        });
+                    return 0;
+                }
+                // Resolve the lifted fn's chunk index (or builtin tag). The
+                // parser only emits MakeClosure with fn_name pointing at a
+                // synthetic `__lit_N` decl, so the User path is the common
+                // case; we keep the Builtin path symmetric for future use.
+                let (kind_bit, id_bits): (u16, u16) =
+                    if let Some(idx) = self.func_names.iter().position(|n| n == fn_name) {
+                        assert!(
+                            idx <= 0x7FFF,
+                            "OP_MAKE_CLOSURE: user-fn index {} exceeds 15-bit limit",
+                            idx
+                        );
+                        (0, idx as u16)
+                    } else if let Some(b) = crate::builtins::Builtin::from_name(fn_name) {
+                        (0x8000, b.tag() as u16)
+                    } else {
+                        self.first_error
+                            .get_or_insert(CompileError::UndefinedVariable {
+                                name: fn_name.clone(),
+                            });
+                        return 0;
+                    };
+
+                // Compile each capture expression into a register. Collect
+                // the source register indices for the trailing data words.
+                let cap_regs: Vec<u8> = captures
+                    .iter()
+                    .map(|c_expr| self.compile_expr(c_expr))
+                    .collect();
+
+                // Load the fn-ref into a fresh register so OP_MAKE_CLOSURE
+                // can read it as plain register B (mirrors OP_CALL_DYN's
+                // callee ABI for naming consistency).
+                let fn_reg = self.alloc_reg();
+                self.emit_abx(OP_LOADFN, fn_reg, kind_bit | id_bits);
+
+                let dest = self.alloc_reg();
+                self.emit_abc(OP_MAKE_CLOSURE, dest, fn_reg, cap_regs.len() as u8);
+                // Pack capture source register indices 4 per 32-bit data
+                // word, little-endian byte order.
+                let n = cap_regs.len();
+                let n_words = n.div_ceil(4);
+                for w in 0..n_words {
+                    let mut word: u32 = 0;
+                    for slot in 0..4 {
+                        let i = w * 4 + slot;
+                        if i < n {
+                            word |= (cap_regs[i] as u32) << (slot * 8);
+                        }
+                    }
+                    self.current.emit(word, self.current_span);
+                }
+                dest
             }
         }
     }
@@ -5086,7 +5152,7 @@ fn chunk_is_all_numeric(chunk: &Chunk) -> bool {
             | OP_TL | OP_FMT2 | OP_RGXSUB | OP_ZIP | OP_ENUMERATE | OP_WINDOW | OP_WINDOW_VIEW
             | OP_FFT | OP_IFFT | OP_RANGE | OP_CHUNKS | OP_CUMSUM | OP_SETUNION | OP_SETINTER
             | OP_SETDIFF | OP_TRANSPOSE | OP_MATMUL | OP_INV | OP_SOLVE | OP_DTFMT | OP_DTPARSE
-            | OP_FLAT | OP_CALL_BUILTIN_TREE | OP_LOADFN | OP_CALL_DYN => {
+            | OP_FLAT | OP_CALL_BUILTIN_TREE | OP_LOADFN | OP_CALL_DYN | OP_MAKE_CLOSURE => {
                 return false;
             }
             _ => {}
@@ -5730,6 +5796,21 @@ enum HeapObj {
     },
     OkVal(NanVal),
     ErrVal(NanVal),
+    /// Closure: a named (lifted) function plus by-value capture snapshots.
+    ///
+    /// Produced by `OP_MAKE_CLOSURE` when an inline lambda `(params>ret;body)`
+    /// closes over enclosing-scope variables. Stored under the `TAG_LIST` tag
+    /// (heap-pointer space) and discriminated at deref by HeapObj variant.
+    /// `slice_of`, `materialize_list_view`, and other list-shaped ops error on
+    /// this variant — closures are not list-like. `OP_CALL_DYN` checks for
+    /// `HeapObj::Closure` at callee deref and prepends `captures` onto the
+    /// call frame's arg slice before dispatching as a plain User/Builtin
+    /// call (mirroring the tree interpreter's Value::Closure handling).
+    Closure {
+        kind: FnRefKind,
+        id: u32,
+        captures: Vec<NanVal>,
+    },
 }
 
 impl Drop for HeapObj {
@@ -5760,6 +5841,11 @@ impl Drop for HeapObj {
             }
             HeapObj::OkVal(inner) | HeapObj::ErrVal(inner) => {
                 inner.drop_rc();
+            }
+            HeapObj::Closure { captures, .. } => {
+                for v in captures {
+                    v.drop_rc();
+                }
             }
         }
     }
@@ -5800,7 +5886,10 @@ fn materialize_list_view(v: NanVal) -> NanVal {
                 .collect();
             NanVal::heap_list(items)
         }
-        // Tag-checked above, so unreachable; explicit arms for audit.
+        // Tag-checked above, so unreachable for these variants. Closure
+        // shares TAG_LIST but is not list-shaped — materialize_list_view is
+        // a no-op for closures (they don't have a list-view sibling).
+        HeapObj::Closure { .. } => v,
         HeapObj::Str(_)
         | HeapObj::Map(_)
         | HeapObj::Record { .. }
@@ -5850,11 +5939,15 @@ fn slice_of(obj: &HeapObj) -> &[NanVal] {
         HeapObj::List(items) => items.as_slice(),
         // Non-list variants: slice_of is contractually list-only, but explicit
         // arms keep rustc audit-enforced if HeapObj grows new variants later.
+        // Closure shares TAG_LIST but is not list-like — list ops must error
+        // rather than silently return an empty slice or read closure bytes
+        // as if they were list elements.
         HeapObj::Str(_)
         | HeapObj::Map(_)
         | HeapObj::Record { .. }
         | HeapObj::OkVal(_)
-        | HeapObj::ErrVal(_) => {
+        | HeapObj::ErrVal(_)
+        | HeapObj::Closure { .. } => {
             debug_assert!(false, "slice_of called on non-list HeapObj variant");
             &[]
         }
@@ -5887,7 +5980,8 @@ fn slice_of(obj: &HeapObj) -> &[NanVal] {
                 | HeapObj::Map(_)
                 | HeapObj::Record { .. }
                 | HeapObj::OkVal(_)
-                | HeapObj::ErrVal(_) => {
+                | HeapObj::ErrVal(_)
+                | HeapObj::Closure { .. } => {
                     debug_assert!(false, "ListView::src does not reference HeapObj::List");
                     &[]
                 }
@@ -6004,6 +6098,18 @@ impl NanVal {
         let rc = Rc::new(HeapObj::Record { type_info, fields });
         let ptr = Rc::into_raw(rc) as u64;
         NanVal(TAG_RECORD | (ptr & PTR_MASK))
+    }
+
+    /// Construct a closure value wrapping a named (lifted) function and a
+    /// vector of by-value capture snapshots. Stored under `TAG_LIST` so the
+    /// caller can use the existing heap-pointer space without carving a new
+    /// NaN tag; discrimination from real lists happens at deref by HeapObj
+    /// variant. The caller transfers ownership of each capture's RC into
+    /// the closure (no clone_rc here); the closure's Drop releases them.
+    fn heap_closure(kind: FnRefKind, id: u32, captures: Vec<NanVal>) -> Self {
+        let rc = Rc::new(HeapObj::Closure { kind, id, captures });
+        let ptr = Rc::into_raw(rc) as u64;
+        NanVal(TAG_LIST | (ptr & PTR_MASK))
     }
 
     /// Create a NanVal pointing to an arena-allocated record.
@@ -6294,6 +6400,23 @@ impl NanVal {
                     NanVal::heap_string(name.clone())
                 }
             }
+            Value::Closure { fn_name, captures } => {
+                let (kind, id) = if let Some(idx) = func_names.iter().position(|n| n == fn_name) {
+                    (FnRefKind::User, idx as u32)
+                } else if let Some(b) = crate::builtins::Builtin::from_name(fn_name) {
+                    (FnRefKind::Builtin, b.tag() as u32)
+                } else {
+                    // Unresolved closure name — fall back to text so any
+                    // downstream call surfaces a clear diagnostic rather
+                    // than producing an opaque closure with a dangling id.
+                    return NanVal::heap_string(fn_name.clone());
+                };
+                let nv_captures: Vec<NanVal> = captures
+                    .iter()
+                    .map(|v| NanVal::from_value_with_program(v, func_names))
+                    .collect();
+                NanVal::heap_closure(kind, id, nv_captures)
+            }
             _ => NanVal::from_value(val),
         }
     }
@@ -6383,6 +6506,20 @@ impl NanVal {
                     },
                     HeapObj::OkVal(inner) => Value::Ok(Box::new(inner.to_value())),
                     HeapObj::ErrVal(inner) => Value::Err(Box::new(inner.to_value())),
+                    HeapObj::Closure { kind, id, captures } => {
+                        let fn_name = match kind {
+                            FnRefKind::Builtin => crate::builtins::Builtin::from_tag(*id as u8)
+                                .map(|b| b.name().to_string())
+                                .unwrap_or_else(|| format!("<unknown_builtin:{}>", id)),
+                            FnRefKind::User => {
+                                active_func_name(*id).unwrap_or_else(|| format!("<user_fn:{}>", id))
+                            }
+                        };
+                        Value::Closure {
+                            fn_name,
+                            captures: captures.iter().map(|v| v.to_value()).collect(),
+                        }
+                    }
                 }
             },
         }
@@ -6449,6 +6586,24 @@ impl NanVal {
                         }
                         HeapObj::ErrVal(inner) => {
                             Value::Err(Box::new(inner.to_value_with_program(func_names)))
+                        }
+                        HeapObj::Closure { kind, id, captures } => {
+                            let fn_name = match kind {
+                                FnRefKind::Builtin => crate::builtins::Builtin::from_tag(*id as u8)
+                                    .map(|b| b.name().to_string())
+                                    .unwrap_or_else(|| format!("<unknown_builtin:{}>", id)),
+                                FnRefKind::User => func_names
+                                    .get(*id as usize)
+                                    .cloned()
+                                    .unwrap_or_else(|| format!("<user_fn:{}>", id)),
+                            };
+                            Value::Closure {
+                                fn_name,
+                                captures: captures
+                                    .iter()
+                                    .map(|v| v.to_value_with_program(func_names))
+                                    .collect(),
+                            }
                         }
                     }
                 }
@@ -8062,7 +8217,8 @@ impl<'a> VM<'a> {
                             | HeapObj::Map(_)
                             | HeapObj::Record { .. }
                             | HeapObj::OkVal(_)
-                            | HeapObj::ErrVal(_) => {
+                            | HeapObj::ErrVal(_)
+                            | HeapObj::Closure { .. } => {
                                 vm_err!(VmError::Type("index access on non-list"))
                             }
                         }
@@ -8101,7 +8257,8 @@ impl<'a> VM<'a> {
                                 | HeapObj::Map(_)
                                 | HeapObj::Record { .. }
                                 | HeapObj::OkVal(_)
-                                | HeapObj::ErrVal(_) => {
+                                | HeapObj::ErrVal(_)
+                                | HeapObj::Closure { .. } => {
                                     vm_err!(VmError::Type("foreach requires a list"))
                                 }
                             }
@@ -8142,7 +8299,8 @@ impl<'a> VM<'a> {
                             | HeapObj::Map(_)
                             | HeapObj::Record { .. }
                             | HeapObj::OkVal(_)
-                            | HeapObj::ErrVal(_) => {
+                            | HeapObj::ErrVal(_)
+                            | HeapObj::Closure { .. } => {
                                 vm_err!(VmError::Type("foreach requires a list"))
                             }
                         }
@@ -8184,7 +8342,8 @@ impl<'a> VM<'a> {
                             | HeapObj::Map(_)
                             | HeapObj::Record { .. }
                             | HeapObj::OkVal(_)
-                            | HeapObj::ErrVal(_) => {
+                            | HeapObj::ErrVal(_)
+                            | HeapObj::Closure { .. } => {
                                 // Should never happen: list was validated by FOREACHPREP.
                                 vm_err!(VmError::Type("foreach requires a list"))
                             }
@@ -8276,6 +8435,45 @@ impl<'a> VM<'a> {
                     };
                     let id = (bx & 0x7FFF) as u32;
                     reg_set!(a, NanVal::fnref(kind, id));
+                }
+                OP_MAKE_CLOSURE => {
+                    // ABC: A = dest, B = fn-ref reg, C = capture count N.
+                    // Followed by ceil(N/4) data words of source register
+                    // indices packed 4 per word (little-endian byte order).
+                    let a = ((inst >> 16) & 0xFF) as u8;
+                    let b = ((inst >> 8) & 0xFF) as u8;
+                    let n = (inst & 0xFF) as usize;
+                    let fn_val = reg!(base + b as usize);
+                    if !fn_val.is_fnref() {
+                        vm_err!(VmError::Type(
+                            "make_closure: fn-ref operand is not a function reference"
+                        ));
+                    }
+                    let (kind, id) = fn_val.fnref_parts();
+                    let n_words = n.div_ceil(4);
+                    let mut captures: Vec<NanVal> = Vec::with_capacity(n);
+                    for w in 0..n_words {
+                        // SAFETY: emitter always writes n_words trailing data
+                        // words immediately after the opcode word, so ip..ip+n_words
+                        // is in range.
+                        let word = unsafe { *code.get_unchecked(ip + w) };
+                        for slot in 0..4 {
+                            let i = w * 4 + slot;
+                            if i >= n {
+                                break;
+                            }
+                            let src_reg = ((word >> (slot * 8)) & 0xFF) as usize;
+                            let v = reg!(base + src_reg);
+                            // By-value capture snapshot: bump RC so the
+                            // closure owns its own ref independent of any
+                            // future mutation in the source register.
+                            v.clone_rc();
+                            captures.push(v);
+                        }
+                    }
+                    ip += n_words;
+                    let closure = NanVal::heap_closure(kind, id, captures);
+                    reg_set!(base + a as usize, closure);
                 }
                 OP_JMP => {
                     let sbx = (inst & 0xFFFF) as i16;
@@ -8404,13 +8602,37 @@ impl<'a> VM<'a> {
                     base = new_base;
                 }
                 OP_CALL_DYN => {
-                    // Dynamic call by FnRef. Layout:
+                    // Dynamic call by FnRef or Closure. Layout:
                     //   A = result_reg, B = fnref_reg, C = argc
                     //   args live in R[A+1..=A+argc] (mirrors OP_CALL).
+                    //
+                    // Closure callees carry trailing capture values which we
+                    // append after the user-supplied args before dispatching
+                    // (matches the tree interpreter's `Value::Closure`
+                    // semantics: lifted-fn signature is
+                    // `[original_params..., capture_params...]`).
                     let a = ((inst >> 16) & 0xFF) as u8;
                     let b = ((inst >> 8) & 0xFF) as u8;
                     let n_args = (inst & 0xFF) as usize;
                     let mut callee = reg!(base + b as usize);
+
+                    // Closure path: deref the heap pointer and check the
+                    // HeapObj variant. If it's a closure, swap the callee
+                    // for a plain FnRef and remember the captures to append
+                    // after the user args.
+                    let mut closure_captures: Option<Vec<NanVal>> = None;
+                    if callee.is_heap() && (callee.0 & TAG_MASK) == TAG_LIST {
+                        // SAFETY: is_heap() + TAG_LIST tag means the pointer
+                        // was produced by heap_list / heap_list_view /
+                        // heap_closure, and we hold an owned RC on it (it's
+                        // sitting in register `b`).
+                        let heap = unsafe { callee.as_heap_ref() };
+                        if let HeapObj::Closure { kind, id, captures } = heap {
+                            callee = NanVal::fnref(*kind, *id);
+                            closure_captures = Some(captures.clone());
+                        }
+                    }
+
                     // Text callee — resolve the name to a user fn or builtin
                     // and re-shape into a FnRef NanVal. This mirrors the
                     // tree interpreter's `Value::Text(name)` callee path
@@ -8439,6 +8661,8 @@ impl<'a> VM<'a> {
                         ));
                     }
                     let (kind, id) = callee.fnref_parts();
+                    let n_caps = closure_captures.as_ref().map(|c| c.len()).unwrap_or(0);
+                    let total_args = n_args + n_caps;
                     match kind {
                         FnRefKind::User => {
                             let func_idx = id as u16;
@@ -8459,6 +8683,20 @@ impl<'a> VM<'a> {
                                     v.clone_rc();
                                 }
                                 self.stack.push(v);
+                            }
+                            // Append closure captures after the user args.
+                            // The captures vec already holds its own RCs on
+                            // each value (taken at OP_MAKE_CLOSURE time); we
+                            // clone_rc one more time here so each call to the
+                            // closure pushes an independent ref onto the
+                            // frame (consumed by OP_RET / register overwrite).
+                            if let Some(caps) = &closure_captures {
+                                for &v in caps.iter() {
+                                    if !callee_all_numeric && !v.is_number() {
+                                        v.clone_rc();
+                                    }
+                                    self.stack.push(v);
+                                }
                             }
 
                             let reg_count =
@@ -8503,10 +8741,16 @@ impl<'a> VM<'a> {
                                 Some(b) => b,
                                 None => vm_err!(VmError::Type("dynamic call: unknown builtin tag")),
                             };
-                            let mut value_args: Vec<Value> = Vec::with_capacity(n_args);
+                            let mut value_args: Vec<Value> = Vec::with_capacity(total_args);
                             for i in 0..n_args {
                                 let v = reg!(base + a as usize + 1 + i);
                                 value_args.push(v.to_value_with_program(&self.program.func_names));
+                            }
+                            if let Some(caps) = &closure_captures {
+                                for v in caps.iter() {
+                                    value_args
+                                        .push(v.to_value_with_program(&self.program.func_names));
+                                }
                             }
                             let result = match crate::interpreter::call_builtin_for_bridge(
                                 builtin.name(),
@@ -9126,7 +9370,8 @@ impl<'a> VM<'a> {
                             HeapObj::Str(_)
                             | HeapObj::Record { .. }
                             | HeapObj::OkVal(_)
-                            | HeapObj::ErrVal(_) => {
+                            | HeapObj::ErrVal(_)
+                            | HeapObj::Closure { .. } => {
                                 vm_err!(VmError::Type("len requires string, list, or map"))
                             }
                         }
@@ -10163,7 +10408,8 @@ impl<'a> VM<'a> {
                             | HeapObj::Map(_)
                             | HeapObj::Record { .. }
                             | HeapObj::OkVal(_)
-                            | HeapObj::ErrVal(_) => {
+                            | HeapObj::ErrVal(_)
+                            | HeapObj::Closure { .. } => {
                                 vm_err!(VmError::Type("has requires a list or text"))
                             }
                         }
@@ -10206,7 +10452,8 @@ impl<'a> VM<'a> {
                             | HeapObj::Map(_)
                             | HeapObj::Record { .. }
                             | HeapObj::OkVal(_)
-                            | HeapObj::ErrVal(_) => {
+                            | HeapObj::ErrVal(_)
+                            | HeapObj::Closure { .. } => {
                                 vm_err!(VmError::Type("hd requires a list or text"))
                             }
                         }
@@ -10281,7 +10528,8 @@ impl<'a> VM<'a> {
                             | HeapObj::Map(_)
                             | HeapObj::Record { .. }
                             | HeapObj::OkVal(_)
-                            | HeapObj::ErrVal(_) => {
+                            | HeapObj::ErrVal(_)
+                            | HeapObj::Closure { .. } => {
                                 vm_err!(VmError::Type("at requires a list or text"))
                             }
                         }
@@ -10678,7 +10926,8 @@ impl<'a> VM<'a> {
                             | HeapObj::Map(_)
                             | HeapObj::Record { .. }
                             | HeapObj::OkVal(_)
-                            | HeapObj::ErrVal(_) => {
+                            | HeapObj::ErrVal(_)
+                            | HeapObj::Closure { .. } => {
                                 vm_err!(VmError::Type("tl requires a list or text"))
                             }
                         }
@@ -10717,7 +10966,8 @@ impl<'a> VM<'a> {
                             | HeapObj::Map(_)
                             | HeapObj::Record { .. }
                             | HeapObj::OkVal(_)
-                            | HeapObj::ErrVal(_) => {
+                            | HeapObj::ErrVal(_)
+                            | HeapObj::Closure { .. } => {
                                 vm_err!(VmError::Type("rev requires a list or text"))
                             }
                         }
@@ -10785,7 +11035,8 @@ impl<'a> VM<'a> {
                             | HeapObj::Map(_)
                             | HeapObj::Record { .. }
                             | HeapObj::OkVal(_)
-                            | HeapObj::ErrVal(_) => {
+                            | HeapObj::ErrVal(_)
+                            | HeapObj::Closure { .. } => {
                                 vm_err!(VmError::Type("srt requires a list or text"))
                             }
                         }
@@ -10852,7 +11103,8 @@ impl<'a> VM<'a> {
                             | HeapObj::Map(_)
                             | HeapObj::Record { .. }
                             | HeapObj::OkVal(_)
-                            | HeapObj::ErrVal(_) => {
+                            | HeapObj::ErrVal(_)
+                            | HeapObj::Closure { .. } => {
                                 vm_err!(VmError::Type("rsrt requires a list or text"))
                             }
                         }
@@ -11043,7 +11295,8 @@ impl<'a> VM<'a> {
                             | HeapObj::Map(_)
                             | HeapObj::Record { .. }
                             | HeapObj::OkVal(_)
-                            | HeapObj::ErrVal(_) => {
+                            | HeapObj::ErrVal(_)
+                            | HeapObj::Closure { .. } => {
                                 vm_err!(VmError::Type("slc requires a list or text"))
                             }
                         }
@@ -11097,7 +11350,8 @@ impl<'a> VM<'a> {
                             | HeapObj::Map(_)
                             | HeapObj::Record { .. }
                             | HeapObj::OkVal(_)
-                            | HeapObj::ErrVal(_) => {
+                            | HeapObj::ErrVal(_)
+                            | HeapObj::Closure { .. } => {
                                 vm_err!(VmError::Type("lst requires a list"))
                             }
                         }
@@ -11250,7 +11504,8 @@ impl<'a> VM<'a> {
                             | HeapObj::Map(_)
                             | HeapObj::Record { .. }
                             | HeapObj::OkVal(_)
-                            | HeapObj::ErrVal(_) => {
+                            | HeapObj::ErrVal(_)
+                            | HeapObj::Closure { .. } => {
                                 vm_err!(VmError::Type("take requires a list or text"))
                             }
                         }
@@ -11300,7 +11555,8 @@ impl<'a> VM<'a> {
                             | HeapObj::Map(_)
                             | HeapObj::Record { .. }
                             | HeapObj::OkVal(_)
-                            | HeapObj::ErrVal(_) => {
+                            | HeapObj::ErrVal(_)
+                            | HeapObj::Closure { .. } => {
                                 vm_err!(VmError::Type("drop requires a list or text"))
                             }
                         }
@@ -11377,7 +11633,8 @@ impl<'a> VM<'a> {
                             | HeapObj::Map(_)
                             | HeapObj::Record { .. }
                             | HeapObj::OkVal(_)
-                            | HeapObj::ErrVal(_) => {
+                            | HeapObj::ErrVal(_)
+                            | HeapObj::Closure { .. } => {
                                 return Err(VmError::Type("+= requires a list"));
                             }
                         }
@@ -11402,7 +11659,8 @@ impl<'a> VM<'a> {
                             | HeapObj::Map(_)
                             | HeapObj::Record { .. }
                             | HeapObj::OkVal(_)
-                            | HeapObj::ErrVal(_) => {
+                            | HeapObj::ErrVal(_)
+                            | HeapObj::Closure { .. } => {
                                 vm_err!(VmError::Type("+= requires a list"))
                             }
                         }
@@ -11753,6 +12011,20 @@ fn nanval_to_json(v: NanVal) -> serde_json::Value {
                             .collect();
                         serde_json::Value::Object(obj)
                     }
+                    HeapObj::Closure { kind, id, .. } => {
+                        // Closures don't have a meaningful JSON representation —
+                        // serialise as a sentinel string so jdmp surfaces "got a
+                        // closure" rather than panicking or producing junk.
+                        let name = match kind {
+                            FnRefKind::Builtin => crate::builtins::Builtin::from_tag(*id as u8)
+                                .map(|b| b.name().to_string())
+                                .unwrap_or_else(|| format!("<unknown_builtin:{}>", id)),
+                            FnRefKind::User => {
+                                active_func_name(*id).unwrap_or_else(|| format!("<user_fn:{}>", id))
+                            }
+                        };
+                        serde_json::Value::String(format!("<closure:{}>", name))
+                    }
                 }
             }
         }
@@ -11895,7 +12167,8 @@ fn nanval_truthy(v: NanVal) -> bool {
                     HeapObj::Map(_)
                     | HeapObj::Record { .. }
                     | HeapObj::OkVal(_)
-                    | HeapObj::ErrVal(_) => true,
+                    | HeapObj::ErrVal(_)
+                    | HeapObj::Closure { .. } => true,
                 }
             },
         }
@@ -17216,6 +17489,15 @@ pub(crate) fn find_block_leaders(code: &[u32]) -> Vec<usize> {
                 // bogus leaders. The instruction after the data word is a normal leader
                 // candidate (and will be reached on the next loop iteration).
                 i += 2;
+                continue;
+            }
+            OP_MAKE_CLOSURE => {
+                // Variable-length: ceil(N/4) trailing data words holding
+                // packed capture source register indices. Skip them so
+                // their bytes aren't mis-decoded as opcodes.
+                let n = (inst & 0xFF) as usize;
+                let n_words = n.div_ceil(4);
+                i += 1 + n_words;
                 continue;
             }
             op if op == OP_CMPK_GE_N
