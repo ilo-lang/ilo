@@ -1,0 +1,3 @@
+-- feature: now-ms — millisecond wall-clock
+-- expected: true
+main>b;t=now-ms;>t 0

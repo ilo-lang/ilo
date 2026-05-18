@@ -1,0 +1,4 @@
+-- feature: record immutable update
+-- expected: 99
+type pt{x:n;y:n}
+main>n;p=pt x:1 y:2;q=p with x:99;q.x

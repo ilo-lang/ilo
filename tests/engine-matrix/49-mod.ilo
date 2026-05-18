@@ -1,0 +1,3 @@
+-- feature: mod — modulo
+-- expected: 1
+main>n;mod 10 3

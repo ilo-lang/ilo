@@ -1,0 +1,3 @@
+-- feature: str — number to string
+-- expected: 7
+main>t;str 7

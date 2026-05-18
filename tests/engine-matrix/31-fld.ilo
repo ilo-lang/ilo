@@ -1,0 +1,4 @@
+-- feature: fld — fold list with sum builtin replacement (binary op as fn ref not supported; use named fn)
+-- expected: 10
+add a:n b:n>n;+a b
+main>n;fld add [1,2,3,4] 0

@@ -1,0 +1,3 @@
+-- feature: spl — split string
+-- expected: 3
+main>n;parts=spl "a,b,c" ",";len parts

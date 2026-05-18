@@ -1,0 +1,3 @@
+-- feature: fmt — template + arg fill
+-- expected: x=7
+main>t;n=7;fmt "x={}" n

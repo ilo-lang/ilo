@@ -1,0 +1,3 @@
+-- feature: now — wall-clock (s) returns positive number
+-- expected: true
+main>b;t=now;>t 0

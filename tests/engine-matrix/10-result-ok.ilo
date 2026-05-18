@@ -1,0 +1,3 @@
+-- feature: result match (Ok)
+-- expected: 42
+main>n;r=num "42";?r{~v:v;^e:0}

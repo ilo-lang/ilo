@@ -1,0 +1,3 @@
+-- feature: env-all — snapshot full env as map
+-- expected: true
+main>b;r=env-all;?r{~m:>len mkeys m 0;^e:false}

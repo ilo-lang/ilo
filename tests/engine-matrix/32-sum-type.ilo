@@ -1,0 +1,4 @@
+-- feature: sum type (S a b c) - tagged text variant
+-- expected: cat
+pick a:S dog cat>t;?a{"dog":"woof";"cat":"cat"}
+main>t;pick "cat"

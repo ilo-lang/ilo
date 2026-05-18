@@ -1,0 +1,4 @@
+-- feature: returning a *capturing* closure from a fn (true closure-return)
+-- expected: 15
+mkadd k:n>F n n;x:n>n;+x k
+main>n;f=mkadd 10;f 5

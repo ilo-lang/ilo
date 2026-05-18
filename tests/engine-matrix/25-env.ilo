@@ -1,0 +1,3 @@
+-- feature: env — read env var (PATH always set)
+-- expected: true
+main>b;r=env "PATH";?r{~v:>len v 0;^e:false}
