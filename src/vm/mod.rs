@@ -506,6 +506,12 @@ pub(crate) fn is_tree_bridge_eligible(b: crate::builtins::Builtin, argc: usize) 
         (Builtin::Fmt, _) if argc >= 1 => true,
         (Builtin::Rd, 2) => true,
         (Builtin::Rdb, 2) => true,
+        // Filesystem enumeration: ls / walk / glob. No FnRef args, returns
+        // R (L t) t, dispatched through the tree interpreter the same way
+        // `rd`/`rdl` are. Cross-engine parity for free.
+        (Builtin::Ls, 1) => true,
+        (Builtin::Walk, 1) => true,
+        (Builtin::Glob, 2) => true,
         // `sleep ms` has no FnRef args and returns Nil; the bridge round-trip
         // is lossless, so VM/Cranelift get it for free. The actual sleep is
         // delegated to `std::thread::sleep` inside the tree interpreter.
@@ -551,7 +557,10 @@ pub(crate) fn is_tree_bridge_eligible(b: crate::builtins::Builtin, argc: usize) 
 /// the auto-unwrap (`!`) protocol when called via the tree bridge.
 pub(crate) fn tree_bridge_returns_result(b: crate::builtins::Builtin) -> bool {
     use crate::builtins::Builtin;
-    matches!(b, Builtin::Rd | Builtin::Rdb | Builtin::Mapr)
+    matches!(
+        b,
+        Builtin::Rd | Builtin::Rdb | Builtin::Mapr | Builtin::Ls | Builtin::Walk | Builtin::Glob
+    )
 }
 
 pub(crate) const OP_GETMANY: u8 = 136; // R[A] = get_many(R[B])  (L t → L (R t t), concurrent fan-out)
