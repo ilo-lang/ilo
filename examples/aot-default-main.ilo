@@ -1,0 +1,17 @@
+-- `ilo compile file.ilo -o out && ./out` picks `main` as the entry
+-- function when a file declares more than one fn. Historically AOT
+-- picked `func_names.first()`, so a file with a helper declared above
+-- `main` produced a binary that called the helper instead — usually
+-- SIGSEGV at runtime, no diagnostic. Tree/VM/Cranelift JIT all
+-- canonicalise on `main`; AOT now matches.
+--
+-- When no `main` is defined and no explicit entry name is supplied,
+-- AOT errors with ILO-E801 instead of compiling the wrong function.
+
+helper>n;42
+main>n;helper
+
+-- run: main
+-- out: 42
+-- run: helper
+-- out: 42

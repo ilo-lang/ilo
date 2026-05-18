@@ -1475,14 +1475,62 @@ fn compile_cmd(args: &[String]) -> i32 {
         }
     };
 
-    // Determine entry function
-    let entry = func_name.unwrap_or_else(|| {
-        compiled
-            .func_names
-            .first()
-            .map(|s| s.as_str())
-            .unwrap_or("main")
-    });
+    // Determine entry function.
+    //
+    // AOT historically picked `func_names.first()` here, which meant a file
+    // like `helper>n;42\nmain>n;helper` compiled with the helper as the
+    // entry symbol — the produced binary then SIGSEGV'd at runtime because
+    // the wrapper expected `main`'s shape. Tree/VM/JIT all canonicalise on
+    // `main` (or the single-fn shortcut) via the dispatch in `run_cmd`; AOT
+    // now mirrors that convention exactly:
+    //
+    //   1. explicit positional `func` argument wins
+    //   2. else single user-defined function (the `m>...` test idiom) → use it
+    //   3. else `main` exists → use `main`
+    //   4. else error ILO-E801 with the available-function list, exit 1
+    //      (never SIGSEGV)
+    let user_fn_names: Vec<&str> = program
+        .declarations
+        .iter()
+        .filter_map(|d| match d {
+            ast::Decl::Function { name, .. } | ast::Decl::Tool { name, .. }
+                if !name.starts_with("__") =>
+            {
+                Some(name.as_str())
+            }
+            _ => None,
+        })
+        .collect();
+
+    let entry: &str = if let Some(name) = func_name {
+        name
+    } else if user_fn_names.len() == 1 {
+        user_fn_names[0]
+    } else if user_fn_names.contains(&"main") {
+        "main"
+    } else {
+        eprintln!(
+            "error[ILO-E801]: AOT compile needs an entry function but no `main` is defined and no entry name was supplied"
+        );
+        if user_fn_names.is_empty() {
+            eprintln!("note: this file declares no functions");
+        } else {
+            eprintln!("available functions:");
+            for n in &user_fn_names {
+                eprintln!("  {}", n);
+            }
+        }
+        eprintln!();
+        eprintln!(
+            "  ilo compile {} <func>          compile and call <func> as the entry point",
+            source_arg
+        );
+        eprintln!(
+            "  ilo compile {} -o <out> <func> compile to <out> with <func> as the entry point",
+            source_arg
+        );
+        return 1;
+    };
 
     // AOT compile
     let start = std::time::Instant::now();
