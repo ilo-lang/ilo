@@ -2085,8 +2085,13 @@ impl RegCompiler {
                     self.current.patch_jump(jump_over_else);
                     self.next_reg = result_reg + 1;
                     Some(result_reg)
-                } else if *braceless {
-                    // Braceless guard: cond expr — early return
+                } else {
+                    // Guard (braced or braceless) when truthy: early return.
+                    // The two surface forms — `cond expr` and `cond{body}` —
+                    // share semantics. `braceless` is kept on the AST for
+                    // source-preserving round-trips only. Ternary is handled
+                    // in the else_body branch above and is not early-return.
+                    let _ = braceless;
                     let body_result = self.compile_body(body);
                     let ret_reg = body_result.unwrap_or_else(|| {
                         let r = self.alloc_reg();
@@ -2098,22 +2103,6 @@ impl RegCompiler {
                     self.current.patch_jump(jump);
                     self.next_reg = saved_next;
                     None
-                } else {
-                    // Braced guard: cond{body} — conditional execution (no early return)
-                    // Compile body, condition-false jump skips it, no OP_RET emitted.
-                    // The body value is available (like ternary) but does not early-return.
-                    let result_reg = self.alloc_reg();
-                    // Initialize result_reg to Nil (default when condition is false)
-                    let nil_ki = self.current.add_const(Value::Nil);
-                    self.emit_abx(OP_LOADK, result_reg, nil_ki);
-                    let body_result = self.compile_body(body);
-                    let body_reg = body_result.unwrap_or(result_reg);
-                    if body_reg != result_reg {
-                        self.emit_abc(OP_MOVE, result_reg, body_reg, 0);
-                    }
-                    self.current.patch_jump(jump);
-                    self.next_reg = result_reg + 1;
-                    Some(result_reg)
                 }
             }
 
@@ -26234,13 +26223,12 @@ mod tests {
     // ── Guard & ternary ─────────────────────────────────────────────────
 
     #[test]
-    fn vm_braced_guard_no_early_return() {
-        // Braced guard is conditional execution — no early return
+    fn vm_braced_guard_early_returns() {
+        // Braced and braceless guards both early-return (option A).
         let source = "f x:n>n;=x 0{99};+x 1";
-        // x=0: {99} runs but value is discarded, returns +0 1 = 1
         assert_eq!(
             vm_run(source, Some("f"), vec![Value::Number(0.0)]),
-            Value::Number(1.0)
+            Value::Number(99.0)
         );
         assert_eq!(
             vm_run(source, Some("f"), vec![Value::Number(5.0)]),
@@ -26263,9 +26251,9 @@ mod tests {
     }
 
     #[test]
-    fn vm_braced_guard_in_loop_no_early_return() {
-        // Braced guard inside loop does NOT early-return — finds max of list
-        let source = "mx xs:L n>n;m=xs.0;@x xs{>x m{m=x}};+m 0";
+    fn vm_braced_guard_in_loop_uses_ternary_rebind() {
+        // Under option A the canonical find-max idiom is the ternary rebind.
+        let source = "mx xs:L n>n;m=xs.0;@x xs{m=>x m{x}{m}};+m 0";
         let result = vm_run(
             source,
             Some("mx"),

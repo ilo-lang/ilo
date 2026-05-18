@@ -1865,8 +1865,8 @@ fn braceless_guard_fibonacci() {
 }
 
 #[test]
-fn braceless_guard_early_return_vs_braced_conditional() {
-    // Braceless guard: early return → returns "gold" for 1500
+fn braceless_and_braced_guards_both_early_return() {
+    // Option A: braced and braceless guards both early-return.
     let braceless = ilo()
         .args([
             r#"cls sp:n>t;>=sp 1000 "gold";>=sp 500 "silver";"bronze""#,
@@ -1877,9 +1877,8 @@ fn braceless_guard_early_return_vs_braced_conditional() {
     assert_eq!(
         String::from_utf8_lossy(&braceless.stdout).trim(),
         "gold",
-        "braceless guard should early-return"
+        "braceless guard early-returns"
     );
-    // Braced guard: conditional execution (no early return) → returns "bronze"
     let braced = ilo()
         .args([
             r#"cls sp:n>t;>=sp 1000{"gold"};>=sp 500{"silver"};"bronze""#,
@@ -1889,8 +1888,8 @@ fn braceless_guard_early_return_vs_braced_conditional() {
         .expect("failed to run ilo");
     assert_eq!(
         String::from_utf8_lossy(&braced.stdout).trim(),
-        "bronze",
-        "braced guard should be conditional execution (no early return)"
+        "gold",
+        "braced guard also early-returns under option A"
     );
 }
 
