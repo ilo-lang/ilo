@@ -81,11 +81,13 @@ fn assert_verify_error(engine: &str, src: &str, entry: &str, builtin: &str) {
 
 // ── 1. fn-ref-as-map (the db-analyst originating shape) ──────────────
 
-const FNREF_MGET_SRC: &str = "mkmap d:n>M t n;m=mmap;mset m \"a\" 1 main>O n;tg=mkmap;mget tg \"a\"";
+const FNREF_MGET_SRC: &str =
+    "mkmap d:n>M t n;m=mmap;mset m \"a\" 1 main>O n;tg=mkmap;mget tg \"a\"";
 const FNREF_MSET_SRC: &str =
     "mkmap d:n>M t n;m=mmap;mset m \"a\" 1 main>M t n;tg=mkmap;mset tg \"b\" 2";
 const FNREF_MHAS_SRC: &str = "mkmap d:n>M t n;m=mmap;mset m \"a\" 1 main>b;tg=mkmap;mhas tg \"a\"";
-const FNREF_MDEL_SRC: &str = "mkmap d:n>M t n;m=mmap;mset m \"a\" 1 main>M t n;tg=mkmap;mdel tg \"a\"";
+const FNREF_MDEL_SRC: &str =
+    "mkmap d:n>M t n;m=mmap;mset m \"a\" 1 main>M t n;tg=mkmap;mdel tg \"a\"";
 const FNREF_MVALS_SRC: &str = "mkmap d:n>M t n;m=mmap;mset m \"a\" 1 main>L n;tg=mkmap;mvals tg";
 const FNREF_MKEYS_SRC: &str = "mkmap d:n>M t n;m=mmap;mset m \"a\" 1 main>L t;tg=mkmap;mkeys tg";
 
