@@ -9,6 +9,23 @@
 ### Added
 
 - `.@` is the new canonical source file extension. `.@` tokenises as two tokens (`foo`, `.@`) on cl100k and o200k vs three for `foo.ilo` - one token saved per filename mention. All `examples/` and `tests/` source files in this repo have been renamed to `.@`. `.ilo` continues to be accepted but emits a deprecation hint on stderr at load time: `hint: .ilo extension is deprecated; rename to .@`. Rename your files with: `find . -name '*.ilo' -exec sh -c 'mv "$1" "${1%.ilo}.@"' _ {} \;`
+- **Typed HIR module (`src/hir/`).** Phase 5 Stage 5a. A thin high-level
+  intermediate representation that sits between the verified AST and concrete
+  code emission. Every Phase 5 backend (Cranelift refactor, Python refactor,
+  WASM Component Model, Zero transpile) will consume `hir::Program`. Includes:
+  - `hir::lower(ast, verify_out)` — AST → HIR lowering pass.
+  - Documented departures from the AST: function body tail-expression split,
+    guard polarity folded into `UnaryOp(Not)`, `Ternary` → value-level `If`,
+    `Alias`/`Use`/`Error` decls dropped.
+  - `hir::walker::walk` — throwaway walker that raises HIR → AST and runs the
+    existing tree interpreter. Used by the round-trip test only; deleted in
+    Stage 5f when real backends supersede it.
+  - `tests/hir_roundtrip.rs` — exercises every `examples/*.ilo` file with a
+    no-arg `-- run:` annotation and asserts the AST-walk and HIR round-trip
+    paths produce identical outcomes. 375 cases across 228 example files
+    pass; zero round-trip failures.
+  - `src/hir/DESIGN.md` documents the shape, the departures, the deferrals,
+    and open questions for Stage 5b.
 - `rgxall-multi pats:L t s:t > L t` builtin. Apply multiple patterns to a single string and get one flat list of all hits in pattern order. Per-pattern semantics follow `rgxall1`: 0 capture groups returns whole matches; 1 capture group returns capture-1 strings; 2+ capture groups errors with a hint to use `rgxall`. Replaces the verbose `flat (map (p:t>L t;rgxall1 p line) pats)` workaround (~20 tokens per call site saved). Motivated by cron-explainer and historical-archeologist personas, which both needed multi-pattern scan on a single line. Tree-bridge eligible alongside `rgxall1`; no new opcodes.
 - `fmod a b` builtin: floor-mod, always non-negative when `b > 0`. Equivalent to Python `a % b` and JS `Math.floor((a % b + b) % b)`. Implemented across VM, JIT, and AOT. Eliminates the `(raw + 7) % 7` workaround that every TZ/weekday persona needed with signed `mod`. `mod` is unchanged (C-style signed remainder).
 - `dtparse-rel s now > R n t` builtin. Resolves a natural-language relative-date phrase to a Unix epoch anchored at `now`. Supported: `today`/`yesterday`/`tomorrow`, `N days/weeks/months ago`, `in N days/weeks/months` (singular + plural), `last/next/this <weekday>` (monday-sunday or mon-sun; `last`/`next` never return today), and ISO-8601 `YYYY-MM-DD` passthrough. Month arithmetic clamps to the last valid day (Jan 31 + 1 month = Feb 28/29). Tree-bridge eligible -- VM and Cranelift pick it up automatically. Eliminates ~40 LoC of date-arithmetic helpers per date persona (P1 #8 from the persona feedback log).
