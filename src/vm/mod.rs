@@ -604,9 +604,6 @@ pub(crate) fn tree_bridge_returns_result(b: crate::builtins::Builtin) -> bool {
     use crate::builtins::Builtin;
     matches!(
         b,
-<<<<<<< HEAD
-        Builtin::Rd | Builtin::Rdb | Builtin::Mapr | Builtin::EnvAll | Builtin::Run
-=======
         Builtin::Rd
             | Builtin::Rdb
             | Builtin::Mapr
@@ -614,7 +611,7 @@ pub(crate) fn tree_bridge_returns_result(b: crate::builtins::Builtin) -> bool {
             | Builtin::Walk
             | Builtin::Glob
             | Builtin::EnvAll
->>>>>>> 5e71f487267b2ef66289d0a0f5248553ab7d3a8a
+            | Builtin::Run
     )
 }
 

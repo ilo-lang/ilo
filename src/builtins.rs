@@ -844,13 +844,10 @@ mod tests {
             "dtfmt",
             "dtparse",
             "sleep",
-<<<<<<< HEAD
             "run",
-=======
             "ls",
             "walk",
             "glob",
->>>>>>> 5e71f487267b2ef66289d0a0f5248553ab7d3a8a
         ];
         for name in &all {
             let b = Builtin::from_name(name).unwrap_or_else(|| panic!("missing builtin: {name}"));
@@ -1061,13 +1058,10 @@ mod tests {
             "solve",
             "inv",
             "det",
-<<<<<<< HEAD
             "run",
-=======
             "ls",
             "walk",
             "glob",
->>>>>>> 5e71f487267b2ef66289d0a0f5248553ab7d3a8a
         ] {
             let b = Builtin::from_name(name).unwrap_or_else(|| panic!("no builtin: {name}"));
             let t = b.tag();
