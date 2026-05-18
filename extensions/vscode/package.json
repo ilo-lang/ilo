@@ -1,0 +1,66 @@
+{
+  "name": "ilo-lang",
+  "displayName": "ilo Language",
+  "description": "Syntax highlighting and editor support for ilo, the token-optimised programming language for AI agents.",
+  "publisher": "ilo-lang",
+  "version": "0.12.0",
+  "license": "MIT",
+  "private": false,
+  "type": "module",
+  "homepage": "https://ilo-lang.ai",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ilo-lang/ilo.git",
+    "directory": "extensions/vscode"
+  },
+  "bugs": {
+    "url": "https://github.com/ilo-lang/ilo/issues"
+  },
+  "keywords": [
+    "ilo",
+    "ilo-lang",
+    "agents",
+    "ai",
+    "tokens"
+  ],
+  "categories": [
+    "Programming Languages",
+    "Snippets"
+  ],
+  "scripts": {
+    "install:cursor": "node scripts/install-cursor-extension.mjs",
+    "test": "node --test tests/*.test.mjs"
+  },
+  "engines": {
+    "node": ">=22",
+    "vscode": "^1.85.0"
+  },
+  "contributes": {
+    "languages": [
+      {
+        "id": "ilo",
+        "aliases": [
+          "ilo",
+          "ilo-lang"
+        ],
+        "extensions": [
+          ".ilo"
+        ],
+        "configuration": "./language-configuration/ilo.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "ilo",
+        "scopeName": "source.ilo",
+        "path": "./syntaxes/ilo.tmLanguage.json"
+      }
+    ],
+    "snippets": [
+      {
+        "language": "ilo",
+        "path": "./snippets/ilo.code-snippets"
+      }
+    ]
+  }
+}

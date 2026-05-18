@@ -24,6 +24,315 @@ fn compact_spec() -> &'static str {
     include_str!("../ai.txt")
 }
 
+// ── Modular agent skills ──────────────────────────────────────────────────────
+//
+// Six skill modules carved out of the monolithic compact spec so agents can
+// load only the slice their current task needs (typical: 1-2 modules ≈ 2,000
+// tokens) instead of the whole 16,000-token `ai.txt`. Each module is embedded
+// into the binary via `include_str!` so they stay version-locked to the
+// compiler and travel with every install.
+//
+// `ilo -ai` still emits the full concatenated spec for back-compat. The CLI
+// subcommands (`ilo skill list/get/path/show`) are the preferred surface.
+
+/// One bundled agent skill.
+struct Skill {
+    name: &'static str,
+    description: &'static str,
+    path: &'static str,
+    content: &'static str,
+}
+
+/// The full set of bundled skills, ordered for `ilo skill list`.
+const SKILLS: &[Skill] = &[
+    Skill {
+        name: "ilo-language",
+        description: "Use this when writing or reviewing .ilo source. Covers prefix notation, type sigils, guards, match, pipes, records, and Result handling.",
+        path: "skills/ilo/ilo-language.md",
+        content: include_str!("../skills/ilo/ilo-language.md"),
+    },
+    Skill {
+        name: "ilo-builtins",
+        description: "Use this when calling ilo's builtin functions. One-line signatures plus examples for list, text, IO, HTTP, JSON, map, math, time, and HOF builtins.",
+        path: "skills/ilo/ilo-builtins.md",
+        content: include_str!("../skills/ilo/ilo-builtins.md"),
+    },
+    Skill {
+        name: "ilo-errors",
+        description: "Use this when reading ILO-XXXX error codes or fixing failures. Lists the common codes with one-line cause + fix; run `ilo --explain ILO-XXXX` for the long form.",
+        path: "skills/ilo/ilo-errors.md",
+        content: include_str!("../skills/ilo/ilo-errors.md"),
+    },
+    Skill {
+        name: "ilo-tools",
+        description: "Use this when declaring or using MCP tools in ilo programs. Covers the `tool` keyword, HTTP and MCP providers, and runtime tool-call handling.",
+        path: "skills/ilo/ilo-tools.md",
+        content: include_str!("../skills/ilo/ilo-tools.md"),
+    },
+    Skill {
+        name: "ilo-engines",
+        description: "Use this when choosing between tree, VM, JIT, or AOT execution. Covers the feature matrix, default behaviour, and when each backend matters.",
+        path: "skills/ilo/ilo-engines.md",
+        content: include_str!("../skills/ilo/ilo-engines.md"),
+    },
+    Skill {
+        name: "ilo-agent",
+        description: "Use this when integrating ilo into an agent loop. Covers skill discovery, running programs, reading JSON diagnostics, and the repair loop.",
+        path: "skills/ilo/ilo-agent.md",
+        content: include_str!("../skills/ilo/ilo-agent.md"),
+    },
+];
+
+fn find_skill(name: &str) -> Option<&'static Skill> {
+    SKILLS.iter().find(|s| s.name == name)
+}
+
+fn skill_unknown(name: &str) -> i32 {
+    eprintln!("error: unknown skill '{name}'");
+    eprintln!("run `ilo skill list` to see available skills.");
+    1
+}
+
+/// Emit a "skill not found" error as a stable JSON envelope on stdout.
+/// Used by the `--json` paths of every skill subcommand so agent callers
+/// can route on the error without parsing prose.
+fn skill_unknown_json(name: &str) -> i32 {
+    let v = serde_json::json!({
+        "schemaVersion": 1,
+        "error": {
+            "code": "unknown-skill",
+            "message": format!("unknown skill '{name}'"),
+            "name": name,
+        }
+    });
+    println!("{}", v);
+    1
+}
+
+fn skill_list_cmd(as_json: bool) -> i32 {
+    if as_json {
+        let items: Vec<serde_json::Value> = SKILLS
+            .iter()
+            .map(|s| {
+                serde_json::json!({
+                    "name": s.name,
+                    "description": s.description,
+                    "path": s.path,
+                })
+            })
+            .collect();
+        let v = serde_json::json!({
+            "schemaVersion": 1,
+            "skills": items,
+        });
+        match serde_json::to_string_pretty(&v) {
+            Ok(s) => println!("{}", s),
+            Err(e) => {
+                eprintln!("error: failed to serialise skill list: {e}");
+                return 1;
+            }
+        }
+        return 0;
+    }
+    for s in SKILLS {
+        println!("{:<14} {}", s.name, s.description);
+    }
+    0
+}
+
+fn skill_get_cmd(name: &str, as_json: bool) -> i32 {
+    match find_skill(name) {
+        Some(s) => {
+            if as_json {
+                let v = serde_json::json!({
+                    "schemaVersion": 1,
+                    "name": s.name,
+                    "description": s.description,
+                    "path": s.path,
+                    "content": s.content,
+                });
+                match serde_json::to_string_pretty(&v) {
+                    Ok(out) => println!("{}", out),
+                    Err(e) => {
+                        eprintln!("error: failed to serialise skill: {e}");
+                        return 1;
+                    }
+                }
+            } else {
+                print!("{}", s.content);
+            }
+            0
+        }
+        None => {
+            if as_json {
+                skill_unknown_json(name)
+            } else {
+                skill_unknown(name)
+            }
+        }
+    }
+}
+
+fn skill_path_cmd(name: &str, as_json: bool) -> i32 {
+    match find_skill(name) {
+        Some(s) => {
+            if as_json {
+                let v = serde_json::json!({
+                    "schemaVersion": 1,
+                    "name": s.name,
+                    "path": s.path,
+                });
+                println!("{}", v);
+            } else {
+                println!("{}", s.path);
+            }
+            0
+        }
+        None => {
+            if as_json {
+                skill_unknown_json(name)
+            } else {
+                skill_unknown(name)
+            }
+        }
+    }
+}
+
+fn skill_show_cmd(name: &str, as_json: bool) -> i32 {
+    match find_skill(name) {
+        Some(s) => {
+            if as_json {
+                // `show` in JSON mode is identical to `get` in JSON mode —
+                // the prose header makes no sense as JSON, so we emit the
+                // structured form once.
+                let v = serde_json::json!({
+                    "schemaVersion": 1,
+                    "name": s.name,
+                    "description": s.description,
+                    "path": s.path,
+                    "content": s.content,
+                });
+                match serde_json::to_string_pretty(&v) {
+                    Ok(out) => println!("{}", out),
+                    Err(e) => {
+                        eprintln!("error: failed to serialise skill: {e}");
+                        return 1;
+                    }
+                }
+            } else {
+                println!("# {} ({})", s.name, s.path);
+                println!();
+                println!("{}", s.description);
+                println!();
+                println!("---");
+                println!();
+                print!("{}", s.content);
+            }
+            0
+        }
+        None => {
+            if as_json {
+                skill_unknown_json(name)
+            } else {
+                skill_unknown(name)
+            }
+        }
+    }
+}
+
+/// `ilo version` — plain prints `ilo X.Y.Z`, `--json` emits a structured
+/// envelope so agent tooling can route on the version without parsing.
+fn version_cmd(as_json: bool) -> i32 {
+    if as_json {
+        let v = serde_json::json!({
+            "schemaVersion": 1,
+            "name": "ilo",
+            "version": env!("CARGO_PKG_VERSION"),
+            "features": features_list(),
+        });
+        match serde_json::to_string_pretty(&v) {
+            Ok(s) => println!("{}", s),
+            Err(e) => {
+                eprintln!("error: failed to serialise version: {e}");
+                return 1;
+            }
+        }
+    } else {
+        println!("ilo {}", env!("CARGO_PKG_VERSION"));
+    }
+    0
+}
+
+/// Build-time feature flags that affect runtime behaviour. Surfaced in the
+/// `--json` version output so agents can detect e.g. whether the JIT or
+/// MCP-tools feature is compiled in without having to probe with a sample
+/// program.
+fn features_list() -> Vec<&'static str> {
+    // Each entry is wrapped in `Option` so the cfg gates collapse to `None`
+    // when a feature is off without tripping `clippy::vec_init_then_push`.
+    let entries: [Option<&'static str>; 3] = [
+        #[cfg(feature = "cranelift")]
+        Some("cranelift"),
+        #[cfg(not(feature = "cranelift"))]
+        None,
+        #[cfg(feature = "llvm")]
+        Some("llvm"),
+        #[cfg(not(feature = "llvm"))]
+        None,
+        #[cfg(feature = "tools")]
+        Some("tools"),
+        #[cfg(not(feature = "tools"))]
+        None,
+    ];
+    entries.into_iter().flatten().collect()
+}
+
+/// `ilo explain ILO-XXXX` — plain prints the long-form explanation,
+/// `--json` emits a structured envelope with `code`, `short`, and `long`
+/// so agent tooling can route on the error code class without parsing
+/// markdown.
+fn explain_cmd(code: &str, as_json: bool) -> i32 {
+    match diagnostic::registry::lookup(code) {
+        Some(entry) => {
+            if as_json {
+                let v = serde_json::json!({
+                    "schemaVersion": 1,
+                    "code": entry.code,
+                    "short": entry.short,
+                    "long": entry.long,
+                });
+                match serde_json::to_string_pretty(&v) {
+                    Ok(s) => println!("{}", s),
+                    Err(e) => {
+                        eprintln!("error: failed to serialise explain: {e}");
+                        return 1;
+                    }
+                }
+            } else {
+                print!("{}", entry.long);
+            }
+            0
+        }
+        None => {
+            if as_json {
+                let v = serde_json::json!({
+                    "schemaVersion": 1,
+                    "error": {
+                        "code": "unknown-error-code",
+                        "message": format!("unknown error code: {code}"),
+                        "input": code,
+                    }
+                });
+                println!("{}", v);
+            } else {
+                eprintln!("unknown error code: {}", code);
+                eprintln!("Error codes have the form ILO-L001, ILO-P001, ILO-T001, ILO-R001.");
+            }
+            1
+        }
+    }
+}
+
 // ── `ilo tools` subcommand ─────────────────────────────────────────────────
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -1019,6 +1328,7 @@ fn compile_cmd(args: &[String]) -> i32 {
     let mut source_arg: Option<&str> = None;
     let mut func_name: Option<&str> = None;
     let mut bench_mode = false;
+    let mut as_json = false;
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
@@ -1032,6 +1342,9 @@ fn compile_cmd(args: &[String]) -> i32 {
             }
             "--bench" => {
                 bench_mode = true;
+            }
+            "--json" | "-j" => {
+                as_json = true;
             }
             _ if source_arg.is_none() => {
                 source_arg = Some(&args[i]);
@@ -1172,18 +1485,46 @@ fn compile_cmd(args: &[String]) -> i32 {
     });
 
     // AOT compile
+    let start = std::time::Instant::now();
     let result = if bench_mode {
         vm::compile_cranelift::compile_to_bench_binary(&compiled, entry, &output)
     } else {
         vm::compile_cranelift::compile_to_binary(&compiled, entry, &output)
     };
+    let duration_ms = start.elapsed().as_millis();
     match result {
         Ok(()) => {
-            eprintln!("Compiled: {}", output);
+            if as_json {
+                let size_bytes = std::fs::metadata(&output).map(|m| m.len()).ok();
+                let v = serde_json::json!({
+                    "schemaVersion": 1,
+                    "ok": true,
+                    "output": output,
+                    "entry": entry,
+                    "bench": bench_mode,
+                    "sizeBytes": size_bytes,
+                    "durationMs": duration_ms,
+                });
+                println!("{}", v);
+            } else {
+                eprintln!("Compiled: {}", output);
+            }
             0
         }
         Err(e) => {
-            eprintln!("AOT compile error: {}", e);
+            if as_json {
+                let v = serde_json::json!({
+                    "schemaVersion": 1,
+                    "ok": false,
+                    "error": {
+                        "phase": "aot-compile",
+                        "message": e.to_string(),
+                    }
+                });
+                println!("{}", v);
+            } else {
+                eprintln!("AOT compile error: {}", e);
+            }
             1
         }
     }
@@ -1897,6 +2238,34 @@ fn main() {
         std::process::exit(0);
     }
 
+    // Friendly usage for `ilo run` / `ilo check` / `ilo build` with no
+    // source argument. Without this, clap rejects the missing-positional
+    // and we fall through to dispatch_bare_args, which then tries to lex
+    // the verb (`run` / `check` / `build`) as inline ilo source and emits
+    // a confusing parser error. The verb-noun shape is the recommended
+    // surface for agents and humans alike (ilo run file.ilo); show usage
+    // instead of a parser blowup.
+    if raw_args.len() == 2 {
+        match raw_args[1].as_str() {
+            "run" => {
+                eprintln!("Usage: ilo run <file.ilo> [func] [args...]");
+                eprintln!("       ilo run <inline-code> [func] [args...]");
+                std::process::exit(1);
+            }
+            "check" => {
+                eprintln!("Usage: ilo check <file.ilo>");
+                eprintln!("       ilo check <inline-code>");
+                eprintln!("       ilo check <file.ilo> --json   (machine-readable diagnostics)");
+                std::process::exit(1);
+            }
+            "build" => {
+                eprintln!("Usage: ilo build <file.ilo> [-o out] [func]");
+                std::process::exit(1);
+            }
+            _ => {}
+        }
+    }
+
     // Try clap parse.  When it fails (e.g. `ilo 'fn x:n>n;*x 2' 5` or
     // `ilo --help`), reconstruct a Cli with the raw positional args.
     let (cli, bare_args_have_bin_name) = match cli::Cli::try_parse_from(&raw_args) {
@@ -1999,7 +2368,7 @@ fn dispatch_cli(cli: cli::Cli, bare_has_bin: bool) -> i32 {
             serv_cmd(&args);
             0
         }
-        Some(cli::Cmd::Compile(c)) => {
+        Some(cli::Cmd::Compile(c)) | Some(cli::Cmd::Build(c)) => {
             let mut args: Vec<String> = vec![c.source];
             if let Some(ref o) = c.output {
                 args.push("-o".into());
@@ -2008,22 +2377,23 @@ fn dispatch_cli(cli: cli::Cli, bare_has_bin: bool) -> i32 {
             if c.bench {
                 args.push("--bench".into());
             }
+            if cli.global.explicit_json() {
+                args.push("--json".into());
+            }
             if let Some(ref f) = c.func {
                 args.push(f.clone());
             }
             compile_cmd(&args)
         }
-        Some(cli::Cmd::Explain(e)) => match diagnostic::registry::lookup(&e.code) {
-            Some(entry) => {
-                print!("{}", entry.long);
-                0
-            }
-            None => {
-                eprintln!("unknown error code: {}", e.code);
-                eprintln!("Error codes have the form ILO-L001, ILO-P001, ILO-T001, ILO-R001.");
-                1
-            }
-        },
+        Some(cli::Cmd::Check(c)) => {
+            let mode = cli.global.output_mode();
+            let explicit_json = cli.global.explicit_json();
+            check_cmd(&c.source, mode, explicit_json)
+        }
+        Some(cli::Cmd::Explain(e)) => {
+            let as_json = cli.global.explicit_json();
+            explain_cmd(&e.code, as_json)
+        }
         Some(cli::Cmd::Spec(s)) => {
             match s.topic.as_deref() {
                 Some("lang") => print!("{}", include_str!("../SPEC.md")),
@@ -2032,10 +2402,16 @@ fn dispatch_cli(cli: cli::Cli, bare_has_bin: bool) -> i32 {
             }
             0
         }
-        Some(cli::Cmd::Version) => {
-            println!("ilo {}", env!("CARGO_PKG_VERSION"));
-            0
+        Some(cli::Cmd::Skill(s)) => {
+            let as_json = cli.global.explicit_json();
+            match s.cmd {
+                cli::args::SkillCmd::List => skill_list_cmd(as_json),
+                cli::args::SkillCmd::Get { name } => skill_get_cmd(&name, as_json),
+                cli::args::SkillCmd::Path { name } => skill_path_cmd(&name, as_json),
+                cli::args::SkillCmd::Show { name } => skill_show_cmd(&name, as_json),
+            }
         }
+        Some(cli::Cmd::Version) => version_cmd(cli.global.explicit_json()),
         Some(cli::Cmd::Run(r)) => {
             let mode = cli.global.output_mode();
             let explicit_json = cli.global.explicit_json();
@@ -2117,6 +2493,11 @@ fn dispatch_bare_args(raw_args: Vec<String>, global: &cli::Global) -> i32 {
     if args.len() < 2 {
         eprintln!(
             "Usage: ilo <file-or-code> [args... | --run func args... | --bench func args... | --emit python]"
+        );
+        eprintln!("       ilo run <file> [args...]                  Run (verb form)");
+        eprintln!("       ilo check <file> [--json]                 Verify without running");
+        eprintln!(
+            "       ilo build <file> -o <out> [func]          AOT compile (alias for compile)"
         );
         eprintln!("       ilo repl                                  Interactive REPL");
         eprintln!("       ilo serv [--mcp <path>] [--tools <path>]  Stdio agent loop");
@@ -2467,6 +2848,114 @@ fn resolve_engine_func_name<'a>(
         return (Some("main"), &[][..]);
     }
     (None, &[][..])
+}
+
+/// `ilo check <file-or-code>` — run the verifier without executing.
+///
+/// Exit code 0 = program is well-typed and verifier-clean.
+/// Exit code 1 = parse / lex / import / verify errors. Diagnostics are
+/// emitted to stderr in the resolved output mode (auto-detected ANSI/text,
+/// or JSON when `--json` is passed or stderr is not a TTY).
+///
+/// Mirrors the front-half of `dispatch_run` — lex, parse, import-resolve,
+/// verify — but stops before bytecode compilation / execution. Factored
+/// out rather than reused so a future verify-only invocation path
+/// (e.g. an `--check-only` flag on `run`) can call into the same logic
+/// without disturbing the run hot path.
+fn check_cmd(source_arg: &str, mode: OutputMode, _explicit_json: bool) -> i32 {
+    // Read source from file or treat as inline code.
+    let (source, is_file) = if std::path::Path::new(source_arg).is_file() {
+        match std::fs::read_to_string(source_arg) {
+            Ok(s) => (s, true),
+            Err(e) => {
+                eprintln!("Error reading {}: {}", source_arg, e);
+                return 1;
+            }
+        }
+    } else {
+        if source_arg.is_empty() {
+            eprintln!("Error: empty code string");
+            return 1;
+        }
+        (source_arg.to_string(), false)
+    };
+
+    let mut had_errors = false;
+
+    let tokens = match lexer::lex(&source) {
+        Ok(t) => t,
+        Err(e) => {
+            report_diagnostic(&Diagnostic::from(&e).with_source(source.clone()), mode);
+            return 1;
+        }
+    };
+
+    let token_spans: Vec<(lexer::Token, ast::Span)> = tokens
+        .into_iter()
+        .map(|(t, r)| {
+            (
+                t,
+                ast::Span {
+                    start: r.start,
+                    end: r.end,
+                },
+            )
+        })
+        .collect();
+
+    let (mut program, parse_errors) = parser::parse(token_spans);
+    ast::resolve_aliases(&mut program);
+    ast::desugar_dot_var_index(&mut program);
+    program.source = Some(source.clone());
+
+    // Resolve imports relative to the file's parent dir (skipped for inline).
+    {
+        let base_dir: Option<std::path::PathBuf> = if is_file {
+            std::path::Path::new(source_arg)
+                .canonicalize()
+                .ok()
+                .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+        } else {
+            None
+        };
+        let mut import_diagnostics: Vec<Diagnostic> = Vec::new();
+        let mut visited = std::collections::HashSet::new();
+        if let Ok(canonical_file) = std::path::Path::new(source_arg).canonicalize() {
+            visited.insert(canonical_file);
+        }
+        program.declarations = resolve_imports(
+            program.declarations,
+            base_dir.as_deref(),
+            &mut visited,
+            &mut import_diagnostics,
+        );
+        for d in import_diagnostics {
+            report_diagnostic(&d, mode);
+            had_errors = true;
+        }
+    }
+
+    for e in &parse_errors {
+        report_diagnostic(&Diagnostic::from(e).with_source(source.clone()), mode);
+        had_errors = true;
+    }
+
+    // Run the verifier even when parse errors fired — diagnostics are
+    // cumulative so the caller sees every issue in one pass, not a
+    // fix-one-rerun-find-next loop. Verifier itself is robust to
+    // partially-broken ASTs.
+    let verify_result = verify::verify(&program);
+    for w in &verify_result.warnings {
+        report_diagnostic(&Diagnostic::from(w).with_source(source.clone()), mode);
+    }
+    if !verify_result.errors.is_empty() {
+        for e in &verify_result.errors {
+            report_diagnostic(&Diagnostic::from(e).with_source(source.clone()), mode);
+        }
+        had_errors = true;
+    }
+
+    if had_errors { 1 } else { 0 }
 }
 
 /// Dispatch the `run` subcommand via parsed RunArgs.  Returns exit code.
@@ -3143,6 +3632,9 @@ fn run_llvm_engine(_program: &ast::Program, rest: &[String]) -> i32 {
 fn print_help() {
     println!("ilo — a programming language for AI agents\n");
     println!("Usage:");
+    println!("  ilo run <file.ilo> [args...]      Run (verb form; alias for positional)");
+    println!("  ilo check <file.ilo>              Verify without running (exit 0 = clean)");
+    println!("  ilo build <file.ilo> -o <out>     AOT compile (alias for `compile`)");
     println!("  ilo <code> [args...]              Run (bytecode VM; use --jit for JIT)");
     println!("  ilo <file.ilo> [args...]          Run from file");
     println!("  ilo <code> func [args...]         Run a specific function");

@@ -1,0 +1,26 @@
+-- grp fn xs — group items by the key returned by `fn`. Phase 2 PR3c
+-- lifts the 2-arg form off the tree-bridge: VM and Cranelift now run a
+-- native foreach + per-element OP_CALL_DYN, then assemble the result
+-- map via OP_GRP_BY_KEY. Closure callbacks dispatch natively.
+
+-- Key: a text label based on size bucket.
+lbl n:n>t;>n 5 "big";"small"
+
+by-size ns:L n>M t (L n);grp lbl ns
+
+-- Capturing lambda: bucket by threshold supplied by the caller. The
+-- closure captures `t` and dispatches natively under Cranelift JIT/AOT.
+by-thresh ns:L n t:n>M t (L n);grp (n:n>t;>n t "big";"small") ns
+
+-- Numeric key: grp floors finite floats to i64. Bucket items by their
+-- integer floor so 1.0, 1.5 and 1.9 share a key but 2.0 does not.
+fl n:n>n;flr n
+
+by-floor ns:L n>M n (L n);grp fl ns
+
+-- run: by-size [1,2,7,3,8,9]
+-- out: {big: [7, 8, 9]; small: [1, 2, 3]}
+-- run: by-thresh [1,2,7,3,8,9] 5
+-- out: {big: [7, 8, 9]; small: [1, 2, 3]}
+-- run: by-floor [1.1,1.7,2.4,1.5,2.9]
+-- out: {1: [1.1, 1.7, 1.5]; 2: [2.4, 2.9]}

@@ -1,0 +1,82 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "ilo",
+  "scopeName": "source.ilo",
+  "patterns": [
+    { "include": "#comment" },
+    { "include": "#string" },
+    { "include": "#number" },
+    { "include": "#boolean" },
+    { "include": "#type-sigil" },
+    { "include": "#operator" },
+    { "include": "#keyword" },
+    { "include": "#builtin" },
+    { "include": "#function-def" },
+    { "include": "#punctuation" }
+  ],
+  "repository": {
+    "comment": {
+      "match": "--.*$",
+      "name": "comment.line.double-dash.ilo"
+    },
+    "string": {
+      "match": "\"[^\"\\\\]*(?:\\\\.[^\"\\\\]*)*\"",
+      "name": "string.quoted.double.ilo"
+    },
+    "number": {
+      "match": "\\b-?[0-9]+(\\.[0-9]+)?\\b",
+      "name": "constant.numeric.ilo"
+    },
+    "boolean": {
+      "match": "\\b(true|false)\\b",
+      "name": "constant.language.boolean.ilo"
+    },
+    "type-sigil": {
+      "patterns": [
+        {
+          "match": ":[ntb?LRMFOS]\\b",
+          "name": "support.type.ilo"
+        },
+        {
+          "match": ":(number|text|bool|List|Map|Result)\\b",
+          "name": "support.type.ilo"
+        },
+        {
+          "match": "(?<=\\s)>\\s*[ntb?LRMFOS]\\b",
+          "name": "support.type.ilo"
+        },
+        {
+          "match": "(?<=\\s)>\\s*(number|text|bool|List|Map|Result)\\b",
+          "name": "support.type.ilo"
+        }
+      ]
+    },
+    "operator": {
+      "match": ">>|>=|<=|!=|==|\\+=|\\?\\?|\\.\\?|\\+|-|\\*|/|%|>|<|=(?!=)|&|\\||!|\\^|~|\\$",
+      "name": "keyword.operator.ilo"
+    },
+    "keyword": {
+      "match": "\\b(type|tool|use|with|timeout|retry|return)\\b",
+      "name": "keyword.control.ilo"
+    },
+    "builtin": {
+      "match": "\\b(cat|len|trm|spl|has|rgx|fmt|hd|tl|rev|srt|slc|flat|unq|map|flt|fld|grp|sum|avg|mmap|mget|mset|mhas|mkeys|mvals|mdel|str|num|abs|flr|cel|rnd|get|post|rd|wr|rdb|jpth|jdmp|jpar|prnt|now|env|fac)\\b",
+      "name": "support.function.ilo"
+    },
+    "function-def": {
+      "match": "^([a-z][a-z0-9]*)(?=\\s+[a-z])",
+      "captures": {
+        "1": { "name": "entity.name.function.ilo" }
+      }
+    },
+    "punctuation": {
+      "patterns": [
+        { "match": "[;]", "name": "punctuation.separator.ilo" },
+        { "match": "[:\\.]", "name": "punctuation.accessor.ilo" },
+        { "match": "[{}()\\[\\]]", "name": "punctuation.bracket.ilo" },
+        { "match": ",", "name": "punctuation.comma.ilo" },
+        { "match": "→", "name": "punctuation.arrow.ilo" }
+      ]
+    }
+  }
+}

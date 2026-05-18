@@ -66,12 +66,21 @@ pub enum Cmd {
     /// AOT compile to a standalone native binary.
     Compile(CompileArgs),
 
+    /// AOT compile to a standalone native binary (alias for `compile`).
+    Build(CompileArgs),
+
+    /// Verify a program without running it.
+    Check(CheckArgs),
+
     /// Show language specification or compact spec.
     #[command(alias = "help")]
     Spec(SpecArgs),
 
     /// Explain an error code (e.g. ILO-T005).
     Explain(ExplainArgs),
+
+    /// Modular agent skills (ilo-language, ilo-builtins, ...).
+    Skill(SkillArgs),
 
     /// Print version.
     Version,
@@ -277,6 +286,14 @@ pub struct CompileArgs {
     pub bench: bool,
 }
 
+// ── Check ──────────────────────────────────────────────────────────────────────
+
+#[derive(Args, Debug)]
+pub struct CheckArgs {
+    /// Source file or inline code.
+    pub source: String,
+}
+
 // ── Spec ───────────────────────────────────────────────────────────────────────
 
 #[derive(Args, Debug)]
@@ -291,6 +308,26 @@ pub struct SpecArgs {
 pub struct ExplainArgs {
     /// Error code to explain (e.g. ILO-T005).
     pub code: String,
+}
+
+// ── Skill ─────────────────────────────────────────────────────────────────────
+
+#[derive(Args, Debug)]
+pub struct SkillArgs {
+    #[command(subcommand)]
+    pub cmd: SkillCmd,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum SkillCmd {
+    /// List all available skills with their descriptions.
+    List,
+    /// Print the full content of a skill by name.
+    Get { name: String },
+    /// Print the bundled filesystem path of a skill by name.
+    Path { name: String },
+    /// Print a skill with a formatted header.
+    Show { name: String },
 }
 
 // ── OutputMode resolution ──────────────────────────────────────────────────────

@@ -408,6 +408,40 @@ pub(crate) const OP_LOADFN: u8 = 159;
 // semantics of Value::Closure in the tree interpreter.
 pub(crate) const OP_MAKE_CLOSURE: u8 = 178;
 
+// ABC OP_SRT_BY_KEY: finalizer for `srt 2` native lift.
+//   A = destination register (sorted list)
+//   B = register holding the pre-computed keys list (one key per item)
+//   C = register holding the values list (same length, parallel order)
+// The compiler emits a per-element OP_CALL_DYN loop that fills the keys
+// and values lists; this opcode sorts the values list in place by key.
+// Comparison rules mirror the tree-walker: all-Number ascending numeric,
+// all-Text ascending lex, mixed types fall back to Ordering::Equal
+// (stable, no error). Returns a fresh `HeapObj::List` of the sorted
+// values (consumes nothing; both input lists are decoupled from the
+// output and their RCs are managed normally by the caller).
+pub(crate) const OP_SRT_BY_KEY: u8 = 179;
+
+// ABC OP_GRP_BY_KEY: finalizer for `grp 2` native lift.
+//   A = destination register (Map t (L _))
+//   B = register holding the pre-computed keys list
+//   C = register holding the values list
+// Builds a HashMap<MapKey, NanVal::List> where each value list contains
+// the elements (in input order) whose key bucket matches. Numeric keys
+// floor to i64 to match `MapKey::from_value`. Non-finite numeric keys
+// raise a runtime error mirroring the tree-walker.
+pub(crate) const OP_GRP_BY_KEY: u8 = 180;
+
+// ABC OP_UNIQ_BY_KEY: finalizer for `uniqby 2` native lift.
+//   A = destination register (deduplicated list)
+//   B = register holding the pre-computed keys list
+//   C = register holding the values list
+// Walks the parallel lists, keeping the first item per distinct key.
+// Keys are hashed via type-prefixed strings (`t:`/`n:`/`b:`) so values
+// from disjoint domains never alias each other — matches the tree
+// walker's existing scheme exactly (see `interpreter::mod.rs` uniqby
+// arm), so we deliberately don't reuse `MapKey` here.
+pub(crate) const OP_UNIQ_BY_KEY: u8 = 181;
+
 // Dynamic call by function reference. The callee is a FnRef NanVal sitting
 // in a register; we decode its (kind, id), then either push a VM frame
 // (user fn) or invoke the builtin dispatch path (builtin).
@@ -519,18 +553,17 @@ pub(crate) fn is_tree_bridge_eligible(b: crate::builtins::Builtin, argc: usize) 
         // HOFs that take a FnRef + list. The bridge routes them through the
         // tree interpreter, which dispatches user-fn callbacks via the
         // Env populated from the ACTIVE_AST_PROGRAM TLS.
-        (Builtin::Grp, 2) => true,
-        (Builtin::Uniqby, 2) => true,
-        // partition 2 was on the bridge in PR 3b; Phase 2 PR3 lifts it natively
-        // via OP_CALL_DYN + OP_LISTAPPEND so closure callbacks dispatch without
-        // a tree re-entry. See the matching arm in the compiler.
+        // grp / uniqby / srt / partition / mapr 2-arg were on the bridge in
+        // PR 3 and earlier; Phase 2 PR3 / PR3b / PR3c lift them natively via
+        // OP_CALL_DYN + a dedicated finalizer opcode (OP_GRP_BY_KEY /
+        // OP_UNIQ_BY_KEY / OP_SRT_BY_KEY) or, where no finalizer is needed,
+        // a tail OP_WRAPOK (mapr). See the matching arms in the compiler.
         // ct fn xs / ct fn ctx xs — count by predicate. Same bridge
         // contract as flt 2/3; tree interpreter handles the user-fn
         // callback via ACTIVE_AST_PROGRAM. Named `ct` to avoid
         // `cnt`-as-continue keyword reservation.
         (Builtin::Ct, 2) => true,
         (Builtin::Ct, 3) => true,
-        (Builtin::Srt, 2) => true,
         // rsrt fn xs — descending sort by key. Same bridge contract as
         // srt 2-arg: tree interpreter does the user-fn callback, bridge
         // round-trips the result list. Cross-engine parity with srt.
@@ -549,6 +582,11 @@ pub(crate) fn is_tree_bridge_eligible(b: crate::builtins::Builtin, argc: usize) 
         // rsrt fn ctx xs — closure-bind descending sort. Same bridge
         // contract as srt 3-arg.
         (Builtin::Rsrt, 3) => true,
+        // env-all -> R M t t: zero-arg snapshot of the process environment.
+        // Not perf-sensitive (one-shot enumeration), and the result is a
+        // Map[Text, Text] which round-trips through NanVal heap_map cleanly,
+        // so the bridge is the right tier for both VM and Cranelift.
+        (Builtin::EnvAll, 0) => true,
         _ => false,
     }
 }
@@ -559,7 +597,13 @@ pub(crate) fn tree_bridge_returns_result(b: crate::builtins::Builtin) -> bool {
     use crate::builtins::Builtin;
     matches!(
         b,
-        Builtin::Rd | Builtin::Rdb | Builtin::Mapr | Builtin::Ls | Builtin::Walk | Builtin::Glob
+        Builtin::Rd
+            | Builtin::Rdb
+            | Builtin::Mapr
+            | Builtin::Ls
+            | Builtin::Walk
+            | Builtin::Glob
+            | Builtin::EnvAll
     )
 }
 
@@ -1584,6 +1628,94 @@ impl RegCompiler {
     ///   - Panic emits OP_PANIC_UNWRAP to abort with a runtime diagnostic.
     ///
     /// Both ultimately extract the Ok inner with OP_UNWRAP on the hot branch.
+    /// Phase 2 PR3c shared emitter for the keyed-finalizer HOFs
+    /// (`srt 2 fn xs` / `grp 2 fn xs` / `uniqby 2 fn xs`).
+    ///
+    /// Emits a native foreach loop that fills two parallel scratch
+    /// lists — keys (per-element user-fn callback result) and vals
+    /// (the original list element) — using OP_CALL_DYN per item. The
+    /// caller passes the finalizer opcode (`OP_SRT_BY_KEY` /
+    /// `OP_GRP_BY_KEY` / `OP_UNIQ_BY_KEY`) which the helper then emits
+    /// against the two lists to assemble the final result.
+    ///
+    /// The shape of the emitted bytecode is identical across all three
+    /// HOFs; the only variation is the final 3-operand finalizer
+    /// opcode, which is why we factor this into one helper.
+    ///
+    /// Returns the register holding the finalized result. Callers are
+    /// responsible for handling `!` / `!!` auto-unwrap — none of the
+    /// three HOFs return a Result today, so verify already rejects the
+    /// unwrap suffixes upstream.
+    fn emit_hof_keyed_finalize(
+        &mut self,
+        fn_arg: &crate::ast::Expr,
+        xs_arg: &crate::ast::Expr,
+        finalizer_op: u8,
+    ) -> u8 {
+        let fn_reg = self.compile_expr(fn_arg);
+        let xs_reg = self.compile_expr(xs_arg);
+
+        // Two parallel scratch lists: keys (per-element callback
+        // result) and vals (the original item). After the loop,
+        // keys[i] is the key for vals[i]; the finalizer opcode walks
+        // both in lockstep.
+        let keys_reg = self.alloc_reg();
+        self.emit_abx(OP_LISTNEW, keys_reg, 0);
+        let vals_reg = self.alloc_reg();
+        self.emit_abx(OP_LISTNEW, vals_reg, 0);
+
+        let idx_reg = self.alloc_reg();
+        let zero_ki = self.current.add_const(Value::Number(0.0));
+        self.emit_abx(OP_LOADK, idx_reg, zero_ki);
+        self.reg_is_num[idx_reg as usize] = true;
+
+        let item_reg = self.alloc_reg();
+        let nil_ki = self.current.add_const(Value::Nil);
+        self.emit_abx(OP_LOADK, item_reg, nil_ki);
+
+        // res_reg + arg_reg contiguous for OP_CALL_DYN ABI.
+        let res_reg = self.alloc_reg();
+        self.emit_abx(OP_LOADK, res_reg, nil_ki);
+        let arg_reg = self.alloc_reg();
+        assert!(
+            arg_reg == res_reg + 1,
+            "keyed-finalize HOF: arg reg must follow result reg contiguously"
+        );
+        self.emit_abx(OP_LOADK, arg_reg, nil_ki);
+
+        let _loop_top = self.current.code.len();
+        self.emit_abc(OP_FOREACHPREP, item_reg, xs_reg, idx_reg);
+        let exit_jump_a = self.emit_jmp_placeholder();
+
+        let body_top = self.current.code.len();
+        self.emit_abc(OP_MOVE, arg_reg, item_reg, 0);
+        self.emit_abc(OP_CALL_DYN, res_reg, fn_reg, 1);
+
+        // Push key and value into their respective accs. OP_LISTAPPEND
+        // clone_rc's the appended NanVal so res_reg and item_reg can
+        // be safely reused by the next iteration.
+        self.emit_abc(OP_LISTAPPEND, keys_reg, keys_reg, res_reg);
+        self.emit_abc(OP_LISTAPPEND, vals_reg, vals_reg, item_reg);
+
+        self.emit_abc(OP_FOREACHNEXT, item_reg, xs_reg, idx_reg);
+        let exit_jump_b = self.emit_jmp_placeholder();
+        self.emit_jump_to(body_top);
+
+        self.current.patch_jump(exit_jump_a);
+        self.current.patch_jump(exit_jump_b);
+
+        // Finalize. The finalizer opcode reads keys + vals and writes
+        // the sorted / grouped / deduped result into out_reg.
+        let out_reg = self.alloc_reg();
+        self.emit_abc(finalizer_op, out_reg, keys_reg, vals_reg);
+
+        self.current_all_regs_numeric = false;
+        self.reg_is_num[out_reg as usize] = false;
+
+        self.next_reg = out_reg + 1;
+        out_reg
+    }
+
     fn emit_result_unwrap(&mut self, a: u8, unwrap: UnwrapMode) {
         debug_assert!(unwrap.is_any(), "emit_result_unwrap called with None");
         let check_reg = self.alloc_reg();
@@ -4648,11 +4780,55 @@ impl RegCompiler {
 
                             return out_reg;
                         }
+                        // srt 2 / grp 2 / uniqby 2 — Phase 2 PR3c HOF
+                        // native lifts, one finalizer opcode each.
+                        //
+                        // Pre-PR3c these three HOFs sat on the tree-bridge:
+                        // every per-element callback round-tripped through
+                        // the tree interpreter via OP_CALL_BUILTIN_TREE,
+                        // paying a NanVal-to-Value cost per call and tying
+                        // the engines to the ACTIVE_AST_PROGRAM TLS.
+                        //
+                        // Now we emit a native foreach loop that fills two
+                        // parallel scratch lists (keys + values) using
+                        // OP_CALL_DYN per element, then hands them to a
+                        // dedicated finalizer opcode. The closure-aware
+                        // OP_CALL_DYN from PR1/PR2 makes capturing lambdas
+                        // work natively without further plumbing.
+                        //
+                        // Each finalizer matches its tree-walker semantics
+                        // exactly (see `interpreter::call_function`'s arms
+                        // for srt 2-arg / grp 2 / uniqby 2). The shared
+                        // shape is:
+                        //   keys = LISTNEW; vals = LISTNEW
+                        //   foreach item in xs:
+                        //     arg = item
+                        //     key = CALL_DYN fn 1 arg
+                        //     LISTAPPEND keys key
+                        //     LISTAPPEND vals item
+                        //   out = OP_<X>_BY_KEY keys vals
+                        //
+                        // Each arm calls the same `emit_hof_keyed_finalize`
+                        // helper to keep the three identical until the
+                        // finalizer step.
+                        (Builtin::Srt, 2) => {
+                            return self.emit_hof_keyed_finalize(&args[0], &args[1], OP_SRT_BY_KEY);
+                        }
+                        (Builtin::Grp, 2) => {
+                            return self.emit_hof_keyed_finalize(&args[0], &args[1], OP_GRP_BY_KEY);
+                        }
+                        (Builtin::Uniqby, 2) => {
+                            return self.emit_hof_keyed_finalize(
+                                &args[0],
+                                &args[1],
+                                OP_UNIQ_BY_KEY,
+                            );
+                        }
                         // Builtins that fall through:
                         //   - tree-bridge eligible (rgx, rgxall, fmt-variadic,
-                        //     rd 2-arg, rdb, sleep, grp/uniqby/srt 2-arg from
-                        //     PR 3b, map/flt/fld/srt closure-bind ctx forms
-                        //     from PR 3c) → routed to OP_CALL_BUILTIN_TREE below.
+                        //     rd 2-arg, rdb, sleep, ct 2/3-arg, rsrt 2-arg,
+                        //     map/flt/fld/srt closure-bind ctx forms)
+                        //     → routed to OP_CALL_BUILTIN_TREE below.
                         //   - Anything else (e.g. `wr` 3-arg with dynamic fmt)
                         //     still errors here; the native lift lands later in
                         //     the HOF dispatch chain. `map`, `flt`, `fld`, and
@@ -5380,7 +5556,8 @@ fn chunk_is_all_numeric(chunk: &Chunk) -> bool {
             | OP_TL | OP_FMT2 | OP_RGXSUB | OP_ZIP | OP_ENUMERATE | OP_WINDOW | OP_WINDOW_VIEW
             | OP_FFT | OP_IFFT | OP_RANGE | OP_CHUNKS | OP_CUMSUM | OP_SETUNION | OP_SETINTER
             | OP_SETDIFF | OP_TRANSPOSE | OP_MATMUL | OP_INV | OP_SOLVE | OP_DTFMT | OP_DTPARSE
-            | OP_FLAT | OP_CALL_BUILTIN_TREE | OP_LOADFN | OP_CALL_DYN | OP_MAKE_CLOSURE => {
+            | OP_FLAT | OP_CALL_BUILTIN_TREE | OP_LOADFN | OP_CALL_DYN | OP_MAKE_CLOSURE
+            | OP_SRT_BY_KEY | OP_GRP_BY_KEY | OP_UNIQ_BY_KEY => {
                 return false;
             }
             _ => {}
@@ -12107,6 +12284,72 @@ impl<'a> VM<'a> {
                     // exists so the opcode is a known dispatch target for future wiring.
                     vm_err!(VmError::Type("partition: VM HOF dispatch not implemented"));
                 }
+                OP_SRT_BY_KEY => {
+                    // Phase 2 PR3c finalizer for `srt 2 fn xs`. R[B] holds the
+                    // pre-computed keys list, R[C] holds the values list (both
+                    // built by the emitter's foreach + OP_CALL_DYN loop). We
+                    // sort vals by key and store the fresh list in R[A].
+                    let a = ((inst >> 16) & 0xFF) as usize + base;
+                    let b = ((inst >> 8) & 0xFF) as usize + base;
+                    let c = (inst & 0xFF) as usize + base;
+                    let vb = reg!(b);
+                    let vc = reg!(c);
+                    if !vb.is_heap() || (vb.0 & TAG_MASK) != TAG_LIST {
+                        vm_err!(VmError::Type("srt: internal keys reg is not a list"));
+                    }
+                    if !vc.is_heap() || (vc.0 & TAG_MASK) != TAG_LIST {
+                        vm_err!(VmError::Type("srt: internal values reg is not a list"));
+                    }
+                    // SAFETY: TAG_LIST + is_heap() → live List/View Rc.
+                    let keys = slice_of(unsafe { vb.as_heap_ref() });
+                    let vals = slice_of(unsafe { vc.as_heap_ref() });
+                    let out = srt_by_key_finalize(keys, vals);
+                    reg_set!(a, out);
+                }
+                OP_GRP_BY_KEY => {
+                    // Phase 2 PR3c finalizer for `grp 2 fn xs`. Same shape as
+                    // OP_SRT_BY_KEY but the finalizer produces a Map and can
+                    // fail on a bad key-value type.
+                    let a = ((inst >> 16) & 0xFF) as usize + base;
+                    let b = ((inst >> 8) & 0xFF) as usize + base;
+                    let c = (inst & 0xFF) as usize + base;
+                    let vb = reg!(b);
+                    let vc = reg!(c);
+                    if !vb.is_heap() || (vb.0 & TAG_MASK) != TAG_LIST {
+                        vm_err!(VmError::Type("grp: internal keys reg is not a list"));
+                    }
+                    if !vc.is_heap() || (vc.0 & TAG_MASK) != TAG_LIST {
+                        vm_err!(VmError::Type("grp: internal values reg is not a list"));
+                    }
+                    let keys = slice_of(unsafe { vb.as_heap_ref() });
+                    let vals = slice_of(unsafe { vc.as_heap_ref() });
+                    match grp_by_key_finalize(keys, vals) {
+                        Ok(out) => reg_set!(a, out),
+                        Err(msg) => vm_err!(VmError::Type(msg)),
+                    }
+                }
+                OP_UNIQ_BY_KEY => {
+                    // Phase 2 PR3c finalizer for `uniqby 2 fn xs`. Walks keys
+                    // and vals in parallel, keeps the first value per distinct
+                    // key. Type-prefixed string keys so n/t/b never alias.
+                    let a = ((inst >> 16) & 0xFF) as usize + base;
+                    let b = ((inst >> 8) & 0xFF) as usize + base;
+                    let c = (inst & 0xFF) as usize + base;
+                    let vb = reg!(b);
+                    let vc = reg!(c);
+                    if !vb.is_heap() || (vb.0 & TAG_MASK) != TAG_LIST {
+                        vm_err!(VmError::Type("uniqby: internal keys reg is not a list"));
+                    }
+                    if !vc.is_heap() || (vc.0 & TAG_MASK) != TAG_LIST {
+                        vm_err!(VmError::Type("uniqby: internal values reg is not a list"));
+                    }
+                    let keys = slice_of(unsafe { vb.as_heap_ref() });
+                    let vals = slice_of(unsafe { vc.as_heap_ref() });
+                    match uniq_by_key_finalize(keys, vals) {
+                        Ok(out) => reg_set!(a, out),
+                        Err(msg) => vm_err!(VmError::Type(msg)),
+                    }
+                }
                 _ => vm_err!(VmError::UnknownOpcode { op }),
             }
         }
@@ -12198,6 +12441,165 @@ fn nanval_to_grouping_key(v: NanVal) -> Option<MapKey> {
         }
     }
     None
+}
+
+/// Finalizer for `srt 2 fn xs` (OP_SRT_BY_KEY). Sorts `vals` by the
+/// parallel `keys` slice, mirroring the tree-walker's policy:
+///   - all-Number keys → ascending numeric, NaN folded to Equal.
+///   - all-Text keys → ascending byte-wise lex.
+///   - mixed-type keys → no error; comparator returns Equal so the
+///     sort is stable on input order. Matches `srt 2-arg` in
+///     `interpreter::call_function`.
+///
+/// Both input slices are expected to be the same length (the emitter
+/// guarantees this — keys and vals are filled in lockstep). Returns a
+/// fresh `HeapObj::List` NanVal owning RC=1; each element's RC is
+/// bumped exactly once on the way out.
+///
+/// Used by both the VM dispatch arm and the Cranelift `jit_srt_by_key`
+/// wrapper so the two paths can't drift.
+fn srt_by_key_finalize(keys: &[NanVal], vals: &[NanVal]) -> NanVal {
+    debug_assert_eq!(
+        keys.len(),
+        vals.len(),
+        "srt_by_key_finalize: keys/vals length mismatch"
+    );
+    let n = vals.len();
+    if n == 0 {
+        return NanVal::heap_list(Vec::new());
+    }
+    // Build (key, val) pair indices so we don't shuffle the raw NanVal
+    // bits during compare. RC discipline: we bump each emitted val's RC
+    // exactly once below; the caller's lists keep their own RCs.
+    let mut idx: Vec<usize> = (0..n).collect();
+    let all_num = keys.iter().all(|k| k.is_number());
+    let all_text = keys.iter().all(|k| k.is_string());
+    if all_num {
+        idx.sort_by(|&a, &b| {
+            let ka = keys[a].as_number();
+            let kb = keys[b].as_number();
+            ka.partial_cmp(&kb).unwrap_or(std::cmp::Ordering::Equal)
+        });
+    } else if all_text {
+        idx.sort_by(|&a, &b| {
+            // SAFETY: all_text confirmed every key is a TAG_STR heap value.
+            unsafe { nanval_str_cmp(keys[a], keys[b]) }
+        });
+    } else {
+        // Mixed-type keys: tree walker returns Ordering::Equal (effectively
+        // a no-op stable sort). Preserve that behaviour exactly.
+        idx.sort_by(|_, _| std::cmp::Ordering::Equal);
+    }
+    let mut out: Vec<NanVal> = Vec::with_capacity(n);
+    for i in idx {
+        let v = vals[i];
+        v.clone_rc();
+        out.push(v);
+    }
+    NanVal::heap_list(out)
+}
+
+/// Finalizer for `grp 2 fn xs` (OP_GRP_BY_KEY). Buckets `vals` by their
+/// parallel `keys`, returning `Map<MapKey, List<value>>`. Mirrors the
+/// tree-walker's policy in `interpreter::call_function`'s `grp 2-arg`:
+/// text/number/bool keys map through `nanval_to_grouping_key` (numbers
+/// floor to i64, bools become text "true"/"false"); non-finite numbers
+/// or non-{t,n,b} key values raise a runtime error.
+///
+/// Each bucket preserves input order. Each value's RC is bumped exactly
+/// once on the way into its bucket list.
+///
+/// Returns `Ok(NanVal)` for a fresh `HeapObj::Map` of `HeapObj::List`s,
+/// or `Err(&'static str)` if any key value fails the type check.
+fn grp_by_key_finalize(
+    keys: &[NanVal],
+    vals: &[NanVal],
+) -> std::result::Result<NanVal, &'static str> {
+    debug_assert_eq!(
+        keys.len(),
+        vals.len(),
+        "grp_by_key_finalize: keys/vals length mismatch"
+    );
+    let mut groups: std::collections::HashMap<MapKey, Vec<NanVal>> =
+        std::collections::HashMap::new();
+    for i in 0..vals.len() {
+        let mk = match nanval_to_grouping_key(keys[i]) {
+            Some(k) => k,
+            None => {
+                // Tree walker emits two distinct messages: "grp: numeric key
+                // must be finite" for non-finite numbers, and the generic
+                // "key function must return a string, number, or bool" for
+                // other type errors. Cross-engine consistency matters less
+                // than catching the bug, so we collapse to one message
+                // mirroring the dominant tree-walker shape.
+                return Err("grp: key function must return a string, number, or bool");
+            }
+        };
+        let v = vals[i];
+        v.clone_rc();
+        groups.entry(mk).or_default().push(v);
+    }
+    let map: std::collections::HashMap<MapKey, NanVal> = groups
+        .into_iter()
+        .map(|(k, v)| (k, NanVal::heap_list(v)))
+        .collect();
+    Ok(NanVal::heap_map(map))
+}
+
+/// Finalizer for `uniqby 2 fn xs` (OP_UNIQ_BY_KEY). Walks the parallel
+/// `keys`/`vals` slices, keeping the first item per distinct key.
+///
+/// Keys are hashed via type-prefixed strings (`t:` / `n:` / `b:`) to
+/// match the tree-walker's existing scheme exactly — distinct domains
+/// never alias each other. We deliberately don't promote to `MapKey`
+/// here so the dedup behaviour stays byte-for-byte identical to the
+/// tree implementation, including its handling of integer-valued floats
+/// (`n:5` vs `n:5.0` → both `n:5`, same as the tree walker).
+///
+/// Returns `Ok(NanVal)` for a fresh `HeapObj::List`, or `Err(&'static
+/// str)` if a key value isn't text/number/bool.
+fn uniq_by_key_finalize(
+    keys: &[NanVal],
+    vals: &[NanVal],
+) -> std::result::Result<NanVal, &'static str> {
+    debug_assert_eq!(
+        keys.len(),
+        vals.len(),
+        "uniq_by_key_finalize: keys/vals length mismatch"
+    );
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut out: Vec<NanVal> = Vec::new();
+    for i in 0..vals.len() {
+        let k = keys[i];
+        let key_str = if k.is_number() {
+            let n = k.as_number();
+            if n == (n as i64) as f64 {
+                format!("n:{}", n as i64)
+            } else {
+                format!("n:{n}")
+            }
+        } else if k.is_string() {
+            // SAFETY: is_string() confirmed.
+            unsafe {
+                match k.as_heap_ref() {
+                    HeapObj::Str(s) => format!("t:{s}"),
+                    _ => return Err("uniqby: key function must return a string, number, or bool"),
+                }
+            }
+        } else {
+            match k.0 {
+                TAG_TRUE => "b:true".to_string(),
+                TAG_FALSE => "b:false".to_string(),
+                _ => return Err("uniqby: key function must return a string, number, or bool"),
+            }
+        };
+        if seen.insert(key_str) {
+            let v = vals[i];
+            v.clone_rc();
+            out.push(v);
+        }
+    }
+    Ok(NanVal::heap_list(out))
 }
 
 /// Convert a NanVal expected to be a list-of-numbers into Vec<f64>.
@@ -17465,6 +17867,111 @@ pub(crate) extern "C" fn jit_partition(_fn_ref: u64, _list: u64) -> u64 {
     // Returns nil so callers see a typed failure rather than UB. The emitter
     // does not produce OP_PARTITION today; this stub exists for plumbing parity.
     TAG_NIL
+}
+
+/// Cranelift helper for `OP_SRT_BY_KEY` (Phase 2 PR3c srt 2 native lift).
+/// Thin wrapper over `srt_by_key_finalize` so the Cranelift JIT and AOT
+/// paths share a single implementation with the VM dispatcher.
+///
+/// Args:
+///   keys_val: u64 NanVal of the per-element key list (TAG_LIST).
+///   vals_val: u64 NanVal of the parallel values list.
+///   span_bits: packed source span for the call site.
+/// Returns: NanVal bits of a fresh `HeapObj::List` (the sorted values),
+/// or TAG_NIL on an internal type error (with `jit_set_runtime_error_*`
+/// already signalled). Internal-type errors should be impossible —
+/// `RegCompiler` always emits OP_LISTNEW for both operands — but the
+/// check matches the VM dispatch arm so a bytecode bug surfaces as a
+/// typed runtime error rather than UB.
+#[cfg(feature = "cranelift")]
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn jit_srt_by_key(keys_val: u64, vals_val: u64, span_bits: u64) -> u64 {
+    let vk = NanVal(keys_val);
+    let vv = NanVal(vals_val);
+    if !vk.is_heap() || (vk.0 & TAG_MASK) != TAG_LIST {
+        jit_set_runtime_error_with_span(
+            VmError::Type("srt: internal keys reg is not a list"),
+            span_bits,
+        );
+        return TAG_NIL;
+    }
+    if !vv.is_heap() || (vv.0 & TAG_MASK) != TAG_LIST {
+        jit_set_runtime_error_with_span(
+            VmError::Type("srt: internal values reg is not a list"),
+            span_bits,
+        );
+        return TAG_NIL;
+    }
+    // SAFETY: TAG_LIST + is_heap() confirmed for both.
+    let keys = slice_of(unsafe { vk.as_heap_ref() });
+    let vals = slice_of(unsafe { vv.as_heap_ref() });
+    srt_by_key_finalize(keys, vals).0
+}
+
+/// Cranelift helper for `OP_GRP_BY_KEY` (Phase 2 PR3c grp 2 native lift).
+/// Thin wrapper over `grp_by_key_finalize`. Unlike `jit_srt_by_key`, this
+/// helper can fail at runtime when a key is not text / finite-number /
+/// bool, in which case it signals a typed runtime error and returns nil.
+#[cfg(feature = "cranelift")]
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn jit_grp_by_key(keys_val: u64, vals_val: u64, span_bits: u64) -> u64 {
+    let vk = NanVal(keys_val);
+    let vv = NanVal(vals_val);
+    if !vk.is_heap() || (vk.0 & TAG_MASK) != TAG_LIST {
+        jit_set_runtime_error_with_span(
+            VmError::Type("grp: internal keys reg is not a list"),
+            span_bits,
+        );
+        return TAG_NIL;
+    }
+    if !vv.is_heap() || (vv.0 & TAG_MASK) != TAG_LIST {
+        jit_set_runtime_error_with_span(
+            VmError::Type("grp: internal values reg is not a list"),
+            span_bits,
+        );
+        return TAG_NIL;
+    }
+    let keys = slice_of(unsafe { vk.as_heap_ref() });
+    let vals = slice_of(unsafe { vv.as_heap_ref() });
+    match grp_by_key_finalize(keys, vals) {
+        Ok(out) => out.0,
+        Err(msg) => {
+            jit_set_runtime_error_with_span(VmError::Type(msg), span_bits);
+            TAG_NIL
+        }
+    }
+}
+
+/// Cranelift helper for `OP_UNIQ_BY_KEY` (Phase 2 PR3c uniqby 2 native
+/// lift). Thin wrapper over `uniq_by_key_finalize`.
+#[cfg(feature = "cranelift")]
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn jit_uniq_by_key(keys_val: u64, vals_val: u64, span_bits: u64) -> u64 {
+    let vk = NanVal(keys_val);
+    let vv = NanVal(vals_val);
+    if !vk.is_heap() || (vk.0 & TAG_MASK) != TAG_LIST {
+        jit_set_runtime_error_with_span(
+            VmError::Type("uniqby: internal keys reg is not a list"),
+            span_bits,
+        );
+        return TAG_NIL;
+    }
+    if !vv.is_heap() || (vv.0 & TAG_MASK) != TAG_LIST {
+        jit_set_runtime_error_with_span(
+            VmError::Type("uniqby: internal values reg is not a list"),
+            span_bits,
+        );
+        return TAG_NIL;
+    }
+    let keys = slice_of(unsafe { vk.as_heap_ref() });
+    let vals = slice_of(unsafe { vv.as_heap_ref() });
+    match uniq_by_key_finalize(keys, vals) {
+        Ok(out) => out.0,
+        Err(msg) => {
+            jit_set_runtime_error_with_span(VmError::Type(msg), span_bits);
+            TAG_NIL
+        }
+    }
 }
 
 #[cfg(feature = "cranelift")]

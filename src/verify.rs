@@ -381,6 +381,7 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("dtfmt", &["n", "t"], "R t t"),
     ("dtparse", &["t", "t"], "R n t"),
     ("env", &["t"], "R t t"),
+    ("env-all", &[], "R (M t t) t"),
     ("jpth", &["t", "t"], "R t t"),
     ("jdmp", &["any"], "t"),
     ("prnt", &["any"], "any"),
@@ -2552,6 +2553,19 @@ fn builtin_check_args(
                 });
             }
             (Ty::Number, errors)
+        }
+        "env-all" => {
+            // env-all -> R (M t t) t: snapshot the full process environment
+            // as a Map[Text, Text] wrapped in Result. No args; arity is
+            // enforced by builtin_arity (BUILTINS table). The Err arm is
+            // reserved for future failure modes (sandboxed envs, etc).
+            (
+                Ty::Result(
+                    Box::new(Ty::Map(Box::new(Ty::Text), Box::new(Ty::Text))),
+                    Box::new(Ty::Text),
+                ),
+                errors,
+            )
         }
         "sleep" => {
             // sleep ms:n -> _   (blocks the current engine for `ms` milliseconds,

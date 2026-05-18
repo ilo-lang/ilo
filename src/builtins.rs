@@ -105,6 +105,7 @@ pub enum Builtin {
     Ls,
     Walk,
     Glob,
+    EnvAll,
 
     // String
     Trm,
@@ -240,6 +241,7 @@ impl Builtin {
             "ls" => Some(Builtin::Ls),
             "walk" => Some(Builtin::Walk),
             "glob" => Some(Builtin::Glob),
+            "env-all" => Some(Builtin::EnvAll),
             "trm" => Some(Builtin::Trm),
             "upr" => Some(Builtin::Upr),
             "lwr" => Some(Builtin::Lwr),
@@ -366,6 +368,7 @@ impl Builtin {
             Builtin::Ls => "ls",
             Builtin::Walk => "walk",
             Builtin::Glob => "glob",
+            Builtin::EnvAll => "env-all",
             Builtin::Trm => "trm",
             Builtin::Upr => "upr",
             Builtin::Lwr => "lwr",
@@ -545,6 +548,10 @@ impl Builtin {
         Builtin::Ls,
         Builtin::Walk,
         Builtin::Glob,
+        // env-all -> R M t t: full process environment as Map[Text, Text]
+        // wrapped in Result. Tree-bridge eligible (zero args, no FnRef);
+        // see is_tree_bridge_eligible in src/vm/mod.rs.
+        Builtin::EnvAll,
     ];
 
     /// On-wire 8-bit tag for cross-engine builtin dispatch. See `ALL`.

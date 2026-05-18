@@ -2740,8 +2740,12 @@ or write `({fmt_name} \"...\" ...)` so its args are grouped."
                 return self.parse_record(name);
             }
 
-            // Zero-arg builtins: `rnd`/`now`/`now-ms`/`mmap` with no args → Call with empty args
-            if (name == "rnd" || name == "now" || name == "now-ms" || name == "mmap")
+            // Zero-arg builtins: `rnd`/`now`/`now-ms`/`mmap`/`env-all` with no args → Call with empty args
+            if (name == "rnd"
+                || name == "now"
+                || name == "now-ms"
+                || name == "mmap"
+                || name == "env-all")
                 && !self.can_start_operand()
             {
                 return Ok(Expr::Call {
@@ -3292,7 +3296,7 @@ results first: `r={first_op}a b;…r` keeps each step explicit."
             // still parses as `now(x)` and the verifier can surface its usual
             // arity-mismatch error instead of a confusing ILO-P020 from a
             // bare `x` at the next statement boundary.
-            Some(Token::Ident(name)) if name == "now" || name == "now-ms" => {
+            Some(Token::Ident(name)) if name == "now" || name == "now-ms" || name == "env-all" => {
                 let name = name.clone();
                 self.advance();
                 Ok(Expr::Call {
