@@ -792,6 +792,14 @@ Match replaces `switch`. There is no fall-through — each arm is independent. T
 
 Arms separated by `;`. First match wins.
 
+**Exhaustiveness.** Matches on closed sum-shaped types must cover every variant or include `_:`. For a `R T E` subject, `~v: + ^e:` is exhaustive on its own — no `_:` wildcard required (verifier rule, mirrors `S`-typed matches). For a `b` (bool) subject, `true: + false:` is exhaustive. For numbers and text, `_:` is required.
+
+```
+parse>t;r=num "3.14";?r{~v:str v;^e:e}   -- canonical two-arm Result match
+```
+
+Zero-arg user functions called bare in a value position auto-expand to a call, so `r=mk` where `mk>R t t;...` makes `r` the Result, not a function reference.
+
 In any binding position the name `_` is permitted and binds normally — `~_:body`, `^_:body`, `n _:body` etc. expose the matched inner value to `body` under the name `_`. Bodies that don't reference `_` are unaffected.
 
 ```

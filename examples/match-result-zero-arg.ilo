@@ -1,0 +1,14 @@
+-- Two-arm Result match on a zero-arg user function is exhaustive: ~v + ^e
+-- covers R fully, no wildcard required. The zero-arg fn `mk` auto-calls when
+-- referenced bare (`r=mk`), so `r` is the Result, not a function reference.
+
+mk-ok>R t t;~"got"
+ok-msg>t;r=mk-ok;?r{~v:v;^e:e}
+
+mk-err>R t t;^"boom"
+err-msg>t;r=mk-err;?r{~v:v;^e:e}
+
+-- run: ok-msg
+-- out: got
+-- run: err-msg
+-- out: boom
