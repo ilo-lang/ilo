@@ -98,6 +98,10 @@ ilo build program.ilo -o ./bin            # AOT compile
 
 **[Tutorial: Write your first program →](https://ilo-lang.ai/docs/first-program/)**
 
+## Editor support
+
+Syntax highlighting, snippets, and `--` comment handling for `.ilo` files ships in [`extensions/vscode/`](./extensions/vscode/). Install into Cursor with `cd extensions/vscode && npm run install:cursor`. VS Code marketplace publish is tracked separately.
+
 ## What it looks like
 
 **Guards** - flat, no nesting:
