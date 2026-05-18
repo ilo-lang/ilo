@@ -1240,6 +1240,30 @@ identifies the propagation point for diagnostic purposes.
 "#,
     },
     ErrorEntry {
+        code: "ILO-R015",
+        short: "AOT runtime fault",
+        long: r#"## ILO-R015: AOT runtime fault
+
+An AOT-compiled ilo binary received a fatal signal (SIGSEGV, SIGBUS,
+SIGFPE, SIGILL, or SIGABRT) and aborted. Unlike the tree-walker, VM,
+and JIT backends — which surface runtime errors as structured
+`ILO-R###` diagnostics through `JIT_RUNTIME_ERROR` — AOT binaries
+execute as standalone native code, so any hard fault would otherwise
+exit with a raw signal exit code (e.g. 139 for SIGSEGV) and no
+diagnostic on stderr.
+
+The AOT runtime installs an async-signal-safe handler in
+`ilo_aot_init` that writes a single JSON line to stderr identifying
+the signal before letting the default handler terminate the process
+with the conventional exit code (128 + signo).
+
+A hard fault from an AOT binary is always a bug in ilo itself —
+either a codegen issue in the Cranelift AOT backend, or a missing
+runtime check that the other engines apply. Please file an issue
+with the source program and the JSON diagnostic.
+"#,
+    },
+    ErrorEntry {
         code: "ILO-R026",
         short: "panic-unwrap on Err / nil",
         long: r#"## ILO-R026: panic-unwrap on Err / nil
