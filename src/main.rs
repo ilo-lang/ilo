@@ -93,46 +93,243 @@ fn skill_unknown(name: &str) -> i32 {
     1
 }
 
-fn skill_list_cmd() -> i32 {
+/// Emit a "skill not found" error as a stable JSON envelope on stdout.
+/// Used by the `--json` paths of every skill subcommand so agent callers
+/// can route on the error without parsing prose.
+fn skill_unknown_json(name: &str) -> i32 {
+    let v = serde_json::json!({
+        "schemaVersion": 1,
+        "error": {
+            "code": "unknown-skill",
+            "message": format!("unknown skill '{name}'"),
+            "name": name,
+        }
+    });
+    println!("{}", v);
+    1
+}
+
+fn skill_list_cmd(as_json: bool) -> i32 {
+    if as_json {
+        let items: Vec<serde_json::Value> = SKILLS
+            .iter()
+            .map(|s| {
+                serde_json::json!({
+                    "name": s.name,
+                    "description": s.description,
+                    "path": s.path,
+                })
+            })
+            .collect();
+        let v = serde_json::json!({
+            "schemaVersion": 1,
+            "skills": items,
+        });
+        match serde_json::to_string_pretty(&v) {
+            Ok(s) => println!("{}", s),
+            Err(e) => {
+                eprintln!("error: failed to serialise skill list: {e}");
+                return 1;
+            }
+        }
+        return 0;
+    }
     for s in SKILLS {
         println!("{:<14} {}", s.name, s.description);
     }
     0
 }
 
-fn skill_get_cmd(name: &str) -> i32 {
+fn skill_get_cmd(name: &str, as_json: bool) -> i32 {
     match find_skill(name) {
         Some(s) => {
-            print!("{}", s.content);
+            if as_json {
+                let v = serde_json::json!({
+                    "schemaVersion": 1,
+                    "name": s.name,
+                    "description": s.description,
+                    "path": s.path,
+                    "content": s.content,
+                });
+                match serde_json::to_string_pretty(&v) {
+                    Ok(out) => println!("{}", out),
+                    Err(e) => {
+                        eprintln!("error: failed to serialise skill: {e}");
+                        return 1;
+                    }
+                }
+            } else {
+                print!("{}", s.content);
+            }
             0
         }
-        None => skill_unknown(name),
+        None => {
+            if as_json {
+                skill_unknown_json(name)
+            } else {
+                skill_unknown(name)
+            }
+        }
     }
 }
 
-fn skill_path_cmd(name: &str) -> i32 {
+fn skill_path_cmd(name: &str, as_json: bool) -> i32 {
     match find_skill(name) {
         Some(s) => {
-            println!("{}", s.path);
+            if as_json {
+                let v = serde_json::json!({
+                    "schemaVersion": 1,
+                    "name": s.name,
+                    "path": s.path,
+                });
+                println!("{}", v);
+            } else {
+                println!("{}", s.path);
+            }
             0
         }
-        None => skill_unknown(name),
+        None => {
+            if as_json {
+                skill_unknown_json(name)
+            } else {
+                skill_unknown(name)
+            }
+        }
     }
 }
 
-fn skill_show_cmd(name: &str) -> i32 {
+fn skill_show_cmd(name: &str, as_json: bool) -> i32 {
     match find_skill(name) {
         Some(s) => {
-            println!("# {} ({})", s.name, s.path);
-            println!();
-            println!("{}", s.description);
-            println!();
-            println!("---");
-            println!();
-            print!("{}", s.content);
+            if as_json {
+                // `show` in JSON mode is identical to `get` in JSON mode —
+                // the prose header makes no sense as JSON, so we emit the
+                // structured form once.
+                let v = serde_json::json!({
+                    "schemaVersion": 1,
+                    "name": s.name,
+                    "description": s.description,
+                    "path": s.path,
+                    "content": s.content,
+                });
+                match serde_json::to_string_pretty(&v) {
+                    Ok(out) => println!("{}", out),
+                    Err(e) => {
+                        eprintln!("error: failed to serialise skill: {e}");
+                        return 1;
+                    }
+                }
+            } else {
+                println!("# {} ({})", s.name, s.path);
+                println!();
+                println!("{}", s.description);
+                println!();
+                println!("---");
+                println!();
+                print!("{}", s.content);
+            }
             0
         }
-        None => skill_unknown(name),
+        None => {
+            if as_json {
+                skill_unknown_json(name)
+            } else {
+                skill_unknown(name)
+            }
+        }
+    }
+}
+
+/// `ilo version` — plain prints `ilo X.Y.Z`, `--json` emits a structured
+/// envelope so agent tooling can route on the version without parsing.
+fn version_cmd(as_json: bool) -> i32 {
+    if as_json {
+        let v = serde_json::json!({
+            "schemaVersion": 1,
+            "name": "ilo",
+            "version": env!("CARGO_PKG_VERSION"),
+            "features": features_list(),
+        });
+        match serde_json::to_string_pretty(&v) {
+            Ok(s) => println!("{}", s),
+            Err(e) => {
+                eprintln!("error: failed to serialise version: {e}");
+                return 1;
+            }
+        }
+    } else {
+        println!("ilo {}", env!("CARGO_PKG_VERSION"));
+    }
+    0
+}
+
+/// Build-time feature flags that affect runtime behaviour. Surfaced in the
+/// `--json` version output so agents can detect e.g. whether the JIT or
+/// MCP-tools feature is compiled in without having to probe with a sample
+/// program.
+fn features_list() -> Vec<&'static str> {
+    // Each entry is wrapped in `Option` so the cfg gates collapse to `None`
+    // when a feature is off without tripping `clippy::vec_init_then_push`.
+    let entries: [Option<&'static str>; 3] = [
+        #[cfg(feature = "cranelift")]
+        Some("cranelift"),
+        #[cfg(not(feature = "cranelift"))]
+        None,
+        #[cfg(feature = "llvm")]
+        Some("llvm"),
+        #[cfg(not(feature = "llvm"))]
+        None,
+        #[cfg(feature = "tools")]
+        Some("tools"),
+        #[cfg(not(feature = "tools"))]
+        None,
+    ];
+    entries.into_iter().flatten().collect()
+}
+
+/// `ilo explain ILO-XXXX` — plain prints the long-form explanation,
+/// `--json` emits a structured envelope with `code`, `short`, and `long`
+/// so agent tooling can route on the error code class without parsing
+/// markdown.
+fn explain_cmd(code: &str, as_json: bool) -> i32 {
+    match diagnostic::registry::lookup(code) {
+        Some(entry) => {
+            if as_json {
+                let v = serde_json::json!({
+                    "schemaVersion": 1,
+                    "code": entry.code,
+                    "short": entry.short,
+                    "long": entry.long,
+                });
+                match serde_json::to_string_pretty(&v) {
+                    Ok(s) => println!("{}", s),
+                    Err(e) => {
+                        eprintln!("error: failed to serialise explain: {e}");
+                        return 1;
+                    }
+                }
+            } else {
+                print!("{}", entry.long);
+            }
+            0
+        }
+        None => {
+            if as_json {
+                let v = serde_json::json!({
+                    "schemaVersion": 1,
+                    "error": {
+                        "code": "unknown-error-code",
+                        "message": format!("unknown error code: {code}"),
+                        "input": code,
+                    }
+                });
+                println!("{}", v);
+            } else {
+                eprintln!("unknown error code: {}", code);
+                eprintln!("Error codes have the form ILO-L001, ILO-P001, ILO-T001, ILO-R001.");
+            }
+            1
+        }
     }
 }
 
@@ -1131,6 +1328,7 @@ fn compile_cmd(args: &[String]) -> i32 {
     let mut source_arg: Option<&str> = None;
     let mut func_name: Option<&str> = None;
     let mut bench_mode = false;
+    let mut as_json = false;
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
@@ -1144,6 +1342,9 @@ fn compile_cmd(args: &[String]) -> i32 {
             }
             "--bench" => {
                 bench_mode = true;
+            }
+            "--json" | "-j" => {
+                as_json = true;
             }
             _ if source_arg.is_none() => {
                 source_arg = Some(&args[i]);
@@ -1284,18 +1485,46 @@ fn compile_cmd(args: &[String]) -> i32 {
     });
 
     // AOT compile
+    let start = std::time::Instant::now();
     let result = if bench_mode {
         vm::compile_cranelift::compile_to_bench_binary(&compiled, entry, &output)
     } else {
         vm::compile_cranelift::compile_to_binary(&compiled, entry, &output)
     };
+    let duration_ms = start.elapsed().as_millis();
     match result {
         Ok(()) => {
-            eprintln!("Compiled: {}", output);
+            if as_json {
+                let size_bytes = std::fs::metadata(&output).map(|m| m.len()).ok();
+                let v = serde_json::json!({
+                    "schemaVersion": 1,
+                    "ok": true,
+                    "output": output,
+                    "entry": entry,
+                    "bench": bench_mode,
+                    "sizeBytes": size_bytes,
+                    "durationMs": duration_ms,
+                });
+                println!("{}", v);
+            } else {
+                eprintln!("Compiled: {}", output);
+            }
             0
         }
         Err(e) => {
-            eprintln!("AOT compile error: {}", e);
+            if as_json {
+                let v = serde_json::json!({
+                    "schemaVersion": 1,
+                    "ok": false,
+                    "error": {
+                        "phase": "aot-compile",
+                        "message": e.to_string(),
+                    }
+                });
+                println!("{}", v);
+            } else {
+                eprintln!("AOT compile error: {}", e);
+            }
             1
         }
     }
@@ -2148,6 +2377,9 @@ fn dispatch_cli(cli: cli::Cli, bare_has_bin: bool) -> i32 {
             if c.bench {
                 args.push("--bench".into());
             }
+            if cli.global.explicit_json() {
+                args.push("--json".into());
+            }
             if let Some(ref f) = c.func {
                 args.push(f.clone());
             }
@@ -2158,17 +2390,10 @@ fn dispatch_cli(cli: cli::Cli, bare_has_bin: bool) -> i32 {
             let explicit_json = cli.global.explicit_json();
             check_cmd(&c.source, mode, explicit_json)
         }
-        Some(cli::Cmd::Explain(e)) => match diagnostic::registry::lookup(&e.code) {
-            Some(entry) => {
-                print!("{}", entry.long);
-                0
-            }
-            None => {
-                eprintln!("unknown error code: {}", e.code);
-                eprintln!("Error codes have the form ILO-L001, ILO-P001, ILO-T001, ILO-R001.");
-                1
-            }
-        },
+        Some(cli::Cmd::Explain(e)) => {
+            let as_json = cli.global.explicit_json();
+            explain_cmd(&e.code, as_json)
+        }
         Some(cli::Cmd::Spec(s)) => {
             match s.topic.as_deref() {
                 Some("lang") => print!("{}", include_str!("../SPEC.md")),
@@ -2177,16 +2402,16 @@ fn dispatch_cli(cli: cli::Cli, bare_has_bin: bool) -> i32 {
             }
             0
         }
-        Some(cli::Cmd::Skill(s)) => match s.cmd {
-            cli::args::SkillCmd::List => skill_list_cmd(),
-            cli::args::SkillCmd::Get { name } => skill_get_cmd(&name),
-            cli::args::SkillCmd::Path { name } => skill_path_cmd(&name),
-            cli::args::SkillCmd::Show { name } => skill_show_cmd(&name),
-        },
-        Some(cli::Cmd::Version) => {
-            println!("ilo {}", env!("CARGO_PKG_VERSION"));
-            0
+        Some(cli::Cmd::Skill(s)) => {
+            let as_json = cli.global.explicit_json();
+            match s.cmd {
+                cli::args::SkillCmd::List => skill_list_cmd(as_json),
+                cli::args::SkillCmd::Get { name } => skill_get_cmd(&name, as_json),
+                cli::args::SkillCmd::Path { name } => skill_path_cmd(&name, as_json),
+                cli::args::SkillCmd::Show { name } => skill_show_cmd(&name, as_json),
+            }
         }
+        Some(cli::Cmd::Version) => version_cmd(cli.global.explicit_json()),
         Some(cli::Cmd::Run(r)) => {
             let mode = cli.global.output_mode();
             let explicit_json = cli.global.explicit_json();
