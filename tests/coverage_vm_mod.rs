@@ -1409,31 +1409,48 @@ fn list_concat() {
 
 // ── nested record access with .? ──────────────────────────────────────
 
-// ── closure capture (tree only) ──────────────────────────────────────
+// ── closure capture (cross-engine after #384 + #385 + #387) ──────────
 
 #[test]
-fn closure_capture_flt_tree() {
+fn closure_capture_flt() {
     let src = "f xs:L n thr:n>L n;flt (x:n>b;>x thr) xs";
-    let out = ilo()
-        .args([src, "--run-tree", "f", "1,2,3,4,5", "3"])
-        .output()
-        .expect("ilo");
-    assert!(
-        out.status.success(),
-        "{}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "[4, 5]");
+    for e in ENGINES_ALL {
+        let out = ilo()
+            .args([src, e, "f", "1,2,3,4,5", "3"])
+            .output()
+            .expect("ilo");
+        assert!(
+            out.status.success(),
+            "engine {e}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout).trim(),
+            "[4, 5]",
+            "engine {e}"
+        );
+    }
 }
 
 #[test]
-fn closure_capture_map_tree() {
+fn closure_capture_map() {
     let src = "f xs:L n k:n>L n;map (x:n>n;*x k) xs";
-    let out = ilo()
-        .args([src, "--run-tree", "f", "1,2,3", "10"])
-        .output()
-        .expect("ilo");
-    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "[10, 20, 30]");
+    for e in ENGINES_ALL {
+        let out = ilo()
+            .args([src, e, "f", "1,2,3", "10"])
+            .output()
+            .expect("ilo");
+        assert!(
+            out.status.success(),
+            "engine {e}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout).trim(),
+            "[10, 20, 30]",
+            "engine {e}"
+        );
+    }
 }
 
 // ── pipe and auto-unwrap mix ──────────────────────────────────────────
