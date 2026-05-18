@@ -2880,6 +2880,18 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         };
     }
 
+    // env-all -> R M t t: snapshot the full process environment as a
+    // Map[Text, Text] wrapped in Ok. The Result wrapper mirrors `env key`
+    // so callers can use `env-all!` to auto-unwrap; the Err arm is reserved
+    // for future failure modes (non-UTF-8 vars, sandboxed envs). std::env::vars()
+    // silently skips non-UTF-8 entries today, so the snapshot is always Ok.
+    if builtin == Some(Builtin::EnvAll) && args.is_empty() {
+        let map: std::collections::HashMap<MapKey, Value> = std::env::vars()
+            .map(|(k, v)| (MapKey::Text(k), Value::Text(Arc::new(v))))
+            .collect();
+        return Ok(Value::Ok(Box::new(Value::Map(Arc::new(map)))));
+    }
+
     // Higher-order builtins: map, flt, fld
     // A function reference can be Value::FnRef(name) or Value::Text(Arc::new(name)) when the
     // function name was passed as a CLI string argument. Inline lambdas with
