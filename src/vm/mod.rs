@@ -514,7 +514,9 @@ pub(crate) fn is_tree_bridge_eligible(b: crate::builtins::Builtin, argc: usize) 
         // Env populated from the ACTIVE_AST_PROGRAM TLS.
         (Builtin::Grp, 2) => true,
         (Builtin::Uniqby, 2) => true,
-        (Builtin::Partition, 2) => true,
+        // partition 2 was on the bridge in PR 3b; Phase 2 PR3 lifts it natively
+        // via OP_CALL_DYN + OP_LISTAPPEND so closure callbacks dispatch without
+        // a tree re-entry. See the matching arm in the compiler.
         // ct fn xs / ct fn ctx xs — count by predicate. Same bridge
         // contract as flt 2/3; tree interpreter handles the user-fn
         // callback via ACTIVE_AST_PROGRAM. Named `ct` to avoid
@@ -4420,10 +4422,108 @@ impl RegCompiler {
                             self.next_reg = acc_reg + 1;
                             return acc_reg;
                         }
+                        // partition fn xs → native HOF loop using OP_CALL_DYN.
+                        // Same shape as `flt 2` but threads two acc lists: items
+                        // for which the predicate returns true go to `pass`, false
+                        // to `fail`. Final result is a 2-element list `[pass, fail]`
+                        // matching the tree-walker. Non-bool predicate result
+                        // raises through OP_PANIC_UNWRAP with a "partition"+"bool"
+                        // message, mirroring the `flt` shape so error semantics
+                        // stay cross-engine consistent.
+                        //
+                        // Migrated off the tree-bridge in Phase 2 PR3: the bridge
+                        // re-entered the tree interpreter per element which (a)
+                        // cost a NanVal↔Value round-trip per callback and (b)
+                        // required ACTIVE_AST_PROGRAM TLS to be live. With the
+                        // closure-aware OP_CALL_DYN from #384/#385, capturing
+                        // lambdas work natively here for free.
+                        (Builtin::Partition, 2) => {
+                            let fn_reg = self.compile_expr(&args[0]);
+                            let xs_reg = self.compile_expr(&args[1]);
+
+                            // Two accumulator lists: pass and fail. Both start
+                            // empty; OP_LISTAPPEND grows whichever the predicate
+                            // selects per iteration.
+                            let pass_reg = self.alloc_reg();
+                            self.emit_abx(OP_LISTNEW, pass_reg, 0);
+                            let fail_reg = self.alloc_reg();
+                            self.emit_abx(OP_LISTNEW, fail_reg, 0);
+
+                            let idx_reg = self.alloc_reg();
+                            let zero_ki = self.current.add_const(Value::Number(0.0));
+                            self.emit_abx(OP_LOADK, idx_reg, zero_ki);
+                            self.reg_is_num[idx_reg as usize] = true;
+
+                            let item_reg = self.alloc_reg();
+                            let nil_ki = self.current.add_const(Value::Nil);
+                            self.emit_abx(OP_LOADK, item_reg, nil_ki);
+
+                            // res_reg + arg_reg contiguous for OP_CALL_DYN ABI.
+                            let res_reg = self.alloc_reg();
+                            self.emit_abx(OP_LOADK, res_reg, nil_ki);
+                            let arg_reg = self.alloc_reg();
+                            assert!(
+                                arg_reg == res_reg + 1,
+                                "partition HOF: arg reg must follow result reg contiguously"
+                            );
+                            self.emit_abx(OP_LOADK, arg_reg, nil_ki);
+
+                            // Scratch for the bool typecheck.
+                            let isb_reg = self.alloc_reg();
+                            self.emit_abx(OP_LOADK, isb_reg, nil_ki);
+
+                            let _loop_top = self.current.code.len();
+                            self.emit_abc(OP_FOREACHPREP, item_reg, xs_reg, idx_reg);
+                            let exit_jump_a = self.emit_jmp_placeholder();
+
+                            let body_top = self.current.code.len();
+                            self.emit_abc(OP_MOVE, arg_reg, item_reg, 0);
+                            self.emit_abc(OP_CALL_DYN, res_reg, fn_reg, 1);
+
+                            // Typecheck: predicate must return Bool. If not, fail
+                            // with a "partition: predicate must return bool"
+                            // message. Same shape as the `flt` arm.
+                            self.emit_abc(OP_ISBOOL, isb_reg, res_reg, 0);
+                            let typeok_jump = self.emit_jmpt(isb_reg);
+                            let err_text_ki = self.current.add_const(Value::Text(Arc::new(
+                                "partition: predicate must return bool".to_string(),
+                            )));
+                            self.emit_abx(OP_LOADK, arg_reg, err_text_ki);
+                            self.emit_abc(OP_WRAPERR, arg_reg, arg_reg, 0);
+                            self.emit_abc(OP_PANIC_UNWRAP, 0, arg_reg, 0);
+                            self.current.patch_jump(typeok_jump);
+
+                            // Branch: bool true → append to pass; bool false → append to fail.
+                            let skip_pass_jump = self.emit_jmpf(res_reg);
+                            self.emit_abc(OP_LISTAPPEND, pass_reg, pass_reg, item_reg);
+                            let skip_fail_jump = self.emit_jmp_placeholder();
+                            self.current.patch_jump(skip_pass_jump);
+                            self.emit_abc(OP_LISTAPPEND, fail_reg, fail_reg, item_reg);
+                            self.current.patch_jump(skip_fail_jump);
+
+                            self.emit_abc(OP_FOREACHNEXT, item_reg, xs_reg, idx_reg);
+                            let exit_jump_b = self.emit_jmp_placeholder();
+                            self.emit_jump_to(body_top);
+
+                            self.current.patch_jump(exit_jump_a);
+                            self.current.patch_jump(exit_jump_b);
+
+                            // Build the outer 2-element [pass, fail] list.
+                            let out_reg = self.alloc_reg();
+                            self.emit_abx(OP_LISTNEW, out_reg, 0);
+                            self.emit_abc(OP_LISTAPPEND, out_reg, out_reg, pass_reg);
+                            self.emit_abc(OP_LISTAPPEND, out_reg, out_reg, fail_reg);
+
+                            self.current_all_regs_numeric = false;
+                            self.reg_is_num[out_reg as usize] = false;
+
+                            self.next_reg = out_reg + 1;
+                            return out_reg;
+                        }
                         // Builtins that fall through:
                         //   - tree-bridge eligible (rgx, rgxall, fmt-variadic,
-                        //     rd 2-arg, rdb, sleep, grp/uniqby/partition/srt 2-arg
-                        //     from PR 3b, map/flt/fld/srt closure-bind ctx forms
+                        //     rd 2-arg, rdb, sleep, grp/uniqby/srt 2-arg from
+                        //     PR 3b, map/flt/fld/srt closure-bind ctx forms
                         //     from PR 3c) → routed to OP_CALL_BUILTIN_TREE below.
                         //   - Anything else (e.g. `wr` 3-arg with dynamic fmt)
                         //     still errors here; the native lift lands later in
