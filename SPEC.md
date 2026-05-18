@@ -200,8 +200,8 @@ Short builtin names are precious surface and ilo reserves a stable subset of the
 2-char  at hd tl rd wr ct
 3-char  abs avg cap cat cel chr cos det dot env exp fft fld flr flt fmt
         frq get grp has inv len log lst lwr map max min mod now num ord
-        pow rdb rdl rev rgx rng rnd rou sin slc spl srt str sum tan trm unq
-        upr wrl zip
+        pow pst rdb rdl rev rgx rng rnd rou run sin slc spl srt str sum
+        tan trm unq upr wrl zip
 ```
 
 `rng` is the short-form alias for the canonical `range` builtin; it is reserved with the same shadow-prevention semantics as a canonical builtin name (binding `rng=...` or declaring `rng x:...` fires `ILO-P011`).
@@ -448,8 +448,9 @@ Called like functions, compiled to dedicated opcodes.
 | `now-ms` | current Unix timestamp (milliseconds) | `n` |
 | `get url` | HTTP GET | `R t t` |
 | `get url headers` | HTTP GET with custom headers (`M t t` map) | `R t t` |
-| `post url body` | HTTP POST with text body | `R t t` |
-| `post url body headers` | HTTP POST with body and custom headers (`M t t` map) | `R t t` |
+| `pst url body` | HTTP POST with text body (renamed from `post` in 0.12.0) | `R t t` |
+| `pst url body headers` | HTTP POST with body and custom headers (`M t t` map) | `R t t` |
+| `run cmd argv` | spawn `cmd` with argv list — see [Process spawn](#process-spawn) for the no-shell-no-glob security model | `R (M t t) t` |
 | `env key` | read environment variable | `R t t` |
 | `rd path` | read file; format auto-detected from extension (`.csv`/`.tsv`→grid, `.json`→graph, else text) | `R _ t` |
 | `rd path fmt` | read file with explicit format override (`"csv"`, `"tsv"`, `"json"`, `"raw"`) | `R _ t` |
@@ -638,25 +639,48 @@ range 0 10  -- canonical — no hint
 
 Short-form aliases (where the alias is shorter than the canonical) follow the same shadow-prevention rule as canonical builtins: `rng=...` as a binding or function name is rejected at parse time with `ILO-P011` so the call-site rewrite cannot silently mis-dispatch.
 
-`get` and `post` return `Ok(body)` on success, `Err(message)` on failure (connection error, timeout, DNS failure, etc). `$` is a terse alias for `get`:
+`get` and `pst` return `Ok(body)` on success, `Err(message)` on failure (connection error, timeout, DNS failure, etc).
+
+In 0.12.0 the `$` sigil was rebound from `get` (parochial — `$` for HTTP is unique to ilo) to the new `run` builtin (argv-list process spawn). `$` for shell-exec reads cross-language — bash, Perl, Ruby, Python, PowerShell, and Zx all use `$` for command substitution. HTTP `get` is still called by name; the `$` shortcut is for process exec only. `post` was renamed to `pst` to bring it into line with the I/O compression family (`rd`, `wr`, `srt`, `flt`, `fld`, `fmt`).
 
 ```
 get url          -- R t t: Ok=response body, Err=error message
-$url             -- same as get url
 get! url         -- auto-unwrap: Ok→body, Err→propagate to caller
-$!url            -- same as get! url
 
-post url body           -- R t t: HTTP POST with text body
-post url body headers   -- R t t: HTTP POST with body and custom headers
+pst url body           -- R t t: HTTP POST with text body
+pst url body headers   -- R t t: HTTP POST with body and custom headers
 
 -- Custom headers: build an M t t map with mmap/mset
 h=mmap
 h=mset h "x-api-key" "secret"
 r=get url h      -- GET with x-api-key header
-r=post url body h -- POST with x-api-key header
+r=pst url body h -- POST with x-api-key header
 ```
 
-Behind the `http` feature flag (on by default). Without the feature, `get`/`post` return `Err("http feature not enabled")`.
+Behind the `http` feature flag (on by default). Without the feature, `get`/`pst` return `Err("http feature not enabled")`.
+
+### Process spawn
+
+ilo provides one process-spawn primitive: `run cmd argv > R (M t t) t`. The signature is deliberately narrow: the first argument is the program (text), the second is the argv list (`L t`), and the result is a `Result` whose `Ok` carries a three-key Map of stdout / stderr / code as text.
+
+```
+r=run "echo" ["hi"]              -- Ok({"stdout":"hi\n","stderr":"","code":"0"})
+out=mget r.! "stdout"            -- "hi\n"
+
+$"git" ["status", "--short"]     -- equivalent: $ is the sigil shortcut for run
+```
+
+**No shell, no interpolation, no glob.** The argv list is passed directly to `std::process::Command::args`. There is no `sh -c`, no string concatenation between `cmd` and `argv`, and no glob expansion. This is the principled defence against shell injection: ilo refuses to provide an injection vector while still providing controlled exec. Compared to bash + `jq`, the argv-list discipline and the typed Result + Map handle make `run` materially safer for agent orchestration.
+
+**Non-zero exit is NOT an error.** `Err` is reserved for spawn failures (command not found, permission denied, kernel-level pipe failure, output cap exceeded). A child that returns a non-zero exit code surfaces as `Ok({"stdout":..., "stderr":..., "code":"<n>"})`; the caller inspects `code` and branches as needed. This matches Python's `subprocess.run` semantics.
+
+**Inherits parent env + cwd.** The first version provides no env or cwd override. Set the parent env / cwd before invoking ilo if you need a different shape.
+
+**Captured output is capped at 10 MiB per stream.** Either stream exceeding the cap returns an `Err` rather than partial capture so downstream JSON pipelines never see a truncated payload.
+
+**Stdin is `/dev/null`.** Stdin piping is a planned follow-up; today, programs that need stdin should read a file via `rd` and pass the contents as an argv entry, or wait for the 4-arity form.
+
+Behind the same default build profile as `get`/`pst`; on `wasm32` targets, `run` returns `Err("run: process spawn not available on wasm")`.
 
 `env` reads an environment variable by name, returning `Ok(value)` or `Err("env var 'KEY' not set")`:
 
