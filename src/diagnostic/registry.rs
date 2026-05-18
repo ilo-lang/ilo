@@ -878,6 +878,62 @@ This error fires only when the bang is adjacent to the ident (`x!`,
 and is unaffected.
 "#,
     },
+    ErrorEntry {
+        code: "ILO-T035",
+        short: "function exceeds the 256-register VM cap",
+        long: r#"## ILO-T035: function exceeds the 256-register VM cap
+
+The register-based bytecode VM packs each register index into 8 bits,
+so a single function body can use at most 256 live registers. The
+named function's codegen would need more, so the VM cannot lower it.
+
+**Example (problem):**
+
+    -- a function with 300 local bindings each kept alive
+    big a:n>n;
+      x1=+a 1;x2=+x1 1;x3=+x2 1; ... ;x300=+x299 1;
+      +x300 0
+
+**Fix - factor the function into smaller helpers:**
+
+Split long blocks so intermediate values fall out of scope and their
+registers can be reused, or extract helpers that take only the values
+they need as parameters. Most real functions need fewer than 50
+registers; hitting the cap almost always means there's a chunk of
+code that wants to live in its own function.
+
+**Tip:** the error names the function that overflowed. Start there.
+If you cannot avoid the cap (e.g. machine-generated code), file a bug
+- the cap is an implementation detail of the current bytecode format.
+"#,
+    },
+    ErrorEntry {
+        code: "ILO-T036",
+        short: "call requires too many register slots (VM cap)",
+        long: r#"## ILO-T036: call requires too many register slots (VM cap)
+
+The register VM packs each register index into 8 bits, and a call
+needs `result_reg + argc` contiguous slots inside the **caller's**
+register window. The named call site would push the caller past the
+256-register cap.
+
+**Example (problem):**
+
+    -- caller is already near the cap before this call
+    main>n; ... ; r=callee a1 a2 a3 ... aN; r
+
+**Fix - reduce live state at the call site:**
+
+- Refactor the caller so fewer locals are alive when the call is made.
+- Bundle arguments into a record so the call uses fewer slots
+  (`callee p` instead of `callee p.x p.y p.z ...`).
+- Move the call earlier in the function, before the caller has
+  accumulated so many temporaries.
+
+**Tip:** the error names both the enclosing function and the callee.
+The fix is almost always at the call site, not in the callee.
+"#,
+    },
     // ── Warnings ─────────────────────────────────────────────────────────────
     ErrorEntry {
         code: "ILO-W001",
