@@ -1437,6 +1437,8 @@ JSON error output follows a structured schema with `severity`, `code`, `message`
 
 Runtime errors raised from the Cranelift JIT (opt-in via `--jit`) populate `labels` with the source span of the failing operation, matching tree and VM behaviour. Span coverage threads through every JIT runtime helper (unwrap, panic-unwrap, list-get, slice, index, jpth, mget, record-field strict access, builtin dispatch, dynamic call); AOT-compiled binaries inherit the same coverage. Pre-v0.11.6 builds surfaced `{"labels":[]}` for these shapes - if you see an empty labels array on a runtime error, the binary is out of date.
 
+AOT binaries also install an async-signal-safe handler in `ilo_aot_init` that catches fatal signals (SIGSEGV, SIGBUS, SIGFPE, SIGILL, SIGABRT) and writes a single JSON line on stderr identifying the signal before the process terminates with the conventional 128+signo exit code. The diagnostic uses `ILO-R015` (AOT runtime fault). Without the handler, a hard fault inside compiled native code would leave the process with raw signal exit (e.g. 139 for SIGSEGV) and no diagnostic — agents driving ilo couldn't distinguish a clean non-zero exit from a hard fault. A SIGSEGV from an AOT binary is always a bug in ilo (codegen or runtime helper); file an issue with the source program and the JSON line.
+
 ### Top-level program output
 
 For a program whose entry function returns a Result, the `~`/`^` wrapper is split across streams and exit codes so shell callers do not have to strip a prefix:
