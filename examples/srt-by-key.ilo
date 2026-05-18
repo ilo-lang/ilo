@@ -1,8 +1,9 @@
--- srt fn xs: sort xs by the key returned by `fn`.
--- The 2-arg form pipes each element through `fn` and sorts by that key.
--- Signature: srt fn:F a k xs:L a > L a
+-- srt fn xs — sort by a key function. Phase 2 PR3c lifts the 2-arg form
+-- off the tree-bridge: VM and Cranelift now run a native foreach + per-
+-- element OP_CALL_DYN, then assemble the sorted list via OP_SRT_BY_KEY.
+-- Closure callbacks dispatch natively (no tree re-entry per element).
 
--- Key: absolute value, so [-3,1,-2] sorts to [1,-2,-3].
+-- Key: absolute value, so [-3,1,-2] sorts ascending by magnitude.
 absv n:n>n;?<n 0 (-0 n) n
 
 by-abs xs:L n>L n;srt absv xs
@@ -12,9 +13,14 @@ slen s:t>n;len s
 
 by-len ws:L t>L t;srt slen ws
 
--- engine-skip: jit
+-- Capturing lambda: sort by distance from a caller-supplied centre.
+-- `c` is captured into the closure; Cranelift OP_CALL_DYN handles it
+-- without bouncing through the tree interpreter.
+by-dist xs:L n c:n>L n;srt (x:n>n;d=-x c;?<d 0 (-0 d) d) xs
 
 -- run: by-abs [-3,1,-2,4,-1]
 -- out: [1, -1, -2, -3, 4]
 -- run: by-len ["banana","fig","apple"]
 -- out: [fig, apple, banana]
+-- run: by-dist [1,5,3,9] 4
+-- out: [5, 3, 1, 9]

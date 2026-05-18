@@ -172,12 +172,19 @@ f>L t;srt slen []"#,
 
 #[test]
 fn grp_wrong_list_arg_errors_on_tree_and_vm() {
-    // `grp` requires the second arg to be a list. Tree and VM surface the
-    // typed runtime error; Cranelift's `jit_call_builtin_tree` documents
-    // that bridge errors collapse to Nil (matching `jit_rgxsub`/`jit_rd`
-    // precedent), so we don't include it in the must-error set. Promoting
-    // these to typed runtime errors on the JIT path is a documented
-    // follow-up in `jit_call_builtin_tree`'s rustdoc.
+    // `grp` requires the second arg to be a list.
+    //
+    // Tree-walker raises "grp: second arg must be a list" directly.
+    // Since Phase 2 PR3c the VM emits a native foreach for grp 2-arg,
+    // so a non-list xs trips OP_FOREACHPREP and surfaces as the generic
+    // "foreach requires a list" message instead — same pattern as `flt`,
+    // `partition`, and `mapr` after their native lifts. The semantics
+    // are identical (typed runtime error, non-zero exit, error mentions
+    // a list); only the message shape differs across engines.
+    //
+    // Cranelift's `jit_call_builtin_tree` documents that bridge errors
+    // collapse to Nil; that's a separate follow-up and so isn't in the
+    // must-error set here.
     for engine in ["--run-tree", "--run-vm"] {
         let err = run_engine_err(
             r#"key n:n>n;n
@@ -185,8 +192,8 @@ f>_;grp key 42"#,
             engine,
         );
         assert!(
-            err.contains("grp"),
-            "engine={engine}: stderr missing `grp`: {err}"
+            err.contains("grp") || err.contains("list"),
+            "engine={engine}: stderr missing `grp` or `list`: {err}"
         );
     }
 }
