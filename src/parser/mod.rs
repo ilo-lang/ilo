@@ -1376,8 +1376,12 @@ impl Parser {
             && self.peek() != Some(&Token::LBrace)
             && self.can_start_operand()
         {
-            let first = self.parse_operand()?;
-            let second = self.parse_operand()?;
+            // Use `parse_prefix_binop_operand` so a known-arity ident followed
+            // by enough operands expands into a nested call. Mirrors the
+            // expression-position branch above and the `?=cond a b` family in
+            // `parse_prefix_ternary`.
+            let first = self.parse_prefix_binop_operand()?;
+            let second = self.parse_prefix_binop_operand()?;
             // `?h` general prefix-ternary: when the subject ident is literally
             // `h` and a third operand follows, reinterpret `?h` as a fixed
             // prefix-ternary keyword (analogous to `?=`/`?>`/`?<` etc.) with
@@ -1387,7 +1391,7 @@ impl Parser {
             // to the literal ident `h` keeps every other bool-named subject
             // (`?ready a b`, `?ok 1 0`, …) unambiguous and unchanged.
             if matches!(subj, Expr::Ref(n) if n == "h") && self.can_start_operand() {
-                let third = self.parse_operand()?;
+                let third = self.parse_prefix_binop_operand()?;
                 return Ok(Stmt::Expr(Expr::Ternary {
                     condition: Box::new(first),
                     then_expr: Box::new(second),
@@ -2181,9 +2185,13 @@ impl Parser {
         self.advance(); // consume ?
         // Parse the condition as a prefix binop (=x 0, >x 5, etc.)
         let condition = self.parse_prefix_binop()?;
-        // Parse then and else expressions
-        let then_expr = self.parse_operand()?;
-        let else_expr = self.parse_operand()?;
+        // Parse then and else expressions. Use `parse_prefix_binop_operand` so
+        // a known-arity ident followed by enough operands expands into a
+        // nested call: `?=a b sev sc "NONE"` parses `sev sc` as `Call(sev, sc)`
+        // instead of leaving `sev` as a bare Ref and orphaning `sc "NONE"`.
+        // Mirrors the prefix-binop swap from #332 (`>len q 0`).
+        let then_expr = self.parse_prefix_binop_operand()?;
+        let else_expr = self.parse_prefix_binop_operand()?;
         Ok(Expr::Ternary {
             condition: Box::new(condition),
             then_expr: Box::new(then_expr),
@@ -2214,8 +2222,13 @@ impl Parser {
             && self.peek() != Some(&Token::LBrace)
             && self.can_start_operand()
         {
-            let first = self.parse_operand()?;
-            let second = self.parse_operand()?;
+            // Use `parse_prefix_binop_operand` so a known-arity ident followed
+            // by enough operands expands into a nested call. Without this,
+            // `?h =a b sev sc "NONE"` parses `sev` as a bare Ref and then
+            // chokes on `sc "NONE"`. See `parse_prefix_ternary` for the
+            // same swap on the `?=cond a b` family.
+            let first = self.parse_prefix_binop_operand()?;
+            let second = self.parse_prefix_binop_operand()?;
             // `?h` general prefix-ternary in expr position. See the matching
             // block in `parse_match_stmt` for the rationale: literal subject
             // ident `h` followed by three operand atoms is reinterpreted as
@@ -2224,7 +2237,7 @@ impl Parser {
             // the brace form when the condition is an expression rather than
             // a bare bool ref.
             if matches!(subj.as_ref(), Expr::Ref(n) if n == "h") && self.can_start_operand() {
-                let third = self.parse_operand()?;
+                let third = self.parse_prefix_binop_operand()?;
                 return Ok(Expr::Ternary {
                     condition: Box::new(first),
                     then_expr: Box::new(second),

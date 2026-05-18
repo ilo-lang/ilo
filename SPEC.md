@@ -377,7 +377,7 @@ wh >len q 0{body}        -- parses as wh > (len q) 0 { body }
 - dbl 5                  -- Negate(Call(dbl, [5])) — unary on a call
 ```
 
-This parallels the `??` precedent: `??x default` accepts a call expression on the value side. Applies to every prefix-binop family member — `+`, `-`, `*`, `/`, comparisons, `&`, `|`, `+=` — and to unary negate when the call consumes the only operand. Bare locals that shadow a user fn name still resolve via `Ref` rather than expanding into a zero-arg call, so `&e f{...}` where `f` is a local still parses as the bool operator with two refs.
+This parallels the `??` precedent: `??x default` accepts a call expression on the value side. Applies to every prefix-binop family member — `+`, `-`, `*`, `/`, comparisons, `&`, `|`, `+=` — and to unary negate when the call consumes the only operand. The same expansion also applies to the then/else slots of the prefix-ternary family (`?=cond a b`, `?>cond a b`, …) and the `?h cond a b` keyword form, so `?h =a b sev sc "NONE"` parses `sev sc` as a nested call without parens or a bind-first. Bare locals that shadow a user fn name still resolve via `Ref` rather than expanding into a zero-arg call, so `&e f{...}` where `f` is a local still parses as the bool operator with two refs.
 
 When the call expansion isn't available (the ident is a local that shadows a fn name, or the call's arity doesn't fit the remaining tokens), bind the call result first:
 
@@ -896,6 +896,8 @@ f mn:t>t;cn=(=mn "v40");sc1=?h cn "v4" "v3";sc1   -- in let-RHS
 ```
 
 The disambiguator is operand count: **two** operand atoms after `?h` keeps the bool-subject reading above (`?h a b` → `if h then a else b`); **three** operand atoms promotes `?h` to the fixed keyword form (`?h cond a b` → `if cond then a else b`). The keyword reading triggers only for the literal ident `h`, so every other bool-named subject (`?ready a b`, `?ok 1 0`, …) keeps the PR #330 semantics regardless of how many operands follow. Use the keyword form when the condition is a more complex bool expression than a single ref and you want the cheapest prefix shape; the brace form `?cond{a}{b}` works too but is two characters longer per occurrence.
+
+Each of the three operand slots accepts the same shapes as a prefix-binop operand — atom, nested prefix operator, or known-arity call. `?h =a b sev sc "NONE"` parses `sev sc` as `Call(sev, [sc])` in the then-slot, so `Call` results don't have to be bound first or paren-grouped (paren form `(sev sc)` still works as an explicit alternative).
 
 ### Early Return
 
