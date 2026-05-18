@@ -1,6 +1,6 @@
 # Privacy Policy
 
-**ilo** — a token-optimised programming language for AI agents
+**ilo** - a token-optimised programming language for AI agents
 
 *Last updated: 2026-03-07*
 
@@ -12,8 +12,8 @@ ilo does not collect, store, transmit, or process any personal data. The ilo CLI
 
 ilo makes no network requests except when:
 
-- **You explicitly use `get!`** — an HTTP GET builtin that fetches a URL you provide in your program. No data is sent beyond the standard HTTP request to the URL you specify.
-- **You explicitly use `post!`** — an HTTP POST builtin that sends data you provide to a URL you specify.
+- **You explicitly use `get!`** - an HTTP GET builtin that fetches a URL you provide in your program. No data is sent beyond the standard HTTP request to the URL you specify.
+- **You explicitly use `post!`** - an HTTP POST builtin that sends data you provide to a URL you specify.
 
 ilo never phones home, has no telemetry, no analytics, and no update checks.
 

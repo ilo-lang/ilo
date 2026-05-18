@@ -62,19 +62,19 @@ repo). Briefs there set the why; PRs here implement the how.
 The pipeline flows: **Lexer** -> **Parser** -> **AST** -> **Verifier** -> **Interpreter/VM/Cranelift JIT**
 
 Key source files:
-- `src/lexer/mod.rs` — tokenizer
-- `src/parser/mod.rs` — parser producing AST
-- `src/ast/mod.rs` — AST types
-- `src/verify.rs` — static type checker
-- `src/interpreter/mod.rs` — tree-walking interpreter
-- `src/vm/mod.rs` — register-based VM
-- `src/codegen/python.rs` — Python transpiler
-- `src/diagnostic/` — error codes and reporting
+- `src/lexer/mod.rs` - tokenizer
+- `src/parser/mod.rs` - parser producing AST
+- `src/ast/mod.rs` - AST types
+- `src/verify.rs` - static type checker
+- `src/interpreter/mod.rs` - tree-walking interpreter
+- `src/vm/mod.rs` - register-based VM
+- `src/codegen/python.rs` - Python transpiler
+- `src/diagnostic/` - error codes and reporting
 
 ## Community
 
-- [ilo-lang.ai](https://ilo-lang.ai) — docs, playground, and examples
-- [hello@ilo-lang.ai](mailto:hello@ilo-lang.ai) — get in touch
+- [ilo-lang.ai](https://ilo-lang.ai) - docs, playground, and examples
+- [hello@ilo-lang.ai](mailto:hello@ilo-lang.ai) - get in touch
 
 ## Language Spec
 
