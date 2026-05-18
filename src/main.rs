@@ -1475,14 +1475,62 @@ fn compile_cmd(args: &[String]) -> i32 {
         }
     };
 
-    // Determine entry function
-    let entry = func_name.unwrap_or_else(|| {
-        compiled
-            .func_names
-            .first()
-            .map(|s| s.as_str())
-            .unwrap_or("main")
-    });
+    // Determine entry function.
+    //
+    // AOT historically picked `func_names.first()` here, which meant a file
+    // like `helper>n;42\nmain>n;helper` compiled with the helper as the
+    // entry symbol — the produced binary then SIGSEGV'd at runtime because
+    // the wrapper expected `main`'s shape. Tree/VM/JIT all canonicalise on
+    // `main` (or the single-fn shortcut) via the dispatch in `run_cmd`; AOT
+    // now mirrors that convention exactly:
+    //
+    //   1. explicit positional `func` argument wins
+    //   2. else single user-defined function (the `m>...` test idiom) → use it
+    //   3. else `main` exists → use `main`
+    //   4. else error ILO-E801 with the available-function list, exit 1
+    //      (never SIGSEGV)
+    let user_fn_names: Vec<&str> = program
+        .declarations
+        .iter()
+        .filter_map(|d| match d {
+            ast::Decl::Function { name, .. } | ast::Decl::Tool { name, .. }
+                if !name.starts_with("__") =>
+            {
+                Some(name.as_str())
+            }
+            _ => None,
+        })
+        .collect();
+
+    let entry: &str = if let Some(name) = func_name {
+        name
+    } else if user_fn_names.len() == 1 {
+        user_fn_names[0]
+    } else if user_fn_names.contains(&"main") {
+        "main"
+    } else {
+        eprintln!(
+            "error[ILO-E801]: AOT compile needs an entry function but no `main` is defined and no entry name was supplied"
+        );
+        if user_fn_names.is_empty() {
+            eprintln!("note: this file declares no functions");
+        } else {
+            eprintln!("available functions:");
+            for n in &user_fn_names {
+                eprintln!("  {}", n);
+            }
+        }
+        eprintln!();
+        eprintln!(
+            "  ilo compile {} <func>          compile and call <func> as the entry point",
+            source_arg
+        );
+        eprintln!(
+            "  ilo compile {} -o <out> <func> compile to <out> with <func> as the entry point",
+            source_arg
+        );
+        return 1;
+    };
 
     // AOT compile
     let start = std::time::Instant::now();
@@ -3174,7 +3222,8 @@ fn dispatch_run(r: cli::RunArgs, mode: OutputMode, explicit_json: bool, no_hints
             &[][..]
         };
         let run_args = parse_cli_args_typed(&program, func_name, raw);
-        run_bench(&program, func_name, &run_args);
+        let json = matches!(mode, OutputMode::Json);
+        run_bench(&program, func_name, &run_args, json);
         0
     } else if r.explain {
         let filename = if is_file {
@@ -4090,7 +4139,54 @@ fn program_exit_code(val: &interpreter::Value) -> i32 {
 }
 
 #[allow(unused_variables, unused_mut)]
-fn run_bench(program: &ast::Program, func_name: Option<&str>, args: &[interpreter::Value]) {
+/// Emit one machine-readable JSON envelope for a single bench measurement.
+///
+/// One line per engine. Top-level `engine` field names which engine produced
+/// the timing — `tree` (Rust interpreter), `vm` (register VM, with `variant`
+/// distinguishing the fresh-compile vs reusable-VmState measurements), or
+/// `jit` (Cranelift). `llvm` and `python` are emitted for completeness but
+/// fall outside the four-engine `tree|vm|jit|aot` contract from adoption
+/// brief 4; AOT isn't measured by `--bench` today (use `ilo build` then time
+/// the binary). Text mode is unchanged — this only fires under `--json`.
+fn emit_bench_json(
+    engine: &str,
+    variant: Option<&str>,
+    result: &str,
+    iterations: u32,
+    total_ms: f64,
+    per_call_ns: u128,
+) {
+    // Escape the result string for JSON. Bench results are values rendered by
+    // `Display` so they can contain `"` and `\` (rare but possible — `Text`
+    // values pass through verbatim). Roll a minimal escaper here to avoid
+    // pulling serde just for one line.
+    let mut esc = String::with_capacity(result.len() + 2);
+    for c in result.chars() {
+        match c {
+            '"' => esc.push_str("\\\""),
+            '\\' => esc.push_str("\\\\"),
+            '\n' => esc.push_str("\\n"),
+            '\r' => esc.push_str("\\r"),
+            '\t' => esc.push_str("\\t"),
+            c if (c as u32) < 0x20 => esc.push_str(&format!("\\u{:04x}", c as u32)),
+            c => esc.push(c),
+        }
+    }
+    let variant_field = match variant {
+        Some(v) => format!(",\"variant\":\"{}\"", v),
+        None => String::new(),
+    };
+    println!(
+        "{{\"schemaVersion\":1,\"engine\":\"{engine}\"{variant_field},\"result\":\"{esc}\",\"iterations\":{iterations},\"totalMs\":{total_ms:.4},\"perCallNs\":{per_call_ns}}}"
+    );
+}
+
+fn run_bench(
+    program: &ast::Program,
+    func_name: Option<&str>,
+    args: &[interpreter::Value],
+    json: bool,
+) {
     use std::io::Write;
     use std::process::Command;
     use std::time::Instant;
@@ -4112,12 +4208,23 @@ fn run_bench(program: &ast::Program, func_name: Option<&str>, args: &[interprete
     let interp_dur = start.elapsed();
     let interp_ns = interp_dur.as_nanos() / iterations as u128;
 
-    println!("Rust interpreter");
-    println!("  result:     {}", result);
-    println!("  iterations: {}", iterations);
-    println!("  total:      {:.2}ms", interp_dur.as_nanos() as f64 / 1e6);
-    println!("  per call:   {}ns", interp_ns);
-    println!();
+    if json {
+        emit_bench_json(
+            "tree",
+            None,
+            &result.to_string(),
+            iterations,
+            interp_dur.as_nanos() as f64 / 1e6,
+            interp_ns,
+        );
+    } else {
+        println!("Rust interpreter");
+        println!("  result:     {}", result);
+        println!("  iterations: {}", iterations);
+        println!("  total:      {:.2}ms", interp_dur.as_nanos() as f64 / 1e6);
+        println!("  per call:   {}ns", interp_ns);
+        println!();
+    }
 
     // -- Register VM benchmark --
     let compiled = vm::compile(program).expect("compile error in benchmark");
@@ -4135,12 +4242,23 @@ fn run_bench(program: &ast::Program, func_name: Option<&str>, args: &[interprete
     let vm_dur = start.elapsed();
     let vm_ns = vm_dur.as_nanos() / iterations as u128;
 
-    println!("Register VM");
-    println!("  result:     {}", vm_result);
-    println!("  iterations: {}", iterations);
-    println!("  total:      {:.2}ms", vm_dur.as_nanos() as f64 / 1e6);
-    println!("  per call:   {}ns", vm_ns);
-    println!();
+    if json {
+        emit_bench_json(
+            "vm",
+            Some("fresh"),
+            &vm_result.to_string(),
+            iterations,
+            vm_dur.as_nanos() as f64 / 1e6,
+            vm_ns,
+        );
+    } else {
+        println!("Register VM");
+        println!("  result:     {}", vm_result);
+        println!("  iterations: {}", iterations);
+        println!("  total:      {:.2}ms", vm_dur.as_nanos() as f64 / 1e6);
+        println!("  per call:   {}ns", vm_ns);
+        println!();
+    }
 
     // -- Register VM (reusable) benchmark --
     let call_name = func_name.unwrap_or(
@@ -4164,15 +4282,26 @@ fn run_bench(program: &ast::Program, func_name: Option<&str>, args: &[interprete
     let vm_reuse_dur = start.elapsed();
     let vm_reuse_ns = vm_reuse_dur.as_nanos() / iterations as u128;
 
-    println!("Register VM (reusable)");
-    println!("  result:     {}", vm_result);
-    println!("  iterations: {}", iterations);
-    println!(
-        "  total:      {:.2}ms",
-        vm_reuse_dur.as_nanos() as f64 / 1e6
-    );
-    println!("  per call:   {}ns", vm_reuse_ns);
-    println!();
+    if json {
+        emit_bench_json(
+            "vm",
+            Some("reusable"),
+            &vm_result.to_string(),
+            iterations,
+            vm_reuse_dur.as_nanos() as f64 / 1e6,
+            vm_reuse_ns,
+        );
+    } else {
+        println!("Register VM (reusable)");
+        println!("  result:     {}", vm_result);
+        println!("  iterations: {}", iterations);
+        println!(
+            "  total:      {:.2}ms",
+            vm_reuse_dur.as_nanos() as f64 / 1e6
+        );
+        println!("  per call:   {}ns", vm_reuse_ns);
+        println!();
+    }
 
     // -- JIT benchmarks --
     // Extract function info for JIT
@@ -4222,12 +4351,23 @@ fn run_bench(program: &ast::Program, func_name: Option<&str>, args: &[interprete
                 // synthetic `<user_fn:N>` placeholder.
                 let jit_result =
                     vm::NanVal(jit_result_bits).to_value_with_program(&compiled.func_names);
-                println!("Cranelift JIT");
-                println!("  result:     {}", jit_result);
-                println!("  iterations: {}", iterations);
-                println!("  total:      {:.2}ms", jit_dur.as_nanos() as f64 / 1e6);
-                println!("  per call:   {}ns", ns);
-                println!();
+                if json {
+                    emit_bench_json(
+                        "jit",
+                        None,
+                        &jit_result.to_string(),
+                        iterations,
+                        jit_dur.as_nanos() as f64 / 1e6,
+                        ns,
+                    );
+                } else {
+                    println!("Cranelift JIT");
+                    println!("  result:     {}", jit_result);
+                    println!("  iterations: {}", iterations);
+                    println!("  total:      {:.2}ms", jit_dur.as_nanos() as f64 / 1e6);
+                    println!("  per call:   {}ns", ns);
+                    println!();
+                }
             }
         });
     }
@@ -4254,21 +4394,39 @@ fn run_bench(program: &ast::Program, func_name: Option<&str>, args: &[interprete
                 let ns = jit_dur.as_nanos() / iterations as u128;
                 jit_llvm_ns = Some(ns);
 
-                println!("LLVM JIT");
-                if jit_result == (jit_result as i64) as f64 {
-                    println!("  result:     {}", jit_result as i64);
+                let result_str = if jit_result == (jit_result as i64) as f64 {
+                    format!("{}", jit_result as i64)
                 } else {
-                    println!("  result:     {}", jit_result);
+                    format!("{}", jit_result)
+                };
+                if json {
+                    emit_bench_json(
+                        "llvm",
+                        None,
+                        &result_str,
+                        iterations,
+                        jit_dur.as_nanos() as f64 / 1e6,
+                        ns,
+                    );
+                } else {
+                    println!("LLVM JIT");
+                    println!("  result:     {}", result_str);
+                    println!("  iterations: {}", iterations);
+                    println!("  total:      {:.2}ms", jit_dur.as_nanos() as f64 / 1e6);
+                    println!("  per call:   {}ns", ns);
+                    println!();
                 }
-                println!("  iterations: {}", iterations);
-                println!("  total:      {:.2}ms", jit_dur.as_nanos() as f64 / 1e6);
-                println!("  per call:   {}ns", ns);
-                println!();
             }
         }
     }
 
     // -- Python transpiler benchmark (single invocation) --
+    // JSON mode skips Python entirely — it isn't one of the four engines
+    // (tree/vm/jit/aot) and the human-readable comparator only makes sense
+    // alongside the text-mode summary block below.
+    if json {
+        return;
+    }
     let py_code = codegen::python::emit(program);
     let call_func = func_name.unwrap_or("main").replace('-', "_");
     let call_args: Vec<String> = args
