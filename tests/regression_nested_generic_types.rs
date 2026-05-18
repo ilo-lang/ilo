@@ -92,5 +92,5 @@ fn nested_generic_types_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn nested_generic_types_cranelift() {
-    check_all("--run-cranelift");
+    check_all("--jit");
 }

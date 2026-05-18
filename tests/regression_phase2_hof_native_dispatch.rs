@@ -17,7 +17,7 @@
 //   2. Capturing inline lambda (Phase 2 shape, Expr::MakeClosure).
 //   3. Named top-level fn (FnRef to user fn).
 //
-// Each shape runs on `--run-tree`, `--run-vm`, and `--run-cranelift`
+// Each shape runs on `--run-tree`, `--run-vm`, and `--jit`
 // (when the `cranelift` feature is enabled) so all three engines stay
 // in lockstep.
 
@@ -56,7 +56,7 @@ fn run_ok(engine: &str, src: &str, entry: &str, args: &[&str]) -> String {
 
 fn run_all(src: &str, entry: &str, args: &[&str], expected: &str) {
     #[cfg(feature = "cranelift")]
-    let engines: &[&str] = &["--run-tree", "--run-vm", "--run-cranelift"];
+    let engines: &[&str] = &["--run-tree", "--run-vm", "--jit"];
     #[cfg(not(feature = "cranelift"))]
     let engines: &[&str] = &["--run-tree", "--run-vm"];
     for engine in engines {
@@ -169,7 +169,7 @@ fn partition_all_fail() {
 fn partition_non_bool_predicate_errors() {
     let src = "bad x:n>n;+x 1\nf xs:L n>L L n;partition bad xs";
     #[cfg(feature = "cranelift")]
-    let engines: &[&str] = &["--run-tree", "--run-vm", "--run-cranelift"];
+    let engines: &[&str] = &["--run-tree", "--run-vm", "--jit"];
     #[cfg(not(feature = "cranelift"))]
     let engines: &[&str] = &["--run-tree", "--run-vm"];
     for engine in engines {

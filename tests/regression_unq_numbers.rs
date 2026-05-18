@@ -63,7 +63,7 @@ fn unq_numbers_basic_len_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn unq_numbers_basic_len_cranelift() {
-    check_basic_len("--run-cranelift");
+    check_basic_len("--jit");
 }
 
 // Return-the-list form: `unq [1,2,2,3]` returns [1, 2, 3] preserving order.
@@ -86,7 +86,7 @@ fn unq_numbers_preserves_order_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn unq_numbers_preserves_order_cranelift() {
-    check_order("--run-cranelift");
+    check_order("--jit");
 }
 
 // All-same: a list of identical numbers dedupes to one element.
@@ -109,7 +109,7 @@ fn unq_numbers_all_same_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn unq_numbers_all_same_cranelift() {
-    check_all_same("--run-cranelift");
+    check_all_same("--jit");
 }
 
 // Empty list: edge case, returns [].
@@ -132,7 +132,7 @@ fn unq_numbers_empty_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn unq_numbers_empty_cranelift() {
-    check_empty("--run-cranelift");
+    check_empty("--jit");
 }
 
 // All-unique: no element should be dropped, length equals input length.
@@ -168,7 +168,7 @@ fn unq_numbers_all_unique_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn unq_numbers_all_unique_cranelift() {
-    check_all_unique("--run-cranelift");
+    check_all_unique("--jit");
 }
 
 // Floats: `nanval_equal` uses `f64::EPSILON` so exact-representation
@@ -196,7 +196,7 @@ fn unq_numbers_floats_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn unq_numbers_floats_cranelift() {
-    check_floats("--run-cranelift");
+    check_floats("--jit");
 }
 
 // Negatives and zero: sign and zero are preserved through the
@@ -225,7 +225,7 @@ fn unq_numbers_negatives_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn unq_numbers_negatives_cranelift() {
-    check_negatives("--run-cranelift");
+    check_negatives("--jit");
 }
 
 // Stress test: 1000-element list (500 unique values, each repeated
@@ -276,5 +276,5 @@ fn unq_numbers_stress_1000_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn unq_numbers_stress_1000_cranelift() {
-    check_stress("--run-cranelift");
+    check_stress("--jit");
 }

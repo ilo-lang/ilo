@@ -138,5 +138,5 @@ fn minus_zero_decl_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn minus_zero_decl_cranelift() {
-    check_all("--run-cranelift");
+    check_all("--jit");
 }

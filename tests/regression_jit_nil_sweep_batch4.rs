@@ -50,7 +50,7 @@ fn check_all(src: &str, expected: &str) {
     check_stdout("--run-tree", src, expected);
     check_stdout("--run-vm", src, expected);
     #[cfg(feature = "cranelift")]
-    check_stdout("--run-cranelift", src, expected);
+    check_stdout("--jit", src, expected);
 }
 
 // ── fmt2 ──────────────────────────────────────────────────────────────────
@@ -98,7 +98,7 @@ fn check_all_no_trim(src: &str, expected: &str) {
         "--run-tree",
         "--run-vm",
         #[cfg(feature = "cranelift")]
-        "--run-cranelift",
+        "--jit",
     ] {
         let out = ilo()
             .args([src, engine, "f"])
@@ -172,9 +172,9 @@ fn unq_list_cross_engine() {
 #[cfg(feature = "cranelift")]
 fn no_stale_jit_error_leak_after_hd_error_then_chars() {
     let first = ilo()
-        .args(["f>n;hd []", "--run-cranelift", "f"])
+        .args(["f>n;hd []", "--jit", "f"])
         .output()
         .expect("failed to run ilo");
     assert!(!first.status.success(), "first call should error on hd []");
-    check_stdout("--run-cranelift", "f>L t;chars \"hi\"", "[h, i]");
+    check_stdout("--jit", "f>L t;chars \"hi\"", "[h, i]");
 }

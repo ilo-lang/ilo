@@ -52,7 +52,7 @@ fn frq_strings_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn frq_strings_cranelift() {
-    check_string_freq("--run-cranelift");
+    check_string_freq("--jit");
 }
 
 // ── Numbers: frq [1,2,1,3,2,1] — keys preserve the number type ───────────
@@ -80,7 +80,7 @@ fn frq_numbers_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn frq_numbers_cranelift() {
-    check_num_freq("--run-cranelift");
+    check_num_freq("--jit");
 }
 
 // ── Empty list: frq [] → {} (size 0) ──────────────────────────────────────
@@ -106,7 +106,7 @@ fn frq_empty_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn frq_empty_cranelift() {
-    check_empty("--run-cranelift");
+    check_empty("--jit");
 }
 
 // ── Singleton: frq ["x"] → {"x":1} ────────────────────────────────────────
@@ -130,7 +130,7 @@ fn frq_single_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn frq_single_cranelift() {
-    check_single("--run-cranelift");
+    check_single("--jit");
 }
 
 // ── Bare keys round-trip through mkeys: the regression that motivated the
@@ -158,7 +158,7 @@ fn frq_mkeys_bare_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn frq_mkeys_bare_cranelift() {
-    check_mkeys("--run-cranelift");
+    check_mkeys("--jit");
 }
 
 // ── Cross-type keys: frq [1, "1", true] — with typed `MapKey`, `Int(1)`,
@@ -204,5 +204,5 @@ fn frq_cross_type_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn frq_cross_type_cranelift() {
-    check_cross_type("--run-cranelift");
+    check_cross_type("--jit");
 }

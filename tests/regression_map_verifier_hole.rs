@@ -41,7 +41,7 @@ fn write_src(tag: &str, src: &str) -> std::path::PathBuf {
 }
 
 #[cfg(feature = "cranelift")]
-const ENGINES: &[&str] = &["--run-tree", "--run-vm", "--run-cranelift"];
+const ENGINES: &[&str] = &["--run-tree", "--run-vm", "--jit"];
 #[cfg(not(feature = "cranelift"))]
 const ENGINES: &[&str] = &["--run-tree", "--run-vm"];
 

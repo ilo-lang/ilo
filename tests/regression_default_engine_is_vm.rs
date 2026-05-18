@@ -1,7 +1,7 @@
 // Regression tests for the default engine flip: bytecode register VM is the
-// default execution path, Cranelift JIT is opt-in via `--cranelift` /
-// `--run-cranelift`. Tree interpreter remains the canonical-semantics
-// fallback for any program the VM rejects.
+// default execution path, Cranelift JIT is opt-in via `--jit`. Tree
+// interpreter remains the canonical-semantics fallback for any program the VM
+// rejects.
 //
 // Pre-flip: default tried Cranelift JIT first then fell back to the VM on
 // every NotEligible bailout, paying compile-and-bail cost on programs that
@@ -13,8 +13,8 @@
 // What we assert:
 //   1. `ilo file.ilo` (default) and `ilo file.ilo --run-vm` produce
 //      identical stdout for a VM-supported workload.
-//   2. `ilo file.ilo --cranelift` and `ilo file.ilo --run-cranelift`
-//      produce identical stdout (the short alias works).
+//   2. `ilo file.ilo --jit` runs the workload and produces correct output
+//      (the JIT opt-in flag works).
 //   3. Default invocation of a JIT-eligible workload completes WITHOUT a
 //      JIT-fallback breadcrumb on stderr (proves we're using the VM
 //      directly, not JIT-then-fallback).
@@ -59,13 +59,10 @@ fn default_matches_run_vm_numeric() {
 }
 
 #[test]
-fn cranelift_alias_matches_run_cranelift() {
-    let (short_out, _, short_code) = run_args(&["--cranelift", NUMERIC_SRC, "main", "7"]);
-    let (long_out, _, long_code) = run_args(&["--run-cranelift", NUMERIC_SRC, "main", "7"]);
-    assert_eq!(short_code, 0, "--cranelift exit");
-    assert_eq!(long_code, 0, "--run-cranelift exit");
-    assert_eq!(short_out, "15");
-    assert_eq!(short_out, long_out, "--cranelift vs --run-cranelift parity");
+fn jit_flag_runs_numeric() {
+    let (out, _, code) = run_args(&["--jit", NUMERIC_SRC, "main", "7"]);
+    assert_eq!(code, 0, "--jit exit");
+    assert_eq!(out, "15");
 }
 
 #[test]

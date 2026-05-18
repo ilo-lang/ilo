@@ -3,7 +3,7 @@
 // per element, so the bridge needs the active AST `Program` plumbed through
 // `ACTIVE_AST_PROGRAM` to resolve the callback name to its `Decl::Function`.
 //
-// Pre-fix: `--run-vm` and `--run-cranelift` errored with `Compile error:
+// Pre-fix: `--run-vm` and `--jit` errored with `Compile error:
 // undefined function: grp` (etc.) because the VM emitter fell through to
 // OP_CALL's user-function lookup. Post-fix: every engine routes through
 // `interpreter::call_builtin_for_bridge_with_program`, which builds an Env
@@ -16,7 +16,7 @@
 
 use std::process::Command;
 
-const ENGINES: &[&str] = &["--run-tree", "--run-vm", "--run-cranelift"];
+const ENGINES: &[&str] = &["--run-tree", "--run-vm", "--jit"];
 
 fn ilo() -> Command {
     Command::new(env!("CARGO_BIN_EXE_ilo"))

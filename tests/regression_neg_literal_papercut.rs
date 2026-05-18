@@ -168,5 +168,5 @@ fn neg_literal_papercut_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn neg_literal_papercut_cranelift() {
-    check_engine("--run-cranelift");
+    check_engine("--jit");
 }

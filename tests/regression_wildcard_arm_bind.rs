@@ -75,10 +75,7 @@ fn wildcard_discard_ok_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn wildcard_discard_ok_cranelift() {
-    assert_eq!(
-        run("--run-cranelift", WILDCARD_DISCARD, "pn", "3.14"),
-        "3.14"
-    );
+    assert_eq!(run("--jit", WILDCARD_DISCARD, "pn", "3.14"), "3.14");
 }
 
 #[test]
@@ -94,7 +91,7 @@ fn wildcard_discard_err_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn wildcard_discard_err_cranelift() {
-    assert_eq!(run("--run-cranelift", WILDCARD_DISCARD, "pn", "oops"), "0");
+    assert_eq!(run("--jit", WILDCARD_DISCARD, "pn", "oops"), "0");
 }
 
 // ── `~_:~_` re-wrap unchanged (SPEC.md line 1069) ───────────────────────────
@@ -117,10 +114,7 @@ fn rewrap_unchanged_ok_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn rewrap_unchanged_ok_cranelift() {
-    assert_eq!(
-        run("--run-cranelift", REWRAP_UNCHANGED, "f", "3.14"),
-        "3.14"
-    );
+    assert_eq!(run("--jit", REWRAP_UNCHANGED, "f", "3.14"), "3.14");
 }
 
 #[test]
@@ -136,7 +130,7 @@ fn rewrap_unchanged_err_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn rewrap_unchanged_err_cranelift() {
-    assert_eq!(run("--run-cranelift", REWRAP_UNCHANGED, "f", "oops"), "^e");
+    assert_eq!(run("--jit", REWRAP_UNCHANGED, "f", "oops"), "^e");
 }
 
 // ── `^_:fmt "err: {}" _` — debug-log the unbound name ───────────────────────
@@ -159,10 +153,7 @@ fn err_debug_fmt_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn err_debug_fmt_cranelift() {
-    assert_eq!(
-        run("--run-cranelift", ERR_DEBUG_FMT, "f", "abc"),
-        "err: abc"
-    );
+    assert_eq!(run("--jit", ERR_DEBUG_FMT, "f", "abc"), "err: abc");
 }
 
 // ── `_:_` plain wildcard binds the subject ──────────────────────────────────
@@ -186,7 +177,7 @@ fn plain_wildcard_bind_subject_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn plain_wildcard_bind_subject_cranelift() {
-    assert_eq!(run("--run-cranelift", PLAIN_WILDCARD_BIND, "f", "42"), "42");
+    assert_eq!(run("--jit", PLAIN_WILDCARD_BIND, "f", "42"), "42");
 }
 
 // Hit-the-literal arm: confirms the wildcard fall-through still picks up
@@ -205,7 +196,7 @@ fn plain_wildcard_bind_literal_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn plain_wildcard_bind_literal_cranelift() {
-    assert_eq!(run("--run-cranelift", PLAIN_WILDCARD_BIND, "f", "1"), "10");
+    assert_eq!(run("--jit", PLAIN_WILDCARD_BIND, "f", "1"), "10");
 }
 
 // ── `n _:_` TypeIs wildcard binds the typed subject ─────────────────────────
@@ -227,7 +218,7 @@ fn typeis_wildcard_bind_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn typeis_wildcard_bind_cranelift() {
-    assert_eq!(run("--run-cranelift", TYPEIS_WILDCARD_BIND, "f", "5"), "6");
+    assert_eq!(run("--jit", TYPEIS_WILDCARD_BIND, "f", "5"), "6");
 }
 
 // ── Negative regression: named bindings still work ──────────────────────────
@@ -250,7 +241,7 @@ fn named_bindings_ok_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn named_bindings_ok_cranelift() {
-    assert_eq!(run("--run-cranelift", NAMED_BINDINGS, "f", "3.14"), "3.14");
+    assert_eq!(run("--jit", NAMED_BINDINGS, "f", "3.14"), "3.14");
 }
 
 #[test]
@@ -266,8 +257,5 @@ fn named_bindings_err_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn named_bindings_err_cranelift() {
-    assert_eq!(
-        run("--run-cranelift", NAMED_BINDINGS, "f", "abc"),
-        "err: abc"
-    );
+    assert_eq!(run("--jit", NAMED_BINDINGS, "f", "abc"), "err: abc");
 }

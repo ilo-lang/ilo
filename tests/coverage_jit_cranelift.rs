@@ -2,7 +2,7 @@
 //
 // Goal: lift region coverage on jit_cranelift.rs by exercising opcode arms
 // that are not reached by the existing JIT integration tests. Each test
-// runs an ilo program with `--run-cranelift` so the codegen path under
+// runs an ilo program with `--jit` so the codegen path under
 // test is compiled and executed.
 //
 // Grouping mirrors the big `match op { … }` in `compile_function_body`:
@@ -20,12 +20,12 @@ fn ilo() -> Command {
     Command::new(env!("CARGO_BIN_EXE_ilo"))
 }
 
-/// Run `ilo --run-cranelift <src> <entry> [args…]` and assert success
+/// Run `ilo --jit <src> <entry> [args…]` and assert success
 /// with `stdout.trim() == expected`. Use an empty `args` slice when the
 /// entry takes no CLI args.
 fn run_ok(src: &str, entry: &str, args: &[&str], expected: &str) {
     let mut cmd = ilo();
-    cmd.args(["--run-cranelift", src, entry]);
+    cmd.args(["--jit", src, entry]);
     for a in args {
         cmd.arg(a);
     }
@@ -45,7 +45,7 @@ fn run_ok(src: &str, entry: &str, args: &[&str], expected: &str) {
 
 fn run_err_contains(src: &str, entry: &str, needle: &str) {
     let out = ilo()
-        .args(["--run-cranelift", src, entry])
+        .args(["--jit", src, entry])
         .output()
         .expect("failed to run ilo");
     let stderr = String::from_utf8_lossy(&out.stderr);
@@ -649,7 +649,7 @@ fn jit_len_list() {
 #[test]
 fn jit_prnt_runs() {
     let out = ilo()
-        .args(["--run-cranelift", "f>n;prnt 7", "f"])
+        .args(["--jit", "f>n;prnt 7", "f"])
         .output()
         .expect("failed to run ilo");
     let stdout = String::from_utf8_lossy(&out.stdout);

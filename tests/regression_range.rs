@@ -45,7 +45,7 @@ fn range_basic_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn range_basic_cranelift() {
-    check_basic("--run-cranelift");
+    check_basic("--jit");
 }
 
 // Empty: a == b
@@ -68,7 +68,7 @@ fn range_empty_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn range_empty_cranelift() {
-    check_empty("--run-cranelift");
+    check_empty("--jit");
 }
 
 // Flipped: a > b → empty (not error)
@@ -91,7 +91,7 @@ fn range_flipped_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn range_flipped_cranelift() {
-    check_flipped("--run-cranelift");
+    check_flipped("--jit");
 }
 
 // Negative start: range -2 3 → [-2,-1,0,1,2]
@@ -118,7 +118,7 @@ fn range_neg_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn range_neg_cranelift() {
-    check_neg("--run-cranelift");
+    check_neg("--jit");
 }
 
 // Gauss check: sum of range 0..11 → 55. Tree-only because the inline-CLI

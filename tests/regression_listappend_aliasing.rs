@@ -80,7 +80,7 @@ fn append_non_rebind_preserves_xs_vm() {
 #[cfg(feature = "cranelift")]
 fn append_non_rebind_preserves_xs_cranelift() {
     assert_eq!(
-        run("--run-cranelift", APPEND_NON_REBIND_PRESERVES_XS, "f"),
+        run("--jit", APPEND_NON_REBIND_PRESERVES_XS, "f"),
         "[1, 2, 3]"
     );
 }
@@ -110,7 +110,7 @@ fn append_non_rebind_ys_gets_new_item_vm() {
 #[cfg(feature = "cranelift")]
 fn append_non_rebind_ys_gets_new_item_cranelift() {
     assert_eq!(
-        run("--run-cranelift", APPEND_NON_REBIND_YS_GETS_NEW_ITEM, "f"),
+        run("--jit", APPEND_NON_REBIND_YS_GETS_NEW_ITEM, "f"),
         "[1, 2, 3, 99]"
     );
 }
@@ -137,10 +137,7 @@ fn append_non_rebind_both_visible_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn append_non_rebind_both_visible_cranelift() {
-    assert_eq!(
-        run("--run-cranelift", APPEND_NON_REBIND_BOTH_VISIBLE, "f"),
-        "3;4"
-    );
+    assert_eq!(run("--jit", APPEND_NON_REBIND_BOTH_VISIBLE, "f"), "3;4");
 }
 
 // ── Issue 2: `xs = += xs item` rebind shape still in-place (no regression) ──
@@ -167,10 +164,7 @@ fn append_rebind_accumulator_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn append_rebind_accumulator_cranelift() {
-    assert_eq!(
-        run("--run-cranelift", APPEND_REBIND_ACCUMULATOR, "f"),
-        "100"
-    );
+    assert_eq!(run("--jit", APPEND_REBIND_ACCUMULATOR, "f"), "100");
 }
 
 // ── Issue 2 with non-numeric items (Text) ───────────────────────────────────
@@ -197,10 +191,7 @@ fn append_non_rebind_text_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn append_non_rebind_text_cranelift() {
-    assert_eq!(
-        run("--run-cranelift", APPEND_NON_REBIND_TEXT, "f"),
-        "ab|abc"
-    );
+    assert_eq!(run("--jit", APPEND_NON_REBIND_TEXT, "f"), "ab|abc");
 }
 
 // ── Issue 2 at RC > 1 (function-call boundary) ──────────────────────────────
@@ -230,10 +221,7 @@ fn append_non_rebind_rc_gt_1_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn append_non_rebind_rc_gt_1_cranelift() {
-    assert_eq!(
-        run("--run-cranelift", APPEND_NON_REBIND_RC_GT_1, "f"),
-        "[1, 2, 3]"
-    );
+    assert_eq!(run("--jit", APPEND_NON_REBIND_RC_GT_1, "f"), "[1, 2, 3]");
 }
 
 // ── Issue 1 contract pin: `m2 = mset m k v` must NOT mutate `m` ─────────────
@@ -257,10 +245,7 @@ fn mset_non_rebind_preserves_m_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn mset_non_rebind_preserves_m_cranelift() {
-    assert_eq!(
-        run("--run-cranelift", MSET_NON_REBIND_PRESERVES_M, "f"),
-        "1"
-    );
+    assert_eq!(run("--jit", MSET_NON_REBIND_PRESERVES_M, "f"), "1");
 }
 
 // And confirm m2 received the new entry.
@@ -284,10 +269,7 @@ fn mset_non_rebind_m2_gets_new_entry_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn mset_non_rebind_m2_gets_new_entry_cranelift() {
-    assert_eq!(
-        run("--run-cranelift", MSET_NON_REBIND_M2_GETS_NEW_ENTRY, "f"),
-        "2"
-    );
+    assert_eq!(run("--jit", MSET_NON_REBIND_M2_GETS_NEW_ENTRY, "f"), "2");
 }
 
 // mset non-rebind with Text values — exercises the cloning helper's
@@ -316,8 +298,5 @@ fn mset_non_rebind_text_preserves_m_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn mset_non_rebind_text_preserves_m_cranelift() {
-    assert_eq!(
-        run("--run-cranelift", MSET_NON_REBIND_TEXT_PRESERVES_M, "f"),
-        "first"
-    );
+    assert_eq!(run("--jit", MSET_NON_REBIND_TEXT_PRESERVES_M, "f"), "first");
 }

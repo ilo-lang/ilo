@@ -60,7 +60,7 @@ fn sci_e9_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn sci_e9_cranelift() {
-    check_e9("--run-cranelift");
+    check_e9("--jit");
 }
 
 // `2.5e-3` → 0.0025 (negative exponent; the `-` is part of the number,
@@ -84,7 +84,7 @@ fn sci_neg_exp_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn sci_neg_exp_cranelift() {
-    check_neg_exp("--run-cranelift");
+    check_neg_exp("--jit");
 }
 
 // Capital `E` works the same as lowercase.
@@ -111,7 +111,7 @@ fn sci_cap_e_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn sci_cap_e_cranelift() {
-    check_cap_e("--run-cranelift");
+    check_cap_e("--jit");
 }
 
 // Explicit `+` in exponent.
@@ -134,7 +134,7 @@ fn sci_plus_exp_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn sci_plus_exp_cranelift() {
-    check_plus_exp("--run-cranelift");
+    check_plus_exp("--jit");
 }
 
 // `e9` on its own (no leading digit) must still tokenise as an identifier.

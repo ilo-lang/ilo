@@ -87,10 +87,7 @@ fn addss_non_rebind_preserves_a_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn addss_non_rebind_preserves_a_cranelift() {
-    assert_eq!(
-        run("--run-cranelift", ADDSS_NON_REBIND_PRESERVES_A, "go", "1"),
-        "k1"
-    );
+    assert_eq!(run("--jit", ADDSS_NON_REBIND_PRESERVES_A, "go", "1"), "k1");
 }
 
 // And the same shape returning `b` rather than `a`, to confirm the
@@ -119,7 +116,7 @@ fn addss_non_rebind_b_gets_result_vm() {
 #[cfg(feature = "cranelift")]
 fn addss_non_rebind_b_gets_result_cranelift() {
     assert_eq!(
-        run("--run-cranelift", ADDSS_NON_REBIND_B_GETS_RESULT, "go", "1"),
+        run("--jit", ADDSS_NON_REBIND_B_GETS_RESULT, "go", "1"),
         "k1_x"
     );
 }
@@ -150,7 +147,7 @@ fn addss_non_rebind_both_visible_vm() {
 #[cfg(feature = "cranelift")]
 fn addss_non_rebind_both_visible_cranelift() {
     assert_eq!(
-        run("--run-cranelift", ADDSS_NON_REBIND_BOTH_VISIBLE, "go", "1"),
+        run("--jit", ADDSS_NON_REBIND_BOTH_VISIBLE, "go", "1"),
         "k1|k1_x"
     );
 }
@@ -184,12 +181,7 @@ fn add_untyped_non_rebind_preserves_a_vm() {
 #[cfg(feature = "cranelift")]
 fn add_untyped_non_rebind_preserves_a_cranelift() {
     assert_eq!(
-        run(
-            "--run-cranelift",
-            ADD_UNTYPED_NON_REBIND_PRESERVES_A,
-            "go",
-            "1"
-        ),
+        run("--jit", ADD_UNTYPED_NON_REBIND_PRESERVES_A, "go", "1"),
         "k1"
     );
 }
@@ -223,10 +215,7 @@ fn add_rebind_accumulator_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn add_rebind_accumulator_cranelift() {
-    assert_eq!(
-        run("--run-cranelift", ADD_REBIND_ACCUMULATOR, "go", "100").len(),
-        100
-    );
+    assert_eq!(run("--jit", ADD_REBIND_ACCUMULATOR, "go", "100").len(), 100);
 }
 
 // ── RC > 1 case (function-call boundary) ────────────────────────────────────
@@ -251,10 +240,7 @@ fn addss_non_rebind_rc_gt_1_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn addss_non_rebind_rc_gt_1_cranelift() {
-    assert_eq!(
-        run("--run-cranelift", ADDSS_NON_REBIND_RC_GT_1, "go", "1"),
-        "k1"
-    );
+    assert_eq!(run("--jit", ADDSS_NON_REBIND_RC_GT_1, "go", "1"), "k1");
 }
 
 // ── Self-concat (`s = +s s`): in-place path must not self-alias ─────────────
@@ -281,7 +267,7 @@ fn add_self_concat_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn add_self_concat_cranelift() {
-    assert_eq!(run("--run-cranelift", ADD_SELF_CONCAT, "go", "1"), "k1k1");
+    assert_eq!(run("--jit", ADD_SELF_CONCAT, "go", "1"), "k1k1");
 }
 
 // Self-concat with statically-typed LHS so the compiler emits OP_ADD_SS rather
@@ -302,8 +288,5 @@ fn addss_self_concat_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn addss_self_concat_cranelift() {
-    assert_eq!(
-        run("--run-cranelift", ADDSS_SELF_CONCAT, "go", "ab"),
-        "abab"
-    );
+    assert_eq!(run("--jit", ADDSS_SELF_CONCAT, "go", "ab"), "abab");
 }

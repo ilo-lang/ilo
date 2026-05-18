@@ -61,7 +61,7 @@ fn extract_span(stderr: &str) -> Option<(u32, u32)> {
 #[cfg(feature = "cranelift")]
 fn assert_span_parity(src: &str) {
     let vm_err = run_err("--run-vm", src);
-    let cl_err = run_err("--run-cranelift", src);
+    let cl_err = run_err("--jit", src);
 
     let vm_span = extract_span(&vm_err)
         .unwrap_or_else(|| panic!("VM stderr had no labels for `{src}`: {vm_err}"));
@@ -138,7 +138,7 @@ fn at_oob_text_span_matches_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn cranelift_hd_error_carries_some_span() {
-    let stderr = run_err("--run-cranelift", "f>n;hd []");
+    let stderr = run_err("--jit", "f>n;hd []");
     assert!(
         !stderr.contains("\"labels\":[]"),
         "cranelift hd error must carry a source span, got: {stderr}"

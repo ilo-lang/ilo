@@ -167,7 +167,7 @@ fn record_size_sweep_vm() {
 fn record_size_sweep_cranelift() {
     for &n in SIZES {
         let probe = n - 1;
-        check_record("--run-cranelift", n, probe);
+        check_record("--jit", n, probe);
     }
 }
 
@@ -192,7 +192,7 @@ fn with_size_sweep_vm() {
 fn with_size_sweep_cranelift() {
     for &n in SIZES {
         let probe = n - 1;
-        check_with("--run-cranelift", n, probe);
+        check_with("--jit", n, probe);
     }
 }
 
@@ -209,7 +209,7 @@ fn record_leading_locals_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn record_leading_locals_cranelift() {
-    check_record_leading_locals("--run-cranelift");
+    check_record_leading_locals("--jit");
 }
 
 #[test]
@@ -225,7 +225,7 @@ fn with_leading_locals_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn with_leading_locals_cranelift() {
-    check_with_leading_locals("--run-cranelift");
+    check_with_leading_locals("--jit");
 }
 
 // Adjacent coverage: confirm a large `with` preserves untouched fields
@@ -257,7 +257,7 @@ fn with_preserves_untouched_fields_cranelift() {
         type_fields.join(";"),
         inits.join(" "),
     );
-    let out = run("--run-cranelift", &src, "go");
+    let out = run("--jit", &src, "go");
     assert_eq!(out, "140");
 }
 
@@ -293,7 +293,7 @@ fn with_does_not_mutate_original_cranelift() {
         zeroes.join(" "),
         updates.join(" "),
     );
-    let out = run("--run-cranelift", &src, "go");
+    let out = run("--jit", &src, "go");
     assert_eq!(out, "0", "original record should be untouched after with");
 }
 
@@ -357,6 +357,6 @@ fn record_with_string_fields_cranelift() {
         type_fields.join(";"),
         inits.join(" "),
     );
-    let out = run("--run-cranelift", &src, "go");
+    let out = run("--jit", &src, "go");
     assert_eq!(out, "s140");
 }

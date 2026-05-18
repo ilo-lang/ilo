@@ -30,7 +30,7 @@ fn check_all(src: &str, expected: &str) {
     }
     #[cfg(feature = "cranelift")]
     {
-        let actual = run_text("--run-cranelift", src);
+        let actual = run_text("--jit", src);
         assert_eq!(
             actual, expected,
             "engine=cranelift src=`{src}`: got `{actual}`, expected `{expected}`"

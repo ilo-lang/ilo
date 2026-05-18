@@ -6,7 +6,7 @@
 -- JIT entry point is now wrapped in `std::panic::catch_unwind`, so any
 -- such panic becomes a stderr breadcrumb plus an engine fallback:
 --   * default engine → tree interpreter
---   * `--run-cranelift` → bytecode VM
+--   * `--jit` → bytecode VM
 --
 -- This example pins that a numeric pipeline of the shape that triggered
 -- the original repro keeps producing the same result on every engine.

@@ -53,7 +53,7 @@ fn run(engine: &str, src: &str, entry: &str, extra: &[&str]) -> String {
 fn engines() -> Vec<&'static str> {
     let mut v = vec!["--run-tree", "--run-vm"];
     if cfg!(feature = "cranelift") {
-        v.push("--run-cranelift");
+        v.push("--jit");
     }
     v
 }

@@ -1,4 +1,4 @@
--- Engine flags (--run-tree / --run-vm / --run-cranelift) now mirror the
+-- Engine flags (--run-tree / --run-vm / --jit) now mirror the
 -- default engine's #328 heuristic: when the first positional after the
 -- source path is NOT ident-shaped (e.g. `paper.txt`, `/tmp/x.json`, a
 -- number, anything with a `.` or `/` in it) and `main` is defined, the

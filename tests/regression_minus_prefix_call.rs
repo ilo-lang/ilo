@@ -132,5 +132,5 @@ fn minus_prefix_call_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn minus_prefix_call_cranelift() {
-    check_all("--run-cranelift");
+    check_all("--jit");
 }

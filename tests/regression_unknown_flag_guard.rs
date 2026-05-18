@@ -18,7 +18,7 @@
 //      `--` first: `ilo main.ilo -- --foo` or `ilo main.ilo -- --foo=bar`.
 //   3. All recognised long flags (`--run-vm`, `--bench`, etc.) still work.
 //   4. Holds across every engine (default, --run-tree, --run-vm,
-//      --run-cranelift), the bare-positional dispatcher AND the `run`
+//      --jit), the bare-positional dispatcher AND the `run`
 //      subcommand path.
 
 use std::io::Write;
@@ -200,7 +200,7 @@ fn unknown_flag_rejected_under_run_vm() {
 fn unknown_flag_rejected_under_run_cranelift() {
     let p = temp_main("eng_cl");
     let path_str = p.to_str().unwrap();
-    assert_unrecognised(run_args(&["--run-cranelift", path_str, "--foo"]), "--foo");
+    assert_unrecognised(run_args(&["--jit", path_str, "--foo"]), "--foo");
 }
 
 #[test]

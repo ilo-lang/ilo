@@ -48,7 +48,7 @@ fn lst_num_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn lst_num_cranelift() {
-    check_num("--run-cranelift");
+    check_num("--jit");
 }
 
 // Type variable: works on a list of text too, with same-type replacement.
@@ -71,7 +71,7 @@ fn lst_text_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn lst_text_cranelift() {
-    check_text("--run-cranelift");
+    check_text("--jit");
 }
 
 // First and last indices.
@@ -127,7 +127,7 @@ fn lst_no_mutation_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn lst_no_mutation_cranelift() {
-    check_no_mut("--run-cranelift");
+    check_no_mut("--jit");
 }
 
 // Out-of-range: tree and vm engines raise a runtime error.
@@ -166,7 +166,7 @@ fn lst_out_of_range_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn lst_out_of_range_cranelift() {
-    check_oor_error("--run-cranelift");
+    check_oor_error("--jit");
 }
 
 // Negative index: tree/vm error, cranelift returns original list unchanged.
@@ -213,7 +213,7 @@ fn lst_negative_vm() {
 fn lst_negative_cranelift() {
     // Cranelift now errors on a negative `lst` index to match tree/VM.
     let out = ilo()
-        .args([NEG_SRC, "--run-cranelift", "f"])
+        .args([NEG_SRC, "--jit", "f"])
         .output()
         .expect("failed to run ilo");
     assert!(
@@ -274,5 +274,5 @@ fn lst_histogram_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn lst_histogram_cranelift() {
-    check_histogram("--run-cranelift");
+    check_histogram("--jit");
 }

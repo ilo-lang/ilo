@@ -61,7 +61,7 @@ fn extract_span(stderr: &str) -> Option<(u32, u32)> {
 #[cfg(feature = "cranelift")]
 fn assert_span_parity_with_entry(src: &str, entry: &str) {
     let vm_err = run_err("--run-vm", src, entry);
-    let cl_err = run_err("--run-cranelift", src, entry);
+    let cl_err = run_err("--jit", src, entry);
 
     let vm_span = extract_span(&vm_err)
         .unwrap_or_else(|| panic!("VM stderr had no labels for `{src}`: {vm_err}"));
@@ -192,7 +192,7 @@ fn op_call_dyn_callback_error_carries_span() {
     // it was. We assert: (a) labels non-empty, (b) the span is within the
     // source file extent (no garbage from a stale stack slot).
     let src = "bad x:n>n;(^\"oops\")!!\ng>L n;map [1,2] bad";
-    let cl_err = run_err("--run-cranelift", src, "g");
+    let cl_err = run_err("--jit", src, "g");
     assert!(
         !cl_err.contains("\"labels\":[]"),
         "Cranelift call_dyn callback error must carry a span, got: {cl_err}"

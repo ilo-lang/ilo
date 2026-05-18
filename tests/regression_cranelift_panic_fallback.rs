@@ -11,11 +11,10 @@
 //! the hook — the `cfg(debug_assertions)` guard trips it out — so this
 //! cannot affect production users.
 //!
-//! Cross-engine coverage:
-//!   - default engine dispatch (`ilo file.ilo`) falls through to the tree
-//!     interpreter, same path as `JitCallError::NotEligible`.
-//!   - explicit `--run-cranelift` falls back to the bytecode VM, since the
-//!     user opted into a JIT engine and VM is the closest non-JIT tier.
+//! Coverage: explicit `--jit` falls back to the bytecode VM, since the
+//! user opted into a JIT engine and VM is the closest non-JIT tier.
+//! (Post-#390 the default engine is the bytecode VM, so the default path
+//! never invokes the JIT and the synthetic-panic hook cannot fire on it.)
 //!
 //! Gated on `cfg(debug_assertions)`: the env-var hook in
 //! `vm::jit_cranelift::check_force_panic_env` is only compiled in debug
@@ -30,31 +29,16 @@ fn ilo() -> Command {
     Command::new(env!("CARGO_BIN_EXE_ilo"))
 }
 
-#[test]
-fn cranelift_panic_default_engine_does_not_invoke_jit() {
-    // Post-#390 the default engine is the bytecode VM; ILO_FORCE_JIT_PANIC
-    // has no effect because JIT is opt-in via --cranelift.
-    let out = ilo()
-        .args(["f x:n>n;*x 2", "f", "5"])
-        .env("ILO_FORCE_JIT_PANIC", "1")
-        .output()
-        .expect("failed to run ilo");
-
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    let stderr = String::from_utf8_lossy(&out.stderr);
-
-    assert!(out.status.success(), "default VM should run cleanly; stderr={stderr:?}");
-    assert_eq!(stdout.trim(), "10");
-    assert!(
-        !stderr.contains("Cranelift JIT panicked"),
-        "default engine should not invoke JIT at all, got {stderr:?}"
-    );
-}
+// Note: pre-#390 there was a `cranelift_panic_default_falls_back_to_interpreter`
+// test here. Post-#390 the default engine is the bytecode VM and never invokes
+// the JIT, so the synthetic-panic hook cannot fire on the default path. The
+// `--jit` opt-in path is covered by
+// `cranelift_panic_explicit_engine_falls_back_to_vm` below.
 
 #[test]
 fn cranelift_panic_explicit_engine_falls_back_to_vm() {
     let out = ilo()
-        .args(["--run-cranelift", "f x:n>n;*x 2", "f", "5"])
+        .args(["--jit", "f x:n>n;*x 2", "f", "5"])
         .env("ILO_FORCE_JIT_PANIC", "1")
         .output()
         .expect("failed to run ilo");
@@ -64,7 +48,7 @@ fn cranelift_panic_explicit_engine_falls_back_to_vm() {
 
     assert!(
         out.status.success(),
-        "--run-cranelift should fall back to VM after JIT panic. \
+        "--jit should fall back to VM after JIT panic. \
          stdout={stdout:?} stderr={stderr:?} status={:?}",
         out.status.code()
     );
@@ -84,13 +68,12 @@ fn cranelift_panic_explicit_engine_falls_back_to_vm() {
 
 /// The breadcrumb must include the panic payload so the upstream issue
 /// (AArch64 relocation assertion, etc.) is searchable in production logs
-/// rather than being collapsed into a generic message.
+/// rather than being collapsed into a generic message. Exercised via the
+/// `--jit` opt-in path since the default engine no longer invokes the JIT.
 #[test]
 fn cranelift_panic_breadcrumb_includes_payload() {
-    // Explicit --cranelift triggers JIT; ILO_FORCE_JIT_PANIC then trips
-    // the breadcrumb path. Default engine never reaches JIT post-#390.
     let out = ilo()
-        .args(["--run-cranelift", "f x:n>n;*x 2", "f", "5"])
+        .args(["--jit", "f x:n>n;*x 2", "f", "5"])
         .env("ILO_FORCE_JIT_PANIC", "1")
         .output()
         .expect("failed to run ilo");

@@ -23,7 +23,7 @@
 // Plus an empty-input case and (for mapr) a short-circuit case that
 // returns Err mid-loop without producing a full result list.
 //
-// Each shape runs on `--run-tree`, `--run-vm`, and `--run-cranelift`
+// Each shape runs on `--run-tree`, `--run-vm`, and `--jit`
 // (when the `cranelift` feature is enabled) so all three engines stay
 // in lockstep.
 
@@ -62,7 +62,7 @@ fn run_ok(engine: &str, src: &str, entry: &str, args: &[&str]) -> String {
 
 fn run_all(src: &str, entry: &str, args: &[&str], expected: &str) {
     #[cfg(feature = "cranelift")]
-    let engines: &[&str] = &["--run-tree", "--run-vm", "--run-cranelift"];
+    let engines: &[&str] = &["--run-tree", "--run-vm", "--jit"];
     #[cfg(not(feature = "cranelift"))]
     let engines: &[&str] = &["--run-tree", "--run-vm"];
     for engine in engines {
@@ -93,7 +93,7 @@ fn run_err_combined(engine: &str, src: &str, entry: &str, args: &[&str]) -> (i32
 
 fn run_err_all_contains(src: &str, entry: &str, args: &[&str], needle: &str) {
     #[cfg(feature = "cranelift")]
-    let engines: &[&str] = &["--run-tree", "--run-vm", "--run-cranelift"];
+    let engines: &[&str] = &["--run-tree", "--run-vm", "--jit"];
     #[cfg(not(feature = "cranelift"))]
     let engines: &[&str] = &["--run-tree", "--run-vm"];
     for engine in engines {

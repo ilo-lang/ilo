@@ -83,7 +83,7 @@ fn dot_keywords_all_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn dot_keywords_all_cranelift() {
-    check_all_keywords("--run-cranelift");
+    check_all_keywords("--jit");
 }
 
 // `.?keyword` (safe field access) still parses. We only assert the parse
@@ -107,7 +107,7 @@ fn dot_keywords_safe_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn dot_keywords_safe_cranelift() {
-    check_safe("--run-cranelift");
+    check_safe("--jit");
 }
 
 // `record.type_id` — keyword followed by snake_case suffix. The
@@ -136,7 +136,7 @@ fn dot_keywords_snake_after_kw_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn dot_keywords_snake_after_kw_cranelift() {
-    check_snake_after_kw("--run-cranelift");
+    check_snake_after_kw("--jit");
 }
 
 // `record.type_kind_id` — alternating keyword + snake segments.
@@ -163,7 +163,7 @@ fn dot_keywords_snake_long_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn dot_keywords_snake_long_cranelift() {
-    check_snake_long("--run-cranelift");
+    check_snake_long("--jit");
 }
 
 // --- Negative regressions: reserved words in binding position still error. ---

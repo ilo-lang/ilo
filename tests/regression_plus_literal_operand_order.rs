@@ -217,5 +217,5 @@ fn plus_literal_operand_order_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn plus_literal_operand_order_cranelift() {
-    check_all("--run-cranelift");
+    check_all("--jit");
 }

@@ -59,7 +59,7 @@ fn chunks_basic_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn chunks_basic_cranelift() {
-    check_basic("--run-cranelift");
+    check_basic("--jit");
 }
 
 // Exact: list length divides evenly by n.
@@ -86,7 +86,7 @@ fn chunks_exact_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn chunks_exact_cranelift() {
-    check_exact("--run-cranelift");
+    check_exact("--jit");
 }
 
 // n >= len xs: single chunk containing the full list.
@@ -113,7 +113,7 @@ fn chunks_big_n_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn chunks_big_n_cranelift() {
-    check_big_n("--run-cranelift");
+    check_big_n("--jit");
 }
 
 // n == 1: each element is its own singleton chunk.
@@ -140,7 +140,7 @@ fn chunks_one_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn chunks_one_cranelift() {
-    check_one("--run-cranelift");
+    check_one("--jit");
 }
 
 // n == 0: error — chunk size must be a positive integer.
@@ -170,7 +170,7 @@ fn chunks_zero_cranelift() {
     // cranelift jit_chunks returns nil on invalid args; the surrounding
     // type contract surfaces this as an error or nil — accept either.
     let out = ilo()
-        .args([ZERO_SRC, "--run-cranelift", "f"])
+        .args([ZERO_SRC, "--jit", "f"])
         .output()
         .expect("failed to run ilo");
     let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
@@ -201,7 +201,7 @@ fn chunks_empty_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn chunks_empty_cranelift() {
-    check_empty("--run-cranelift");
+    check_empty("--jit");
 }
 
 // Type variable: works on text lists too.
@@ -228,7 +228,7 @@ fn chunks_text_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn chunks_text_cranelift() {
-    check_text("--run-cranelift");
+    check_text("--jit");
 }
 
 // `chunks n xs` where n > len xs returns a single short trailing chunk
@@ -257,5 +257,5 @@ fn chunks_partial_trailing_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn chunks_partial_trailing_cranelift() {
-    check_partial_trailing("--run-cranelift");
+    check_partial_trailing("--jit");
 }

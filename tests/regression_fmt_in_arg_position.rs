@@ -69,7 +69,7 @@ fn run_err(engine: &str, src: &str, entry: &str) -> String {
 const ENGINES: &[&str] = &["--run-tree", "--run-vm"];
 
 #[cfg(feature = "cranelift")]
-const CRANELIFT_ENGINE: &str = "--run-cranelift";
+const CRANELIFT_ENGINE: &str = "--jit";
 
 // ── 1) Trailing fmt at slot 0 of arity-1 outer ────────────────────────────
 

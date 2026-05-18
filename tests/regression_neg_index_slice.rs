@@ -46,9 +46,9 @@ fn check_all_engines(src: &str, entry: &str, expected: &str) {
     #[cfg(feature = "cranelift")]
     {
         assert_eq!(
-            run("--run-cranelift", src, entry),
+            run("--jit", src, entry),
             expected,
-            "engine=--run-cranelift src=`{src}` entry={entry}"
+            "engine=--jit src=`{src}` entry={entry}"
         );
     }
 }

@@ -47,7 +47,7 @@ const ENGINES: &[&str] = &[
     "--run-tree",
     "--run-vm",
     #[cfg(feature = "cranelift")]
-    "--run-cranelift",
+    "--jit",
 ];
 
 // (at rows 0).2 — numeric dot-index on a parenthesised call. The exact

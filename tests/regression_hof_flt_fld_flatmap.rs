@@ -15,7 +15,7 @@
 // opcode, and the lowering is op-agnostic.
 //
 // The tests below pin the value-level behaviour across `--run-tree`,
-// `--run-vm` and `--run-cranelift`. They cover the common shapes that
+// `--run-vm` and `--jit`. They cover the common shapes that
 // were previously gated with `engine-skip: vm / cranelift`:
 //   - user-function callbacks
 //   - builtin callbacks (where the verifier promotes a pure builtin to F)
@@ -63,7 +63,7 @@ fn run_ok(engine: &str, src: &str, entry: &str, args: &[&str]) -> String {
 }
 
 fn run_all(src: &str, entry: &str, args: &[&str], expected: &str) {
-    for engine in ["--run-tree", "--run-vm", "--run-cranelift"] {
+    for engine in ["--run-tree", "--run-vm", "--jit"] {
         let actual = run_ok(engine, src, entry, args);
         assert_eq!(
             actual, expected,
