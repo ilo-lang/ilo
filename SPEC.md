@@ -470,7 +470,7 @@ Called like functions, compiled to dedicated opcodes.
 | `srt fn xs` | sort list by key function (returns number or text key) | `L` |
 | `unq xs` | remove duplicates, preserve order (list or text chars) | same type |
 | `slc xs a b` | slice list or text from index a to b (a, b accept negative indices counting from end; bounds clamp) | same type |
-| `jpth json path` | JSON path lookup (dot-separated keys, array indices) | `R t t` |
+| `jpth json path` | JSON dot-path lookup, dot-separated keys + numeric array indices (e.g. `"a.b.0.c"`), not JSONPath — leading `$`, `*`, or `[...]` rejected with a diagnostic | `R t t` |
 | `jdmp value` | serialise ilo value to JSON text | `t` |
 | `prnt value` | print value to stdout, return it unchanged (passthrough) | same type |
 | `jpar text` | parse JSON text into ilo values | `R _ t` |
@@ -665,13 +665,15 @@ env! key         -- auto-unwrap: Ok→value, Err→propagate to caller
 
 ### JSON builtins
 
-`jpth` extracts a value from a JSON string by dot-separated path. Array elements are accessed by numeric index:
+`jpth` extracts a value from a JSON string by dot-separated path. Array elements are accessed by numeric index. **Note: `jpth` is dot-path only, not JSONPath.** A leading `$`, `*` wildcard, or `[...]` bracket selector triggers a diagnostic error pointing at the dot-path form; iterate arrays yourself with `@i` or `map` if you need wildcard behaviour.
 
 ```
 jpth json "name"            -- R t t: Ok=extracted value as text, Err=error
 jpth json "user.name"       -- nested path lookup
-jpth json "items.0.name"    -- array index access
+jpth json "items.0.name"    -- array index access (dot before index, not [0])
 jpth! json "name"           -- auto-unwrap
+jpth json "$.a.b"           -- ^"jpth is dot-path only ..." (JSONPath rejected)
+jpth json "items.*.name"    -- ^"jpth is dot-path only ..." (no wildcards)
 ```
 
 `jdmp` serialises any ilo value to a JSON string:
