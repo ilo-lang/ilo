@@ -1897,6 +1897,34 @@ fn main() {
         std::process::exit(0);
     }
 
+    // Friendly usage for `ilo run` / `ilo check` / `ilo build` with no
+    // source argument. Without this, clap rejects the missing-positional
+    // and we fall through to dispatch_bare_args, which then tries to lex
+    // the verb (`run` / `check` / `build`) as inline ilo source and emits
+    // a confusing parser error. The verb-noun shape is the recommended
+    // surface for agents and humans alike (ilo run file.ilo); show usage
+    // instead of a parser blowup.
+    if raw_args.len() == 2 {
+        match raw_args[1].as_str() {
+            "run" => {
+                eprintln!("Usage: ilo run <file.ilo> [func] [args...]");
+                eprintln!("       ilo run <inline-code> [func] [args...]");
+                std::process::exit(1);
+            }
+            "check" => {
+                eprintln!("Usage: ilo check <file.ilo>");
+                eprintln!("       ilo check <inline-code>");
+                eprintln!("       ilo check <file.ilo> --json   (machine-readable diagnostics)");
+                std::process::exit(1);
+            }
+            "build" => {
+                eprintln!("Usage: ilo build <file.ilo> [-o out] [func]");
+                std::process::exit(1);
+            }
+            _ => {}
+        }
+    }
+
     // Try clap parse.  When it fails (e.g. `ilo 'fn x:n>n;*x 2' 5` or
     // `ilo --help`), reconstruct a Cli with the raw positional args.
     let (cli, bare_args_have_bin_name) = match cli::Cli::try_parse_from(&raw_args) {
@@ -1999,7 +2027,7 @@ fn dispatch_cli(cli: cli::Cli, bare_has_bin: bool) -> i32 {
             serv_cmd(&args);
             0
         }
-        Some(cli::Cmd::Compile(c)) => {
+        Some(cli::Cmd::Compile(c)) | Some(cli::Cmd::Build(c)) => {
             let mut args: Vec<String> = vec![c.source];
             if let Some(ref o) = c.output {
                 args.push("-o".into());
@@ -2012,6 +2040,11 @@ fn dispatch_cli(cli: cli::Cli, bare_has_bin: bool) -> i32 {
                 args.push(f.clone());
             }
             compile_cmd(&args)
+        }
+        Some(cli::Cmd::Check(c)) => {
+            let mode = cli.global.output_mode();
+            let explicit_json = cli.global.explicit_json();
+            check_cmd(&c.source, mode, explicit_json)
         }
         Some(cli::Cmd::Explain(e)) => match diagnostic::registry::lookup(&e.code) {
             Some(entry) => {
@@ -2117,6 +2150,11 @@ fn dispatch_bare_args(raw_args: Vec<String>, global: &cli::Global) -> i32 {
     if args.len() < 2 {
         eprintln!(
             "Usage: ilo <file-or-code> [args... | --run func args... | --bench func args... | --emit python]"
+        );
+        eprintln!("       ilo run <file> [args...]                  Run (verb form)");
+        eprintln!("       ilo check <file> [--json]                 Verify without running");
+        eprintln!(
+            "       ilo build <file> -o <out> [func]          AOT compile (alias for compile)"
         );
         eprintln!("       ilo repl                                  Interactive REPL");
         eprintln!("       ilo serv [--mcp <path>] [--tools <path>]  Stdio agent loop");
@@ -2467,6 +2505,114 @@ fn resolve_engine_func_name<'a>(
         return (Some("main"), &[][..]);
     }
     (None, &[][..])
+}
+
+/// `ilo check <file-or-code>` — run the verifier without executing.
+///
+/// Exit code 0 = program is well-typed and verifier-clean.
+/// Exit code 1 = parse / lex / import / verify errors. Diagnostics are
+/// emitted to stderr in the resolved output mode (auto-detected ANSI/text,
+/// or JSON when `--json` is passed or stderr is not a TTY).
+///
+/// Mirrors the front-half of `dispatch_run` — lex, parse, import-resolve,
+/// verify — but stops before bytecode compilation / execution. Factored
+/// out rather than reused so a future verify-only invocation path
+/// (e.g. an `--check-only` flag on `run`) can call into the same logic
+/// without disturbing the run hot path.
+fn check_cmd(source_arg: &str, mode: OutputMode, _explicit_json: bool) -> i32 {
+    // Read source from file or treat as inline code.
+    let (source, is_file) = if std::path::Path::new(source_arg).is_file() {
+        match std::fs::read_to_string(source_arg) {
+            Ok(s) => (s, true),
+            Err(e) => {
+                eprintln!("Error reading {}: {}", source_arg, e);
+                return 1;
+            }
+        }
+    } else {
+        if source_arg.is_empty() {
+            eprintln!("Error: empty code string");
+            return 1;
+        }
+        (source_arg.to_string(), false)
+    };
+
+    let mut had_errors = false;
+
+    let tokens = match lexer::lex(&source) {
+        Ok(t) => t,
+        Err(e) => {
+            report_diagnostic(&Diagnostic::from(&e).with_source(source.clone()), mode);
+            return 1;
+        }
+    };
+
+    let token_spans: Vec<(lexer::Token, ast::Span)> = tokens
+        .into_iter()
+        .map(|(t, r)| {
+            (
+                t,
+                ast::Span {
+                    start: r.start,
+                    end: r.end,
+                },
+            )
+        })
+        .collect();
+
+    let (mut program, parse_errors) = parser::parse(token_spans);
+    ast::resolve_aliases(&mut program);
+    ast::desugar_dot_var_index(&mut program);
+    program.source = Some(source.clone());
+
+    // Resolve imports relative to the file's parent dir (skipped for inline).
+    {
+        let base_dir: Option<std::path::PathBuf> = if is_file {
+            std::path::Path::new(source_arg)
+                .canonicalize()
+                .ok()
+                .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+        } else {
+            None
+        };
+        let mut import_diagnostics: Vec<Diagnostic> = Vec::new();
+        let mut visited = std::collections::HashSet::new();
+        if let Ok(canonical_file) = std::path::Path::new(source_arg).canonicalize() {
+            visited.insert(canonical_file);
+        }
+        program.declarations = resolve_imports(
+            program.declarations,
+            base_dir.as_deref(),
+            &mut visited,
+            &mut import_diagnostics,
+        );
+        for d in import_diagnostics {
+            report_diagnostic(&d, mode);
+            had_errors = true;
+        }
+    }
+
+    for e in &parse_errors {
+        report_diagnostic(&Diagnostic::from(e).with_source(source.clone()), mode);
+        had_errors = true;
+    }
+
+    // Run the verifier even when parse errors fired — diagnostics are
+    // cumulative so the caller sees every issue in one pass, not a
+    // fix-one-rerun-find-next loop. Verifier itself is robust to
+    // partially-broken ASTs.
+    let verify_result = verify::verify(&program);
+    for w in &verify_result.warnings {
+        report_diagnostic(&Diagnostic::from(w).with_source(source.clone()), mode);
+    }
+    if !verify_result.errors.is_empty() {
+        for e in &verify_result.errors {
+            report_diagnostic(&Diagnostic::from(e).with_source(source.clone()), mode);
+        }
+        had_errors = true;
+    }
+
+    if had_errors { 1 } else { 0 }
 }
 
 /// Dispatch the `run` subcommand via parsed RunArgs.  Returns exit code.
@@ -3143,6 +3289,9 @@ fn run_llvm_engine(_program: &ast::Program, rest: &[String]) -> i32 {
 fn print_help() {
     println!("ilo — a programming language for AI agents\n");
     println!("Usage:");
+    println!("  ilo run <file.ilo> [args...]      Run (verb form; alias for positional)");
+    println!("  ilo check <file.ilo>              Verify without running (exit 0 = clean)");
+    println!("  ilo build <file.ilo> -o <out>     AOT compile (alias for `compile`)");
     println!("  ilo <code> [args...]              Run (bytecode VM; use --jit for JIT)");
     println!("  ilo <file.ilo> [args...]          Run from file");
     println!("  ilo <code> func [args...]         Run a specific function");
