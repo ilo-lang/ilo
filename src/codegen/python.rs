@@ -310,6 +310,12 @@ fn emit_stmt(out: &mut String, stmt: &Stmt, level: usize, implicit_return: bool)
             } else {
                 out.push_str(&format!("if {}:\n", cond));
             }
+            // Non-ternary guards (no else_body) are early-return forms — the
+            // body's tail expression becomes the function's return value when
+            // the condition is truthy. Pass implicit_return=true so the inner
+            // body's last Expr stmt emits `return <val>`. Ternary guards
+            // (else_body present) are value expressions and rely on the outer
+            // fn-tail context to decide whether the result is returned.
             let is_ternary = else_body.is_some();
             emit_body(out, body, level + 1, !is_ternary);
             if let Some(eb) = else_body {

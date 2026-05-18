@@ -4587,8 +4587,14 @@ fn eval_stmt(env: &mut Env, stmt: &Stmt) -> Result<Option<BodyResult>> {
                     BodyResult::Continue => Ok(Some(BodyResult::Continue)),
                     BodyResult::Value(v) | BodyResult::Return(v) => Ok(Some(BodyResult::Value(v))),
                 }
-            } else if should_run && *braceless {
-                // Braceless guard: cond expr — early return from function
+            } else if should_run {
+                // Guard (braced or braceless) when truthy: early return from
+                // enclosing function. The two surface forms — `cond expr` and
+                // `cond{body}` — share semantics. `braceless` is kept on the
+                // AST for source-preserving round-trips only. Ternary
+                // `cond{a}{b}` is handled in the else_body branch above and is
+                // not an early-return form.
+                let _ = braceless; // semantics unified; flag retained for formatter
                 env.push_scope();
                 let result = eval_body(env, body);
                 env.pop_scope();
@@ -4596,17 +4602,6 @@ fn eval_stmt(env: &mut Env, stmt: &Stmt) -> Result<Option<BodyResult>> {
                     BodyResult::Break(v) => Ok(Some(BodyResult::Break(v))),
                     BodyResult::Continue => Ok(Some(BodyResult::Continue)),
                     BodyResult::Value(v) | BodyResult::Return(v) => Ok(Some(BodyResult::Return(v))),
-                }
-            } else if should_run {
-                // Braced guard: cond{body} — conditional execution (no early return)
-                env.push_scope();
-                let result = eval_body(env, body);
-                env.pop_scope();
-                match result? {
-                    BodyResult::Break(v) => Ok(Some(BodyResult::Break(v))),
-                    BodyResult::Continue => Ok(Some(BodyResult::Continue)),
-                    BodyResult::Value(v) => Ok(Some(BodyResult::Value(v))),
-                    BodyResult::Return(v) => Ok(Some(BodyResult::Return(v))),
                 }
             } else {
                 Ok(None)
@@ -7011,14 +7006,15 @@ mod tests {
     }
 
     #[test]
-    fn interpret_braced_guard_no_early_return() {
-        // Braced guard is conditional execution — no early return
+    fn interpret_braced_guard_early_returns() {
+        // Braced and braceless guards both early-return (option A unification).
         let source = "f x:n>n;=x 0{99};+x 1";
-        // x=0: {99} runs but value is discarded, returns +0 1 = 1
+        // x=0: =x 0 true, body 99 early-returns
         assert_eq!(
             run_str(source, Some("f"), vec![Value::Number(0.0)]),
-            Value::Number(1.0)
+            Value::Number(99.0)
         );
+        // x=5: guard false, falls through to +x 1
         assert_eq!(
             run_str(source, Some("f"), vec![Value::Number(5.0)]),
             Value::Number(6.0)
@@ -7040,9 +7036,10 @@ mod tests {
     }
 
     #[test]
-    fn interpret_braced_guard_in_loop_no_early_return() {
-        // Braced guard inside loop does NOT early-return — finds max of list
-        let source = "mx xs:L n>n;m=xs.0;@x xs{>x m{m=x}};+m 0";
+    fn interpret_braced_guard_in_loop_uses_ternary_rebind() {
+        // Under option A, `>x m{m=x}` in a loop early-returns. The
+        // canonical find-max idiom is the ternary rebind form.
+        let source = "mx xs:L n>n;m=xs.0;@x xs{m=>x m{x}{m}};+m 0";
         let result = run_str(
             source,
             Some("mx"),

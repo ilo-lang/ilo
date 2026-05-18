@@ -111,7 +111,7 @@ const EMPTY_LOOP: &str = "f>n;xs=[];@x xs{prnt x}";
 //    Function ends with the loop so the loop tail bubbles up. Suppressed.
 //    Body ends with `prnt s` so the loop's value type is `n` (typechecker
 //    requires the tail to resolve to the declared return type).
-const BRK_LOOP: &str = "f>n;s=0;@i 0..10{>=i 3{brk};s=+s i;prnt s}";
+const BRK_LOOP: &str = "f>n;s=0;@i 0..10{>=i 3{brk}{nil};s=+s i;prnt s}";
 
 // 5. While loop at top level. Body ends with `prnt i` for the same type
 //    reason as BRK_LOOP — the loop's value must type-check as `n`.
