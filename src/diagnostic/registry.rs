@@ -1084,6 +1084,49 @@ have higher caps. See also ILO-T035 (function exceeds the 256-register
 VM cap).
 "#,
     },
+    // ── Engine-specific ──────────────────────────────────────────────────────
+    ErrorEntry {
+        code: "ILO-E801",
+        short: "AOT compile needs an entry function",
+        long: r#"## ILO-E801: AOT compile needs an entry function
+
+`ilo compile <file>` builds a standalone native binary, which means the
+binary's `main()` calls a single entry function. AOT picks that entry
+the same way the in-process engines do:
+
+1. an explicit positional `func` argument wins
+   (`ilo compile foo.ilo -o foo entry-fn`)
+2. otherwise a file with a single user-defined function uses it
+3. otherwise a function called `main` is used if defined
+
+If none of those apply, AOT errors with this code instead of compiling
+the first-declared function as the entry — which historically produced
+a binary that SIGSEGV'd because the chosen function's shape did not
+match the wrapper's expectation.
+
+**Wrong:**
+
+    helper>n;42
+    run>n;helper
+
+Two functions, no `main`, no explicit entry → ILO-E801.
+
+**Fixes:**
+
+- Rename one of the functions to `main`:
+
+      helper>n;42
+      main>n;helper
+
+- Pass the entry function name on the command line:
+
+      ilo compile prog.ilo -o prog run
+
+The other engines (tree / VM / Cranelift JIT) raise the same kind of
+error at the CLI dispatch layer; ILO-E801 is the AOT-side equivalent so
+the failure mode is the same across every engine.
+"#,
+    },
     // ── Warnings ─────────────────────────────────────────────────────────────
     ErrorEntry {
         code: "ILO-W001",

@@ -39,13 +39,12 @@ Phase 2 closure capture (the lambda body references a variable from an enclosing
 ## Benchmarking
 
 ```
-ilo file.ilo --bench main args...      VM (default), reports ns/op
-ilo file.ilo --jit --bench main args   JIT
-ilo file.ilo --run-tree --bench main   Tree
-ilo compile file.ilo -o ./prog && ./prog args   AOT
+ilo file.ilo --bench main args         All engines, text
+ilo file.ilo --bench main args --json  All engines, JSON (one line per engine)
+ilo compile file.ilo -o ./prog && ./prog args   AOT (build then time)
 ```
 
-JIT cold-start includes Cranelift compilation; for short programs that swamps the run time. Use `--bench` which loops the hot path.
+`--bench` runs tree, vm, jit on the same input; JIT cold-start washes out in the hot loop. JSON envelope: `{"schemaVersion":1,"engine":"tree|vm|jit","variant":?,"result":...,"iterations":...,"totalMs":...,"perCallNs":...}`. VM emits two records (`variant: "fresh"` and `"reusable"`).
 
 ## AOT specifics
 
