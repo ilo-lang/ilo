@@ -1,0 +1,15 @@
+-- jpth is dot-path only, not JSONPath. A leading `$`, `*` wildcard, or `[...]`
+-- bracket selector now triggers a diagnostic error that points at the correct
+-- dot-path form, so agents reaching for textbook JSONPath get a clear pointer
+-- instead of a misleading `key not found: $`.
+
+probe path:t>t;j="{\"vulnerabilities\":[{\"cve\":{\"id\":\"CVE-1\"}}]}";r=jpth j path;?r{~v:v;^e:e}
+
+-- run: probe vulnerabilities.0.cve.id
+-- out: CVE-1
+-- run: probe $.vulnerabilities[0].cve.id
+-- out: jpth is dot-path only (e.g. "a.b.0.c"), not JSONPath. Got: "$.vulnerabilities[0].cve.id". Drop the leading `$` and use dot-separated keys / indices; for wildcards, iterate with `@i` or `map`.
+-- run: probe vulnerabilities.*.cve.id
+-- out: jpth is dot-path only (e.g. "a.b.0.c"), not JSONPath. Got: "vulnerabilities.*.cve.id". `*` wildcards are not supported; iterate the array yourself with `@i` after extracting it, or use `jpar` and walk the parsed value.
+-- run: probe vulnerabilities[0].cve.id
+-- out: jpth is dot-path only (e.g. "a.b.0.c"), not JSONPath. Got: "vulnerabilities[0].cve.id". Use a dot before array indices (e.g. "items.0.name") instead of bracket selectors.

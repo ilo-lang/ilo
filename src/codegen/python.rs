@@ -543,8 +543,10 @@ fn emit_expr(out: &mut String, level: usize, expr: &Expr) -> String {
             if function == "jpth" && args.len() == 2 {
                 let json_arg = emit_expr(out, level, &args[0]);
                 let path_arg = emit_expr(out, level, &args[1]);
+                // Guard JSONPath-shape paths so the Python backend mirrors the
+                // tree / VM / JIT diagnostic instead of crashing with a KeyError.
                 let call = format!(
-                    "(lambda j, p: (lambda c: (\"ok\", str(c) if not isinstance(c, str) else c))((__import__('functools').reduce(lambda c, k: c[int(k)] if isinstance(c, list) and k.isdigit() else c[k], p.split('.'), __import__('json').loads(j)))) if True else None)({}, {})",
+                    "(lambda j, p: (\"err\", f'jpth is dot-path only (e.g. \"a.b.0.c\"), not JSONPath. Got: \"{{p}}\". Drop the leading `$` / `[` / `*` and use dot-separated keys / indices.') if (p.startswith('$.') or p.startswith('$[') or p.startswith('$*') or '*' in p or '[' in p) else (lambda c: (\"ok\", str(c) if not isinstance(c, str) else c))((__import__('functools').reduce(lambda c, k: c[int(k)] if isinstance(c, list) and k.isdigit() else c[k], p.split('.'), __import__('json').loads(j)))))({}, {})",
                     json_arg, path_arg
                 );
                 let call = format!("(lambda: {})()", call);

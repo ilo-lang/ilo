@@ -2749,6 +2749,12 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
     if builtin == Some(Builtin::Jpth) && args.len() == 2 {
         return match (&args[0], &args[1]) {
             (Value::Text(json_str), Value::Text(path)) => {
+                // Diagnose JSONPath-shaped input up-front so the agent gets a
+                // clear pointer at the dot-path form instead of a misleading
+                // "key not found: $".
+                if let Some(msg) = crate::builtins::jpth_jsonpath_diagnostic(path) {
+                    return Ok(Value::Err(Box::new(Value::Text(Arc::new(msg)))));
+                }
                 match serde_json::from_str::<serde_json::Value>(json_str) {
                     Ok(parsed) => {
                         let mut current = &parsed;
