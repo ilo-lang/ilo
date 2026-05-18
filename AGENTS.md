@@ -1,4 +1,4 @@
-# ilo-lang — Agent context
+# ilo-lang - Agent context
 
 **ilo** is a token-optimised programming language for AI agents.
 
@@ -41,13 +41,13 @@ cargo test                       # full test suite
 
 Every new builtin reserves its name from the user namespace at parse time (`ILO-P011`). To keep that reservation forecastable across releases, follow these rules when adding a builtin:
 
-1. **Land the long name first.** New builtins ship under a name of **4 characters or longer** (`countif`, `flatmap`, `cumsum`, `partition`, `dtparse`, …). The 2-character namespace is closed to new entries — agents rely on "any 2-char name not in the published reserve list is mine to use, forever." Adding a new 2-char builtin breaks that promise and breaks every carry-forward script that happened to bind the name.
+1. **Land the long name first.** New builtins ship under a name of **4 characters or longer** (`countif`, `flatmap`, `cumsum`, `partition`, `dtparse`, …). The 2-character namespace is closed to new entries - agents rely on "any 2-char name not in the published reserve list is mine to use, forever." Adding a new 2-char builtin breaks that promise and breaks every carry-forward script that happened to bind the name.
 2. **3-char names are discouraged but not banned.** The 3-char surface is already dense and most short forms are taken. If a 3-char name reads obviously natural for the operation (and no plausible domain binding would reach for it), it's acceptable, but the long form must land first and the 3-char form is added as an alias afterwards. Call out the new reservation in the changelog.
-3. **Short aliases come later.** Once the long-name builtin has shipped, a short alias may be added through the `builtin_aliases` mechanism (see `src/ast/mod.rs` and the `### Builtin aliases` section of SPEC.md) — but only if:
+3. **Short aliases come later.** Once the long-name builtin has shipped, a short alias may be added through the `builtin_aliases` mechanism (see `src/ast/mod.rs` and the `### Builtin aliases` section of SPEC.md) - but only if:
    - The long form is unambiguous (no other builtin or near-name conflicts).
    - The short form does not shadow a plausible user binding (e.g. `ct` for "count" was unsafe because analytics agents reach for it as "category text"; `nwhere` or `countif` would have been the right long form). Verify by `grep`-ing recent persona artifacts (`/tmp/ilo-persona-*/`) and `examples/*.ilo` for binding-position uses of the candidate alias.
    - The new reservation is added to the `### Reserved namespaces` enumeration in `SPEC.md` in the same commit, and a targeted ILO-P011 guard is added in `parse_decl` / `parse_stmt` / `parse_fn_decl` to reject the alias as a binding or user-function name (mirroring the canonical-builtin check). Precedent: `rng` → `range` (feature/mp-rng-aliases).
-4. **Drift guard.** `tests/regression_reserved_names_doc.rs` asserts the SPEC enumeration matches `Builtin::ALL` at test time. Adding a builtin without updating the doc fails the suite — that's the contract that keeps the published forecast accurate.
+4. **Drift guard.** `tests/regression_reserved_names_doc.rs` asserts the SPEC enumeration matches `Builtin::ALL` at test time. Adding a builtin without updating the doc fails the suite - that's the contract that keeps the published forecast accurate.
 5. **Existing short builtins are grandfathered.** Anything already on the reserve list (`avg`, `ct`, `sin`, `flat`, `frq`, …) stays. The 3+ char-first rule applies to new entries only.
 
 The manifesto framing: agents budget around the reserve list once, not once per release. The cost of a release that breaks carry-forward scripts on a name collision is paid by every running agent; the cost of a 4-char long-name plus a deferred short alias is paid once by the language.

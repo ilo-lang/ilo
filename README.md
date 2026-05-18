@@ -92,7 +92,7 @@ ilo program.ilo functionName arg1 arg2
 
 # Verb form (cargo / go / zero style; bare positional still works)
 ilo run program.ilo arg1 arg2             # run
-ilo check program.ilo                     # verify only — exit 0 if clean
+ilo check program.ilo                     # verify only - exit 0 if clean
 ilo build program.ilo -o ./bin            # AOT compile
 ```
 
