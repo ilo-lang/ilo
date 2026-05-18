@@ -1,0 +1,25 @@
+-- AOT-compiled binaries handle programs where multiple functions
+-- each emit string constants. Before the fix in this PR, the AOT
+-- compiler reset its data-section counter per function but declared
+-- the data sections at module scope, so two functions each emitting
+-- a Text constant collided on `ilo_strconst_1` and the compile
+-- aborted with `Duplicate definition of identifier`.
+--
+-- Sum-type variants like `S dog cat` were the most visible trigger:
+-- the tag names always emit string constants, so any sum-type
+-- program with more than one function failed to AOT compile.
+-- Tree / VM / Cranelift JIT all handled this fine (the JIT compiles
+-- one chunk per module, so its per-function counter was also the
+-- module counter).
+--
+-- The example harness only drives the in-process runners. The full
+-- AOT contract (compile to a real binary, run it, compare against
+-- tree / VM / JIT byte-for-byte) lives in
+-- tests/regression_aot_strconst_interning.rs.
+
+pick a:S dog cat>t;?a{"dog":"woof";"cat":"cat"}
+
+m>t;pick "cat"
+
+-- run: m
+-- out: cat

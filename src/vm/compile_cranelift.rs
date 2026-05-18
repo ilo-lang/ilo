@@ -889,7 +889,7 @@ fn compile_function_body(
     module: &mut ObjectModule,
     chunk: &Chunk,
     nan_consts: &[NanVal],
-    _name: &str,
+    name: &str,
     func_id: FuncId,
     helpers: &HelperFuncs,
     all_func_ids: Option<&[FuncId]>,
@@ -1911,7 +1911,12 @@ fn compile_function_body(
                         _ => b"\0".to_vec(),
                     };
                     data_section_counter += 1;
-                    let ds_name = format!("ilo_strconst_{}", data_section_counter);
+                    // Prefix with the cranelift function name so data sections
+                    // are unique across the module. The per-function counter
+                    // alone collides between functions because every
+                    // `compile_function_body` call resets it to 0 while
+                    // `module.declare_data` lives at module scope.
+                    let ds_name = format!("{}_strconst_{}", name, data_section_counter);
                     let str_ptr =
                         create_data_section(module, &mut builder, &ds_name, &string_bytes)?;
                     let fref = get_func_ref(&mut builder, module, helpers.string_const);
@@ -2909,7 +2914,7 @@ fn compile_function_body(
                 };
                 name_bytes.push(0); // null-terminate
                 data_section_counter += 1;
-                let ds_name = format!("ilo_fldname_{}", data_section_counter);
+                let ds_name = format!("{}_fldname_{}", name, data_section_counter);
                 let name_ptr = create_data_section(module, &mut builder, &ds_name, &name_bytes)?;
                 // Get registry pointer at runtime
                 let fref_reg = get_func_ref(&mut builder, module, helpers.get_registry_ptr);
@@ -2950,7 +2955,7 @@ fn compile_function_body(
                 };
                 name_bytes.push(0);
                 data_section_counter += 1;
-                let ds_name = format!("ilo_fldname_safe_{}", data_section_counter);
+                let ds_name = format!("{}_fldname_safe_{}", name, data_section_counter);
                 let name_ptr = create_data_section(module, &mut builder, &ds_name, &name_bytes)?;
                 let fref_reg = get_func_ref(&mut builder, module, helpers.get_registry_ptr);
                 let reg_call = builder.ins().call(fref_reg, &[]);
@@ -3102,7 +3107,7 @@ fn compile_function_body(
                 };
 
                 // Use a data section instead of leaking a Box
-                let ds_name = format!("ilo_recwith_indices_{}", data_section_counter);
+                let ds_name = format!("{}_recwith_indices_{}", name, data_section_counter);
                 data_section_counter += 1;
                 let indices_gv =
                     create_data_section(module, &mut builder, &ds_name, &update_indices)?;
