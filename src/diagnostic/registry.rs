@@ -72,8 +72,7 @@
 //   removal. Forward-looking; no codes allocated yet.
 // - **E (Engine-specific)** — limitations of a particular execution engine
 //   (VM register caps surfaced ahead of time, JIT-unsupported opcode, AOT
-//   constraint). Forward-looking; R012 is a transitional historical
-//   resident.
+//   constraint). Forward-looking; no codes allocated yet.
 // - **S (Skill / spec)** — skill-bundle loader errors, manifest issues,
 //   spec-link breaks. Forward-looking; no codes allocated yet.
 
@@ -1338,6 +1337,26 @@ specific code. The diagnostic message carries the inner cause.
 
 If you encounter this, it usually indicates a verifier gap or a bug
 in a builtin — please file an issue with the source that triggers it.
+"#,
+    },
+    // ── Engine-specific limitations ────────────────────────────────────────
+    ErrorEntry {
+        code: "ILO-E801",
+        short: "inline lambda exceeds 255-capture VM cap",
+        long: r#"## ILO-E801: inline lambda exceeds 255-capture VM cap
+
+The register VM encodes the capture count for `OP_MAKE_CLOSURE` in an
+8-bit field, so an inline lambda whose body references more than 255
+free variables from the enclosing scope cannot be compiled.
+
+In practice this never trips on real code — a lambda capturing more
+than 255 distinct outer names is almost certainly a programming
+mistake. If you genuinely need that many, refactor the captured state
+into a record and capture the single record value instead.
+
+Phase 2 closure capture is otherwise fully supported across every
+in-process engine (tree, VM, Cranelift JIT). This diagnostic only
+fires on the pathological wide-capture case.
 "#,
     },
 ];
