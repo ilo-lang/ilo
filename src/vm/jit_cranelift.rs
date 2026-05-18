@@ -1210,7 +1210,10 @@ fn compile_function_body(
                 | OP_RECNEW | OP_RECWITH | OP_RECNEW_EMPTY | OP_RECCOPY
                 | OP_PRT | OP_RD | OP_RDL | OP_WR | OP_WRL | OP_TRM | OP_UPR | OP_LWR | OP_CAP
                 | OP_PADL | OP_PADR | OP_PADLC | OP_PADRC | OP_CHR | OP_CHARS | OP_UNQ | OP_UNIQBY | OP_PARTITION | OP_FRQ | OP_NUM
+<<<<<<< Updated upstream
                 | OP_SRT_BY_KEY | OP_GRP_BY_KEY | OP_UNIQ_BY_KEY
+=======
+>>>>>>> Stashed changes
                 | OP_RGXSUB | OP_TRANSPOSE | OP_MATMUL | OP_DTFMT | OP_DTPARSE
                 | OP_FLAT | OP_CALL_BUILTIN_TREE | OP_LOADFN | OP_CALL_DYN => {
                     non_num_write[a] = true;
