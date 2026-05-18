@@ -202,6 +202,7 @@ fn pad_two_arg_form_still_pads_with_space_cross_engine() {
         assert_eq!(r, "42   ", "{engine}: padr 2-arg space default");
     }
 }
+<<<<<<< Updated upstream
 
 #[test]
 fn pad_char_non_text_rejected_at_verify() {
@@ -250,3 +251,5 @@ fn pad_empty_string_pads_to_width_with_pad_char() {
         assert_eq!(r, "....", "{engine}: padr empty + dot pad");
     }
 }
+=======
+>>>>>>> Stashed changes

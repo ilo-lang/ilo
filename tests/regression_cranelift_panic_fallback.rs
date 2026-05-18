@@ -31,7 +31,9 @@ fn ilo() -> Command {
 }
 
 #[test]
-fn cranelift_panic_default_falls_back_to_interpreter() {
+fn cranelift_panic_default_engine_does_not_invoke_jit() {
+    // Post-#390 the default engine is the bytecode VM; ILO_FORCE_JIT_PANIC
+    // has no effect because JIT is opt-in via --cranelift.
     let out = ilo()
         .args(["f x:n>n;*x 2", "f", "5"])
         .env("ILO_FORCE_JIT_PANIC", "1")
@@ -41,23 +43,11 @@ fn cranelift_panic_default_falls_back_to_interpreter() {
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
 
+    assert!(out.status.success(), "default VM should run cleanly; stderr={stderr:?}");
+    assert_eq!(stdout.trim(), "10");
     assert!(
-        out.status.success(),
-        "default engine should fall through after JIT panic. \
-         stdout={stdout:?} stderr={stderr:?} status={:?}",
-        out.status.code()
-    );
-    assert!(
-        stdout.trim() == "10",
-        "tree interpreter fallback should produce f(5)=10, got stdout={stdout:?}"
-    );
-    assert!(
-        stderr.contains("Cranelift JIT panicked"),
-        "stderr breadcrumb missing, got {stderr:?}"
-    );
-    assert!(
-        stderr.contains("falling back to interpreter"),
-        "default-engine breadcrumb should mention interpreter fallback, got {stderr:?}"
+        !stderr.contains("Cranelift JIT panicked"),
+        "default engine should not invoke JIT at all, got {stderr:?}"
     );
 }
 
@@ -97,8 +87,10 @@ fn cranelift_panic_explicit_engine_falls_back_to_vm() {
 /// rather than being collapsed into a generic message.
 #[test]
 fn cranelift_panic_breadcrumb_includes_payload() {
+    // Explicit --cranelift triggers JIT; ILO_FORCE_JIT_PANIC then trips
+    // the breadcrumb path. Default engine never reaches JIT post-#390.
     let out = ilo()
-        .args(["f x:n>n;*x 2", "f", "5"])
+        .args(["--run-cranelift", "f x:n>n;*x 2", "f", "5"])
         .env("ILO_FORCE_JIT_PANIC", "1")
         .output()
         .expect("failed to run ilo");

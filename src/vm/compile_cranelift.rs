@@ -1114,6 +1114,7 @@ fn compile_function_body(
                 | OP_JPAR | OP_RDJL | OP_MAPNEW | OP_MGET | OP_MSET | OP_MDEL | OP_MKEYS
                 | OP_MVALS | OP_LISTNEW | OP_LISTAPPEND | OP_RECNEW | OP_RECWITH
                 | OP_RECNEW_EMPTY | OP_RECCOPY | OP_PRT | OP_RD | OP_RDL | OP_WR | OP_WRL
+<<<<<<< Updated upstream
                 | OP_TRM | OP_UPR | OP_LWR | OP_CAP | OP_PADL | OP_PADR | OP_PADLC | OP_PADRC
                 | OP_CHR | OP_CHARS | OP_UNQ | OP_UNIQBY | OP_PARTITION | OP_FRQ | OP_NUM
                 | OP_SRT_BY_KEY | OP_GRP_BY_KEY | OP_UNIQ_BY_KEY | OP_RGXSUB | OP_ZIP
@@ -1121,6 +1122,14 @@ fn compile_function_body(
                 | OP_SETUNION | OP_SETINTER | OP_SETDIFF | OP_FFT | OP_IFFT | OP_TRANSPOSE
                 | OP_MATMUL | OP_INV | OP_SOLVE | OP_DTFMT | OP_DTPARSE | OP_FLAT
                 | OP_CALL_BUILTIN_TREE | OP_LOADFN | OP_CALL_DYN => {
+=======
+                | OP_TRM | OP_UPR | OP_LWR | OP_CAP | OP_PADL | OP_PADR | OP_PADLC | OP_PADRC | OP_CHR | OP_CHARS
+                | OP_UNQ | OP_UNIQBY | OP_PARTITION | OP_FRQ | OP_NUM | OP_RGXSUB | OP_ZIP
+                | OP_ENUMERATE | OP_RANGE | OP_WINDOW | OP_CHUNKS | OP_CUMSUM | OP_SETUNION
+                | OP_SETINTER | OP_SETDIFF | OP_FFT | OP_IFFT | OP_TRANSPOSE | OP_MATMUL
+                | OP_INV | OP_SOLVE | OP_DTFMT | OP_DTPARSE | OP_CALL_BUILTIN_TREE | OP_LOADFN
+                | OP_CALL_DYN => {
+>>>>>>> Stashed changes
                     non_num_write[a] = true;
                     non_bool_write[a] = true;
                 }
