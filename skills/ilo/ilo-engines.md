@@ -26,15 +26,15 @@ ilo has four execution backends. The default (`ilo file.ilo`) runs the register 
 ## When to pick which
 
 - **Default (VM).** Anything that doesn't have a specific reason to be elsewhere.
-- **`--run-tree`.** You're using a closure that captures from an enclosing scope (`flt (x:n>b;>x thr) xs` where `thr` is outer). VM/Cranelift detect captures and fall back automatically with no error, so this flag is rarely needed; pass it only to force-pin the engine for debugging.
+- **`--run-tree`.** Reference semantics for debugging, or when you want to pin to the canonical interpreter. Phase 2 closure capture (`flt (x:n>b;>x thr) xs` where `thr` is outer) runs natively on the VM and JIT too, no engine pinning needed for captures any more.
 - **`--jit`.** Tight numeric loops (Mandelbrot, n-body, hot fold over millions of items). The JIT bails out to VM on unsupported features without warning, so use `--bench` to compare and confirm you're getting JIT speed.
 - **`ilo compile`.** Shipping a binary, or running on a system without the ilo toolchain. Output is large; cold-start is ~zero.
 
 ## Feature/backend matrix
 
-All four backends support: core ops, lists/maps/records/sums, HOFs, inline non-capturing lambdas, Results, HTTP, JSON, file I/O, MCP tools, HTTP tool provider.
+All four backends support: core ops, lists/maps/records/sums, HOFs, inline lambdas (Phase 1 non-capturing and Phase 2 capturing), Results, HTTP, JSON, file I/O, MCP tools, HTTP tool provider.
 
-Only the tree-walker runs **capturing** lambdas directly; VM, JIT, AOT detect captures and silently recompile the affected fn down to the tree-walker on first hit. No `ILO-R012` unless the call site is genuinely undefined.
+Phase 2 closure capture (the lambda body references a variable from an enclosing scope) runs natively on tree, VM, and Cranelift JIT: free variables are snapshot by value at the call site and appended to the call frame. The AOT backend currently miscompiles HOFs that take a function value (including capturing closures) and is the only engine that still needs `--run-tree` or `--run-vm` for that case; tracked as a separate fix.
 
 ## Benchmarking
 
