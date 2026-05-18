@@ -194,7 +194,10 @@ impl From<&crate::vm::CompileError> for Diagnostic {
         let code = match e {
             CompileError::UndefinedVariable { .. } => "ILO-R010",
             CompileError::UndefinedFunction { .. } => "ILO-R011",
-            CompileError::UnsupportedClosureCapture { .. } => "ILO-R012",
+            // Wide-capture (>255) VM-encoding cap. Phase 2 closure capture
+            // itself is fully supported across tree / VM / Cranelift JIT;
+            // this is the engine-specific encoding limit only.
+            CompileError::UnsupportedClosureCapture { .. } => "ILO-E801",
             CompileError::RegisterOverflow { .. } => "ILO-T035",
             CompileError::CallRegisterOverflow { .. } => "ILO-T036",
         };
@@ -407,6 +410,22 @@ mod tests {
         let d = Diagnostic::from(&e);
         assert_eq!(d.code, Some("ILO-R012"));
         assert!(d.message.contains("no functions defined"));
+    }
+
+    #[test]
+    fn from_compile_error_unsupported_closure_capture_maps_to_e801() {
+        // Phase 2 closure capture is fully supported on tree / VM / Cranelift JIT.
+        // `CompileError::UnsupportedClosureCapture` now only fires on the
+        // >255-capture VM-encoding cap, so it maps to the engine-specific
+        // `ILO-E801`, not the misleading `ILO-R012` ("no functions defined")
+        // it used to share. Regression guard so a future refactor doesn't
+        // silently revive the old contract.
+        let e = crate::vm::CompileError::UnsupportedClosureCapture {
+            fn_name: "__lit_0".to_string(),
+        };
+        let d = Diagnostic::from(&e);
+        assert_eq!(d.code, Some("ILO-E801"));
+        assert!(d.message.contains("255-capture"));
     }
 
     #[test]
