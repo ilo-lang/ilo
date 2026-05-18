@@ -4535,14 +4535,18 @@ impl RegCompiler {
                             callee: function.clone(),
                             span: self.current_span,
                         });
-                    // Saturate so subsequent codegen doesn't wrap u8.
+                    // Saturate so subsequent codegen doesn't wrap u8, then
+                    // bail before emitting MOVEs / OP_CALL. The arg-slot
+                    // targets would overflow u8 in debug builds, and the
+                    // bytecode is dead anyway — compile_program will surface
+                    // the latched error before any chunk is returned.
                     self.next_reg = 255;
                     self.max_reg = 255;
-                } else {
-                    self.next_reg += args.len() as u8;
-                    if self.next_reg > self.max_reg {
-                        self.max_reg = self.next_reg;
-                    }
+                    return a;
+                }
+                self.next_reg += args.len() as u8;
+                if self.next_reg > self.max_reg {
+                    self.max_reg = self.next_reg;
                 }
 
                 for (i, &arg_reg) in arg_regs.iter().enumerate() {
