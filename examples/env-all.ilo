@@ -1,0 +1,25 @@
+-- `env-all` snapshots the full process environment as a `M t t` map
+-- wrapped in `R`. Pair with `env key` (which reads a single var) to
+-- enable the "merge env over config" pattern in two lines: parse a
+-- config map, then overwrite any key the parent shell has set. Without
+-- enumeration the agent has to hardcode the key list up-front.
+--
+-- Originating friction: env-config rerun1 (assessment doc, 2026-05-18).
+
+-- PATH is set in every reasonable shell environment, including CI, so
+-- it's a stable target for a round-trip check. `env-all!` returns the
+-- map; `mhas` confirms the key is present.
+
+has-path>R b t;m=env-all!;~mhas m "PATH"
+
+-- run: has-path
+-- out: true
+
+-- The value read out of the env-all map must match what `env key`
+-- returns directly. This pins the cross-engine round-trip — if any
+-- backend disagrees, this assertion catches the drift.
+
+path-matches>R b t;m=env-all!;a=mget m "PATH";b=env! "PATH";~=a b
+
+-- run: path-matches
+-- out: true
