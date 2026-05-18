@@ -1439,6 +1439,8 @@ Runtime errors raised from the Cranelift JIT (opt-in via `--jit`) populate `labe
 
 AOT binaries also install an async-signal-safe handler in `ilo_aot_init` that catches fatal signals (SIGSEGV, SIGBUS, SIGFPE, SIGILL, SIGABRT) and writes a single JSON line on stderr identifying the signal before the process terminates with the conventional 128+signo exit code. The diagnostic uses `ILO-R015` (AOT runtime fault). Without the handler, a hard fault inside compiled native code would leave the process with raw signal exit (e.g. 139 for SIGSEGV) and no diagnostic — agents driving ilo couldn't distinguish a clean non-zero exit from a hard fault. A SIGSEGV from an AOT binary is always a bug in ilo (codegen or runtime helper); file an issue with the source program and the JSON line.
 
+AOT binaries also install an async-signal-safe handler in `ilo_aot_init` that catches fatal signals (SIGSEGV, SIGBUS, SIGFPE, SIGILL, SIGABRT) and writes a single JSON line on stderr identifying the signal before the process terminates with the conventional 128+signo exit code. The diagnostic uses `ILO-R015` (AOT runtime fault). Without the handler, a hard fault inside compiled native code would leave the process with raw signal exit (e.g. 139 for SIGSEGV) and no diagnostic — agents driving ilo couldn't distinguish a clean non-zero exit from a hard fault. A SIGSEGV from an AOT binary is always a bug in ilo (codegen or runtime helper); file an issue with the source program and the JSON line.
+
 ### Top-level program output
 
 For a program whose entry function returns a Result, the `~`/`^` wrapper is split across streams and exit codes so shell callers do not have to strip a prefix:
