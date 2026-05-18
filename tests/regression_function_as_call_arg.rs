@@ -141,7 +141,7 @@ fn flr_vm() {
 
 // ── 5. PR #159 regression: prefix-binop in 3rd-arg position still works ────
 // `slc xs i +i 1` — outer slc has arity 3; the `+i 1` is a prefix-binop arg.
-const SLC_SRC: &str = "f>L n;ls=[10,20,30];i=0;slc ls i +i 1";
+const SLC_SRC: &str = "f>L n;xs=[10,20,30];i=0;slc xs i +i 1";
 
 fn check_slc(engine: &str) {
     assert_eq!(run_ok(engine, SLC_SRC, "f", &[]), "[10]", "engine={engine}");
