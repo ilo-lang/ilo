@@ -15115,6 +15115,26 @@ pub(crate) extern "C" fn jit_call_dyn(
     span_bits: u64,
 ) -> u64 {
     let mut callee = NanVal(callee_bits);
+
+    // Closure callee — produced by OP_MAKE_CLOSURE under TAG_LIST. Discriminate
+    // by HeapObj variant; if we see `HeapObj::Closure`, swap the callee for a
+    // plain FnRef and remember the captures to append onto the user-arg list
+    // before dispatching. Mirrors the OP_CALL_DYN dispatcher path in the VM
+    // (see `closure_captures` handling there). Append-not-prepend matches
+    // Value::Closure semantics: the lifted-fn signature is
+    // `[original_params..., capture_params...]`.
+    let mut closure_captures: Option<Vec<NanVal>> = None;
+    if callee.is_heap() && (callee.0 & TAG_MASK) == TAG_LIST {
+        // SAFETY: is_heap() + TAG_LIST tag means the pointer was produced by
+        // heap_list / heap_list_view / heap_closure; the value sits in a JIT
+        // register and holds an owned RC for the duration of this call.
+        let heap = unsafe { callee.as_heap_ref() };
+        if let HeapObj::Closure { kind, id, captures } = heap {
+            callee = NanVal::fnref(*kind, *id);
+            closure_captures = Some(captures.clone());
+        }
+    }
+
     // Text callee — resolve through the active program's func_names. Mirrors
     // the OP_CALL_DYN dispatcher path so a function name held as a string
     // works the same on every engine.
@@ -15160,7 +15180,8 @@ pub(crate) extern "C" fn jit_call_dyn(
                 Some(b) => b,
                 None => return TAG_NIL,
             };
-            let mut value_args: Vec<Value> = Vec::with_capacity(argc);
+            let n_caps = closure_captures.as_ref().map(|c| c.len()).unwrap_or(0);
+            let mut value_args: Vec<Value> = Vec::with_capacity(argc + n_caps);
             for nv in regs {
                 // Use the program-aware bridge so FnRef args render with
                 // their source name rather than `<user_fn:N>`. Falls back
@@ -15178,6 +15199,26 @@ pub(crate) extern "C" fn jit_call_dyn(
                     }
                 });
                 value_args.push(v);
+            }
+            // Append closure captures after the user args. Matches the VM's
+            // OP_CALL_DYN closure dispatch: lifted-fn signature is
+            // `[original_params..., capture_params...]`.
+            if let Some(caps) = &closure_captures {
+                let v_caps: Vec<Value> = ACTIVE_FUNC_NAMES.with(|cell| {
+                    let ptr = cell.get();
+                    caps.iter()
+                        .map(|nv| {
+                            if ptr.is_null() {
+                                nv.to_value()
+                            } else {
+                                // SAFETY: see above.
+                                let names: &Vec<String> = unsafe { &*ptr };
+                                nv.to_value_with_program(names)
+                            }
+                        })
+                        .collect()
+                });
+                value_args.extend(v_caps);
             }
             match crate::interpreter::call_builtin_for_bridge(builtin.name(), value_args) {
                 Ok(v) => NanVal::from_value(&v).0,
@@ -15211,9 +15252,19 @@ pub(crate) extern "C" fn jit_call_dyn(
             if (func_idx as usize) >= program.chunks.len() {
                 return TAG_NIL;
             }
-            let mut value_args: Vec<Value> = Vec::with_capacity(argc);
+            let n_caps = closure_captures.as_ref().map(|c| c.len()).unwrap_or(0);
+            let mut value_args: Vec<Value> = Vec::with_capacity(argc + n_caps);
             for nv in regs {
                 value_args.push(nv.to_value_with_program(&program.func_names));
+            }
+            // Append closure captures after the user args. Lifted-fn
+            // signature is `[original_params..., capture_params...]` —
+            // matches Value::Closure semantics in the tree interpreter
+            // and the VM's OP_CALL_DYN closure dispatch.
+            if let Some(caps) = &closure_captures {
+                for nv in caps.iter() {
+                    value_args.push(nv.to_value_with_program(&program.func_names));
+                }
             }
             // Fresh VM on the same program. `call(func_idx, ...)` mirrors
             // OP_CALL_DYN's User arm in the bytecode interpreter.
@@ -15244,6 +15295,56 @@ pub(crate) extern "C" fn jit_call_dyn(
             }
         }
     }
+}
+
+/// Cranelift helper for OP_MAKE_CLOSURE. Build a `HeapObj::Closure` from an
+/// in-register FnRef and a contiguous stack slot of capture NanVals, mirroring
+/// the VM's OP_MAKE_CLOSURE dispatch arm.
+///
+/// Args:
+///   fnref_bits:  bits of a FnRef NanVal (the lifted `__lit_N` fn)
+///   n:           capture count (0..=255)
+///   captures_ptr: pointer to `n` contiguous NanVal slots holding the captures,
+///                 in lifter order
+///
+/// Returns: NanVal bits of the constructed closure, or `TAG_NIL` on a malformed
+/// fn-ref operand (treated the same as the VM's `vm_err!` path, surfaced as a
+/// fallback nil since the caller has no place to raise mid-codegen).
+///
+/// Captures are snapshotted by value: each pointed-to NanVal's RC is bumped on
+/// the way into the closure (the helper takes ownership of an independent ref
+/// per capture). The caller is responsible for ensuring the source registers
+/// retain their own RCs (they do — registers continue to hold the value after
+/// OP_MAKE_CLOSURE returns).
+///
+/// SAFETY: `captures_ptr` must point to at least `n` valid `NanVal`s in
+/// readable memory for the duration of the call. The compiler emits a sized
+/// stack slot immediately before the call, mirroring `jit_call_dyn`.
+#[cfg(feature = "cranelift")]
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn jit_make_closure(fnref_bits: u64, n: u64, captures_ptr: u64) -> u64 {
+    let fn_val = NanVal(fnref_bits);
+    if !fn_val.is_fnref() {
+        return TAG_NIL;
+    }
+    let (kind, id) = fn_val.fnref_parts();
+    let n = n as usize;
+    // SAFETY: caller guarantees `captures_ptr` points to `n` valid NanVals.
+    let regs: &[NanVal] = unsafe {
+        if n == 0 {
+            &[]
+        } else {
+            std::slice::from_raw_parts(captures_ptr as *const NanVal, n)
+        }
+    };
+    let mut captures: Vec<NanVal> = Vec::with_capacity(n);
+    for &v in regs {
+        // By-value capture snapshot: bump RC so the closure owns its own ref
+        // independent of any future mutation in the source register.
+        v.clone_rc();
+        captures.push(v);
+    }
+    NanVal::heap_closure(kind, id, captures).0
 }
 
 #[cfg(feature = "cranelift")]

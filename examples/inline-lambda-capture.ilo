@@ -29,7 +29,6 @@ contains ws:L t needle:t>L t;flt (w:t>b;has w needle) ws
 -- Weighted sum: the per-item weight is captured.
 wsum xs:L n w:n>n;fld (a:n x:n>n;+a *x w) xs 0
 
--- engine-skip: jit cranelift
 -- run: above [1,5,3,8,2] 4
 -- out: [5, 8]
 -- run: near [1,5,10,20] 8
