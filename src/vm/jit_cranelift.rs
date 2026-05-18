@@ -2615,25 +2615,57 @@ fn compile_function_body(
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
             }
-            OP_WINDOW | OP_WINDOW_VIEW => {
-                // PR-2 (window-listview-perf): the VM dispatcher's OP_WINDOW /
-                // OP_WINDOW_VIEW arms now emit `HeapObj::ListView` aliasing the
-                // source list (O(1) per stride instead of n clone_rc's). Views
-                // share the TAG_LIST tag with real Lists; Cranelift's inlined
-                // FOREACHPREP / FOREACHNEXT / LISTGET / LEN fast paths read Vec
-                // metadata at fixed offsets (see audit comments in OP_FOREACHPREP
-                // below) and would UB on a view's struct layout.
+            OP_WINDOW => {
+                // OP_WINDOW: R[A] = window(R[B] (n), R[C] (list)).
                 //
-                // Cleanest fix: bail out of JIT compilation for any function
-                // touching window opcodes; it runs on the VM dispatcher, which
-                // gets the perf win. This is the design-of-record from PR-1
-                // ("VM gets the new fast path, Cranelift falls back via
-                // unknown-opcode return None") and the path the predecessor's
-                // perf analysis approved.
+                // History: this arm previously bailed JIT compilation
+                // (`return None`) because the VM dispatcher's OP_WINDOW emits
+                // `HeapObj::ListView` strides and the inlined LISTGET /
+                // FOREACHPREP / FOREACHNEXT fast paths read Vec metadata at
+                // fixed offsets that would UB on a view's struct layout.
                 //
-                // A future PR can add a discriminant guard in the inlined Vec
-                // loads to let Cranelift emit views directly.
-                return None;
+                // Fix: call the existing `jit_window` extern helper. That
+                // helper always returns an owning `HeapObj::List` of owning
+                // `HeapObj::List`s (no views), so any subsequent inlined
+                // foreach reads operate on the expected Vec layout. The
+                // function compiles, the rest of the hot path (e.g. bio's
+                // `flt all-h (window k seqs)`) runs JIT-native, and we trade
+                // the VM dispatcher's per-stride ListView win for the much
+                // larger JIT-compiled outer loop.
+                let bv = builder.use_var(vars[b_idx]);
+                let cv = builder.use_var(vars[c_idx]);
+                let span_bits = pack_span_bits(chunk.spans[ip]);
+                let span_arg = builder.ins().iconst(I64, span_bits);
+                let fref = get_func_ref(&mut builder, module, helpers.window);
+                let call_inst = builder.ins().call(fref, &[bv, cv, span_arg]);
+                let result = builder.inst_results(call_inst)[0];
+                builder.def_var(vars[a_idx], result);
+            }
+            OP_WINDOW_VIEW => {
+                // OP_WINDOW_VIEW: stride-1 fused-loop materialiser used by
+                // the `flt fn (window n xs)` / `map fn (window n xs)` emitter.
+                //
+                //   word 0 (ABC): A = dest list reg, B = xs reg, C = idx reg
+                //   word 1 (data, A field): A = n reg
+                //
+                // Like OP_WINDOW above, this used to bail JIT compilation.
+                // Route to the `jit_window_view` extern helper which mirrors
+                // the VM dispatcher's in-place reuse path and always returns
+                // a `HeapObj::List` (never a view), keeping the inlined
+                // foreach fast paths sound.
+                let cur = builder.use_var(vars[a_idx]);
+                let bv = builder.use_var(vars[b_idx]);
+                let cv = builder.use_var(vars[c_idx]);
+                let data_inst = chunk.code[ip + 1];
+                skip_next = true;
+                let n_idx = ((data_inst >> 16) & 0xFF) as usize;
+                let nv = builder.use_var(vars[n_idx]);
+                let span_bits = pack_span_bits(chunk.spans[ip]);
+                let span_arg = builder.ins().iconst(I64, span_bits);
+                let fref = get_func_ref(&mut builder, module, helpers.window_view);
+                let call_inst = builder.ins().call(fref, &[cur, bv, cv, nv, span_arg]);
+                let result = builder.inst_results(call_inst)[0];
+                builder.def_var(vars[a_idx], result);
             }
             OP_CHUNKS => {
                 let bv = builder.use_var(vars[b_idx]);

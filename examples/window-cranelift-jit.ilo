@@ -1,0 +1,22 @@
+-- Cranelift JIT used to bail out on any function containing
+-- `OP_WINDOW` / `OP_WINDOW_VIEW`, forcing the bio-canonical shape
+-- `flt p (window k xs)` onto the VM dispatcher. This example pins
+-- the shape that the fix unbails so all engines now run it through
+-- the same JIT-compiled outer loop.
+
+basic>L (L n);window 3 [1, 2, 3, 4, 5]
+
+-- Outer foreach over a window result — exercises FOREACHPREP /
+-- FOREACHNEXT on the list-of-lists produced by OP_WINDOW.
+sumheads>n;s=0;@w (window 2 [10, 20, 30, 40]){s=+s hd w};s
+
+-- Fused `flt p (window n xs)` shape — emitter uses OP_WINDOW_VIEW.
+hastwo w:L n>b;>(hd w) 1
+fused>n;len (flt hastwo (window 2 [1, 2, 3, 2, 4]))
+
+-- run: basic
+-- out: [[1, 2, 3], [2, 3, 4], [3, 4, 5]]
+-- run: sumheads
+-- out: 60
+-- run: fused
+-- out: 3
