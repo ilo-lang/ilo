@@ -18298,10 +18298,130 @@ pub(crate) extern "C" fn jit_posth(url_v: u64, body_v: u64, headers_v: u64) -> u
 
 // ── AOT runtime init/fini and arena/registry pointer helpers ─────────
 
+/// Async-signal-safe handler installed by `ilo_aot_init`. Writes a single
+/// JSON line to stderr identifying the fatal signal, then re-raises with
+/// the default disposition so the OS reports the conventional 128+signo
+/// exit code (e.g. 139 for SIGSEGV).
+///
+/// Only async-signal-safe primitives are used: `libc::write`,
+/// `libc::sigaction`, `libc::raise`. No allocation, no locking, no
+/// stdio. The message bytes for each signal are precomputed static
+/// slices so the handler is straight-line code.
+///
+/// Surfaces `ILO-R015` — see the registry for the long form.
+#[cfg(all(feature = "cranelift", unix))]
+extern "C" fn ilo_aot_signal_handler(signo: libc::c_int) {
+    // Precomputed JSON for each signal we trap. Including a trailing
+    // newline matches the line-delimited stderr convention used by
+    // the other engines' diagnostics.
+    let msg: &[u8] = match signo {
+        libc::SIGSEGV => {
+            b"{\"code\":\"ILO-R015\",\"short\":\"AOT runtime fault\",\"signal\":\"SIGSEGV\"}\n"
+        }
+        libc::SIGBUS => {
+            b"{\"code\":\"ILO-R015\",\"short\":\"AOT runtime fault\",\"signal\":\"SIGBUS\"}\n"
+        }
+        libc::SIGFPE => {
+            b"{\"code\":\"ILO-R015\",\"short\":\"AOT runtime fault\",\"signal\":\"SIGFPE\"}\n"
+        }
+        libc::SIGILL => {
+            b"{\"code\":\"ILO-R015\",\"short\":\"AOT runtime fault\",\"signal\":\"SIGILL\"}\n"
+        }
+        libc::SIGABRT => {
+            b"{\"code\":\"ILO-R015\",\"short\":\"AOT runtime fault\",\"signal\":\"SIGABRT\"}\n"
+        }
+        _ => b"{\"code\":\"ILO-R015\",\"short\":\"AOT runtime fault\",\"signal\":\"unknown\"}\n",
+    };
+    // SAFETY: `libc::write` is async-signal-safe per POSIX. Ignoring the
+    // return value is intentional — if stderr is closed there is nothing
+    // we can usefully do, and the next step (re-raise) still terminates.
+    unsafe {
+        let _ = libc::write(
+            libc::STDERR_FILENO,
+            msg.as_ptr() as *const libc::c_void,
+            msg.len(),
+        );
+        // Reset to default disposition and re-raise so the process exits
+        // with the conventional 128+signo code. SA_RESETHAND on the
+        // original install would have done this for us, but being
+        // explicit here is robust against handler chains.
+        let mut sa: libc::sigaction = std::mem::zeroed();
+        sa.sa_sigaction = libc::SIG_DFL;
+        libc::sigemptyset(&mut sa.sa_mask);
+        libc::sigaction(signo, &sa, std::ptr::null_mut());
+        libc::raise(signo);
+    }
+}
+
+/// Install the AOT signal handler. Idempotent: a process-global flag
+/// guards against double-install if `ilo_aot_init` is called more than
+/// once (it shouldn't be, but defensive). Uses `std::sync::Once` via
+/// an `AtomicBool` to keep this signal-safe (Once would be fine too,
+/// but the atomic is simpler and we don't need the Once's run-once
+/// guarantees for re-entrancy).
+#[cfg(all(feature = "cranelift", unix))]
+fn install_aot_signal_handler() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static INSTALLED: AtomicBool = AtomicBool::new(false);
+    if INSTALLED.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    // SAFETY: sigaction is the documented POSIX entry point. We zero
+    // the struct so unused fields (sa_flags on some platforms) start
+    // clean, then point sa_sigaction at our handler.
+    unsafe {
+        let mut sa: libc::sigaction = std::mem::zeroed();
+        sa.sa_sigaction = ilo_aot_signal_handler as *const () as libc::sighandler_t;
+        libc::sigemptyset(&mut sa.sa_mask);
+        // SA_NODEFER lets the same signal recur during the handler (we
+        // explicitly reset+raise anyway). No SA_SIGINFO — the one-arg
+        // handler form is sufficient for our message-and-die contract.
+        sa.sa_flags = libc::SA_NODEFER;
+        for &signo in &[
+            libc::SIGSEGV,
+            libc::SIGBUS,
+            libc::SIGFPE,
+            libc::SIGILL,
+            libc::SIGABRT,
+        ] {
+            libc::sigaction(signo, &sa, std::ptr::null_mut());
+        }
+    }
+}
+
+/// Windows stub — AOT signal handling on Windows would use
+/// `SetUnhandledExceptionFilter`. Left as a TODO; the AOT backend
+/// already requires a Unix toolchain to link `libilo.a` against the
+/// system linker, so this is a no-op for now.
+#[cfg(all(feature = "cranelift", not(unix)))]
+fn install_aot_signal_handler() {}
+
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
 pub extern "C" fn ilo_aot_init() {
+    install_aot_signal_handler();
     jit_arena_reset();
+    // Test-only escape hatch: lets `tests/regression_aot_signal_diagnostic.rs`
+    // exercise the signal handler end-to-end via a compiled AOT binary
+    // without having to construct a real codegen fault. Mirrors the
+    // `ILO_FORCE_JIT_PANIC` env hook in `jit_cranelift.rs`. The variable
+    // is read once at startup; values: `segv`, `bus`, `fpe`, `ill`,
+    // `abrt`. Anything else is ignored.
+    #[cfg(unix)]
+    if let Ok(which) = std::env::var("ILO_FORCE_AOT_SIGNAL") {
+        let signo = match which.as_str() {
+            "segv" => libc::SIGSEGV,
+            "bus" => libc::SIGBUS,
+            "fpe" => libc::SIGFPE,
+            "ill" => libc::SIGILL,
+            "abrt" => libc::SIGABRT,
+            _ => return,
+        };
+        // SAFETY: libc::raise is async-signal-safe and well-defined.
+        unsafe {
+            libc::raise(signo);
+        }
+    }
 }
 
 /// Set the active TypeRegistry from serialized bytes (for AOT binaries).
