@@ -11,11 +11,10 @@
 //! the hook — the `cfg(debug_assertions)` guard trips it out — so this
 //! cannot affect production users.
 //!
-//! Cross-engine coverage:
-//!   - default engine dispatch (`ilo file.ilo`) falls through to the tree
-//!     interpreter, same path as `JitCallError::NotEligible`.
-//!   - explicit `--jit` falls back to the bytecode VM, since the
-//!     user opted into a JIT engine and VM is the closest non-JIT tier.
+//! Coverage: explicit `--jit` falls back to the bytecode VM, since the
+//! user opted into a JIT engine and VM is the closest non-JIT tier.
+//! (Post-#390 the default engine is the bytecode VM, so the default path
+//! never invokes the JIT and the synthetic-panic hook cannot fire on it.)
 //!
 //! Gated on `cfg(debug_assertions)`: the env-var hook in
 //! `vm::jit_cranelift::check_force_panic_env` is only compiled in debug
@@ -30,36 +29,11 @@ fn ilo() -> Command {
     Command::new(env!("CARGO_BIN_EXE_ilo"))
 }
 
-#[test]
-fn cranelift_panic_default_falls_back_to_interpreter() {
-    let out = ilo()
-        .args(["f x:n>n;*x 2", "f", "5"])
-        .env("ILO_FORCE_JIT_PANIC", "1")
-        .output()
-        .expect("failed to run ilo");
-
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    let stderr = String::from_utf8_lossy(&out.stderr);
-
-    assert!(
-        out.status.success(),
-        "default engine should fall through after JIT panic. \
-         stdout={stdout:?} stderr={stderr:?} status={:?}",
-        out.status.code()
-    );
-    assert!(
-        stdout.trim() == "10",
-        "tree interpreter fallback should produce f(5)=10, got stdout={stdout:?}"
-    );
-    assert!(
-        stderr.contains("Cranelift JIT panicked"),
-        "stderr breadcrumb missing, got {stderr:?}"
-    );
-    assert!(
-        stderr.contains("falling back to interpreter"),
-        "default-engine breadcrumb should mention interpreter fallback, got {stderr:?}"
-    );
-}
+// Note: pre-#390 there was a `cranelift_panic_default_falls_back_to_interpreter`
+// test here. Post-#390 the default engine is the bytecode VM and never invokes
+// the JIT, so the synthetic-panic hook cannot fire on the default path. The
+// `--jit` opt-in path is covered by
+// `cranelift_panic_explicit_engine_falls_back_to_vm` below.
 
 #[test]
 fn cranelift_panic_explicit_engine_falls_back_to_vm() {
@@ -94,11 +68,12 @@ fn cranelift_panic_explicit_engine_falls_back_to_vm() {
 
 /// The breadcrumb must include the panic payload so the upstream issue
 /// (AArch64 relocation assertion, etc.) is searchable in production logs
-/// rather than being collapsed into a generic message.
+/// rather than being collapsed into a generic message. Exercised via the
+/// `--jit` opt-in path since the default engine no longer invokes the JIT.
 #[test]
 fn cranelift_panic_breadcrumb_includes_payload() {
     let out = ilo()
-        .args(["f x:n>n;*x 2", "f", "5"])
+        .args(["--jit", "f x:n>n;*x 2", "f", "5"])
         .env("ILO_FORCE_JIT_PANIC", "1")
         .output()
         .expect("failed to run ilo");
