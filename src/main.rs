@@ -24,6 +24,118 @@ fn compact_spec() -> &'static str {
     include_str!("../ai.txt")
 }
 
+// ── Modular agent skills ──────────────────────────────────────────────────────
+//
+// Six skill modules carved out of the monolithic compact spec so agents can
+// load only the slice their current task needs (typical: 1-2 modules ≈ 2,000
+// tokens) instead of the whole 16,000-token `ai.txt`. Each module is embedded
+// into the binary via `include_str!` so they stay version-locked to the
+// compiler and travel with every install.
+//
+// `ilo -ai` still emits the full concatenated spec for back-compat. The CLI
+// subcommands (`ilo skill list/get/path/show`) are the preferred surface.
+
+/// One bundled agent skill.
+struct Skill {
+    name: &'static str,
+    description: &'static str,
+    path: &'static str,
+    content: &'static str,
+}
+
+/// The full set of bundled skills, ordered for `ilo skill list`.
+const SKILLS: &[Skill] = &[
+    Skill {
+        name: "ilo-language",
+        description: "Use this when writing or reviewing .ilo source. Covers prefix notation, type sigils, guards, match, pipes, records, and Result handling.",
+        path: "skills/ilo/ilo-language.md",
+        content: include_str!("../skills/ilo/ilo-language.md"),
+    },
+    Skill {
+        name: "ilo-builtins",
+        description: "Use this when calling ilo's builtin functions. One-line signatures plus examples for list, text, IO, HTTP, JSON, map, math, time, and HOF builtins.",
+        path: "skills/ilo/ilo-builtins.md",
+        content: include_str!("../skills/ilo/ilo-builtins.md"),
+    },
+    Skill {
+        name: "ilo-errors",
+        description: "Use this when reading ILO-XXXX error codes or fixing failures. Lists the common codes with one-line cause + fix; run `ilo --explain ILO-XXXX` for the long form.",
+        path: "skills/ilo/ilo-errors.md",
+        content: include_str!("../skills/ilo/ilo-errors.md"),
+    },
+    Skill {
+        name: "ilo-tools",
+        description: "Use this when declaring or using MCP tools in ilo programs. Covers the `tool` keyword, HTTP and MCP providers, and runtime tool-call handling.",
+        path: "skills/ilo/ilo-tools.md",
+        content: include_str!("../skills/ilo/ilo-tools.md"),
+    },
+    Skill {
+        name: "ilo-engines",
+        description: "Use this when choosing between tree, VM, JIT, or AOT execution. Covers the feature matrix, default behaviour, and when each backend matters.",
+        path: "skills/ilo/ilo-engines.md",
+        content: include_str!("../skills/ilo/ilo-engines.md"),
+    },
+    Skill {
+        name: "ilo-agent",
+        description: "Use this when integrating ilo into an agent loop. Covers skill discovery, running programs, reading JSON diagnostics, and the repair loop.",
+        path: "skills/ilo/ilo-agent.md",
+        content: include_str!("../skills/ilo/ilo-agent.md"),
+    },
+];
+
+fn find_skill(name: &str) -> Option<&'static Skill> {
+    SKILLS.iter().find(|s| s.name == name)
+}
+
+fn skill_unknown(name: &str) -> i32 {
+    eprintln!("error: unknown skill '{name}'");
+    eprintln!("run `ilo skill list` to see available skills.");
+    1
+}
+
+fn skill_list_cmd() -> i32 {
+    for s in SKILLS {
+        println!("{:<14} {}", s.name, s.description);
+    }
+    0
+}
+
+fn skill_get_cmd(name: &str) -> i32 {
+    match find_skill(name) {
+        Some(s) => {
+            print!("{}", s.content);
+            0
+        }
+        None => skill_unknown(name),
+    }
+}
+
+fn skill_path_cmd(name: &str) -> i32 {
+    match find_skill(name) {
+        Some(s) => {
+            println!("{}", s.path);
+            0
+        }
+        None => skill_unknown(name),
+    }
+}
+
+fn skill_show_cmd(name: &str) -> i32 {
+    match find_skill(name) {
+        Some(s) => {
+            println!("# {} ({})", s.name, s.path);
+            println!();
+            println!("{}", s.description);
+            println!();
+            println!("---");
+            println!();
+            print!("{}", s.content);
+            0
+        }
+        None => skill_unknown(name),
+    }
+}
+
 // ── `ilo tools` subcommand ─────────────────────────────────────────────────
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -2032,6 +2144,12 @@ fn dispatch_cli(cli: cli::Cli, bare_has_bin: bool) -> i32 {
             }
             0
         }
+        Some(cli::Cmd::Skill(s)) => match s.cmd {
+            cli::args::SkillCmd::List => skill_list_cmd(),
+            cli::args::SkillCmd::Get { name } => skill_get_cmd(&name),
+            cli::args::SkillCmd::Path { name } => skill_path_cmd(&name),
+            cli::args::SkillCmd::Show { name } => skill_show_cmd(&name),
+        },
         Some(cli::Cmd::Version) => {
             println!("ilo {}", env!("CARGO_PKG_VERSION"));
             0

@@ -73,6 +73,9 @@ pub enum Cmd {
     /// Explain an error code (e.g. ILO-T005).
     Explain(ExplainArgs),
 
+    /// Modular agent skills (ilo-language, ilo-builtins, ...).
+    Skill(SkillArgs),
+
     /// Print version.
     Version,
 }
@@ -291,6 +294,26 @@ pub struct SpecArgs {
 pub struct ExplainArgs {
     /// Error code to explain (e.g. ILO-T005).
     pub code: String,
+}
+
+// ── Skill ─────────────────────────────────────────────────────────────────────
+
+#[derive(Args, Debug)]
+pub struct SkillArgs {
+    #[command(subcommand)]
+    pub cmd: SkillCmd,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum SkillCmd {
+    /// List all available skills with their descriptions.
+    List,
+    /// Print the full content of a skill by name.
+    Get { name: String },
+    /// Print the bundled filesystem path of a skill by name.
+    Path { name: String },
+    /// Print a skill with a formatted header.
+    Show { name: String },
 }
 
 // ── OutputMode resolution ──────────────────────────────────────────────────────

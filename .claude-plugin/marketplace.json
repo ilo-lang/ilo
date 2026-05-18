@@ -17,7 +17,15 @@
       },
       "homepage": "https://github.com/ilo-lang/ilo",
       "license": "MIT",
-      "keywords": ["ilo", "programming-language", "token-optimised", "ai-agents"]
+      "keywords": ["ilo", "programming-language", "token-optimised", "ai-agents"],
+      "skills": [
+        { "name": "ilo-language", "description": "Use this when writing or reviewing .ilo source.", "path": "skills/ilo/ilo-language.md" },
+        { "name": "ilo-builtins", "description": "Use this when calling ilo's builtin functions.", "path": "skills/ilo/ilo-builtins.md" },
+        { "name": "ilo-errors", "description": "Use this when reading ILO-XXXX error codes or fixing failures.", "path": "skills/ilo/ilo-errors.md" },
+        { "name": "ilo-tools", "description": "Use this when declaring or using MCP tools in ilo programs.", "path": "skills/ilo/ilo-tools.md" },
+        { "name": "ilo-engines", "description": "Use this when choosing between tree, VM, JIT, or AOT execution.", "path": "skills/ilo/ilo-engines.md" },
+        { "name": "ilo-agent", "description": "Use this when integrating ilo into an agent loop.", "path": "skills/ilo/ilo-agent.md" }
+      ]
     }
   ]
 }
