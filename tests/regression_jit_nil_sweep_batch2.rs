@@ -82,7 +82,7 @@ fn strict_recfld_name_miss_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn strict_recfld_name_miss_cranelift() {
-    check_strict_miss("--run-cranelift");
+    check_strict_miss("--jit");
 }
 
 // ── jit_recfld_name strict path: present field returns the value ───────
@@ -113,7 +113,7 @@ fn strict_recfld_name_hit_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn strict_recfld_name_hit_cranelift() {
-    check_strict_hit("--run-cranelift");
+    check_strict_hit("--jit");
 }
 
 // ── jit_recfld_name SAFE path: must still return nil (permissive helper
@@ -147,7 +147,7 @@ fn safe_recfld_name_miss_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn safe_recfld_name_miss_cranelift() {
-    check_safe_miss("--run-cranelift");
+    check_safe_miss("--jit");
 }
 
 // ── jit_mget: missing key returns nil on every engine ──────────────────
@@ -179,7 +179,7 @@ fn mget_missing_key_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn mget_missing_key_cranelift() {
-    check_mget_miss("--run-cranelift");
+    check_mget_miss("--jit");
 }
 
 // ── jit_mget: present key returns the value ────────────────────────────
@@ -203,7 +203,7 @@ fn mget_present_key_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn mget_present_key_cranelift() {
-    check_mget_hit("--run-cranelift");
+    check_mget_hit("--jit");
 }
 
 // ── No stale-error leak across successive cranelift calls ──────────────
@@ -216,10 +216,10 @@ fn mget_present_key_cranelift() {
 #[cfg(feature = "cranelift")]
 fn no_stale_jit_error_leak_after_strict_recfld_miss() {
     // First process: errors via strict recfld_name miss.
-    let _ = run_err("--run-cranelift", STRICT_MISS, "f", &[r#"{"present":1}"#]);
+    let _ = run_err("--jit", STRICT_MISS, "f", &[r#"{"present":1}"#]);
     // Second fresh process: must succeed cleanly.
     assert_eq!(
-        run_ok("--run-cranelift", STRICT_HIT, "f", &[r#"{"present":99}"#],),
+        run_ok("--jit", STRICT_HIT, "f", &[r#"{"present":99}"#],),
         "99",
         "fresh process after strict-miss error must succeed"
     );

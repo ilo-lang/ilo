@@ -161,5 +161,5 @@ fn prefix_binop_call_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn prefix_binop_call_cranelift() {
-    check_all("--run-cranelift");
+    check_all("--jit");
 }

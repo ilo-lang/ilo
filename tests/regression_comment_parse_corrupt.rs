@@ -123,7 +123,7 @@ fn paren_bound_fmt_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn paren_bound_fmt_cranelift() {
-    check_paren_bound_fmt("--run-cranelift");
+    check_paren_bound_fmt("--jit");
 }
 
 #[test]
@@ -139,7 +139,7 @@ fn comment_between_bindings_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn comment_between_bindings_cranelift() {
-    check_comment_between_bindings("--run-cranelift");
+    check_comment_between_bindings("--jit");
 }
 
 #[test]
@@ -155,7 +155,7 @@ fn stacked_comments_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn stacked_comments_cranelift() {
-    check_stacked_comments("--run-cranelift");
+    check_stacked_comments("--jit");
 }
 
 #[test]
@@ -171,7 +171,7 @@ fn comment_with_punct_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn comment_with_punct_cranelift() {
-    check_comment_with_punct("--run-cranelift");
+    check_comment_with_punct("--jit");
 }
 
 #[test]
@@ -187,5 +187,5 @@ fn dashes_in_string_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn dashes_in_string_cranelift() {
-    check_dashes_in_string("--run-cranelift");
+    check_dashes_in_string("--jit");
 }

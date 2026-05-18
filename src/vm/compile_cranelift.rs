@@ -4965,7 +4965,7 @@ mod tests {
 
     // ── AOT translator coverage for the new transcendental math opcodes ───
     // These exercise the OP_POW and OP_SQRT|OP_LOG|OP_EXP|OP_SIN|OP_COS arms
-    // in compile_function_body, which the JIT-based --run-cranelift tests do
+    // in compile_function_body, which the JIT-based --jit tests do
     // not reach (those go through jit_cranelift::compile_and_call, not the
     // AOT translator).
     #[test]

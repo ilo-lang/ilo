@@ -67,7 +67,7 @@ fn fld_binding_in_body_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn fld_binding_in_body_cranelift() {
-    check_fld_binding("--run-cranelift");
+    check_fld_binding("--jit");
 }
 
 // `fld=5` inside a loop body, the natural shape a persona writes when
@@ -104,7 +104,7 @@ fn fld_binding_in_loop_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn fld_binding_in_loop_cranelift() {
-    check_fld_binding_loop("--run-cranelift");
+    check_fld_binding_loop("--jit");
 }
 
 // Sanity: `fld` as the fold builtin still works after the fix.

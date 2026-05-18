@@ -11,7 +11,7 @@
 
 use std::process::Command;
 
-const ENGINES: &[&str] = &["--run-tree", "--run-vm", "--run-cranelift"];
+const ENGINES: &[&str] = &["--run-tree", "--run-vm", "--jit"];
 
 fn ilo() -> Command {
     Command::new(env!("CARGO_BIN_EXE_ilo"))

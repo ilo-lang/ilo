@@ -44,7 +44,7 @@ macro_rules! tri_engine_test {
             #[test]
             #[cfg(feature = "cranelift")]
             fn cranelift() {
-                assert_eq!(run("--run-cranelift", SRC, "f"), EXPECT);
+                assert_eq!(run("--jit", SRC, "f"), EXPECT);
             }
         }
     };

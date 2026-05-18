@@ -518,7 +518,7 @@ fn inline_run_tree() {
 #[test]
 fn inline_run_cranelift() {
     let out = ilo()
-        .args(["f x:n>n;*x 2", "--run-cranelift", "f", "5"])
+        .args(["f x:n>n;*x 2", "--jit", "f", "5"])
         .output()
         .expect("failed to run ilo");
     assert!(
@@ -1305,13 +1305,13 @@ fn file_read_error() {
     );
 }
 
-// L285: --run-cranelift with no extra args after func name → vec![]
+// L285: --jit with no extra args after func name → vec![]
 #[cfg(feature = "cranelift")]
 #[test]
 fn run_cranelift_no_extra_args() {
-    // `f>n;42` takes no args, `--run-cranelift f` → run_args = vec![] at L285
+    // `f>n;42` takes no args, `--jit f` → run_args = vec![] at L285
     let out = ilo()
-        .args(["f>n;42", "--run-cranelift", "f"])
+        .args(["f>n;42", "--jit", "f"])
         .output()
         .expect("failed to run ilo");
     assert!(
@@ -1322,13 +1322,13 @@ fn run_cranelift_no_extra_args() {
     assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "42");
 }
 
-// L300: --run-cranelift float result (non-integer)
+// L300: --jit float result (non-integer)
 #[cfg(feature = "cranelift")]
 #[test]
 fn run_cranelift_float_result() {
     // /x 3 with x=2 → 2/3 = 0.666... → println!("{}", result) at L300
     let out = ilo()
-        .args(["f x:n>n;/x 3", "--run-cranelift", "f", "2"])
+        .args(["f x:n>n;/x 3", "--jit", "f", "2"])
         .output()
         .expect("failed to run ilo");
     assert!(
@@ -1346,13 +1346,13 @@ fn run_cranelift_float_result() {
     );
 }
 
-// L304-305: --run-cranelift with non-eligible function → "not eligible" error
+// L304-305: --jit with non-eligible function → "not eligible" error
 #[cfg(feature = "cranelift")]
 #[test]
 fn run_cranelift_not_eligible() {
     // Match expression is now JIT-eligible with NanVal JIT — should succeed
     let out = ilo()
-        .args(["f x:n>n;?x{1:2;_:3}", "--run-cranelift", "f", "5"])
+        .args(["f x:n>n;?x{1:2;_:3}", "--jit", "f", "5"])
         .output()
         .expect("failed to run ilo");
     assert!(

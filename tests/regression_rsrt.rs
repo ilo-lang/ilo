@@ -47,7 +47,7 @@ fn rsrt_nums_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn rsrt_nums_cranelift() {
-    check_nums("--run-cranelift");
+    check_nums("--jit");
 }
 
 // String list — lexicographic descending.
@@ -74,7 +74,7 @@ fn rsrt_text_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn rsrt_text_cranelift() {
-    check_text("--run-cranelift");
+    check_text("--jit");
 }
 
 // Empty list — round-trips as empty.
@@ -97,7 +97,7 @@ fn rsrt_empty_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn rsrt_empty_cranelift() {
-    check_empty("--run-cranelift");
+    check_empty("--jit");
 }
 
 // Single element — round-trips unchanged. Use a two-element collapse
@@ -121,7 +121,7 @@ fn rsrt_single_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn rsrt_single_cranelift() {
-    check_single("--run-cranelift");
+    check_single("--jit");
 }
 
 // Type-variable signature: rsrt :: L a > L a — accepts any list element type.
@@ -149,7 +149,7 @@ fn rsrt_typevar_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn rsrt_typevar_cranelift() {
-    check_typevar("--run-cranelift");
+    check_typevar("--jit");
 }
 
 // Text input — mirror `srt` but in reverse. Sorts characters by codepoint
@@ -173,7 +173,7 @@ fn rsrt_str_asc_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn rsrt_str_asc_cranelift() {
-    check_str_asc("--run-cranelift");
+    check_str_asc("--jit");
 }
 
 // Already-descending text — round-trips unchanged.
@@ -196,5 +196,5 @@ fn rsrt_str_desc_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn rsrt_str_desc_cranelift() {
-    check_str_desc("--run-cranelift");
+    check_str_desc("--jit");
 }

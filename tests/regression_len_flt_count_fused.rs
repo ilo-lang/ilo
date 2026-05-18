@@ -12,7 +12,7 @@
 //
 // The tests below pin the value-level contract across `--run-tree` (the
 // reference semantics impl, untouched by this change), `--run-vm` (where
-// the fused emitter lives), and `--run-cranelift` (which falls back to
+// the fused emitter lives), and `--jit` (which falls back to
 // the VM on `OP_WINDOW` workloads but otherwise uses its own jit_call_dyn
 // dispatch over `flt`). The fused counter MUST agree bit-for-bit with
 // the unfused `len . flt` shape on every engine — silent miscompile via
@@ -93,7 +93,7 @@ fn run_err(engine: &str, src: &str, entry: &str, args: &[&str]) -> String {
 }
 
 fn run_all(src: &str, entry: &str, args: &[&str], expected: &str) {
-    for engine in ["--run-tree", "--run-vm", "--run-cranelift"] {
+    for engine in ["--run-tree", "--run-vm", "--jit"] {
         let actual = run_ok(engine, src, entry, args);
         assert_eq!(
             actual, expected,

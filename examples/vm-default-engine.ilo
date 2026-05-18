@@ -1,6 +1,6 @@
 -- The bytecode register VM is the default execution engine. It supports
 -- every opcode (closures, listview windows, len-of-filter fusion, etc).
--- Cranelift JIT is opt-in via `--cranelift` for hot numeric workloads.
+-- Cranelift JIT is opt-in via `--jit` for hot numeric workloads.
 -- Tree interpreter (`--run-tree`) remains the canonical-semantics reference.
 --
 -- This example exercises a few modern opcodes (OP_WINDOW_VIEW, fused

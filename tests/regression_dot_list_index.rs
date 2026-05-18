@@ -27,7 +27,7 @@ const ENGINES: &[&str] = &[
     "--run-tree",
     "--run-vm",
     #[cfg(feature = "cranelift")]
-    "--run-cranelift",
+    "--jit",
 ];
 
 // xs.0 — first element.
@@ -81,7 +81,7 @@ fn dot_index_out_of_range_cranelift() {
     // a runtime error for OOB literal-index OP_INDEX, matching tree/VM.
     let src = "f>n;xs=[10,20,30];xs.5";
     let out = ilo()
-        .args([src, "--run-cranelift", "f"])
+        .args([src, "--jit", "f"])
         .output()
         .expect("failed to run ilo");
     assert!(

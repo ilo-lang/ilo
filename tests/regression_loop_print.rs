@@ -234,5 +234,5 @@ fn loop_print_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn loop_print_cranelift() {
-    check_all("--run-cranelift");
+    check_all("--jit");
 }

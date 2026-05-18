@@ -45,7 +45,7 @@ fn check_all(src: &str, expected: &str) {
     check_stdout("--run-tree", src, expected);
     check_stdout("--run-vm", src, expected);
     #[cfg(feature = "cranelift")]
-    check_stdout("--run-cranelift", src, expected);
+    check_stdout("--jit", src, expected);
 }
 
 // ── Stats helpers ─────────────────────────────────────────────────────────
@@ -143,11 +143,11 @@ fn cranelift_no_stale_error_after_batch6_failure() {
     // First: deliberately error out via a singular-matrix inv.
     // The surface verifier accepts this; the singular check fires at runtime.
     let out = ilo()
-        .args(["f>L (L n);inv [[1 2] [2 4]]", "--run-cranelift", "f"])
+        .args(["f>L (L n);inv [[1 2] [2 4]]", "--jit", "f"])
         .output()
         .expect("failed to run ilo");
     assert!(!out.status.success(), "expected failure for singular inv");
 
     // Second: a fresh, unrelated invocation must succeed.
-    check_stdout("--run-cranelift", "f>n;median [1 2 3]", "2");
+    check_stdout("--jit", "f>n;median [1 2 3]", "2");
 }

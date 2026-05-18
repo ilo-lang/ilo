@@ -43,7 +43,7 @@ fn take_basic_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn take_basic_cranelift() {
-    check_take_basic("--run-cranelift");
+    check_take_basic("--jit");
 }
 
 // ── take: truncate on out-of-range ────────────────────────────────────
@@ -66,7 +66,7 @@ fn take_trunc_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn take_trunc_cranelift() {
-    check_take_trunc("--run-cranelift");
+    check_take_trunc("--jit");
 }
 
 // ── take: empty result ────────────────────────────────────────────────
@@ -89,7 +89,7 @@ fn take_zero_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn take_zero_cranelift() {
-    check_take_zero("--run-cranelift");
+    check_take_zero("--jit");
 }
 
 // ── drop: basic ───────────────────────────────────────────────────────
@@ -112,7 +112,7 @@ fn drop_basic_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn drop_basic_cranelift() {
-    check_drop_basic("--run-cranelift");
+    check_drop_basic("--jit");
 }
 
 // ── drop: truncate (n > len) returns empty ────────────────────────────
@@ -135,7 +135,7 @@ fn drop_trunc_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn drop_trunc_cranelift() {
-    check_drop_trunc("--run-cranelift");
+    check_drop_trunc("--jit");
 }
 
 // ── empty input ───────────────────────────────────────────────────────
@@ -158,7 +158,7 @@ fn take_empty_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn take_empty_cranelift() {
-    check_take_empty("--run-cranelift");
+    check_take_empty("--jit");
 }
 
 // ── type variable: take on text ────────────────────────────────────────
@@ -181,7 +181,7 @@ fn take_text_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn take_text_cranelift() {
-    check_take_text("--run-cranelift");
+    check_take_text("--jit");
 }
 
 // ── drop on text ──────────────────────────────────────────────────────
@@ -204,7 +204,7 @@ fn drop_text_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn drop_text_cranelift() {
-    check_drop_text("--run-cranelift");
+    check_drop_text("--jit");
 }
 
 // ── negative count: Python-style tail semantics across every engine ───
@@ -241,7 +241,7 @@ fn take_negative_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn take_negative_cranelift() {
-    check_take_neg_python_style("--run-cranelift");
+    check_take_neg_python_style("--jit");
 }
 
 const DROP_NEG: &str = "f>L n;xs=[1,2,3];drop -1 xs";
@@ -267,7 +267,7 @@ fn drop_negative_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn drop_negative_cranelift() {
-    check_drop_neg_python_style("--run-cranelift");
+    check_drop_neg_python_style("--jit");
 }
 
 // ── type variable: take/drop preserve element type (list of text) ─────
@@ -294,5 +294,5 @@ fn take_text_list_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn take_text_list_cranelift() {
-    check_take_text_list("--run-cranelift");
+    check_take_text_list("--jit");
 }

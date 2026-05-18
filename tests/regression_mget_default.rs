@@ -181,5 +181,5 @@ fn mget_default_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn mget_default_cranelift() {
-    check_all("--run-cranelift");
+    check_all("--jit");
 }

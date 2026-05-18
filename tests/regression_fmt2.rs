@@ -43,7 +43,7 @@ fn fmt2_basic_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn fmt2_basic_cranelift() {
-    check_basic("--run-cranelift");
+    check_basic("--jit");
 }
 
 // Zero decimals: integer-valued float prints without a fractional part.
@@ -66,7 +66,7 @@ fn fmt2_zero_digits_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn fmt2_zero_digits_cranelift() {
-    check_zero_digits("--run-cranelift");
+    check_zero_digits("--jit");
 }
 
 // Long fractional number, asymmetric truncation.
@@ -89,7 +89,7 @@ fn fmt2_long_frac_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn fmt2_long_frac_cranelift() {
-    check_long_frac("--run-cranelift");
+    check_long_frac("--jit");
 }
 
 // Half-to-even (banker's rounding): 1.5 → "2", 2.5 → "2".
@@ -112,7 +112,7 @@ fn fmt2_half_even_up_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn fmt2_half_even_up_cranelift() {
-    check_half_even_up("--run-cranelift");
+    check_half_even_up("--jit");
 }
 
 const HALF_EVEN_DOWN_SRC: &str = "f>t;fmt2 2.5 0";
@@ -134,7 +134,7 @@ fn fmt2_half_even_down_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn fmt2_half_even_down_cranelift() {
-    check_half_even_down("--run-cranelift");
+    check_half_even_down("--jit");
 }
 
 // Negative digits clamp to 0 (integer formatting). Use a literal -1.
@@ -157,5 +157,5 @@ fn fmt2_neg_digits_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn fmt2_neg_digits_cranelift() {
-    check_neg_digits("--run-cranelift");
+    check_neg_digits("--jit");
 }

@@ -64,7 +64,7 @@ fn camel_field_sigil_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn camel_field_sigil_cranelift() {
-    check_sigil("--run-cranelift");
+    check_sigil("--jit");
 }
 
 // `r.gitURL` (capital is a non-sigil `U`) — exercises the second lex path.
@@ -91,7 +91,7 @@ fn camel_field_non_sigil_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn camel_field_non_sigil_cranelift() {
-    check_non_sigil("--run-cranelift");
+    check_non_sigil("--jit");
 }
 
 // Chained camelCase access: `r.baseSeverity.label`.
@@ -118,7 +118,7 @@ fn camel_field_chained_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn camel_field_chained_cranelift() {
-    check_chained("--run-cranelift");
+    check_chained("--jit");
 }
 
 // camelCase + trailing digit: `r.field2Name`.
@@ -145,7 +145,7 @@ fn camel_field_digit_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn camel_field_digit_cranelift() {
-    check_digit("--run-cranelift");
+    check_digit("--jit");
 }
 
 // Safe access on a camelCase field: `r.?baseSeverity`.
@@ -186,7 +186,7 @@ fn camel_field_mixed_snake_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn camel_field_mixed_snake_cranelift() {
-    check_mixed("--run-cranelift");
+    check_mixed("--jit");
 }
 
 // ---- Negative regressions: strict lowercase rule preserved for bindings ----
