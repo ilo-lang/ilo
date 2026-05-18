@@ -1,0 +1,58 @@
+{
+  "function": {
+    "prefix": "fn",
+    "body": [
+      "${1:name} ${2:x}:${3:n}>${4:n};${5:body}"
+    ],
+    "description": "ilo function declaration: name args:type>return;body"
+  },
+  "tool": {
+    "prefix": "tool",
+    "body": [
+      "tool ${1:name} \"${2:description}\" (${3:args}) > R ${4:t} ${5:t}"
+    ],
+    "description": "ilo tool declaration"
+  },
+  "match": {
+    "prefix": "match",
+    "body": [
+      "?{~${1:v}:${2:ok};^${3:e}:${4:err}}"
+    ],
+    "description": "ilo match expression on Result"
+  },
+  "let": {
+    "prefix": "let",
+    "body": [
+      "${1:name}=${2:value}"
+    ],
+    "description": "ilo variable binding"
+  },
+  "loop": {
+    "prefix": "loop",
+    "body": [
+      "@${1:x} ${2:xs}{${3:body}}"
+    ],
+    "description": "ilo loop over a list"
+  },
+  "guard": {
+    "prefix": "guard",
+    "body": [
+      ">=${1:x} ${2:0} ${3:result}"
+    ],
+    "description": "ilo prefix guard"
+  },
+  "type": {
+    "prefix": "type",
+    "body": [
+      "type ${1:Name} ${2:field}:${3:n}"
+    ],
+    "description": "ilo type declaration"
+  },
+  "ternary": {
+    "prefix": "tern",
+    "body": [
+      "?${1:cond} ${2:then} ${3:else}"
+    ],
+    "description": "ilo prefix ternary"
+  }
+}
