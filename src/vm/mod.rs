@@ -576,6 +576,11 @@ pub(crate) fn is_tree_bridge_eligible(b: crate::builtins::Builtin, argc: usize) 
         // rsrt fn ctx xs — closure-bind descending sort. Same bridge
         // contract as srt 3-arg.
         (Builtin::Rsrt, 3) => true,
+        // env-all -> R M t t: zero-arg snapshot of the process environment.
+        // Not perf-sensitive (one-shot enumeration), and the result is a
+        // Map[Text, Text] which round-trips through NanVal heap_map cleanly,
+        // so the bridge is the right tier for both VM and Cranelift.
+        (Builtin::EnvAll, 0) => true,
         _ => false,
     }
 }
@@ -584,7 +589,10 @@ pub(crate) fn is_tree_bridge_eligible(b: crate::builtins::Builtin, argc: usize) 
 /// the auto-unwrap (`!`) protocol when called via the tree bridge.
 pub(crate) fn tree_bridge_returns_result(b: crate::builtins::Builtin) -> bool {
     use crate::builtins::Builtin;
-    matches!(b, Builtin::Rd | Builtin::Rdb | Builtin::Mapr)
+    matches!(
+        b,
+        Builtin::Rd | Builtin::Rdb | Builtin::Mapr | Builtin::EnvAll
+    )
 }
 
 pub(crate) const OP_GETMANY: u8 = 136; // R[A] = get_many(R[B])  (L t → L (R t t), concurrent fan-out)

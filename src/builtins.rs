@@ -102,6 +102,7 @@ pub enum Builtin {
     Wrl,
     Prnt,
     Env,
+    EnvAll,
 
     // String
     Trm,
@@ -234,6 +235,7 @@ impl Builtin {
             "wrl" => Some(Builtin::Wrl),
             "prnt" => Some(Builtin::Prnt),
             "env" => Some(Builtin::Env),
+            "env-all" => Some(Builtin::EnvAll),
             "trm" => Some(Builtin::Trm),
             "upr" => Some(Builtin::Upr),
             "lwr" => Some(Builtin::Lwr),
@@ -357,6 +359,7 @@ impl Builtin {
             Builtin::Wrl => "wrl",
             Builtin::Prnt => "prnt",
             Builtin::Env => "env",
+            Builtin::EnvAll => "env-all",
             Builtin::Trm => "trm",
             Builtin::Upr => "upr",
             Builtin::Lwr => "lwr",
@@ -529,6 +532,10 @@ impl Builtin {
         // (seconds) so per-phase timing has no rounding loss in agent
         // perf-bisection workloads.
         Builtin::NowMs,
+        // env-all -> R M t t: full process environment as Map[Text, Text]
+        // wrapped in Result. Tree-bridge eligible (zero args, no FnRef);
+        // see is_tree_bridge_eligible in src/vm/mod.rs.
+        Builtin::EnvAll,
     ];
 
     /// On-wire 8-bit tag for cross-engine builtin dispatch. See `ALL`.

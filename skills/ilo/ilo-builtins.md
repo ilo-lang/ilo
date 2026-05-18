@@ -86,6 +86,7 @@ get url          -- R t t (alias: $)
 post url body    -- R t t
 get-many urls    -- R L t t (parallel)
 env name         -- t (env var, "" if unset)
+env-all          -- R (M t t) t (all env vars)
 ```
 
 ## JSON
