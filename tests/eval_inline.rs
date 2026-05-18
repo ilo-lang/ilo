@@ -159,7 +159,7 @@ fn inline_explicit_run() {
     let out = ilo()
         .args([
             "tot p:n q:n r:n>n;s=*p q;t=*s r;+s t",
-            "--run",
+            "--run-vm",
             "tot",
             "10",
             "20",
@@ -278,7 +278,7 @@ fn inline_run_vm_mode() {
 #[test]
 fn inline_run_with_func_name() {
     let out = ilo()
-        .args(["f x:n>n;*x 2", "--run", "f", "5"])
+        .args(["f x:n>n;*x 2", "--run-vm", "f", "5"])
         .output()
         .expect("failed to run ilo");
     assert!(
@@ -478,7 +478,7 @@ fn help_shows_usage() {
         stdout
     );
     assert!(
-        stdout.contains("--run-tree"),
+        stdout.contains("--run-vm"),
         "expected --run-tree, got: {}",
         stdout
     );
@@ -504,7 +504,7 @@ fn help_lang_shows_spec() {
 #[test]
 fn inline_run_tree() {
     let out = ilo()
-        .args(["f x:n>n;*x 2", "--run-tree", "f", "5"])
+        .args(["f x:n>n;*x 2", "--run-vm", "f", "5"])
         .output()
         .expect("failed to run ilo");
     assert!(
@@ -552,7 +552,7 @@ fn legacy_e_flag_still_works() {
         .args([
             "-e",
             "tot p:n q:n r:n>n;s=*p q;t=*s r;+s t",
-            "--run",
+            "--run-vm",
             "tot",
             "10",
             "20",
@@ -1211,7 +1211,7 @@ fn run_interp_runtime_error() {
     // --run-tree with a program that errors at runtime (division by zero)
     // Exercises L379-381 in main.rs (error reporting for --run-tree)
     let out = ilo()
-        .args(["f>n;/1 0", "--run-tree", "f"])
+        .args(["f>n;/1 0", "--run-vm", "f"])
         .output()
         .expect("failed to run ilo");
     assert!(!out.status.success(), "should exit with error");
@@ -1905,7 +1905,7 @@ fn range_basic() {
     // being the function tail; that shape now (correctly) suppresses the
     // top-level print to avoid double-output in print-loops.
     let out = ilo()
-        .args(["f>n;r=0;@i 0..3{r=i};+r 0", "--run", "f"])
+        .args(["f>n;r=0;@i 0..3{r=i};+r 0", "--run-vm", "f"])
         .output()
         .expect("failed to run ilo");
     assert!(
@@ -1934,7 +1934,7 @@ fn range_with_arg() {
 #[test]
 fn range_empty() {
     let out = ilo()
-        .args(["f>n;@i 5..2{99};0", "--run", "f"])
+        .args(["f>n;@i 5..2{99};0", "--run-vm", "f"])
         .output()
         .expect("failed to run ilo");
     assert!(
@@ -1953,7 +1953,7 @@ fn alias_basic_run() {
     // `Value::Ok` prints bare (no `~` prefix) — see
     // tests/regression_main_ok_stdout_bare.rs.
     let out = ilo()
-        .args(["-e", "alias res R n t\nf>res;~42", "--run", "f"])
+        .args(["-e", "alias res R n t\nf>res;~42", "--run-vm", "f"])
         .output()
         .expect("failed to run ilo");
     assert!(
@@ -1967,7 +1967,7 @@ fn alias_basic_run() {
 #[test]
 fn alias_in_param_run() {
     let out = ilo()
-        .args(["-e", "alias num n\nf x:num>num;+x 1", "--run", "f", "5"])
+        .args(["-e", "alias num n\nf x:num>num;+x 1", "--run-vm", "f", "5"])
         .output()
         .expect("failed to run ilo");
     assert!(
@@ -1991,7 +1991,7 @@ fn use_imports_function_from_file() {
     std::fs::write(main_file, "use \"ilo_test_math.ilo\"\nmyrun x:n>n;dbl x\n").unwrap();
 
     let out = ilo()
-        .args([main_file, "--run", "myrun", "5"])
+        .args([main_file, "--run-vm", "myrun", "5"])
         .output()
         .expect("failed to run ilo");
     let _ = std::fs::remove_file(lib);
@@ -2045,7 +2045,7 @@ fn use_circular_import_error() {
 fn use_in_inline_code_error() {
     // use in inline code (no file context) should error with ILO-P017
     let out = ilo()
-        .args(["-e", "use \"foo.ilo\"\nf>n;1", "--run", "f"])
+        .args(["-e", "use \"foo.ilo\"\nf>n;1", "--run-vm", "f"])
         .output()
         .expect("failed to run ilo");
     assert!(!out.status.success());
@@ -2105,7 +2105,7 @@ fn use_transitive_imports() {
     .unwrap();
 
     let out = ilo()
-        .args([file_main, "--run", "main", "2"])
+        .args([file_main, "--run-vm", "main", "2"])
         .output()
         .expect("failed to run ilo");
     let _ = std::fs::remove_file(file_b);
@@ -2174,7 +2174,7 @@ fn expanded_flag_formats_code() {
 #[test]
 fn json_flag_wraps_ok_result() {
     let out = ilo()
-        .args(["--json", "f x:n>n;*x 2", "--run", "f", "5"])
+        .args(["--json", "f x:n>n;*x 2", "--run-vm", "f", "5"])
         .output()
         .expect("failed to run ilo");
     assert!(
@@ -2193,7 +2193,7 @@ fn json_flag_wraps_ok_result() {
 #[test]
 fn json_flag_wraps_err_result() {
     let out = ilo()
-        .args(["--json", "-e", "f>R n t;^\"oops\"", "--run", "f"])
+        .args(["--json", "-e", "f>R n t;^\"oops\"", "--run-vm", "f"])
         .output()
         .expect("failed to run ilo");
     // Entry function returns Value::Err -> exit 1, but in JSON mode the
