@@ -883,6 +883,92 @@ fn desugar_expr(expr: &mut Expr, scope: &[String], rf: &std::collections::HashSe
     }
 }
 
+/// Cycle-capability classifier for runtime values of a given static type.
+///
+/// Background: ilo's runtime is reference-counted (Arc in the tree
+/// interpreter, custom RC on `HeapObj` in the VM). Pure RC cannot reclaim
+/// reference cycles (A -> B -> A). Most RC languages pair RC with a cycle
+/// collector to handle this. ilo deliberately does NOT — the surface
+/// language is structurally cycle-free:
+///
+///   * Records are immutable after construction. `with` allocates a fresh
+///     record; there is no field-assignment expression. Fields are bound
+///     from already-evaluated values, so a field cannot refer forward to
+///     the record being built.
+///   * Lists and maps are persistent. Mutation goes through copy-on-share
+///     (`Arc::make_mut`, fresh `HeapObj` allocation). You cannot install
+///     a reference back to a holder you no longer have a write handle to.
+///   * Closures capture by value.
+///   * Numbers, booleans, text, sums-of-strings, nil are inline / immutable.
+///
+/// This classifier exists as a foundation. It defines the invariant
+/// explicitly and gives us a regression surface if a future language
+/// change quietly introduces a cycle-forming construct. It is also the
+/// hook a future cycle collector would consult to prune immutable types.
+///
+/// Default policy: when in doubt, return `true` (cycle-capable). It is
+/// always sound to mark a type cycle-capable; the cost is unnecessary
+/// scanning. The unsound case is the reverse: marking a cycle-capable
+/// type clean would let a real cycle leak forever.
+impl Type {
+    /// Returns true if a runtime value of this type could possibly
+    /// participate in a reference cycle under ilo's current memory model.
+    ///
+    /// `resolve_record` resolves a record type name to its field types.
+    /// Pass `&|_| None` to treat all `Named` references conservatively
+    /// (cycle-capable).
+    pub fn can_form_cycle<F>(&self, resolve_record: &F) -> bool
+    where
+        F: Fn(&str) -> Option<Vec<Type>>,
+    {
+        fn rec<F>(ty: &Type, seen: &mut Vec<String>, resolve_record: &F) -> bool
+        where
+            F: Fn(&str) -> Option<Vec<Type>>,
+        {
+            match ty {
+                // Inline primitives.
+                Type::Number | Type::Bool | Type::Sum(_) => false,
+                // Immutable shared bytes; no embedded references.
+                Type::Text => false,
+                // No information at the type level.
+                Type::Any => true,
+                // Closures capture by value. Without a per-closure capture
+                // type list at this layer we conservatively mark Fn as
+                // cycle-capable. Param/return types here describe the
+                // call-site arrow, not the captured environment.
+                Type::Fn(_, _) => true,
+                // Wrappers inherit cycle-capability from their inner type.
+                Type::Optional(inner) | Type::List(inner) => rec(inner, seen, resolve_record),
+                Type::Result(ok, err) => {
+                    rec(ok, seen, resolve_record) || rec(err, seen, resolve_record)
+                }
+                Type::Map(k, v) => rec(k, seen, resolve_record) || rec(v, seen, resolve_record),
+                Type::Named(name) => {
+                    if seen.iter().any(|s| s == name) {
+                        // Closed loop on the resolution path — by definition
+                        // cycle-capable.
+                        return true;
+                    }
+                    match resolve_record(name.as_str()) {
+                        Some(fields) => {
+                            seen.push(name.clone());
+                            let result = fields.iter().any(|f| rec(f, seen, resolve_record));
+                            seen.pop();
+                            result
+                        }
+                        // Unknown name (type variable, missing record,
+                        // unresolved alias): conservative default.
+                        None => true,
+                    }
+                }
+            }
+        }
+
+        let mut seen: Vec<String> = Vec::new();
+        rec(self, &mut seen, resolve_record)
+    }
+}
+
 #[cfg(test)]
 #[allow(clippy::approx_constant)]
 mod tests {
@@ -1524,5 +1610,135 @@ mod tests {
             matches!(last, Stmt::Expr(Expr::Field { field, .. }) if field == "name"),
             "expected Field unchanged when field name not in scope, got {last:?}"
         );
+    }
+
+    // ---- can_form_cycle tests ----
+    //
+    // The whole point of the classifier is to make our cycle-freedom
+    // invariant testable. If any of these change, the language has grown
+    // a new cycle-forming construct and the runtime needs a cycle
+    // collector before that change ships.
+
+    fn no_records(_: &str) -> Option<Vec<Type>> {
+        None
+    }
+
+    #[test]
+    fn primitives_cannot_cycle() {
+        let resolver = |s: &str| no_records(s);
+        assert!(!Type::Number.can_form_cycle(&resolver));
+        assert!(!Type::Bool.can_form_cycle(&resolver));
+        assert!(!Type::Text.can_form_cycle(&resolver));
+        assert!(!Type::Sum(vec!["a".into(), "b".into()]).can_form_cycle(&resolver));
+    }
+
+    #[test]
+    fn lists_and_maps_of_primitives_cannot_cycle() {
+        let resolver = |s: &str| no_records(s);
+        assert!(!Type::List(Box::new(Type::Number)).can_form_cycle(&resolver));
+        assert!(!Type::List(Box::new(Type::Text)).can_form_cycle(&resolver));
+        assert!(!Type::Map(Box::new(Type::Text), Box::new(Type::Number)).can_form_cycle(&resolver));
+        assert!(!Type::Optional(Box::new(Type::Number)).can_form_cycle(&resolver));
+        assert!(
+            !Type::Result(Box::new(Type::Number), Box::new(Type::Text)).can_form_cycle(&resolver)
+        );
+    }
+
+    #[test]
+    fn any_is_conservative() {
+        let resolver = |s: &str| no_records(s);
+        assert!(Type::Any.can_form_cycle(&resolver));
+        assert!(Type::List(Box::new(Type::Any)).can_form_cycle(&resolver));
+    }
+
+    #[test]
+    fn fn_is_conservative() {
+        // Closures capture by value. The capture types aren't exposed at the
+        // Type level, so the classifier marks Fn cycle-capable.
+        let resolver = |s: &str| no_records(s);
+        assert!(Type::Fn(vec![Type::Number], Box::new(Type::Number)).can_form_cycle(&resolver));
+    }
+
+    #[test]
+    fn unknown_named_is_conservative() {
+        let resolver = |s: &str| no_records(s);
+        assert!(Type::Named("Whatever".into()).can_form_cycle(&resolver));
+    }
+
+    #[test]
+    fn record_of_primitives_cannot_cycle() {
+        let resolver = |s: &str| match s {
+            "Point" => Some(vec![Type::Number, Type::Number]),
+            _ => None,
+        };
+        assert!(!Type::Named("Point".into()).can_form_cycle(&resolver));
+    }
+
+    #[test]
+    fn record_with_primitive_list_cannot_cycle() {
+        let resolver = |s: &str| match s {
+            "Bag" => Some(vec![Type::Text, Type::List(Box::new(Type::Number))]),
+            _ => None,
+        };
+        assert!(!Type::Named("Bag".into()).can_form_cycle(&resolver));
+    }
+
+    #[test]
+    fn record_containing_any_field_can_cycle() {
+        let resolver = |s: &str| match s {
+            "Box" => Some(vec![Type::Any]),
+            _ => None,
+        };
+        assert!(Type::Named("Box".into()).can_form_cycle(&resolver));
+    }
+
+    #[test]
+    fn record_containing_function_field_can_cycle() {
+        let resolver = |s: &str| match s {
+            "Handler" => Some(vec![Type::Fn(vec![Type::Number], Box::new(Type::Number))]),
+            _ => None,
+        };
+        assert!(Type::Named("Handler".into()).can_form_cycle(&resolver));
+    }
+
+    #[test]
+    fn self_referential_record_marked_cycle_capable() {
+        // type Node { next:Node } — not constructible today (records are
+        // immutable, so you can't tie the knot), but the classifier still
+        // marks the *type* cycle-capable. If we ever add a primitive that
+        // would let you build one, the runtime needs to know.
+        let resolver = |s: &str| match s {
+            "Node" => Some(vec![Type::Named("Node".into())]),
+            _ => None,
+        };
+        assert!(Type::Named("Node".into()).can_form_cycle(&resolver));
+    }
+
+    #[test]
+    fn mutually_recursive_records_marked_cycle_capable() {
+        let resolver = |s: &str| match s {
+            "A" => Some(vec![Type::Named("B".into())]),
+            "B" => Some(vec![Type::Named("A".into())]),
+            _ => None,
+        };
+        assert!(Type::Named("A".into()).can_form_cycle(&resolver));
+        assert!(Type::Named("B".into()).can_form_cycle(&resolver));
+    }
+
+    #[test]
+    fn list_of_record_inherits_record_capability() {
+        let primitive_record = |s: &str| match s {
+            "Point" => Some(vec![Type::Number, Type::Number]),
+            _ => None,
+        };
+        assert!(
+            !Type::List(Box::new(Type::Named("Point".into()))).can_form_cycle(&primitive_record)
+        );
+
+        let cyclic_record = |s: &str| match s {
+            "Node" => Some(vec![Type::Named("Node".into())]),
+            _ => None,
+        };
+        assert!(Type::List(Box::new(Type::Named("Node".into()))).can_form_cycle(&cyclic_record));
     }
 }
