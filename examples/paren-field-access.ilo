@@ -1,0 +1,44 @@
+-- Postfix `.field` / `.N` access works on any parenthesised expression,
+-- not just bare identifiers. `(at rows i).2` reads column 2 of row i
+-- without binding the row to a name first.
+--
+-- Before the fix that landed this example, the parser accepted the
+-- chain only after a bare ident (`row.2`), so the agent had to spend
+-- two extra tokens binding the head: `row=at rows i;row.2`. Inside
+-- a HOF lambda the shape failed outright with ILO-P003 expected
+-- RParen, got Dot — the parser had already returned from `(expr)`
+-- when the trailing `.2` arrived.
+--
+-- The shape that matters most is reading one column out of each row
+-- of a matrix indexed by a sparse index list — the gis-analyst
+-- rerun9 originating shape (haversine row indexing).
+
+-- (slc r 0 2).1 — numeric dot-index on a parenthesised call inside
+-- an inline lambda body. The originating shape was `(at rows i).2`
+-- with `rows` captured from the enclosing scope, but inline-lambda
+-- capture is still tree-only on the VM/Cranelift backends today —
+-- so this example uses the no-capture variant (`r` is the lambda
+-- param, the parenthesised call references only it) which exercises
+-- the same parser path across every engine the example harness runs.
+pick-col-1 rows:L L n>L n
+  map (r:L n>n;(slc r 0 3).1) rows
+
+-- (p with x:30).x — field access on a parenthesised record-update.
+-- Demonstrates the same chain on a non-call grouped expression.
+type point{x:n;y:n}
+
+bumped-x>n
+  p=point x:10 y:20
+  (p with x:30).x
+
+-- (at rs 0).?2 — safe variant. `.?N` reads as nil if out of range
+-- rather than raising; same postfix chain through the helper.
+safe-third rs:L L n>O n
+  (at rs 0).?2
+
+-- run: pick-col-1 [[1,2,3],[4,5,6],[7,8,9]]
+-- out: [2, 5, 8]
+-- run: bumped-x
+-- out: 30
+-- run: safe-third [[10,20,30]]
+-- out: 30

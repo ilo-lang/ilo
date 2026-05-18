@@ -1044,6 +1044,13 @@ p.x
 ord.addr.country
 ```
 
+The `.field` / `.N` chain also applies to any parenthesised expression, so a call result can be read directly without binding to a name first:
+```
+(at rows i).2          -- numeric dot-index on a call result
+(p with x:30).x        -- field access on a record-update
+map (i:n>n;(at rs i).2) ixs   -- inside an inline lambda body
+```
+
 Destructure:
 ```
 {x;y}=p
