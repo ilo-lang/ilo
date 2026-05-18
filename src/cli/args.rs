@@ -95,19 +95,19 @@ pub struct RunArgs {
 
     // ── Engine selection flags ─────────────────────────────────────────────
     /// Tree-walking interpreter.
-    #[arg(long = "run-tree", conflicts_with_all = ["run", "run_vm", "run_cranelift", "run_llvm"])]
+    #[arg(long = "run-tree", conflicts_with_all = ["run", "run_vm", "jit", "run_llvm"])]
     pub run_tree: bool,
     /// Alias for --run-tree.
-    #[arg(long = "run", conflicts_with_all = ["run_tree", "run_vm", "run_cranelift", "run_llvm"])]
+    #[arg(long = "run", conflicts_with_all = ["run_tree", "run_vm", "jit", "run_llvm"])]
     pub run: bool,
     /// Register VM.
-    #[arg(long = "run-vm", conflicts_with_all = ["run", "run_tree", "run_cranelift", "run_llvm"])]
+    #[arg(long = "run-vm", conflicts_with_all = ["run", "run_tree", "jit", "run_llvm"])]
     pub run_vm: bool,
-    /// Cranelift JIT. `--cranelift` is accepted as a short alias.
-    #[arg(long = "run-cranelift", visible_alias = "cranelift", conflicts_with_all = ["run", "run_tree", "run_vm", "run_llvm"])]
-    pub run_cranelift: bool,
+    /// Cranelift JIT (opt-in for hot numeric loops; falls back to VM on bailout).
+    #[arg(long = "jit", conflicts_with_all = ["run", "run_tree", "run_vm", "run_llvm"])]
+    pub jit: bool,
     /// LLVM JIT.
-    #[arg(long = "run-llvm", conflicts_with_all = ["run", "run_tree", "run_vm", "run_cranelift"])]
+    #[arg(long = "run-llvm", conflicts_with_all = ["run", "run_tree", "run_vm", "jit"])]
     pub run_llvm: bool,
 
     /// Benchmark mode.
@@ -163,7 +163,7 @@ impl RunArgs {
             Engine::Tree
         } else if self.run_vm {
             Engine::Vm
-        } else if self.run_cranelift {
+        } else if self.jit {
             Engine::Cranelift
         } else if self.run_llvm {
             Engine::Llvm
@@ -717,8 +717,8 @@ mod tests {
     // ── effective_engine: Cranelift and Llvm paths ────────────────────────────
 
     #[test]
-    fn engine_flag_run_cranelift() {
-        let cli = Cli::try_parse_from(["ilo", "run", "--run-cranelift", "code"]).unwrap();
+    fn engine_flag_jit() {
+        let cli = Cli::try_parse_from(["ilo", "run", "--jit", "code"]).unwrap();
         if let Some(Cmd::Run(r)) = cli.cmd {
             assert_eq!(r.effective_engine(), Engine::Cranelift);
         } else {
@@ -757,7 +757,7 @@ mod tests {
             run_tree: false,
             run: false,
             run_vm: false,
-            run_cranelift: false,
+            jit: false,
             run_llvm: false,
             bench: false,
             emit: None,

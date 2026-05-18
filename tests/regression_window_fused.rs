@@ -25,7 +25,7 @@ fn ilo() -> Command {
     Command::new(env!("CARGO_BIN_EXE_ilo"))
 }
 
-const ENGINES: &[&str] = &["--run-tree", "--run-vm", "--run-cranelift"];
+const ENGINES: &[&str] = &["--run-tree", "--run-vm", "--jit"];
 
 fn run(engine: &str, src: &str, entry: &str) -> std::process::Output {
     ilo()

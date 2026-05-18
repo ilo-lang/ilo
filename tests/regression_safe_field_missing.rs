@@ -90,7 +90,7 @@ fn safe_field_missing_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn safe_field_missing_cranelift() {
-    check_missing("--run-cranelift");
+    check_missing("--jit");
 }
 
 // ── Present field still returns the value (no regression on the hit path) ──
@@ -118,7 +118,7 @@ fn safe_field_present_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn safe_field_present_cranelift() {
-    check_present("--run-cranelift");
+    check_present("--jit");
 }
 
 // ── Nil-propagation through chained .? on dynamic records ──────────────────
@@ -150,7 +150,7 @@ fn safe_field_chained_missing_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn safe_field_chained_missing_cranelift() {
-    check_chained_missing("--run-cranelift");
+    check_chained_missing("--jit");
 }
 
 // ── Chained .? on present nested records still walks the chain ─────────────
@@ -183,7 +183,7 @@ fn safe_field_chained_present_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn safe_field_chained_present_cranelift() {
-    check_chained_present("--run-cranelift");
+    check_chained_present("--jit");
 }
 
 // ── Original nil-object case still works (no regression) ───────────────────
@@ -212,7 +212,7 @@ fn safe_field_nil_object_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn safe_field_nil_object_cranelift() {
-    check_nil_object("--run-cranelift");
+    check_nil_object("--jit");
 }
 
 // ── Strict access on missing field still errors (verifier+runtime guard) ───

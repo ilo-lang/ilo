@@ -60,10 +60,10 @@ fn at_text_ascii_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn at_text_ascii_cranelift() {
-    check_eq("--run-cranelift", ASCII_FIRST_SRC, "h");
-    check_eq("--run-cranelift", ASCII_LAST_SRC, "o");
-    check_eq("--run-cranelift", ASCII_NEG_LAST_SRC, "o");
-    check_eq("--run-cranelift", ASCII_NEG_FIRST_SRC, "h");
+    check_eq("--jit", ASCII_FIRST_SRC, "h");
+    check_eq("--jit", ASCII_LAST_SRC, "o");
+    check_eq("--jit", ASCII_NEG_LAST_SRC, "o");
+    check_eq("--jit", ASCII_NEG_FIRST_SRC, "h");
 }
 
 // Unicode: "naïve" — 5 codepoints, 6 bytes. at returns codepoint-indexed chars,
@@ -92,10 +92,10 @@ fn at_text_unicode_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn at_text_unicode_cranelift() {
-    check_eq("--run-cranelift", UNI_MID_SRC, "ï");
-    check_eq("--run-cranelift", UNI_LAST_SRC, "e");
-    check_eq("--run-cranelift", UNI_NEG_MID_SRC, "ï");
-    check_eq("--run-cranelift", UNI_NEG_LAST_SRC, "e");
+    check_eq("--jit", UNI_MID_SRC, "ï");
+    check_eq("--jit", UNI_LAST_SRC, "e");
+    check_eq("--jit", UNI_NEG_MID_SRC, "ï");
+    check_eq("--jit", UNI_NEG_LAST_SRC, "e");
 }
 
 // Out-of-range on text: errors on every engine (tree, VM, cranelift).
@@ -132,7 +132,7 @@ fn at_text_oor_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn at_text_oor_cranelift() {
-    check_text_oor_error("--run-cranelift");
+    check_text_oor_error("--jit");
 }
 
 // --- Per-char loop correctness over a non-trivial string -------------------
@@ -169,5 +169,5 @@ fn at_loop_over_built_string_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn at_loop_over_built_string_cranelift() {
-    check_at_loop("--run-cranelift");
+    check_at_loop("--jit");
 }

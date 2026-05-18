@@ -46,7 +46,7 @@ fn zip_basic_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn zip_basic_cranelift() {
-    check_basic("--run-cranelift");
+    check_basic("--jit");
 }
 
 // Truncate to shorter (xs longer than ys).
@@ -73,7 +73,7 @@ fn zip_trunc_long_xs_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn zip_trunc_long_xs_cranelift() {
-    check_trunc_long_xs("--run-cranelift");
+    check_trunc_long_xs("--jit");
 }
 
 // Truncate to shorter (ys longer than xs).
@@ -100,7 +100,7 @@ fn zip_trunc_long_ys_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn zip_trunc_long_ys_cranelift() {
-    check_trunc_long_ys("--run-cranelift");
+    check_trunc_long_ys("--jit");
 }
 
 // Empty list: either side empty yields empty.
@@ -123,7 +123,7 @@ fn zip_empty_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn zip_empty_cranelift() {
-    check_empty("--run-cranelift");
+    check_empty("--jit");
 }
 
 // Mixed types via type variable: zip text with numbers.
@@ -150,5 +150,5 @@ fn zip_mixed_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn zip_mixed_cranelift() {
-    check_mixed("--run-cranelift");
+    check_mixed("--jit");
 }

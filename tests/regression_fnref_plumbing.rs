@@ -73,10 +73,7 @@ fn user_fnref_round_trip_vm() {
 
 #[test]
 fn user_fnref_round_trip_cranelift() {
-    assert_eq!(
-        run_ok("--run-cranelift", USER_FNREF_SRC, "mk", &[]),
-        "<fn:sq>"
-    );
+    assert_eq!(run_ok("--jit", USER_FNREF_SRC, "mk", &[]), "<fn:sq>");
 }
 
 // ── Builtin name as a value: same story ────────────────────────────────
@@ -102,10 +99,7 @@ fn builtin_fnref_round_trip_vm() {
 
 #[test]
 fn builtin_fnref_round_trip_cranelift() {
-    assert_eq!(
-        run_ok("--run-cranelift", BUILTIN_FNREF_SRC, "mk", &[]),
-        "<fn:abs>"
-    );
+    assert_eq!(run_ok("--jit", BUILTIN_FNREF_SRC, "mk", &[]), "<fn:abs>");
 }
 
 // ── FnRef stored in a local, then returned ──────────────────────────────
@@ -128,8 +122,5 @@ fn fnref_bind_then_return_vm() {
 
 #[test]
 fn fnref_bind_then_return_cranelift() {
-    assert_eq!(
-        run_ok("--run-cranelift", FNREF_BIND_SRC, "mk", &[]),
-        "<fn:sq>"
-    );
+    assert_eq!(run_ok("--jit", FNREF_BIND_SRC, "mk", &[]), "<fn:sq>");
 }

@@ -50,7 +50,7 @@ fn at_num_index_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn at_num_index_cranelift() {
-    check_num_index("--run-cranelift");
+    check_num_index("--jit");
 }
 
 // Type variable: works on a list of text too.
@@ -73,7 +73,7 @@ fn at_text_index_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn at_text_index_cranelift() {
-    check_text_index("--run-cranelift");
+    check_text_index("--jit");
 }
 
 // First element with index 0.
@@ -96,7 +96,7 @@ fn at_first_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn at_first_cranelift() {
-    check_first("--run-cranelift");
+    check_first("--jit");
 }
 
 // Last element of a 3-element list via hardcoded index.
@@ -119,7 +119,7 @@ fn at_last_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn at_last_cranelift() {
-    check_last("--run-cranelift");
+    check_last("--jit");
 }
 
 // Out-of-range: every engine (tree, VM, cranelift) raises a runtime error.
@@ -161,7 +161,7 @@ fn at_out_of_range_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn at_out_of_range_cranelift() {
-    check_oor_error("--run-cranelift");
+    check_oor_error("--jit");
 }
 
 // Negative index: Python-style from-the-end indexing.
@@ -185,7 +185,7 @@ fn at_negative_last_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn at_negative_last_cranelift() {
-    check_neg_last("--run-cranelift");
+    check_neg_last("--jit");
 }
 
 // -3 on a 3-element list reaches the first element.
@@ -208,7 +208,7 @@ fn at_negative_first_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn at_negative_first_cranelift() {
-    check_neg_first("--run-cranelift");
+    check_neg_first("--jit");
 }
 
 // Negative index on text: -1 yields the last character.
@@ -231,7 +231,7 @@ fn at_negative_text_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn at_negative_text_cranelift() {
-    check_neg_text("--run-cranelift");
+    check_neg_text("--jit");
 }
 
 // Out-of-range negative: -4 on a 3-element list errors on every engine.
@@ -270,7 +270,7 @@ fn at_negative_oor_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn at_negative_oor_cranelift() {
-    check_neg_oor_error("--run-cranelift");
+    check_neg_oor_error("--jit");
 }
 
 // Float indices auto-floor at the `at` boundary. Removes the `flr (/ ln 2)`
@@ -302,7 +302,7 @@ fn at_float_integral_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn at_float_integral_cranelift() {
-    check_float_integral("--run-cranelift");
+    check_float_integral("--jit");
 }
 
 // `at xs 1.7` floors to 1.
@@ -324,7 +324,7 @@ fn at_float_frac_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn at_float_frac_cranelift() {
-    check_float_frac("--run-cranelift");
+    check_float_frac("--jit");
 }
 
 // `at xs -1.5` on a len-3 list: floor(-1.5) = -2 → middle element (20).
@@ -346,7 +346,7 @@ fn at_negative_float_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn at_negative_float_cranelift() {
-    check_neg_float("--run-cranelift");
+    check_neg_float("--jit");
 }
 
 // `at xs -0.5` on a len-3 list: floor(-0.5) = -1 → last element (30).
@@ -369,7 +369,7 @@ fn at_negative_half_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn at_negative_half_cranelift() {
-    check_neg_half("--run-cranelift");
+    check_neg_half("--jit");
 }
 
 // `at xs (len/2)` — the originating idiom from html-scraper rerun3 (median
@@ -398,7 +398,7 @@ fn at_computed_float_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn at_computed_float_cranelift() {
-    check_computed_float("--run-cranelift");
+    check_computed_float("--jit");
 }
 
 // Non-numeric index still errors — the type guard is preserved.
@@ -436,5 +436,5 @@ fn at_non_numeric_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn at_non_numeric_cranelift() {
-    check_non_numeric_error("--run-cranelift");
+    check_non_numeric_error("--jit");
 }

@@ -161,5 +161,5 @@ fn prefix_nil_coalesce_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn prefix_nil_coalesce_cranelift() {
-    check_all("--run-cranelift");
+    check_all("--jit");
 }

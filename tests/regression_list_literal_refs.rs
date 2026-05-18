@@ -81,5 +81,5 @@ fn list_literal_refs_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn list_literal_refs_cranelift() {
-    check_all("--run-cranelift");
+    check_all("--jit");
 }

@@ -95,7 +95,7 @@ fn listlit_size_sweep_vm() {
 #[cfg(feature = "cranelift")]
 fn listlit_size_sweep_cranelift() {
     for &n in SIZES {
-        check_len("--run-cranelift", n);
+        check_len("--jit", n);
     }
 }
 
@@ -112,5 +112,5 @@ fn listlit_leading_locals_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn listlit_leading_locals_cranelift() {
-    check_leading_locals("--run-cranelift");
+    check_leading_locals("--jit");
 }

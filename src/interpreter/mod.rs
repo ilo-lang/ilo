@@ -353,7 +353,7 @@ pub fn run(program: &Program, func_name: Option<&str>, args: Vec<Value>) -> Resu
 
 /// Dispatch a builtin call from the VM/Cranelift tree-bridge (`OP_CALL_BUILTIN_TREE`).
 ///
-/// Used by `--run-vm` and `--run-cranelift` to delegate tree-only builtins
+/// Used by `--run-vm` and `--jit` to delegate tree-only builtins
 /// (`rgx`, `rgxall`, `fmt` variadic, 2-arg `rd`, `rdb`) to the same code path
 /// the tree interpreter uses. Caller has already converted NanVal arg
 /// registers to owned `Value`s; we return an owned `Value` for the caller

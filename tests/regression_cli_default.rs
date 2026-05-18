@@ -430,7 +430,7 @@ fn multi_fn_file_bracketed_list_leading_arg_passes_through() {
 //
 // PR #307 fixed the Default-engine branch to auto-run `main` on a
 // multi-fn file when no func arg is given. The explicit-engine paths
-// (`--run-tree`, `--run-vm`, `--run-cranelift`) kept the pre-307
+// (`--run-tree`, `--run-vm`, `--jit`) kept the pre-307
 // behaviour of treating the first declared fn as the entry, which
 // surfaced as:
 //   * Tree     → misleading arity error (`helper: expected 1 args, got 0`)
@@ -475,7 +475,7 @@ fn run_vm_flag_auto_picks_main_on_multi_fn_file() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn run_cranelift_flag_auto_picks_main_on_multi_fn_file() {
-    run_engine_picks_main("--run-cranelift");
+    run_engine_picks_main("--jit");
 }
 
 #[test]
@@ -512,7 +512,7 @@ fn run_vm_flag_explicit_func_overrides_main() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn run_cranelift_flag_explicit_func_overrides_main() {
-    run_engine_explicit_func_overrides_main("--run-cranelift");
+    run_engine_explicit_func_overrides_main("--jit");
 }
 
 fn run_engine_undefined_func_arg_still_errors(engine_flag: &str) {
@@ -547,7 +547,7 @@ fn run_vm_flag_undefined_func_arg_still_errors() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn run_cranelift_flag_undefined_func_arg_still_errors() {
-    run_engine_undefined_func_arg_still_errors("--run-cranelift");
+    run_engine_undefined_func_arg_still_errors("--jit");
 }
 
 fn run_engine_single_fn_no_args_still_runs(engine_flag: &str) {
@@ -578,7 +578,7 @@ fn run_vm_flag_single_fn_no_args_still_runs() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn run_cranelift_flag_single_fn_no_args_still_runs() {
-    run_engine_single_fn_no_args_still_runs("--run-cranelift");
+    run_engine_single_fn_no_args_still_runs("--jit");
 }
 
 // ── hyphenated unknown subcommand: friendly error (PR #320 follow-up) ─────────
@@ -766,7 +766,7 @@ fn known_func_name_overrides_main_routing() {
 // other half (#328: non-ident first positional routes to `main` with the
 // positional as arg #1) didn't get propagated, so the default-engine path
 // `ilo main.ilo paper.txt` correctly runs `main "paper.txt"` but every
-// explicit-engine variant (`--run-tree`, `--run-vm`, `--run-cranelift`)
+// explicit-engine variant (`--run-tree`, `--run-vm`, `--jit`)
 // hard-failed with `ILO-R002: undefined function: paper.txt`.
 //
 // Reported in rerun7 by three independent personas:
@@ -810,7 +810,7 @@ fn run_vm_flag_non_ident_positional_routes_to_main() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn run_cranelift_flag_non_ident_positional_routes_to_main() {
-    run_engine_non_ident_positional_routes_to_main("--run-cranelift");
+    run_engine_non_ident_positional_routes_to_main("--jit");
 }
 
 #[test]
@@ -853,7 +853,7 @@ fn run_vm_flag_path_shaped_positional_routes_to_main() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn run_cranelift_flag_path_shaped_positional_routes_to_main() {
-    run_engine_path_shaped_positional_routes_to_main("--run-cranelift");
+    run_engine_path_shaped_positional_routes_to_main("--jit");
 }
 
 fn run_engine_numeric_positional_routes_to_main(engine_flag: &str) {
@@ -883,7 +883,7 @@ fn run_vm_flag_numeric_positional_routes_to_main() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn run_cranelift_flag_numeric_positional_routes_to_main() {
-    run_engine_numeric_positional_routes_to_main("--run-cranelift");
+    run_engine_numeric_positional_routes_to_main("--jit");
 }
 
 fn run_engine_explicit_main_keyword_still_works(engine_flag: &str) {
@@ -912,7 +912,7 @@ fn run_vm_flag_explicit_main_with_non_ident_arg() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn run_cranelift_flag_explicit_main_with_non_ident_arg() {
-    run_engine_explicit_main_keyword_still_works("--run-cranelift");
+    run_engine_explicit_main_keyword_still_works("--jit");
 }
 
 fn run_engine_explicit_helper_overrides_main_heuristic(engine_flag: &str) {
@@ -946,7 +946,7 @@ fn run_vm_flag_explicit_helper_overrides_main_heuristic() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn run_cranelift_flag_explicit_helper_overrides_main_heuristic() {
-    run_engine_explicit_helper_overrides_main_heuristic("--run-cranelift");
+    run_engine_explicit_helper_overrides_main_heuristic("--jit");
 }
 
 fn run_engine_unknown_ident_no_main_still_errors(engine_flag: &str) {
@@ -975,5 +975,5 @@ fn run_vm_flag_unknown_ident_no_main_still_errors() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn run_cranelift_flag_unknown_ident_no_main_still_errors() {
-    run_engine_unknown_ident_no_main_still_errors("--run-cranelift");
+    run_engine_unknown_ident_no_main_still_errors("--jit");
 }

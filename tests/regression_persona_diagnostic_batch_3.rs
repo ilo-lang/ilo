@@ -112,7 +112,7 @@ fn rsrt_swap_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn rsrt_swap_cranelift() {
-    check_rsrt_swap("--run-cranelift");
+    check_rsrt_swap("--jit");
 }
 
 // Same shape but with `srt`.
@@ -196,7 +196,7 @@ fn list_semi_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn list_semi_cranelift() {
-    check_list_semi("--run-cranelift");
+    check_list_semi("--jit");
 }
 
 // Sanity: whitespace and comma list literals still parse.

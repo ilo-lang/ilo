@@ -45,14 +45,14 @@ fn run_ok(engine: &str, src: &str, entry: &str, args: &[&str]) -> String {
 }
 
 /// Run a Phase 2 inline-lambda program on every engine. PR1 covered
-/// `--run-tree` and `--run-vm`; PR2 widens to `--run-cranelift` once the
+/// `--run-tree` and `--run-vm`; PR2 widens to `--jit` once the
 /// `jit_make_closure` helper + closure-aware `jit_call_dyn` land. The
 /// Cranelift engine flag is only meaningful in builds with the
 /// `cranelift` feature; otherwise the `ilo` binary rejects it with
 /// ILO-R013 (unknown engine), so we gate it on the same cfg.
 fn run_all(src: &str, entry: &str, args: &[&str], expected: &str) {
     #[cfg(feature = "cranelift")]
-    let engines: &[&str] = &["--run-tree", "--run-vm", "--run-cranelift"];
+    let engines: &[&str] = &["--run-tree", "--run-vm", "--jit"];
     #[cfg(not(feature = "cranelift"))]
     let engines: &[&str] = &["--run-tree", "--run-vm"];
     for engine in engines {

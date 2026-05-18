@@ -55,7 +55,7 @@ fn wh_gt_after_let_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn wh_gt_after_let_cranelift() {
-    check_wh_gt_after_let("--run-cranelift");
+    check_wh_gt_after_let("--jit");
 }
 
 // `wh >cond{...}` followed by a sibling function — must not slurp the next
@@ -82,7 +82,7 @@ fn wh_gt_then_sibling_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn wh_gt_then_sibling_cranelift() {
-    check_wh_gt_then_sibling("--run-cranelift");
+    check_wh_gt_then_sibling("--jit");
 }
 
 // `wh >=v 0` (GreaterEq prefix) — same family, must not be misread.
@@ -107,7 +107,7 @@ fn wh_ge_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn wh_ge_cranelift() {
-    check_wh_ge("--run-cranelift");
+    check_wh_ge("--jit");
 }
 
 // Sanity: a legitimate zero-param fn decl still parses fine — the reserved
@@ -135,5 +135,5 @@ fn zero_param_fn_ok_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn zero_param_fn_ok_cranelift() {
-    check_zero_param_fn_ok("--run-cranelift");
+    check_zero_param_fn_ok("--jit");
 }

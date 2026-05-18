@@ -47,7 +47,7 @@ fn hd_empty_list_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn hd_empty_list_cranelift() {
-    check_runtime_error("--run-cranelift", "f>n;hd []", &["hd", "empty", "ILO-R004"]);
+    check_runtime_error("--jit", "f>n;hd []", &["hd", "empty", "ILO-R004"]);
 }
 
 #[test]
@@ -63,11 +63,7 @@ fn hd_empty_text_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn hd_empty_text_cranelift() {
-    check_runtime_error(
-        "--run-cranelift",
-        "f>t;hd \"\"",
-        &["hd", "empty", "ILO-R004"],
-    );
+    check_runtime_error("--jit", "f>t;hd \"\"", &["hd", "empty", "ILO-R004"]);
 }
 
 #[test]
@@ -95,7 +91,7 @@ fn hd_on_number_cranelift() {
     // function that the verify pass would normally reject; pass via CLI as
     // a number directly to the JIT entry.
     let out = ilo()
-        .args(["f x:n>n;hd x", "--run-cranelift", "f", "42"])
+        .args(["f x:n>n;hd x", "--jit", "f", "42"])
         .output()
         .expect("failed to run ilo");
     assert!(
@@ -125,11 +121,7 @@ fn tl_empty_list_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn tl_empty_list_cranelift() {
-    check_runtime_error(
-        "--run-cranelift",
-        "f>L n;tl []",
-        &["tl", "empty", "ILO-R004"],
-    );
+    check_runtime_error("--jit", "f>L n;tl []", &["tl", "empty", "ILO-R004"]);
 }
 
 #[test]
@@ -145,11 +137,7 @@ fn tl_empty_text_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn tl_empty_text_cranelift() {
-    check_runtime_error(
-        "--run-cranelift",
-        "f>t;tl \"\"",
-        &["tl", "empty", "ILO-R004"],
-    );
+    check_runtime_error("--jit", "f>t;tl \"\"", &["tl", "empty", "ILO-R004"]);
 }
 
 // ── No stale-error leak across successive JIT calls ─────────────────────
@@ -165,7 +153,7 @@ fn tl_empty_text_cranelift() {
 fn no_stale_jit_error_leak_cranelift() {
     // First call errors.
     let out = ilo()
-        .args(["f>n;hd []", "--run-cranelift", "f"])
+        .args(["f>n;hd []", "--jit", "f"])
         .output()
         .expect("failed to run ilo");
     assert!(
@@ -175,7 +163,7 @@ fn no_stale_jit_error_leak_cranelift() {
 
     // Second call in a fresh process must succeed cleanly with no stale error.
     let out = ilo()
-        .args(["f>n;hd [1,2,3]", "--run-cranelift", "f"])
+        .args(["f>n;hd [1,2,3]", "--jit", "f"])
         .output()
         .expect("failed to run ilo");
     assert!(

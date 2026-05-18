@@ -50,7 +50,7 @@ fn check_all(src: &str, expected: &[f64]) {
     }
     #[cfg(feature = "cranelift")]
     {
-        let got = parse_list(&run_ok("--run-cranelift", src));
+        let got = parse_list(&run_ok("--jit", src));
         assert_eq!(
             got.len(),
             expected.len(),

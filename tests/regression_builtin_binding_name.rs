@@ -114,7 +114,7 @@ fn builtin_binding_rejected_in_fn_vm() {
 #[cfg(feature = "cranelift")]
 fn builtin_binding_rejected_in_fn_cranelift() {
     for name in BINDING_NAMES {
-        check_in_fn_binding("--run-cranelift", name);
+        check_in_fn_binding("--jit", name);
     }
 }
 
@@ -136,7 +136,7 @@ fn builtin_binding_rejected_top_level_vm() {
 #[cfg(feature = "cranelift")]
 fn builtin_binding_rejected_top_level_cranelift() {
     for name in BINDING_NAMES {
-        check_top_level_binding("--run-cranelift", name);
+        check_top_level_binding("--jit", name);
     }
 }
 
@@ -180,7 +180,7 @@ fn flat_repro_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn flat_repro_cranelift() {
-    check_flat_repro("--run-cranelift");
+    check_flat_repro("--jit");
 }
 
 // Sanity: the more-specific `fld` message from the earlier fix still fires
@@ -212,7 +212,7 @@ fn fld_specific_message_preserved_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn fld_specific_message_preserved_cranelift() {
-    check_fld_keeps_specific_message("--run-cranelift");
+    check_fld_keeps_specific_message("--jit");
 }
 
 // Sanity: renaming to a non-builtin name works on every engine. The hint
@@ -248,5 +248,5 @@ fn rename_workaround_binding_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn rename_workaround_binding_cranelift() {
-    check_renamed_binding_works("--run-cranelift");
+    check_renamed_binding_works("--jit");
 }

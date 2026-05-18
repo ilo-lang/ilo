@@ -21,7 +21,7 @@
 // divergence between AOT and the others shows up immediately in CI.
 //
 // Gated on the `cranelift` feature because both AOT compile and the
-// `--run-cranelift` baseline require it.
+// `--jit` baseline require it.
 
 #![cfg(feature = "cranelift")]
 
@@ -112,7 +112,7 @@ fn assert_aot_matches_in_process(
     // Cross-engine parity: AOT must match all three in-process runners
     // byte-for-byte. This is the contract PR #275 set for in-process and
     // this PR extends to AOT.
-    for engine in ["--run-tree", "--run-vm", "--run-cranelift"] {
+    for engine in ["--run-tree", "--run-vm", "--jit"] {
         let (s, e, c) = run_in_process(&src_path, engine);
         assert_eq!(
             s,

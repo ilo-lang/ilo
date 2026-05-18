@@ -63,7 +63,7 @@ fn param_index_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn param_index_cranelift() {
-    check_param("--run-cranelift");
+    check_param("--jit");
 }
 
 // `xs.i` inside a range loop, summing all elements.
@@ -89,7 +89,7 @@ fn range_index_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn range_index_cranelift() {
-    check_range("--run-cranelift");
+    check_range("--jit");
 }
 
 // `xs.i` with `i` introduced by a `let` binding inside the function body.
@@ -112,7 +112,7 @@ fn let_index_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn let_index_cranelift() {
-    check_let("--run-cranelift");
+    check_let("--jit");
 }
 
 // Collision guard: when the indexer name matches a declared record field, the
@@ -142,7 +142,7 @@ fn collision_record_field_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn collision_record_field_cranelift() {
-    check_collision("--run-cranelift");
+    check_collision("--jit");
 }
 
 // Nested chain: `xss.i.j` where both `i` and `j` are variables. Each level
@@ -184,7 +184,7 @@ fn nested_chain_cranelift() {
     let p = write_src("nested_cl", NESTED_SRC);
     let s = run_args(&[
         p.to_str().unwrap(),
-        "--run-cranelift",
+        "--jit",
         "deep",
         "[[1,2,3],[4,5,6],[7,8,9]]",
         "1",

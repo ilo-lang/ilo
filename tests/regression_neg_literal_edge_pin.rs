@@ -125,5 +125,5 @@ fn neg_literal_edge_pin_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn neg_literal_edge_pin_cranelift() {
-    check_all("--run-cranelift");
+    check_all("--jit");
 }

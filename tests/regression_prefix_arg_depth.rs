@@ -45,7 +45,7 @@ fn slc_with_prefix_arg_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn slc_with_prefix_arg_cranelift() {
-    check_slc("--run-cranelift");
+    check_slc("--jit");
 }
 
 // 3-arg user function with a prefix-binary expression in each position.
@@ -88,7 +88,7 @@ fn three_arg_prefix_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn three_arg_prefix_cranelift() {
-    check_three_arg_prefix("--run-cranelift");
+    check_three_arg_prefix("--jit");
 }
 
 // Infix on a call result still works: `g 5 + 3` = `(g 5) + 3` = `10 + 3` = 13.
@@ -133,7 +133,7 @@ fn infix_on_call_result_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn infix_on_call_result_cranelift() {
-    check_infix_on_call("--run-cranelift");
+    check_infix_on_call("--jit");
 }
 
 // Guard expression with negative literal: ensure the parser isn't confused.
@@ -183,7 +183,7 @@ fn abs_guard_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn abs_guard_cranelift() {
-    check_abs_guard("--run-cranelift");
+    check_abs_guard("--jit");
 }
 
 // Characterization test: `f +x` where the prefix arg has only ONE operand.
@@ -232,7 +232,7 @@ fn single_atom_after_op_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn single_atom_after_op_cranelift() {
-    check_single_atom_after_op("--run-cranelift");
+    check_single_atom_after_op("--jit");
 }
 
 // FOLLOW-UP: multi-fn programs written in the single-line `;`-separated form

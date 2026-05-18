@@ -62,7 +62,7 @@ fn lset_num_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn lset_num_cranelift() {
-    check_num("--run-cranelift");
+    check_num("--jit");
 }
 
 // Type variable: works on a list of text just like `lst`.
@@ -85,7 +85,7 @@ fn lset_text_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn lset_text_cranelift() {
-    check_text("--run-cranelift");
+    check_text("--jit");
 }
 
 // Boundary: first and last indices.
@@ -103,7 +103,7 @@ fn lset_first_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn lset_first_cranelift() {
-    assert_eq!(run("--run-cranelift", FIRST_SRC, "f"), "[9, 2, 3]");
+    assert_eq!(run("--jit", FIRST_SRC, "f"), "[9, 2, 3]");
 }
 
 #[test]
@@ -117,7 +117,7 @@ fn lset_last_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn lset_last_cranelift() {
-    assert_eq!(run("--run-cranelift", LAST_SRC, "f"), "[1, 2, 9]");
+    assert_eq!(run("--jit", LAST_SRC, "f"), "[1, 2, 9]");
 }
 
 // Out-of-range index: every engine now raises a runtime error after the
@@ -158,7 +158,7 @@ fn lset_oob_vm_errors() {
 #[cfg(feature = "cranelift")]
 fn lset_oob_cranelift_errors() {
     // Cranelift now errors on OOB to match tree/VM (JIT nil-sweep batch 1).
-    let (stdout, stderr) = run_expect_fail("--run-cranelift", OOB_SRC, "f");
+    let (stdout, stderr) = run_expect_fail("--jit", OOB_SRC, "f");
     let combined = format!("{stdout}{stderr}");
     assert!(
         combined.contains("ILO-R004") || combined.contains("ILO-R009"),
@@ -221,7 +221,7 @@ fn lset_type_mismatch_rejected_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn lset_type_mismatch_rejected_cranelift() {
-    let (stdout, stderr) = run_expect_fail("--run-cranelift", TYPE_MISMATCH_SRC, "f");
+    let (stdout, stderr) = run_expect_fail("--jit", TYPE_MISMATCH_SRC, "f");
     let combined = format!("{stdout}{stderr}");
     assert!(
         combined.contains("ILO-T013"),
@@ -246,7 +246,7 @@ fn lset_preserves_original_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn lset_preserves_original_cranelift() {
-    assert_eq!(run("--run-cranelift", PRESERVES_PROBE, "f"), "2");
+    assert_eq!(run("--jit", PRESERVES_PROBE, "f"), "2");
 }
 
 // Histogram pattern (the use-case the gis-analyst rerun needed). Uses lset
@@ -267,7 +267,7 @@ fn lset_histogram_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn lset_histogram_cranelift() {
-    assert_eq!(run("--run-cranelift", HIST_SRC, "main"), "[2, 2, 3, 1]");
+    assert_eq!(run("--jit", HIST_SRC, "main"), "[2, 2, 3, 1]");
 }
 
 // Hint surfaces: when `lset` is used in JSON-mode CLI output, the canonical

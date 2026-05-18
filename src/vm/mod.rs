@@ -485,7 +485,7 @@ pub(crate) const OP_PANIC_UNWRAP: u8 = 164;
 /// matches the call shape. The list is deliberately narrow: it covers the
 /// regex/format/file-format family that has no FnRef args, so NanVal↔Value
 /// round-tripping is lossless. Adding a new entry here makes the builtin
-/// callable from `--run-vm` and `--run-cranelift` for free.
+/// callable from `--run-vm` and `--jit` for free.
 ///
 /// HOFs that have native VM lifts (`map 2`, `flt 2`, `fld 3`, `flatmap 2`)
 /// short-circuit before this check — see the matching arms in the compiler.

@@ -49,7 +49,7 @@ fn check_all(src: &str, expected: &str) {
     check_stdout("--run-tree", src, expected);
     check_stdout("--run-vm", src, expected);
     #[cfg(feature = "cranelift")]
-    check_stdout("--run-cranelift", src, expected);
+    check_stdout("--jit", src, expected);
 }
 
 // ── Arithmetic happy paths ────────────────────────────────────────────────
@@ -252,10 +252,10 @@ fn str_number_cross_engine() {
 #[cfg(feature = "cranelift")]
 fn no_stale_jit_error_leak_after_hd_error_then_arithmetic() {
     let first = ilo()
-        .args(["f>n;hd []", "--run-cranelift", "f"])
+        .args(["f>n;hd []", "--jit", "f"])
         .output()
         .expect("failed to run ilo");
     assert!(!first.status.success(), "first call should error on hd []");
     // Second fresh process: arithmetic must succeed cleanly.
-    check_stdout("--run-cranelift", "f>n;+ 1 2", "3");
+    check_stdout("--jit", "f>n;+ 1 2", "3");
 }
