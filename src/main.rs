@@ -2860,7 +2860,7 @@ fn dispatch_run(r: cli::RunArgs, mode: OutputMode, explicit_json: bool, no_hints
                 )
             }
             cli::Engine::Default => {
-                // Default: func-name heuristic + Cranelift JIT with interpreter fallback.
+                // Default: func-name heuristic + Cranelift JIT with bytecode VM fallback.
                 //
                 // Inline-lambda lifting emits synthetic `__lit_N` top-level
                 // decls (see parser/mod.rs ~line 2863). These are an
@@ -3254,7 +3254,7 @@ fn print_help() {
     println!("AOT compilation:");
     println!("  ilo compile <file> [-o out] [func]  Compile to standalone binary\n");
     println!("Backends:");
-    println!("  (default)        Cranelift JIT → interpreter fallback");
+    println!("  (default)        Cranelift JIT, falls back to register VM on bailout");
     println!("  --run-tree       Tree-walking interpreter");
     println!("  --run-vm         Register VM");
     println!("  --run-cranelift  Cranelift JIT");
@@ -8574,7 +8574,7 @@ mod tests {
             OutputMode::Text,
             false,
         );
-        // Tree interpreter fallback ran the program → exit 0.
+        // Bytecode VM fallback ran the program → exit 0.
         assert_eq!(code, 0);
         assert!(!vm::jit_cranelift::FORCE_PANIC_FOR_TEST.with(|c| c.get()));
         // Same visibility contract as the cranelift-engine path: the
