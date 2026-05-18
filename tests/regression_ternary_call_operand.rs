@@ -75,8 +75,7 @@ fn h_keyword_both_branches_unparenthesised_calls_cross_engine() {
     // declared arity so the other branch's call sits cleanly afterwards.
     // `hi`/`lo` are strict `>` guards: `hi sc=10` is "H", `hi sc=5` is "h";
     // `lo sc=10` is "L", `lo sc=0` is "l".
-    let src =
-        "hi sc:n>t;>sc 5 \"H\";\"h\"\nlo sc:n>t;>sc 0 \"L\";\"l\"\nf a:n sc:n>t;?h =a 1 hi sc lo sc";
+    let src = "hi sc:n>t;>sc 5 \"H\";\"h\"\nlo sc:n>t;>sc 0 \"L\";\"l\"\nf a:n sc:n>t;?h =a 1 hi sc lo sc";
     for engine in ENGINES_ALL {
         assert_eq!(run_ok(engine, src, &["f", "1", "10"]), "H");
         assert_eq!(run_ok(engine, src, &["f", "1", "5"]), "h");
