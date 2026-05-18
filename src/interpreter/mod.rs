@@ -467,6 +467,177 @@ pub(crate) fn box_muller_normal(mu: f64, sigma: f64) -> f64 {
     mu + sigma * z
 }
 
+/// Recursive depth-first walk over `root`, collecting paths relative to it,
+/// sorted lexicographically. Symlinks are not followed (uses `file_type`,
+/// not `metadata`, on each entry). Returns the OS error message string on
+/// the first I/O failure so the calling builtin can wrap it as `Value::Err`.
+///
+/// Shared by `walk` and `glob`: `glob` is `walk_collect` plus a matcher pass,
+/// keeping pattern semantics and traversal semantics in lockstep (so a
+/// pattern that fails to match still pays the same cost / sees the same set
+/// of paths that `walk` would have produced — predictable for the agent).
+fn walk_collect(root: &std::path::Path) -> std::result::Result<Vec<String>, String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut stack: Vec<std::path::PathBuf> = vec![root.to_path_buf()];
+    while let Some(cur) = stack.pop() {
+        let rd = std::fs::read_dir(&cur).map_err(|e| e.to_string())?;
+        for entry in rd {
+            let ent = entry.map_err(|e| e.to_string())?;
+            let path = ent.path();
+            let rel = path.strip_prefix(root).unwrap_or(&path);
+            // Forward slashes on every OS — paths are an ilo string, not an
+            // OS path, and downstream code (cat, fmt, rd) does not care which
+            // separator was used. Picking `/` makes cross-platform tests deterministic.
+            let rel_str = rel
+                .to_string_lossy()
+                .into_owned()
+                .replace(std::path::MAIN_SEPARATOR, "/");
+            out.push(rel_str);
+            let ft = ent.file_type().map_err(|e| e.to_string())?;
+            if ft.is_dir() {
+                stack.push(path);
+            }
+        }
+    }
+    out.sort();
+    Ok(out)
+}
+
+/// Shell-style glob match against the relative path `text`.
+///
+/// Pattern operators:
+/// - `?` matches one character within a single path segment (no `/`).
+/// - `*` matches a run of characters within a single path segment (no `/`).
+/// - `[abc]` / `[a-z]` matches a character class; leading `!` or `^` negates.
+/// - `**` matches any number of nested segments, including zero. Must occupy
+///   a full segment (i.e. preceded and followed by `/` or end of string).
+///
+/// All other characters match literally. The matcher is recursive but bounded
+/// by pattern length, so worst-case is the usual O(n*m) glob cost. No
+/// `walkdir` / `glob` crate dependency — keeps the build lean.
+fn glob_match(pat: &str, text: &str) -> bool {
+    glob_match_bytes(pat.as_bytes(), text.as_bytes())
+}
+
+fn glob_match_bytes(pat: &[u8], text: &[u8]) -> bool {
+    // Recursive backtracker. Anchored at both ends.
+    let (mut pi, mut ti) = (0usize, 0usize);
+    while pi < pat.len() {
+        match pat[pi] {
+            b'*' => {
+                // `**` segment: matches any number of nested segments.
+                // Must be bounded by `/` or string-end on both sides to count
+                // as the recursive form; otherwise treated as plain `*`.
+                let is_double = pi + 1 < pat.len() && pat[pi + 1] == b'*';
+                let left_boundary = pi == 0 || pat[pi - 1] == b'/';
+                let right_boundary_at = pi + 2;
+                let right_boundary =
+                    is_double && (right_boundary_at == pat.len() || pat[right_boundary_at] == b'/');
+                if is_double && left_boundary && right_boundary {
+                    // `**` followed by `/<rest>` or end. Try every match of
+                    // the rest at every position from `ti` to `text.len()`.
+                    let rest_start = if right_boundary_at < pat.len() {
+                        right_boundary_at + 1
+                    } else {
+                        right_boundary_at
+                    };
+                    let rest = &pat[rest_start..];
+                    // Empty rest means `**` is the whole tail — matches anything left.
+                    if rest.is_empty() {
+                        return true;
+                    }
+                    let mut probe = ti;
+                    loop {
+                        if glob_match_bytes(rest, &text[probe..]) {
+                            return true;
+                        }
+                        if probe == text.len() {
+                            return false;
+                        }
+                        probe += 1;
+                    }
+                }
+                // Single `*`: matches any run within the current segment.
+                // Greedy with backtrack via recursion on the remainder.
+                let rest = &pat[pi + 1..];
+                // Empty remainder: match to next `/` or end.
+                let mut probe = ti;
+                loop {
+                    if glob_match_bytes(rest, &text[probe..]) {
+                        return true;
+                    }
+                    if probe == text.len() || text[probe] == b'/' {
+                        return false;
+                    }
+                    probe += 1;
+                }
+            }
+            b'?' => {
+                if ti >= text.len() || text[ti] == b'/' {
+                    return false;
+                }
+                pi += 1;
+                ti += 1;
+            }
+            b'[' => {
+                if ti >= text.len() || text[ti] == b'/' {
+                    return false;
+                }
+                // Parse [class]: optional leading `!`/`^` for negation,
+                // then a sequence of chars or `a-z` ranges, terminated by `]`.
+                let mut j = pi + 1;
+                let mut negate = false;
+                if j < pat.len() && (pat[j] == b'!' || pat[j] == b'^') {
+                    negate = true;
+                    j += 1;
+                }
+                let mut matched = false;
+                let mut found_close = false;
+                while j < pat.len() {
+                    if pat[j] == b']' && j > pi + 1 + (negate as usize) {
+                        found_close = true;
+                        break;
+                    }
+                    // Range form: a-b
+                    if j + 2 < pat.len() && pat[j + 1] == b'-' && pat[j + 2] != b']' {
+                        if text[ti] >= pat[j] && text[ti] <= pat[j + 2] {
+                            matched = true;
+                        }
+                        j += 3;
+                    } else {
+                        if text[ti] == pat[j] {
+                            matched = true;
+                        }
+                        j += 1;
+                    }
+                }
+                if !found_close {
+                    // Unterminated `[`: treat as literal char (no panic).
+                    if text[ti] != b'[' {
+                        return false;
+                    }
+                    pi += 1;
+                    ti += 1;
+                    continue;
+                }
+                if matched == negate {
+                    return false;
+                }
+                pi = j + 1;
+                ti += 1;
+            }
+            c => {
+                if ti >= text.len() || text[ti] != c {
+                    return false;
+                }
+                pi += 1;
+                ti += 1;
+            }
+        }
+    }
+    ti == text.len()
+}
+
 fn parse_format(fmt: &str, content: &str) -> std::result::Result<Value, String> {
     match fmt {
         "csv" | "tsv" => {
@@ -2628,6 +2799,114 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             }
         }
         return Ok(Value::Text(Arc::new(result)));
+    }
+    if builtin == Some(Builtin::Ls) && args.len() == 1 {
+        // ls dir > R (L t) t — list non-recursive directory entries (filenames
+        // only, not full paths). Sorted lexicographically for determinism so
+        // agent diffs stay stable across runs / filesystems. Missing dir or
+        // permission denied surface as Err so the caller can branch with `!`
+        // or pattern-match on the Result. Mirrors `rd`'s typed-error shape.
+        let dir = match &args[0] {
+            Value::Text(s) => s.clone(),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("ls requires text path, got {:?}", other),
+                ));
+            }
+        };
+        return match std::fs::read_dir(dir.as_str()) {
+            Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(e.to_string()))))),
+            Ok(rd) => {
+                let mut names: Vec<String> = Vec::new();
+                for entry in rd {
+                    match entry {
+                        Ok(ent) => {
+                            // Lossy is intentional: ilo strings are UTF-8 and a
+                            // non-UTF-8 path is vanishingly rare in agent
+                            // workloads; failing the whole listing on one bad
+                            // name would be more surprising than the U+FFFD.
+                            names.push(ent.file_name().to_string_lossy().into_owned());
+                        }
+                        Err(e) => {
+                            return Ok(Value::Err(Box::new(Value::Text(Arc::new(e.to_string())))));
+                        }
+                    }
+                }
+                names.sort();
+                let items: Vec<Value> = names
+                    .into_iter()
+                    .map(|n| Value::Text(Arc::new(n)))
+                    .collect();
+                Ok(Value::Ok(Box::new(Value::List(Arc::new(items)))))
+            }
+        };
+    }
+    if builtin == Some(Builtin::Walk) && args.len() == 1 {
+        // walk dir > R (L t) t — recursive directory traversal. Returns paths
+        // relative to `dir` (not absolute) so output is stable across cwd / OS
+        // and composable with `cat`/`fmt` for downstream reads. Sorted for
+        // deterministic output. Symlinks are not followed (avoids the cycle
+        // trap that `find -L` and shell rglob hit on typical project trees).
+        let dir = match &args[0] {
+            Value::Text(s) => s.clone(),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("walk requires text path, got {:?}", other),
+                ));
+            }
+        };
+        let root = std::path::PathBuf::from(dir.as_str());
+        match walk_collect(&root) {
+            Ok(out) => {
+                let items: Vec<Value> = out.into_iter().map(|n| Value::Text(Arc::new(n))).collect();
+                return Ok(Value::Ok(Box::new(Value::List(Arc::new(items)))));
+            }
+            Err(e) => {
+                return Ok(Value::Err(Box::new(Value::Text(Arc::new(e)))));
+            }
+        }
+    }
+    if builtin == Some(Builtin::Glob) && args.len() == 2 {
+        // glob dir pat > R (L t) t — shell-style pattern filter under dir.
+        // Pattern syntax: `*` matches any run within a path segment, `?` one
+        // char within a segment, `[abc]` / `[a-z]` a char class, `**` matches
+        // any number of nested segments (recursive). Sorted output. Paths
+        // returned relative to `dir`, same as `walk`. Implemented as
+        // `walk_collect` + matcher so we don't pull a transitive glob crate.
+        let dir = match &args[0] {
+            Value::Text(s) => s.clone(),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("glob requires text path, got {:?}", other),
+                ));
+            }
+        };
+        let pat = match &args[1] {
+            Value::Text(s) => s.clone(),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("glob pattern must be text, got {:?}", other),
+                ));
+            }
+        };
+        let root = std::path::PathBuf::from(dir.as_str());
+        match walk_collect(&root) {
+            Ok(all) => {
+                let items: Vec<Value> = all
+                    .into_iter()
+                    .filter(|p| glob_match(pat.as_str(), p))
+                    .map(|n| Value::Text(Arc::new(n)))
+                    .collect();
+                return Ok(Value::Ok(Box::new(Value::List(Arc::new(items)))));
+            }
+            Err(e) => {
+                return Ok(Value::Err(Box::new(Value::Text(Arc::new(e)))));
+            }
+        }
     }
     if builtin == Some(Builtin::Rd) && (args.len() == 1 || args.len() == 2) {
         let path = match &args[0] {

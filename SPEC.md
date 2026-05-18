@@ -197,7 +197,7 @@ Short builtin names are precious surface and ilo reserves a stable subset of the
 **Currently reserved short names (1-3 characters).** Every name in this list is a builtin today and triggers `ILO-P011` if used as a binding or user-function name:
 
 ```
-2-char  at hd tl rd wr ct
+2-char  at hd tl rd wr ct ls
 3-char  abs avg cap cat cel chr cos det dot env exp fft fld flr flt fmt
         frq get grp has inv len log lst lwr map max min mod now num ord
         pow pst rdb rdl rev rgx rng rnd rou run sin slc spl srt str sum
@@ -206,7 +206,7 @@ Short builtin names are precious surface and ilo reserves a stable subset of the
 
 `rng` is the short-form alias for the canonical `range` builtin; it is reserved with the same shadow-prevention semantics as a canonical builtin name (binding `rng=...` or declaring `rng x:...` fires `ILO-P011`).
 
-Longer builtin names (`acos`, `asin`, `atan`, `flat`, `take`, `drop`, `mget`, `mset`, `mmap`, `prnt`, `mapr`, `solve`, `clamp`, `cumsum`, `median`, `matmul`, `range`, `window`, `chunks`, …) are also reserved and rejected by `ILO-P011`, but the short-name namespace above is where carry-forward scripts most often collide, so it gets explicit enumeration.
+Longer builtin names (`acos`, `asin`, `atan`, `flat`, `take`, `drop`, `mget`, `mset`, `mmap`, `prnt`, `mapr`, `solve`, `clamp`, `cumsum`, `median`, `matmul`, `range`, `window`, `chunks`, `walk`, `glob`, …) are also reserved and rejected by `ILO-P011`, but the short-name namespace above is where carry-forward scripts most often collide, so it gets explicit enumeration.
 
 **Forward-compatibility rule.** Future ilo releases add new builtins under names **4 characters or longer**. A 2-character name that is not on this list today is safe to use as a binding or function name and stays safe across releases. A 3-character name that is not on this list is _highly likely_ to stay safe but is not a hard promise - the 3-char surface is already dense, and a rare ergonomic win may justify an addition, called out in the changelog.
 
@@ -456,6 +456,9 @@ Called like functions, compiled to dedicated opcodes.
 | `rd path` | read file; format auto-detected from extension (`.csv`/`.tsv`→grid, `.json`→graph, else text) | `R _ t` |
 | `rd path fmt` | read file with explicit format override (`"csv"`, `"tsv"`, `"json"`, `"raw"`) | `R _ t` |
 | `rdl path` | read file as list of lines | `R (L t) t` |
+| `ls dir` | list directory entries (filenames only, not full paths; sorted lexicographically; includes both files and subdirs; empty dirs return `[]`, not Err) | `R (L t) t` |
+| `walk dir` | recursive depth-first traversal; paths returned relative to `dir`, sorted; includes both file and directory entries; symlinks not followed | `R (L t) t` |
+| `glob dir pat` | shell-style filter under `dir`: `*`/`?`/`[abc]` within a path segment, `**` across segments; relative-path output, sorted; no matches returns `[]` (not Err) | `R (L t) t` |
 | `rdb s fmt` | parse string/buffer in given format - for data from HTTP, env vars, etc. | `R _ t` |
 | `wr path s` | write text to file (overwrite) | `R t t` |
 | `wr path data "csv"` | write list-of-lists as CSV (with proper quoting) | `R t t` |
@@ -1505,6 +1508,8 @@ ilo serv                          -- long-lived JSON request/response loop
 **`ilo check`.** Standalone verifier invocation: lex, parse, resolve imports, and run the type verifier without proceeding to bytecode compilation or execution. Exit code 0 means the program is well-typed and verifier-clean; exit code 1 means at least one diagnostic was emitted on stderr. The output mode follows the global flags (`--json` for NDJSON diagnostics, `--text` for plain text, `--ansi` for coloured output; auto-detected when omitted - JSON when stderr is not a TTY, ANSI otherwise). `ilo check` works on both files and inline code; on a syntactically-broken input it still reports the parse error rather than crashing, which is important for editor and agent loops that may feed in half-written programs.
 
 **Default-run.** Inline programs (`ilo 'code'`) and single-function files run their entry function with the remaining CLI args; no explicit function name needed. Multi-function files auto-pick a function called `main` when no positional func arg is supplied. The same heuristic applies to the explicit engine flags - `--run-tree`, `--run-vm`, and `--jit` all auto-pick `main` on multi-fn files, matching the default-engine behaviour. With no `main` declared, supply a function-name argument.
+
+**AOT entry-pick.** `ilo compile file.ilo -o out` (alias `ilo build`) follows the same entry-pick rules as the in-process engines: a single user-defined function is used directly; on multi-function files the entry is `main` if defined, otherwise the explicit positional `func` arg (`ilo compile file.ilo -o out run`); otherwise the compile fails with `ILO-E801` and exits 1 without writing a binary. AOT does not fall back to "first declared function" - that historical default produced binaries that called the wrong entry symbol and SIGSEGV'd at runtime.
 
 **Default engine.** The bytecode register VM is the default execution path. It supports every opcode (closures, listview windows, fused len-of-filter, every modern shape), and avoids the JIT compile-and-bail cost paid by the pre-v0.11.9 Cranelift-first default whenever a program touched an opcode the JIT couldn't handle. Cranelift JIT is opt-in via `--jit`; on opt-in, the JIT runs hot numeric loops and falls back to the VM on bailout. The tree interpreter (`--run-tree`) remains the canonical-semantics reference. Phase 2 closure captures still execute on the tree interpreter (the VM and JIT raise `ILO-R012` and the default runner falls through). For long-running workloads where the JIT pays for itself, opt in explicitly; for most agent workloads the VM is the right default.
 

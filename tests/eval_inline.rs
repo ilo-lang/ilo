@@ -1395,7 +1395,7 @@ fn run_default_interpreter_error() {
 fn bench_simple_function() {
     // `f>n;42` with --bench covers run_bench (L448+), L230 (vec![]), all benchmark paths
     let out = ilo()
-        .args(["f>n;42", "--bench", "f"])
+        .args(["f>n;42", "--bench", "f", "--text"])
         .output()
         .expect("failed to run ilo");
     assert!(
@@ -1417,7 +1417,7 @@ fn bench_with_text_arg() {
     // bench mode with a text arg → filter_map hits `_ => None` (L525), all_numeric=false,
     // and the Python call_args builder hits the Text(s) branch (L638)
     let out = ilo()
-        .args(["f x:t>t;x", "--bench", "f", "hello"])
+        .args(["f x:t>t;x", "--bench", "f", "hello", "--text"])
         .output()
         .expect("failed to run ilo");
     assert!(
@@ -1437,7 +1437,7 @@ fn bench_with_text_arg() {
 fn bench_with_bool_arg() {
     // bench mode with a bool arg → Python call_args builder hits Bool(b) branch (L639)
     let out = ilo()
-        .args(["f x:b>b;x", "--bench", "f", "true"])
+        .args(["f x:b>b;x", "--bench", "f", "true", "--text"])
         .output()
         .expect("failed to run ilo");
     assert!(
@@ -1457,7 +1457,7 @@ fn bench_with_bool_arg() {
 fn bench_with_list_arg() {
     // bench mode with a list arg → Python call_args builder hits _ => "None" branch (L640)
     let out = ilo()
-        .args(["f xs:L n>n;+xs.0 1", "--bench", "f", "[1,2,3]"])
+        .args(["f xs:L n>n;+xs.0 1", "--bench", "f", "[1,2,3]", "--text"])
         .output()
         .expect("failed to run ilo");
     assert!(
@@ -1478,7 +1478,7 @@ fn bench_with_list_arg() {
 fn bench_jit_float_result() {
     // f x:n>n;/x 2 with arg 1 → JIT result = 0.5 (non-integer) → covers else branch
     let out = ilo()
-        .args(["f x:n>n;/x 2", "--bench", "f", "1"])
+        .args(["f x:n>n;/x 2", "--bench", "f", "1", "--text"])
         .output()
         .expect("failed to run ilo");
     assert!(
@@ -1507,7 +1507,7 @@ fn bench_jit_float_result() {
 fn bench_jit_non_numeric_const() {
     // f x:n>n;y="hi";x — NanVal JIT now handles text constants
     let out = ilo()
-        .args(["f x:n>n;y=\"hi\";x", "--bench", "f", "5"])
+        .args(["f x:n>n;y=\"hi\";x", "--bench", "f", "5", "--text"])
         .output()
         .expect("failed to run ilo");
     assert!(
@@ -1537,7 +1537,7 @@ fn bench_jit_move_different_regs() {
     // compile_match_arms: result_reg = reg1, body compiles +x 1 to reg2
     // → OP_MOVE 1,2 (a=1 != b=2) → arm64 L207-209 + Cranelift L167-170
     let out = ilo()
-        .args(["f x:n>n;?x{_:+x 1}", "--bench", "f", "7"])
+        .args(["f x:n>n;?x{_:+x 1}", "--bench", "f", "7", "--text"])
         .output()
         .expect("failed to run ilo");
     assert!(

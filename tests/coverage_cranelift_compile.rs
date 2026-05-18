@@ -347,14 +347,14 @@ fn aot_cov_frq() {
 
 #[test]
 fn aot_cov_uniqby() {
-    expect_codegen_ok("uniqby", "key x:n>n;mod x 2;f xs:L n>L n;uniqby key xs");
+    expect_codegen_ok("uniqby", "key x:n>n;mod x 2;main xs:L n>L n;uniqby key xs");
 }
 
 #[test]
 fn aot_cov_partition() {
     expect_codegen_ok(
         "partition",
-        "ev x:n>b;= 0 (mod x 2);f xs:L n>L (L n);partition ev xs",
+        "ev x:n>b;= 0 (mod x 2);main xs:L n>L (L n);partition ev xs",
     );
 }
 
