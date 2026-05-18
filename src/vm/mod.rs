@@ -366,13 +366,8 @@ pub(crate) const OP_PADL: u8 = 121; // R[A] = pad_left(R[B], R[C])  (text, width
 pub(crate) const OP_PADR: u8 = 122; // R[A] = pad_right(R[B], R[C]) (text, width → text; pad char ' ')
 // Pad-with-char: 2-instruction sequence (data word A = pad-char reg). Pad char
 // must be a 1-Unicode-scalar string at runtime; anything else is a Type error.
-<<<<<<< Updated upstream
 pub(crate) const OP_PADLC: u8 = 169; // R[A] = pad_left(R[B], R[C], R[D])  (text, width, padchar → text)
 pub(crate) const OP_PADRC: u8 = 170; // R[A] = pad_right(R[B], R[C], R[D]) (text, width, padchar → text)
-=======
-pub(crate) const OP_PADLC: u8 = 165; // R[A] = pad_left(R[B], R[C], R[D])  (text, width, padchar → text)
-pub(crate) const OP_PADRC: u8 = 166; // R[A] = pad_right(R[B], R[C], R[D]) (text, width, padchar → text)
->>>>>>> Stashed changes
 
 // Per-char codepoint round-trip — t->n and n->t (Unicode scalar, 1-arg each).
 pub(crate) const OP_ORD: u8 = 153; // R[A] = first-char codepoint of R[B]
