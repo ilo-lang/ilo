@@ -46,7 +46,7 @@ fn check_all_str(src: &str, expected: &str) {
     assert_eq!(run_ok("--run-tree", src), expected, "tree engine");
     assert_eq!(run_ok("--run-vm", src), expected, "vm engine");
     #[cfg(feature = "cranelift")]
-    assert_eq!(run_ok("--run-cranelift", src), expected, "cranelift engine");
+    assert_eq!(run_ok("--jit", src), expected, "cranelift engine");
 }
 
 fn check_all_num(src: &str, expected: f64) {
@@ -59,9 +59,7 @@ fn check_all_num(src: &str, expected: f64) {
     }
     #[cfg(feature = "cranelift")]
     {
-        let actual = run_ok("--run-cranelift", src)
-            .parse::<f64>()
-            .expect("number");
+        let actual = run_ok("--jit", src).parse::<f64>().expect("number");
         assert!(
             (actual - expected).abs() < 1e-10,
             "engine=cranelift src=`{src}`: got {actual}, expected {expected}"

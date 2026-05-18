@@ -85,10 +85,7 @@ fn rebind_50k_numeric_len_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn rebind_50k_numeric_len_cranelift() {
-    assert_eq!(
-        run("--run-cranelift", REBIND_50K_NUMERIC_LEN, "demo"),
-        "50000"
-    );
+    assert_eq!(run("--jit", REBIND_50K_NUMERIC_LEN, "demo"), "50000");
 }
 
 #[test]
@@ -104,10 +101,7 @@ fn rebind_50k_numeric_last_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn rebind_50k_numeric_last_cranelift() {
-    assert_eq!(
-        run("--run-cranelift", REBIND_50K_NUMERIC_LAST, "demo"),
-        "49999"
-    );
+    assert_eq!(run("--jit", REBIND_50K_NUMERIC_LAST, "demo"), "49999");
 }
 
 // ── Scale: 50k-element rebind accumulator must finish well under O(n²) ──────
@@ -150,7 +144,7 @@ fn rebind_50k_accumulator_under_15s_cranelift() {
     // a_idx==b_idx peephole ported into jit_cranelift.rs, runtime drops to
     // sub-second.
     let start = Instant::now();
-    let out = run("--run-cranelift", REBIND_50K_NUMERIC_LEN, "demo");
+    let out = run("--jit", REBIND_50K_NUMERIC_LEN, "demo");
     let elapsed = start.elapsed();
     assert_eq!(out, "50000");
     assert!(
@@ -189,7 +183,7 @@ fn non_rebind_distinct_preserves_xs_vm() {
 #[cfg(feature = "cranelift")]
 fn non_rebind_distinct_preserves_xs_cranelift() {
     assert_eq!(
-        run("--run-cranelift", NON_REBIND_DISTINCT_PRESERVES_XS, "f"),
+        run("--jit", NON_REBIND_DISTINCT_PRESERVES_XS, "f"),
         "[1, 2, 3]"
     );
 }
@@ -217,5 +211,5 @@ fn rebind_text_1k_last_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn rebind_text_1k_last_cranelift() {
-    assert_eq!(run("--run-cranelift", REBIND_TEXT_1K_LAST, "demo"), "x");
+    assert_eq!(run("--jit", REBIND_TEXT_1K_LAST, "demo"), "x");
 }

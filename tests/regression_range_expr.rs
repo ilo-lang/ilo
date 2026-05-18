@@ -38,7 +38,7 @@ fn check_all(src: &str, expected: &str) {
     }
     #[cfg(feature = "cranelift")]
     {
-        let engine = "--run-cranelift";
+        let engine = "--jit";
         let actual = run_text(engine, src);
         assert_eq!(
             actual, expected,

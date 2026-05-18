@@ -79,7 +79,7 @@ fn main_err_exits_one_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn main_err_exits_one_cranelift() {
-    assert_err_exit_plain("--run-cranelift");
+    assert_err_exit_plain("--jit");
 }
 
 // ── JSON mode: Value::Err exits 1 with structured envelope on stdout ───────
@@ -125,7 +125,7 @@ fn main_err_exits_one_json_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn main_err_exits_one_json_cranelift() {
-    assert_err_exit_json("--run-cranelift");
+    assert_err_exit_json("--jit");
 }
 
 // ── OK return still exits 0 (no regression on the happy path) ──────────────
@@ -165,7 +165,7 @@ fn main_ok_exits_zero_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn main_ok_exits_zero_cranelift() {
-    assert_ok_exit("--run-cranelift");
+    assert_ok_exit("--jit");
 }
 
 // ── Default engine path (no --run-* flag) also surfaces the err exit code ──

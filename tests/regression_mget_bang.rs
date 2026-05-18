@@ -67,7 +67,7 @@ fn mget_bang_present_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn mget_bang_present_cranelift() {
-    check_present("--run-cranelift");
+    check_present("--jit");
 }
 
 // ── missing key: mget! propagates nil out of the enclosing function ──────
@@ -90,7 +90,7 @@ fn mget_bang_missing_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn mget_bang_missing_cranelift() {
-    check_missing("--run-cranelift");
+    check_missing("--jit");
 }
 
 // ── mget! propagation short-circuits subsequent statements ───────────────
@@ -114,7 +114,7 @@ fn mget_bang_shortcircuit_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn mget_bang_shortcircuit_cranelift() {
-    check_shortcircuit("--run-cranelift");
+    check_shortcircuit("--jit");
 }
 
 // ── verifier rejects mget! in a non-Optional-returning function ──────────
@@ -150,7 +150,7 @@ fn mget_two_step_default_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn mget_two_step_default_cranelift() {
-    check_two_step("--run-cranelift");
+    check_two_step("--jit");
 }
 
 // Two-step on missing key uses the default.
@@ -173,7 +173,7 @@ fn mget_two_step_default_miss_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn mget_two_step_default_miss_cranelift() {
-    check_two_step_miss("--run-cranelift");
+    check_two_step_miss("--jit");
 }
 
 // ── Result `!` propagation: cross-engine contract ───────────────────────
@@ -231,7 +231,7 @@ fn result_bang_ok_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn result_bang_ok_cranelift() {
-    check_result_ok("--run-cranelift");
+    check_result_ok("--jit");
 }
 
 #[test]
@@ -247,7 +247,7 @@ fn result_bang_err_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn result_bang_err_cranelift() {
-    check_result_err("--run-cranelift");
+    check_result_err("--jit");
 }
 
 // ── dtfmt!: timestamp-out-of-range Err short-circuit ─────────────────────
@@ -278,7 +278,7 @@ fn dtfmt_bang_err_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn dtfmt_bang_err_cranelift() {
-    check_dtfmt_err("--run-cranelift");
+    check_dtfmt_err("--jit");
 }
 
 // ── num! short-circuit skips subsequent statements ───────────────────────
@@ -306,7 +306,7 @@ fn num_bang_shortcircuit_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn num_bang_shortcircuit_cranelift() {
-    check_num_shortcircuit("--run-cranelift");
+    check_num_shortcircuit("--jit");
 }
 
 // ── rd! / rdl! short-circuit on missing file ─────────────────────────────
@@ -350,7 +350,7 @@ fn rd_bang_err_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn rd_bang_err_cranelift() {
-    check_rd_err("--run-cranelift");
+    check_rd_err("--jit");
 }
 
 #[test]
@@ -366,5 +366,5 @@ fn rdl_bang_err_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn rdl_bang_err_cranelift() {
-    check_rdl_err("--run-cranelift");
+    check_rdl_err("--jit");
 }

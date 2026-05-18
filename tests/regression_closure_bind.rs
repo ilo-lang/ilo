@@ -51,7 +51,7 @@ fn run_ok_on(engine: &str, src: &str, entry: &str, args: &[&str]) -> String {
 }
 
 fn run_all(src: &str, entry: &str, args: &[&str], expected: &str) {
-    for engine in ["--run-tree", "--run-vm", "--run-cranelift"] {
+    for engine in ["--run-tree", "--run-vm", "--jit"] {
         let actual = run_ok_on(engine, src, entry, args);
         assert_eq!(
             actual, expected,

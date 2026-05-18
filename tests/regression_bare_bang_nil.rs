@@ -17,7 +17,7 @@
 //     shape specifically (with a hint pointing at `?x{~v:v;^e:^e}` or
 //     `scs = producer! ...`), instead of the generic ILO-T005.
 //   - The error fires consistently on default, --run-tree, --run-vm, and
-//     --run-cranelift, on:
+//     --jit, on:
 //       * a Number-valued local (`x=42;x!`)
 //       * a Text-valued local (`s="hi";s!`)
 //       * a parameter (`fn p:n>n;p!`)
@@ -37,7 +37,7 @@ fn ilo() -> Command {
 }
 
 #[cfg(feature = "cranelift")]
-const ENGINES_ALL: &[&str] = &["--run-tree", "--run-vm", "--run-cranelift"];
+const ENGINES_ALL: &[&str] = &["--run-tree", "--run-vm", "--jit"];
 #[cfg(not(feature = "cranelift"))]
 const ENGINES_ALL: &[&str] = &["--run-tree", "--run-vm"];
 

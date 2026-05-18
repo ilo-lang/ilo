@@ -47,7 +47,7 @@ fn check_all(src: &str, expected: &str) {
     check_stdout("--run-tree", src, expected);
     check_stdout("--run-vm", src, expected);
     #[cfg(feature = "cranelift")]
-    check_stdout("--run-cranelift", src, expected);
+    check_stdout("--jit", src, expected);
 }
 
 // ── jit_wr + jit_rd round-trip (text file) ────────────────────────────────
@@ -76,7 +76,7 @@ fn wr_then_rd_text_cross_engine() {
     );
     #[cfg(feature = "cranelift")]
     check_stdout(
-        "--run-cranelift",
+        "--jit",
         &format!("f>t;w=wr!! \"{path_cl}\" \"hello\";rd!! \"{path_cl}\""),
         "hello",
     );
@@ -105,7 +105,7 @@ fn wrl_then_rdl_cross_engine() {
     );
     #[cfg(feature = "cranelift")]
     check_stdout(
-        "--run-cranelift",
+        "--jit",
         &format!("f>n;w=wrl!! \"{path_cl}\" [\"a\" \"b\" \"c\"];es=rdl!! \"{path_cl}\";len es"),
         "3",
     );
@@ -145,7 +145,7 @@ fn rdjl_reads_jsonl_cross_engine() {
     check_stdout("--run-tree", &prog_tree, "3");
     check_stdout("--run-vm", &prog_vm, "3");
     #[cfg(feature = "cranelift")]
-    check_stdout("--run-cranelift", &prog_cl, "3");
+    check_stdout("--jit", &prog_cl, "3");
 }
 
 // ── jit_dtfmt happy path ──────────────────────────────────────────────────
@@ -173,7 +173,7 @@ fn dtparse_round_trip_cross_engine() {
 #[cfg(feature = "cranelift")]
 fn no_stale_jit_error_leak_after_hd_error_then_io() {
     let first = ilo()
-        .args(["f>n;hd []", "--run-cranelift", "f"])
+        .args(["f>n;hd []", "--jit", "f"])
         .output()
         .expect("failed to run ilo");
     assert!(!first.status.success(), "first call should error on hd []");
@@ -182,7 +182,7 @@ fn no_stale_jit_error_leak_after_hd_error_then_io() {
     let _ = std::fs::remove_file(path);
     let src = format!("f>t;w=wr!! \"{path}\" \"ok\";rd!! \"{path}\"");
     let second = ilo()
-        .args([src.as_str(), "--run-cranelift", "f"])
+        .args([src.as_str(), "--jit", "f"])
         .output()
         .expect("failed to run ilo");
     assert!(

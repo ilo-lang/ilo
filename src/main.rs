@@ -1313,13 +1313,13 @@ fn serv_cmd(args_slice: &[String]) {
     }
 }
 
-/// Scan args for `--run-tree` / `--run` / `--run-vm` / `--run-cranelift` /
-/// `--cranelift` / `--run-llvm` anywhere in the list and remove them. argv[0]
+/// Scan args for `--run-tree` / `--run` / `--run-vm` / `--jit` /
+/// `--run-llvm` anywhere in the list and remove them. argv[0]
 /// (binary name) is preserved at position 0. Returns the chosen engine (if
 /// any) plus the remaining args. Multiple conflicting engine flags produce an
-/// error. `--cranelift` is a short alias for `--run-cranelift`; agents that
-/// opt into the JIT for hot numeric loops shouldn't pay the extra `run-`
-/// prefix tokens.
+/// error. `--jit` opts into the Cranelift JIT for hot numeric loops; the
+/// implementation name (Cranelift) is kept internal so the user-facing flag
+/// names the concept, not the backend.
 fn extract_run_engine_flag(
     args: Vec<String>,
 ) -> Result<(Option<cli::Engine>, Vec<String>), String> {
@@ -1329,7 +1329,7 @@ fn extract_run_engine_flag(
 
     for arg in args {
         let candidate = match arg.as_str() {
-            "--run-cranelift" | "--cranelift" => Some(cli::Engine::Cranelift),
+            "--jit" => Some(cli::Engine::Cranelift),
             "--run-llvm" => Some(cli::Engine::Llvm),
             "--run-vm" => Some(cli::Engine::Vm),
             "--run" | "--run-tree" => Some(cli::Engine::Tree),
@@ -1347,7 +1347,7 @@ fn extract_run_engine_flag(
 
     if conflict {
         return Err(
-            "error: --run, --run-tree, --run-vm, --run-cranelift, --run-llvm are mutually exclusive"
+            "error: --run, --run-tree, --run-vm, --jit, --run-llvm are mutually exclusive"
                 .to_string(),
         );
     }
@@ -2245,7 +2245,7 @@ fn dispatch_bare_args(raw_args: Vec<String>, global: &cli::Global) -> i32 {
     let m = mode_args_start;
     let (engine_flag, run_rest_start) = if args.len() > m {
         match args[m].as_str() {
-            "--run-cranelift" | "--cranelift" => (Some(cli::Engine::Cranelift), m + 1),
+            "--jit" => (Some(cli::Engine::Cranelift), m + 1),
             "--run-llvm" => (Some(cli::Engine::Llvm), m + 1),
             "--run-vm" => (Some(cli::Engine::Vm), m + 1),
             "--run" | "--run-tree" => (Some(cli::Engine::Tree), m + 1),
@@ -2269,7 +2269,7 @@ fn dispatch_bare_args(raw_args: Vec<String>, global: &cli::Global) -> i32 {
                     run_tree: false,
                     run: false,
                     run_vm: false,
-                    run_cranelift: false,
+                    jit: false,
                     run_llvm: false,
                     bench: true,
                     emit: None,
@@ -2290,7 +2290,7 @@ fn dispatch_bare_args(raw_args: Vec<String>, global: &cli::Global) -> i32 {
                     run_tree: false,
                     run: false,
                     run_vm: false,
-                    run_cranelift: false,
+                    jit: false,
                     run_llvm: false,
                     bench: false,
                     emit: None,
@@ -2316,7 +2316,7 @@ fn dispatch_bare_args(raw_args: Vec<String>, global: &cli::Global) -> i32 {
                     run_tree: false,
                     run: false,
                     run_vm: false,
-                    run_cranelift: false,
+                    jit: false,
                     run_llvm: false,
                     bench: false,
                     emit: target,
@@ -2337,7 +2337,7 @@ fn dispatch_bare_args(raw_args: Vec<String>, global: &cli::Global) -> i32 {
                     run_tree: false,
                     run: false,
                     run_vm: false,
-                    run_cranelift: false,
+                    jit: false,
                     run_llvm: false,
                     bench: false,
                     emit: None,
@@ -2358,7 +2358,7 @@ fn dispatch_bare_args(raw_args: Vec<String>, global: &cli::Global) -> i32 {
                     run_tree: false,
                     run: false,
                     run_vm: false,
-                    run_cranelift: false,
+                    jit: false,
                     run_llvm: false,
                     bench: false,
                     emit: None,
@@ -2391,7 +2391,7 @@ fn dispatch_bare_args(raw_args: Vec<String>, global: &cli::Global) -> i32 {
         run_tree: false,
         run: false,
         run_vm: false,
-        run_cranelift: false,
+        jit: false,
         run_llvm: false,
         bench: false,
         emit: None,
@@ -2407,7 +2407,7 @@ fn dispatch_bare_args(raw_args: Vec<String>, global: &cli::Global) -> i32 {
 }
 
 /// Resolve the function name + remaining args for an explicit engine flag
-/// (`--run-tree`, `--run-vm`, `--run-cranelift`).
+/// (`--run-tree`, `--run-vm`, `--jit`).
 ///
 /// Mirrors the auto-pick-main heuristic from the Default engine branch
 /// (PR #307): when no positional func arg is supplied, prefer a function
@@ -2793,8 +2793,8 @@ fn dispatch_run(r: cli::RunArgs, mode: OutputMode, explicit_json: bool, no_hints
             }
             cli::Engine::Default => {
                 // Default: func-name heuristic + bytecode register VM (closure-aware,
-                // all opcodes supported). Cranelift JIT is opt-in via --cranelift /
-                // --run-cranelift; tree interpreter is the canonical-semantics fallback
+                // all opcodes supported). Cranelift JIT is opt-in via --jit /
+                // --jit; tree interpreter is the canonical-semantics fallback
                 // for any program the VM rejects.
                 //
                 // Inline-lambda lifting emits synthetic `__lit_N` top-level
@@ -2959,7 +2959,7 @@ fn run_cranelift_engine(
     let run_args = parse_cli_args_typed(program, func_name, raw);
     // CLI-boundary arity guard (mirrors run_default). See the comment there
     // for the regression history; same contract applies to the explicit
-    // --run-cranelift dispatch path.
+    // --jit dispatch path.
     if let Err(code) = check_cli_arity(program, func_name, run_args.len(), source, mode) {
         return code;
     }
@@ -3143,7 +3143,7 @@ fn run_llvm_engine(_program: &ast::Program, rest: &[String]) -> i32 {
 fn print_help() {
     println!("ilo — a programming language for AI agents\n");
     println!("Usage:");
-    println!("  ilo <code> [args...]              Run (bytecode VM; use --cranelift for JIT)");
+    println!("  ilo <code> [args...]              Run (bytecode VM; use --jit for JIT)");
     println!("  ilo <file.ilo> [args...]          Run from file");
     println!("  ilo <code> func [args...]         Run a specific function");
     println!("  ilo <code> --emit python          Transpile to Python");
@@ -3190,11 +3190,13 @@ fn print_help() {
     println!("  ilo compile <file> [-o out] [func]  Compile to standalone binary\n");
     println!("Backends:");
     println!("  (default)        Register VM (closure-aware, all opcodes supported)");
-    println!("  --cranelift      Cranelift JIT (hot numeric loops; VM fallback on bailout)");
-    println!("  --run-cranelift  Same as --cranelift");
-    println!("  --run-vm         Register VM (explicit form of the default)");
-    println!("  --run-tree       Tree-walking interpreter (reference semantics)");
-    println!("  --run-llvm       LLVM JIT (requires --features llvm build)\n");
+    println!(
+        "  --jit            Cranelift JIT (faster on hot numeric loops; falls back to VM on bailout)"
+    );
+    println!(
+        "  --run-tree       Tree-walking interpreter (reference impl; Phase 2 closure capture)"
+    );
+    println!("  --run-vm         Register VM (explicit form of default)\n");
     println!("Examples:");
     println!("  ilo 'f x:n>n;*x 2' 5             Define and call f(5) → 10");
     println!("  ilo 'f xs:L n>n;len xs' 1,2,3     Pass a list → 3");
@@ -3400,8 +3402,8 @@ fn run_default(
     // (closures, listview, len-has-k-count, every modern shape), and avoids
     // the JIT compile-and-bail cost the old Cranelift-first default paid on
     // any program touching opcodes the JIT can't yet handle. Cranelift
-    // remains opt-in for hot numeric workloads via `--cranelift` (alias of
-    // `--run-cranelift`); the tree interpreter remains the canonical
+    // remains opt-in for hot numeric workloads via `--jit`; the tree
+    // interpreter remains the canonical
     // reference semantics and the last-resort fallback for any program the
     // VM compile/run rejects (e.g. shapes the VM doesn't yet support).
     if let Ok(compiled) = vm::compile(program) {
@@ -7226,7 +7228,7 @@ mod tests {
         assert_eq!(code, 0);
     }
 
-    // ── dispatch_bare_args: engine flags (--run-vm, --run-cranelift, --run-llvm, --run)
+    // ── dispatch_bare_args: engine flags (--run-vm, --jit, --run-llvm, --run)
 
     #[test]
     fn dispatch_bare_args_run_vm_engine_flag() {
@@ -7913,7 +7915,7 @@ mod tests {
             run_tree: false,
             run: false,
             run_vm: false,
-            run_cranelift: false,
+            jit: false,
             run_llvm: false,
             bench: false,
             emit: None,
@@ -7939,7 +7941,7 @@ mod tests {
             run_tree: false,
             run: false,
             run_vm: false,
-            run_cranelift: false,
+            jit: false,
             run_llvm: false,
             bench: false,
             emit: None,
@@ -7969,7 +7971,7 @@ mod tests {
             run_tree: false,
             run: false,
             run_vm: false,
-            run_cranelift: false,
+            jit: false,
             run_llvm: false,
             bench: false,
             emit: None,
@@ -7996,7 +7998,7 @@ mod tests {
             run_tree: false,
             run: false,
             run_vm: false,
-            run_cranelift: false,
+            jit: false,
             run_llvm: false,
             bench: false,
             emit: None,
@@ -8021,7 +8023,7 @@ mod tests {
             run_tree: false,
             run: false,
             run_vm: false,
-            run_cranelift: false,
+            jit: false,
             run_llvm: false,
             bench: false,
             emit: None,
@@ -8048,7 +8050,7 @@ mod tests {
             run_tree: false,
             run: false,
             run_vm: false,
-            run_cranelift: false,
+            jit: false,
             run_llvm: false,
             bench: false,
             emit: None,
@@ -8075,7 +8077,7 @@ mod tests {
             run_tree: false,
             run: false,
             run_vm: false,
-            run_cranelift: false,
+            jit: false,
             run_llvm: false,
             bench: false,
             emit: None,
@@ -8346,7 +8348,7 @@ mod tests {
     /// even with `FORCE_PANIC_FOR_TEST` set, the JIT is never called, the
     /// panic helper is never armed, and the fallback counter must stay at
     /// zero. The equivalent panic-fallback contract still applies on the
-    /// opt-in `--cranelift` path (covered by
+    /// opt-in `--jit` path (covered by
     /// `run_cranelift_engine_panic_falls_back_to_vm`).
     #[test]
     #[cfg(all(feature = "cranelift", debug_assertions))]

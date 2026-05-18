@@ -14,7 +14,7 @@
 //   - sub-arity (missing required positional)
 //   - super-arity (extra positional)
 //   - happy path (exact arity) — unchanged behaviour
-//   - every engine (default, --run-tree, --run-vm, --run-cranelift)
+//   - every engine (default, --run-tree, --run-vm, --jit)
 //   - inline (`ilo 'src' ...`) and file (`ilo main.ilo ...`)
 //   - auto-main file dispatch (`ilo main.ilo` with main taking args)
 //
@@ -74,7 +74,7 @@ fn inline_sub_arity_run_vm() {
 #[test]
 fn inline_sub_arity_run_cranelift() {
     // Pre-fix: JIT bailed via NotEligible, fell through to nil-padded VM.
-    assert_arity_error(run_args(&["--run-cranelift", "f x:n>n;+x 1"]), "f", 1, 0);
+    assert_arity_error(run_args(&["--jit", "f x:n>n;+x 1"]), "f", 1, 0);
 }
 
 // ── inline super-arity (extra positional) ─────────────────────────────────────
@@ -109,7 +109,7 @@ fn inline_exact_arity_run_vm() {
 
 #[test]
 fn inline_exact_arity_run_cranelift() {
-    let (code, stdout, _) = run_args(&["--run-cranelift", "f x:n>n;+x 1", "f", "5"]);
+    let (code, stdout, _) = run_args(&["--jit", "f x:n>n;+x 1", "f", "5"]);
     assert_eq!(code, 0);
     assert_eq!(stdout.trim(), "6");
 }
@@ -246,7 +246,7 @@ fn file_auto_main_super_arity_default() {
 
 // ── explicit-engine file dispatch ─────────────────────────────────────────────
 //
-// The `--run-vm` / `--run-cranelift` engine flag with a file routes
+// The `--run-vm` / `--jit` engine flag with a file routes
 // non-ident first positional to main (per the #329 / #336 fix). Cover
 // that the arity guard fires regardless of engine.
 
@@ -276,7 +276,7 @@ fn file_main_sub_arity_run_cranelift() {
     let path = dir.path().join("two.ilo");
     std::fs::write(&path, src).expect("write");
     let out = ilo()
-        .args(["--run-cranelift", path.to_str().unwrap()])
+        .args(["--jit", path.to_str().unwrap()])
         .output()
         .expect("spawn");
     let code = out.status.code().unwrap_or(-1);

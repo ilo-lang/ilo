@@ -11,7 +11,7 @@
 //     window/chunks, datetime parse/format, char/case helpers, HTTP fan-out,
 //     RECCOPY/RECSETFIELD/RECFLD_*_SAFE, etc.)
 //
-// Note: `--run-cranelift` exercises src/vm/jit_cranelift.rs (the JIT), NOT
+// Note: `--jit` exercises src/vm/jit_cranelift.rs (the JIT), NOT
 // src/vm/compile_cranelift.rs (the AOT). To cover the AOT module these tests
 // must invoke `ilo compile <src> -o <path>`, which routes through
 // `compile_to_binary` in src/vm/compile_cranelift.rs.

@@ -62,7 +62,7 @@ fn snake_field_simple_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn snake_field_simple_cranelift() {
-    check_simple("--run-cranelift");
+    check_simple("--jit");
 }
 
 // Multi-underscore field name.
@@ -94,7 +94,7 @@ fn snake_field_multi_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn snake_field_multi_cranelift() {
-    check_multi("--run-cranelift");
+    check_multi("--jit");
 }
 
 // Field name with a digit segment (`change_1d`).
@@ -121,7 +121,7 @@ fn snake_field_digit_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn snake_field_digit_cranelift() {
-    check_digit("--run-cranelift");
+    check_digit("--jit");
 }
 
 // Safe access (`.?`) on a snake_case field.
@@ -197,7 +197,7 @@ fn snake_field_bare_digit_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn snake_field_bare_digit_cranelift() {
-    check_bare_digit("--run-cranelift");
+    check_bare_digit("--jit");
 }
 
 // Alternating Ident/Number/Ident segments (`x_2y_3z`).
@@ -224,7 +224,7 @@ fn snake_field_alternating_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn snake_field_alternating_cranelift() {
-    check_alternating("--run-cranelift");
+    check_alternating("--jit");
 }
 
 // Real-world shape: `ema_20d_change_5d` (two `_Number Ident` groups).
@@ -251,5 +251,5 @@ fn snake_field_real_world_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn snake_field_real_world_cranelift() {
-    check_real_world("--run-cranelift");
+    check_real_world("--jit");
 }

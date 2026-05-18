@@ -87,7 +87,7 @@ fn builtin_fn_name_rejected_vm() {
 #[cfg(feature = "cranelift")]
 fn builtin_fn_name_rejected_cranelift() {
     for name in BUILTIN_NAMES {
-        check_single_decl("--run-cranelift", name);
+        check_single_decl("--jit", name);
     }
 }
 
@@ -131,7 +131,7 @@ fn lst_repro_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn lst_repro_cranelift() {
-    check_lst_repro("--run-cranelift");
+    check_lst_repro("--jit");
 }
 
 // Sanity: renaming the function to something non-builtin works on every
@@ -167,7 +167,7 @@ fn rename_workaround_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn rename_workaround_cranelift() {
-    check_renamed_works("--run-cranelift");
+    check_renamed_works("--jit");
 }
 
 // Sanity: the underlying builtins still work after the fix. If we

@@ -37,7 +37,7 @@ fn check_all(src: &str, expected: f64) {
     approx("--run-tree", src, expected);
     approx("--run-vm", src, expected);
     #[cfg(feature = "cranelift")]
-    approx("--run-cranelift", src, expected);
+    approx("--jit", src, expected);
 }
 
 #[test]
@@ -136,7 +136,7 @@ fn asin_domain_error_is_nan() {
     }
     #[cfg(feature = "cranelift")]
     {
-        let actual = run_num("--run-cranelift", "f>n;asin 2");
+        let actual = run_num("--jit", "f>n;asin 2");
         assert!(actual.is_nan(), "cranelift: expected NaN for asin(2)");
     }
 }

@@ -60,7 +60,7 @@ fn mset_chain_text_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn mset_chain_text_cranelift() {
-    assert_eq!(run("--run-cranelift", CHAIN_TEXT_SRC, "f"), "2");
+    assert_eq!(run("--jit", CHAIN_TEXT_SRC, "f"), "2");
 }
 
 // ── Repeated-key overwrite preserves prior values ───────────────────────────
@@ -87,7 +87,7 @@ fn mset_overwrite_text_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn mset_overwrite_text_cranelift() {
-    assert_eq!(run("--run-cranelift", OVERWRITE_TEXT_SRC, "f"), "second");
+    assert_eq!(run("--jit", OVERWRITE_TEXT_SRC, "f"), "second");
 }
 
 // NOTE on shared-map aliasing:
@@ -135,7 +135,7 @@ fn mset_nonrebind_no_alias_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn mset_nonrebind_no_alias_cranelift() {
-    assert_eq!(run("--run-cranelift", NONREBIND_NO_ALIAS_SRC, "f"), "miss");
+    assert_eq!(run("--jit", NONREBIND_NO_ALIAS_SRC, "f"), "miss");
 }
 
 // ── RC > 1 via function-call boundary ───────────────────────────────────────
@@ -160,7 +160,7 @@ fn mset_fn_boundary_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn mset_fn_boundary_cranelift() {
-    assert_eq!(run("--run-cranelift", FN_RC_SRC, "f"), "one");
+    assert_eq!(run("--jit", FN_RC_SRC, "f"), "one");
 }
 
 // ── List values (non-numeric, non-Text heap value) ──────────────────────────
@@ -184,7 +184,7 @@ fn mset_list_val_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn mset_list_val_cranelift() {
-    assert_eq!(run("--run-cranelift", LIST_VAL_SRC, "f"), "3");
+    assert_eq!(run("--jit", LIST_VAL_SRC, "f"), "3");
 }
 
 // ── Loop accumulator correctness over a non-trivial key count ──────────────
@@ -211,7 +211,7 @@ fn mset_loop_text_keys_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn mset_loop_text_keys_cranelift() {
-    assert_eq!(run("--run-cranelift", LOOP_TEXT_KEYS_SRC, "f"), "500");
+    assert_eq!(run("--jit", LOOP_TEXT_KEYS_SRC, "f"), "500");
 }
 
 // ── Scaling sanity: 5k keys must finish quickly on VM and Cranelift ────────
@@ -249,6 +249,6 @@ fn mset_scaling_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn mset_scaling_cranelift() {
-    let result = run_with_budget("--run-cranelift", SCALE_SRC, Duration::from_secs(10));
+    let result = run_with_budget("--jit", SCALE_SRC, Duration::from_secs(10));
     assert_eq!(result, "5000");
 }

@@ -80,7 +80,7 @@ fn lst_oob_vm() {
 #[cfg(feature = "cranelift")]
 fn lst_oob_cranelift() {
     check_runtime_error(
-        "--run-cranelift",
+        "--jit",
         "f>L n;lst [1,2,3] 5 99",
         &["lst", "out of range", "ILO-R004"],
     );
@@ -110,7 +110,7 @@ fn lst_negative_vm() {
 #[cfg(feature = "cranelift")]
 fn lst_negative_cranelift() {
     check_runtime_error(
-        "--run-cranelift",
+        "--jit",
         "f>L n;lst [1,2,3] -1 99",
         &["lst", "non-negative", "integer", "ILO-R004"],
     );
@@ -132,7 +132,7 @@ fn lst_ok_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn lst_ok_cranelift() {
-    check_stdout("--run-cranelift", "f>L n;lst [1,2,3] 1 99", "[1, 99, 3]");
+    check_stdout("--jit", "f>L n;lst [1,2,3] 1 99", "[1, 99, 3]");
 }
 
 // ── slc: type error on non-number index ──────────────────────────────────
@@ -158,7 +158,7 @@ fn slc_oob_clamps_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn slc_oob_clamps_cranelift() {
-    check_stdout("--run-cranelift", "f>L n;slc [1,2,3] 1 999", "[2, 3]");
+    check_stdout("--jit", "f>L n;slc [1,2,3] 1 999", "[2, 3]");
 }
 
 #[test]
@@ -174,7 +174,7 @@ fn slc_text_oob_clamps_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn slc_text_oob_clamps_cranelift() {
-    check_stdout("--run-cranelift", "f>t;slc \"hello\" 1 999", "ello");
+    check_stdout("--jit", "f>t;slc \"hello\" 1 999", "ello");
 }
 
 // ── jpth: path miss returns Err(...) on every engine (regression) ────────
@@ -209,7 +209,7 @@ fn jpth_path_miss_vm() {
 #[cfg(feature = "cranelift")]
 fn jpth_path_miss_cranelift() {
     check_stdout(
-        "--run-cranelift",
+        "--jit",
         "f>n;v=jpth \"{\\\"a\\\":1}\" \"b\";prnt v;0",
         "^key not found: b\n0",
     );
@@ -239,7 +239,7 @@ fn jpth_ok_vm() {
 #[cfg(feature = "cranelift")]
 fn jpth_ok_cranelift() {
     check_stdout(
-        "--run-cranelift",
+        "--jit",
         "f>n;v=jpth \"{\\\"a\\\":1}\" \"a\";prnt v;0",
         "~1\n0",
     );
@@ -274,7 +274,7 @@ fn index_oob_vm() {
 #[cfg(feature = "cranelift")]
 fn index_oob_cranelift() {
     check_runtime_error(
-        "--run-cranelift",
+        "--jit",
         "f>n;xs=[10,20,30];xs.5",
         &["out of bounds", "ILO-R004"],
     );
@@ -295,7 +295,7 @@ fn index_ok_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn index_ok_cranelift() {
-    check_stdout("--run-cranelift", "f>n;xs=[10,20,30];xs.1", "20");
+    check_stdout("--jit", "f>n;xs=[10,20,30];xs.1", "20");
 }
 
 // ── No stale-error leak after the new failure paths ──────────────────────
@@ -309,7 +309,7 @@ fn index_ok_cranelift() {
 fn no_stale_jit_error_leak_after_lst_oob() {
     // First call: lst OOB → runtime error.
     let out = ilo()
-        .args(["f>L n;lst [1,2,3] 5 99", "--run-cranelift", "f"])
+        .args(["f>L n;lst [1,2,3] 5 99", "--jit", "f"])
         .output()
         .expect("failed to run ilo");
     assert!(
@@ -319,7 +319,7 @@ fn no_stale_jit_error_leak_after_lst_oob() {
 
     // Second call in a fresh process: must succeed cleanly.
     let out = ilo()
-        .args(["f>L n;lst [1,2,3] 1 99", "--run-cranelift", "f"])
+        .args(["f>L n;lst [1,2,3] 1 99", "--jit", "f"])
         .output()
         .expect("failed to run ilo");
     assert!(
