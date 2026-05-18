@@ -5674,6 +5674,21 @@ enum HeapObj {
     },
     OkVal(NanVal),
     ErrVal(NanVal),
+    /// Closure: a named (lifted) function plus by-value capture snapshots.
+    ///
+    /// Produced by `OP_MAKE_CLOSURE` when an inline lambda `(params>ret;body)`
+    /// closes over enclosing-scope variables. Stored under the `TAG_LIST` tag
+    /// (heap-pointer space) and discriminated at deref by HeapObj variant.
+    /// `slice_of`, `materialize_list_view`, and other list-shaped ops error on
+    /// this variant — closures are not list-like. `OP_CALL_DYN` checks for
+    /// `HeapObj::Closure` at callee deref and prepends `captures` onto the
+    /// call frame's arg slice before dispatching as a plain User/Builtin
+    /// call (mirroring the tree interpreter's Value::Closure handling).
+    Closure {
+        kind: FnRefKind,
+        id: u32,
+        captures: Vec<NanVal>,
+    },
 }
 
 impl Drop for HeapObj {
@@ -5704,6 +5719,11 @@ impl Drop for HeapObj {
             }
             HeapObj::OkVal(inner) | HeapObj::ErrVal(inner) => {
                 inner.drop_rc();
+            }
+            HeapObj::Closure { captures, .. } => {
+                for v in captures {
+                    v.drop_rc();
+                }
             }
         }
     }
@@ -5744,7 +5764,10 @@ fn materialize_list_view(v: NanVal) -> NanVal {
                 .collect();
             NanVal::heap_list(items)
         }
-        // Tag-checked above, so unreachable; explicit arms for audit.
+        // Tag-checked above, so unreachable for these variants. Closure
+        // shares TAG_LIST but is not list-shaped — materialize_list_view is
+        // a no-op for closures (they don't have a list-view sibling).
+        HeapObj::Closure { .. } => v,
         HeapObj::Str(_)
         | HeapObj::Map(_)
         | HeapObj::Record { .. }
@@ -5794,11 +5817,15 @@ fn slice_of(obj: &HeapObj) -> &[NanVal] {
         HeapObj::List(items) => items.as_slice(),
         // Non-list variants: slice_of is contractually list-only, but explicit
         // arms keep rustc audit-enforced if HeapObj grows new variants later.
+        // Closure shares TAG_LIST but is not list-like — list ops must error
+        // rather than silently return an empty slice or read closure bytes
+        // as if they were list elements.
         HeapObj::Str(_)
         | HeapObj::Map(_)
         | HeapObj::Record { .. }
         | HeapObj::OkVal(_)
-        | HeapObj::ErrVal(_) => {
+        | HeapObj::ErrVal(_)
+        | HeapObj::Closure { .. } => {
             debug_assert!(false, "slice_of called on non-list HeapObj variant");
             &[]
         }
@@ -5831,7 +5858,8 @@ fn slice_of(obj: &HeapObj) -> &[NanVal] {
                 | HeapObj::Map(_)
                 | HeapObj::Record { .. }
                 | HeapObj::OkVal(_)
-                | HeapObj::ErrVal(_) => {
+                | HeapObj::ErrVal(_)
+                | HeapObj::Closure { .. } => {
                     debug_assert!(false, "ListView::src does not reference HeapObj::List");
                     &[]
                 }
@@ -5948,6 +5976,18 @@ impl NanVal {
         let rc = Rc::new(HeapObj::Record { type_info, fields });
         let ptr = Rc::into_raw(rc) as u64;
         NanVal(TAG_RECORD | (ptr & PTR_MASK))
+    }
+
+    /// Construct a closure value wrapping a named (lifted) function and a
+    /// vector of by-value capture snapshots. Stored under `TAG_LIST` so the
+    /// caller can use the existing heap-pointer space without carving a new
+    /// NaN tag; discrimination from real lists happens at deref by HeapObj
+    /// variant. The caller transfers ownership of each capture's RC into
+    /// the closure (no clone_rc here); the closure's Drop releases them.
+    fn heap_closure(kind: FnRefKind, id: u32, captures: Vec<NanVal>) -> Self {
+        let rc = Rc::new(HeapObj::Closure { kind, id, captures });
+        let ptr = Rc::into_raw(rc) as u64;
+        NanVal(TAG_LIST | (ptr & PTR_MASK))
     }
 
     /// Create a NanVal pointing to an arena-allocated record.
@@ -6238,6 +6278,23 @@ impl NanVal {
                     NanVal::heap_string(name.clone())
                 }
             }
+            Value::Closure { fn_name, captures } => {
+                let (kind, id) = if let Some(idx) = func_names.iter().position(|n| n == fn_name) {
+                    (FnRefKind::User, idx as u32)
+                } else if let Some(b) = crate::builtins::Builtin::from_name(fn_name) {
+                    (FnRefKind::Builtin, b.tag() as u32)
+                } else {
+                    // Unresolved closure name — fall back to text so any
+                    // downstream call surfaces a clear diagnostic rather
+                    // than producing an opaque closure with a dangling id.
+                    return NanVal::heap_string(fn_name.clone());
+                };
+                let nv_captures: Vec<NanVal> = captures
+                    .iter()
+                    .map(|v| NanVal::from_value_with_program(v, func_names))
+                    .collect();
+                NanVal::heap_closure(kind, id, nv_captures)
+            }
             _ => NanVal::from_value(val),
         }
     }
@@ -6327,6 +6384,20 @@ impl NanVal {
                     },
                     HeapObj::OkVal(inner) => Value::Ok(Box::new(inner.to_value())),
                     HeapObj::ErrVal(inner) => Value::Err(Box::new(inner.to_value())),
+                    HeapObj::Closure { kind, id, captures } => {
+                        let fn_name = match kind {
+                            FnRefKind::Builtin => crate::builtins::Builtin::from_tag(*id as u8)
+                                .map(|b| b.name().to_string())
+                                .unwrap_or_else(|| format!("<unknown_builtin:{}>", id)),
+                            FnRefKind::User => {
+                                active_func_name(*id).unwrap_or_else(|| format!("<user_fn:{}>", id))
+                            }
+                        };
+                        Value::Closure {
+                            fn_name,
+                            captures: captures.iter().map(|v| v.to_value()).collect(),
+                        }
+                    }
                 }
             },
         }
@@ -6393,6 +6464,24 @@ impl NanVal {
                         }
                         HeapObj::ErrVal(inner) => {
                             Value::Err(Box::new(inner.to_value_with_program(func_names)))
+                        }
+                        HeapObj::Closure { kind, id, captures } => {
+                            let fn_name = match kind {
+                                FnRefKind::Builtin => crate::builtins::Builtin::from_tag(*id as u8)
+                                    .map(|b| b.name().to_string())
+                                    .unwrap_or_else(|| format!("<unknown_builtin:{}>", id)),
+                                FnRefKind::User => func_names
+                                    .get(*id as usize)
+                                    .cloned()
+                                    .unwrap_or_else(|| format!("<user_fn:{}>", id)),
+                            };
+                            Value::Closure {
+                                fn_name,
+                                captures: captures
+                                    .iter()
+                                    .map(|v| v.to_value_with_program(func_names))
+                                    .collect(),
+                            }
                         }
                     }
                 }
@@ -8006,7 +8095,8 @@ impl<'a> VM<'a> {
                             | HeapObj::Map(_)
                             | HeapObj::Record { .. }
                             | HeapObj::OkVal(_)
-                            | HeapObj::ErrVal(_) => {
+                            | HeapObj::ErrVal(_)
+                            | HeapObj::Closure { .. } => {
                                 vm_err!(VmError::Type("index access on non-list"))
                             }
                         }
@@ -8045,7 +8135,8 @@ impl<'a> VM<'a> {
                                 | HeapObj::Map(_)
                                 | HeapObj::Record { .. }
                                 | HeapObj::OkVal(_)
-                                | HeapObj::ErrVal(_) => {
+                                | HeapObj::ErrVal(_)
+                                | HeapObj::Closure { .. } => {
                                     vm_err!(VmError::Type("foreach requires a list"))
                                 }
                             }
@@ -8086,7 +8177,8 @@ impl<'a> VM<'a> {
                             | HeapObj::Map(_)
                             | HeapObj::Record { .. }
                             | HeapObj::OkVal(_)
-                            | HeapObj::ErrVal(_) => {
+                            | HeapObj::ErrVal(_)
+                            | HeapObj::Closure { .. } => {
                                 vm_err!(VmError::Type("foreach requires a list"))
                             }
                         }
@@ -8128,7 +8220,8 @@ impl<'a> VM<'a> {
                             | HeapObj::Map(_)
                             | HeapObj::Record { .. }
                             | HeapObj::OkVal(_)
-                            | HeapObj::ErrVal(_) => {
+                            | HeapObj::ErrVal(_)
+                            | HeapObj::Closure { .. } => {
                                 // Should never happen: list was validated by FOREACHPREP.
                                 vm_err!(VmError::Type("foreach requires a list"))
                             }
@@ -9070,7 +9163,8 @@ impl<'a> VM<'a> {
                             HeapObj::Str(_)
                             | HeapObj::Record { .. }
                             | HeapObj::OkVal(_)
-                            | HeapObj::ErrVal(_) => {
+                            | HeapObj::ErrVal(_)
+                            | HeapObj::Closure { .. } => {
                                 vm_err!(VmError::Type("len requires string, list, or map"))
                             }
                         }
@@ -10100,7 +10194,8 @@ impl<'a> VM<'a> {
                             | HeapObj::Map(_)
                             | HeapObj::Record { .. }
                             | HeapObj::OkVal(_)
-                            | HeapObj::ErrVal(_) => {
+                            | HeapObj::ErrVal(_)
+                            | HeapObj::Closure { .. } => {
                                 vm_err!(VmError::Type("has requires a list or text"))
                             }
                         }
@@ -10143,7 +10238,8 @@ impl<'a> VM<'a> {
                             | HeapObj::Map(_)
                             | HeapObj::Record { .. }
                             | HeapObj::OkVal(_)
-                            | HeapObj::ErrVal(_) => {
+                            | HeapObj::ErrVal(_)
+                            | HeapObj::Closure { .. } => {
                                 vm_err!(VmError::Type("hd requires a list or text"))
                             }
                         }
@@ -10218,7 +10314,8 @@ impl<'a> VM<'a> {
                             | HeapObj::Map(_)
                             | HeapObj::Record { .. }
                             | HeapObj::OkVal(_)
-                            | HeapObj::ErrVal(_) => {
+                            | HeapObj::ErrVal(_)
+                            | HeapObj::Closure { .. } => {
                                 vm_err!(VmError::Type("at requires a list or text"))
                             }
                         }
@@ -10615,7 +10712,8 @@ impl<'a> VM<'a> {
                             | HeapObj::Map(_)
                             | HeapObj::Record { .. }
                             | HeapObj::OkVal(_)
-                            | HeapObj::ErrVal(_) => {
+                            | HeapObj::ErrVal(_)
+                            | HeapObj::Closure { .. } => {
                                 vm_err!(VmError::Type("tl requires a list or text"))
                             }
                         }
@@ -10654,7 +10752,8 @@ impl<'a> VM<'a> {
                             | HeapObj::Map(_)
                             | HeapObj::Record { .. }
                             | HeapObj::OkVal(_)
-                            | HeapObj::ErrVal(_) => {
+                            | HeapObj::ErrVal(_)
+                            | HeapObj::Closure { .. } => {
                                 vm_err!(VmError::Type("rev requires a list or text"))
                             }
                         }
@@ -10722,7 +10821,8 @@ impl<'a> VM<'a> {
                             | HeapObj::Map(_)
                             | HeapObj::Record { .. }
                             | HeapObj::OkVal(_)
-                            | HeapObj::ErrVal(_) => {
+                            | HeapObj::ErrVal(_)
+                            | HeapObj::Closure { .. } => {
                                 vm_err!(VmError::Type("srt requires a list or text"))
                             }
                         }
@@ -10789,7 +10889,8 @@ impl<'a> VM<'a> {
                             | HeapObj::Map(_)
                             | HeapObj::Record { .. }
                             | HeapObj::OkVal(_)
-                            | HeapObj::ErrVal(_) => {
+                            | HeapObj::ErrVal(_)
+                            | HeapObj::Closure { .. } => {
                                 vm_err!(VmError::Type("rsrt requires a list or text"))
                             }
                         }
@@ -10980,7 +11081,8 @@ impl<'a> VM<'a> {
                             | HeapObj::Map(_)
                             | HeapObj::Record { .. }
                             | HeapObj::OkVal(_)
-                            | HeapObj::ErrVal(_) => {
+                            | HeapObj::ErrVal(_)
+                            | HeapObj::Closure { .. } => {
                                 vm_err!(VmError::Type("slc requires a list or text"))
                             }
                         }
@@ -11034,7 +11136,8 @@ impl<'a> VM<'a> {
                             | HeapObj::Map(_)
                             | HeapObj::Record { .. }
                             | HeapObj::OkVal(_)
-                            | HeapObj::ErrVal(_) => {
+                            | HeapObj::ErrVal(_)
+                            | HeapObj::Closure { .. } => {
                                 vm_err!(VmError::Type("lst requires a list"))
                             }
                         }
@@ -11187,7 +11290,8 @@ impl<'a> VM<'a> {
                             | HeapObj::Map(_)
                             | HeapObj::Record { .. }
                             | HeapObj::OkVal(_)
-                            | HeapObj::ErrVal(_) => {
+                            | HeapObj::ErrVal(_)
+                            | HeapObj::Closure { .. } => {
                                 vm_err!(VmError::Type("take requires a list or text"))
                             }
                         }
@@ -11237,7 +11341,8 @@ impl<'a> VM<'a> {
                             | HeapObj::Map(_)
                             | HeapObj::Record { .. }
                             | HeapObj::OkVal(_)
-                            | HeapObj::ErrVal(_) => {
+                            | HeapObj::ErrVal(_)
+                            | HeapObj::Closure { .. } => {
                                 vm_err!(VmError::Type("drop requires a list or text"))
                             }
                         }
@@ -11314,7 +11419,8 @@ impl<'a> VM<'a> {
                             | HeapObj::Map(_)
                             | HeapObj::Record { .. }
                             | HeapObj::OkVal(_)
-                            | HeapObj::ErrVal(_) => {
+                            | HeapObj::ErrVal(_)
+                            | HeapObj::Closure { .. } => {
                                 return Err(VmError::Type("+= requires a list"));
                             }
                         }
@@ -11339,7 +11445,8 @@ impl<'a> VM<'a> {
                             | HeapObj::Map(_)
                             | HeapObj::Record { .. }
                             | HeapObj::OkVal(_)
-                            | HeapObj::ErrVal(_) => {
+                            | HeapObj::ErrVal(_)
+                            | HeapObj::Closure { .. } => {
                                 vm_err!(VmError::Type("+= requires a list"))
                             }
                         }
@@ -11690,6 +11797,20 @@ fn nanval_to_json(v: NanVal) -> serde_json::Value {
                             .collect();
                         serde_json::Value::Object(obj)
                     }
+                    HeapObj::Closure { kind, id, .. } => {
+                        // Closures don't have a meaningful JSON representation —
+                        // serialise as a sentinel string so jdmp surfaces "got a
+                        // closure" rather than panicking or producing junk.
+                        let name = match kind {
+                            FnRefKind::Builtin => crate::builtins::Builtin::from_tag(*id as u8)
+                                .map(|b| b.name().to_string())
+                                .unwrap_or_else(|| format!("<unknown_builtin:{}>", id)),
+                            FnRefKind::User => {
+                                active_func_name(*id).unwrap_or_else(|| format!("<user_fn:{}>", id))
+                            }
+                        };
+                        serde_json::Value::String(format!("<closure:{}>", name))
+                    }
                 }
             }
         }
@@ -11832,7 +11953,8 @@ fn nanval_truthy(v: NanVal) -> bool {
                     HeapObj::Map(_)
                     | HeapObj::Record { .. }
                     | HeapObj::OkVal(_)
-                    | HeapObj::ErrVal(_) => true,
+                    | HeapObj::ErrVal(_)
+                    | HeapObj::Closure { .. } => true,
                 }
             },
         }
