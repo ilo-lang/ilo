@@ -1,0 +1,49 @@
+-- Commutative prefix operators accept literal-first or ref-first operands
+-- symmetrically: `+ 1 x` parses the same as `+ x 1`.
+--
+-- quant-trader rerun9 (assessment doc) hit a transient where
+-- `onep=+ 1 contrib` was reported as failing to parse while the
+-- operand-swapped `onep=+ contrib 1` worked. On current main both forms
+-- parse cleanly and produce identical `BinOp Add(Literal, Ref)` ASTs
+-- across every engine — but the friction was real for a persona run, so
+-- this example locks the symmetry contract.
+--
+-- Covers `+`, `*`, `&`, `|` (the four commutatives where order shouldn't
+-- matter). `-` and `/` are non-commutative and have their own examples.
+
+-- `+` literal-first vs ref-first.
+plus-lit-first x:n>n;+ 1 x
+plus-ref-first x:n>n;+ x 1
+
+-- `*` literal-first vs ref-first.
+mul-lit-first x:n>n;* 2 x
+mul-ref-first x:n>n;* x 2
+
+-- `&` literal-first vs ref-first (booleans).
+and-lit-first b:b>b;& true b
+and-ref-first b:b>b;& b true
+
+-- `|` literal-first vs ref-first.
+or-lit-first b:b>b;| false b
+or-ref-first b:b>b;| b false
+
+-- run: plus-lit-first 5
+-- out: 6
+-- run: plus-ref-first 5
+-- out: 6
+-- run: mul-lit-first 5
+-- out: 10
+-- run: mul-ref-first 5
+-- out: 10
+-- run: and-lit-first true
+-- out: true
+-- run: and-ref-first true
+-- out: true
+-- run: and-lit-first false
+-- out: false
+-- run: or-lit-first false
+-- out: false
+-- run: or-ref-first false
+-- out: false
+-- run: or-lit-first true
+-- out: true
