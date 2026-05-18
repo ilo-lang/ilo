@@ -6,9 +6,43 @@ Thanks for your interest in contributing to ilo!
 
 ```bash
 git clone https://github.com/ilo-lang/ilo
-cd ilo-lang
+cd ilo
 cargo test
 ```
+
+## Shared build cache (recommended)
+
+ilo development typically involves many worktrees (one per fix / feature
+branch). By default each worktree gets its own `target/` directory and these
+add up fast, historically into the tens of GB on a single developer machine.
+Set a shared cache once in your shell config:
+
+```bash
+# ~/.zshrc or ~/.bashrc
+export CARGO_TARGET_DIR="$HOME/.cargo-shared"
+mkdir -p "$CARGO_TARGET_DIR"
+```
+
+All worktrees then share one build cache. Cargo namespaces artefacts per
+package + feature combination internally, so this is safe across branches.
+
+## Empirical discipline
+
+Claims about ilo's performance, token count, or runtime behaviour need
+benchmarks or tests, not assertions. "Measured, not asserted" is the rule.
+If you're tightening a hot path, add a criterion bench or a deterministic
+timing harness. If you're claiming a token win in docs, the number comes
+from the benchmark, not from rounding what feels right.
+
+The binary-size tripwire (`tests/binary_size.rs`) is one expression of this:
+AOT output for a trivial program is checked against a ceiling on every CI
+run, so dep upgrades that inflate the runtime fail loudly instead of
+drifting silently.
+
+## Strategic context
+
+Longer-form plans for upcoming phases live in `zero-gap-specs/` (separate
+repo). Briefs there set the why; PRs here implement the how.
 
 ## Development
 
@@ -39,8 +73,8 @@ Key source files:
 
 ## Community
 
-- [r/ilolang](https://www.reddit.com/r/ilolang/) — discussion, feedback, and updates
-- Email: danieljohnmorris@gmail.com
+- [ilo-lang.ai](https://ilo-lang.ai) — docs, playground, and examples
+- [hello@ilo-lang.ai](mailto:hello@ilo-lang.ai) — get in touch
 
 ## Language Spec
 

@@ -1800,13 +1800,26 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         };
     }
     if builtin == Some(Builtin::Rev) && args.len() == 1 {
-        return match &args[0] {
-            Value::List(items) => {
-                let mut reversed: Vec<Value> = (**items).clone();
-                reversed.reverse();
-                Ok(Value::List(Arc::new(reversed)))
+        // RC=1 fast path: consume args by value so we own the Arc; Arc::make_mut
+        // mutates the underlying Vec/String in place when the Arc is the sole
+        // reference, else clones once. Mirrors the mset/mdel pattern landed in
+        // PR #249. The clone-on-shared branch keeps the same observable
+        // behaviour (callers still see a fresh List/Text), while the sole-owner
+        // branch skips the buffer allocation entirely.
+        let mut it = args.into_iter();
+        let v = it.next().unwrap();
+        return match v {
+            Value::List(mut items) => {
+                let inner = Arc::make_mut(&mut items);
+                inner.reverse();
+                Ok(Value::List(items))
             }
-            Value::Text(s) => Ok(Value::Text(Arc::new(s.chars().rev().collect()))),
+            Value::Text(mut s) => {
+                let inner = Arc::make_mut(&mut s);
+                let reversed: String = inner.chars().rev().collect();
+                *inner = reversed;
+                Ok(Value::Text(s))
+            }
             other => Err(RuntimeError::new(
                 "ILO-R009",
                 format!("rev requires a list or text, got {:?}", other),
@@ -1814,33 +1827,39 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         };
     }
     if builtin == Some(Builtin::Srt) && args.len() == 1 {
-        return match &args[0] {
-            Value::List(items) => {
+        // RC=1 fast path: see Rev for rationale. When the input Arc is uniquely
+        // owned, Arc::make_mut hands back &mut Vec<Value> and we sort in place;
+        // when shared, it clones once and we sort the clone. Same observable
+        // behaviour either way.
+        let mut it = args.into_iter();
+        let v = it.next().unwrap();
+        return match v {
+            Value::List(mut items) => {
                 if items.is_empty() {
-                    return Ok(Value::List(Arc::new(vec![])));
+                    return Ok(Value::List(items));
                 }
                 let all_numbers = items.iter().all(|v| matches!(v, Value::Number(_)));
                 let all_text = items.iter().all(|v| matches!(v, Value::Text(_)));
                 if all_numbers {
-                    let mut sorted: Vec<Value> = (**items).clone();
-                    sorted.sort_by(|a, b| {
+                    let inner = Arc::make_mut(&mut items);
+                    inner.sort_by(|a, b| {
                         if let (Value::Number(x), Value::Number(y)) = (a, b) {
                             x.partial_cmp(y).unwrap_or(std::cmp::Ordering::Equal)
                         } else {
                             unreachable!()
                         }
                     });
-                    Ok(Value::List(Arc::new(sorted)))
+                    Ok(Value::List(items))
                 } else if all_text {
-                    let mut sorted: Vec<Value> = (**items).clone();
-                    sorted.sort_by(|a, b| {
+                    let inner = Arc::make_mut(&mut items);
+                    inner.sort_by(|a, b| {
                         if let (Value::Text(x), Value::Text(y)) = (a, b) {
                             x.cmp(y)
                         } else {
                             unreachable!()
                         }
                     });
-                    Ok(Value::List(Arc::new(sorted)))
+                    Ok(Value::List(items))
                 } else {
                     Err(RuntimeError::new(
                         "ILO-R009",
@@ -1848,10 +1867,12 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                     ))
                 }
             }
-            Value::Text(s) => {
-                let mut chars: Vec<char> = s.chars().collect();
+            Value::Text(mut s) => {
+                let inner = Arc::make_mut(&mut s);
+                let mut chars: Vec<char> = inner.chars().collect();
                 chars.sort();
-                Ok(Value::Text(Arc::new(chars.into_iter().collect())))
+                *inner = chars.into_iter().collect();
+                Ok(Value::Text(s))
             }
             other => Err(RuntimeError::new(
                 "ILO-R009",
@@ -2982,13 +3003,23 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             )
         })?;
         let captures = closure_captures(&args[0]);
-        let (ctx, list_arg) = if args.len() == 3 {
-            (Some(args[1].clone()), &args[2])
+        // Consume args so we can move the input List Arc and try Arc::make_mut
+        // for the RC=1 in-place compact fast path. When the input is sole-owned
+        // we mutate the underlying Vec via Vec::retain — N kept items skip the
+        // per-item Value::clone() the cold path pays. When shared we fall
+        // through to a fresh allocation.
+        let mut args_iter = args.into_iter();
+        let fn_arg = args_iter.next().unwrap();
+        let _ = fn_arg;
+        let (ctx, list_arg) = if args_iter.len() == 2 {
+            let c = args_iter.next().unwrap();
+            let l = args_iter.next().unwrap();
+            (Some(c), l)
         } else {
-            (None, &args[1])
+            (None, args_iter.next().unwrap())
         };
-        let items = match list_arg {
-            Value::List(l) => l.clone(),
+        let mut items = match list_arg {
+            Value::List(l) => l,
             other => {
                 return Err(RuntimeError::new(
                     "ILO-R009",
@@ -2996,7 +3027,10 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 ));
             }
         };
-        let mut result = Vec::new();
+        // First pass: evaluate the predicate once per item, recording a bitmap
+        // of keeps so we never call the predicate twice. The predicate may
+        // panic — we don't reorder side effects relative to the cold path.
+        let mut keep: Vec<bool> = Vec::with_capacity(items.len());
         for item in items.iter() {
             let mut call_args = match &ctx {
                 Some(c) => vec![item.clone(), c.clone()],
@@ -3004,8 +3038,8 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             };
             call_args.extend(captures.iter().cloned());
             match call_function(env, &fn_name, call_args)? {
-                Value::Bool(true) => result.push(item.clone()),
-                Value::Bool(false) => {}
+                Value::Bool(true) => keep.push(true),
+                Value::Bool(false) => keep.push(false),
                 other => {
                     return Err(RuntimeError::new(
                         "ILO-R009",
@@ -3014,7 +3048,27 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 }
             }
         }
-        return Ok(Value::List(Arc::new(result)));
+        // Second pass: branch on RC. Sole-owned -> retain in place (zero
+        // per-item Value::clone()s). Shared -> clone-collect kept items only
+        // (cheaper than cloning the full Vec when many items are dropped).
+        return if Arc::strong_count(&items) == 1 {
+            let inner = Arc::make_mut(&mut items);
+            let mut idx = 0usize;
+            inner.retain(|_| {
+                let k = keep[idx];
+                idx += 1;
+                k
+            });
+            Ok(Value::List(items))
+        } else {
+            let mut result = Vec::with_capacity(keep.iter().filter(|k| **k).count());
+            for (item, &k) in items.iter().zip(keep.iter()) {
+                if k {
+                    result.push(item.clone());
+                }
+            }
+            Ok(Value::List(Arc::new(result)))
+        };
     }
     if builtin == Some(Builtin::Ct) && (args.len() == 2 || args.len() == 3) {
         // ct fn xs / ct fn ctx xs  → number of elements where fn returns true.

@@ -1349,14 +1349,37 @@ ilo verifies programs before execution and reports errors with stable codes, sou
 
 ### Error codes
 
-Every error has a stable code:
+Every error has a stable `ILO-<letter><digits>` code. The letter is the
+namespace - the phase that raised the diagnostic - so agents and tools
+can route on prefix without parsing the message. Numeric ranges are
+reserved per namespace with generous gaps, so future codes slot in
+cleanly and the contract is forward-compatible.
 
-| Prefix | Phase |
-|--------|-------|
-| `ILO-L___` | lexer (tokenisation) |
-| `ILO-P___` | parser (syntax) |
-| `ILO-T___` | type verifier (static analysis) |
-| `ILO-R___` | runtime (execution) |
+| Range          | Letter | Area                          | Status   |
+|----------------|--------|-------------------------------|----------|
+| `ILO-L000-099` | L      | Lexer / tokenisation          | active   |
+| `ILO-P100-199` | P      | Parser / syntax               | active   |
+| `ILO-N200-299` | N      | Names / resolution            | reserved |
+| `ILO-I300-399` | I      | Imports                       | reserved |
+| `ILO-T400-499` | T      | Types                         | active   |
+| `ILO-V500-599` | V      | Verifier (post-type checks)   | reserved |
+| `ILO-R600-699` | R      | Runtime                       | active   |
+| `ILO-D700-799` | D      | Deprecation warnings          | reserved |
+| `ILO-E800-899` | E      | Engine-specific limitations   | reserved |
+| `ILO-S900-999` | S      | Skill / spec system           | reserved |
+
+**Historical codes.** ilo shipped with flat numbering inside each
+namespace - `ILO-L001`, `ILO-P001`, `ILO-T001`, `ILO-R001`, `ILO-W001`,
+all starting at 001. Those codes remain valid forever. The hundreds-block
+allocation above applies to new codes from now on, and a cross-engine
+regression test asserts every emitted code lives in a documented range.
+
+**Reserved namespaces.** `N`, `I`, `V`, `D`, `E`, `S` carry no codes
+today. They are forward declarations so the first code in each category
+slots into its own range without conflicting with the active namespaces.
+`D` is earmarked for deprecation warnings: when a feature is scheduled
+for removal it emits an `ILO-D7xx` warning at compile time without
+failing the build.
 
 Use `--explain` to see a detailed explanation:
 ```

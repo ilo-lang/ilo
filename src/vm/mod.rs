@@ -11159,7 +11159,39 @@ impl<'a> VM<'a> {
                     let a = ((inst >> 16) & 0xFF) as usize + base;
                     let b = ((inst >> 8) & 0xFF) as usize + base;
                     let v = reg!(b);
+                    // RC=1 fast path applies when (1) destination matches
+                    // source (rebind shape `xs = rev xs`), (2) operand is a
+                    // plain HeapObj::List (NOT ListView — a view shares its
+                    // backing buffer with another list), (3) Rc strong count
+                    // is exactly 1. In that case we reverse the inner Vec in
+                    // place without cloning any items or allocating a fresh
+                    // list. Same observable behaviour as the cold path:
+                    // contents of the Vec at `a` after the op are the
+                    // reversal of the contents at `b` on entry. Mirror of the
+                    // OP_ADD string fast path (line ~7253).
                     let result = if v.is_string() {
+                        let ptr = (v.0 & PTR_MASK) as *const HeapObj;
+                        // SAFETY: is_string() ⇒ ptr is a live Rc-managed Str.
+                        let rc_count = {
+                            let rc_peek = unsafe { Rc::from_raw(ptr) };
+                            let count = Rc::strong_count(&rc_peek);
+                            std::mem::forget(rc_peek);
+                            count
+                        };
+                        if a == b && rc_count == 1 {
+                            // SAFETY: sole owner, same dest slot. No other
+                            // live ref can observe the in-place mutation.
+                            let heap_mut = unsafe { &mut *(ptr as *mut HeapObj) };
+                            match heap_mut {
+                                HeapObj::Str(s) => {
+                                    let reversed: String = s.chars().rev().collect();
+                                    *s = reversed;
+                                }
+                                _ => unreachable!(),
+                            }
+                            // a == b: bv already in slot a, nothing to write.
+                            continue;
+                        }
                         let s = unsafe {
                             match v.as_heap_ref() {
                                 HeapObj::Str(s) => s,
@@ -11169,7 +11201,41 @@ impl<'a> VM<'a> {
                         NanVal::heap_string(s.chars().rev().collect::<String>())
                     } else if v.is_heap() {
                         match unsafe { v.as_heap_ref() } {
-                            h @ (HeapObj::List(_) | HeapObj::ListView { .. }) => {
+                            HeapObj::List(_) => {
+                                let ptr = (v.0 & PTR_MASK) as *const HeapObj;
+                                // SAFETY: tag is TAG_LIST and variant matched
+                                // List ⇒ ptr is a live Rc-managed List.
+                                let rc_count = {
+                                    let rc_peek = unsafe { Rc::from_raw(ptr) };
+                                    let count = Rc::strong_count(&rc_peek);
+                                    std::mem::forget(rc_peek);
+                                    count
+                                };
+                                if a == b && rc_count == 1 {
+                                    // SAFETY: sole owner, same dest slot. Vec
+                                    // reversal touches no item NanVals' RCs.
+                                    let heap_mut = unsafe { &mut *(ptr as *mut HeapObj) };
+                                    match heap_mut {
+                                        HeapObj::List(items) => items.reverse(),
+                                        _ => unreachable!(),
+                                    }
+                                    continue;
+                                }
+                                let items = slice_of(unsafe { v.as_heap_ref() });
+                                let mut reversed: Vec<NanVal> = items
+                                    .iter()
+                                    .map(|item| {
+                                        item.clone_rc();
+                                        *item
+                                    })
+                                    .collect();
+                                reversed.reverse();
+                                NanVal::heap_list(reversed)
+                            }
+                            h @ HeapObj::ListView { .. } => {
+                                // ListView shares its backing buffer with
+                                // another List — no in-place reversal is
+                                // sound. Fall through to clone-and-reverse.
                                 let items = slice_of(h);
                                 let mut reversed: Vec<NanVal> = items
                                     .iter()
@@ -11199,6 +11265,51 @@ impl<'a> VM<'a> {
                     let a = ((inst >> 16) & 0xFF) as usize + base;
                     let b = ((inst >> 8) & 0xFF) as usize + base;
                     let v = reg!(b);
+                    // RC=1 fast path (list only, not ListView; rebind shape
+                    // `xs = srt xs`): sort the inner Vec in place. Same
+                    // contract / mirror as OP_REV's fast path above. Sorting
+                    // doesn't change item RCs.
+                    if a == b
+                        && v.is_heap()
+                        && matches!(unsafe { v.as_heap_ref() }, HeapObj::List(_))
+                    {
+                        let ptr = (v.0 & PTR_MASK) as *const HeapObj;
+                        let rc_count = {
+                            // SAFETY: live Rc<HeapObj::List>.
+                            let rc_peek = unsafe { Rc::from_raw(ptr) };
+                            let count = Rc::strong_count(&rc_peek);
+                            std::mem::forget(rc_peek);
+                            count
+                        };
+                        if rc_count == 1 {
+                            // SAFETY: sole owner, same dest slot.
+                            let heap_mut = unsafe { &mut *(ptr as *mut HeapObj) };
+                            let items = match heap_mut {
+                                HeapObj::List(v) => v,
+                                _ => unreachable!(),
+                            };
+                            if items.is_empty() {
+                                continue;
+                            }
+                            let all_numbers = items.iter().all(|v| v.is_number());
+                            let all_strings = items.iter().all(|v| v.is_string());
+                            if all_numbers {
+                                items.sort_by(|a, b| {
+                                    a.as_number()
+                                        .partial_cmp(&b.as_number())
+                                        .unwrap_or(std::cmp::Ordering::Equal)
+                                });
+                                continue;
+                            } else if all_strings {
+                                items.sort_by(|a, b| unsafe { nanval_str_cmp(*a, *b) });
+                                continue;
+                            } else {
+                                vm_err!(VmError::Type(
+                                    "srt: list must contain all numbers or all text"
+                                ));
+                            }
+                        }
+                    }
                     if v.is_string() {
                         let s = unsafe {
                             match v.as_heap_ref() {
@@ -14486,6 +14597,11 @@ pub(crate) extern "C" fn jit_tl(a: u64, span_bits: u64) -> u64 {
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn jit_rev(a: u64, span_bits: u64) -> u64 {
+    // NOTE: no RC=1 fast path here yet. The JIT calling convention for
+    // single-input helpers keeps the source slot's RC alive across the call
+    // (the compiler emits no drop_rc before invoking us), so we can't tell
+    // from inside this helper whether we're the sole owner. The bytecode
+    // OP_REV fast path covers the same shape; JIT-emitted code is a follow-up.
     let v = NanVal(a);
     if v.is_string() {
         let s = unsafe {
