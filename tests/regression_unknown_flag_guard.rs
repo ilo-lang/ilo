@@ -17,9 +17,8 @@
 //   2. To pass a hyphen-prefixed token as a literal arg, the user inserts
 //      `--` first: `ilo main.ilo -- --foo` or `ilo main.ilo -- --foo=bar`.
 //   3. All recognised long flags (`--run-vm`, `--bench`, etc.) still work.
-//   4. Holds across every engine (default, --run-tree, --run-vm,
-//      --jit), the bare-positional dispatcher AND the `run`
-//      subcommand path.
+//   4. Holds across every engine (default, --run-vm, --jit), the
+//      bare-positional dispatcher AND the `run` subcommand path.
 
 use std::io::Write;
 use std::process::Command;
@@ -157,13 +156,18 @@ fn recognised_run_vm_flag_still_works() {
 }
 
 #[test]
-fn recognised_run_tree_flag_still_works() {
-    let p = temp_main("known_run_tree");
+fn removed_run_tree_flag_hits_unknown_flag_guard() {
+    // --run-tree / --run were removed from the public CLI surface as part
+    // of the tree-walker soft-deprecation. They must now hit the unknown-flag
+    // guard with a clean error rather than being silently accepted as a
+    // positional argument.
+    let p = temp_main("removed_run_tree");
     let path_str = p.to_str().unwrap();
     let (code, _, stderr) = run_args(&["--run-tree", path_str]);
-    assert_eq!(
-        code, 0,
-        "--run-tree should still parse and run; stderr={stderr}"
+    assert_ne!(code, 0, "--run-tree should be rejected; stderr={stderr}");
+    assert!(
+        stderr.contains("--run-tree") || stderr.contains("unknown"),
+        "stderr should name the removed flag; got: {stderr}"
     );
 }
 
@@ -185,7 +189,7 @@ fn recognised_bench_flag_still_works() {
 fn unknown_flag_rejected_under_run_tree() {
     let p = temp_main("eng_tree");
     let path_str = p.to_str().unwrap();
-    assert_unrecognised(run_args(&["--run-tree", path_str, "--foo"]), "--foo");
+    assert_unrecognised(run_args(&["--run-vm", path_str, "--foo"]), "--foo");
 }
 
 #[test]
