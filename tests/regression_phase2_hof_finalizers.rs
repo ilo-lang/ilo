@@ -8,8 +8,12 @@
 // via either an existing opcode (mapr: OP_WRAPOK on the acc list) or a
 // new dedicated finalizer opcode (srt/grp/uniqby: 179-181, follow-up PR).
 //
-// This PR ships the `mapr 2` lift. The remaining three HOFs are deferred
-// to PR3c per the time-box on the original PR3b scope.
+// PR3b shipped the `mapr 2` lift. PR3c lifts the remaining three HOFs
+// (`srt 2` / `grp 2` / `uniqby 2`) with dedicated finalizer opcodes
+// (OP_SRT_BY_KEY / OP_GRP_BY_KEY / OP_UNIQ_BY_KEY). The shape is shared
+// across all three: a foreach loop fills parallel keys + values lists
+// via OP_CALL_DYN, then the finalizer opcode walks them in lockstep to
+// assemble the final sorted list / grouped map / deduped list.
 //
 // Each migrated HOF is exercised in three shapes:
 //   1. Non-capturing inline lambda (Phase 1 shape, FnRef to __lit_N).
@@ -170,4 +174,116 @@ fn mapr_short_circuit_all_ok() {
 fn mapr_short_circuit_first_element() {
     let src = "chk x:n>R n t;>x 5 ^\"too big\";~*x 2\nf xs:L n>R (L n) t;mapr chk xs";
     run_err_all_contains(src, "f", &["[100,2,3]"], "too big");
+}
+
+// ── PR3c (srt 2 / grp 2 / uniqby 2 finalizer opcodes) ─────────────────
+//
+// Each HOF gets four shapes exercised across all engines: non-capturing
+// inline lambda, capturing inline lambda, named fn-ref, and empty input.
+// The non-capturing case uses an inline lambda whose body is a single
+// op (the key function), so the bytecode hits OP_CALL_DYN against a
+// FnRef-only NanVal. The capturing case bumps to OP_MAKE_CLOSURE +
+// closure-aware OP_CALL_DYN — exercising the Phase 2 PR2 path under
+// each new finalizer. The named-fn case ensures `srt fn xs` with a
+// top-level fn works without any closure machinery.
+//
+// All assertions are against the tree-walker's canonical output, which
+// the existing tree-bridge guaranteed before PR3c.
+
+// ── srt 2 ─────────────────────────────────────────────────────────────
+
+#[test]
+fn srt_inline_lambda_non_capturing() {
+    // Sort by absolute value (negated key path that tree-walker matches).
+    let src = "k x:n>n;-0 x\nf xs:L n>L n;srt k xs";
+    run_all(src, "f", &["[3,1,4,1,5,9,2,6]"], "[9, 6, 5, 4, 3, 2, 1, 1]");
+}
+
+#[test]
+fn srt_inline_lambda_single_capture() {
+    // Key is item*scale, so sort order depends on the captured scale.
+    let src = "f xs:L n s:n>L n;srt (x:n>n;*x s) xs";
+    run_all(src, "f", &["[3,1,4,1,5]", "1"], "[1, 1, 3, 4, 5]");
+    // Negative scale flips the sort.
+    run_all(src, "f", &["[3,1,4,1,5]", "-1"], "[5, 4, 3, 1, 1]");
+}
+
+#[test]
+fn srt_named_fn_ref() {
+    let src = "neg x:n>n;-0 x\nf xs:L n>L n;srt neg xs";
+    run_all(src, "f", &["[2,8,5,1]"], "[8, 5, 2, 1]");
+}
+
+#[test]
+fn srt_empty_input() {
+    let src = "k x:n>n;-0 x\nf xs:L n>L n;srt k xs";
+    run_all(src, "f", &["[]"], "[]");
+}
+
+// ── grp 2 ─────────────────────────────────────────────────────────────
+
+#[test]
+fn grp_inline_lambda_non_capturing() {
+    // Group by "big" if > 5 else "small".
+    let src = "k x:n>t;>x 5 \"big\";\"small\"\nf xs:L n>M t L n;grp k xs";
+    run_all(
+        src,
+        "f",
+        &["[1,2,7,3,8,9]"],
+        "{big: [7, 8, 9]; small: [1, 2, 3]}",
+    );
+}
+
+#[test]
+fn grp_inline_lambda_single_capture() {
+    // Threshold is captured, label by side of the threshold.
+    let src = "f xs:L n t:n>M t L n;grp (x:n>t;>x t \"big\";\"small\") xs";
+    run_all(
+        src,
+        "f",
+        &["[1,2,7,3,8,9]", "5"],
+        "{big: [7, 8, 9]; small: [1, 2, 3]}",
+    );
+}
+
+#[test]
+fn grp_named_fn_ref() {
+    let src = "lbl x:n>t;>x 5 \"big\";\"small\"\nf xs:L n>M t L n;grp lbl xs";
+    run_all(src, "f", &["[1,7,2,8]"], "{big: [7, 8]; small: [1, 2]}");
+}
+
+#[test]
+fn grp_empty_input() {
+    let src = "k x:n>t;>x 5 \"big\";\"small\"\nf xs:L n>M t L n;grp k xs";
+    run_all(src, "f", &["[]"], "{}");
+}
+
+// ── uniqby 2 ──────────────────────────────────────────────────────────
+
+#[test]
+fn uniqby_inline_lambda_non_capturing() {
+    // Dedup by "big" / "small" bucket — keep first per bucket.
+    let src = "k x:n>t;>x 5 \"big\";\"small\"\nf xs:L n>L n;uniqby k xs";
+    run_all(src, "f", &["[1,2,7,3,8,9]"], "[1, 7]");
+}
+
+#[test]
+fn uniqby_inline_lambda_single_capture() {
+    // Captured threshold drives the bucket.
+    let src = "f xs:L n t:n>L n;uniqby (x:n>t;>x t \"big\";\"small\") xs";
+    run_all(src, "f", &["[1,2,7,3,8,9]", "5"], "[1, 7]");
+    // Tighter threshold flips first-seen on each side.
+    run_all(src, "f", &["[1,2,7,3,8,9]", "2"], "[1, 7]");
+}
+
+#[test]
+fn uniqby_named_fn_ref() {
+    let src = "lbl x:n>t;>x 5 \"big\";\"small\"\nf xs:L n>L n;uniqby lbl xs";
+    run_all(src, "f", &["[1,7,2,8]"], "[1, 7]");
+}
+
+#[test]
+fn uniqby_empty_input() {
+    let src = "k x:n>t;>x 5 \"big\";\"small\"\nf xs:L n>L n;uniqby k xs";
+    run_all(src, "f", &["[]"], "[]");
 }

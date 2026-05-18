@@ -1,0 +1,31 @@
+-- uniqby fn xs — keep the first item per distinct key. Phase 2 PR3c
+-- lifts the 2-arg form off the tree-bridge: VM and Cranelift now run a
+-- native foreach + per-element OP_CALL_DYN, then assemble the dedup'd
+-- list via OP_UNIQ_BY_KEY. Closure callbacks dispatch natively.
+--
+-- Keys are hashed via type-prefixed strings (`t:`/`n:`/`b:`), so
+-- numeric and text keys with the same printed form never alias.
+
+-- Key: a text label based on size bucket. First "small" wins, first
+-- "big" wins.
+lbl n:n>t;>n 5 "big";"small"
+
+by-size ns:L n>L n;uniqby lbl ns
+
+-- Capturing lambda: bucket by a caller-supplied threshold. Captured
+-- `t` flows through the closure and is read on every callback.
+by-thresh ns:L n t:n>L n;uniqby (n:n>t;>n t "big";"small") ns
+
+-- Mixed-type list: uniqby never aliases a Number with a Text that
+-- prints the same. Here all four items share the printed form "1" or
+-- "true" but their key prefixes (`n:` vs `t:` vs `b:`) keep them apart.
+idt x:t>t;x
+
+by-text ws:L t>L t;uniqby idt ws
+
+-- run: by-size [1,2,7,3,8,9]
+-- out: [1, 7]
+-- run: by-thresh [1,2,7,3,8,9] 5
+-- out: [1, 7]
+-- run: by-text ["a","b","a","c","b"]
+-- out: [a, b, c]
