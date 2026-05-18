@@ -1171,6 +1171,36 @@ fn scan_camel_offenders(src: &str) -> Vec<CamelOffender> {
     let mut i = 0;
     while i < bytes.len() {
         let b = bytes[i];
+        // Skip string literal content so format strings like
+        // `"%Y-%m-%dT%H:%M"` don't surface `dT` as a fake camelCase
+        // offender. Mirrors the pre-pass at the top of this file: a `"`
+        // opens a string that runs to the next unescaped `"`.
+        if b == b'"' {
+            i += 1;
+            while i < bytes.len() {
+                let c = bytes[i];
+                if c == b'\\' {
+                    // Skip the escape byte too (handles `\"`, `\\`, etc.).
+                    i += 2;
+                    continue;
+                }
+                if c == b'"' {
+                    i += 1;
+                    break;
+                }
+                i += 1;
+            }
+            continue;
+        }
+        // Skip `--` line comments so identifiers explaining the bug in
+        // a comment don't double-report.
+        if b == b'-' && i + 1 < bytes.len() && bytes[i + 1] == b'-' {
+            i += 2;
+            while i < bytes.len() && bytes[i] != b'\n' {
+                i += 1;
+            }
+            continue;
+        }
         // Find start of a lowercase-led identifier.
         let prev = if i == 0 { 0 } else { bytes[i - 1] };
         let prev_prev = if i >= 2 { bytes[i - 2] } else { 0 };
