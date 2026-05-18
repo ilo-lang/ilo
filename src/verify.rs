@@ -4183,6 +4183,36 @@ impl VerifyContext {
         arms: &[MatchArm],
         span: Span,
     ) {
+        // ILO-T035: `~v:` / `^e:` are Result arms and never match on an
+        // Optional subject at runtime - they silently fall through to the
+        // wildcard, hiding bugs. Catch this before the wildcard early
+        // return below so the diagnostic fires whether or not the user
+        // also wrote `_:`.
+        if let Ty::Optional(_) = subject_ty {
+            let bad_arm = arms
+                .iter()
+                .find(|a| matches!(a.pattern, Pattern::Ok(_) | Pattern::Err(_)));
+            if let Some(arm) = bad_arm {
+                let marker = match arm.pattern {
+                    Pattern::Ok(_) => "~",
+                    Pattern::Err(_) => "^",
+                    _ => unreachable!(),
+                };
+                self.err(
+                    "ILO-T035",
+                    func,
+                    format!(
+                        "`{marker}` arm on Option subject ({subject_ty}); Option values aren't Ok/Err-tagged so this arm never matches at runtime"
+                    ),
+                    Some(
+                        "use `??x default` to unwrap, or match a literal value and `_:` for nil; `~`/`^` only apply to Result (R T E)".to_string(),
+                    ),
+                    Some(span),
+                );
+                return;
+            }
+        }
+
         let has_wildcard = arms
             .iter()
             .any(|a| matches!(a.pattern, Pattern::Wildcard | Pattern::TypeIs { .. }));
