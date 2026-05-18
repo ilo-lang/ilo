@@ -4047,13 +4047,17 @@ impl RegCompiler {
                                 }
                                 return ra;
                             }
-                            // Dynamic format string: no VM path yet — surface
-                            // a clear compile error pointing at --run-tree.
-                            self.first_error.get_or_insert(
-                                CompileError::UndefinedFunction {
-                                    name: "wr (3-arg with dynamic format not yet supported in VM; use --run-tree)".to_string(),
-                                },
-                            );
+                            // Dynamic format string: no native VM path yet.
+                            // Surface a clear compile error. (Pre-0.12.x this
+                            // pointed users at --run-tree; that flag was
+                            // removed in the tree-walker soft-deprecation,
+                            // so the diagnostic now just states the gap and
+                            // leaves a TODO for a native VM implementation.)
+                            self.first_error
+                                .get_or_insert(CompileError::UndefinedFunction {
+                                    name: "wr (3-arg with dynamic format not yet supported in VM)"
+                                        .to_string(),
+                                });
                             return self.alloc_reg();
                         }
                         (Builtin::Jpar, 1) => {
