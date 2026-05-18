@@ -1,18 +1,15 @@
 // Cross-engine regression coverage for Phase 2 inline lambdas (closure
-// capture) on the VM. Phase 1 (PR #247) lifts `(params>ret;body)` to
-// synthetic `__lit_N` decls; Phase 2 (PR #265) adds by-value capture of
-// free variables and produces `Expr::MakeClosure` at the call site.
+// capture). Phase 1 (PR #247) lifts `(params>ret;body)` to synthetic
+// `__lit_N` decls; Phase 2 (PR #265) adds by-value capture of free
+// variables and produces `Expr::MakeClosure` at the call site.
 //
-// Before this PR (#373 baseline) the VM compiler bailed at the
-// MakeClosure compile site with `CompileError::UnsupportedClosureCapture`
-// and the runtime silently fell back to the tree interpreter. With
-// `OP_MAKE_CLOSURE` + closure-aware `OP_CALL_DYN` dispatch in place,
-// every Phase 2 shape should run identically on tree and VM.
+// PR1 (#384) added VM closure support: `HeapObj::Closure`, OP_MAKE_CLOSURE
+// opcode, and closure-aware OP_CALL_DYN dispatch. PR2 (this PR) adds
+// Cranelift JIT + AOT parity via a shared `jit_make_closure` extern "C"
+// helper and closure-aware `jit_call_dyn`. With both PRs in place, every
+// Phase 2 shape runs identically on tree, VM, and Cranelift.
 //
-// Cranelift parity arrives in the next PR (PR2). For now the JIT path
-// bails on chunks that contain OP_MAKE_CLOSURE (unknown opcode → return
-// false in compile_function_body), which transparently falls back to
-// the VM. So we run tree + VM here; PR2 expands the matrix.
+// Cranelift coverage is gated on the `cranelift` cargo feature.
 
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -47,11 +44,18 @@ fn run_ok(engine: &str, src: &str, entry: &str, args: &[&str]) -> String {
     String::from_utf8_lossy(&out.stdout).trim().to_string()
 }
 
-/// Run a Phase 2 inline-lambda program on every engine that supports
-/// closure capture today (tree + VM). PR2 will widen this to include
-/// `--run-cranelift` once the jit_call_dyn helper is closure-aware.
+/// Run a Phase 2 inline-lambda program on every engine. PR1 covered
+/// `--run-tree` and `--run-vm`; PR2 widens to `--run-cranelift` once the
+/// `jit_make_closure` helper + closure-aware `jit_call_dyn` land. The
+/// Cranelift engine flag is only meaningful in builds with the
+/// `cranelift` feature; otherwise the `ilo` binary rejects it with
+/// ILO-R013 (unknown engine), so we gate it on the same cfg.
 fn run_all(src: &str, entry: &str, args: &[&str], expected: &str) {
-    for engine in ["--run-tree", "--run-vm"] {
+    #[cfg(feature = "cranelift")]
+    let engines: &[&str] = &["--run-tree", "--run-vm", "--run-cranelift"];
+    #[cfg(not(feature = "cranelift"))]
+    let engines: &[&str] = &["--run-tree", "--run-vm"];
+    for engine in engines {
         let actual = run_ok(engine, src, entry, args);
         assert_eq!(
             actual, expected,
