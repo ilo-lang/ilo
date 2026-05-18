@@ -385,12 +385,14 @@ When the call expansion isn't available (the ident is a local that shadows a fn 
 r=fac p;*n r   -- bind, then operate — always unambiguous
 ```
 
-**Negative literals vs binary minus**: the lexer greedily includes a leading `-` into number tokens. `-1`, `-7`, `-0` are all number literals. To subtract from zero, use a space: `- 0 v` (Minus token, then `0`, then `v`).
+**Negative literals vs binary minus**: the lexer greedily includes a leading `-` into number tokens. `-1`, `-7`, `-0` are all number literals at fresh-expression positions. To subtract from zero at the start of a statement, use a space: `- 0 v` (Minus token, then `0`, then `v`).
 
 ```
 f v:n>n;-0 v   -- WRONG: -0 is Number(-0.0); v is a stray token
 f v:n>n;- 0 v  -- OK: binary subtract: 0 - v = -v
 ```
+
+The lexer splits a glued negative literal back into `Minus + Number` when the previous token is one of `;`, `\n`, `=`, `{`, `(`, or `-`. The `-` context covers the operand slot of an outer prefix-minus, so `- -0 a b` lexes as `-, -, 0, a, b` and parses as `Subtract(Subtract(0, a), b)` = `-a - b` rather than tripping `ILO-P020`. Negative literals after an Ident, `[`, or another prefix binop (`+`, `*`, `/`) stay glued so call args (`at xs -1`), list literals (`[-2 1 3]`), and binary operands (`+a -3`) read naturally.
 
 ---
 
