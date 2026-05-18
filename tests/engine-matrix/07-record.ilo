@@ -1,0 +1,4 @@
+-- feature: record type + field access
+-- expected: 3
+type pt{x:n;y:n}
+main>n;p=pt x:3 y:4;p.x

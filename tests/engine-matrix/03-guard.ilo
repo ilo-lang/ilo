@@ -1,0 +1,3 @@
+-- feature: guarded return (braceless early-return form)
+-- expected: big
+main>t;n=10;>n 5{ret "big"};"small"

@@ -1,0 +1,3 @@
+-- feature: boolean or (|) — short-circuit
+-- expected: true
+main>b;a=true;b=false;|a b

@@ -1,0 +1,5 @@
+-- feature: returning fn-ref by name (FnRef plumbing, not capture)
+-- expected: 25
+sq x:n>n;*x x
+mksq>F n n;sq
+main>n;f=mksq;f 5

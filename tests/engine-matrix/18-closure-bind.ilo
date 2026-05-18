@@ -1,0 +1,4 @@
+-- feature: HOF closure-bind (3-arg map with ctx)
+-- expected: [11, 12, 13]
+addk x:n k:n>n;+x k
+main>L n;map addk 10 [1,2,3]

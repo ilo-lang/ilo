@@ -1,0 +1,3 @@
+-- feature: map construction + lookup via match
+-- expected: 1
+main>n;mp=mset mmap "a" 1;r=mget mp "a";?r{n v:v;_:0}

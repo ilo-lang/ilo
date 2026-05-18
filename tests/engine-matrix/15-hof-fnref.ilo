@@ -1,0 +1,4 @@
+-- feature: higher-order — pass top-level fn ref to map
+-- expected: [2, 4, 6]
+dbl x:n>n;*x 2
+main>L n;map dbl [1,2,3]

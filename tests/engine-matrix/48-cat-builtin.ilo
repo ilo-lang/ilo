@@ -1,0 +1,3 @@
+-- feature: cat — join list of text with separator
+-- expected: a,b,c
+main>t;cat ["a","b","c"] ","

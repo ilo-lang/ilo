@@ -1,0 +1,3 @@
+-- feature: sum — builtin sum of numeric list
+-- expected: 10
+main>n;sum [1,2,3,4]
