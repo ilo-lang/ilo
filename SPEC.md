@@ -129,7 +129,7 @@ Syntax: `(<param>:<type> ...><return-type>;<body>)`. Same shape as a top-level f
 f xs:L n thr:n>L n;flt (x:n>b;>x thr) xs   -- captures `thr`
 ```
 
-Phase 2 is **tree-only**. The VM and Cranelift engines surface `ILO-R012` (unsupported closure capture) and the default runner falls through to the tree interpreter automatically. The ctx-arg form (`srt fn ctx xs`) is the cross-engine alternative for capturing state.
+Phase 2 works on every engine. Closure capture is supported natively across the tree interpreter, the bytecode VM, and the Cranelift JIT/AOT backends, with no per-engine fallbacks. The ctx-arg form (`srt fn ctx xs`) remains available as an alternative for passing state explicitly.
 
 ---
 
@@ -1442,7 +1442,7 @@ ilo serv                          -- long-lived JSON request/response loop
 
 **Default-run.** Inline programs (`ilo 'code'`) and single-function files run their entry function with the remaining CLI args; no explicit function name needed. Multi-function files auto-pick a function called `main` when no positional func arg is supplied. The same heuristic applies to the explicit engine flags — `--run-tree`, `--run-vm`, and `--run-cranelift` all auto-pick `main` on multi-fn files, matching the default-engine behaviour. With no `main` declared, supply a function-name argument.
 
-**Default engine.** The bytecode register VM is the default execution path. It supports every opcode (closures, listview windows, fused len-of-filter, every modern shape), and avoids the JIT compile-and-bail cost paid by the pre-v0.11.9 Cranelift-first default whenever a program touched an opcode the JIT couldn't handle. Cranelift JIT is opt-in via `--cranelift` (short alias) or `--run-cranelift`; on opt-in, the JIT runs hot numeric loops and falls back to the VM on bailout. The tree interpreter (`--run-tree`) remains the canonical-semantics reference. Phase 2 closure captures still execute on the tree interpreter (the VM and JIT raise `ILO-R012` and the default runner falls through). For long-running workloads where the JIT pays for itself, opt in explicitly; for most agent workloads the VM is the right default.
+**Default engine.** The bytecode register VM is the default execution path. It supports every opcode (closures, listview windows, fused len-of-filter, every modern shape), and avoids the JIT compile-and-bail cost paid by the pre-v0.11.9 Cranelift-first default whenever a program touched an opcode the JIT couldn't handle. Cranelift JIT is opt-in via `--cranelift` (short alias) or `--run-cranelift`; on opt-in, the JIT runs hot numeric loops and falls back to the VM on bailout. The tree interpreter (`--run-tree`) remains the canonical-semantics reference. Phase 2 closure capture is supported natively on every engine, so no per-engine fallback is needed. For long-running workloads where the JIT pays for itself, opt in explicitly; for most agent workloads the VM is the right default.
 
 **Subcommand dispatch.** The first positional argument is interpreted as a function name when it has the shape of an ilo identifier — `[a-z][a-z0-9]*(-[a-z0-9]+)*` — so `ilo file.ilo list-orders` routes to the `list-orders` function. Args that don't match the ident shape (file paths like `/tmp/data.json`, numbers, sigils, bracketed lists, anything with a `.` or `/`) route to `main` (or the entry function) as a positional CLI arg instead. Trailing dashes (`foo-`), doubled dashes (`foo--bar`), and negative numbers (`-1`) are not idents and pass through as data.
 
