@@ -187,7 +187,6 @@ Per-call time (ns) across 8 micro-benchmarks. Lower is better. [Full results →
 ## Community
 
 - **[ilo-lang.ai](https://ilo-lang.ai)** - docs, playground, and examples
-- **[r/ilolang](https://www.reddit.com/r/ilolang/)** - discussion and updates
 - **[hello@ilo-lang.ai](mailto:hello@ilo-lang.ai)** - get in touch
 
 ## Principles
