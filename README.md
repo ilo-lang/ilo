@@ -184,7 +184,6 @@ Per-call time (ns) across 8 micro-benchmarks. Lower is better. [Full results →
 | ilo AOT | 1.8us | 12.9us | 1.1us | 33.0us | 5.3us | 37.3us | 1.1us | 148ns | 126ns | n/a | n/a |
 | ilo Cranelift | 1.3us | 5.0us | 504ns | 26.2us | 3.2us | 37.2us | 935ns | 150ns | 125ns | 16.5us | 1.7ms |
 | ilo VM | 11.3us | 10.5us | 3.1us | 31.6us | 53.5us | 528.3us | 2.4us | 1.2us | 7.0us | 16.9us | 171.1us |
-| ilo Interpreter | 91.4us | 61.2us | 54.3us | 1.3ms | 1.0ms | 17.4ms | 84.2us | 10.6us | 155.1us | 32.3us | 174.7us |
 | Lua | 4.0us | 39.8us | 7.5us | 49.2us | 27.0us | 339.1us | 3.8us | 967ns | 4.3us | 16.1us | 54.3us |
 | Ruby | 19.8us | 26.0us | 8.7us | 18.4us | 38.5us | 373.0us | 3.2us | 2.3us | 6.3us | 19.6us | 269.2us |
 | PHP | 6.4us | 4.0us | 4.0us | 8.2us | 25.8us | 552.9us | 1.1us | 767ns | 6.7us | 15.3us | 173.9us |
