@@ -241,4 +241,3 @@ fn walk_single_file_cross_engine() {
         assert_eq!(out, "[only.txt]", "{engine}: walk single file");
     }
 }
-
