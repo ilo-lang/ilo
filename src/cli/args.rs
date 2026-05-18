@@ -66,6 +66,12 @@ pub enum Cmd {
     /// AOT compile to a standalone native binary.
     Compile(CompileArgs),
 
+    /// AOT compile to a standalone native binary (alias for `compile`).
+    Build(CompileArgs),
+
+    /// Verify a program without running it.
+    Check(CheckArgs),
+
     /// Show language specification or compact spec.
     #[command(alias = "help")]
     Spec(SpecArgs),
@@ -278,6 +284,14 @@ pub struct CompileArgs {
     /// Benchmark binary mode.
     #[arg(long)]
     pub bench: bool,
+}
+
+// ── Check ──────────────────────────────────────────────────────────────────────
+
+#[derive(Args, Debug)]
+pub struct CheckArgs {
+    /// Source file or inline code.
+    pub source: String,
 }
 
 // ── Spec ───────────────────────────────────────────────────────────────────────

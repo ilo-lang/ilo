@@ -89,6 +89,11 @@ ilo 'dbl x:n>n;*x 2' 5                    # → 10
 
 # From file
 ilo program.ilo functionName arg1 arg2
+
+# Verb form (cargo / go / zero style; bare positional still works)
+ilo run program.ilo arg1 arg2             # run
+ilo check program.ilo                     # verify only — exit 0 if clean
+ilo build program.ilo -o ./bin            # AOT compile
 ```
 
 **[Tutorial: Write your first program →](https://ilo-lang.ai/docs/first-program/)**
