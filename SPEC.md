@@ -1399,7 +1399,7 @@ NO_COLOR=1      Disable colour (same as --text)
 
 JSON error output follows a structured schema with `severity`, `code`, `message`, `labels` (with spans), `notes`, and `suggestion` fields.
 
-Runtime errors raised from the Cranelift JIT (default engine and `--run-cranelift`) populate `labels` with the source span of the failing operation, matching tree and VM behaviour. Span coverage threads through every JIT runtime helper (unwrap, panic-unwrap, list-get, slice, index, jpth, mget, record-field strict access, builtin dispatch, dynamic call); AOT-compiled binaries inherit the same coverage. Pre-v0.11.6 builds surfaced `{"labels":[]}` for these shapes — if you see an empty labels array on a runtime error, the binary is out of date.
+Runtime errors raised from the Cranelift JIT (opt-in via `--cranelift` / `--run-cranelift`) populate `labels` with the source span of the failing operation, matching tree and VM behaviour. Span coverage threads through every JIT runtime helper (unwrap, panic-unwrap, list-get, slice, index, jpth, mget, record-field strict access, builtin dispatch, dynamic call); AOT-compiled binaries inherit the same coverage. Pre-v0.11.6 builds surfaced `{"labels":[]}` for these shapes — if you see an empty labels array on a runtime error, the binary is out of date.
 
 ### Top-level program output
 
@@ -1441,6 +1441,8 @@ ilo serv                          -- long-lived JSON request/response loop
 ```
 
 **Default-run.** Inline programs (`ilo 'code'`) and single-function files run their entry function with the remaining CLI args; no explicit function name needed. Multi-function files auto-pick a function called `main` when no positional func arg is supplied. The same heuristic applies to the explicit engine flags — `--run-tree`, `--run-vm`, and `--run-cranelift` all auto-pick `main` on multi-fn files, matching the default-engine behaviour. With no `main` declared, supply a function-name argument.
+
+**Default engine.** The bytecode register VM is the default execution path. It supports every opcode (closures, listview windows, fused len-of-filter, every modern shape), and avoids the JIT compile-and-bail cost paid by the pre-v0.11.9 Cranelift-first default whenever a program touched an opcode the JIT couldn't handle. Cranelift JIT is opt-in via `--cranelift` (short alias) or `--run-cranelift`; on opt-in, the JIT runs hot numeric loops and falls back to the VM on bailout. The tree interpreter (`--run-tree`) remains the canonical-semantics reference. Phase 2 closure captures still execute on the tree interpreter (the VM and JIT raise `ILO-R012` and the default runner falls through). For long-running workloads where the JIT pays for itself, opt in explicitly; for most agent workloads the VM is the right default.
 
 **Subcommand dispatch.** The first positional argument is interpreted as a function name when it has the shape of an ilo identifier — `[a-z][a-z0-9]*(-[a-z0-9]+)*` — so `ilo file.ilo list-orders` routes to the `list-orders` function. Args that don't match the ident shape (file paths like `/tmp/data.json`, numbers, sigils, bracketed lists, anything with a `.` or `/`) route to `main` (or the entry function) as a positional CLI arg instead. Trailing dashes (`foo-`), doubled dashes (`foo--bar`), and negative numbers (`-1`) are not idents and pass through as data.
 

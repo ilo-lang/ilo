@@ -1314,9 +1314,12 @@ fn serv_cmd(args_slice: &[String]) {
 }
 
 /// Scan args for `--run-tree` / `--run` / `--run-vm` / `--run-cranelift` /
-/// `--run-llvm` anywhere in the list and remove them. argv[0] (binary name)
-/// is preserved at position 0. Returns the chosen engine (if any) plus the
-/// remaining args. Multiple conflicting engine flags produce an error.
+/// `--cranelift` / `--run-llvm` anywhere in the list and remove them. argv[0]
+/// (binary name) is preserved at position 0. Returns the chosen engine (if
+/// any) plus the remaining args. Multiple conflicting engine flags produce an
+/// error. `--cranelift` is a short alias for `--run-cranelift`; agents that
+/// opt into the JIT for hot numeric loops shouldn't pay the extra `run-`
+/// prefix tokens.
 fn extract_run_engine_flag(
     args: Vec<String>,
 ) -> Result<(Option<cli::Engine>, Vec<String>), String> {
@@ -1326,7 +1329,7 @@ fn extract_run_engine_flag(
 
     for arg in args {
         let candidate = match arg.as_str() {
-            "--run-cranelift" => Some(cli::Engine::Cranelift),
+            "--run-cranelift" | "--cranelift" => Some(cli::Engine::Cranelift),
             "--run-llvm" => Some(cli::Engine::Llvm),
             "--run-vm" => Some(cli::Engine::Vm),
             "--run" | "--run-tree" => Some(cli::Engine::Tree),
@@ -2242,7 +2245,7 @@ fn dispatch_bare_args(raw_args: Vec<String>, global: &cli::Global) -> i32 {
     let m = mode_args_start;
     let (engine_flag, run_rest_start) = if args.len() > m {
         match args[m].as_str() {
-            "--run-cranelift" => (Some(cli::Engine::Cranelift), m + 1),
+            "--run-cranelift" | "--cranelift" => (Some(cli::Engine::Cranelift), m + 1),
             "--run-llvm" => (Some(cli::Engine::Llvm), m + 1),
             "--run-vm" => (Some(cli::Engine::Vm), m + 1),
             "--run" | "--run-tree" => (Some(cli::Engine::Tree), m + 1),
@@ -2789,7 +2792,10 @@ fn dispatch_run(r: cli::RunArgs, mode: OutputMode, explicit_json: bool, no_hints
                 )
             }
             cli::Engine::Default => {
-                // Default: func-name heuristic + Cranelift JIT with bytecode VM fallback.
+                // Default: func-name heuristic + bytecode register VM (closure-aware,
+                // all opcodes supported). Cranelift JIT is opt-in via --cranelift /
+                // --run-cranelift; tree interpreter is the canonical-semantics fallback
+                // for any program the VM rejects.
                 //
                 // Inline-lambda lifting emits synthetic `__lit_N` top-level
                 // decls (see parser/mod.rs ~line 2863). These are an
@@ -3137,7 +3143,7 @@ fn run_llvm_engine(_program: &ast::Program, rest: &[String]) -> i32 {
 fn print_help() {
     println!("ilo — a programming language for AI agents\n");
     println!("Usage:");
-    println!("  ilo <code> [args...]              Run (Cranelift JIT, falls back to interpreter)");
+    println!("  ilo <code> [args...]              Run (bytecode VM; use --cranelift for JIT)");
     println!("  ilo <file.ilo> [args...]          Run from file");
     println!("  ilo <code> func [args...]         Run a specific function");
     println!("  ilo <code> --emit python          Transpile to Python");
@@ -3183,10 +3189,11 @@ fn print_help() {
     println!("AOT compilation:");
     println!("  ilo compile <file> [-o out] [func]  Compile to standalone binary\n");
     println!("Backends:");
-    println!("  (default)        Cranelift JIT, falls back to register VM on bailout");
-    println!("  --run-tree       Tree-walking interpreter");
-    println!("  --run-vm         Register VM");
-    println!("  --run-cranelift  Cranelift JIT");
+    println!("  (default)        Register VM (closure-aware, all opcodes supported)");
+    println!("  --cranelift      Cranelift JIT (hot numeric loops; VM fallback on bailout)");
+    println!("  --run-cranelift  Same as --cranelift");
+    println!("  --run-vm         Register VM (explicit form of the default)");
+    println!("  --run-tree       Tree-walking interpreter (reference semantics)");
     println!("  --run-llvm       LLVM JIT (requires --features llvm build)\n");
     println!("Examples:");
     println!("  ilo 'f x:n>n;*x 2' 5             Define and call f(5) → 10");
@@ -3389,81 +3396,26 @@ fn run_default(
         return code;
     }
     let suppress = program_result_should_suppress(program, func_name);
-    // Try Cranelift JIT first — all functions are now eligible
-    #[cfg(feature = "cranelift")]
-    {
-        if let Ok(compiled) = vm::compile(program) {
-            let target = func_name.unwrap_or(
-                compiled
-                    .func_names
-                    .first()
-                    .map(|s| s.as_str())
-                    .unwrap_or("main"),
-            );
-            if let Some(func_idx) = compiled.func_names.iter().position(|n| n == target) {
-                let chunk = &compiled.chunks[func_idx];
-                let nan_consts = &compiled.nan_constants[func_idx];
-                let nan_args: Vec<u64> = args
-                    .iter()
-                    .map(|v| vm::NanVal::from_value_with_program(v, &compiled.func_names).0)
-                    .collect();
-                match vm::jit_cranelift::compile_and_call(chunk, nan_consts, &nan_args, &compiled) {
-                    Ok(result_bits) => {
-                        // Use the program-aware bridge so a user-fn FnRef
-                        // returned at the top-level resolves to its source
-                        // name (`<fn:sq>`) rather than `<user_fn:0>`.
-                        let result =
-                            vm::NanVal(result_bits).to_value_with_program(&compiled.func_names);
-                        print_value(&result, explicit_json, suppress);
-                        return program_exit_code(&result);
-                    }
-                    Err(vm::jit_cranelift::JitCallError::Runtime(e)) => {
-                        // The JIT executed and surfaced a defined runtime
-                        // error (e.g. `hd []`, `at xs 99`). Do NOT fall back
-                        // to the tree interpreter — it would hide the error
-                        // or, worse, run the program a second time and
-                        // produce divergent observable behaviour.
-                        report_diagnostic(
-                            &Diagnostic::from(&e).with_source(source.to_string()),
-                            mode,
-                        );
-                        return 1;
-                    }
-                    Err(vm::jit_cranelift::JitCallError::NotEligible) => {
-                        // JIT couldn't dispatch this function (e.g. it contains
-                        // an opcode the JIT bails on, like OP_WINDOW after the
-                        // PR-2 listview reshape). The bytecode VM dispatcher is
-                        // the closest-performance fallback and remains sound
-                        // for views — try it before the tree interpreter.
-                        match vm::run(&compiled, func_name, args.clone()) {
-                            Ok(val) => {
-                                print_value(&val, explicit_json, suppress);
-                                return program_exit_code(&val);
-                            }
-                            Err(_e) => {
-                                // Fall through to the tree interpreter — the
-                                // VM's error reporting may not match the
-                                // interpreter's diagnostics, and the
-                                // interpreter is the canonical reference
-                                // semantics. Preserves prior behaviour for
-                                // any program the bytecode VM rejects.
-                            }
-                        }
-                    }
-                    Err(vm::jit_cranelift::JitCallError::Panic { msg }) => {
-                        // Upstream cranelift-jit 0.116 AArch64 near-call
-                        // relocation assertion (`compiled_blob.rs:90`) fires
-                        // non-deterministically. The JIT never produced
-                        // runnable code, so falling through to the tree
-                        // interpreter is sound and preserves the user's
-                        // pipeline. The shared `note_jit_panic_fallback`
-                        // helper emits a tagged, flushed, once-per-process
-                        // breadcrumb so the upstream issue stays measurable
-                        // (and detectable by harnesses) rather than
-                        // degrading silently into the slower engine.
-                        vm::jit_cranelift::note_jit_panic_fallback(&msg, "interpreter");
-                    }
-                }
+    // Default engine is the bytecode register VM: it supports every opcode
+    // (closures, listview, len-has-k-count, every modern shape), and avoids
+    // the JIT compile-and-bail cost the old Cranelift-first default paid on
+    // any program touching opcodes the JIT can't yet handle. Cranelift
+    // remains opt-in for hot numeric workloads via `--cranelift` (alias of
+    // `--run-cranelift`); the tree interpreter remains the canonical
+    // reference semantics and the last-resort fallback for any program the
+    // VM compile/run rejects (e.g. shapes the VM doesn't yet support).
+    if let Ok(compiled) = vm::compile(program) {
+        match vm::run(&compiled, func_name, args.clone()) {
+            Ok(val) => {
+                print_value(&val, explicit_json, suppress);
+                return program_exit_code(&val);
+            }
+            Err(_e) => {
+                // Fall through to the tree interpreter — the VM's error
+                // reporting may not match the interpreter's diagnostics,
+                // and the interpreter is the canonical reference
+                // semantics. Preserves prior behaviour for any program the
+                // bytecode VM rejects.
             }
         }
     }
@@ -8388,11 +8340,17 @@ mod tests {
         );
     }
 
-    /// `run_default` must catch an upstream cranelift panic and fall through
-    /// to the tree interpreter (the same path used for `NotEligible`).
+    /// After the VM-as-default flip, `run_default` no longer invokes the
+    /// Cranelift JIT at all — it goes straight to the bytecode VM. A JIT
+    /// panic in the default path is therefore impossible by construction:
+    /// even with `FORCE_PANIC_FOR_TEST` set, the JIT is never called, the
+    /// panic helper is never armed, and the fallback counter must stay at
+    /// zero. The equivalent panic-fallback contract still applies on the
+    /// opt-in `--cranelift` path (covered by
+    /// `run_cranelift_engine_panic_falls_back_to_vm`).
     #[test]
     #[cfg(all(feature = "cranelift", debug_assertions))]
-    fn run_default_cranelift_panic_falls_back_to_interpreter() {
+    fn run_default_does_not_invoke_jit() {
         let _guard = JIT_PANIC_TEST_LOCK
             .lock()
             .unwrap_or_else(|p| p.into_inner());
@@ -8407,16 +8365,24 @@ mod tests {
             OutputMode::Text,
             false,
         );
-        // Bytecode VM fallback ran the program → exit 0.
+        // VM ran the program → exit 0.
         assert_eq!(code, 0);
-        assert!(!vm::jit_cranelift::FORCE_PANIC_FOR_TEST.with(|c| c.get()));
-        // Same visibility contract as the cranelift-engine path: the
-        // fallback must bump the counter so harnesses can detect that a
-        // JIT panic happened even when stderr is buffered or merged.
+        // JIT was never invoked, so the FORCE_PANIC flag is still armed and
+        // the panic-fallback counter is still zero. This is the
+        // load-bearing assertion: pre-flip default would consume the flag
+        // and bump the counter.
         assert!(
-            vm::jit_cranelift::jit_panic_fallback_count() >= 1,
-            "expected panic-fallback counter to increment on JIT panic"
+            vm::jit_cranelift::FORCE_PANIC_FOR_TEST.with(|c| c.get()),
+            "default path must not invoke the JIT; FORCE_PANIC flag should stay armed"
         );
+        assert_eq!(
+            vm::jit_cranelift::jit_panic_fallback_count(),
+            0,
+            "default path must not invoke the JIT; fallback counter should stay at zero"
+        );
+        // Clear the flag so it doesn't leak into other tests that run
+        // after this one in the same process.
+        vm::jit_cranelift::FORCE_PANIC_FOR_TEST.with(|c| c.set(false));
     }
 
     /// Multiple JIT panics in the same process must only emit ONE stderr
