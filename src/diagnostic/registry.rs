@@ -1341,9 +1341,9 @@ in a builtin — please file an issue with the source that triggers it.
     },
     // ── Engine-specific limitations ────────────────────────────────────────
     ErrorEntry {
-        code: "ILO-E801",
+        code: "ILO-E802",
         short: "inline lambda exceeds 255-capture VM cap",
-        long: r#"## ILO-E801: inline lambda exceeds 255-capture VM cap
+        long: r#"## ILO-E802: inline lambda exceeds 255-capture VM cap
 
 The register VM encodes the capture count for `OP_MAKE_CLOSURE` in an
 8-bit field, so an inline lambda whose body references more than 255
