@@ -451,6 +451,7 @@ Called like functions, compiled to dedicated opcodes.
 | `post url body` | HTTP POST with text body | `R t t` |
 | `post url body headers` | HTTP POST with body and custom headers (`M t t` map) | `R t t` |
 | `env key` | read environment variable | `R t t` |
+| `env-all` | snapshot the full process environment as `M t t` | `R (M t t) t` |
 | `rd path` | read file; format auto-detected from extension (`.csv`/`.tsv`→grid, `.json`→graph, else text) | `R _ t` |
 | `rd path fmt` | read file with explicit format override (`"csv"`, `"tsv"`, `"json"`, `"raw"`) | `R _ t` |
 | `rdl path` | read file as list of lines | `R (L t) t` |
@@ -664,6 +665,15 @@ Behind the `http` feature flag (on by default). Without the feature, `get`/`post
 env key          -- R t t: Ok=value, Err=not set message
 env! key         -- auto-unwrap: Ok→value, Err→propagate to caller
 ```
+
+`env-all` returns the full process environment as a `M t t` map wrapped in `R`, mirroring the `env` shape so `env-all!` auto-unwraps inside a Result-returning function. Use it for "merge env over config" patterns where the agent does not know which keys to read up-front:
+
+```
+env-all          -- R (M t t) t: Ok=map of every env var, Err reserved for future failures
+env-all!         -- auto-unwrap to M t t
+```
+
+Non-UTF-8 environment variables are silently skipped (same policy as Rust's `std::env::vars`); the snapshot is always `Ok` today.
 
 ### JSON builtins
 
