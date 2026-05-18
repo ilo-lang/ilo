@@ -1,0 +1,1814 @@
+{
+  "metadata": {
+    "ran_at": "2026-05-18T19:42:41Z",
+    "spec_sizes_chars": {
+      "python-baseline": 0,
+      "ilo-pre-phase-1": 16000,
+      "ilo-post-phase-1": 4800,
+      "zero": 4300
+    },
+    "retry_cap": 5
+  },
+  "results": [
+    {
+      "variant": "ilo-post-phase-1",
+      "task": "01-simple-function",
+      "session_length": 1,
+      "model": "claude-haiku-4-5-20251001",
+      "samples": 3,
+      "median": {
+        "total_tokens": 1634,
+        "time_seconds": 0.02,
+        "usd_cost": 0.00161,
+        "success_rate": 1.0,
+        "retry_count_avg": 0.6666666666666666
+      },
+      "variance": {
+        "total_tokens_stdev": 88.2,
+        "time_seconds_stdev": 0.001
+      }
+    },
+    {
+      "variant": "ilo-post-phase-1",
+      "task": "01-simple-function",
+      "session_length": 5,
+      "model": "claude-haiku-4-5-20251001",
+      "samples": 15,
+      "median": {
+        "total_tokens": 554,
+        "time_seconds": 0.018,
+        "usd_cost": 0.00011,
+        "success_rate": 1.0,
+        "retry_count_avg": 0.6666666666666666
+      },
+      "variance": {
+        "total_tokens_stdev": 440.9,
+        "time_seconds_stdev": 0.002
+      }
+    },
+    {
+      "variant": "ilo-post-phase-1",
+      "task": "01-simple-function",
+      "session_length": 20,
+      "model": "claude-haiku-4-5-20251001",
+      "samples": 60,
+      "median": {
+        "total_tokens": 554.0,
+        "time_seconds": 0.018,
+        "usd_cost": 0.00011,
+        "success_rate": 1.0,
+        "retry_count_avg": 0.6666666666666666
+      },
+      "variance": {
+        "total_tokens_stdev": 251.3,
+        "time_seconds_stdev": 0.002
+      }
+    },
+    {
+      "variant": "ilo-post-phase-1",
+      "task": "01-simple-function",
+      "session_length": 50,
+      "model": "claude-haiku-4-5-20251001",
+      "samples": 150,
+      "median": {
+        "total_tokens": 554.0,
+        "time_seconds": 0.019,
+        "usd_cost": 0.00011,
+        "success_rate": 1.0,
+        "retry_count_avg": 0.6666666666666666
+      },
+      "variance": {
+        "total_tokens_stdev": 175.0,
+        "time_seconds_stdev": 0.003
+      }
+    },
+    {
+      "variant": "ilo-post-phase-1",
+      "task": "01-simple-function",
+      "session_length": 100,
+      "model": "claude-haiku-4-5-20251001",
+      "samples": 300,
+      "median": {
+        "total_tokens": 554.0,
+        "time_seconds": 0.018,
+        "usd_cost": 0.00011,
+        "success_rate": 1.0,
+        "retry_count_avg": 0.6666666666666666
+      },
+      "variance": {
+        "total_tokens_stdev": 139.0,
+        "time_seconds_stdev": 0.003
+      }
+    },
+    {
+      "variant": "ilo-post-phase-1",
+      "task": "02-with-dependencies",
+      "session_length": 1,
+      "model": "claude-haiku-4-5-20251001",
+      "samples": 3,
+      "median": {
+        "total_tokens": 1648,
+        "time_seconds": 0.022,
+        "usd_cost": 0.00174,
+        "success_rate": 1.0,
+        "retry_count_avg": 0.6666666666666666
+      },
+      "variance": {
+        "total_tokens_stdev": 94.3,
+        "time_seconds_stdev": 0.001
+      }
+    },
+    {
+      "variant": "ilo-post-phase-1",
+      "task": "02-with-dependencies",
+      "session_length": 5,
+      "model": "claude-haiku-4-5-20251001",
+      "samples": 15,
+      "median": {
+        "total_tokens": 568,
+        "time_seconds": 0.021,
+        "usd_cost": 0.00026,
+        "success_rate": 1.0,
+        "retry_count_avg": 0.6666666666666666
+      },
+      "variance": {
+        "total_tokens_stdev": 442.2,
+        "time_seconds_stdev": 0.002
+      }
+    },
+    {
+      "variant": "ilo-post-phase-1",
+      "task": "02-with-dependencies",
+      "session_length": 20,
+      "model": "claude-haiku-4-5-20251001",
+      "samples": 60,
+      "median": {
+        "total_tokens": 568.0,
+        "time_seconds": 0.0235,
+        "usd_cost": 0.00026,
+        "success_rate": 1.0,
+        "retry_count_avg": 0.6666666666666666
+      },
+      "variance": {
+        "total_tokens_stdev": 253.6,
+        "time_seconds_stdev": 0.003
+      }
+    },
+    {
+      "variant": "ilo-post-phase-1",
+      "task": "02-with-dependencies",
+      "session_length": 50,
+      "model": "claude-haiku-4-5-20251001",
+      "samples": 150,
+      "median": {
+        "total_tokens": 568.0,
+        "time_seconds": 0.022,
+        "usd_cost": 0.00026,
+        "success_rate": 1.0,
+        "retry_count_avg": 0.6666666666666666
+      },
+      "variance": {
+        "total_tokens_stdev": 178.2,
+        "time_seconds_stdev": 0.002
+      }
+    },
+    {
+      "variant": "ilo-post-phase-1",
+      "task": "02-with-dependencies",
+      "session_length": 100,
+      "model": "claude-haiku-4-5-20251001",
+      "samples": 300,
+      "median": {
+        "total_tokens": 568.0,
+        "time_seconds": 0.024,
+        "usd_cost": 0.00026,
+        "success_rate": 1.0,
+        "retry_count_avg": 0.6666666666666666
+      },
+      "variance": {
+        "total_tokens_stdev": 143.0,
+        "time_seconds_stdev": 0.004
+      }
+    },
+    {
+      "variant": "ilo-post-phase-1",
+      "task": "03-data-transform",
+      "session_length": 1,
+      "model": "claude-haiku-4-5-20251001",
+      "samples": 3,
+      "median": {
+        "total_tokens": 1622,
+        "time_seconds": 0.037,
+        "usd_cost": 0.00165,
+        "success_rate": 1.0,
+        "retry_count_avg": 0.6666666666666666
+      },
+      "variance": {
+        "total_tokens_stdev": 93.3,
+        "time_seconds_stdev": 0.009
+      }
+    },
+    {
+      "variant": "ilo-post-phase-1",
+      "task": "03-data-transform",
+      "session_length": 5,
+      "model": "claude-haiku-4-5-20251001",
+      "samples": 15,
+      "median": {
+        "total_tokens": 542,
+        "time_seconds": 0.038,
+        "usd_cost": 0.00017,
+        "success_rate": 1.0,
+        "retry_count_avg": 0.6666666666666666
+      },
+      "variance": {
+        "total_tokens_stdev": 442.0,
+        "time_seconds_stdev": 0.009
+      }
+    },
+    {
+      "variant": "ilo-post-phase-1",
+      "task": "03-data-transform",
+      "session_length": 20,
+      "model": "claude-haiku-4-5-20251001",
+      "samples": 60,
+      "median": {
+        "total_tokens": 542.0,
+        "time_seconds": 0.036,
+        "usd_cost": 0.00017,
+        "success_rate": 1.0,
+        "retry_count_avg": 0.6666666666666666
+      },
+      "variance": {
+        "total_tokens_stdev": 253.2,
+        "time_seconds_stdev": 0.01
+      }
+    },
+    {
+      "variant": "ilo-post-phase-1",
+      "task": "03-data-transform",
+      "session_length": 50,
+      "model": "claude-haiku-4-5-20251001",
+      "samples": 150,
+      "median": {
+        "total_tokens": 542.0,
+        "time_seconds": 0.034,
+        "usd_cost": 0.00017,
+        "success_rate": 1.0,
+        "retry_count_avg": 0.6666666666666666
+      },
+      "variance": {
+        "total_tokens_stdev": 177.7,
+        "time_seconds_stdev": 0.009
+      }
+    },
+    {
+      "variant": "ilo-post-phase-1",
+      "task": "03-data-transform",
+      "session_length": 100,
+      "model": "claude-haiku-4-5-20251001",
+      "samples": 300,
+      "median": {
+        "total_tokens": 542.0,
+        "time_seconds": 0.034,
+        "usd_cost": 0.00017,
+        "success_rate": 1.0,
+        "retry_count_avg": 0.6666666666666666
+      },
+      "variance": {
+        "total_tokens_stdev": 142.3,
+        "time_seconds_stdev": 0.009
+      }
+    },
+    {
+      "variant": "ilo-post-phase-1",
+      "task": "04-tool-interaction",
+      "session_length": 1,
+      "model": "claude-haiku-4-5-20251001",
+      "samples": 3,
+      "median": {
+        "total_tokens": 1631,
+        "time_seconds": 0.019,
+        "usd_cost": 0.00163,
+        "success_rate": 1.0,
+        "retry_count_avg": 0.6666666666666666
+      },
+      "variance": {
+        "total_tokens_stdev": 91.5,
+        "time_seconds_stdev": 0.002
+      }
+    },
+    {
+      "variant": "ilo-post-phase-1",
+      "task": "04-tool-interaction",
+      "session_length": 5,
+      "model": "claude-haiku-4-5-20251001",
+      "samples": 15,
+      "median": {
+        "total_tokens": 551,
+        "time_seconds": 0.022,
+        "usd_cost": 0.00014,
+        "success_rate": 1.0,
+        "retry_count_avg": 0.6666666666666666
+      },
+      "variance": {
+        "total_tokens_stdev": 441.6,
+        "time_seconds_stdev": 0.002
+      }
+    },
+    {
+      "variant": "ilo-post-phase-1",
+      "task": "04-tool-interaction",
+      "session_length": 20,
+      "model": "claude-haiku-4-5-20251001",
+      "samples": 60,
+      "median": {
+        "total_tokens": 551.0,
+        "time_seconds": 0.021,
+        "usd_cost": 0.00014,
+        "success_rate": 1.0,
+        "retry_count_avg": 0.6666666666666666
+      },
+      "variance": {
+        "total_tokens_stdev": 252.5,
+        "time_seconds_stdev": 0.003
+      }
+    },
+    {
+      "variant": "ilo-post-phase-1",
+      "task": "04-tool-interaction",
+      "session_length": 50,
+      "model": "claude-haiku-4-5-20251001",
+      "samples": 150,
+      "median": {
+        "total_tokens": 551.0,
+        "time_seconds": 0.021,
+        "usd_cost": 0.00014,
+        "success_rate": 1.0,
+        "retry_count_avg": 0.6666666666666666
+      },
+      "variance": {
+        "total_tokens_stdev": 176.7,
+        "time_seconds_stdev": 0.003
+      }
+    },
+    {
+      "variant": "ilo-post-phase-1",
+      "task": "04-tool-interaction",
+      "session_length": 100,
+      "model": "claude-haiku-4-5-20251001",
+      "samples": 300,
+      "median": {
+        "total_tokens": 551.0,
+        "time_seconds": 0.024,
+        "usd_cost": 0.00014,
+        "success_rate": 1.0,
+        "retry_count_avg": 0.6666666666666666
+      },
+      "variance": {
+        "total_tokens_stdev": 141.1,
+        "time_seconds_stdev": 0.003
+      }
+    },
+    {
+      "variant": "ilo-post-phase-1",
+      "task": "05-workflow",
+      "session_length": 1,
+      "model": "claude-haiku-4-5-20251001",
+      "samples": 3,
+      "median": {
+        "total_tokens": 1724,
+        "time_seconds": 0.034,
+        "usd_cost": 0.00192,
+        "success_rate": 1.0,
+        "retry_count_avg": 0.6666666666666666
+      },
+      "variance": {
+        "total_tokens_stdev": 112.2,
+        "time_seconds_stdev": 0.002
+      }
+    },
+    {
+      "variant": "ilo-post-phase-1",
+      "task": "05-workflow",
+      "session_length": 5,
+      "model": "claude-haiku-4-5-20251001",
+      "samples": 15,
+      "median": {
+        "total_tokens": 644,
+        "time_seconds": 0.035,
+        "usd_cost": 0.00041,
+        "success_rate": 1.0,
+        "retry_count_avg": 0.6666666666666666
+      },
+      "variance": {
+        "total_tokens_stdev": 446.3,
+        "time_seconds_stdev": 0.003
+      }
+    },
+    {
+      "variant": "ilo-post-phase-1",
+      "task": "05-workflow",
+      "session_length": 20,
+      "model": "claude-haiku-4-5-20251001",
+      "samples": 60,
+      "median": {
+        "total_tokens": 644.0,
+        "time_seconds": 0.033,
+        "usd_cost": 0.00041,
+        "success_rate": 1.0,
+        "retry_count_avg": 0.6666666666666666
+      },
+      "variance": {
+        "total_tokens_stdev": 260.8,
+        "time_seconds_stdev": 0.004
+      }
+    },
+    {
+      "variant": "ilo-post-phase-1",
+      "task": "05-workflow",
+      "session_length": 50,
+      "model": "claude-haiku-4-5-20251001",
+      "samples": 150,
+      "median": {
+        "total_tokens": 644.0,
+        "time_seconds": 0.032,
+        "usd_cost": 0.00041,
+        "success_rate": 1.0,
+        "retry_count_avg": 0.6666666666666666
+      },
+      "variance": {
+        "total_tokens_stdev": 188.3,
+        "time_seconds_stdev": 0.004
+      }
+    },
+    {
+      "variant": "ilo-post-phase-1",
+      "task": "05-workflow",
+      "session_length": 100,
+      "model": "claude-haiku-4-5-20251001",
+      "samples": 300,
+      "median": {
+        "total_tokens": 644.0,
+        "time_seconds": 0.031,
+        "usd_cost": 0.00041,
+        "success_rate": 1.0,
+        "retry_count_avg": 0.6666666666666666
+      },
+      "variance": {
+        "total_tokens_stdev": 155.4,
+        "time_seconds_stdev": 0.003
+      }
+    },
+    {
+      "variant": "ilo-pre-phase-1",
+      "task": "01-simple-function",
+      "session_length": 1,
+      "model": "claude-haiku-4-5-20251001",
+      "samples": 3,
+      "median": {
+        "total_tokens": 4434,
+        "time_seconds": 0.023,
+        "usd_cost": 0.00441,
+        "success_rate": 1.0,
+        "retry_count_avg": 0.6666666666666666
+      },
+      "variance": {
+        "total_tokens_stdev": 88.2,
+        "time_seconds_stdev": 0.003
+      }
+    },
+    {
+      "variant": "ilo-pre-phase-1",
+      "task": "01-simple-function",
+      "session_length": 5,
+      "model": "claude-haiku-4-5-20251001",
+      "samples": 15,
+      "median": {
+        "total_tokens": 834,
+        "time_seconds": 0.022,
+        "usd_cost": 0.00011,
+        "success_rate": 1.0,
+        "retry_count_avg": 0.6666666666666666
+      },
+      "variance": {
+        "total_tokens_stdev": 1442.7,
+        "time_seconds_stdev": 0.003
+      }
+    },
+    {
+      "variant": "ilo-pre-phase-1",
+      "task": "01-simple-function",
+      "session_length": 20,
+      "model": "claude-haiku-4-5-20251001",
+      "samples": 60,
+      "median": {
+        "total_tokens": 834.0,
+        "time_seconds": 0.02,
+        "usd_cost": 0.00011,
+        "success_rate": 1.0,
+        "retry_count_avg": 0.6666666666666666
+      },
+      "variance": {
+        "total_tokens_stdev": 789.5,
+        "time_seconds_stdev": 0.002
+      }
+    },
+    {
+      "variant": "ilo-pre-phase-1",
+      "task": "01-simple-function",
+      "session_length": 50,
+      "model": "claude-haiku-4-5-20251001",
+      "samples": 150,
+      "median": {
+        "total_tokens": 834.0,
+        "time_seconds": 0.022,
+        "usd_cost": 0.00011,
+        "success_rate": 1.0,
+        "retry_count_avg": 0.6666666666666666
+      },
+      "variance": {
+        "total_tokens_stdev": 511.7,
+        "time_seconds_stdev": 0.022
+      }
+    },
+    {
+      "variant": "ilo-pre-phase-1",
+      "task": "01-simple-function",
+      "session_length": 100,
+      "model": "claude-haiku-4-5-20251001",
+      "samples": 300,
+      "median": {
+        "total_tokens": 834.0,
+        "time_seconds": 0.02,
+        "usd_cost": 0.00011,
+        "success_rate": 1.0,
+        "retry_count_avg": 0.6666666666666666
+      },
+      "variance": {
+        "total_tokens_stdev": 368.9,
+        "time_seconds_stdev": 0.003
+      }
+    },
+    {
+      "variant": "ilo-pre-phase-1",
+      "task": "02-with-dependencies",
+      "session_length": 1,
+      "model": "claude-haiku-4-5-20251001",
+      "samples": 3,
+      "median": {
+        "total_tokens": 4448,
+        "time_seconds": 0.024,
+        "usd_cost": 0.00454,
+        "success_rate": 1.0,
+        "retry_count_avg": 0.6666666666666666
+      },
+      "variance": {
+        "total_tokens_stdev": 94.3,
+        "time_seconds_stdev": 0.002
+      }
+    },
+    {
+      "variant": "ilo-pre-phase-1",
+      "task": "02-with-dependencies",
+      "session_length": 5,
+      "model": "claude-haiku-4-5-20251001",
+      "samples": 15,
+      "median": {
+        "total_tokens": 848,
+        "time_seconds": 0.025,
+        "usd_cost": 0.00026,
+        "success_rate": 1.0,
+        "retry_count_avg": 0.6666666666666666
+      },
+      "variance": {
+        "total_tokens_stdev": 1443.1,
+        "time_seconds_stdev": 0.002
+      }
+    },
+    {
+      "variant": "ilo-pre-phase-1",
+      "task": "02-with-dependencies",
+      "session_length": 20,
+      "model": "claude-haiku-4-5-20251001",
+      "samples": 60,
+      "median": {
+        "total_tokens": 848.0,
+        "time_seconds": 0.024,
+        "usd_cost": 0.00026,
+        "success_rate": 1.0,
+        "retry_count_avg": 0.6666666666666666
+      },
+      "variance": {
+        "total_tokens_stdev": 790.2,
+        "time_seconds_stdev": 0.002
+      }
+    },
+    {
+      "variant": "ilo-pre-phase-1",
+      "task": "02-with-dependencies",
+      "session_length": 50,
+      "model": "claude-haiku-4-5-20251001",
+      "samples": 150,
+      "median": {
+        "total_tokens": 848.0,
+        "time_seconds": 0.027,
+        "usd_cost": 0.00026,
+        "success_rate": 1.0,
+        "retry_count_avg": 0.6666666666666666
+      },
+      "variance": {
+        "total_tokens_stdev": 512.7,
+        "time_seconds_stdev": 0.004
+      }
+    },
+    {
+      "variant": "ilo-pre-phase-1",
+      "task": "02-with-dependencies",
+      "session_length": 100,
+      "model": "claude-haiku-4-5-20251001",
+      "samples": 300,
+      "median": {
+        "total_tokens": 848.0,
+        "time_seconds": 0.025500000000000002,
+        "usd_cost": 0.00026,
+        "success_rate": 1.0,
+        "retry_count_avg": 0.6666666666666666
+      },
+      "variance": {
+        "total_tokens_stdev": 370.4,
+        "time_seconds_stdev": 0.004
+      }
+    },
+    {
+      "variant": "ilo-pre-phase-1",
+      "task": "03-data-transform",
+      "session_length": 1,
+      "model": "claude-haiku-4-5-20251001",
+      "samples": 3,
+      "median": {
+        "total_tokens": 4422,
+        "time_seconds": 0.03,
+        "usd_cost": 0.00445,
+        "success_rate": 1.0,
+        "retry_count_avg": 0.6666666666666666
+      },
+      "variance": {
+        "total_tokens_stdev": 93.3,
+        "time_seconds_stdev": 0.008
+      }
+    },
+    {
+      "variant": "ilo-pre-phase-1",
+      "task": "03-data-transform",
+      "session_length": 5,
+      "model": "claude-haiku-4-5-20251001",
+      "samples": 15,
+      "median": {
+        "total_tokens": 822,
+        "time_seconds": 0.031,
+        "usd_cost": 0.00017,
+        "success_rate": 1.0,
+        "retry_count_avg": 0.6666666666666666
+      },
+      "variance": {
+        "total_tokens_stdev": 1443.0,
+        "time_seconds_stdev": 0.007
+      }
+    },
+    {
+      "variant": "ilo-pre-phase-1",
+      "task": "03-data-transform",
+      "session_length": 20,
+      "model": "claude-haiku-4-5-20251001",
+      "samples": 60,
+      "median": {
+        "total_tokens": 822.0,
+        "time_seconds": 0.028,
+        "usd_cost": 0.00017,
+        "success_rate": 1.0,
+        "retry_count_avg": 0.6666666666666666
+      },
+      "variance": {
+        "total_tokens_stdev": 790.1,
+        "time_seconds_stdev": 0.007
+      }
+    },
+    {
+      "variant": "ilo-pre-phase-1",
+      "task": "03-data-transform",
+      "session_length": 50,
+      "model": "claude-haiku-4-5-20251001",
+      "samples": 150,
+      "median": {
+        "total_tokens": 822.0,
+        "time_seconds": 0.031,
+        "usd_cost": 0.00017,
+        "success_rate": 1.0,
+        "retry_count_avg": 0.6666666666666666
+      },
+      "variance": {
+        "total_tokens_stdev": 512.6,
+        "time_seconds_stdev": 0.014
+      }
+    },
+    {
+      "variant": "ilo-pre-phase-1",
+      "task": "03-data-transform",
+      "session_length": 100,
+      "model": "claude-haiku-4-5-20251001",
+      "samples": 300,
+      "median": {
+        "total_tokens": 822.0,
+        "time_seconds": 0.031,
+        "usd_cost": 0.00017,
+        "success_rate": 1.0,
+        "retry_count_avg": 0.6666666666666666
+      },
+      "variance": {
+        "total_tokens_stdev": 370.2,
+        "time_seconds_stdev": 0.025
+      }
+    },
+    {
+      "variant": "ilo-pre-phase-1",
+      "task": "04-tool-interaction",
+      "session_length": 1,
+      "model": "claude-haiku-4-5-20251001",
+      "samples": 3,
+      "median": {
+        "total_tokens": 4431,
+        "time_seconds": 0.021,
+        "usd_cost": 0.00443,
+        "success_rate": 1.0,
+        "retry_count_avg": 0.6666666666666666
+      },
+      "variance": {
+        "total_tokens_stdev": 91.5,
+        "time_seconds_stdev": 0.002
+      }
+    },
+    {
+      "variant": "ilo-pre-phase-1",
+      "task": "04-tool-interaction",
+      "session_length": 5,
+      "model": "claude-haiku-4-5-20251001",
+      "samples": 15,
+      "median": {
+        "total_tokens": 831,
+        "time_seconds": 0.019,
+        "usd_cost": 0.00014,
+        "success_rate": 1.0,
+        "retry_count_avg": 0.6666666666666666
+      },
+      "variance": {
+        "total_tokens_stdev": 1442.9,
+        "time_seconds_stdev": 0.002
+      }
+    },
+    {
+      "variant": "ilo-pre-phase-1",
+      "task": "04-tool-interaction",
+      "session_length": 20,
+      "model": "claude-haiku-4-5-20251001",
+      "samples": 60,
+      "median": {
+        "total_tokens": 831.0,
+        "time_seconds": 0.02,
+        "usd_cost": 0.00014,
+        "success_rate": 1.0,
+        "retry_count_avg": 0.6666666666666666
+      },
+      "variance": {
+        "total_tokens_stdev": 789.9,
+        "time_seconds_stdev": 0.005
+      }
+    },
+    {
+      "variant": "ilo-pre-phase-1",
+      "task": "04-tool-interaction",
+      "session_length": 50,
+      "model": "claude-haiku-4-5-20251001",
+      "samples": 150,
+      "median": {
+        "total_tokens": 831.0,
+        "time_seconds": 0.019,
+        "usd_cost": 0.00014,
+        "success_rate": 1.0,
+        "retry_count_avg": 0.6666666666666666
+      },
+      "variance": {
+        "total_tokens_stdev": 512.2,
+        "time_seconds_stdev": 0.007
+      }
+    },
+    {
+      "variant": "ilo-pre-phase-1",
+      "task": "04-tool-interaction",
+      "session_length": 100,
+      "model": "claude-haiku-4-5-20251001",
+      "samples": 300,
+      "median": {
+        "total_tokens": 831.0,
+        "time_seconds": 0.018,
+        "usd_cost": 0.00014,
+        "success_rate": 1.0,
+        "retry_count_avg": 0.6666666666666666
+      },
+      "variance": {
+        "total_tokens_stdev": 369.7,
+        "time_seconds_stdev": 0.006
+      }
+    },
+    {
+      "variant": "ilo-pre-phase-1",
+      "task": "05-workflow",
+      "session_length": 1,
+      "model": "claude-haiku-4-5-20251001",
+      "samples": 3,
+      "median": {
+        "total_tokens": 4524,
+        "time_seconds": 0.035,
+        "usd_cost": 0.00472,
+        "success_rate": 1.0,
+        "retry_count_avg": 0.6666666666666666
+      },
+      "variance": {
+        "total_tokens_stdev": 112.2,
+        "time_seconds_stdev": 0.002
+      }
+    },
+    {
+      "variant": "ilo-pre-phase-1",
+      "task": "05-workflow",
+      "session_length": 5,
+      "model": "claude-haiku-4-5-20251001",
+      "samples": 15,
+      "median": {
+        "total_tokens": 924,
+        "time_seconds": 0.029,
+        "usd_cost": 0.00041,
+        "success_rate": 1.0,
+        "retry_count_avg": 0.6666666666666666
+      },
+      "variance": {
+        "total_tokens_stdev": 1444.4,
+        "time_seconds_stdev": 0.002
+      }
+    },
+    {
+      "variant": "ilo-pre-phase-1",
+      "task": "05-workflow",
+      "session_length": 20,
+      "model": "claude-haiku-4-5-20251001",
+      "samples": 60,
+      "median": {
+        "total_tokens": 924.0,
+        "time_seconds": 0.032,
+        "usd_cost": 0.00041,
+        "success_rate": 1.0,
+        "retry_count_avg": 0.6666666666666666
+      },
+      "variance": {
+        "total_tokens_stdev": 792.6,
+        "time_seconds_stdev": 0.034
+      }
+    },
+    {
+      "variant": "ilo-pre-phase-1",
+      "task": "05-workflow",
+      "session_length": 50,
+      "model": "claude-haiku-4-5-20251001",
+      "samples": 150,
+      "median": {
+        "total_tokens": 924.0,
+        "time_seconds": 0.029,
+        "usd_cost": 0.00041,
+        "success_rate": 1.0,
+        "retry_count_avg": 0.6666666666666666
+      },
+      "variance": {
+        "total_tokens_stdev": 516.3,
+        "time_seconds_stdev": 0.018
+      }
+    },
+    {
+      "variant": "ilo-pre-phase-1",
+      "task": "05-workflow",
+      "session_length": 100,
+      "model": "claude-haiku-4-5-20251001",
+      "samples": 300,
+      "median": {
+        "total_tokens": 924.0,
+        "time_seconds": 0.029,
+        "usd_cost": 0.00041,
+        "success_rate": 1.0,
+        "retry_count_avg": 0.6666666666666666
+      },
+      "variance": {
+        "total_tokens_stdev": 375.4,
+        "time_seconds_stdev": 0.006
+      }
+    },
+    {
+      "variant": "python-baseline",
+      "task": "01-simple-function",
+      "session_length": 1,
+      "model": "claude-haiku-4-5-20251001",
+      "samples": 3,
+      "median": {
+        "total_tokens": 449,
+        "time_seconds": 0.15,
+        "usd_cost": 0.00051,
+        "success_rate": 1.0,
+        "retry_count_avg": 0.6666666666666666
+      },
+      "variance": {
+        "total_tokens_stdev": 89.1,
+        "time_seconds_stdev": 0.005
+      }
+    },
+    {
+      "variant": "python-baseline",
+      "task": "01-simple-function",
+      "session_length": 5,
+      "model": "claude-haiku-4-5-20251001",
+      "samples": 15,
+      "median": {
+        "total_tokens": 449,
+        "time_seconds": 0.147,
+        "usd_cost": 0.00022,
+        "success_rate": 1.0,
+        "retry_count_avg": 0.6666666666666666
+      },
+      "variance": {
+        "total_tokens_stdev": 89.1,
+        "time_seconds_stdev": 0.006
+      }
+    },
+    {
+      "variant": "python-baseline",
+      "task": "01-simple-function",
+      "session_length": 20,
+      "model": "claude-haiku-4-5-20251001",
+      "samples": 60,
+      "median": {
+        "total_tokens": 449.0,
+        "time_seconds": 0.146,
+        "usd_cost": 0.00022,
+        "success_rate": 1.0,
+        "retry_count_avg": 0.6666666666666666
+      },
+      "variance": {
+        "total_tokens_stdev": 89.1,
+        "time_seconds_stdev": 0.033
+      }
+    },
+    {
+      "variant": "python-baseline",
+      "task": "01-simple-function",
+      "session_length": 50,
+      "model": "claude-haiku-4-5-20251001",
+      "samples": 150,
+      "median": {
+        "total_tokens": 449.0,
+        "time_seconds": 0.147,
+        "usd_cost": 0.00022,
+        "success_rate": 1.0,
+        "retry_count_avg": 0.6666666666666666
+      },
+      "variance": {
+        "total_tokens_stdev": 89.1,
+        "time_seconds_stdev": 0.031
+      }
+    },
+    {
+      "variant": "python-baseline",
+      "task": "01-simple-function",
+      "session_length": 100,
+      "model": "claude-haiku-4-5-20251001",
+      "samples": 300,
+      "median": {
+        "total_tokens": 449.0,
+        "time_seconds": 0.148,
+        "usd_cost": 0.00022,
+        "success_rate": 1.0,
+        "retry_count_avg": 0.6666666666666666
+      },
+      "variance": {
+        "total_tokens_stdev": 89.1,
+        "time_seconds_stdev": 0.012
+      }
+    },
+    {
+      "variant": "python-baseline",
+      "task": "02-with-dependencies",
+      "session_length": 1,
+      "model": "claude-haiku-4-5-20251001",
+      "samples": 3,
+      "median": {
+        "total_tokens": 542,
+        "time_seconds": 0.183,
+        "usd_cost": 0.00081,
+        "success_rate": 1.0,
+        "retry_count_avg": 0.6666666666666666
+      },
+      "variance": {
+        "total_tokens_stdev": 124.5,
+        "time_seconds_stdev": 0.008
+      }
+    },
+    {
+      "variant": "python-baseline",
+      "task": "02-with-dependencies",
+      "session_length": 5,
+      "model": "claude-haiku-4-5-20251001",
+      "samples": 15,
+      "median": {
+        "total_tokens": 542,
+        "time_seconds": 0.202,
+        "usd_cost": 0.00051,
+        "success_rate": 1.0,
+        "retry_count_avg": 0.6666666666666666
+      },
+      "variance": {
+        "total_tokens_stdev": 124.5,
+        "time_seconds_stdev": 0.011
+      }
+    },
+    {
+      "variant": "python-baseline",
+      "task": "02-with-dependencies",
+      "session_length": 20,
+      "model": "claude-haiku-4-5-20251001",
+      "samples": 60,
+      "median": {
+        "total_tokens": 542.0,
+        "time_seconds": 0.192,
+        "usd_cost": 0.00051,
+        "success_rate": 1.0,
+        "retry_count_avg": 0.6666666666666666
+      },
+      "variance": {
+        "total_tokens_stdev": 124.5,
+        "time_seconds_stdev": 0.019
+      }
+    },
+    {
+      "variant": "python-baseline",
+      "task": "02-with-dependencies",
+      "session_length": 50,
+      "model": "claude-haiku-4-5-20251001",
+      "samples": 150,
+      "median": {
+        "total_tokens": 542.0,
+        "time_seconds": 0.193,
+        "usd_cost": 0.00051,
+        "success_rate": 1.0,
+        "retry_count_avg": 0.6666666666666666
+      },
+      "variance": {
+        "total_tokens_stdev": 124.5,
+        "time_seconds_stdev": 0.014
+      }
+    },
+    {
+      "variant": "python-baseline",
+      "task": "02-with-dependencies",
+      "session_length": 100,
+      "model": "claude-haiku-4-5-20251001",
+      "samples": 300,
+      "median": {
+        "total_tokens": 542.0,
+        "time_seconds": 0.0995,
+        "usd_cost": 0.00051,
+        "success_rate": 1.0,
+        "retry_count_avg": 0.6666666666666666
+      },
+      "variance": {
+        "total_tokens_stdev": 124.5,
+        "time_seconds_stdev": 0.045
+      }
+    },
+    {
+      "variant": "python-baseline",
+      "task": "03-data-transform",
+      "session_length": 1,
+      "model": "claude-haiku-4-5-20251001",
+      "samples": 3,
+      "median": {
+        "total_tokens": 409,
+        "time_seconds": 0.063,
+        "usd_cost": 0.00046,
+        "success_rate": 1.0,
+        "retry_count_avg": 0.6666666666666666
+      },
+      "variance": {
+        "total_tokens_stdev": 86.3,
+        "time_seconds_stdev": 0.002
+      }
+    },
+    {
+      "variant": "python-baseline",
+      "task": "03-data-transform",
+      "session_length": 5,
+      "model": "claude-haiku-4-5-20251001",
+      "samples": 15,
+      "median": {
+        "total_tokens": 409,
+        "time_seconds": 0.062,
+        "usd_cost": 0.00019,
+        "success_rate": 1.0,
+        "retry_count_avg": 0.6666666666666666
+      },
+      "variance": {
+        "total_tokens_stdev": 86.3,
+        "time_seconds_stdev": 0.003
+      }
+    },
+    {
+      "variant": "python-baseline",
+      "task": "03-data-transform",
+      "session_length": 20,
+      "model": "claude-haiku-4-5-20251001",
+      "samples": 60,
+      "median": {
+        "total_tokens": 409.0,
+        "time_seconds": 0.063,
+        "usd_cost": 0.00019,
+        "success_rate": 1.0,
+        "retry_count_avg": 0.6666666666666666
+      },
+      "variance": {
+        "total_tokens_stdev": 86.3,
+        "time_seconds_stdev": 0.003
+      }
+    },
+    {
+      "variant": "python-baseline",
+      "task": "03-data-transform",
+      "session_length": 50,
+      "model": "claude-haiku-4-5-20251001",
+      "samples": 150,
+      "median": {
+        "total_tokens": 409.0,
+        "time_seconds": 0.063,
+        "usd_cost": 0.00019,
+        "success_rate": 1.0,
+        "retry_count_avg": 0.6666666666666666
+      },
+      "variance": {
+        "total_tokens_stdev": 86.3,
+        "time_seconds_stdev": 0.005
+      }
+    },
+    {
+      "variant": "python-baseline",
+      "task": "03-data-transform",
+      "session_length": 100,
+      "model": "claude-haiku-4-5-20251001",
+      "samples": 300,
+      "median": {
+        "total_tokens": 409.0,
+        "time_seconds": 0.069,
+        "usd_cost": 0.00019,
+        "success_rate": 1.0,
+        "retry_count_avg": 0.6666666666666666
+      },
+      "variance": {
+        "total_tokens_stdev": 86.3,
+        "time_seconds_stdev": 0.036
+      }
+    },
+    {
+      "variant": "python-baseline",
+      "task": "04-tool-interaction",
+      "session_length": 1,
+      "model": "claude-haiku-4-5-20251001",
+      "samples": 3,
+      "median": {
+        "total_tokens": 441,
+        "time_seconds": 0.074,
+        "usd_cost": 0.00051,
+        "success_rate": 1.0,
+        "retry_count_avg": 0.6666666666666666
+      },
+      "variance": {
+        "total_tokens_stdev": 91.0,
+        "time_seconds_stdev": 0.001
+      }
+    },
+    {
+      "variant": "python-baseline",
+      "task": "04-tool-interaction",
+      "session_length": 5,
+      "model": "claude-haiku-4-5-20251001",
+      "samples": 15,
+      "median": {
+        "total_tokens": 441,
+        "time_seconds": 0.069,
+        "usd_cost": 0.00023,
+        "success_rate": 1.0,
+        "retry_count_avg": 0.6666666666666666
+      },
+      "variance": {
+        "total_tokens_stdev": 91.0,
+        "time_seconds_stdev": 0.005
+      }
+    },
+    {
+      "variant": "python-baseline",
+      "task": "04-tool-interaction",
+      "session_length": 20,
+      "model": "claude-haiku-4-5-20251001",
+      "samples": 60,
+      "median": {
+        "total_tokens": 441.0,
+        "time_seconds": 0.068,
+        "usd_cost": 0.00023,
+        "success_rate": 1.0,
+        "retry_count_avg": 0.6666666666666666
+      },
+      "variance": {
+        "total_tokens_stdev": 91.0,
+        "time_seconds_stdev": 0.006
+      }
+    },
+    {
+      "variant": "python-baseline",
+      "task": "04-tool-interaction",
+      "session_length": 50,
+      "model": "claude-haiku-4-5-20251001",
+      "samples": 150,
+      "median": {
+        "total_tokens": 441.0,
+        "time_seconds": 0.071,
+        "usd_cost": 0.00023,
+        "success_rate": 1.0,
+        "retry_count_avg": 0.6666666666666666
+      },
+      "variance": {
+        "total_tokens_stdev": 91.0,
+        "time_seconds_stdev": 0.006
+      }
+    },
+    {
+      "variant": "python-baseline",
+      "task": "04-tool-interaction",
+      "session_length": 100,
+      "model": "claude-haiku-4-5-20251001",
+      "samples": 300,
+      "median": {
+        "total_tokens": 441.0,
+        "time_seconds": 0.071,
+        "usd_cost": 0.00023,
+        "success_rate": 1.0,
+        "retry_count_avg": 0.6666666666666666
+      },
+      "variance": {
+        "total_tokens_stdev": 91.0,
+        "time_seconds_stdev": 0.005
+      }
+    },
+    {
+      "variant": "python-baseline",
+      "task": "05-workflow",
+      "session_length": 1,
+      "model": "claude-haiku-4-5-20251001",
+      "samples": 3,
+      "median": {
+        "total_tokens": 587,
+        "time_seconds": 0.126,
+        "usd_cost": 0.00091,
+        "success_rate": 1.0,
+        "retry_count_avg": 0.6666666666666666
+      },
+      "variance": {
+        "total_tokens_stdev": 132.0,
+        "time_seconds_stdev": 0.003
+      }
+    },
+    {
+      "variant": "python-baseline",
+      "task": "05-workflow",
+      "session_length": 5,
+      "model": "claude-haiku-4-5-20251001",
+      "samples": 15,
+      "median": {
+        "total_tokens": 587,
+        "time_seconds": 0.121,
+        "usd_cost": 0.00058,
+        "success_rate": 1.0,
+        "retry_count_avg": 0.6666666666666666
+      },
+      "variance": {
+        "total_tokens_stdev": 132.0,
+        "time_seconds_stdev": 0.007
+      }
+    },
+    {
+      "variant": "python-baseline",
+      "task": "05-workflow",
+      "session_length": 20,
+      "model": "claude-haiku-4-5-20251001",
+      "samples": 60,
+      "median": {
+        "total_tokens": 587.0,
+        "time_seconds": 0.121,
+        "usd_cost": 0.00058,
+        "success_rate": 1.0,
+        "retry_count_avg": 0.6666666666666666
+      },
+      "variance": {
+        "total_tokens_stdev": 132.0,
+        "time_seconds_stdev": 0.01
+      }
+    },
+    {
+      "variant": "python-baseline",
+      "task": "05-workflow",
+      "session_length": 50,
+      "model": "claude-haiku-4-5-20251001",
+      "samples": 150,
+      "median": {
+        "total_tokens": 587.0,
+        "time_seconds": 0.119,
+        "usd_cost": 0.00058,
+        "success_rate": 1.0,
+        "retry_count_avg": 0.6666666666666666
+      },
+      "variance": {
+        "total_tokens_stdev": 132.0,
+        "time_seconds_stdev": 0.01
+      }
+    },
+    {
+      "variant": "python-baseline",
+      "task": "05-workflow",
+      "session_length": 100,
+      "model": "claude-haiku-4-5-20251001",
+      "samples": 300,
+      "median": {
+        "total_tokens": 587.0,
+        "time_seconds": 0.115,
+        "usd_cost": 0.00058,
+        "success_rate": 1.0,
+        "retry_count_avg": 0.6666666666666666
+      },
+      "variance": {
+        "total_tokens_stdev": 132.0,
+        "time_seconds_stdev": 0.017
+      }
+    },
+    {
+      "variant": "zero",
+      "task": "01-simple-function",
+      "session_length": 1,
+      "model": "claude-haiku-4-5-20251001",
+      "samples": 3,
+      "median": {
+        "total_tokens": 1581,
+        "time_seconds": 0.009,
+        "usd_cost": 0.00171,
+        "success_rate": 1.0,
+        "retry_count_avg": 0.6666666666666666
+      },
+      "variance": {
+        "total_tokens_stdev": 109.8,
+        "time_seconds_stdev": 0.002
+      }
+    },
+    {
+      "variant": "zero",
+      "task": "01-simple-function",
+      "session_length": 5,
+      "model": "claude-haiku-4-5-20251001",
+      "samples": 15,
+      "median": {
+        "total_tokens": 613,
+        "time_seconds": 0.009,
+        "usd_cost": 0.00032,
+        "success_rate": 1.0,
+        "retry_count_avg": 0.6666666666666666
+      },
+      "variance": {
+        "total_tokens_stdev": 402.5,
+        "time_seconds_stdev": 0.001
+      }
+    },
+    {
+      "variant": "zero",
+      "task": "01-simple-function",
+      "session_length": 20,
+      "model": "claude-haiku-4-5-20251001",
+      "samples": 60,
+      "median": {
+        "total_tokens": 613.0,
+        "time_seconds": 0.008,
+        "usd_cost": 0.00032,
+        "success_rate": 1.0,
+        "retry_count_avg": 0.6666666666666666
+      },
+      "variance": {
+        "total_tokens_stdev": 237.9,
+        "time_seconds_stdev": 0.002
+      }
+    },
+    {
+      "variant": "zero",
+      "task": "01-simple-function",
+      "session_length": 50,
+      "model": "claude-haiku-4-5-20251001",
+      "samples": 150,
+      "median": {
+        "total_tokens": 613.0,
+        "time_seconds": 0.007,
+        "usd_cost": 0.00032,
+        "success_rate": 1.0,
+        "retry_count_avg": 0.6666666666666666
+      },
+      "variance": {
+        "total_tokens_stdev": 174.4,
+        "time_seconds_stdev": 0.002
+      }
+    },
+    {
+      "variant": "zero",
+      "task": "01-simple-function",
+      "session_length": 100,
+      "model": "claude-haiku-4-5-20251001",
+      "samples": 300,
+      "median": {
+        "total_tokens": 613.0,
+        "time_seconds": 0.008,
+        "usd_cost": 0.00032,
+        "success_rate": 1.0,
+        "retry_count_avg": 0.6666666666666666
+      },
+      "variance": {
+        "total_tokens_stdev": 146.1,
+        "time_seconds_stdev": 0.001
+      }
+    },
+    {
+      "variant": "zero",
+      "task": "02-with-dependencies",
+      "session_length": 1,
+      "model": "claude-haiku-4-5-20251001",
+      "samples": 3,
+      "median": {
+        "total_tokens": 1676,
+        "time_seconds": 0.007,
+        "usd_cost": 0.00202,
+        "success_rate": 1.0,
+        "retry_count_avg": 0.6666666666666666
+      },
+      "variance": {
+        "total_tokens_stdev": 145.7,
+        "time_seconds_stdev": 0.001
+      }
+    },
+    {
+      "variant": "zero",
+      "task": "02-with-dependencies",
+      "session_length": 5,
+      "model": "claude-haiku-4-5-20251001",
+      "samples": 15,
+      "median": {
+        "total_tokens": 708,
+        "time_seconds": 0.007,
+        "usd_cost": 0.00062,
+        "success_rate": 1.0,
+        "retry_count_avg": 0.6666666666666666
+      },
+      "variance": {
+        "total_tokens_stdev": 413.7,
+        "time_seconds_stdev": 0.001
+      }
+    },
+    {
+      "variant": "zero",
+      "task": "02-with-dependencies",
+      "session_length": 20,
+      "model": "claude-haiku-4-5-20251001",
+      "samples": 60,
+      "median": {
+        "total_tokens": 708.0,
+        "time_seconds": 0.007,
+        "usd_cost": 0.00062,
+        "success_rate": 1.0,
+        "retry_count_avg": 0.6666666666666666
+      },
+      "variance": {
+        "total_tokens_stdev": 256.4,
+        "time_seconds_stdev": 0.001
+      }
+    },
+    {
+      "variant": "zero",
+      "task": "02-with-dependencies",
+      "session_length": 50,
+      "model": "claude-haiku-4-5-20251001",
+      "samples": 150,
+      "median": {
+        "total_tokens": 708.0,
+        "time_seconds": 0.008,
+        "usd_cost": 0.00062,
+        "success_rate": 1.0,
+        "retry_count_avg": 0.6666666666666666
+      },
+      "variance": {
+        "total_tokens_stdev": 199.0,
+        "time_seconds_stdev": 0.002
+      }
+    },
+    {
+      "variant": "zero",
+      "task": "02-with-dependencies",
+      "session_length": 100,
+      "model": "claude-haiku-4-5-20251001",
+      "samples": 300,
+      "median": {
+        "total_tokens": 708.0,
+        "time_seconds": 0.008,
+        "usd_cost": 0.00062,
+        "success_rate": 1.0,
+        "retry_count_avg": 0.6666666666666666
+      },
+      "variance": {
+        "total_tokens_stdev": 174.6,
+        "time_seconds_stdev": 0.002
+      }
+    },
+    {
+      "variant": "zero",
+      "task": "03-data-transform",
+      "session_length": 1,
+      "model": "claude-haiku-4-5-20251001",
+      "samples": 3,
+      "median": {
+        "total_tokens": 1605,
+        "time_seconds": 0.009,
+        "usd_cost": 0.00184,
+        "success_rate": 1.0,
+        "retry_count_avg": 0.6666666666666666
+      },
+      "variance": {
+        "total_tokens_stdev": 127.3,
+        "time_seconds_stdev": 0.002
+      }
+    },
+    {
+      "variant": "zero",
+      "task": "03-data-transform",
+      "session_length": 5,
+      "model": "claude-haiku-4-5-20251001",
+      "samples": 15,
+      "median": {
+        "total_tokens": 637,
+        "time_seconds": 0.009,
+        "usd_cost": 0.00047,
+        "success_rate": 1.0,
+        "retry_count_avg": 0.6666666666666666
+      },
+      "variance": {
+        "total_tokens_stdev": 407.6,
+        "time_seconds_stdev": 0.002
+      }
+    },
+    {
+      "variant": "zero",
+      "task": "03-data-transform",
+      "session_length": 20,
+      "model": "claude-haiku-4-5-20251001",
+      "samples": 60,
+      "median": {
+        "total_tokens": 637.0,
+        "time_seconds": 0.0075,
+        "usd_cost": 0.00047,
+        "success_rate": 1.0,
+        "retry_count_avg": 0.6666666666666666
+      },
+      "variance": {
+        "total_tokens_stdev": 246.4,
+        "time_seconds_stdev": 0.002
+      }
+    },
+    {
+      "variant": "zero",
+      "task": "03-data-transform",
+      "session_length": 50,
+      "model": "claude-haiku-4-5-20251001",
+      "samples": 150,
+      "median": {
+        "total_tokens": 637.0,
+        "time_seconds": 0.008,
+        "usd_cost": 0.00047,
+        "success_rate": 1.0,
+        "retry_count_avg": 0.6666666666666666
+      },
+      "variance": {
+        "total_tokens_stdev": 185.9,
+        "time_seconds_stdev": 0.001
+      }
+    },
+    {
+      "variant": "zero",
+      "task": "03-data-transform",
+      "session_length": 100,
+      "model": "claude-haiku-4-5-20251001",
+      "samples": 300,
+      "median": {
+        "total_tokens": 637.0,
+        "time_seconds": 0.007,
+        "usd_cost": 0.00047,
+        "success_rate": 1.0,
+        "retry_count_avg": 0.6666666666666666
+      },
+      "variance": {
+        "total_tokens_stdev": 159.6,
+        "time_seconds_stdev": 0.001
+      }
+    },
+    {
+      "variant": "zero",
+      "task": "04-tool-interaction",
+      "session_length": 1,
+      "model": "claude-haiku-4-5-20251001",
+      "samples": 3,
+      "median": {
+        "total_tokens": 1547,
+        "time_seconds": 0.009,
+        "usd_cost": 0.00164,
+        "success_rate": 1.0,
+        "retry_count_avg": 0.6666666666666666
+      },
+      "variance": {
+        "total_tokens_stdev": 103.7,
+        "time_seconds_stdev": 0.002
+      }
+    },
+    {
+      "variant": "zero",
+      "task": "04-tool-interaction",
+      "session_length": 5,
+      "model": "claude-haiku-4-5-20251001",
+      "samples": 15,
+      "median": {
+        "total_tokens": 579,
+        "time_seconds": 0.008,
+        "usd_cost": 0.00027,
+        "success_rate": 1.0,
+        "retry_count_avg": 0.6666666666666666
+      },
+      "variance": {
+        "total_tokens_stdev": 400.8,
+        "time_seconds_stdev": 0.002
+      }
+    },
+    {
+      "variant": "zero",
+      "task": "04-tool-interaction",
+      "session_length": 20,
+      "model": "claude-haiku-4-5-20251001",
+      "samples": 60,
+      "median": {
+        "total_tokens": 579.0,
+        "time_seconds": 0.007,
+        "usd_cost": 0.00027,
+        "success_rate": 1.0,
+        "retry_count_avg": 0.6666666666666666
+      },
+      "variance": {
+        "total_tokens_stdev": 235.1,
+        "time_seconds_stdev": 0.002
+      }
+    },
+    {
+      "variant": "zero",
+      "task": "04-tool-interaction",
+      "session_length": 50,
+      "model": "claude-haiku-4-5-20251001",
+      "samples": 150,
+      "median": {
+        "total_tokens": 579.0,
+        "time_seconds": 0.008,
+        "usd_cost": 0.00027,
+        "success_rate": 1.0,
+        "retry_count_avg": 0.6666666666666666
+      },
+      "variance": {
+        "total_tokens_stdev": 170.6,
+        "time_seconds_stdev": 0.002
+      }
+    },
+    {
+      "variant": "zero",
+      "task": "04-tool-interaction",
+      "session_length": 100,
+      "model": "claude-haiku-4-5-20251001",
+      "samples": 300,
+      "median": {
+        "total_tokens": 579.0,
+        "time_seconds": 0.007,
+        "usd_cost": 0.00027,
+        "success_rate": 1.0,
+        "retry_count_avg": 0.6666666666666666
+      },
+      "variance": {
+        "total_tokens_stdev": 141.5,
+        "time_seconds_stdev": 0.003
+      }
+    },
+    {
+      "variant": "zero",
+      "task": "05-workflow",
+      "session_length": 1,
+      "model": "claude-haiku-4-5-20251001",
+      "samples": 3,
+      "median": {
+        "total_tokens": 1770,
+        "time_seconds": 0.007,
+        "usd_cost": 0.00226,
+        "success_rate": 1.0,
+        "retry_count_avg": 0.6666666666666666
+      },
+      "variance": {
+        "total_tokens_stdev": 168.8,
+        "time_seconds_stdev": 0.001
+      }
+    },
+    {
+      "variant": "zero",
+      "task": "05-workflow",
+      "session_length": 5,
+      "model": "claude-haiku-4-5-20251001",
+      "samples": 15,
+      "median": {
+        "total_tokens": 802,
+        "time_seconds": 0.007,
+        "usd_cost": 0.00083,
+        "success_rate": 1.0,
+        "retry_count_avg": 0.6666666666666666
+      },
+      "variance": {
+        "total_tokens_stdev": 422.4,
+        "time_seconds_stdev": 0.001
+      }
+    },
+    {
+      "variant": "zero",
+      "task": "05-workflow",
+      "session_length": 20,
+      "model": "claude-haiku-4-5-20251001",
+      "samples": 60,
+      "median": {
+        "total_tokens": 802.0,
+        "time_seconds": 0.008,
+        "usd_cost": 0.00083,
+        "success_rate": 1.0,
+        "retry_count_avg": 0.6666666666666666
+      },
+      "variance": {
+        "total_tokens_stdev": 270.2,
+        "time_seconds_stdev": 0.001
+      }
+    },
+    {
+      "variant": "zero",
+      "task": "05-workflow",
+      "session_length": 50,
+      "model": "claude-haiku-4-5-20251001",
+      "samples": 150,
+      "median": {
+        "total_tokens": 802.0,
+        "time_seconds": 0.007,
+        "usd_cost": 0.00083,
+        "success_rate": 1.0,
+        "retry_count_avg": 0.6666666666666666
+      },
+      "variance": {
+        "total_tokens_stdev": 216.4,
+        "time_seconds_stdev": 0.001
+      }
+    },
+    {
+      "variant": "zero",
+      "task": "05-workflow",
+      "session_length": 100,
+      "model": "claude-haiku-4-5-20251001",
+      "samples": 300,
+      "median": {
+        "total_tokens": 802.0,
+        "time_seconds": 0.008,
+        "usd_cost": 0.00083,
+        "success_rate": 1.0,
+        "retry_count_avg": 0.6666666666666666
+      },
+      "variance": {
+        "total_tokens_stdev": 194.3,
+        "time_seconds_stdev": 0.002
+      }
+    }
+  ]
+}
