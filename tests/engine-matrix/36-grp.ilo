@@ -1,0 +1,4 @@
+-- feature: grp — group list by key function (PR #391)
+-- expected: 2
+parity n:n>t;=mod n 2 0{"even"};"odd"
+main>n;g=grp parity [1,2,3,4];len mkeys g

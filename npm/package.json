@@ -1,7 +1,7 @@
 {
   "name": "ilo-lang",
   "version": "0.11.8",
-  "description": "ilo \u2014 a token-optimised programming language for AI agents",
+  "description": "ilo - the token-minimal programming language AI agents write",
   "license": "MIT",
   "repository": {
     "type": "git",

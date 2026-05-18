@@ -1,0 +1,4 @@
+-- feature: flt — filter with fn ref
+-- expected: [2, 4]
+ev x:n>b;=mod x 2 0
+main>L n;flt ev [1,2,3,4]

@@ -1,0 +1,3 @@
+-- feature: optional (n=just, _=nothing) via mget
+-- expected: present
+main>t;mp=mset mmap "k" 1;r=mget mp "k";?r{n v:"present";_:"absent"}

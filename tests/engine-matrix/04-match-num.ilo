@@ -1,0 +1,3 @@
+-- feature: match on number
+-- expected: zero
+main>t;n=0;?n{0:"zero";_:"nonzero"}

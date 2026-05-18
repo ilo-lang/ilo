@@ -1,0 +1,4 @@
+-- feature: prnt — write to stdout (output is "hi" then "0" on its own line)
+-- expected: hi
+-- expected: 0
+main>n;prnt "hi";0

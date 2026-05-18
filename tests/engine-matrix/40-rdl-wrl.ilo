@@ -1,0 +1,3 @@
+-- feature: wrl + rdl line round-trip
+-- expected: 3
+main>n;p="/tmp/ilo-audit-fs-lines.txt";wrl p ["a","b","c"];r=rdl p;?r{~xs:len xs;^e:0}

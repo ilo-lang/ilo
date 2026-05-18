@@ -1,0 +1,3 @@
+-- feature: wr + rd round-trip via a temp path under /tmp
+-- expected: hello
+main>t;p="/tmp/ilo-audit-fs.txt";wr p "hello";r=rd p;?r{~v:v;^e:"FAIL"}

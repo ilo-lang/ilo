@@ -1,0 +1,3 @@
+-- feature: unq — dedupe consecutive
+-- expected: [1, 2, 3]
+main>L n;unq [1,1,2,2,3]

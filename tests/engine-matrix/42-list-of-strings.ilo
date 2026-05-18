@@ -1,0 +1,3 @@
+-- feature: list of strings + len
+-- expected: 3
+main>n;xs=["a","b","c"];len xs

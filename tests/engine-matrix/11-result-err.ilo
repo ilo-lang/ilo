@@ -1,0 +1,3 @@
+-- feature: result match (Err)
+-- expected: bad
+main>t;r=num "abc";?r{~v:"ok";^e:"bad"}

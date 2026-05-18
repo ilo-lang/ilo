@@ -10,8 +10,8 @@ ilo is a token-optimised programming language for AI agents. Every design choice
 <name> <param>:<type> ...><return-type>;<body>
 ```
 
-- No parens around params — `>` separates params from return type
-- `;` separates statements — no newlines required
+- No parens around params - `>` separates params from return type
+- `;` separates statements - no newlines required
 - Last expression is the return value (no `return` keyword)
 - Zero-arg call: `make-id()`
 
@@ -33,10 +33,10 @@ tot p:n q:n r:n>n;s=*p q;t=*s r;+s t
 | `R n t` | result: ok=number, err=text |
 | `O n` | optional number (nil or n) |
 | `M t n` | map from text keys to numbers |
-| `S red green blue` | sum type — one of named text variants |
+| `S red green blue` | sum type - one of named text variants |
 | `F n t` | function type: takes n, returns t (used in HOF params) |
 | `order` | named type |
-| `a` | type variable — any single lowercase letter except n, t, b |
+| `a` | type variable - any single lowercase letter except n, t, b |
 
 ### Optional (`O T`)
 
@@ -48,7 +48,7 @@ g>O n;nil           -- returns nil (valid O n)
 h>O n;42            -- returns 42 (valid O n)
 ```
 
-`??x default` — nil-coalesce: returns `x` if non-nil, else `default`. Unwraps `O T` to `T`.
+`??x default` - nil-coalesce: returns `x` if non-nil, else `default`. Unwraps `O T` to `T`.
 
 ### Sum types (`S a b c`)
 
@@ -59,7 +59,7 @@ color x:S red green blue > t
   ?x{red:"ff0000";green:"00ff00";blue:"0000ff"}
 ```
 
-Sum types are compatible with `t` — a sum value can be passed to any `t` parameter.
+Sum types are compatible with `t` - a sum value can be passed to any `t` parameter.
 
 ### Map type (`M k v`)
 
@@ -76,7 +76,7 @@ mdel m k                 -- return new map with key k removed
 len m                     -- number of entries
 ```
 
-Numeric keys work directly — no `str` conversion needed. Float keys floor to `i64` at the builtin boundary (matching `at xs i`); NaN/Infinity raise at runtime.
+Numeric keys work directly - no `str` conversion needed. Float keys floor to `i64` at the builtin boundary (matching `at xs i`); NaN/Infinity raise at runtime.
 
 ```
 idx=mmap
@@ -86,7 +86,7 @@ mhas idx 7                 -- true
 mhas idx "7"               -- false (Int and Text are distinct)
 ```
 
-`jdmp` stringifies numeric keys for JSON output (JSON object keys are always strings). The round-trip via `jpar` is lossy — numeric keys come back as text.
+`jdmp` stringifies numeric keys for JSON output (JSON object keys are always strings). The round-trip via `jpar` is lossy - numeric keys come back as text.
 
 Example:
 
@@ -107,7 +107,7 @@ identity x:a>a;x
 apply f:F a a x:a>a;f x
 ```
 
-Type variables provide weak generics — the verifier accepts any type for `a` without consistency checking across call sites.
+Type variables provide weak generics - the verifier accepts any type for `a` without consistency checking across call sites.
 
 ### Inline lambdas
 
@@ -147,7 +147,7 @@ Short names everywhere. 1–3 chars.
 | `final` | `fin` | first 3 |
 | `items` | `its` | first 3 |
 
-Function names follow the same rules. Field names in constructors and external tool names keep their full form — they define the public interface.
+Function names follow the same rules. Field names in constructors and external tool names keep their full form - they define the public interface.
 
 ### Identifier syntax
 
@@ -208,14 +208,14 @@ Short builtin names are precious surface and ilo reserves a stable subset of the
 
 Longer builtin names (`acos`, `asin`, `atan`, `flat`, `take`, `drop`, `mget`, `mset`, `mmap`, `prnt`, `mapr`, `solve`, `clamp`, `cumsum`, `median`, `matmul`, `range`, `window`, `chunks`, …) are also reserved and rejected by `ILO-P011`, but the short-name namespace above is where carry-forward scripts most often collide, so it gets explicit enumeration.
 
-**Forward-compatibility rule.** Future ilo releases add new builtins under names **4 characters or longer**. A 2-character name that is not on this list today is safe to use as a binding or function name and stays safe across releases. A 3-character name that is not on this list is _highly likely_ to stay safe but is not a hard promise — the 3-char surface is already dense, and a rare ergonomic win may justify an addition, called out in the changelog.
+**Forward-compatibility rule.** Future ilo releases add new builtins under names **4 characters or longer**. A 2-character name that is not on this list today is safe to use as a binding or function name and stays safe across releases. A 3-character name that is not on this list is _highly likely_ to stay safe but is not a hard promise - the 3-char surface is already dense, and a rare ergonomic win may justify an addition, called out in the changelog.
 
 This gives agents a deterministic safe-name strategy:
 - **2 chars**: any unreserved 2-char name is permanently fine for bindings (`ce` for "category", `ix` for index, `mn` for "mean", `pq` for "priority queue", …). Names on the reserved list above never get removed.
 - **3 chars**: prefer unreserved 3-char names where possible. If a future release reserves one, the migration is a 1-character rename plus a changelog entry.
 - **4+ chars**: always safe. New builtins land here first; any short alias is added later only if the long name is unambiguous and the short doesn't shadow a plausible user binding.
 
-When a collision does happen, `ILO-P011` surfaces it at the binding site with a rename suggestion — never silently mis-dispatches at the call site (see the `flat=cat ls " "` example above). Combined with the reserve list, that turns every name-collision incident into a single-character rename instead of a debugging spiral.
+When a collision does happen, `ILO-P011` surfaces it at the binding site with a rename suggestion - never silently mis-dispatches at the call site (see the `flat=cat ls " "` example above). Combined with the reserve list, that turns every name-collision incident into a single-character rename instead of a debugging spiral.
 
 ### Cross-language gotchas
 
@@ -247,7 +247,7 @@ The double-minus trap (`ILO-P021`) catches the silent-miscompile shape `- -<op> 
 -- like this
 ```
 
-Single-line only. `--` to end of line. No multi-line comment syntax — newlines are a human display concern, not a language concern. An entire ilo program can be one line. Use consecutive `--` lines when humans need multi-line comments. Stripped at the lexer level before parsing — comments produce no AST nodes and cost zero runtime tokens. Generating `--` costs 1 LLM token, so comments are essentially free.
+Single-line only. `--` to end of line. No multi-line comment syntax - newlines are a human display concern, not a language concern. An entire ilo program can be one line. Use consecutive `--` lines when humans need multi-line comments. Stripped at the lexer level before parsing - comments produce no AST nodes and cost zero runtime tokens. Generating `--` costs 1 LLM token, so comments are essentially free.
 
 **Gotcha:** `--x 1` is a comment, not "negate (x minus 1)". The lexer matches `--` greedily as a comment and eats the rest of the line. To negate a subtraction, use a space or bind first:
 
@@ -261,7 +261,7 @@ Single-line only. `--` to end of line. No multi-line comment syntax — newlines
 
 ## Operators
 
-Both prefix and infix notation are supported. **Prefix is preferred** — it is the token-optimal form that eliminates parentheses and produces denser code. Infix is available for readability when needed.
+Both prefix and infix notation are supported. **Prefix is preferred** - it is the token-optimal form that eliminates parentheses and produces denser code. Infix is available for readability when needed.
 
 ### Binary
 
@@ -297,7 +297,7 @@ len +=xs 99                        -- length of [xs..., 99]
 sum +=xs 99                        -- sum of [xs..., 99]
 ```
 
-The rebind shape `xs = +=xs v` is the standard foreach-build accumulator. When the binding is RC=1 the engines mutate the underlying buffer in place (amortised O(1) per push) — but this is a behind-the-scenes optimisation. To any observer the operation is still functional: nothing outside the rebind sees the old `xs`. The non-rebind shape `ys = +=xs v` always allocates a fresh list and leaves `xs` untouched, so source aliases are safe.
+The rebind shape `xs = +=xs v` is the standard foreach-build accumulator. When the binding is RC=1 the engines mutate the underlying buffer in place (amortised O(1) per push) - but this is a behind-the-scenes optimisation. To any observer the operation is still functional: nothing outside the rebind sees the old `xs`. The non-rebind shape `ys = +=xs v` always allocates a fresh list and leaves `xs` untouched, so source aliases are safe.
 
 There is no separate `push` builtin. `+=` covers every use case and is shorter; adding an alias would mean two ways to spell the same operation, costing reasoning tokens and surface area.
 
@@ -374,15 +374,15 @@ Operator operands are **atoms** (literals, refs, field access), **nested prefix 
 wh >len q 0{body}        -- parses as wh > (len q) 0 { body }
 +f g h                   -- if f is 1-arity: BinOp(+, Call(f, [g]), h)
 -lnx 5 lnx 3             -- BinOp(-, Call(lnx, [5]), Call(lnx, [3]))
-- dbl 5                  -- Negate(Call(dbl, [5])) — unary on a call
+- dbl 5                  -- Negate(Call(dbl, [5])) - unary on a call
 ```
 
-This parallels the `??` precedent: `??x default` accepts a call expression on the value side. Applies to every prefix-binop family member — `+`, `-`, `*`, `/`, comparisons, `&`, `|`, `+=` — and to unary negate when the call consumes the only operand. The same expansion also applies to the then/else slots of the prefix-ternary family (`?=cond a b`, `?>cond a b`, …) and the `?h cond a b` keyword form, so `?h =a b sev sc "NONE"` parses `sev sc` as a nested call without parens or a bind-first. Bare locals that shadow a user fn name still resolve via `Ref` rather than expanding into a zero-arg call, so `&e f{...}` where `f` is a local still parses as the bool operator with two refs.
+This parallels the `??` precedent: `??x default` accepts a call expression on the value side. Applies to every prefix-binop family member - `+`, `-`, `*`, `/`, comparisons, `&`, `|`, `+=` - and to unary negate when the call consumes the only operand. The same expansion also applies to the then/else slots of the prefix-ternary family (`?=cond a b`, `?>cond a b`, …) and the `?h cond a b` keyword form, so `?h =a b sev sc "NONE"` parses `sev sc` as a nested call without parens or a bind-first. Bare locals that shadow a user fn name still resolve via `Ref` rather than expanding into a zero-arg call, so `&e f{...}` where `f` is a local still parses as the bool operator with two refs.
 
 When the call expansion isn't available (the ident is a local that shadows a fn name, or the call's arity doesn't fit the remaining tokens), bind the call result first:
 
 ```
-r=fac p;*n r   -- bind, then operate — always unambiguous
+r=fac p;*n r   -- bind, then operate - always unambiguous
 ```
 
 **Negative literals vs binary minus**: the lexer greedily includes a leading `-` into number tokens. `-1`, `-7`, `-0` are all number literals at fresh-expression positions. To subtract from zero at the start of a statement, use a space: `- 0 v` (Minus token, then `0`, then `v`).
@@ -456,7 +456,7 @@ Called like functions, compiled to dedicated opcodes.
 | `rd path` | read file; format auto-detected from extension (`.csv`/`.tsv`→grid, `.json`→graph, else text) | `R _ t` |
 | `rd path fmt` | read file with explicit format override (`"csv"`, `"tsv"`, `"json"`, `"raw"`) | `R _ t` |
 | `rdl path` | read file as list of lines | `R (L t) t` |
-| `rdb s fmt` | parse string/buffer in given format — for data from HTTP, env vars, etc. | `R _ t` |
+| `rdb s fmt` | parse string/buffer in given format - for data from HTTP, env vars, etc. | `R _ t` |
 | `wr path s` | write text to file (overwrite) | `R t t` |
 | `wr path data "csv"` | write list-of-lists as CSV (with proper quoting) | `R t t` |
 | `wr path data "tsv"` | write list-of-lists as TSV | `R t t` |
@@ -464,7 +464,7 @@ Called like functions, compiled to dedicated opcodes.
 | `wrl path xs` | write list of lines to file (joins with `\n`) | `R t t` |
 | `trm s` | trim leading and trailing whitespace | `t` |
 | `spl t sep` | split text by separator | `L t` |
-| `fmt tmpl args…` | format string — bare `{}` placeholders only, filled left-to-right. Printf-style specs (`{:06d}`, `{:.3f}`) are rejected; compose `fmt2` for decimal precision and `padl` for width/padding | `t` |
+| `fmt tmpl args…` | format string - bare `{}` placeholders only, filled left-to-right. Printf-style specs (`{:06d}`, `{:.3f}`) are rejected; compose `fmt2` for decimal precision and `padl` for width/padding | `t` |
 | `cat xs sep` | join list of text with separator | `t` |
 | `has xs v` | membership test (list: element, text: substring) | `b` |
 | `hd xs` | head (first element/char) of list or text | element / `t` |
@@ -474,7 +474,7 @@ Called like functions, compiled to dedicated opcodes.
 | `srt fn xs` | sort list by key function (returns number or text key) | `L` |
 | `unq xs` | remove duplicates, preserve order (list or text chars) | same type |
 | `slc xs a b` | slice list or text from index a to b (a, b accept negative indices counting from end; bounds clamp) | same type |
-| `jpth json path` | JSON dot-path lookup, dot-separated keys + numeric array indices (e.g. `"a.b.0.c"`), not JSONPath — leading `$`, `*`, or `[...]` rejected with a diagnostic | `R t t` |
+| `jpth json path` | JSON dot-path lookup, dot-separated keys + numeric array indices (e.g. `"a.b.0.c"`), not JSONPath - leading `$`, `*`, or `[...]` rejected with a diagnostic | `R t t` |
 | `jdmp value` | serialise ilo value to JSON text | `t` |
 | `prnt value` | print value to stdout, return it unchanged (passthrough) | same type |
 | `jpar text` | parse JSON text into ilo values | `R _ t` |
@@ -561,11 +561,11 @@ Called like functions, compiled to dedicated opcodes.
 | `ifft pairs` | inverse FFT; imaginary part dropped on return | `L n` |
 | `fmt2 x digits` | format number `x` to `digits` decimal places (half-to-even rounding; `digits` clamped to `0..=20`). Compose with `fmt` for template + precision: `fmt "x={}" (fmt2 v 2)` | `t` |
 
-> **`fmt` does not print.** `fmt` and `fmt2` are pure-functional string builders, not `println!`. A bare `fmt "..." v` statement evaluates and discards the resulting text on every engine — nothing reaches stdout. Print with `prnt fmt "..." v` or capture with `line = fmt "..." v`. The verifier emits **ILO-T032** when `fmt`/`fmt2` is a non-tail statement with no binding. Tail position is fine: `say-x v:n>t;fmt "x={}" v` returns the string to the caller as documented.
+> **`fmt` does not print.** `fmt` and `fmt2` are pure-functional string builders, not `println!`. A bare `fmt "..." v` statement evaluates and discards the resulting text on every engine - nothing reaches stdout. Print with `prnt fmt "..." v` or capture with `line = fmt "..." v`. The verifier emits **ILO-T032** when `fmt`/`fmt2` is a non-tail statement with no binding. Tail position is fine: `say-x v:n>t;fmt "x={}" v` returns the string to the caller as documented.
 
-> **`+=`, `mset`, and `mdel` return a new value, they do not mutate in place.** `+=xs v` returns a new list; `mset m k v` and `mdel m k` return a new map. As a bare statement (`@i 0..3{+=out i}`, `mset m "a" 1;m`) the result is silently discarded and the source binding is unchanged. The verifier emits **ILO-T033** when these calls appear at a discarded position — any non-tail statement, or anywhere inside a loop body. Fix is the assignment form: `out=+=out i`, `m=mset m k v`, `m=mdel m k`. Tail position in a function/`?{}` arm is fine — the value flows out as the return.
+> **`+=`, `mset`, and `mdel` return a new value, they do not mutate in place.** `+=xs v` returns a new list; `mset m k v` and `mdel m k` return a new map. As a bare statement (`@i 0..3{+=out i}`, `mset m "a" 1;m`) the result is silently discarded and the source binding is unchanged. The verifier emits **ILO-T033** when these calls appear at a discarded position - any non-tail statement, or anywhere inside a loop body. Fix is the assignment form: `out=+=out i`, `m=mset m k v`, `m=mdel m k`. Tail position in a function/`?{}` arm is fine - the value flows out as the return.
 
-> **`wr` and `wrl` return the written path, not a status.** Both succeed with `~path` (the file path you passed in), not `~"ok"` or nil. A `save` helper that ends with a bare `wrl "tasks.txt" xs` therefore returns `~"tasks.txt"`, and every successful mutation echoes the state-file path to stdout — noise for any caller piping output. Discard the path and return a clean status string instead: `save xs:L t>R t t;r=wrl "tasks.txt" xs;?r{~_:~"ok";^e:^e}`. The error arm still propagates `wrl`'s message. See [`examples/cli-tasks-save-ok.ilo`](examples/cli-tasks-save-ok.ilo) for the full shape.
+> **`wr` and `wrl` return the written path, not a status.** Both succeed with `~path` (the file path you passed in), not `~"ok"` or nil. A `save` helper that ends with a bare `wrl "tasks.txt" xs` therefore returns `~"tasks.txt"`, and every successful mutation echoes the state-file path to stdout - noise for any caller piping output. Discard the path and return a clean status string instead: `save xs:L t>R t t;r=wrl "tasks.txt" xs;?r{~_:~"ok";^e:^e}`. The error arm still propagates `wrl`'s message. See [`examples/cli-tasks-save-ok.ilo`](examples/cli-tasks-save-ok.ilo) for the full shape.
 
 ### Datetime (`dtfmt` / `dtparse`)
 
@@ -579,7 +579,7 @@ dtfmt! e "%H:%M:%S"                   -- auto-unwrap inside R-returning fn
 
 ### Set operations
 
-`setunion`, `setinter`, `setdiff` operate on lists of `t`, `n`, or `b` (same constraint as `uniqby`). Output is deduped and sorted by a type-prefixed string key, so results are deterministic across runs and engines. Sort is lexicographic on the key, not numeric — re-sort with `srt` afterwards if you need numeric order.
+`setunion`, `setinter`, `setdiff` operate on lists of `t`, `n`, or `b` (same constraint as `uniqby`). Output is deduped and sorted by a type-prefixed string key, so results are deterministic across runs and engines. Sort is lexicographic on the key, not numeric - re-sort with `srt` afterwards if you need numeric order.
 
 ### Linear algebra
 
@@ -632,10 +632,10 @@ All builtins accept one or more alias names that resolve to the canonical name a
 
 ```
 length xs   -- works, but emits: hint: `length` → `len` (canonical form)
-len xs      -- canonical — no hint
+len xs      -- canonical - no hint
 
 rng 0 10    -- works, but emits: hint: `rng` → `range` (canonical form)
-range 0 10  -- canonical — no hint
+range 0 10  -- canonical - no hint
 ```
 
 Short-form aliases (where the alias is shorter than the canonical) follow the same shadow-prevention rule as canonical builtins: `rng=...` as a binding or function name is rejected at parse time with `ILO-P011` so the call-site rewrite cannot silently mis-dispatch.
@@ -755,7 +755,7 @@ xs.2     # third element (literal index)
 xs.i     # i-th element when `i` is a bound variable in scope
 ```
 
-The variable-index form `xs.i` is sugar for `at xs i` — the parser builds
+The variable-index form `xs.i` is sugar for `at xs i` - the parser builds
 a field-access node and a post-parse desugar pass rewrites it whenever the
 field identifier resolves to a binding in scope (parameter, let, foreach,
 range, match-arm). Record field access keeps working: if the identifier is
@@ -772,15 +772,15 @@ ilo 'f xs:L t>t;xs.0' 'a,b,c'       → a
 
 ## Statements
 
-Guards and conditionals replace `if`/`else if`/`else`. They are flat statements — no nesting, no closing braces to match. There are three forms:
+Guards and conditionals replace `if`/`else if`/`else`. They are flat statements - no nesting, no closing braces to match. There are three forms:
 
-- **Braceless guard** (`cond expr`): early return — if condition is true, returns the expression from the function.
-- **Braced conditional** (`cond{body}`): conditional execution — if condition is true, body runs but execution continues (no early return). Use `ret` inside the body for explicit early return.
-- **Ternary** (`cond{then}{else}`): value expression — evaluates then or else branch, no early return.
+- **Braceless guard** (`cond expr`): early return - if condition is true, returns the expression from the function.
+- **Braced conditional** (`cond{body}`): conditional execution - if condition is true, body runs but execution continues (no early return). Use `ret` inside the body for explicit early return.
+- **Ternary** (`cond{then}{else}`): value expression - evaluates then or else branch, no early return.
 
 Multiple braceless guards chain vertically for guard clauses, keeping indentation depth constant.
 
-Match replaces `switch`. There is no fall-through — each arm is independent. The `_` arm is the default catch-all.
+Match replaces `switch`. There is no fall-through - each arm is independent. The `_` arm is the default catch-all.
 
 | Form | Meaning |
 |------|---------|
@@ -816,17 +816,17 @@ Match replaces `switch`. There is no fall-through — each arm is independent. T
 |---------|---------|
 | `"gold":body` | literal text |
 | `42:body` | literal number |
-| `~v:body` | ok — bind inner value to `v` |
-| `^e:body` | err — bind inner value to `e` |
-| `n v:body` | number — branch if value is a number, bind to `v` |
-| `t v:body` | text — branch if value is text, bind to `v` |
-| `b v:body` | bool — branch if value is a bool, bind to `v` |
-| `l v:body` | list — branch if value is a list, bind to `v` |
+| `~v:body` | ok - bind inner value to `v` |
+| `^e:body` | err - bind inner value to `e` |
+| `n v:body` | number - branch if value is a number, bind to `v` |
+| `t v:body` | text - branch if value is text, bind to `v` |
+| `b v:body` | bool - branch if value is a bool, bind to `v` |
+| `l v:body` | list - branch if value is a list, bind to `v` |
 | `_:body` | wildcard, binds matched subject to `_` |
 
 Arms separated by `;`. First match wins.
 
-**Exhaustiveness.** Matches on closed sum-shaped types must cover every variant or include `_:`. For a `R T E` subject, `~v: + ^e:` is exhaustive on its own — no `_:` wildcard required (verifier rule, mirrors `S`-typed matches). For a `b` (bool) subject, `true: + false:` is exhaustive. For numbers and text, `_:` is required.
+**Exhaustiveness.** Matches on closed sum-shaped types must cover every variant or include `_:`. For a `R T E` subject, `~v: + ^e:` is exhaustive on its own - no `_:` wildcard required (verifier rule, mirrors `S`-typed matches). For a `b` (bool) subject, `true: + false:` is exhaustive. For numbers and text, `_:` is required.
 
 ```
 parse>t;r=num "3.14";?r{~v:str v;^e:e}   -- canonical two-arm Result match
@@ -834,7 +834,7 @@ parse>t;r=num "3.14";?r{~v:str v;^e:e}   -- canonical two-arm Result match
 
 Zero-arg user functions called bare in a value position auto-expand to a call, so `r=mk` where `mk>R t t;...` makes `r` the Result, not a function reference.
 
-In any binding position the name `_` is permitted and binds normally — `~_:body`, `^_:body`, `n _:body` etc. expose the matched inner value to `body` under the name `_`. Bodies that don't reference `_` are unaffected.
+In any binding position the name `_` is permitted and binds normally - `~_:body`, `^_:body`, `n _:body` etc. expose the matched inner value to `body` under the name `_`. Bodies that don't reference `_` are unaffected.
 
 ```
 cls sp:n>t;>=sp 1000 "gold";>=sp 500 "silver";"bronze"
@@ -850,7 +850,7 @@ cls sp:n>t;>=sp 1000 "gold";>=sp 500 "silver";"bronze"
 
 Negated braceless guards also work: `!<=n 0 ^"must be positive"`.
 
-**Comparison operators always start a guard at statement position.** You cannot use `=`, `<`, `>`, `<=`, `>=` etc. as a standalone return expression — the parser treats them as a guard condition and expects a following return value. To return a comparison result, bind it first:
+**Comparison operators always start a guard at statement position.** You cannot use `=`, `<`, `>`, `<=`, `>=` etc. as a standalone return expression - the parser treats them as a guard condition and expects a following return value. To return a comparison result, bind it first:
 
 ```
 -- WRONG: r=has xs v;=r true   -- =r true is parsed as a guard, not a return expression
@@ -860,7 +860,7 @@ Negated braceless guards also work: `!<=n 0 ^"must be positive"`.
 
 ### Braced Conditionals (No Early Return)
 
-A braced guard `cond{body}` is **conditional execution** — the body runs if the condition is true, but execution always continues to the next statement (no early return):
+A braced guard `cond{body}` is **conditional execution** - the body runs if the condition is true, but execution always continues to the next statement (no early return):
 
 ```
 f x:n>n;>x 0{99};+x 1   -- {99} runs when x>0 but is discarded; always returns +x 1
@@ -888,7 +888,7 @@ f x:n>n;>x 0{ret x};-x   -- return x early if positive, else negate
 
 ### Ternary (Guard-Else)
 
-A guard followed by a second brace block becomes a ternary — it produces a value without early return:
+A guard followed by a second brace block becomes a ternary - it produces a value without early return:
 
 ```
 f x:n>t;=x 1{"yes"}{"no"}
@@ -902,14 +902,14 @@ f x:n>n;=x 0{10}{20};+x 1   -- always returns x+1, ternary value is discarded
 
 Negated ternary: `!=x 1{"not one"}{"one"}`.
 
-**Bare-bool ternary** uses `?` with a bool-valued expression as the condition — no comparison operator required:
+**Bare-bool ternary** uses `?` with a bool-valued expression as the condition - no comparison operator required:
 
 ```
 f h:b>n;?h{1}{0}             -- if h then 1 else 0
 f x:n>t;c=>x 0;?c{"pos"}{"nonpos"}   -- bool from comparison, then ternary
 ```
 
-This is the natural shape when the condition is already a bool (function param, comparison result, predicate call) and saves the explicit `=h true` step that the `=cond{a}{b}` form would otherwise require. Detected purely by shape: `?subj{a}{b}` where both braces contain a single colon-and-semi-free expression. Match-arm forms (`?x{1:a;2:b;_:c}`, `?h{true:a;false:b}`) are unaffected — the colon or semicolon at the outer brace level routes them to match parsing.
+This is the natural shape when the condition is already a bool (function param, comparison result, predicate call) and saves the explicit `=h true` step that the `=cond{a}{b}` form would otherwise require. Detected purely by shape: `?subj{a}{b}` where both braces contain a single colon-and-semi-free expression. Match-arm forms (`?x{1:a;2:b;_:c}`, `?h{true:a;false:b}`) are unaffected - the colon or semicolon at the outer brace level routes them to match parsing.
 
 **Prefix ternary** uses `?` with a comparison operator for a fully prefix-style conditional:
 
@@ -920,16 +920,16 @@ f x:n>n;v=?>x 100 1 0;v   -- assign result to v
 
 The condition must start with a comparison operator (`=`, `>`, `<`, `>=`, `<=`, `!=`).
 
-**Bare-bool prefix ternary** uses `?` with a bool-valued subject (param, comparison result, predicate call) followed by two operand atoms — the parens-free, brace-free shape:
+**Bare-bool prefix ternary** uses `?` with a bool-valued subject (param, comparison result, predicate call) followed by two operand atoms - the parens-free, brace-free shape:
 
 ```
 f h:b>n;?h 1 0            -- if h then 1 else 0
 f h:b>n;v=?h 1 0;v        -- assign result to v
 ```
 
-This is the cheapest shape when the condition is already a bool — 6 chars for `?h 1 0` vs 8 for the brace form `?h{1}{0}` and 12 for the eq-prefix form `?=h true 1 0`. The match-vs-ternary disambiguator routes `?subj{arms-with-colon-or-semi}` to match parsing, `?subj{a}{b}` to brace bare-bool ternary, and `?subj a b` (two bare operands at the cursor, no leading brace) to bare-bool prefix ternary. `?subj` alone with no following operand still errors the same way as before.
+This is the cheapest shape when the condition is already a bool - 6 chars for `?h 1 0` vs 8 for the brace form `?h{1}{0}` and 12 for the eq-prefix form `?=h true 1 0`. The match-vs-ternary disambiguator routes `?subj{arms-with-colon-or-semi}` to match parsing, `?subj{a}{b}` to brace bare-bool ternary, and `?subj a b` (two bare operands at the cursor, no leading brace) to bare-bool prefix ternary. `?subj` alone with no following operand still errors the same way as before.
 
-**`?h cond a b` general prefix-ternary keyword** uses the literal subject ident `h` plus three operand atoms — the condition is the first operand and `a`/`b` are the arms, analogous to the `?=`/`?>`/`?<` family of comparison-prefix-ternaries but with the condition as an arbitrary bool-valued atom rather than a comparison expression:
+**`?h cond a b` general prefix-ternary keyword** uses the literal subject ident `h` plus three operand atoms - the condition is the first operand and `a`/`b` are the arms, analogous to the `?=`/`?>`/`?<` family of comparison-prefix-ternaries but with the condition as an arbitrary bool-valued atom rather than a comparison expression:
 
 ```
 f x:n>t;cn=>x 0;?h cn "pos" "nonpos"             -- comparison-derived bool as condition
@@ -939,7 +939,7 @@ f mn:t>t;cn=(=mn "v40");sc1=?h cn "v4" "v3";sc1   -- in let-RHS
 
 The disambiguator is operand count: **two** operand atoms after `?h` keeps the bool-subject reading above (`?h a b` → `if h then a else b`); **three** operand atoms promotes `?h` to the fixed keyword form (`?h cond a b` → `if cond then a else b`). The keyword reading triggers only for the literal ident `h`, so every other bool-named subject (`?ready a b`, `?ok 1 0`, …) keeps the PR #330 semantics regardless of how many operands follow. Use the keyword form when the condition is a more complex bool expression than a single ref and you want the cheapest prefix shape; the brace form `?cond{a}{b}` works too but is two characters longer per occurrence.
 
-Each of the three operand slots accepts the same shapes as a prefix-binop operand — atom, nested prefix operator, or known-arity call. `?h =a b sev sc "NONE"` parses `sev sc` as `Call(sev, [sc])` in the then-slot, so `Call` results don't have to be bound first or paren-grouped (paren form `(sev sc)` still works as an explicit alternative).
+Each of the three operand slots accepts the same shapes as a prefix-binop operand - atom, nested prefix operator, or known-arity call. `?h =a b sev sc "NONE"` parses `sev sc` as `Call(sev, [sc])` in the then-slot, so `Call` results don't have to be bound first or paren-grouped (paren form `(sev sc)` still works as an explicit alternative).
 
 ### Early Return
 
@@ -984,7 +984,7 @@ f>n;i=0;wh true{i=+i 1;>=i 3{brk}};i    -- i = 3
 f>n;i=0;s=0;wh <i 5{i=+i 1;>=i 3{cnt};s=+s i};s   -- s = 3 (skips i>=3)
 ```
 
-`brk expr` provides an optional value (currently discarded — the loop result is the last body value before the break).
+`brk expr` provides an optional value (currently discarded - the loop result is the last body value before the break).
 
 Both `brk` and `cnt` work inside braced conditionals within loops. Using them outside a loop is a compile-time error (no-op in current implementation).
 
@@ -998,7 +998,7 @@ add x 1>>add 2      -- desugars to: add 2 (add x 1)
 f x>>g>>h            -- desugars to: h (g (f x))
 ```
 
-Pipes desugar at parse time — no new AST node. Works with `!` for auto-unwrap: `f x>>g!>>h`.
+Pipes desugar at parse time - no new AST node. Works with `!` for auto-unwrap: `f x>>g!>>h`.
 
 ### Safe Field Navigation
 
@@ -1031,7 +1031,7 @@ a??b??99           -- chained: first non-nil wins, else 99
 mk 0??"default"   -- works with function results
 ```
 
-Compiled via `OP_JMPNN` (jump if not nil) — right side is only evaluated when left is nil.
+Compiled via `OP_JMPNN` (jump if not nil) - right side is only evaluated when left is nil.
 
 Use braces when the body has multiple statements:
 
@@ -1062,7 +1062,7 @@ Call arguments can be atoms or prefix expressions:
 ```
 fac -n 1       -- Call(fac, [Subtract(n, 1)])
 fac +a b       -- Call(fac, [Add(a, b)])
-g +a b c       -- Call(g, [Add(a,b), c])  — 2 args
+g +a b c       -- Call(g, [Add(a,b), c])  - 2 args
 fac p           -- Call(fac, [Ref(p)])
 ```
 
@@ -1114,13 +1114,13 @@ ord with total:fin cost:sh
 
 After `.` or `.?`, the parser accepts any identifier-shaped token as a field name, including:
 
-- **Reserved keywords** — `r.type`, `r.if`, `r.use`, `r.true`, `r.nil`. JSON keys commonly mirror language keywords and dot-access must just work.
-- **camelCase** — `r.cvssMetricV31`, `r.userId`. Real-world JSON from APIs is rarely snake_case.
-- **Leading uppercase** — `r.Items`, `r.UserName`. PascalCase keys from .NET / Java backends are first-class.
-- **snake_case** — `r.type_id`, `r.user_name`.
-- **kebab-case** — `r.x-request-id` (requires the leading segment to be an identifier).
+- **Reserved keywords** - `r.type`, `r.if`, `r.use`, `r.true`, `r.nil`. JSON keys commonly mirror language keywords and dot-access must just work.
+- **camelCase** - `r.cvssMetricV31`, `r.userId`. Real-world JSON from APIs is rarely snake_case.
+- **Leading uppercase** - `r.Items`, `r.UserName`. PascalCase keys from .NET / Java backends are first-class.
+- **snake_case** - `r.type_id`, `r.user_name`.
+- **kebab-case** - `r.x-request-id` (requires the leading segment to be an identifier).
 
-These relaxations are scoped to post-dot position only — top-level identifiers still follow the standard naming rules.
+These relaxations are scoped to post-dot position only - top-level identifiers still follow the standard naming rules.
 
 ---
 
@@ -1134,7 +1134,7 @@ tool <name>"<description>" <params>><return-type> timeout:<n>,retry:<n>
 tool get-user"Retrieve user by ID" uid:t>R profile t timeout:5,retry:2
 ```
 
-Tool declarations are verified statically like functions — call sites are type-checked and arity-checked. At runtime, tool calls dispatch through a provider configured via `--tools <config.json>`:
+Tool declarations are verified statically like functions - call sites are type-checked and arity-checked. At runtime, tool calls dispatch through a provider configured via `--tools <config.json>`:
 
 ```json
 {
@@ -1164,7 +1164,7 @@ ilo serialises call arguments as `{"args": [...]}` (JSON array), sends them to t
 | `R ok err` | `{"ok": ...}` or `{"err": ...}` |
 | record | object |
 
-Tool return type `>t` is the escape hatch — any JSON response is coerced to a text string without parsing.
+Tool return type `>t` is the escape hatch - any JSON response is coerced to a text string without parsing.
 
 ---
 
@@ -1177,7 +1177,7 @@ use "path/to/file.ilo"         -- import all declarations
 use "path/to/file.ilo" [name1 name2]  -- import only named declarations
 ```
 
-All imported declarations merge into a flat shared namespace — no qualification, no `mod::fn` syntax. The verifier catches name collisions.
+All imported declarations merge into a flat shared namespace - no qualification, no `mod::fn` syntax. The verifier catches name collisions.
 
 ```
 -- math.ilo
@@ -1252,11 +1252,11 @@ On `^e` (Err) the program writes `panic-unwrap: <Err payload>` to stderr and exi
 
 Rules:
 - The called function must return `R` or `O` (else verifier error ILO-T025)
-- **No constraint on the enclosing function's return type** — this is the difference from `!`
+- **No constraint on the enclosing function's return type** - this is the difference from `!`
 - `!!` goes after the function name, before args: `rdl!! path` not `rdl path!!`
 - Zero-arg: `fetch!!()`
 
-Use `!` when the caller wants to react to the Err (compensate, retry, log). Use `!!` when the failure is a programming or environmental error the caller has no way to recover from — typical in short scripts, glue code, and main entry points.
+Use `!` when the caller wants to react to the Err (compensate, retry, log). Use `!!` when the failure is a programming or environmental error the caller has no way to recover from - typical in short scripts, glue code, and main entry points.
 
 ---
 
@@ -1264,7 +1264,7 @@ Use `!` when the caller wants to react to the Err (compensate, retry, log). Use 
 
 ### Bind-first pattern
 
-Always bind complex expressions to variables before using them in operators. Operators only accept atoms and nested operators as operands — not function calls.
+Always bind complex expressions to variables before using them in operators. Operators only accept atoms and nested operators as operands - not function calls.
 
 ```
 -- DON'T: *n fac -n 1     (fac is an operand of *, not a call)
@@ -1277,9 +1277,9 @@ Always bind complex expressions to variables before using them in operators. Ope
 <name> <params>><return>;<guard>;...;<recursive-calls>;combine
 ```
 
-1. **Guard**: base case returns early — `<=n 1 1` (or `<=n 1{1}`)
-2. **Bind**: bind recursive call results — `r=fac -n 1`
-3. **Combine**: use bound results in final expression — `*n r`
+1. **Guard**: base case returns early - `<=n 1 1` (or `<=n 1{1}`)
+2. **Bind**: bind recursive call results - `r=fac -n 1`
+3. **Combine**: use bound results in final expression - `*n r`
 
 ### Factorial
 
@@ -1287,9 +1287,9 @@ Always bind complex expressions to variables before using them in operators. Ope
 fac n:n>n;<=n 1 1;r=fac -n 1;*n r
 ```
 
-- `<=n 1 1` — braceless guard: if n <= 1, return 1
-- `r=fac -n 1` — recursive call with prefix subtract as argument
-- `*n r` — multiply n by result
+- `<=n 1 1` - braceless guard: if n <= 1, return 1
+- `r=fac -n 1` - recursive call with prefix subtract as argument
+- `*n r` - multiply n by result
 
 ### Fibonacci
 
@@ -1297,9 +1297,9 @@ fac n:n>n;<=n 1 1;r=fac -n 1;*n r
 fib n:n>n;<=n 1 n;a=fib -n 1;b=fib -n 2;+a b
 ```
 
-- `<=n 1 n` — braceless guard: return n for 0 and 1
-- `a=fib -n 1;b=fib -n 2` — two recursive calls, each with prefix arg
-- `+a b` — add results
+- `<=n 1 n` - braceless guard: return n for 0 and 1
+- `a=fib -n 1;b=fib -n 2` - two recursive calls, each with prefix arg
+- `+a b` - add results
 
 ### Multi-statement bodies
 
@@ -1332,7 +1332,7 @@ A non-last function body's **final expression must not be a bare variable refere
 
 | Ending | Example | Safe? | Why |
 |--------|---------|-------|-----|
-| Binary operator | `+n 0`, `*x 1` | ✓ | fixed arity — no greedy loop |
+| Binary operator | `+n 0`, `*x 1` | ✓ | fixed arity - no greedy loop |
 | Index access | `xs.0`, `rec.field` | ✓ | returns `Expr::Index`, not `Ref` |
 | Match block | `?v{…}` | ✓ | ends with `}` |
 | ForEach block | `@x xs{…}` | ✓ | ends with `}` |
@@ -1342,7 +1342,7 @@ A non-last function body's **final expression must not be a bare variable refere
 | Bare variable (`Ref`) | `n`, `result` | ✗ | greedy loop fires |
 | Bare function call | `len xs`, `f a` | ✗ | greedy loop fires |
 
-The **last function in a file** can end with anything — greedy parsing stops at EOF.
+The **last function in a file** can end with anything - greedy parsing stops at EOF.
 
 ```
 -- Non-last functions: end with a binary expression
@@ -1350,13 +1350,13 @@ digs n:n>n;t=str n;l=len t;+l 0    -- +l 0 = l (binary, safe)
 clmp n:n lo:n hi:n>n;<n lo lo;>n hi hi;+n 0   -- +n 0 = n (binary, safe; `clamp` is a builtin)
 
 -- Last function: bare call is fine
-sz xs:L n>n;len xs                  -- EOF — greedy loop stops naturally
+sz xs:L n>n;len xs                  -- EOF - greedy loop stops naturally
 ```
 
 To use a pipe chain in a non-last function, wrap it in parentheses:
 ```
 dbl-inc x:n>n;(x>>dbl>>inc)   -- parens prevent >> from consuming next function's name
-inc-sq x:n>n;x>>inc>>sq       -- last function — no parens needed
+inc-sq x:n>n;x>>inc>>sq       -- last function - no parens needed
 ```
 
 ### DO / DON'T
@@ -1439,10 +1439,10 @@ Parser, verifier, and runtime errors all show source spans. The verifier uses th
 ### Suggestions
 
 The verifier provides context-aware hints:
-- **Did you mean?** — Levenshtein-based suggestions for undefined variables, functions, fields, and types
-- **Type conversion** — suggests `str` for n→t, `num` for t→n
-- **Missing arms** — lists uncovered match patterns with types
-- **Arity** — shows expected parameter signature
+- **Did you mean?** - Levenshtein-based suggestions for undefined variables, functions, fields, and types
+- **Type conversion** - suggests `str` for n→t, `num` for t→n
+- **Missing arms** - lists uncovered match patterns with types
+- **Arity** - shows expected parameter signature
 
 ### Error output formats
 
@@ -1456,7 +1456,7 @@ NO_COLOR=1      Disable colour (same as --text)
 
 JSON error output follows a structured schema with `severity`, `code`, `message`, `labels` (with spans), `notes`, and `suggestion` fields.
 
-Runtime errors raised from the Cranelift JIT (opt-in via `--jit`) populate `labels` with the source span of the failing operation, matching tree and VM behaviour. Span coverage threads through every JIT runtime helper (unwrap, panic-unwrap, list-get, slice, index, jpth, mget, record-field strict access, builtin dispatch, dynamic call); AOT-compiled binaries inherit the same coverage. Pre-v0.11.6 builds surfaced `{"labels":[]}` for these shapes — if you see an empty labels array on a runtime error, the binary is out of date.
+Runtime errors raised from the Cranelift JIT (opt-in via `--jit`) populate `labels` with the source span of the failing operation, matching tree and VM behaviour. Span coverage threads through every JIT runtime helper (unwrap, panic-unwrap, list-get, slice, index, jpth, mget, record-field strict access, builtin dispatch, dynamic call); AOT-compiled binaries inherit the same coverage. Pre-v0.11.6 builds surfaced `{"labels":[]}` for these shapes - if you see an empty labels array on a runtime error, the binary is out of date.
 
 ### Top-level program output
 
@@ -1464,15 +1464,15 @@ For a program whose entry function returns a Result, the `~`/`^` wrapper is spli
 
 | Top-level return | Plain stdout | Plain stderr | Exit |
 | --- | --- | --- | --- |
-| `~v` (Ok)        | `v` (bare)   | —            | 0    |
-| `^e` (Err)       | —            | `^e`         | 1    |
-| any non-Result   | `v`          | —            | 0    |
+| `~v` (Ok)        | `v` (bare)   | -            | 0    |
+| `^e` (Err)       | -            | `^e`         | 1    |
+| any non-Result   | `v`          | -            | 0    |
 
 In `--json` mode the value is always wrapped (`{"ok": v}` / `{"error": {...}}`) and emitted to stdout; exit codes match the plain-mode table.
 
-`Display` on `Value::Ok` / `Value::Err` still renders `~v` / `^e` in every other context (nested values, `prnt`, REPL prompts, error messages, debug output) — only the top-level program-return print path is split.
+`Display` on `Value::Ok` / `Value::Err` still renders `~v` / `^e` in every other context (nested values, `prnt`, REPL prompts, error messages, debug output) - only the top-level program-return print path is split.
 
-The contract applies uniformly to in-process runners (`ilo prog.ilo`, `--run-tree`, `--run-vm`, `--jit`) and to AOT-compiled standalone binaries from `ilo compile`. Both strip the top-level `~`/`^` wrapper on stdout, route `^e` to stderr, and use the same exit codes — output is byte-for-byte identical across every backend.
+The contract applies uniformly to in-process runners (`ilo prog.ilo`, `--run-tree`, `--run-vm`, `--jit`) and to AOT-compiled standalone binaries from `ilo compile`. Both strip the top-level `~`/`^` wrapper on stdout, route `^e` to stderr, and use the same exit codes - output is byte-for-byte identical across every backend.
 
 ### Idiomatic hints
 
@@ -1500,15 +1500,15 @@ ilo help ai                      -- compact AI spec to stdout (= contents of ai.
 ilo serv                          -- long-lived JSON request/response loop
 ```
 
-**Verb-noun aliases.** `ilo run <file>` is an exact alias for the bare positional `ilo <file>` — same dispatch, same engine selection, same arg handling. `ilo build <file> -o <out>` is an alias for `ilo compile <file> -o <out>`. Both exist to match the toolchain conventions used by `cargo`, `go`, and `zero` so agents and humans can guess the command name without consulting the help text. The bare positional forms remain fully supported for backwards compatibility; nothing has been removed.
+**Verb-noun aliases.** `ilo run <file>` is an exact alias for the bare positional `ilo <file>` - same dispatch, same engine selection, same arg handling. `ilo build <file> -o <out>` is an alias for `ilo compile <file> -o <out>`. Both exist to match the toolchain conventions used by `cargo`, `go`, and `zero` so agents and humans can guess the command name without consulting the help text. The bare positional forms remain fully supported for backwards compatibility; nothing has been removed.
 
-**`ilo check`.** Standalone verifier invocation: lex, parse, resolve imports, and run the type verifier without proceeding to bytecode compilation or execution. Exit code 0 means the program is well-typed and verifier-clean; exit code 1 means at least one diagnostic was emitted on stderr. The output mode follows the global flags (`--json` for NDJSON diagnostics, `--text` for plain text, `--ansi` for coloured output; auto-detected when omitted — JSON when stderr is not a TTY, ANSI otherwise). `ilo check` works on both files and inline code; on a syntactically-broken input it still reports the parse error rather than crashing, which is important for editor and agent loops that may feed in half-written programs.
+**`ilo check`.** Standalone verifier invocation: lex, parse, resolve imports, and run the type verifier without proceeding to bytecode compilation or execution. Exit code 0 means the program is well-typed and verifier-clean; exit code 1 means at least one diagnostic was emitted on stderr. The output mode follows the global flags (`--json` for NDJSON diagnostics, `--text` for plain text, `--ansi` for coloured output; auto-detected when omitted - JSON when stderr is not a TTY, ANSI otherwise). `ilo check` works on both files and inline code; on a syntactically-broken input it still reports the parse error rather than crashing, which is important for editor and agent loops that may feed in half-written programs.
 
-**Default-run.** Inline programs (`ilo 'code'`) and single-function files run their entry function with the remaining CLI args; no explicit function name needed. Multi-function files auto-pick a function called `main` when no positional func arg is supplied. The same heuristic applies to the explicit engine flags — `--run-tree`, `--run-vm`, and `--jit` all auto-pick `main` on multi-fn files, matching the default-engine behaviour. With no `main` declared, supply a function-name argument.
+**Default-run.** Inline programs (`ilo 'code'`) and single-function files run their entry function with the remaining CLI args; no explicit function name needed. Multi-function files auto-pick a function called `main` when no positional func arg is supplied. The same heuristic applies to the explicit engine flags - `--run-tree`, `--run-vm`, and `--jit` all auto-pick `main` on multi-fn files, matching the default-engine behaviour. With no `main` declared, supply a function-name argument.
 
 **Default engine.** The bytecode register VM is the default execution path. It supports every opcode (closures, listview windows, fused len-of-filter, every modern shape), and avoids the JIT compile-and-bail cost paid by the pre-v0.11.9 Cranelift-first default whenever a program touched an opcode the JIT couldn't handle. Cranelift JIT is opt-in via `--jit`; on opt-in, the JIT runs hot numeric loops and falls back to the VM on bailout. The tree interpreter (`--run-tree`) remains the canonical-semantics reference. Phase 2 closure captures still execute on the tree interpreter (the VM and JIT raise `ILO-R012` and the default runner falls through). For long-running workloads where the JIT pays for itself, opt in explicitly; for most agent workloads the VM is the right default.
 
-**Subcommand dispatch.** The first positional argument is interpreted as a function name when it has the shape of an ilo identifier — `[a-z][a-z0-9]*(-[a-z0-9]+)*` — so `ilo file.ilo list-orders` routes to the `list-orders` function. Args that don't match the ident shape (file paths like `/tmp/data.json`, numbers, sigils, bracketed lists, anything with a `.` or `/`) route to `main` (or the entry function) as a positional CLI arg instead. Trailing dashes (`foo-`), doubled dashes (`foo--bar`), and negative numbers (`-1`) are not idents and pass through as data.
+**Subcommand dispatch.** The first positional argument is interpreted as a function name when it has the shape of an ilo identifier - `[a-z][a-z0-9]*(-[a-z0-9]+)*` - so `ilo file.ilo list-orders` routes to the `list-orders` function. Args that don't match the ident shape (file paths like `/tmp/data.json`, numbers, sigils, bracketed lists, anything with a `.` or `/`) route to `main` (or the entry function) as a positional CLI arg instead. Trailing dashes (`foo-`), doubled dashes (`foo--bar`), and negative numbers (`-1`) are not idents and pass through as data.
 
 **Unknown `--flag` guard.** Any token in the positional tail matching the clean long-flag shape `--word` or `--word-with-dashes` that isn't a recognised flag is rejected upfront with `error: unrecognised flag '--<name>'. Use 'ilo --help' for valid flags. To pass it as a literal arg, separate with '--' first.` and exit 1. This prevents `ilo main.ilo --engine tree` from silently consuming `--engine` as a positional arg (which used to surface as misleading `ILO-R012 no functions defined` or `ILO-R004 main: expected N args, got N+1`). To pass a hyphen-prefixed token through as literal data, place the `--` separator first: `ilo main.ilo -- --foo`. Anything after the first `--` is data. Tokens with `=` (`--key=val`), trailing or doubled dashes (`--foo-`, `--foo--bar`), and negative numbers (`-1`) are not clean flag shapes and pass through unchanged.
 
@@ -1522,7 +1522,7 @@ ilo serv                          -- long-lived JSON request/response loop
 
 ## Formatter
 
-Dense output is the default — newlines are for humans, not agents. No flag needed for dense format:
+Dense output is the default - newlines are for humans, not agents. No flag needed for dense format:
 
 ```
 ilo 'code'                    Dense wire format (default)
@@ -1553,7 +1553,7 @@ cls sp:n > t
   "bronze"
 ```
 
-Dense format is canonical — `dense(parse(dense(parse(src)))) == dense(parse(src))`.
+Dense format is canonical - `dense(parse(dense(parse(src)))) == dense(parse(src))`.
 
 ---
 

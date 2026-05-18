@@ -1,0 +1,3 @@
+-- feature: string concat with +
+-- expected: hello world
+main>t;+"hello " "world"

@@ -1,0 +1,3 @@
+-- feature: comparisons (<, >, =)
+-- expected: true
+main>b;>5 3

@@ -1,0 +1,5 @@
+-- feature: mutual recursion
+-- expected: true
+isev n:n>b;=n 0{true};isod -n 1
+isod n:n>b;=n 0{false};isev -n 1
+main>b;isev 4

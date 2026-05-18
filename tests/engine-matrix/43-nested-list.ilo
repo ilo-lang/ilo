@@ -1,0 +1,3 @@
+-- feature: nested list construction + len
+-- expected: 2
+main>n;xs=[[1,2],[3,4]];len xs

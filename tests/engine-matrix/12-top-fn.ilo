@@ -1,0 +1,4 @@
+-- feature: top-level function call
+-- expected: 10
+add a:n b:n>n;+a b
+main>n;add 4 6
