@@ -81,13 +81,13 @@ fn assert_verify_error(engine: &str, src: &str, entry: &str, builtin: &str) {
 
 // ── 1. fn-ref-as-map (the db-analyst originating shape) ──────────────
 
-const FNREF_MGET_SRC: &str = "mkmap>M t n;m=mmap;mset m \"a\" 1 main>O n;tg=mkmap;mget tg \"a\"";
+const FNREF_MGET_SRC: &str = "mkmap d:n>M t n;m=mmap;mset m \"a\" 1 main>O n;tg=mkmap;mget tg \"a\"";
 const FNREF_MSET_SRC: &str =
-    "mkmap>M t n;m=mmap;mset m \"a\" 1 main>M t n;tg=mkmap;mset tg \"b\" 2";
-const FNREF_MHAS_SRC: &str = "mkmap>M t n;m=mmap;mset m \"a\" 1 main>b;tg=mkmap;mhas tg \"a\"";
-const FNREF_MDEL_SRC: &str = "mkmap>M t n;m=mmap;mset m \"a\" 1 main>M t n;tg=mkmap;mdel tg \"a\"";
-const FNREF_MVALS_SRC: &str = "mkmap>M t n;m=mmap;mset m \"a\" 1 main>L n;tg=mkmap;mvals tg";
-const FNREF_MKEYS_SRC: &str = "mkmap>M t n;m=mmap;mset m \"a\" 1 main>L t;tg=mkmap;mkeys tg";
+    "mkmap d:n>M t n;m=mmap;mset m \"a\" 1 main>M t n;tg=mkmap;mset tg \"b\" 2";
+const FNREF_MHAS_SRC: &str = "mkmap d:n>M t n;m=mmap;mset m \"a\" 1 main>b;tg=mkmap;mhas tg \"a\"";
+const FNREF_MDEL_SRC: &str = "mkmap d:n>M t n;m=mmap;mset m \"a\" 1 main>M t n;tg=mkmap;mdel tg \"a\"";
+const FNREF_MVALS_SRC: &str = "mkmap d:n>M t n;m=mmap;mset m \"a\" 1 main>L n;tg=mkmap;mvals tg";
+const FNREF_MKEYS_SRC: &str = "mkmap d:n>M t n;m=mmap;mset m \"a\" 1 main>L t;tg=mkmap;mkeys tg";
 
 #[test]
 fn fnref_first_arg_mget() {
@@ -186,7 +186,7 @@ fn num_first_arg_mkeys() {
 
 // ── 3. call shape still works (regression guard for false positives) ─
 
-const CALL_MGET_SRC: &str = "mkmap>M t n;m=mmap;mset m \"a\" 1 main>O n;tg=mkmap;mget tg \"a\"";
+const CALL_MGET_SRC: &str = "mkmap d:n>M t n;m=mmap;mset m \"a\" 1 main>O n;tg=mkmap;mget tg \"a\"";
 
 fn run_ok(engine: &str, src: &str, entry: &str) -> String {
     let path = write_src(entry, src);
@@ -208,7 +208,7 @@ fn run_ok(engine: &str, src: &str, entry: &str) -> String {
 // pins that the new guard doesn't false-positive on the proper shape.
 #[test]
 fn call_shape_still_verifies_and_runs() {
-    let src = "mkmap>M t n;m=mmap;mset m \"a\" 1 main>O n;tg=mkmap();mget tg \"a\"";
+    let src = "mkmap d:n>M t n;m=mmap;mset m \"a\" 1 main>O n;tg=mkmap 0;mget tg \"a\"";
     for engine in ENGINES {
         let out = run_ok(engine, src, "main");
         // Output of an Option<n> with Some(1) is engine-dependent;
