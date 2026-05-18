@@ -168,5 +168,5 @@ fn multiline_fn_body_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn multiline_fn_body_cranelift() {
-    check_all("--run-cranelift");
+    check_all("--jit");
 }

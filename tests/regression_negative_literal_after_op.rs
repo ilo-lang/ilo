@@ -126,6 +126,6 @@ fn neg_after_op_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn neg_after_op_cranelift() {
-    check_all("--run-cranelift");
-    check_id("--run-cranelift");
+    check_all("--jit");
+    check_id("--jit");
 }

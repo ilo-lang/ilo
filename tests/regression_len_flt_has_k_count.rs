@@ -16,7 +16,7 @@
 //
 // The tests below pin the value-level contract across `--run-tree` (the
 // reference semantics impl, untouched by this change), `--run-vm` (where
-// the new opcode lives), and `--run-cranelift` (which bails to the VM on
+// the new opcode lives), and `--jit` (which bails to the VM on
 // the new opcode just as it does for OP_WINDOW_VIEW). The fused dispatch
 // MUST agree bit-for-bit with the unfused `len . flt` shape on every
 // engine — a silent miscompile via const-pool index drift, register
@@ -100,7 +100,7 @@ fn run_err(engine: &str, src: &str, entry: &str, args: &[&str]) -> String {
 }
 
 fn run_all(src: &str, entry: &str, args: &[&str], expected: &str) {
-    for engine in ["--run-tree", "--run-vm", "--run-cranelift"] {
+    for engine in ["--run-tree", "--run-vm", "--jit"] {
         let actual = run_ok(engine, src, entry, args);
         assert_eq!(
             actual, expected,
@@ -207,7 +207,7 @@ fn non_list_xs_errors_consistently() {
     // it (the exact message may differ between tiers, but none should
     // silently succeed).
     let src = "is-hydro c:t>b;has \"AILMFWVYC\" c\nmain>n;len (flt is-hydro 42)";
-    for engine in ["--run-tree", "--run-vm", "--run-cranelift"] {
+    for engine in ["--run-tree", "--run-vm", "--jit"] {
         let _stderr = run_err(engine, src, "main", &[]);
     }
 }

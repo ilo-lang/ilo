@@ -70,7 +70,7 @@ fn assert_all_engines_err(src: &str, args: &[&str], code: &str, msg: &str) {
     }
     #[cfg(feature = "cranelift")]
     {
-        assert_engine_errs("--run-cranelift", src, args, code, msg);
+        assert_engine_errs("--jit", src, args, code, msg);
     }
 }
 
@@ -95,7 +95,7 @@ fn assert_all_engines_fail(src: &str, args: &[&str], msg: &str) {
     }
     #[cfg(feature = "cranelift")]
     {
-        assert_engine_fails("--run-cranelift", src, args, msg);
+        assert_engine_fails("--jit", src, args, msg);
     }
 }
 
@@ -165,7 +165,7 @@ fn div_safe_runtime_divisor_cross_engine_agrees() {
     }
     #[cfg(feature = "cranelift")]
     {
-        let (stdout, _, ec) = run_engine("--run-cranelift", "f a:n b:n>n;/a b", &["10", "4"]);
+        let (stdout, _, ec) = run_engine("--jit", "f a:n b:n>n;/a b", &["10", "4"]);
         assert_eq!(ec, 0, "engine=cranelift unexpected error");
         assert_eq!(stdout.trim(), "2.5");
     }
@@ -182,7 +182,7 @@ fn div_const_nonzero_fast_path_cross_engine_agrees() {
     }
     #[cfg(feature = "cranelift")]
     {
-        let (stdout, _, ec) = run_engine("--run-cranelift", "f a:n>n;/a 4", &["10"]);
+        let (stdout, _, ec) = run_engine("--jit", "f a:n>n;/a 4", &["10"]);
         assert_eq!(ec, 0, "engine=cranelift unexpected error");
         assert_eq!(stdout.trim(), "2.5");
     }

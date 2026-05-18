@@ -104,7 +104,7 @@ fn literal_06d_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn literal_06d_cranelift() {
-    check_literal_06d("--run-cranelift");
+    check_literal_06d("--jit");
 }
 
 // ── 2) Verify-time rejection for `{:.3f}` precision spec ───────────────────
@@ -132,7 +132,7 @@ fn literal_3f_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn literal_3f_cranelift() {
-    check_literal_3f("--run-cranelift");
+    check_literal_3f("--jit");
 }
 
 // ── 3) Runtime rejection when the template is computed ─────────────────────
@@ -168,7 +168,7 @@ fn computed_06d_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn computed_06d_cranelift() {
-    check_computed_06d("--run-cranelift");
+    check_computed_06d("--jit");
 }
 
 // ── 4) Bare `{}` still works on every engine ───────────────────────────────
@@ -195,7 +195,7 @@ fn bare_ok_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn bare_ok_cranelift() {
-    check_bare_ok("--run-cranelift");
+    check_bare_ok("--jit");
 }
 
 // ── 5) A lone `{` followed by non-`:` non-`}` still passes through ────────
@@ -226,5 +226,5 @@ fn lone_brace_ok_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn lone_brace_ok_cranelift() {
-    check_lone_brace_ok("--run-cranelift");
+    check_lone_brace_ok("--jit");
 }

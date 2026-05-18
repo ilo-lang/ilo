@@ -78,7 +78,7 @@ fn main_ok_num_bare_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn main_ok_num_bare_cranelift() {
-    assert_ok_bare_plain("--run-cranelift", OK_NUM_SRC, "7");
+    assert_ok_bare_plain("--jit", OK_NUM_SRC, "7");
 }
 
 #[test]
@@ -94,7 +94,7 @@ fn main_ok_text_bare_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn main_ok_text_bare_cranelift() {
-    assert_ok_bare_plain("--run-cranelift", OK_TEXT_SRC, "tasks.txt");
+    assert_ok_bare_plain("--jit", OK_TEXT_SRC, "tasks.txt");
 }
 
 // ── Plain mode: non-Result return unchanged ────────────────────────────────
@@ -126,7 +126,7 @@ fn main_plain_unchanged_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn main_plain_unchanged_cranelift() {
-    assert_plain_unchanged("--run-cranelift");
+    assert_plain_unchanged("--jit");
 }
 
 // ── JSON mode: Value::Ok still wraps as {"ok": v} on stdout ────────────────
@@ -171,7 +171,7 @@ fn main_ok_json_envelope_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn main_ok_json_envelope_cranelift() {
-    assert_ok_json_envelope("--run-cranelift");
+    assert_ok_json_envelope("--jit");
 }
 
 // ── Display contract elsewhere is preserved: `prnt ~"x"` still shows `~x` ──
@@ -229,5 +229,5 @@ fn prnt_wrapper_preserved_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn prnt_wrapper_preserved_cranelift() {
-    assert_prnt_wrapper_preserved("--run-cranelift");
+    assert_prnt_wrapper_preserved("--jit");
 }

@@ -48,7 +48,7 @@ fn check_all(src: &str, expected: &str) {
     check_stdout("--run-tree", src, expected);
     check_stdout("--run-vm", src, expected);
     #[cfg(feature = "cranelift")]
-    check_stdout("--run-cranelift", src, expected);
+    check_stdout("--jit", src, expected);
 }
 
 // ── spl / cat happy paths ─────────────────────────────────────────────────

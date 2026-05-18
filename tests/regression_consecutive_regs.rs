@@ -72,7 +72,7 @@ fn slc_in_loop_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn slc_in_loop_cranelift() {
-    check_slc("--run-cranelift");
+    check_slc("--jit");
 }
 
 #[test]
@@ -88,7 +88,7 @@ fn mset_in_loop_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn mset_in_loop_cranelift() {
-    check_mset("--run-cranelift");
+    check_mset("--jit");
 }
 
 fn check_mdel(engine: &str) {
@@ -115,5 +115,5 @@ fn mdel_in_loop_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn mdel_in_loop_cranelift() {
-    check_mdel("--run-cranelift");
+    check_mdel("--jit");
 }

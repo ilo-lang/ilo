@@ -14,7 +14,7 @@
 //! Cross-engine coverage:
 //!   - default engine dispatch (`ilo file.ilo`) falls through to the tree
 //!     interpreter, same path as `JitCallError::NotEligible`.
-//!   - explicit `--run-cranelift` falls back to the bytecode VM, since the
+//!   - explicit `--jit` falls back to the bytecode VM, since the
 //!     user opted into a JIT engine and VM is the closest non-JIT tier.
 //!
 //! Gated on `cfg(debug_assertions)`: the env-var hook in
@@ -64,7 +64,7 @@ fn cranelift_panic_default_falls_back_to_interpreter() {
 #[test]
 fn cranelift_panic_explicit_engine_falls_back_to_vm() {
     let out = ilo()
-        .args(["--run-cranelift", "f x:n>n;*x 2", "f", "5"])
+        .args(["--jit", "f x:n>n;*x 2", "f", "5"])
         .env("ILO_FORCE_JIT_PANIC", "1")
         .output()
         .expect("failed to run ilo");
@@ -74,7 +74,7 @@ fn cranelift_panic_explicit_engine_falls_back_to_vm() {
 
     assert!(
         out.status.success(),
-        "--run-cranelift should fall back to VM after JIT panic. \
+        "--jit should fall back to VM after JIT panic. \
          stdout={stdout:?} stderr={stderr:?} status={:?}",
         out.status.code()
     );

@@ -34,7 +34,7 @@ const ENGINES: &[&str] = &[
     "--run-tree",
     "--run-vm",
     #[cfg(feature = "cranelift")]
-    "--run-cranelift",
+    "--jit",
 ];
 
 // ── Text keys: existing behaviour stays correct ──────────────────────────

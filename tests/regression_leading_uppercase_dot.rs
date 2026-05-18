@@ -70,7 +70,7 @@ fn leading_upper_url_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn leading_upper_url_cranelift() {
-    check_url("--run-cranelift");
+    check_url("--jit");
 }
 
 // `r.ID` — `I` is a non-sigil uppercase letter, two letters total.
@@ -97,7 +97,7 @@ fn leading_upper_id_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn leading_upper_id_cranelift() {
-    check_id("--run-cranelift");
+    check_id("--jit");
 }
 
 // `r.AccessKey` — leading uppercase + mixed-case tail (PascalCase). `A` is
@@ -125,7 +125,7 @@ fn leading_upper_access_key_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn leading_upper_access_key_cranelift() {
-    check_access_key("--run-cranelift");
+    check_access_key("--jit");
 }
 
 // `r.?URL` — safe-access form. Same path, prev token is `DotQuestion`.
@@ -160,7 +160,7 @@ fn leading_upper_safe_url_present_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn leading_upper_safe_url_present_cranelift() {
-    check_safe_url_present("--run-cranelift");
+    check_safe_url_present("--jit");
 }
 
 #[test]
@@ -176,7 +176,7 @@ fn leading_upper_safe_url_missing_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn leading_upper_safe_url_missing_cranelift() {
-    check_safe_url_missing("--run-cranelift");
+    check_safe_url_missing("--jit");
 }
 
 // Mixed camel + snake: `r.URL_count`. The leading-uppercase pass emits a
@@ -205,7 +205,7 @@ fn leading_upper_url_count_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn leading_upper_url_count_cranelift() {
-    check_url_count("--run-cranelift");
+    check_url_count("--jit");
 }
 
 // Leading-uppercase that happens to be a type sigil: `r.MetaData` (`M` is
@@ -243,7 +243,7 @@ fn leading_sigil_meta_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn leading_sigil_meta_cranelift() {
-    check_meta("--run-cranelift");
+    check_meta("--jit");
 }
 
 #[test]
@@ -259,7 +259,7 @@ fn leading_sigil_left_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn leading_sigil_left_cranelift() {
-    check_left("--run-cranelift");
+    check_left("--jit");
 }
 
 // ---- Negative regressions: strict lowercase rule preserved for bindings ----

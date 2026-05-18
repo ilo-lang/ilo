@@ -1,4 +1,4 @@
-// Tests for flexible placement of `--run-tree` / `--run-vm` / `--run-cranelift`
+// Tests for flexible placement of `--run-tree` / `--run-vm` / `--jit`
 // / `--run-llvm` / `--run` engine flags in bare-args invocations.
 //
 // The flag should be accepted in any of these positions:
@@ -77,26 +77,26 @@ fn run_vm_flag_before_code() {
     assert_eq!(stdout.trim(), "10");
 }
 
-// ── --run-cranelift in every position ─────────────────────────────────────────
+// ── --jit in every position ─────────────────────────────────────────
 // Cranelift may not be available in every build profile; just check that the
 // flag is accepted (either succeeds, or fails for cranelift-specific reasons
 // rather than "unknown flag" / argument-order parse errors).
 
 #[test]
 fn run_cranelift_flag_after_func_accepted() {
-    let (_ok, _stdout, stderr) = run_args(&["f>n;5", "f", "--run-cranelift"]);
+    let (_ok, _stdout, stderr) = run_args(&["f>n;5", "f", "--jit"]);
     assert!(
         !stderr.contains("Usage:") && !stderr.contains("unknown flag"),
-        "--run-cranelift trailing should be parsed; stderr: {stderr}"
+        "--jit trailing should be parsed; stderr: {stderr}"
     );
 }
 
 #[test]
 fn run_cranelift_flag_before_code_accepted() {
-    let (_ok, _stdout, stderr) = run_args(&["--run-cranelift", "f>n;5", "f"]);
+    let (_ok, _stdout, stderr) = run_args(&["--jit", "f>n;5", "f"]);
     assert!(
         !stderr.contains("Usage:") && !stderr.contains("unknown flag"),
-        "--run-cranelift leading should be parsed; stderr: {stderr}"
+        "--jit leading should be parsed; stderr: {stderr}"
     );
 }
 

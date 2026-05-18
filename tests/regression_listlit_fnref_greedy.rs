@@ -215,5 +215,5 @@ fn listlit_fnref_greedy_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn listlit_fnref_greedy_cranelift() {
-    check_all("--run-cranelift");
+    check_all("--jit");
 }

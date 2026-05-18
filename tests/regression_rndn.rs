@@ -83,7 +83,7 @@ fn rndn_std_normal_vm() {
 #[cfg(feature = "cranelift")]
 #[test]
 fn rndn_std_normal_cranelift() {
-    check_normal_stats("--run-cranelift", N, 0.0, 1.0, 0.2, (0.85, 1.15));
+    check_normal_stats("--jit", N, 0.0, 1.0, 0.2, (0.85, 1.15));
 }
 
 #[test]
@@ -100,7 +100,7 @@ fn rndn_shifted_scaled_vm() {
 #[cfg(feature = "cranelift")]
 #[test]
 fn rndn_shifted_scaled_cranelift() {
-    check_normal_stats("--run-cranelift", N, 10.0, 2.0, 0.4, (1.7, 2.3));
+    check_normal_stats("--jit", N, 10.0, 2.0, 0.4, (1.7, 2.3));
 }
 
 #[test]

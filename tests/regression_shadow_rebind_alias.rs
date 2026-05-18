@@ -71,10 +71,7 @@ fn number_shadow_rebind_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn number_shadow_rebind_cranelift() {
-    assert_eq!(
-        run("--run-cranelift", NUMBER_SHADOW_REBIND, "go"),
-        "[6.28, 3.14]"
-    );
+    assert_eq!(run("--jit", NUMBER_SHADOW_REBIND, "go"), "[6.28, 3.14]");
 }
 
 // ── Number shadow-then-literal-overwrite: the minimal repro ────────────────
@@ -105,7 +102,7 @@ fn number_shadow_literal_overwrite_vm() {
 #[cfg(feature = "cranelift")]
 fn number_shadow_literal_overwrite_cranelift() {
     assert_eq!(
-        run("--run-cranelift", NUMBER_SHADOW_LITERAL_OVERWRITE, "go"),
+        run("--jit", NUMBER_SHADOW_LITERAL_OVERWRITE, "go"),
         "[5, 99]"
     );
 }
@@ -136,7 +133,7 @@ fn map_shadow_rebind_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn map_shadow_rebind_cranelift() {
-    assert_eq!(run("--run-cranelift", MAP_SHADOW_REBIND, "go"), "1|99");
+    assert_eq!(run("--jit", MAP_SHADOW_REBIND, "go"), "1|99");
 }
 
 // ── List shadow-rebind ─────────────────────────────────────────────────────
@@ -163,7 +160,7 @@ fn list_shadow_rebind_vm() {
 #[cfg(feature = "cranelift")]
 fn list_shadow_rebind_cranelift() {
     assert_eq!(
-        run("--run-cranelift", LIST_SHADOW_REBIND, "go"),
+        run("--jit", LIST_SHADOW_REBIND, "go"),
         "[[1, 2], [1, 2, 99]]"
     );
 }
@@ -185,7 +182,7 @@ fn text_shadow_rebind_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn text_shadow_rebind_cranelift() {
-    assert_eq!(run("--run-cranelift", TEXT_SHADOW_REBIND, "go"), "x|xy");
+    assert_eq!(run("--jit", TEXT_SHADOW_REBIND, "go"), "x|xy");
 }
 
 // ── Transitive shadow: a → b → c, then write c ─────────────────────────────
@@ -209,10 +206,7 @@ fn transitive_shadow_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn transitive_shadow_cranelift() {
-    assert_eq!(
-        run("--run-cranelift", TRANSITIVE_SHADOW, "go"),
-        "[7, 7, 99]"
-    );
+    assert_eq!(run("--jit", TRANSITIVE_SHADOW, "go"), "[7, 7, 99]");
 }
 
 // ── Non-aliasing happy path stays cheap ────────────────────────────────────
@@ -236,8 +230,5 @@ fn non_aliasing_happy_path_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn non_aliasing_happy_path_cranelift() {
-    assert_eq!(
-        run("--run-cranelift", NON_ALIASING_HAPPY_PATH, "go"),
-        "[5, 99]"
-    );
+    assert_eq!(run("--jit", NON_ALIASING_HAPPY_PATH, "go"), "[5, 99]");
 }

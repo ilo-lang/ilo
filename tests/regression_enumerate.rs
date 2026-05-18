@@ -48,7 +48,7 @@ fn enumerate_strings_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn enumerate_strings_cranelift() {
-    check_strings("--run-cranelift");
+    check_strings("--jit");
 }
 
 // Empty list: produces an empty list.
@@ -71,7 +71,7 @@ fn enumerate_empty_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn enumerate_empty_cranelift() {
-    check_empty("--run-cranelift");
+    check_empty("--jit");
 }
 
 // Singleton: a single-element list.
@@ -94,7 +94,7 @@ fn enumerate_single_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn enumerate_single_cranelift() {
-    check_single("--run-cranelift");
+    check_single("--jit");
 }
 
 // Type-variable: numbers work too (element type erased to `_`).
@@ -121,7 +121,7 @@ fn enumerate_numbers_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn enumerate_numbers_cranelift() {
-    check_numbers("--run-cranelift");
+    check_numbers("--jit");
 }
 
 // Use case: pass the result through `hd` to grab the first [i,v] pair.
@@ -148,5 +148,5 @@ fn enumerate_first_pair_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn enumerate_first_pair_cranelift() {
-    check_first_pair("--run-cranelift");
+    check_first_pair("--jit");
 }

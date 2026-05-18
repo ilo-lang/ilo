@@ -37,7 +37,7 @@ fn check_all(src: &str, expected: f64) {
     approx("--run-tree", src, expected);
     approx("--run-vm", src, expected);
     #[cfg(feature = "cranelift")]
-    approx("--run-cranelift", src, expected);
+    approx("--jit", src, expected);
 }
 
 #[test]

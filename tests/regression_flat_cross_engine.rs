@@ -4,7 +4,7 @@
 // and Cranelift had no helper wired through, so any call fell through to
 // the named-function lookup and failed with
 // "Compile error: undefined function: flat" on both `--run-vm` and
-// `--run-cranelift`. The tree-walking interpreter handled it directly and
+// `--jit`. The tree-walking interpreter handled it directly and
 // worked correctly.
 //
 // These tests pin the behaviour across all three engines: happy paths,
@@ -44,7 +44,7 @@ fn run_err(engine: &str, src: &str, entry: &str) -> String {
 }
 
 #[cfg(feature = "cranelift")]
-const ENGINES_ALL: &[&str] = &["--run-tree", "--run-vm", "--run-cranelift"];
+const ENGINES_ALL: &[&str] = &["--run-tree", "--run-vm", "--jit"];
 #[cfg(not(feature = "cranelift"))]
 const ENGINES_ALL: &[&str] = &["--run-tree", "--run-vm"];
 

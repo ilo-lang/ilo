@@ -51,7 +51,7 @@ fn doc_repro_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn doc_repro_cranelift() {
-    check_doc_repro("--run-cranelift");
+    check_doc_repro("--jit");
 }
 
 // A function ending in a bare call followed by another function declaration
@@ -77,7 +77,7 @@ fn bare_call_then_sibling_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn bare_call_then_sibling_cranelift() {
-    check_bare_call_then_sibling("--run-cranelift");
+    check_bare_call_then_sibling("--jit");
 }
 
 // Record construction inside a statement following a `;` must still parse as
@@ -104,7 +104,7 @@ fn record_after_semi_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn record_after_semi_cranelift() {
-    check_record_after_semi("--run-cranelift");
+    check_record_after_semi("--jit");
 }
 
 // The parenthesised workaround must continue to work (no regression).
@@ -130,5 +130,5 @@ fn paren_workaround_vm() {
 #[test]
 #[cfg(feature = "cranelift")]
 fn paren_workaround_cranelift() {
-    check_paren_workaround("--run-cranelift");
+    check_paren_workaround("--jit");
 }
