@@ -3588,9 +3588,10 @@ For variable-position list indexing bind the head first: \
     /// returns `Expr::Ref("__lit_N")` so HOFs see a fn-ref identical to a
     /// named helper.
     ///
-    /// Phase 1: closures are rejected. Any reference to a name that isn't a
-    /// param, isn't a local binding, and isn't a known function/builtin
-    /// raises ILO-P017 pointing at the Phase 2 follow-up.
+    /// Free variables in the body (names that aren't params, locals, or known
+    /// top-level fns/builtins) become Phase 2 captures: appended as extra
+    /// params on the lifted decl and snapshot by value via `Expr::MakeClosure`
+    /// at the call site. Phase 2 closure capture works on every engine.
     fn parse_inline_lambda(&mut self) -> Result<Expr> {
         let start = self.peek_span();
         self.expect(&Token::LParen)?;

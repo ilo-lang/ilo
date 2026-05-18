@@ -69,12 +69,13 @@ pub enum CompileError {
     UndefinedVariable { name: String },
     #[error("undefined function: {name}")]
     UndefinedFunction { name: String },
-    /// Inline lambda with capture (`Expr::MakeClosure`) cannot lower to the
-    /// register VM yet — HOF dispatch with N captures depends on the parked
-    /// FnRef NaN-tagging effort. Returning this from `vm::compile` lets the
-    /// default runner fall through to the tree interpreter cleanly, rather
-    /// than panicking partway through codegen.
-    #[error("inline lambda capture for `{fn_name}` is tree-only")]
+    /// Inline lambda with more than 255 captures cannot be encoded by the
+    /// register VM's `OP_MAKE_CLOSURE` instruction, which uses an 8-bit
+    /// capture-count field. Phase 2 closure capture is otherwise fully
+    /// supported across every engine; this variant only fires on the
+    /// pathological wide-capture case. Kept around so the compiler can
+    /// surface a structured error rather than panic.
+    #[error("inline lambda `{fn_name}` exceeds the 255-capture VM cap")]
     UnsupportedClosureCapture { fn_name: String },
     /// The register-VM byte-encoded instruction set is capped at 256 live
     /// registers per function (8-bit register field). When codegen for a
@@ -6724,13 +6725,13 @@ impl NanVal {
                 }
             }
             Value::Closure { fn_name, .. } => {
-                // Closures don't round-trip through NanVal — VM/Cranelift HOF
-                // dispatch with N captures is downstream of this PR. The VM
-                // `compile_expr` branch for `Expr::MakeClosure` records a
-                // `CompileError::UnsupportedClosureCapture` before we get here
-                // in any well-formed program, so this sentinel-string fallback
-                // is belt-and-braces for stray Closures threaded through the
-                // tree-bridge dispatcher.
+                // Closures don't round-trip through NanVal as a bare tagged
+                // value — the VM uses a dedicated `HeapObj::Closure` plus
+                // `OP_MAKE_CLOSURE` for native dispatch. This sentinel-string
+                // fallback is only reached if a tree-level `Value::Closure`
+                // leaks into the NanVal conversion path (e.g. through a stale
+                // tree-bridge call site); native compilation goes through
+                // `Expr::MakeClosure` instead.
                 NanVal::heap_string(format!("<closure:{}>", fn_name))
             }
         }

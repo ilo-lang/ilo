@@ -60,7 +60,7 @@ fn run_engine(engine: &str, src: &str, entry: &str, args: &[&str]) -> String {
 /// Use this by default — closure capture works natively on tree, VM,
 /// and Cranelift after #384 + #385 + #387.
 fn run_all(src: &str, entry: &str, args: &[&str], expected: &str) {
-    for engine in ["--run-tree", "--run-vm", "--jit"] {
+    for engine in ["--run-tree", "--run-vm", "--run-cranelift"] {
         let actual = run_engine(engine, src, entry, args);
         assert_eq!(
             actual, expected,
