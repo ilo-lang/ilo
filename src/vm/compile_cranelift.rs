@@ -191,6 +191,10 @@ struct HelperFuncs {
     call_builtin_tree: FuncId,
     // Dynamic-dispatch bridge for OP_CALL_DYN (HOF callbacks: `map`, ...)
     call_dyn: FuncId,
+    // Closure construction bridge for OP_MAKE_CLOSURE (Phase 2 inline lambdas
+    // with free vars). Takes a FnRef NanVal + a stack slot of capture NanVals,
+    // returns the closure heap-pointer NanVal.
+    make_closure: FuncId,
     // `!!` panic-unwrap. Used by HOF lifts that emit a typed runtime error
     // mid-loop (e.g. `flt` when the predicate returns a non-bool).
     panic_unwrap: FuncId,
@@ -384,6 +388,7 @@ fn declare_all_helpers(module: &mut ObjectModule) -> HelperFuncs {
         dtparse: declare_helper(module, "jit_dtparse", 3, 1),
         call_builtin_tree: declare_helper(module, "jit_call_builtin_tree", 4, 1),
         call_dyn: declare_helper(module, "jit_call_dyn", 4, 1),
+        make_closure: declare_helper(module, "jit_make_closure", 3, 1),
         panic_unwrap: declare_helper(module, "jit_panic_unwrap", 2, 1),
         // AOT-specific helpers
         get_arena_ptr: declare_helper(module, "jit_get_arena_ptr", 0, 1),
@@ -1041,10 +1046,26 @@ fn compile_function_body(
             }
         }
 
-        // First pass: classify all non-MOVE instructions.
-        for &inst in &chunk.code {
+        // First pass: classify all non-MOVE instructions. Skip variable-width
+        // opcodes' trailing data words so register-index bytes inside them
+        // aren't mis-classified as opcode writes. OP_MAKE_CLOSURE is the only
+        // multi-word producer today (`ceil(N/4)` trailing data words).
+        let mut i = 0;
+        while i < chunk.code.len() {
+            let inst = chunk.code[i];
             let op = (inst >> 24) as u8;
             let a = ((inst >> 16) & 0xFF) as usize;
+            if op == OP_MAKE_CLOSURE {
+                if a < reg_count {
+                    non_num_write[a] = true;
+                    non_bool_write[a] = true;
+                }
+                let n = (inst & 0xFF) as usize;
+                let n_words = n.div_ceil(4);
+                i += 1 + n_words;
+                continue;
+            }
+            i += 1;
             if a >= reg_count {
                 continue;
             }
@@ -1116,10 +1137,20 @@ fn compile_function_body(
         }
 
         // Fixpoint: propagate MOVE a, b by copying b's proven type to a.
+        // Skip OP_MAKE_CLOSURE's trailing data words so a register-index byte
+        // (10 == OP_MOVE) inside a data word doesn't falsely fire propagation.
         loop {
             let mut changed = false;
-            for &inst in &chunk.code {
+            let mut i = 0;
+            while i < chunk.code.len() {
+                let inst = chunk.code[i];
                 let op = (inst >> 24) as u8;
+                if op == OP_MAKE_CLOSURE {
+                    let n = (inst & 0xFF) as usize;
+                    i += 1 + n.div_ceil(4);
+                    continue;
+                }
+                i += 1;
                 if op != OP_MOVE {
                     continue;
                 }
@@ -1176,6 +1207,10 @@ fn compile_function_body(
 
     let mut block_terminated = false;
     let mut skip_next = false;
+    // Multi-word skip counter for variable-length opcodes whose trailing data
+    // words exceed one (OP_MAKE_CLOSURE: ceil(N/4) words of packed capture
+    // register indices). Decremented once per iteration until zero.
+    let mut extra_skip: usize = 0;
     let mf = MemFlags::new();
     // Counter for unique data section names
     let mut data_section_counter: usize = 0;
@@ -1183,6 +1218,10 @@ fn compile_function_body(
     for (ip, &inst) in chunk.code.iter().enumerate() {
         if skip_next {
             skip_next = false;
+            continue;
+        }
+        if extra_skip > 0 {
+            extra_skip -= 1;
             continue;
         }
 
@@ -4049,6 +4088,54 @@ fn compile_function_body(
                     "OP_FLATMAP not yet supported by cranelift codegen at instruction {}",
                     ip
                 ));
+            }
+            // ── Build a closure from an in-register FnRef + N captures ──
+            // ABC: A = dest reg, B = FnRef reg, C = capture count N.
+            // Followed by ceil(N/4) inline data words holding source register
+            // indices packed 4 per 32-bit word (little-endian byte order),
+            // identical to the VM's OP_MAKE_CLOSURE layout. Spill the captures
+            // into a contiguous stack slot and delegate construction to the
+            // `jit_make_closure` helper (Phase 2 PR2), mirroring how
+            // OP_CALL_DYN delegates to `jit_call_dyn`.
+            OP_MAKE_CLOSURE => {
+                let n = c_idx;
+                let fn_val = builder.use_var(vars[b_idx]);
+                let n_val = builder.ins().iconst(I64, n as i64);
+
+                let n_words = n.div_ceil(4);
+                let mut cap_regs: Vec<usize> = Vec::with_capacity(n);
+                for w in 0..n_words {
+                    let data = chunk.code[ip + 1 + w];
+                    for slot in 0..4 {
+                        if cap_regs.len() == n {
+                            break;
+                        }
+                        let src = ((data >> (slot * 8)) & 0xFF) as usize;
+                        cap_regs.push(src);
+                    }
+                }
+                extra_skip = n_words;
+
+                let regs_ptr = if n == 0 {
+                    builder.ins().iconst(I64, 0)
+                } else {
+                    let slot =
+                        builder.create_sized_stack_slot(cranelift_codegen::ir::StackSlotData::new(
+                            cranelift_codegen::ir::StackSlotKind::ExplicitSlot,
+                            (n * 8) as u32,
+                            0,
+                        ));
+                    for (i, &src) in cap_regs.iter().enumerate() {
+                        let v = builder.use_var(vars[src]);
+                        builder.ins().stack_store(v, slot, (i * 8) as i32);
+                    }
+                    builder.ins().stack_addr(I64, slot, 0)
+                };
+
+                let fref = get_func_ref(&mut builder, module, helpers.make_closure);
+                let call_inst = builder.ins().call(fref, &[fn_val, n_val, regs_ptr]);
+                let result = builder.inst_results(call_inst)[0];
+                builder.def_var(vars[a_idx], result);
             }
             _ => {
                 return Err(format!("unsupported opcode {} at instruction {}", op, ip));
