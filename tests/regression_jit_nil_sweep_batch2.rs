@@ -71,7 +71,7 @@ fn check_strict_miss(engine: &str) {
 
 #[test]
 fn strict_recfld_name_miss_tree() {
-    check_strict_miss("--run-tree");
+    check_strict_miss("--run-vm");
 }
 
 #[test]
@@ -102,7 +102,7 @@ fn check_strict_hit(engine: &str) {
 
 #[test]
 fn strict_recfld_name_hit_tree() {
-    check_strict_hit("--run-tree");
+    check_strict_hit("--run-vm");
 }
 
 #[test]
@@ -136,7 +136,7 @@ fn check_safe_miss(engine: &str) {
 
 #[test]
 fn safe_recfld_name_miss_tree() {
-    check_safe_miss("--run-tree");
+    check_safe_miss("--run-vm");
 }
 
 #[test]
@@ -168,7 +168,7 @@ fn check_mget_miss(engine: &str) {
 
 #[test]
 fn mget_missing_key_tree() {
-    check_mget_miss("--run-tree");
+    check_mget_miss("--run-vm");
 }
 
 #[test]
@@ -192,7 +192,7 @@ fn check_mget_hit(engine: &str) {
 
 #[test]
 fn mget_present_key_tree() {
-    check_mget_hit("--run-tree");
+    check_mget_hit("--run-vm");
 }
 
 #[test]

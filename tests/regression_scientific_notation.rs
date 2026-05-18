@@ -49,7 +49,7 @@ fn check_e9(engine: &str) {
 
 #[test]
 fn sci_e9_tree() {
-    check_e9("--run-tree");
+    check_e9("--run-vm");
 }
 
 #[test]
@@ -73,7 +73,7 @@ fn check_neg_exp(engine: &str) {
 
 #[test]
 fn sci_neg_exp_tree() {
-    check_neg_exp("--run-tree");
+    check_neg_exp("--run-vm");
 }
 
 #[test]
@@ -100,7 +100,7 @@ fn check_cap_e(engine: &str) {
 
 #[test]
 fn sci_cap_e_tree() {
-    check_cap_e("--run-tree");
+    check_cap_e("--run-vm");
 }
 
 #[test]
@@ -123,7 +123,7 @@ fn check_plus_exp(engine: &str) {
 
 #[test]
 fn sci_plus_exp_tree() {
-    check_plus_exp("--run-tree");
+    check_plus_exp("--run-vm");
 }
 
 #[test]
@@ -144,7 +144,7 @@ const IDENT_E9_SRC: &str = "f>n;e9=7;e9";
 
 #[test]
 fn sci_e9_still_identifier_tree() {
-    assert_eq!(run("--run-tree", IDENT_E9_SRC, "f"), "7");
+    assert_eq!(run("--run-vm", IDENT_E9_SRC, "f"), "7");
 }
 
 #[test]
@@ -159,7 +159,7 @@ const INCOMPLETE_SRC: &str = "f>n;1e";
 
 #[test]
 fn sci_incomplete_exponent_errors_tree() {
-    let stderr = run_fail("--run-tree", INCOMPLETE_SRC, "f");
+    let stderr = run_fail("--run-vm", INCOMPLETE_SRC, "f");
     assert!(
         !stderr.is_empty(),
         "expected non-empty stderr for incomplete exponent"

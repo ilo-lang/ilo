@@ -31,7 +31,7 @@ fn run(engine: &str, src: &str, entry: &str) -> String {
 }
 
 const ENGINES: &[&str] = &[
-    "--run-tree",
+    "--run-vm",
     "--run-vm",
     #[cfg(feature = "cranelift")]
     "--jit",

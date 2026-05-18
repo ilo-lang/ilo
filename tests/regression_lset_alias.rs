@@ -51,7 +51,7 @@ fn check_num(engine: &str) {
 
 #[test]
 fn lset_num_tree() {
-    check_num("--run-tree");
+    check_num("--run-vm");
 }
 
 #[test]
@@ -74,7 +74,7 @@ fn check_text(engine: &str) {
 
 #[test]
 fn lset_text_tree() {
-    check_text("--run-tree");
+    check_text("--run-vm");
 }
 
 #[test]
@@ -94,7 +94,7 @@ const LAST_SRC: &str = "f>L n;lset [1,2,3] 2 9";
 
 #[test]
 fn lset_first_tree() {
-    assert_eq!(run("--run-tree", FIRST_SRC, "f"), "[9, 2, 3]");
+    assert_eq!(run("--run-vm", FIRST_SRC, "f"), "[9, 2, 3]");
 }
 #[test]
 fn lset_first_vm() {
@@ -108,7 +108,7 @@ fn lset_first_cranelift() {
 
 #[test]
 fn lset_last_tree() {
-    assert_eq!(run("--run-tree", LAST_SRC, "f"), "[1, 2, 9]");
+    assert_eq!(run("--run-vm", LAST_SRC, "f"), "[1, 2, 9]");
 }
 #[test]
 fn lset_last_vm() {
@@ -128,7 +128,7 @@ const OOB_SRC: &str = "f>L n;lset [1,2,3] 5 99";
 
 #[test]
 fn lset_oob_tree_errors() {
-    let (stdout, stderr) = run_expect_fail("--run-tree", OOB_SRC, "f");
+    let (stdout, stderr) = run_expect_fail("--run-vm", OOB_SRC, "f");
     let combined = format!("{stdout}{stderr}");
     assert!(
         combined.contains("ILO-R009") || combined.contains("ILO-R004"),
@@ -176,7 +176,7 @@ const EMPTY_SRC: &str = "f>L n;xs=[];lset xs 0 1";
 
 #[test]
 fn lset_empty_tree_errors() {
-    let (stdout, stderr) = run_expect_fail("--run-tree", EMPTY_SRC, "f");
+    let (stdout, stderr) = run_expect_fail("--run-vm", EMPTY_SRC, "f");
     let combined = format!("{stdout}{stderr}");
     assert!(
         combined.contains("out of range"),
@@ -200,7 +200,7 @@ const TYPE_MISMATCH_SRC: &str = "f>L n;lset [1,2,3] 0 \"oops\"";
 
 #[test]
 fn lset_type_mismatch_rejected_tree() {
-    let (stdout, stderr) = run_expect_fail("--run-tree", TYPE_MISMATCH_SRC, "f");
+    let (stdout, stderr) = run_expect_fail("--run-vm", TYPE_MISMATCH_SRC, "f");
     let combined = format!("{stdout}{stderr}");
     assert!(
         combined.contains("ILO-T013"),
@@ -237,7 +237,7 @@ const PRESERVES_PROBE: &str = "f>n;xs=[1,2,3];ys=lset xs 1 99;at xs 1";
 
 #[test]
 fn lset_preserves_original_tree() {
-    assert_eq!(run("--run-tree", PRESERVES_PROBE, "f"), "2");
+    assert_eq!(run("--run-vm", PRESERVES_PROBE, "f"), "2");
 }
 #[test]
 fn lset_preserves_original_vm() {
@@ -258,7 +258,7 @@ const HIST_SRC: &str = "hist samples:L n bins:L n>L n;@s samples{c=at bins s;bin
 
 #[test]
 fn lset_histogram_tree() {
-    assert_eq!(run("--run-tree", HIST_SRC, "main"), "[2, 2, 3, 1]");
+    assert_eq!(run("--run-vm", HIST_SRC, "main"), "[2, 2, 3, 1]");
 }
 #[test]
 fn lset_histogram_vm() {
@@ -275,7 +275,7 @@ fn lset_histogram_cranelift() {
 #[test]
 fn lset_emits_canonical_short_form_hint() {
     let out = ilo()
-        .args([NUM_SRC, "--run-tree", "f"])
+        .args([NUM_SRC, "--run-vm", "f"])
         .output()
         .expect("failed to run ilo");
     let stdout = String::from_utf8_lossy(&out.stdout);

@@ -21,9 +21,9 @@ fn ilo() -> Command {
 }
 
 #[cfg(feature = "cranelift")]
-const ENGINES: &[&str] = &["--run-tree", "--run-vm", "--jit"];
+const ENGINES: &[&str] = &["--run-vm", "--jit"];
 #[cfg(not(feature = "cranelift"))]
-const ENGINES: &[&str] = &["--run-tree", "--run-vm"];
+const ENGINES: &[&str] = &["--run-vm"];
 
 const JSON: &str = r#"{"vulnerabilities":[{"cve":{"id":"CVE-1"}}]}"#;
 

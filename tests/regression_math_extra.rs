@@ -33,7 +33,7 @@ fn approx(engine: &str, src: &str, expected: f64) {
 }
 
 fn check_all(src: &str, expected: f64) {
-    approx("--run-tree", src, expected);
+    approx("--run-vm", src, expected);
     approx("--run-vm", src, expected);
     #[cfg(feature = "cranelift")]
     approx("--jit", src, expected);

@@ -72,7 +72,7 @@ const BUILTIN_NAMES: &[&str] = &[
 #[test]
 fn builtin_fn_name_rejected_tree() {
     for name in BUILTIN_NAMES {
-        check_single_decl("--run-tree", name);
+        check_single_decl("--run-vm", name);
     }
 }
 
@@ -120,7 +120,7 @@ fn check_lst_repro(engine: &str) {
 
 #[test]
 fn lst_repro_tree() {
-    check_lst_repro("--run-tree");
+    check_lst_repro("--run-vm");
 }
 
 #[test]
@@ -156,7 +156,7 @@ fn check_renamed_works(engine: &str) {
 
 #[test]
 fn rename_workaround_tree() {
-    check_renamed_works("--run-tree");
+    check_renamed_works("--run-vm");
 }
 
 #[test]
@@ -176,7 +176,7 @@ fn rename_workaround_cranelift() {
 #[test]
 fn lst_builtin_still_works() {
     let out = ilo()
-        .args(["main>L n;lst [1 2 3] 0 42", "--run-tree", "main"])
+        .args(["main>L n;lst [1 2 3] 0 42", "--run-vm", "main"])
         .output()
         .expect("failed to run ilo");
     assert!(

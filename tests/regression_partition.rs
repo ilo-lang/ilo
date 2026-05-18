@@ -48,20 +48,20 @@ const POS_SRC: &str = "pos x:n>b;>x 0\nf xs:L n>L (L n);partition pos xs";
 #[test]
 fn partition_pos_neg_tree() {
     assert_eq!(
-        run_ok("--run-tree", POS_SRC, "f", &["[-1,2,-3,4]"]),
+        run_ok("--run-vm", POS_SRC, "f", &["[-1,2,-3,4]"]),
         "[[2, 4], [-1, -3]]"
     );
 }
 
 #[test]
 fn partition_empty_input_tree() {
-    assert_eq!(run_ok("--run-tree", POS_SRC, "f", &["[]"]), "[[], []]");
+    assert_eq!(run_ok("--run-vm", POS_SRC, "f", &["[]"]), "[[], []]");
 }
 
 #[test]
 fn partition_all_pass_tree() {
     assert_eq!(
-        run_ok("--run-tree", POS_SRC, "f", &["[1,2,3]"]),
+        run_ok("--run-vm", POS_SRC, "f", &["[1,2,3]"]),
         "[[1, 2, 3], []]"
     );
 }
@@ -73,7 +73,7 @@ const NEG_SRC: &str = "neg x:n>b;<x 0\nf xs:L n>L (L n);partition neg xs";
 #[test]
 fn partition_all_fail_tree() {
     assert_eq!(
-        run_ok("--run-tree", NEG_SRC, "f", &["[1,2,3]"]),
+        run_ok("--run-vm", NEG_SRC, "f", &["[1,2,3]"]),
         "[[], [1, 2, 3]]"
     );
 }
@@ -85,7 +85,7 @@ const EVEN_SRC: &str = "even x:n>b;=(mod x 2) 0\nf xs:L n>L (L n);partition even
 #[test]
 fn partition_even_odd_tree() {
     assert_eq!(
-        run_ok("--run-tree", EVEN_SRC, "f", &["[1,2,3,4,5,6]"]),
+        run_ok("--run-vm", EVEN_SRC, "f", &["[1,2,3,4,5,6]"]),
         "[[2, 4, 6], [1, 3, 5]]"
     );
 }

@@ -33,7 +33,7 @@ fn run(engine: &str, src: &str, entry: &str, args: &[&str]) -> String {
 
 fn run_err(src: &str) -> String {
     let out = ilo()
-        .args([src, "--run-tree", "f"])
+        .args([src, "--run-vm", "f"])
         .output()
         .expect("failed to run ilo");
     assert!(!out.status.success(), "expected failure for `{src}`");
@@ -72,7 +72,7 @@ fn check_all_keywords(engine: &str) {
 
 #[test]
 fn dot_keywords_all_tree() {
-    check_all_keywords("--run-tree");
+    check_all_keywords("--run-vm");
 }
 
 #[test]
@@ -96,7 +96,7 @@ fn check_safe(engine: &str) {
 
 #[test]
 fn dot_keywords_safe_tree() {
-    check_safe("--run-tree");
+    check_safe("--run-vm");
 }
 
 #[test]
@@ -125,7 +125,7 @@ fn check_snake_after_kw(engine: &str) {
 
 #[test]
 fn dot_keywords_snake_after_kw_tree() {
-    check_snake_after_kw("--run-tree");
+    check_snake_after_kw("--run-vm");
 }
 
 #[test]
@@ -152,7 +152,7 @@ fn check_snake_long(engine: &str) {
 
 #[test]
 fn dot_keywords_snake_long_tree() {
-    check_snake_long("--run-tree");
+    check_snake_long("--run-vm");
 }
 
 #[test]

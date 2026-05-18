@@ -52,7 +52,7 @@ fn check_basic_len(engine: &str) {
 
 #[test]
 fn unq_numbers_basic_len_tree() {
-    check_basic_len("--run-tree");
+    check_basic_len("--run-vm");
 }
 
 #[test]
@@ -75,7 +75,7 @@ fn check_order(engine: &str) {
 
 #[test]
 fn unq_numbers_preserves_order_tree() {
-    check_order("--run-tree");
+    check_order("--run-vm");
 }
 
 #[test]
@@ -98,7 +98,7 @@ fn check_all_same(engine: &str) {
 
 #[test]
 fn unq_numbers_all_same_tree() {
-    check_all_same("--run-tree");
+    check_all_same("--run-vm");
 }
 
 #[test]
@@ -121,7 +121,7 @@ fn check_empty(engine: &str) {
 
 #[test]
 fn unq_numbers_empty_tree() {
-    check_empty("--run-tree");
+    check_empty("--run-vm");
 }
 
 #[test]
@@ -157,7 +157,7 @@ fn check_all_unique(engine: &str) {
 
 #[test]
 fn unq_numbers_all_unique_tree() {
-    check_all_unique("--run-tree");
+    check_all_unique("--run-vm");
 }
 
 #[test]
@@ -185,7 +185,7 @@ fn check_floats(engine: &str) {
 
 #[test]
 fn unq_numbers_floats_tree() {
-    check_floats("--run-tree");
+    check_floats("--run-vm");
 }
 
 #[test]
@@ -214,7 +214,7 @@ fn check_negatives(engine: &str) {
 
 #[test]
 fn unq_numbers_negatives_tree() {
-    check_negatives("--run-tree");
+    check_negatives("--run-vm");
 }
 
 #[test]
@@ -265,7 +265,7 @@ fn check_stress(engine: &str) {
 
 #[test]
 fn unq_numbers_stress_1000_tree() {
-    check_stress("--run-tree");
+    check_stress("--run-vm");
 }
 
 #[test]

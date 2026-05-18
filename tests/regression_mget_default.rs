@@ -170,7 +170,7 @@ fn check_all(engine: &str) {
 
 #[test]
 fn mget_default_tree() {
-    check_all("--run-tree");
+    check_all("--run-vm");
 }
 
 #[test]

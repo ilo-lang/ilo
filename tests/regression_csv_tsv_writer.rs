@@ -34,7 +34,7 @@ fn run_ok(engine: &str, src: &str, entry: &str) -> String {
 }
 
 fn engines() -> &'static [&'static str] {
-    &["--run-tree", "--run-vm"]
+    &["--run-vm"]
 }
 
 // `L (L t)` → no header row, just data rows.

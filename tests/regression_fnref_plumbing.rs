@@ -63,7 +63,7 @@ const USER_FNREF_SRC: &str = "sq x:n>n;*x x\nmk>F n n;sq";
 
 #[test]
 fn user_fnref_round_trip_tree() {
-    assert_eq!(run_ok("--run-tree", USER_FNREF_SRC, "mk", &[]), "<fn:sq>");
+    assert_eq!(run_ok("--run-vm", USER_FNREF_SRC, "mk", &[]), "<fn:sq>");
 }
 
 #[test]
@@ -86,10 +86,7 @@ const BUILTIN_FNREF_SRC: &str = "mk>F n n;abs";
 
 #[test]
 fn builtin_fnref_round_trip_tree() {
-    assert_eq!(
-        run_ok("--run-tree", BUILTIN_FNREF_SRC, "mk", &[]),
-        "<fn:abs>"
-    );
+    assert_eq!(run_ok("--run-vm", BUILTIN_FNREF_SRC, "mk", &[]), "<fn:abs>");
 }
 
 #[test]
@@ -112,7 +109,7 @@ const FNREF_BIND_SRC: &str = "sq x:n>n;*x x\nmk>F n n;f=sq;f";
 
 #[test]
 fn fnref_bind_then_return_tree() {
-    assert_eq!(run_ok("--run-tree", FNREF_BIND_SRC, "mk", &[]), "<fn:sq>");
+    assert_eq!(run_ok("--run-vm", FNREF_BIND_SRC, "mk", &[]), "<fn:sq>");
 }
 
 #[test]

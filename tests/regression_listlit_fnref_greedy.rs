@@ -165,7 +165,7 @@ g>L n;xs=[1 2 3];hd [map dbl xs]";
 
 fn check_hof_preserved(engine: &str) {
     // Tree only: VM/cranelift skip HOF dispatch (FnRef NaN-tagging TBD)
-    if engine != "--run-tree" {
+    if engine != "--run-vm" {
         return;
     }
     assert_eq!(
@@ -204,7 +204,7 @@ fn check_all(engine: &str) {
 
 #[test]
 fn listlit_fnref_greedy_tree() {
-    check_all("--run-tree");
+    check_all("--run-vm");
 }
 
 #[test]

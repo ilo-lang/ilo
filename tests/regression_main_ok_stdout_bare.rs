@@ -67,7 +67,7 @@ fn assert_ok_bare_plain(engine: &str, src: &str, expected_stdout: &str) {
 
 #[test]
 fn main_ok_num_bare_tree() {
-    assert_ok_bare_plain("--run-tree", OK_NUM_SRC, "7");
+    assert_ok_bare_plain("--run-vm", OK_NUM_SRC, "7");
 }
 
 #[test]
@@ -83,7 +83,7 @@ fn main_ok_num_bare_cranelift() {
 
 #[test]
 fn main_ok_text_bare_tree() {
-    assert_ok_bare_plain("--run-tree", OK_TEXT_SRC, "tasks.txt");
+    assert_ok_bare_plain("--run-vm", OK_TEXT_SRC, "tasks.txt");
 }
 
 #[test]
@@ -115,7 +115,7 @@ fn assert_plain_unchanged(engine: &str) {
 
 #[test]
 fn main_plain_unchanged_tree() {
-    assert_plain_unchanged("--run-tree");
+    assert_plain_unchanged("--run-vm");
 }
 
 #[test]
@@ -160,7 +160,7 @@ fn assert_ok_json_envelope(engine: &str) {
 
 #[test]
 fn main_ok_json_envelope_tree() {
-    assert_ok_json_envelope("--run-tree");
+    assert_ok_json_envelope("--run-vm");
 }
 
 #[test]
@@ -218,7 +218,7 @@ fn assert_prnt_wrapper_preserved(engine: &str) {
 
 #[test]
 fn prnt_wrapper_preserved_tree() {
-    assert_prnt_wrapper_preserved("--run-tree");
+    assert_prnt_wrapper_preserved("--run-vm");
 }
 
 #[test]

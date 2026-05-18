@@ -56,7 +56,7 @@ fn text_param_with_digit_input_num_unwraps_across_engines() {
     let (_dir, path) = write_temp(src);
     let p = path.to_str().unwrap();
 
-    for engine in [None, Some("--run-tree"), Some("--run-vm"), Some("--jit")] {
+    for engine in [None, Some("--run-vm"), Some("--run-vm"), Some("--jit")] {
         let out = run_engine(p, "f", "2", engine);
         assert_eq!(
             out, "2",
@@ -73,7 +73,7 @@ fn text_param_with_non_numeric_input_hits_err_arm_across_engines() {
     let (_dir, path) = write_temp(src);
     let p = path.to_str().unwrap();
 
-    for engine in [None, Some("--run-tree"), Some("--run-vm"), Some("--jit")] {
+    for engine in [None, Some("--run-vm"), Some("--run-vm"), Some("--jit")] {
         let out = run_engine(p, "f", "abc", engine);
         assert_eq!(out, "-1", "engine {engine:?}: expected `-1`, got `{out}`");
     }
@@ -89,7 +89,7 @@ fn text_param_preserves_bool_shaped_input_across_engines() {
     let (_dir, path) = write_temp(src);
     let p = path.to_str().unwrap();
 
-    for engine in [None, Some("--run-tree"), Some("--run-vm"), Some("--jit")] {
+    for engine in [None, Some("--run-vm"), Some("--run-vm"), Some("--jit")] {
         let out = run_engine(p, "id", "true", engine);
         assert_eq!(out, "true", "engine {engine:?}: got `{out}`");
     }
@@ -104,7 +104,7 @@ fn text_param_preserves_nil_shaped_input_across_engines() {
     let (_dir, path) = write_temp(src);
     let p = path.to_str().unwrap();
 
-    for engine in [None, Some("--run-tree"), Some("--run-vm"), Some("--jit")] {
+    for engine in [None, Some("--run-vm"), Some("--run-vm"), Some("--jit")] {
         let out = run_engine(p, "id", "nil", engine);
         assert_eq!(out, "nil", "engine {engine:?}: got `{out}`");
     }
@@ -120,7 +120,7 @@ fn number_param_still_parses_as_number_across_engines() {
     let (_dir, path) = write_temp(src);
     let p = path.to_str().unwrap();
 
-    for engine in [None, Some("--run-tree"), Some("--run-vm"), Some("--jit")] {
+    for engine in [None, Some("--run-vm"), Some("--run-vm"), Some("--jit")] {
         let out = run_engine(p, "double", "21", engine);
         assert_eq!(out, "42", "engine {engine:?}: got `{out}`");
     }

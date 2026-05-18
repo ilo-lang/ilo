@@ -56,9 +56,9 @@ fn run_ok(engine: &str, src: &str, entry: &str, args: &[&str]) -> String {
 
 fn run_all(src: &str, entry: &str, args: &[&str], expected: &str) {
     #[cfg(feature = "cranelift")]
-    let engines: &[&str] = &["--run-tree", "--run-vm", "--jit"];
+    let engines: &[&str] = &["--run-vm", "--jit"];
     #[cfg(not(feature = "cranelift"))]
-    let engines: &[&str] = &["--run-tree", "--run-vm"];
+    let engines: &[&str] = &["--run-vm"];
     for engine in engines {
         let actual = run_ok(engine, src, entry, args);
         assert_eq!(
@@ -169,9 +169,9 @@ fn partition_all_fail() {
 fn partition_non_bool_predicate_errors() {
     let src = "bad x:n>n;+x 1\nf xs:L n>L L n;partition bad xs";
     #[cfg(feature = "cranelift")]
-    let engines: &[&str] = &["--run-tree", "--run-vm", "--jit"];
+    let engines: &[&str] = &["--run-vm", "--jit"];
     #[cfg(not(feature = "cranelift"))]
-    let engines: &[&str] = &["--run-tree", "--run-vm"];
+    let engines: &[&str] = &["--run-vm"];
     for engine in engines {
         let stderr = run_err(engine, src, "f", &["[1,2,3]"]);
         assert!(

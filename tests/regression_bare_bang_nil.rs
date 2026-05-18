@@ -37,9 +37,9 @@ fn ilo() -> Command {
 }
 
 #[cfg(feature = "cranelift")]
-const ENGINES_ALL: &[&str] = &["--run-tree", "--run-vm", "--jit"];
+const ENGINES_ALL: &[&str] = &["--run-vm", "--jit"];
 #[cfg(not(feature = "cranelift"))]
-const ENGINES_ALL: &[&str] = &["--run-tree", "--run-vm"];
+const ENGINES_ALL: &[&str] = &["--run-vm"];
 
 /// Run `ilo <src> <engine>` and return (stdout, stderr, exit code).
 fn run_engine(engine: &str, src: &str) -> (String, String, i32) {

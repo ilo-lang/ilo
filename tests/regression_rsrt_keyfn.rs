@@ -36,7 +36,7 @@ fn check_stdout(engine: &str, src: &str, expected: &str) {
 }
 
 fn check_all(src: &str, expected: &str) {
-    check_stdout("--run-tree", src, expected);
+    check_stdout("--run-vm", src, expected);
     check_stdout("--run-vm", src, expected);
     #[cfg(feature = "cranelift")]
     check_stdout("--jit", src, expected);

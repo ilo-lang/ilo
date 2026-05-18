@@ -1,3 +1,4 @@
+#![allow(clippy::single_element_loop)] // see soft-deprecate-tree: arrays shrank from 2-3 engines to 1
 // Regression tests pinning kebab-case identifier behaviour and the
 // diagnostic-layer hint that fires when an undefined kebab-case ident's
 // halves are both bound in scope.
@@ -35,7 +36,7 @@ fn check_all(src: &str, func: &str, expected: &str) {
     // Split `func` on whitespace so multi-arg invocations like "f 10 3"
     // are passed as separate argv entries (not a single quoted string).
     let argv: Vec<&str> = func.split_whitespace().collect();
-    for engine in ["--run-tree", "--run-vm"] {
+    for engine in ["--run-vm"] {
         let actual = run_ok(engine, src, &argv);
         assert_eq!(
             actual, expected,

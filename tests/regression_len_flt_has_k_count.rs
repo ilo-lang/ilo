@@ -100,7 +100,7 @@ fn run_err(engine: &str, src: &str, entry: &str, args: &[&str]) -> String {
 }
 
 fn run_all(src: &str, entry: &str, args: &[&str], expected: &str) {
-    for engine in ["--run-tree", "--run-vm", "--jit"] {
+    for engine in ["--run-vm", "--jit"] {
         let actual = run_ok(engine, src, entry, args);
         assert_eq!(
             actual, expected,
@@ -207,7 +207,7 @@ fn non_list_xs_errors_consistently() {
     // it (the exact message may differ between tiers, but none should
     // silently succeed).
     let src = "is-hydro c:t>b;has \"AILMFWVYC\" c\nmain>n;len (flt is-hydro 42)";
-    for engine in ["--run-tree", "--run-vm", "--jit"] {
+    for engine in ["--run-vm", "--jit"] {
         let _stderr = run_err(engine, src, "main", &[]);
     }
 }

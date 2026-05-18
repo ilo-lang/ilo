@@ -32,7 +32,7 @@ fn check_take_basic(engine: &str) {
 
 #[test]
 fn take_basic_tree() {
-    check_take_basic("--run-tree");
+    check_take_basic("--run-vm");
 }
 
 #[test]
@@ -55,7 +55,7 @@ fn check_take_trunc(engine: &str) {
 
 #[test]
 fn take_trunc_tree() {
-    check_take_trunc("--run-tree");
+    check_take_trunc("--run-vm");
 }
 
 #[test]
@@ -78,7 +78,7 @@ fn check_take_zero(engine: &str) {
 
 #[test]
 fn take_zero_tree() {
-    check_take_zero("--run-tree");
+    check_take_zero("--run-vm");
 }
 
 #[test]
@@ -101,7 +101,7 @@ fn check_drop_basic(engine: &str) {
 
 #[test]
 fn drop_basic_tree() {
-    check_drop_basic("--run-tree");
+    check_drop_basic("--run-vm");
 }
 
 #[test]
@@ -124,7 +124,7 @@ fn check_drop_trunc(engine: &str) {
 
 #[test]
 fn drop_trunc_tree() {
-    check_drop_trunc("--run-tree");
+    check_drop_trunc("--run-vm");
 }
 
 #[test]
@@ -147,7 +147,7 @@ fn check_take_empty(engine: &str) {
 
 #[test]
 fn take_empty_tree() {
-    check_take_empty("--run-tree");
+    check_take_empty("--run-vm");
 }
 
 #[test]
@@ -170,7 +170,7 @@ fn check_take_text(engine: &str) {
 
 #[test]
 fn take_text_tree() {
-    check_take_text("--run-tree");
+    check_take_text("--run-vm");
 }
 
 #[test]
@@ -193,7 +193,7 @@ fn check_drop_text(engine: &str) {
 
 #[test]
 fn drop_text_tree() {
-    check_drop_text("--run-tree");
+    check_drop_text("--run-vm");
 }
 
 #[test]
@@ -230,7 +230,7 @@ fn check_take_neg_python_style(engine: &str) {
 
 #[test]
 fn take_negative_tree() {
-    check_take_neg_python_style("--run-tree");
+    check_take_neg_python_style("--run-vm");
 }
 
 #[test]
@@ -256,7 +256,7 @@ fn check_drop_neg_python_style(engine: &str) {
 
 #[test]
 fn drop_negative_tree() {
-    check_drop_neg_python_style("--run-tree");
+    check_drop_neg_python_style("--run-vm");
 }
 
 #[test]
@@ -283,7 +283,7 @@ fn check_take_text_list(engine: &str) {
 
 #[test]
 fn take_text_list_tree() {
-    check_take_text_list("--run-tree");
+    check_take_text_list("--run-vm");
 }
 
 #[test]

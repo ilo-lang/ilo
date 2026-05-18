@@ -37,7 +37,7 @@ fn check_num(engine: &str) {
 
 #[test]
 fn lst_num_tree() {
-    check_num("--run-tree");
+    check_num("--run-vm");
 }
 
 #[test]
@@ -60,7 +60,7 @@ fn check_text(engine: &str) {
 
 #[test]
 fn lst_text_tree() {
-    check_text("--run-tree");
+    check_text("--run-vm");
 }
 
 #[test]
@@ -78,7 +78,7 @@ fn lst_text_cranelift() {
 #[test]
 fn lst_first_tree() {
     assert_eq!(
-        run("--run-tree", "f>L n;lst [10,20,30] 0 99", "f"),
+        run("--run-vm", "f>L n;lst [10,20,30] 0 99", "f"),
         "[99, 20, 30]"
     );
 }
@@ -94,7 +94,7 @@ fn lst_first_vm() {
 #[test]
 fn lst_last_tree() {
     assert_eq!(
-        run("--run-tree", "f>L n;lst [10,20,30] 2 99", "f"),
+        run("--run-vm", "f>L n;lst [10,20,30] 2 99", "f"),
         "[10, 20, 99]"
     );
 }
@@ -116,7 +116,7 @@ fn check_no_mut(engine: &str) {
 
 #[test]
 fn lst_no_mutation_tree() {
-    check_no_mut("--run-tree");
+    check_no_mut("--run-vm");
 }
 
 #[test]
@@ -152,7 +152,7 @@ fn check_oor_error(engine: &str) {
 
 #[test]
 fn lst_out_of_range_tree() {
-    check_oor_error("--run-tree");
+    check_oor_error("--run-vm");
 }
 
 #[test]
@@ -175,7 +175,7 @@ const NEG_SRC: &str = "f>L n;lst [10,20,30] -1 42";
 #[test]
 fn lst_negative_tree() {
     let out = ilo()
-        .args([NEG_SRC, "--run-tree", "f"])
+        .args([NEG_SRC, "--run-vm", "f"])
         .output()
         .expect("failed to run ilo");
     assert!(
@@ -232,7 +232,7 @@ fn lst_negative_cranelift() {
 #[test]
 fn lst_type_mismatch_rejected() {
     let out = ilo()
-        .args(["f>L n;lst [10,20,30] 1 \"X\"", "--run-tree", "f"])
+        .args(["f>L n;lst [10,20,30] 1 \"X\"", "--run-vm", "f"])
         .output()
         .expect("failed to run ilo");
     assert!(
@@ -263,7 +263,7 @@ fn check_histogram(engine: &str) {
 
 #[test]
 fn lst_histogram_tree() {
-    check_histogram("--run-tree");
+    check_histogram("--run-vm");
 }
 
 #[test]

@@ -1,3 +1,4 @@
+#![allow(clippy::single_element_loop)] // see soft-deprecate-tree: arrays shrank from 2-3 engines to 1
 // Regression tests for Python-style negative indices on `slc`, `take`, `drop`.
 //
 // Background: PR #183 (2026-05-12) added negative-index support to `at xs i`.
@@ -36,7 +37,7 @@ fn run(engine: &str, src: &str, entry: &str) -> String {
 }
 
 fn check_all_engines(src: &str, entry: &str, expected: &str) {
-    for engine in ["--run-tree", "--run-vm"] {
+    for engine in ["--run-vm"] {
         assert_eq!(
             run(engine, src, entry),
             expected,

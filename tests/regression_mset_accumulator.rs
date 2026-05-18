@@ -49,7 +49,7 @@ const CHAIN_TEXT_SRC: &str = "f>t;m=mset mmap \"a\" \"1\";m=mset m \"b\" \"2\";m
 
 #[test]
 fn mset_chain_text_tree() {
-    assert_eq!(run("--run-tree", CHAIN_TEXT_SRC, "f"), "2");
+    assert_eq!(run("--run-vm", CHAIN_TEXT_SRC, "f"), "2");
 }
 
 #[test]
@@ -76,7 +76,7 @@ const OVERWRITE_TEXT_SRC: &str =
 
 #[test]
 fn mset_overwrite_text_tree() {
-    assert_eq!(run("--run-tree", OVERWRITE_TEXT_SRC, "f"), "second");
+    assert_eq!(run("--run-vm", OVERWRITE_TEXT_SRC, "f"), "second");
 }
 
 #[test]
@@ -124,7 +124,7 @@ const NONREBIND_NO_ALIAS_SRC: &str =
 
 #[test]
 fn mset_nonrebind_no_alias_tree() {
-    assert_eq!(run("--run-tree", NONREBIND_NO_ALIAS_SRC, "f"), "miss");
+    assert_eq!(run("--run-vm", NONREBIND_NO_ALIAS_SRC, "f"), "miss");
 }
 
 #[test]
@@ -149,7 +149,7 @@ const FN_RC_SRC: &str = "addto m:M t t k:t v:t>t;m=mset m k v;mget m k ?? \"miss
 
 #[test]
 fn mset_fn_boundary_tree() {
-    assert_eq!(run("--run-tree", FN_RC_SRC, "f"), "one");
+    assert_eq!(run("--run-vm", FN_RC_SRC, "f"), "one");
 }
 
 #[test]
@@ -173,7 +173,7 @@ const LIST_VAL_SRC: &str =
 
 #[test]
 fn mset_list_val_tree() {
-    assert_eq!(run("--run-tree", LIST_VAL_SRC, "f"), "3");
+    assert_eq!(run("--run-vm", LIST_VAL_SRC, "f"), "3");
 }
 
 #[test]
@@ -200,7 +200,7 @@ const LOOP_TEXT_KEYS_SRC: &str = "f>n;\
 
 #[test]
 fn mset_loop_text_keys_tree() {
-    assert_eq!(run("--run-tree", LOOP_TEXT_KEYS_SRC, "f"), "500");
+    assert_eq!(run("--run-vm", LOOP_TEXT_KEYS_SRC, "f"), "500");
 }
 
 #[test]

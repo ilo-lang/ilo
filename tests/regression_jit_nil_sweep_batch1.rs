@@ -61,7 +61,7 @@ fn check_stdout(engine: &str, src: &str, expected: &str) {
 #[test]
 fn lst_oob_tree() {
     check_runtime_error(
-        "--run-tree",
+        "--run-vm",
         "f>L n;lst [1,2,3] 5 99",
         &["lst", "out of range", "ILO-R009"],
     );
@@ -91,7 +91,7 @@ fn lst_oob_cranelift() {
 #[test]
 fn lst_negative_tree() {
     check_runtime_error(
-        "--run-tree",
+        "--run-vm",
         "f>L n;lst [1,2,3] -1 99",
         &["lst", "non-negative", "integer", "ILO-R009"],
     );
@@ -121,7 +121,7 @@ fn lst_negative_cranelift() {
 
 #[test]
 fn lst_ok_tree() {
-    check_stdout("--run-tree", "f>L n;lst [1,2,3] 1 99", "[1, 99, 3]");
+    check_stdout("--run-vm", "f>L n;lst [1,2,3] 1 99", "[1, 99, 3]");
 }
 
 #[test]
@@ -147,7 +147,7 @@ fn lst_ok_cranelift() {
 
 #[test]
 fn slc_oob_clamps_tree() {
-    check_stdout("--run-tree", "f>L n;slc [1,2,3] 1 999", "[2, 3]");
+    check_stdout("--run-vm", "f>L n;slc [1,2,3] 1 999", "[2, 3]");
 }
 
 #[test]
@@ -163,7 +163,7 @@ fn slc_oob_clamps_cranelift() {
 
 #[test]
 fn slc_text_oob_clamps_tree() {
-    check_stdout("--run-tree", "f>t;slc \"hello\" 1 999", "ello");
+    check_stdout("--run-vm", "f>t;slc \"hello\" 1 999", "ello");
 }
 
 #[test]
@@ -190,7 +190,7 @@ fn slc_text_oob_clamps_cranelift() {
 #[test]
 fn jpth_path_miss_tree() {
     check_stdout(
-        "--run-tree",
+        "--run-vm",
         "f>n;v=jpth \"{\\\"a\\\":1}\" \"b\";prnt v;0",
         "^key not found: b\n0",
     );
@@ -220,7 +220,7 @@ fn jpth_path_miss_cranelift() {
 #[test]
 fn jpth_ok_tree() {
     check_stdout(
-        "--run-tree",
+        "--run-vm",
         "f>n;v=jpth \"{\\\"a\\\":1}\" \"a\";prnt v;0",
         "~1\n0",
     );
@@ -255,7 +255,7 @@ fn jpth_ok_cranelift() {
 #[test]
 fn index_oob_tree() {
     check_runtime_error(
-        "--run-tree",
+        "--run-vm",
         "f>n;xs=[10,20,30];xs.5",
         &["out of bounds", "ILO-R006"],
     );
@@ -284,7 +284,7 @@ fn index_oob_cranelift() {
 
 #[test]
 fn index_ok_tree() {
-    check_stdout("--run-tree", "f>n;xs=[10,20,30];xs.1", "20");
+    check_stdout("--run-vm", "f>n;xs=[10,20,30];xs.1", "20");
 }
 
 #[test]

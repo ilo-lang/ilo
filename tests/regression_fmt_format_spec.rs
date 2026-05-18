@@ -93,7 +93,7 @@ fn check_literal_06d(engine: &str) {
 
 #[test]
 fn literal_06d_tree() {
-    check_literal_06d("--run-tree");
+    check_literal_06d("--run-vm");
 }
 
 #[test]
@@ -121,7 +121,7 @@ fn check_literal_3f(engine: &str) {
 
 #[test]
 fn literal_3f_tree() {
-    check_literal_3f("--run-tree");
+    check_literal_3f("--run-vm");
 }
 
 #[test]
@@ -157,7 +157,7 @@ fn check_computed_06d(engine: &str) {
 
 #[test]
 fn computed_06d_tree() {
-    check_computed_06d("--run-tree");
+    check_computed_06d("--run-vm");
 }
 
 #[test]
@@ -184,7 +184,7 @@ fn check_bare_ok(engine: &str) {
 
 #[test]
 fn bare_ok_tree() {
-    check_bare_ok("--run-tree");
+    check_bare_ok("--run-vm");
 }
 
 #[test]
@@ -215,7 +215,7 @@ fn check_lone_brace_ok(engine: &str) {
 
 #[test]
 fn lone_brace_ok_tree() {
-    check_lone_brace_ok("--run-tree");
+    check_lone_brace_ok("--run-vm");
 }
 
 #[test]

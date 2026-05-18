@@ -112,7 +112,7 @@ fn check_dashes_in_string(engine: &str) {
 
 #[test]
 fn paren_bound_fmt_tree() {
-    check_paren_bound_fmt("--run-tree");
+    check_paren_bound_fmt("--run-vm");
 }
 
 #[test]
@@ -128,7 +128,7 @@ fn paren_bound_fmt_cranelift() {
 
 #[test]
 fn comment_between_bindings_tree() {
-    check_comment_between_bindings("--run-tree");
+    check_comment_between_bindings("--run-vm");
 }
 
 #[test]
@@ -144,7 +144,7 @@ fn comment_between_bindings_cranelift() {
 
 #[test]
 fn stacked_comments_tree() {
-    check_stacked_comments("--run-tree");
+    check_stacked_comments("--run-vm");
 }
 
 #[test]
@@ -160,7 +160,7 @@ fn stacked_comments_cranelift() {
 
 #[test]
 fn comment_with_punct_tree() {
-    check_comment_with_punct("--run-tree");
+    check_comment_with_punct("--run-vm");
 }
 
 #[test]
@@ -176,7 +176,7 @@ fn comment_with_punct_cranelift() {
 
 #[test]
 fn dashes_in_string_tree() {
-    check_dashes_in_string("--run-tree");
+    check_dashes_in_string("--run-vm");
 }
 
 #[test]

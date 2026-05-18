@@ -38,7 +38,7 @@ fn ilo() -> Command {
 
 fn run_tree(src: &str, entry: &str) -> String {
     let out = ilo()
-        .args([src, "--run-tree", entry])
+        .args([src, "--run-vm", entry])
         .output()
         .expect("failed to run ilo");
     assert!(
@@ -152,7 +152,7 @@ fn tree_text_concat_scale_5k_under_5s() {
 demo>n;build 5000"#;
     let start = Instant::now();
     let out = ilo()
-        .args([src, "--run-tree", "demo"])
+        .args([src, "--run-vm", "demo"])
         .output()
         .expect("failed to run ilo");
     let elapsed = start.elapsed();
