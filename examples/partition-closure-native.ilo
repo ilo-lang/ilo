@@ -1,0 +1,24 @@
+-- partition with capturing inline lambdas: Phase 2 PR3 native dispatch.
+--
+-- Pre-PR3 the closure callback re-entered the tree interpreter on
+-- every element via the OP_CALL_BUILTIN_TREE bridge. PR3 emits an
+-- OP_FOREACHPREP/NEXT loop with per-element OP_CALL_DYN against the
+-- closure NanVal, so VM and Cranelift run the predicate natively
+-- without bouncing through the tree-walker.
+
+-- Single capture: filter values above a threshold the caller supplies.
+split-above xs:L n thr:n>L (L n);partition (x:n>b;>x thr) xs
+
+-- Two captures: keep items inclusive between lo and hi, drop the rest.
+split-between xs:L n lo:n hi:n>L (L n);partition (x:n>b;&(>=x lo) <=x hi) xs
+
+-- Capture a text value: split words by whether they contain the
+-- captured substring.
+split-has ws:L t needle:t>L (L t);partition (w:t>b;has w needle) ws
+
+-- run: split-above [1,5,3,8,2] 4
+-- out: [[5, 8], [1, 3, 2]]
+-- run: split-between [1,3,5,7,9,11] 3 7
+-- out: [[3, 5, 7], [1, 9, 11]]
+-- run: split-has ["cat","dog","ant","fish"] "a"
+-- out: [[cat, ant], [dog, fish]]
