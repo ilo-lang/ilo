@@ -1,0 +1,19 @@
+{
+  "id": "05-workflow",
+  "name": "workflow",
+  "description": "Multi-step orchestration with conditional logic — loan approval rules",
+  "prompt": "Write a function called `approve` that decides whether to approve a loan.\n- Takes: income (number), debt (number), score (number), amount (number)\n- Returns: number — the approved monthly payment, or 0 if rejected.\n- Rule 1: If score < 500, reject (return 0).\n- Rule 2: If debt / income > 0.4, reject.\n- Rule 3: If amount > income * 5, reject.\n- Otherwise: rate is 3.5 if score > 750, 5.0 if score > 650, else 7.5.\n  Monthly payment = amount * rate / 100 / 12. Return the monthly payment.\n",
+  "function_name": "approve",
+  "test_cases": [
+    {"args": [50000, 10000, 800, 100000], "expected": 291.6666666666667},
+    {"args": [50000, 10000, 400, 100000], "expected": 0.0},
+    {"args": [50000, 30000, 800, 100000], "expected": 0.0},
+    {"args": [50000, 10000, 800, 1000000], "expected": 0.0},
+    {"args": [50000, 10000, 700, 100000], "expected": 416.6666666666667}
+  ],
+  "reference_impls": {
+    "python": "def approve(income, debt, score, amount):\n    if score < 500: return 0.0\n    if debt / income > 0.4: return 0.0\n    if amount > income * 5: return 0.0\n    if score > 750: rate = 3.5\n    elif score > 650: rate = 5.0\n    else: rate = 7.5\n    return amount * rate / 100 / 12\n",
+    "ilo": "rate-for s:n>n;>s 750 3.5;>s 650 5.0;7.5\napprove income:n debt:n score:n amount:n>n;<score 500 0;r=/debt income;>r 0.4 0;m=*income 5;>amount m 0;rt=rate-for score;p=*amount rt;/(/p 100)12\n",
+    "zero": "fun rate_for(score: f64) -> f64 {\n    if score > 750.0 { return 3.5 }\n    if score > 650.0 { return 5.0 }\n    return 7.5\n}\n\npub fun approve(income: f64, debt: f64, score: f64, amount: f64) -> f64 {\n    if score < 500.0 { return 0.0 }\n    if debt / income > 0.4 { return 0.0 }\n    if amount > income * 5.0 { return 0.0 }\n    let rate = rate_for(score)\n    return amount * rate / 100.0 / 12.0\n}\n"
+  }
+}

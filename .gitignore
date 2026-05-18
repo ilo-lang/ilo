@@ -7,7 +7,18 @@ __pycache__/
 .playwright-mcp/
 .worktrees
 .claude/worktrees/
-research/
+# research/ is untracked by default (scratch space + private explorations).
+# Track the closed-loop benchmark explicitly - it is a publishable artefact.
+research/*
+!research/closed-loop-bench/
+!research/BENCHMARK-METHODOLOGY.md
+# PNGs in the benchmark charts/ are dataset artefacts and must be tracked.
+!research/closed-loop-bench/charts/*.png
+# Per-cell raw results and tool caches are reproducible from the driver -
+# don't bloat the repo with them.
+research/closed-loop-bench/results/raw/
+research/closed-loop-bench/.zero/
+research/closed-loop-bench/**/__pycache__/
 site/
 .DS_Store
 .astro/
