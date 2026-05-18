@@ -1314,9 +1314,12 @@ fn serv_cmd(args_slice: &[String]) {
 }
 
 /// Scan args for `--run-tree` / `--run` / `--run-vm` / `--run-cranelift` /
-/// `--run-llvm` anywhere in the list and remove them. argv[0] (binary name)
-/// is preserved at position 0. Returns the chosen engine (if any) plus the
-/// remaining args. Multiple conflicting engine flags produce an error.
+/// `--cranelift` / `--run-llvm` anywhere in the list and remove them. argv[0]
+/// (binary name) is preserved at position 0. Returns the chosen engine (if
+/// any) plus the remaining args. Multiple conflicting engine flags produce an
+/// error. `--cranelift` is a short alias for `--run-cranelift`; agents that
+/// opt into the JIT for hot numeric loops shouldn't pay the extra `run-`
+/// prefix tokens.
 fn extract_run_engine_flag(
     args: Vec<String>,
 ) -> Result<(Option<cli::Engine>, Vec<String>), String> {
@@ -1326,7 +1329,7 @@ fn extract_run_engine_flag(
 
     for arg in args {
         let candidate = match arg.as_str() {
-            "--run-cranelift" => Some(cli::Engine::Cranelift),
+            "--run-cranelift" | "--cranelift" => Some(cli::Engine::Cranelift),
             "--run-llvm" => Some(cli::Engine::Llvm),
             "--run-vm" => Some(cli::Engine::Vm),
             "--run" | "--run-tree" => Some(cli::Engine::Tree),
@@ -2242,7 +2245,7 @@ fn dispatch_bare_args(raw_args: Vec<String>, global: &cli::Global) -> i32 {
     let m = mode_args_start;
     let (engine_flag, run_rest_start) = if args.len() > m {
         match args[m].as_str() {
-            "--run-cranelift" => (Some(cli::Engine::Cranelift), m + 1),
+            "--run-cranelift" | "--cranelift" => (Some(cli::Engine::Cranelift), m + 1),
             "--run-llvm" => (Some(cli::Engine::Llvm), m + 1),
             "--run-vm" => (Some(cli::Engine::Vm), m + 1),
             "--run" | "--run-tree" => (Some(cli::Engine::Tree), m + 1),

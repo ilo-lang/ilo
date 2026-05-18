@@ -103,8 +103,8 @@ pub struct RunArgs {
     /// Register VM.
     #[arg(long = "run-vm", conflicts_with_all = ["run", "run_tree", "run_cranelift", "run_llvm"])]
     pub run_vm: bool,
-    /// Cranelift JIT.
-    #[arg(long = "run-cranelift", conflicts_with_all = ["run", "run_tree", "run_vm", "run_llvm"])]
+    /// Cranelift JIT. `--cranelift` is accepted as a short alias.
+    #[arg(long = "run-cranelift", visible_alias = "cranelift", conflicts_with_all = ["run", "run_tree", "run_vm", "run_llvm"])]
     pub run_cranelift: bool,
     /// LLVM JIT.
     #[arg(long = "run-llvm", conflicts_with_all = ["run", "run_tree", "run_vm", "run_cranelift"])]
