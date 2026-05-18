@@ -39,3 +39,4 @@ zero-gap-specs/
 research/
 .claude/commands/
 .env.example
+.zero/
