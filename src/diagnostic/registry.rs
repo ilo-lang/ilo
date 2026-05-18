@@ -242,35 +242,22 @@ do not need braces:
     },
     ErrorEntry {
         code: "ILO-P017",
-        short: "inline lambda captures outer scope",
-        long: r#"## ILO-P017: inline lambda captures outer scope
+        short: "use-import failed",
+        long: r#"## ILO-P017: use-import failed
 
-Phase 1 inline lambdas — `(p:t>r;body)` passed to a HOF like `srt`, `map`,
-`flt`, `fld`, `grp` — cannot close over variables from the enclosing function.
-Every name referenced in the body must be a parameter of the lambda, a name
-bound locally inside the lambda body, or a known top-level function/builtin.
+A `use "path.ilo"` declaration could not be resolved. Possible causes:
 
-**Wrong:**
+- The path is not reachable from a file context (inline code via
+  `ilo '<src>'` has no base directory to resolve against)
+- The file does not exist at the given relative path
+- The file could not be read (permissions, IO error)
 
-    rank xs:L n threshold:n>L n
-      srt (x:n>n;-x threshold) xs
+The diagnostic message identifies the specific failure mode.
 
-The lambda references `threshold` from the enclosing scope.
-
-**Fix A: use the HOF's ctx-arg form.** Every closure-aware HOF accepts an
-optional context value that is threaded through every call:
-
-    rank xs:L n threshold:n>L n
-      srt (x:n c:n>n;-x c) threshold xs
-
-**Fix B: define a top-level helper** that takes the value as a param and use
-`srt fn ctx xs`:
-
-    diff x:n c:n>n;-x c
-    rank xs:L n threshold:n>L n;srt diff threshold xs
-
-Closure capture is tracked as a Phase 2 follow-up; once it lands, free
-variables will be captured by value automatically.
+**Note:** ILO-P017 used to be raised by inline lambdas with captures from
+the enclosing scope. Closure capture now works on every engine (tree, VM,
+Cranelift JIT/AOT) so that path no longer errors; the code was repurposed
+for `use`-import resolution.
 "#,
     },
     ErrorEntry {
