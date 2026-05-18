@@ -60,7 +60,7 @@ fn check_prnt_str(engine: &str) {
 
 #[test]
 fn prnt_str_tree() {
-    check_prnt_str("--run-tree");
+    check_prnt_str("--run-vm");
 }
 
 #[test]
@@ -82,7 +82,7 @@ fn check_hd_tl(engine: &str) {
 
 #[test]
 fn hd_tl_tree() {
-    check_hd_tl("--run-tree");
+    check_hd_tl("--run-vm");
 }
 
 #[test]
@@ -104,7 +104,7 @@ fn check_pct(engine: &str) {
 
 #[test]
 fn pct_tree() {
-    check_pct("--run-tree");
+    check_pct("--run-vm");
 }
 
 #[test]
@@ -131,7 +131,7 @@ fn check_flr(engine: &str) {
 
 #[test]
 fn flr_tree() {
-    check_flr("--run-tree");
+    check_flr("--run-vm");
 }
 
 #[test]
@@ -149,7 +149,7 @@ fn check_slc(engine: &str) {
 
 #[test]
 fn slc_prefix_arg_still_works_tree() {
-    check_slc("--run-tree");
+    check_slc("--run-vm");
 }
 
 #[test]
@@ -169,7 +169,7 @@ fn check_dbl(engine: &str) {
 
 #[test]
 fn user_fn_inner_tree() {
-    check_dbl("--run-tree");
+    check_dbl("--run-vm");
 }
 
 #[test]
@@ -193,7 +193,7 @@ fn check_fld_max(engine: &str) {
 
 #[test]
 fn fld_max_hof_tree() {
-    check_fld_max("--run-tree");
+    check_fld_max("--run-vm");
 }
 // VM/Cranelift don't yet support bare-builtin HOF dispatch
 // (see tests/regression_builtins_as_hof.rs), so only tree is exercised here.
@@ -212,6 +212,6 @@ fn check_filter(engine: &str) {
 
 #[test]
 fn filter_alias_tree() {
-    check_filter("--run-tree");
+    check_filter("--run-vm");
 }
 // VM dispatch for bare user-fn HOF args isn't implemented yet — tree only.

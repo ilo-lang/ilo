@@ -63,7 +63,7 @@ const APPEND_NON_REBIND_PRESERVES_XS: &str = "f>L n;xs=[1,2,3];ys=+=xs 99;xs";
 #[test]
 fn append_non_rebind_preserves_xs_tree() {
     assert_eq!(
-        run("--run-tree", APPEND_NON_REBIND_PRESERVES_XS, "f"),
+        run("--run-vm", APPEND_NON_REBIND_PRESERVES_XS, "f"),
         "[1, 2, 3]"
     );
 }
@@ -93,7 +93,7 @@ const APPEND_NON_REBIND_YS_GETS_NEW_ITEM: &str = "f>L n;xs=[1,2,3];ys=+=xs 99;ys
 #[test]
 fn append_non_rebind_ys_gets_new_item_tree() {
     assert_eq!(
-        run("--run-tree", APPEND_NON_REBIND_YS_GETS_NEW_ITEM, "f"),
+        run("--run-vm", APPEND_NON_REBIND_YS_GETS_NEW_ITEM, "f"),
         "[1, 2, 3, 99]"
     );
 }
@@ -123,10 +123,7 @@ const APPEND_NON_REBIND_BOTH_VISIBLE: &str =
 
 #[test]
 fn append_non_rebind_both_visible_tree() {
-    assert_eq!(
-        run("--run-tree", APPEND_NON_REBIND_BOTH_VISIBLE, "f"),
-        "3;4"
-    );
+    assert_eq!(run("--run-vm", APPEND_NON_REBIND_BOTH_VISIBLE, "f"), "3;4");
 }
 
 #[test]
@@ -153,7 +150,7 @@ const APPEND_REBIND_ACCUMULATOR: &str = "f>n;xs=[];@i 0..100{xs=+=xs i};len xs";
 
 #[test]
 fn append_rebind_accumulator_tree() {
-    assert_eq!(run("--run-tree", APPEND_REBIND_ACCUMULATOR, "f"), "100");
+    assert_eq!(run("--run-vm", APPEND_REBIND_ACCUMULATOR, "f"), "100");
 }
 
 #[test]
@@ -180,7 +177,7 @@ const APPEND_NON_REBIND_TEXT: &str =
 
 #[test]
 fn append_non_rebind_text_tree() {
-    assert_eq!(run("--run-tree", APPEND_NON_REBIND_TEXT, "f"), "ab|abc");
+    assert_eq!(run("--run-vm", APPEND_NON_REBIND_TEXT, "f"), "ab|abc");
 }
 
 #[test]
@@ -207,10 +204,7 @@ f>L n;xs=[1,2,3];keep=ident xs;ys=+=xs 99;xs\n\
 
 #[test]
 fn append_non_rebind_rc_gt_1_tree() {
-    assert_eq!(
-        run("--run-tree", APPEND_NON_REBIND_RC_GT_1, "f"),
-        "[1, 2, 3]"
-    );
+    assert_eq!(run("--run-vm", APPEND_NON_REBIND_RC_GT_1, "f"), "[1, 2, 3]");
 }
 
 #[test]
@@ -234,7 +228,7 @@ const MSET_NON_REBIND_PRESERVES_M: &str = "f>n;m=mset mmap \"a\" 1;m2=mset m \"b
 
 #[test]
 fn mset_non_rebind_preserves_m_tree() {
-    assert_eq!(run("--run-tree", MSET_NON_REBIND_PRESERVES_M, "f"), "1");
+    assert_eq!(run("--run-vm", MSET_NON_REBIND_PRESERVES_M, "f"), "1");
 }
 
 #[test]
@@ -255,10 +249,7 @@ const MSET_NON_REBIND_M2_GETS_NEW_ENTRY: &str =
 
 #[test]
 fn mset_non_rebind_m2_gets_new_entry_tree() {
-    assert_eq!(
-        run("--run-tree", MSET_NON_REBIND_M2_GETS_NEW_ENTRY, "f"),
-        "2"
-    );
+    assert_eq!(run("--run-vm", MSET_NON_REBIND_M2_GETS_NEW_ENTRY, "f"), "2");
 }
 
 #[test]
@@ -282,7 +273,7 @@ f>t;m=mset mmap \"a\" \"first\";m2=mset m \"b\" \"second\";mget m \"a\" ?? \"mis
 #[test]
 fn mset_non_rebind_text_preserves_m_tree() {
     assert_eq!(
-        run("--run-tree", MSET_NON_REBIND_TEXT_PRESERVES_M, "f"),
+        run("--run-vm", MSET_NON_REBIND_TEXT_PRESERVES_M, "f"),
         "first"
     );
 }

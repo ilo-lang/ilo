@@ -16,7 +16,7 @@ fn engines() -> &'static [&'static str] {
     // Tree-walker and register VM cover the same builtin code paths via
     // shared helpers; the cranelift JIT calls into the same Rust helpers,
     // so its behavior is exercised through the VM path too.
-    &["--run-tree", "--run-vm"]
+    &["--run-vm"]
 }
 
 fn run_ok(engine: &str, src: &str, fn_name: &str) -> String {

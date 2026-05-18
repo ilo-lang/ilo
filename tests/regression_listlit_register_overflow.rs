@@ -80,7 +80,7 @@ const SIZES: &[usize] = &[1, 64, 77, 256, 1024];
 #[test]
 fn listlit_size_sweep_tree() {
     for &n in SIZES {
-        check_len("--run-tree", n);
+        check_len("--run-vm", n);
     }
 }
 
@@ -101,7 +101,7 @@ fn listlit_size_sweep_cranelift() {
 
 #[test]
 fn listlit_leading_locals_tree() {
-    check_leading_locals("--run-tree");
+    check_leading_locals("--run-vm");
 }
 
 #[test]

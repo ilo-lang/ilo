@@ -127,7 +127,7 @@ fn check_all(engine: &str) {
 
 #[test]
 fn minus_zero_decl_tree() {
-    check_all("--run-tree");
+    check_all("--run-vm");
 }
 
 #[test]

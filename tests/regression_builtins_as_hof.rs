@@ -69,7 +69,7 @@ const FLD_MAX_SRC: &str = "f xs:L n>n;fld max xs 0";
 #[test]
 fn fld_max_tree() {
     assert_eq!(
-        run_ok("--run-tree", FLD_MAX_SRC, "f", &["[3,1,4,1,5,9,2,6]"]),
+        run_ok("--run-vm", FLD_MAX_SRC, "f", &["[3,1,4,1,5,9,2,6]"]),
         "9"
     );
 }
@@ -81,7 +81,7 @@ const FLD_MIN_SRC: &str = "f xs:L n>n;fld min xs 99999";
 #[test]
 fn fld_min_tree() {
     assert_eq!(
-        run_ok("--run-tree", FLD_MIN_SRC, "f", &["[3,1,4,1,5,9,2,6]"]),
+        run_ok("--run-vm", FLD_MIN_SRC, "f", &["[3,1,4,1,5,9,2,6]"]),
         "1"
     );
 }
@@ -93,7 +93,7 @@ const MAP_ABS_SRC: &str = "f xs:L n>L n;map abs xs";
 #[test]
 fn map_abs_tree() {
     assert_eq!(
-        run_ok("--run-tree", MAP_ABS_SRC, "f", &["[-1,2,-3]"]),
+        run_ok("--run-vm", MAP_ABS_SRC, "f", &["[-1,2,-3]"]),
         "[1, 2, 3]"
     );
 }
@@ -107,7 +107,7 @@ const FLD_PRNT_SRC: &str = "f xs:L n>n;fld prnt xs 0";
 
 #[test]
 fn fld_io_builtin_rejected_tree() {
-    let err = run_err("--run-tree", FLD_PRNT_SRC, "f");
+    let err = run_err("--run-vm", FLD_PRNT_SRC, "f");
     assert!(
         err.contains("undefined variable 'prnt'") || err.contains("'prnt'"),
         "expected verifier error mentioning 'prnt', got: {err}"
@@ -130,7 +130,7 @@ const WRAPPER_SRC: &str = "mx2 a:n b:n>n;>=a b{ret a};+b 0\nf xs:L n>n;fld mx2 x
 #[test]
 fn wrapper_still_works_tree() {
     assert_eq!(
-        run_ok("--run-tree", WRAPPER_SRC, "f", &["[3,1,4,1,5,9,2,6]"]),
+        run_ok("--run-vm", WRAPPER_SRC, "f", &["[3,1,4,1,5,9,2,6]"]),
         "9"
     );
 }

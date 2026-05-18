@@ -61,7 +61,7 @@ fn check_mset(engine: &str) {
 
 #[test]
 fn slc_in_loop_tree() {
-    check_slc("--run-tree");
+    check_slc("--run-vm");
 }
 
 #[test]
@@ -77,7 +77,7 @@ fn slc_in_loop_cranelift() {
 
 #[test]
 fn mset_in_loop_tree() {
-    check_mset("--run-tree");
+    check_mset("--run-vm");
 }
 
 #[test]
@@ -104,7 +104,7 @@ fn check_mdel(engine: &str) {
 
 #[test]
 fn mdel_in_loop_tree() {
-    check_mdel("--run-tree");
+    check_mdel("--run-vm");
 }
 
 #[test]

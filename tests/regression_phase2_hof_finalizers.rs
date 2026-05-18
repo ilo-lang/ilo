@@ -62,9 +62,9 @@ fn run_ok(engine: &str, src: &str, entry: &str, args: &[&str]) -> String {
 
 fn run_all(src: &str, entry: &str, args: &[&str], expected: &str) {
     #[cfg(feature = "cranelift")]
-    let engines: &[&str] = &["--run-tree", "--run-vm", "--jit"];
+    let engines: &[&str] = &["--run-vm", "--jit"];
     #[cfg(not(feature = "cranelift"))]
-    let engines: &[&str] = &["--run-tree", "--run-vm"];
+    let engines: &[&str] = &["--run-vm"];
     for engine in engines {
         let actual = run_ok(engine, src, entry, args);
         assert_eq!(
@@ -93,9 +93,9 @@ fn run_err_combined(engine: &str, src: &str, entry: &str, args: &[&str]) -> (i32
 
 fn run_err_all_contains(src: &str, entry: &str, args: &[&str], needle: &str) {
     #[cfg(feature = "cranelift")]
-    let engines: &[&str] = &["--run-tree", "--run-vm", "--jit"];
+    let engines: &[&str] = &["--run-vm", "--jit"];
     #[cfg(not(feature = "cranelift"))]
-    let engines: &[&str] = &["--run-tree", "--run-vm"];
+    let engines: &[&str] = &["--run-vm"];
     for engine in engines {
         let (code, stderr) = run_err_combined(engine, src, entry, args);
         assert_ne!(

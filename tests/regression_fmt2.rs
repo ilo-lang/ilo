@@ -32,7 +32,7 @@ fn check_basic(engine: &str) {
 
 #[test]
 fn fmt2_basic_tree() {
-    check_basic("--run-tree");
+    check_basic("--run-vm");
 }
 
 #[test]
@@ -55,7 +55,7 @@ fn check_zero_digits(engine: &str) {
 
 #[test]
 fn fmt2_zero_digits_tree() {
-    check_zero_digits("--run-tree");
+    check_zero_digits("--run-vm");
 }
 
 #[test]
@@ -78,7 +78,7 @@ fn check_long_frac(engine: &str) {
 
 #[test]
 fn fmt2_long_frac_tree() {
-    check_long_frac("--run-tree");
+    check_long_frac("--run-vm");
 }
 
 #[test]
@@ -101,7 +101,7 @@ fn check_half_even_up(engine: &str) {
 
 #[test]
 fn fmt2_half_even_up_tree() {
-    check_half_even_up("--run-tree");
+    check_half_even_up("--run-vm");
 }
 
 #[test]
@@ -123,7 +123,7 @@ fn check_half_even_down(engine: &str) {
 
 #[test]
 fn fmt2_half_even_down_tree() {
-    check_half_even_down("--run-tree");
+    check_half_even_down("--run-vm");
 }
 
 #[test]
@@ -146,7 +146,7 @@ fn check_neg_digits(engine: &str) {
 
 #[test]
 fn fmt2_neg_digits_tree() {
-    check_neg_digits("--run-tree");
+    check_neg_digits("--run-vm");
 }
 
 #[test]

@@ -104,11 +104,11 @@ fn engines() -> &'static [Option<&'static str>] {
     // include it under that feature gate.
     #[cfg(feature = "cranelift")]
     {
-        &[None, Some("--run-tree"), Some("--run-vm"), Some("--jit")]
+        &[None, Some("--run-vm"), Some("--run-vm"), Some("--jit")]
     }
     #[cfg(not(feature = "cranelift"))]
     {
-        &[None, Some("--run-tree"), Some("--run-vm")]
+        &[None, Some("--run-vm"), Some("--run-vm")]
     }
 }
 

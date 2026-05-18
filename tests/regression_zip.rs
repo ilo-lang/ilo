@@ -35,7 +35,7 @@ fn check_basic(engine: &str) {
 
 #[test]
 fn zip_basic_tree() {
-    check_basic("--run-tree");
+    check_basic("--run-vm");
 }
 
 #[test]
@@ -62,7 +62,7 @@ fn check_trunc_long_xs(engine: &str) {
 
 #[test]
 fn zip_trunc_long_xs_tree() {
-    check_trunc_long_xs("--run-tree");
+    check_trunc_long_xs("--run-vm");
 }
 
 #[test]
@@ -89,7 +89,7 @@ fn check_trunc_long_ys(engine: &str) {
 
 #[test]
 fn zip_trunc_long_ys_tree() {
-    check_trunc_long_ys("--run-tree");
+    check_trunc_long_ys("--run-vm");
 }
 
 #[test]
@@ -112,7 +112,7 @@ fn check_empty(engine: &str) {
 
 #[test]
 fn zip_empty_tree() {
-    check_empty("--run-tree");
+    check_empty("--run-vm");
 }
 
 #[test]
@@ -139,7 +139,7 @@ fn check_mixed(engine: &str) {
 
 #[test]
 fn zip_mixed_tree() {
-    check_mixed("--run-tree");
+    check_mixed("--run-vm");
 }
 
 #[test]

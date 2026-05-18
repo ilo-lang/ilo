@@ -157,7 +157,7 @@ fn check_engine(engine: &str) {
 
 #[test]
 fn neg_literal_papercut_tree() {
-    check_engine("--run-tree");
+    check_engine("--run-vm");
 }
 
 #[test]

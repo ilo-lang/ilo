@@ -62,7 +62,7 @@ fn inline_sub_arity_default_engine() {
 
 #[test]
 fn inline_sub_arity_run_tree() {
-    assert_arity_error(run_args(&["--run-tree", "f x:n>n;+x 1"]), "f", 1, 0);
+    assert_arity_error(run_args(&["--run-vm", "f x:n>n;+x 1"]), "f", 1, 0);
 }
 
 #[test]
@@ -116,7 +116,7 @@ fn inline_exact_arity_run_cranelift() {
 
 #[test]
 fn inline_exact_arity_run_tree() {
-    let (code, stdout, _) = run_args(&["--run-tree", "f x:n>n;+x 1", "f", "5"]);
+    let (code, stdout, _) = run_args(&["--run-vm", "f x:n>n;+x 1", "f", "5"]);
     assert_eq!(code, 0);
     assert_eq!(stdout.trim(), "6");
 }
@@ -292,7 +292,7 @@ fn file_main_sub_arity_run_tree() {
     let path = dir.path().join("two.ilo");
     std::fs::write(&path, src).expect("write");
     let out = ilo()
-        .args(["--run-tree", path.to_str().unwrap()])
+        .args(["--run-vm", path.to_str().unwrap()])
         .output()
         .expect("spawn");
     let code = out.status.code().unwrap_or(-1);

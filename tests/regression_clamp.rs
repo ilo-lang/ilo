@@ -1,3 +1,4 @@
+#![allow(clippy::single_element_loop)] // see soft-deprecate-tree: arrays shrank from 2-3 engines to 1
 // Cross-engine smoke tests for the `clamp` builtin.
 // `clamp x lo hi` returns max(lo, min(hi, x)). When lo > hi, the
 // outer max wins so the result is always >= lo (documented choice).
@@ -25,7 +26,7 @@ fn run_num(engine: &str, src: &str) -> f64 {
 }
 
 fn check_all(src: &str, expected: f64) {
-    for engine in ["--run-tree", "--run-vm"] {
+    for engine in ["--run-vm"] {
         let actual = run_num(engine, src);
         assert!(
             (actual - expected).abs() < 1e-12,

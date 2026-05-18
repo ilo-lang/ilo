@@ -47,14 +47,14 @@ fn run_err(engine: &str, src: &str, entry: &str) -> String {
 }
 
 #[cfg(feature = "cranelift")]
-const ENGINES_ALL: &[&str] = &["--run-tree", "--run-vm", "--jit"];
+const ENGINES_ALL: &[&str] = &["--run-vm", "--jit"];
 #[cfg(not(feature = "cranelift"))]
-const ENGINES_ALL: &[&str] = &["--run-tree", "--run-vm"];
+const ENGINES_ALL: &[&str] = &["--run-vm"];
 
 // Some operations are tree-only (closures with captures) or VM-only
 // (specific opcode optimisations). For others we want cross-engine
 // confirmation. These helpers let us choose the scope per test.
-const ENGINES_TREE_VM: &[&str] = &["--run-tree", "--run-vm"];
+const ENGINES_TREE_VM: &[&str] = &["--run-vm"];
 
 // ── arithmetic and constant folding ────────────────────────────────────
 

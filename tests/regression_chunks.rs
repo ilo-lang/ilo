@@ -48,7 +48,7 @@ fn check_basic(engine: &str) {
 
 #[test]
 fn chunks_basic_tree() {
-    check_basic("--run-tree");
+    check_basic("--run-vm");
 }
 
 #[test]
@@ -75,7 +75,7 @@ fn check_exact(engine: &str) {
 
 #[test]
 fn chunks_exact_tree() {
-    check_exact("--run-tree");
+    check_exact("--run-vm");
 }
 
 #[test]
@@ -102,7 +102,7 @@ fn check_big_n(engine: &str) {
 
 #[test]
 fn chunks_big_n_tree() {
-    check_big_n("--run-tree");
+    check_big_n("--run-vm");
 }
 
 #[test]
@@ -129,7 +129,7 @@ fn check_one(engine: &str) {
 
 #[test]
 fn chunks_one_tree() {
-    check_one("--run-tree");
+    check_one("--run-vm");
 }
 
 #[test]
@@ -156,7 +156,7 @@ fn check_zero_err(engine: &str) {
 
 #[test]
 fn chunks_zero_tree() {
-    check_zero_err("--run-tree");
+    check_zero_err("--run-vm");
 }
 
 #[test]
@@ -190,7 +190,7 @@ fn check_empty(engine: &str) {
 
 #[test]
 fn chunks_empty_tree() {
-    check_empty("--run-tree");
+    check_empty("--run-vm");
 }
 
 #[test]
@@ -217,7 +217,7 @@ fn check_text(engine: &str) {
 
 #[test]
 fn chunks_text_tree() {
-    check_text("--run-tree");
+    check_text("--run-vm");
 }
 
 #[test]
@@ -246,7 +246,7 @@ fn check_partial_trailing(engine: &str) {
 
 #[test]
 fn chunks_partial_trailing_tree() {
-    check_partial_trailing("--run-tree");
+    check_partial_trailing("--run-vm");
 }
 
 #[test]

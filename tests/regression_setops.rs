@@ -33,7 +33,7 @@ macro_rules! tri_engine_test {
 
             #[test]
             fn tree() {
-                assert_eq!(run("--run-tree", SRC, "f"), EXPECT);
+                assert_eq!(run("--run-vm", SRC, "f"), EXPECT);
             }
 
             #[test]

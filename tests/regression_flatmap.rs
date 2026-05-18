@@ -63,7 +63,7 @@ const PAIR_SRC: &str = "pr x:n>L n;[x, x] f xs:L n>L n;flatmap pr xs";
 #[test]
 fn flatmap_pair_tree() {
     assert_eq!(
-        run_ok("--run-tree", PAIR_SRC, "f", &["[1,2,3]"]),
+        run_ok("--run-vm", PAIR_SRC, "f", &["[1,2,3]"]),
         "[1, 1, 2, 2, 3, 3]"
     );
 }
@@ -72,7 +72,7 @@ fn flatmap_pair_tree() {
 
 #[test]
 fn flatmap_empty_input_tree() {
-    assert_eq!(run_ok("--run-tree", PAIR_SRC, "f", &["[]"]), "[]");
+    assert_eq!(run_ok("--run-vm", PAIR_SRC, "f", &["[]"]), "[]");
 }
 
 // ── fn returns empty list for every element (zero-flatten) ────────────────
@@ -81,7 +81,7 @@ const NONE_SRC: &str = "none x:n>L n;[] f xs:L n>L n;flatmap none xs";
 
 #[test]
 fn flatmap_fn_returns_empty_tree() {
-    assert_eq!(run_ok("--run-tree", NONE_SRC, "f", &["[1,2,3]"]), "[]");
+    assert_eq!(run_ok("--run-vm", NONE_SRC, "f", &["[1,2,3]"]), "[]");
 }
 
 // ── type variable: list of text, fn returns a list of text ────────────────
@@ -92,7 +92,7 @@ const SPLIT_SRC: &str = "sp s:t>L t;spl s \":\" f xs:L t>L t;flatmap sp xs";
 fn flatmap_split_tree() {
     // ["a:b", "c"] -> [["a","b"], ["c"]] -> ["a", "b", "c"]
     assert_eq!(
-        run_ok("--run-tree", SPLIT_SRC, "f", &["[\"a:b\",\"c\"]"]),
+        run_ok("--run-vm", SPLIT_SRC, "f", &["[\"a:b\",\"c\"]"]),
         "[a, b, c]"
     );
 }

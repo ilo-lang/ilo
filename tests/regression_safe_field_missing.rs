@@ -79,7 +79,7 @@ fn check_missing(engine: &str) {
 
 #[test]
 fn safe_field_missing_tree() {
-    check_missing("--run-tree");
+    check_missing("--run-vm");
 }
 
 #[test]
@@ -107,7 +107,7 @@ fn check_present(engine: &str) {
 
 #[test]
 fn safe_field_present_tree() {
-    check_present("--run-tree");
+    check_present("--run-vm");
 }
 
 #[test]
@@ -139,7 +139,7 @@ fn check_chained_missing(engine: &str) {
 
 #[test]
 fn safe_field_chained_missing_tree() {
-    check_chained_missing("--run-tree");
+    check_chained_missing("--run-vm");
 }
 
 #[test]
@@ -172,7 +172,7 @@ fn check_chained_present(engine: &str) {
 
 #[test]
 fn safe_field_chained_present_tree() {
-    check_chained_present("--run-tree");
+    check_chained_present("--run-vm");
 }
 
 #[test]
@@ -201,7 +201,7 @@ fn check_nil_object(engine: &str) {
 
 #[test]
 fn safe_field_nil_object_tree() {
-    check_nil_object("--run-tree");
+    check_nil_object("--run-vm");
 }
 
 #[test]
@@ -227,7 +227,7 @@ const STRICT_MISSING: &str = "f j:t>R t t;r=jpar! j;vb=r.missing;~vb";
 
 #[test]
 fn strict_field_missing_still_errors_tree() {
-    let err = run_err("--run-tree", STRICT_MISSING, "f", &[r#"{"a":1}"#]);
+    let err = run_err("--run-vm", STRICT_MISSING, "f", &[r#"{"a":1}"#]);
     assert!(
         err.contains("ILO-R005") && err.contains("missing"),
         "stderr: {err}"
@@ -270,7 +270,7 @@ fn safe_field_on_typed_list_caught_by_verifier() {
     // mismatch; runtime nil-tolerance is reserved for genuinely-dynamic
     // shapes (jpar records).
     let out = ilo()
-        .args(["f>n;xs=[1,2,3];xs.?name??99", "--run-tree", "f"])
+        .args(["f>n;xs=[1,2,3];xs.?name??99", "--run-vm", "f"])
         .output()
         .expect("failed to run ilo");
     assert!(
@@ -291,7 +291,7 @@ fn safe_field_on_typed_list_caught_by_verifier() {
 fn safe_field_typo_on_static_record_still_errors() {
     let src = "type pt{x:n;y:n}\nf>n;p=pt x:1 y:2;p.?z";
     let out = ilo()
-        .args([src, "--run-tree", "f"])
+        .args([src, "--run-vm", "f"])
         .output()
         .expect("failed to run ilo");
     assert!(

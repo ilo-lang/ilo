@@ -19,7 +19,7 @@ fn ilo() -> Command {
 }
 
 fn engines() -> &'static [&'static str] {
-    &["--run-tree", "--run-vm", "--jit"]
+    &["--run-vm", "--jit"]
 }
 
 fn run_ok(engine: &str, src: &str, fn_name: &str, args: &[&str]) -> String {

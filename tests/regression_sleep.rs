@@ -17,7 +17,7 @@
 use std::process::Command;
 use std::time::Instant;
 
-const ENGINES: &[&str] = &["--run-tree", "--run-vm", "--jit"];
+const ENGINES: &[&str] = &["--run-vm", "--jit"];
 
 fn ilo() -> Command {
     Command::new(env!("CARGO_BIN_EXE_ilo"))
@@ -90,7 +90,7 @@ fn sleep_negative_is_a_noop_cross_engine() {
 
 #[test]
 fn sleep_pauses_for_requested_ms_tree() {
-    timing_check("--run-tree", 200);
+    timing_check("--run-vm", 200);
 }
 
 #[test]

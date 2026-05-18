@@ -38,7 +38,7 @@ fn run(engine: &str, src: &str, entry: &str, args: &[&str]) -> String {
 
 fn run_err(src: &str) -> String {
     let out = ilo()
-        .args([src, "--run-tree", "f"])
+        .args([src, "--run-vm", "f"])
         .output()
         .expect("failed to run ilo");
     assert!(!out.status.success(), "expected failure for `{src}`");
@@ -59,7 +59,7 @@ fn check_url(engine: &str) {
 
 #[test]
 fn leading_upper_url_tree() {
-    check_url("--run-tree");
+    check_url("--run-vm");
 }
 
 #[test]
@@ -86,7 +86,7 @@ fn check_id(engine: &str) {
 
 #[test]
 fn leading_upper_id_tree() {
-    check_id("--run-tree");
+    check_id("--run-vm");
 }
 
 #[test]
@@ -114,7 +114,7 @@ fn check_access_key(engine: &str) {
 
 #[test]
 fn leading_upper_access_key_tree() {
-    check_access_key("--run-tree");
+    check_access_key("--run-vm");
 }
 
 #[test]
@@ -149,7 +149,7 @@ fn check_safe_url_missing(engine: &str) {
 
 #[test]
 fn leading_upper_safe_url_present_tree() {
-    check_safe_url_present("--run-tree");
+    check_safe_url_present("--run-vm");
 }
 
 #[test]
@@ -165,7 +165,7 @@ fn leading_upper_safe_url_present_cranelift() {
 
 #[test]
 fn leading_upper_safe_url_missing_tree() {
-    check_safe_url_missing("--run-tree");
+    check_safe_url_missing("--run-vm");
 }
 
 #[test]
@@ -194,7 +194,7 @@ fn check_url_count(engine: &str) {
 
 #[test]
 fn leading_upper_url_count_tree() {
-    check_url_count("--run-tree");
+    check_url_count("--run-vm");
 }
 
 #[test]
@@ -232,7 +232,7 @@ fn check_left(engine: &str) {
 
 #[test]
 fn leading_sigil_meta_tree() {
-    check_meta("--run-tree");
+    check_meta("--run-vm");
 }
 
 #[test]
@@ -248,7 +248,7 @@ fn leading_sigil_meta_cranelift() {
 
 #[test]
 fn leading_sigil_left_tree() {
-    check_left("--run-tree");
+    check_left("--run-vm");
 }
 
 #[test]

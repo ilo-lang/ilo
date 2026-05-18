@@ -31,7 +31,7 @@ fn run(engine: &str, src: &str, entry: &str, args: &[&str]) -> String {
 
 fn run_err(src: &str) -> String {
     let out = ilo()
-        .args([src, "--run-tree", "f"])
+        .args([src, "--run-vm", "f"])
         .output()
         .expect("failed to run ilo");
     assert!(!out.status.success(), "expected failure for `{src}`");
@@ -51,7 +51,7 @@ fn check_simple(engine: &str) {
 
 #[test]
 fn snake_field_simple_tree() {
-    check_simple("--run-tree");
+    check_simple("--run-vm");
 }
 
 #[test]
@@ -83,7 +83,7 @@ fn check_multi(engine: &str) {
 
 #[test]
 fn snake_field_multi_tree() {
-    check_multi("--run-tree");
+    check_multi("--run-vm");
 }
 
 #[test]
@@ -110,7 +110,7 @@ fn check_digit(engine: &str) {
 
 #[test]
 fn snake_field_digit_tree() {
-    check_digit("--run-tree");
+    check_digit("--run-vm");
 }
 
 #[test]
@@ -128,7 +128,7 @@ fn snake_field_digit_cranelift() {
 #[test]
 fn snake_field_safe_access_tree() {
     let out = run(
-        "--run-tree",
+        "--run-vm",
         "f j:t>R n t;r=jpar! j;r.?stargazers_count",
         "f",
         &[r#"{"stargazers_count":7}"#],
@@ -154,7 +154,7 @@ fn dot_then_plain_ident_unchanged() {
     // following identifier is a separate token.  Sanity that we didn't
     // accidentally consume tokens beyond the field name.
     let out = run(
-        "--run-tree",
+        "--run-vm",
         "f j:t>R n t;r=jpar! j;r.foo",
         "f",
         &[r#"{"foo":3}"#],
@@ -186,7 +186,7 @@ fn check_bare_digit(engine: &str) {
 
 #[test]
 fn snake_field_bare_digit_tree() {
-    check_bare_digit("--run-tree");
+    check_bare_digit("--run-vm");
 }
 
 #[test]
@@ -213,7 +213,7 @@ fn check_alternating(engine: &str) {
 
 #[test]
 fn snake_field_alternating_tree() {
-    check_alternating("--run-tree");
+    check_alternating("--run-vm");
 }
 
 #[test]
@@ -240,7 +240,7 @@ fn check_real_world(engine: &str) {
 
 #[test]
 fn snake_field_real_world_tree() {
-    check_real_world("--run-tree");
+    check_real_world("--run-vm");
 }
 
 #[test]

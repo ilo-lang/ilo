@@ -57,10 +57,7 @@ const NUMBER_SHADOW_REBIND: &str = "go>L n;z=3.14;t=z;t = *t 2;[t z]";
 
 #[test]
 fn number_shadow_rebind_tree() {
-    assert_eq!(
-        run("--run-tree", NUMBER_SHADOW_REBIND, "go"),
-        "[6.28, 3.14]"
-    );
+    assert_eq!(run("--run-vm", NUMBER_SHADOW_REBIND, "go"), "[6.28, 3.14]");
 }
 
 #[test]
@@ -85,7 +82,7 @@ const NUMBER_SHADOW_LITERAL_OVERWRITE: &str = "go>L n;a=5;b=a;b=99;[a b]";
 #[test]
 fn number_shadow_literal_overwrite_tree() {
     assert_eq!(
-        run("--run-tree", NUMBER_SHADOW_LITERAL_OVERWRITE, "go"),
+        run("--run-vm", NUMBER_SHADOW_LITERAL_OVERWRITE, "go"),
         "[5, 99]"
     );
 }
@@ -122,7 +119,7 @@ const MAP_SHADOW_REBIND: &str = concat!(
 
 #[test]
 fn map_shadow_rebind_tree() {
-    assert_eq!(run("--run-tree", MAP_SHADOW_REBIND, "go"), "1|99");
+    assert_eq!(run("--run-vm", MAP_SHADOW_REBIND, "go"), "1|99");
 }
 
 #[test]
@@ -143,7 +140,7 @@ const LIST_SHADOW_REBIND: &str = "go>L L n;a=[1 2];b=a;b = +=b 99;[a b]";
 #[test]
 fn list_shadow_rebind_tree() {
     assert_eq!(
-        run("--run-tree", LIST_SHADOW_REBIND, "go"),
+        run("--run-vm", LIST_SHADOW_REBIND, "go"),
         "[[1, 2], [1, 2, 99]]"
     );
 }
@@ -171,7 +168,7 @@ const TEXT_SHADOW_REBIND: &str = "go>t;a=\"x\";b=a;b = +b \"y\";fmt \"{}|{}\" a 
 
 #[test]
 fn text_shadow_rebind_tree() {
-    assert_eq!(run("--run-tree", TEXT_SHADOW_REBIND, "go"), "x|xy");
+    assert_eq!(run("--run-vm", TEXT_SHADOW_REBIND, "go"), "x|xy");
 }
 
 #[test]
@@ -195,7 +192,7 @@ const TRANSITIVE_SHADOW: &str = "go>L n;a=7;b=a;c=b;c=99;[a b c]";
 
 #[test]
 fn transitive_shadow_tree() {
-    assert_eq!(run("--run-tree", TRANSITIVE_SHADOW, "go"), "[7, 7, 99]");
+    assert_eq!(run("--run-vm", TRANSITIVE_SHADOW, "go"), "[7, 7, 99]");
 }
 
 #[test]
@@ -219,7 +216,7 @@ const NON_ALIASING_HAPPY_PATH: &str = "go>L n;a=5;b=+a 1;b=99;[a b]";
 
 #[test]
 fn non_aliasing_happy_path_tree() {
-    assert_eq!(run("--run-tree", NON_ALIASING_HAPPY_PATH, "go"), "[5, 99]");
+    assert_eq!(run("--run-vm", NON_ALIASING_HAPPY_PATH, "go"), "[5, 99]");
 }
 
 #[test]
