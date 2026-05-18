@@ -352,11 +352,14 @@ impl Global {
 /// To pass a hyphen-prefixed token as a literal arg, separate with `--` first:
 /// `ilo main.ilo -- --foo`. Anything after the first `--` is data.
 ///
-/// Shape match: `^--[a-z][a-z0-9]*(-[a-z0-9]+)*$`. Tokens containing `=`,
-/// digits-first, or non-ASCII are NOT flagged as flags — they're data.
-/// Short flags (`-x`, `-V`) are NOT flagged here either — clap rejects
-/// unknown short flags upfront at parse time; only the long-flag shape
-/// slips through the trailing_var_arg sink.
+/// Shape match: `^--[a-z][a-z0-9]*(-[a-z0-9]+)*(=.*)?$`. The `--key=value`
+/// form is normalised by splitting on the first `=` before the shape check,
+/// so `--engine=tree` and `--foo=bar` are rejected the same way as the
+/// space-separated forms. Tokens with digits-first or non-ASCII prefixes
+/// are NOT treated as flags, they're data. Short flags (`-x`, `-V`) are
+/// NOT flagged here either, clap rejects unknown short flags upfront at
+/// parse time; only the long-flag shape slips through the trailing_var_arg
+/// sink.
 pub fn reject_unknown_flags(args: &[String]) -> Result<(), String> {
     reject_unknown_flags_with_allowlist(args, &[])
 }
@@ -376,7 +379,16 @@ pub fn reject_unknown_flags_with_allowlist(
             // Separator reached: everything after is data.
             return Ok(());
         }
-        if looks_like_clean_long_flag(a) && !allowlist.contains(&a.as_str()) {
+        // Normalise `--key=value` to its `--key` head before the shape check
+        // so the equals form is rejected the same way as the space form.
+        // Without this split, `--engine=tree` slips past the guard and gets
+        // consumed as a positional, surfacing as a misleading ILO-R012/R004
+        // downstream.
+        let head = a.split_once('=').map(|(h, _)| h).unwrap_or(a.as_str());
+        if looks_like_clean_long_flag(head)
+            && !allowlist.contains(&head)
+            && !allowlist.contains(&a.as_str())
+        {
             return Err(format!(
                 "error: unrecognised flag '{a}'. Use 'ilo --help' for valid flags. To pass it as a literal arg, separate with '--' first."
             ));
@@ -918,12 +930,57 @@ mod tests {
     }
 
     #[test]
-    fn equals_form_not_treated_as_flag() {
-        // `--key=val` shape is data, not a clean flag. We err on the side of
-        // accepting it so users who paste config strings aren't surprised;
-        // clap's recognised `--key=val` flags are bound by clap before this
-        // guard runs.
+    fn equals_form_unknown_flag_rejected() {
+        // `--key=value` shape used to slip past the guard and get consumed as
+        // a positional, surfacing as a misleading ILO-R012/R004 downstream.
+        // The guard now splits on `=` before the shape check so this form is
+        // caught the same way as the space-separated form.
         let args = vec!["main.ilo".to_string(), "--foo=bar".to_string()];
+        let err = reject_unknown_flags(&args).unwrap_err();
+        assert!(err.contains("--foo=bar"), "msg={err}");
+        assert!(err.contains("unrecognised flag"));
+    }
+
+    #[test]
+    fn equals_form_engine_rejected() {
+        // Concrete repro from the originating bug report: `--engine=tree`
+        // slipped past while `--engine tree` was caught.
+        let args = vec!["main.ilo".to_string(), "--engine=tree".to_string()];
+        let err = reject_unknown_flags(&args).unwrap_err();
+        assert!(err.contains("--engine=tree"), "msg={err}");
+    }
+
+    #[test]
+    fn equals_form_allowlisted_head_accepted() {
+        // Allowlist matches against the `--key` head, so callers can
+        // pre-approve a known flag and its `--key=value` form is accepted.
+        let args = vec!["main.ilo".to_string(), "--bench=on".to_string()];
+        assert!(reject_unknown_flags_with_allowlist(&args, &["--bench"]).is_ok());
+    }
+
+    #[test]
+    fn equals_form_after_dash_dash_accepted() {
+        // The `--` separator still escapes everything that follows, including
+        // the equals form.
+        let args = vec![
+            "main.ilo".to_string(),
+            "--".to_string(),
+            "--foo=bar".to_string(),
+        ];
+        assert!(reject_unknown_flags(&args).is_ok());
+    }
+
+    #[test]
+    fn equals_form_with_empty_value_rejected() {
+        // `--foo=` (empty value) is still an unrecognised flag.
+        let args = vec!["main.ilo".to_string(), "--foo=".to_string()];
+        assert!(reject_unknown_flags(&args).is_err());
+    }
+
+    #[test]
+    fn equals_form_with_non_flag_head_accepted() {
+        // `key=value` (no leading `--`) is data, not a flag.
+        let args = vec!["main.ilo".to_string(), "key=value".to_string()];
         assert!(reject_unknown_flags(&args).is_ok());
     }
 

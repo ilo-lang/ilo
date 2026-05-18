@@ -1,0 +1,14 @@
+-- The camelCase rename-cascade scanner (ILO-L003 "Also found in this file: ...")
+-- now skips string-literal content. Before this fix, format strings like
+-- "%Y-%m-%dT%H:%M:%S" surfaced fake offenders like `dT` from the strftime
+-- pattern, polluting the suggestion list with bytes that aren't identifiers.
+--
+-- This example is a regression smoke test: a function that returns a format
+-- string verbatim. If the scanner ever regresses and tries to lex inside the
+-- string, the source won't even compile, so the cross-engine harness will
+-- catch it on every backend.
+
+fmtstr>t;"%Y-%m-%dT%H:%M:%S"
+
+-- run: fmtstr
+-- out: %Y-%m-%dT%H:%M:%S

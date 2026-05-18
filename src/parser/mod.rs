@@ -3336,6 +3336,13 @@ results first: `r={first_op}a b;…r` keeps each step explicit."
                 self.no_whitespace_call = prev;
                 let expr = expr?;
                 self.expect(&Token::RParen)?;
+                // Field access chain on a parenthesised expression:
+                // `(at rows i).2`, `(p with x:1).x`, `(rec).field.sub`.
+                // Mirrors the postfix chain after a bare Ident below so
+                // grouped expressions accept the same `.field` / `.N`
+                // suffix without the agent needing to bind first
+                // (gis-analyst rerun9).
+                let expr = self.parse_field_chain(expr, None)?;
                 Ok(expr)
             }
             Some(Token::LBracket) => {
@@ -3432,48 +3439,8 @@ results first: `r={first_op}a b;…r` keeps each step explicit."
                     });
                 }
                 // Check for field access chain: ident.field.field...
-                let mut expr = Expr::Ref(name.clone());
-                while matches!(self.peek(), Some(Token::Dot) | Some(Token::DotQuestion)) {
-                    let safe = self.peek() == Some(&Token::DotQuestion);
-                    self.advance();
-                    match self.peek().cloned() {
-                        Some(Token::Number(n)) if n.fract() == 0.0 && n >= 0.0 => {
-                            self.advance();
-                            expr = Expr::Index {
-                                object: Box::new(expr),
-                                index: n as usize,
-                                safe,
-                            };
-                        }
-                        // `xs.(expr)` — parenthesised expression after `.`
-                        // is a common reach for variable-position indexing
-                        // (ml-engineer rerun4). PR #298 desugars `xs.i` to
-                        // `at xs i` when `i` is bound, but `xs.(i+1)` never
-                        // even parses. Emit a hint pointing at the correct
-                        // shape rather than the bare "expected identifier"
-                        // error from expect_ident().
-                        Some(Token::LParen) => {
-                            return Err(self.error_hint(
-                                "ILO-P005",
-                                "expected identifier, got LParen".into(),
-                                format!(
-                                    "field access requires an identifier after `.`. \
-For variable-position list indexing use `at {n} (expr)`, \
-or bind the index to a name first: `i:expr;{n}.i`.",
-                                    n = name
-                                ),
-                            ));
-                        }
-                        _ => {
-                            let field = self.expect_ident()?;
-                            expr = Expr::Field {
-                                object: Box::new(expr),
-                                field,
-                                safe,
-                            };
-                        }
-                    }
-                }
+                let expr = Expr::Ref(name.clone());
+                let expr = self.parse_field_chain(expr, Some(&name))?;
                 Ok(expr)
             }
             Some(tok) => {
@@ -3494,6 +3461,70 @@ or bind the index to a name first: `i:expr;{n}.i`.",
                 hint: None,
             }),
         }
+    }
+
+    /// Parse a postfix `.field` / `.N` chain against an already-parsed atom.
+    ///
+    /// Shared by the bare-identifier branch (`xs.2`, `p.x.sub`) and the
+    /// parenthesised-expression branch (`(at rows i).2`, `(p with x:1).x`).
+    /// Both forms accept `.?ident` for safe field access and `.N` for
+    /// zero-based positional index, and the `.(expr)` reach gets a
+    /// pointed hint instead of the bare expect_ident() surface.
+    ///
+    /// `ident_hint` carries the leading identifier name when the chain
+    /// started with a bare ref, so the `.(expr)` ILO-P005 hint can name
+    /// it (`at xs (expr)` vs `xs.i`). For parenthesised heads we don't
+    /// have a name to recommend; the hint falls back to a generic shape.
+    fn parse_field_chain(&mut self, mut expr: Expr, ident_hint: Option<&str>) -> Result<Expr> {
+        while matches!(self.peek(), Some(Token::Dot) | Some(Token::DotQuestion)) {
+            let safe = self.peek() == Some(&Token::DotQuestion);
+            self.advance();
+            match self.peek().cloned() {
+                Some(Token::Number(n)) if n.fract() == 0.0 && n >= 0.0 => {
+                    self.advance();
+                    expr = Expr::Index {
+                        object: Box::new(expr),
+                        index: n as usize,
+                        safe,
+                    };
+                }
+                // `xs.(expr)` — parenthesised expression after `.`
+                // is a common reach for variable-position indexing
+                // (ml-engineer rerun4). PR #298 desugars `xs.i` to
+                // `at xs i` when `i` is bound, but `xs.(i+1)` never
+                // even parses. Emit a hint pointing at the correct
+                // shape rather than the bare "expected identifier"
+                // error from expect_ident().
+                Some(Token::LParen) => {
+                    let hint = match ident_hint {
+                        Some(n) => format!(
+                            "field access requires an identifier after `.`. \
+For variable-position list indexing use `at {n} (expr)`, \
+or bind the index to a name first: `i:expr;{n}.i`.",
+                            n = n
+                        ),
+                        None => "field access requires an identifier after `.`. \
+For variable-position list indexing bind the head first: \
+`xs=(expr);at xs (idx)`, or use `at (expr) (idx)`."
+                            .to_string(),
+                    };
+                    return Err(self.error_hint(
+                        "ILO-P005",
+                        "expected identifier, got LParen".into(),
+                        hint,
+                    ));
+                }
+                _ => {
+                    let field = self.expect_ident()?;
+                    expr = Expr::Field {
+                        object: Box::new(expr),
+                        field,
+                        safe,
+                    };
+                }
+            }
+        }
+        Ok(expr)
     }
 
     /// Lookahead: does the token at `self.pos` (`(`) open an inline lambda?

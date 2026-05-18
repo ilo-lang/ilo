@@ -740,6 +740,30 @@ fn lex_normalized(normalized: &str) -> Result<Vec<(Token, std::ops::Range<usize>
     //   - `=` (rhs of an assignment)
     //   - `{` (start of a block - function body, conditional arm)
     //   - `(` (start of a parenthesised expression)
+    //   - `-` (operand slot of an outer prefix-minus: `- -0 a bo`)
+    //
+    // The `Minus` context fixes a repeat trap that hit multiple personas
+    // (scientific-researcher rerun9, plus gis-analyst / ml-engineer /
+    // content-mod from earlier reruns): `- -0 a bo` lexed as
+    // `Minus, Number(-0.0), Ident(a), Ident(bo)`, where the outer `-`
+    // consumed `-0` and `a` as a binary subtract and left `bo` orphaned,
+    // surfacing as a misleading ILO-P020 "incomplete function header for
+    // `bo`". After this split, the tokens become
+    // `Minus, Minus, Number(0), Ident(a), Ident(bo)`, and `parse_minus`
+    // reads it as `Subtract(Subtract(0, a), bo)` = `-a - bo`. Same shape
+    // covers the wider `*-0 k s` / `t=-0 /t 6` family from earlier sessions.
+    // Collateral: `- -N M` (N != 0) changes from `Subtract(-N, M)` to
+    // `Negate(Subtract(N, M))` - the new reading matches a natural
+    // left-associative parse. Zero hits in the repo before this fix; pinned
+    // with explicit regression tests below and in
+    // `regression_minus_zero_decl_parse.rs`.
+    //
+    // We deliberately do NOT add the other prefix binops (`+`, `*`, `/`)
+    // to this set: `+ -3 5` currently reads as `Add(-3, 5) = 2`, and
+    // splitting it would leave `+` with only one operand and produce a
+    // parse error. The `Minus` carve-out is safe because `parse_minus`
+    // already disambiguates unary-negate vs binary-subtract via
+    // `can_start_operand`.
     //
     // After splitting, the parser's existing `parse_minus` handles both
     // `Negate(N)` (no following operand) and `Subtract(N, M)` (operand
@@ -761,7 +785,12 @@ fn lex_normalized(normalized: &str) -> Result<Vec<(Token, std::ops::Range<usize>
             let prev_splits = i == 0
                 || matches!(
                     tokens[i - 1].0,
-                    Token::Semi | Token::Newline | Token::Eq | Token::LBrace | Token::LParen
+                    Token::Semi
+                        | Token::Newline
+                        | Token::Eq
+                        | Token::LBrace
+                        | Token::LParen
+                        | Token::Minus
                 );
             if !prev_splits {
                 i += 1;
@@ -1171,6 +1200,36 @@ fn scan_camel_offenders(src: &str) -> Vec<CamelOffender> {
     let mut i = 0;
     while i < bytes.len() {
         let b = bytes[i];
+        // Skip string literal content so format strings like
+        // `"%Y-%m-%dT%H:%M"` don't surface `dT` as a fake camelCase
+        // offender. Mirrors the pre-pass at the top of this file: a `"`
+        // opens a string that runs to the next unescaped `"`.
+        if b == b'"' {
+            i += 1;
+            while i < bytes.len() {
+                let c = bytes[i];
+                if c == b'\\' {
+                    // Skip the escape byte too (handles `\"`, `\\`, etc.).
+                    i += 2;
+                    continue;
+                }
+                if c == b'"' {
+                    i += 1;
+                    break;
+                }
+                i += 1;
+            }
+            continue;
+        }
+        // Skip `--` line comments so identifiers explaining the bug in
+        // a comment don't double-report.
+        if b == b'-' && i + 1 < bytes.len() && bytes[i + 1] == b'-' {
+            i += 2;
+            while i < bytes.len() && bytes[i] != b'\n' {
+                i += 1;
+            }
+            continue;
+        }
         // Find start of a lowercase-led identifier.
         let prev = if i == 0 { 0 } else { bytes[i - 1] };
         let prev_prev = if i >= 2 { bytes[i - 2] } else { 0 };
@@ -1644,6 +1703,61 @@ mod tests {
                 Token::Ident("a".to_string()),
                 Token::Number(-3.0),
             ]
+        );
+    }
+
+    /// Negative literal after a `-` token splits: `- -0 a bo` must become
+    /// `Minus, Minus, Number(0), Ident(a), Ident(bo)` so the outer minus can
+    /// recurse into the inner subtract and consume `bo` as its second
+    /// operand, instead of orphaning `bo` and tripping ILO-P020.
+    /// Originating bug: scientific-researcher rerun9 `-0` literal hijack.
+    #[test]
+    fn lex_neg_zero_after_minus_splits() {
+        let source = "- -0 a bo";
+        let tokens: Vec<_> = lex(source).unwrap().into_iter().map(|(t, _)| t).collect();
+        assert_eq!(
+            tokens,
+            vec![
+                Token::Minus,
+                Token::Minus,
+                Token::Number(0.0),
+                Token::Ident("a".to_string()),
+                Token::Ident("bo".to_string()),
+            ]
+        );
+    }
+
+    /// The same split fires for non-zero negative literals after a `-` token.
+    /// `- -3 5` lexes as `-, -, 3, 5`, which parses as
+    /// `Negate(Subtract(3, 5))` = `Negate(-2)` = `2`. The pre-fix reading was
+    /// `Subtract(-3, 5)` = `-8`; zero in-repo usages, intentionally changed
+    /// to match the natural left-associative parse and pinned here.
+    #[test]
+    fn lex_neg_int_after_minus_splits() {
+        let source = "- -3 5";
+        let tokens: Vec<_> = lex(source).unwrap().into_iter().map(|(t, _)| t).collect();
+        assert_eq!(
+            tokens,
+            vec![
+                Token::Minus,
+                Token::Minus,
+                Token::Number(3.0),
+                Token::Number(5.0),
+            ]
+        );
+    }
+
+    /// `+ -3 5` must NOT trigger the split. The `Minus` carve-out is
+    /// deliberately narrow; adding `Plus` to the split set would leave `+`
+    /// with only one operand and break `Add(-3, 5) = 2`. This pins the
+    /// negative control so the carve-out stays narrow.
+    #[test]
+    fn lex_neg_literal_after_plus_stays() {
+        let source = "+ -3 5";
+        let tokens: Vec<_> = lex(source).unwrap().into_iter().map(|(t, _)| t).collect();
+        assert_eq!(
+            tokens,
+            vec![Token::Plus, Token::Number(-3.0), Token::Number(5.0),]
         );
     }
 

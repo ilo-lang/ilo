@@ -1,0 +1,28 @@
+-- `- -0 a b` shape: the `-0` literal no longer hijacks the decl parse.
+-- Originating bug: scientific-researcher rerun9. `- -0 a bo` used to
+-- trip ILO-P020 because `-0` lexed as a glued `Number(-0.0)` and the
+-- outer `-` consumed `-0` and `a` as a binary subtract, leaving `bo`
+-- orphaned at statement level where the multi-fn parser mis-read it as
+-- a new decl header. Fix: the lexer's neg-literal split predicate now
+-- treats `Minus` as a fresh-expression context, so `- -0 a b` re-lexes
+-- as `-, -, 0, a, b` and parses as `Subtract(Subtract(0, a), b)`.
+
+-- `- -0 a b` parses as `(0 - a) - b` = `-a - b`. The natural prefix
+-- transcription of the math now works without the `na=- 0 a` binding tax.
+sub-neg a:n b:n>n;- -0 a b
+
+-- Two-operand form `- -0 a` parses as `Negate(Subtract(0, a))` = `a`.
+-- Useful as a sanity check that the new lex still produces a defined
+-- expression when only one operand follows the inner zero.
+double-neg a:n>n;- -0 a
+
+-- run: sub-neg 5 7
+-- out: -12
+-- run: sub-neg 3 2
+-- out: -5
+-- run: sub-neg -4 1
+-- out: 3
+-- run: double-neg 5
+-- out: 5
+-- run: double-neg -3
+-- out: -3
