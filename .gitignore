@@ -33,3 +33,9 @@ tests/e2e/
 
 # CLAUDE.md is per-developer Claude Code context; AGENTS.md is the cross-tool tracked equivalent
 CLAUDE.md
+
+# Internal strategy and exploration (kept local, not public)
+zero-gap-specs/
+research/
+.claude/commands/
+.env.example
