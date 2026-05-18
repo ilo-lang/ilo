@@ -1,5 +1,5 @@
 -- Builtin names like flat, frq, map, flt, cat, len, ord are reserved and
--- cannot be reused as local binding names. Binding `flat=cat ls " "` and
+-- cannot be reused as local binding names. Binding `flat=cat ws " "` and
 -- then writing `spl flat ". "` would silently dispatch the `flat` operand
 -- to the 1-arg flatten builtin (not the local binding), surfacing as a
 -- misleading ILO-T006 arity mismatch on `flat`.
@@ -11,8 +11,8 @@
 -- Correct shape: pick a non-builtin name (here `body` for a joined string).
 
 main>n
-  ls=["one" "two" "three"]
-  body=cat ls " "
+  ws=["one" "two" "three"]
+  body=cat ws " "
   parts=spl body " "
   len parts
 

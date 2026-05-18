@@ -197,7 +197,7 @@ Short builtin names are precious surface and ilo reserves a stable subset of the
 **Currently reserved short names (1-3 characters).** Every name in this list is a builtin today and triggers `ILO-P011` if used as a binding or user-function name:
 
 ```
-2-char  at hd tl rd wr ct
+2-char  at hd tl rd wr ct ls
 3-char  abs avg cap cat cel chr cos det dot env exp fft fld flr flt fmt
         frq get grp has inv len log lst lwr map max min mod now num ord
         pow rdb rdl rev rgx rng rnd rou sin slc spl srt str sum tan trm unq
@@ -206,7 +206,7 @@ Short builtin names are precious surface and ilo reserves a stable subset of the
 
 `rng` is the short-form alias for the canonical `range` builtin; it is reserved with the same shadow-prevention semantics as a canonical builtin name (binding `rng=...` or declaring `rng x:...` fires `ILO-P011`).
 
-Longer builtin names (`acos`, `asin`, `atan`, `flat`, `take`, `drop`, `mget`, `mset`, `mmap`, `prnt`, `mapr`, `solve`, `clamp`, `cumsum`, `median`, `matmul`, `range`, `window`, `chunks`, …) are also reserved and rejected by `ILO-P011`, but the short-name namespace above is where carry-forward scripts most often collide, so it gets explicit enumeration.
+Longer builtin names (`acos`, `asin`, `atan`, `flat`, `take`, `drop`, `mget`, `mset`, `mmap`, `prnt`, `mapr`, `solve`, `clamp`, `cumsum`, `median`, `matmul`, `range`, `window`, `chunks`, `walk`, `glob`, …) are also reserved and rejected by `ILO-P011`, but the short-name namespace above is where carry-forward scripts most often collide, so it gets explicit enumeration.
 
 **Forward-compatibility rule.** Future ilo releases add new builtins under names **4 characters or longer**. A 2-character name that is not on this list today is safe to use as a binding or function name and stays safe across releases. A 3-character name that is not on this list is _highly likely_ to stay safe but is not a hard promise - the 3-char surface is already dense, and a rare ergonomic win may justify an addition, called out in the changelog.
 
@@ -455,6 +455,9 @@ Called like functions, compiled to dedicated opcodes.
 | `rd path` | read file; format auto-detected from extension (`.csv`/`.tsv`→grid, `.json`→graph, else text) | `R _ t` |
 | `rd path fmt` | read file with explicit format override (`"csv"`, `"tsv"`, `"json"`, `"raw"`) | `R _ t` |
 | `rdl path` | read file as list of lines | `R (L t) t` |
+| `ls dir` | list directory entries (filenames only, not full paths; sorted lexicographically; includes both files and subdirs; empty dirs return `[]`, not Err) | `R (L t) t` |
+| `walk dir` | recursive depth-first traversal; paths returned relative to `dir`, sorted; includes both file and directory entries; symlinks not followed | `R (L t) t` |
+| `glob dir pat` | shell-style filter under `dir`: `*`/`?`/`[abc]` within a path segment, `**` across segments; relative-path output, sorted; no matches returns `[]` (not Err) | `R (L t) t` |
 | `rdb s fmt` | parse string/buffer in given format - for data from HTTP, env vars, etc. | `R _ t` |
 | `wr path s` | write text to file (overwrite) | `R t t` |
 | `wr path data "csv"` | write list-of-lists as CSV (with proper quoting) | `R t t` |

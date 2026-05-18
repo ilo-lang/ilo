@@ -104,9 +104,9 @@ by-feature u:usage>t
   u.feature
 
 check-limit u:usage p:plan>R b t
-  ls=flt match-feature p.limits
-  =len ls 0{ret ~true}
-  lim=hd ls
+  lims=flt match-feature p.limits
+  =len lims 0{ret ~true}
+  lim=hd lims
   ~<=u.count lim.max
 
 match-feature l:limit>b

@@ -26,7 +26,7 @@ fn run(engine: &str, src: &str, entry: &str) -> String {
 }
 
 // Original repro: slc with a prefix-binary 3rd arg.
-const SLC_REPRO: &str = "f>L n;ls=[10,20,30];i=0;slc ls i +i 1";
+const SLC_REPRO: &str = "f>L n;xs=[10,20,30];i=0;slc xs i +i 1";
 
 fn check_slc(engine: &str) {
     assert_eq!(run(engine, SLC_REPRO, "f"), "[10]", "engine={engine}");

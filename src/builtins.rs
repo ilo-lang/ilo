@@ -102,6 +102,9 @@ pub enum Builtin {
     Wrl,
     Prnt,
     Env,
+    Ls,
+    Walk,
+    Glob,
     EnvAll,
 
     // String
@@ -235,6 +238,9 @@ impl Builtin {
             "wrl" => Some(Builtin::Wrl),
             "prnt" => Some(Builtin::Prnt),
             "env" => Some(Builtin::Env),
+            "ls" => Some(Builtin::Ls),
+            "walk" => Some(Builtin::Walk),
+            "glob" => Some(Builtin::Glob),
             "env-all" => Some(Builtin::EnvAll),
             "trm" => Some(Builtin::Trm),
             "upr" => Some(Builtin::Upr),
@@ -359,6 +365,9 @@ impl Builtin {
             Builtin::Wrl => "wrl",
             Builtin::Prnt => "prnt",
             Builtin::Env => "env",
+            Builtin::Ls => "ls",
+            Builtin::Walk => "walk",
+            Builtin::Glob => "glob",
             Builtin::EnvAll => "env-all",
             Builtin::Trm => "trm",
             Builtin::Upr => "upr",
@@ -532,6 +541,13 @@ impl Builtin {
         // (seconds) so per-phase timing has no rounding loss in agent
         // perf-bisection workloads.
         Builtin::NowMs,
+        // Filesystem enumeration. Closes the categorical gap vs Python rglob
+        // and shell `find`: single-file `rd` exists but no directory listing
+        // until now. All three return Result so missing-dir / permission-denied
+        // are typed at the boundary. Tree-bridge eligible; no native opcodes.
+        Builtin::Ls,
+        Builtin::Walk,
+        Builtin::Glob,
         // env-all -> R M t t: full process environment as Map[Text, Text]
         // wrapped in Result. Tree-bridge eligible (zero args, no FnRef);
         // see is_tree_bridge_eligible in src/vm/mod.rs.
@@ -813,6 +829,9 @@ mod tests {
             "dtfmt",
             "dtparse",
             "sleep",
+            "ls",
+            "walk",
+            "glob",
         ];
         for name in &all {
             let b = Builtin::from_name(name).unwrap_or_else(|| panic!("missing builtin: {name}"));
@@ -1023,6 +1042,9 @@ mod tests {
             "solve",
             "inv",
             "det",
+            "ls",
+            "walk",
+            "glob",
         ] {
             let b = Builtin::from_name(name).unwrap_or_else(|| panic!("no builtin: {name}"));
             let t = b.tag();
