@@ -7,11 +7,11 @@
 //
 // Threshold rationale: under `cargo test` the AOT-linked binary is built
 // against the *debug* libilo.a (debuginfo + un-stripped HTTPS / cranelift
-// object code), which on macOS arm64 measures ~34 MB for `m>n;42`. Release
-// + strip + LTO shrinks the same program to ~9 MB but isn't what CI links
-// against in the test harness. The 50 MB ceiling gives ~50% headroom on
-// the debug baseline while still failing loudly if a new dep silently
-// inflates the AOT runtime.
+// object code). The debug baseline differs across platforms: ~34 MB on
+// macOS arm64, ~94 MB on Linux x86_64 (CI). Release + strip + LTO shrinks
+// the same program to ~9 MB but isn't what `cargo test` links against in
+// CI. The 150 MB ceiling sits ~50% above the Linux debug baseline while
+// still failing loudly if a new dep silently inflates the AOT runtime.
 //
 // Gated on the `cranelift` feature because AOT compile requires it.
 
@@ -21,10 +21,10 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::sync::atomic::{AtomicU32, Ordering};
 
-/// Maximum AOT binary size in bytes. Current debug baseline is ~34 MB;
-/// ceiling is 50 MB. Bump deliberately only with a PR note explaining the
-/// new floor — never silently.
-const MAX_AOT_BINARY_BYTES: u64 = 50 * 1024 * 1024;
+/// Maximum AOT binary size in bytes. Debug baseline is ~34 MB (macOS arm64)
+/// / ~94 MB (Linux x86_64); ceiling is 150 MB. Bump deliberately only with
+/// a PR note explaining the new floor — never silently.
+const MAX_AOT_BINARY_BYTES: u64 = 150 * 1024 * 1024;
 
 static COUNTER: AtomicU32 = AtomicU32::new(0);
 
