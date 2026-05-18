@@ -11,11 +11,11 @@
 // security-researcher) independently burned minutes on this trap.
 //
 // The contract:
-//   1. Any clean long-flag shape (`--word` or `--word-with-dashes`) that
-//      isn't a recognised flag is rejected upfront with a clear
-//      "unrecognised flag" message and exit 1.
+//   1. Any clean long-flag shape (`--word`, `--word-with-dashes`, or the
+//      `--word=value` equals form) that isn't a recognised flag is rejected
+//      upfront with a clear "unrecognised flag" message and exit 1.
 //   2. To pass a hyphen-prefixed token as a literal arg, the user inserts
-//      `--` first: `ilo main.ilo -- --foo`.
+//      `--` first: `ilo main.ilo -- --foo` or `ilo main.ilo -- --foo=bar`.
 //   3. All recognised long flags (`--run-vm`, `--bench`, etc.) still work.
 //   4. Holds across every engine (default, --run-tree, --run-vm,
 //      --run-cranelift), the bare-positional dispatcher AND the `run`
@@ -233,11 +233,55 @@ fn negative_number_arg_not_treated_as_flag() {
 }
 
 #[test]
-fn equals_form_data_arg_not_treated_as_flag() {
-    // `--key=val` shape is data (e.g. a config string); not flagged.
-    let (_, _, stderr) = run_args(&["f x:t>t;x", "f", "--key=val"]);
+fn equals_form_unknown_flag_rejected_bare() {
+    // `--key=value` used to slip past the guard (the shape check excluded
+    // tokens containing `=`) and got silently consumed as a positional,
+    // surfacing as a misleading ILO-R012/R004 downstream. The guard now
+    // splits on `=` and checks the `--key` head, so this form is rejected
+    // the same way as the space-separated form.
+    let p = temp_main("bare_engine_eq");
+    let path_str = p.to_str().unwrap();
+    assert_unrecognised(run_args(&[path_str, "--engine=tree"]), "--engine=tree");
+}
+
+#[test]
+fn equals_form_unknown_foo_flag_rejected_bare() {
+    let p = temp_main("bare_foo_eq");
+    let path_str = p.to_str().unwrap();
+    assert_unrecognised(run_args(&[path_str, "--foo=bar"]), "--foo=bar");
+}
+
+#[test]
+fn equals_form_unknown_flag_rejected_run_subcmd() {
+    let p = temp_main("run_engine_eq");
+    let path_str = p.to_str().unwrap();
+    assert_unrecognised(
+        run_args(&["run", path_str, "--engine=tree"]),
+        "--engine=tree",
+    );
+}
+
+#[test]
+fn equals_form_after_dash_dash_passes_through() {
+    // `--` separator still escapes everything that follows, including the
+    // equals form.
+    let (code, stdout, stderr) = run_args(&["f x:t>t;x", "f", "--", "--key=val"]);
+    assert_eq!(
+        code, 0,
+        "expected exit 0 with `--` separator on equals form; stdout=\n{stdout}\nstderr=\n{stderr}"
+    );
     assert!(
         !stderr.contains("unrecognised flag"),
-        "--key=val shape should pass through as data; stderr={stderr}"
+        "should not error on equals form after `--`; stderr={stderr}"
+    );
+}
+
+#[test]
+fn non_flag_equals_data_passes_through() {
+    // `key=value` (no leading `--`) is data, not a flag. Must pass through.
+    let (_, _, stderr) = run_args(&["f x:t>t;x", "f", "key=value"]);
+    assert!(
+        !stderr.contains("unrecognised flag"),
+        "`key=value` shape should pass through as data; stderr={stderr}"
     );
 }

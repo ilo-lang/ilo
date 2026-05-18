@@ -1,0 +1,41 @@
+-- `mget` returns Optional (`O T`) - the key may not exist.
+--
+-- The wrong shape (caught by ILO-T035):
+--
+--   ?(mget m "k"){~v:v;_:0}
+--
+-- `~v:` is a Result arm. Option values aren't Ok/Err-tagged at
+-- runtime, so the `~v:` arm never matches and the match silently
+-- falls through to the wildcard, returning 0 even when the key
+-- exists. The verifier flags this so the bug surfaces at check
+-- time instead of as a wrong answer.
+--
+-- The right shapes are below: `??x default` to unwrap the Option,
+-- or match a literal value with `_:` for the nil case.
+
+unwrap-with-default>n
+  m=mmap
+  m=mset m "k" 5
+  ??(mget m "k") 0
+
+unwrap-missing-key>n
+  m=mmap
+  ??(mget m "k") 99
+
+match-literal-or-nil>t
+  m=mmap
+  m=mset m "k" 5
+  ?(mget m "k"){5:"hit";_:"miss"}
+
+match-literal-or-nil-missing>t
+  m=mmap
+  ?(mget m "k"){5:"hit";_:"miss"}
+
+-- run: unwrap-with-default
+-- out: 5
+-- run: unwrap-missing-key
+-- out: 99
+-- run: match-literal-or-nil
+-- out: hit
+-- run: match-literal-or-nil-missing
+-- out: miss

@@ -9944,41 +9944,48 @@ impl<'a> VM<'a> {
                             _ => unreachable!(),
                         }
                     };
-                    let result = match serde_json::from_str::<serde_json::Value>(json_str) {
-                        Ok(parsed) => {
-                            let mut current = &parsed;
-                            let mut found = true;
-                            let mut missing_key = String::new();
-                            for key in path_str.split('.') {
-                                if let Ok(idx) = key.parse::<usize>() {
-                                    if let Some(v) = current.as_array().and_then(|a| a.get(idx)) {
+                    let result = if let Some(msg) =
+                        crate::builtins::jpth_jsonpath_diagnostic(path_str)
+                    {
+                        NanVal::heap_err(NanVal::heap_string(msg))
+                    } else {
+                        match serde_json::from_str::<serde_json::Value>(json_str) {
+                            Ok(parsed) => {
+                                let mut current = &parsed;
+                                let mut found = true;
+                                let mut missing_key = String::new();
+                                for key in path_str.split('.') {
+                                    if let Ok(idx) = key.parse::<usize>() {
+                                        if let Some(v) = current.as_array().and_then(|a| a.get(idx))
+                                        {
+                                            current = v;
+                                        } else {
+                                            found = false;
+                                            missing_key = key.to_string();
+                                            break;
+                                        }
+                                    } else if let Some(v) = current.get(key) {
                                         current = v;
                                     } else {
                                         found = false;
                                         missing_key = key.to_string();
                                         break;
                                     }
-                                } else if let Some(v) = current.get(key) {
-                                    current = v;
+                                }
+                                if found {
+                                    let result_str = match current {
+                                        serde_json::Value::String(s) => s.clone(),
+                                        other => other.to_string(),
+                                    };
+                                    NanVal::heap_ok(NanVal::heap_string(result_str))
                                 } else {
-                                    found = false;
-                                    missing_key = key.to_string();
-                                    break;
+                                    NanVal::heap_err(NanVal::heap_string(format!(
+                                        "key not found: {missing_key}"
+                                    )))
                                 }
                             }
-                            if found {
-                                let result_str = match current {
-                                    serde_json::Value::String(s) => s.clone(),
-                                    other => other.to_string(),
-                                };
-                                NanVal::heap_ok(NanVal::heap_string(result_str))
-                            } else {
-                                NanVal::heap_err(NanVal::heap_string(format!(
-                                    "key not found: {missing_key}"
-                                )))
-                            }
+                            Err(e) => NanVal::heap_err(NanVal::heap_string(e.to_string())),
                         }
-                        Err(e) => NanVal::heap_err(NanVal::heap_string(e.to_string())),
                     };
                     reg_set!(a, result);
                 }
@@ -15867,6 +15874,9 @@ pub(crate) extern "C" fn jit_jpth(a: u64, b: u64, span_bits: u64) -> u64 {
             _ => unreachable!(),
         }
     };
+    if let Some(msg) = crate::builtins::jpth_jsonpath_diagnostic(path_str) {
+        return NanVal::heap_err(NanVal::heap_string(msg)).0;
+    }
     match serde_json::from_str::<serde_json::Value>(json_str) {
         Ok(parsed) => {
             let mut current = &parsed;

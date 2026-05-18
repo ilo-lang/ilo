@@ -385,12 +385,14 @@ When the call expansion isn't available (the ident is a local that shadows a fn 
 r=fac p;*n r   -- bind, then operate — always unambiguous
 ```
 
-**Negative literals vs binary minus**: the lexer greedily includes a leading `-` into number tokens. `-1`, `-7`, `-0` are all number literals. To subtract from zero, use a space: `- 0 v` (Minus token, then `0`, then `v`).
+**Negative literals vs binary minus**: the lexer greedily includes a leading `-` into number tokens. `-1`, `-7`, `-0` are all number literals at fresh-expression positions. To subtract from zero at the start of a statement, use a space: `- 0 v` (Minus token, then `0`, then `v`).
 
 ```
 f v:n>n;-0 v   -- WRONG: -0 is Number(-0.0); v is a stray token
 f v:n>n;- 0 v  -- OK: binary subtract: 0 - v = -v
 ```
+
+The lexer splits a glued negative literal back into `Minus + Number` when the previous token is one of `;`, `\n`, `=`, `{`, `(`, or `-`. The `-` context covers the operand slot of an outer prefix-minus, so `- -0 a b` lexes as `-, -, 0, a, b` and parses as `Subtract(Subtract(0, a), b)` = `-a - b` rather than tripping `ILO-P020`. Negative literals after an Ident, `[`, or another prefix binop (`+`, `*`, `/`) stay glued so call args (`at xs -1`), list literals (`[-2 1 3]`), and binary operands (`+a -3`) read naturally.
 
 ---
 
@@ -470,7 +472,7 @@ Called like functions, compiled to dedicated opcodes.
 | `srt fn xs` | sort list by key function (returns number or text key) | `L` |
 | `unq xs` | remove duplicates, preserve order (list or text chars) | same type |
 | `slc xs a b` | slice list or text from index a to b (a, b accept negative indices counting from end; bounds clamp) | same type |
-| `jpth json path` | JSON path lookup (dot-separated keys, array indices) | `R t t` |
+| `jpth json path` | JSON dot-path lookup, dot-separated keys + numeric array indices (e.g. `"a.b.0.c"`), not JSONPath — leading `$`, `*`, or `[...]` rejected with a diagnostic | `R t t` |
 | `jdmp value` | serialise ilo value to JSON text | `t` |
 | `prnt value` | print value to stdout, return it unchanged (passthrough) | same type |
 | `jpar text` | parse JSON text into ilo values | `R _ t` |
@@ -665,13 +667,15 @@ env! key         -- auto-unwrap: Ok→value, Err→propagate to caller
 
 ### JSON builtins
 
-`jpth` extracts a value from a JSON string by dot-separated path. Array elements are accessed by numeric index:
+`jpth` extracts a value from a JSON string by dot-separated path. Array elements are accessed by numeric index. **Note: `jpth` is dot-path only, not JSONPath.** A leading `$`, `*` wildcard, or `[...]` bracket selector triggers a diagnostic error pointing at the dot-path form; iterate arrays yourself with `@i` or `map` if you need wildcard behaviour.
 
 ```
 jpth json "name"            -- R t t: Ok=extracted value as text, Err=error
 jpth json "user.name"       -- nested path lookup
-jpth json "items.0.name"    -- array index access
+jpth json "items.0.name"    -- array index access (dot before index, not [0])
 jpth! json "name"           -- auto-unwrap
+jpth json "$.a.b"           -- ^"jpth is dot-path only ..." (JSONPath rejected)
+jpth json "items.*.name"    -- ^"jpth is dot-path only ..." (no wildcards)
 ```
 
 `jdmp` serialises any ilo value to a JSON string:
@@ -1042,6 +1046,13 @@ Access:
 ```
 p.x
 ord.addr.country
+```
+
+The `.field` / `.N` chain also applies to any parenthesised expression, so a call result can be read directly without binding to a name first:
+```
+(at rows i).2          -- numeric dot-index on a call result
+(p with x:30).x        -- field access on a record-update
+map (i:n>n;(at rs i).2) ixs   -- inside an inline lambda body
 ```
 
 Destructure:

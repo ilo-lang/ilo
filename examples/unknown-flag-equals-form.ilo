@@ -1,0 +1,20 @@
+-- The unknown-flag guard also rejects the `--key=value` shape. Before
+-- the fix, `--engine=tree` and `--foo=bar` slipped past the guard (the
+-- shape check excluded any token containing `=`) and got silently
+-- consumed as positional args, surfacing as a misleading ILO-R012
+-- "no functions defined" or ILO-R004 "main: expected N args, got N+1".
+-- The guard now splits on `=` and shape-checks the `--key` head, so
+-- `--engine=tree` is caught the same way as `--engine tree`.
+--
+-- To pass a `--key=value` token as literal data, insert `--` first:
+--   ilo main.ilo -- --key=val
+--
+-- This file is exercised by the engine harness on the happy path so
+-- the guard's no-op behaviour on plain positional args stays under
+-- cross-engine regression coverage. The rejection path is covered by
+-- tests/regression_unknown_flag_guard.rs.
+
+main x:n>n;+x 1
+
+-- run: main 41
+-- out: 42

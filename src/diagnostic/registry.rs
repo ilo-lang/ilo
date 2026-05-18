@@ -880,58 +880,35 @@ and is unaffected.
     },
     ErrorEntry {
         code: "ILO-T035",
-        short: "function exceeds the 256-register VM cap",
-        long: r#"## ILO-T035: function exceeds the 256-register VM cap
+        short: "Result arm (`~v:` / `^e:`) on Option subject",
+        long: r#"## ILO-T035: Result arm (`~v:` / `^e:`) on Option subject
 
-The register-based bytecode VM packs each register index into 8 bits,
-so a single function body can use at most 256 live registers. The
-named function's codegen would need more, so the VM cannot lower it.
+`~v:` and `^e:` are **Result** arms - they discriminate on the Ok/Err
+tag carried by a `R T E` value. Optional values (`O T`) are not tagged
+this way: an Option is either the inner value or `_` (nil). At runtime
+a `~v:` arm on an Option subject never matches and the match silently
+falls through to the wildcard or to no arm at all - usually returning
+the wrong answer with no error.
 
-**Example (problem):**
+The verifier now flags this shape so the bug surfaces at check time
+instead of being chased through wrong outputs.
 
-    -- a function with 300 local bindings each kept alive
-    big a:n>n;
-      x1=+a 1;x2=+x1 1;x3=+x2 1; ... ;x300=+x299 1;
-      +x300 0
+**Example (bug):**
 
-**Fix - factor the function into smaller helpers:**
+    main>n;m=mmap;m=mset m "k" 5;?(mget m "k"){~v:v;_:0}
+    -- mget returns O n; ~v: never matches; result is 0, not 5
 
-Split long blocks so intermediate values fall out of scope and their
-registers can be reused, or extract helpers that take only the values
-they need as parameters. Most real functions need fewer than 50
-registers; hitting the cap almost always means there's a chunk of
-code that wants to live in its own function.
+**Fix - unwrap with `??`:**
 
-**Tip:** the error names the function that overflowed. Start there.
-If you cannot avoid the cap (e.g. machine-generated code), file a bug
-- the cap is an implementation detail of the current bytecode format.
-"#,
-    },
-    ErrorEntry {
-        code: "ILO-T036",
-        short: "call requires too many register slots (VM cap)",
-        long: r#"## ILO-T036: call requires too many register slots (VM cap)
+    main>n;m=mmap;m=mset m "k" 5;??(mget m "k") 0
+    -- ??x default: inner value if non-nil, default otherwise
 
-The register VM packs each register index into 8 bits, and a call
-needs `result_reg + argc` contiguous slots inside the **caller's**
-register window. The named call site would push the caller past the
-256-register cap.
+**Fix - match a literal value and `_:` for nil:**
 
-**Example (problem):**
+    main>t;m=mmap;m=mset m "k" 5;?(mget m "k"){5:"hit";_:"miss"}
 
-    -- caller is already near the cap before this call
-    main>n; ... ; r=callee a1 a2 a3 ... aN; r
-
-**Fix - reduce live state at the call site:**
-
-- Refactor the caller so fewer locals are alive when the call is made.
-- Bundle arguments into a record so the call uses fewer slots
-  (`callee p` instead of `callee p.x p.y p.z ...`).
-- Move the call earlier in the function, before the caller has
-  accumulated so many temporaries.
-
-**Tip:** the error names both the enclosing function and the callee.
-The fix is almost always at the call site, not in the callee.
+`~v:` / `^e:` arms remain correct on Result (`R T E`) subjects and are
+unaffected.
 "#,
     },
     // ── Warnings ─────────────────────────────────────────────────────────────
