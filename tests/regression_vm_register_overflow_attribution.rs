@@ -55,7 +55,10 @@ fn vm_register_overflow_names_the_function() {
     // 300 lets > 256 registers; cap trips inside alloc_reg.
     let src = long_fn("toobig", 300);
     let prog = parse(&src);
-    let err = vm::compile(&prog).expect_err("expected register-cap error");
+    let err = match vm::compile(&prog) {
+        Ok(_) => panic!("expected register-cap error, compile succeeded"),
+        Err(e) => e,
+    };
 
     match err {
         CompileError::RegisterOverflow { fn_name, .. } => {
@@ -69,7 +72,10 @@ fn vm_register_overflow_names_the_function() {
 fn vm_register_overflow_error_message_is_human_attributed() {
     let src = long_fn("widefn", 300);
     let prog = parse(&src);
-    let err = vm::compile(&prog).expect_err("expected register-cap error");
+    let err = match vm::compile(&prog) {
+        Ok(_) => panic!("expected register-cap error, compile succeeded"),
+        Err(e) => e,
+    };
 
     let msg = err.to_string();
     assert!(
@@ -86,10 +92,13 @@ fn vm_register_overflow_error_message_is_human_attributed() {
 fn vm_register_overflow_diagnostic_carries_ilo_t035() {
     let src = long_fn("toobig", 300);
     let prog = parse(&src);
-    let err = vm::compile(&prog).expect_err("expected register-cap error");
+    let err = match vm::compile(&prog) {
+        Ok(_) => panic!("expected register-cap error, compile succeeded"),
+        Err(e) => e,
+    };
 
     let diag = ilo::diagnostic::Diagnostic::from(&err);
-    assert_eq!(diag.code.as_deref(), Some("ILO-T035"));
+    assert_eq!(diag.code, Some("ILO-T035"));
     assert!(diag.message.contains("toobig"));
 }
 
@@ -111,7 +120,10 @@ fn vm_call_register_overflow_names_caller_and_callee() {
     src.push_str(";r=callee x1 x2 x3 x4 x5 x6 x7 x8 x9 x10;+r 0");
 
     let prog = parse(&src);
-    let err = vm::compile(&prog).expect_err("expected call register-cap error");
+    let err = match vm::compile(&prog) {
+        Ok(_) => panic!("expected call register-cap error, compile succeeded"),
+        Err(e) => e,
+    };
 
     match err {
         CompileError::CallRegisterOverflow {
@@ -141,10 +153,13 @@ fn vm_call_register_overflow_diagnostic_carries_ilo_t036() {
     src.push_str(";r=callee x1 x2 x3 x4 x5 x6 x7 x8 x9 x10;+r 0");
 
     let prog = parse(&src);
-    let err = vm::compile(&prog).expect_err("expected call register-cap error");
+    let err = match vm::compile(&prog) {
+        Ok(_) => panic!("expected call register-cap error, compile succeeded"),
+        Err(e) => e,
+    };
     let diag = ilo::diagnostic::Diagnostic::from(&err);
 
-    let code = diag.code.as_deref().unwrap_or("");
+    let code = diag.code.unwrap_or("");
     assert!(
         code == "ILO-T035" || code == "ILO-T036",
         "expected ILO-T035 or ILO-T036, got {code:?}"

@@ -1423,7 +1423,7 @@ impl RegCompiler {
     }
 
     fn alloc_reg(&mut self) -> u8 {
-        if self.next_reg >= 255 {
+        if self.next_reg == 255 {
             // Latch a structured error attributed to the current function and
             // its decl span, then return a sentinel so compilation can
             // continue collecting downstream diagnostics. compile_program
