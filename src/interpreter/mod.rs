@@ -2256,7 +2256,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             _ => {
                 return Err(RuntimeError::new(
                     "ILO-R009",
-                    format!("post requires (t, t), got ({:?}, {:?})", args[0], args[1]),
+                    format!("pst requires (t, t), got ({:?}, {:?})", args[0], args[1]),
                 ));
             }
         };
@@ -2275,7 +2275,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 other => {
                     return Err(RuntimeError::new(
                         "ILO-R009",
-                        format!("post headers must be M t t, got {:?}", other),
+                        format!("pst headers must be M t t, got {:?}", other),
                     ));
                 }
             }
@@ -2307,6 +2307,58 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 ))))
             }
         };
+    }
+    if builtin == Some(Builtin::Run) && args.len() == 2 {
+        // run cmd:t args:L t  >  R (M t t) t
+        //
+        // Argv-list process spawn. No shell, no string interpolation, no glob.
+        // Returns a 3-key Map[Text, Text] on success: stdout / stderr / code.
+        // Result Err only on spawn failure (cmd not found, permission denied,
+        // and similar) — a non-zero exit code is NOT an error; the caller
+        // inspects `code` in the map. Matches Python subprocess.run semantics.
+        //
+        // Captures stdout AND stderr separately. Output > RUN_OUTPUT_CAP bytes
+        // (10 MiB per stream) is rejected with an Err to avoid runaway
+        // buffering on misbehaving children. v1 has no env/cwd override and
+        // no stdin piping — the child inherits the parent env+cwd and reads
+        // /dev/null on stdin. Follow-ups: 4-arity form for env, optional
+        // stdin Text arg, configurable output cap.
+        let cmd = match &args[0] {
+            Value::Text(s) => s.clone(),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("run requires text (cmd), got {:?}", other),
+                ));
+            }
+        };
+        let argv: Vec<String> = match &args[1] {
+            Value::List(items) => {
+                let mut out = Vec::with_capacity(items.len());
+                for (i, v) in items.iter().enumerate() {
+                    match v {
+                        Value::Text(s) => out.push((**s).clone()),
+                        other => {
+                            return Err(RuntimeError::new(
+                                "ILO-R009",
+                                format!(
+                                    "run argv must be L t (text list); element {i} is {:?}",
+                                    other
+                                ),
+                            ));
+                        }
+                    }
+                }
+                out
+            }
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("run argv must be L t (text list), got {:?}", other),
+                ));
+            }
+        };
+        return Ok(run_spawn(cmd.as_str(), &argv));
     }
     if builtin == Some(Builtin::Trm) && args.len() == 1 {
         return match &args[0] {
@@ -5295,6 +5347,186 @@ pub(crate) const GET_MANY_MAX_CONCURRENCY: usize = 10;
 /// `GET_MANY_MAX_CONCURRENCY` at a time. Each chunk runs in parallel and
 /// joins before the next chunk starts. When the `http` feature is disabled,
 /// every URL becomes `Err("http feature not enabled")`.
+/// Per-stream cap on captured child output, in bytes. Hit on either stream
+/// produces an Err result rather than a partial Map — agent scripts that
+/// reach this limit are almost always misconfigured (tailing a log, piping
+/// a binary), and a typed Err lets the caller surface the configuration
+/// bug cleanly instead of silently truncating downstream JSON.
+pub(crate) const RUN_OUTPUT_CAP: usize = 10 * 1024 * 1024;
+
+/// Spawn `cmd` with `argv` via `std::process::Command` and return the result
+/// as a typed `Value::Ok(Map[Text, Text])` on success, or `Value::Err(text)`
+/// on spawn failure / output cap exceeded.
+///
+/// **No shell.** The argv list is passed directly to `Command::args` — there
+/// is no `sh -c`, no string concatenation, and no glob expansion. This is
+/// the principled choice that makes `run` safer than bash for agent
+/// orchestration: ilo refuses to provide an injection vector, but does
+/// provide controlled exec.
+///
+/// **Inherits parent env + cwd.** No env or cwd override in this first
+/// version — that's a follow-up if real workloads need it.
+///
+/// **Captures stdout + stderr separately** as Text. Either stream exceeding
+/// `RUN_OUTPUT_CAP` bytes triggers an Err rather than partial capture, so
+/// downstream JSON pipelines never see a truncated payload.
+///
+/// **Stdin is /dev/null.** Stdin piping is a follow-up (4-arity form taking
+/// optional input Text).
+///
+/// **Non-zero exit is NOT an error.** Matches Python's `subprocess.run`:
+/// the caller inspects `code` in the returned Map. Spawn failures (cmd
+/// not found, permission denied, etc.) ARE errors and surface as Err.
+#[cfg(not(target_family = "wasm"))]
+pub(crate) fn run_spawn(cmd: &str, argv: &[String]) -> Value {
+    use std::process::{Command, Stdio};
+
+    let mut command = Command::new(cmd);
+    command
+        .args(argv)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    let mut child = match command.spawn() {
+        Ok(c) => c,
+        Err(e) => {
+            return Value::Err(Box::new(Value::Text(Arc::new(format!(
+                "run: failed to spawn {cmd:?}: {e}"
+            )))));
+        }
+    };
+
+    // Read both streams concurrently so a child that fills its stderr pipe
+    // while we drain stdout doesn't deadlock. Per-stream cap enforced inside
+    // the reader; on cap-exceeded we drop the child and surface an Err.
+    let mut stdout_pipe = child.stdout.take();
+    let mut stderr_pipe = child.stderr.take();
+
+    let (stdout_res, stderr_res) = std::thread::scope(|s| {
+        let so = s.spawn(|| -> std::result::Result<Vec<u8>, String> {
+            let mut buf = Vec::new();
+            if let Some(p) = stdout_pipe.as_mut() {
+                read_capped(p, &mut buf, RUN_OUTPUT_CAP)?;
+            }
+            Ok(buf)
+        });
+        let se = s.spawn(|| -> std::result::Result<Vec<u8>, String> {
+            let mut buf = Vec::new();
+            if let Some(p) = stderr_pipe.as_mut() {
+                read_capped(p, &mut buf, RUN_OUTPUT_CAP)?;
+            }
+            Ok(buf)
+        });
+        let so = so
+            .join()
+            .unwrap_or_else(|_| Err("stdout reader panicked".to_string()));
+        let se = se
+            .join()
+            .unwrap_or_else(|_| Err("stderr reader panicked".to_string()));
+        (so, se)
+    });
+
+    let stdout_buf = match stdout_res {
+        Ok(b) => b,
+        Err(e) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Value::Err(Box::new(Value::Text(Arc::new(format!(
+                "run: stdout capture failed: {e}"
+            )))));
+        }
+    };
+    let stderr_buf = match stderr_res {
+        Ok(b) => b,
+        Err(e) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Value::Err(Box::new(Value::Text(Arc::new(format!(
+                "run: stderr capture failed: {e}"
+            )))));
+        }
+    };
+
+    let status = match child.wait() {
+        Ok(s) => s,
+        Err(e) => {
+            return Value::Err(Box::new(Value::Text(Arc::new(format!(
+                "run: wait failed: {e}"
+            )))));
+        }
+    };
+
+    // UTF-8 conversion is lossy — agents asking `run` to drive a binary
+    // protocol should reach for a different tool. Lossy keeps the Map
+    // schema honest as Text/Text without forcing an Err on every utf-8
+    // boundary trip.
+    let stdout = String::from_utf8_lossy(&stdout_buf).into_owned();
+    let stderr = String::from_utf8_lossy(&stderr_buf).into_owned();
+    let code = status.code().map(|c| c.to_string()).unwrap_or_else(|| {
+        // On unix, .code() is None when the process was killed by a signal.
+        // Surface the signal as a negative-style string so the caller can
+        // still branch on it; we deliberately do not raise Err here because
+        // signal termination is a normal outcome for `kill -9` style flows.
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::ExitStatusExt;
+            if let Some(sig) = status.signal() {
+                return format!("signal:{sig}");
+            }
+        }
+        "unknown".to_string()
+    });
+
+    let mut m: HashMap<MapKey, Value> = HashMap::with_capacity(3);
+    m.insert(
+        MapKey::Text("stdout".to_string()),
+        Value::Text(Arc::new(stdout)),
+    );
+    m.insert(
+        MapKey::Text("stderr".to_string()),
+        Value::Text(Arc::new(stderr)),
+    );
+    m.insert(
+        MapKey::Text("code".to_string()),
+        Value::Text(Arc::new(code)),
+    );
+    Value::Ok(Box::new(Value::Map(Arc::new(m))))
+}
+
+#[cfg(target_family = "wasm")]
+pub(crate) fn run_spawn(_cmd: &str, _argv: &[String]) -> Value {
+    Value::Err(Box::new(Value::Text(Arc::new(
+        "run: process spawn not available on wasm".to_string(),
+    ))))
+}
+
+/// Drain `reader` into `buf` while enforcing `cap` bytes per call. Returns
+/// Err(message) when the cap is exceeded so the caller can surface an Err
+/// rather than partial capture.
+#[cfg(not(target_family = "wasm"))]
+fn read_capped<R: std::io::Read>(
+    reader: &mut R,
+    buf: &mut Vec<u8>,
+    cap: usize,
+) -> std::result::Result<(), String> {
+    let mut chunk = [0u8; 8192];
+    loop {
+        match reader.read(&mut chunk) {
+            Ok(0) => return Ok(()),
+            Ok(n) => {
+                if buf.len() + n > cap {
+                    return Err(format!(
+                        "captured output exceeded cap ({cap} bytes); kill child + abort"
+                    ));
+                }
+                buf.extend_from_slice(&chunk[..n]);
+            }
+            Err(e) => return Err(format!("read error: {e}")),
+        }
+    }
+}
+
 pub(crate) fn get_many_fetch(urls: &[String]) -> Vec<Value> {
     if urls.is_empty() {
         return Vec::new();
@@ -9075,21 +9307,18 @@ mod tests {
         );
     }
 
-    // L648: post wrong arg types
+    // L648: pst wrong arg types (renamed from `post` in 0.12.0)
     #[test]
-    fn interpret_post_wrong_arg_types() {
-        let err = run_str_err(r#"f>t;post 42 "body""#, Some("f"), vec![]);
-        assert!(err.contains("post"), "got: {err}");
+    fn interpret_pst_wrong_arg_types() {
+        let err = run_str_err(r#"f>t;pst 42 "body""#, Some("f"), vec![]);
+        assert!(err.contains("pst"), "got: {err}");
     }
 
-    // L656: post with invalid headers
+    // L656: pst with invalid headers
     #[test]
-    fn interpret_post_invalid_headers() {
-        let err = run_str_err(r#"f>t;post "http://x" "body" 42"#, Some("f"), vec![]);
-        assert!(
-            err.contains("headers") || err.contains("post"),
-            "got: {err}"
-        );
+    fn interpret_pst_invalid_headers() {
+        let err = run_str_err(r#"f>t;pst "http://x" "body" 42"#, Some("f"), vec![]);
+        assert!(err.contains("headers") || err.contains("pst"), "got: {err}");
     }
 
     // L703: unq wrong type

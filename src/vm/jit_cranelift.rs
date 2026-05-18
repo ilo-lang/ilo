@@ -7063,7 +7063,7 @@ mod tests {
     #[test]
     fn cranelift_post_compiles() {
         let tokens: Vec<crate::lexer::Token> =
-            crate::lexer::lex("f url:t body:t>R t t;post url body")
+            crate::lexer::lex("f url:t body:t>R t t;pst url body")
                 .unwrap()
                 .into_iter()
                 .map(|(t, _)| t)
@@ -7344,7 +7344,7 @@ mod tests {
     fn cranelift_posth_compiles() {
         // OP_POSTH is emitted when `post` receives a Map argument for headers.
         let tokens: Vec<crate::lexer::Token> =
-            crate::lexer::lex("f url:t body:t hdrs:M t t>R t t;post url body hdrs")
+            crate::lexer::lex("f url:t body:t hdrs:M t t>R t t;pst url body hdrs")
                 .unwrap()
                 .into_iter()
                 .map(|(t, _)| t)

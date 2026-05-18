@@ -777,7 +777,8 @@ fn expr_dollar_get() {
 
 #[test]
 fn expr_dollar_bang() {
-    ok("f m:M t n k:t>n;$!(mget m k)");
+    // Post-0.12.0 `$` is rebound to `run` (2-arg), not `get` (1-arg).
+    ok(r#"f>M t t;$!"echo" ["hi"]"#);
 }
 
 #[test]

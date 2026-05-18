@@ -308,7 +308,7 @@ fn aot_cov_getmany() {
 fn aot_cov_posth() {
     expect_codegen_ok(
         "posth",
-        "f u:t b:t>R t t;h=mmap;h=mset h \"x-api-key\" \"secret\";post u b h",
+        "f u:t b:t>R t t;h=mmap;h=mset h \"x-api-key\" \"secret\";pst u b h",
     );
 }
 

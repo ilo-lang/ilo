@@ -5509,8 +5509,8 @@ mod tests {
 
     #[test]
     fn codegen_cov_http_ops() {
-        let bytes = compile_to_object_bytes("f url:t body:t>R t t;post url body");
-        assert!(bytes.is_ok(), "post codegen failed: {:?}", bytes.err());
+        let bytes = compile_to_object_bytes("f url:t body:t>R t t;pst url body");
+        assert!(bytes.is_ok(), "pst codegen failed: {:?}", bytes.err());
         // OP_GETH is emitted when `get` receives a Map argument for headers.
         let bytes2 = compile_to_object_bytes("f url:t hdrs:M t t>R t t;get url hdrs");
         assert!(bytes2.is_ok(), "geth codegen failed: {:?}", bytes2.err());
@@ -5984,7 +5984,7 @@ f a:t b:t>t;join a b"#,
     #[test]
     fn codegen_cov_posth() {
         // OP_POSTH is emitted when `post` receives a Map argument for headers.
-        let bytes = compile_to_object_bytes("f url:t body:t hdrs:M t t>R t t;post url body hdrs");
+        let bytes = compile_to_object_bytes("f url:t body:t hdrs:M t t>R t t;pst url body hdrs");
         assert!(bytes.is_ok(), "posth codegen failed: {:?}", bytes.err());
     }
 
