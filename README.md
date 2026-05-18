@@ -30,8 +30,8 @@ AI agents pay three costs per program: generation tokens, error feedback, retrie
 <details open>
 <summary>macOS / Linux</summary>
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/ilo-lang/ilo/main/install.sh | sh
+```sh
+curl -fsSL https://ilo-lang.ai/install.sh | sh
 ```
 
 </details>
@@ -40,7 +40,7 @@ curl -fsSL https://raw.githubusercontent.com/ilo-lang/ilo/main/install.sh | sh
 <summary>Windows (PowerShell)</summary>
 
 ```powershell
-Invoke-WebRequest -Uri https://github.com/ilo-lang/ilo/releases/latest/download/ilo-x86_64-pc-windows-msvc.exe -OutFile ilo.exe
+iwr -useb https://ilo-lang.ai/install.ps1 | iex
 ```
 
 </details>

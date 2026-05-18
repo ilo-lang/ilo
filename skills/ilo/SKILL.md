@@ -302,7 +302,7 @@ Safe endings: binary/unary operators, index access, match blocks, text/number li
 ## Install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/ilo-lang/ilo/main/install.sh | sh
+curl -fsSL https://ilo-lang.ai/install.sh | sh
 ```
 
 ## Examples
