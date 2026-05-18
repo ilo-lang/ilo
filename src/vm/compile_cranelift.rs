@@ -4505,6 +4505,15 @@ mod tests {
     use super::*;
     use crate::lexer;
     use crate::parser;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    fn aot_tmp_path(tag: &str) -> std::path::PathBuf {
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+        let mut p = std::env::temp_dir();
+        p.push(format!("ilo_test_aot_{tag}_{}_{n}", std::process::id()));
+        p
+    }
 
     fn compile_program(source: &str) -> CompiledProgram {
         let tokens = lexer::lex(source).unwrap();
@@ -4528,7 +4537,7 @@ mod tests {
     #[test]
     fn aot_compile_simple_multiply() {
         let compiled = compile_program("f x:n>n;*x 2");
-        let tmp = std::env::temp_dir().join("ilo_test_aot_mul");
+        let tmp = aot_tmp_path("mul");
         let out = tmp.to_str().unwrap();
         compile_to_binary(&compiled, "f", out).unwrap();
 
@@ -4544,7 +4553,7 @@ mod tests {
     #[test]
     fn aot_compile_add_two_args() {
         let compiled = compile_program("f a:n b:n>n;+a b");
-        let tmp = std::env::temp_dir().join("ilo_test_aot_add");
+        let tmp = aot_tmp_path("add");
         let out = tmp.to_str().unwrap();
         compile_to_binary(&compiled, "f", out).unwrap();
 
@@ -4561,7 +4570,7 @@ mod tests {
     fn aot_compile_conditional() {
         // if x > 0 then x * 2 else neg(x)
         let compiled = compile_program("f x:n>n;?>x 0 *x 2 *x -1");
-        let tmp = std::env::temp_dir().join("ilo_test_aot_cond");
+        let tmp = aot_tmp_path("cond");
         let out = tmp.to_str().unwrap();
         compile_to_binary(&compiled, "f", out).unwrap();
 
@@ -4585,7 +4594,7 @@ mod tests {
     fn aot_compile_recursive() {
         // Recursive factorial — now supported via direct calls
         let compiled = compile_program("fac n:n>n;<=n 1 1;r=fac -n 1;*n r");
-        let tmp = std::env::temp_dir().join("ilo_test_aot_rec");
+        let tmp = aot_tmp_path("rec");
         let out = tmp.to_str().unwrap();
         compile_to_binary(&compiled, "fac", out).unwrap();
 
@@ -4601,7 +4610,7 @@ mod tests {
     #[test]
     fn aot_no_args_function() {
         let compiled = compile_program("f >n;42");
-        let tmp = std::env::temp_dir().join("ilo_test_aot_noargs");
+        let tmp = aot_tmp_path("noargs");
         let out = tmp.to_str().unwrap();
         compile_to_binary(&compiled, "f", out).unwrap();
 
@@ -4618,7 +4627,7 @@ mod tests {
         // Two sequential calls: a=dbl(n), then triple(a)
         let compiled =
             compile_program("dbl x:n>n;*x 2\ntriple x:n>n;*x 3\nf n:n>n;a=dbl n;triple a");
-        let tmp = std::env::temp_dir().join("ilo_test_aot_seq_calls");
+        let tmp = aot_tmp_path("seq_calls");
         let out = tmp.to_str().unwrap();
         compile_to_binary(&compiled, "f", out).unwrap();
 
@@ -4636,7 +4645,7 @@ mod tests {
         // Pipe chain: i>>dbl>>inc>>dbl>>inc = inc(dbl(inc(dbl(i)))) = 4i+3
         let compiled =
             compile_program("dbl x:n>n;*x 2\ninc x:n>n;+x 1\nf n:n>n;n>>dbl>>inc>>dbl>>inc");
-        let tmp = std::env::temp_dir().join("ilo_test_aot_pipe");
+        let tmp = aot_tmp_path("pipe");
         let out = tmp.to_str().unwrap();
         compile_to_binary(&compiled, "f", out).unwrap();
 
@@ -5100,7 +5109,7 @@ mod tests {
     #[test]
     fn compile_to_binary_undefined_function_returns_error() {
         let compiled = compile_program("f x:n>n;+x 1");
-        let tmp = std::env::temp_dir().join("ilo_test_aot_no_such_fn");
+        let tmp = aot_tmp_path("no_such_fn");
         let out = tmp.to_str().unwrap();
         let result = compile_to_binary(&compiled, "does_not_exist", out);
         assert!(result.is_err());
@@ -5118,7 +5127,7 @@ mod tests {
         // completes end-to-end (if libilo.a is present) or fails at the LINKING step
         // (not at codegen). In either case, Cranelift IR generation was exercised.
         let compiled = compile_program("f x:n>n;*x 2");
-        let tmp = std::env::temp_dir().join("ilo_test_aot_codegen_check");
+        let tmp = aot_tmp_path("codegen_check");
         let out = tmp.to_str().unwrap();
         let result = compile_to_binary(&compiled, "f", out);
         let _ = std::fs::remove_file(out);
@@ -5147,7 +5156,7 @@ mod tests {
     #[test]
     fn compile_to_binary_guard_reaches_link_step_or_succeeds() {
         let compiled = compile_program("f x:n>n;>x 5{1};0");
-        let tmp = std::env::temp_dir().join("ilo_test_aot_guard_check");
+        let tmp = aot_tmp_path("guard_check");
         let out = tmp.to_str().unwrap();
         let result = compile_to_binary(&compiled, "f", out);
         let _ = std::fs::remove_file(out);
@@ -5169,7 +5178,7 @@ mod tests {
     #[test]
     fn compile_to_binary_while_loop_reaches_link_step_or_succeeds() {
         let compiled = compile_program("f n:n>n;s=0;i=0;wh <i n{s=+s i;i=+i 1};s");
-        let tmp = std::env::temp_dir().join("ilo_test_aot_loop_check");
+        let tmp = aot_tmp_path("loop_check");
         let out = tmp.to_str().unwrap();
         let result = compile_to_binary(&compiled, "f", out);
         let _ = std::fs::remove_file(out);
@@ -5191,7 +5200,7 @@ mod tests {
     #[test]
     fn compile_to_binary_record_type_reaches_link_step_or_succeeds() {
         let compiled = compile_program("type pt{x:n;y:n}\nf>n;p=pt x:3 y:4;p.x");
-        let tmp = std::env::temp_dir().join("ilo_test_aot_record_check");
+        let tmp = aot_tmp_path("record_check");
         let out = tmp.to_str().unwrap();
         let result = compile_to_binary(&compiled, "f", out);
         let _ = std::fs::remove_file(out);
@@ -5213,7 +5222,7 @@ mod tests {
     #[test]
     fn compile_to_binary_string_ops_reaches_link_step_or_succeeds() {
         let compiled = compile_program("f x:t>t;cat x \" world\"");
-        let tmp = std::env::temp_dir().join("ilo_test_aot_str_check");
+        let tmp = aot_tmp_path("str_check");
         let out = tmp.to_str().unwrap();
         let result = compile_to_binary(&compiled, "f", out);
         let _ = std::fs::remove_file(out);
