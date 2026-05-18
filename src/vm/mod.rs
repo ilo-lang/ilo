@@ -510,6 +510,13 @@ pub(crate) fn is_tree_bridge_eligible(b: crate::builtins::Builtin, argc: usize) 
         // is lossless, so VM/Cranelift get it for free. The actual sleep is
         // delegated to `std::thread::sleep` inside the tree interpreter.
         (Builtin::Sleep, 1) => true,
+        // `run cmd argv` — argv-list process spawn. Same pattern as `rd`/
+        // `sleep`: bridged through the tree interpreter so VM/Cranelift get
+        // cross-engine parity for free. Returns R (M t t) t — auto-unwrap
+        // (`run!`) supported via `tree_bridge_returns_result`. See SPEC.md
+        // "Process spawn" for the security framing (no shell, no glob, no
+        // interpolation).
+        (Builtin::Run, 2) => true,
         // HOFs that take a FnRef + list. The bridge routes them through the
         // tree interpreter, which dispatches user-fn callbacks via the
         // Env populated from the ACTIVE_AST_PROGRAM TLS.
@@ -551,7 +558,7 @@ pub(crate) fn is_tree_bridge_eligible(b: crate::builtins::Builtin, argc: usize) 
 /// the auto-unwrap (`!`) protocol when called via the tree bridge.
 pub(crate) fn tree_bridge_returns_result(b: crate::builtins::Builtin) -> bool {
     use crate::builtins::Builtin;
-    matches!(b, Builtin::Rd | Builtin::Rdb | Builtin::Mapr)
+    matches!(b, Builtin::Rd | Builtin::Rdb | Builtin::Mapr | Builtin::Run)
 }
 
 pub(crate) const OP_GETMANY: u8 = 136; // R[A] = get_many(R[B])  (L t → L (R t t), concurrent fan-out)
@@ -10206,7 +10213,7 @@ impl<'a> VM<'a> {
                     let vb = reg!(b);
                     let vc = reg!(c);
                     if !vb.is_string() || !vc.is_string() {
-                        vm_err!(VmError::Type("post requires two strings (url, body)"));
+                        vm_err!(VmError::Type("pst requires two strings (url, body)"));
                     }
                     #[cfg(feature = "http")]
                     let result = {
@@ -10331,7 +10338,7 @@ impl<'a> VM<'a> {
                     let vc = reg!(c);
                     let vd = reg!(d);
                     if !vb.is_string() || !vc.is_string() {
-                        vm_err!(VmError::Type("post requires string url and body"));
+                        vm_err!(VmError::Type("pst requires string url and body"));
                     }
                     #[cfg(feature = "http")]
                     let result = {
@@ -20452,18 +20459,32 @@ mod tests {
     }
 
     #[test]
-    fn vm_dollar_desugars_to_get() {
-        // $url should compile the same as get url
-        let prog = parse_program(r#"f url:t>R t t;$url"#);
+    fn vm_dollar_desugars_to_run() {
+        // Post-0.12.0, `$cmd argv` desugars to `run cmd argv` and compiles
+        // through the tree-bridge (no native OP_RUN opcode). Verify the
+        // bridge dispatch is emitted, not OP_GET.
+        let prog = parse_program(r#"f cmd:t argv:L t>R (M t t) t;$cmd argv"#);
         let compiled = compile(&prog).unwrap();
         let chunk = &compiled.chunks[0];
+        let has_bridge = chunk
+            .code
+            .iter()
+            .any(|inst| (inst >> 24) as u8 == OP_CALL_BUILTIN_TREE);
+        assert!(
+            has_bridge,
+            "expected OP_CALL_BUILTIN_TREE in bytecode from $ syntax (now bound to run)"
+        );
+        // Sanity: the old OP_GET binding must be gone for $.
         let has_get_op = chunk.code.iter().any(|inst| (inst >> 24) as u8 == OP_GET);
-        assert!(has_get_op, "expected OP_GET in bytecode from $ syntax");
+        assert!(
+            !has_get_op,
+            "OP_GET should NOT appear — $ is rebound to run, not get"
+        );
     }
 
     #[test]
     fn vm_post_compiles_to_op_post() {
-        let prog = parse_program(r#"f url:t body:t>R t t;post url body"#);
+        let prog = parse_program(r#"f url:t body:t>R t t;pst url body"#);
         let compiled = compile(&prog).unwrap();
         let chunk = &compiled.chunks[0];
         let has_post_op = chunk.code.iter().any(|inst| (inst >> 24) as u8 == OP_POST);
@@ -20472,7 +20493,7 @@ mod tests {
 
     #[test]
     fn vm_post_unwrap_compiles_to_op_post() {
-        let prog = parse_program(r#"f url:t body:t>t;post! url body"#);
+        let prog = parse_program(r#"f url:t body:t>t;pst! url body"#);
         let compiled = compile(&prog).unwrap();
         let chunk = &compiled.chunks[0];
         let has_post_op = chunk.code.iter().any(|inst| (inst >> 24) as u8 == OP_POST);
@@ -20490,7 +20511,7 @@ mod tests {
 
     #[test]
     fn vm_post_with_headers_compiles_to_op_posth() {
-        let prog = parse_program(r#"f url:t body:t hdrs:M t t>R t t;post url body hdrs"#);
+        let prog = parse_program(r#"f url:t body:t hdrs:M t t>R t t;pst url body hdrs"#);
         let compiled = compile(&prog).unwrap();
         let chunk = &compiled.chunks[0];
         let has_posth = chunk.code.iter().any(|inst| (inst >> 24) as u8 == OP_POSTH);
@@ -20522,7 +20543,7 @@ mod tests {
     #[test]
     fn vm_post_with_headers_bad_host_returns_err() {
         // bad host → Err value, even with headers passed as parameter
-        let src = r#"f url:t body:t hdrs:M t t>R t t;post url body hdrs"#;
+        let src = r#"f url:t body:t hdrs:M t t>R t t;pst url body hdrs"#;
         let mut headers = std::collections::HashMap::new();
         headers.insert(
             crate::interpreter::MapKey::Text("x-api-key".to_string()),
@@ -22752,7 +22773,7 @@ mod tests {
     #[test]
     fn vm_post_bad_host_returns_err() {
         // post to an unreachable host should return Err, not panic
-        let src = r#"f url:t body:t>R t t;post url body"#;
+        let src = r#"f url:t body:t>R t t;pst url body"#;
         let result = vm_run(
             src,
             Some("f"),
@@ -22981,7 +23002,7 @@ mod tests {
     fn vm_posth_empty_map_headers_bad_host() {
         // post url body headers where headers is an empty map — exercises the vd.is_heap() +
         // HeapObj::Map branch in OP_POSTH. Bad URL → Err.
-        let src = r#"f url:t body:t hdrs:M t t>R t t;post url body hdrs"#;
+        let src = r#"f url:t body:t hdrs:M t t>R t t;pst url body hdrs"#;
         let result = vm_run(
             src,
             Some("f"),
@@ -23092,7 +23113,7 @@ mod tests {
 
     #[test]
     fn vm_post_with_headers_bang_compiles_unwrap_sequence() {
-        let prog = parse_program(r#"f url:t body:t hdrs:M t t>t;post! url body hdrs"#);
+        let prog = parse_program(r#"f url:t body:t hdrs:M t t>t;pst! url body hdrs"#);
         let compiled = compile(&prog).unwrap();
         let chunk = &compiled.chunks[0];
         let has_posth = chunk.code.iter().any(|inst| (inst >> 24) as u8 == OP_POSTH);
@@ -26648,7 +26669,7 @@ mod tests {
     #[test]
     fn vm_post_non_string_args_error() {
         let err = vm_run_err(
-            "f u:z b:z>R t t;post u b",
+            "f u:z b:z>R t t;pst u b",
             Some("f"),
             vec![
                 Value::Number(1.0),
@@ -26656,7 +26677,7 @@ mod tests {
             ],
         );
         assert!(
-            err.contains("post") || err.contains("string") || err.contains("type"),
+            err.contains("pst") || err.contains("string") || err.contains("type"),
             "got: {err}"
         );
     }
@@ -26682,7 +26703,7 @@ mod tests {
     #[test]
     fn vm_posth_non_string_url_error() {
         let err = vm_run_err(
-            "f u:z b:z h:M t t>R t t;post u b h",
+            "f u:z b:z h:M t t>R t t;pst u b h",
             Some("f"),
             vec![
                 Value::Number(1.0),
@@ -26691,7 +26712,7 @@ mod tests {
             ],
         );
         assert!(
-            err.contains("post") || err.contains("string") || err.contains("type"),
+            err.contains("pst") || err.contains("string") || err.contains("type"),
             "got: {err}"
         );
     }
@@ -29573,9 +29594,9 @@ mod tests {
 
     #[test]
     fn vm_post_wrong_arg_types() {
-        let err = vm_run_err(r#"f>t;post 42 "body""#, Some("f"), vec![]);
+        let err = vm_run_err(r#"f>t;pst 42 "body""#, Some("f"), vec![]);
         assert!(
-            err.contains("post") || err.contains("text") || err.contains("type"),
+            err.contains("pst") || err.contains("text") || err.contains("type"),
             "got: {err}"
         );
     }
@@ -29583,9 +29604,9 @@ mod tests {
     #[test]
     #[ignore] // VM skips header type validation, makes network call instead
     fn vm_post_invalid_headers() {
-        let err = vm_run_err(r#"f>t;post "http://x" "body" 42"#, Some("f"), vec![]);
+        let err = vm_run_err(r#"f>t;pst "http://x" "body" 42"#, Some("f"), vec![]);
         assert!(
-            err.contains("headers") || err.contains("post") || err.contains("map"),
+            err.contains("headers") || err.contains("pst") || err.contains("map"),
             "got: {err}"
         );
     }

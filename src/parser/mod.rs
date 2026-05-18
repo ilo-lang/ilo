@@ -2145,14 +2145,23 @@ impl Parser {
         }
     }
 
-    /// `$expr` → `get expr`, `$!expr` → `get! expr`, `$!!expr` → `get!! expr`
+    /// `$cmd argv` → `run cmd argv`, `$!cmd argv` → `run! cmd argv`,
+    /// `$!!cmd argv` → `run!! cmd argv`.
+    ///
+    /// In 0.12.0 the `$` sigil was rebound from HTTP `get` (parochial) to
+    /// the new `run` builtin (argv-list process spawn). `$` for shell-exec
+    /// reads cross-language — bash, Perl, Ruby, Python, PowerShell, Zx all
+    /// use `$` for command substitution. The semantics are still argv-list
+    /// (no shell, no interpolation, no glob); the sigil is just a token-cost
+    /// shortcut over `run`.
     fn parse_dollar(&mut self) -> Result<Expr> {
         self.advance(); // consume $
         let unwrap = self.maybe_postfix_unwrap();
-        let arg = self.parse_operand()?;
+        let cmd = self.parse_operand()?;
+        let argv = self.parse_operand()?;
         Ok(Expr::Call {
-            function: "get".to_string(),
-            args: vec![arg],
+            function: "run".to_string(),
+            args: vec![cmd, argv],
             unwrap,
         })
     }
@@ -6685,11 +6694,11 @@ mod tests {
         assert!(matches!(&body[0].node, Stmt::Guard { .. }));
     }
 
-    // ---- Dollar / HTTP get tests ----
+    // ---- Dollar / run sigil tests (0.12.0: $ rebound from `get` to `run`) ----
 
     #[test]
-    fn parse_dollar_desugars_to_get() {
-        let prog = parse_str(r#"f url:t>R t t;$url"#);
+    fn parse_dollar_desugars_to_run() {
+        let prog = parse_str(r#"f cmd:t argv:L t>R (M t t) t;$cmd argv"#);
         let Decl::Function { body, .. } = &prog.declarations[0] else {
             panic!("expected function")
         };
@@ -6699,16 +6708,16 @@ mod tests {
             unwrap,
         }) = &body[0].node
         else {
-            panic!("expected get call")
+            panic!("expected run call")
         };
-        assert_eq!(function, "get");
-        assert_eq!(args.len(), 1);
+        assert_eq!(function, "run");
+        assert_eq!(args.len(), 2);
         assert!(!unwrap.is_any());
     }
 
     #[test]
-    fn parse_dollar_bang_desugars_to_get_unwrap() {
-        let prog = parse_str(r#"f url:t>t;$!url"#);
+    fn parse_dollar_bang_desugars_to_run_unwrap() {
+        let prog = parse_str(r#"f cmd:t argv:L t>M t t;$!cmd argv"#);
         let Decl::Function { body, .. } = &prog.declarations[0] else {
             panic!("expected function")
         };
@@ -6718,23 +6727,24 @@ mod tests {
             unwrap,
         }) = &body[0].node
         else {
-            panic!("expected get! call")
+            panic!("expected run! call")
         };
-        assert_eq!(function, "get");
-        assert_eq!(args.len(), 1);
+        assert_eq!(function, "run");
+        assert_eq!(args.len(), 2);
         assert!(unwrap.is_propagate());
     }
 
     #[test]
     fn parse_dollar_with_string_literal() {
-        let prog = parse_str(r#"f>R t t;$"http://example.com""#);
+        let prog = parse_str(r#"f>R (M t t) t;$"echo" ["hi"]"#);
         let Decl::Function { body, .. } = &prog.declarations[0] else {
             panic!("expected function")
         };
         let Stmt::Expr(Expr::Call { function, args, .. }) = &body[0].node else {
-            panic!("expected get call")
+            panic!("expected run call")
         };
-        assert_eq!(function, "get");
+        assert_eq!(function, "run");
+        assert_eq!(args.len(), 2);
         assert!(matches!(&args[0], Expr::Literal(Literal::Text(_))));
     }
 
@@ -6876,8 +6886,10 @@ mod tests {
 
     #[test]
     fn parse_dollar_in_operand() {
-        // $ in operand position (inside a binary op)
-        let prog = parse_str(r#"f url:t>R t t;cat [$url] ",""#);
+        // $ in operand position. Post-0.12.0 the sigil takes (cmd, argv);
+        // wrap in parens so the outer `cat` doesn't slurp the argv list as
+        // its own second arg.
+        let prog = parse_str(r#"f cmd:t argv:L t>t;cat [($cmd argv)] ",""#);
         let Decl::Function { body, .. } = &prog.declarations[0] else {
             panic!("expected function")
         };
@@ -8004,8 +8016,9 @@ mod tests {
 
     #[test]
     fn parse_dollar_as_operand_in_let() {
-        // `r = $url` where `$url` appears in operand position inside a let binding
-        let prog = parse_str(r#"f url:t>R t t;r=$url;r"#);
+        // `r = $cmd argv` where `$cmd argv` appears in operand position inside
+        // a let binding. Post-0.12.0 the sigil binds to `run`, not `get`.
+        let prog = parse_str(r#"f cmd:t argv:L t>R (M t t) t;r=$cmd argv;r"#);
         let Decl::Function { body, .. } = &prog.declarations[0] else {
             panic!("expected function")
         };
@@ -8017,9 +8030,9 @@ mod tests {
             function, unwrap, ..
         } = value
         else {
-            panic!("expected get call")
+            panic!("expected run call")
         };
-        assert_eq!(function, "get");
+        assert_eq!(function, "run");
         assert!(!unwrap.is_any());
     }
 
@@ -8185,9 +8198,10 @@ mod tests {
 
     #[test]
     fn parse_dollar_as_function_argument() {
-        // `foo $url` — Dollar appears as an argument in parse_operand (line 1413),
-        // distinct from `$url` at statement level which uses parse_expr_inner (line 1118).
-        let prog = parse_str(r#"f url:t>t;fetch $url"#);
+        // `foo ($cmd argv)` — Dollar appears parenthesised as an argument so
+        // the outer call doesn't slurp the argv list. Post-0.12.0 the sigil
+        // expands to `run` (2-arg), not `get` (1-arg).
+        let prog = parse_str(r#"f cmd:t argv:L t>t;fetch ($cmd argv)"#);
         let Decl::Function { body, .. } = &prog.declarations[0] else {
             panic!("expected function")
         };
@@ -8201,9 +8215,9 @@ mod tests {
             function: inner_fn, ..
         } = &args[0]
         else {
-            panic!("expected get call as arg")
+            panic!("expected run call as arg")
         };
-        assert_eq!(inner_fn, "get");
+        assert_eq!(inner_fn, "run");
     }
 
     // ── Coverage: L798 — literal pattern lookahead when literal is last token ──

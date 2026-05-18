@@ -102,7 +102,7 @@ async fn post_ok_returns_body() {
 
     let url = format!("{}/echo", server.uri());
     let out = ilo()
-        .args([r#"f url:t body:t>R t t;post url body"#, &url, "hello"])
+        .args([r#"f url:t body:t>R t t;pst url body"#, &url, "hello"])
         .output()
         .expect("failed to run ilo");
     assert!(
@@ -129,7 +129,7 @@ async fn post_sends_body() {
 
     let url = format!("{}/submit", server.uri());
     let out = ilo()
-        .args([r#"f url:t body:t>R t t;post url body"#, &url, "payload"])
+        .args([r#"f url:t body:t>R t t;pst url body"#, &url, "payload"])
         .output()
         .expect("failed to run ilo");
     assert!(
@@ -157,7 +157,7 @@ async fn post_ok_and_match_result() {
     // Match on the R t t result to extract the body
     let out = ilo()
         .args([
-            r#"f url:t body:t>t;r=post url body;?r{~v:v;^_:"err"}"#,
+            r#"f url:t body:t>t;r=pst url body;?r{~v:v;^_:"err"}"#,
             &url,
             "input",
         ])
@@ -178,7 +178,7 @@ async fn post_bad_host_returns_err() {
     // from the entry function -> exit 1 with err on stderr, never a crash.
     let out = ilo()
         .args([
-            r#"f url:t body:t>R t t;post url body"#,
+            r#"f url:t body:t>R t t;pst url body"#,
             "http://127.0.0.1:1",
             "body",
         ])
@@ -240,7 +240,7 @@ async fn post_with_header_sent() {
         .await;
 
     let url = format!("{}/submit", server.uri());
-    let code = r#"f url:t>R t t;h=mmap;h=mset h "x-api-key" "tok";post url "payload" h"#;
+    let code = r#"f url:t>R t t;h=mmap;h=mset h "x-api-key" "tok";pst url "payload" h"#;
     let out = ilo()
         .args([code, &url])
         .output()

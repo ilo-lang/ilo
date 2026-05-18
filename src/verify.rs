@@ -328,9 +328,12 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("atan2", &["n", "n"], "n"),
     ("get", &["t"], "R t t"),
     ("get", &["t", "M t t"], "R t t"),
-    ("post", &["t", "t"], "R t t"),
-    ("post", &["t", "t", "M t t"], "R t t"),
+    // pst — HTTP POST. Renamed from `post` in 0.12.0 for the I/O
+    // compression family (rd, wr, srt, flt, fld, fmt).
+    ("pst", &["t", "t"], "R t t"),
+    ("pst", &["t", "t", "M t t"], "R t t"),
     ("get-many", &["L t"], "L (R t t)"),
+    ("run", &["t", "L t"], "R (M t t) t"),
     ("rd", &["t"], "R ? t"),
     ("rd", &["t", "t"], "R ? t"),
     ("rdl", &["t"], "R (L t) t"),
@@ -1512,16 +1515,16 @@ fn builtin_check_args(
             }
             (Ty::Result(Box::new(Ty::Text), Box::new(Ty::Text)), errors)
         }
-        "post" => {
-            // post url body          — 2-arg
-            // post url body headers  — 3-arg: headers is M t t
+        "pst" => {
+            // pst url body          — 2-arg (HTTP POST; renamed from `post` in 0.12.0)
+            // pst url body headers  — 3-arg: headers is M t t
             for (i, arg) in arg_types.iter().enumerate().take(2) {
                 if !compatible(arg, &Ty::Text) {
                     let label = if i == 0 { "url" } else { "body" };
                     errors.push(VerifyError {
                         code: "ILO-T013",
                         function: func_ctx.to_string(),
-                        message: format!("'post' expects t ({label}), got {arg}"),
+                        message: format!("'pst' expects t ({label}), got {arg}"),
                         hint: None,
                         span,
                         is_warning: false,
@@ -1534,7 +1537,7 @@ fn builtin_check_args(
                     errors.push(VerifyError {
                         code: "ILO-T013",
                         function: func_ctx.to_string(),
-                        message: format!("'post' headers arg expects M t t, got {arg}"),
+                        message: format!("'pst' headers arg expects M t t, got {arg}"),
                         hint: None,
                         span,
                         is_warning: false,
@@ -2550,6 +2553,52 @@ fn builtin_check_args(
             }
             (Ty::Number, errors)
         }
+        "run" => {
+            // run cmd:t args:L t  >  R (M t t) t
+            // argv-list process spawn. Result Err only on spawn failure
+            // (cmd not found, permission denied, etc.) — a non-zero exit
+            // code is NOT an error; callers inspect `code` in the success
+            // Map. See SPEC.md "Process spawn" for the security framing.
+            if let Some(arg) = arg_types.first()
+                && !compatible(arg, &Ty::Text)
+            {
+                errors.push(VerifyError {
+                    code: "ILO-T013",
+                    function: func_ctx.to_string(),
+                    message: format!("'run' expects t (cmd), got {arg}"),
+                    hint: Some(
+                        "first arg is the program path or name, e.g. run \"echo\" [\"hi\"]"
+                            .to_string(),
+                    ),
+                    span,
+                    is_warning: false,
+                });
+            }
+            if let Some(arg) = arg_types.get(1) {
+                let list_text = Ty::List(Box::new(Ty::Text));
+                if !compatible(arg, &list_text) {
+                    errors.push(VerifyError {
+                        code: "ILO-T013",
+                        function: func_ctx.to_string(),
+                        message: format!("'run' args slot expects L t, got {arg}"),
+                        hint: Some(
+                            "second arg is the argv list (no shell interpolation), e.g. \
+                             run \"git\" [\"status\", \"--short\"]"
+                                .to_string(),
+                        ),
+                        span,
+                        is_warning: false,
+                    });
+                }
+            }
+            (
+                Ty::Result(
+                    Box::new(Ty::Map(Box::new(Ty::Text), Box::new(Ty::Text))),
+                    Box::new(Ty::Text),
+                ),
+                errors,
+            )
+        }
         "sleep" => {
             // sleep ms:n -> _   (blocks the current engine for `ms` milliseconds,
             // returns nil so it composes naturally as a statement in any block).
@@ -3423,7 +3472,7 @@ impl VerifyContext {
                         args.len() == 2 || args.len() == 3
                     } else if callee == "get" {
                         args.len() == 1 || args.len() == 2
-                    } else if callee == "post" {
+                    } else if callee == "pst" {
                         args.len() == 2 || args.len() == 3
                     } else if callee == "padl" || callee == "padr" {
                         // padl s w  /  padl s w padchar
@@ -3444,7 +3493,7 @@ impl VerifyContext {
                             "3 or 4".to_string()
                         } else if callee == "rd" || callee == "get" {
                             "1 or 2".to_string()
-                        } else if matches!(callee.as_str(), "post" | "wr" | "padl" | "padr") {
+                        } else if matches!(callee.as_str(), "pst" | "wr" | "padl" | "padr") {
                             "2 or 3".to_string()
                         } else if callee == "min" || callee == "max" {
                             "1 or 2".to_string()
@@ -5833,15 +5882,16 @@ mod tests {
     }
 
     #[test]
-    fn builtin_post_with_headers_ok() {
-        // 3-arg post with M t t headers is valid
-        assert!(parse_and_verify(r#"f url:t body:t hdrs:M t t>R t t;post url body hdrs"#).is_ok());
+    fn builtin_pst_with_headers_ok() {
+        // 3-arg pst with M t t headers is valid (renamed from `post` in 0.12.0)
+        assert!(parse_and_verify(r#"f url:t body:t hdrs:M t t>R t t;pst url body hdrs"#).is_ok());
     }
 
     #[test]
-    fn dollar_desugars_to_get() {
-        // $url should parse and verify the same as get url
-        assert!(parse_and_verify(r#"f url:t>R t t;$url"#).is_ok());
+    fn dollar_desugars_to_run() {
+        // $cmd argv should parse and verify the same as `run cmd argv`.
+        // Post-0.12.0 the sigil binds to `run`, not `get`.
+        assert!(parse_and_verify(r#"f cmd:t argv:L t>R (M t t) t;$cmd argv"#).is_ok());
     }
 
     // ---- Braceless guard ambiguity detection (ILO-T027) ----
@@ -7388,11 +7438,11 @@ mod tests {
     }
 
     #[test]
-    fn post_wrong_headers_type_error() {
-        // post url body n (headers not M t t) → ILO-T013 (lines 680-687)
-        let errs = parse_and_verify("f url:t body:t hdrs:n>R t t;post url body hdrs").unwrap_err();
+    fn pst_wrong_headers_type_error() {
+        // pst url body n (headers not M t t) → ILO-T013 (renamed from `post`)
+        let errs = parse_and_verify("f url:t body:t hdrs:n>R t t;pst url body hdrs").unwrap_err();
         assert!(errs.iter().any(|e| e.code == "ILO-T013"
-            && e.message.contains("post")
+            && e.message.contains("pst")
             && e.message.contains("headers")));
     }
 
@@ -7548,12 +7598,12 @@ mod tests {
     }
 
     #[test]
-    fn post_one_arg_arity_error_description() {
-        // post with 1 arg → arity error using "2 or 3" description (line 1499)
-        let errs = parse_and_verify(r#"f url:t>R t t;post url"#).unwrap_err();
+    fn pst_one_arg_arity_error_description() {
+        // pst with 1 arg → arity error using "2 or 3" description
+        let errs = parse_and_verify(r#"f url:t>R t t;pst url"#).unwrap_err();
         assert!(
             errs.iter()
-                .any(|e| e.message.contains("arity") && e.message.contains("post"))
+                .any(|e| e.message.contains("arity") && e.message.contains("pst"))
         );
     }
 
@@ -8314,7 +8364,7 @@ mod tests {
             "frq",
             "prnt",
             "get",
-            "post",
+            "pst",
             "hd",
             "tl",
         ] {
