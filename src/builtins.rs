@@ -646,6 +646,44 @@ pub(crate) fn resolve_drop_count(n: i64, len: usize) -> usize {
     }
 }
 
+/// Detects when a `jpth` path argument looks like JSONPath rather than ilo's
+/// dot-path. ilo's `jpth` uses `a.b.0.c` style segments — leading `$`, `*`
+/// wildcards, and `[...]` bracket selectors all signal that the caller reached
+/// for JSONPath syntax. Returns a descriptive error message in that case so the
+/// agent doesn't waste retries decoding a generic "key not found" diagnostic.
+///
+/// The first sentence is kept short so it fits cleanly in JSON error output
+/// and matches the diagnostic shape used elsewhere in the runtime.
+pub fn jpth_jsonpath_diagnostic(path: &str) -> Option<String> {
+    // Leading `$` — classic JSONPath root selector.
+    if let Some(rest) = path.strip_prefix('$') {
+        // Tolerate a path that happens to be the literal key "$" — `key not found: $`
+        // is still the right behaviour for that case. The diagnostic only fires when
+        // `$` is followed by `.`, `[`, or `*`, all of which are JSONPath operators.
+        if rest.starts_with('.') || rest.starts_with('[') || rest.starts_with('*') {
+            return Some(format!(
+                "jpth is dot-path only (e.g. \"a.b.0.c\"), not JSONPath. Got: \"{}\". Drop the leading `$` and use dot-separated keys / indices; for wildcards, iterate with `@i` or `map`.",
+                path
+            ));
+        }
+    }
+    // Wildcard segment — JSONPath `*`, not valid in dot-path.
+    if path.contains('*') {
+        return Some(format!(
+            "jpth is dot-path only (e.g. \"a.b.0.c\"), not JSONPath. Got: \"{}\". `*` wildcards are not supported; iterate the array yourself with `@i` after extracting it, or use `jpar` and walk the parsed value.",
+            path
+        ));
+    }
+    // Bracket selector — JSONPath `[0]` / `[*]` / `['key']`, not valid in dot-path.
+    if path.contains('[') {
+        return Some(format!(
+            "jpth is dot-path only (e.g. \"a.b.0.c\"), not JSONPath. Got: \"{}\". Use a dot before array indices (e.g. \"items.0.name\") instead of bracket selectors.",
+            path
+        ));
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

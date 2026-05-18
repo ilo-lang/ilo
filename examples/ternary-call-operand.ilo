@@ -1,0 +1,42 @@
+-- Known-arity calls can sit directly in the then/else slots of
+-- the prefix-ternary family (`?=cond a b`, `?>cond a b`, …) and
+-- the `?h cond a b` general keyword form, with no parens and no
+-- bind-first.
+--
+-- Before this fix, the operand slots accepted atoms only. A bare
+-- known-arity call like `sev sc` in `?h =a b sev sc "NONE"` had to
+-- be wrapped `(sev sc)` or bound to a local first. Same shape as
+-- #332's `wh >len q 0`: the parser now expands a known-arity
+-- ident plus enough trailing operands into a nested `Call` in
+-- ternary operand slots too.
+
+-- Helper that returns a label for the severity-score.
+sev sc:n>t;>sc 5 "HI";"LO"
+
+-- `?h cond a b` keyword form with an unparenthesised call in the
+-- then-slot. The condition `=a b` is a comparison-derived bool.
+classify a:n b:n sc:n>t;?h =a b sev sc "NONE"
+
+-- `?=cond a b` family with an unparenthesised call in the else-slot.
+-- `dbl` is a known-arity helper consumed as a nested call in the
+-- else-slot of the comparison-led prefix ternary.
+dbl x:n>n;+*x 2 0
+sign-magnitude x:n>n;?=x 0 0 dbl x
+
+-- run: classify 1 1 10
+-- out: HI
+
+-- run: classify 1 1 0
+-- out: LO
+
+-- run: classify 1 2 10
+-- out: NONE
+
+-- run: sign-magnitude 0
+-- out: 0
+
+-- run: sign-magnitude 3
+-- out: 6
+
+-- run: sign-magnitude 5
+-- out: 10

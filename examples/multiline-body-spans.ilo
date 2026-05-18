@@ -33,14 +33,13 @@ classify v:n>t
   >v 100 (+s "big")
   +s "small"
 
--- Nested foreach inside a guard body, lots of indent to compress.
+-- Nested foreach; for n=0 the loops just don't execute (0..0 is empty),
+-- so no outer guard is needed.
 gridsum n:n>n
   total = 0
-  >n 0{
-    @i 0..n{
-      @j 0..n{
-        total = +total (+i j)
-      }
+  @i 0..n{
+    @j 0..n{
+      total = +total (+i j)
     }
   }
   total

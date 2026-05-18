@@ -878,6 +878,39 @@ This error fires only when the bang is adjacent to the ident (`x!`,
 and is unaffected.
 "#,
     },
+    ErrorEntry {
+        code: "ILO-T035",
+        short: "Result arm (`~v:` / `^e:`) on Option subject",
+        long: r#"## ILO-T035: Result arm (`~v:` / `^e:`) on Option subject
+
+`~v:` and `^e:` are **Result** arms - they discriminate on the Ok/Err
+tag carried by a `R T E` value. Optional values (`O T`) are not tagged
+this way: an Option is either the inner value or `_` (nil). At runtime
+a `~v:` arm on an Option subject never matches and the match silently
+falls through to the wildcard or to no arm at all - usually returning
+the wrong answer with no error.
+
+The verifier now flags this shape so the bug surfaces at check time
+instead of being chased through wrong outputs.
+
+**Example (bug):**
+
+    main>n;m=mmap;m=mset m "k" 5;?(mget m "k"){~v:v;_:0}
+    -- mget returns O n; ~v: never matches; result is 0, not 5
+
+**Fix - unwrap with `??`:**
+
+    main>n;m=mmap;m=mset m "k" 5;??(mget m "k") 0
+    -- ??x default: inner value if non-nil, default otherwise
+
+**Fix - match a literal value and `_:` for nil:**
+
+    main>t;m=mmap;m=mset m "k" 5;?(mget m "k"){5:"hit";_:"miss"}
+
+`~v:` / `^e:` arms remain correct on Result (`R T E`) subjects and are
+unaffected.
+"#,
+    },
     // ── Warnings ─────────────────────────────────────────────────────────────
     ErrorEntry {
         code: "ILO-W001",

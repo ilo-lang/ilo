@@ -818,6 +818,49 @@ fn match_non_exhaustive_other_no_wildcard() {
     assert_err(src, "ILO-T024", "main");
 }
 
+// ---- ILO-T035: Result arm on Option subject ---------------------------------
+
+// `~v:` on an Option subject (mget returns O n) silently falls through to the
+// wildcard at runtime. The verifier now flags this.
+#[test]
+fn match_ok_arm_on_option_subject() {
+    let src = "main>n;m=mmap;m=mset m \"k\" 5;?(mget m \"k\"){~v:v;_:0}";
+    assert_err(src, "ILO-T035", "main");
+}
+
+#[test]
+fn match_err_arm_on_option_subject() {
+    let src = "main>n;m=mmap;m=mset m \"k\" 5;?(mget m \"k\"){^e:0;_:9}";
+    assert_err(src, "ILO-T035", "main");
+}
+
+#[test]
+fn match_both_ok_and_err_arm_on_option_subject() {
+    let src = "main>n;m=mmap;m=mset m \"k\" 5;?(mget m \"k\"){~v:v;^e:0;_:9}";
+    assert_err(src, "ILO-T035", "main");
+}
+
+// Negative: `~v:` / `^e:` on a Result subject still verify cleanly.
+#[test]
+fn match_ok_arm_on_result_subject_ok() {
+    let src = "main>n;r=num \"5\";?r{~v:v;^e:0}";
+    assert_ok(src, "main");
+}
+
+// Negative: Option subject with literal + wildcard arms is fine (no ~/^ arm).
+#[test]
+fn match_literal_and_wildcard_on_option_subject_ok() {
+    let src = "main>t;m=mmap;m=mset m \"k\" 5;?(mget m \"k\"){5:\"hit\";_:\"miss\"}";
+    assert_ok(src, "main");
+}
+
+// Negative: Option subject with only wildcard is fine.
+#[test]
+fn match_wildcard_only_on_option_subject_ok() {
+    let src = "main>n;m=mmap;m=mset m \"k\" 5;?(mget m \"k\"){_:0}";
+    assert_ok(src, "main");
+}
+
 // ---- bang / unwrap / Result --------------------------------------------------
 
 #[test]

@@ -5831,7 +5831,7 @@ f a:t b:t>t;join a b"#,
 
     #[test]
     fn codegen_cov_inline_cmpk_guard_callee() {
-        // Callee uses OP_CMPK_GT_N (guard >x 0) + braceless return + OP_LOADK for 0:
+        // Callee uses OP_CMPK_GT_N (guard >x 0) + early return + OP_LOADK for 0:
         //   `pos x:n>n;>x 0 x;0`
         // This exercises the OP_CMPK_*, OP_JMP, and OP_LOADK branches in inline_chunk.
         let bytes = compile_to_object_bytes("pos x:n>n;>x 0 x;0\nf x:n>n;pos x");
@@ -5864,7 +5864,7 @@ f a:t b:t>t;join a b"#,
 
     #[test]
     fn codegen_cov_jmpt_always_bool() {
-        // A negated braceless guard `!>x 5 10;0` emits OP_JMPT on an always-bool
+        // A negated guard `!>x 5 10;0` emits OP_JMPT on an always-bool
         // register (the comparison result).
         let bytes = compile_to_object_bytes("f x:n>n;!>x 5 10;0");
         assert!(
@@ -5879,9 +5879,7 @@ f a:t b:t>t;join a b"#,
     #[test]
     fn codegen_cov_inline_cmpk_lt_callee() {
         // Callee uses OP_CMPK_LT_N (guard <x 0) — inline_chunk OP_CMPK_LT_N branch.
-        // `neg x:n>n;<x 0{ret x};0` — returns x if x<0, else 0.
-        // But `ret` inside braced guard is fine; callee is inlinable.
-        // Actually, braceless guard: `<x 0 x;0` = if x<0 return x, else 0.
+        // Guard `<x 0 x;0` = if x<0 return x, else 0.
         let bytes = compile_to_object_bytes("negval x:n>n;<x 0 x;0\nf x:n>n;negval x");
         assert!(
             bytes.is_ok(),

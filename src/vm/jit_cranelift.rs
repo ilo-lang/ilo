@@ -6250,7 +6250,7 @@ mod tests {
         assert_eq!(result, Some(5.0));
     }
 
-    // Greater-than comparison (OP_CMPK_GT_N path) — braceless guards (early return)
+    // Greater-than comparison (OP_CMPK_GT_N path) — guards (early return)
     #[test]
     fn cranelift_cov_gt_comparison() {
         let result = jit_run_numeric("f x:n>n;>x 5 1;0", "f", &[10.0]);
@@ -6302,14 +6302,14 @@ mod tests {
         assert_eq!(result, Some(12.0));
     }
 
-    // Equality check — braceless guard (early return)
+    // Equality check — guard (early return)
     #[test]
     fn cranelift_cov_eq() {
         let result = jit_run_numeric("f a:n b:n>n;=a b 1;0", "f", &[5.0, 5.0]);
         assert_eq!(result, Some(1.0));
     }
 
-    // Not-equal check — braceless guard (early return)
+    // Not-equal check — guard (early return)
     #[test]
     fn cranelift_cov_neq() {
         let result = jit_run_numeric("f a:n b:n>n;!=a b 1;0", "f", &[5.0, 3.0]);

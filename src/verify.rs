@@ -3140,8 +3140,12 @@ impl VerifyContext {
             } => {
                 let _ = self.infer_expr(func, scope, condition, span);
 
-                // Warn if braceless guard body is a single identifier matching a function name.
-                if body.len() == 1
+                // Warn if a guard body is a single identifier matching a function
+                // name (braced or braceless — semantics are unified). Almost
+                // always the author meant to call the function, not return a
+                // function reference as the early-return value.
+                if else_body.is_none()
+                    && body.len() == 1
                     && let Stmt::Expr(Expr::Ref(ref name)) = body[0].node
                     && (self.functions.contains_key(name) || is_builtin(name))
                 {
@@ -3149,8 +3153,12 @@ impl VerifyContext {
                     self.err(
                         "ILO-T027",
                         func,
-                        format!("braceless guard body '{name}' is a function name — did you mean to call it?"),
-                        Some(format!("use braces for function calls: cond{{{name} args}}")),
+                        format!(
+                            "guard body '{name}' is a function name — did you mean to call it?"
+                        ),
+                        Some(format!(
+                            "use braces with arguments to call: cond{{{name} args}}"
+                        )),
                         Some(body_span),
                     );
                 }
@@ -4183,6 +4191,36 @@ impl VerifyContext {
         arms: &[MatchArm],
         span: Span,
     ) {
+        // ILO-T035: `~v:` / `^e:` are Result arms and never match on an
+        // Optional subject at runtime - they silently fall through to the
+        // wildcard, hiding bugs. Catch this before the wildcard early
+        // return below so the diagnostic fires whether or not the user
+        // also wrote `_:`.
+        if let Ty::Optional(_) = subject_ty {
+            let bad_arm = arms
+                .iter()
+                .find(|a| matches!(a.pattern, Pattern::Ok(_) | Pattern::Err(_)));
+            if let Some(arm) = bad_arm {
+                let marker = match arm.pattern {
+                    Pattern::Ok(_) => "~",
+                    Pattern::Err(_) => "^",
+                    _ => unreachable!(),
+                };
+                self.err(
+                    "ILO-T035",
+                    func,
+                    format!(
+                        "`{marker}` arm on Option subject ({subject_ty}); Option values aren't Ok/Err-tagged so this arm never matches at runtime"
+                    ),
+                    Some(
+                        "use `??x default` to unwrap, or match a literal value and `_:` for nil; `~`/`^` only apply to Result (R T E)".to_string(),
+                    ),
+                    Some(span),
+                );
+                return;
+            }
+        }
+
         let has_wildcard = arms
             .iter()
             .any(|a| matches!(a.pattern, Pattern::Wildcard | Pattern::TypeIs { .. }));
@@ -5845,7 +5883,39 @@ mod tests {
             errors
                 .iter()
                 .any(|e| e.code == "ILO-T027" && e.message.contains("len")),
-            "expected ILO-T027 for builtin name in braceless guard body, got: {:?}",
+            "expected ILO-T027 for builtin name in guard body, got: {:?}",
+            errors
+        );
+    }
+
+    #[test]
+    fn braced_guard_body_is_function_name_warns() {
+        // Mirror of `braceless_guard_body_is_function_name` for the braced
+        // form. Under the unified-guard semantics both early-return, so a
+        // bare function-name body is a bug in either shape.
+        let result = parse_and_verify(
+            "classify n:n>t;\"done\"\ncls sp:n>t;>=sp 1000{classify};\"fallback\"",
+        );
+        let errors = result.unwrap_err();
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.code == "ILO-T027" && e.message.contains("classify")),
+            "expected ILO-T027 for function name in braced guard body, got: {:?}",
+            errors
+        );
+    }
+
+    #[test]
+    fn braced_guard_body_is_builtin_name_warns() {
+        // Mirror for builtin name in a braced guard body.
+        let result = parse_and_verify("f x:n>n;>=x 0{len};x");
+        let errors = result.unwrap_err();
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.code == "ILO-T027" && e.message.contains("len")),
+            "expected ILO-T027 for builtin name in braced guard body, got: {:?}",
             errors
         );
     }

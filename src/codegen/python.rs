@@ -310,6 +310,12 @@ fn emit_stmt(out: &mut String, stmt: &Stmt, level: usize, implicit_return: bool)
             } else {
                 out.push_str(&format!("if {}:\n", cond));
             }
+            // Non-ternary guards (no else_body) are early-return forms — the
+            // body's tail expression becomes the function's return value when
+            // the condition is truthy. Pass implicit_return=true so the inner
+            // body's last Expr stmt emits `return <val>`. Ternary guards
+            // (else_body present) are value expressions and rely on the outer
+            // fn-tail context to decide whether the result is returned.
             let is_ternary = else_body.is_some();
             emit_body(out, body, level + 1, !is_ternary);
             if let Some(eb) = else_body {
@@ -543,8 +549,10 @@ fn emit_expr(out: &mut String, level: usize, expr: &Expr) -> String {
             if function == "jpth" && args.len() == 2 {
                 let json_arg = emit_expr(out, level, &args[0]);
                 let path_arg = emit_expr(out, level, &args[1]);
+                // Guard JSONPath-shape paths so the Python backend mirrors the
+                // tree / VM / JIT diagnostic instead of crashing with a KeyError.
                 let call = format!(
-                    "(lambda j, p: (lambda c: (\"ok\", str(c) if not isinstance(c, str) else c))((__import__('functools').reduce(lambda c, k: c[int(k)] if isinstance(c, list) and k.isdigit() else c[k], p.split('.'), __import__('json').loads(j)))) if True else None)({}, {})",
+                    "(lambda j, p: (\"err\", f'jpth is dot-path only (e.g. \"a.b.0.c\"), not JSONPath. Got: \"{{p}}\". Drop the leading `$` / `[` / `*` and use dot-separated keys / indices.') if (p.startswith('$.') or p.startswith('$[') or p.startswith('$*') or '*' in p or '[' in p) else (lambda c: (\"ok\", str(c) if not isinstance(c, str) else c))((__import__('functools').reduce(lambda c, k: c[int(k)] if isinstance(c, list) and k.isdigit() else c[k], p.split('.'), __import__('json').loads(j)))))({}, {})",
                     json_arg, path_arg
                 );
                 let call = format!("(lambda: {})()", call);

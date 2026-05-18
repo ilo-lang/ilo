@@ -1504,24 +1504,11 @@ fn collect_hints_with_program(source: &str, program: Option<&ast::Program>) -> V
             hints.push(hint);
         }
     }
-    // AST-aware hint: braced-conditional guard `cond{^"err"}` discards the
-    // body value, which is almost always not what the author intended.
-    // Personas (qa-tester, scientific-researcher rerun3) reach for this
-    // shape expecting early-return semantics. The braceless guard form
-    // `<k 1 ^"err"` or explicit `ret`/`!`-propagate covers the real intent.
-    if let Some(prog) = program {
-        for decl in &prog.declarations {
-            if let ast::Decl::Function { body, .. } = decl
-                && walk_for_discarded_guard_result(body)
-            {
-                hints.push(
-                    "hint: `cond{^\"err\"}` and `cond{~v}` discard the body expression. For early-return use the braceless form `cond ^\"err\"` or wrap the body in `{ret ^\"err\"}`."
-                        .to_string(),
-                );
-                break; // one hint per run is enough
-            }
-        }
-    }
+    // Note: a previous hint warned that `cond{^"err"}` and `cond{~v}` discard
+    // the body expression. Under the unified guard semantics, braced guards
+    // now early-return identically to braceless guards, so the discard
+    // footgun no longer exists and the hint has been retired.
+    let _ = program;
     hints
 }
 
@@ -1618,64 +1605,6 @@ fn is_value_yielding(tok: &lexer::Token) -> bool {
             | Bang
             | BangBang
     )
-}
-
-/// Walk a body looking for a braced-conditional guard whose final body
-/// statement is an `Expr::Err(_)` or `Expr::Ok(_)` expression — a strong
-/// signal the author meant `ret ^...` / `ret ~...` but wrote `cond{^...}`,
-/// which silently discards the value.
-fn walk_for_discarded_guard_result(body: &[ast::Spanned<ast::Stmt>]) -> bool {
-    for s in body {
-        if walk_stmt_for_discarded_guard_result(&s.node) {
-            return true;
-        }
-    }
-    false
-}
-
-fn walk_stmt_for_discarded_guard_result(stmt: &ast::Stmt) -> bool {
-    match stmt {
-        ast::Stmt::Guard {
-            body,
-            else_body,
-            braceless,
-            ..
-        } => {
-            // Only fire on the original target shape: a single-statement
-            // braced body whose sole expression is `^...` or `~...`. The
-            // single-statement requirement matters because multi-statement
-            // bodies like `{prnt "..."; ~"ok"}` legitimately use the trailing
-            // `~v` as the body's return value, the author knows the value
-            // is the guard's result, not a discarded early-return. Firing
-            // there is a false positive that erodes trust in the hint.
-            if !*braceless
-                && body.len() == 1
-                && let Some(only) = body.first()
-                && matches!(
-                    only.node,
-                    ast::Stmt::Expr(ast::Expr::Err(_) | ast::Expr::Ok(_))
-                )
-            {
-                return true;
-            }
-            if walk_for_discarded_guard_result(body) {
-                return true;
-            }
-            if let Some(eb) = else_body
-                && walk_for_discarded_guard_result(eb)
-            {
-                return true;
-            }
-            false
-        }
-        ast::Stmt::Match { arms, .. } => arms
-            .iter()
-            .any(|a| walk_for_discarded_guard_result(&a.body)),
-        ast::Stmt::ForEach { body, .. }
-        | ast::Stmt::ForRange { body, .. }
-        | ast::Stmt::While { body, .. } => walk_for_discarded_guard_result(body),
-        _ => false,
-    }
 }
 
 /// Strip both string-literal contents and `--`-prefixed line comments,
@@ -2860,7 +2789,7 @@ fn dispatch_run(r: cli::RunArgs, mode: OutputMode, explicit_json: bool, no_hints
                 )
             }
             cli::Engine::Default => {
-                // Default: func-name heuristic + Cranelift JIT with interpreter fallback.
+                // Default: func-name heuristic + Cranelift JIT with bytecode VM fallback.
                 //
                 // Inline-lambda lifting emits synthetic `__lit_N` top-level
                 // decls (see parser/mod.rs ~line 2863). These are an
@@ -3254,7 +3183,7 @@ fn print_help() {
     println!("AOT compilation:");
     println!("  ilo compile <file> [-o out] [func]  Compile to standalone binary\n");
     println!("Backends:");
-    println!("  (default)        Cranelift JIT → interpreter fallback");
+    println!("  (default)        Cranelift JIT, falls back to register VM on bailout");
     println!("  --run-tree       Tree-walking interpreter");
     println!("  --run-vm         Register VM");
     println!("  --run-cranelift  Cranelift JIT");
@@ -3566,17 +3495,26 @@ fn body_has_early_return(body: &[ast::Spanned<ast::Stmt>]) -> bool {
 fn stmt_has_early_return(stmt: &ast::Stmt) -> bool {
     match stmt {
         ast::Stmt::Return(_) => true,
-        // Braceless guards (`cond expr`) early-return from the function.
+        // Both braced and braceless guards (`cond expr` / `cond{body}`) early-
+        // return from the function under the unified-guard semantics. Ternary
+        // `cond{a}{b}` (else_body present) is a value form and does not
+        // short-circuit on its own, but its branches might contain `ret`.
         ast::Stmt::Guard {
-            braceless: true, ..
-        } => true,
-        // Braced guards do NOT early-return, but their bodies might contain `ret`.
-        ast::Stmt::Guard {
-            body, else_body, ..
+            body,
+            else_body: None,
+            ..
         } => {
-            body_has_early_return(body)
-                || else_body.as_ref().is_some_and(|b| body_has_early_return(b))
+            // Either the guard itself is an early-return when the condition
+            // is truthy, or the body contains an explicit `ret` / nested
+            // early-return.
+            let _ = body;
+            true
         }
+        ast::Stmt::Guard {
+            body,
+            else_body: Some(eb),
+            ..
+        } => body_has_early_return(body) || body_has_early_return(eb),
         ast::Stmt::Match { arms, .. } => arms.iter().any(|a| body_has_early_return(&a.body)),
         ast::Stmt::ForEach { body, .. }
         | ast::Stmt::ForRange { body, .. }
@@ -4683,117 +4621,12 @@ mod tests {
     }
 
     #[test]
-    fn collect_hints_discarded_err_in_guard_body() {
-        // `f x:n>R n t;<x 0{^"neg"};~x` — `^"neg"` is silently discarded.
-        let prog = parse_program("f x:n>R n t;<x 0{^\"neg\"};~x");
-        let hints = collect_hints_with_program("f x:n>R n t;<x 0{^\"neg\"};~x", Some(&prog));
-        assert!(
-            hints
-                .iter()
-                .any(|h| h.contains("discard the body expression")),
-            "hints: {:?}",
-            hints
-        );
-    }
-
-    #[test]
-    fn collect_hints_discarded_ok_in_guard_body() {
-        // Symmetric: braced-cond with `~v` in tail also discarded.
-        let prog = parse_program("f x:n>R n t;>x 0{~x};^\"neg\"");
-        let hints = collect_hints_with_program("f x:n>R n t;>x 0{~x};^\"neg\"", Some(&prog));
-        assert!(
-            hints
-                .iter()
-                .any(|h| h.contains("discard the body expression")),
-            "hints: {:?}",
-            hints
-        );
-    }
-
-    #[test]
-    fn collect_hints_braceless_guard_no_discard_hint() {
-        // Braceless guard `<x 0 ^"neg"` is the canonical early-return shape
-        // and must NOT trigger the hint.
-        let prog = parse_program("f x:n>R n t;<x 0 ^\"neg\";~x");
-        let hints = collect_hints_with_program("f x:n>R n t;<x 0 ^\"neg\";~x", Some(&prog));
-        assert!(
-            !hints
-                .iter()
-                .any(|h| h.contains("discard the body expression")),
-            "hints: {:?}",
-            hints
-        );
-    }
-
-    #[test]
-    fn collect_hints_explicit_ret_in_guard_no_discard_hint() {
-        // `<x 0{ret ^"neg"}` is the explicit-return form; no hint.
-        let prog = parse_program("f x:n>R n t;<x 0{ret ^\"neg\"};~x");
-        let hints = collect_hints_with_program("f x:n>R n t;<x 0{ret ^\"neg\"};~x", Some(&prog));
-        assert!(
-            !hints
-                .iter()
-                .any(|h| h.contains("discard the body expression")),
-            "hints: {:?}",
-            hints
-        );
-    }
-
-    #[test]
-    fn collect_hints_discarded_err_inside_foreach_body() {
-        // Nested-body coverage: discarded `^...` inside an `@k xs{}` body.
-        let prog = parse_program("f xs:L n>R n t;@k xs{<k 0{^\"neg\"}};~0");
-        let hints =
-            collect_hints_with_program("f xs:L n>R n t;@k xs{<k 0{^\"neg\"}};~0", Some(&prog));
-        assert!(
-            hints
-                .iter()
-                .any(|h| h.contains("discard the body expression")),
-            "hints: {:?}",
-            hints
-        );
-    }
-
-    #[test]
-    fn collect_hints_discarded_err_inside_match_arm_body() {
-        // Match-arm body contains a braced-cond guard whose tail discards
-        // an `^...` expression. Walker should recurse into match arms.
-        let src = "f r:R n t>R n t;?r{~v:<v 0{^\"neg\"};~v;^e:^e}";
-        let prog = parse_program(src);
-        let hints = collect_hints_with_program(src, Some(&prog));
-        assert!(
-            hints
-                .iter()
-                .any(|h| h.contains("discard the body expression")),
-            "hints: {:?}",
-            hints
-        );
-    }
-
-    #[test]
-    fn collect_hints_multi_stmt_guard_body_with_trailing_ok_no_hint() {
-        // False-positive guard: a multi-statement braced body that ends with
-        // a `~v` is legitimately returning that value as the guard's result.
-        // The author is NOT discarding it. Compare to the single-stmt shape
-        // `{~v}` which IS the discard pattern. Source from interactive-cli
-        // persona rerun4: `f n:n>R t t;=n 0{prnt "empty";~"ok"};~"done"`.
-        let src = "f n:n>R t t;=n 0{prnt \"empty\";~\"ok\"};~\"done\"";
-        let prog = parse_program(src);
-        let hints = collect_hints_with_program(src, Some(&prog));
-        assert!(
-            !hints
-                .iter()
-                .any(|h| h.contains("discard the body expression")),
-            "hints: {:?}",
-            hints
-        );
-    }
-
-    #[test]
-    fn collect_hints_multi_stmt_guard_body_with_trailing_err_no_hint() {
-        // Symmetric: multi-statement body ending with `^...` is also a
-        // legitimate guard return, not a discard.
-        let src = "f x:n>R n t;<x 0{prnt \"neg\";^\"bad\"};~x";
+    fn collect_hints_braced_guard_no_discard_hint_under_unified_semantics() {
+        // Under the unified-guard semantics, braced `cond{^"neg"}` early-returns
+        // just like braceless. The old "discard the body expression" hint has
+        // been retired. Pin the absence here so future hint work doesn't
+        // regress and reintroduce a false-positive on the now-canonical form.
+        let src = "f x:n>R n t;<x 0{^\"neg\"};~x";
         let prog = parse_program(src);
         let hints = collect_hints_with_program(src, Some(&prog));
         assert!(
@@ -8574,7 +8407,7 @@ mod tests {
             OutputMode::Text,
             false,
         );
-        // Tree interpreter fallback ran the program → exit 0.
+        // Bytecode VM fallback ran the program → exit 0.
         assert_eq!(code, 0);
         assert!(!vm::jit_cranelift::FORCE_PANIC_FOR_TEST.with(|c| c.get()));
         // Same visibility contract as the cranelift-engine path: the
