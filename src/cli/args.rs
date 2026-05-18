@@ -103,20 +103,27 @@ pub struct RunArgs {
     pub engine: Engine,
 
     // ── Engine selection flags ─────────────────────────────────────────────
-    /// Tree-walking interpreter.
-    #[arg(long = "run-tree", conflicts_with_all = ["run", "run_vm", "jit", "run_llvm"])]
+    /// Tree-walking interpreter. SOFT-DEPRECATED: no longer selectable on the
+    /// CLI. The tree-walker stays in-tree as the runtime for HOF callbacks
+    /// that VM/JIT bail to, but `--run-tree` / `--run` are no longer
+    /// recognised flags - they fall through to the unknown-flag guard and
+    /// suggest `--run-vm` or `--jit`. The field is kept with `#[arg(skip)]`
+    /// so internal construction sites (REPL, tests, dispatcher) compile.
+    /// Real removal deferred to 0.13.0+ once PR3d/PR3e/runtime extraction
+    /// land.
+    #[arg(skip = false)]
     pub run_tree: bool,
-    /// Alias for --run-tree.
-    #[arg(long = "run", conflicts_with_all = ["run_tree", "run_vm", "jit", "run_llvm"])]
+    /// Was an alias for --run-tree; now also rejected by the unknown-flag guard.
+    #[arg(skip = false)]
     pub run: bool,
     /// Register VM.
-    #[arg(long = "run-vm", conflicts_with_all = ["run", "run_tree", "jit", "run_llvm"])]
+    #[arg(long = "run-vm", conflicts_with_all = ["jit", "run_llvm"])]
     pub run_vm: bool,
     /// Cranelift JIT (opt-in for hot numeric loops; falls back to VM on bailout).
-    #[arg(long = "jit", conflicts_with_all = ["run", "run_tree", "run_vm", "run_llvm"])]
+    #[arg(long = "jit", conflicts_with_all = ["run_vm", "run_llvm"])]
     pub jit: bool,
     /// LLVM JIT.
-    #[arg(long = "run-llvm", conflicts_with_all = ["run", "run_tree", "run_vm", "jit"])]
+    #[arg(long = "run-llvm", conflicts_with_all = ["run_vm", "jit"])]
     pub run_llvm: bool,
 
     /// Benchmark mode.
@@ -609,11 +616,16 @@ mod tests {
     }
 
     #[test]
-    fn engine_flag_run_tree() {
-        let cli = Cli::try_parse_from(["ilo", "run", "--run-tree", "code"]).unwrap();
-        if let Some(Cmd::Run(r)) = cli.cmd {
-            assert_eq!(r.effective_engine(), Engine::Tree);
-        }
+    fn run_tree_flag_rejected_by_clap() {
+        // --run-tree was removed from the public CLI surface as part of the
+        // tree-walker soft-deprecation. Clap should now reject it as an
+        // unknown long flag.
+        let err = Cli::try_parse_from(["ilo", "run", "--run-tree", "code"]).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("--run-tree") || msg.contains("unexpected"),
+            "expected clap to reject --run-tree; got: {msg}"
+        );
     }
 
     #[test]
@@ -774,14 +786,14 @@ mod tests {
     }
 
     #[test]
-    fn engine_flag_run_alias() {
-        // --run is alias for --run-tree
-        let cli = Cli::try_parse_from(["ilo", "run", "--run", "code"]).unwrap();
-        if let Some(Cmd::Run(r)) = cli.cmd {
-            assert_eq!(r.effective_engine(), Engine::Tree);
-        } else {
-            panic!("expected Run subcommand");
-        }
+    fn run_alias_flag_rejected_by_clap() {
+        // --run (the old --run-tree alias) is also gone from the public surface.
+        let err = Cli::try_parse_from(["ilo", "run", "--run", "code"]).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("--run") || msg.contains("unexpected"),
+            "expected clap to reject --run as a flag; got: {msg}"
+        );
     }
 
     // ── effective_engine: default when no flags set ───────────────────────────

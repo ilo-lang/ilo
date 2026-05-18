@@ -1715,13 +1715,18 @@ fn serv_cmd(args_slice: &[String]) {
     }
 }
 
-/// Scan args for `--run-tree` / `--run` / `--run-vm` / `--jit` /
-/// `--run-llvm` anywhere in the list and remove them. argv[0]
-/// (binary name) is preserved at position 0. Returns the chosen engine (if
-/// any) plus the remaining args. Multiple conflicting engine flags produce an
-/// error. `--jit` opts into the Cranelift JIT for hot numeric loops; the
-/// implementation name (Cranelift) is kept internal so the user-facing flag
-/// names the concept, not the backend.
+/// Scan args for `--run-vm` / `--jit` / `--run-llvm` anywhere in the list and
+/// remove them. argv[0] (binary name) is preserved at position 0. Returns the
+/// chosen engine (if any) plus the remaining args. Multiple conflicting engine
+/// flags produce an error. `--jit` opts into the Cranelift JIT for hot numeric
+/// loops; the implementation name (Cranelift) is kept internal so the
+/// user-facing flag names the concept, not the backend.
+///
+/// `--run-tree` / `--run` are NOT recognised here as part of the tree-walker
+/// soft-deprecation. They fall through to the unknown-flag guard, which
+/// surfaces a clear error suggesting `--run-vm` or `--jit`. The tree-walker
+/// stays in-tree as the HOF-callback runtime; it's just no longer
+/// user-selectable on the CLI.
 fn extract_run_engine_flag(
     args: Vec<String>,
 ) -> Result<(Option<cli::Engine>, Vec<String>), String> {
@@ -1734,7 +1739,6 @@ fn extract_run_engine_flag(
             "--jit" => Some(cli::Engine::Cranelift),
             "--run-llvm" => Some(cli::Engine::Llvm),
             "--run-vm" => Some(cli::Engine::Vm),
-            "--run" | "--run-tree" => Some(cli::Engine::Tree),
             _ => None,
         };
         match candidate {
@@ -1748,10 +1752,7 @@ fn extract_run_engine_flag(
     }
 
     if conflict {
-        return Err(
-            "error: --run, --run-tree, --run-vm, --jit, --run-llvm are mutually exclusive"
-                .to_string(),
-        );
+        return Err("error: --run-vm, --jit, --run-llvm are mutually exclusive".to_string());
     }
 
     Ok((engine, remaining))
@@ -2763,7 +2764,6 @@ fn dispatch_bare_args(raw_args: Vec<String>, global: &cli::Global) -> i32 {
             "--jit" => (Some(cli::Engine::Cranelift), m + 1),
             "--run-llvm" => (Some(cli::Engine::Llvm), m + 1),
             "--run-vm" => (Some(cli::Engine::Vm), m + 1),
-            "--run" | "--run-tree" => (Some(cli::Engine::Tree), m + 1),
             _ => (None, m),
         }
     } else {
@@ -3819,9 +3819,6 @@ fn print_help() {
     println!("  (default)        Register VM (closure-aware, all opcodes supported)");
     println!(
         "  --jit            Cranelift JIT (faster on hot numeric loops; falls back to VM on bailout)"
-    );
-    println!(
-        "  --run-tree       Tree-walking interpreter (reference impl; Phase 2 closure capture)"
     );
     println!("  --run-vm         Register VM (explicit form of default)\n");
     println!("Examples:");
@@ -8068,7 +8065,9 @@ mod tests {
     }
 
     #[test]
-    fn dispatch_bare_args_run_tree_engine_flag() {
+    fn dispatch_bare_args_run_alias_now_rejected() {
+        // --run was the tree-walker alias; both are gone from the public surface.
+        // The dispatcher should now reject them via the unknown-flag guard.
         let global = cli::Global {
             ansi: false,
             text: false,
@@ -8085,11 +8084,11 @@ mod tests {
             ],
             &global,
         );
-        assert_eq!(code, 0);
+        assert_eq!(code, 1, "expected exit 1 for removed --run flag");
     }
 
     #[test]
-    fn dispatch_bare_args_run_tree_long_flag() {
+    fn dispatch_bare_args_run_tree_long_flag_now_rejected() {
         let global = cli::Global {
             ansi: false,
             text: false,
@@ -8106,7 +8105,7 @@ mod tests {
             ],
             &global,
         );
-        assert_eq!(code, 0);
+        assert_eq!(code, 1, "expected exit 1 for removed --run-tree flag");
     }
 
     // ── dispatch_bare_args: global flag overrides ────────────────────────────
