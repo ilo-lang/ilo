@@ -313,6 +313,48 @@ fn camel_cascade_truncates_long_lists() {
     );
 }
 
+// The cascade scanner walks raw bytes, so without skipping string literals it
+// would surface `dT` from a strftime format string like `"%Y-%m-%dT%H..."` as
+// a phantom camelCase offender. Skip strings (and `--` comments) so only real
+// identifiers show up in the "Also found in this file" list.
+
+#[test]
+fn camel_cascade_skips_string_literal_content() {
+    let err = run_err("main x:n>t;r=fmt \"%Y-%m-%dT%H:%M:%S\" x;badIdent=r");
+    assert!(err.contains("ILO-L003"), "stderr: {err}");
+    assert!(
+        err.contains("badIdent"),
+        "should still report the real offender: {err}"
+    );
+    assert!(
+        !err.contains("dT"),
+        "should not surface `dT` from inside the format string: {err}"
+    );
+}
+
+#[test]
+fn camel_cascade_skips_comment_content() {
+    let err = run_err("go>n;fooBar=1\n-- fixMe later\nfooBar");
+    assert!(err.contains("ILO-L003"), "stderr: {err}");
+    assert!(
+        !err.contains("fixMe"),
+        "should not surface `fixMe` from inside a comment: {err}"
+    );
+}
+
+#[test]
+fn camel_cascade_handles_escaped_quotes_in_strings() {
+    // `\"` inside a string must not close the literal early, otherwise
+    // `wowZa` in the trailing real-source position would be missed and
+    // `evilZ` (which only appears inside the escaped string) would leak.
+    let err = run_err("go>t;s=\"a\\\"evilZap\\\"b\";wowZa=1");
+    assert!(err.contains("ILO-L003"), "stderr: {err}");
+    assert!(
+        !err.contains("evilZap"),
+        "escaped quotes must not break out of the string skip: {err}"
+    );
+}
+
 // ---- `?cond{body}` bare-bool match-vs-conditional confusion ----
 
 #[test]
