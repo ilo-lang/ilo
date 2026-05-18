@@ -192,18 +192,18 @@ Per-call time (ns) across 8 micro-benchmarks. Lower is better. [Full results →
 ## Community
 
 - **[ilo-lang.ai](https://ilo-lang.ai)** - docs, playground, and examples
-- **[r/ilolang](https://www.reddit.com/r/ilolang/)** - discussion and updates
 - **[hello@ilo-lang.ai](mailto:hello@ilo-lang.ai)** - get in touch
 
 ## Principles
 
 1. **Token-conservative** - every choice evaluated against total token cost
 2. **Constrained** - small vocabulary, one way to do things, fewer wrong choices
-3. **Verified** - types checked before execution, all errors reported at once
+3. **Self-contained** - each function declares its deps; no globals, no ambient state
 4. **Language-agnostic** - structural tokens (`@`, `>`, `?`, `^`, `~`, `!`, `$`) over English words
+5. **Graph-reducible** - load only the relevant subgraph per task
 
 See the [manifesto](https://ilo-lang.ai/docs/manifesto/) for full rationale.
 
 ## Author
 
-Built by [Daniel John Morris](https://danieljohnmorris.com), Technology Director at Cubitts. ilo is the language I wanted while building with LLMs and AI agents.
+Built by [Daniel John Morris](https://danieljohnmorris.com). ilo is the language I wanted while building with LLMs and AI agents.

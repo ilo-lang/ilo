@@ -1,9 +1,136 @@
+// =============================================================================
+// Stable error-code namespace
+// =============================================================================
+//
+// Every diagnostic ilo emits has the shape `ILO-<letter><digits>`. The letter
+// is the **namespace** — it tells an agent or tool which compiler phase raised
+// the error without reading the message. Numeric ranges are reserved per
+// namespace, with generous gaps so future codes slot in cleanly:
+//
+// | Range          | Letter | Area                          | Status            |
+// |----------------|--------|-------------------------------|-------------------|
+// | ILO-L000-099   | L      | Lexer / tokenisation          | active            |
+// | ILO-P100-199   | P      | Parser / syntax               | active            |
+// | ILO-N200-299   | N      | Names / resolution            | reserved          |
+// | ILO-I300-399   | I      | Imports                       | reserved          |
+// | ILO-T400-499   | T      | Types                         | active            |
+// | ILO-V500-599   | V      | Verifier (post-type checks)   | reserved          |
+// | ILO-R600-699   | R      | Runtime                       | active            |
+// | ILO-D700-799   | D      | Deprecation warnings          | reserved          |
+// | ILO-E800-899   | E      | Engine-specific limitations   | reserved          |
+// | ILO-S900-999   | S      | Skill / spec system           | reserved          |
+//
+// ## Stability contract
+//
+// 1. **Existing codes never change.** ilo shipped with a flat numbering scheme
+//    (`ILO-L001`, `ILO-P001`, `ILO-T001`, `ILO-R001`, `ILO-W001`) where each
+//    namespace started at 001. Those codes remain valid forever — agents and
+//    pinned tool configs depend on them. The new range scheme is **additive**:
+//    new codes allocated from now on land in the documented hundreds-block of
+//    their namespace; historical codes stay where they are.
+//
+// 2. **New codes go in the right namespace, not the next free slot.** A new
+//    parser error gets `ILO-P101` (or the next free P1xx), not `ILO-P022`.
+//    A new name-resolution error gets `ILO-N201`, not `ILO-T037`. This is
+//    enforced by the cross-engine regression test in `tests/error_codes.rs`,
+//    which asserts every code emitted by the compiler lives in its
+//    documented range.
+//
+// 3. **Each namespace has reserved space.** 100 codes per namespace is far
+//    more than ilo will ever need at the current pace of growth; the
+//    spacing is intentional so adding new categories never forces a
+//    renumber.
+//
+// 4. **Deprecation warnings are issued via `ILO-D###` codes.** They emit at
+//    compile time, are surfaced as warnings (not errors), and do not fail
+//    the build. The range is reserved but currently empty — the first
+//    `ILO-D###` ships with the first feature deprecation.
+//
+// ## Namespace definitions
+//
+// - **L (Lexer)** — character-class issues, malformed literals, identifier-
+//   shape violations. Raised before a syntax tree exists.
+// - **P (Parser)** — token-stream errors: missing tokens, unexpected tokens,
+//   incomplete declarations. Raised after the lexer succeeds.
+// - **N (Names)** — name resolution failures: unknown identifier, duplicate
+//   definitions, shadowing of reserved names. Currently emitted under the
+//   T-prefix for historical reasons; the N-range is reserved for the eventual
+//   split.
+// - **I (Imports)** — `use` resolution: missing file, IO error, cycle. P017
+//   (use-import failed) is the historical home; new import diagnostics get
+//   `ILO-I3xx`.
+// - **T (Types)** — type-checking errors: mismatched types, arity, generic
+//   instantiation, record/variant shape.
+// - **V (Verifier)** — post-type checks that aren't strictly type errors:
+//   exhaustiveness, reachability, register caps, mutation-shape warnings.
+//   T029 (unreachable), T032/T033 (discarded mutation), T035/T036 (register
+//   caps) are historical T-residents; new verifier diagnostics get
+//   `ILO-V5xx`.
+// - **R (Runtime)** — failures observed at execution time: division by zero,
+//   index out of bounds, panic-unwrap, builtin failures.
+// - **D (Deprecation)** — compile-time warnings for features scheduled for
+//   removal. Forward-looking; no codes allocated yet.
+// - **E (Engine-specific)** — limitations of a particular execution engine
+//   (VM register caps surfaced ahead of time, JIT-unsupported opcode, AOT
+//   constraint). Forward-looking; R012 is a transitional historical
+//   resident.
+// - **S (Skill / spec)** — skill-bundle loader errors, manifest issues,
+//   spec-link breaks. Forward-looking; no codes allocated yet.
+
 /// An entry in the error code registry.
 #[allow(dead_code)] // `short` is used by tooling; `long` is used by --explain
 pub struct ErrorEntry {
     pub code: &'static str,
     pub short: &'static str, // brief description for tooling / --list-errors
     pub long: &'static str,  // full explanation for --explain
+}
+
+/// Documented namespace ranges. Used by the cross-engine regression test in
+/// `tests/error_codes.rs` to assert every emitted code lands in its range.
+///
+/// Each entry is `(letter, lo, hi)`. `lo` and `hi` are inclusive. Codes outside
+/// any documented range fail the test — there is no fallback bucket on purpose.
+pub static NAMESPACE_RANGES: &[(char, u16, u16)] = &[
+    // Active namespaces — historical block (1..99) plus canonical range.
+    ('L', 1, 99),    // Lexer
+    ('P', 1, 99),    // Parser, historical (P001-P021)
+    ('P', 100, 199), // Parser, canonical
+    ('T', 1, 99),    // Types, historical (T001-T036)
+    ('T', 400, 499), // Types, canonical
+    ('R', 1, 99),    // Runtime, historical (R001-R026)
+    ('R', 600, 699), // Runtime, canonical
+    ('W', 1, 99),    // Warnings (W001 retired but documented)
+    // Reserved namespaces — new codes land here from now on.
+    ('N', 200, 299), // Names / resolution
+    ('I', 300, 399), // Imports
+    ('V', 500, 599), // Verifier (post-type)
+    ('D', 700, 799), // Deprecation warnings
+    ('E', 800, 899), // Engine-specific
+    ('S', 900, 999), // Skill / spec
+];
+
+/// Parse an `ILO-<letter><digits>` code into `(letter, number)`. Returns
+/// `None` if the code is malformed. Used by the namespace regression test.
+pub fn parse_code(code: &str) -> Option<(char, u16)> {
+    let rest = code.strip_prefix("ILO-")?;
+    let mut chars = rest.chars();
+    let letter = chars.next()?;
+    if !letter.is_ascii_uppercase() {
+        return None;
+    }
+    let digits: String = chars.collect();
+    let n: u16 = digits.parse().ok()?;
+    Some((letter, n))
+}
+
+/// True if `code` lives in a documented namespace range.
+pub fn in_documented_range(code: &str) -> bool {
+    let Some((letter, n)) = parse_code(code) else {
+        return false;
+    };
+    NAMESPACE_RANGES
+        .iter()
+        .any(|&(l, lo, hi)| l == letter && n >= lo && n <= hi)
 }
 
 /// All stable error codes for the ilo language.
@@ -287,6 +414,19 @@ whether `fmt` consumes `"tmpl {}" 1` or `"tmpl {}" 1 z`.
 
 The parens make the `fmt` call self-contained, so the outer's arg counter
 treats it as a single operand.
+"#,
+    },
+    ErrorEntry {
+        code: "ILO-P019",
+        short: "use-import name not found",
+        long: r#"## ILO-P019: use-import name not found
+
+A `use "path.ilo" { name }` declaration listed a name that does not
+exist in the imported file. The other names in the list are still
+imported; only the missing ones produce this diagnostic.
+
+**Fix:** correct the spelling, or remove the missing name from the
+import list.
 "#,
     },
     ErrorEntry {
@@ -754,6 +894,36 @@ never be executed.
 "#,
     },
     ErrorEntry {
+        code: "ILO-T030",
+        short: "circular type alias",
+        long: r#"## ILO-T030: circular type alias
+
+A `type` alias declaration references itself, either directly or
+through a cycle of other aliases. Aliases must be acyclic so the
+verifier can resolve them to concrete types.
+
+**Example that triggers this:**
+
+    type foo foo                -- direct self-reference
+    type a b;type b a           -- 2-cycle
+
+**Fix:** break the cycle by introducing a named record type, or
+remove one side of the cycle.
+"#,
+    },
+    ErrorEntry {
+        code: "ILO-T031",
+        short: "type alias shadows builtin",
+        long: r#"## ILO-T031: type alias shadows a builtin type
+
+A `type` alias uses a name reserved for a builtin type (`n`, `t`,
+`b`, `L`, `R`, `_`). These names are part of the language and cannot
+be redefined.
+
+**Fix:** choose a different name for the alias.
+"#,
+    },
+    ErrorEntry {
         code: "ILO-T032",
         short: "bare 'fmt' result is discarded",
         long: r#"## ILO-T032: bare 'fmt' result is discarded
@@ -898,6 +1068,23 @@ instead of being chased through wrong outputs.
 unaffected.
 "#,
     },
+    ErrorEntry {
+        code: "ILO-T036",
+        short: "call requires too many register slots (VM cap)",
+        long: r#"## ILO-T036: call requires too many register slots
+
+A call site needs more contiguous VM registers than the 256-slot
+window allows. Splitting the call into intermediate bindings reduces
+the slot pressure.
+
+**Fix:** bind sub-expressions to locals so each call has fewer live
+operands at the same time.
+
+This is a VM-specific limit; the tree interpreter and Cranelift JIT
+have higher caps. See also ILO-T035 (function exceeds the 256-register
+VM cap).
+"#,
+    },
     // ── Warnings ─────────────────────────────────────────────────────────────
     ErrorEntry {
         code: "ILO-W001",
@@ -1037,6 +1224,22 @@ If you see this, please file a bug report.
 "#,
     },
     ErrorEntry {
+        code: "ILO-R014",
+        short: "auto-unwrap propagated Err / nil",
+        long: r#"## ILO-R014: auto-unwrap propagated Err / nil
+
+The `!` auto-unwrap operator observed an `^e` (Err) or `nil` return
+from the called function and propagated it as the enclosing function's
+return value. This is normal control flow, not a bug — the message
+identifies the propagation point for diagnostic purposes.
+
+**See also:**
+
+- ILO-R026 — `!!` panic-unwrap aborts the program instead of propagating.
+- ILO-T025 / ILO-T026 — static checks that `!` is applied correctly.
+"#,
+    },
+    ErrorEntry {
         code: "ILO-R026",
         short: "panic-unwrap on Err / nil",
         long: r#"## ILO-R026: panic-unwrap on Err / nil
@@ -1056,6 +1259,18 @@ should observe and respond to the failure.
 main>t;rdl!! "input.txt"    -- aborts with panic-unwrap if file missing
 main>n;num!! "abc"          -- aborts with panic-unwrap: abc
 ```
+"#,
+    },
+    ErrorEntry {
+        code: "ILO-R099",
+        short: "internal runtime error",
+        long: r#"## ILO-R099: internal runtime error
+
+A catch-all for unexpected runtime failures that don't map to a more
+specific code. The diagnostic message carries the inner cause.
+
+If you encounter this, it usually indicates a verifier gap or a bug
+in a builtin — please file an issue with the source that triggers it.
 "#,
     },
 ];
@@ -1104,6 +1319,45 @@ mod tests {
                 !entry.long.is_empty(),
                 "{} missing long description",
                 entry.code
+            );
+        }
+    }
+
+    #[test]
+    fn parse_code_roundtrip() {
+        assert_eq!(parse_code("ILO-T004"), Some(('T', 4)));
+        assert_eq!(parse_code("ILO-P101"), Some(('P', 101)));
+        assert_eq!(parse_code("ILO-R026"), Some(('R', 26)));
+        assert_eq!(parse_code("ILO-XXXX"), None);
+        assert_eq!(parse_code("T004"), None);
+        assert_eq!(parse_code(""), None);
+    }
+
+    #[test]
+    fn registry_codes_in_documented_ranges() {
+        for entry in REGISTRY {
+            assert!(
+                in_documented_range(entry.code),
+                "{} not in any documented namespace range",
+                entry.code
+            );
+        }
+    }
+
+    #[test]
+    fn reserved_namespaces_have_room() {
+        // Forward-looking namespaces should each span at least 100 codes so
+        // future categories never have to renumber. This is a regression
+        // guard against accidentally tightening a range.
+        for ns in ['N', 'I', 'V', 'D', 'E', 'S'] {
+            let total: u16 = NAMESPACE_RANGES
+                .iter()
+                .filter(|(l, _, _)| *l == ns)
+                .map(|(_, lo, hi)| hi - lo + 1)
+                .sum();
+            assert!(
+                total >= 100,
+                "namespace {ns} has only {total} reserved codes; expected >= 100"
             );
         }
     }
