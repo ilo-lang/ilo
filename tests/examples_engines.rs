@@ -3,12 +3,16 @@
 // asserts that each engine produces the same output.
 //
 // Supported engines tested here:
-//   --run-tree   Tree-walking interpreter
 //   --run-vm     Register VM
+//
+// The tree-walker was removed from the public CLI in the 0.12.x
+// soft-deprecation. It stays in-tree as the runtime for HOF callbacks
+// that VM/Cranelift bail to, so the VM engine transitively exercises it.
 //
 // Per-example skip annotations (anywhere in the file):
 //   -- engine-skip: vm     Skip the VM engine for this example
-//   -- engine-skip: tree   Skip the interpreter for this example
+//   -- engine-skip: tree   Legacy marker, ignored (kept for backwards-compat
+//                          with existing example annotations).
 
 use std::path::PathBuf;
 use std::process::Command;
@@ -101,16 +105,10 @@ struct Engine {
 }
 
 fn engines() -> Vec<Engine> {
-    vec![
-        Engine {
-            name: "tree",
-            flag: "--run-tree",
-        },
-        Engine {
-            name: "vm",
-            flag: "--run-vm",
-        },
-    ]
+    vec![Engine {
+        name: "vm",
+        flag: "--run-vm",
+    }]
 }
 
 #[test]

@@ -162,11 +162,6 @@ fn check_all(engine: &str) {
 }
 
 #[test]
-fn listlit_builtin_call_hint_tree() {
-    check_all("--run-tree");
-}
-
-#[test]
 fn listlit_builtin_call_hint_vm() {
     check_all("--run-vm");
 }

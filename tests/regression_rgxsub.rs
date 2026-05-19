@@ -1,3 +1,4 @@
+#![allow(clippy::single_element_loop)] // see soft-deprecate-tree: arrays shrank from 2-3 engines to 1
 // Cross-engine regression tests for the `rgxsub` builtin.
 // rgxsub pattern replacement subject — global regex replace, returns text.
 
@@ -21,7 +22,7 @@ fn run_text(engine: &str, src: &str) -> String {
 }
 
 fn check_all(src: &str, expected: &str) {
-    for engine in ["--run-tree", "--run-vm"] {
+    for engine in ["--run-vm"] {
         let actual = run_text(engine, src);
         assert_eq!(
             actual, expected,

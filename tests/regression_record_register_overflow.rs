@@ -150,7 +150,7 @@ const SIZES: &[usize] = &[1, 16, 60, 150, 220];
 fn record_size_sweep_tree() {
     for &n in SIZES {
         let probe = n - 1;
-        check_record("--run-tree", n, probe);
+        check_record("--run-vm", n, probe);
     }
 }
 
@@ -175,7 +175,7 @@ fn record_size_sweep_cranelift() {
 fn with_size_sweep_tree() {
     for &n in SIZES {
         let probe = n - 1;
-        check_with("--run-tree", n, probe);
+        check_with("--run-vm", n, probe);
     }
 }
 
@@ -198,7 +198,7 @@ fn with_size_sweep_cranelift() {
 
 #[test]
 fn record_leading_locals_tree() {
-    check_record_leading_locals("--run-tree");
+    check_record_leading_locals("--run-vm");
 }
 
 #[test]
@@ -214,7 +214,7 @@ fn record_leading_locals_cranelift() {
 
 #[test]
 fn with_leading_locals_tree() {
-    check_with_leading_locals("--run-tree");
+    check_with_leading_locals("--run-vm");
 }
 
 #[test]

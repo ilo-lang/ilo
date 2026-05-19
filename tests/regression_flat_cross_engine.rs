@@ -44,9 +44,9 @@ fn run_err(engine: &str, src: &str, entry: &str) -> String {
 }
 
 #[cfg(feature = "cranelift")]
-const ENGINES_ALL: &[&str] = &["--run-tree", "--run-vm", "--jit"];
+const ENGINES_ALL: &[&str] = &["--run-vm", "--jit"];
 #[cfg(not(feature = "cranelift"))]
-const ENGINES_ALL: &[&str] = &["--run-tree", "--run-vm"];
+const ENGINES_ALL: &[&str] = &["--run-vm"];
 
 // ── happy paths ─────────────────────────────────────────────────────────
 

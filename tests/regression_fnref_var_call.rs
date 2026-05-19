@@ -35,9 +35,9 @@ fn run(engine: &str, src: &str, entry: &str) -> String {
 }
 
 #[cfg(feature = "cranelift")]
-const ENGINES: &[&str] = &["--run-tree", "--run-vm", "--jit"];
+const ENGINES: &[&str] = &["--run-vm", "--jit"];
 #[cfg(not(feature = "cranelift"))]
-const ENGINES: &[&str] = &["--run-tree", "--run-vm"];
+const ENGINES: &[&str] = &["--run-vm"];
 
 // User-fn assigned to a local, then invoked: `f = dbl; f 10` → 20.
 #[test]

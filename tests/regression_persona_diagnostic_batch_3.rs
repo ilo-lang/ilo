@@ -63,7 +63,7 @@ fn run_inline(engine: &str, src: &str, entry: &str) -> (bool, String) {
 fn lambda_with_parens_still_works() {
     let src = "kc x:t>n;len x;body k:t>t;k;main>n;kws=[\"hi\" \"there\"];fld (a:n k:t>n;+a (kc (body k))) kws 0";
     let out = ilo()
-        .args([src, "--run-tree", "main"])
+        .args([src, "--run-vm", "main"])
         .output()
         .expect("failed");
     assert!(
@@ -101,7 +101,7 @@ fn check_rsrt_swap(engine: &str) {
 
 #[test]
 fn rsrt_swap_tree() {
-    check_rsrt_swap("--run-tree");
+    check_rsrt_swap("--run-vm");
 }
 
 #[test]
@@ -119,7 +119,7 @@ fn rsrt_swap_cranelift() {
 #[test]
 fn srt_swap_tree() {
     let src = "mkey c:n e:t>n;+c (len e);main>L t;ctx=10;xs=[\"bb\" \"a\" \"ccc\"];srt mkey ctx xs";
-    let (ok, stderr) = run_inline("--run-tree", src, "main");
+    let (ok, stderr) = run_inline("--run-vm", src, "main");
     assert!(!ok);
     assert!(stderr.contains("params look swapped"), "stderr={stderr}");
 }
@@ -128,7 +128,7 @@ fn srt_swap_tree() {
 #[test]
 fn map_swap_tree() {
     let src = "f c:n e:t>n;+c (len e);main>L n;ctx=10;xs=[\"bb\" \"a\" \"ccc\"];map f ctx xs";
-    let (ok, stderr) = run_inline("--run-tree", src, "main");
+    let (ok, stderr) = run_inline("--run-vm", src, "main");
     assert!(!ok);
     assert!(stderr.contains("params look swapped"), "stderr={stderr}");
 }
@@ -137,7 +137,7 @@ fn map_swap_tree() {
 #[test]
 fn flt_swap_tree() {
     let src = "f c:n e:t>b;>(len e) c;main>L t;ctx=1;xs=[\"bb\" \"a\" \"ccc\"];flt f ctx xs";
-    let (ok, stderr) = run_inline("--run-tree", src, "main");
+    let (ok, stderr) = run_inline("--run-vm", src, "main");
     assert!(!ok);
     assert!(stderr.contains("params look swapped"), "stderr={stderr}");
 }
@@ -147,7 +147,7 @@ fn flt_swap_tree() {
 fn rsrt_correct_order_passes() {
     let src =
         "mkey e:t c:n>n;+c (len e);main>L t;ctx=10;xs=[\"bb\" \"a\" \"ccc\"];rsrt mkey ctx xs";
-    let (ok, stderr) = run_inline("--run-tree", src, "main");
+    let (ok, stderr) = run_inline("--run-vm", src, "main");
     assert!(ok, "stderr={stderr}");
 }
 
@@ -156,7 +156,7 @@ fn rsrt_correct_order_passes() {
 #[test]
 fn rsrt_same_type_no_false_positive() {
     let src = "mkey a:n b:n>n;+a b;main>L n;ctx=10;xs=[1 2 3];rsrt mkey ctx xs";
-    let (ok, stderr) = run_inline("--run-tree", src, "main");
+    let (ok, stderr) = run_inline("--run-vm", src, "main");
     assert!(ok, "stderr={stderr}");
 }
 
@@ -185,7 +185,7 @@ fn check_list_semi(engine: &str) {
 
 #[test]
 fn list_semi_tree() {
-    check_list_semi("--run-tree");
+    check_list_semi("--run-vm");
 }
 
 #[test]
@@ -203,7 +203,7 @@ fn list_semi_cranelift() {
 #[test]
 fn list_whitespace_still_works() {
     let out = ilo()
-        .args(["main>n;sum [1 2 3]", "--run-tree", "main"])
+        .args(["main>n;sum [1 2 3]", "--run-vm", "main"])
         .output()
         .expect("failed");
     assert!(out.status.success());
@@ -213,7 +213,7 @@ fn list_whitespace_still_works() {
 #[test]
 fn list_comma_still_works() {
     let out = ilo()
-        .args(["main>n;sum [1, 2, 3]", "--run-tree", "main"])
+        .args(["main>n;sum [1, 2, 3]", "--run-vm", "main"])
         .output()
         .expect("failed");
     assert!(out.status.success());
@@ -226,7 +226,7 @@ fn list_comma_still_works() {
 fn semi_outside_list_unchanged() {
     let src = "main>n;[1 2 3];0";
     let out = ilo()
-        .args([src, "--run-tree", "main"])
+        .args([src, "--run-vm", "main"])
         .output()
         .expect("failed");
     // This one should succeed — `[1 2 3]` is a discarded value.

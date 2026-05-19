@@ -18,7 +18,7 @@ fn tool_call_stub_via_interp() {
     let prog = r#"tool mytool"a helper" x:t>R _ t
 main x:t>R _ t;mytool x"#;
     let out = ilo()
-        .args([prog, "--run-tree", "main", "hello"])
+        .args([prog, "--run-vm", "main", "hello"])
         .output()
         .expect("ilo failed to start");
     assert!(
@@ -64,7 +64,7 @@ main x:t>R _ t;mytool x"#;
             prog,
             "--tools",
             "/nonexistent/path/to/config.json",
-            "--run-tree",
+            "--run-vm",
             "main",
             "hello",
         ])
@@ -104,7 +104,7 @@ fn tools_flag_with_valid_config() {
 main x:t>t;"hello""#;
 
     let out = ilo()
-        .args([prog, "--tools", &path, "--run-tree", "main", "world"])
+        .args([prog, "--tools", &path, "--run-vm", "main", "world"])
         .output()
         .expect("ilo failed to start");
 
@@ -153,7 +153,7 @@ fn tools_flag_invalid_json_config() {
     let prog = r#"tool mytool"a helper" x:t>R _ t
 main x:t>R _ t;mytool x"#;
     let out = ilo()
-        .args([prog, "--tools", &path, "--run-tree", "main", "hello"])
+        .args([prog, "--tools", &path, "--run-vm", "main", "hello"])
         .output()
         .expect("ilo failed to start");
 
@@ -219,7 +219,7 @@ f>R _ t;b "test""#;
 fn get_builtin_real_http() {
     let prog = "main x:t>R t t;$x";
     let out = ilo()
-        .args([prog, "--run-tree", "main", "https://httpbin.org/get"])
+        .args([prog, "--run-vm", "main", "https://httpbin.org/get"])
         .output()
         .expect("ilo failed to start");
     assert!(
@@ -442,7 +442,7 @@ main x:n>R n n;double x"#;
                 prog,
                 "--tools",
                 p.to_str().unwrap(),
-                "--run-tree",
+                "--run-vm",
                 "main",
                 "2",
             ])
@@ -470,7 +470,7 @@ main x:n>R n n;double x"#;
                 prog,
                 "--tools",
                 p.to_str().unwrap(),
-                "--run-tree",
+                "--run-vm",
                 "main",
                 "2",
             ])
@@ -517,7 +517,7 @@ main x:n>R n n;double x"#;
                 prog,
                 "--tools",
                 p.to_str().unwrap(),
-                "--run-tree",
+                "--run-vm",
                 "main",
                 "2",
             ])

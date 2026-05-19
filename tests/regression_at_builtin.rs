@@ -39,7 +39,7 @@ fn check_num_index(engine: &str) {
 
 #[test]
 fn at_num_index_tree() {
-    check_num_index("--run-tree");
+    check_num_index("--run-vm");
 }
 
 #[test]
@@ -62,7 +62,7 @@ fn check_text_index(engine: &str) {
 
 #[test]
 fn at_text_index_tree() {
-    check_text_index("--run-tree");
+    check_text_index("--run-vm");
 }
 
 #[test]
@@ -85,7 +85,7 @@ fn check_first(engine: &str) {
 
 #[test]
 fn at_first_tree() {
-    check_first("--run-tree");
+    check_first("--run-vm");
 }
 
 #[test]
@@ -108,7 +108,7 @@ fn check_last(engine: &str) {
 
 #[test]
 fn at_last_tree() {
-    check_last("--run-tree");
+    check_last("--run-vm");
 }
 
 #[test]
@@ -150,7 +150,7 @@ fn check_oor_error(engine: &str) {
 
 #[test]
 fn at_out_of_range_tree() {
-    check_oor_error("--run-tree");
+    check_oor_error("--run-vm");
 }
 
 #[test]
@@ -174,7 +174,7 @@ fn check_neg_last(engine: &str) {
 
 #[test]
 fn at_negative_last_tree() {
-    check_neg_last("--run-tree");
+    check_neg_last("--run-vm");
 }
 
 #[test]
@@ -197,7 +197,7 @@ fn check_neg_first(engine: &str) {
 
 #[test]
 fn at_negative_first_tree() {
-    check_neg_first("--run-tree");
+    check_neg_first("--run-vm");
 }
 
 #[test]
@@ -220,7 +220,7 @@ fn check_neg_text(engine: &str) {
 
 #[test]
 fn at_negative_text_tree() {
-    check_neg_text("--run-tree");
+    check_neg_text("--run-vm");
 }
 
 #[test]
@@ -259,7 +259,7 @@ fn check_neg_oor_error(engine: &str) {
 
 #[test]
 fn at_negative_oor_tree() {
-    check_neg_oor_error("--run-tree");
+    check_neg_oor_error("--run-vm");
 }
 
 #[test]
@@ -291,7 +291,7 @@ fn check_float_integral(engine: &str) {
 
 #[test]
 fn at_float_integral_tree() {
-    check_float_integral("--run-tree");
+    check_float_integral("--run-vm");
 }
 
 #[test]
@@ -313,7 +313,7 @@ fn check_float_frac(engine: &str) {
 
 #[test]
 fn at_float_frac_tree() {
-    check_float_frac("--run-tree");
+    check_float_frac("--run-vm");
 }
 
 #[test]
@@ -335,7 +335,7 @@ fn check_neg_float(engine: &str) {
 
 #[test]
 fn at_negative_float_tree() {
-    check_neg_float("--run-tree");
+    check_neg_float("--run-vm");
 }
 
 #[test]
@@ -358,7 +358,7 @@ fn check_neg_half(engine: &str) {
 
 #[test]
 fn at_negative_half_tree() {
-    check_neg_half("--run-tree");
+    check_neg_half("--run-vm");
 }
 
 #[test]
@@ -387,7 +387,7 @@ fn check_computed_float(engine: &str) {
 
 #[test]
 fn at_computed_float_tree() {
-    check_computed_float("--run-tree");
+    check_computed_float("--run-vm");
 }
 
 #[test]
@@ -425,7 +425,7 @@ fn check_non_numeric_error(engine: &str) {
 
 #[test]
 fn at_non_numeric_tree() {
-    check_non_numeric_error("--run-tree");
+    check_non_numeric_error("--run-vm");
 }
 
 #[test]

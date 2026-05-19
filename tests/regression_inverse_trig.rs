@@ -1,3 +1,4 @@
+#![allow(clippy::single_element_loop)] // see soft-deprecate-tree: arrays shrank from 2-3 engines to 1
 // Cross-engine smoke tests for the inverse trig builtins (asin, acos, atan).
 // Each is checked against tree, vm, and cranelift (when enabled) to f64
 // precision. Mirrors regression_math_extra.rs so the geospatial personas
@@ -34,7 +35,7 @@ fn approx(engine: &str, src: &str, expected: f64) {
 }
 
 fn check_all(src: &str, expected: f64) {
-    approx("--run-tree", src, expected);
+    approx("--run-vm", src, expected);
     approx("--run-vm", src, expected);
     #[cfg(feature = "cranelift")]
     approx("--jit", src, expected);
@@ -127,7 +128,7 @@ fn atan_round_trip() {
 fn asin_domain_error_is_nan() {
     // asin is defined on [-1, 1]; outside the domain the result is NaN.
     // Across all engines the same NaN should appear.
-    for engine in ["--run-tree", "--run-vm"] {
+    for engine in ["--run-vm"] {
         let actual = run_num(engine, "f>n;asin 2");
         assert!(
             actual.is_nan(),

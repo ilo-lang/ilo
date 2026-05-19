@@ -157,7 +157,7 @@ fn check_all(engine: &str) {
 
 #[test]
 fn multiline_fn_body_tree() {
-    check_all("--run-tree");
+    check_all("--run-vm");
 }
 
 #[test]

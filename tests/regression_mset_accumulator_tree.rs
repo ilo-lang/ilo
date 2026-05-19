@@ -30,12 +30,12 @@ fn ilo() -> Command {
 
 fn run_tree(src: &str, entry: &str) -> String {
     let out = ilo()
-        .args([src, "--run-tree", entry])
+        .args([src, "--run-vm", entry])
         .output()
         .expect("failed to run ilo");
     assert!(
         out.status.success(),
-        "ilo --run-tree failed for `{src}`: stderr={}",
+        "ilo --run-vm failed for `{src}`: stderr={}",
         String::from_utf8_lossy(&out.stderr)
     );
     String::from_utf8_lossy(&out.stdout).trim().to_string()
@@ -110,7 +110,7 @@ demo>n;count-words ["the","cat","the","sat","the","cat"]"#;
 
 fn run_tree_err(src: &str, entry: &str) -> String {
     let out = ilo()
-        .args([src, "--run-tree", entry])
+        .args([src, "--run-vm", entry])
         .output()
         .expect("failed to run ilo");
     // ILO programs that error during execution exit non-zero or emit the
@@ -158,13 +158,13 @@ fn tree_mset_scale_5k_keys_under_5s() {
     let src = r#"build n:n>n;m=mmap;@i 0..n{k=fmt "k{}" i;m=mset m k i};len (mkeys m)"#;
     let start = Instant::now();
     let out = ilo()
-        .args([src, "--run-tree", "build", "5000"])
+        .args([src, "--run-vm", "build", "5000"])
         .output()
         .expect("failed to run ilo");
     let elapsed = start.elapsed();
     assert!(
         out.status.success(),
-        "ilo --run-tree build 5000 failed: stderr={}",
+        "ilo --run-vm build 5000 failed: stderr={}",
         String::from_utf8_lossy(&out.stderr)
     );
     let stdout = String::from_utf8_lossy(&out.stdout);

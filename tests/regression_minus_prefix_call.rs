@@ -121,7 +121,7 @@ fn check_all(engine: &str) {
 
 #[test]
 fn minus_prefix_call_tree() {
-    check_all("--run-tree");
+    check_all("--run-vm");
 }
 
 #[test]

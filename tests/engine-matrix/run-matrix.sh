@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
-# Run every *.ilo in this dir through all four engines (tree/vm/jit/aot)
-# and print a Markdown matrix. Each file's expected output is read from
-# any header line(s) of the form `-- expected: <text>`; multiple lines are
-# joined with newlines.
+# Run every *.ilo in this dir through every public engine (vm/jit/aot) and
+# print a Markdown matrix. The tree-walker column was dropped when --run-tree
+# was removed from the public CLI in the 0.12.x soft-deprecation; the
+# tree-walker stays in-tree as the runtime for HOF callbacks that VM/Cranelift
+# bail to, so VM coverage transitively exercises it. Each file's expected
+# output is read from any header line(s) of the form `-- expected: <text>`;
+# multiple lines are joined with newlines.
 #
 # Env: ILO_BIN (default: ./target/release/ilo)
 #      ILO_AUDIT_NET=1 to include http-* tests (skipped by default)
@@ -20,7 +23,6 @@ if [ ! -x "$ILO" ]; then
 fi
 
 # Engine invocations
-run_tree() { "$ILO" --run-tree "$1" 2>&1; }
 run_vm()   { "$ILO" --run-vm   "$1" 2>&1; }
 run_jit()  { "$ILO" --jit      "$1" 2>&1; }
 run_aot()  {
@@ -47,8 +49,8 @@ cell() {
   fi
 }
 
-printf "| File | Feature | Tree | VM | JIT | AOT |\n"
-printf "|---|---|---|---|---|---|\n"
+printf "| File | Feature | VM | JIT | AOT |\n"
+printf "|---|---|---|---|---|\n"
 
 for f in "$DIR"/*.ilo; do
   fname=$(basename "$f")
@@ -58,20 +60,18 @@ for f in "$DIR"/*.ilo; do
 
   case "$fname" in
     33-http-*|3[4-9]-http-*) if [ "${ILO_AUDIT_NET:-0}" != "1" ]; then
-        printf "| %s | %s | skip | skip | skip | skip |\n" "$fname" "$feature"
+        printf "| %s | %s | skip | skip | skip |\n" "$fname" "$feature"
         continue
       fi;;
   esac
 
-  ot=$(run_tree "$f"); et=$?
   ov=$(run_vm   "$f"); ev=$?
   oj=$(run_jit  "$f"); ej=$?
   oa=$(run_aot  "$f"); ea=$?
 
-  ct=$(cell "$ot" "$expected" "$et")
   cv=$(cell "$ov" "$expected" "$ev")
   cj=$(cell "$oj" "$expected" "$ej")
   ca=$(cell "$oa" "$expected" "$ea")
 
-  printf "| %s | %s | %s | %s | %s | %s |\n" "$fname" "$feature" "$ct" "$cv" "$cj" "$ca"
+  printf "| %s | %s | %s | %s | %s |\n" "$fname" "$feature" "$cv" "$cj" "$ca"
 done

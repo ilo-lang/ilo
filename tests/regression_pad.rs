@@ -1,3 +1,4 @@
+#![allow(clippy::single_element_loop)] // see soft-deprecate-tree: arrays shrank from 2-3 engines to 1
 // Cross-engine regression tests for `padl` (left-pad) and `padr` (right-pad).
 // Mirrors the trm/math-extra cross-engine test pattern: every engine must
 // agree on padding behaviour including edge cases (already-wider, exact, w=0,
@@ -10,9 +11,9 @@ fn ilo() -> Command {
 }
 
 #[cfg(feature = "cranelift")]
-const ENGINES_ALL: &[&str] = &["--run-tree", "--run-vm", "--jit"];
+const ENGINES_ALL: &[&str] = &["--run-vm", "--jit"];
 #[cfg(not(feature = "cranelift"))]
-const ENGINES_ALL: &[&str] = &["--run-tree", "--run-vm"];
+const ENGINES_ALL: &[&str] = &["--run-vm"];
 
 fn run_ok(engine: &str, src: &str, args: &[&str]) -> String {
     let mut cmd = ilo();
@@ -122,7 +123,7 @@ fn pad_empty_string_pads_to_width() {
 fn pad_negative_width_errors() {
     // Cranelift returns nil on invalid width (matches `at`/`hd` engine-divergence
     // precedent); tree-walker and VM error. Harmonising this is a deferred follow-up.
-    for engine in &["--run-tree", "--run-vm"] {
+    for engine in &["--run-vm"] {
         let _ = run_err(engine, PADL_SRC, &["f", "hi", "-1"]);
         let _ = run_err(engine, PADR_SRC, &["f", "hi", "-1"]);
     }
@@ -177,7 +178,7 @@ fn pad_char_unicode_scalar_cross_engine() {
 fn pad_char_multichar_errors_tree_vm() {
     // Tree and VM error; Cranelift returns nil (existing engine-divergence on
     // invalid pad inputs, same precedent as the negative-width case above).
-    for engine in &["--run-tree", "--run-vm"] {
+    for engine in &["--run-vm"] {
         let _ = run_err(engine, PADL3_SRC, &["f", "x", "5", "ab"]);
         let _ = run_err(engine, PADR3_SRC, &["f", "x", "5", "ab"]);
     }
@@ -186,7 +187,7 @@ fn pad_char_multichar_errors_tree_vm() {
 #[test]
 fn pad_char_empty_errors_tree_vm() {
     // Empty pad string is not a 1-character string; same error semantics as multi-char.
-    for engine in &["--run-tree", "--run-vm"] {
+    for engine in &["--run-vm"] {
         let _ = run_err(engine, PADL3_SRC, &["f", "x", "5", ""]);
         let _ = run_err(engine, PADR3_SRC, &["f", "x", "5", ""]);
     }
@@ -208,7 +209,7 @@ fn pad_char_non_text_rejected_at_verify() {
     // Verifier rejects a non-text 3rd arg with ILO-T013 before any engine runs.
     // Covers the arity-3 type-check branch in verify.rs.
     let src = "f s:t w:n>t;padl s w 7"; // numeric literal 7 in the pad-char slot
-    let err = run_err("--run-tree", src, &["f", "x", "5"]);
+    let err = run_err("--run-vm", src, &["f", "x", "5"]);
     assert!(
         err.contains("ILO-T013") || err.contains("expects t"),
         "expected ILO-T013 for non-text pad char, got: {err}"
@@ -220,7 +221,7 @@ fn pad_arity_overload_rejects_four_args() {
     // The arity overload accepts 2 or 3 args. Four must still be rejected so
     // the arity-mismatch error message picks up the new "2 or 3" branch.
     let src = "f s:t w:n p:t q:t>t;padl s w p q";
-    let err = run_err("--run-tree", src, &["f", "x", "5", "0", "0"]);
+    let err = run_err("--run-vm", src, &["f", "x", "5", "0", "0"]);
     assert!(
         err.contains("ILO-T006") || err.contains("arity") || err.contains("2 or 3"),
         "expected ILO-T006 arity mismatch, got: {err}"

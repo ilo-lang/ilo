@@ -1,3 +1,4 @@
+#![allow(clippy::single_element_loop)] // see soft-deprecate-tree: arrays shrank from 2-3 engines to 1
 // Regression tests for literal-int dot-index on lists: `xs.0` desugars to
 // `at xs 0` at parse time (parser emits Expr::Index, which every engine
 // already supports). These tests lock in the cross-engine behaviour and
@@ -24,7 +25,7 @@ fn run_ok(engine: &str, src: &str, entry: &str) -> String {
 }
 
 const ENGINES: &[&str] = &[
-    "--run-tree",
+    "--run-vm",
     "--run-vm",
     #[cfg(feature = "cranelift")]
     "--jit",
@@ -53,7 +54,7 @@ fn dot_index_two() {
 #[test]
 fn dot_index_out_of_range_tree_vm() {
     let src = "f>n;xs=[10,20,30];xs.5";
-    for engine in ["--run-tree", "--run-vm"] {
+    for engine in ["--run-vm"] {
         let out = ilo()
             .args([src, engine, "f"])
             .output()
@@ -110,7 +111,7 @@ fn record_field_access_unaffected() {
 fn record_numeric_dot_fails_verify() {
     let src = "type point{x:n;y:n}\nf>n;p=point x:10 y:20;p.0";
     let out = ilo()
-        .args([src, "--run-tree", "f"])
+        .args([src, "--run-vm", "f"])
         .output()
         .expect("failed to run ilo");
     assert!(

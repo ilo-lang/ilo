@@ -36,7 +36,7 @@ fn check_nums(engine: &str) {
 
 #[test]
 fn rsrt_nums_tree() {
-    check_nums("--run-tree");
+    check_nums("--run-vm");
 }
 
 #[test]
@@ -63,7 +63,7 @@ fn check_text(engine: &str) {
 
 #[test]
 fn rsrt_text_tree() {
-    check_text("--run-tree");
+    check_text("--run-vm");
 }
 
 #[test]
@@ -86,7 +86,7 @@ fn check_empty(engine: &str) {
 
 #[test]
 fn rsrt_empty_tree() {
-    check_empty("--run-tree");
+    check_empty("--run-vm");
 }
 
 #[test]
@@ -110,7 +110,7 @@ fn check_single(engine: &str) {
 
 #[test]
 fn rsrt_single_tree() {
-    check_single("--run-tree");
+    check_single("--run-vm");
 }
 
 #[test]
@@ -138,7 +138,7 @@ fn check_typevar(engine: &str) {
 
 #[test]
 fn rsrt_typevar_tree() {
-    check_typevar("--run-tree");
+    check_typevar("--run-vm");
 }
 
 #[test]
@@ -162,7 +162,7 @@ fn check_str_asc(engine: &str) {
 
 #[test]
 fn rsrt_str_asc_tree() {
-    check_str_asc("--run-tree");
+    check_str_asc("--run-vm");
 }
 
 #[test]
@@ -185,7 +185,7 @@ fn check_str_desc(engine: &str) {
 
 #[test]
 fn rsrt_str_desc_tree() {
-    check_str_desc("--run-tree");
+    check_str_desc("--run-vm");
 }
 
 #[test]

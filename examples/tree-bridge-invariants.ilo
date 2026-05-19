@@ -1,0 +1,39 @@
+-- Tree-bridge invariants: the ops that still route through the
+-- (internal) tree-walker after --run-tree was removed in 0.12.1.
+--
+-- The VM bails to the tree-walker transparently for these shapes
+-- (regex, fmt variadic, fmt2, rd/rdb/rdjl, sleep, ct, rsrt, and the
+-- 3-arg ctx variants of map/flt/fld/srt). The JIT and AOT inherit the
+-- same dispatch via the VM's `is_tree_bridge_eligible` table.
+--
+-- This example exercises one op per family so the engine harness
+-- catches any regression that breaks bridge dispatch under VM/JIT/AOT.
+
+-- rgxall1: 0-or-1 capture group, flat L t over every match.
+keys>L t;rgxall1 "(\w+)=\d+" "x=1 y=22 z=333"
+
+-- fmt2: decimal-precision formatter; binary signature x digits.
+pi-two>t;fmt2 3.14159 2
+
+-- ct 3-arg ctx: closure-bind count by predicate.
+gt x:n threshold:n>b;>x threshold
+positive-over-two>n;ct gt 2 [1,2,3,4,5]
+
+-- map 3-arg ctx: closure-bind map.
+add x:n c:n>n;+x c
+shifted>L n;map add 10 [1,2,3]
+
+-- rsrt 2-arg: descending sort by key.
+identity x:n>n;x
+desc>L n;rsrt identity [3,1,4,1,5]
+
+-- run: keys
+-- out: [x, y, z]
+-- run: pi-two
+-- out: 3.14
+-- run: positive-over-two
+-- out: 3
+-- run: shifted
+-- out: [11, 12, 13]
+-- run: desc
+-- out: [5, 4, 3, 1, 1]

@@ -1,3 +1,4 @@
+#![allow(clippy::single_element_loop)] // see soft-deprecate-tree: arrays shrank from 2-3 engines to 1
 // Cross-engine coverage for the PR 3b HOF tree-bridge: `grp`, `uniqby`,
 // `partition`, and 2-arg `srt`. These HOFs invoke a user-defined callback
 // per element, so the bridge needs the active AST `Program` plumbed through
@@ -16,7 +17,7 @@
 
 use std::process::Command;
 
-const ENGINES: &[&str] = &["--run-tree", "--run-vm", "--jit"];
+const ENGINES: &[&str] = &["--run-vm", "--jit"];
 
 fn ilo() -> Command {
     Command::new(env!("CARGO_BIN_EXE_ilo"))
@@ -185,7 +186,7 @@ fn grp_wrong_list_arg_errors_on_tree_and_vm() {
     // Cranelift's `jit_call_builtin_tree` documents that bridge errors
     // collapse to Nil; that's a separate follow-up and so isn't in the
     // must-error set here.
-    for engine in ["--run-tree", "--run-vm"] {
+    for engine in ["--run-vm"] {
         let err = run_engine_err(
             r#"key n:n>n;n
 f>_;grp key 42"#,

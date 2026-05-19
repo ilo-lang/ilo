@@ -224,16 +224,18 @@ fn run_vm_basic_execution() {
     );
 }
 
-/// `ilo run --run-tree 'f x:n>n;*x 2' f 5` should succeed and print 10.
-/// Uses the `run` subcommand to properly route --run-tree through dispatch_run.
+/// `ilo run --run-vm 'f x:n>n;*x 2' f 5` should succeed and print 10. The
+/// equivalent --run-tree variant was removed in the 0.12.x soft-deprecation;
+/// this test was repointed to --run-vm so the clap parse path still gets
+/// coverage at the `run` subcommand level.
 #[test]
-fn run_tree_basic_execution() {
-    let (ok, stdout, stderr) = run_args(&["run", "--run-tree", "f x:n>n;*x 2", "f", "5"]);
-    assert!(ok, "--run-tree should succeed; stderr: {stderr}");
+fn run_vm_basic_execution_via_subcommand() {
+    let (ok, stdout, stderr) = run_args(&["run", "--run-vm", "f x:n>n;*x 2", "f", "5"]);
+    assert!(ok, "--run-vm should succeed; stderr: {stderr}");
     assert_eq!(
         stdout.trim(),
         "10",
-        "--run-tree result should be 10; got: {stdout}"
+        "--run-vm result should be 10; got: {stdout}"
     );
 }
 

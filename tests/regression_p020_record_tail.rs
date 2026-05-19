@@ -55,9 +55,9 @@ fn run_ok(engine: &str, src: &str, args: &[&str]) -> String {
 }
 
 #[cfg(feature = "cranelift")]
-const ENGINES_ALL: &[&str] = &["--run-tree", "--run-vm", "--jit"];
+const ENGINES_ALL: &[&str] = &["--run-vm", "--jit"];
 #[cfg(not(feature = "cranelift"))]
-const ENGINES_ALL: &[&str] = &["--run-tree", "--run-vm"];
+const ENGINES_ALL: &[&str] = &["--run-vm"];
 
 // ── (a) Record-constructor tail with 1, 2, 3 fields ──────────────────
 

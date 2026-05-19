@@ -99,7 +99,7 @@ const BINDING_NAMES: &[&str] = &[
 #[test]
 fn builtin_binding_rejected_in_fn_tree() {
     for name in BINDING_NAMES {
-        check_in_fn_binding("--run-tree", name);
+        check_in_fn_binding("--run-vm", name);
     }
 }
 
@@ -121,7 +121,7 @@ fn builtin_binding_rejected_in_fn_cranelift() {
 #[test]
 fn builtin_binding_rejected_top_level_tree() {
     for name in BINDING_NAMES {
-        check_top_level_binding("--run-tree", name);
+        check_top_level_binding("--run-vm", name);
     }
 }
 
@@ -169,7 +169,7 @@ fn check_flat_repro(engine: &str) {
 
 #[test]
 fn flat_repro_tree() {
-    check_flat_repro("--run-tree");
+    check_flat_repro("--run-vm");
 }
 
 #[test]
@@ -201,7 +201,7 @@ fn check_fld_keeps_specific_message(engine: &str) {
 
 #[test]
 fn fld_specific_message_preserved_tree() {
-    check_fld_keeps_specific_message("--run-tree");
+    check_fld_keeps_specific_message("--run-vm");
 }
 
 #[test]
@@ -237,7 +237,7 @@ fn check_renamed_binding_works(engine: &str) {
 
 #[test]
 fn rename_workaround_binding_tree() {
-    check_renamed_binding_works("--run-tree");
+    check_renamed_binding_works("--run-vm");
 }
 
 #[test]

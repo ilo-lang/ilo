@@ -10,9 +10,10 @@ Engines exercised:
 
 | Engine            | Invocation                                                |
 |-------------------|-----------------------------------------------------------|
-| Tree walker       | `ilo --run-tree FILE`                                     |
 | Register VM       | `ilo --run-vm FILE`                                       |
 | Cranelift JIT     | `ilo --jit FILE`                                          |
 | Cranelift AOT     | `ilo compile FILE -o out && ./out`                        |
+
+The tree-walker is no longer a public engine: `--run-tree` was removed in the 0.12.x soft-deprecation. It stays in-tree as the runtime for HOF callbacks that VM/Cranelift bail to, so VM coverage transitively exercises tree-walker behaviour for the remaining bridge ops.
 
 `run-matrix.sh` produces a Markdown matrix on stdout suitable for pasting into the audit doc.

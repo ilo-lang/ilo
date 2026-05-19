@@ -464,7 +464,7 @@ fn run_engine_picks_main(engine_flag: &str) {
 
 #[test]
 fn run_tree_flag_auto_picks_main_on_multi_fn_file() {
-    run_engine_picks_main("--run-tree");
+    run_engine_picks_main("--run-vm");
 }
 
 #[test]
@@ -501,7 +501,7 @@ fn run_engine_explicit_func_overrides_main(engine_flag: &str) {
 
 #[test]
 fn run_tree_flag_explicit_func_overrides_main() {
-    run_engine_explicit_func_overrides_main("--run-tree");
+    run_engine_explicit_func_overrides_main("--run-vm");
 }
 
 #[test]
@@ -536,7 +536,7 @@ fn run_engine_undefined_func_arg_still_errors(engine_flag: &str) {
 
 #[test]
 fn run_tree_flag_undefined_func_arg_still_errors() {
-    run_engine_undefined_func_arg_still_errors("--run-tree");
+    run_engine_undefined_func_arg_still_errors("--run-vm");
 }
 
 #[test]
@@ -567,7 +567,7 @@ fn run_engine_single_fn_no_args_still_runs(engine_flag: &str) {
 
 #[test]
 fn run_tree_flag_single_fn_no_args_still_runs() {
-    run_engine_single_fn_no_args_still_runs("--run-tree");
+    run_engine_single_fn_no_args_still_runs("--run-vm");
 }
 
 #[test]
@@ -799,7 +799,7 @@ fn run_engine_non_ident_positional_routes_to_main(engine_flag: &str) {
 
 #[test]
 fn run_tree_flag_non_ident_positional_routes_to_main() {
-    run_engine_non_ident_positional_routes_to_main("--run-tree");
+    run_engine_non_ident_positional_routes_to_main("--run-vm");
 }
 
 #[test]
@@ -842,7 +842,7 @@ fn run_engine_path_shaped_positional_routes_to_main(engine_flag: &str) {
 
 #[test]
 fn run_tree_flag_path_shaped_positional_routes_to_main() {
-    run_engine_path_shaped_positional_routes_to_main("--run-tree");
+    run_engine_path_shaped_positional_routes_to_main("--run-vm");
 }
 
 #[test]
@@ -872,7 +872,7 @@ fn run_engine_numeric_positional_routes_to_main(engine_flag: &str) {
 
 #[test]
 fn run_tree_flag_numeric_positional_routes_to_main() {
-    run_engine_numeric_positional_routes_to_main("--run-tree");
+    run_engine_numeric_positional_routes_to_main("--run-vm");
 }
 
 #[test]
@@ -901,7 +901,7 @@ fn run_engine_explicit_main_keyword_still_works(engine_flag: &str) {
 
 #[test]
 fn run_tree_flag_explicit_main_with_non_ident_arg() {
-    run_engine_explicit_main_keyword_still_works("--run-tree");
+    run_engine_explicit_main_keyword_still_works("--run-vm");
 }
 
 #[test]
@@ -935,7 +935,7 @@ fn run_engine_explicit_helper_overrides_main_heuristic(engine_flag: &str) {
 
 #[test]
 fn run_tree_flag_explicit_helper_overrides_main_heuristic() {
-    run_engine_explicit_helper_overrides_main_heuristic("--run-tree");
+    run_engine_explicit_helper_overrides_main_heuristic("--run-vm");
 }
 
 #[test]
@@ -964,7 +964,7 @@ fn run_engine_unknown_ident_no_main_still_errors(engine_flag: &str) {
 
 #[test]
 fn run_tree_flag_unknown_ident_no_main_still_errors() {
-    run_engine_unknown_ident_no_main_still_errors("--run-tree");
+    run_engine_unknown_ident_no_main_still_errors("--run-vm");
 }
 
 #[test]

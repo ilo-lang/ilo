@@ -36,7 +36,7 @@ fn run_ok(engine: &str, src: &str, entry: &str) -> String {
 }
 
 fn engines() -> &'static [&'static str] {
-    &["--run-tree", "--run-vm"]
+    &["--run-vm"]
 }
 
 // Canonical regression: write a row with an embedded newline, then read

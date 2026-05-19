@@ -54,7 +54,7 @@ fn check_param(engine: &str) {
 
 #[test]
 fn param_index_tree() {
-    check_param("--run-tree");
+    check_param("--run-vm");
 }
 #[test]
 fn param_index_vm() {
@@ -80,7 +80,7 @@ fn check_range(engine: &str) {
 
 #[test]
 fn range_index_tree() {
-    check_range("--run-tree");
+    check_range("--run-vm");
 }
 #[test]
 fn range_index_vm() {
@@ -103,7 +103,7 @@ fn check_let(engine: &str) {
 
 #[test]
 fn let_index_tree() {
-    check_let("--run-tree");
+    check_let("--run-vm");
 }
 #[test]
 fn let_index_vm() {
@@ -133,7 +133,7 @@ fn check_collision(engine: &str) {
 
 #[test]
 fn collision_record_field_tree() {
-    check_collision("--run-tree");
+    check_collision("--run-vm");
 }
 #[test]
 fn collision_record_field_vm() {
@@ -155,7 +155,7 @@ fn nested_chain_tree() {
     let p = write_src("nested_tree", NESTED_SRC);
     let s = run_args(&[
         p.to_str().unwrap(),
-        "--run-tree",
+        "--run-vm",
         "deep",
         "[[1,2,3],[4,5,6],[7,8,9]]",
         "1",

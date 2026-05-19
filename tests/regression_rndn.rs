@@ -72,7 +72,7 @@ const N: i64 = 1000;
 
 #[test]
 fn rndn_std_normal_tree() {
-    check_normal_stats("--run-tree", N, 0.0, 1.0, 0.2, (0.85, 1.15));
+    check_normal_stats("--run-vm", N, 0.0, 1.0, 0.2, (0.85, 1.15));
 }
 
 #[test]
@@ -89,7 +89,7 @@ fn rndn_std_normal_cranelift() {
 #[test]
 fn rndn_shifted_scaled_tree() {
     // N(10, 2): mean tol 0.4 (5 SE), stdev in [1.7, 2.3].
-    check_normal_stats("--run-tree", N, 10.0, 2.0, 0.4, (1.7, 2.3));
+    check_normal_stats("--run-vm", N, 10.0, 2.0, 0.4, (1.7, 2.3));
 }
 
 #[test]
@@ -106,7 +106,7 @@ fn rndn_shifted_scaled_cranelift() {
 #[test]
 fn rndn_returns_number_type() {
     // Single-sample sanity: should be a finite number.
-    let out = run_text("--run-tree", "f>n;rndn 0 1");
+    let out = run_text("--run-vm", "f>n;rndn 0 1");
     let v: f64 = out.parse().expect("not a number");
     assert!(v.is_finite(), "rndn produced non-finite: {v}");
 }
@@ -114,7 +114,7 @@ fn rndn_returns_number_type() {
 #[test]
 fn rndn_zero_sigma_returns_mu() {
     // Box-Muller with sigma=0: mu + 0*z = mu exactly.
-    let out = run_text("--run-tree", "f>n;rndn 7 0");
+    let out = run_text("--run-vm", "f>n;rndn 7 0");
     let v: f64 = out.parse().expect("not a number");
     assert_eq!(v, 7.0, "rndn 7 0 should be exactly 7, got {v}");
 }

@@ -39,9 +39,9 @@ fn run_noarg(engine: &str, src: &str, entry: &str) -> String {
 }
 
 #[cfg(feature = "cranelift")]
-const ENGINES_ALL: &[&str] = &["--run-tree", "--run-vm", "--jit"];
+const ENGINES_ALL: &[&str] = &["--run-vm", "--jit"];
 #[cfg(not(feature = "cranelift"))]
-const ENGINES_ALL: &[&str] = &["--run-tree", "--run-vm"];
+const ENGINES_ALL: &[&str] = &["--run-vm"];
 
 const CHARS_SRC: &str = "f s:t>L t;chars s";
 const CHARS_LEN_SRC: &str = "f s:t>n;len (chars s)";

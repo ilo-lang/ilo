@@ -114,7 +114,7 @@ fn check_all(engine: &str) {
 
 #[test]
 fn neg_literal_edge_pin_tree() {
-    check_all("--run-tree");
+    check_all("--run-vm");
 }
 
 #[test]
