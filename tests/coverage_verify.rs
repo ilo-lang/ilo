@@ -563,18 +563,18 @@ fn get_headers_wrong() {
 }
 
 #[test]
-fn post_wrong() {
-    assert_err("main>R t t;post 5 \"body\"", "ILO-T013", "main");
+fn pst_wrong() {
+    assert_err("main>R t t;pst 5 \"body\"", "ILO-T013", "main");
 }
 
 #[test]
-fn post_body_wrong() {
-    assert_err("main>R t t;post \"http://x\" 5", "ILO-T013", "main");
+fn pst_body_wrong() {
+    assert_err("main>R t t;pst \"http://x\" 5", "ILO-T013", "main");
 }
 
 #[test]
-fn post_headers_wrong() {
-    assert_err("main>R t t;post \"http://x\" \"b\" 5", "ILO-T013", "main");
+fn pst_headers_wrong() {
+    assert_err("main>R t t;pst \"http://x\" \"b\" 5", "ILO-T013", "main");
 }
 
 #[test]
@@ -685,8 +685,8 @@ fn arity_get() {
 }
 
 #[test]
-fn arity_post() {
-    assert_err("main>R t t;post \"u\"", "ILO-T006", "main");
+fn arity_pst() {
+    assert_err("main>R t t;pst \"u\"", "ILO-T006", "main");
 }
 
 #[test]
