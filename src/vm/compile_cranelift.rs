@@ -217,6 +217,11 @@ struct HelperFuncs {
     /// OP_CALL_DYN — see engine audit PR #413 gap #1.
     aot_publish_program: FuncId,
     aot_parse_arg: FuncId,
+    /// `ilo_aot_parse_arg_list` — parse a CLI arg as a `L _` value.
+    /// Used by `generate_main` whenever the entry function declares a
+    /// list-typed parameter (e.g. `main args:L t`). Wraps non-list shapes
+    /// as `[value]` to match the binary-side `parse_cli_args_typed` path.
+    aot_parse_arg_list: FuncId,
     string_const: FuncId,
     // Linear algebra
     solve: FuncId,
@@ -413,6 +418,7 @@ fn declare_all_helpers(module: &mut ObjectModule) -> HelperFuncs {
         aot_set_registry: declare_helper(module, "ilo_aot_set_registry", 2, 0),
         aot_publish_program: declare_helper(module, "ilo_aot_publish_program", 2, 1),
         aot_parse_arg: declare_helper(module, "ilo_aot_parse_arg", 1, 1),
+        aot_parse_arg_list: declare_helper(module, "ilo_aot_parse_arg_list", 1, 1),
         string_const: declare_helper(module, "jit_string_const", 1, 1),
         // Linear algebra
         solve: declare_helper(module, "jit_solve", 3, 1),
@@ -560,6 +566,13 @@ pub fn compile_to_binary(
     // for HOF / closure dispatch (engine audit PR #413 gap #1).
     let program_blob = super::aot_blob::serialize_program(program)?;
 
+    // Resolve per-param list-ness for the entry function from the retained
+    // AST. We need this so `main args:L t` (or any param typed `L _`) is
+    // bound from argv via the list-coercing helper. Inline programs whose
+    // AST didn't survive into `CompiledProgram` (rare; mostly test paths)
+    // fall back to all-false, preserving the historical scalar-parse path.
+    let param_is_list = entry_param_is_list(program, entry_func, entry_chunk.param_count as usize);
+
     // Generate main()
     generate_main(
         &mut module,
@@ -568,6 +581,7 @@ pub fn compile_to_binary(
         &helpers,
         &registry_bytes,
         &program_blob,
+        &param_is_list,
     )?;
 
     // Emit object file
@@ -4255,6 +4269,47 @@ fn compile_function_body(
     Ok(())
 }
 
+/// Resolve per-parameter list-ness for an AOT entry function.
+///
+/// Returns a vector of length `param_count` where `vec[i]` is `true` iff the
+/// entry function's i-th declared parameter has type `L _`. Walks the AST
+/// kept alive on the `CompiledProgram` (populated by `compile()`).
+///
+/// Inline / test programs whose AST wasn't retained, or entry names that
+/// don't resolve to a `Decl::Function`, fall back to all-false. That matches
+/// the historical AOT behaviour (every arg parsed as a scalar) so we don't
+/// silently change the binding for programs we can't introspect.
+///
+/// Used by `generate_main` and the bench harness in `compile_to_bench_binary`
+/// to pick between `ilo_aot_parse_arg` and `ilo_aot_parse_arg_list` per
+/// param. See `cli_parse::parse_cli_arg_as_list` and the 0.12.1 AOT argv
+/// fix notes for full context.
+fn entry_param_is_list(
+    program: &CompiledProgram,
+    entry_func: &str,
+    param_count: usize,
+) -> Vec<bool> {
+    use crate::ast;
+    let Some(ast_program) = program.ast.as_ref() else {
+        return vec![false; param_count];
+    };
+    let params = ast_program.declarations.iter().find_map(|d| match d {
+        ast::Decl::Function { name, params, .. } if name == entry_func => Some(params),
+        _ => None,
+    });
+    let Some(params) = params else {
+        return vec![false; param_count];
+    };
+    (0..param_count)
+        .map(|i| {
+            params
+                .get(i)
+                .map(|p| matches!(&p.ty, ast::Type::List(_)))
+                .unwrap_or(false)
+        })
+        .collect()
+}
+
 /// Generate the `main(argc, argv)` entry point.
 /// Serialize a TypeRegistry to bytes for embedding in AOT binaries.
 /// Format: `type_name\0num_fields_bitmask\0field1\0field2\0...\0\n` per type.
@@ -4281,6 +4336,14 @@ fn generate_main(
     helpers: &HelperFuncs,
     registry_bytes: &[u8],
     program_blob: &[u8],
+    // Per-param "is this a `L _` list-typed parameter?" flag, parallel to the
+    // entry function's declared params. Drives the choice between
+    // `ilo_aot_parse_arg` (scalar) and `ilo_aot_parse_arg_list` (list-coerce)
+    // for each argv slot. An empty slice (or a value shorter than
+    // `param_count`) falls back to scalar parsing for the missing tail —
+    // matches the historical behaviour for entry funcs whose AST we couldn't
+    // resolve (inline snippets, test harnesses).
+    param_is_list: &[bool],
 ) -> Result<(), String> {
     let mut sig = module.make_signature();
     sig.params.push(AbiParam::new(I32)); // argc
@@ -4333,14 +4396,29 @@ fn generate_main(
 
     let user_fref = module.declare_func_in_func(user_func_id, builder.func);
     let parse_arg_fref = module.declare_func_in_func(helpers.aot_parse_arg, builder.func);
+    let parse_arg_list_fref = module.declare_func_in_func(helpers.aot_parse_arg_list, builder.func);
 
-    // Convert CLI args to NanVal via ilo_aot_parse_arg (auto-detects number vs string)
+    // Convert CLI args to NanVal. For each param, pick the right parser:
+    //   - `L _` → ilo_aot_parse_arg_list (wraps non-list as `[value]`, mirrors
+    //     `parse_cli_args_typed`'s tree/VM coercion path)
+    //   - everything else → ilo_aot_parse_arg (number / bool / nil / string)
+    //
+    // This is the canonical fix for the 0.12.1 AOT argv binding regression:
+    // before, `main args:L t` was parsed as a single string and `len args`
+    // returned the character count instead of the list length, while
+    // `cat args ","` silently produced `nil` because `cat` requires a `L t`.
     let mut call_args = Vec::with_capacity(param_count);
     for i in 0..param_count {
         let idx = builder.ins().iconst(I64, ((i + 1) * 8) as i64);
         let arg_ptr_ptr = builder.ins().iadd(argv, idx);
         let arg_ptr = builder.ins().load(I64, mf, arg_ptr_ptr, 0);
-        let call_inst = builder.ins().call(parse_arg_fref, &[arg_ptr]);
+        let is_list = param_is_list.get(i).copied().unwrap_or(false);
+        let fref = if is_list {
+            parse_arg_list_fref
+        } else {
+            parse_arg_fref
+        };
+        let call_inst = builder.ins().call(fref, &[arg_ptr]);
         let nan_val = builder.inst_results(call_inst)[0];
         call_args.push(nan_val);
     }
@@ -4498,7 +4576,8 @@ pub fn compile_to_bench_binary(
          extern void ilo_aot_arena_reset(void);\n\
          extern void ilo_aot_set_registry(int64_t ptr, int64_t len);\n\
          extern int64_t ilo_aot_publish_program(int64_t ptr, int64_t len);\n\
-         extern int64_t ilo_aot_parse_arg(int64_t ptr);\n\n",
+         extern int64_t ilo_aot_parse_arg(int64_t ptr);\n\
+         extern int64_t ilo_aot_parse_arg_list(int64_t ptr);\n\n",
     );
     // Embed the serialized type registry as a C byte array
     if !registry_bytes.is_empty() {
@@ -4533,10 +4612,21 @@ pub fn compile_to_bench_binary(
     ));
     c_code.push_str("\tint iters = atoi(argv[1]);\n");
 
+    // Resolve per-param list-ness for the bench-target function from the
+    // retained AST, so a benchmark for e.g. `f xs:L n>n;sum xs` binds its
+    // argv slot as a list rather than a scalar (same fix as the AOT main
+    // entry path).
+    let bench_param_is_list = entry_param_is_list(program, entry_func, param_count);
     for i in 0..param_count {
+        let helper = if bench_param_is_list.get(i).copied().unwrap_or(false) {
+            "ilo_aot_parse_arg_list"
+        } else {
+            "ilo_aot_parse_arg"
+        };
         c_code.push_str(&format!(
-            "\tint64_t a{} = ilo_aot_parse_arg((int64_t)argv[{}]);\n",
+            "\tint64_t a{} = {}((int64_t)argv[{}]);\n",
             i,
+            helper,
             i + 2
         ));
     }

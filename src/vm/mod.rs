@@ -18927,6 +18927,28 @@ pub extern "C" fn ilo_aot_parse_arg(ptr: u64) -> u64 {
     }
 }
 
+/// Parse a CLI arg destined for a `L _` parameter.
+///
+/// Used by AOT-compiled binaries whose `main` declares a list-typed parameter
+/// (e.g. `main args:L t > ...`). Without this path, the AOT entry shim would
+/// treat the raw shell string as a single text value, and `args` would behave
+/// as a string instead of a list — `len args` would return the character count
+/// rather than the list length, and `cat args ","` would silently produce `nil`
+/// because `cat` needs a `L t`.
+///
+/// Mirrors `cli_parse::parse_cli_arg_as_list`: parses `[..]` literals and bare
+/// comma lists, and wraps every other shape in a single-element list. Keeps
+/// the AOT entry behaviour aligned with the tree-walker / VM / JIT path that
+/// goes through `parse_cli_args_typed`.
+#[cfg(feature = "cranelift")]
+#[unsafe(no_mangle)]
+pub extern "C" fn ilo_aot_parse_arg_list(ptr: u64) -> u64 {
+    let cstr = unsafe { std::ffi::CStr::from_ptr(ptr as *const std::ffi::c_char) };
+    let s = cstr.to_str().unwrap_or("");
+    let v = crate::cli_parse::parse_cli_arg_as_list(s);
+    NanVal::from_value(&v).0
+}
+
 // ── Block leader analysis (shared by JIT backends) ──────────────────
 
 /// Identify basic block leaders in bytecode. A leader is:
