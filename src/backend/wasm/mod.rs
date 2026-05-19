@@ -252,19 +252,24 @@ fn emit_program(hir: &Program, config: WasmConfig) -> Result<Artefact, BackendEr
     let mut notes: Vec<String> = vec![config.target.name().to_string()];
 
     if matches!(config.target, WasmTarget::Component) {
-        // Component Model wrap: drop the adapter to a temp file (so we can
-        // pass it via --adapt) and shell out to wasm-tools.
-        let tmp_dir = std::env::temp_dir();
-        let adapter_path = tmp_dir.join(format!(
-            "ilo-wasi-adapter-{}.wasm",
-            std::process::id()
-        ));
-        std::fs::write(&adapter_path, WASI_ADAPTER_BYTES).map_err(|e| {
-            codegen(
-                "ILO-B204",
-                format!("write adapter {}: {}", adapter_path.display(), e),
-            )
-        })?;
+        // Component Model wrap: drop the adapter to a NamedTempFile (RAII
+        // cleanup, unique filename so concurrent ilo builds can't collide
+        // on a reused PID) and shell out to wasm-tools.
+        let mut adapter_file = tempfile::Builder::new()
+            .prefix("ilo-wasi-adapter-")
+            .suffix(".wasm")
+            .tempfile()
+            .map_err(|e| codegen("ILO-B204", format!("create adapter tempfile: {}", e)))?;
+        {
+            use std::io::Write;
+            adapter_file
+                .write_all(WASI_ADAPTER_BYTES)
+                .map_err(|e| codegen("ILO-B204", format!("write adapter: {}", e)))?;
+            adapter_file
+                .flush()
+                .map_err(|e| codegen("ILO-B204", format!("flush adapter: {}", e)))?;
+        }
+        let adapter_path = adapter_file.path().to_path_buf();
 
         let component_out = config.output_path.clone();
         let status = Command::new("wasm-tools")
@@ -280,7 +285,8 @@ fn emit_program(hir: &Program, config: WasmConfig) -> Result<Artefact, BackendEr
             .arg(&component_out)
             .output();
 
-        let _ = std::fs::remove_file(&adapter_path);
+        // `adapter_file` drops at end of scope — RAII delete. No manual
+        // remove_file with a swallowed error.
 
         let output = status.map_err(|e| {
             codegen(
@@ -292,12 +298,23 @@ fn emit_program(hir: &Program, config: WasmConfig) -> Result<Artefact, BackendEr
             )
         })?;
         if !output.status.success() {
+            // Mirror run_zero_build: include both streams since wasm-tools
+            // doesn't guarantee which one a given diagnostic lands on.
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let mut detail = String::new();
+            if !stderr.trim().is_empty() {
+                detail.push_str(stderr.trim());
+            }
+            if !stdout.trim().is_empty() {
+                if !detail.is_empty() {
+                    detail.push('\n');
+                }
+                detail.push_str(stdout.trim());
+            }
             return Err(codegen(
                 "ILO-B203",
-                format!(
-                    "wasm-tools component new failed: {}",
-                    String::from_utf8_lossy(&output.stderr)
-                ),
+                format!("wasm-tools component new failed ({}): {}", output.status, detail),
             ));
         }
 
