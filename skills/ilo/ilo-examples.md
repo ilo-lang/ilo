@@ -5,7 +5,7 @@ description: Use this when looking for a runnable pattern for the kind of task y
 
 # ilo examples index
 
-Pointers into `examples/`. Every entry is a real program the engine harness runs on every push. Pick the closest match, `rd examples/<name>.ilo` for the working pattern.
+Pointers into `examples/`. Every entry runs cross-engine on push. `rd examples/<name>.ilo` for the working pattern.
 
 ## Data shaping
 
@@ -46,9 +46,9 @@ Pointers into `examples/`. Every entry is a real program the engine harness runs
 
 ## Workflow
 
-- `01-simple-function.ilo` smallest program. `02-with-dependencies.ilo` multi-fn.
-- `04-tool-interaction.ilo` MCP call. `05-workflow.ilo` agent end-to-end.
+- `01-simple-function.ilo` smallest. `02-with-dependencies.ilo` multi-fn.
+- `04-tool-interaction.ilo` MCP. `05-workflow.ilo` agent end-to-end.
 
 ## Header
 
-`-- run: <fn>` + `-- out: <expected>` comments are parsed by `tests/examples_engines.rs` and run cross-engine. Same shape gives free regression coverage.
+`-- run: <fn>` + `-- out: <expected>` parsed by `tests/examples_engines.rs`, run cross-engine. Free regression coverage.
