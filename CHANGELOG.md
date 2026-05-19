@@ -6,6 +6,10 @@
 
 - `ls dir` renamed to `lsd dir`. Six rerun10 personas tripped ILO-P011 on `ls=rdl! p` because `ls` was reserved; rename frees `ls` for user code. `walk`, `glob` unchanged.
 
+### Fixed
+
+- CSV/TSV reader now tracks quote state across record separators. A cell containing `\n` (which the writer correctly emits as a quoted multi-line field per RFC 4180) used to be re-parsed as two rows, so `rd path "csv"` silently disagreed with `wr path data "csv"`. The reader is now a single-pass scanner over the whole document and round-trips multi-line quoted fields, embedded quotes, and CRLF line endings byte-stably across tree and VM. Surfaced by csv-pipeline rerun10.
+
 ## 0.12.0 - 2026-05-19
 
 ### Breaking
