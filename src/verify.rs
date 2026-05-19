@@ -339,6 +339,11 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("lsd", &["t"], "R (L t) t"),
     ("walk", &["t"], "R (L t) t"),
     ("glob", &["t", "t"], "R (L t) t"),
+    // Path manipulation (POSIX dirname/basename + list-form pathjoin).
+    // Pure text ops, no Result wrapper — these are total on strings.
+    ("dirname", &["t"], "t"),
+    ("basename", &["t"], "t"),
+    ("pathjoin", &["L t"], "t"),
     ("rdl", &["t"], "R (L t) t"),
     ("rdb", &["t", "t"], "R ? t"),
     ("wr", &["t", "t"], "R t t"),

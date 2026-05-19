@@ -169,6 +169,13 @@ pub enum Builtin {
     Argmax,
     Argmin,
     Argsort,
+
+    // Path manipulation (pure text ops, Unix forward-slash only).
+    // POSIX dirname/basename semantics; pathjoin takes a list to avoid
+    // the variadic-arity ILO-P101 trap that `fmt` lives with.
+    Dirname,
+    Basename,
+    Pathjoin,
 }
 
 impl Builtin {
@@ -306,6 +313,9 @@ impl Builtin {
             "argmax" => Some(Builtin::Argmax),
             "argmin" => Some(Builtin::Argmin),
             "argsort" => Some(Builtin::Argsort),
+            "dirname" => Some(Builtin::Dirname),
+            "basename" => Some(Builtin::Basename),
+            "pathjoin" => Some(Builtin::Pathjoin),
             _ => None,
         }
     }
@@ -440,6 +450,9 @@ impl Builtin {
             Builtin::Argmax => "argmax",
             Builtin::Argmin => "argmin",
             Builtin::Argsort => "argsort",
+            Builtin::Dirname => "dirname",
+            Builtin::Basename => "basename",
+            Builtin::Pathjoin => "pathjoin",
         }
     }
 
@@ -609,6 +622,13 @@ impl Builtin {
         Builtin::Argmax,
         Builtin::Argmin,
         Builtin::Argsort,
+        // Path manipulation builtins. Pure text ops, POSIX semantics,
+        // forward-slash only (Windows paths are a 0.13.0 concern).
+        // Tree-bridge eligible like the lsd/walk/glob trio, but with no
+        // Result wrapper — see is_tree_bridge_eligible in src/vm/mod.rs.
+        Builtin::Dirname,
+        Builtin::Basename,
+        Builtin::Pathjoin,
     ];
 
     /// On-wire 8-bit tag for cross-engine builtin dispatch. See `ALL`.
@@ -896,6 +916,9 @@ mod tests {
             "argmax",
             "argmin",
             "argsort",
+            "dirname",
+            "basename",
+            "pathjoin",
         ];
         for name in &all {
             let b = Builtin::from_name(name).unwrap_or_else(|| panic!("missing builtin: {name}"));
@@ -1113,6 +1136,9 @@ mod tests {
             "lsd",
             "walk",
             "glob",
+            "dirname",
+            "basename",
+            "pathjoin",
         ] {
             let b = Builtin::from_name(name).unwrap_or_else(|| panic!("no builtin: {name}"));
             let t = b.tag();

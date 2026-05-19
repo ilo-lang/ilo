@@ -4117,6 +4117,10 @@ fn builtin_arity_tables() -> (HashMap<String, usize>, HashMap<String, Vec<bool>>
         // default — keeps eager arg parsing in step with `mset`/`lst`.
         ("mget-or", 3, &[]),
         ("lget-or", 3, &[]),
+        // Path manipulation (pure text ops; Unix forward-slash semantics)
+        ("dirname", 1, &[]),
+        ("basename", 1, &[]),
+        ("pathjoin", 1, &[]),
         // Note: omitted by design — these have overloads or zero-arg forms
         // best left to the existing greedy/zero-arg paths:
         //   rnd, now, mmap (0-arg, special-cased above)
