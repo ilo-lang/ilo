@@ -11,6 +11,10 @@
 
 - `rand` alias for `rnd` (universal short-form for random; matches C/Python/Rust/Go/JS naming). Resolves to canonical `rnd` after parsing; rejected as binding or user-fn name via ILO-P011 to prevent silent shadow mis-dispatch. `random` continues to resolve to `rnd` as before.
 
+### Diagnostics
+
+- ILO-T006 on `lst` (and its `lset` alias) now carries a suggestion clarifying that `lst xs i v` is "list set at index" (3 args, returns a new list with index `i` replaced by `v`), not "last element". The 1-arg case (`lst xs`) points at the canonical `at xs -1` for last-element intent; other arities point at the 3-arg signature without misreading the call as a last-element attempt. Surfaced by git-workflow rerun11 - agents reached for `lst xs` and hit an empty-suggestion arity error.
+
 ### Fixed
 
 - `walk dir` and `glob dir pat` now skip unreadable subdirectories (most commonly `chmod 000` or sandbox roots) instead of aborting the entire traversal. Previously the first permission-denied subdir would poison the whole walk and lose every readable path that had already been collected, breaking realistic uses like `walk /` or `walk ~/`. An unreadable root still returns Err so the agent can distinguish "starting point unreadable" from "descendant unreadable". Surfaced by filesystem-walk rerun11.

@@ -17,7 +17,7 @@ Prefix-call syntax: `name arg1 arg2 ...`. All builtins work cross-engine unless 
 
 ## List
 
-`len hd tl at lst take drop slc`; `rev srt rsrt unq uniqby flat grp zip enumerate range`; `chunks window flatmap partition`; `setunion setinter setdiff`. `at xs i` floors floats; negative indexes from end (same for `slc take drop`). Bounds clamp.
+`len hd tl at lst take drop slc`; `rev srt rsrt unq uniqby flat grp zip enumerate range`; `chunks window flatmap partition`; `setunion setinter setdiff`. `at xs i` floors floats; negative indexes from end (same for `slc take drop`). Bounds clamp. `lst xs i v` is **list set at index** (3 args: returns a new list with index `i` replaced by `v`; alias `lset`) - it is NOT "last element". For the last element use `at xs -1`.
 
 ## HOFs
 
