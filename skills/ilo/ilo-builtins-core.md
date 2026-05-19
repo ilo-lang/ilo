@@ -1,9 +1,9 @@
 ---
 name: ilo-builtins-core
-description: Core builtins for ilo — type coercions, list ops, and map ops.
+description: Use this when calling core ilo builtins. Type coercions (len, str, num, trm), list ops, HOFs, and map ops.
 ---
 
-# ilo builtins — core
+# ilo builtins - core
 
 Prefix-call: `name arg1 arg2 ...`. Cross-engine unless noted.
 

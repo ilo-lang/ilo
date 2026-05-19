@@ -1,9 +1,9 @@
 ---
 name: ilo-builtins-math
-description: Math builtins for ilo — arithmetic, trig, statistics, and random.
+description: Use this when calling math builtins. Arithmetic, trig, constants (pi, tau, e), random, and statistics.
 ---
 
-# ilo builtins — math
+# ilo builtins - math
 
 Prefix-call: `name arg1 arg2 ...`. Cross-engine unless noted.
 

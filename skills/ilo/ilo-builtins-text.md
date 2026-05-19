@@ -1,9 +1,9 @@
 ---
 name: ilo-builtins-text
-description: Text builtins for ilo — manipulation, regex, formatting, and date parsing.
+description: Use this when calling text builtins. Manipulation, regex, formatting (fmt, fmt2), CSV/TSV, and date parsing.
 ---
 
-# ilo builtins — text
+# ilo builtins - text
 
 Prefix-call: `name arg1 arg2 ...`. Cross-engine unless noted.
 

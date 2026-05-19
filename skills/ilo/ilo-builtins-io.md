@@ -1,9 +1,9 @@
 ---
 name: ilo-builtins-io
-description: I/O builtins for ilo — files, HTTP, environment, time, and process.
+description: Use this when calling I/O builtins. File read/write, HTTP, JSON, path ops, env, time, and process.
 ---
 
-# ilo builtins — I/O
+# ilo builtins - I/O
 
 Prefix-call: `name arg1 arg2 ...`. Cross-engine unless noted.
 
