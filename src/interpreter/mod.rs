@@ -2801,7 +2801,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         return Ok(Value::Text(Arc::new(result)));
     }
     if builtin == Some(Builtin::Ls) && args.len() == 1 {
-        // ls dir > R (L t) t — list non-recursive directory entries (filenames
+        // lsd dir > R (L t) t — list non-recursive directory entries (filenames
         // only, not full paths). Sorted lexicographically for determinism so
         // agent diffs stay stable across runs / filesystems. Missing dir or
         // permission denied surface as Err so the caller can branch with `!`

@@ -33,7 +33,7 @@ mmap mset mget mhas mdel mkeys mvals
 
 ## I/O
 
-`rd path` (whole file `R t t`), `rdl path` (lines), `rdjl path` (json lines), `rdb path` (bytes), `wr path s`, `wrl path xs`, `prnt v`. All file ops Result-wrapped; pair with `!`.
+`rd path`, `rdl path`, `rdjl path`, `rdb path`, `wr path s`, `wrl path xs`, `prnt v`. Dir: `lsd dir` (non-recursive), `walk dir` (recursive), `glob dir pat`. All Result-wrapped.
 
 ## HTTP
 

@@ -1,5 +1,5 @@
 // Cross-engine regression tests for the filesystem-enumeration builtins
-// `ls`, `walk`, and `glob`. These are tree-bridge eligible (see
+// `lsd`, `walk`, and `glob`. These are tree-bridge eligible (see
 // `is_tree_bridge_eligible` in src/vm/mod.rs), so the same interpreter path
 // services every engine — but the bridge is exactly where past regressions
 // have hidden, so every assertion runs against tree, VM, and Cranelift JIT.
@@ -76,25 +76,25 @@ fn run_err(engine: &str, src: &str, args: &[&str]) -> String {
     s.trim_end_matches('\n').to_string()
 }
 
-/// `ls dir` returns only the filenames (no path prefix), sorted, and includes
+/// `lsd dir` returns only the filenames (no path prefix), sorted, and includes
 /// directory entries alongside file entries — both `a.txt` and `sub` appear.
 #[test]
 fn ls_basic_cross_engine() {
     let fix = make_fixture();
     let root = fix.path().to_str().unwrap();
-    let src = "f d:t>R (L t) t;ls d";
+    let src = "f d:t>R (L t) t;lsd d";
     for engine in ENGINES_ALL {
         let out = run_ok(engine, src, &["f", root]);
         assert_eq!(out, "[a.txt, b.txt, sub]", "{engine}: ls basic");
     }
 }
 
-/// `ls` on an empty directory returns an empty list, not an error.
+/// `lsd` on an empty directory returns an empty list, not an error.
 #[test]
 fn ls_empty_dir_cross_engine() {
     let dir = tempdir().unwrap();
     let root = dir.path().to_str().unwrap();
-    let src = "f d:t>R (L t) t;ls d";
+    let src = "f d:t>R (L t) t;lsd d";
     for engine in ENGINES_ALL {
         let out = run_ok(engine, src, &["f", root]);
         assert_eq!(out, "[]", "{engine}: ls empty");
@@ -106,7 +106,7 @@ fn ls_empty_dir_cross_engine() {
 /// the exit code is non-zero — same shape as `rd` on a missing file.
 #[test]
 fn ls_missing_dir_cross_engine() {
-    let src = "f d:t>R (L t) t;ls d";
+    let src = "f d:t>R (L t) t;lsd d";
     for engine in ENGINES_ALL {
         let out = run_err(
             engine,
