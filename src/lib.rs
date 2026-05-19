@@ -2,6 +2,7 @@
 #![deny(rust_2018_idioms)]
 
 pub mod ast;
+pub mod backend;
 pub mod builtins;
 pub mod cli_parse;
 pub mod codegen;
