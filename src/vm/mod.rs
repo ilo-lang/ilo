@@ -6037,6 +6037,7 @@ pub(crate) fn jit_arena_reset() {
 #[cfg(feature = "cranelift")]
 pub(crate) type JitRuntimeErrorPayload = (VmError, Option<crate::ast::Span>, Vec<String>);
 
+#[cfg(feature = "cranelift")]
 thread_local! {
     // JIT helpers raise errors but do not unwind native frames — the
     // pop_call_frame emitted after each direct OP_CALL still fires on
