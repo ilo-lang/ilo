@@ -647,7 +647,7 @@ pub(crate) fn is_tree_bridge_eligible(b: crate::builtins::Builtin, argc: usize) 
         // dispatch we already pay for; not worth a new opcode in v1.
         (Builtin::MgetOr, 3) => true,
         (Builtin::LgetOr, 3) => true,
-        // argmax / argmin / argsort — pure list-of-number aggregates that
+        // argmax / argmin / argsort - pure list-of-number aggregates that
         // return an index (or list of indices). No FnRef args, no I/O.
         // Tree-bridge keeps cross-engine parity at the same cost tier as
         // `median`/`stdev`-equivalents without burning native opcodes for
@@ -662,6 +662,9 @@ pub(crate) fn is_tree_bridge_eligible(b: crate::builtins::Builtin, argc: usize) 
         // unwrap path unchanged).
         (Builtin::Rdin, 0) => true,
         (Builtin::Rdinl, 0) => true,
+        // wra path s - append text to file. Same bridge contract as wr 2-arg:
+        // no FnRef args, returns R t t, round-trips cleanly through NanVal.
+        (Builtin::Wra, 2) => true,
         _ => false,
     }
 }
@@ -683,6 +686,7 @@ pub(crate) fn tree_bridge_returns_result(b: crate::builtins::Builtin) -> bool {
             | Builtin::Jkeys
             | Builtin::Rdin
             | Builtin::Rdinl
+            | Builtin::Wra
     )
 }
 
