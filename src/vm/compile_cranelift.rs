@@ -209,6 +209,13 @@ struct HelperFuncs {
     aot_init: FuncId,
     aot_fini: FuncId,
     aot_set_registry: FuncId,
+    /// Deserialise an embedded `CompiledProgram` blob and publish it via the
+    /// `with_active_registry` TLS slots so HOF / closure dispatch helpers can
+    /// re-enter the VM. See `ilo_aot_publish_program` in `src/vm/mod.rs` and
+    /// the `aot_blob` module for the blob format. Without this call AOT
+    /// binaries silently returned `TAG_NIL` for every program that emitted
+    /// OP_CALL_DYN — see engine audit PR #413 gap #1.
+    aot_publish_program: FuncId,
     aot_parse_arg: FuncId,
     string_const: FuncId,
     // Linear algebra
@@ -404,6 +411,7 @@ fn declare_all_helpers(module: &mut ObjectModule) -> HelperFuncs {
         aot_init: declare_helper(module, "ilo_aot_init", 0, 0),
         aot_fini: declare_helper(module, "ilo_aot_fini", 0, 0),
         aot_set_registry: declare_helper(module, "ilo_aot_set_registry", 2, 0),
+        aot_publish_program: declare_helper(module, "ilo_aot_publish_program", 2, 1),
         aot_parse_arg: declare_helper(module, "ilo_aot_parse_arg", 1, 1),
         string_const: declare_helper(module, "jit_string_const", 1, 1),
         // Linear algebra
@@ -547,6 +555,11 @@ pub fn compile_to_binary(
     // Serialize the type registry for embedding in the binary
     let registry_bytes = serialize_type_registry(&program.type_registry);
 
+    // Serialize the full CompiledProgram (chunks + AST + func_names + ...)
+    // so the AOT runtime can publish ACTIVE_PROGRAM and ACTIVE_AST_PROGRAM
+    // for HOF / closure dispatch (engine audit PR #413 gap #1).
+    let program_blob = super::aot_blob::serialize_program(program)?;
+
     // Generate main()
     generate_main(
         &mut module,
@@ -554,6 +567,7 @@ pub fn compile_to_binary(
         entry_chunk.param_count as usize,
         &helpers,
         &registry_bytes,
+        &program_blob,
     )?;
 
     // Emit object file
@@ -4228,6 +4242,7 @@ fn generate_main(
     param_count: usize,
     helpers: &HelperFuncs,
     registry_bytes: &[u8],
+    program_blob: &[u8],
 ) -> Result<(), String> {
     let mut sig = module.make_signature();
     sig.params.push(AbiParam::new(I32)); // argc
@@ -4264,6 +4279,18 @@ fn generate_main(
         let reg_len = builder.ins().iconst(I64, registry_bytes.len() as i64);
         let set_reg_fref = module.declare_func_in_func(helpers.aot_set_registry, builder.func);
         builder.ins().call(set_reg_fref, &[reg_ptr, reg_len]);
+    }
+
+    // Publish the embedded CompiledProgram blob so HOF / closure dispatch
+    // helpers (jit_call_dyn, jit_call_builtin_tree) can re-enter the VM on
+    // user-fn callbacks. Engine audit PR #413 gap #1: without this, every
+    // OP_CALL_DYN dispatch silently returns TAG_NIL, manifesting as
+    // [nil, nil, ...] for map(lambda), nil for fld/grp/uniqby/fnref-return.
+    {
+        let blob_ptr = create_data_section(module, &mut builder, "ilo_program_blob", program_blob)?;
+        let blob_len = builder.ins().iconst(I64, program_blob.len() as i64);
+        let publish_fref = module.declare_func_in_func(helpers.aot_publish_program, builder.func);
+        builder.ins().call(publish_fref, &[blob_ptr, blob_len]);
     }
 
     let user_fref = module.declare_func_in_func(user_func_id, builder.func);
@@ -4415,6 +4442,12 @@ pub fn compile_to_bench_binary(
         .iter()
         .map(|b| format!("\\x{:02x}", b))
         .collect::<String>();
+    // Serialize the CompiledProgram blob for HOF / closure dispatch (PR #413 gap #1).
+    let program_blob = super::aot_blob::serialize_program(program)?;
+    let program_blob_c_literal = program_blob
+        .iter()
+        .map(|b| format!("\\x{:02x}", b))
+        .collect::<String>();
 
     let mut c_code = String::from(
         "#include <stdio.h>\n\
@@ -4426,6 +4459,7 @@ pub fn compile_to_bench_binary(
          extern void ilo_aot_fini(void);\n\
          extern void ilo_aot_arena_reset(void);\n\
          extern void ilo_aot_set_registry(int64_t ptr, int64_t len);\n\
+         extern int64_t ilo_aot_publish_program(int64_t ptr, int64_t len);\n\
          extern int64_t ilo_aot_parse_arg(int64_t ptr);\n\n",
     );
     // Embed the serialized type registry as a C byte array
@@ -4435,6 +4469,13 @@ pub fn compile_to_bench_binary(
             registry_c_literal
         ));
     }
+    // Embed the serialized program blob as a C byte array
+    c_code.push_str(&format!(
+        "static const char ilo_program_blob_data[] = \"{}\";\n\
+         static const long ilo_program_blob_len = {};\n\n",
+        program_blob_c_literal,
+        program_blob.len()
+    ));
 
     // Declare the exported function
     c_code.push_str(&format!("extern int64_t {}(", func_name));
@@ -4475,6 +4516,9 @@ pub fn compile_to_bench_binary(
             registry_bytes.len()
         ));
     }
+    c_code.push_str(
+        "\tilo_aot_publish_program((int64_t)ilo_program_blob_data, (int64_t)ilo_program_blob_len);\n",
+    );
     c_code.push_str(&format!("\t{}({});\n", func_name, call_args));
     c_code.push_str("\tilo_aot_arena_reset();\n");
 

@@ -102,6 +102,8 @@ pub enum CompileError {
 }
 
 #[cfg(feature = "cranelift")]
+pub mod aot_blob;
+#[cfg(feature = "cranelift")]
 pub mod compile_cranelift;
 #[cfg(feature = "cranelift")]
 pub mod jit_cranelift;
@@ -18535,10 +18537,61 @@ pub extern "C" fn ilo_aot_arena_reset() {
     jit_arena_reset();
 }
 
+/// Deserialise an embedded `CompiledProgram` blob and publish its pointers
+/// into the `ACTIVE_PROGRAM`, `ACTIVE_AST_PROGRAM`, `ACTIVE_FUNC_NAMES`, and
+/// `ACTIVE_REGISTRY` TLS slots so HOF / closure dispatch helpers
+/// (`jit_call_dyn`, `jit_call_builtin_tree`) can re-enter the VM and resolve
+/// user-fn callbacks. Without this, AOT binaries silently returned `TAG_NIL`
+/// for every program that emitted OP_CALL_DYN — see `aot_blob` module docs and
+/// engine audit PR #413 gap #1.
+///
+/// The program is leaked (`Box::leak`) for the process lifetime to match how
+/// the JIT publishes `&CompiledProgram` for the duration of its `compile_and_call`
+/// scope. AOT has no scope smaller than the process, so leaking is the
+/// honest representation. On a malformed blob (schema mismatch or postcard
+/// parse failure) we write a JSON diagnostic to stderr and exit 1 — no
+/// silent fallback.
+///
+/// Returns 0 on success, 1 on a malformed blob. The caller (the cranelift-
+/// emitted `main`) ignores the return value because the helper has already
+/// exited on failure; the signature is kept for forward compatibility with a
+/// future "AOT diagnostic recovery" path.
+///
+/// SAFETY: `ptr` must point to `len` readable bytes for the duration of this
+/// call. The cranelift codegen emits the blob into a `.rodata` data section
+/// via `create_data_section`, which the linker maps read-only; the pointer
+/// is valid for the entire process lifetime.
+#[cfg(feature = "cranelift")]
+#[unsafe(no_mangle)]
+pub extern "C" fn ilo_aot_publish_program(ptr: u64, len: u64) -> u64 {
+    let bytes = unsafe { std::slice::from_raw_parts(ptr as *const u8, len as usize) };
+    let program = match aot_blob::deserialize_program(bytes) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!(
+                "{{\"severity\":\"error\",\"code\":\"ILO-R013\",\"message\":\"AOT program blob load failed: {}\"}}",
+                e.replace('"', "\\\"")
+            );
+            std::process::exit(1);
+        }
+    };
+    let leaked: &'static CompiledProgram = Box::leak(Box::new(program));
+    ACTIVE_PROGRAM.with(|r| r.set(leaked as *const CompiledProgram));
+    ACTIVE_FUNC_NAMES.with(|r| r.set(&leaked.func_names as *const Vec<String>));
+    ACTIVE_REGISTRY.with(|r| r.set(&leaked.type_registry as *const TypeRegistry));
+    if let Some(ast) = &leaked.ast {
+        ACTIVE_AST_PROGRAM.with(|r| r.set(ast.as_ref() as *const Program));
+    }
+    0
+}
+
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
 pub extern "C" fn ilo_aot_fini() {
     clear_active_registry();
+    ACTIVE_PROGRAM.with(|r| r.set(std::ptr::null()));
+    ACTIVE_FUNC_NAMES.with(|r| r.set(std::ptr::null()));
+    ACTIVE_AST_PROGRAM.with(|r| r.set(std::ptr::null()));
     jit_arena_reset();
 }
 
@@ -34451,5 +34504,103 @@ main>n
             }
             other => panic!("expected VmError::Arity, got {other:?}"),
         }
+    }
+}
+
+#[cfg(all(test, feature = "cranelift"))]
+mod aot_publish_tests {
+    //! Direct FFI tests for `ilo_aot_publish_program` and `ilo_aot_fini`.
+    //!
+    //! The cross-engine AOT regression tests in `tests/regression_aot_closures.rs`
+    //! cover the happy path end-to-end by compiling a real binary, but they
+    //! run the publish/fini code inside a child process, so the parent's
+    //! `cargo llvm-cov` instrumentation misses the lines. These tests call
+    //! the `extern "C"` helpers directly from Rust so coverage picks them up,
+    //! and exercise the TLS publish + fini cycle without exec-ing a binary.
+    use super::*;
+    use crate::vm::aot_blob::{BLOB_SCHEMA_VERSION, serialize_program};
+
+    fn compile_simple(src: &str) -> CompiledProgram {
+        let tokens = crate::lexer::lex(src).expect("lex");
+        let token_spans: Vec<_> = tokens
+            .into_iter()
+            .map(|(t, r)| {
+                (
+                    t,
+                    crate::ast::Span {
+                        start: r.start,
+                        end: r.end,
+                    },
+                )
+            })
+            .collect();
+        let (prog, errors) = crate::parser::parse(token_spans);
+        assert!(errors.is_empty(), "parse errors: {:?}", errors);
+        compile(&prog).expect("compile")
+    }
+
+    #[test]
+    fn publish_program_populates_tls_slots() {
+        let prog = compile_simple("add a:n b:n>n;+a b\nmain>n;add 2 3");
+        let bytes = serialize_program(&prog).expect("serialize");
+
+        // Sanity: TLS slots may be set by a previous test; clear so we observe
+        // the publish actually writes them.
+        ilo_aot_fini();
+        ACTIVE_PROGRAM.with(|r| assert!(r.get().is_null()));
+        ACTIVE_FUNC_NAMES.with(|r| assert!(r.get().is_null()));
+        ACTIVE_AST_PROGRAM.with(|r| assert!(r.get().is_null()));
+
+        let rc = ilo_aot_publish_program(bytes.as_ptr() as u64, bytes.len() as u64);
+        assert_eq!(rc, 0, "publish should return 0 on success");
+
+        ACTIVE_PROGRAM.with(|r| assert!(!r.get().is_null(), "ACTIVE_PROGRAM not published"));
+        ACTIVE_FUNC_NAMES.with(|r| assert!(!r.get().is_null(), "ACTIVE_FUNC_NAMES not published"));
+        ACTIVE_AST_PROGRAM
+            .with(|r| assert!(!r.get().is_null(), "ACTIVE_AST_PROGRAM not published"));
+
+        let names_ptr = ACTIVE_FUNC_NAMES.with(|r| r.get());
+        let names = unsafe { &*names_ptr };
+        assert!(names.contains(&"add".to_string()));
+        assert!(names.contains(&"main".to_string()));
+
+        // Cleanup so we don't leak state into other tests in the same process.
+        ilo_aot_fini();
+        ACTIVE_PROGRAM.with(|r| assert!(r.get().is_null(), "fini should null ACTIVE_PROGRAM"));
+        ACTIVE_FUNC_NAMES
+            .with(|r| assert!(r.get().is_null(), "fini should null ACTIVE_FUNC_NAMES"));
+        ACTIVE_AST_PROGRAM
+            .with(|r| assert!(r.get().is_null(), "fini should null ACTIVE_AST_PROGRAM"));
+    }
+
+    #[test]
+    fn publish_program_round_trips_chunks_and_registry() {
+        // Confirms the published CompiledProgram is structurally equivalent
+        // to the source: same chunk count, same func_names, same TLS
+        // pointers reachable.
+        let src = "sq x:n>n;*x x\nmain>L n;map (n:n>n;sq n) [1,2,3]";
+        let prog = compile_simple(src);
+        let original_chunk_count = prog.chunks.len();
+        let original_names = prog.func_names.clone();
+        let bytes = serialize_program(&prog).expect("serialize");
+
+        ilo_aot_fini();
+        let rc = ilo_aot_publish_program(bytes.as_ptr() as u64, bytes.len() as u64);
+        assert_eq!(rc, 0);
+
+        let prog_ptr = ACTIVE_PROGRAM.with(|r| r.get());
+        let pubd = unsafe { &*prog_ptr };
+        assert_eq!(pubd.chunks.len(), original_chunk_count);
+        assert_eq!(pubd.func_names, original_names);
+
+        ilo_aot_fini();
+    }
+
+    #[test]
+    fn blob_schema_version_is_stable() {
+        // Lock the schema version. Bumping it must be intentional - any
+        // change here must come with a corresponding deserialise-compat
+        // story (or an explicit "we only support v_n" cut-over).
+        assert_eq!(BLOB_SCHEMA_VERSION, 1);
     }
 }
