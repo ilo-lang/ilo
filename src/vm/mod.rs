@@ -18513,10 +18513,61 @@ pub extern "C" fn ilo_aot_arena_reset() {
     jit_arena_reset();
 }
 
+/// Deserialise an embedded `CompiledProgram` blob and publish its pointers
+/// into the `ACTIVE_PROGRAM`, `ACTIVE_AST_PROGRAM`, `ACTIVE_FUNC_NAMES`, and
+/// `ACTIVE_REGISTRY` TLS slots so HOF / closure dispatch helpers
+/// (`jit_call_dyn`, `jit_call_builtin_tree`) can re-enter the VM and resolve
+/// user-fn callbacks. Without this, AOT binaries silently returned `TAG_NIL`
+/// for every program that emitted OP_CALL_DYN — see `aot_blob` module docs and
+/// engine audit PR #413 gap #1.
+///
+/// The program is leaked (`Box::leak`) for the process lifetime to match how
+/// the JIT publishes `&CompiledProgram` for the duration of its `compile_and_call`
+/// scope. AOT has no scope smaller than the process, so leaking is the
+/// honest representation. On a malformed blob (schema mismatch or postcard
+/// parse failure) we write a JSON diagnostic to stderr and exit 1 — no
+/// silent fallback.
+///
+/// Returns 0 on success, 1 on a malformed blob. The caller (the cranelift-
+/// emitted `main`) ignores the return value because the helper has already
+/// exited on failure; the signature is kept for forward compatibility with a
+/// future "AOT diagnostic recovery" path.
+///
+/// SAFETY: `ptr` must point to `len` readable bytes for the duration of this
+/// call. The cranelift codegen emits the blob into a `.rodata` data section
+/// via `create_data_section`, which the linker maps read-only; the pointer
+/// is valid for the entire process lifetime.
+#[cfg(feature = "cranelift")]
+#[unsafe(no_mangle)]
+pub extern "C" fn ilo_aot_publish_program(ptr: u64, len: u64) -> u64 {
+    let bytes = unsafe { std::slice::from_raw_parts(ptr as *const u8, len as usize) };
+    let program = match aot_blob::deserialize_program(bytes) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!(
+                "{{\"severity\":\"error\",\"code\":\"ILO-R013\",\"message\":\"AOT program blob load failed: {}\"}}",
+                e.replace('"', "\\\"")
+            );
+            std::process::exit(1);
+        }
+    };
+    let leaked: &'static CompiledProgram = Box::leak(Box::new(program));
+    ACTIVE_PROGRAM.with(|r| r.set(leaked as *const CompiledProgram));
+    ACTIVE_FUNC_NAMES.with(|r| r.set(&leaked.func_names as *const Vec<String>));
+    ACTIVE_REGISTRY.with(|r| r.set(&leaked.type_registry as *const TypeRegistry));
+    if let Some(ast) = &leaked.ast {
+        ACTIVE_AST_PROGRAM.with(|r| r.set(ast.as_ref() as *const Program));
+    }
+    0
+}
+
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
 pub extern "C" fn ilo_aot_fini() {
     clear_active_registry();
+    ACTIVE_PROGRAM.with(|r| r.set(std::ptr::null()));
+    ACTIVE_FUNC_NAMES.with(|r| r.set(std::ptr::null()));
+    ACTIVE_AST_PROGRAM.with(|r| r.set(std::ptr::null()));
     jit_arena_reset();
 }
 
