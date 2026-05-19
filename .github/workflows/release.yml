@@ -8,7 +8,20 @@ permissions:
   contents: write
 
 jobs:
+  secret-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_CONFIG: .gitleaks.toml
+
   build:
+    needs: secret-scan
     strategy:
       matrix:
         include:
@@ -71,6 +84,7 @@ jobs:
           path: ilo-${{ matrix.target }}*
 
   build-wasm:
+    needs: secret-scan
     runs-on: ubuntu-latest
 
     steps:
