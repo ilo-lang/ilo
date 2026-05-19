@@ -362,7 +362,7 @@ fn walk_call(expr: &Expr, prints: &mut Vec<String>) -> Result<(), BackendError> 
                         "Stage 5e Zero backend only lowers `prnt` of literal arguments \
                          (text/number/bool). hint: hoist the value to a literal or build \
                          with the Cranelift native backend.",
-                    ))
+                    ));
                 }
             };
             prints.push(s);

@@ -54,9 +54,8 @@ struct ObjBaseline {
 
 fn parse_baselines() -> Vec<ObjBaseline> {
     let path = Path::new(OBJ_BASELINES_TSV);
-    let body = std::fs::read_to_string(path).unwrap_or_else(|e| {
-        panic!("missing obj baselines at {}: {}", path.display(), e)
-    });
+    let body = std::fs::read_to_string(path)
+        .unwrap_or_else(|e| panic!("missing obj baselines at {}: {}", path.display(), e));
     let mut out = Vec::new();
     for line in body.lines() {
         if line.trim().is_empty() {
@@ -83,7 +82,11 @@ fn tmp_path(name: &str) -> PathBuf {
 
 /// Compute SHA-256 via the system `shasum` so we don't drag in a `sha2` crate.
 fn sha256_file(path: &Path) -> Option<String> {
-    let out = Command::new("shasum").args(["-a", "256"]).arg(path).output().ok()?;
+    let out = Command::new("shasum")
+        .args(["-a", "256"])
+        .arg(path)
+        .output()
+        .ok()?;
     if !out.status.success() {
         return None;
     }
@@ -147,8 +150,11 @@ fn cranelift_aot_object_file_byte_identical_to_baselines() {
         let _ = std::fs::remove_file(&obj);
 
         let Some(observed) = observed else {
-            compile_failures
-                .push(format!("{}: produced no object file at {}", entry.name, obj.display()));
+            compile_failures.push(format!(
+                "{}: produced no object file at {}",
+                entry.name,
+                obj.display()
+            ));
             continue;
         };
 

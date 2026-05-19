@@ -42,10 +42,7 @@ pub struct CapabilitySet {
 /// unknown-unknown the caller is expected to have already errored at
 /// capability-check time; we defensively skip the import here so a misuse
 /// produces an empty module rather than an invalid one.
-pub fn emit_core_module(
-    strings: &[String],
-    caps: CapabilitySet,
-) -> Result<Vec<u8>, String> {
+pub fn emit_core_module(strings: &[String], caps: CapabilitySet) -> Result<Vec<u8>, String> {
     let mut module = Module::new();
 
     // ---- type section -----------------------------------------------------
@@ -53,9 +50,10 @@ pub fn emit_core_module(
     // type 0: (i32, i32, i32, i32) -> i32   -- fd_write signature
     // type 1: () -> ()                       -- _start signature
     let mut types = TypeSection::new();
-    types
-        .ty()
-        .function([ValType::I32, ValType::I32, ValType::I32, ValType::I32], [ValType::I32]);
+    types.ty().function(
+        [ValType::I32, ValType::I32, ValType::I32, ValType::I32],
+        [ValType::I32],
+    );
     types.ty().function([], []);
     module.section(&types);
 

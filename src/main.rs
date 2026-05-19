@@ -2708,10 +2708,7 @@ fn main() {
     // `ilo build --help` / `ilo build -h`: print the manifesto-strict build
     // help and exit 0 before clap or the unknown-flag guard sees it.
     if raw_args.get(1).map(|s| s.as_str()) == Some("build")
-        && raw_args
-            .iter()
-            .skip(2)
-            .any(|a| a == "--help" || a == "-h")
+        && raw_args.iter().skip(2).any(|a| a == "--help" || a == "-h")
     {
         print_build_help();
         std::process::exit(0);

@@ -47,7 +47,7 @@ use crate::hir::{
 };
 
 mod emit;
-pub use emit::{emit_core_module, CapabilitySet};
+pub use emit::{CapabilitySet, emit_core_module};
 
 /// Bundled WASI preview1 → preview2 reactor adapter. Pinned to the version
 /// shipped with the Wasmtime v25 release; refreshed alongside the
@@ -143,7 +143,10 @@ pub fn check_builtin(builtin: &str, target: WasmTarget) -> Result<(), BackendErr
             "prnt" | "now" | "now-ms" | "env" | "rd" | "wr" | "get" | "post",
             WasmTarget::Wasip1 | WasmTarget::Wasip2 | WasmTarget::Component,
         ) => true,
-        ("prnt" | "now" | "now-ms" | "env" | "rd" | "wr" | "get" | "post", WasmTarget::UnknownUnknown) => false,
+        (
+            "prnt" | "now" | "now-ms" | "env" | "rd" | "wr" | "get" | "post",
+            WasmTarget::UnknownUnknown,
+        ) => false,
 
         // `run` (subprocess spawn) is not supported on any wasm target —
         // there is no WASI or Component Model interface for it.
@@ -292,10 +295,7 @@ fn emit_program(hir: &Program, config: WasmConfig) -> Result<Artefact, BackendEr
             .arg("new")
             .arg(&core_path)
             .arg("--adapt")
-            .arg(format!(
-                "wasi_snapshot_preview1={}",
-                adapter_path.display()
-            ))
+            .arg(format!("wasi_snapshot_preview1={}", adapter_path.display()))
             .arg("-o")
             .arg(&component_out)
             .output();
@@ -335,7 +335,10 @@ fn emit_program(hir: &Program, config: WasmConfig) -> Result<Artefact, BackendEr
             }
             return Err(codegen(
                 "ILO-B203",
-                format!("wasm-tools component new failed ({}): {}", output.status, detail),
+                format!(
+                    "wasm-tools component new failed ({}): {}",
+                    output.status, detail
+                ),
             ));
         }
 
@@ -361,7 +364,11 @@ fn emit_program(hir: &Program, config: WasmConfig) -> Result<Artefact, BackendEr
 
 /// Walk a HIR body collecting `prnt "<literal>"` calls. Any other shape
 /// returns `ILO-B202`.
-fn walk_body(body: &Body, strings: &mut Vec<String>, target: WasmTarget) -> Result<(), BackendError> {
+fn walk_body(
+    body: &Body,
+    strings: &mut Vec<String>,
+    target: WasmTarget,
+) -> Result<(), BackendError> {
     for stmt in &body.stmts {
         walk_stmt(stmt, strings, target)?;
     }
@@ -381,7 +388,11 @@ fn walk_body(body: &Body, strings: &mut Vec<String>, target: WasmTarget) -> Resu
     Ok(())
 }
 
-fn walk_stmt(stmt: &Stmt, strings: &mut Vec<String>, target: WasmTarget) -> Result<(), BackendError> {
+fn walk_stmt(
+    stmt: &Stmt,
+    strings: &mut Vec<String>,
+    target: WasmTarget,
+) -> Result<(), BackendError> {
     match stmt {
         Stmt::Expr { value, .. } => walk_call(value, strings, target),
         _ => Err(unsupported(
@@ -390,7 +401,11 @@ fn walk_stmt(stmt: &Stmt, strings: &mut Vec<String>, target: WasmTarget) -> Resu
     }
 }
 
-fn walk_call(expr: &Expr, strings: &mut Vec<String>, target: WasmTarget) -> Result<(), BackendError> {
+fn walk_call(
+    expr: &Expr,
+    strings: &mut Vec<String>,
+    target: WasmTarget,
+) -> Result<(), BackendError> {
     match expr {
         Expr::Call { function, args, .. } => {
             check_builtin(function, target)?;

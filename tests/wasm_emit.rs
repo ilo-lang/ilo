@@ -6,19 +6,31 @@
 
 use std::path::PathBuf;
 
-use ilo::backend::wasm::{emit, check_builtin, WasmConfig, WasmTarget};
 use ilo::backend::BackendError;
+use ilo::backend::wasm::{WasmConfig, WasmTarget, check_builtin, emit};
 
 fn lower(src: &str) -> ilo::hir::Program {
     let tokens = ilo::lexer::lex(src).expect("lex");
     let token_spans: Vec<(ilo::lexer::Token, ilo::ast::Span)> = tokens
         .into_iter()
-        .map(|(t, r)| (t, ilo::ast::Span { start: r.start, end: r.end }))
+        .map(|(t, r)| {
+            (
+                t,
+                ilo::ast::Span {
+                    start: r.start,
+                    end: r.end,
+                },
+            )
+        })
         .collect();
     let (program, parse_errors) = ilo::parser::parse(token_spans);
     assert!(parse_errors.is_empty(), "parse errors: {:?}", parse_errors);
     let verify = ilo::verify::verify(&program);
-    assert!(verify.errors.is_empty(), "verify errors: {:?}", verify.errors);
+    assert!(
+        verify.errors.is_empty(),
+        "verify errors: {:?}",
+        verify.errors
+    );
     ilo::hir::lower(&program, &verify).expect("hir lower")
 }
 
@@ -125,9 +137,18 @@ fn capability_check_matrix() {
 fn target_parse_accepts_aliases() {
     assert_eq!(WasmTarget::parse("wasm32-wasi"), Some(WasmTarget::Wasip1));
     assert_eq!(WasmTarget::parse("wasm32-wasip1"), Some(WasmTarget::Wasip1));
-    assert_eq!(WasmTarget::parse("wasm32-component"), Some(WasmTarget::Component));
-    assert_eq!(WasmTarget::parse("wasm32-web"), Some(WasmTarget::UnknownUnknown));
-    assert_eq!(WasmTarget::parse("wasm32-unknown-unknown"), Some(WasmTarget::UnknownUnknown));
+    assert_eq!(
+        WasmTarget::parse("wasm32-component"),
+        Some(WasmTarget::Component)
+    );
+    assert_eq!(
+        WasmTarget::parse("wasm32-web"),
+        Some(WasmTarget::UnknownUnknown)
+    );
+    assert_eq!(
+        WasmTarget::parse("wasm32-unknown-unknown"),
+        Some(WasmTarget::UnknownUnknown)
+    );
     assert!(WasmTarget::parse("x86_64-linux-gnu").is_none());
 }
 

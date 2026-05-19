@@ -9,7 +9,7 @@
 use std::path::PathBuf;
 use std::process::Command;
 
-use ilo::backend::wasm::{emit, WasmConfig, WasmTarget};
+use ilo::backend::wasm::{WasmConfig, WasmTarget, emit};
 
 fn wasmtime_available() -> bool {
     Command::new("wasmtime").arg("--version").output().is_ok()
@@ -19,7 +19,15 @@ fn build(src: &str, target: WasmTarget, dir: &std::path::Path) -> PathBuf {
     let tokens = ilo::lexer::lex(src).expect("lex");
     let token_spans: Vec<(ilo::lexer::Token, ilo::ast::Span)> = tokens
         .into_iter()
-        .map(|(t, r)| (t, ilo::ast::Span { start: r.start, end: r.end }))
+        .map(|(t, r)| {
+            (
+                t,
+                ilo::ast::Span {
+                    start: r.start,
+                    end: r.end,
+                },
+            )
+        })
         .collect();
     let (program, parse_errors) = ilo::parser::parse(token_spans);
     assert!(parse_errors.is_empty(), "parse: {:?}", parse_errors);
@@ -43,8 +51,15 @@ fn wasip1_hello_runs_on_wasmtime() {
         return;
     }
     let dir = tempfile::tempdir().unwrap();
-    let path = build("hello>t;prnt \"Hello, WASM!\"", WasmTarget::Wasip1, dir.path());
-    let out = Command::new("wasmtime").arg(&path).output().expect("wasmtime run");
+    let path = build(
+        "hello>t;prnt \"Hello, WASM!\"",
+        WasmTarget::Wasip1,
+        dir.path(),
+    );
+    let out = Command::new("wasmtime")
+        .arg(&path)
+        .output()
+        .expect("wasmtime run");
     assert!(
         out.status.success(),
         "wasmtime exit: {} stderr: {}",
@@ -64,8 +79,15 @@ fn wasip1_multiple_prints() {
     let dir = tempfile::tempdir().unwrap();
     let src = "go>t;prnt \"one\";prnt \"two\";prnt \"three\"";
     let path = build(src, WasmTarget::Wasip1, dir.path());
-    let out = Command::new("wasmtime").arg(&path).output().expect("wasmtime");
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    let out = Command::new("wasmtime")
+        .arg(&path)
+        .output()
+        .expect("wasmtime");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let stdout = String::from_utf8_lossy(&out.stdout);
     let lines: Vec<&str> = stdout.lines().collect();
     assert_eq!(lines, vec!["one", "two", "three"]);

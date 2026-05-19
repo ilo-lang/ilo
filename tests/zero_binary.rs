@@ -9,7 +9,7 @@
 use std::path::Path;
 use std::process::Command;
 
-use ilo::backend::zero::{default_zero_path, emit, ZeroConfig, ZeroMode};
+use ilo::backend::zero::{ZeroConfig, ZeroMode, default_zero_path, emit};
 
 fn zero_available() -> bool {
     if let Some(p) = default_zero_path() {
@@ -28,7 +28,15 @@ fn lower(src: &str) -> ilo::hir::Program {
     let tokens = ilo::lexer::lex(src).expect("lex");
     let token_spans: Vec<(ilo::lexer::Token, ilo::ast::Span)> = tokens
         .into_iter()
-        .map(|(t, r)| (t, ilo::ast::Span { start: r.start, end: r.end }))
+        .map(|(t, r)| {
+            (
+                t,
+                ilo::ast::Span {
+                    start: r.start,
+                    end: r.end,
+                },
+            )
+        })
         .collect();
     let (program, parse_errors) = ilo::parser::parse(token_spans);
     assert!(parse_errors.is_empty(), "parse: {:?}", parse_errors);
@@ -64,7 +72,10 @@ fn round_trip_hello_world() {
         out.status,
         String::from_utf8_lossy(&out.stderr)
     );
-    assert_eq!(String::from_utf8_lossy(&out.stdout).trim_end(), "Hello, Zero!");
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout).trim_end(),
+        "Hello, Zero!"
+    );
 }
 
 #[test]
@@ -79,5 +90,8 @@ fn round_trip_multi_print_matches_tree_interpreter() {
     let out = Command::new(&bin).output().expect("run binary");
     assert!(out.status.success());
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert_eq!(stdout.lines().collect::<Vec<_>>(), vec!["alpha", "beta", "gamma"]);
+    assert_eq!(
+        stdout.lines().collect::<Vec<_>>(),
+        vec!["alpha", "beta", "gamma"]
+    );
 }

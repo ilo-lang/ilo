@@ -2310,9 +2310,9 @@ mod tests {
                 },
                 MatchArm {
                     pattern: Pattern::Wildcard,
-                    body: vec![Spanned::unknown(Stmt::Expr(Expr::Literal(Literal::Number(
-                        0.0,
-                    ))))],
+                    body: vec![Spanned::unknown(Stmt::Expr(Expr::Literal(
+                        Literal::Number(0.0),
+                    )))],
                 },
             ],
         };
@@ -2327,9 +2327,9 @@ mod tests {
                 },
                 MatchArm {
                     pattern: Pattern::Wildcard,
-                    body: vec![Spanned::unknown(Stmt::Expr(Expr::Literal(Literal::Number(
-                        -1.0,
-                    ))))],
+                    body: vec![Spanned::unknown(Stmt::Expr(Expr::Literal(
+                        Literal::Number(-1.0),
+                    )))],
                 },
             ],
         };

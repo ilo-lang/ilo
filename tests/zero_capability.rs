@@ -3,14 +3,22 @@
 //! Asserts unsupported HIR shapes surface as `BackendError::CodegenFailed`
 //! with the documented `ILO-B3##` error codes.
 
-use ilo::backend::zero::{emit, ZeroConfig, ZeroMode};
 use ilo::backend::BackendError;
+use ilo::backend::zero::{ZeroConfig, ZeroMode, emit};
 
 fn lower(src: &str) -> ilo::hir::Program {
     let tokens = ilo::lexer::lex(src).expect("lex");
     let token_spans: Vec<(ilo::lexer::Token, ilo::ast::Span)> = tokens
         .into_iter()
-        .map(|(t, r)| (t, ilo::ast::Span { start: r.start, end: r.end }))
+        .map(|(t, r)| {
+            (
+                t,
+                ilo::ast::Span {
+                    start: r.start,
+                    end: r.end,
+                },
+            )
+        })
         .collect();
     let (program, parse_errors) = ilo::parser::parse(token_spans);
     assert!(parse_errors.is_empty(), "parse: {:?}", parse_errors);
@@ -38,7 +46,11 @@ fn non_prnt_call_errors_with_b302() {
     match err {
         BackendError::CodegenFailed { code, message, .. } => {
             assert_eq!(code, "ILO-B302");
-            assert!(message.contains("now") || message.contains("call"), "msg: {}", message);
+            assert!(
+                message.contains("now") || message.contains("call"),
+                "msg: {}",
+                message
+            );
             assert!(message.contains("hint"), "msg: {}", message);
         }
         other => panic!("expected ILO-B302, got {:?}", other),

@@ -187,9 +187,8 @@ fn parse_run(raw: &str) -> (String, Vec<String>) {
     // shlex returns None for malformed input (unclosed quotes etc.); fall
     // back to whitespace split in that case so the test still runs and the
     // expected/actual diff surfaces in the per-case Fail output.
-    let tokens = shlex::split(raw).unwrap_or_else(|| {
-        raw.split_whitespace().map(|s| s.to_string()).collect()
-    });
+    let tokens = shlex::split(raw)
+        .unwrap_or_else(|| raw.split_whitespace().map(|s| s.to_string()).collect());
     let mut it = tokens.into_iter();
     let func = it.next().unwrap_or_default();
     let args: Vec<String> = it.collect();
@@ -334,11 +333,7 @@ fn run_wasm(case: &Case) -> Outcome {
         }
         return Outcome::Fail(format!("ilo build --wasm failed: {stderr}"));
     }
-    let exec = match Command::new("wasmtime")
-        .arg(&tmp)
-        .args(&case.args)
-        .output()
-    {
+    let exec = match Command::new("wasmtime").arg(&tmp).args(&case.args).output() {
         Ok(o) => o,
         Err(e) => return Outcome::Fail(format!("wasmtime spawn failed: {e}")),
     };
@@ -473,8 +468,14 @@ fn cross_backend_conformance() {
         }
     }
 
-    eprintln!("\n=== Cross-backend conformance summary ({} cases) ===", cases.len());
-    eprintln!("{:>10} {:>6} {:>6} {:>12} {:>6}", "backend", "pass", "skip", "unsupported", "fail");
+    eprintln!(
+        "\n=== Cross-backend conformance summary ({} cases) ===",
+        cases.len()
+    );
+    eprintln!(
+        "{:>10} {:>6} {:>6} {:>12} {:>6}",
+        "backend", "pass", "skip", "unsupported", "fail"
+    );
     for b in BACKENDS {
         let s = stats.get(b).expect("stats slot present");
         eprintln!(

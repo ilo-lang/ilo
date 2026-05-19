@@ -8,7 +8,7 @@
 use std::path::PathBuf;
 use std::process::Command;
 
-use ilo::backend::zero::{default_zero_path, emit, ZeroConfig, ZeroMode};
+use ilo::backend::zero::{ZeroConfig, ZeroMode, default_zero_path, emit};
 
 fn zero_bin() -> Option<String> {
     if let Some(p) = default_zero_path() {
@@ -31,7 +31,15 @@ fn lower(src: &str) -> ilo::hir::Program {
     let tokens = ilo::lexer::lex(src).expect("lex");
     let token_spans: Vec<(ilo::lexer::Token, ilo::ast::Span)> = tokens
         .into_iter()
-        .map(|(t, r)| (t, ilo::ast::Span { start: r.start, end: r.end }))
+        .map(|(t, r)| {
+            (
+                t,
+                ilo::ast::Span {
+                    start: r.start,
+                    end: r.end,
+                },
+            )
+        })
         .collect();
     let (program, parse_errors) = ilo::parser::parse(token_spans);
     assert!(parse_errors.is_empty(), "parse: {:?}", parse_errors);
@@ -77,7 +85,11 @@ fn zero_check_accepts_hello_world() {
         return;
     };
     let (path, _) = build_zero("hello>t;prnt \"hello\"");
-    let out = Command::new(&zero).arg("check").arg(&path).output().expect("zero check");
+    let out = Command::new(&zero)
+        .arg("check")
+        .arg(&path)
+        .output()
+        .expect("zero check");
     assert!(
         out.status.success(),
         "zero check failed: stdout={} stderr={}",
@@ -98,7 +110,11 @@ fn zero_check_accepts_multi_print() {
     let b = text.find("\"b\\n\"").expect("b");
     let c = text.find("\"c\\n\"").expect("c");
     assert!(a < b && b < c, "order preserved: {}", text);
-    let out = Command::new(&zero).arg("check").arg(&path).output().expect("zero check");
+    let out = Command::new(&zero)
+        .arg("check")
+        .arg(&path)
+        .output()
+        .expect("zero check");
     assert!(
         out.status.success(),
         "zero check failed: stdout={} stderr={}",
