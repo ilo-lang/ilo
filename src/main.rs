@@ -53,10 +53,28 @@ const SKILLS: &[Skill] = &[
         content: include_str!("../skills/ilo/ilo-language.md"),
     },
     Skill {
-        name: "ilo-builtins",
-        description: "Use this when calling ilo's builtin functions. One-line signatures plus examples for list, text, IO, HTTP, JSON, map, math, time, and HOF builtins.",
-        path: "skills/ilo/ilo-builtins.md",
-        content: include_str!("../skills/ilo/ilo-builtins.md"),
+        name: "ilo-builtins-core",
+        description: "Use this for core builtins: type coercions (len str num trm), list ops, HOFs, and map ops.",
+        path: "skills/ilo/ilo-builtins-core.md",
+        content: include_str!("../skills/ilo/ilo-builtins-core.md"),
+    },
+    Skill {
+        name: "ilo-builtins-math",
+        description: "Use this for math builtins: arithmetic, trig, constants (pi tau e), random, and statistics.",
+        path: "skills/ilo/ilo-builtins-math.md",
+        content: include_str!("../skills/ilo/ilo-builtins-math.md"),
+    },
+    Skill {
+        name: "ilo-builtins-io",
+        description: "Use this for I/O builtins: file read/write, HTTP, JSON, path ops, env, time, and process.",
+        path: "skills/ilo/ilo-builtins-io.md",
+        content: include_str!("../skills/ilo/ilo-builtins-io.md"),
+    },
+    Skill {
+        name: "ilo-builtins-text",
+        description: "Use this for text builtins: manipulation, regex, formatting (fmt fmt2), CSV/TSV, and date parsing.",
+        path: "skills/ilo/ilo-builtins-text.md",
+        content: include_str!("../skills/ilo/ilo-builtins-text.md"),
     },
     Skill {
         name: "ilo-errors",

@@ -20,7 +20,10 @@
       "keywords": ["ilo", "programming-language", "token-optimised", "ai-agents"],
       "skills": [
         { "name": "ilo-language", "description": "Use this when writing or reviewing .ilo source.", "path": "skills/ilo/ilo-language.md" },
-        { "name": "ilo-builtins", "description": "Use this when calling ilo's builtin functions.", "path": "skills/ilo/ilo-builtins.md" },
+        { "name": "ilo-builtins-core", "description": "Use this for core builtins: type coercions, list ops, HOFs, and map ops.", "path": "skills/ilo/ilo-builtins-core.md" },
+        { "name": "ilo-builtins-math", "description": "Use this for math builtins: arithmetic, trig, constants, random, and statistics.", "path": "skills/ilo/ilo-builtins-math.md" },
+        { "name": "ilo-builtins-io", "description": "Use this for I/O builtins: file read/write, HTTP, JSON, path ops, env, time, and process.", "path": "skills/ilo/ilo-builtins-io.md" },
+        { "name": "ilo-builtins-text", "description": "Use this for text builtins: manipulation, regex, formatting, CSV/TSV, and date parsing.", "path": "skills/ilo/ilo-builtins-text.md" },
         { "name": "ilo-errors", "description": "Use this when reading ILO-XXXX error codes or fixing failures.", "path": "skills/ilo/ilo-errors.md" },
         { "name": "ilo-tools", "description": "Use this when declaring or using MCP tools in ilo programs.", "path": "skills/ilo/ilo-tools.md" },
         { "name": "ilo-engines", "description": "Use this when choosing between tree, VM, JIT, or AOT execution.", "path": "skills/ilo/ilo-engines.md" },

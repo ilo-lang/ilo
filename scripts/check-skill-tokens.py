@@ -1,15 +1,18 @@
 #!/usr/bin/env python3
 """
-Enforce the modular-skill token budget (Phase 1, PR #395).
+Enforce the modular-skill token budget.
 
 Each `skills/ilo/ilo-*.md` module must encode to <= 1,000 tokens under
-`cl100k_base`. The aggregate across all six must be <= 5,000.
+`cl100k_base`. The aggregate across all modules must be <= 8,000.
 
 The budget exists because the whole point of splitting the monolithic
 ~16,000-token compact spec into modules was to let agents load only the
 slices their current task needs (typical: 1-2 modules ~ 2,000 tokens). If
 a module drifts past 1,000 tokens, the per-task economics regress, so the
 guard is a CI gate, not advisory.
+
+`ilo-builtins` was split into four category files (core, math, io, text)
+to give headroom as the language grows (PR: skill-split-by-category).
 
 Run locally with: `python3 scripts/check-skill-tokens.py`
 """
@@ -23,7 +26,10 @@ import tiktoken
 
 SKILL_NAMES = [
     "ilo-language",
-    "ilo-builtins",
+    "ilo-builtins-core",
+    "ilo-builtins-math",
+    "ilo-builtins-io",
+    "ilo-builtins-text",
     "ilo-errors",
     "ilo-tools",
     "ilo-engines",
@@ -33,7 +39,7 @@ SKILL_NAMES = [
 ]
 
 PER_MODULE_LIMIT = 1000
-TOTAL_LIMIT = 5000
+TOTAL_LIMIT = 8000
 
 
 def main() -> int:
