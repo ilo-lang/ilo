@@ -1,0 +1,18 @@
+-- Demonstrates correct 0-arg function call forms in ilo.
+-- A 0-arg function auto-expands in statement/assignment position,
+-- but needs explicit `name()` in value position (e.g. operand of `+`).
+--
+-- `get-now` is a 0-arg function that returns the current timestamp.
+
+get-now>n;now-ms()
+
+-- In statement position: auto-expands to a call.
+ts>n;get-now
+
+-- In value position: use get-now() explicitly.
+later>n;+(get-now()) 1000
+
+main>b;>(later) ts
+
+-- run: main
+-- out: true
