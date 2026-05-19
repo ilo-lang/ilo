@@ -1,18 +1,17 @@
 -- Demonstrates correct 0-arg function call forms in ilo.
 -- A 0-arg function auto-expands in statement/assignment position,
 -- but needs explicit `name()` in value position (e.g. operand of `+`).
---
--- `get-now` is a 0-arg function that returns the current timestamp.
 
-get-now>n;now-ms()
+-- `stamp` returns a fixed value (not time-dependent, safe for tests).
+stamp>n;42
 
--- In statement position: auto-expands to a call.
-ts>n;get-now
+-- In statement/assignment position: auto-expands to a call. Returns 42.
+get-val>n;stamp
 
--- In value position: use get-now() explicitly.
-later>n;+(get-now()) 1000
+-- In value position: use stamp() explicitly to get the value.
+add-one>n;+(stamp()) 1
 
-main>b;>(later) ts
+main>b;=add-one() 43
 
 -- run: main
 -- out: true
