@@ -439,6 +439,12 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("solve", &["L (L n)", "L n"], "L n"),
     ("inv", &["L (L n)"], "L (L n)"),
     ("det", &["L (L n)"], "n"),
+    // Index-returning aggregates. numpy convention: argmax/argmin return
+    // the index of the max/min element; argsort returns the sorted-index
+    // permutation (ascending).
+    ("argmax", &["L n"], "n"),
+    ("argmin", &["L n"], "n"),
+    ("argsort", &["L n"], "L n"),
 ];
 
 fn builtin_arity(name: &str) -> Option<usize> {
@@ -2774,6 +2780,42 @@ fn builtin_check_args(
                 });
             }
             (Ty::Nil, errors)
+        }
+        "argmax" | "argmin" | "argsort" => {
+            // arg* xs:L n — element type must be number. Empty list is a
+            // runtime error for argmax/argmin (matches `max`/`min`); for
+            // argsort an empty list returns the empty list at runtime.
+            if let Some(arg) = arg_types.first() {
+                match arg {
+                    Ty::List(inner) => {
+                        if !compatible(inner, &Ty::Number) {
+                            errors.push(VerifyError {
+                                code: "ILO-T013",
+                                function: func_ctx.to_string(),
+                                message: format!("'{name}' expects L n, got L {inner}"),
+                                hint: None,
+                                span,
+                                is_warning: false,
+                            });
+                        }
+                    }
+                    Ty::Unknown => {}
+                    other => errors.push(VerifyError {
+                        code: "ILO-T013",
+                        function: func_ctx.to_string(),
+                        message: format!("'{name}' expects L n, got {other}"),
+                        hint: None,
+                        span,
+                        is_warning: false,
+                    }),
+                }
+            }
+            let ret = if name == "argsort" {
+                Ty::List(Box::new(Ty::Number))
+            } else {
+                Ty::Number
+            };
+            (ret, errors)
         }
         _ => (Ty::Unknown, errors),
     }
