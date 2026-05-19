@@ -479,7 +479,7 @@ fn help_shows_usage() {
     );
     assert!(
         stdout.contains("--run-vm"),
-        "expected --run-tree, got: {}",
+        "expected --run-vm, got: {}",
         stdout
     );
 }
