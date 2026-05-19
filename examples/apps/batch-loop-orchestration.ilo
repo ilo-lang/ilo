@@ -1,0 +1,24 @@
+-- Harvested from persona-rerun: batch loop orchestration.
+-- N independent tasks where each can fail; demonstrates three strategies:
+-- mapr (first-Err), per-task partition into oks/errs, and @-loop accumulators.
+
+proc i:n>R t t;m=mod i 13;?(=m 0){true:^(fmt "task {} failed" i);false:~(fmt "task {} ok" i)}
+
+happy>R (L t) t;ids=range 1 11;mapr proc ids
+
+bail>R (L t) t;ids=range 1 21;mapr proc ids
+
+both>L (L t);ids=range 1 31;rs=map proc ids;oks=[];ers=[];@r rs{?r{~v:oks=+=oks v;^e:ers=+=ers e}};[oks ers]
+
+errs>n;ids=range 1 101;c=0;@i ids{r=proc i;?r{~_:c=c;^_:c=+c 1}};c
+
+first-fail>n;ids=range 1 101;@i ids{r=proc i;?r{~_:0;^_:ret i}};0
+
+-- run: happy
+-- out: [task 1 ok, task 2 ok, task 3 ok, task 4 ok, task 5 ok, task 6 ok, task 7 ok, task 8 ok, task 9 ok, task 10 ok]
+-- run: bail
+-- err: ^task 13 failed
+-- run: errs
+-- out: 7
+-- run: first-fail
+-- out: 13

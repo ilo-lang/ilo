@@ -1,0 +1,11 @@
+-- Harvested from persona-rerun: agent-repair-loop. A small program with a
+-- couple of helpers and Result-on-num! patterns, used to exercise the kind
+-- of multi-function file an agent generates while iterating on a fix.
+
+add x:n y:n>n;+x y
+sub x:n y:n>n;p=num "2";?p{~v:-x v;^_:x}
+greet n:t>t;+"hi " n
+main >n;add 1 2
+
+-- run: main
+-- out: 3

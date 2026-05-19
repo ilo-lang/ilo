@@ -1,0 +1,19 @@
+-- Harvested from persona-rerun: error-budget. SLO=0.99, lat threshold=300ms.
+-- Reads a CSV of events, buckets per-minute, computes burn rate and a
+-- 5-minute rolling window, classifies severity. Exercises rdl!, mapr!,
+-- map/flt/grp, window, avg/quantile/max, fmt.
+
+prow ln:t>R (L n) t;ps=spl ln ",";tt=num! at ps 0;l=num! at ps 1;st=num! at ps 2;~[tt l st]
+okev ev:L n>n;l=at ev 1;st=at ev 2;?h (& (=st 200) (<l 300)) 1 0
+bk ev:L n>n;flr (/ (at ev 0) 60)
+mkrec e:L n>L n;[(bk e) (okev e)]
+rb r:L n>n;at r 0
+rok r:L n>n;at r 1
+prate b:n recs:L (L n)>n;ms=flt (r:L n>b;=(at r 0) b) recs;g=sum (map rok ms);tot=len ms;?h (=tot 0) 1 (/ g tot)
+pburn sr:n>n;/ (- 1 sr) 0.01
+wavg w:L n>n;avg w
+cls br:n>t;>br 14.4 "CRITICAL";>br 6 "HIGH";>br 1 "WARN";"OK"
+main p:t>R t t;lns=rdl! p;body=slc lns 1 (len lns);rows=mapr! prow body;recs=map mkrec rows;bks=unq (map rb recs);bs=srt bks;rates=map (b:n>n;prate b recs) bs;burns=map pburn rates;wnd=window 5 burns;rolling=map wavg wnd;ovr=avg burns;p95=quantile burns 0.95;worst=max burns;mxr=max rolling;st=cls mxr;~fmt "buckets={} overall_burn={} p95_burn={} worst_burn={} max_5m_rolling={} status={}" (len bs) (fmt2 ovr 3) (fmt2 p95 3) (fmt2 worst 3) (fmt2 mxr 3) st
+
+-- run: main examples/apps/fixtures/error-budget-events.csv
+-- out: buckets=10 overall_burn=2.800 p95_burn=6.100 worst_burn=7.000 max_5m_rolling=3.200 status=WARN

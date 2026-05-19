@@ -1,0 +1,37 @@
+-- Harvested from persona-rerun: config-shaper.
+-- Shape a JSON config: rename keys, merge defaults, derive a DSN. Exercises
+-- field access via dot syntax (v.app_name, v.db.host), mmap/mset/mhas/mget,
+-- and string concat for derived fields. Path passed via argv.
+
+main p:t>R t t;
+v=rd! p;
+m=mmap;
+m=mset m "service" v.app_name;
+m=mset m "port" (str v.port);
+m=mset m "db-host" v.db.host;
+m=mset m "db-port" (str v.db.port);
+m=mset m "db-name" v.db.name;
+m=mset m "workers" (str v.workers);
+-- merge defaults: only set if absent
+d=mmap;
+d=mset d "timeout" "30";
+d=mset d "retries" "3";
+d=mset d "log-level" "info";
+dk=mkeys d;
+@k dk{
+  h=mhas m k;
+  !h{m=mset m k (mget d k ?? "")}
+};
+host=mget m "db-host" ?? "";
+prt=mget m "db-port" ?? "";
+nm=mget m "db-name" ?? "";
+p1=+"postgres://" host;
+p2=+p1 ":";
+p3=+p2 prt;
+p4=+p3 "/";
+dsn=+p4 nm;
+m=mset m "dsn" dsn;
+~jdmp m
+
+-- run: main examples/apps/fixtures/config-shaper.json
+-- out: {"db-host":"localhost","db-name":"appdb","db-port":"5432","dsn":"postgres://localhost:5432/appdb","log-level":"info","port":"3000","retries":"3","service":"web","timeout":"30","workers":"4"}

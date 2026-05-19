@@ -23,14 +23,37 @@ fn ilo() -> Command {
 
 fn find_examples() -> Vec<PathBuf> {
     let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("examples");
-    let mut paths: Vec<_> = std::fs::read_dir(&dir)
-        .unwrap_or_else(|e| panic!("cannot read examples/ at {}: {e}", dir.display()))
-        .filter_map(|e| e.ok())
-        .map(|e| e.path())
-        .filter(|p| p.extension().map(|e| e == "ilo").unwrap_or(false))
-        .collect();
+    let mut paths: Vec<PathBuf> = Vec::new();
+    collect_ilo(&dir, &mut paths);
     paths.sort();
     paths
+}
+
+/// Collect *.ilo files from `dir` and one level of subdirectories.
+/// This lets us group real-world harvested programs under `examples/apps/`
+/// while keeping the flat top-level layout for the language-feature examples.
+fn collect_ilo(dir: &std::path::Path, out: &mut Vec<PathBuf>) {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(e) => panic!("cannot read {}: {e}", dir.display()),
+    };
+    for e in entries.filter_map(|e| e.ok()) {
+        let p = e.path();
+        if p.is_dir() {
+            // One level of recursion is enough for examples/apps/<group>/file.ilo
+            // and keeps the harness's traversal cost bounded.
+            if let Ok(sub) = std::fs::read_dir(&p) {
+                for s in sub.filter_map(|s| s.ok()) {
+                    let sp = s.path();
+                    if sp.extension().map(|e| e == "ilo").unwrap_or(false) {
+                        out.push(sp);
+                    }
+                }
+            }
+        } else if p.extension().map(|e| e == "ilo").unwrap_or(false) {
+            out.push(p);
+        }
+    }
 }
 
 #[derive(Clone, Copy, PartialEq)]
