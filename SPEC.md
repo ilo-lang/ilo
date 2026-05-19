@@ -480,7 +480,8 @@ Called like functions, compiled to dedicated opcodes.
 | `srt fn xs` | sort list by key function (returns number or text key) | `L` |
 | `unq xs` | remove duplicates, preserve order (list or text chars) | same type |
 | `slc xs a b` | slice list or text from index a to b (a, b accept negative indices counting from end; bounds clamp) | same type |
-| `jpth json path` | JSON dot-path lookup, dot-separated keys + numeric array indices (e.g. `"a.b.0.c"`), not JSONPath - leading `$`, `*`, or `[...]` rejected with a diagnostic | `R t t` |
+| `jpth json path` | JSON dot-path lookup, dot-separated keys + numeric array indices (e.g. `"a.b.0.c"`), not JSONPath - leading `$`, `*`, or `[...]` rejected with a diagnostic. Result is typed: arrays → list, objects → record, scalars → matching primitive. | `R _ t` |
+| `jkeys json path` | sorted top-level keys of the JSON object at `path` (empty path = root). Err if the value at the path is not an object. | `R (L t) t` |
 | `jdmp value` | serialise ilo value to JSON text | `t` |
 | `prnt value` | print value to stdout, return it unchanged (passthrough) | same type |
 | `jpar text` | parse JSON text into ilo values | `R _ t` |
@@ -709,13 +710,27 @@ Non-UTF-8 environment variables are silently skipped (same policy as Rust's `std
 
 `jpth` extracts a value from a JSON string by dot-separated path. Array elements are accessed by numeric index. **Note: `jpth` is dot-path only, not JSONPath.** A leading `$`, `*` wildcard, or `[...]` bracket selector triggers a diagnostic error pointing at the dot-path form; iterate arrays yourself with `@i` or `map` if you need wildcard behaviour.
 
+Since 0.12.1 the Ok variant is **typed**: a JSON array comes back as a list (`@`-iterable, `len`-able), a JSON object comes back as a record (`jdmp`-roundtrippable, `jkeys`-enumerable), and scalars come back as the matching ilo primitive (number, text, bool, nil). Pre-0.12.1 every non-string leaf was stringified, forcing a re-parse via `jpar` to iterate. The signature is now `R _ t`.
+
 ```
-jpth json "name"            -- R t t: Ok=extracted value as text, Err=error
+jpth json "name"            -- R _ t: Ok=typed value, Err=error message
 jpth json "user.name"       -- nested path lookup
 jpth json "items.0.name"    -- array index access (dot before index, not [0])
+jpth json "spans"           -- Ok=L _ when the leaf is a JSON array (iterable!)
+jpth json "deps"            -- Ok=record when the leaf is a JSON object
+jpth json "n"               -- Ok=Number 42 (not Text "42") on a numeric leaf
 jpth! json "name"           -- auto-unwrap
 jpth json "$.a.b"           -- ^"jpth is dot-path only ..." (JSONPath rejected)
 jpth json "items.*.name"    -- ^"jpth is dot-path only ..." (no wildcards)
+```
+
+`jkeys json path` returns the **sorted** top-level keys of the JSON object at the dot-path as `L t`. Empty path means root. Errs if the value at the path is not an object. Pairs with `mkeys` (which works on ilo `M` maps) so an agent can enumerate JSON object keys without re-parsing through `jpar`.
+
+```
+jkeys json ""               -- R (L t) t: Ok=sorted root keys
+jkeys json "deps"           -- sorted keys of the "deps" object
+jkeys! json "deps"          -- auto-unwrap
+jkeys json "items"          -- ^"jkeys: value at path is not a JSON object"
 ```
 
 `jdmp` serialises any ilo value to a JSON string:
