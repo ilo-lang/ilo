@@ -530,6 +530,18 @@ fn emit_expr(out: &mut String, level: usize, expr: &Expr) -> String {
             if function == "now" && args.is_empty() {
                 return "(__import__('time').time())".to_string();
             }
+            // Math constants (0.12.1). `math.pi` / `math.tau` / `math.e`
+            // agree bit-for-bit with Rust's `f64::consts::{PI,TAU,E}`, so
+            // cross-engine output matches the tree / VM / Cranelift bridge.
+            if function == "pi" && args.is_empty() {
+                return "(__import__('math').pi)".to_string();
+            }
+            if function == "tau" && args.is_empty() {
+                return "(__import__('math').tau)".to_string();
+            }
+            if function == "e" && args.is_empty() {
+                return "(__import__('math').e)".to_string();
+            }
             if function == "now-ms" && args.is_empty() {
                 // Mirrors `Builtin::NowMs` across the other engines.
                 // `time.time()` returns seconds-as-float; multiply by

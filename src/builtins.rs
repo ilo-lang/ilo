@@ -187,6 +187,14 @@ pub enum Builtin {
     Dirname,
     Basename,
     Pathjoin,
+
+    // Math constants (zero-arg). Added 0.12.1 so agents stop hardcoding
+    // `3.14159...` or reconstructing pi via `* 2 (atan2 0 -1)` — fft-peak
+    // rerun12 surfaced both shapes. Tree-bridge-eligible so VM / Cranelift
+    // inherit for free; Python codegen emits `math.pi` / `math.tau` / `math.e`.
+    Pi,
+    Tau,
+    Eu,
 }
 
 impl Builtin {
@@ -334,6 +342,9 @@ impl Builtin {
             "dirname" => Some(Builtin::Dirname),
             "basename" => Some(Builtin::Basename),
             "pathjoin" => Some(Builtin::Pathjoin),
+            "pi" => Some(Builtin::Pi),
+            "tau" => Some(Builtin::Tau),
+            "e" => Some(Builtin::Eu),
             _ => None,
         }
     }
@@ -478,6 +489,9 @@ impl Builtin {
             Builtin::Dirname => "dirname",
             Builtin::Basename => "basename",
             Builtin::Pathjoin => "pathjoin",
+            Builtin::Pi => "pi",
+            Builtin::Tau => "tau",
+            Builtin::Eu => "e",
         }
     }
 
@@ -675,6 +689,11 @@ impl Builtin {
         // flat list of all hits in pattern order. Tree-bridge eligible alongside
         // rgxall1 — same dispatch path, no new opcodes.
         Builtin::RgxallMulti,
+        // Math constants (0.12.1). Appended last to preserve on-wire tag
+        // stability for every prior builtin. Zero-arg, tree-bridge-eligible.
+        Builtin::Pi,
+        Builtin::Tau,
+        Builtin::Eu,
     ];
 
     /// On-wire 8-bit tag for cross-engine builtin dispatch. See `ALL`.
@@ -972,6 +991,9 @@ mod tests {
             "pathjoin",
             "rdin",
             "rdinl",
+            "pi",
+            "tau",
+            "e",
         ];
         for name in &all {
             let b = Builtin::from_name(name).unwrap_or_else(|| panic!("missing builtin: {name}"));
@@ -1199,6 +1221,9 @@ mod tests {
             "pathjoin",
             "rdin",
             "rdinl",
+            "pi",
+            "tau",
+            "e",
         ] {
             let b = Builtin::from_name(name).unwrap_or_else(|| panic!("no builtin: {name}"));
             let t = b.tag();
