@@ -44,7 +44,37 @@ def _ilo_parse_fmt(s, fmt):
 
 "#;
 
+use std::cell::Cell;
+
+thread_local! {
+    /// Monotonic counter for complex-match temp names. Reset at the start of
+    /// every `emit` pass so output is deterministic per program. Each entry
+    /// into [`emit_match_expr_complex`] takes the current value, formats its
+    /// temps with that depth, then bumps the counter. Nested complex matches
+    /// (a match inside an arm body of another complex match) therefore get
+    /// distinct names like `__ilo_m0` / `__ilo_subject0` for the outer and
+    /// `__ilo_m1` / `__ilo_subject1` for the inner, so the outer temp is
+    /// never overwritten before its value is read.
+    ///
+    /// The `__ilo_` prefix also keeps these from colliding with any user
+    /// binding starting with `_` (e.g. ilo's `_` wildcard binding).
+    static MATCH_TMP_COUNTER: Cell<u32> = const { Cell::new(0) };
+}
+
+fn next_match_tmp_id() -> u32 {
+    MATCH_TMP_COUNTER.with(|c| {
+        let v = c.get();
+        c.set(v + 1);
+        v
+    })
+}
+
+fn reset_match_tmp_counter() {
+    MATCH_TMP_COUNTER.with(|c| c.set(0));
+}
+
 pub fn emit(program: &Program) -> String {
+    reset_match_tmp_counter();
     let mut out = String::new();
     if uses_unwrap(program) {
         out.push_str("def _ilo_unwrap(r):\n    if r[0] == \"ok\":\n        return r[1]\n    raise RuntimeError(r[1])\n\n");
@@ -398,7 +428,7 @@ fn emit_stmt(out: &mut String, stmt: &Stmt, level: usize, implicit_return: bool)
 fn emit_match_stmt(out: &mut String, subject: &Option<Expr>, arms: &[MatchArm], level: usize) {
     let subj_str = match subject {
         Some(e) => emit_expr(out, level, e),
-        None => "_subject".to_string(),
+        None => format!("__ilo_subject{}", next_match_tmp_id()),
     };
 
     // Use if/elif chain for pattern matching
@@ -971,10 +1001,13 @@ fn emit_match_expr(
         return emit_match_expr_complex(out, level, subject, arms);
     }
 
-    // Simple path: emit as a chained ternary expression
+    // Simple path: emit as a chained ternary expression. No temp variable
+    // is written here (the ternary path is pure expression), so the
+    // synthesised subject name only needs to be unique within the ternary.
+    // Use the same counter so nested simple+complex matches don't collide.
     let subj = match subject {
         Some(e) => emit_expr(out, level, e),
-        None => "_subject".to_string(),
+        None => format!("__ilo_subject{}", next_match_tmp_id()),
     };
 
     let mut parts: Vec<String> = Vec::new();
@@ -1033,11 +1066,16 @@ fn emit_match_expr_complex(
     subject: &Option<Box<Expr>>,
     arms: &[MatchArm],
 ) -> String {
+    // Take a unique id up front so nested complex matches (one inside the
+    // arm body of another) get distinct temp names. Without this the inner
+    // match silently overwrote the outer `_m` / `_subject` before the
+    // outer's result was read.
+    let id = next_match_tmp_id();
     let subj_str = match subject {
         Some(e) => emit_expr(out, level, e),
-        None => "_subject".to_string(),
+        None => format!("__ilo_subject{}", id),
     };
-    let tmp = "_m".to_string();
+    let tmp = format!("__ilo_m{}", id);
 
     for (i, arm) in arms.iter().enumerate() {
         indent(out, level);
@@ -1555,7 +1593,7 @@ mod tests {
     fn emit_match_expr_subjectless() {
         // Subjectless match expression ?{...}
         let py = parse_and_emit(r#"f>n;y=?{true:1;_:0};y"#);
-        assert!(py.contains("_subject"), "got: {}", py);
+        assert!(py.contains("__ilo_subject"), "got: {}", py);
     }
 
     #[test]
@@ -1573,17 +1611,17 @@ mod tests {
         // Should use complex path with if/elif and temp var
         assert!(py.contains("v = x[1]"), "should bind v: got: {}", py);
         assert!(
-            py.contains("_m = v"),
+            py.contains("__ilo_m0 = v"),
             "should assign v to temp: got: {}",
             py
         );
         assert!(
-            py.contains("_m = 0"),
+            py.contains("__ilo_m0 = 0"),
             "should assign 0 to temp: got: {}",
             py
         );
         assert!(
-            py.contains("y = _m"),
+            py.contains("y = __ilo_m0"),
             "should assign temp to y: got: {}",
             py
         );
@@ -1601,12 +1639,12 @@ mod tests {
             py
         );
         assert!(
-            py.contains("_m = z"),
+            py.contains("__ilo_m0 = z"),
             "should assign z to temp: got: {}",
             py
         );
         assert!(
-            py.contains("y = _m"),
+            py.contains("y = __ilo_m0"),
             "should assign temp to y: got: {}",
             py
         );
@@ -1651,7 +1689,7 @@ mod tests {
         // Arm 1 body is just `z=2` (Let stmt) → last stmt is Let → _m = None (L379-383)
         // Syntax: arm bodies use `;` not `{}` — `1:z=2` means arm 1 body is [Let{z=2}]
         let py = parse_and_emit("f x:n>n;y=?x{1:z=2;_:0};y");
-        assert!(py.contains("_m"), "expected temp var _m in: {py}");
+        assert!(py.contains("__ilo_m"), "expected temp var _m in: {py}");
         assert!(py.contains("None"), "expected None assignment in: {py}");
     }
 
@@ -1671,7 +1709,7 @@ mod tests {
         // Match expr with no subject, complex (needs statements) → "_subject" default (L313)
         // Wildcard with multi-stmt body → complex path, no subject
         let py = parse_and_emit("f>n;y=?{_:z=1;+z 1};y");
-        assert!(py.contains("_m"), "expected temp var in: {py}");
+        assert!(py.contains("__ilo_m"), "expected temp var in: {py}");
     }
 
     #[test]
@@ -1706,7 +1744,7 @@ mod tests {
             *body = vec![Spanned::unknown(Stmt::Expr(match_expr))];
         }
         let py = emit(&prog);
-        assert!(py.contains("_m"), "expected temp var in: {py}");
+        assert!(py.contains("__ilo_m"), "expected temp var in: {py}");
     }
 
     #[test]
@@ -2129,7 +2167,7 @@ mod tests {
         // TypeIs with non-wildcard binding → complex path with binding assignment
         let py = parse_and_emit(r#"f x:n>t;y=?x{n v:str v;_:"other"};y"#);
         assert!(py.contains("isinstance"), "got: {py}");
-        assert!(py.contains("_m"), "expected complex path: {py}");
+        assert!(py.contains("__ilo_m"), "expected complex path: {py}");
     }
 
     // ── emit_type for Fn (lines 777-779) ─────────────────────────────────────
@@ -2245,5 +2283,75 @@ mod tests {
     fn emit_literal_nil() {
         let py = parse_and_emit("f>O n;nil");
         assert!(py.contains("None"), "expected None for nil: {py}");
+    }
+
+    // ── Regression: nested complex match must not clobber outer temp ────────
+
+    #[test]
+    fn emit_nested_complex_match_uses_distinct_temps() {
+        // Build a match where one arm body contains a second complex match.
+        // Before the fix, both layers wrote to `_m`, so the inner one
+        // silently overwrote the outer's result before it was read.
+        use crate::ast::{Expr, Literal, MatchArm, Pattern, Spanned, Stmt};
+        let tokens: Vec<crate::lexer::Token> = lexer::lex("f x:R n t>n;42")
+            .unwrap()
+            .into_iter()
+            .map(|(t, _)| t)
+            .collect();
+        let mut prog = parser::parse_tokens(tokens).unwrap();
+
+        // Inner complex match (Ok-binding makes it needs_statements).
+        let inner = Expr::Match {
+            subject: Some(Box::new(Expr::Ref("x".to_string()))),
+            arms: vec![
+                MatchArm {
+                    pattern: Pattern::Ok("v".to_string()),
+                    body: vec![Spanned::unknown(Stmt::Expr(Expr::Ref("v".to_string())))],
+                },
+                MatchArm {
+                    pattern: Pattern::Wildcard,
+                    body: vec![Spanned::unknown(Stmt::Expr(Expr::Literal(Literal::Number(
+                        0.0,
+                    ))))],
+                },
+            ],
+        };
+
+        // Outer complex match wraps the inner one in an Ok arm body.
+        let outer = Expr::Match {
+            subject: Some(Box::new(Expr::Ref("x".to_string()))),
+            arms: vec![
+                MatchArm {
+                    pattern: Pattern::Ok("w".to_string()),
+                    body: vec![Spanned::unknown(Stmt::Expr(inner))],
+                },
+                MatchArm {
+                    pattern: Pattern::Wildcard,
+                    body: vec![Spanned::unknown(Stmt::Expr(Expr::Literal(Literal::Number(
+                        -1.0,
+                    ))))],
+                },
+            ],
+        };
+
+        if let crate::ast::Decl::Function { ref mut body, .. } = prog.declarations[0] {
+            *body = vec![Spanned::unknown(Stmt::Expr(outer))];
+        }
+        let py = emit(&prog);
+
+        // Two distinct temps must appear. The exact ids depend on emission
+        // order; what matters is that more than one __ilo_m<N> name is used.
+        assert!(py.contains("__ilo_m0"), "expected outer temp: {py}");
+        assert!(py.contains("__ilo_m1"), "expected inner temp: {py}");
+    }
+
+    #[test]
+    fn emit_match_tmp_counter_resets_between_calls() {
+        // Each fresh `emit` call should start the counter at 0 so output is
+        // stable across program builds (no leaked state from prior emits).
+        let py1 = parse_and_emit(r#"f x:R n t>n;y=?x{~v:v;^e:0};y"#);
+        let py2 = parse_and_emit(r#"f x:R n t>n;y=?x{~v:v;^e:0};y"#);
+        assert_eq!(py1, py2, "emit output must be deterministic");
+        assert!(py1.contains("__ilo_m0"), "expected __ilo_m0: {py1}");
     }
 }
