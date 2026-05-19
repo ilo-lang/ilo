@@ -1,0 +1,21 @@
+-- Braced guard `cond{body}` inside an `@` loop is conditional execution:
+-- the body runs when the condition is truthy, but the function does NOT
+-- early-return. Control falls through to the next statement so the loop
+-- can mutate-and-continue. Use the braceless form `cond expr` (or `ret`
+-- inside the braces) for early return.
+--
+-- This file pins the mutate-and-continue idiom across every engine,
+-- matching the SPEC's "no early return" line for the braced form.
+
+-- bioinformatics rerun10 minimisation: add 10 to k each iteration where
+-- i > 2, plus 1 unconditionally. Sum = (1+1+1) + (10+10) + (1+1) = 25.
+counter>n;k=0;@i 0..5{>i 2{k=+k 10};k=+k 1};+k 0
+
+-- config-shaper rerun10 minimisation: build a map of APP_* keys by
+-- filtering a list and setting each match in-place via the braced guard.
+appkeys>n;ks=["APP_PORT" "FOO"];out=mmap;@k ks{pre=slc k 0 4;c= =pre "APP_";c{out=mset out k k}};len out
+
+-- run: counter
+-- out: 25
+-- run: appkeys
+-- out: 1
