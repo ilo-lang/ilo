@@ -1,7 +1,7 @@
 -- Builtin aliases like `head`, `length`, `tail`, `filter`, `concat` resolve
 -- to canonical builtins (`hd`, `len`, `tl`, `flt`, `cat`) after parse. They
 -- are reserved at binding LHS for the same reason their canonical forms are:
--- `head=fmt "### {}" t` then `cat [head body] "\n"` would silently rewrite
+-- `head=fmt "### {}" s` then `cat [head body] "\n"` would silently rewrite
 -- `head` in call position to the `hd` builtin and emit empty output instead
 -- of the formatted heading (rerun-prompt-generator + changelog-validator
 -- rerun12 papercut, 0.12.1).
@@ -12,12 +12,10 @@
 --
 -- Correct shape below: pick a non-alias name (`hdr` for the header text).
 
-main>t
-  t="Section"
-  hdr=fmt "### {}" t
-  body="line one"
-  cat [hdr body] "\n"
+main s:t>t
+  hdr=fmt "### {}" s
+  body="see below"
+  fmt "{} ({})" hdr body
 
--- run: main
--- out: ### Section
--- out: line one
+-- run: main Section
+-- out: ### Section (see below)
