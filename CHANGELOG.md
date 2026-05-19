@@ -33,6 +33,10 @@
 
 - `if` reserved-word hint now suggests `?expr{true:...;false:...}` (semicolon-separated arms) instead of the space-separated `?expr{true:... false:...}` shape, which the parser rejected with `ILO-P003 expected Semi, got False`. Agents following the hint hit a second error and burned tokens retrying. Surfaced by logs-forensics rerun11. Doc-discovery rerun11 re-confirmed. Same fix landed in SPEC.md and ai.txt. Added `examples/conditional-shapes.ilo` as the canonical in-context learning example covering all four bool-conditional shapes (`?h{true:a;false:b}`, `?h{a}{b}`, `?h a b`, `?h cond a b`).
 
+### Fixed (docs)
+
+- `rsrt fn xs` and `rsrt fn ctx xs` now documented in `SPEC.md`, `ai.txt`, `skills/ilo/ilo-builtins.md`, and the site builtins reference. The key-function and ctx-arg forms have been implemented since PR #316 (verifier, interpreter, parser, VM bridge eligibility, 9 regression tests, `examples/rsrt-by-key.ilo`) but were absent from the canonical docs, so agents couldn't discover them without reading source. Surfaced when grepping the four doc surfaces for `rsrt fn` returned zero hits.
+
 ### Fixed
 
 - `?h cond a b` silent-truthy bug. A paren-grouped prefix-comparison in cond position (`?h (> p 0.5) 1 0`) was mis-parsed as a zero-param inline lambda, lifted into a synthetic decl, and silently always took the then-branch. ml-tabular rerun11's logistic-regression classifier scored 25.75% instead of 84.6%; streaming-tail and devops-sre rerun11 hit the same family. Two-layer fix: the parser now requires a `;` body separator at paren-depth 1 before treating `(> ...)` as an inline lambda, so `(> p 0.5)` parses as a grouped comparison; the verifier additionally rejects (ILO-T038) any ternary cond that doesn't type-check to `b`, catching the broader family (partial-applied fn-refs, `R b E` without unwrap, etc.). Hint steers to bind-first `c=<expr>;?h c a b` or the brace ternary `?cond{...}`.

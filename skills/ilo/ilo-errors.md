@@ -5,7 +5,7 @@ description: Use this when reading ILO-XXXX error codes or fixing failures. List
 
 # ilo error codes
 
-`ILO-L###` lex, `ILO-P###` parse, `ILO-T###` type, `ILO-R###` runtime. `ilo --explain ILO-XXXX` for long form. No borrow/lifetime/ownership errors exist.
+`ILO-L###` lex, `ILO-P###` parse, `ILO-T###` type, `ILO-R###` runtime. `ilo --explain ILO-XXXX` for long form. No borrow/lifetime errors.
 
 ## Lex
 
@@ -40,7 +40,7 @@ description: Use this when reading ILO-XXXX error codes or fixing failures. List
 
 ## Patterns
 
-`^"divide by zero"`: guard denom. Mystery arity after `--engine tree`: use `--run-vm` or `--jit`. `NaN`: `asin`/`acos`/`sqrt`/`log` out-of-domain upstream; clamp at boundary.
+`^"divide by zero"`: guard denom. `NaN`: clamp `asin`/`acos`/`sqrt`/`log` inputs at boundary.
 
 ## JSON shape
 

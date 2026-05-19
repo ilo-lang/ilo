@@ -9,7 +9,7 @@ Prefix-call: `name arg1 arg2 ...`. Cross-engine unless noted.
 
 ## Math
 
-`abs min max mod flr cel rou rnd rndn clamp`; `sum avg median quantile stdev variance cumsum frq`; `sqrt pow exp log log10 log2`; `sin cos tan asin acos atan atan2`. NaN out-of-domain. `rnd`=random (`rand`/`random`); `rou`=round.
+`abs min max mod flr cel rou rnd rndn clamp`; `sum avg median quantile stdev variance cumsum frq`; `sqrt pow exp log log10 log2`; `sin cos tan asin acos atan atan2`. NaN out-of-domain; NaN propagates, compares false. `rnd`=random; `rou`=round.
 
 ## Text
 
@@ -21,7 +21,7 @@ Prefix-call: `name arg1 arg2 ...`. Cross-engine unless noted.
 
 ## HOFs
 
-`map f xs`, `flt f xs`, `ct f xs`, `fld f xs init`. Lambdas `(x:n>n;+x 1)`.
+`map f xs`, `flt f xs`, `ct f xs`, `fld f xs init`; `srt fn xs`/`rsrt fn xs` sort-by-key. Lambda: `(x:n>n;+x 1)`.
 
 ## Map
 
