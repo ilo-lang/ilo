@@ -1,0 +1,7 @@
+-- The minimal ilo->Zero bridge example. Build with `ilo build hello.ilo --0`
+-- to inspect the generated Zero source, or `ilo build hello.ilo --0bin` to
+-- produce a native binary via the pinned `zero` compiler (0.1.2).
+--
+-- run: hello
+-- out: Hello, Zero!
+hello>t;prnt "Hello, Zero!"
