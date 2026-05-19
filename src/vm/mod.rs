@@ -456,6 +456,10 @@ pub(crate) const OP_UNIQ_BY_KEY: u8 = 181;
 //   A = destination register
 //   B = source register (cleared to Nil after move)
 pub(crate) const OP_MOVE_OWN: u8 = 182;
+// mpairs m — sorted-by-key list of [k, v] 2-element lists.
+// Single-arg, no dynamic dispatch — pure map walk identical in shape to
+// OP_MKEYS/OP_MVALS. Added in 0.12.1.
+pub(crate) const OP_MPAIRS: u8 = 184; // R[A] = pairs(R[B])  → L (L _)
 
 // Move-first-arg variant of OP_CALL. Same frame layout and dispatch as
 // OP_CALL but does not clone_rc the first arg (R[A+1]) when pushing it
@@ -4415,6 +4419,12 @@ impl RegCompiler {
                             self.emit_abc(OP_MDEL, ra, rb, rc);
                             return ra;
                         }
+                        (Builtin::Mpairs, 1) => {
+                            let rb = self.compile_expr(&args[0]);
+                            let ra = self.alloc_reg();
+                            self.emit_abc(OP_MPAIRS, ra, rb, 0);
+                            return ra;
+                        }
                         // map fn xs → native HOF loop using OP_CALL_DYN.
                         // The FnRef plumbing from #274 means we can keep the
                         // callee in a register (NanVal-tagged) and invoke it
@@ -5824,7 +5834,7 @@ fn chunk_is_all_numeric(chunk: &Chunk) -> bool {
             | OP_SLC | OP_TAKE | OP_DROP | OP_UNQ | OP_UNIQBY | OP_FRQ | OP_PARTITION
             | OP_LISTAPPEND | OP_JPAR | OP_JDMP | OP_CSVDMP | OP_ENV | OP_GET | OP_GETH
             | OP_GETMANY | OP_POST | OP_POSTH | OP_RD | OP_RDL | OP_RDJL | OP_WR | OP_WRL
-            | OP_MAPNEW | OP_MGET | OP_MSET | OP_MKEYS | OP_MVALS | OP_HD | OP_AT | OP_LST
+            | OP_MAPNEW | OP_MGET | OP_MSET | OP_MKEYS | OP_MVALS | OP_MPAIRS | OP_HD | OP_AT | OP_LST
             | OP_TL | OP_FMT2 | OP_RGXSUB | OP_ZIP | OP_ENUMERATE | OP_WINDOW | OP_WINDOW_VIEW
             | OP_FFT | OP_IFFT | OP_RANGE | OP_CHUNKS | OP_CUMSUM | OP_CPROD | OP_SETUNION
             | OP_SETINTER | OP_SETDIFF | OP_TRANSPOSE | OP_MATMUL | OP_INV | OP_SOLVE
@@ -8167,6 +8177,30 @@ impl<'a> VM<'a> {
                                 NanVal::heap_list(nan_vals)
                             }
                             _ => vm_err!(VmError::Type("mvals: expects a map")),
+                        }
+                    };
+                    reg_set!(a, result);
+                }
+                OP_MPAIRS => {
+                    let a = ((inst >> 16) & 0xFF) as usize + base;
+                    let b = ((inst >> 8) & 0xFF) as usize + base;
+                    let map_v = reg!(b);
+                    let result = unsafe {
+                        match map_v.as_heap_ref() {
+                            HeapObj::Map(m) => {
+                                let mut pairs: Vec<(&MapKey, &NanVal)> = m.iter().collect();
+                                pairs.sort_by_key(|(k, _)| (*k).clone());
+                                let nan_pairs: Vec<NanVal> = pairs
+                                    .iter()
+                                    .map(|(k, v)| {
+                                        let key_nv = map_key_to_nanval(k);
+                                        v.clone_rc();
+                                        NanVal::heap_list(vec![key_nv, **v])
+                                    })
+                                    .collect();
+                                NanVal::heap_list(nan_pairs)
+                            }
+                            _ => vm_err!(VmError::Type("mpairs: expects a map")),
                         }
                     };
                     reg_set!(a, result);
@@ -17938,6 +17972,33 @@ pub(crate) extern "C" fn jit_mvals(map: u64) -> u64 {
                     })
                     .collect();
                 NanVal::heap_list(nan_vals).0
+            }
+            _ => TAG_NIL,
+        }
+    }
+}
+
+#[cfg(feature = "cranelift")]
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn jit_mpairs(map: u64) -> u64 {
+    let map_v = NanVal(map);
+    if !map_v.is_heap() {
+        return TAG_NIL;
+    }
+    unsafe {
+        match map_v.as_heap_ref() {
+            HeapObj::Map(m) => {
+                let mut pairs: Vec<(&MapKey, &NanVal)> = m.iter().collect();
+                pairs.sort_by_key(|(k, _)| (*k).clone());
+                let nan_pairs: Vec<NanVal> = pairs
+                    .iter()
+                    .map(|(k, v)| {
+                        let key_nv = map_key_to_nanval(k);
+                        v.clone_rc();
+                        NanVal::heap_list(vec![key_nv, **v])
+                    })
+                    .collect();
+                NanVal::heap_list(nan_pairs).0
             }
             _ => TAG_NIL,
         }

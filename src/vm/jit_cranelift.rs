@@ -163,6 +163,7 @@ struct HelperFuncs {
     mkeys: FuncId,
     mvals: FuncId,
     mdel: FuncId,
+    mpairs: FuncId,
     // Print, trim, uniq
     prt: FuncId,
     trm: FuncId,
@@ -379,6 +380,7 @@ fn register_helpers(builder: &mut JITBuilder) {
         ("jit_mkeys", jit_mkeys as *const u8),
         ("jit_mvals", jit_mvals as *const u8),
         ("jit_mdel", jit_mdel as *const u8),
+        ("jit_mpairs", jit_mpairs as *const u8),
         // Print, trim, uniq
         ("jit_prt", jit_prt as *const u8),
         ("jit_prt_main_result", jit_prt_main_result as *const u8),
@@ -572,6 +574,7 @@ fn declare_all_helpers(module: &mut JITModule) -> HelperFuncs {
         mkeys: declare_helper(module, "jit_mkeys", 1, 1),
         mvals: declare_helper(module, "jit_mvals", 1, 1),
         mdel: declare_helper(module, "jit_mdel", 2, 1),
+        mpairs: declare_helper(module, "jit_mpairs", 1, 1),
         // Print, trim, uniq
         prt: declare_helper(module, "jit_prt", 1, 1),
         trm: declare_helper(module, "jit_trm", 2, 1),
@@ -1211,7 +1214,7 @@ fn compile_function_body(
                 | OP_INV | OP_SOLVE
                 | OP_SPL | OP_CAT | OP_GET | OP_POST | OP_GETH | OP_POSTH | OP_GETMANY
                 | OP_ENV | OP_JPTH | OP_JDMP | OP_JPAR | OP_RDJL
-                | OP_MAPNEW | OP_MGET | OP_MSET | OP_MDEL | OP_MKEYS | OP_MVALS
+                | OP_MAPNEW | OP_MGET | OP_MSET | OP_MDEL | OP_MKEYS | OP_MVALS | OP_MPAIRS
                 | OP_LISTNEW | OP_LISTAPPEND
                 | OP_RECNEW | OP_RECWITH | OP_RECNEW_EMPTY | OP_RECCOPY
                 | OP_PRT | OP_RD | OP_RDL | OP_WR | OP_WRL | OP_TRM | OP_UPR | OP_LWR | OP_CAP
@@ -4711,6 +4714,13 @@ fn compile_function_body(
                 let cv = builder.use_var(vars[c_idx]);
                 let fref = get_func_ref(&mut builder, module, helpers.mdel);
                 let call_inst = builder.ins().call(fref, &[bv, cv]);
+                let result = builder.inst_results(call_inst)[0];
+                builder.def_var(vars[a_idx], result);
+            }
+            OP_MPAIRS => {
+                let bv = builder.use_var(vars[b_idx]);
+                let fref = get_func_ref(&mut builder, module, helpers.mpairs);
+                let call_inst = builder.ins().call(fref, &[bv]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
             }

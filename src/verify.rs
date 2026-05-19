@@ -446,6 +446,7 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     // arms below; this table only feeds arity + suggestion paths.
     ("mget-or", &["map", "t", "any"], "any"),
     ("lget-or", &["list", "n", "any"], "any"),
+    ("mpairs", &["map"], "L (L _)"),
     // Linear algebra
     ("solve", &["L (L n)", "L n"], "L n"),
     ("inv", &["L (L n)"], "L (L n)"),
@@ -2606,6 +2607,27 @@ fn builtin_check_args(
                 _ => Ty::Unknown,
             };
             (Ty::List(Box::new(val_ty)), errors)
+        }
+        "mpairs" => {
+            if let Some(first) = arg_types.first()
+                && !matches!(first, Ty::Map(_, _) | Ty::Unknown)
+            {
+                errors.push(VerifyError {
+                    code: "ILO-T013",
+                    function: func_ctx.to_string(),
+                    message: format!("'mpairs' expects a map, got {first}"),
+                    hint: None,
+                    span,
+                    is_warning: false,
+                });
+            }
+            // mpairs returns L (L _) — list of 2-element [k, v] pairs.
+            // Inner element type is Unknown because key and value types
+            // generally differ; agents destructure positionally.
+            (
+                Ty::List(Box::new(Ty::List(Box::new(Ty::Unknown)))),
+                errors,
+            )
         }
         "mdel" => {
             if let Some(first) = arg_types.first()

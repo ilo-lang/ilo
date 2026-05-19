@@ -165,6 +165,7 @@ pub enum Builtin {
     // Same negative-index semantics as `at xs i`; OOB returns default
     // rather than erroring.
     LgetOr,
+    Mpairs,
 
     // Linear algebra
     Solve,
@@ -319,6 +320,7 @@ impl Builtin {
             "mdel" => Some(Builtin::Mdel),
             "mget-or" => Some(Builtin::MgetOr),
             "lget-or" => Some(Builtin::LgetOr),
+            "mpairs" => Some(Builtin::Mpairs),
             "solve" => Some(Builtin::Solve),
             "inv" => Some(Builtin::Inv),
             "det" => Some(Builtin::Det),
@@ -460,6 +462,7 @@ impl Builtin {
             Builtin::Mdel => "mdel",
             Builtin::MgetOr => "mget-or",
             Builtin::LgetOr => "lget-or",
+            Builtin::Mpairs => "mpairs",
             Builtin::Solve => "solve",
             Builtin::Inv => "inv",
             Builtin::Det => "det",
@@ -653,6 +656,11 @@ impl Builtin {
         // Both are 0-arg and tree-bridge eligible. Appended to preserve tags.
         Builtin::Rdin,
         Builtin::Rdinl,
+        // `mpairs m > L (L _)` — sorted-by-key list of [k, v] 2-element lists.
+        // Invariant: `mpairs m == zip (mkeys m) (mvals m)`. Kills the common
+        // `map (fn k > [k (mget m k)]) (mkeys m)` cascade — one builtin call
+        // instead of lambda + mkeys + mget per iteration. Added in 0.12.1.
+        Builtin::Mpairs,
     ];
 
     /// On-wire 8-bit tag for cross-engine builtin dispatch. See `ALL`.

@@ -154,6 +154,7 @@ struct HelperFuncs {
     mkeys: FuncId,
     mvals: FuncId,
     mdel: FuncId,
+    mpairs: FuncId,
     // Print, trim, uniq
     prt: FuncId,
     /// AOT main-result printer: strips top-level `Value::Ok` wrapper on
@@ -381,6 +382,7 @@ fn declare_all_helpers(module: &mut ObjectModule) -> HelperFuncs {
         mkeys: declare_helper(module, "jit_mkeys", 1, 1),
         mvals: declare_helper(module, "jit_mvals", 1, 1),
         mdel: declare_helper(module, "jit_mdel", 2, 1),
+        mpairs: declare_helper(module, "jit_mpairs", 1, 1),
         // Print, trim, uniq
         prt: declare_helper(module, "jit_prt", 1, 1),
         prt_main: declare_helper(module, "jit_prt_main_result", 1, 1),
@@ -1154,7 +1156,7 @@ fn compile_function_body(
                 | OP_SRT | OP_SRTDESC | OP_SLC | OP_TAKE | OP_DROP | OP_SPL | OP_CAT | OP_GET
                 | OP_POST | OP_GETH | OP_POSTH | OP_GETMANY | OP_ENV | OP_JPTH | OP_JDMP
                 | OP_JPAR | OP_RDJL | OP_MAPNEW | OP_MGET | OP_MSET | OP_MDEL | OP_MKEYS
-                | OP_MVALS | OP_LISTNEW | OP_LISTAPPEND | OP_RECNEW | OP_RECWITH
+                | OP_MVALS | OP_MPAIRS | OP_LISTNEW | OP_LISTAPPEND | OP_RECNEW | OP_RECWITH
                 | OP_RECNEW_EMPTY | OP_RECCOPY | OP_PRT | OP_RD | OP_RDL | OP_WR | OP_WRL
                 | OP_TRM | OP_UPR | OP_LWR | OP_CAP | OP_PADL | OP_PADR | OP_PADLC | OP_PADRC
                 | OP_CHR | OP_CHARS | OP_UNQ | OP_UNIQBY | OP_PARTITION | OP_FRQ | OP_NUM
@@ -3954,6 +3956,13 @@ fn compile_function_body(
             OP_MVALS => {
                 let bv = builder.use_var(vars[b_idx]);
                 let fref = get_func_ref(&mut builder, module, helpers.mvals);
+                let call_inst = builder.ins().call(fref, &[bv]);
+                let result = builder.inst_results(call_inst)[0];
+                builder.def_var(vars[a_idx], result);
+            }
+            OP_MPAIRS => {
+                let bv = builder.use_var(vars[b_idx]);
+                let fref = get_func_ref(&mut builder, module, helpers.mpairs);
                 let call_inst = builder.ins().call(fref, &[bv]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
