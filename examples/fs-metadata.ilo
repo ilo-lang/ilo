@@ -9,7 +9,7 @@
 -- expose the error so callers can branch on missing vs perm-denied vs dir.
 
 -- Roundtrip a known-size temp file through fsize.
-roundtrip>n;p="/tmp/ilo-fsize-example.txt";~wr p "hello";fsize! p
+roundtrip>R n t;p="/tmp/ilo-fsize-example.txt";~wr p "hello";fsize p
 
 -- Predicates collapse missing into `false` — one-token branch.
 checkmiss>b;isfile "/no/such/path/xyzzy-fsmeta"
