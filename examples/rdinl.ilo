@@ -1,0 +1,10 @@
+-- rdinl > R (L t) t — read stdin as a list of lines (newlines stripped).
+-- Pairs naturally with map/flt for line-oriented text processing pipelines.
+-- Returns Err on I/O failure or WASM targets.
+--
+-- This example reads stdin lines, filters non-empty ones, and counts them.
+-- It can only run in a pipeline; the engine harness skips it (no -- run: marker).
+
+main>n
+lines=rdinl!
+len (flt (\l;>(len l) 0) lines)

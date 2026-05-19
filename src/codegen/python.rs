@@ -621,6 +621,23 @@ fn emit_expr(out: &mut String, level: usize, expr: &Expr) -> String {
                     call
                 };
             }
+            if function == "rdin" && args.is_empty() {
+                let call = "(lambda: (\"ok\", __import__('sys').stdin.read()))()".to_string();
+                return if unwrap.is_any() {
+                    format!("_ilo_unwrap({})", call)
+                } else {
+                    call
+                };
+            }
+            if function == "rdinl" && args.is_empty() {
+                let call =
+                    "(lambda: (\"ok\", [l.rstrip('\\n') for l in __import__('sys').stdin.readlines()]))()".to_string();
+                return if unwrap.is_any() {
+                    format!("_ilo_unwrap({})", call)
+                } else {
+                    call
+                };
+            }
             if function == "rdl" && args.len() == 1 {
                 let arg = emit_expr(out, level, &args[0]);
                 let call = format!(

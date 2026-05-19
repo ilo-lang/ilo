@@ -1,0 +1,10 @@
+-- rdin > R t t — read all of stdin as text.
+-- Unblocks Unix-pipeline programs: `echo "hello" | ilo rdin.ilo main`.
+-- Returns Err on I/O failure or WASM targets.
+--
+-- This example reads stdin, trims whitespace, and echoes the content.
+-- It can only run in a pipeline; the engine harness skips it (no -- run: marker).
+
+main>t
+s=rdin!
+trm s

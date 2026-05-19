@@ -3364,6 +3364,16 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             )),
         };
     }
+    // rdin > R t t — read all of stdin as text.
+    // rdinl > R (L t) t — read stdin line by line.
+    // Both are 0-arg and return Err on I/O failure. On WASM targets stdin is
+    // not available; we return Err immediately so callers can branch safely.
+    if builtin == Some(Builtin::Rdin) && args.is_empty() {
+        return rdin_impl();
+    }
+    if builtin == Some(Builtin::Rdinl) && args.is_empty() {
+        return rdinl_impl();
+    }
     if builtin == Some(Builtin::Wr) && (args.len() == 2 || args.len() == 3) {
         let path = match &args[0] {
             Value::Text(s) => s.clone(),
@@ -6148,6 +6158,53 @@ pub(crate) const RUN_OUTPUT_CAP: usize = 10 * 1024 * 1024;
 ///
 /// **Stdin is /dev/null.** Stdin piping is a follow-up (4-arity form taking
 /// optional input Text).
+/// `rdin` implementation — reads all of stdin into a text string.
+/// Returns `R t t`: `Ok(text)` on success, `Err(message)` on I/O failure.
+/// On WASM targets stdin is unavailable; returns `Err` immediately.
+fn rdin_impl() -> Result<Value> {
+    #[cfg(target_family = "wasm")]
+    {
+        return Ok(Value::Err(Box::new(Value::Text(Arc::new(
+            "rdin: stdin not available on wasm".to_string(),
+        )))));
+    }
+    #[cfg(not(target_family = "wasm"))]
+    {
+        use std::io::Read;
+        let mut buf = String::new();
+        Ok(match std::io::stdin().read_to_string(&mut buf) {
+            Ok(_) => Value::Ok(Box::new(Value::Text(Arc::new(buf)))),
+            Err(e) => Value::Err(Box::new(Value::Text(Arc::new(e.to_string())))),
+        })
+    }
+}
+
+/// `rdinl` implementation — reads stdin line by line, stripping newlines.
+/// Returns `R (L t) t`: `Ok([line, ...])` on success, `Err(message)` on failure.
+/// On WASM targets stdin is unavailable; returns `Err` immediately.
+fn rdinl_impl() -> Result<Value> {
+    #[cfg(target_family = "wasm")]
+    {
+        return Ok(Value::Err(Box::new(Value::Text(Arc::new(
+            "rdinl: stdin not available on wasm".to_string(),
+        )))));
+    }
+    #[cfg(not(target_family = "wasm"))]
+    {
+        use std::io::BufRead;
+        let stdin = std::io::stdin();
+        let lines: std::result::Result<Vec<String>, std::io::Error> =
+            stdin.lock().lines().collect();
+        Ok(match lines {
+            Ok(ls) => {
+                let items: Vec<Value> = ls.into_iter().map(|l| Value::Text(Arc::new(l))).collect();
+                Value::Ok(Box::new(Value::List(Arc::new(items))))
+            }
+            Err(e) => Value::Err(Box::new(Value::Text(Arc::new(e.to_string())))),
+        })
+    }
+}
+
 ///
 /// **Non-zero exit is NOT an error.** Matches Python's `subprocess.run`:
 /// the caller inspects `code` in the returned Map. Spawn failures (cmd

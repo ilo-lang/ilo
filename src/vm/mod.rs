@@ -651,6 +651,13 @@ pub(crate) fn is_tree_bridge_eligible(b: crate::builtins::Builtin, argc: usize) 
         (Builtin::Argmax, 1) => true,
         (Builtin::Argmin, 1) => true,
         (Builtin::Argsort, 1) => true,
+        // rdin / rdinl — 0-arg stdin read primitives. No FnRef args. The
+        // bridge lets VM + Cranelift inherit stdin reads without new opcodes.
+        // On WASM targets the interpreter arm returns Err immediately, so the
+        // bridge is safe there too (the Err passes through the native Result
+        // unwrap path unchanged).
+        (Builtin::Rdin, 0) => true,
+        (Builtin::Rdinl, 0) => true,
         _ => false,
     }
 }
@@ -670,6 +677,8 @@ pub(crate) fn tree_bridge_returns_result(b: crate::builtins::Builtin) -> bool {
             | Builtin::EnvAll
             | Builtin::Run
             | Builtin::Jkeys
+            | Builtin::Rdin
+            | Builtin::Rdinl
     )
 }
 

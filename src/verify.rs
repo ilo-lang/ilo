@@ -346,6 +346,10 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("pathjoin", &["L t"], "t"),
     ("rdl", &["t"], "R (L t) t"),
     ("rdb", &["t", "t"], "R ? t"),
+    // stdin read primitives (0.12.1). rdin reads all stdin; rdinl reads lines.
+    // Both return Err on I/O failure or on WASM targets.
+    ("rdin", &[], "R t t"),
+    ("rdinl", &[], "R (L t) t"),
     ("wr", &["t", "t"], "R t t"),
     ("wrl", &["t", "L t"], "R t t"),
     ("trm", &["t"], "t"),

@@ -100,6 +100,12 @@ pub enum Builtin {
     Rd,
     Rdl,
     Rdb,
+    // `rdin > R t t` — read all of stdin to a text string.
+    // `rdinl > R (L t) t` — read stdin line by line, returning `R (L t) t`.
+    // Both return Err on I/O failure. On WASM targets they always return
+    // `Err("rdin: stdin not available on wasm")`.
+    Rdin,
+    Rdinl,
     Wr,
     Wrl,
     Prnt,
@@ -266,6 +272,8 @@ impl Builtin {
             "rd" => Some(Builtin::Rd),
             "rdl" => Some(Builtin::Rdl),
             "rdb" => Some(Builtin::Rdb),
+            "rdin" => Some(Builtin::Rdin),
+            "rdinl" => Some(Builtin::Rdinl),
             "wr" => Some(Builtin::Wr),
             "wrl" => Some(Builtin::Wrl),
             "prnt" => Some(Builtin::Prnt),
@@ -409,6 +417,8 @@ impl Builtin {
             Builtin::Rd => "rd",
             Builtin::Rdl => "rdl",
             Builtin::Rdb => "rdb",
+            Builtin::Rdin => "rdin",
+            Builtin::Rdinl => "rdinl",
             Builtin::Wr => "wr",
             Builtin::Wrl => "wrl",
             Builtin::Prnt => "prnt",
@@ -637,6 +647,12 @@ impl Builtin {
         Builtin::Dirname,
         Builtin::Basename,
         Builtin::Pathjoin,
+        // 0.12.1: stdin read primitives. Unblocks the Unix-pipeline persona
+        // class — `rd` is file-only; child stdin was Stdio::null() previously.
+        // `rdin > R t t` reads all of stdin; `rdinl > R (L t) t` is line-mode.
+        // Both are 0-arg and tree-bridge eligible. Appended to preserve tags.
+        Builtin::Rdin,
+        Builtin::Rdinl,
     ];
 
     /// On-wire 8-bit tag for cross-engine builtin dispatch. See `ALL`.
@@ -929,6 +945,8 @@ mod tests {
             "dirname",
             "basename",
             "pathjoin",
+            "rdin",
+            "rdinl",
         ];
         for name in &all {
             let b = Builtin::from_name(name).unwrap_or_else(|| panic!("missing builtin: {name}"));
@@ -1151,6 +1169,8 @@ mod tests {
             "dirname",
             "basename",
             "pathjoin",
+            "rdin",
+            "rdinl",
         ] {
             let b = Builtin::from_name(name).unwrap_or_else(|| panic!("no builtin: {name}"));
             let t = b.tag();
