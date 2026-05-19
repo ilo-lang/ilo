@@ -4107,6 +4107,10 @@ fn builtin_arity_tables() -> (HashMap<String, usize>, HashMap<String, Vec<bool>>
         ("mkeys", 1, &[]),
         ("mvals", 1, &[]),
         ("mdel", 2, &[]),
+        // 0.12.1: defaulted lookups. Ternary form — value + key/index +
+        // default — keeps eager arg parsing in step with `mset`/`lst`.
+        ("mget-or", 3, &[]),
+        ("lget-or", 3, &[]),
         // Note: omitted by design — these have overloads or zero-arg forms
         // best left to the existing greedy/zero-arg paths:
         //   rnd, now, mmap (0-arg, special-cased above)
