@@ -642,13 +642,11 @@ fn parse_format(fmt: &str, content: &str) -> std::result::Result<Value, String> 
     match fmt {
         "csv" | "tsv" => {
             let sep = if fmt == "tsv" { '\t' } else { ',' };
-            let rows: Vec<Value> = content
-                .lines()
-                .map(|line| {
-                    let fields: Vec<Value> = parse_csv_row(line, sep)
-                        .into_iter()
-                        .map(|s| Value::Text(Arc::new(s)))
-                        .collect();
+            let rows: Vec<Value> = parse_csv_content(content, sep)
+                .into_iter()
+                .map(|row| {
+                    let fields: Vec<Value> =
+                        row.into_iter().map(|s| Value::Text(Arc::new(s))).collect();
                     Value::List(Arc::new(fields))
                 })
                 .collect();
@@ -661,12 +659,26 @@ fn parse_format(fmt: &str, content: &str) -> std::result::Result<Value, String> 
     }
 }
 
-/// Parse one CSV/TSV row respecting double-quoted fields.
-fn parse_csv_row(line: &str, sep: char) -> Vec<String> {
-    let mut fields = Vec::new();
+/// Parse a full CSV/TSV document into rows of fields, RFC 4180 compliant.
+///
+/// Unlike a line-based split, this scanner tracks quote state across record
+/// boundaries so that a quoted field containing an embedded newline is
+/// preserved as a single cell. Both `\n` and `\r\n` are accepted as record
+/// separators outside quotes; inside quotes they are kept verbatim. A final
+/// trailing newline does not produce an extra empty row.
+///
+/// History: the previous implementation called `content.lines()` then handed
+/// each line to a per-line quote-aware parser. That meant any cell containing
+/// `\n` (which `write_csv_tsv` correctly emits as a quoted multi-line field
+/// per RFC 4180) was re-parsed as two rows on the way back in, so ilo silently
+/// mis-parsed CSV it had just written. csv-pipeline rerun10 flagged this as
+/// the one blocker on round-trip integrity.
+fn parse_csv_content(content: &str, sep: char) -> Vec<Vec<String>> {
+    let mut rows: Vec<Vec<String>> = Vec::new();
+    let mut row: Vec<String> = Vec::new();
     let mut field = String::new();
     let mut in_quotes = false;
-    let mut chars = line.chars().peekable();
+    let mut chars = content.chars().peekable();
     while let Some(c) = chars.next() {
         if in_quotes {
             if c == '"' {
@@ -677,19 +689,45 @@ fn parse_csv_row(line: &str, sep: char) -> Vec<String> {
                     in_quotes = false;
                 }
             } else {
+                // Inside quotes, newlines (including \r\n) are part of the
+                // field. Keep them verbatim.
                 field.push(c);
             }
         } else if c == '"' {
             in_quotes = true;
         } else if c == sep {
-            fields.push(std::mem::take(&mut field));
+            row.push(std::mem::take(&mut field));
+        } else if c == '\n' {
+            row.push(std::mem::take(&mut field));
+            rows.push(std::mem::take(&mut row));
+        } else if c == '\r' {
+            // Accept \r\n as a record terminator; bare \r outside quotes is
+            // treated the same way (matches `content.lines()` previously and
+            // keeps platform-CR-only files readable).
+            if chars.peek() == Some(&'\n') {
+                chars.next();
+            }
+            row.push(std::mem::take(&mut field));
+            rows.push(std::mem::take(&mut row));
         } else {
             field.push(c);
         }
     }
-    fields.push(field);
-    fields
+    // Flush the trailing record. A file that ends with `\n` already emitted
+    // its last row in the loop and field/row are empty here — skip pushing
+    // a spurious empty row in that case. A file with no trailing newline
+    // still has one record left to flush.
+    if !field.is_empty() || !row.is_empty() || in_quotes {
+        row.push(field);
+        rows.push(row);
+    }
+    rows
 }
+
+// Note: a separate per-line `parse_csv_row` previously existed but its only
+// caller (`parse_format`) was the source of the multi-line round-trip bug
+// fixed in csv-pipeline rerun10. The full-document `parse_csv_content` above
+// is now the single entry point for csv/tsv parsing.
 
 // ── Linear algebra helpers ──────────────────────────────────────────
 
@@ -9535,22 +9573,168 @@ mod tests {
         assert_eq!(format!("{}", Value::FnRef("add".into())), "<fn:add>");
     }
 
-    // L268-279: parse_csv_row with quoted fields
+    // Single-row quoted-field coverage now lives on parse_csv_content;
+    // the previous per-line `parse_csv_row` helper was removed as part of
+    // the csv-pipeline rerun10 fix. See parse_csv_content_* tests below.
     #[test]
-    fn parse_csv_row_quoted_fields() {
-        // quoted field + escaped double-quote inside
-        let rows = parse_csv_row(r#""he said ""hello""","world""#, ',');
-        assert_eq!(rows.len(), 2);
-        assert_eq!(rows[0], r#"he said "hello""#);
-        assert_eq!(rows[1], "world");
+    fn parse_csv_content_single_row_escaped_quote() {
+        let rows = parse_csv_content(r#""he said ""hello""","world""#, ',');
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0], vec![r#"he said "hello""#, "world"]);
     }
 
     #[test]
-    fn parse_csv_row_simple_quoted() {
-        // plain quoted field (no escaped quotes)
-        let rows = parse_csv_row(r#""hello","world""#, ',');
-        assert_eq!(rows[0], "hello");
-        assert_eq!(rows[1], "world");
+    fn parse_csv_content_single_row_simple_quoted() {
+        let rows = parse_csv_content(r#""hello","world""#, ',');
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0], vec!["hello", "world"]);
+    }
+
+    // ── parse_csv_content: quote-state tracking across newlines ───────────────
+    // Regression for csv-pipeline rerun10: the reader used to split content
+    // on `\n` before tracking quote state, so a multi-line quoted field
+    // (which the writer correctly emits per RFC 4180) was mis-parsed as
+    // two rows. parse_csv_content now scans the full document in one pass.
+
+    #[test]
+    fn parse_csv_content_multiline_quoted_field() {
+        // The writer emits "line\nbreak" as a quoted multi-line cell.
+        // The reader must keep it as a single cell across the embedded \n.
+        let input = "name,note,n\nplain,\"line\nbreak\",2\n";
+        let rows = parse_csv_content(input, ',');
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0], vec!["name", "note", "n"]);
+        assert_eq!(rows[1], vec!["plain", "line\nbreak", "2"]);
+    }
+
+    #[test]
+    fn parse_csv_content_basic_no_trailing_newline() {
+        let rows = parse_csv_content("a,b\nc,d", ',');
+        assert_eq!(rows, vec![vec!["a", "b"], vec!["c", "d"]]);
+    }
+
+    #[test]
+    fn parse_csv_content_basic_trailing_newline_no_phantom_row() {
+        // A file ending in `\n` should NOT yield a trailing empty row.
+        let rows = parse_csv_content("a,b\nc,d\n", ',');
+        assert_eq!(rows, vec![vec!["a", "b"], vec!["c", "d"]]);
+    }
+
+    #[test]
+    fn parse_csv_content_crlf_line_endings() {
+        let rows = parse_csv_content("a,b\r\nc,d\r\n", ',');
+        assert_eq!(rows, vec![vec!["a", "b"], vec!["c", "d"]]);
+    }
+
+    #[test]
+    fn parse_csv_content_crlf_inside_quoted_field_preserved() {
+        // \r\n inside a quoted cell is part of the cell, not a record break.
+        let rows = parse_csv_content("a,\"x\r\ny\"\n", ',');
+        assert_eq!(rows, vec![vec!["a".to_string(), "x\r\ny".to_string()]]);
+    }
+
+    #[test]
+    fn parse_csv_content_escaped_quote_inside_multiline_field() {
+        // Combined edge case: embedded newline AND escaped quote in one cell.
+        let input = "a,\"he said \"\"hi\"\"\nfoo\",b\n";
+        let rows = parse_csv_content(input, ',');
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0], vec!["a", "he said \"hi\"\nfoo", "b"]);
+    }
+
+    #[test]
+    fn parse_csv_content_tsv_separator() {
+        // Same scanner, tab separator.
+        let rows = parse_csv_content("a\tb\nc\td\n", '\t');
+        assert_eq!(rows, vec![vec!["a", "b"], vec!["c", "d"]]);
+    }
+
+    #[test]
+    fn parse_csv_content_empty_input() {
+        let rows = parse_csv_content("", ',');
+        assert!(rows.is_empty());
+    }
+
+    #[test]
+    fn parse_csv_content_embedded_comma_in_quoted_field() {
+        // A comma inside a quoted cell is part of the cell, not a separator.
+        let rows = parse_csv_content("a,\"x,y\",b\n", ',');
+        assert_eq!(rows, vec![vec!["a", "x,y", "b"]]);
+    }
+
+    #[test]
+    fn parse_csv_content_mixed_quoted_and_unquoted_in_same_row() {
+        // Real-world CSV mixes quoted and unquoted cells freely. The scanner
+        // must handle both in a single row.
+        let rows = parse_csv_content("alice,\"engineer, sr.\",30,\"London\"\n", ',');
+        assert_eq!(rows, vec![vec!["alice", "engineer, sr.", "30", "London"]]);
+    }
+
+    #[test]
+    fn parse_csv_content_empty_trailing_field() {
+        // A row ending with a separator means the last cell is empty. This is
+        // a common spreadsheet artefact ("alice,30," for a missing column).
+        let rows = parse_csv_content("a,b,\nc,d,\n", ',');
+        assert_eq!(rows, vec![vec!["a", "b", ""], vec!["c", "d", ""]]);
+    }
+
+    #[test]
+    fn parse_csv_content_empty_field_in_middle() {
+        // ",,," produces ["", "", "", ""] -- four cells, three of them empty.
+        let rows = parse_csv_content("a,,b\n", ',');
+        assert_eq!(rows, vec![vec!["a", "", "b"]]);
+    }
+
+    #[test]
+    fn parse_csv_content_empty_quoted_field() {
+        // "" is the canonical empty quoted cell -- not a stray escape.
+        let rows = parse_csv_content("a,\"\",b\n", ',');
+        assert_eq!(rows, vec![vec!["a", "", "b"]]);
+    }
+
+    #[test]
+    fn parse_csv_content_utf8_bom_preserved_in_first_cell() {
+        // We don't currently strip a leading UTF-8 BOM. Pin the current
+        // behaviour so future BOM handling (if added) is a deliberate change,
+        // not silent drift. The BOM is the three bytes EF BB BF (\u{feff}).
+        let rows = parse_csv_content("\u{feff}name,age\nalice,30\n", ',');
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0], vec!["\u{feff}name", "age"]);
+        assert_eq!(rows[1], vec!["alice", "30"]);
+    }
+
+    #[test]
+    fn parse_csv_content_single_unterminated_quoted_field() {
+        // Malformed input: open quote with no close. The scanner should not
+        // panic and should still produce the partial cell so the user can
+        // see the broken data rather than getting a silent empty result.
+        let rows = parse_csv_content("a,\"oops\n", ',');
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0], vec!["a", "oops\n"]);
+    }
+
+    #[test]
+    fn parse_csv_content_round_trip_via_write_csv_tsv() {
+        // End-to-end: the canonical regression. Take a row with a multi-line
+        // cell, write it via write_csv_tsv, then parse_csv_content the result.
+        // The original cells should come back byte-for-byte.
+        let original = vec![
+            Value::List(Arc::new(vec![
+                Value::Text(Arc::new("name".to_string())),
+                Value::Text(Arc::new("note".to_string())),
+                Value::Text(Arc::new("n".to_string())),
+            ])),
+            Value::List(Arc::new(vec![
+                Value::Text(Arc::new("plain".to_string())),
+                Value::Text(Arc::new("line\nbreak".to_string())),
+                Value::Number(2.0),
+            ])),
+        ];
+        let serialised = write_csv_tsv(&original, ',').expect("write_csv_tsv failed");
+        let rows = parse_csv_content(&serialised, ',');
+        assert_eq!(rows.len(), 2, "round-trip produced wrong row count");
+        assert_eq!(rows[0], vec!["name", "note", "n"]);
+        assert_eq!(rows[1], vec!["plain", "line\nbreak", "2"]);
     }
 
     // L299: len on Map
