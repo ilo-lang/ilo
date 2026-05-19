@@ -336,7 +336,7 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("run", &["t", "L t"], "R (M t t) t"),
     ("rd", &["t"], "R ? t"),
     ("rd", &["t", "t"], "R ? t"),
-    ("ls", &["t"], "R (L t) t"),
+    ("lsd", &["t"], "R (L t) t"),
     ("walk", &["t"], "R (L t) t"),
     ("glob", &["t", "t"], "R (L t) t"),
     ("rdl", &["t"], "R (L t) t"),
@@ -3232,10 +3232,14 @@ impl VerifyContext {
             } => {
                 let _ = self.infer_expr(func, scope, condition, span);
 
-                // Warn if a guard body is a single identifier matching a function
-                // name (braced or braceless — semantics are unified). Almost
-                // always the author meant to call the function, not return a
-                // function reference as the early-return value.
+                // Warn if a guard body is a single identifier matching a
+                // function name. Two failure modes share the same shape:
+                //   * braceless `cond name` returns the bare fn-ref as the
+                //     early-return value (almost never intentional);
+                //   * braced  `cond{name}` evaluates and discards the fn-ref,
+                //     yielding no useful effect.
+                // In both cases the author almost certainly meant to call
+                // the function — emit a single diagnostic with the call form.
                 if else_body.is_none()
                     && body.len() == 1
                     && let Stmt::Expr(Expr::Ref(ref name)) = body[0].node

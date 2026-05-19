@@ -310,12 +310,15 @@ fn emit_stmt(out: &mut String, stmt: &Stmt, level: usize, implicit_return: bool)
             } else {
                 out.push_str(&format!("if {}:\n", cond));
             }
-            // Non-ternary guards (no else_body) are early-return forms — the
-            // body's tail expression becomes the function's return value when
-            // the condition is truthy. Pass implicit_return=true so the inner
-            // body's last Expr stmt emits `return <val>`. Ternary guards
-            // (else_body present) are value expressions and rely on the outer
-            // fn-tail context to decide whether the result is returned.
+            // Python codegen: non-ternary guard bodies pass implicit_return so
+            // the body tail is rendered as `return <val>`. This is the
+            // approximation used for both surface forms — the early-return
+            // shape covers the braceless guard, and for the braced form it
+            // round-trips the "value of the guard body" into the function
+            // tail when the braced guard is itself the last statement. Where
+            // the braced form is followed by further statements the next
+            // statement's `return` takes over, leaving the body's `return`
+            // unreachable but harmless.
             let is_ternary = else_body.is_some();
             emit_body(out, body, level + 1, !is_ternary);
             if let Some(eb) = else_body {
