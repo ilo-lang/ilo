@@ -104,6 +104,46 @@
   - Error code namespace `ILO-B2##` reserved for the WASM backend.
     Cranelift uses `ILO-B1##`, Zero will use `ILO-B3##`, Python `ILO-B4##`.
 
+- **Zero transpile backend (`src/backend/zero/`).** Phase 5 Stage 5e.
+  Real ilo to Zero bridge: the two-layer-stack thesis now has a working
+  source-level handoff plus a chained `--0bin` path for native binaries
+  built by Zero's own toolchain.
+  - `ilo build file.ilo --0 [-o out.0]` — emit idiomatic Zero source.
+    The generated `main` matches Zero's canonical entry shape:
+    `pub fun main(world: World) -> Void raises { check world.out.write("...\n") }`.
+  - `ilo build file.ilo --0bin [-o bin]` — emit `.0` source then invoke
+    the pinned `zero` compiler (0.1.2) to produce a native binary. Both
+    paths produce identical source; `--0bin` adds the build step.
+  - Stage 5e v1 covers the same hello-world subset as the WASM backend:
+    top-level `prnt` calls with text/number/bool literal arguments, plus
+    `Ok` / literal tail expressions. Richer constructs surface as
+    `BackendError::CodegenFailed { code: "ILO-B3##", .. }` with hints
+    pointing at the Cranelift native backend.
+  - Pinned toolchain: `zero 0.1.2`. Recorded in `.zero-version` at the
+    repo root and as `PINNED_ZERO_VERSION` in
+    `src/backend/zero/mod.rs`. Subprocess invocation prefers
+    `/Users/dan/.zero/bin/zero` and falls back to `zero` on PATH; a
+    missing compiler surfaces `ILO-B303` with the install one-liner
+    (`curl https://zerolang.ai/install.sh | sh`).
+  - `zero build --json` flag passed by default; both stdout and stderr
+    captured because Zero 0.1.2 prints diagnostics to stdout.
+  - Error code namespace `ILO-B3##`: `ILO-B301` (zero rejected source),
+    `ILO-B302` (HIR construct unsupported), `ILO-B303` (`zero` missing),
+    `ILO-B304` (IO), `ILO-B305` (entry not found).
+  - `tests/zero_emit.rs` — source emit + `zero check` validation
+    (4 tests, subprocess tests skipped when `zero` is not on PATH).
+  - `tests/zero_binary.rs` — `--0bin` round-trip: ilo source to Zero
+    source to native binary to expected stdout (2 tests, skipped when
+    `zero` is not on PATH).
+  - `tests/zero_capability.rs` — asserts unsupported features surface
+    with the documented `ILO-B3##` codes (5 tests).
+  - `examples/zero-bridge/hello.ilo` + README demonstrate the chain.
+  - Capability matrix at `docs/zero-transpile-capabilities.md` mirrors
+    the prep doc; covers clean / shim / unsupported constructs, error
+    codes, and the Zero upgrade procedure.
+  - No new runtime deps. `zero` is subprocess-only for `--0bin`; not
+    linked into `libilo.a`.
+
 ### Changed (breaking)
 
 - **`--emit python` removed.** The legacy `ilo <file-or-code> --emit python`
