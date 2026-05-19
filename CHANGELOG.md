@@ -10,6 +10,7 @@
 ### Added
 
 - `rand` alias for `rnd` (universal short-form for random; matches C/Python/Rust/Go/JS naming). Resolves to canonical `rnd` after parsing; rejected as binding or user-fn name via ILO-P011 to prevent silent shadow mis-dispatch. `random` continues to resolve to `rnd` as before.
+- `ilo check --strict` flag. Treats every warning-severity diagnostic (ILO-T032 bare `fmt`, ILO-T033 bare `mset`/`+=`/`mdel`, future warning codes) as a hard exit-code failure so CI harnesses can fail-on-warning. The diagnostic stream itself is unchanged: warnings still emit with `severity: "warning"` in the JSON output, only the exit code is elevated. Surfaced by rerun11 ci-gating personas that ran `ilo check src/*.ilo` in CI and missed mset / fmt traps because the verifier exited 0 on warnings.
 
 ### Fixed
 

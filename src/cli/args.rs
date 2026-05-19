@@ -299,6 +299,14 @@ pub struct CompileArgs {
 pub struct CheckArgs {
     /// Source file or inline code.
     pub source: String,
+
+    /// Treat warnings as errors. Exit 1 when any diagnostic fires, even
+    /// warning-severity ones (ILO-T032, ILO-T033, etc). CI harnesses use
+    /// this to fail builds on warnings; the diagnostic stream itself is
+    /// unchanged - warnings still emit with severity=warning, only the
+    /// exit-code decision is elevated.
+    #[arg(long)]
+    pub strict: bool,
 }
 
 // ── Spec ───────────────────────────────────────────────────────────────────────

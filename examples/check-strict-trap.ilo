@@ -1,0 +1,22 @@
+-- `ilo check` exits 0 on a file whose only diagnostics are warnings.
+-- That's correct in interactive use (warnings are advisory) but it breaks
+-- CI: a harness that runs `ilo check src/*.ilo` and gates merges on the
+-- exit code lets ILO-T032 (bare fmt) and ILO-T033 (mset / += discarded)
+-- through silently. The fix is to gate CI on `ilo check --strict`, which
+-- treats every warning as a hard error for exit-code purposes.
+--
+-- The verifier already catches the trap; bare `ilo check` just doesn't
+-- raise the alarm loud enough for CI. `--strict` flips warnings into
+-- exit-code failures while keeping their severity in the JSON stream
+-- (so editor integrations still render them as warnings, not errors).
+--
+-- The trap below would compile but `mset m k v` returns a new map and
+-- the caller doesn't rebind, so the original `m` is unchanged. The fix
+-- threads the new map back through the same name. Mirror for `+=xs v`
+-- (`xs=+=xs v`) and `mdel m k` (`m=mdel m k`).
+
+-- Canonical fix: rebind `m` to the new map returned by `mset`.
+trap-fixed>M t n;m=mmap;m=mset m "k" 1;m
+
+-- run: trap-fixed
+-- out: {k: 1}
