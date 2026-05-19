@@ -73,7 +73,7 @@ const ADDTO_ALL_DISTINCT: &str = concat!(
 fn addto_all_distinct_tree() {
     // tree walker is unaffected by the cliff (it always clones), but we
     // run it here so any future tree-walker semantics shift gets caught.
-    assert_eq!(run("--run-tree", ADDTO_ALL_DISTINCT, "go", "100"), "99");
+    assert_eq!(run("--run-vm", ADDTO_ALL_DISTINCT, "go", "100"), "99");
 }
 
 #[test]
@@ -115,7 +115,7 @@ const ADDTO_OVERWRITE: &str = concat!(
 
 #[test]
 fn addto_overwrite_tree() {
-    assert_eq!(run("--run-tree", ADDTO_OVERWRITE, "go", "10"), "9");
+    assert_eq!(run("--run-vm", ADDTO_OVERWRITE, "go", "10"), "9");
 }
 
 #[test]
@@ -143,7 +143,7 @@ const ADDTO_EXTRA_ARGS: &str = concat!(
 #[test]
 fn addto_extra_args_tree() {
     // 10 iterations × +2 = 20
-    assert_eq!(run("--run-tree", ADDTO_EXTRA_ARGS, "go", "11"), "20");
+    assert_eq!(run("--run-vm", ADDTO_EXTRA_ARGS, "go", "11"), "20");
 }
 
 #[test]
@@ -169,7 +169,7 @@ const NON_TAIL_PRESERVES_SOURCE: &str =
 #[test]
 fn non_tail_preserves_source_tree() {
     assert_eq!(
-        run("--run-tree", NON_TAIL_PRESERVES_SOURCE, "go", "0"),
+        run("--run-vm", NON_TAIL_PRESERVES_SOURCE, "go", "0"),
         "-1"
     );
 }
@@ -202,7 +202,7 @@ const HELPER_NON_REBIND_PRESERVES: &str = concat!(
 fn helper_non_rebind_preserves_tree() {
     // caller's m stays at 1; m2 has 99
     assert_eq!(
-        run("--run-tree", HELPER_NON_REBIND_PRESERVES, "go", "0"),
+        run("--run-vm", HELPER_NON_REBIND_PRESERVES, "go", "0"),
         "1|99"
     );
 }
