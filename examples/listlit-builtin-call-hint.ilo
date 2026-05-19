@@ -1,0 +1,31 @@
+-- Variadic builtins (`fmt`, `fmt2`) inside list literals.
+--
+-- For fixed-arity builtins like `str` and `at`, list-literal parsing
+-- auto-expands the call (see `listlit-fnref-greedy.ilo`). For variadic
+-- builtins like `fmt` and `fmt2`, the parser can't know how many of the
+-- following tokens are call args, so the bare form `[k fmt2 rv 2]` would
+-- silently fall through as four list elements and the verifier would
+-- emit a misleading "undefined variable 'fmt2'".
+--
+-- ILO-P101 catches this at parse time and tells the agent to use one of
+-- the two ergonomic shapes below.
+
+-- Workaround A: wrap the call in parens.
+-- Each set of parens groups the call as one list element.
+row-parens k:t rv:n>L t;[k (fmt2 rv 2)]
+
+-- Workaround B: bind first, then list the binding.
+-- Use this when the same value is needed in more than one place, or
+-- when the inline form gets unreadable.
+row-bind k:t rv:n>L t;s=fmt2 rv 2;[k s]
+
+-- A typical CSV row mixes both: known-arity calls auto-expand, variadic
+-- ones get parens.
+csv-row k:t c:t rv:n>L t;[k c (fmt2 rv 2)]
+
+-- run: row-parens "foo" 3.14
+-- out: [foo, 3.14]
+-- run: row-bind "foo" 3.14
+-- out: [foo, 3.14]
+-- run: csv-row "x" "y" 2.5
+-- out: [x, y, 2.50]

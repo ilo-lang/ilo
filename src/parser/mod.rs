@@ -2796,6 +2796,27 @@ or write `({fmt_name} \"...\" ...)` so its args are grouped."
             if self.no_whitespace_call {
                 let arity = self.fn_arity.get(&name).copied().unwrap_or(0);
                 if arity == 0 || !self.can_start_operand() {
+                    // Diagnostic-only fix for list-literal call traps: variadic
+                    // or arity-unknown builtins (e.g. `fmt`, `fmt2`) aren't in
+                    // `fn_arity`, so `[k str c fmt2 rv 2]` falls through with
+                    // `fmt2` as a bare Ref and the verifier later emits
+                    // ILO-T004 "undefined variable 'fmt2'" — a misleading hint
+                    // pointing at typos rather than the real fix. Catch the
+                    // case at parse time: a bare-ref name that's actually a
+                    // known builtin, followed by operands, inside a list
+                    // literal can never be what the agent meant. Tell them to
+                    // wrap in parens or bind-first.
+                    if arity == 0 && self.can_start_operand() && Builtin::is_builtin(&name) {
+                        return Err(self.error_hint(
+                            "ILO-P101",
+                            format!(
+                                "list literal element starts with builtin `{name}` followed by operands; wrap the call in parens or bind it first"
+                            ),
+                            format!(
+                                "list-literal elements are atoms by default. Either write `({name} <args>)` to call as one element, or bind first: `x={name} <args>;[... x ...]`"
+                            ),
+                        ));
+                    }
                     return Ok(atom);
                 }
                 let mut args = Vec::with_capacity(arity);
