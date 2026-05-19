@@ -1190,7 +1190,9 @@ fn compile_function_body(
                     non_num_write[a] = true;
                 }
                 // MOVE: skip here, handled by fixpoint below.
-                OP_MOVE => {}
+                // OP_MOVE_OWN behaves identically to OP_MOVE for type
+                // propagation purposes (same A=dest, B=src layout).
+                OP_MOVE | OP_MOVE_OWN => {}
                 // Ops that write a non-numeric or unknown type to R[A].
                 OP_ADD | OP_SUB | OP_MUL | OP_DIV  // may be string concat etc.
                 | OP_ADD_SS  // string concat — always a string
@@ -1217,7 +1219,10 @@ fn compile_function_body(
                     non_bool_write[a] = true;
                 }
                 // OP_CALL: if callee is known all-numeric, result is numeric.
-                OP_CALL => {
+                // OP_CALL_OWN1 has the identical encoding and result-write
+                // shape (move-not-clone on first arg only changes RC
+                // bookkeeping, not the result Variable type).
+                OP_CALL | OP_CALL_OWN1 => {
                     let bx = (inst & 0xFFFF) as usize;
                     let func_idx = bx >> 8;
                     if func_idx < program.chunks.len()
@@ -1252,7 +1257,7 @@ fn compile_function_body(
                     continue;
                 }
                 i += 1;
-                if op != OP_MOVE {
+                if op != OP_MOVE && op != OP_MOVE_OWN {
                     continue;
                 }
                 let a = ((inst >> 16) & 0xFF) as usize;
@@ -1922,6 +1927,59 @@ fn compile_function_body(
                         }
                     } else {
                         // General path: inline is_heap check; clone_rc only for heap values.
+                        let qnan_val = builder.ins().iconst(I64, QNAN as i64);
+                        let masked = builder.ins().band(bv, qnan_val);
+                        let is_heap = builder.ins().icmp(
+                            cranelift_codegen::ir::condcodes::IntCC::Equal,
+                            masked,
+                            qnan_val,
+                        );
+                        let clone_block = builder.create_block();
+                        let after_block = builder.create_block();
+                        builder
+                            .ins()
+                            .brif(is_heap, clone_block, &[], after_block, &[]);
+
+                        builder.switch_to_block(clone_block);
+                        let fref = get_func_ref(&mut builder, module, helpers.jit_move);
+                        builder.ins().call(fref, &[bv]);
+                        builder.ins().jump(after_block, &[]);
+
+                        builder.switch_to_block(after_block);
+                        builder.def_var(vars[a_idx], bv);
+                    }
+                }
+            }
+            OP_MOVE_OWN => {
+                // Move-not-clone variant of OP_MOVE used by the
+                // `name = fn(name, ...)` peephole. In the Cranelift JIT
+                // model registers are SSA Variables (not heap slots), so
+                // RC management is per-value-flow rather than per-slot:
+                // copying the Variable here corresponds to the bit-copy
+                // half of the VM's OP_MOVE_OWN. The "clear source slot"
+                // half of the VM semantics is implicit: the source
+                // Variable simply isn't used again on the SSA path
+                // emitted by the compiler peephole, so its phantom RC
+                // reference never gets dropped twice.
+                //
+                // We still must emit a clone_rc on copy through OP_MOVE
+                // because the compiler's tail-position rewrite is the
+                // real perf win; OP_MOVE_OWN exists mainly so the JIT
+                // doesn't bail out when it encounters the opcode emitted
+                // for the VM. To preserve correctness, mirror OP_MOVE's
+                // RC handling (numeric/bool fast path; heap path with
+                // jit_move clone).
+                if a_idx != b_idx {
+                    let bv = builder.use_var(vars[b_idx]);
+                    let src_always_num = b_idx < reg_always_num.len() && reg_always_num[b_idx];
+                    let src_always_bool = b_idx < reg_always_bool.len() && reg_always_bool[b_idx];
+                    if src_always_num || src_always_bool {
+                        builder.def_var(vars[a_idx], bv);
+                        if src_always_num && a_idx < reg_always_num.len() && reg_always_num[a_idx] {
+                            let bf = builder.use_var(f64_vars[b_idx]);
+                            builder.def_var(f64_vars[a_idx], bf);
+                        }
+                    } else {
                         let qnan_val = builder.ins().iconst(I64, QNAN as i64);
                         let masked = builder.ins().band(bv, qnan_val);
                         let is_heap = builder.ins().icmp(
@@ -4307,7 +4365,18 @@ fn compile_function_body(
                 }
                 // else: blocks not found → JIT bails (should not happen in practice)
             }
-            OP_CALL => {
+            OP_CALL | OP_CALL_OWN1 => {
+                // OP_CALL_OWN1 is the move-not-clone first-arg variant of
+                // OP_CALL used by the let-stmt peephole. In the Cranelift
+                // JIT/AOT model args are passed as SSA Variable values
+                // (no per-push clone_rc on the stack like the VM has),
+                // so the move-vs-clone distinction collapses here — both
+                // opcodes lower to the same call sequence. The compiler
+                // peephole still wins on Cranelift because it rewrites
+                // the tail mset to use a == b (in-place fast path), and
+                // the source-register clear on the caller side is a
+                // no-op under SSA: the moved-out Variable just isn't
+                // referenced again.
                 let a = ((inst >> 16) & 0xFF) as u8;
                 let bx = (inst & 0xFFFF) as usize;
                 let func_idx = bx >> 8;
