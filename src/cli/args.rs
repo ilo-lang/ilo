@@ -314,6 +314,17 @@ pub struct CompileArgs {
     /// `wasm32-web`.
     #[arg(long)]
     pub target: Option<String>,
+
+    /// Transpile to Zero source (`.0`) via the Zero backend
+    /// (Phase 5 Stage 5e). Pinned to `zero 0.1.2`.
+    #[arg(long = "0")]
+    pub zero: bool,
+
+    /// Transpile to Zero source then chain through the pinned `zero`
+    /// compiler to produce a native binary. Requires `zero` on PATH or
+    /// at `/Users/dan/.zero/bin/zero`.
+    #[arg(long = "0bin")]
+    pub zero_bin: bool,
 }
 
 // ── Check ──────────────────────────────────────────────────────────────────────

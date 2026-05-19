@@ -1391,6 +1391,8 @@ fn compile_cmd(args: &[String]) -> i32 {
     let mut python_mode = false;
     let mut wasm_mode = false;
     let mut wasm_target_arg: Option<String> = None;
+    let mut zero_mode = false;
+    let mut zero_bin_mode = false;
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
@@ -1413,6 +1415,12 @@ fn compile_cmd(args: &[String]) -> i32 {
             }
             "--wasm" => {
                 wasm_mode = true;
+            }
+            "--0" => {
+                zero_mode = true;
+            }
+            "--0bin" => {
+                zero_bin_mode = true;
             }
             "--target" => {
                 i += 1;
@@ -1442,6 +1450,14 @@ fn compile_cmd(args: &[String]) -> i32 {
     }
     if wasm_target_arg.is_some() && !wasm_mode {
         eprintln!("Error: --target only applies to --wasm builds");
+        return 1;
+    }
+    if zero_mode && zero_bin_mode {
+        eprintln!("Error: --0 and --0bin are mutually exclusive (--0bin already emits the source)");
+        return 1;
+    }
+    if (zero_mode || zero_bin_mode) && (python_mode || wasm_mode || bench_mode) {
+        eprintln!("Error: --0/--0bin is mutually exclusive with --py / --wasm / --bench");
         return 1;
     }
 
@@ -1482,6 +1498,18 @@ fn compile_cmd(args: &[String]) -> i32 {
                 format!("{}.wasm", source_arg.trim_end_matches(".ilo"))
             } else {
                 "out.wasm".to_string()
+            }
+        } else if zero_mode {
+            if source_arg.ends_with(".ilo") {
+                format!("{}.0", source_arg.trim_end_matches(".ilo"))
+            } else {
+                "out.0".to_string()
+            }
+        } else if zero_bin_mode {
+            if source_arg.ends_with(".ilo") {
+                source_arg.trim_end_matches(".ilo").to_string()
+            } else {
+                "a.out".to_string()
             }
         } else if source_arg.ends_with(".ilo") {
             source_arg.trim_end_matches(".ilo").to_string()
@@ -1640,6 +1668,40 @@ fn compile_cmd(args: &[String]) -> i32 {
             }
             Err(e) => {
                 eprintln!("WASM compile error: {}", e);
+                1
+            }
+        };
+    }
+
+    // `--0` / `--0bin`: emit Zero source (`.0`) via the ZeroBackend.
+    // `--0bin` chains through the pinned `zero` compiler (0.1.2) to produce
+    // a native binary. See `backend/zero/mod.rs` and
+    // `docs/zero-transpile-capabilities.md` for the capability matrix.
+    if zero_mode || zero_bin_mode {
+        let hir = match ilo::hir::lower(&program, &verify_result) {
+            Ok(h) => h,
+            Err(e) => {
+                eprintln!("HIR lowering error: {}", e);
+                return 1;
+            }
+        };
+        let mode = if zero_bin_mode {
+            ilo::backend::zero::ZeroMode::Binary
+        } else {
+            ilo::backend::zero::ZeroMode::Source
+        };
+        let config = ilo::backend::zero::ZeroConfig {
+            output_path: std::path::PathBuf::from(&output),
+            mode,
+            entry: func_name.map(|s| s.to_string()),
+        };
+        return match ilo::backend::zero::emit(&hir, config) {
+            Ok(_artefact) => {
+                eprintln!("Compiled: {}", output);
+                0
+            }
+            Err(e) => {
+                eprintln!("Zero transpile error: {}", e);
                 1
             }
         };
@@ -2757,6 +2819,12 @@ fn dispatch_cli(cli: cli::Cli, bare_has_bin: bool) -> i32 {
             if let Some(ref t) = c.target {
                 args.push("--target".into());
                 args.push(t.clone());
+            }
+            if c.zero {
+                args.push("--0".into());
+            }
+            if c.zero_bin {
+                args.push("--0bin".into());
             }
             if let Some(ref f) = c.func {
                 args.push(f.clone());
@@ -4063,6 +4131,8 @@ fn print_help() {
     println!("  ilo <code> func [args...]         Run a specific function");
     println!("  ilo build <file.ilo> --py         Transpile to Python source");
     println!("  ilo build <file.ilo> --wasm       Compile to WASM (Component Model by default)");
+    println!("  ilo build <file.ilo> --0          Transpile to Zero source (.0)");
+    println!("  ilo build <file.ilo> --0bin       Transpile to Zero and build native binary");
     println!("  ilo <code> --explain / -x            Annotate each statement with its role");
     println!("  ilo <code> --dense / -d             Reformat (dense wire format)");
     println!("  ilo <code> --expanded / -e          Reformat (expanded human format)");
