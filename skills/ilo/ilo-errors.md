@@ -33,11 +33,7 @@ ilo has no borrow checker, no lifetimes, no ownership rules, no `&`/`&mut`. The 
 
 - **R001 div-by-zero** - guard with `=b 0 ^"..."`.
 - **R004 wrong main arity** - CLI args don't match signature.
-<<<<<<< HEAD
 - **R012 no functions defined** - typo'd flag swallowed as positional. (Phase 2 captures run natively; ILO-E802 covers the >255 overflow only.)
-=======
-- **R012 capture not supported** - typo'd flag, or capturing lambda on non-tree (auto-fallback usually handles).
->>>>>>> e8d1ecc437f0632f933bf5bfba17c9bfa06d0067
 - **R020 file not found** - check path or `env "HOME"`.
 - **R030 http error** - non-2xx or network. Match `^e`.
 - **R040 json parse error** - bad `jpar` input. Match `^e`.
