@@ -1,0 +1,89 @@
+-- subscription-renewer.ilo
+-- Generate next 12 occurrences for four recurring billing rules:
+--   "every 2nd Tuesday", "first weekday of month",
+--   "quarterly on the 15th", "last day of month"
+-- run: main
+-- out: === Every 2nd Tuesday ===
+
+-- zero-pad number to 2 digits
+zp n:n>t;padl (str (flr n)) 2 "0"
+
+-- extract year from epoch
+gy ts:n>R n t;s=dtfmt! ts "%Y";num s
+
+-- extract month from epoch
+gm ts:n>R n t;s=dtfmt! ts "%m";num s
+
+-- extract day-of-week Mon=1..Sun=7
+gdow ts:n>R n t;s=dtfmt! ts "%u";num s
+
+-- build epoch from year/month/day components
+mk-date y:n m:n d:n>R n t;s=fmt "{}-{}-{}" (str (flr y)) (zp m) (zp d);dtparse s "%Y-%m-%d"
+
+-- add n calendar months to epoch (preserves day-of-month)
+add-mo ts:n n:n>R n t;y=gy! ts;m=gm! ts;ds=dtfmt! ts "%d";d=num! ds;tot=+*-y 1 12 -m 1;nt=+tot n;ny=+1 flr /nt 12;nm=+1 mod nt 12;mk-date ny nm d
+
+-- epoch of the first day of the next calendar month
+next-mo ts:n>R n t;y=gy! ts;m=gm! ts;nm=?h =m 12 1 +m 1;ny=?h =m 12 +y 1 y;mk-date ny nm 1
+
+-- last calendar day of the month containing ts
+last-dom ts:n>R n t;n1=next-mo! ts;~-n1 86400
+
+-- first weekday (Mon-Fri) of given year+month
+fwkd-mo y:n m:n>R n t;d1=mk-date! y m 1;dow=gdow! d1;=dow 6 ~+d1 172800;=dow 7 ~+d1 86400;~d1
+
+-- next occurrence of weekday tgt (1=Mon..7=Sun) on or after ts
+next-dow ts:n tgt:n>R n t;dow=gdow! ts;raw=mod -tgt dow 7;off=?h >=raw 0 raw +raw 7;~+ts *off 86400
+
+-- quarter month (3,6,9,12) for a given calendar month number
+qmo m:n>n;>=m 10 12;>=m 7 9;>=m 4 6;3
+
+-- format epoch as YYYY-MM-DD text
+fmt-d ts:n>R t t;dtfmt ts "%Y-%m-%d"
+
+-- first quarterly 15th date on or after today
+qstart today:n>R n t;m=gm! today;y=gy! today;qm=qmo m;ts=mk-date! y qm 15;>=ts today ~ts;r=add-mo! ts 3;~r
+
+-- Rule 1: every 2nd Tuesday (biweekly), next 12 occurrences
+rule-2nd-tue today:n>R t t;
+  first=next-dow! today 2;
+  out=[];
+  @i 0..12{ts=+first *i 1209600;d=fmt-d! ts;out=+=out d};
+  ~cat out "\n"
+
+-- Rule 2: first weekday of each of the next 12 calendar months
+rule-fwkd-mo today:n>R t t;
+  out=[];
+  @i 1..13{
+    y=gy! today;m=gm! today;
+    tot=+*-y 1 12 -m 1;nt=+tot i;
+    ny=+1 flr /nt 12;nm=+1 mod nt 12;
+    d=fwkd-mo! ny nm;s=fmt-d! d;out=+=out s
+  };
+  ~cat out "\n"
+
+-- Rule 3: quarterly on the 15th (Mar/Jun/Sep/Dec), next 12 occurrences
+rule-qtr-15 today:n>R t t;
+  start=qstart! today;
+  out=[];
+  @i 0..12{ts=add-mo! start *i 3;s=fmt-d! ts;out=+=out s};
+  ~cat out "\n"
+
+-- Rule 4: last day of month, next 12 months
+rule-last-dom today:n>R t t;
+  out=[];
+  @i 1..13{ts=add-mo! today i;ld=last-dom! ts;s=fmt-d! ld;out=+=out s};
+  ~cat out "\n"
+
+-- main: build and return full schedule report
+main>t;
+  today=now();
+  r1=rule-2nd-tue!! today;
+  r2=rule-fwkd-mo!! today;
+  r3=rule-qtr-15!! today;
+  r4=rule-last-dom!! today;
+  h1="=== Every 2nd Tuesday ===";
+  h2="=== First Weekday of Month ===";
+  h3="=== Quarterly on the 15th ===";
+  h4="=== Last Day of Month ===";
+  cat [h1 r1 h2 r2 h3 r3 h4 r4] "\n"
