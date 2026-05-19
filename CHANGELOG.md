@@ -6,6 +6,10 @@
 
 - `ls dir` renamed to `lsd dir`. Six rerun10 personas tripped ILO-P011 on `ls=rdl! p` because `ls` was reserved; rename frees `ls` for user code. `walk`, `glob` unchanged.
 
+### Performance
+
+- `mset` accumulator via helper fn no longer pays a ~1000x perf cliff. The canonical DRY refactor `addto m k v > mset m k v` followed by `m = addto m k v` in a loop now runs at the same speed as the inline form. New OP_MOVE_OWN / OP_CALL_OWN1 opcodes thread the first arg into the helper at the caller's RC, and a tail-position rewrite lets the helper's `mset m k v` fire the existing in-place fast path. 40k rows: 25.8s to 0.01s on VM; JIT and AOT linear at 1M rows.
+
 ## 0.12.0 - 2026-05-19
 
 ### Breaking
