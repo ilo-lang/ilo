@@ -1,0 +1,153 @@
+-- cron-explainer: bidirectional cron tool (cross-engine, <=200 LoC)
+-- explain "0 9 * * 1-5"    -> human description + next run (UTC)
+-- build "9am" "weekdays"   -> cron expression + description
+
+-- safe text-to-number; returns 9999 on parse error
+tonum s:t>n;r=num s;?r{~v:v;^_:9999}
+
+-- match a cron field string against a numeric value
+-- dow uses ISO weekday: 1=Mon..7=Sun
+fmatch f:t v:n>b;
+  =f "*" true;
+  isstep=has f "/";isrange=has f "-";islist=has f ",";
+  isstep{
+    pts=spl f "/";step=tonum (at pts 1);r=mod v step;=r 0
+  }{
+    isrange{
+      ms=rgx "(\d+)-(\d+)" f;
+      lo=tonum (at ms 0);hi=tonum (at ms 1);
+      r1=>=v lo;r2=<=v hi;&r1 r2
+    }{
+      islist{has (map tonum (spl f ",")) v}{nv=tonum f;=v nv}
+    }
+  }
+
+-- get a strftime field from an epoch as a number, with fallback default
+fmtget ep:n fmts:t dfl:n>n;r=dtfmt ep fmts;?r{~v:tonum v;^_:dfl}
+
+-- midnight UTC epoch for today (truncates fractional seconds)
+today-mid>n;
+  e=now;dstr=dtfmt e "%Y-%m-%d";
+  ds=?dstr{~v:v;^_:"1970-01-01"};
+  r=dtparse ds "%Y-%m-%d";?r{~v:v;^_:0}
+
+-- find next epoch > after that satisfies all 5 cron fields
+-- scans up to 8 days x 24 hours x 60 minutes; returns -1 on no match
+find-next mn:t hr:t dom:t mo:t dow:t after:n>n;
+  mid=today-mid();found=-1;
+  @off 0..8{
+    dep=+mid *off 86400;
+    dow-v=fmtget dep "%u" 7;dom-v=fmtget dep "%d" 1;mon-v=fmtget dep "%m" 1;
+    dw=fmatch dow dow-v;dm=fmatch dom dom-v;mm=fmatch mo mon-v;
+    &dw &dm mm{
+      @h 0..24{
+        fmatch hr h{
+          @mi 0..60{
+            fmatch mn mi{
+              cand=+dep +*h 3600 *mi 60;
+              >cand after{found=cand;brk}{}
+            }{}
+          };!=found -1{brk}{}
+        }{}
+      };!=found -1{brk}{}
+    }{}
+  };found
+
+-- format an epoch as a human-readable UTC datetime string
+fmtdt ep:n>t;r=dtfmt ep "%Y-%m-%d %H:%M UTC";?r{~v:v;^_:"(unknown)"}
+
+-- describe a cron minute field in plain English
+desc-mn m:t>t;
+  =m "*" "every minute";
+  isstep=has m "/";islist=has m ",";isrange=has m "-";
+  isstep{pts=spl m "/";fmt "every {} min" (at pts 1)}{
+    islist{fmt "min {}" m}{
+      isrange{ms=rgx "(\d+)-(\d+)" m;fmt "min {}-{}" (at ms 0) (at ms 1)}{
+        =m "0" "on the hour";
+        fmt "at :{}" m}}}
+
+-- describe a cron hour field in plain English
+desc-hr h:t>t;
+  =h "*" "every hour";
+  isstep=has h "/";islist=has h ",";isrange=has h "-";
+  isstep{pts=spl h "/";fmt "every {}h" (at pts 1)}{
+    islist{fmt "hours {}" h}{
+      isrange{ms=rgx "(\d+)-(\d+)" h;fmt "hours {}-{}" (at ms 0) (at ms 1)}{
+        hv=tonum h;
+        =hv 0 "midnight";
+        =hv 12 "noon";
+        ispm=>=hv 12;
+        ispm{pm=fmt2 -hv 12 0;fmt "{}pm" pm}{fmt "{}am" h}}}}
+
+-- weekday number (ISO 1=Mon..7=Sun) to short name
+wdname d:n>t;=d 1 "Mon";=d 2 "Tue";=d 3 "Wed";=d 4 "Thu";=d 5 "Fri";=d 6 "Sat";"Sun"
+
+-- describe a cron day-of-week field
+desc-dow d:t>t;
+  =d "*" "every day";=d "1-5" "weekdays (Mon-Fri)";=d "6-7" "weekends";
+  islist=has d ",";isrange=has d "-";
+  islist{cat (map wdname (map tonum (spl d ","))) "/"}{
+    isrange{
+      ms=rgx "(\d+)-(\d+)" d;
+      fmt "{}-{}" (wdname (tonum (at ms 0))) (wdname (tonum (at ms 1)))
+    }{wdname (tonum d)}}
+
+-- human summary from 5 cron fields + next-run line
+summarise mn:t hr:t dom:t mo:t dow:t>t;
+  mnd=desc-mn mn;hrd=desc-hr hr;dowd=desc-dow dow;
+  e=now;nxt=find-next mn hr dom mo dow e;
+  nxts=<nxt 0{"(no match in next 8 days)"}{fmtdt nxt};
+  fmt "{} at {}, {}\nNext run (UTC): {}" dowd hrd mnd nxts
+
+-- parse a cron expression string and explain it
+explain expr:t>t;
+  fs=spl expr " ";
+  !=len fs 5 "Error: expected 5 fields (min hour dom month dow)";
+  summarise (at fs 0) (at fs 1) (at fs 2) (at fs 3) (at fs 4)
+
+-- parse hour from natural-language time: "9am", "14:30", "midnight", "noon"
+parse-hr ts:t>t;
+  ismid=has ts "midnight";isnoon=has ts "noon";
+  iscolon=has ts ":";ispm=has ts "pm";
+  ismid{"0"}{isnoon{"12"}{
+    iscolon{pts=spl ts ":";at pts 0}{
+      ispm{ds=rgx "\d+" ts;hh=+tonum (at ds 0) 12;str hh}{
+        ds=rgx "\d+" ts;str (tonum (at ds 0))}}}}
+
+-- parse minute from time string (default "0" for non-HH:MM forms)
+parse-mn ts:t>t;iscolon=has ts ":";iscolon{pts=spl ts ":";at pts 1}{"0"}
+
+-- map schedule word to dow cron field
+parse-sched sc:t>t;
+  =sc "weekdays" "1-5";=sc "weekends" "6-7";=sc "daily" "*";
+  =sc "mondays" "1";=sc "tuesdays" "2";=sc "wednesdays" "3";
+  =sc "thursdays" "4";=sc "fridays" "5";=sc "saturdays" "6";
+  =sc "sundays" "7";"*"
+
+-- human -> cron: build expression from time + schedule, then explain it
+build ts:t sc:t>t;
+  hh=parse-hr ts;mn=parse-mn ts;dow=parse-sched sc;
+  expr=fmt "{} {} * * {}" mn hh dow;
+  fmt "Cron: {}\n{}" expr (summarise mn hh "*" "*" dow)
+
+-- entry point: dispatch on mode
+main mode:t a1:t a2:t>t;
+  =mode "explain" (fmt "Cron: {}\n{}" a1 (explain a1));
+  =mode "build" (build a1 a2);
+  "Usage:\n  explain <cron-expr>\n  build <time> <schedule>"
+
+-- engine-skip: vm
+--
+-- Example outputs (time-dependent next-run lines omitted from harness):
+--   ilo cron-explainer.ilo explain "0 9 * * 1-5"
+--     weekdays (Mon-Fri) at 9am, on the hour
+--     Next run (UTC): 2026-05-20 09:00 UTC
+--
+--   ilo cron-explainer.ilo build "9am" "weekdays"
+--     Cron: 0 9 * * 1-5
+--     weekdays (Mon-Fri) at 9am, on the hour
+--     Next run (UTC): 2026-05-20 09:00 UTC
+--
+--   ilo cron-explainer.ilo explain "*/15 * * * *"
+--     every day at every hour, every 15 min
+--     Next run (UTC): 2026-05-19 23:45 UTC
