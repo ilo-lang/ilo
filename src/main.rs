@@ -2523,7 +2523,7 @@ fn dispatch_cli(cli: cli::Cli, bare_has_bin: bool) -> i32 {
         Some(cli::Cmd::Check(c)) => {
             let mode = cli.global.output_mode();
             let explicit_json = cli.global.explicit_json();
-            check_cmd(&c.source, mode, explicit_json)
+            check_cmd(&c.source, mode, explicit_json, c.strict)
         }
         Some(cli::Cmd::Explain(e)) => {
             let as_json = cli.global.explicit_json();
@@ -2996,7 +2996,7 @@ fn resolve_engine_func_name<'a>(
 /// out rather than reused so a future verify-only invocation path
 /// (e.g. an `--check-only` flag on `run`) can call into the same logic
 /// without disturbing the run hot path.
-fn check_cmd(source_arg: &str, mode: OutputMode, _explicit_json: bool) -> i32 {
+fn check_cmd(source_arg: &str, mode: OutputMode, _explicit_json: bool, strict: bool) -> i32 {
     // Read source from file or treat as inline code.
     let (source, is_file) = if std::path::Path::new(source_arg).is_file() {
         match std::fs::read_to_string(source_arg) {
@@ -3015,6 +3015,10 @@ fn check_cmd(source_arg: &str, mode: OutputMode, _explicit_json: bool) -> i32 {
     };
 
     let mut had_errors = false;
+    // In --strict mode, any warning bumps the exit code to 1 too. Tracked
+    // separately so we don't conflate genuine errors with elevated warnings
+    // in any future diagnostic count or summary line.
+    let mut had_warnings = false;
 
     let tokens = match lexer::lex(&source) {
         Ok(t) => t,
@@ -3081,6 +3085,7 @@ fn check_cmd(source_arg: &str, mode: OutputMode, _explicit_json: bool) -> i32 {
     let verify_result = verify::verify(&program);
     for w in &verify_result.warnings {
         report_diagnostic(&Diagnostic::from(w).with_source(source.clone()), mode);
+        had_warnings = true;
     }
     if !verify_result.errors.is_empty() {
         for e in &verify_result.errors {
@@ -3089,7 +3094,11 @@ fn check_cmd(source_arg: &str, mode: OutputMode, _explicit_json: bool) -> i32 {
         had_errors = true;
     }
 
-    if had_errors { 1 } else { 0 }
+    if had_errors || (strict && had_warnings) {
+        1
+    } else {
+        0
+    }
 }
 
 /// Dispatch the `run` subcommand via parsed RunArgs.  Returns exit code.

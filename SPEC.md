@@ -1527,7 +1527,7 @@ ilo 'code' [args...]            -- inline program; default-runs the entry functi
 ilo program.ilo [func] [args]   -- if `func` is omitted and the file declares exactly
                                    one function, that function runs automatically
 ilo run program.ilo [func] [a]   -- verb form; same dispatch as the bare positional
-ilo check program.ilo [--json]   -- run the verifier without executing (exit 0 = clean)
+ilo check program.ilo [--json] [--strict]  -- run the verifier without executing (exit 0 = clean; --strict treats warnings as exit-code errors)
 ilo build program.ilo -o out     -- AOT compile to a standalone binary (alias for `compile`)
 ilo program.ilo --ast            -- print parsed AST as JSON and exit
 ilo --explain ILO-T004           -- print error explanation and exit
@@ -1538,6 +1538,8 @@ ilo serv                          -- long-lived JSON request/response loop
 **Verb-noun aliases.** `ilo run <file>` is an exact alias for the bare positional `ilo <file>` - same dispatch, same engine selection, same arg handling. `ilo build <file> -o <out>` is an alias for `ilo compile <file> -o <out>`. Both exist to match the toolchain conventions used by `cargo`, `go`, and `zero` so agents and humans can guess the command name without consulting the help text. The bare positional forms remain fully supported for backwards compatibility; nothing has been removed.
 
 **`ilo check`.** Standalone verifier invocation: lex, parse, resolve imports, and run the type verifier without proceeding to bytecode compilation or execution. Exit code 0 means the program is well-typed and verifier-clean; exit code 1 means at least one diagnostic was emitted on stderr. The output mode follows the global flags (`--json` for NDJSON diagnostics, `--text` for plain text, `--ansi` for coloured output; auto-detected when omitted - JSON when stderr is not a TTY, ANSI otherwise). `ilo check` works on both files and inline code; on a syntactically-broken input it still reports the parse error rather than crashing, which is important for editor and agent loops that may feed in half-written programs.
+
+**`ilo check --strict`.** Treats every warning-severity diagnostic (ILO-T032 bare `fmt`, ILO-T033 bare `mset` / `+=` / `mdel`, future warning codes) as a hard exit-code failure. The diagnostic stream itself is unchanged: warnings still emit with `severity: "warning"` in the JSON output, so editor integrations that route by severity stay correct. Only the exit code is elevated. CI harnesses that gate merges on `ilo check` should use `--strict` so warnings can't slip through silently; for interactive use, the default (warnings-are-advisory) is the right behaviour.
 
 **Default-run.** Inline programs (`ilo 'code'`) and single-function files run their entry function with the remaining CLI args; no explicit function name needed. Multi-function files auto-pick a function called `main` when no positional func arg is supplied. The same heuristic applies to the explicit engine flags - `--run-vm` and `--jit` both auto-pick `main` on multi-fn files, matching the default-engine behaviour. With no `main` declared, supply a function-name argument.
 

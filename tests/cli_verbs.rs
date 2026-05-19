@@ -172,6 +172,126 @@ fn check_verb_json_flag_emits_json_diagnostics() {
     );
 }
 
+/// `ilo check <file>` on a file that emits only warning-severity diagnostics
+/// (ILO-T032: bare `fmt`) exits 0 - warnings are advisory in interactive use.
+/// `ilo check --strict <file>` on the same file exits 1 because CI harnesses
+/// need to fail-on-warning. The diagnostic stream is unchanged either way.
+#[test]
+fn check_verb_strict_elevates_t032_to_exit_failure() {
+    // Bare `fmt` at non-tail discards the formatted string - ILO-T032.
+    // The trailing `42` keeps the function well-typed so the only
+    // diagnostic is the T032 warning.
+    let (_dir, path) = write_temp_ilo("f>n;fmt \"x={}\" 1;42");
+
+    let (ok_relaxed, _stdout, stderr_relaxed) = run_args(&["check", path.to_str().unwrap()]);
+    assert!(
+        ok_relaxed,
+        "bare `ilo check` should exit 0 on a warning-only file; stderr: {stderr_relaxed}"
+    );
+    assert!(
+        stderr_relaxed.contains("ILO-T032"),
+        "warning should still be emitted on stderr; got: {stderr_relaxed}"
+    );
+
+    let (ok_strict, _stdout, stderr_strict) =
+        run_args(&["check", path.to_str().unwrap(), "--strict"]);
+    assert!(
+        !ok_strict,
+        "`ilo check --strict` should exit non-zero when only warnings fire; stderr: {stderr_strict}"
+    );
+    assert!(
+        stderr_strict.contains("ILO-T032"),
+        "warning should still be emitted under --strict; got: {stderr_strict}"
+    );
+}
+
+/// `--strict` also elevates ILO-T033 (bare `mset` / `+=` / `mdel` discarded)
+/// to a non-zero exit. Pinned per-warning-code so a future verifier change
+/// that swaps the code for a different category doesn't silently degrade
+/// CI coverage.
+#[test]
+fn check_verb_strict_elevates_t033_to_exit_failure() {
+    // Bare `mset` at non-tail discards the new map - ILO-T033.
+    let (_dir, path) = write_temp_ilo("f>n;m=mmap;mset m \"k\" 1;42");
+
+    let (ok_relaxed, _stdout, stderr_relaxed) = run_args(&["check", path.to_str().unwrap()]);
+    assert!(
+        ok_relaxed,
+        "bare `ilo check` should exit 0 on a warning-only file; stderr: {stderr_relaxed}"
+    );
+    assert!(
+        stderr_relaxed.contains("ILO-T033"),
+        "warning should still be emitted on stderr; got: {stderr_relaxed}"
+    );
+
+    let (ok_strict, _stdout, stderr_strict) =
+        run_args(&["check", path.to_str().unwrap(), "--strict"]);
+    assert!(
+        !ok_strict,
+        "`ilo check --strict` should exit non-zero on T033; stderr: {stderr_strict}"
+    );
+    assert!(
+        stderr_strict.contains("ILO-T033"),
+        "warning should still be emitted under --strict; got: {stderr_strict}"
+    );
+}
+
+/// `--strict --json` keeps the diagnostic severity as `warning` in the
+/// JSON stream - only the exit code is elevated. This matters for editor
+/// integrations that render diagnostics by severity: bumping them to
+/// `error` in the JSON would make every CI-time warning look catastrophic
+/// in the IDE.
+#[test]
+fn check_verb_strict_json_keeps_warning_severity() {
+    let (_dir, path) = write_temp_ilo("f>n;fmt \"x={}\" 1;42");
+    let (ok, _stdout, stderr) = run_args(&["check", path.to_str().unwrap(), "--strict", "--json"]);
+    assert!(
+        !ok,
+        "--strict --json should exit non-zero on warning-only file; stderr: {stderr}"
+    );
+    let first = stderr
+        .lines()
+        .find(|l| !l.trim().is_empty())
+        .expect("expected at least one diagnostic line");
+    let parsed: serde_json::Value =
+        serde_json::from_str(first).expect("check --json diagnostic should be valid JSON");
+    assert_eq!(
+        parsed.get("severity").and_then(|v| v.as_str()),
+        Some("warning"),
+        "JSON severity must stay 'warning' under --strict; got: {parsed}"
+    );
+    assert_eq!(
+        parsed.get("code").and_then(|v| v.as_str()),
+        Some("ILO-T032"),
+        "expected ILO-T032 diagnostic; got: {parsed}"
+    );
+}
+
+/// `--strict` on a clean file still exits 0. Warnings-as-errors must not
+/// degrade into errors-on-empty-input.
+#[test]
+fn check_verb_strict_clean_file_succeeds() {
+    let (_dir, path) = write_temp_ilo("main>n;42");
+    let (ok, _stdout, stderr) = run_args(&["check", path.to_str().unwrap(), "--strict"]);
+    assert!(
+        ok,
+        "`ilo check --strict` on a clean file should exit 0; stderr: {stderr}"
+    );
+}
+
+/// `--strict` on a file with real errors still exits 1. The flag must not
+/// regress the error-path exit code.
+#[test]
+fn check_verb_strict_error_file_still_exits_nonzero() {
+    // Type error: `fmt` is `t`, function declared `>n`.
+    let (_dir, path) = write_temp_ilo("f>n;\"hello\"");
+    let (ok, _stdout, stderr) = run_args(&["check", path.to_str().unwrap(), "--strict"]);
+    assert!(
+        !ok,
+        "`ilo check --strict` should exit 1 on an error file; stderr: {stderr}"
+    );
+}
+
 /// `ilo check` with no source arg prints friendly usage.
 #[test]
 fn check_verb_no_args_prints_usage() {
