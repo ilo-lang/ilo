@@ -489,6 +489,7 @@ const BUILTIN_ALIASES: &[(&str, &str)] = &[
     // for rounding is `rou`/`round`; `rnd` stays as the canonical for backward
     // compat. Costs 1 extra char vs `rnd`, accepted for trap-avoidance.
     ("rand", "rnd"),
+    ("random", "rnd"),
     // `rng` is a short-form alias for the canonical `range` builtin. Personas
     // working in numeric / simulation / regression code reach for it first
     // because `range a b` is load-bearing and the 5-char hit is paid
