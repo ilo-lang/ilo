@@ -1,0 +1,31 @@
+-- Helper-fn `mset` accumulator now stays O(N) instead of O(N·K).
+--
+-- Pre-0.12.1: factoring the per-row map update into a helper fn caused
+-- a silent ~1000x slowdown on high-cardinality rollups. The map crossed
+-- an OP_CALL boundary, RC bumped to >=2, and OP_MSET's RC=1 in-place
+-- fast path declined — every row cloned the whole HashMap. The agent's
+-- obvious DRY refactor (extract per-row update into a helper) made the
+-- program 1000x slower with no error or warning.
+--
+-- 0.12.1 closes the cliff with OP_CALL_OWN1 + OP_MOVE_OWN (move-not-
+-- clone first arg when the compiler sees `name = fn(name, ...)`) plus
+-- a tail-position rewrite that lets `mset m k v` inside the helper
+-- fire the existing in-place fast path. The "obvious thing is the
+-- right thing" promise holds again: factor or don't, the perf is the
+-- same.
+
+-- Canonical accumulator pattern: helper takes the map, mutates and
+-- returns. Caller rebinds the map to the result. With the fix this
+-- stays at one RC=1 in-place insert per row, even at scale.
+addto m:M t n k:t v:n>M t n;mset m k v
+build n:n>n;m=mmap;@i 1..n{k=str i;m=addto m k i};len (mkeys m)
+
+-- Per-key bump helper: read-modify-write through the same shape.
+-- Exercises the same move-semantics path with an extra arg.
+bump m:M t n k:t inc:n>M t n;c=??(mget m k) 0;mset m k (+c inc)
+total>n;m=mmap;@i 0..5{m=bump m "x" 2};??(mget m "x") 0
+
+-- run: build 100
+-- out: 99
+-- run: total
+-- out: 10

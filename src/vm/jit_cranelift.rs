@@ -1190,7 +1190,9 @@ fn compile_function_body(
                     non_num_write[a] = true;
                 }
                 // MOVE: skip here, handled by fixpoint below.
-                OP_MOVE => {}
+                // OP_MOVE_OWN behaves identically to OP_MOVE for type
+                // propagation purposes (same A=dest, B=src layout).
+                OP_MOVE | OP_MOVE_OWN => {}
                 // Ops that write a non-numeric or unknown type to R[A].
                 OP_ADD | OP_SUB | OP_MUL | OP_DIV  // may be string concat etc.
                 | OP_ADD_SS  // string concat — always a string
@@ -1217,7 +1219,10 @@ fn compile_function_body(
                     non_bool_write[a] = true;
                 }
                 // OP_CALL: if callee is known all-numeric, result is numeric.
-                OP_CALL => {
+                // OP_CALL_OWN1 has the identical encoding and result-write
+                // shape (move-not-clone on first arg only changes RC
+                // bookkeeping, not the result Variable type).
+                OP_CALL | OP_CALL_OWN1 => {
                     let bx = (inst & 0xFFFF) as usize;
                     let func_idx = bx >> 8;
                     if func_idx < program.chunks.len()
@@ -1252,7 +1257,7 @@ fn compile_function_body(
                     continue;
                 }
                 i += 1;
-                if op != OP_MOVE {
+                if op != OP_MOVE && op != OP_MOVE_OWN {
                     continue;
                 }
                 let a = ((inst >> 16) & 0xFF) as usize;
@@ -1942,6 +1947,38 @@ fn compile_function_body(
 
                         builder.switch_to_block(after_block);
                         builder.def_var(vars[a_idx], bv);
+                    }
+                }
+            }
+            OP_MOVE_OWN => {
+                // Move-not-clone variant of OP_MOVE used by the
+                // `name = fn(name, ...)` peephole. The VM-side semantics
+                // are: transfer the NanVal bit pattern from R[B] to R[A]
+                // without bumping any RC, and clear R[B] to Nil so a
+                // later drop_rc on the source slot is a no-op.
+                //
+                // In Cranelift, registers are SSA Variables — assigning
+                // a Variable doesn't bump RC of the underlying heap
+                // value (that's done explicitly by jit_move for the
+                // ordinary OP_MOVE). For OP_MOVE_OWN we deliberately
+                // skip jit_move: the source Variable is not used again
+                // on the SSA path emitted by the peephole (in / out
+                // pair brackets the call), so the RC stays at the
+                // caller's pre-move count exactly as the VM intends.
+                //
+                // Emitting a clone here would inflate the RC by one
+                // per loop iteration, defeating the in-place OP_MSET
+                // fast path inside the helper and leaking memory.
+                if a_idx != b_idx {
+                    let bv = builder.use_var(vars[b_idx]);
+                    builder.def_var(vars[a_idx], bv);
+                    // Propagate f64 shadow for the numeric fast path so
+                    // downstream arithmetic ops skip the bitcast, same
+                    // as OP_MOVE does.
+                    let src_always_num = b_idx < reg_always_num.len() && reg_always_num[b_idx];
+                    if src_always_num && a_idx < reg_always_num.len() && reg_always_num[a_idx] {
+                        let bf = builder.use_var(f64_vars[b_idx]);
+                        builder.def_var(f64_vars[a_idx], bf);
                     }
                 }
             }
@@ -4307,7 +4344,18 @@ fn compile_function_body(
                 }
                 // else: blocks not found → JIT bails (should not happen in practice)
             }
-            OP_CALL => {
+            OP_CALL | OP_CALL_OWN1 => {
+                // OP_CALL_OWN1 is the move-not-clone first-arg variant of
+                // OP_CALL used by the let-stmt peephole. In the Cranelift
+                // JIT/AOT model args are passed as SSA Variable values
+                // (no per-push clone_rc on the stack like the VM has),
+                // so the move-vs-clone distinction collapses here — both
+                // opcodes lower to the same call sequence. The compiler
+                // peephole still wins on Cranelift because it rewrites
+                // the tail mset to use a == b (in-place fast path), and
+                // the source-register clear on the caller side is a
+                // no-op under SSA: the moved-out Variable just isn't
+                // referenced again.
                 let a = ((inst >> 16) & 0xFF) as u8;
                 let bx = (inst & 0xFFFF) as usize;
                 let func_idx = bx >> 8;

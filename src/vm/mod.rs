@@ -444,6 +444,32 @@ pub(crate) const OP_GRP_BY_KEY: u8 = 180;
 // arm), so we deliberately don't reuse `MapKey` here.
 pub(crate) const OP_UNIQ_BY_KEY: u8 = 181;
 
+// Move-not-clone variant of OP_MOVE. Transfers the NanVal bit pattern from
+// R[B] to R[A] without bumping the RC of any heap payload, then clears R[B]
+// to Nil so the source register drops its reference. Used by the
+// `name = fn(name, ...)` peephole to avoid the extra RC bump that would
+// otherwise defeat OP_MSET's RC=1 in-place fast path inside helper fns.
+//
+// Encoding (ABC):
+//   A = destination register
+//   B = source register (cleared to Nil after move)
+pub(crate) const OP_MOVE_OWN: u8 = 182;
+
+// Move-first-arg variant of OP_CALL. Same frame layout and dispatch as
+// OP_CALL but does not clone_rc the first arg (R[A+1]) when pushing it
+// onto the callee's frame. The compiler emits this when it detects the
+// `name = fn(name, ...)` shape and statically proves the first arg is
+// dead after the call (no aliasing use). Combined with OP_MOVE_OWN on the
+// MOVE-to-args_base step, the callee receives the map at the same RC the
+// caller had — typically RC=1 for accumulator patterns, unlocking the
+// OP_MSET in-place fast path inside the helper.
+//
+// Encoding (ABC):
+//   A = result/first-arg register (same as OP_CALL)
+//   B = func_idx (low byte)  — OR via the AD form like OP_CALL
+//   C = argc
+pub(crate) const OP_CALL_OWN1: u8 = 183;
+
 // Dynamic call by function reference. The callee is a FnRef NanVal sitting
 // in a register; we decode its (kind, id), then either push a VM frame
 // (user fn) or invoke the builtin dispatch path (builtin).
@@ -936,10 +962,10 @@ fn inline_kind_for_opcode(op: u8) -> InlineOpKind {
         // literal index, NOT a register, so the generic "shift by window_base"
         // rewrite in `emit_inlined_body` would corrupt it. If a predicate
         // uses literal indexing it falls back to OP_CALL_DYN.
-        OP_HAS | OP_HD | OP_TL | OP_REV | OP_LEN | OP_MOVE | OP_NOT | OP_NEG | OP_AT
-        | OP_LISTGET | OP_MGET | OP_MHAS | OP_ABS | OP_FLR | OP_CEL | OP_MIN | OP_MAX | OP_STR
-        | OP_NUM | OP_CHR | OP_ORD | OP_UPR | OP_LWR | OP_CAP | OP_CHARS | OP_TRM | OP_ROU
-        | OP_ISNUM | OP_ISTEXT | OP_ISBOOL | OP_ISLIST => InlineOpKind::Abc,
+        OP_HAS | OP_HD | OP_TL | OP_REV | OP_LEN | OP_MOVE | OP_MOVE_OWN | OP_NOT | OP_NEG
+        | OP_AT | OP_LISTGET | OP_MGET | OP_MHAS | OP_ABS | OP_FLR | OP_CEL | OP_MIN | OP_MAX
+        | OP_STR | OP_NUM | OP_CHR | OP_ORD | OP_UPR | OP_LWR | OP_CAP | OP_CHARS | OP_TRM
+        | OP_ROU | OP_ISNUM | OP_ISTEXT | OP_ISBOOL | OP_ISLIST => InlineOpKind::Abc,
 
         // Wrappers — ABC, A and B are regs (C unused / discriminator).
         OP_WRAPOK | OP_WRAPERR | OP_ISOK | OP_ISERR => InlineOpKind::Abc,
@@ -1479,6 +1505,13 @@ struct RegCompiler {
     /// Decl span of the function currently being lowered, used as the
     /// fallback label location for register-cap overflow errors.
     current_fn_span: crate::ast::Span,
+    /// True while lowering the last statement of a function body — used
+    /// by the `mset` builtin emitter to opt into move-semantics on the
+    /// source map register when it knows the source becomes dead at
+    /// OP_RET. The let-stmt `name = mset name k v` peephole already
+    /// covers the rebind shape; this flag covers the tail-position
+    /// `mset m k v` shape inside helper fns reached via OP_CALL_OWN1.
+    in_tail_position: bool,
 }
 
 impl RegCompiler {
@@ -1501,6 +1534,7 @@ impl RegCompiler {
             current_all_regs_numeric: true,
             current_fn_name: String::new(),
             current_fn_span: crate::ast::Span::UNKNOWN,
+            in_tail_position: false,
         }
     }
 
@@ -1916,7 +1950,12 @@ impl RegCompiler {
                     self.reg_record_type[i] = self.resolve_type_id(&p.ty);
                 }
 
+                // Function body root: the last stmt is in tail position.
+                // compile_body propagates this through the loop so only
+                // the final stmt sees in_tail_position = true.
+                self.in_tail_position = true;
                 let result = self.compile_body(body);
+                self.in_tail_position = false;
 
                 let ret_reg = result.unwrap_or_else(|| {
                     let r = self.alloc_reg();
@@ -1977,11 +2016,21 @@ impl RegCompiler {
 
     fn compile_body(&mut self, stmts: &[crate::ast::Spanned<Stmt>]) -> Option<u8> {
         let saved_locals = self.locals.len();
+        let saved_tail = self.in_tail_position;
         let mut result = None;
-        for spanned in stmts {
+        let last_idx = stmts.len().saturating_sub(1);
+        for (i, spanned) in stmts.iter().enumerate() {
             self.current_span = spanned.span;
+            // Tail-position flag: set true only while lowering the final
+            // statement, and only when the parent context is itself a
+            // tail position (so a `cond {...}` body inside a non-tail
+            // statement still sees in_tail_position = false). The
+            // function-body emitter sets in_tail_position = true around
+            // the top-level call to compile_body for the function root.
+            self.in_tail_position = saved_tail && i == last_idx;
             result = self.compile_stmt(&spanned.node);
         }
+        self.in_tail_position = saved_tail;
         self.locals.truncate(saved_locals);
         result
     }
@@ -2100,6 +2149,108 @@ impl RegCompiler {
                         let rd = self.compile_expr(&args[2]);
                         self.emit_abc(OP_MSET, existing_reg, existing_reg, rc);
                         self.emit_abc(0, rd, 0, 0);
+                        return None;
+                    }
+                    // Peephole: `name = fn(name, ...)` for a static user fn —
+                    // emit OP_CALL_OWN1 so the first arg threads into the
+                    // callee without an RC bump. Inside the callee the
+                    // accumulator stays at RC=1, so any in-place mutation
+                    // (OP_MSET, OP_LISTAPPEND, OP_ADD_SS in-place) keeps its
+                    // amortised-O(1) fast path even when the agent factors
+                    // the per-row update into a helper fn.
+                    //
+                    // Audit:
+                    //   * `function` must resolve to a static user fn — if
+                    //     it resolves to a local register first (closure /
+                    //     dynamic FnRef), `resolve_local` would have shunted
+                    //     us through OP_CALL_DYN at line 4922 in the normal
+                    //     compile_expr path. We replicate that check here
+                    //     to keep this peephole safe.
+                    //   * Builtins go through their native opcode emitters
+                    //     and the tree bridge — explicitly skip those.
+                    //   * The `unwrap: UnwrapMode::None` guard keeps us out
+                    //     of the `!` / `!!` paths; those have an extra
+                    //     post-call emit that wants the result register to
+                    //     stay live. (We could lift this later.)
+                    if let Expr::Call {
+                        function,
+                        args,
+                        unwrap: UnwrapMode::None,
+                    } = value
+                        && !args.is_empty()
+                        && let Expr::Ref(ref_name) = &args[0]
+                        && ref_name == name
+                        && self.resolve_local(function).is_none()
+                        && !crate::builtins::Builtin::is_builtin(function)
+                        && let Some(func_idx) = self.func_names.iter().position(|n| n == function)
+                        && func_idx <= 255
+                        && args.len() <= 255
+                    {
+                        // Compile non-first args. We compile them BEFORE
+                        // reserving the args window so any sub-expression
+                        // register allocations don't collide.
+                        let rest_regs: Vec<u8> =
+                            args.iter().skip(1).map(|e| self.compile_expr(e)).collect();
+
+                        let a = self.alloc_reg(); // result register
+                        let args_base = self.next_reg;
+                        if (self.next_reg as usize) + args.len() > 255 {
+                            self.first_error.get_or_insert_with(|| {
+                                CompileError::CallRegisterOverflow {
+                                    fn_name: self.current_fn_name.clone(),
+                                    callee: function.clone(),
+                                    span: self.current_span,
+                                }
+                            });
+                            self.next_reg = 255;
+                            self.max_reg = 255;
+                            return None;
+                        }
+                        self.next_reg += args.len() as u8;
+                        if self.next_reg > self.max_reg {
+                            self.max_reg = self.next_reg;
+                        }
+
+                        // First arg: move-not-clone from `existing_reg` into
+                        // args_base. Clears existing_reg to Nil — the local
+                        // is re-bound below when we move the result back.
+                        self.emit_abc(OP_MOVE_OWN, args_base, existing_reg, 0);
+                        // Remaining args: normal MOVE (clone-on-push happens
+                        // in OP_CALL_OWN1's push loop for i > 0).
+                        for (i, &arg_reg) in rest_regs.iter().enumerate() {
+                            let target = args_base + 1 + i as u8;
+                            if arg_reg != target {
+                                self.emit_abc(OP_MOVE, target, arg_reg, 0);
+                            }
+                        }
+
+                        let bx = ((func_idx as u16) << 8) | args.len() as u16;
+                        self.emit_abx(OP_CALL_OWN1, a, bx);
+
+                        // Propagate return-type metadata onto the temporary
+                        // result reg so the subsequent OP_MOVE_OWN into
+                        // existing_reg carries the correct type info.
+                        if func_idx < self.func_return_types.len() {
+                            let ret_ty = &self.func_return_types[func_idx];
+                            self.reg_record_type[a as usize] = self.resolve_type_id(ret_ty);
+                            if *ret_ty == Type::Number {
+                                self.reg_is_num[a as usize] = true;
+                            } else {
+                                self.current_all_regs_numeric = false;
+                            }
+                        }
+
+                        // Move result back into the local's existing register.
+                        // OP_MOVE_OWN drops existing_reg's current value (Nil
+                        // from the move-out above, drop is a no-op) and
+                        // installs the result, clearing the temp slot.
+                        self.emit_abc(OP_MOVE_OWN, existing_reg, a, 0);
+                        self.reg_record_type[existing_reg as usize] =
+                            self.reg_record_type[a as usize];
+                        self.reg_is_num[existing_reg as usize] = self.reg_is_num[a as usize];
+                        // Reset next_reg back to before the call window so
+                        // subsequent codegen reuses those slots.
+                        self.next_reg = a;
                         return None;
                     }
                     // General re-binding: compile value and move to existing register
@@ -4151,9 +4302,41 @@ impl RegCompiler {
                             // mset map key val — two-instruction sequence:
                             //   OP_MSET  A=result  B=map  C=key
                             //   data word: A=val_reg (consumed by OP_MSET dispatch; ip advances past it)
+                            //
+                            // Tail-position fast path: when the call sits
+                            // at the tail of a function body AND args[0] is
+                            // a direct Ref to a local register, we know the
+                            // source map dies at OP_RET. We can therefore
+                            // reuse the local's register as both result
+                            // and source — the existing OP_MSET fast path
+                            // (a == b && RC == 1) then fires in place,
+                            // closing the helper-fn perf cliff (see
+                            // OP_CALL_OWN1). Stays a no-op when RC > 1 (a
+                            // captured/aliased map), since the runtime
+                            // still gates on rc_count.
+                            let tail_save = self.in_tail_position;
+                            self.in_tail_position = false;
+                            let tail_local_reg: Option<u8> =
+                                if tail_save && let Expr::Ref(ref_name) = &args[0] {
+                                    self.resolve_local(ref_name)
+                                } else {
+                                    None
+                                };
                             let rb = self.compile_expr(&args[0]);
                             let rc = self.compile_expr(&args[1]);
                             let rd = self.compile_expr(&args[2]);
+                            if let Some(local_reg) = tail_local_reg
+                                && local_reg == rb
+                            {
+                                // a == b == local_reg: in-place fast path
+                                // mutates the local. After this emit the
+                                // result is local_reg; the surrounding
+                                // function emitter will pick it up and
+                                // emit OP_RET local_reg.
+                                self.emit_abc(OP_MSET, local_reg, local_reg, rc);
+                                self.emit_abc(0, rd, 0, 0);
+                                return local_reg;
+                            }
                             let ra = self.alloc_reg();
                             self.emit_abc(OP_MSET, ra, rb, rc);
                             self.emit_abc(0, rd, 0, 0);
@@ -12394,6 +12577,103 @@ impl<'a> VM<'a> {
                         Ok(out) => reg_set!(a, out),
                         Err(msg) => vm_err!(VmError::Type(msg)),
                     }
+                }
+                OP_MOVE_OWN => {
+                    // Move-not-clone variant of OP_MOVE. Transfers the bit
+                    // pattern from R[B] to R[A] without bumping or dropping
+                    // any RC, then clears R[B] to Nil so the source slot
+                    // doesn't double-drop on frame teardown. Used by the
+                    // `name = fn(name, ...)` peephole to thread the first
+                    // arg into the callee at the same RC the caller had,
+                    // unlocking OP_MSET's in-place fast path inside helper
+                    // fns.
+                    let a = ((inst >> 16) & 0xFF) as usize + base;
+                    let b = ((inst >> 8) & 0xFF) as usize + base;
+                    let v = reg!(b);
+                    // SAFETY: a, b are in-frame register slots by the
+                    // compiler's register-allocation invariant. We must
+                    // drop the existing value at R[a] (reg_set! pattern)
+                    // and overwrite R[b] without dropping its old value
+                    // since ownership transferred into R[a].
+                    unsafe {
+                        let slot_a = self.stack.as_mut_ptr().add(a);
+                        (*slot_a).drop_rc();
+                        *slot_a = v;
+                        // Note: if a == b, we already overwrote R[a]=R[b]
+                        // with itself, and clearing here would zap the
+                        // value we just stored. Guard against that.
+                        if a != b {
+                            *self.stack.as_mut_ptr().add(b) = NanVal::nil();
+                        }
+                    }
+                }
+                OP_CALL_OWN1 => {
+                    // Move-first-arg variant of OP_CALL. Identical to
+                    // OP_CALL except the first arg (R[A+1]) is pushed onto
+                    // the callee's stack without a clone_rc bump, and its
+                    // source register is cleared to Nil to preserve the
+                    // RC invariant. Encoding matches OP_CALL exactly so
+                    // the compiler can swap the opcode in place.
+                    let a = ((inst >> 16) & 0xFF) as u8;
+                    let bx = (inst & 0xFFFF) as usize;
+                    let func_idx = (bx >> 8) as u16;
+                    let n_args = bx & 0xFF;
+
+                    // SAFETY: frames is non-empty while execute() is running.
+                    unsafe { self.frames.last_mut().unwrap_unchecked() }.ip = ip;
+
+                    let new_base = self.stack.len();
+                    let callee_all_numeric =
+                        unsafe { self.program.chunks.get_unchecked(func_idx as usize) }
+                            .all_regs_numeric;
+                    for i in 0..n_args {
+                        let src_idx = base + a as usize + 1 + i;
+                        let v = reg!(src_idx);
+                        if i == 0 {
+                            // Move-arg path: don't clone_rc, and clear the
+                            // source slot so the caller's frame doesn't
+                            // double-drop the same RC on OP_RET teardown.
+                            // SAFETY: src_idx is the caller's in-frame
+                            // register slot for arg 0.
+                            unsafe {
+                                *self.stack.as_mut_ptr().add(src_idx) = NanVal::nil();
+                            }
+                        } else if !callee_all_numeric && !v.is_number() {
+                            v.clone_rc();
+                        }
+                        self.stack.push(v);
+                    }
+
+                    let reg_count = self.program.chunks[func_idx as usize].reg_count as usize;
+                    let new_len = new_base + reg_count;
+                    let old_len = self.stack.len();
+                    if new_len > old_len {
+                        self.stack.reserve(new_len - old_len);
+                        let nil = NanVal::nil();
+                        let ptr = self.stack.as_mut_ptr();
+                        for i in old_len..new_len {
+                            // SAFETY: writing into newly-reserved capacity
+                            // before set_len makes the slot a valid Nil.
+                            unsafe {
+                                ptr.add(i).write(nil);
+                            }
+                        }
+                        // SAFETY: capacity was just reserved.
+                        unsafe {
+                            self.stack.set_len(new_len);
+                        }
+                    }
+
+                    self.frames.push(CallFrame {
+                        chunk_idx: func_idx,
+                        ip: 0,
+                        stack_base: new_base,
+                        result_reg: a,
+                    });
+
+                    ci = func_idx as usize;
+                    ip = 0;
+                    base = new_base;
                 }
                 _ => vm_err!(VmError::UnknownOpcode { op }),
             }

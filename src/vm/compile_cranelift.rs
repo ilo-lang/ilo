@@ -1118,7 +1118,11 @@ fn compile_function_body(
                     non_num_write[a] = true;
                 }
                 // MOVE: skip here, handled by fixpoint below.
-                OP_MOVE => {}
+                // OP_MOVE_OWN shares OP_MOVE's encoding and propagates
+                // type info the same way (the move-vs-clone-rc distinction
+                // is a runtime-only concern that doesn't change the
+                // numeric/boolean classification of the destination).
+                OP_MOVE | OP_MOVE_OWN => {}
                 // Ops that write a non-numeric or unknown type to R[A].
                 OP_ADD | OP_SUB | OP_MUL | OP_DIV | OP_ADD_SS | OP_NEG | OP_WRAPOK | OP_WRAPERR
                 | OP_UNWRAP | OP_RECFLD | OP_RECFLD_NAME | OP_RECFLD_SAFE | OP_RECFLD_NAME_SAFE
@@ -1139,7 +1143,10 @@ fn compile_function_body(
                     non_bool_write[a] = true;
                 }
                 // OP_CALL: if callee is known all-numeric, result is numeric.
-                OP_CALL => {
+                // OP_CALL_OWN1 has the identical encoding and result-write
+                // shape; the move-not-clone first-arg semantics are an
+                // RC bookkeeping detail that doesn't change classification.
+                OP_CALL | OP_CALL_OWN1 => {
                     if let Some(prog) = program {
                         let bx = (inst & 0xFFFF) as usize;
                         let func_idx = bx >> 8;
@@ -1174,7 +1181,7 @@ fn compile_function_body(
                     continue;
                 }
                 i += 1;
-                if op != OP_MOVE {
+                if op != OP_MOVE && op != OP_MOVE_OWN {
                     continue;
                 }
                 let a = ((inst >> 16) & 0xFF) as usize;
@@ -1784,6 +1791,29 @@ fn compile_function_body(
 
                         builder.switch_to_block(after_block);
                         builder.def_var(vars[a_idx], bv);
+                    }
+                }
+            }
+            OP_MOVE_OWN => {
+                // Move-not-clone variant of OP_MOVE used by the
+                // `name = fn(name, ...)` peephole. In Cranelift, SSA
+                // Variable assignment doesn't bump RC of heap values
+                // (that's done explicitly by jit_move for OP_MOVE).
+                // For OP_MOVE_OWN we deliberately skip jit_move: the
+                // source Variable is not used again on the SSA path
+                // emitted by the peephole (in / out pair brackets the
+                // call), so the RC stays at the caller's pre-move count
+                // exactly as the VM intends. Emitting a clone here
+                // would inflate RC by one per loop iteration, defeating
+                // the in-place OP_MSET fast path inside the helper and
+                // leaking memory.
+                if a_idx != b_idx {
+                    let bv = builder.use_var(vars[b_idx]);
+                    builder.def_var(vars[a_idx], bv);
+                    let src_always_num = b_idx < reg_always_num.len() && reg_always_num[b_idx];
+                    if src_always_num && a_idx < reg_always_num.len() && reg_always_num[a_idx] {
+                        let bf = builder.use_var(f64_vars[b_idx]);
+                        builder.def_var(f64_vars[a_idx], bf);
                     }
                 }
             }
@@ -3589,7 +3619,15 @@ fn compile_function_body(
                 }
             }
             // ── Function call with inlining + F64 shadow support ──
-            OP_CALL => {
+            OP_CALL | OP_CALL_OWN1 => {
+                // OP_CALL_OWN1: move-not-clone first-arg variant of OP_CALL,
+                // emitted by the let-stmt peephole for `name = fn(name, ...)`.
+                // Under Cranelift's SSA Variable model, args are passed as
+                // values (no per-push clone_rc on a stack), so the lowering
+                // is identical to OP_CALL. The perf win on Cranelift comes
+                // from the compiler's tail-position rewrite of `mset m k v`
+                // inside the helper, which fires the existing in-place
+                // fast path in the OP_MSET handler.
                 let a = ((inst >> 16) & 0xFF) as u8;
                 let bx = (inst & 0xFFFF) as usize;
                 let func_idx = bx >> 8;

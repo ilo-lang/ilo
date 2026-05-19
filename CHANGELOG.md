@@ -16,6 +16,10 @@
 - `walk dir` and `glob dir pat` now skip unreadable subdirectories (most commonly `chmod 000` or sandbox roots) instead of aborting the entire traversal. Previously the first permission-denied subdir would poison the whole walk and lose every readable path that had already been collected, breaking realistic uses like `walk /` or `walk ~/`. An unreadable root still returns Err so the agent can distinguish "starting point unreadable" from "descendant unreadable". Surfaced by filesystem-walk rerun11.
 - CSV/TSV reader now tracks quote state across record separators. A cell containing `\n` (which the writer correctly emits as a quoted multi-line field per RFC 4180) used to be re-parsed as two rows, so `rd path "csv"` silently disagreed with `wr path data "csv"`. The reader is now a single-pass scanner over the whole document and round-trips multi-line quoted fields, embedded quotes, and CRLF line endings byte-stably across tree and VM. Surfaced by csv-pipeline rerun10.
 
+### Performance
+
+- `mset` accumulator via helper fn no longer pays a ~1000x perf cliff. The canonical DRY refactor `addto m k v > mset m k v` followed by `m = addto m k v` in a loop now runs at the same speed as the inline form. New OP_MOVE_OWN / OP_CALL_OWN1 opcodes thread the first arg into the helper at the caller's RC, and a tail-position rewrite lets the helper's `mset m k v` fire the existing in-place fast path. 40k rows: 25.8s to 0.01s on VM; JIT and AOT linear at 1M rows.
+
 ## 0.12.0 - 2026-05-19
 
 ### Breaking
