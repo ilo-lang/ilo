@@ -1208,8 +1208,8 @@ fn run_vm_runtime_error() {
 
 #[test]
 fn run_interp_runtime_error() {
-    // --run-tree with a program that errors at runtime (division by zero)
-    // Exercises L379-381 in main.rs (error reporting for --run-tree)
+    // --run-vm with a program that errors at runtime (division by zero)
+    // Exercises L379-381 in main.rs (error reporting for the runtime-error path)
     let out = ilo()
         .args(["f>n;/1 0", "--run-vm", "f"])
         .output()
