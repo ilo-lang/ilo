@@ -1,0 +1,32 @@
+-- vacation example: May 22 (Fri) + 5 business days = May 29 (Fri)
+-- holidays in 2026: Jan 1, Apr 10, Apr 13, May 8, May 25, Aug 31, Dec 25, Dec 28
+
+-- day-of-week for May 2026: 22=Fri (5), 23=Sat (6), 24=Sun (0), 25=Mon (1), ...
+dow d:n>n;mod(+22 d)7
+;
+
+-- holiday check
+is-hol d:n hol:L t>b;cnt(cat[[str 2026]"-05"-"(padl(str d)2)]]hol
+;
+
+-- business day: not weekend (0=Sun, 6=Sat) and not in holiday list
+is-bday d:n hol:L t>b;
+  w=(dow d);
+  &(!(|(=w 0)(=w 6)))(!(is-hol d hol))
+;
+
+-- count forward cnt business days from day d
+go d:n cnt:n tgt:n hol:L t>t;
+  ?=cnt tgt(cat[[str 2026]"-05"-"(padl(str d)2)"])(
+    nd=(+d 1);
+    nc=?(is-bday nd hol)(+cnt 1)cnt;
+    go nd nc tgt hol
+  )
+;
+
+-- main
+hol=jpar(rd "examples/personas/fixtures/uk-bank-holidays.json").holidays;
+go 22 0 5 hol
+
+-- run: main
+-- out: "2026-05-29"

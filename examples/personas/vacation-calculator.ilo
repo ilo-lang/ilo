@@ -1,0 +1,11 @@
+-- vacation-calc: 5 working days from Friday 2026-05-22, skip UK bank holidays
+
+dow d:n>n;mod(+22 d)7
+is-hol y:n m:n d:n hol:L t>b;has hol(cat[[str y](padl(str m)2)(padl(str d)2)]"-")
+is-bday y:n m:n d:n hol:L t>b;w=(dow d);&(!(|(=w 0)(=w 6)))(!(is-hol y m d hol))
+go y:n m:n d:n cnt:n tgt:n hol:L t>t;?=cnt tgt(cat[[str y](padl(str m)2)(padl(str d)2)]"-")(go y m(+d 1)(?(is-bday y m(+d 1)hol)(+cnt 1)cnt)tgt hol)
+
+main>R t t;hol=(jpar!(rd! "examples/personas/fixtures/uk-bank-holidays.json")).holidays;~go 2026 5 22 0 5 hol
+
+-- run: main
+-- out: "2026-05-29"
