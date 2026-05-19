@@ -413,3 +413,56 @@ fn map_literal_empty_braces_hints_mset_mmap() {
 fn let_with_normal_rhs_still_parses() {
     run_ok("go>n;x=5;y=+x 1;y");
 }
+
+// ---- Hint suggestions must themselves be valid ilo syntax ----
+//
+// Regression for the wave-4 "diagnostic-followability" bug: the `if`
+// reserved-word hint used to suggest `?expr{true:... false:...}` with a
+// space separator, but the parser requires `;` between match arms and
+// would reject the agent's first retry with `ILO-P003 expected Semi, got
+// False`. Agents following the hint hit a second error and burned tokens
+// retrying. The fix: hints must always emit syntax that the parser
+// accepts on the next attempt.
+#[test]
+fn if_keyword_hint_uses_semicolon_separator() {
+    // At the declaration position the `if` keyword fires ILO-P001 with a
+    // ternary-shaped hint.
+    let err = run_err("if x:n>n;x");
+    assert!(err.contains("ILO-P001"), "stderr: {err}");
+    // The canonical match-arm form requires `;` between arms.
+    assert!(
+        err.contains(";false:"),
+        "hint must use `;false:` (semicolon-separated arms), got: {err}"
+    );
+    // And must not contain the old space-separated shape that the
+    // parser rejects.
+    assert!(
+        !err.contains(" false:"),
+        "hint must not use space-separated arms: {err}"
+    );
+}
+
+#[test]
+fn if_keyword_hint_is_parseable() {
+    // Extract the suggested syntax shape and feed it back through the
+    // parser to prove it round-trips. We don't try to scrape the literal
+    // string out of stderr; instead we exercise the canonical form from
+    // the hint directly. If the hint string drifts away from this shape
+    // again, the `if_keyword_hint_uses_semicolon_separator` test above
+    // catches it.
+    run_ok("f x:b>n;?x{true:1;false:0}");
+}
+
+#[test]
+fn if_keyword_hint_at_expression_position_uses_semicolon() {
+    // The expression-position `if` (e.g. `?x{if y{...}}`) fires a
+    // different branch that also emits the ternary hint. Pin that too.
+    let err = run_err("f x:n>n;if x{0}");
+    // This path goes through Token::KwIf in the declaration error
+    // branch, not the Ident("if") one. The hint string is the same.
+    assert!(
+        err.contains(";false:") || !err.contains("true:"),
+        "expression-position `if` hint must use `;` separator if it \
+         suggests true/false arms: {err}"
+    );
+}

@@ -172,7 +172,7 @@ The only place capital letters and underscores are accepted is **after `.` or `.
 The following identifiers are reserved and cannot be used as names: `if`, `return`, `let`, `fn`, `def`, `var`, `const`. Using them produces a friendly error with the ilo equivalent:
 
 ```
--- ERROR: `if` is a reserved word. Use: ?cond{true:... false:...}
+-- ERROR: `if` is a reserved word. Use: ?cond{true:...;false:...}
 -- ERROR: `return` is a reserved word. Last expression is the return value.
 -- ERROR: `let` is a reserved word. Use: name = expr
 -- ERROR: `fn`/`def` is a reserved word. Use: name param:type > rettype; body

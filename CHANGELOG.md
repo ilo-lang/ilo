@@ -11,6 +11,10 @@
 
 - `rand` alias for `rnd` (universal short-form for random; matches C/Python/Rust/Go/JS naming). Resolves to canonical `rnd` after parsing; rejected as binding or user-fn name via ILO-P011 to prevent silent shadow mis-dispatch. `random` continues to resolve to `rnd` as before.
 
+### Diagnostics
+
+- `if` reserved-word hint now suggests `?expr{true:...;false:...}` (semicolon-separated arms) instead of the space-separated `?expr{true:... false:...}` shape, which the parser rejected with `ILO-P003 expected Semi, got False`. Agents following the hint hit a second error and burned tokens retrying. Surfaced by logs-forensics rerun11. Doc-discovery rerun11 re-confirmed. Same fix landed in SPEC.md and ai.txt. Added `examples/conditional-shapes.ilo` as the canonical in-context learning example covering all four bool-conditional shapes (`?h{true:a;false:b}`, `?h{a}{b}`, `?h a b`, `?h cond a b`).
+
 ### Fixed
 
 - `walk dir` and `glob dir pat` now skip unreadable subdirectories (most commonly `chmod 000` or sandbox roots) instead of aborting the entire traversal. Previously the first permission-denied subdir would poison the whole walk and lose every readable path that had already been collected, breaking realistic uses like `walk /` or `walk ~/`. An unreadable root still returns Err so the agent can distinguish "starting point unreadable" from "descendant unreadable". Surfaced by filesystem-walk rerun11.
