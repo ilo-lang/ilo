@@ -3559,18 +3559,31 @@ impl VerifyContext {
                         );
                         return Ty::Unknown;
                     }
-                    // Literal-template check for `fmt`: if the template is a
-                    // string literal and contains a `{:...}` printf-style
-                    // spec, fail fast — fmt only supports bare `{}` and the
-                    // runtime would otherwise either silently emit the
-                    // literal (pre-fix) or surface ILO-R009 (post-fix).
+                    // Literal-template checks for `fmt`: if the template is a
+                    // string literal we can do two static checks here.
+                    //   1. Reject `{:...}` printf-style specs — fmt only
+                    //      supports bare `{}` and the runtime would otherwise
+                    //      silently emit the literal (pre-fix) or surface
+                    //      ILO-R009 (post-fix).
+                    //   2. Require placeholder-count == arg-count. The
+                    //      previous behaviour was to silently leave extra
+                    //      `{}` as literal `{}` or to ignore trailing args,
+                    //      which is exactly the persona footgun:
+                    //         fmt "x={} y={}" [a, b]
+                    //      binds the list to the first slot, leaves the
+                    //      second `{}` literal, and produces wrong output
+                    //      with no diagnostic.
                     if callee == "fmt"
                         && let Some(Expr::Literal(Literal::Text(tmpl))) = args.first()
                     {
                         let mut iter = tmpl.chars().peekable();
                         let mut bad: Option<String> = None;
+                        let mut slot_count: usize = 0;
                         while let Some(c) = iter.next() {
-                            if c == '{' && iter.peek() == Some(&':') {
+                            if c == '{' && iter.peek() == Some(&'}') {
+                                iter.next();
+                                slot_count += 1;
+                            } else if c == '{' && iter.peek() == Some(&':') {
                                 let mut spec = String::from("{");
                                 for sc in iter.by_ref() {
                                     spec.push(sc);
@@ -3596,6 +3609,42 @@ impl VerifyContext {
                                 ),
                                 Some(span),
                             );
+                        } else {
+                            let value_arg_count = args.len() - 1;
+                            if value_arg_count != slot_count {
+                                // Spot the common list-literal-splat mistake
+                                // so we can give a targeted hint.
+                                let list_literal_arg = args
+                                    .iter()
+                                    .skip(1)
+                                    .find(|a| matches!(a, Expr::List(_)));
+                                let hint = if slot_count > 1
+                                    && value_arg_count == 1
+                                    && list_literal_arg.is_some()
+                                {
+                                    Some(format!(
+                                        "list literals are formatted as a single value, not splatted. \
+                                         pass elements positionally: fmt \"...\" a b ... ({slot_count} args for {slot_count} `{{}}` slots)"
+                                    ))
+                                } else if slot_count > value_arg_count {
+                                    Some(format!(
+                                        "template has {slot_count} `{{}}` slots, pass {slot_count} value args after the template"
+                                    ))
+                                } else {
+                                    Some(format!(
+                                        "template has {slot_count} `{{}}` slot(s) but {value_arg_count} value arg(s) were passed; trim the extras or add more slots"
+                                    ))
+                                };
+                                self.err(
+                                    "ILO-T013",
+                                    func,
+                                    format!(
+                                        "'fmt' template has {slot_count} `{{}}` slot(s) but got {value_arg_count} value arg(s)"
+                                    ),
+                                    hint,
+                                    Some(span),
+                                );
+                            }
                         }
                     }
                     // Literal-format check for 3-arg `wr path data fmt`:

@@ -1,0 +1,21 @@
+-- `fmt` is variadic but does NOT splat lists. Passing a list literal to
+-- a multi-`{}` template silently mis-fills (pre-0.12.1): the list bound
+-- to the first slot and the rest were left as literal `{}`.
+--
+--   fmt "x={} y={}" [10, 20]    -- WRONG: "x=[10, 20] y={}"
+--
+-- 0.12.1 catches this at verify with ILO-T013 (slot/arg-count mismatch).
+-- Two idiomatic shapes:
+--   1. positional args  -> fmt "x={} y={}" 10 20
+--   2. single-slot list -> fmt "list={}" [10, 20]   (formats list as one value)
+
+-- positional: one `{}` per value
+both-positional>t;fmt "x={} y={}" 10 20
+
+-- single-slot: list rendered as a single value
+list-as-one>t;fmt "list={}" [10, 20]
+
+-- run: both-positional
+-- out: x=10 y=20
+-- run: list-as-one
+-- out: list=[10, 20]
