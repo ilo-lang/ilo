@@ -41,7 +41,7 @@ No borrow checker, no lifetimes, no `&`/`&mut`. The four classes above are the f
 
 ## Patterns
 
-`^"divide by zero"`: guard denominator. Mystery arity after `--engine tree`: not a flag, use `--run-vm` or `--jit`. `NaN` in output: `asin`/`acos`/`sqrt`/`log` out-of-domain upstream; clamp at boundary.
+`^"divide by zero"`: guard denominator. `NaN` in output: `asin`/`acos`/`sqrt`/`log` out-of-domain upstream; clamp at boundary.
 
 ## JSON shape
 
