@@ -1,0 +1,24 @@
+-- Field access on a `_`-typed param now resolves by NAME (not by positional
+-- offset of a same-named user `type`). Before this fix, declaring
+--   type row{sku:t;qty:n;rev:n}
+-- and then writing `(it:_>t;it.sku)` over a `jpar`'d record silently returned
+-- the value at row-offset 0 inside the live record. `jpar` records are
+-- sorted alphabetically (qty, rev, sku), so `it.sku` quietly returned qty's
+-- value with no diagnostic. Silent-wrong output is the worst class of bug
+-- for an AI agent reading the program at face value. Fix is in the bytecode
+-- compiler: when the object's static record type is unknown, emit
+-- OP_RECFLD_NAME (name-based) instead of the positional OP_RECFLD.
+type row{sku:t;qty:n;rev:n}
+
+sku-of>R t t;all=jpar! "[{\"sku\":\"x\",\"qty\":2,\"rev\":99}]";~jdmp (map (it:_>t;it.sku) all)
+qty-of>R t t;all=jpar! "[{\"sku\":\"x\",\"qty\":2,\"rev\":99}]";~jdmp (map (it:_>n;it.qty) all)
+rev-of>R t t;all=jpar! "[{\"sku\":\"x\",\"qty\":2,\"rev\":99}]";~jdmp (map (it:_>n;it.rev) all)
+
+-- run: sku-of
+-- out: ["x"]
+
+-- run: qty-of
+-- out: [2]
+
+-- run: rev-of
+-- out: [99]
