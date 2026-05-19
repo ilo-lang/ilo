@@ -5,7 +5,7 @@ description: Use this when declaring or using MCP tools in ilo programs. Covers 
 
 # ilo tools
 
-ilo programs can call external tools (HTTP endpoints, MCP servers) as typed prefix-call functions. Tools are declared at the top of the file; the verifier checks call sites against the declared signature.
+External tools (HTTP, MCP) called as typed prefix-call functions. Declared at file top; verifier checks call sites against signature.
 
 ## Declaration
 
@@ -13,21 +13,11 @@ ilo programs can call external tools (HTTP endpoints, MCP servers) as typed pref
 tool name "description" (arg1:t arg2:n) > R _ t timeout:30,retry:2
 ```
 
-- `name` - the binding used at call sites (same ident rules as functions).
-- `"description"` - prose passed to the tool provider (MCP server, HTTP host) for routing.
-- `(args)` - typed parameter list. Parens are required here (different from fn decls).
-- `> return-type` - typically `R _ t` for an opaque JSON payload, or a more specific type.
-- Suffix options: `timeout:N` (seconds), `retry:N` (retries on failure).
+`name` is the call-site binding (fn ident rules). `"description"` is prose passed to the provider for routing. `(args)` parens required. Return usually `R _ t` (opaque JSON) or specific. Suffix `timeout:N` seconds, `retry:N`.
 
-## Use at call sites
+## Call
 
-A declared tool calls like any other function:
-
-```
-r=name! arg1 arg2
-```
-
-Auto-unwrap with `!`. The tool dispatcher resolves the binding to a provider lookup at runtime.
+`r=name! arg1 arg2` like any function. `!` auto-unwraps; dispatcher resolves to a provider at runtime.
 
 ## HTTP tool provider
 
@@ -69,33 +59,11 @@ Tool names on the MCP server appear as bindings. Run `ilo tools --mcp path.json`
 ## Discovery
 
 ```
-ilo tools --mcp m.json                Human-readable list
-ilo tools --mcp m.json --ilo          Emit valid `tool` decls
-ilo tools --mcp m.json --json         Structured JSON
-ilo tools --tools http.json --full    Full signatures
-ilo tools --mcp m.json --graph        Type-level composition graph
+ilo tools --mcp m.json [--ilo|--json|--full|--graph]
 ```
 
-The `--ilo` output is paste-ready into a `.ilo` file.
+`--ilo` emits paste-ready `tool` decls. `--json` is structured. `--graph` is a type-level composition graph.
 
-## Runtime flow
+## Failures
 
-1. Verifier matches each call site against the declared `tool` signature.
-2. Dispatcher routes to the configured provider (HTTP or MCP).
-3. Response is parsed into the declared return type.
-4. Network/transport errors become `^"..."` Result errors; the program either auto-propagates with `!` or matches.
-
-## Failure handling
-
-```
-r=?name! arg
-?r{~v:use v;^e:^+"weather: "e}
-```
-
-Common failures:
-- timeout (default 60s, configurable per-tool)
-- non-2xx HTTP status -> `^"status N"`
-- MCP server crashed -> `^"server gone"`
-- response shape mismatch -> `^"type N: ..."`
-
-Retries are applied transparently before the error surfaces.
+Network/transport errors become `^"..."` Results; propagate with `!` or match. Common: timeout (default 60s), non-2xx (`^"status N"`), MCP server crashed (`^"server gone"`), shape mismatch (`^"type N: ..."`). Retries apply transparently before the error surfaces.

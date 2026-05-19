@@ -41,7 +41,7 @@ Flat early returns at statement position: `cls sp:n>t;>=sp 1000 "gold";>=sp 500 
 
 ## Pipes
 
-`xs >> flt pos >> map sq` desugars left-to-right to nested calls. Wrap in `()` for non-last fns in multi-fn files.
+`xs >> flt pos >> map sq` desugars left-to-right to nested calls. Wrap `()` for non-last fns in multi-fn files.
 
 ## Records
 
@@ -49,7 +49,7 @@ Flat early returns at statement position: `cls sp:n>t;>=sp 1000 "gold";>=sp 500 
 
 ## Lambdas
 
-Parenthesised, passed directly: `map (x:n>n;+x 1) xs`. Capturing lambdas run only on tree engine; VM/JIT/AOT auto-fall-back.
+Parenthesised, passed directly: `map (x:n>n;+x 1) xs`. Captures run on tree only; VM/JIT/AOT auto-fall-back.
 
 ## Multi-function files
 
@@ -57,7 +57,7 @@ Non-last fns end with a safe expression (op, index, match, literal, parens). Las
 
 ## Strings
 
-`"text"` with `\n \t \" \\`. Multi-line `"""..."""`. Interp `"{x} items"`.
+`"text"` with `\n \t \" \\`. Multi-line `"""..."""`. Interp `"{x}"`.
 
 ## What's not here
 
