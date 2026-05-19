@@ -28,6 +28,7 @@ No borrow checker, no lifetimes, no `&`/`&mut`. The four classes above are the f
 - **T006 arity mismatch** - add/remove args to match signature.
 - **T007 not a function** - calling a value. Rename or rebind.
 - **T010 non-result error-propagate** - `!` in a non-`R` fn. Declare `>R t t` or use `??` / match.
+- **T013 builtin arg type** - `cat` is list-concat; text uses `fmt`/`+`.
 - **T038 non-bool ternary cond** - `?h c a b` cond must be `b`. Bind first.
 
 ## Runtime
