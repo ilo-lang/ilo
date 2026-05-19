@@ -1,0 +1,37 @@
+-- Shows the canonical fix-up for ILO-P003 "missing return-type marker".
+--
+-- A common slip is to put `>>` (pipe operator), `|` (or), or `:>`
+-- between the parameter list and the return type, where ilo expects a
+-- single `>`. The 0.12.1 diagnostic surfaces the offending character
+-- literally so the next attempt sees what to change:
+--
+--   f x:n>>n;x    ==>   ERROR ILO-P003: expected `>`, got `>>`
+--   f x:n|n;x     ==>   ERROR ILO-P003: expected `>`, got `|`
+--   main:>n;x     ==>   ERROR ILO-P003: unexpected `:>` after `main`
+--
+-- Old wording was `expected Greater, got PipeOp` — the parser's
+-- internal token-kind names leaked into user diagnostics and gave
+-- agents no source-level information to act on.
+--
+-- The functions below are the correct shape after fixing each slip.
+
+-- No-param fn — `name>return;body`, no colon, no extra arrow.
+main>n;42
+
+-- Single-param fn — `name p:t>r;body`, single `>`.
+inc x:n>n;+x 1
+
+-- Multi-param fn — params space-separated.
+add x:n y:n>n;+x y
+
+-- Param of list type — `L n` is "list of n", still `>` for return.
+total xs:L n>n;sum xs
+
+-- run: main
+-- out: 42
+
+-- run: inc 4
+-- out: 5
+
+-- run: add 2 3
+-- out: 5

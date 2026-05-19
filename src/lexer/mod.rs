@@ -181,6 +181,110 @@ pub enum Token {
     Newline,
 }
 
+impl Token {
+    /// Return a user-facing rendering of this token suitable for inclusion
+    /// in diagnostics. Operators and punctuation render as their source
+    /// character(s) wrapped in backticks (e.g. `` `>` `` for `Token::Greater`),
+    /// content-carrying tokens render with their literal payload
+    /// (`` identifier `foo` ``, `` number `42` ``, `` text `"hi"` ``), and
+    /// keyword/type tokens render as the keyword in backticks (`` `if` ``,
+    /// `` `L` ``). The intent is that an agent reading a diagnostic sees the
+    /// same characters they would have typed, not the parser's internal
+    /// `TokenKind` variant name (`Greater`, `PipeOp`, `LBrace` ...).
+    pub fn user_facing_name(&self) -> String {
+        match self {
+            // Keywords
+            Token::Type => "`type`".into(),
+            Token::Tool => "`tool`".into(),
+            Token::Use => "`use`".into(),
+            Token::With => "`with`".into(),
+            Token::Timeout => "`timeout`".into(),
+            Token::Retry => "`retry`".into(),
+
+            // Type constructors
+            Token::ListType => "`L`".into(),
+            Token::ResultType => "`R`".into(),
+            Token::FnType => "`F`".into(),
+            Token::OptType => "`O`".into(),
+            Token::MapType => "`M`".into(),
+            Token::SumType => "`S`".into(),
+
+            // Reserved cross-language keywords
+            Token::KwIf => "`if`".into(),
+            Token::KwReturn => "`return`".into(),
+            Token::KwLet => "`let`".into(),
+            Token::KwFn => "`fn`".into(),
+            Token::KwDef => "`def`".into(),
+            Token::KwVar => "`var`".into(),
+            Token::KwConst => "`const`".into(),
+
+            // Boolean / nil
+            Token::True => "`true`".into(),
+            Token::False => "`false`".into(),
+            Token::Nil => "`nil`".into(),
+
+            // Multi-char operators
+            Token::GreaterEq => "`>=`".into(),
+            Token::LessEq => "`<=`".into(),
+            Token::NotEq => "`!=`".into(),
+            Token::PlusEq => "`+=`".into(),
+            Token::PipeOp => "`>>`".into(),
+            Token::NilCoalesce => "`??`".into(),
+            Token::BangBang => "`!!`".into(),
+
+            // Single-char operators
+            Token::Plus => "`+`".into(),
+            Token::Minus => "`-`".into(),
+            Token::Star => "`*`".into(),
+            Token::Slash => "`/`".into(),
+            Token::Greater => "`>`".into(),
+            Token::Less => "`<`".into(),
+            Token::Eq => "`=`".into(),
+            Token::Amp => "`&`".into(),
+            Token::Pipe => "`|`".into(),
+
+            // Special
+            Token::Question => "`?`".into(),
+            Token::At => "`@`".into(),
+            Token::Bang => "`!`".into(),
+            Token::Caret => "`^`".into(),
+            Token::Tilde => "`~`".into(),
+            Token::Dollar => "`$`".into(),
+
+            // Punctuation
+            Token::Colon => "`:`".into(),
+            Token::Semi => "`;`".into(),
+            Token::DotDot => "`..`".into(),
+            Token::DotQuestion => "`.?`".into(),
+            Token::Dot => "`.`".into(),
+            Token::Comma => "`,`".into(),
+            Token::LBrace => "`{`".into(),
+            Token::RBrace => "`}`".into(),
+            Token::LParen => "`(`".into(),
+            Token::RParen => "`)`".into(),
+            Token::LBracket => "`[`".into(),
+            Token::RBracket => "`]`".into(),
+            Token::Underscore => "`_`".into(),
+
+            // Literals — include the payload so the diagnostic mentions
+            // the actual offending value (`number 42`, `text "hi"`).
+            Token::Number(n) => {
+                if n.fract() == 0.0 && n.is_finite() && n.abs() < 1e16 {
+                    format!("number `{}`", *n as i64)
+                } else {
+                    format!("number `{n}`")
+                }
+            }
+            Token::Text(s) => format!("text `\"{s}\"`"),
+            Token::Ident(name) => format!("identifier `{name}`"),
+
+            // Newline isn't usually surfaced (the normaliser eats them),
+            // but render conservatively if one slips through.
+            Token::Newline => "newline".into(),
+        }
+    }
+}
+
 /// Convert indented newlines to semicolons so multi-line file format works.
 ///
 /// Rules:
