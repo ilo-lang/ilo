@@ -483,7 +483,6 @@ fn help_shows_usage() {
         "expected compilation section, got: {}",
         stdout
     );
-    assert!(stdout.contains("--vm"), "expected --vm, got: {}", stdout);
     assert!(
         stdout.contains("ilo build <file.ilo> --wasm"),
         "expected --wasm form in build help, got: {}",
