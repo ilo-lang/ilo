@@ -6,6 +6,10 @@
 
 - `ls dir` renamed to `lsd dir`. Six rerun10 personas tripped ILO-P011 on `ls=rdl! p` because `ls` was reserved; rename frees `ls` for user code. `walk`, `glob` unchanged.
 
+### Added
+
+- `rand` alias for `rnd` (universal short-form for random; matches C / Python / Rust / Go / JS naming). Closes the round-vs-random muscle-memory trap where agents reach for `rnd` expecting "round" (drop-vowels of `round`) and silently get random floats. Canonical for random stays `rnd`; canonical for rounding stays `rou` (alias `round`).
+
 ## 0.12.0 - 2026-05-19
 
 ### Breaking

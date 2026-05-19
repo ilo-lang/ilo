@@ -445,7 +445,7 @@ Called like functions, compiled to dedicated opcodes.
 | `mod a b` | remainder (modulo); errors on zero divisor | `n` |
 | `flr n` | floor (round toward negative infinity) | `n` |
 | `cel n` | ceiling (round toward positive infinity) | `n` |
-| `rnd` | random float in [0, 1) | `n` |
+| `rnd` | random float in [0, 1) (aliases: `rand`, `random`). `rnd` returns random, not round; for rounding use `rou` (alias `round`). | `n` |
 | `rnd a b` | random integer in [a, b] (inclusive) | `n` |
 | `now` | current Unix timestamp (seconds) | `n` |
 | `now-ms` | current Unix timestamp (milliseconds) | `n` |
@@ -606,6 +606,7 @@ All builtins accept one or more alias names that resolve to the canonical name a
 | `ceil` | → | `cel` |
 | `round` | → | `rou` |
 | `random` | → | `rnd` |
+| `rand` | → | `rnd` |
 | `rng` | → | `range` |
 | `lset` | → | `lst` |
 | `regex_all` | → | `rgxall` |

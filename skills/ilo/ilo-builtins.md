@@ -11,6 +11,8 @@ Prefix-call syntax: `name arg1 arg2 ...`. All builtins work cross-engine unless 
 
 `abs min max mod flr cel rou rnd rndn clamp`; `sum avg median quantile stdev variance cumsum frq`; `sqrt pow exp log log10 log2`; `sin cos tan asin acos atan atan2`. `asin acos sqrt log` return NaN out-of-domain; clamp at the boundary. NaN propagates; comparisons return false.
 
+`rnd` returns random, not round (aliases: `rand`, `random`). For rounding use `rou` (alias: `round`). Don't read `rnd` as "drop-vowels of round" — it's the random builtin.
+
 ## Text
 
 `len str num trm spl cat fmt fmt2 has`; `rgx rgxall rgxall1 rgxsub`; `upr lwr cap padl padr chars ord chr`. `num` returns `R n t`. `spl "a,b,c" ","` -> `["a","b","c"]`.
