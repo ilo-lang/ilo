@@ -66,4 +66,4 @@ ilo tools --mcp m.json [--ilo|--json|--full|--graph]
 
 ## Failures
 
-Network/transport errors become `^"..."` Results; propagate with `!` or match. Common: timeout (default 60s), non-2xx (`^"status N"`), MCP server crashed (`^"server gone"`), shape mismatch (`^"type N: ..."`). Retries apply transparently before the error surfaces.
+Errors become `^"..."` Results; propagate with `!` or match. Common: timeout (default 60s), non-2xx (`^"status N"`), MCP crash (`^"server gone"`), shape mismatch. Retries apply before error surfaces.

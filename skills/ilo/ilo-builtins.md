@@ -33,7 +33,7 @@ mmap mset mget mget-or mhas mdel mkeys mvals
 
 ## I/O
 
-`rd`, `rdl`, `rdjl`, `rdb`, `wr p s`, `wrl p xs`, `prnt v`. Dirs: `lsd d`, `walk d`, `glob d pat`. Result-wrapped.
+`rd path`, `rdl path`, `rdjl path`, `rdb path`, `wr path s`, `wrl path xs`, `prnt v`. Dir: `lsd dir`, `walk dir`, `glob dir pat`. Result-wrapped. `walk`/`glob` skip unreadable subdirs; root Errs. Path: `dirname p`, `basename p`, `pathjoin xs`.
 
 ## HTTP
 

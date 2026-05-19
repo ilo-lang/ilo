@@ -30,7 +30,7 @@ All three public backends support core ops, lists/maps/records/sums, HOFs, lambd
 
 ## Benchmarking
 
-`ilo file.ilo --bench main args` runs VM and JIT on the same input and reports per-engine `perCallNs`; JIT cold-start washes out in the hot loop. Add `--json` for one envelope per engine: `{"schemaVersion":1,"engine":"vm|jit","variant":?,"result":...,"iterations":...,"totalMs":...,"perCallNs":...}`. VM emits two records (`variant: "fresh"` and `"reusable"`). AOT timed via `ilo compile ... && ./prog args`.
+`ilo file.ilo --bench main args` runs VM and JIT, reports per-engine `perCallNs`. `--json` for one envelope per engine. AOT timed via `ilo compile ... && ./prog args`.
 
 ## AOT
 

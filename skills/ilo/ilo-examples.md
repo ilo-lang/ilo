@@ -42,13 +42,13 @@ Pointers into `examples/`. Every entry runs cross-engine on push. `rd examples/<
 ## Lambdas
 
 - `inline-lambda.ilo` direct HOF. `inline-lambda-typevar.ilo` type var.
-- `inline-lambda-capture.ilo` capture (tree only). `closure-bind.ilo` bind.
+- `inline-lambda-capture.ilo` capture. `closure-bind.ilo` bind.
 
 ## Workflow
 
 - `01-simple-function.ilo` smallest. `02-with-dependencies.ilo` multi-fn.
-- `04-tool-interaction.ilo` MCP. `05-workflow.ilo` agent end-to-end.
+- `04-tool-interaction.ilo` MCP. `05-workflow.ilo` end-to-end.
 
 ## Header
 
-`-- run: <fn>` + `-- out: <expected>` parsed by `tests/examples_engines.rs`, run cross-engine. Free regression coverage.
+`-- run: <fn>` + `-- out: <expected>` parsed by `tests/examples_engines.rs`, run cross-engine.
