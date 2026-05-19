@@ -470,6 +470,44 @@ header is incomplete, not on the next function in the file.
 "#,
     },
     ErrorEntry {
+        code: "ILO-P101",
+        short: "list-literal element is a builtin call without parens",
+        long: r#"## ILO-P101: list-literal element is a builtin call without parens
+
+Inside a list literal `[...]`, each whitespace-separated token is treated as
+its own element by default. `[a b c]` is a 3-element list, not a call.
+When an element starts with a builtin name that takes operands, the parser
+can't know how many of the following tokens are call arguments and how many
+are sibling list elements.
+
+For builtins with a fixed known arity (e.g. `str`, `at`, `map`), ilo
+auto-expands the call up to that arity. But for variadic builtins like
+`fmt` and `fmt2`, the arity isn't fixed, so the call can't be auto-expanded
+and the bare name would silently fall through as an undefined reference.
+
+**Wrong:**
+
+    row=[k str c fmt2 rv 2]
+
+`fmt2 rv 2` is a 2-arg call producing one formatted string, but the list
+parser would treat `fmt2`, `rv`, and `2` as three separate elements.
+
+**Fix A: wrap the call in parens.**
+
+    row=[k str c (fmt2 rv 2)]
+
+The parens group the call as one element. Works for any builtin.
+
+**Fix B: bind the call first, then use the binding.**
+
+    s=fmt2 rv 2
+    row=[k str c s]
+
+Use this when the same value is needed in more than one place, or when the
+inline form gets unreadable.
+"#,
+    },
+    ErrorEntry {
         code: "ILO-P021",
         short: "ambiguous double-minus prefix-binop chain",
         long: r#"## ILO-P021: ambiguous double-minus prefix-binop chain
