@@ -1,0 +1,41 @@
+name: sync next from main
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: next
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Try fast-forward
+        id: ff
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          if git merge --ff-only origin/main; then
+            echo "result=ff" >> "$GITHUB_OUTPUT"
+            git push origin next
+          else
+            echo "result=diverged" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Open sync PR if diverged
+        if: steps.ff.outputs.result == 'diverged'
+        uses: peter-evans/create-pull-request@v6
+        with:
+          branch: chore/sync-next-from-main
+          base: next
+          title: "chore: sync next from main"
+          body: |
+            Automated PR — `next` could not fast-forward from `main`.
+            Resolve any conflicts, then merge to bring `next` current.
+          delete-branch: true
