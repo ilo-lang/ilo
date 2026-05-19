@@ -395,10 +395,19 @@ fn cross_backend_conformance() {
         stats.insert(*b, Stats::default());
     }
 
-    // In 0.13.0 we report rather than gate; see the comment below at the
-    // soft-fail branch. The hard-failures bucket is retained for the summary
-    // and intentionally never panicked on.
-    let hard_failures: Vec<String> = Vec::new();
+    // In 0.13.0 Cranelift is the production backend and must not regress:
+    // any Fail there is a hard failure. The narrow HIR walkers in WASM and
+    // Zero v1, plus Python's missing __main__ dispatcher, mean those three
+    // get soft-fail treatment for Outcome::Fail (we still hard-fail on
+    // Outcome::Fail for Cranelift, and on Outcome::Unsupported nowhere —
+    // unsupported is by definition a documented skip).
+    //
+    // Set ILO_STRICT_CONFORMANCE=1 to promote every backend's Fail to a
+    // hard failure (intended for 0.14 once the walkers cover the corpus).
+    let strict = std::env::var("ILO_STRICT_CONFORMANCE")
+        .map(|v| !v.is_empty() && v != "0")
+        .unwrap_or(false);
+    let mut hard_failures: Vec<String> = Vec::new();
 
     for case in &cases {
         for backend in BACKENDS {
@@ -428,20 +437,18 @@ fn cross_backend_conformance() {
                         case.path.file_name().and_then(|n| n.to_str()).unwrap_or(""),
                         msg
                     );
-                    // In 0.13.0 the conformance suite REPORTS honestly across
-                    // all four backends rather than gating. The narrow HIR
-                    // walkers in WASM and Zero v1 cover only the hello-world
-                    // subset; Python emits library code (no `__main__`
-                    // dispatcher) so subprocess invocation needs wrapper
-                    // scaffolding that lands in the next release. Cranelift
-                    // covers the corpus today via `ilo run` but `ilo build`
-                    // surfaces auto-main-pick gaps that show up as fails
-                    // here. Document all of this in the per-backend numbers,
-                    // then file follow-ups. The brief calls this out: "fails
-                    // are findings, not blockers — document the skip, keep
-                    // moving."
-                    let _ = hard_failures.len();
-                    eprintln!("soft-fail: {line}");
+                    // Cranelift is the production backend in 0.13.0 — any
+                    // fail there is a regression and gets pushed onto
+                    // hard_failures, which panics at the end. WASM / Zero /
+                    // Python failures stay soft-fail in 0.13.0 because the
+                    // walkers are intentionally narrow; flip
+                    // ILO_STRICT_CONFORMANCE=1 to hard-fail those too.
+                    let is_hard = strict || *backend == Backend::Cranelift;
+                    if is_hard {
+                        hard_failures.push(line);
+                    } else {
+                        eprintln!("soft-fail: {line}");
+                    }
                 }
             }
         }
@@ -462,8 +469,15 @@ fn cross_backend_conformance() {
     }
     eprintln!();
 
-    // 0.13.0 reports honest per-backend numbers without gating. Cranelift
-    // native is the production backend; users tracking regressions should
-    // diff the summary table emitted above against the previous release.
-    let _ = hard_failures;
+    // 0.13.0 gates on Cranelift fails (production backend); WASM / Zero /
+    // Python stay soft-fail unless ILO_STRICT_CONFORMANCE=1. The summary
+    // table above gives the per-backend coverage diff between releases.
+    if !hard_failures.is_empty() {
+        let mut msg = String::from("conformance hard-failures:\n");
+        for line in &hard_failures {
+            msg.push_str(line);
+            msg.push('\n');
+        }
+        panic!("{msg}");
+    }
 }
