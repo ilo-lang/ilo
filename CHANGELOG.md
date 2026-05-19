@@ -2,6 +2,10 @@
 
 ## 0.12.1
 
+### Security
+
+- Added a gitleaks secret-scan gate to the release workflow. Every `v*` tag push now runs `gitleaks/gitleaks-action@v2` against the full repo before the build, build-wasm, release, and publish jobs fire. A leaked API key, token, or PEM blocks the tag. Whitelist lives in `.gitleaks.toml` at the repo root and covers the placeholder strings used by `examples/apps/*` (`SCRAPINGBEE_KEY_PLACEHOLDER_...`, `sk-PLACEHOLDER-...`, `YOUR_*_HERE`, `REPLACE_ME`). Default gitleaks ruleset otherwise. Run locally with `gitleaks detect --source . --no-git`.
+
 ### Breaking
 
 - `ls dir` renamed to `lsd dir`. Six rerun10 personas tripped ILO-P011 on `ls=rdl! p` because `ls` was reserved; rename frees `ls` for user code. `walk`, `glob` unchanged.
