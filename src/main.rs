@@ -3475,7 +3475,7 @@ fn dispatch_run(r: cli::RunArgs, mode: OutputMode, explicit_json: bool, no_hints
         0
     } else if let Some(ref target) = r.emit {
         if target == "python" {
-            println!("{}", codegen::python::emit(&program));
+            println!("{}", ilo::backend::python::emit_to_string(&program));
             0
         } else {
             eprintln!("Unknown emit target. Supported: python");
@@ -4675,7 +4675,7 @@ fn run_bench(
     if json {
         return;
     }
-    let py_code = codegen::python::emit(program);
+    let py_code = ilo::backend::python::emit_to_string(program);
     let call_func = func_name.unwrap_or("main").replace('-', "_");
     let call_args: Vec<String> = args
         .iter()
