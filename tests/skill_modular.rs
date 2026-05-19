@@ -1,10 +1,12 @@
 // Modular skill tests.
 //
 // Phase 1 (#395) split the monolithic compact spec into six embedded skill
-// modules, each loaded on demand by an agent via `ilo skill get <name>`. These
-// tests guard the structural contract:
+// modules. Phase 2 added `ilo-examples` and `ilo-edit-loop` (PR #419) for
+// Zero-parity task coverage. Each module is loaded on demand by an agent via
+// `ilo skill get <name>` (or `--json`). These tests guard the structural
+// contract:
 //
-//   - all six modules exist at known paths
+//   - all eight modules exist at known paths
 //   - each carries valid Anthropic-format YAML frontmatter (`name`,
 //     `description`)
 //   - every `description` starts with `Use this when`, the routing key agents
@@ -28,6 +30,8 @@ const SKILL_NAMES: &[&str] = &[
     "ilo-tools",
     "ilo-engines",
     "ilo-agent",
+    "ilo-examples",
+    "ilo-edit-loop",
 ];
 
 /// Conservative byte budget per module. cl100k_base averages ~3.4 bytes/token
