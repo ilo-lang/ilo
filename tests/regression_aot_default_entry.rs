@@ -84,7 +84,7 @@ fn aot_picks_main_over_first_declared_function() {
 #[test]
 fn aot_errors_clearly_when_no_main_and_no_explicit_entry() {
     let (src, bin) = tmp_paths("no-main");
-    std::fs::write(&src, "helper>n;42\nrun>n;helper\n").expect("write src");
+    std::fs::write(&src, "helper>n;42\ngo>n;helper\n").expect("write src");
 
     let compile = ilo()
         .args(["compile"])
@@ -103,7 +103,7 @@ fn aot_errors_clearly_when_no_main_and_no_explicit_entry() {
         "stderr should mention ILO-E801, got: {stderr:?}"
     );
     assert!(
-        stderr.contains("helper") && stderr.contains("run"),
+        stderr.contains("helper") && stderr.contains("go"),
         "stderr should list available functions, got: {stderr:?}"
     );
     // The whole point: no binary produced (no SIGSEGV path possible).
@@ -120,14 +120,14 @@ fn aot_errors_clearly_when_no_main_and_no_explicit_entry() {
 #[test]
 fn aot_honours_explicit_entry_when_no_main_present() {
     let (src, bin) = tmp_paths("explicit-entry");
-    std::fs::write(&src, "helper>n;42\nrun>n;helper\n").expect("write src");
+    std::fs::write(&src, "helper>n;42\ngo>n;helper\n").expect("write src");
 
     let compile = ilo()
         .args(["compile"])
         .arg(&src)
         .arg("-o")
         .arg(&bin)
-        .arg("run")
+        .arg("go")
         .output()
         .expect("compile");
     assert!(
