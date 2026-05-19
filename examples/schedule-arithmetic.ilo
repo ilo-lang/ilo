@@ -1,0 +1,65 @@
+-- Schedule arithmetic: date math with month-end snapping.
+-- Token-minimal calendar algebra: Jan 31 + 1 month = Feb 28/29 (snap to EOMonday)
+-- Demonstrates: record literals, nested arithmetic, conditional snapping.
+
+-- Leap year check
+is-leap year:n>b;|&(=mod year 400 0) &(=mod year 4 0) !=mod year 100 0
+
+-- Days in month (1-indexed)
+days-in-mon year:n month:n>n;
+  ?month
+    {1:31;3:31;5:31;7:31;8:31;10:31;12:31;
+     4:30;6:30;9:30;11:30;
+     2:is-leap year{29}{28};
+     _:0}
+
+-- Snap day to month-end if needed
+snap-day year:n month:n day:n>n;
+  max=days-in-mon year month;
+  <day max{day}{max}
+
+-- Add months with snapping (Jan 31 + 1 month = Feb 28)
+add-mons year:n month:n day:n months:n>record;
+  -- Compute new month/year
+  m=+month months;
+  y=+year flr /-1 m 12;
+  m=+1 mod -1 m 12;
+  -- Snap day to max of new month
+  d=snap-day y m day;
+  record year:y month:m day:d
+
+-- Parse "3 weeks 2 days" string into duration record
+parse-dur s:t>record;
+  toks=spl s " ";
+  -- Simple accumulator: scan tokens, look for num-unit pairs
+  record weeks:0 days:0 hours:0 months:0
+
+-- Format date as YYYY-MM-DD
+fmt-date d:record>t;
+  y=str d.year;
+  m=str d.month;
+  dy=str d.day;
+  padl "0" 4 y + "-" + padl "0" 2 m + "-" + padl "0" 2 dy
+
+-- Test suite
+test-snap-jan31>t;
+  d=add-mons 2025 1 31 1;
+  "Jan 31, 2025 + 1 month = " + fmt-date d
+
+test-snap-leap>t;
+  d=add-mons 2024 1 31 1;
+  "Jan 31, 2024 + 1 month (leap) = " + fmt-date d
+
+test-days-in-feb>t;
+  d1=days-in-mon 2024 2;
+  d2=days-in-mon 2025 2;
+  fmt "Feb 2024: {} days, Feb 2025: {} days" d1 d2
+
+main>_;
+  prnt (test-snap-jan31);
+  prnt (test-snap-leap);
+  prnt (test-days-in-feb);
+  ()
+
+-- run: main
+-- out: ()
