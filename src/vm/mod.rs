@@ -18927,6 +18927,28 @@ pub extern "C" fn ilo_aot_parse_arg(ptr: u64) -> u64 {
     }
 }
 
+/// Parse a CLI arg destined for a `L _` parameter.
+///
+/// Used by AOT-compiled binaries whose `main` declares a list-typed parameter
+/// (e.g. `main args:L t > ...`). Without this path, the AOT entry shim would
+/// treat the raw shell string as a single text value, and `args` would behave
+/// as a string instead of a list — `len args` would return the character count
+/// rather than the list length, and `cat args ","` would silently produce `nil`
+/// because `cat` needs a `L t`.
+///
+/// Mirrors `cli_parse::parse_cli_arg_as_list`: parses `[..]` literals and bare
+/// comma lists, and wraps every other shape in a single-element list. Keeps
+/// the AOT entry behaviour aligned with the tree-walker / VM / JIT path that
+/// goes through `parse_cli_args_typed`.
+#[cfg(feature = "cranelift")]
+#[unsafe(no_mangle)]
+pub extern "C" fn ilo_aot_parse_arg_list(ptr: u64) -> u64 {
+    let cstr = unsafe { std::ffi::CStr::from_ptr(ptr as *const std::ffi::c_char) };
+    let s = cstr.to_str().unwrap_or("");
+    let v = crate::cli_parse::parse_cli_arg_as_list(s);
+    NanVal::from_value(&v).0
+}
+
 // ── Block leader analysis (shared by JIT backends) ──────────────────
 
 /// Identify basic block leaders in bytecode. A leader is:
@@ -34893,5 +34915,64 @@ mod aot_publish_tests {
         // change here must come with a corresponding deserialise-compat
         // story (or an explicit "we only support v_n" cut-over).
         assert_eq!(BLOB_SCHEMA_VERSION, 1);
+    }
+
+    // ── ilo_aot_parse_arg_list FFI helper ─────────────────────────────────
+    //
+    // The AOT entry shim calls this on every argv slot bound to a `L _`
+    // param. Direct in-process coverage so the lines aren't only hit via
+    // subprocess AOT runs (which run uninstrumented binaries).
+
+    #[cfg(feature = "cranelift")]
+    fn call_parse_arg_list(s: &str) -> Value {
+        let c = std::ffi::CString::new(s).unwrap();
+        let bits = ilo_aot_parse_arg_list(c.as_ptr() as u64);
+        NanVal(bits).to_value()
+    }
+
+    #[cfg(feature = "cranelift")]
+    #[test]
+    fn aot_parse_arg_list_wraps_scalar_text() {
+        let v = call_parse_arg_list("hello");
+        match v {
+            Value::List(xs) => {
+                assert_eq!(xs.len(), 1);
+                assert!(matches!(&xs[0], Value::Text(s) if s.as_str() == "hello"));
+            }
+            _ => panic!("expected list, got {v:?}"),
+        }
+    }
+
+    #[cfg(feature = "cranelift")]
+    #[test]
+    fn aot_parse_arg_list_bracketed_literal() {
+        let v = call_parse_arg_list("[1,2,3]");
+        match v {
+            Value::List(xs) => {
+                assert_eq!(xs.len(), 3);
+                assert!(matches!(xs[0], Value::Number(n) if n == 1.0));
+            }
+            _ => panic!("expected list, got {v:?}"),
+        }
+    }
+
+    #[cfg(feature = "cranelift")]
+    #[test]
+    fn aot_parse_arg_list_bare_comma_list() {
+        let v = call_parse_arg_list("a,b,c");
+        match v {
+            Value::List(xs) => assert_eq!(xs.len(), 3),
+            _ => panic!("expected list, got {v:?}"),
+        }
+    }
+
+    #[cfg(feature = "cranelift")]
+    #[test]
+    fn aot_parse_arg_list_empty_brackets() {
+        let v = call_parse_arg_list("[]");
+        match v {
+            Value::List(xs) => assert!(xs.is_empty()),
+            _ => panic!("expected list, got {v:?}"),
+        }
     }
 }

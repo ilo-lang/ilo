@@ -1,0 +1,21 @@
+-- `main args:L t` (or any `L _` param) binds the argv value as a list across
+-- every engine — tree, VM, JIT, and AOT. Historically AOT diverged: every
+-- argv slot was parsed via `ilo_aot_parse_arg`, which only produces numbers
+-- or strings, so `args` was bound as the raw CLI string. Then `len args`
+-- returned the character count (e.g. 13 for `[foo,bar,baz]`) and `cat args
+-- ","` silently produced `nil` (cat needed `L t`, got `t`). The verifier
+-- passed in both cases — the divergence was runtime-only.
+--
+-- The 0.12.1 fix consults the entry function's declared param types and
+-- routes `L _` params through `ilo_aot_parse_arg_list`, which wraps non-list
+-- values as `[value]`, matching the binary-side `parse_cli_args_typed`
+-- coercion the tree/VM/JIT path already uses.
+
+main args:L t>t;cat args ","
+
+-- run: main [foo,bar,baz]
+-- out: foo,bar,baz
+-- run: main foo
+-- out: foo
+-- run: main []
+-- out:

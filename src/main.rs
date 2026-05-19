@@ -4675,28 +4675,10 @@ print(f"__NS__={{_per}}")
     }
 }
 
-/// Split a string on top-level commas, respecting [] nesting.
-/// Used by `parse_cli_arg` so that nested-list literals like
-/// `[[1,2],[3,4]]` are parsed as two elements rather than four.
-fn split_top_level_commas(s: &str) -> Vec<&str> {
-    let mut parts = Vec::new();
-    let mut depth: i32 = 0;
-    let mut start = 0usize;
-    let bytes = s.as_bytes();
-    for (i, &b) in bytes.iter().enumerate() {
-        match b {
-            b'[' => depth += 1,
-            b']' => depth -= 1,
-            b',' if depth == 0 => {
-                parts.push(&s[start..i]);
-                start = i + 1;
-            }
-            _ => {}
-        }
-    }
-    parts.push(&s[start..]);
-    parts
-}
+// Moved to `ilo::cli_parse::split_top_level_commas` so the AOT runtime can
+// share the same nested-bracket-respecting splitter. Re-imported via
+// `parse_cli_arg` (which calls into it) — no direct call sites remain in
+// this file. Kept the comment as a breadcrumb for future maintainers.
 
 /// True iff `s` is shaped like an ilo function identifier (could plausibly
 /// have been intended as a subcommand name).
@@ -4751,51 +4733,10 @@ fn looks_like_subcommand_name(s: &str) -> bool {
     true
 }
 
-fn parse_cli_arg(s: &str) -> interpreter::Value {
-    // Bracketed list: [1,2,3], ["apple","ant"], [[1,2],[3,4]] or [] — split
-    // top-level commas, honoring quoted strings so commas inside strings don't
-    // split, and recursing into nested brackets.
-    if s.starts_with('[') && s.ends_with(']') {
-        let inner = s[1..s.len() - 1].trim();
-        if inner.is_empty() {
-            return interpreter::Value::List(std::sync::Arc::new(vec![]));
-        }
-        let items: Vec<interpreter::Value> = split_top_level_commas(inner)
-            .into_iter()
-            .map(|part| parse_cli_arg(part.trim()))
-            .collect();
-        return interpreter::Value::List(std::sync::Arc::new(items));
-    }
-    // Quoted string: strip surrounding double quotes and treat as text.
-    // This preserves the raw contents (no escape decoding) which mirrors how
-    // the rest of the CLI passes bare text.
-    if s.len() >= 2 && s.starts_with('"') && s.ends_with('"') {
-        return interpreter::Value::Text(std::sync::Arc::new(s[1..s.len() - 1].to_string()));
-    }
-    // Bare comma list: 1,2,3
-    if s.contains(',') {
-        let items: Vec<interpreter::Value> = split_top_level_commas(s)
-            .into_iter()
-            .map(|part| parse_cli_arg(part.trim()))
-            .collect();
-        return interpreter::Value::List(std::sync::Arc::new(items));
-    }
-    if s == "nil" {
-        return interpreter::Value::Nil;
-    }
-    if let Ok(n) = s.parse::<f64>()
-        && n.is_finite()
-    {
-        return interpreter::Value::Number(n);
-    }
-    if s == "true" {
-        interpreter::Value::Bool(true)
-    } else if s == "false" {
-        interpreter::Value::Bool(false)
-    } else {
-        interpreter::Value::Text(std::sync::Arc::new(s.to_string()))
-    }
-}
+// Moved to `ilo::cli_parse::parse_cli_arg` so the AOT runtime helper can
+// share the same parsing logic. Re-exported here so existing call sites and
+// the test module continue to compile without a flag-day rename.
+use ilo::cli_parse::parse_cli_arg;
 
 /// Parse a single CLI arg, taking the declared param type into account.
 ///
@@ -4808,23 +4749,8 @@ fn parse_cli_arg(s: &str) -> interpreter::Value {
 ///
 /// For every other declared type (or when no type is known), behaviour is
 /// identical to `parse_cli_arg`.
-fn parse_cli_arg_for_param(s: &str, expected: Option<&ast::Type>) -> interpreter::Value {
-    if matches!(expected, Some(ast::Type::Text)) {
-        // Preserve the raw CLI string verbatim. We still honor the surrounding
-        // double-quote convention `parse_cli_arg` uses (callers sometimes pass
-        // `"hello"` to force the text branch when no type info was available);
-        // stripping them keeps quoted callers backward-compatible. Everything
-        // else, *including* digits, `true`/`false`, `nil`, `[...]`, is kept
-        // as-is and becomes `Text`.
-        let stripped = if s.len() >= 2 && s.starts_with('"') && s.ends_with('"') {
-            &s[1..s.len() - 1]
-        } else {
-            s
-        };
-        return interpreter::Value::Text(std::sync::Arc::new(stripped.to_string()));
-    }
-    parse_cli_arg(s)
-}
+// Moved to `ilo::cli_parse::parse_cli_arg_for_param`.
+use ilo::cli_parse::parse_cli_arg_for_param;
 
 /// Look up a function's declared parameter types in the program.
 /// Returns `None` if the function isn't declared (e.g. inline-snippet entry).
