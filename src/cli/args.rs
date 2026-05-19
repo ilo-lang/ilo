@@ -116,8 +116,10 @@ pub struct RunArgs {
     /// Was an alias for --run-tree; now also rejected by the unknown-flag guard.
     #[arg(skip = false)]
     pub run: bool,
-    /// Register VM.
-    #[arg(long = "run-vm", conflicts_with_all = ["jit", "run_llvm"])]
+    /// Register VM (canonical form, symmetric with --jit). `--run-vm` is
+    /// retained as a hidden alias for one release; it emits a one-shot
+    /// deprecation hint on stderr. Removal planned for 0.13.0.
+    #[arg(long = "vm", visible_alias = "run-vm", conflicts_with_all = ["jit", "run_llvm"])]
     pub run_vm: bool,
     /// Cranelift JIT (opt-in for hot numeric loops; falls back to VM on bailout).
     #[arg(long = "jit", conflicts_with_all = ["run_vm", "run_llvm"])]

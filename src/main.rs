@@ -1725,16 +1725,20 @@ fn serv_cmd(args_slice: &[String]) {
     }
 }
 
-/// Scan args for `--run-vm` / `--jit` / `--run-llvm` anywhere in the list and
-/// remove them. argv[0] (binary name) is preserved at position 0. Returns the
-/// chosen engine (if any) plus the remaining args. Multiple conflicting engine
-/// flags produce an error. `--jit` opts into the Cranelift JIT for hot numeric
-/// loops; the implementation name (Cranelift) is kept internal so the
-/// user-facing flag names the concept, not the backend.
+/// Scan args for `--vm` / `--run-vm` / `--jit` / `--run-llvm` anywhere in the
+/// list and remove them. argv[0] (binary name) is preserved at position 0.
+/// Returns the chosen engine (if any) plus the remaining args. Multiple
+/// conflicting engine flags produce an error. `--jit` opts into the Cranelift
+/// JIT for hot numeric loops; the implementation name (Cranelift) is kept
+/// internal so the user-facing flag names the concept, not the backend.
+///
+/// `--run-vm` is a one-release transitional alias for `--vm`. When the alias
+/// is seen, a one-shot deprecation hint is emitted on stderr. Removal planned
+/// for 0.13.0.
 ///
 /// `--run-tree` / `--run` are NOT recognised here as part of the tree-walker
 /// soft-deprecation. They fall through to the unknown-flag guard, which
-/// surfaces a clear error suggesting `--run-vm` or `--jit`. The tree-walker
+/// surfaces a clear error suggesting `--vm` or `--jit`. The tree-walker
 /// stays in-tree as the HOF-callback runtime; it's just no longer
 /// user-selectable on the CLI.
 fn extract_run_engine_flag(
@@ -1742,13 +1746,18 @@ fn extract_run_engine_flag(
 ) -> Result<(Option<cli::Engine>, Vec<String>), String> {
     let mut engine: Option<cli::Engine> = None;
     let mut conflict = false;
+    let mut saw_run_vm_alias = false;
     let mut remaining = Vec::with_capacity(args.len());
 
     for arg in args {
         let candidate = match arg.as_str() {
             "--jit" => Some(cli::Engine::Cranelift),
             "--run-llvm" => Some(cli::Engine::Llvm),
-            "--run-vm" => Some(cli::Engine::Vm),
+            "--vm" => Some(cli::Engine::Vm),
+            "--run-vm" => {
+                saw_run_vm_alias = true;
+                Some(cli::Engine::Vm)
+            }
             _ => None,
         };
         match candidate {
@@ -1762,10 +1771,30 @@ fn extract_run_engine_flag(
     }
 
     if conflict {
-        return Err("error: --run-vm, --jit, --run-llvm are mutually exclusive".to_string());
+        return Err("error: --vm, --jit, --run-llvm are mutually exclusive".to_string());
+    }
+
+    if saw_run_vm_alias {
+        emit_run_vm_alias_hint();
     }
 
     Ok((engine, remaining))
+}
+
+/// One-shot stderr hint when the user passes `--run-vm`. The alias is kept
+/// for one release so existing carry-forward scripts/personas don't break,
+/// but every invocation gets a single line nudging them to the canonical
+/// `--vm` spelling. Removal lands in 0.13.0 alongside the tree-walker
+/// hard-removal pass.
+fn emit_run_vm_alias_hint() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static EMITTED: AtomicBool = AtomicBool::new(false);
+    if EMITTED.swap(true, Ordering::Relaxed) {
+        return;
+    }
+    eprintln!(
+        "hint: --run-vm → --vm (canonical form). The --run-vm alias will be removed in 0.13.0."
+    );
 }
 
 /// Scan args for --json/-j, --text/-t, --ansi/-a, --no-hints/-nh.
@@ -2796,7 +2825,11 @@ fn dispatch_bare_args(raw_args: Vec<String>, global: &cli::Global) -> i32 {
         match args[m].as_str() {
             "--jit" => (Some(cli::Engine::Cranelift), m + 1),
             "--run-llvm" => (Some(cli::Engine::Llvm), m + 1),
-            "--run-vm" => (Some(cli::Engine::Vm), m + 1),
+            "--vm" => (Some(cli::Engine::Vm), m + 1),
+            "--run-vm" => {
+                emit_run_vm_alias_hint();
+                (Some(cli::Engine::Vm), m + 1)
+            }
             _ => (None, m),
         }
     } else {
@@ -3862,7 +3895,7 @@ fn print_help() {
     println!(
         "  --jit            Cranelift JIT (faster on hot numeric loops; falls back to VM on bailout)"
     );
-    println!("  --run-vm         Register VM (explicit form of default)\n");
+    println!("  --vm             Register VM (canonical form, symmetric with --jit; --run-vm is a deprecated alias)\n");
     println!("Examples:");
     println!("  ilo 'f x:n>n;*x 2' 5             Define and call f(5) → 10");
     println!("  ilo 'f xs:L n>n;len xs' 1,2,3     Pass a list → 3");
