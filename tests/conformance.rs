@@ -179,39 +179,37 @@ fn parse_case(path: &Path) -> Option<Case> {
 }
 
 fn parse_run(raw: &str) -> (String, Vec<String>) {
-    // Naive whitespace split. Sufficient for the corpus; complex literals
-    // (lists with embedded spaces, multi-word strings) trip this, and the
-    // case ends up running with the wrong arg shape — which surfaces as a
-    // backend disagreement rather than a silent pass. That's the right
-    // failure mode for a conformance suite.
-    let mut it = raw.split_whitespace();
-    let func = it.next().unwrap_or_default().to_string();
-    let args = it.map(|s| s.to_string()).collect();
+    // Shell-style quote-aware tokenisation so multi-word string args don't
+    // get fragmented across whitespace. Combined with the hard-fail
+    // conformance gate above, fragmented args would otherwise produce the
+    // same wrong output across every backend and silently pass.
+    //
+    // shlex returns None for malformed input (unclosed quotes etc.); fall
+    // back to whitespace split in that case so the test still runs and the
+    // expected/actual diff surfaces in the per-case Fail output.
+    let tokens = shlex::split(raw).unwrap_or_else(|| {
+        raw.split_whitespace().map(|s| s.to_string()).collect()
+    });
+    let mut it = tokens.into_iter();
+    let func = it.next().unwrap_or_default();
+    let args: Vec<String> = it.collect();
     (func, args)
 }
 
-/// Look at backend stderr/stdout and decide whether the failure is a
+/// Look at backend stderr and decide whether the failure is a
 /// "backend doesn't support this surface yet" soft skip vs a hard fail.
-fn is_unsupported(stderr: &str, stdout: &str) -> bool {
-    let blob = format!("{stderr}\n{stdout}");
-    blob.contains("ILO-B201")
-        || blob.contains("ILO-B202")
-        || blob.contains("ILO-B203")
-        || blob.contains("ILO-B204")
-        || blob.contains("ILO-B205")
-        || blob.contains("ILO-B301")
-        || blob.contains("ILO-B302")
-        || blob.contains("ILO-B303")
-        || blob.contains("ILO-B305")
-        || blob.contains("UnsupportedFeature")
-        || blob.contains("unsupported feature")
-        || blob.contains("WASM compile error")
-        || blob.contains("Zero compile error")
-        || blob.contains("Zero transpile error")
-        || blob.contains("WASM transpile error")
-        || blob.contains("Stage 5d")
-        || blob.contains("Stage 5e")
-        || blob.contains("only lowers")
+///
+/// Gates exclusively on a structured `ILO-B###` code on stderr. We
+/// deliberately don't match against stdout (program output, never
+/// diagnostics) or against free-form prose like `"only lowers"` /
+/// `"Stage 5d"`; a future example whose program text happens to print
+/// that phrase would otherwise get silently reclassified.
+fn is_unsupported(stderr: &str, _stdout: &str) -> bool {
+    static RE: OnceLock<regex::Regex> = OnceLock::new();
+    let re = RE.get_or_init(|| {
+        regex::Regex::new(r"\bILO-B[0-9]{3}\b").expect("valid backend-error regex")
+    });
+    stderr.lines().any(|l| re.is_match(l))
 }
 
 #[derive(Debug)]

@@ -940,6 +940,7 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
+ "shlex",
  "target-lexicon 0.12.16",
  "tempfile",
  "thiserror 2.0.18",
