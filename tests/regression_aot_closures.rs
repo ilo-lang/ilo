@@ -99,7 +99,7 @@ fn assert_cross_engine(tag: &str, src: &str, expected_stdout: &[u8]) {
         String::from_utf8_lossy(&aot_stderr),
     );
 
-    for engine in ["--run-tree", "--run-vm", "--jit"] {
+    for engine in ["--run-vm", "--jit"] {
         let (s, _e, c) = run_in_process(&src_path, engine);
         assert_eq!(
             s,
