@@ -804,6 +804,19 @@ fn emit_expr(out: &mut String, level: usize, expr: &Expr) -> String {
                     xs, i, d
                 );
             }
+            if function == "prod" && args.len() == 1 {
+                // product of a list of numbers; empty list = 1 (matches tree/VM identity)
+                let xs = emit_expr(out, level, &args[0]);
+                return format!("(__import__('math').prod({}))", xs);
+            }
+            if function == "cprod" && args.len() == 1 {
+                // running product: [a,b,c] -> [a, a*b, a*b*c]
+                let xs = emit_expr(out, level, &args[0]);
+                return format!(
+                    "(list(__import__('itertools').accumulate({}, lambda a, b: a * b)))",
+                    xs
+                );
+            }
             if function == "fmt" && !args.is_empty() {
                 let tmpl = emit_expr(out, level, &args[0]);
                 let rest: Vec<String> =

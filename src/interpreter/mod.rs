@@ -4423,6 +4423,30 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         }
         return Ok(Value::Number(total));
     }
+    if builtin == Some(Builtin::Prod) && args.len() == 1 {
+        let items = match &args[0] {
+            Value::List(l) => l,
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("prod: arg must be a list, got {:?}", other),
+                ));
+            }
+        };
+        let mut total = 1.0_f64;
+        for item in items.iter() {
+            match item {
+                Value::Number(n) => total *= n,
+                other => {
+                    return Err(RuntimeError::new(
+                        "ILO-R009",
+                        format!("prod: list elements must be numbers, got {:?}", other),
+                    ));
+                }
+            }
+        }
+        return Ok(Value::Number(total));
+    }
     if builtin == Some(Builtin::Cumsum) && args.len() == 1 {
         let items = match &args[0] {
             Value::List(l) => l,
@@ -4445,6 +4469,34 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                     return Err(RuntimeError::new(
                         "ILO-R009",
                         format!("cumsum: list elements must be numbers, got {:?}", other),
+                    ));
+                }
+            }
+        }
+        return Ok(Value::List(Arc::new(out)));
+    }
+    if builtin == Some(Builtin::Cprod) && args.len() == 1 {
+        let items = match &args[0] {
+            Value::List(l) => l,
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("cprod: arg must be a list, got {:?}", other),
+                ));
+            }
+        };
+        let mut total = 1.0_f64;
+        let mut out: Vec<Value> = Vec::with_capacity(items.len());
+        for item in items.iter() {
+            match item {
+                Value::Number(n) => {
+                    total *= n;
+                    out.push(Value::Number(total));
+                }
+                other => {
+                    return Err(RuntimeError::new(
+                        "ILO-R009",
+                        format!("cprod: list elements must be numbers, got {:?}", other),
                     ));
                 }
             }

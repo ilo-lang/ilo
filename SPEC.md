@@ -207,7 +207,7 @@ Short builtin names are precious surface and ilo reserves a stable subset of the
 
 `rng` is the short-form alias for the canonical `range` builtin; it is reserved with the same shadow-prevention semantics as a canonical builtin name (binding `rng=...` or declaring `rng x:...` fires `ILO-P011`). `rand` is the short-form alias for the canonical `rnd` builtin (added 0.12.1) and is reserved with the same semantics.
 
-Longer builtin names (`acos`, `asin`, `atan`, `flat`, `take`, `drop`, `mget`, `mset`, `mmap`, `prnt`, `mapr`, `solve`, `clamp`, `cumsum`, `median`, `matmul`, `range`, `window`, `chunks`, `walk`, `glob`, …) are also reserved and rejected by `ILO-P011`, but the short-name namespace above is where carry-forward scripts most often collide, so it gets explicit enumeration.
+Longer builtin names (`acos`, `asin`, `atan`, `flat`, `take`, `drop`, `mget`, `mset`, `mmap`, `prnt`, `mapr`, `solve`, `clamp`, `cumsum`, `cprod`, `median`, `matmul`, `range`, `window`, `chunks`, `walk`, `glob`, `prod`, …) are also reserved and rejected by `ILO-P011`, but the short-name namespace above is where carry-forward scripts most often collide, so it gets explicit enumeration.
 
 **Forward-compatibility rule.** Future ilo releases add new builtins under names **4 characters or longer**. A 2-character name that is not on this list today is safe to use as a binding or function name and stays safe across releases. A 3-character name that is not on this list is _highly likely_ to stay safe but is not a hard promise - the 3-char surface is already dense, and a rare ergonomic win may justify an addition, called out in the changelog.
 
@@ -492,6 +492,7 @@ Called like functions, compiled to dedicated opcodes.
 | `grp fn xs` | group list by key function | `M t (L a)` |
 | `flat xs` | flatten one level of nesting | `L a` |
 | `sum xs` | sum of numeric list (0 for empty) | `n` |
+| `prod xs` | product of numeric list (1 for empty) | `n` |
 | `avg xs` | mean of numeric list (error if empty) | `n` |
 | `rgx pat s` | regex: no groups→all matches; groups→first match captures | `L t` |
 | `mmap` | create empty map | `M t _` |
@@ -525,6 +526,7 @@ Called like functions, compiled to dedicated opcodes.
 | `window n xs` | sliding windows of size `n` (drops trailing partial; empty if n > len) | `L (L a)` |
 | `clamp x lo hi` | restrict `x` to `[lo, hi]` (lower bound wins when `lo > hi`) | `n` |
 | `cumsum xs` | running sum; output length matches input | `L n` |
+| `cprod xs` | running product; output length matches input | `L n` |
 | `frq xs` | frequency map of elements (keys are bare stringified values) | `M t n` |
 | `median xs` | median of numeric list | `n` |
 | `quantile xs p` | sample quantile (linear interp; `p` clamped to `[0, 1]`) | `n` |

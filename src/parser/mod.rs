@@ -4062,6 +4062,9 @@ fn builtin_arity_tables() -> (HashMap<String, usize>, HashMap<String, Vec<bool>>
         ("pow", 2, &[]),
         // Aggregates
         ("sum", 1, &[]),
+        ("prod", 1, &[]),
+        ("cumsum", 1, &[]),
+        ("cprod", 1, &[]),
         ("avg", 1, &[]),
         // Collections (unary)
         ("len", 1, &[]),

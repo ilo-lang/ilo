@@ -411,7 +411,9 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("flatmap", &["fn", "list"], "list"),
     ("flat", &["list"], "list"),
     ("sum", &["list"], "n"),
+    ("prod", &["L n"], "n"),
     ("cumsum", &["L n"], "L n"),
+    ("cprod", &["L n"], "L n"),
     ("avg", &["list"], "n"),
     ("median", &["list"], "n"),
     ("quantile", &["list", "n"], "n"),
@@ -518,7 +520,7 @@ fn builtin_as_fn_ty(name: &str) -> Option<Ty> {
         // 2-arg n,n->n (suitable as fld accumulator)
         "min" | "max" | "mod" => Ty::Fn(vec![n.clone(), n.clone()], Box::new(n)),
         // 1-arg list->n
-        "sum" | "avg" | "median" | "stdev" | "variance" => {
+        "sum" | "prod" | "avg" | "median" | "stdev" | "variance" => {
             Ty::Fn(vec![Ty::List(Box::new(n.clone()))], Box::new(n))
         }
         // 1-arg t->t
@@ -2301,6 +2303,34 @@ fn builtin_check_args(
             }
             (Ty::Map(Box::new(key_ty), Box::new(Ty::Number)), errors)
         }
+        "prod" => {
+            if let Some(arg) = arg_types.first() {
+                match arg {
+                    Ty::List(inner) => {
+                        if !compatible(inner, &Ty::Number) {
+                            errors.push(VerifyError {
+                                code: "ILO-T013",
+                                function: func_ctx.to_string(),
+                                message: format!("'prod' expects L n, got L {inner}"),
+                                hint: None,
+                                span,
+                                is_warning: false,
+                            });
+                        }
+                    }
+                    Ty::Unknown => {}
+                    other => errors.push(VerifyError {
+                        code: "ILO-T013",
+                        function: func_ctx.to_string(),
+                        message: format!("'prod' expects L n, got {other}"),
+                        hint: None,
+                        span,
+                        is_warning: false,
+                    }),
+                }
+            }
+            (Ty::Number, errors)
+        }
         "cumsum" => {
             if let Some(arg) = arg_types.first() {
                 match arg {
@@ -2321,6 +2351,34 @@ fn builtin_check_args(
                         code: "ILO-T013",
                         function: func_ctx.to_string(),
                         message: format!("'cumsum' expects L n, got {other}"),
+                        hint: None,
+                        span,
+                        is_warning: false,
+                    }),
+                }
+            }
+            (Ty::List(Box::new(Ty::Number)), errors)
+        }
+        "cprod" => {
+            if let Some(arg) = arg_types.first() {
+                match arg {
+                    Ty::List(inner) => {
+                        if !compatible(inner, &Ty::Number) {
+                            errors.push(VerifyError {
+                                code: "ILO-T013",
+                                function: func_ctx.to_string(),
+                                message: format!("'cprod' expects L n, got L {inner}"),
+                                hint: None,
+                                span,
+                                is_warning: false,
+                            });
+                        }
+                    }
+                    Ty::Unknown => {}
+                    other => errors.push(VerifyError {
+                        code: "ILO-T013",
+                        function: func_ctx.to_string(),
+                        message: format!("'cprod' expects L n, got {other}"),
                         hint: None,
                         span,
                         is_warning: false,
