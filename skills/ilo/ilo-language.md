@@ -65,7 +65,6 @@ User binding shadowing a builtin fires `ILO-P011`. Unreserved 2-char permanently
 
 - 2: `at hd tl rd wr ct`
 - 3: `abs avg cap cat cel chr cos det dot env exp fft fld flr flt fmt frq get grp has inv len log lsd lst lwr map max min mod now num ord pow pst rdb rdl rev rgx rng rnd rou run sin slc spl srt str sum tan trm unq upr wrl zip`
-- 4+: `take drop mget mset flat range`
 
 ## Not here
 
