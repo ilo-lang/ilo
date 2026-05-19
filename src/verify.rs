@@ -351,6 +351,7 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("rdin", &[], "R t t"),
     ("rdinl", &[], "R (L t) t"),
     ("wr", &["t", "t"], "R t t"),
+    ("wra", &["t", "t"], "R t t"),
     ("wrl", &["t", "L t"], "R t t"),
     ("trm", &["t"], "t"),
     ("upr", &["t"], "t"),
@@ -1709,7 +1710,7 @@ fn builtin_check_args(
                 errors,
             )
         }
-        "wr" | "wrl" => {
+        "wr" | "wra" | "wrl" => {
             if let Some(arg) = arg_types.first()
                 && !compatible(arg, &Ty::Text)
             {
@@ -1725,6 +1726,7 @@ fn builtin_check_args(
             // 2-arg form: wr path content — content must be text.
             // 3-arg form: wr path data fmt — data may be any serialisable type;
             // fmt selects the encoder (csv/tsv/json) and must be text.
+            // wra is always 2-arg: wra path content — content must be text.
             if name == "wr"
                 && arg_types.len() < 3
                 && let Some(arg) = arg_types.get(1)
@@ -1737,6 +1739,19 @@ fn builtin_check_args(
                     hint: Some(
                         "for typed data use the 3-arg form: wr path data \"json\"".to_string(),
                     ),
+                    span,
+                    is_warning: false,
+                });
+            }
+            if name == "wra"
+                && let Some(arg) = arg_types.get(1)
+                && !compatible(arg, &Ty::Text)
+            {
+                errors.push(VerifyError {
+                    code: "ILO-T013",
+                    function: func_ctx.to_string(),
+                    message: format!("'wra' arg 2 expects t (content), got {arg}"),
+                    hint: None,
                     span,
                     is_warning: false,
                 });
