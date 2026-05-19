@@ -1,0 +1,46 @@
+-- AOT-compiled binaries now handle higher-order functions, inline
+-- lambdas (with or without captures), closure-bind ctx args, fld/grp/
+-- uniqby with user-fn callbacks, and fn-ref return-and-call. Pre-fix
+-- AOT silently returned `nil` (or `[nil, nil, ...]`) for every shape
+-- below; tree, VM, and Cranelift JIT all returned the correct answer,
+-- so AOT was the lone diverging engine.
+--
+-- Root cause was simple: the AOT runtime never published the
+-- `CompiledProgram` into `ACTIVE_PROGRAM` / `ACTIVE_AST_PROGRAM`, so the
+-- dispatch helpers (`jit_call_dyn`, `jit_call_builtin_tree`) hit their
+-- null-program guards and returned TAG_NIL. The fix serialises the
+-- full program (chunks + AST + type registry) into a postcard blob
+-- embedded in the binary's `.rodata` and publishes it at startup via
+-- a new `ilo_aot_publish_program` runtime helper.
+--
+-- This file is the in-context learning example for agents: every shape
+-- here is one that used to fail under AOT and now works. The full
+-- cross-engine contract is enforced by
+-- tests/regression_aot_closures.rs.
+
+-- This example demonstrates the fix at the language level. The
+-- `examples_engines` harness runs it through tree / VM / JIT; the AOT
+-- contract is pinned by the regression test cited above.
+
+dbl x:n>n;*x 2
+add a:n b:n>n;+a b
+sq x:n>n;*x x
+addk x:n k:n>n;+x k
+mksq>F n n;sq
+
+map-lambda-nocap>L n;map (x:n>n;*x 2) [1,2,3]
+map-lambda-capture>L n;k=10;map (x:n>n;+x k) [1,2,3]
+map-closure-bind>L n;map addk 10 [1,2,3]
+fld-user-fn>n;fld add [1,2,3,4] 0
+fnref-return-call>n;f=mksq;f 5
+
+main>L n;
+  a=map-lambda-nocap
+  b=map-lambda-capture
+  c=map-closure-bind
+  d=fld-user-fn
+  e=fnref-return-call
+  [hd a, hd b, hd c, d, e]
+
+-- run: main
+-- out: [2, 11, 11, 10, 25]
