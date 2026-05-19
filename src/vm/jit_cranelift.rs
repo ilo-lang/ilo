@@ -1952,54 +1952,33 @@ fn compile_function_body(
             }
             OP_MOVE_OWN => {
                 // Move-not-clone variant of OP_MOVE used by the
-                // `name = fn(name, ...)` peephole. In the Cranelift JIT
-                // model registers are SSA Variables (not heap slots), so
-                // RC management is per-value-flow rather than per-slot:
-                // copying the Variable here corresponds to the bit-copy
-                // half of the VM's OP_MOVE_OWN. The "clear source slot"
-                // half of the VM semantics is implicit: the source
-                // Variable simply isn't used again on the SSA path
-                // emitted by the compiler peephole, so its phantom RC
-                // reference never gets dropped twice.
+                // `name = fn(name, ...)` peephole. The VM-side semantics
+                // are: transfer the NanVal bit pattern from R[B] to R[A]
+                // without bumping any RC, and clear R[B] to Nil so a
+                // later drop_rc on the source slot is a no-op.
                 //
-                // We still must emit a clone_rc on copy through OP_MOVE
-                // because the compiler's tail-position rewrite is the
-                // real perf win; OP_MOVE_OWN exists mainly so the JIT
-                // doesn't bail out when it encounters the opcode emitted
-                // for the VM. To preserve correctness, mirror OP_MOVE's
-                // RC handling (numeric/bool fast path; heap path with
-                // jit_move clone).
+                // In Cranelift, registers are SSA Variables — assigning
+                // a Variable doesn't bump RC of the underlying heap
+                // value (that's done explicitly by jit_move for the
+                // ordinary OP_MOVE). For OP_MOVE_OWN we deliberately
+                // skip jit_move: the source Variable is not used again
+                // on the SSA path emitted by the peephole (in / out
+                // pair brackets the call), so the RC stays at the
+                // caller's pre-move count exactly as the VM intends.
+                //
+                // Emitting a clone here would inflate the RC by one
+                // per loop iteration, defeating the in-place OP_MSET
+                // fast path inside the helper and leaking memory.
                 if a_idx != b_idx {
                     let bv = builder.use_var(vars[b_idx]);
+                    builder.def_var(vars[a_idx], bv);
+                    // Propagate f64 shadow for the numeric fast path so
+                    // downstream arithmetic ops skip the bitcast, same
+                    // as OP_MOVE does.
                     let src_always_num = b_idx < reg_always_num.len() && reg_always_num[b_idx];
-                    let src_always_bool = b_idx < reg_always_bool.len() && reg_always_bool[b_idx];
-                    if src_always_num || src_always_bool {
-                        builder.def_var(vars[a_idx], bv);
-                        if src_always_num && a_idx < reg_always_num.len() && reg_always_num[a_idx] {
-                            let bf = builder.use_var(f64_vars[b_idx]);
-                            builder.def_var(f64_vars[a_idx], bf);
-                        }
-                    } else {
-                        let qnan_val = builder.ins().iconst(I64, QNAN as i64);
-                        let masked = builder.ins().band(bv, qnan_val);
-                        let is_heap = builder.ins().icmp(
-                            cranelift_codegen::ir::condcodes::IntCC::Equal,
-                            masked,
-                            qnan_val,
-                        );
-                        let clone_block = builder.create_block();
-                        let after_block = builder.create_block();
-                        builder
-                            .ins()
-                            .brif(is_heap, clone_block, &[], after_block, &[]);
-
-                        builder.switch_to_block(clone_block);
-                        let fref = get_func_ref(&mut builder, module, helpers.jit_move);
-                        builder.ins().call(fref, &[bv]);
-                        builder.ins().jump(after_block, &[]);
-
-                        builder.switch_to_block(after_block);
-                        builder.def_var(vars[a_idx], bv);
+                    if src_always_num && a_idx < reg_always_num.len() && reg_always_num[a_idx] {
+                        let bf = builder.use_var(f64_vars[b_idx]);
+                        builder.def_var(f64_vars[a_idx], bf);
                     }
                 }
             }

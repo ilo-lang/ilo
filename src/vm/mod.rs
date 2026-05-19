@@ -960,7 +960,7 @@ fn inline_kind_for_opcode(op: u8) -> InlineOpKind {
         // literal index, NOT a register, so the generic "shift by window_base"
         // rewrite in `emit_inlined_body` would corrupt it. If a predicate
         // uses literal indexing it falls back to OP_CALL_DYN.
-        OP_HAS | OP_HD | OP_TL | OP_REV | OP_LEN | OP_MOVE | OP_NOT | OP_NEG | OP_AT
+        OP_HAS | OP_HD | OP_TL | OP_REV | OP_LEN | OP_MOVE | OP_MOVE_OWN | OP_NOT | OP_NEG | OP_AT
         | OP_LISTGET | OP_MGET | OP_MHAS | OP_ABS | OP_FLR | OP_CEL | OP_MIN | OP_MAX | OP_STR
         | OP_NUM | OP_CHR | OP_ORD | OP_UPR | OP_LWR | OP_CAP | OP_CHARS | OP_TRM | OP_ROU
         | OP_ISNUM | OP_ISTEXT | OP_ISBOOL | OP_ISLIST => InlineOpKind::Abc,

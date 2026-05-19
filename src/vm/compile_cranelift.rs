@@ -1740,16 +1740,7 @@ fn compile_function_body(
                     builder.def_var(vars[a_idx], result);
                 }
             }
-            OP_MOVE | OP_MOVE_OWN => {
-                // OP_MOVE_OWN is the move-not-clone variant used by the
-                // `name = fn(name, ...)` peephole. In the AOT/JIT model
-                // registers are SSA Variables and there is no per-push
-                // clone_rc on the stack like the VM, so the move-vs-clone
-                // distinction collapses to the same lowering as OP_MOVE.
-                // The compiler's tail-position rewrite (which makes
-                // `mset m k v` emit a == b) is what actually wins on
-                // Cranelift; OP_MOVE_OWN exists here so the AOT pipeline
-                // doesn't error out on the opcode emitted for the VM.
+            OP_MOVE => {
                 if a_idx != b_idx {
                     let bv = builder.use_var(vars[b_idx]);
                     // Fast path: if source is always numeric or always boolean, no RC
@@ -1786,6 +1777,29 @@ fn compile_function_body(
 
                         builder.switch_to_block(after_block);
                         builder.def_var(vars[a_idx], bv);
+                    }
+                }
+            }
+            OP_MOVE_OWN => {
+                // Move-not-clone variant of OP_MOVE used by the
+                // `name = fn(name, ...)` peephole. In Cranelift, SSA
+                // Variable assignment doesn't bump RC of heap values
+                // (that's done explicitly by jit_move for OP_MOVE).
+                // For OP_MOVE_OWN we deliberately skip jit_move: the
+                // source Variable is not used again on the SSA path
+                // emitted by the peephole (in / out pair brackets the
+                // call), so the RC stays at the caller's pre-move count
+                // exactly as the VM intends. Emitting a clone here
+                // would inflate RC by one per loop iteration, defeating
+                // the in-place OP_MSET fast path inside the helper and
+                // leaking memory.
+                if a_idx != b_idx {
+                    let bv = builder.use_var(vars[b_idx]);
+                    builder.def_var(vars[a_idx], bv);
+                    let src_always_num = b_idx < reg_always_num.len() && reg_always_num[b_idx];
+                    if src_always_num && a_idx < reg_always_num.len() && reg_always_num[a_idx] {
+                        let bf = builder.use_var(f64_vars[b_idx]);
+                        builder.def_var(f64_vars[a_idx], bf);
                     }
                 }
             }
