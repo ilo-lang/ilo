@@ -102,6 +102,8 @@ pub enum CompileError {
 }
 
 #[cfg(feature = "cranelift")]
+pub mod aot_blob;
+#[cfg(feature = "cranelift")]
 pub mod compile_cranelift;
 #[cfg(feature = "cranelift")]
 pub mod jit_cranelift;
