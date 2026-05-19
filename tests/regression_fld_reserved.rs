@@ -111,11 +111,7 @@ fn fld_binding_in_loop_cranelift() {
 #[test]
 fn fld_as_builtin_still_works() {
     let out = ilo()
-        .args([
-            "add x:n y:n>n;+x y;f>n;fld add [1 2 3 4] 0",
-            "--vm",
-            "f",
-        ])
+        .args(["add x:n y:n>n;+x y;f>n;fld add [1 2 3 4] 0", "--vm", "f"])
         .output()
         .expect("failed to run ilo");
     assert!(

@@ -3919,7 +3919,9 @@ fn print_help() {
     println!(
         "  --jit            Cranelift JIT (faster on hot numeric loops; falls back to VM on bailout)"
     );
-    println!("  --vm             Register VM (canonical form, symmetric with --jit; --run-vm is a deprecated alias)\n");
+    println!(
+        "  --vm             Register VM (canonical form, symmetric with --jit; --run-vm is a deprecated alias)\n"
+    );
     println!("Examples:");
     println!("  ilo 'f x:n>n;*x 2' 5             Define and call f(5) → 10");
     println!("  ilo 'f xs:L n>n;len xs' 1,2,3     Pass a list → 3");

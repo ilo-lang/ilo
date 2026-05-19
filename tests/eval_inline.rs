@@ -477,11 +477,7 @@ fn help_shows_usage() {
         "expected backends section, got: {}",
         stdout
     );
-    assert!(
-        stdout.contains("--vm"),
-        "expected --vm, got: {}",
-        stdout
-    );
+    assert!(stdout.contains("--vm"), "expected --vm, got: {}", stdout);
 }
 
 #[test]

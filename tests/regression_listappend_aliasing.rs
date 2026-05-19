@@ -272,18 +272,12 @@ f>t;m=mset mmap \"a\" \"first\";m2=mset m \"b\" \"second\";mget m \"a\" ?? \"mis
 
 #[test]
 fn mset_non_rebind_text_preserves_m_tree() {
-    assert_eq!(
-        run("--vm", MSET_NON_REBIND_TEXT_PRESERVES_M, "f"),
-        "first"
-    );
+    assert_eq!(run("--vm", MSET_NON_REBIND_TEXT_PRESERVES_M, "f"), "first");
 }
 
 #[test]
 fn mset_non_rebind_text_preserves_m_vm() {
-    assert_eq!(
-        run("--vm", MSET_NON_REBIND_TEXT_PRESERVES_M, "f"),
-        "first"
-    );
+    assert_eq!(run("--vm", MSET_NON_REBIND_TEXT_PRESERVES_M, "f"), "first");
 }
 
 #[test]

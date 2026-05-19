@@ -68,20 +68,12 @@ fn hd_empty_text_cranelift() {
 
 #[test]
 fn hd_on_number_tree() {
-    check_runtime_error(
-        "--vm",
-        "f x:n>n;hd x",
-        &["hd", "list", "text", "ILO-R009"],
-    );
+    check_runtime_error("--vm", "f x:n>n;hd x", &["hd", "list", "text", "ILO-R009"]);
 }
 
 #[test]
 fn hd_on_number_vm() {
-    check_runtime_error(
-        "--vm",
-        "f x:n>n;hd x",
-        &["hd", "list", "text", "ILO-R004"],
-    );
+    check_runtime_error("--vm", "f x:n>n;hd x", &["hd", "list", "text", "ILO-R004"]);
 }
 
 #[test]

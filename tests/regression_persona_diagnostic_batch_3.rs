@@ -62,10 +62,7 @@ fn run_inline(engine: &str, src: &str, entry: &str) -> (bool, String) {
 #[test]
 fn lambda_with_parens_still_works() {
     let src = "kc x:t>n;len x;body k:t>t;k;main>n;kws=[\"hi\" \"there\"];fld (a:n k:t>n;+a (kc (body k))) kws 0";
-    let out = ilo()
-        .args([src, "--vm", "main"])
-        .output()
-        .expect("failed");
+    let out = ilo().args([src, "--vm", "main"]).output().expect("failed");
     assert!(
         out.status.success(),
         "stderr={}",
@@ -225,10 +222,7 @@ fn list_comma_still_works() {
 #[test]
 fn semi_outside_list_unchanged() {
     let src = "main>n;[1 2 3];0";
-    let out = ilo()
-        .args([src, "--vm", "main"])
-        .output()
-        .expect("failed");
+    let out = ilo().args([src, "--vm", "main"]).output().expect("failed");
     // This one should succeed — `[1 2 3]` is a discarded value.
     assert!(
         out.status.success()

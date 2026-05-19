@@ -119,18 +119,12 @@ fn matmul_identity_2x2() {
 #[test]
 fn matmul_shape_mismatch_errors() {
     // 2x3 * 2x2 is invalid (cols(a)=3 != rows(b)=2).
-    let err_tree = run_err(
-        "--vm",
-        "f>L (L n);matmul [[1,2,3],[4,5,6]] [[1,2],[3,4]]",
-    );
+    let err_tree = run_err("--vm", "f>L (L n);matmul [[1,2,3],[4,5,6]] [[1,2],[3,4]]");
     assert!(
         err_tree.contains("matmul") || err_tree.contains("shape"),
         "tree: got: {err_tree}"
     );
-    let err_vm = run_err(
-        "--vm",
-        "f>L (L n);matmul [[1,2,3],[4,5,6]] [[1,2],[3,4]]",
-    );
+    let err_vm = run_err("--vm", "f>L (L n);matmul [[1,2,3],[4,5,6]] [[1,2],[3,4]]");
     assert!(
         err_vm.contains("matmul") || err_vm.contains("shape"),
         "vm: got: {err_vm}"

@@ -446,14 +446,7 @@ mod http_tests {
         let prog = r#"tool double"doubles a number" x:n>R n n
 main x:n>R n n;double x"#;
         let out = std::process::Command::new(env!("CARGO_BIN_EXE_ilo"))
-            .args([
-                prog,
-                "--tools",
-                p.to_str().unwrap(),
-                "--vm",
-                "main",
-                "2",
-            ])
+            .args([prog, "--tools", p.to_str().unwrap(), "--vm", "main", "2"])
             .output()
             .expect("ilo failed to start");
 
@@ -474,14 +467,7 @@ main x:n>R n n;double x"#;
         let prog = r#"tool double"doubles a number" x:n>R n n
 main x:n>R n n;double x"#;
         let out = std::process::Command::new(env!("CARGO_BIN_EXE_ilo"))
-            .args([
-                prog,
-                "--tools",
-                p.to_str().unwrap(),
-                "--vm",
-                "main",
-                "2",
-            ])
+            .args([prog, "--tools", p.to_str().unwrap(), "--vm", "main", "2"])
             .output()
             .expect("ilo failed to start");
 
@@ -521,14 +507,7 @@ main x:n>R n n;double x"#;
         let prog = r#"tool double"doubles a number" x:n>R n n
 main x:n>R n n;double x"#;
         let out = std::process::Command::new(env!("CARGO_BIN_EXE_ilo"))
-            .args([
-                prog,
-                "--tools",
-                p.to_str().unwrap(),
-                "--vm",
-                "main",
-                "2",
-            ])
+            .args([prog, "--tools", p.to_str().unwrap(), "--vm", "main", "2"])
             .output()
             .expect("ilo failed to start");
 

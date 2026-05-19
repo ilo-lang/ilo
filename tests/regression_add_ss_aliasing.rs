@@ -70,18 +70,12 @@ const ADDSS_NON_REBIND_PRESERVES_A: &str =
 
 #[test]
 fn addss_non_rebind_preserves_a_tree() {
-    assert_eq!(
-        run("--vm", ADDSS_NON_REBIND_PRESERVES_A, "go", "1"),
-        "k1"
-    );
+    assert_eq!(run("--vm", ADDSS_NON_REBIND_PRESERVES_A, "go", "1"), "k1");
 }
 
 #[test]
 fn addss_non_rebind_preserves_a_vm() {
-    assert_eq!(
-        run("--vm", ADDSS_NON_REBIND_PRESERVES_A, "go", "1"),
-        "k1"
-    );
+    assert_eq!(run("--vm", ADDSS_NON_REBIND_PRESERVES_A, "go", "1"), "k1");
 }
 
 #[test]
@@ -198,18 +192,12 @@ const ADD_REBIND_ACCUMULATOR: &str = "go n:n>t;s=\"\";@i 0..n{s=+s \"x\"};s";
 
 #[test]
 fn add_rebind_accumulator_tree() {
-    assert_eq!(
-        run("--vm", ADD_REBIND_ACCUMULATOR, "go", "100").len(),
-        100
-    );
+    assert_eq!(run("--vm", ADD_REBIND_ACCUMULATOR, "go", "100").len(), 100);
 }
 
 #[test]
 fn add_rebind_accumulator_vm() {
-    assert_eq!(
-        run("--vm", ADD_REBIND_ACCUMULATOR, "go", "100").len(),
-        100
-    );
+    assert_eq!(run("--vm", ADD_REBIND_ACCUMULATOR, "go", "100").len(), 100);
 }
 
 #[test]
