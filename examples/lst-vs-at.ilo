@@ -1,0 +1,17 @@
+-- `lst xs i v` is "list set at index" (3 args, returns updated list).
+-- It is NOT "last element". Agents often misread the name and reach for
+-- `lst xs`, hitting an arity error. The canonical "last element" is
+-- `at xs -1`, which mirrors Python-style negative indexing.
+
+-- Wrong: `lst xs` would error with ILO-T006 + suggestion pointing here.
+-- Right (last element):
+last xs:L n>n;at xs -1
+
+-- Right (set index i to v): replace index 1 with 99.
+setone xs:L n>L n;lst xs 1 99
+
+-- run: last [10,20,30]
+-- out: 30
+
+-- run: setone [10,20,30]
+-- out: [10, 99, 30]
