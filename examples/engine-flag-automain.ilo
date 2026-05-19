@@ -1,7 +1,7 @@
--- `ilo --run-vm file.ilo`, `--jit`, and the default engine all
+-- `ilo --vm file.ilo`, `--jit`, and the default engine all
 -- auto-run `main` on a multi-fn file when no func name is supplied.
 -- Before the fix, only the default engine did:
---   * --run-vm       -> silent `nil`, exit 0
+--   * --vm       -> silent `nil`, exit 0
 --   * --jit-> bare "Cranelift JIT: compilation failed"
 -- All four are now consistent with the documented auto-pick-main
 -- behaviour (SKILL.md: "Multi-function files require either a

@@ -1,7 +1,7 @@
 -- Generic tree-bridge: tree-only builtins now work on every engine.
 --
 -- Pre-fix, `rgx`, `rgxall`, `fmt` variadic, 2-arg `rd`, and `rdb` errored
--- under `--run-vm` and `--jit` with
+-- under `--vm` and `--jit` with
 -- `Compile error: undefined function: <name>`. The fix routes them through
 -- `OP_CALL_BUILTIN_TREE`, a single opcode that hands the call to the same
 -- interpreter dispatcher the (internal) tree-walker uses. VM and
