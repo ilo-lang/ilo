@@ -2,9 +2,15 @@
 
 Newest first. All commits by [Daniel John Morris](https://github.com/danieljohnmorris) unless noted.
 
+## 0.12.1 - planned
+
+### Breaking
+
+- The directory-listing builtin `ls dir` is renamed to `lsd dir`. Six rerun10 persona reports (filesystem-walk, env-config, devops-sre, ecommerce-analytics, pdf-analyst, monorepo-analyst) all flagged the same papercut: agents reach for `ls=rdl! p` as the natural local binding for "lines" and trip ILO-P011 on first attempt because `ls` is reserved. Freeing `ls` for user code is worth the rename. `walk`, `glob`, and the rest of the filesystem surface are unchanged. Migration: any program calling `ls dir` becomes `lsd dir`. The reserved-names list drops `ls` from the 2-char row.
+
 ## 0.12.0 - planned 2026-05-19
 
-The biggest release since 0.10. I rewrote the engine story (VM is the default, JIT is the opt-in), bedded down the I/O family (`run`, `ls`, `walk`, `glob`, `env-all`, `pst`), shipped a VS Code extension, and split the skill into a six-page modular set so agents can load only what they need. Tree-walker comes out of the user-facing surface; full removal targets 0.13.0.
+The biggest release since 0.10. I rewrote the engine story (VM is the default, JIT is the opt-in), bedded down the I/O family (`run`, `ls`, `walk`, `glob`, `env-all`, `pst`) — `ls` is later renamed to `lsd` in 0.12.1, see the entry above — shipped a VS Code extension, and split the skill into a six-page modular set so agents can load only what they need. Tree-walker comes out of the user-facing surface; full removal targets 0.13.0.
 
 ### Breaking
 
