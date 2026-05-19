@@ -4046,6 +4046,12 @@ fn builtin_arity_tables() -> (HashMap<String, usize>, HashMap<String, Vec<bool>>
         ("unq", 1, &[]),
         ("flat", 1, &[]),
         ("frq", 1, &[]),
+        // Index-returning aggregates. Pure list ops, single arg (no key fn
+        // in 0.12.1 — numpy parity is one arg). Closes the
+        // `srt fn (enumerate xs)` + extract-first pattern.
+        ("argmax", 1, &[]),
+        ("argmin", 1, &[]),
+        ("argsort", 1, &[]),
         // Collections (binary)
         ("at", 2, &[]),
         ("has", 2, &[]),
