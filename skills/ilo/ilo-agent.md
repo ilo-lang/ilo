@@ -36,13 +36,13 @@ First positional dispatches to a fn when it has ident shape. Otherwise (paths, n
 - `~v` (Ok)   -> stdout = inner value, exit 0
 - `^e` (Err)  -> stderr = `^e`, exit 1
 - Non-Result  -> stdout = value, exit 0
-- `--json`    -> wraps as `{"schemaVersion":1,"ok":v}` / `{"schemaVersion":1,"error":...}` (every CLI `--json` envelope carries `schemaVersion:1` since 0.12.1)
+- `--json`    -> wraps as `{"ok": v}` / `{"error": ...}`
 
 AOT-compiled binaries (`ilo compile`) follow the same contract byte-for-byte.
 
 ## Serv mode
 
-`ilo serv [--mcp m.json] [--tools http.json]` is a long-lived JSON request/response loop on stdin/stdout. Send `{"program":"fn p:n>n;*p 2","func":"fn","args":[21]}`, get `{"schemaVersion":1,"ok":42,"ms":...}` or `{"schemaVersion":1,"error":{...}}`. Every response line (including the initial `{"schemaVersion":1,"ready":true}` handshake) carries `schemaVersion:1`. Cuts process-spawn overhead to zero.
+`ilo serv [--mcp m.json] [--tools http.json]` is a long-lived JSON request/response loop on stdin/stdout. Send `{"program":"fn p:n>n;*p 2","func":"fn","args":[21]}`, get `{"ok": 42}` or `{"error":{...}}`. Cuts process-spawn overhead to zero.
 
 ## Branching
 
