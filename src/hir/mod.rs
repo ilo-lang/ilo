@@ -5,9 +5,9 @@
 //! consumes HIR; the lowering pass from AST → HIR is the single place where
 //! frontend desugaring lives.
 //!
-//! Stage 5a (this module) defines the HIR shape, the lowering pass, a raise
-//! pass (HIR → AST) used only by the round-trip test harness, and a
-//! throwaway walker that proves the lowering is information-preserving.
+//! Stage 5a defined the HIR shape and the lowering pass. Stage 5f removed the
+//! throwaway raise/walker scaffolding that proved lowering was information
+//! preserving — the cross-backend conformance suite supersedes it.
 //!
 //! See `DESIGN.md` for the shape decisions, departures from the AST, and
 //! open questions for later Phase 5 stages.
@@ -16,13 +16,10 @@ pub mod decl;
 pub mod expr;
 pub mod lower;
 pub mod program;
-pub mod raise;
 pub mod types;
-pub mod walker;
 
 pub use decl::{Decl, Param};
 pub use expr::{Body, Expr, MatchArm, Pattern, Stmt};
 pub use lower::{LowerError, lower};
 pub use program::Program;
 pub use types::Ty;
-pub use walker::walk;
