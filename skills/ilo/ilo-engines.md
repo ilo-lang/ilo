@@ -16,7 +16,7 @@ Three public backends. Default (`ilo file.ilo`) is the register VM; covers ~all 
 | Cranelift AOT | `ilo compile` | 100-1000x | Standalone native (~9 MB). |
 | LLVM JIT | `--run-llvm` | ~Cranelift | Behind `llvm` feature. Rarely needed. |
 
-Tree-walker is internal-only as of 0.12.1: `--run-tree` / `--run` are gone from the public CLI (unknown-flag error). The interpreter stays in-tree as the VM's bail target for regex, fmt variadic, IO, sleep, ct, rsrt, and closure-bind-ctx HOFs. Cross-engine parity pinned by the bridge regression tests.
+Tree-walker is internal-only in 0.12.1: `--run-tree` / `--run` removed (unknown-flag error). Stays in-tree as the VM's bail target for regex, fmt variadic, IO, and closure-bind-ctx HOFs.
 
 ## When to pick which
 
@@ -26,7 +26,7 @@ Tree-walker is internal-only as of 0.12.1: `--run-tree` / `--run` are gone from 
 
 ## Feature matrix
 
-All three public backends support core ops, lists/maps/records/sums, HOFs, lambdas (with or without captures), Results, HTTP, JSON, file I/O, MCP and HTTP tools. AOT miscompiles HOFs taking function values; use `--run-vm` for that case.
+All three public backends support core ops, lists/maps/records/sums, HOFs, lambdas (with or without captures), Results, HTTP, JSON, file I/O, MCP and HTTP tools.
 
 ## Benchmarking
 
