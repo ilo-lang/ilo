@@ -382,11 +382,19 @@ fn tools_cmd_http_json_format() {
         String::from_utf8_lossy(&out.stderr)
     );
     let stdout = String::from_utf8_lossy(&out.stdout);
-    // Should be valid JSON array
+    // Should be a schema-versioned envelope wrapping the tool array.
+    // Pre-0.12.1 this was a bare array; bringing `ilo tools --json` into
+    // the same envelope contract as every other `--json` emitter is the
+    // one observable break in 0.12.1, so we lock the new shape here.
     let parsed: serde_json::Value =
         serde_json::from_str(stdout.trim()).expect("expected valid JSON output");
-    assert!(parsed.is_array(), "expected JSON array, got: {parsed}");
-    let arr = parsed.as_array().unwrap();
+    assert_eq!(
+        parsed["schemaVersion"], 1,
+        "envelope must carry schemaVersion: {parsed}"
+    );
+    let arr = parsed["tools"]
+        .as_array()
+        .unwrap_or_else(|| panic!("expected `tools` array, got: {parsed}"));
     assert!(
         arr.iter().any(|t| t["name"] == "greet"),
         "expected greet tool in JSON output"
