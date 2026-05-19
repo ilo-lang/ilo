@@ -459,7 +459,7 @@ pub(crate) const OP_MOVE_OWN: u8 = 182;
 // mpairs m — sorted-by-key list of [k, v] 2-element lists.
 // Single-arg, no dynamic dispatch — pure map walk identical in shape to
 // OP_MKEYS/OP_MVALS. Added in 0.12.1.
-pub(crate) const OP_MPAIRS: u8 = 184; // R[A] = pairs(R[B])  → L (L _)
+pub(crate) const OP_MPAIRS: u8 = 186; // R[A] = pairs(R[B])  → L (L _)
 
 // Move-first-arg variant of OP_CALL. Same frame layout and dispatch as
 // OP_CALL but does not clone_rc the first arg (R[A+1]) when pushing it
