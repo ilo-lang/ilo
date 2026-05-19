@@ -1098,21 +1098,28 @@ f (g x)        -- Call(f, [Call(g, [x])])
 
 ## Records
 
+Named, nominal product types - the structured-data shape (cf. `M k v` maps, which are dynamic and homogeneous). Reach for a record when fields are fixed and statically known; reach for a map when keys are dynamic or the shape varies at runtime.
+
 Define:
 ```
 type point{x:n;y:n}
 ```
+Fields separated by `;`. Each field is `name:type`. Type sigils match the rest of the language (`n`, `t`, `b`, `L n`, `O t`, `M t n`, another record name).
 
 Construct (type name as constructor):
 ```
 p=point x:10 y:20
 ```
+Space-separated `field:value` pairs, no braces, no commas. Constructor arity and field types are checked at verify time (ILO-T021/T022 surface at update sites; ILO-T019 on missing field at access).
 
 Access:
 ```
-p.x
-ord.addr.country
+p.x                -- strict: missing field is verifier error ILO-T019 / runtime ILO-R005
+p.?x               -- tolerant: nil if field missing, value is nil, or value isn't a record. Returns `O T`. See [Safe Field Navigation].
+ord.addr.country   -- chains across nested records
 ```
+
+Records are **nominal**: `type a{x:n}` and `type b{x:n}` are distinct types even though their fields match. A function `f p:point>n` won't accept a `b` value. Pass `_` (Unknown) when you genuinely want to accept any record shape.
 
 The `.field` / `.N` chain also applies to any parenthesised expression, so a call result can be read directly without binding to a name first:
 ```
