@@ -1,15 +1,15 @@
 ---
 name: ilo-language
-description: Use this when writing or reviewing .ilo source. Covers prefix notation, type sigils, guards, match, pipes, records, and Result handling.
+description: Use this when writing or reviewing .ilo source. Prefix notation, type sigils, guards, match, pipes, records, Result.
 ---
 
 # ilo language
 
-Prefix-notation, strongly-typed, verified pre-run. Bodies single-line, `;`-separated. No borrow checker, no lifetimes. RC-managed values; type checker enforces shape only.
+Prefix-notation, strongly-typed, verified pre-run. Bodies single-line, `;`-separated. No borrow checker, no lifetimes. RC-managed; type checker enforces shape only.
 
-## Function syntax
+## Fn syntax
 
-`tot p:n q:n r:n>n;s=*p q;t=*s r;+s t`. No param parens. `>` returns. `;` separates statements. Last expr returns. Zero-arg: `make-id()`.
+`tot p:n q:n r:n>n;s=*p q;t=*s r;+s t`. No param parens. `>` returns. `;` separates. Last expr returns. Zero-arg: `make-id()`.
 
 ## Types
 
@@ -17,15 +17,15 @@ Prefix-notation, strongly-typed, verified pre-run. Bodies single-line, `;`-separ
 
 ## Operators (prefix)
 
-Binary `+ - * / % < > <= >= = !=`, bool `& | !`, append `+=`. Nesting: `+*a b c` = `(a*b)+c`; outer binds inner LEFT. Operators take atoms/nested-ops, NOT calls; bind first: `r=fac -n 1;*n r`. Compound prefix doesn't compose: `<=a b`, not `=<a b`.
+Binary `+ - * / % < > <= >= = !=`, bool `& | !`, append `+=`. Nest: `+*a b c` = `(a*b)+c`; outer binds inner LEFT. Take atoms/nested-ops, NOT calls; bind first: `r=fac -n 1;*n r`. No compound: `<=a b`, not `=<a b`.
 
-## Identifiers + comments
+## Idents + comments
 
-Idents `[a-z][a-z0-9]*(-[a-z0-9]+)*`, short (1-3 chars). No capitals/underscores except after `.` / `.?` for JSON keys (`r.URL`). Comments `-- to EOL`; `--x` is a comment, not double-negate (use `- -x 1`).
+`[a-z][a-z0-9]*(-[a-z0-9]+)*`, short (1-3 chars). No capitals/underscores except after `.` / `.?` for JSON keys (`r.URL`). Comments `-- to EOL`; `--x` is a comment (use `- -x 1`).
 
 ## Guards
 
-Flat early returns at statement position: `cls sp:n>t;>=sp 1000 "gold";>=sp 500 "silver";"bronze"`. Braceless `cond expr` is cheaper than `cond{expr}`. Bare comparison at statement IS a guard; bind to return otherwise: `r=>a b;r`.
+Flat early returns at statement: `cls sp:n>t;>=sp 1000 "gold";>=sp 500 "silver";"bronze"`. Braceless `cond expr` cheaper than `cond{expr}`. Bare comparison at statement IS a guard; bind to return otherwise: `r=>a b;r`.
 
 ## Match
 
@@ -33,32 +33,39 @@ Flat early returns at statement position: `cls sp:n>t;>=sp 1000 "gold";>=sp 500 
 
 ## Results
 
-`div a:n b:n>R n t;=b 0 ^"divide by zero";~/a b`. `!` auto-unwraps in `R`-fns (`d=get! url`). `!!` panic-unwraps anywhere on `^e`/`nil`.
+`div a:n b:n>R n t;=b 0 ^"divide by zero";~/a b`. `!` auto-unwraps in `R`-fns (`d=get! url`). `!!` panic-unwraps on `^e`/`nil`.
 
 ## Loops
 
-`@x xs{body}` foreach, `@i 0..5{body}` range half-open, `wh <i 10{...}` while. `brk` exits, `cnt` skips, `ret v` early-returns.
+`@x xs{body}` foreach, `@i 0..5{body}` range half-open, `wh <i 10{...}` while. `brk`, `cnt`, `ret v`.
 
 ## Pipes
 
-`xs >> flt pos >> map sq` desugars left-to-right to nested calls. Wrap `()` for non-last fns in multi-fn files.
+`xs >> flt pos >> map sq` desugars left-to-right. Wrap `()` for non-last fns.
 
 ## Records
 
-`type point{x:n;y:n}`, `p=point x:10 y:20`. `p.x` access, `{x;y}=p` destructure, `p with x:30` update, `p.?missing` safe-nav (nil).
+`type point{x:n;y:n}`, `p=point x:10 y:20`. `p.x`, `{x;y}=p`, `p with x:30`, `p.?missing` safe-nav.
 
 ## Lambdas
 
-Parenthesised, passed directly: `map (x:n>n;+x 1) xs`. Captures run on tree only; VM/JIT/AOT auto-fall-back.
+Parenthesised: `map (x:n>n;+x 1) xs`. Captures tree-only; VM/JIT/AOT auto-fall-back.
 
-## Multi-function files
+## Multi-fn files
 
-Non-last fns end with a safe expression (op, index, match, literal, parens). Last fn: anything.
+Non-last fns end with safe expr (op, index, match, literal, parens). Last fn: anything.
 
 ## Strings
 
 `"text"` with `\n \t \" \\`. Multi-line `"""..."""`. Interp `"{x}"`.
 
-## What's not here
+## Reserved names
 
-No `&`, `&mut`, references, lifetimes, or ownership errors. Lifetime reasoning means wrong mental model.
+Binding/user-fn under a builtin fires `ILO-P011`. Unreserved 2-char permanently safe; 4+ always safe; unreserved 3-char usually safe (no hard promise). 4+ builtins (`take drop mget mset flat range`) also reserved.
+
+- 2: `at hd tl rd wr ct`
+- 3: `abs avg cap cat cel chr cos det dot env exp fft fld flr flt fmt frq get grp has inv len log lsd lst lwr map max min mod now num ord pow pst rdb rdl rev rgx rng rnd rou run sin slc spl srt str sum tan trm unq upr wrl zip`
+
+## Not here
+
+No `&`, `&mut`, refs, lifetimes, ownership errors. Lifetime reasoning = wrong model.

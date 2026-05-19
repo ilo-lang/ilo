@@ -5,9 +5,7 @@ description: Use this when reading ILO-XXXX error codes or fixing failures. List
 
 # ilo error codes
 
-`ILO-L###` lex, `ILO-P###` parse, `ILO-T###` type, `ILO-R###` runtime. Run `ilo --explain ILO-XXXX` for the long form.
-
-No borrow checker, no lifetimes, no `&`/`&mut`. The four classes above are the full registry.
+`ILO-L###` lex, `ILO-P###` parse, `ILO-T###` type, `ILO-R###` runtime. `ilo --explain ILO-XXXX` for long form. No borrow/lifetime/ownership errors exist.
 
 ## Lex
 
@@ -42,8 +40,8 @@ No borrow checker, no lifetimes, no `&`/`&mut`. The four classes above are the f
 
 ## Patterns
 
-`^"divide by zero"`: guard denominator. `NaN` in output: `asin`/`acos`/`sqrt`/`log` out-of-domain upstream; clamp at boundary.
+`^"divide by zero"`: guard denom. Mystery arity after `--engine tree`: use `--run-vm` or `--jit`. `NaN`: `asin`/`acos`/`sqrt`/`log` out-of-domain upstream; clamp at boundary.
 
 ## JSON shape
 
-Diagnostics emit one JSON object per line: `{"code","message","span":{"file","line","col","len"},"hint"}`. Route on `code`; edit at `span`. For the wire shape and repair loop load `ilo-edit-loop`.
+One JSON object per line: `{"code","message","span":{"file","line","col","len"},"hint"}`. Route on `code`; edit at `span`. See `ilo-edit-loop`.
