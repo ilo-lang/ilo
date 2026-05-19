@@ -1,0 +1,107 @@
+-- tz-meeting-finder: find overlapping working-hour windows across N people
+-- across the next 5 weekdays. Offsets are hardcoded UTC offsets (no TZ DB).
+-- Usage: ilo tz-meeting-finder.ilo main
+-- People: London(UTC+1), New York(UTC-4), Tokyo(UTC+9)
+-- Working hours: 09:00-17:00 local (slots 9:00..16:30 in 30-min steps)
+-- Output: date | UTC window | local time per person
+
+-- person record: name and UTC offset in hours (no DST)
+type prs{nm:t;off:n}
+
+-- zero-pad a number to 2 digits
+pad v:n>t;s=str v;padl s 2 "0"
+
+-- format a UTC hour+minute slot as HH:MM
+hhmm uh:n um:n>t;
+hs=pad uh;
+ms=pad um;
++hs +":"ms
+
+-- compute local hour for a UTC hour and UTC offset
+loc-h uh:n off:n>n;
+mod ++uh off 24 24
+
+-- check if local hour is within working hours [9:00, 16:30] (start of slot)
+in-work lh:n>b;
+&>=lh 9 <=lh 16
+
+-- check if ALL people are available at a given UTC slot (hour + minute)
+all-avail uh:n um:n ps:L prs>b;
+ok=1;
+@p ps{
+  lh=loc-h uh p.off;
+  iw=in-work lh;
+  ok=?iw ok 0
+};
+=ok 1
+
+-- format one person's local time for a UTC slot
+person-col p:prs uh:n um:n>t;
+lh=loc-h uh p.off;
+lm=um;
+ts=hhmm lh lm;
+fmt "{}: {}" p.nm ts
+
+-- collect next 5 weekday midnight epochs from today (UTC)
+weekdays>R (L n) t;
+ep=now;
+ds=dtfmt! ep "%Y-%m-%d";
+mid=dtparse! ds "%Y-%m-%d";
+days=[];
+d=mid;
+c=0;
+wh <c 5{
+  wd=dtfmt! d "%u";
+  wdn=num! wd;
+  <=wdn 5{
+    days=+=days d;
+    c=+c 1
+  };
+  d=+d 86400
+};
+~days
+
+-- print overlap table for one day
+print-day day:n ps:L prs>R t t;
+ds=dtfmt! day "%Y-%m-%d (%a)";
+header=fmt "\n=== {} ===" ds;
+prnt header;
+found=0;
+@i 0..16{
+  uh=+9 flr /i 2;
+  um=*mod i 2 30;
+  avail=all-avail uh um ps;
+  avail{
+    utc=hhmm uh um;
+    cols=[];
+    @p ps{
+      col=person-col p uh um;
+      cols=+=cols col
+    };
+    row=cat cols "  |  ";
+    line=fmt "  UTC {}  |  {}" utc row;
+    prnt line;
+    found=+found 1
+  }
+};
+=found 0{prnt "  (no overlap)"};
+~""
+
+-- main entry point
+main>R t t;
+ps=[
+  prs nm:"London" off:1,
+  prs nm:"New York" off:-4,
+  prs nm:"Tokyo" off:9
+];
+prnt "Meeting Finder - next 5 weekdays";
+prnt "Working hours: 09:00-17:00 local | 30-min slots";
+nms=[];
+@p ps{nms=+=nms p.nm};
+header=cat nms "  |  ";
+prnt fmt "  UTC slot  |  {}" header;
+days=weekdays!;
+@day days{
+  print-day! day ps
+};
+~""
