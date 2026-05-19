@@ -47,6 +47,7 @@ use std::path::PathBuf;
 
 pub mod cranelift;
 pub mod python;
+pub mod wasm;
 
 /// A pluggable codegen backend.
 ///
