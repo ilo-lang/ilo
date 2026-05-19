@@ -1,0 +1,23 @@
+-- `cat` is list-concat, not string-concat. Coming from Python/JS the
+-- instinct is to write `cat "a" "b"` for "ab" - but `cat` expects a
+-- list of strings as its first arg and a separator as its second.
+--
+-- The verifier flags `cat "a" "b"` as ILO-T013 with a suggestion
+-- pointing at the two canonical text-concat shapes: `fmt` for
+-- arbitrary interpolation, and `+` when both operands are text.
+
+-- Idiom 1: `fmt` builds a string from a template and values
+join-fmt>t;fmt "{}{}" "foo" "bar"
+
+-- Idiom 2: `+` on two text values concatenates them
+join-plus>t;+"foo" "bar"
+
+-- Idiom 3: actual list-concat - what `cat` is for
+join-cat>t;cat ["a" "b" "c"] ","
+
+-- run: join-fmt
+-- out: foobar
+-- run: join-plus
+-- out: foobar
+-- run: join-cat
+-- out: a,b,c

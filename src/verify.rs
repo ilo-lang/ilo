@@ -707,11 +707,23 @@ fn builtin_check_args(
             if let Some(arg) = arg_types.first()
                 && !compatible(arg, &Ty::List(Box::new(Ty::Text)))
             {
+                // String-concat instinct: user wrote `cat "a" "b"` expecting
+                // string concatenation. `cat` is list-concat; point them at
+                // the canonical text-concat shapes.
+                let hint = if matches!(arg, Ty::Text)
+                    && arg_types.get(1).is_some_and(|a| matches!(a, Ty::Text))
+                {
+                    Some(
+                        "`cat` is list-concat. For text use `fmt \"{}{}\" a b`, or `+a b` if both are text".to_string(),
+                    )
+                } else {
+                    None
+                };
                 errors.push(VerifyError {
                     code: "ILO-T013",
                     function: func_ctx.to_string(),
                     message: format!("'cat' arg 1 expects L t, got {arg}"),
-                    hint: None,
+                    hint,
                     span,
                     is_warning: false,
                 });
@@ -6164,6 +6176,42 @@ mod tests {
             errors
                 .iter()
                 .any(|e| e.message.contains("cat") && e.message.contains("2"))
+        );
+    }
+
+    #[test]
+    fn cat_two_strings_suggests_fmt_or_plus() {
+        // `cat "a" "b"` is the string-concat instinct from Python/JS/etc.
+        // `cat` is list-concat; we should point users at `fmt` or `+`.
+        let result = parse_and_verify(r#"main>t;cat "a" "b""#);
+        let errors = result.unwrap_err();
+        let e = errors
+            .iter()
+            .find(|e| e.code == "ILO-T013" && e.message.contains("cat"))
+            .expect("expected ILO-T013 for cat");
+        let hint = e.hint.as_ref().expect("expected hint suggesting fmt/+");
+        assert!(hint.contains("fmt"), "hint should mention fmt: {hint}");
+        assert!(hint.contains("+"), "hint should mention +: {hint}");
+        assert!(
+            hint.contains("list-concat") || hint.contains("list concat"),
+            "hint should explain cat is list-concat: {hint}"
+        );
+    }
+
+    #[test]
+    fn cat_text_then_list_no_string_concat_hint() {
+        // Only the string-concat instinct (both args text) gets the hint.
+        // Other arg-1 mismatches (e.g. number) should not show fmt/+ hint.
+        let result = parse_and_verify("f x:n>t;cat x \",\"");
+        let errors = result.unwrap_err();
+        let e = errors
+            .iter()
+            .find(|e| e.code == "ILO-T013" && e.message.contains("cat"))
+            .unwrap();
+        assert!(
+            e.hint.is_none(),
+            "non-text arg should not get string-concat hint, got: {:?}",
+            e.hint
         );
     }
 
