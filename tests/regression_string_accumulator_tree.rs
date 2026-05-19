@@ -43,7 +43,7 @@ fn run_tree(src: &str, entry: &str) -> String {
         .expect("failed to run ilo");
     assert!(
         out.status.success(),
-        "ilo --run-tree failed for `{src}`: stderr={}",
+        "ilo --run-vm failed for `{src}`: stderr={}",
         String::from_utf8_lossy(&out.stderr)
     );
     String::from_utf8_lossy(&out.stdout).trim().to_string()
@@ -158,7 +158,7 @@ demo>n;build 5000"#;
     let elapsed = start.elapsed();
     assert!(
         out.status.success(),
-        "ilo --run-tree demo failed: stderr={}",
+        "ilo --run-vm demo failed: stderr={}",
         String::from_utf8_lossy(&out.stderr)
     );
     let stdout = String::from_utf8_lossy(&out.stdout);

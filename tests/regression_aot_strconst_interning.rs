@@ -77,9 +77,10 @@ fn assert_aot_cross_engine(tag: &str, src: &str, entry: Option<&str>, expected_s
         String::from_utf8_lossy(expected_stdout),
     );
 
-    // Cross-engine parity. Run the same source through tree, VM, JIT and
-    // require byte-identical stdout.
-    for engine in ["--run-tree", "--run-vm", "--jit"] {
+    // Cross-engine parity. Run the same source through VM, JIT and
+    // require byte-identical stdout. Tree-walker is exercised via the VM
+    // bridge for the ops that still dispatch through it.
+    for engine in ["--run-vm", "--jit"] {
         let mut cmd = ilo();
         cmd.arg(&src_path).arg(engine);
         if let Some(e) = entry {

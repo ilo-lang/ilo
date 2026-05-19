@@ -63,11 +63,6 @@ fn check_repro(engine: &str) {
 }
 
 #[test]
-fn field_access_underscore_typed_tree() {
-    check_repro("--run-tree");
-}
-
-#[test]
 fn field_access_underscore_typed_vm() {
     check_repro("--run-vm");
 }
@@ -102,10 +97,6 @@ fn check_rev(engine: &str) {
 }
 
 #[test]
-fn field_access_qty_tree() {
-    check_qty("--run-tree");
-}
-#[test]
 fn field_access_qty_vm() {
     check_qty("--run-vm");
 }
@@ -115,10 +106,6 @@ fn field_access_qty_jit() {
     check_qty("--jit");
 }
 
-#[test]
-fn field_access_rev_tree() {
-    check_rev("--run-tree");
-}
 #[test]
 fn field_access_rev_vm() {
     check_rev("--run-vm");
@@ -148,10 +135,6 @@ fn check_typed_fast(engine: &str) {
     );
 }
 
-#[test]
-fn typed_record_fast_path_tree() {
-    check_typed_fast("--run-tree");
-}
 #[test]
 fn typed_record_fast_path_vm() {
     check_typed_fast("--run-vm");

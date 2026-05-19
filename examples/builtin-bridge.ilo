@@ -4,9 +4,9 @@
 -- under `--run-vm` and `--jit` with
 -- `Compile error: undefined function: <name>`. The fix routes them through
 -- `OP_CALL_BUILTIN_TREE`, a single opcode that hands the call to the same
--- interpreter dispatcher `--run-tree` uses. Tree, VM, and Cranelift now
--- produce identical output, which is what the engine harness asserts when
--- it replays this example across all three.
+-- interpreter dispatcher the (internal) tree-walker uses. VM and
+-- Cranelift now produce identical output, which is what the engine
+-- harness asserts when it replays this example across both.
 
 -- rgx: every match of a no-group pattern.
 digits>L t;rgx "\d+" "a1 b22 c333"

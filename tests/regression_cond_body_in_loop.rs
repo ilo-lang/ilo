@@ -37,9 +37,9 @@ fn run(engine: &str, src: &str) -> String {
 }
 
 #[cfg(feature = "cranelift")]
-const ENGINES: &[&str] = &["--run-tree", "--run-vm", "--jit"];
+const ENGINES: &[&str] = &["--run-vm", "--jit"];
 #[cfg(not(feature = "cranelift"))]
-const ENGINES: &[&str] = &["--run-tree", "--run-vm"];
+const ENGINES: &[&str] = &["--run-vm"];
 
 // --- bioinformatics rerun10 -------------------------------------------------
 // Minimal repro from the persona report. Pre-fix this printed nothing and
