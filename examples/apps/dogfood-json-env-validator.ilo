@@ -1,0 +1,43 @@
+-- json-envelope-validator: checks schemaVersion:1 on ilo --json subcommands
+
+-- returns "PASS  lbl" or "FAIL  lbl  reason"
+chk lbl:t argv:L t > t
+  r=run "/Users/dan/.cargo/bin/ilo" argv
+  ?r{
+    ^e: cat ["FAIL  " lbl "  SPAWN: " e] "";
+    ~m: out=mget m "stdout"
+        s=??out ""
+        ?(=(trm s) ""){
+          true: cat ["FAIL  " lbl "  empty-stdout"] "";
+          false: v=jpth s "schemaVersion"
+                 ?v{
+                   ^_: cat ["FAIL  " lbl "  no-schemaVersion"] "";
+                   ~_: cat ["PASS  " lbl] ""
+                 }
+        }
+  }
+
+main > t
+  cases=[
+    ["version --json"          ["version" "--json"]]
+    ["check --json hello"      ["check" "--json" "hello.ilo"]]
+    ["graph --json hello"      ["graph" "--json" "hello.ilo"]]
+    ["--ast --json hello"      ["--ast" "--json" "hello.ilo"]]
+    ["run --json hello"        ["run" "--json" "hello.ilo"]]
+    ["bare --json hello"       ["--json" "hello.ilo"]]
+    ["tools --json"            ["tools" "--json"]]
+    ["spec lang --json"        ["spec" "lang" "--json"]]
+    ["spec ai --json"          ["spec" "ai" "--json"]]
+    ["skill list --json"       ["skill" "list" "--json"]]
+    ["skill get ilo --json"    ["skill" "get" "ilo" "--json"]]
+    ["skill path ilo --json"   ["skill" "path" "ilo" "--json"]]
+    ["skill show ilo --json"   ["skill" "show" "ilo" "--json"]]
+    ["explain T001 --json"     ["explain" "ILO-T001" "--json"]]
+    ["build --json"            ["build" "hello.ilo" "-o" "/tmp/hello-bin" "--json"]]
+    ["compile --json"          ["compile" "hello.ilo" "-o" "/tmp/hello-bin2" "--json"]]
+  ]
+  rows=map (c:L _ > t; chk (at c 0) (at c 1)) cases
+  fails=flt (r:t > b; !(=(slc r 0 4) "PASS")) rows
+  hdr=cat ["json-envelope-validator: " (str (len cases)) " subcommands, " (str (len fails)) " not on schemaVersion:1"] ""
+  body=cat rows "\n"
+  cat [hdr "\n" body] ""

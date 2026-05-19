@@ -1,0 +1,28 @@
+-- Rolling stats + anomaly detection over 10k synthetic prices.
+-- Window=20: mean, stdev, p95; flag |price - mean| > 2*stdev.
+
+draw i:n>n;rndn 0 1
+p95 w:L n>n;quantile w 0.95
+
+-- Top-level predicate: anomaly at rolling-index j against context lists.
+-- Captures supplied via inline lambda from main.
+anom-at j:n prices:L n means:L n stds:L n>b;>(abs -(at prices (+j 19)) (at means j)) (*2 (at stds j))
+
+main>n;
+  noise=map draw (range 0 10000);
+  prices=cumsum noise;
+  wins=window 20 prices;
+  means=map avg wins;
+  stds=map stdev wins;
+  p95s=map p95 wins;
+  k=len means;
+  js=range 0 k;
+  -- one-line capturing lambda: relies on Phase 2 inline lambda captures
+  flagged=flt (j:n>b;anom-at j prices means stds) js;
+  n-anom=len flagged;
+  first5-orig=map (j:n>n;+j 19) (take 5 flagged);
+  sample-p95=at p95s 0;
+  prnt n-anom;
+  prnt first5-orig;
+  prnt sample-p95;
+  n-anom

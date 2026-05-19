@@ -1,0 +1,47 @@
+-- helper-fn form of kmer counting: stress the mset perf cliff
+
+do-parse lns:L t>L t
+  out=[]
+  cur=""
+  @ln lns{
+    h=??(slc ln 0 1) ""
+    hdr=(=h ">")
+    hdr{
+      ne=>(len cur) 0
+      ne{out=+=out cur}
+      cur=""
+    }
+    nh=!hdr
+    nh{cur=cat [cur ln] ""}
+  }
+  fin=>(len cur) 0
+  fin{out=+=out cur}
+  out
+
+-- helper fn returning updated map. classic mset-cliff shape.
+bump m:M t n k:t>M t n
+  c=??(mget m k) 0
+  mset m k (+c 1)
+
+count-one m:M t n s:t>M t n
+  n=- (len s) 2
+  @i 0..n{
+    k=slc s i (+i 3)
+    m=bump m k
+  }
+  m
+
+kmers-fn ss:L t>M t n
+  m=mmap
+  @s ss{m=count-one m s}
+  m
+
+main>R n t
+  t0=now-ms
+  lns=rdl! "fixture.fasta"
+  ss=do-parse lns
+  t1=now-ms
+  m=kmers-fn ss
+  t2=now-ms
+  prnt fmt "distinct-3mers={} kmer-fn-ms={}" (len m) (- t2 t1)
+  ~0

@@ -1,0 +1,60 @@
+-- daemon-webpage-checker: polls a URL every N ms, hashes body via shasum,
+-- detects body + status changes across ticks. exits after 4 ticks.
+
+-- compute sha256 of a string by shelling out to shasum
+hash s:t>t
+  cmd=cat ["printf '%s' " (jdmp s) " | shasum -a 256 | cut -d' ' -f1"] ""
+  r=run "sh" ["-c" cmd]
+  ?r{
+    ~m: trm ??(mget m "stdout") ""
+    ^e: cat ["err:" e] ""
+  }
+
+-- diff signal classifier
+diag status:t prevs:t bhash:t prev:t blen:n prevl:t>t
+  base=cat ["baseline status=" status " len=" (str blen) " hash=" bhash] ""
+  arrow=" -> "
+  sp=" "
+  schg=cat ["STATUS CHANGE" sp prevs sp "->" sp status] ""
+  bchg=cat ["BODY CHANGED prev-len=" prevl " new-len=" (str blen) " hash=" bhash] ""
+  same=cat ["no change status=" status " len=" (str blen)] ""
+  empty-str=""
+  is-first=(= prevs empty-str)
+  status-changed=(!= status prevs)
+  body-changed=(!= bhash prev)
+  inner=?h body-changed bchg same
+  outer=?h status-changed schg inner
+  ?h is-first base outer
+
+-- one tick: fetch, hash, compare to prior state, return updated state
+tick url:t state:M t t i:n>M t t
+  prnt cat ["[tick " (str i) "] " url] ""
+  r=get url
+  body=?r{~v:v;^e:""}
+  status=?r{~v:"ok";^e:cat ["err:" e] ""}
+  blen=len body
+  has-body=>blen 0
+  bhash=?h has-body (hash body) "empty"
+  prev=??(mget state "hash") ""
+  prevs=??(mget state "status") ""
+  prevl=??(mget state "len") "0"
+  msg=diag status prevs bhash prev blen prevl
+  prnt cat ["  " msg] ""
+  s2=mset state "hash" bhash
+  s3=mset s2 "status" status
+  s4=mset s3 "len" (str blen)
+  mset s4 "ts" (str now)
+
+main>n
+  url="https://httpbin.org/uuid"
+  prnt cat ["daemon-webpage-checker url=" url " ticks=4 interval=2000ms"] ""
+  st=mmap
+  i=1
+  wh <=i 4{
+    st=tick url st i
+    not-last=<i 4
+    =not-last true{sleep 2000}
+    i=+i 1
+  }
+  prnt "done"
+  0

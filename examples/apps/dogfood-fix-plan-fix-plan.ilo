@@ -1,0 +1,62 @@
+-- fix-plan-emitter: read ilo diagnostics from `ilo check --json` (stderr),
+-- build structured edit-preview JSON for each diagnostic with a non-empty
+-- suggestion. Mirrors the Zero PR #137 "structured edit previews" shape.
+
+-- safe text getter at a JSON dot-path; default if missing or wrong type
+gtxt s:t p:t d:t>t
+  r=jpth s p
+  ?r{~v:v;^e:d}
+
+-- safe numeric getter at a JSON dot-path
+gnum s:t p:t d:n>n
+  r=jpth s p
+  ?r{~v:v;^e:d}
+
+-- true if this JSONL diagnostic carries a "suggestion" field
+has-sug s:t>b
+  r=jkeys s ""
+  ks=?r{~v:v;^e:[]}
+  > ct (k:t>b;=k "suggestion") ks 0
+
+-- read a 1-based inclusive line range from a list of source lines
+extract-range lines:L t a:n b:n>t
+  n=len lines
+  s=clamp -a 1 0 n
+  e=clamp b 0 n
+  >=s e ""
+  sl=slc lines s e
+  cat sl "\n"
+
+-- build the edit-preview map for one diagnostic JSONL line
+build-edit src-path:t lines:L t s:t>M t t
+  ln=gnum s "labels.0.line" 0
+  code=gtxt s "code" ""
+  msg=gtxt s "message" ""
+  sug=gtxt s "suggestion" ""
+  before=extract-range lines ln ln
+  m=mmap
+  m=mset m "file" src-path
+  m=mset m "line_start" str ln
+  m=mset m "line_end" str ln
+  m=mset m "before" before
+  m=mset m "after" sug
+  m=mset m "code" code
+  m=mset m "message" msg
+  m=mset m "suggestion" sug
+  m
+
+not-empty s:t>b
+  > len s 0
+
+main path:t>R _ t
+  -- diagnostics come on stderr as JSONL
+  r=run! "/Users/dan/.cargo/bin/ilo" ["check" "--json" path]
+  err=?? mget r "stderr" ""
+  raw=spl err "\n"
+  jsonl=flt not-empty raw
+  parts=partition has-sug jsonl
+  with-sug=at parts 0
+  src=rdl! path
+  previews=map (s:t>M t t;build-edit path src s) with-sug
+  prnt jdmp previews
+  ~nil

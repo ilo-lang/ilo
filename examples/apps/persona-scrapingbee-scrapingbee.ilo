@@ -1,0 +1,35 @@
+-- scrapingbee.ilo: ilo client for the ScrapingBee web-scraping API.
+-- endpoint: https://app.scrapingbee.com/api/v1/ (GET; key + target via query string)
+-- replace with env api-key in real use; never commit real key
+-- runtime form for the real key: k=env! "SCRAPINGBEE_API_KEY"
+-- demo uses a placeholder literal so this file is safe to commit and run offline.
+
+-- minimal percent-encoder for the chars that matter inside a URL query value:
+-- :/?#&=+ and space. ilo 0.12.x has no urlenc builtin, so we hand-roll via rgxsub.
+-- this is enough for ScrapingBee's `url=` param against well-formed http(s) URLs.
+qenc s:t>t;a=rgxsub "%" "%25" s;b=rgxsub ":" "%3A" a;c=rgxsub "/" "%2F" b;d=rgxsub "\\?" "%3F" c;e=rgxsub "#" "%23" d;f=rgxsub "&" "%26" e;g=rgxsub "=" "%3D" f;h=rgxsub "\\+" "%2B" g;rgxsub " " "%20" h
+
+-- build the full ScrapingBee request URL. js-render + 3s wait + premium proxy as per the persona brief.
+sb-url key:t target:t>t;fmt "https://app.scrapingbee.com/api/v1/?api_key={}&url={}&render_js=true&wait=3000&premium_proxy=true" key (qenc target)
+
+-- the real client. `get` returns R t t (Ok body / Err message); we propagate via `?{}`.
+-- ScrapingBee bills per request, so do NOT call this without a real key.
+scrape key:t target:t>R t t;u=sb-url key target;r=get u;?r{~b:~b;^e:^+"scrapingbee: "e}
+
+-- pull the first <title>...</title> out of an HTML blob.
+-- rgxall1 with one capture group returns L t of capture-1 strings; hd grabs the first.
+title-of html:t>t;ms=rgxall1 "<title>([^<]+)</title>" html;b=>(len ms) 0;?b{true:hd ms;false:"(no title)"}
+
+-- demo wrapper: uses a literal HTML fixture so the run/out marker is deterministic and offline-safe.
+-- in real use, swap `fixture` for `scrape! key "https://example.com/"`.
+demo>t;fixture="<html><head><title>Example Domain</title></head><body><h1>Hi</h1></body></html>";title-of fixture
+
+-- live entry: this is what an agent would call against the real API.
+-- replace with env api-key in real use; never commit real key
+-- key="SCRAPINGBEE_KEY_PLACEHOLDER_set_via_env_in_real_use"
+-- in production: key=env! "SCRAPINGBEE_API_KEY"
+-- scrape key "https://example.com/"
+main url:t>t;b=>(len url) 0;?b{true:fmt "would-scrape: {}" (sb-url "SCRAPINGBEE_KEY_PLACEHOLDER_set_via_env_in_real_use" url);false:demo}
+
+-- run: demo
+-- out: Example Domain

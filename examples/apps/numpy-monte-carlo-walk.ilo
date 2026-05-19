@@ -1,0 +1,37 @@
+-- Monte Carlo: geometric brownian motion stock-price random walk
+-- 10k paths, 252 steps each (1 trading year), N(mu=0.0004, sigma=0.01) daily returns
+-- Final-value distribution: mean, stdev, 5/50/95 quantiles, top-K histogram bins
+
+path s0:n mu:n sg:n n:n>n;
+  p=s0;
+  @i 0..n{r=rndn mu sg;p=*p (+1 r)};
+  p
+
+main>n;
+  np=10000;
+  steps=252;
+  s0=100;
+  mu=0.0004;
+  sg=0.01;
+  fin=map (i:n>n;path s0 mu sg steps) (range 0 np);
+  m=avg fin;
+  sd=stdev fin;
+  md=median fin;
+  q05=quantile fin 0.05;
+  q95=quantile fin 0.95;
+  prnt fmt "n={} steps={} s0={}" np steps s0;
+  prnt fmt "mean={} stdev={}" (fmt2 m 4) (fmt2 sd 4);
+  prnt fmt "median={} q05={} q95={}" (fmt2 md 4) (fmt2 q05 4) (fmt2 q95 4);
+  lo=quantile fin 0.01;
+  hi=quantile fin 0.99;
+  nb=10;
+  w=/(- hi lo) nb;
+  bins=map (x:n>n;clamp (flr (/(- x lo) w)) 0 (- nb 1)) fin;
+  fr=frq bins;
+  ks=mkeys fr;
+  prnt fmt "histogram bin-count over [{} .. {}] in {} bins" (fmt2 lo 2) (fmt2 hi 2) nb;
+  @k ks{
+    c=mget fr k;
+    prnt fmt "  bin {} : {}" k c
+  };
+  0

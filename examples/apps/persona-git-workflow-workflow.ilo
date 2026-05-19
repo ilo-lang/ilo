@@ -1,0 +1,45 @@
+-- git-workflow rerun11 fresh: parse git plumbing, decide on cleanliness
+
+has-pipe s:t>b;has s "|"
+
+ext-of line:t>t;parts=spl (trm line) " ";nm=hd parts;dv=spl nm ".";at dv -1
+
+auth-of line:t>t;parts=spl line "|";at parts 1
+
+decide-state st:t>t;=(trm st) "" "CLEAN";"DIRTY"
+
+main>R t t;
+  rs=run! "git" ["status" "--porcelain"];
+  st-out=??(mget rs "stdout") "";
+  st-lines=flt (l:t>b;>(len (trm l)) 0) (spl st-out "\n");
+  prnt fmt "status: {} dirty entries" (len st-lines);
+  rl=run! "git" ["log" "--format=%H|%an|%s"];
+  log-out=??(mget rl "stdout") "";
+  log-lines=flt (l:t>b;>(len (trm l)) 0) (spl log-out "\n");
+  prnt fmt "log: {} commits" (len log-lines);
+  authors=map (l:t>t;auth-of l) log-lines;
+  by-auth=grp (a:t>t;a) authors;
+  ks=mkeys by-auth;
+  @a ks{
+    gl=??(mget by-auth a) [];
+    prnt fmt "  author {}: {} commit(s)" a (len gl);
+  };
+  rdv=run! "git" ["diff" "--stat" "HEAD"];
+  dd-out=??(mget rdv "stdout") "";
+  dd-lines=flt (l:t>b;has-pipe l) (spl dd-out "\n");
+  exts=map (l:t>t;ext-of l) dd-lines;
+  by-ext=grp (e:t>t;e) exts;
+  eks=mkeys by-ext;
+  prnt fmt "diff: {} files changed across {} extension(s)" (len exts) (len eks);
+  @e eks{
+    g=??(mget by-ext e) [];
+    prnt fmt "  .{}: {} file(s)" e (len g);
+  };
+  state=decide-state st-out;
+  prnt fmt "tree-state: {}" state;
+  ?state{
+    "CLEAN":prnt "decision: nothing to commit, safe to push";
+    "DIRTY":prnt "decision: working tree has changes, refuse auto-push";
+    _:prnt "decision: unknown state";
+  };
+  ~"ok"

@@ -1,0 +1,83 @@
+-- changelog-validator: verify 0.12.1 + 0.12.0 entries reference merged PRs
+
+-- Probe one PR via gh api. Returns short status string.
+probe-pr num:t > t;
+  arg=cat ["repos/ilo-lang/ilo/pulls/" num] "";
+  r=run "gh" ["api" arg];
+  ?r{
+    ~v:{
+      body-o=mget v "stdout";
+      body=??body-o "";
+      state-r=jpth body "state";
+      state=?state-r{~s:s;^_:"?"};
+      tag=cat ["PR #" num] "";
+      ok=(=state "merged");
+      msg-y=cat [tag " MERGED"] "";
+      msg-n=cat [tag " NOT-MERGED state=" state] "";
+      ?ok{msg-y}{msg-n}
+    };
+    ^e:cat ["PR #" num " FETCH-ERR: " e] ""
+  }
+
+-- Find the line index of the first line containing needle; -1 otherwise
+find-taging lines:L t needle:t > n;
+  out=-1;
+  i=0;
+  total=len lines;
+  wh <i total{
+    ln=at lines i;
+    hit=has ln needle;
+    notfound=<out 0;
+    upd=&hit notfound;
+    out=?upd i out;
+    i=+i 1
+  };
+  out
+
+-- Is bullet line (starts with "- ")
+is-bul ln:t > b;
+  short=<len ln 2;
+  ?short{false}{=slc ln 0 2 "- "}
+
+-- Collect bullets in version section starting at start
+section-bullets lines:L t start:n > L t;
+  out=[];
+  i=+start 1;
+  total=len lines;
+  wh <i total{
+    ln=at lines i;
+    next-ver=has ln "## 0.";
+    bul=is-bul ln;
+    keep=&bul !next-ver;
+    out=?keep (+=out ln) out;
+    i=?next-ver total (+i 1)
+  };
+  out
+
+-- validate one bullet: extract #N refs, validate each
+check-refs refs:L t ln:t > t;
+  parts=[];
+  @r refs{parts=+=parts (probe-pr r)};
+  cat ["OK | " ln " -> " cat parts "; "] ""
+
+check-bullet ln:t > t;
+  refs=rgxall1 "#(\d+)" ln;
+  none=(=len refs 0);
+  ?none{cat ["ORPHAN | " ln] ""}{check-refs refs ln}
+
+main > R n t;
+  lines=rdl! "CHANGELOG.md";
+  s121=find-taging lines "## 0.12.1";
+  s120=find-taging lines "## 0.12.0";
+
+  prnt "=== 0.12.1 ===";
+  b121=section-bullets lines s121;
+  prnt cat ["bullets: " str len b121] "";
+  @b b121{prnt check-bullet b};
+
+  prnt "=== 0.12.0 ===";
+  b120=section-bullets lines s120;
+  prnt cat ["bullets: " str len b120] "";
+  @b b120{prnt check-bullet b};
+
+  ~0

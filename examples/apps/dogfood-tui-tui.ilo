@@ -1,0 +1,81 @@
+-- tui-client dogfood: example browser (static demo, stdin is /dev/null in 0.12.x)
+-- Renders a scripted nav sequence; real input loop blocked on missing stdin in 0.12.x.
+
+esc>t;chr 27
+
+ansi code:t>t;a=+esc() "[";b=+code "m";+a b
+wrap c:t x:t>t;a=ansi c;b=ansi "0";p=+a x;+p b
+red x:t>t;wrap "31" x
+grn x:t>t;wrap "32" x
+ylw x:t>t;wrap "33" x
+bld x:t>t;wrap "1" x
+cls>t;a=+esc() "[2J";b=+esc() "[H";+a b
+
+-- highlight `-- run:` / `-- out:` lines
+hl ln:t>t;
+  ws=spl ln " "
+  n=len ws
+  >n 1{
+    t0=at ws 0
+    =t0 "--"{
+      k=at ws 1
+      =k "run:"{ret grn ln}
+      =k "out:"{ret ylw ln}
+    }
+  }
+  ln
+
+mark i:n sel:n>t;=i sel{red ">"}{" "}
+
+row xs:L t sel:n i:n>t;
+  nm=at xs i
+  mk=mark i sel
+  fmt "{} {} {}\n" mk i nm
+
+render-list xs:L t sel:n>t;
+  n=len xs
+  body=fld (a:t i:n>t;r=row xs sel i;+a r) (range 0 n) ""
+  h1=+cls() bld "ilo examples"
+  hdr=+h1 "\n=========================\n"
+  ftr="\n[j/k] [enter] [q]\n"
+  hb=+hdr body
+  +hb ftr
+
+dline x:t>t;fmt "{}\n" hl x
+
+render-detail name:t lines:L t>t;
+  body=fld (a:t x:t>t;d=dline x;+a d) lines ""
+  title=bld fmt "viewing: {}" name
+  h1=+cls() title
+  hdr=+h1 "\n=========================\n"
+  ftr="\n[b] back  [q] quit\n"
+  hb=+hdr body
+  +hb ftr
+
+build-frame xs:L t k:t s:n>R t t;
+  =k "list"{ret ~render-list xs s}
+  =k "back"{ret ~render-list xs s}
+  =k "quit"{q=+cls() "bye!\n";ret ~q}
+  nm=at xs s
+  path=fmt "/Users/dan/code/ilo-lang/ilo/examples/{}" nm
+  ls=rdl! path
+  first=take 12 ls
+  ~render-detail nm first
+
+fline xs:L t ks:L t ss:L n a:t i:n>t;
+  k=at ks i
+  s=at ss i
+  frr=build-frame xs k s
+  fr=?frr{~v:v;^e:e}
+  header=fmt "--- frame {} ({}) ---\n" i k
+  +a +header fr
+
+main>R t t;
+  all=glob! "/Users/dan/code/ilo-lang/ilo/examples" "*.ilo"
+  xs=take 8 all
+  ks=["list" "open" "back" "open" "quit"]
+  ss=[0 2 2 5 0]
+  m=len ks
+  out=fld (a:t i:n>t;fline xs ks ss a i) (range 0 m) ""
+  prnt out
+  ~"done"

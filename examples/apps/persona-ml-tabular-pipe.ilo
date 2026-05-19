@@ -1,0 +1,82 @@
+-- ml-tabular feature-engineering pipeline
+-- load -> coerce -> stats -> normalise -> splt -> train (logistic GD)
+
+-- parse one CSV data row into the numeric subset [age,income,score,churn]
+parse-row ln:t>R (L n) t;parts=spl ln ",";age=num! at parts 1;inc=num! at parts 2;sc=num! at parts 3;ch=num! at parts 5;~[age inc sc ch]
+
+-- extract one column from list-of-rows
+col-of j:n rows:L (L n)>L n;map (r:L n>n;at r j) rows
+
+-- z-score normalise a numeric column
+zscore xs:L n>L n;m=avg xs;s=stdev xs;map (x:n>n;/ (- x m) s) xs
+
+-- sigmoid
+sig z:n>n;e=exp (- 0 z);/ 1 (+ 1 e)
+
+-- one logistic GD epoch over feature matrix X (rows of [x1 x2 x3]) and labels y
+-- weights w = [w0 w1 w2 w3] (w0 = bias)
+predict-row w:L n x:L n>n;z=+ (at w 0) (+ (* (at w 1)(at x 0)) (+ (* (at w 2)(at x 1)) (* (at w 3)(at x 2))));sig z
+
+-- compute gradient over all rows
+grad-step w:L n xs:L (L n) ys:L n lr:n>L n;n=len xs;g0=0.0;g1=0.0;g2=0.0;g3=0.0;@i 0..n{x=at xs i;y=at ys i;p=predict-row w x;d=- p y;g0=+ g0 d;g1=+ g1 (* d (at x 0));g2=+ g2 (* d (at x 1));g3=+ g3 (* d (at x 2))};nf=n;sc=/ lr nf;w0=- (at w 0)(* sc g0);w1=- (at w 1)(* sc g1);w2=- (at w 2)(* sc g2);w3=- (at w 3)(* sc g3);[w0 w1 w2 w3]
+
+-- accuracy
+acc w:L n xs:L (L n) ys:L n>n;n=len xs;ok=0;@i 0..n{x=at xs i;y=at ys i;p=predict-row w x;cp=> p 0.5;pc=?cp{1}{0};ce=(= pc y);eq=?ce{1}{0};ok=+ ok eq};/ ok n
+
+main>R t t
+  -- load
+  t0=now-ms
+  lns=rdl! "data.csv"
+  body=drop 1 lns
+  rows=map (ln:t>L n;r=parse-row ln;?r{~v:v;^e:[0.0 0.0 0.0 0.0]}) body
+  t1=now-ms
+  n-rows=len rows
+  -- per-column summary stats using new builtins
+  ages=col-of 0 rows
+  incs=col-of 1 rows
+  scs=col-of 2 rows
+  chs=col-of 3 rows
+  age-avg=avg ages
+  age-med=median ages
+  age-sd=stdev ages
+  age-var=variance ages
+  age-q25=quantile ages 0.25
+  age-q75=quantile ages 0.75
+  inc-avg=avg incs
+  inc-med=median incs
+  inc-sd=stdev incs
+  sc-avg=avg scs
+  sc-sd=stdev scs
+  ch-rate=avg chs
+  -- cumsum demo over first 10 ages
+  cs10=cumsum (take 10 ages)
+  -- window demo: mean of sliding 50-row income window, take first 3
+  wins=window 50 incs
+  win-mns=map (w:L n>n;avg w) (take 3 wins)
+  t2=now-ms
+  -- normalise features
+  age-n=zscore ages
+  inc-n=zscore incs
+  sc-n=zscore scs
+  -- build feature matrix
+  xs=map (i:n>L n;[at age-n i at inc-n i at sc-n i]) range 0 n-rows
+  ys=chs
+  -- train/test splt 80/20
+  splt=* n-rows 0.8
+  sp=flr splt
+  xs-tr=take sp xs
+  ys-tr=take sp ys
+  xs-te=drop sp xs
+  ys-te=drop sp ys
+  t3=now-ms
+  -- logistic regression: 200 epochs
+  w=[0.0 0.0 0.0 0.0]
+  lr=0.5
+  @e 0..200{w=grad-step w xs-tr ys-tr lr}
+  t4=now-ms
+  acc-tr=acc w xs-tr ys-tr
+  acc-te=acc w xs-te ys-te
+  -- emit summary
+  s=fmt "rows={} load_ms={} stats_ms={} splt_ms={} train_ms={}\nage avg={} med={} sd={} var={} q25={} q75={}\ninc avg={} med={} sd={}\nsc avg={} sd={}\nchurn_rate={}\ncumsum_age_first10={}\nwindow_inc_mean_first3={}\nweights={}\nacc_train={} acc_test={}" n-rows (- t1 t0) (- t2 t1) (- t3 t2) (- t4 t3) age-avg age-med age-sd age-var age-q25 age-q75 inc-avg inc-med inc-sd sc-avg sc-sd ch-rate cs10 win-mns w acc-tr acc-te
+  prnt s
+  ~"ok"

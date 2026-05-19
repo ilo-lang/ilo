@@ -1,0 +1,25 @@
+-- parse FASTA into list of sequences
+do-parse lns:L t>L t
+  out=[]
+  cur=""
+  @ln lns{
+    h=??(slc ln 0 1) ""
+    hdr=(=h ">")
+    hdr{
+      ne=>(len cur) 0
+      ne{out=+=out cur}
+      cur=""
+    }
+    nh=!hdr
+    nh{cur=cat [cur ln] ""}
+  }
+  fin=>(len cur) 0
+  fin{out=+=out cur}
+  out
+
+main>R n t
+  lns=rdl! "fixture.fasta"
+  ss=do-parse lns
+  prnt fmt "seqs={}" (len ss)
+  prnt fmt "first-len={}" (len (??(at ss 0) ""))
+  ~0

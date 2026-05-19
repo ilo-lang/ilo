@@ -1,0 +1,123 @@
+-- examples-harness-runner: exercise example .ilo files across all engines.
+
+-- Path to ilo binary; called as zero-arg function via `ilo-bin()`.
+ilo-bin>t;"/Users/dan/.cargo/bin/ilo"
+
+files>L t;["/Users/dan/code/ilo-lang/ilo/examples/arithmetic.ilo", "/Users/dan/code/ilo-lang/ilo/examples/bool-ternary.ilo", "/Users/dan/code/ilo-lang/ilo/examples/fld-sum.ilo", "/Users/dan/code/ilo-lang/ilo/examples/builtins-as-hof.ilo", "/Users/dan/code/ilo-lang/ilo/examples/cumsum.ilo"]
+
+engines>L t;["tree", "vm", "jit", "aot"]
+
+-- List concat helper (`cat` is text-only).
+cat-lists xs:L t ys:L t>L t;
+  out=xs;
+  @y ys{out=+=out y};
+  out
+
+-- Step the (pending, acc) state for one input line.
+step-line state:L _ l:t>L _;
+  pend=hd state;
+  acc=hd tl state;
+  rc=rgxall1 "^-- run: (.+)$" l;
+  oc=rgxall1 "^-- out: (.*)$" l;
+  np=?>len rc 0 (hd rc) pend;
+  has-out=>len oc 0;
+  has-pend=>len np 0;
+  emit=&has-out has-pend;
+  na=?emit (+=acc [np hd oc]) acc;
+  np2=?emit "" np;
+  [np2 na]
+
+-- Parse cases: walk lines accumulating [run-cmd, expected] pairs.
+parse-cases path:t>L (L t);
+  r=rdl path;
+  ls=?r{~v:v;^e:[]};
+  init=["" []];
+  fin=fld step-line ls init;
+  hd tl fin
+
+-- Flag for tree/vm/jit engine.
+engine-flag eng:t>t;
+  ?eng{"tree":"--run-tree";"vm":"--run-vm";"jit":"--jit";_:"--run-vm"}
+
+-- Run via tree/vm/jit interpreter, return trimmed stdout.
+run-interp path:t myfn:t fnargs:L t eng:t>t;
+  flag=engine-flag eng;
+  argv=cat-lists [flag path myfn] fnargs;
+  rr=run!! (ilo-bin()) argv;
+  trm (??mget rr "stdout" "")
+
+-- Run via AOT: compile to a temp binary, then exec it with args.
+run-aot path:t myfn:t fnargs:L t>t;
+  outbin=cat ["/tmp/ilo-dogfood-examples-harness/aot-" myfn] "";
+  bargv=cat-lists ["build" path "-o" outbin] [myfn];
+  bres=run!! (ilo-bin()) bargv;
+  bcode=??mget bres "code" "x";
+  okb=(="0" bcode);
+  rr=?okb (run!! outbin fnargs) mmap;
+  ?okb (trm (??mget rr "stdout" "")) "<aot-compile-failed>"
+
+-- Run one case under one engine.
+run-case path:t fn-args:t expected:t eng:t>b;
+  parts=spl fn-args " ";
+  myfn=hd parts;
+  fnargs=tl parts;
+  is-aot=(="aot" eng);
+  out=?is-aot (run-aot path myfn fnargs) (run-interp path myfn fnargs eng);
+  =out expected
+
+-- Run every case in a file across all engines.
+run-file path:t>M t (L b);
+  cases=parse-cases path;
+  results=mmap;
+  @eng engines{
+    bools=[];
+    @c cases{
+      bools=+=bools (run-case path (hd c) (hd tl c) eng)
+    };
+    results=mset results eng bools
+  };
+  results
+
+-- Format a row of the matrix.
+fmt-row path:t per-eng:M t (L b)>t;
+  base=padr path 50;
+  cells=[base];
+  @eng engines{
+    bs=??mget per-eng eng [];
+    passes=ct (b:b>b;b) bs;
+    tot=len bs;
+    cells=+=cells (padr (fmt "{}/{}" passes tot) 8)
+  };
+  cat cells ""
+
+-- Tally [total, failures] across all (file, engine) cells.
+tally report:L (M t (L b))>L n;
+  tot=0;
+  fails=0;
+  @per report{
+    @eng engines{
+      bs=??mget per eng [];
+      tot=+tot len bs;
+      fails=+fails (ct (b:b>b;!b) bs)
+    }
+  };
+  [tot fails]
+
+main>n;
+  h1=padr "file" 50;
+  h2=padr "tree" 8;
+  h3=padr "vm" 8;
+  h4=padr "jit" 8;
+  h5=padr "aot" 8;
+  prnt (cat [h1 h2 h3 h4 h5] "");
+  prnt (padr "" 82 "-");
+  report=[];
+  @f files{
+    per=run-file f;
+    prnt (fmt-row f per);
+    report=+=report per
+  };
+  prnt "";
+  ts=tally report;
+  prnt (fmt "total: {} cases, {} failures" (at ts 0) (at ts 1));
+  at ts 1

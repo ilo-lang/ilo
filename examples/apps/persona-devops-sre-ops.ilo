@@ -1,0 +1,27 @@
+-- ops snapshot: shell out for uptime / df / ps, parse, summarise
+parsed s:t>L t;flt (l:t>b;> (len l) 0) (spl s "\n")
+main>R t t;
+  ru=run! "uptime" [];
+  rdf=run! "df" ["-h"];
+  rp=run! "ps" ["-axo" "pid,pcpu,pmem,comm"];
+  up=trm (mget ru "stdout");
+  dfls=parsed (mget rdf "stdout");
+  psls=parsed (mget rp "stdout");
+  dfhdr=hd dfls;dfrows=tl dfls;
+  topdf=take 4 dfrows;
+  -- top cpu procs: skip header, sort desc by 2nd column
+  pshdr=hd psls;psrows=tl psls;
+  sorted=srt (l:t>n;ws=flt (w:t>b;> (len w) 0) (spl l " ");c=at ws 1;?(num c){~v:v;^e:0}) psrows;
+  topcpu=take 5 (rev sorted);
+  ev=env-all!;
+  nvars=len (mkeys ev);
+  shell=??(mget ev "SHELL") "?";
+  l1=fmt "uptime: {}" up;
+  l2=fmt "env: {} vars, shell={}" nvars shell;
+  out=[l1 "" l2 "" "df (top 4):" dfhdr];
+  out=+=out (cat topdf "\n");
+  out=+=out "";
+  out=+=out "top CPU procs:";
+  out=+=out pshdr;
+  out=+=out (cat topcpu "\n");
+  ~cat out "\n"

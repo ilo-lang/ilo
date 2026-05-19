@@ -1,0 +1,26 @@
+-- saas analytics pipeline (rerun11)
+-- workaround: emit pmap/umap as M t t of JSON strings, decode with jpth on lookup
+-- because mget returns O _ and field-access on Optional isn't allowed (rerun10 O _ papercut still bites)
+
+type acct{id:t;name:t;plan:t;region:t}
+
+mkacct row:L t > acct;acct id:(at row 0) name:(at row 1) plan:(at row 2) region:(at row 3)
+
+pcent used:n lim:n > n;?<=lim 0 0 (*100 /used lim)
+
+verdict sp:n ap:n plan:t > t;over=|>=sp 80 >=ap 80;?h (=plan "enterprise") "keep" (?h over "upgrade" "keep")
+
+okline r:R _ t > b;?r{~_:true;^_:false}
+
+unwline r:R _ t > _;?r{~v:v;^_:nil}
+
+-- store JSON-string values for each plan keyed by name
+build-pmap ps:L _ > _;m=mmap;@p ps{m=mset m p.plan (jdmp p)};m
+
+-- usage map keyed by account_id, again storing JSON strings
+build-umap us:L _ > _;fld (u:_ a:_>_;mset u (jdmp a.account_id) (jdmp a)) us mmap
+
+-- jpth lookup for numeric field
+gnum js:t f:t > n;r=jpth js f;?r{~v:?v{n nn:nn;_:0};^_:0}
+
+main > R t t;ac=rd! "accounts.csv";rows=drop 1 ac;accts=map mkacct rows;pj=rd! "plans.json";pmap=build-pmap pj;uses=rdjl "usage.jsonl";uok=map unwline (flt okline uses);umap=build-umap uok;out=[];cands=[];spcts=[];apcts=[];@a accts{ujo=mget umap (jdmp a.id);pjo=mget pmap a.plan;hu=mhas umap (jdmp a.id);hp=mhas pmap a.plan;both=&hu hp;=both true{ujs=??ujo "{}";pjs=??pjo "{}";sp=pcent (gnum ujs "seats_used") (gnum pjs "seats");ap=pcent (gnum ujs "api_calls") (gnum pjs "api_calls");vd=verdict sp ap a.plan;out=+=out [a.id a.name a.plan (fmt2 sp 1) (fmt2 ap 1) vd];spcts=+=spcts sp;apcts=+=apcts ap;isup=(=vd "upgrade");=isup true{cands=+=cands a.id}}};hdr=["account_id" "name" "plan" "seat_pct" "api_pct" "verdict"];allrows=flat [[hdr] out];wr! "report.csv" allrows "csv";prnt fmt "accounts: {}" (len accts);prnt fmt "upgrade candidates: {}" (len cands);prnt fmt "candidate ids: {}" (cat cands ",");prnt fmt "avg seat pct: {}" (fmt2 (avg spcts) 1);prnt fmt "p95 api pct: {}" (fmt2 (quantile apcts 0.95) 1);~"ok"

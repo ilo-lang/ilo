@@ -1,0 +1,102 @@
+-- rerun-prompt-generator: reads ilo_assessment_feedback.md, parses the
+-- ✅ Addressed section + per-persona rerun11 entries, emits fresh rerun12
+-- prompts that exclude already-shipped friction.
+
+-- spl-once "find": split on needle; pieces[0] is text before first hit.
+-- Used in place of a substring-index builtin (none ships in 0.12.0).
+pre-needle hay:t ndl:t>t
+  parts=spl hay ndl
+  z=(= (len parts) 0)
+  ?h z "" (at parts 0)
+
+-- post-needle: text after the first occurrence. Re-join remaining
+-- pieces with the needle so later hits aren't lost.
+post-needle hay:t ndl:t>t
+  parts=spl hay ndl
+  short=(< (len parts) 2)
+  ?h short "" (cat (drop 1 parts) ndl)
+
+-- Slice the Addressed section: from "## ✅ Addressed" to the next "## "
+-- top-level header. The doc has multiple references to the marker string
+-- inside bullet bodies (it's a recursive subject), so we re-join split
+-- pieces past the first split point and neuter inline "\n## ✅" mentions
+-- so the end-of-section cut targets a real sibling heading.
+addressed-block doc:t>t
+  -- Anchored marker: only matches when the marker sits at start of line
+  -- (after a real \n). The doc references the literal string inside
+  -- bullet bodies too, so a non-anchored split would cut at the wrong
+  -- place.
+  marker="\n## ✅ Addressed\n"
+  here=has doc marker
+  !here{ret ""}
+  parts=spl doc marker
+  rest=cat (drop 1 parts) marker
+  neutered=rgxsub "\\n## ✅" "\n@@ADDR" rest
+  hasnext=has neutered "\n## "
+  ?h hasnext (pre-needle neutered "\n## ") neutered
+
+-- Bullet titles in Addressed: every **bold span** in that section.
+addressed-titles block:t>L t
+  rgxall1 "\\*\\*([^*][^*]{8,300}?)\\*\\*" block
+
+-- Persona blocks: split on "\n### ", drop the preamble (first chunk).
+persona-blocks doc:t>L t
+  parts=spl doc "\n### "
+  drop 1 parts
+
+-- Header line: first line of a persona block.
+hdr-line blk:t>t
+  hasnl=has blk "\n"
+  ?h hasnl (pre-needle blk "\n") blk
+
+-- Persona name: text before " rerun11" in the hd1ing.
+persona-name hdr:t>t
+  m=has hdr " rerun11"
+  ?h m (pre-needle hdr " rerun11") ""
+
+-- Friction lines: any line containing 🟡 or 🔴.
+friction-lines blk:t>L t
+  ls=spl blk "\n"
+  flt (l:t>b;yel=has l "🟡";red=has l "🔴";|yel red) ls
+
+-- Filter friction lines down to un-addressed ones.
+unaddressed lines:L t titles:L t>L t
+  flt (l:t>b;c=ct (s:t>b;has l s) titles;= c 0) lines
+
+-- Build the rerun12 prompt block for a single persona.
+build-prompt nm:t hdr:t fric:L t>t
+  hd1=fmt "### {} rerun12 prompt" nm
+  setup="Setup: ilo 0.12.0 at /Users/dan/.cargo/bin/ilo. Fresh workspace."
+  intro=fmt "Persona: {}. Re-run the rerun11 workload against 0.12.0. rerun11 heading was: {}" nm hdr
+  empty=(= (len fric) 0)
+  fbody=cat fric "\n"
+  fric-block=?h empty "No un-addressed friction carried forward; spot-check the workload still works." (cat ["Carry these un-addressed friction items into your repro:" fbody] "\n")
+  taill=fmt "Log findings under ### {} rerun12\n---" nm
+  cat [hd1 setup intro fric-block taill] "\n\n"
+
+-- Per-persona processor: skip non-rerun11 / "(fresh)" / nameless.
+-- Dogfoods mset/mget for the {name, hdr} aggregation.
+process blk:t titles:L t>t
+  hdr=hdr-line blk
+  is11=has hdr "rerun11"
+  !is11{ret ""}
+  isfresh=has hdr "(fresh)"
+  isfresh{ret ""}
+  nm=persona-name hdr
+  noname=(= nm "")
+  noname{ret ""}
+  fric=friction-lines blk
+  open=unaddressed fric titles
+  m=mmap
+  m=mset m "name" nm
+  m=mset m "hdr" hdr
+  nm2=mget m "name"
+  hdr2=mget m "hdr"
+  build-prompt nm2 hdr2 open
+
+main path:t>t
+  doc-lines=rdl path
+  ?doc-lines{
+    ~v:doc=cat v "\n";ab=addressed-block doc;titles=addressed-titles ab;blocks=persona-blocks doc;prompts=map (b:t>t;process b titles) blocks;kept=flt (p:t>b;> (len p) 0) prompts;banner=fmt "# rerun12 prompts ({} personas, filtered against {} resolved items)\n" (len kept) (len titles);cat [banner cat kept "\n"] "\n"
+    ^e:fmt "load failed: {}" e
+  }

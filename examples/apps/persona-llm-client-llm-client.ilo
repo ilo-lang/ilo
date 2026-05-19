@@ -1,0 +1,35 @@
+-- LLM HTTP client. Builds an OpenAI-style chat-completions JSON body,
+-- POSTs it, parses the response, prints the assistant text. Real calls
+-- need a key in ANTHROPIC_API_KEY or OPENAI_API_KEY; for the tests we
+-- target httpbin.org/post which echoes our body back under `.data`,
+-- letting us pin the round-trip (build -> pst -> jpth) without a key.
+--
+-- ilo 0.12.x doesn't have an inline-object literal for heterogeneous
+-- maps, so the JSON body is built via string interpolation + jdmp on
+-- the prompt to escape it. That's still ~3x fewer tokens than the
+-- Python anthropic SDK boilerplate (client = Anthropic(); messages =
+-- [{"role":"user","content":p}]; resp = client.messages.create(...)).
+
+-- replace with env api-key in real use; never commit real key
+key>t;"sk-PLACEHOLDER-set-via-env-in-real-use"
+
+url>t;"https://httpbin.org/post"
+
+-- jdmp on the user prompt handles quote/newline escaping for free.
+body p:t>t;esc=jdmp p;+"{\"model\":\"gpt-4o-mini\",\"messages\":[{\"role\":\"user\",\"content\":" (+esc "}]}")
+
+headers k:t>M t t;h=mmap;h=mset h "content-type" "application/json";mset h "authorization" (+"Bearer " k)
+
+-- httpbin echoes our request body back as text under `.data`. A real
+-- provider response is parsed via jpth on "choices.0.message.content"
+-- (OpenAI) or "content.0.text" (Anthropic). Wire it in by swapping
+-- this one line and pointing `url` at the real endpoint.
+extract j:t>t;r=jpth j "data";?r{~v:v;^e:e}
+
+main p:t>t;b=body p;h=headers key();r=pst url() b h;?r{~v:extract v;^e:e}
+
+-- run: body hello
+-- out: {"model":"gpt-4o-mini","messages":[{"role":"user","content":"hello"}]}
+
+-- run: extract {"data":"echoed"}
+-- out: echoed

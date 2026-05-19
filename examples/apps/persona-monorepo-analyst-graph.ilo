@@ -1,0 +1,31 @@
+-- internal package dep graph + reverse-dep + setunion sanity
+build x:t>R t t
+  pkgs=glob! x "**/package.json"
+  -- collect package names
+  names=[]
+  @p pkgs{
+    j=rd! (cat [x "/" p] "") "raw"
+    names=+names [jpth! j "name"]
+  }
+  out=""
+  out=+out (fmt "internal pkgs: [{}]\n" (cat names ","))
+  -- for each package, list deps intersect names (internal-only)
+  @p pkgs{
+    j=rd! (cat [x "/" p] "") "raw"
+    nm=jpth! j "name"
+    deps=jkeys! j "dependencies"
+    internal=setinter deps names
+    out=+out (fmt "{} -> [{}]\n" nm (cat internal ","))
+  }
+  -- reverse deps of "shared"
+  rdeps=[]
+  @p pkgs{
+    j=rd! (cat [x "/" p] "") "raw"
+    nm=jpth! j "name"
+    deps=jkeys! j "dependencies"
+    =has deps "shared" true{rdeps=+rdeps [nm]}
+  }
+  out=+out (fmt "shared <- [{}]\n" (cat rdeps ","))
+  ~out
+
+main>R t t;build "/tmp/ilo-persona-monorepo-analyst-rerun11/mono"

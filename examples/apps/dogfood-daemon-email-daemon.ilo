@@ -1,0 +1,40 @@
+-- daemon-email: dogfood persona, ilo 0.12.x
+-- reads config each tick, posts an "email" to httpbin.org/post, logs outcome, exits after 5 ticks
+-- run: main
+
+logln line:t>R t t
+  ts=str now
+  entry=cat ["[" ts "] " line "\n"] ""
+  r=rd "/tmp/ilo-email-daemon.log"
+  prev=?r{~v:v;^_:""}
+  wr "/tmp/ilo-email-daemon.log" (cat [prev entry] "")
+
+send-one rcpt:t subj:t body:t>R t t
+  payload=mmap
+  payload=mset payload "to" rcpt
+  payload=mset payload "subject" subj
+  payload=mset payload "body" body
+  json=jdmp payload
+  h=mmap
+  h=mset h "content-type" "application/json"
+  h=mset h "x-daemon" "ilo-daemon-email"
+  pst "https://httpbin.org/post" json h
+
+extract-text cfg:t path:t fallback:t>t
+  r=jpth cfg path
+  ?r{~v:v;^_:fallback}
+
+tick i:n>R t t
+  cr=rd "/tmp/ilo-email-config.json" "raw"
+  ?cr{
+    ~cfg:subj=extract-text cfg "subject" "(no subject)";body=extract-text cfg "body" "(no body)";rr=jpth cfg "recipients";rcpts=?rr{~v:v;^_:[]};sent=0;@r rcpts{res=send-one r subj body;?res{~_:sent=+sent 1;logln (cat ["tick " (str i) " ok to " r] "");^e:logln (cat ["tick " (str i) " ERR to " r ": " e] "")}};~(cat ["tick " (str i) " sent=" (str sent)] "")
+    ^e:logln (cat ["tick " (str i) " config-read-err: " e] "");^e
+  }
+
+main>t
+  wr "/tmp/ilo-email-daemon.log" ""
+  logln "daemon-email start"
+  i=0
+  wh true{i=+i 1;r=tick i;?r{~v:logln v;^e:logln (cat ["tick fatal: " e] "")};>=i 5{brk};sleep 2000}
+  logln "daemon-email done"
+  "done"

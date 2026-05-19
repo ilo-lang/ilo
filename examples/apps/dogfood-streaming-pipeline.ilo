@@ -1,0 +1,48 @@
+-- streaming-pipes dogfood: 50k random ints → external sort|uniq -c → top-10
+-- workaround: ilo's run has no stdin pipe, so write to a file and pass argv
+
+main>t
+  -- 1. generate 50,000 random ints in [0, 99] as text lines
+  lines=[]
+  @i 0..50000{lines=+=lines (str (rnd 0 99))}
+  -- 2. write to file
+  in="/tmp/ilo-dogfood-streaming/data.txt"
+  p1=wrl!! in lines
+  -- 3. external sort
+  r1=run!! "sort" [in]
+  sorted=mget r1 "stdout"
+  -- 4. write sort output to a file (since run has no stdin)
+  mid="/tmp/ilo-dogfood-streaming/sorted.txt"
+  p2=wr!! mid sorted
+  -- 5. external uniq -c
+  r2=run!! "uniq" ["-c", mid]
+  counted=mget r2 "stdout"
+  -- 6. parse rows: "  500 42" → [count, value]
+  rows=spl counted "\n"
+  fm=mmap
+  @line rows{
+    s=trm line
+    parts=rgx "(\\d+)\\s+(\\d+)" s
+    fm=?(>=len parts 2){mset fm (at parts 1) (num!! (at parts 0))}{fm}
+  }
+  -- 7. top-10 by count desc
+  ks=mkeys fm
+  pairs=map (k:t>L _;[mget fm k, k]) ks
+  ranked=srt (p:L _>n;-0 (at p 0)) pairs
+  top=slc ranked 0 10
+  -- 8. format report
+  out="top-10 via external sort|uniq -c:\n"
+  @row top{
+    out=+out (fmt "  {}: {}\n" (at row 1) (at row 0))
+  }
+  -- 9. native frq cross-check
+  fm2=frq lines
+  ks2=mkeys fm2
+  pairs2=map (k:t>L _;[mget fm2 k, k]) ks2
+  ranked2=srt (p:L _>n;-0 (at p 0)) pairs2
+  top2=slc ranked2 0 10
+  out=+out "\ntop-10 via native frq (cross-check):\n"
+  @row top2{
+    out=+out (fmt "  {}: {}\n" (at row 1) (at row 0))
+  }
+  out

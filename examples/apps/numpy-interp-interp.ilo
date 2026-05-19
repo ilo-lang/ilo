@@ -1,0 +1,30 @@
+-- interp1d: linear interpolation of 100 evenly-spaced queries
+-- over 10 sample (x,y) pairs. Numpy: np.interp(qx, sx, sy).
+-- MARK: no bisect/binary-search; linear flt to find segment.
+-- MARK: fp arithmetic precision; step via (hi-lo)/(qn-1).
+
+ilerp sx:L n sy:L n q:n>n;
+  -- MARK: linear scan to find largest i with sx[i] <= q
+  idxs=flt (i:n>b;<=at sx i q) range 0 len sx;
+  i=at idxs -1;
+  ln=- len sx 1;
+  >=i ln{ret at sy ln};
+  x0=at sx i;
+  x1=at sx +i 1;
+  y0=at sy i;
+  y1=at sy +i 1;
+  dx=- x1 x0;
+  dy=- y1 y0;
+  t=/ - q x0 dx;
+  +y0 *t dy
+
+go>L n;
+  sx=[0.0 1.0 2.0 3.0 4.0 5.0 6.0 7.0 8.0 9.0];
+  sy=[0.0 1.0 4.0 9.0 16.0 25.0 36.0 49.0 64.0 81.0];
+  lo=hd sx;
+  hi=at sx -1;
+  qn=100;
+  step=/ - hi lo - qn 1;
+  -- MARK: build evenly-spaced query xs lo, lo+step, ..., hi
+  qs=map (k:n>n;+ lo * k step) range 0 qn;
+  map (q:n>n;ilerp sx sy q) qs

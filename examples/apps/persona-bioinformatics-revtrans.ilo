@@ -1,0 +1,64 @@
+-- reverse-complement and translation (codon -> amino acid)
+
+complement c:t>t
+  ?c{
+    "A":"T"
+    "T":"A"
+    "C":"G"
+    "G":"C"
+    _:"N"
+  }
+
+revcomp s:t>t
+  cs=chars s
+  rc=rev cs
+  out=""
+  @c rc{out=cat [out (complement c)] ""}
+  out
+
+-- minimal codon table (subset for demo)
+codon c:t>t
+  ?c{
+    "ATG":"M"
+    "TAA":"*"
+    "TAG":"*"
+    "TGA":"*"
+    "TTT":"F"
+    "TTC":"F"
+    "TTA":"L"
+    "TTG":"L"
+    "GCT":"A"
+    "GCC":"A"
+    "GCA":"A"
+    "GCG":"A"
+    "GAA":"E"
+    "GAG":"E"
+    "GGT":"G"
+    "GGC":"G"
+    "GGA":"G"
+    "GGG":"G"
+    _:"X"
+  }
+
+translate s:t>t
+  n=len s
+  nc=/n 3
+  ncf=flr nc
+  out=""
+  @i 0..ncf{
+    j=*i 3
+    c=slc s j (+j 3)
+    aa=codon c
+    out=cat [out aa] ""
+  }
+  out
+
+main>R n t
+  s="ATGGCCTTTGGGTAA"
+  rc=revcomp s
+  prnt fmt "fwd={} rc={}" s rc
+  aa=translate s
+  prnt fmt "aa={}" aa
+  -- spot check
+  prnt fmt "comp-A={} comp-N={}" (complement "A") (complement "X")
+  ~0

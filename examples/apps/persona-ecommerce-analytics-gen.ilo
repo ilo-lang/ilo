@@ -1,0 +1,26 @@
+-- gen.ilo: generate synthetic orders.csv for ecom analytics
+-- columns: oid,cid,pid,cat,qty,price
+-- ~40k rows, ~5000 distinct customers, 200 products, 8 categories
+main >R t t;
+  n=40000;
+  cs=40000;
+  ps=200;
+  cats=["elec","books","home","cloth","food","toys","beauty","sport"];
+  rows=[["oid","cid","pid","cat","qty","price"]];
+  i=0;
+  wh <i n{
+    cid=mod i cs;
+    pid=mod i ps;
+    cg=at cats (mod i 8);
+    qty=+1 (mod i 5);
+    price=+5 (mod (* i 17) 200);
+    oid=str i;
+    cs2=cat ["c" str cid] "";
+    ps2=cat ["p" str pid] "";
+    qs=str qty;
+    pr=str price;
+    rows=+=rows [oid cs2 ps2 cg qs pr];
+    i=+i 1
+  };
+  wr! "orders.csv" rows "csv";
+  ~"ok"

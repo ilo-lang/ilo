@@ -1,0 +1,96 @@
+-- k-means clustering: 200 deterministic pseudo-random 2D points, k=3, 10 iters.
+-- Uses an LCG so output is reproducible (rnd in ilo 0.12.x is unseeded).
+-- Demonstrates: nested L (L n), manual argmin via fold, mean-of-cluster step.
+
+-- Linear congruential pseudo-random: returns next state.
+lcg s:n>n;mod +*s 1103515245 12345 2147483648
+
+-- Convert LCG state to unit float in [0, 1).
+unit s:n>n;/s 2147483648
+
+-- Squared Euclidean distance between two 2D points.
+d2 a:L n b:L n>n
+  dx=-(at a 0) (at b 0)
+  dy=-(at a 1) (at b 1)
+  +*dx dx *dy dy
+
+-- Build n points around 3 cluster centres so kmeans has structure.
+gen-pts n:n>L (L n)
+  cx=[2, 8, 5]
+  cy=[2, 2, 8]
+  s=1
+  pts=[]
+  @i 0..n{
+    s=lcg s;jx=-(unit s) 0.5
+    s=lcg s;jy=-(unit s) 0.5
+    k=mod i 3
+    x=+(at cx k) jx
+    y=+(at cy k) jy
+    pts=+=pts [x, y]
+  }
+  pts
+
+-- Manual argmin: scan centroids, keep best index + dist seen so far.
+nearest p:L n cs:L (L n)>n
+  best-i=0
+  best-d=d2 p (at cs 0)
+  @k 1..(len cs){
+    d=d2 p (at cs k)
+    <d best-d{best-i=k;best-d=d}
+  }
+  best-i
+
+-- Recompute centroid k as mean of all points assigned to it.
+mean-of pts:L (L n) labels:L n k:n>L n
+  xs=[]
+  ys=[]
+  @i 0..(len pts){
+    =(at labels i) k{
+      p=at pts i
+      xs=+=xs (at p 0)
+      ys=+=ys (at p 1)
+    }
+  }
+  =(len xs) 0{[0, 0]}{[avg xs, avg ys]}
+
+-- Assign labels for every point under current centroids.
+assign pts:L (L n) cs:L (L n)>L n
+  labels=[]
+  @p pts{labels=+=labels (nearest p cs)}
+  labels
+
+-- Recompute every centroid from current labels.
+update pts:L (L n) labels:L n k-count:n>L (L n)
+  new-cs=[]
+  @k 0..k-count{new-cs=+=new-cs (mean-of pts labels k)}
+  new-cs
+
+-- Run 10 iterations, return final centroids and cluster sizes per row.
+kmeans>L (L n)
+  pts=gen-pts 200
+  cs=[at pts 0, at pts 1, at pts 2]
+  labels=[]
+  @it 0..10{
+    labels=assign pts cs
+    cs=update pts labels 3
+  }
+  sizes=[]
+  @k 0..(len cs){sizes=+=sizes (ct (l:n>b;=l k) labels)}
+  out=[]
+  @k 0..(len cs){
+    c=at cs k
+    out=+=out [at c 0, at c 1, at sizes k]
+  }
+  out
+
+-- Round to 3 dp for stable -- out: assertions.
+r3 x:n>n;/(rou *x 1000) 1000
+
+result>L (L n)
+  rows=kmeans
+  out=[]
+  @row rows{out=+=out [r3 (at row 0), r3 (at row 1), at row 2]}
+  out
+
+-- run: result
+-- out: [[1.961, 2.075, 67], [8.028, 2.027, 67], [4.998, 8.041, 66]]

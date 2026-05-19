@@ -1,0 +1,32 @@
+-- server.ilo: dogfood "server" orchestrator.
+--
+-- Because ilo 0.12.0 has no socket-listen primitive and `run` is fully
+-- blocking with stdin=/dev/null, we cannot bind a port from inside ilo
+-- itself. The pragmatic shape is: ilo spawns a detached child via
+-- `bash -c` (which forces us back to shell-string territory — the very
+-- thing the `run cmd argv` design tries to prevent), then polls its
+-- HTTP endpoints with `get` to confirm readiness and that JSON
+-- round-tripping works.
+--
+-- Exercises: run, get, pst, jpth, jdmp, sleep, wh, records.
+
+type echo-body{tag:t;value:n}
+
+-- Spawn the python listener detached. Returns "ok" or err text.
+boot>R t t;r=run "bash" ["-c" "rm -f server.pid; nohup ./serve.sh 8080 > server.log 2>&1 & echo $! > server.pid; sleep 0.2"];?r{~m:c=mget m "code";?=c "0" ~"ok" ^"non-zero exit";^e:^+ "spawn-err: " e}
+
+-- Stop the listener.
+stop>R t t;r=run "bash" ["-c" "test -f server.pid && kill $(cat server.pid) 2>/dev/null; rm -f server.pid"];?r{~_:~"stopped";^e:^e}
+
+-- Poll /time until it responds. Returns true if ready inside ~3 seconds.
+wait-ready>b;i=0;ok=false;wh (& (< i 30) (! ok)){r=get "http://127.0.0.1:8080/time";?r{~_:ok=true;^_:sleep 100};i=+i 1};ok
+
+-- Hit every endpoint, return summary text.
+probe>t;t1=get "http://127.0.0.1:8080/time";t2=get "http://127.0.0.1:8080/rand";body=jdmp (echo-body tag:"probe" value:7);t3=pst "http://127.0.0.1:8080/echo" body;
+  s1=?t1{~b:?(jpth b "msg"){~v:v;^_:"?"};^e:e};
+  s2=?t2{~b:?(jpth b "value"){~v:str v;^_:"?"};^e:e};
+  s3=?t3{~b:?(jpth b "echo.value"){~v:str v;^_:"?"};^e:e};
+  + "msg=" (+ s1 (+ " rand=" (+ s2 (+ " echo=" s3))))
+
+-- Run the whole dance: boot -> wait -> probe -> stop. Returns final summary.
+main>t;b=boot;?b{~_:_;^e:ret + "boot-failed: " e};ready=wait-ready;!ready{stop;ret "server-not-ready"};p=probe;stop;p

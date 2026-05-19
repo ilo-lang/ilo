@@ -1,0 +1,48 @@
+-- bench.ilo: helper-fn vs inline mset accumulation
+addto m:M t n k:t v:n>M t n;
+  prev=??(mget m k) 0;
+  mset m k (+prev v)
+
+parsen s:t>n;
+  r=num s;
+  ?r{~v:v;^_:0.0}
+
+run-helper rows:L (L t)>M t n;
+  m=mmap;
+  @row rows{
+    cid=at row 1;
+    q=parsen (at row 4);
+    p=parsen (at row 5);
+    m=addto m cid (*q p)
+  };
+  m
+
+run-inline rows:L (L t)>M t n;
+  m=mmap;
+  @row rows{
+    cid=at row 1;
+    q=parsen (at row 4);
+    p=parsen (at row 5);
+    prev=??(mget m cid) 0;
+    m=mset m cid (+prev (*q p))
+  };
+  m
+
+main >R t t;
+  rows=rd! "orders.csv";
+  body=drop 1 rows;
+  prnt cat ["rows: " str len body] "";
+
+  t0=now-ms;
+  mh=run-helper body;
+  t1=now-ms;
+
+  t2=now-ms;
+  mi=run-inline body;
+  t3=now-ms;
+
+  prnt cat ["helper ms: " str (-t1 t0)] "";
+  prnt cat ["inline ms: " str (-t3 t2)] "";
+  prnt cat ["distinct cids helper: " str len mh] "";
+  prnt cat ["distinct cids inline: " str len mi] "";
+  ~"ok"

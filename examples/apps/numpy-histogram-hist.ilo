@@ -1,0 +1,25 @@
+-- histogram-bin: 10k normal samples, 20 equal-width bins, ASCII bars
+gen n:n>L n;xs=[];@i 0..n{xs=+=xs (rndn 0 1)};xs
+
+bins xs:L n bn:n>L n;
+  lo=min xs;
+  hi=max xs;
+  w=/(- hi lo) bn;
+  cs=[];@i 0..bn{cs=+=cs 0};
+  @x xs{
+    k=flr /(- x lo) w;
+    k=?h >=k bn (- bn 1) k;
+    cs=lst cs k +(at cs k) 1
+  };
+  cs
+
+main>n;
+  xs=gen 10000;
+  cs=bins xs 20;
+  mx=max cs;
+  @i 0..20{
+    bw=flr /(* 50 at cs i) mx;
+    bar=padr "" bw "#";
+    prnt fmt "{}: {} {}" (padl str i 2) (padl str at cs i 5) bar
+  };
+  0

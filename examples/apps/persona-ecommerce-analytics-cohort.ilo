@@ -1,0 +1,43 @@
+-- cohort.ilo: revenue-by-category distribution stats (per-category P50/P95/stdev),
+-- plus order-value bucketing (histogram-style) using the new stat builtins.
+parsen s:t>n;
+  r=num s;
+  ?r{~v:v;^_:0.0}
+
+main >R t t;
+  rows=rd! "orders.csv";
+  body=drop 1 rows;
+  prnt cat ["rows: " str len body] "";
+
+  -- per-category list of order revenues (inline mset avoiding cliff)
+  by-cat=mmap;
+  @row body{
+    cg=at row 3;
+    q=parsen (at row 4);
+    p=parsen (at row 5);
+    r=*q p;
+    prev=??(mget by-cat cg) [];
+    by-cat=mset by-cat cg (+=prev r)
+  };
+
+  prnt "category, n, mean, median, p95, stdev";
+  @k mkeys by-cat{
+    xs=??(mget by-cat k) [];
+    mn=avg xs;
+    md=median xs;
+    p95=quantile xs 0.95;
+    sd=stdev xs;
+    line=cat [k str len xs (fmt2 mn 2) (fmt2 md 2) (fmt2 p95 2) (fmt2 sd 2)] ",";
+    prnt line
+  };
+
+  -- overall order-value histogram via chunks/bucketing
+  all-rev=[];
+  @row body{
+    q=parsen (at row 4);
+    p=parsen (at row 5);
+    all-rev=+=all-rev (*q p)
+  };
+  prnt cat ["overall mean: " (fmt2 (avg all-rev) 4)] "";
+  prnt cat ["overall p25/p50/p75/p99: " (fmt2 (quantile all-rev 0.25) 2) " / " (fmt2 (median all-rev) 2) " / " (fmt2 (quantile all-rev 0.75) 2) " / " (fmt2 (quantile all-rev 0.99) 2)] "";
+  ~"ok"

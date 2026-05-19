@@ -1,0 +1,25 @@
+-- monorepo-analyst rerun11: walk repo, list packages, LOC, dep graph
+root x:t>R t t
+  pkgs=glob! x "**/package.json"
+  out=""
+  out=+out (fmt "packages: {}\n" (len pkgs))
+  @p pkgs{
+    full=cat [x "/" p] ""
+    j=rd! full "raw"
+    nm=jpth! j "name"
+    deps=jkeys! j "dependencies"
+    -- LOC for this package: walk its dir, count lines in .js files
+    pdir=cat [x "/" (cat (slc (spl p "/") 0 -1) "/")] ""
+    files=walk! pdir
+    js=flt (f:t>b;has f ".js") files
+    nlines=0
+    @f js{
+      fp=cat [pdir "/" f] ""
+      ls=rdl! fp
+      nlines=+nlines (len ls)
+    }
+    out=+out (fmt "{} v={} loc={} deps=[{}]\n" nm (jpth! j "version") nlines (cat deps ","))
+  }
+  ~out
+
+main>R t t;root "/tmp/ilo-persona-monorepo-analyst-rerun11/mono"

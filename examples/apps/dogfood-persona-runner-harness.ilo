@@ -1,0 +1,55 @@
+-- persona-runner-ilo: tiny harness that walks examples,
+-- extracts -- run / -- out markers, spawns ilo --vm, compares,
+-- and prints a pass/fail summary.
+
+-- Read a file and return all lines joined with newlines (for regex scan)
+blob path:t>t;ls=rdl!! path;cat ls "\n"
+
+-- Run one (cmd-args, expected) pair against `path`.
+-- Returns "" on pass; an error string otherwise.
+one path:t spec:t want:t>t
+  argv=spl spec " "
+  full= +[path] argv
+  r=run!! "/Users/dan/.cargo/bin/ilo" full
+  raw=??(mget r "stdout") ""
+  got=trm raw
+  eq= =got want
+  ?eq{""}{cat [path " :: " spec " got=[" got "] want=[" want "]"] ""}
+
+-- Run every marker pair in a single example file; return list of failure messages
+process path:t>L t
+  b=blob path
+  runs=rgxall1 "-- run: (.+)" b
+  outs=rgxall1 "-- out: (.+)" b
+  n=min len runs len outs
+  msgs=[]
+  @i 0..n{
+    m=one path at runs i at outs i
+    >len m 0{msgs=+=msgs m}
+  }
+  msgs
+
+-- Count how many run markers are in a file (for the pass tally)
+nruns path:t>n;b=blob path;len rgxall1 "-- run: (.+)" b
+
+main>n
+  dir="/Users/dan/code/ilo-lang/ilo/examples"
+  fs=glob!! dir "*.ilo"
+  total=min len fs 12
+  pass=0
+  fail=0
+  fails=[]
+  @i 0..total{
+    p=cat [dir "/" at fs i] ""
+    ms=process p
+    nm=len ms
+    rc=nruns p
+    fail=+fail nm
+    pass=+pass -rc nm
+    @j 0..nm{fails=+=fails at ms j}
+  }
+  prnt cat ["files=" str total] ""
+  prnt cat ["pass=" str pass] ""
+  prnt cat ["fail=" str fail] ""
+  @f fails{prnt f}
+  0

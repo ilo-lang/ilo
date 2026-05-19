@@ -1,0 +1,48 @@
+try2 s:t>R n t
+  r=dtparse s "%Y/%m/%d"
+  ?r{~v:~v;^_:dtparse s "%d %b %Y"}
+
+norm-date s:t>R n t
+  r1=dtparse s "%Y-%m-%d"
+  ?r1{~v:~v;^_:try2 s}
+
+coerce-qty s:t>n
+  =s "" 0
+  q=num s
+  ?q{~v:v;^_:0}
+
+coerce-price s:t>n
+  q=num s
+  ?q{~v:v;^_:0}
+
+iso-of s:t>t
+  d=norm-date s
+  ?d{~e:?(dtfmt e "%Y-%m-%d"){~x:x;^_:"BAD"};^_:"BAD"}
+
+main>R t t
+  rows=rd! "data.csv" "csv"
+  body=tl rows
+  bl-rows=rd! "blocklist.csv" "csv"
+  bl=tl bl-rows
+  blset=map (r:_>t;at r 0) bl
+  out=[]
+  @r body{
+    store=at r 1
+    bk=has blset store
+    ?bk{true:cnt;false:0}
+    iso=iso-of (at r 0)
+    sku=at r 2
+    qty=coerce-qty (at r 3)
+    price=coerce-price (at r 4)
+    out=+=out [iso store sku qty price]
+  }
+  dedup=uniqby (row:_>t;cat [at row 0 at row 1 at row 2 str (at row 3) str (at row 4)] "|") out
+  by-store=grp (row:_>t;at row 1) dedup
+  stores=mkeys by-store
+  rep=[]
+  @s stores{
+    rs=??(mget by-store s) []
+    revs=map (row:_>n;* (at row 3) (at row 4)) rs
+    rep=+=rep [s (fmt2 (sum revs) 2)]
+  }
+  ~jdmp rep

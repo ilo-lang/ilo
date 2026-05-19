@@ -1,0 +1,30 @@
+-- markov-chain rerun12: 3-state chain, 100 steps, frequency dist + stationary via matmul^N
+-- BEGIN MARKERS
+-- transition row from state i; pick next by cumsum + uniform draw (inverse CDF)
+nxt row:L n>n;cs=cumsum row;u=rnd;ct (x:n>b;<x u) cs
+
+-- repeated matmul N times: m^n
+mpow m:L L n n:n>L L n;r=m;@k 1..n{r=matmul r m};r
+
+-- mwalk: start at s0, take n steps, return list of visited states
+mwalk p:L L n s0:n n:n>L n;st=s0;vs=[s0];@k 0..n{row=at p st;st=nxt row;vs=+=vs st};vs
+
+main>t;
+  p=[[0.1 0.6 0.3] [0.4 0.2 0.4] [0.3 0.3 0.4]];
+  s0=0;
+  vs=mwalk p s0 100;
+  f=frq vs;
+  c0=?? mget f 0 0;
+  c1=?? mget f 1 0;
+  c2=?? mget f 2 0;
+  tot=+c0 +c1 c2;
+  e0=/c0 tot;
+  e1=/c1 tot;
+  e2=/c2 tot;
+  pn=mpow p 100;
+  r0=at pn 0;
+  a0=at r0 0;
+  a1=at r0 1;
+  a2=at r0 2;
+  fmt "empirical [{} {} {}] stationary [{} {} {}]" e0 e1 e2 a0 a1 a2
+-- END MARKERS

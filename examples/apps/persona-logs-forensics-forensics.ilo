@@ -1,0 +1,148 @@
+-- logs-forensics rerun11 pipeline
+
+to-num s:t>n;
+  r=num s;
+  ?r{~v:v;^_:0}
+
+x-status ln:t>n;
+  ms=rgxall1 "\" (\\d{3}) " ln;
+  e=>(len ms) 0;
+  ?h e (to-num hd ms) 0
+
+x-ip ln:t>t;
+  ms=rgxall1 "^([0-9.]+) " ln;
+  e=>(len ms) 0;
+  ?h e (hd ms) ""
+
+x-lat ln:t>n;
+  ms=rgxall1 "latency=(\\d+)ms" ln;
+  e=>(len ms) 0;
+  ?h e (to-num hd ms) 0
+
+x-min ln:t>t;
+  ms=rgxall1 ":(\\d{2}:\\d{2}):\\d{2} " ln;
+  e=>(len ms) 0;
+  ?h e (hd ms) "??:??"
+
+is-5xx s:n>b;>=s 500
+is-4xx s:n>b;&(>=s 400) (<s 500)
+status-text s:n>t;str s
+avg-of w:L n>n;avg w
+
+-- pair is [ip:t status:n]
+fst-ip p:L _>t;
+  v=at p 0;
+  ?v{t s:s;_:""}
+
+snd-st p:L _>n;
+  v=at p 1;
+  ?v{n s:s;_:0}
+
+-- pair from mtos is [key:t count:n]
+neg-count p:L _>n;
+  v=at p 1;
+  c=?v{n s:s;_:0};
+  - 0 c
+
+pair-is-err p:L _>b;
+  v=at p 1;
+  s=?v{n x:x;_:0};
+  >=s 500
+
+mget-or m:M t n k:t>n;
+  r=mget m k;
+  ?r{n v:v;_:0}
+
+-- materialise frq map -> [key, count] list of pairs
+mtos m:M t n>L (L _);
+  ks=mkeys m;
+  acc=[];
+  @k ks{
+    c=mget-or m k;
+    acc=+=acc [k c]
+  };
+  acc
+
+count-err acc:n r:R _ t>n;
+  ?r{~_:acc;^_:+ acc 1}
+
+-- rec value from rdjl Ok is a json record; pull fields directly
+extract-lvl acc:L t r:R _ t>L t;
+  ?r{~v:+=acc v.lvl;^_:acc}
+
+extract-lat acc:L n r:R _ t>L n;
+  ?r{~v:+=acc v.lat;^_:acc}
+
+main>R t t;
+  lns=rdl! "nginx.log";
+  total=len lns;
+
+  ips=map x-ip lns;
+  sts=map x-status lns;
+  lts=map x-lat lns;
+  mns=map x-min lns;
+
+  st-strs=map status-text sts;
+  st-frq=frq st-strs;
+
+  errs=flt is-5xx sts;
+  err-n=len errs;
+  c4=flt is-4xx sts;
+  n4=len c4;
+
+  p50=quantile lts 0.5;
+  p95=quantile lts 0.95;
+  p99=quantile lts 0.99;
+  lt-avg=avg lts;
+  lt-sd=stdev lts;
+  lt-mx=max lts;
+
+  ip-frq=frq ips;
+  ip-pairs=mtos ip-frq;
+  ip-sorted=srt neg-count ip-pairs;
+  top-ips=take 5 ip-sorted;
+
+  pairs=zip ips sts;
+  err-pairs=flt pair-is-err pairs;
+  err-ips=map fst-ip err-pairs;
+  err-ip-frq=frq err-ips;
+  err-ip-pairs=mtos err-ip-frq;
+  err-ip-sorted=srt neg-count err-ip-pairs;
+  top-err-ips=take 5 err-ip-sorted;
+
+  min-st=zip mns sts;
+  min-err-pairs2=flt pair-is-err min-st;
+  min-err=map fst-ip min-err-pairs2;
+  min-err-frq=frq min-err;
+  min-err-list=mtos min-err-frq;
+  burst-sorted=srt neg-count min-err-list;
+  burst=take 5 burst-sorted;
+
+  wins=window 60 lts;
+  win-avgs=map avg-of wins;
+  win-max=max win-avgs;
+
+  jl=rdjl "app.jsonl";
+  jl-total=len jl;
+  bad=fld count-err jl 0;
+  ok-n=- jl-total bad;
+
+  lvls=fld extract-lvl jl [];
+  lvl-frq=frq lvls;
+
+  jlats=fld extract-lat jl [];
+  jp95=quantile jlats 0.95;
+  jp99=quantile jlats 0.99;
+  jl-avg=avg jlats;
+
+  prnt fmt "scan: nginx={} jsonl_total={} jsonl_ok={} jsonl_malformed={}" total jl-total ok-n bad;
+  prnt fmt "status: 5xx={} 4xx={}" err-n n4;
+  prnt fmt "lat ms: avg={} sd={} p50={} p95={} p99={} max={}" (fmt2 lt-avg 1) (fmt2 lt-sd 1) p50 p95 p99 lt-mx;
+  prnt fmt "win60 max-avg latency: {}" (fmt2 win-max 1);
+  prnt fmt "top-ips: {}" (jdmp top-ips);
+  prnt fmt "top-error-ips: {}" (jdmp top-err-ips);
+  prnt fmt "error-burst-minutes: {}" (jdmp burst);
+  prnt fmt "jsonl lat: avg={} p95={} p99={}" (fmt2 jl-avg 1) jp95 jp99;
+  prnt fmt "jsonl-levels: {}" (jdmp lvl-frq);
+  prnt fmt "status-hist: {}" (jdmp st-frq);
+  ~"ok"

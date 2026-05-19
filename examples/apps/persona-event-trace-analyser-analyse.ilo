@@ -1,0 +1,51 @@
+-- trace analysis
+type kv{k:t;v:n}
+
+dur s:_>n;s.duration_ms
+svcf s:_>t;s.service
+opf s:_>t;s.op
+tidf s:_>t;s.trace_id
+cpuf s:_>n;s.cpu_ms
+iserr s:_>b;==s.status "err"
+slow s:_>b;>s.duration_ms 300
+
+fmt-slow s:_>t;cat [s.trace_id " " s.span_id " " s.service "." s.op " " str s.duration_ms "ms"] ""
+fmt-kv x:kv>t;cat [x.k " " str x.v "ms"] ""
+
+sum-dur-for m:M t (L _) k:t>n;sum (map dur (??(mget m k) []))
+
+main p:t>R t t
+  j=rd! p "raw"
+  ss=jpth! j "spans"
+
+  n-spans=len ss
+  durs=map dur ss
+  cpus=map cpuf ss
+  total-dur=sum durs
+  total-cpu=sum cpus
+  blocked=-total-dur total-cpu
+  cpu-pct=*100 /total-cpu total-dur
+
+  bysvc=grp svcf ss
+  svc-keys=mkeys bysvc
+  svc-lines=[]
+  @k svc-keys{tot=sum-dur-for bysvc k;ln=cat [k " " str tot "ms"] "";svc-lines=+svc-lines [ln]}
+
+  bytid=grp tidf ss
+  tids=mkeys bytid
+  tid-lines=[]
+  @ti tids{tot=sum-dur-for bytid ti;ln=cat [ti " " str tot "ms"] "";tid-lines=+tid-lines [ln]}
+
+  slow-spans=flt slow ss
+  err-spans=flt iserr ss
+  slow-lines=map fmt-slow slow-spans
+  err-lines=map fmt-slow err-spans
+
+  -- top-N slowest by sort
+  sorted=rsrt durs
+  top5durs=take 5 sorted
+
+  pct=str (flr cpu-pct)
+  hdr=cat ["spans=" str n-spans " traces=" str (len tids) " total-dur=" str total-dur "ms cpu=" str total-cpu "ms (" pct "%) blocked=" str blocked "ms"] ""
+
+  ~cat [hdr "" "BY-SERVICE:" (cat svc-lines "\n") "" "BY-TRACE:" (cat tid-lines "\n") "" "TOP5-DURS:" (cat (map str top5durs) " ") "" "ERRORS:" (cat err-lines "\n") "" "SLOW>300ms:" (cat slow-lines "\n")] "\n"

@@ -1,0 +1,35 @@
+-- daemon: ticks every 5s, increments counter, logs, exits after 30s
+
+init-counter>n;
+  cp="/tmp/ilo-daemon-counter.txt";
+  r=rd cp;
+  ?r{~v:{n=num v;?n{~m:m;^_:0}};^_:0}
+
+read-log>t;
+  lp="/tmp/ilo-daemon.log";
+  r=rd lp;
+  ?r{~v:v;^_:""}
+
+tick c:n>R n t;
+  cp="/tmp/ilo-daemon-counter.txt";
+  lp="/tmp/ilo-daemon.log";
+  n2=+ c 1;
+  wr! cp (str n2);
+  ts=now;
+  line=cat [(str ts) " tick " (str n2) "\n"] "";
+  existing=read-log;
+  new=cat [existing line] "";
+  wr! lp new;
+  ~n2
+
+main>R n t;
+  start=now;
+  c=init-counter;
+  wh true{
+    r=tick c;
+    c=?r{~v:v;^_:0};
+    elapsed=- now start;
+    >=elapsed 30{brk}{c=c};
+    sleep 5000
+  };
+  ~c

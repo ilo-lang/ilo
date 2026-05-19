@@ -1,0 +1,30 @@
+-- per-trace critical path: longest chain by duration from root, trace t002
+parent-of s:_>t;??s.parent_id "ROOT"
+sumc s:_>n;s.duration_ms
+
+main p:t>R t t
+  j=rd! p "raw"
+  ss=jpth! j "spans"
+  ts=[]
+  @s ss{=s.trace_id "t002"{ts=+ts [s]}}
+  bypar=grp parent-of ts
+  -- find root
+  root=at ts 0
+  @s ts{=s.parent_id nil{root=s}}
+  cur-id=root.span_id
+  cur-sum=root.duration_ms
+  chain=[cur-id]
+  d=0
+  wh <d 10{
+    kids=??(mget bypar cur-id) []
+    =(len kids) 0{brk}
+    durs=map sumc kids
+    mx=max durs
+    next=at kids 0
+    @k kids{=k.duration_ms mx{next=k}}
+    cur-id=next.span_id
+    cur-sum=+cur-sum next.duration_ms
+    chain=+chain [cur-id]
+    d=+d 1
+  }
+  ~cat ["trace=t002 critical-path-sum=" str cur-sum "ms depth=" str (len chain) " chain=" cat chain "->"] ""

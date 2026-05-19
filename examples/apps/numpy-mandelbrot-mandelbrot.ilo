@@ -1,0 +1,53 @@
+-- mandelbrot 40x40, ilo 0.12.x
+-- MARKER: missing complex type. z = (re,im) tracked manually.
+-- MARKER: no `cmul` builtin. Inlined: zr2 = zr*zr - zi*zi; zi2 = 2*zr*zi.
+-- PROPOSAL: add `cplx` type or `cmul r1 i1 r2 i2 > [re, im]`.
+
+-- iteration count for c = (cr, ci); escape when zr*zr+zi*zi > 4
+mand cr:n ci:n>n
+  zr=0
+  zi=0
+  i=0
+  wh <i 50{
+    rr=*zr zr
+    ii=*zi zi
+    mag=+rr ii
+    >mag 4{brk}
+    nzr=+-rr ii cr
+    tw=*2 zr
+    nzi=+*tw zi ci
+    zr=nzr
+    zi=nzi
+    i=+i 1
+  }
+  +i 0
+
+-- pick gradient char from iteration count (0..50)
+glyph k:n>t
+  =k 50{ret " "}
+  >=k 40{ret "."}
+  >=k 30{ret ":"}
+  >=k 20{ret "-"}
+  >=k 12{ret "="}
+  >=k 7{ret "+"}
+  >=k 4{ret "*"}
+  >=k 2{ret "%"}
+  "#"
+
+main>n
+  @y 0..40{
+    yf=*3.0 y
+    ys=/yf 39
+    ci=+ys -1.5
+    row=""
+    @x 0..40{
+      xf=*3.0 x
+      xs=/xf 39
+      cr=+xs -2.0
+      k=mand cr ci
+      g=glyph k
+      row=+row g
+    }
+    prnt row
+  }
+  +0 0

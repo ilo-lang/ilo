@@ -1,0 +1,81 @@
+-- canonical bio pipeline: parse FASTA -> GC% per seq -> 3-mer counts -> top 10
+
+do-parse lns:L t>L t
+  out=[]
+  cur=""
+  @ln lns{
+    h=??(slc ln 0 1) ""
+    hdr=(=h ">")
+    hdr{
+      ne=>(len cur) 0
+      ne{out=+=out cur}
+      cur=""
+    }
+    nh=!hdr
+    nh{cur=cat [cur ln] ""}
+  }
+  fin=>(len cur) 0
+  fin{out=+=out cur}
+  out
+
+gc s:t>n
+  cs=chars s
+  g=0
+  @c cs{
+    isg=(=c "G")
+    isc=(=c "C")
+    gc=|isg isc
+    gc{g=+g 1}
+  }
+  /(*g 100.0) (len cs)
+
+-- inline k-mer counting (k=3) across all seqs
+kmers-inline ss:L t>M t n
+  m=mmap
+  @s ss{
+    n=- (len s) 2
+    @i 0..n{
+      k=slc s i (+i 3)
+      c=??(mget m k) 0
+      m=mset m k (+c 1)
+    }
+  }
+  m
+
+-- top-N entries from a M t n
+top-n m:M t n n:n>L t
+  ks=mkeys m
+  -- pair as "count\tkey" so srt sorts by count desc
+  pairs=[]
+  @k ks{
+    v=??(mget m k) 0
+    line=fmt "{}\t{}" v k
+    pairs=+=pairs line
+  }
+  sp=srt pairs
+  rv=rev sp
+  take n rv
+
+main>R n t
+  t0=now-ms
+  lns=rdl! "fixture.fasta"
+  t1=now-ms
+  ss=do-parse lns
+  t2=now-ms
+  prnt fmt "seqs={} parse-ms={}" (len ss) (- t2 t1)
+
+  -- GC content per sequence
+  gcs=map gc ss
+  t3=now-ms
+  s=fld (a:n x:n>n;+a x) gcs 0.0
+  mn=/s (len gcs)
+  prnt fmt "mean-gc={} gc-ms={}" mn (- t3 t2)
+
+  -- inline kmer
+  m=kmers-inline ss
+  t4=now-ms
+  prnt fmt "distinct-3mers={} kmer-inline-ms={}" (len m) (- t4 t3)
+
+  top=top-n m 10
+  @ln top{prnt ln}
+  ~0

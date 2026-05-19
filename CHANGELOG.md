@@ -9,6 +9,7 @@
 
 ### Added
 
+- 45 example programs harvested from persona reruns under `examples/apps/`. Real-world agent tasks - daemons, HTTP clients, numpy-style numerical kernels (kmeans, mandelbrot, life, monte-carlo, markov, rolling, histogram, outlier, interp), bioinformatics pipelines, ecommerce analytics, devops tooling, CSV/JSON shapers, monorepo analysers, trace forensics - kept as in-tree regression coverage and as in-context learning examples for the agent skill. Every file parses cleanly under `ilo check`; no real credentials (placeholder strings only).
 - `rand` alias for `rnd` (universal short-form for random; matches C/Python/Rust/Go/JS naming). Resolves to canonical `rnd` after parsing; rejected as binding or user-fn name via ILO-P011 to prevent silent shadow mis-dispatch. `random` continues to resolve to `rnd` as before.
 - `ilo check --strict` flag. Treats every warning-severity diagnostic (ILO-T032 bare `fmt`, ILO-T033 bare `mset`/`+=`/`mdel`, future warning codes) as a hard exit-code failure so CI harnesses can fail-on-warning. The diagnostic stream itself is unchanged: warnings still emit with `severity: "warning"` in the JSON output, only the exit code is elevated. Surfaced by rerun11 ci-gating personas that ran `ilo check src/*.ilo` in CI and missed mset / fmt traps because the verifier exited 0 on warnings.
 

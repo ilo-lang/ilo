@@ -1,0 +1,35 @@
+-- outlier-detection rerun12: IQR rule (Q1 - 1.5*IQR, Q3 + 1.5*IQR)
+-- generate 500 floats with embedded outliers
+
+gen i:n>n;
+  ?i{
+    17: 9.9;
+    123: -8.5;
+    250: 12.3;
+    400: -10.1;
+    488: 11.7;
+    _: mod (* i 0.7311) 1
+  }
+
+-- quantile via linear interpolation: q in [0,1] on sorted xs
+qtl xs:L n q:n>n;
+  n=len xs;
+  h=*q (-n 1);
+  lo=flr h;
+  hi=cel h;
+  vlo=at xs lo;
+  vhi=at xs hi;
+  +vlo (* (-h lo) (-vhi vlo))
+
+main>t;
+  xs=map gen (range 0 500);
+  s=srt xs;
+  q1=qtl s 0.25;
+  q3=qtl s 0.75;
+  iqr=-q3 q1;
+  lo=-q1 (* 1.5 iqr);
+  hi=+q3 (* 1.5 iqr);
+  outs=flt (x:n>b;| <x lo >x hi) xs;
+  c=len outs;
+  first5=take 5 outs;
+  prnt (fmt "count={} first5={}" c first5)

@@ -1,0 +1,30 @@
+-- shape a JSON config: rename keys, merge defaults, derive computed fields
+main>R t t;
+v=rd! "/tmp/ilo-persona-config-shaper-rerun11/config.json";
+m=mmap;
+m=mset m "service" v.app_name;
+m=mset m "port" (str v.port);
+m=mset m "db-host" v.db.host;
+m=mset m "db-port" (str v.db.port);
+m=mset m "db-name" v.db.name;
+m=mset m "workers" (str v.workers);
+-- merge defaults: only set if absent
+d=mmap;
+d=mset d "timeout" "30";
+d=mset d "retries" "3";
+d=mset d "log-level" "info";
+dk=mkeys d;
+@k dk{
+  h=mhas m k;
+  !h{m=mset m k (mget d k ?? "")}
+};
+host=mget m "db-host" ?? "";
+prt=mget m "db-port" ?? "";
+nm=mget m "db-name" ?? "";
+p1=+"postgres://" host;
+p2=+p1 ":";
+p3=+p2 prt;
+p4=+p3 "/";
+dsn=+p4 nm;
+m=mset m "dsn" dsn;
+~jdmp m

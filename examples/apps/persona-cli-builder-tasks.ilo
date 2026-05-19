@@ -1,0 +1,57 @@
+-- task tracker CLI: add / list / done / stats / help
+-- state file: tasks.json (JSON array of {id, text, done})
+
+type task{id:n;text:t;done:b}
+
+load p:t>L _
+  r=rd p "json"
+  ?r{~v:v;^_:[]}
+
+save p:t xs:L _>R t t;wr p xs "json"
+
+next-id xs:L _>n
+  z=== 0 len xs
+  ?z{true:1;false:ks=map (x:_>n;x.id) xs;+1 (max ks)}
+
+add-task p:t txt:t>n
+  xs=load p
+  id=next-id xs
+  t1=task id:id text:txt done:false
+  ys=+=xs t1
+  r=save p ys
+  ?r{~_:prnt fmt "added #{}: {}" id txt;^e:prnt fmt "ERR: {}" e}
+  0
+
+list-tasks p:t>n
+  xs=load p
+  z=== 0 len xs
+  ?z{true:prnt "no tasks";false:@i 0..len xs{t=at xs i;mark=?t.done "x" " ";prnt fmt "[{}] #{} {}" mark t.id t.text}}
+  0
+
+done-task p:t id:n>n
+  xs=load p
+  ys=map (t:_>_;m=== t.id id;?m{true:task id:t.id text:t.text done:true;false:t}) xs
+  r=save p ys
+  ?r{~_:prnt fmt "marked #{} done" id;^e:prnt fmt "ERR: {}" e}
+  0
+
+stats-task p:t>n
+  xs=load p
+  tot=len xs
+  dn=ct (t:_>b;t.done) xs
+  op=- tot dn
+  prnt fmt "total={} done={} open={}" tot dn op
+  0
+
+usage>n;prnt "usage: tasks <add|list|done|stats|help> [args]";1
+
+main args:L t>n
+  z=< len args 1
+  ?z{true:ret usage;false:0}
+  cmd=at args 0
+  p="tasks.json"
+  ?cmd{"add":add-task p (at args 1);"list":list-tasks p;"done":parse-and-done p (at args 1);"stats":stats-task p;"help":usage;_:usage}
+
+parse-and-done p:t s:_>n
+  r=num (str s)
+  ?r{~v:done-task p v;^e:prnt fmt "bad id: {}" e;1}

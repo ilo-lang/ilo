@@ -1,0 +1,32 @@
+-- controller: spawn daemon in background via bash &, wait, verify
+
+main>R t t;
+  cp="/tmp/ilo-daemon-counter.txt";
+  lp="/tmp/ilo-daemon.log";
+  -- clean prior state
+  wr! cp "0";
+  wr! lp "";
+  -- start daemon backgrounded via shell
+  r=run! "bash" ["-c" "/Users/dan/.cargo/bin/ilo /tmp/ilo-dogfood-daemon/daemon.ilo main >/tmp/ilo-daemon.stdout 2>&1 &"];
+  -- wait 15 seconds for daemon to tick a few times
+  sleep 15000;
+  -- read counter
+  cnt-r=rd cp;
+  cnt-text=?cnt-r{~v:v;^_:"<read failed>"};
+  cnt-num=num cnt-text;
+  cnt-val=?cnt-num{~m:m;^_:-1};
+  -- read log
+  log-r=rd lp;
+  log-text=?log-r{~v:v;^_:""};
+  log-lines=spl log-text "\n";
+  tick-count=len log-lines;
+  -- report
+  ok-counter=>cnt-val 0;
+  ok-log=>tick-count 1;
+  status=cat [
+    "counter=" cnt-text
+    " tick-lines=" (str tick-count)
+    " counter-ok=" (?ok-counter{true:"yes";false:"NO"})
+    " log-ok=" (?ok-log{true:"yes";false:"NO"})
+  ] "";
+  ~status
