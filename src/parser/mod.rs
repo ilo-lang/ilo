@@ -2749,16 +2749,20 @@ or write `({fmt_name} \"...\" ...)` so its args are grouped."
                 return self.parse_record(name);
             }
 
-            // Zero-arg builtins: `rnd`/`now`/`now-ms`/`mmap`/`env-all` with no args → Call with empty args
-            if (name == "rnd"
-                || name == "now"
-                || name == "now-ms"
-                || name == "mmap"
-                || name == "env-all")
+            // Zero-arg builtins: `rnd`/`now`/`now-ms`/`mmap`/`env-all` with no args → Call with empty args.
+            // We also accept aliases that resolve to these canonicals (e.g. `rand`/`random` → `rnd`)
+            // so bare alias usage (`x=rand`) parses as a zero-arg call rather than a Ref that the
+            // verifier then rejects after the alias-Ref → canonical-Ref rewrite.
+            let zero_arg_canonical = match name.as_str() {
+                "rnd" | "now" | "now-ms" | "mmap" | "env-all" => Some(name.as_str()),
+                other => crate::ast::resolve_alias(other)
+                    .filter(|c| matches!(*c, "rnd" | "now" | "now-ms" | "mmap" | "env-all")),
+            };
+            if let Some(canonical) = zero_arg_canonical
                 && !self.can_start_operand()
             {
                 return Ok(Expr::Call {
-                    function: name,
+                    function: canonical.to_string(),
                     args: vec![],
                     unwrap: UnwrapMode::None,
                 });
