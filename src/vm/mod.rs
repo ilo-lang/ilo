@@ -7962,26 +7962,14 @@ impl<'a> VM<'a> {
                         std::mem::forget(rc_peek);
                         count
                     };
-                    // Fast path: sole owner (RC == 1) — mutate HashMap in place,
-                    // skip the clone-the-whole-map slow path. Two shapes:
-                    //   * a == b: compiler emitted `name = mset name k v`
-                    //     peephole. NanVal at slot a (== b) keeps the same
-                    //     bit pattern, RC unchanged.
-                    //   * a != b: callee body inside a helper fn called via
-                    //     OP_CALL_OWN1, where the param-register form is
-                    //     `result = mset map k v` with `map` at a different
-                    //     register than the fresh result. Move the heap
-                    //     pointer from R[b] to R[a] (transfer ownership),
-                    //     leaving R[b] = Nil so frame teardown doesn't
-                    //     double-drop. Combined with OP_CALL_OWN1's
-                    //     move-not-clone first-arg push, this closes the
-                    //     helper-fn mset perf cliff: an O(N·K) clone-per-row
-                    //     workload becomes O(N+K) in-place.
-                    if rc_count == 1 {
+                    // Fast path: a == b and RC == 1 — sole owner, mutate HashMap in place.
+                    // Compiler peephole `name = mset name k v` emits a == b, which lets the
+                    // common accumulator pattern stay RC=1 across loop iterations and turns
+                    // O(n²) clone-per-insert into O(n) amortised.
+                    if a == b && rc_count == 1 {
                         // SAFETY: We are the sole owner (count==1) and no aliasing reference
                         // exists. Cast to *mut to insert directly into the HashMap. Pointer
-                        // identity is unchanged. If a == b the slot already holds the right
-                        // NanVal; if a != b we transfer it below.
+                        // identity is unchanged, so slot a (== b) still holds the same NanVal.
                         let heap_mut = unsafe { &mut *(ptr_b as *mut HeapObj) };
                         match heap_mut {
                             HeapObj::Map(m) => {
@@ -7991,19 +7979,6 @@ impl<'a> VM<'a> {
                                 }
                             }
                             _ => unreachable!(),
-                        }
-                        if a != b {
-                            // Transfer the map's NanVal from R[b] to R[a]
-                            // without bumping or dropping RC. drop_rc on
-                            // R[a]'s previous value, then nil R[b].
-                            // SAFETY: a, b are in-frame register slots
-                            // checked at the top of the dispatch arm.
-                            unsafe {
-                                let slot_a = self.stack.as_mut_ptr().add(a);
-                                (*slot_a).drop_rc();
-                                *slot_a = map_v;
-                                *self.stack.as_mut_ptr().add(b) = NanVal::nil();
-                            }
                         }
                     } else {
                         // RC > 1 or distinct dest register — must clone to avoid aliasing.
