@@ -33,7 +33,7 @@ mmap mset mget mhas mdel mkeys mvals
 
 ## I/O
 
-`rd path`, `rdl path`, `rdjl path`, `rdb path`, `wr path s`, `wrl path xs`, `prnt v`. Dir: `lsd dir` (non-recursive), `walk dir` (recursive), `glob dir pat`. All Result-wrapped.
+`rd path`, `rdl path`, `rdjl path`, `rdb path`, `wr path s`, `wrl path xs`, `prnt v`. Dir: `lsd dir`, `walk dir`, `glob dir pat`. Result-wrapped. `walk`/`glob` skip unreadable subdirs; root Errs.
 
 ## HTTP
 

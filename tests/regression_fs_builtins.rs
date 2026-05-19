@@ -241,3 +241,118 @@ fn walk_single_file_cross_engine() {
         assert_eq!(out, "[only.txt]", "{engine}: walk single file");
     }
 }
+
+// --- Permission-denied resilience ---------------------------------------
+//
+// Real-world filesystems contain dirs the current user can't read
+// (sandbox roots, sibling-user homes, /var/db on macOS). `walk` and
+// `glob` must skip them and keep going, not abort the whole traversal.
+// Pre-fix behaviour was: first chmod-000 subdir Err'd out the entire
+// walk, losing every readable path that had already been collected.
+//
+// chmod is Unix-only, so these tests are gated on cfg(unix). On Windows
+// the equivalent test surface is mostly irrelevant (different ACL model)
+// and the underlying code path is shared so coverage on Unix suffices.
+
+#[cfg(unix)]
+fn make_perm_fixture() -> tempfile::TempDir {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempdir().expect("tempdir");
+    let root = dir.path();
+    // Readable siblings around the unreadable dir — the assertion is that
+    // these still come back even though `locked` is unreadable.
+    fs::write(root.join("a.txt"), "a").unwrap();
+    fs::write(root.join("b.txt"), "b").unwrap();
+    fs::create_dir(root.join("readable")).unwrap();
+    fs::write(root.join("readable").join("c.txt"), "c").unwrap();
+    // The unreadable subdir. Create with content first so we'd notice if
+    // the walker somehow descended anyway.
+    fs::create_dir(root.join("locked")).unwrap();
+    fs::write(root.join("locked").join("secret.txt"), "s").unwrap();
+    let mut perm = fs::metadata(root.join("locked")).unwrap().permissions();
+    perm.set_mode(0o000);
+    fs::set_permissions(root.join("locked"), perm).unwrap();
+    dir
+}
+
+#[cfg(unix)]
+fn restore_perm_fixture(fix: &tempfile::TempDir) {
+    use std::os::unix::fs::PermissionsExt;
+    // tempfile can't drop a chmod-000 dir cleanly on some platforms; restore
+    // perms so the tempdir destructor can recurse into it.
+    let locked = fix.path().join("locked");
+    if let Ok(meta) = fs::metadata(&locked) {
+        let mut perm = meta.permissions();
+        perm.set_mode(0o755);
+        let _ = fs::set_permissions(&locked, perm);
+    }
+}
+
+/// `walk` skips an unreadable subdir and still returns every readable
+/// sibling. The unreadable dir's own entry is included (we saw it from
+/// the parent's listing); its contents are not enumerated.
+#[cfg(unix)]
+#[test]
+fn walk_skips_permission_denied_subdir_cross_engine() {
+    let fix = make_perm_fixture();
+    let root = fix.path().to_str().unwrap();
+    let src = "f d:t>R (L t) t;walk d";
+    for engine in ENGINES_ALL {
+        let out = run_ok(engine, src, &["f", root]);
+        assert_eq!(
+            out, "[a.txt, b.txt, locked, readable, readable/c.txt]",
+            "{engine}: walk skips perm-denied subdir"
+        );
+    }
+    restore_perm_fixture(&fix);
+}
+
+/// `glob` inherits the same skip-on-perm-denied semantics since it shares
+/// the walk_collect traversal. A recursive `**` match returns every
+/// readable file and pretends the locked subtree doesn't exist.
+#[cfg(unix)]
+#[test]
+fn glob_skips_permission_denied_subdir_cross_engine() {
+    let fix = make_perm_fixture();
+    let root = fix.path().to_str().unwrap();
+    let src = "f d:t p:t>R (L t) t;glob d p";
+    for engine in ENGINES_ALL {
+        let out = run_ok(engine, src, &["f", root, "**/*.txt"]);
+        assert_eq!(
+            out, "[a.txt, b.txt, readable/c.txt]",
+            "{engine}: glob skips perm-denied subdir"
+        );
+    }
+    restore_perm_fixture(&fix);
+}
+
+/// An unreadable *root* is still a hard error — there's nothing useful to
+/// return, so surfacing Err lets the agent branch on it. Distinguishable
+/// from the descendant-skip case above.
+#[cfg(unix)]
+#[test]
+fn walk_unreadable_root_is_err_cross_engine() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempdir().unwrap();
+    let root = dir.path();
+    let locked = root.join("root-locked");
+    fs::create_dir(&locked).unwrap();
+    fs::write(locked.join("inside.txt"), "x").unwrap();
+    let mut perm = fs::metadata(&locked).unwrap().permissions();
+    perm.set_mode(0o000);
+    fs::set_permissions(&locked, perm).unwrap();
+
+    let src = "f d:t>R (L t) t;walk d";
+    for engine in ENGINES_ALL {
+        let out = run_err(engine, src, &["f", locked.to_str().unwrap()]);
+        assert!(
+            out.starts_with('^'),
+            "{engine}: expected ^err prefix on unreadable root, got {out:?}"
+        );
+    }
+
+    // Restore perms so tempdir cleanup can recurse.
+    let mut perm = fs::metadata(&locked).unwrap().permissions();
+    perm.set_mode(0o755);
+    fs::set_permissions(&locked, perm).unwrap();
+}

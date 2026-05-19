@@ -469,8 +469,18 @@ pub(crate) fn box_muller_normal(mu: f64, sigma: f64) -> f64 {
 
 /// Recursive depth-first walk over `root`, collecting paths relative to it,
 /// sorted lexicographically. Symlinks are not followed (uses `file_type`,
-/// not `metadata`, on each entry). Returns the OS error message string on
-/// the first I/O failure so the calling builtin can wrap it as `Value::Err`.
+/// not `metadata`, on each entry).
+///
+/// Errors reading `root` itself surface as `Err(String)` so the caller can
+/// wrap them as `Value::Err` — a walk that can't open its starting point is
+/// a real failure the agent needs to see. Errors reading a *subdirectory*
+/// encountered during traversal (most commonly `PermissionDenied` on
+/// sandbox roots, sibling-user dirs, or system paths like `/var/db` on
+/// macOS) are silently skipped: the subdir's own entry is still included
+/// in the output, but its contents are not enumerated. Without this,
+/// `walk /` or `walk ~` would abort on the first unreadable child and
+/// lose every other path it had already collected — the opposite of what
+/// an agent doing a "find me all the X files" pass wants.
 ///
 /// Shared by `walk` and `glob`: `glob` is `walk_collect` plus a matcher pass,
 /// keeping pattern semantics and traversal semantics in lockstep (so a
@@ -478,11 +488,20 @@ pub(crate) fn box_muller_normal(mu: f64, sigma: f64) -> f64 {
 /// of paths that `walk` would have produced — predictable for the agent).
 fn walk_collect(root: &std::path::Path) -> std::result::Result<Vec<String>, String> {
     let mut out: Vec<String> = Vec::new();
-    let mut stack: Vec<std::path::PathBuf> = vec![root.to_path_buf()];
-    while let Some(cur) = stack.pop() {
-        let rd = std::fs::read_dir(&cur).map_err(|e| e.to_string())?;
+    // Open the root up-front so a missing or unreadable starting point is
+    // a hard error, distinguishable from "some descendant was unreadable".
+    let root_rd = std::fs::read_dir(root).map_err(|e| e.to_string())?;
+    let mut stack: Vec<(std::path::PathBuf, std::fs::ReadDir)> = Vec::new();
+    stack.push((root.to_path_buf(), root_rd));
+    while let Some((_cur, rd)) = stack.pop() {
         for entry in rd {
-            let ent = entry.map_err(|e| e.to_string())?;
+            // A bad individual entry (rare: filename decoding etc.) is skipped
+            // for the same reason an unreadable subdir is — losing the whole
+            // walk over one bad inode hurts more than a missing path.
+            let ent = match entry {
+                Ok(e) => e,
+                Err(_) => continue,
+            };
             let path = ent.path();
             let rel = path.strip_prefix(root).unwrap_or(&path);
             // Forward slashes on every OS — paths are an ilo string, not an
@@ -493,9 +512,22 @@ fn walk_collect(root: &std::path::Path) -> std::result::Result<Vec<String>, Stri
                 .into_owned()
                 .replace(std::path::MAIN_SEPARATOR, "/");
             out.push(rel_str);
-            let ft = ent.file_type().map_err(|e| e.to_string())?;
-            if ft.is_dir() {
-                stack.push(path);
+            // `file_type` over `metadata` to avoid following symlinks (cycle
+            // trap). If we can't even read the file_type, treat the entry as
+            // a leaf — same skip rationale as above.
+            let is_dir = match ent.file_type() {
+                Ok(ft) => ft.is_dir(),
+                Err(_) => false,
+            };
+            if is_dir {
+                // Attempt to descend. PermissionDenied (and any other read_dir
+                // failure on a subdir) is skipped silently: the directory's
+                // own path is already in `out`, we just don't enumerate its
+                // contents. This is the fix for the "chmod 000 poisons the
+                // whole walk" regression.
+                if let Ok(child_rd) = std::fs::read_dir(&path) {
+                    stack.push((path, child_rd));
+                }
             }
         }
     }
