@@ -3614,10 +3614,8 @@ impl VerifyContext {
                             if value_arg_count != slot_count {
                                 // Spot the common list-literal-splat mistake
                                 // so we can give a targeted hint.
-                                let list_literal_arg = args
-                                    .iter()
-                                    .skip(1)
-                                    .find(|a| matches!(a, Expr::List(_)));
+                                let list_literal_arg =
+                                    args.iter().skip(1).find(|a| matches!(a, Expr::List(_)));
                                 let hint = if slot_count > 1
                                     && value_arg_count == 1
                                     && list_literal_arg.is_some()
