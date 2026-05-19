@@ -1,0 +1,15 @@
+-- WASM hello-world for Phase 5 Stage 5d. Compile with:
+--
+--   ilo build examples/wasm-edge/hello.ilo --wasm --target wasm32-wasip1
+--   wasmtime hello.wasm
+--
+-- For the default Component Model target (deployable to Cloudflare
+-- Workers / Fastly Compute / Wasmtime with --wasi cli=2):
+--
+--   ilo build examples/wasm-edge/hello.ilo --wasm
+--
+-- See docs/wasm-capabilities.md for the full per-target builtin matrix.
+hello>t;prnt "Hello, WASM!"
+
+-- run: hello
+-- out: Hello, WASM!
