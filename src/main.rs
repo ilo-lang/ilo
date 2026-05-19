@@ -26,14 +26,15 @@ fn compact_spec() -> &'static str {
 
 // ── Modular agent skills ──────────────────────────────────────────────────────
 //
-// Six skill modules carved out of the monolithic compact spec so agents can
+// Eight skill modules carved out of the monolithic compact spec so agents can
 // load only the slice their current task needs (typical: 1-2 modules ≈ 2,000
 // tokens) instead of the whole 16,000-token `ai.txt`. Each module is embedded
 // into the binary via `include_str!` so they stay version-locked to the
 // compiler and travel with every install.
 //
 // `ilo -ai` still emits the full concatenated spec for back-compat. The CLI
-// subcommands (`ilo skill list/get/path/show`) are the preferred surface.
+// subcommands (`ilo skill list/get/path/show`, each with `--json`) are the
+// preferred surface.
 
 /// One bundled agent skill.
 struct Skill {
@@ -77,9 +78,21 @@ const SKILLS: &[Skill] = &[
     },
     Skill {
         name: "ilo-agent",
-        description: "Use this when integrating ilo into an agent loop. Covers skill discovery, running programs, reading JSON diagnostics, and the repair loop.",
+        description: "Use this when integrating ilo into an agent loop. Covers skill discovery, running programs, and the output contract.",
         path: "skills/ilo/ilo-agent.md",
         content: include_str!("../skills/ilo/ilo-agent.md"),
+    },
+    Skill {
+        name: "ilo-examples",
+        description: "Use this when looking for a runnable pattern for the kind of task you are doing. Curated index of `examples/*.ilo` grouped by what each one demonstrates.",
+        path: "skills/ilo/ilo-examples.md",
+        content: include_str!("../skills/ilo/ilo-examples.md"),
+    },
+    Skill {
+        name: "ilo-edit-loop",
+        description: "Use this when an ilo program fails and you need to recover or iterate. Covers the repair loop, JSON diagnostics, `--explain`, and fix patterns for the common ILO-XXXX classes.",
+        path: "skills/ilo/ilo-edit-loop.md",
+        content: include_str!("../skills/ilo/ilo-edit-loop.md"),
     },
 ];
 

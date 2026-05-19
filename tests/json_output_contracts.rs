@@ -81,6 +81,53 @@ fn skill_list_json() {
     assert!(first["name"].is_string());
     assert!(first["description"].is_string());
     assert!(first["path"].is_string());
+
+    // Phase 2 (PR #419): the listing must include the Zero-parity additions.
+    // Guards against a future refactor silently dropping a skill from the
+    // SKILLS array in src/main.rs.
+    let names: Vec<&str> = skills
+        .iter()
+        .map(|s| s["name"].as_str().expect("skill name string"))
+        .collect();
+    for required in [
+        "ilo-language",
+        "ilo-builtins",
+        "ilo-errors",
+        "ilo-tools",
+        "ilo-engines",
+        "ilo-agent",
+        "ilo-examples",
+        "ilo-edit-loop",
+    ] {
+        assert!(
+            names.contains(&required),
+            "skill list missing required skill: {required}; got {names:?}"
+        );
+    }
+}
+
+#[test]
+fn skill_get_phase2_skills_json() {
+    // Phase 2: every new skill must round-trip through `skill get --json`
+    // with a non-trivial content body. This catches an include_str! path
+    // typo or an empty file landing in the binary.
+    for name in ["ilo-examples", "ilo-edit-loop"] {
+        let (ok, v, _) = run_stdout_json(&["skill", "get", name, "--json"]);
+        assert!(ok, "skill get {name} --json should succeed");
+        assert_eq!(v["schemaVersion"], 1);
+        assert_eq!(v["name"], name);
+        let content = v["content"].as_str().expect("content string");
+        assert!(
+            content.len() > 200,
+            "skill {name} content suspiciously short: {} bytes",
+            content.len()
+        );
+        let desc = v["description"].as_str().expect("description string");
+        assert!(
+            desc.starts_with("Use this when"),
+            "skill {name} description must start with 'Use this when'"
+        );
+    }
 }
 
 // ── `ilo skill get <name> --json` ────────────────────────────────────────────
