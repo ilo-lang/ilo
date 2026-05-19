@@ -1,0 +1,129 @@
+-- standup-digest: normalise relative date references in standup notes to ISO 8601.
+-- Usage: ilo standup-digest.ilo main "2026-05-20"
+-- First argv = "now" as ISO date YYYY-MM-DD (or unix epoch text).
+-- Falls back to live clock if omitted.
+-- Reads a hardcoded test corpus; swap `notes` for `rdl! path` in production.
+--
+-- Patterns handled (case-insensitive):
+--   today, yesterday, tomorrow
+--   N days ago, in N days
+--   N weeks ago, N weeks ago <weekday>, in N weeks
+--   last <weekday>, next <weekday>
+--   ISO literal YYYY-MM-DD
+-- dtparse handles ISO dates only; relative logic uses manual epoch arithmetic.
+
+-- Weekday index from Unix epoch: Mon=0 Tue=1 Wed=2 Thu=3 Fri=4 Sat=5 Sun=6.
+-- 1970-01-01 was a Thursday = index 3.
+dow ep:n>n;mod (+ (flr (/ ep 86400)) 3) 7
+
+-- Weekday name (lowercase) to index Mon=0..Sun=6. Unknown -> 0.
+dowi nm:t>n;
+?nm{"monday":0;"tuesday":1;"wednesday":2;"thursday":3;"friday":4;"saturday":5;"sunday":6;_:0}
+
+-- Days back from cur-dow to most recent past occurrence of tgt dow (1..7).
+dsince cd:n td:n>n;d=- cd td;?h (>d 0) d (+ d 7)
+
+-- Days forward from cur-dow to next occurrence of tgt dow (1..7).
+duntil cd:n td:n>n;d=- td cd;?h (>d 0) d (+ d 7)
+
+-- Floor epoch to UTC midnight.
+dflo ep:n>n;* (flr (/ ep 86400)) 86400
+
+-- Format epoch as ISO 8601 UTC datetime string.
+iso ep:n>t;r=dtfmt ep "%Y-%m-%dT00:00:00Z";?r{~s:s;^_:"err"}
+
+-- Parse "now" arg: ISO date string, raw epoch, or fallback to live clock.
+parse-now nw:t>n;
+ri=dtparse nw "%Y-%m-%d";
+?ri{~v:dflo v;^_:{rn=num nw;?rn{~v2:dflo v2;^_:dflo now}}}
+
+-- Normalise one date token to ISO 8601. All relative offsets anchored to nep.
+-- Uses braceless guards (early return) and braced conditionals (conditional execution).
+normalize tok:t nep:n>t;
+lw=lwr (trm tok);
+cd=dow nep;
+-- ISO date literal
+ri=dtparse lw "%Y-%m-%d";
+?ri{~v:ret iso (dflo v);^_:nil};
+-- named relative days
+=lw "today"{ret iso nep};
+=lw "yesterday"{ret iso (- nep 86400)};
+=lw "tomorrow"{ret iso (+ nep 86400)};
+-- N days ago
+mda=rgx "^(\d+) days? ago$" lw;
+>(len mda) 0{
+  n1r=num (hd mda);
+  ?n1r{~n1:ret iso (- nep (* n1 86400));^_:nil}
+};
+-- in N days
+mid=rgx "^in (\d+) days?$" lw;
+>(len mid) 0{
+  n2r=num (hd mid);
+  ?n2r{~n2:ret iso (+ nep (* n2 86400));^_:nil}
+};
+-- N weeks ago <weekday> (longer pattern first)
+mwd=rgx "^(\d+) weeks? ago (\w+)$" lw;
+>(len mwd) 0{
+  nwr=num (at mwd 0);
+  wnm=at mwd 1;
+  td=dowi wnm;
+  ?nwr{
+    ~nw2:{base=- nep (* nw2 604800);bd=dow base;off=dsince bd td;ret iso (- base (* off 86400))};
+    ^_:nil
+  }
+};
+-- N weeks ago (bare)
+mwa=rgx "^(\d+) weeks? ago$" lw;
+>(len mwa) 0{
+  n3r=num (hd mwa);
+  ?n3r{~n3:ret iso (- nep (* n3 604800));^_:nil}
+};
+-- in N weeks
+miw=rgx "^in (\d+) weeks?$" lw;
+>(len miw) 0{
+  n4r=num (hd miw);
+  ?n4r{~n4:ret iso (+ nep (* n4 604800));^_:nil}
+};
+-- last <weekday>
+mla=rgx "^last (\w+)$" lw;
+>(len mla) 0{
+  td2=dowi (hd mla);
+  off2=dsince cd td2;
+  ret iso (- nep (* off2 86400))
+};
+-- next <weekday>
+mne=rgx "^next (\w+)$" lw;
+>(len mne) 0{
+  td3=dowi (hd mne);
+  ret iso (+ nep (* (duntil cd td3) 86400))
+};
+-- fallback
++"unknown:" lw
+
+-- Extract date-like tokens from one line. Lowercases first; longer patterns before shorter.
+tokens line:t>L t;
+lc=lwr line;
+m1=rgxall1 "\d{4}-\d{2}-\d{2}" lc;
+m2=rgxall1 "\d+ weeks? ago \w+" lc;
+m3=rgxall1 "\d+ weeks? ago" lc;
+m4=rgxall1 "in \d+ weeks?" lc;
+m5=rgxall1 "\d+ days? ago" lc;
+m6=rgxall1 "in \d+ days?" lc;
+m7=rgxall1 "(?:last|next) (?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)" lc;
+m8=rgxall1 "yesterday|today|tomorrow" lc;
+unq (flat [m1 m2 m3 m4 m5 m6 m7 m8])
+
+-- Process one line: return one output string per detected date token.
+proc ln:t nep:n>L t;
+toks=tokens ln;
+map (tok:t>t;nrm=normalize tok nep;fmt "original: \"{}\" normalized: \"{}\"" tok nrm) toks
+
+-- Main: argv[0] = now-string. Processes test corpus.
+main args:L t>R t t;
+nw-str=?h (>(len args) 0) (at args 0) "today";
+nep=parse-now nw-str;
+notes=["Deployed fix from yesterday" "PR reviewed last Friday" "Meeting 3 days ago" "Follow up in 2 weeks" "Stand-up on 2026-05-15" "Retro 2 weeks ago Tuesday" "Next steps next monday" "Done today" "Deploy in 3 days" "Kick-off 2026-05-12"];
+outs=[];
+@ln notes{items=proc ln nep;@it items{outs=+=outs it}};
+@out outs{prnt out};
+~"ok"
