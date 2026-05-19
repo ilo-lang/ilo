@@ -673,6 +673,38 @@ fn emit_expr(out: &mut String, level: usize, expr: &Expr) -> String {
                 };
             }
 
+            // Path manipulation builtins — pure-text Unix forward-slash
+            // semantics. POSIX dirname/basename + list-form pathjoin. See
+            // SPEC.md "Path manipulation" for the full edge-case table.
+            if function == "dirname" && args.len() == 1 {
+                let arg = emit_expr(out, level, &args[0]);
+                // POSIX semantics over a raw string (not pathlib): treat
+                // trailing `/` as an empty final segment, return "" (not ".")
+                // when there is no directory component, return "/" for the
+                // root and for single-component absolute paths.
+                return format!(
+                    "(lambda p: \"\" if p == \"\" else (\"/\" if p == \"/\" else (lambda t: \"\" if t.rfind(\"/\") < 0 else (\"/\" if t.rfind(\"/\") == 0 else t[:t.rfind(\"/\")]))(p[:-1] if (p.endswith(\"/\") and len(p) > 1) else p)))({})",
+                    arg
+                );
+            }
+            if function == "basename" && args.len() == 1 {
+                let arg = emit_expr(out, level, &args[0]);
+                return format!(
+                    "(lambda p: \"\" if p == \"\" else (\"/\" if p == \"/\" else (lambda t: t if t.rfind(\"/\") < 0 else t[t.rfind(\"/\")+1:])(p[:-1] if (p.endswith(\"/\") and len(p) > 1) else p)))({})",
+                    arg
+                );
+            }
+            if function == "pathjoin" && args.len() == 1 {
+                let arg = emit_expr(out, level, &args[0]);
+                // Mirrors `pathjoin_posix` in src/interpreter/mod.rs. Reduce
+                // over the segment list: trim trailing `/` on seg 0, both
+                // leading and trailing `/` on later segs, preserve a leading
+                // `/` root marker on seg 0, drop empties, join with `/`.
+                return format!(
+                    "(lambda ps: (lambda f: f(f, ps, 0, \"\"))((lambda f, ps, i, acc: acc if i >= len(ps) else (lambda s: (lambda t: (f(f, ps, i+1, acc) if t == \"\" else (f(f, ps, i+1, t) if acc == \"\" else (f(f, ps, i+1, acc + t) if acc.endswith(\"/\") else f(f, ps, i+1, acc + \"/\" + t)))))(\"/\" if (i == 0 and s != \"\" and s.replace(\"/\", \"\") == \"\") else (s.rstrip(\"/\") if i == 0 else s.strip(\"/\"))))(ps[i]))))({})",
+                    arg
+                );
+            }
             if function == "env" && args.len() == 1 {
                 let arg = emit_expr(out, level, &args[0]);
                 let call = format!(

@@ -574,6 +574,14 @@ pub(crate) fn is_tree_bridge_eligible(b: crate::builtins::Builtin, argc: usize) 
         (Builtin::Ls, 1) => true,
         (Builtin::Walk, 1) => true,
         (Builtin::Glob, 2) => true,
+        // Path manipulation builtins. Pure-text ops with no FnRef args, no
+        // I/O, no Result wrapper — even simpler than the lsd/walk/glob trio
+        // above. Tree-bridge keeps cross-engine parity for VM + Cranelift
+        // (JIT/AOT) without dedicated opcodes. See `dirname_posix`,
+        // `basename_posix`, `pathjoin_posix` in src/interpreter/mod.rs.
+        (Builtin::Dirname, 1) => true,
+        (Builtin::Basename, 1) => true,
+        (Builtin::Pathjoin, 1) => true,
         // `sleep ms` has no FnRef args and returns Nil; the bridge round-trip
         // is lossless, so VM/Cranelift get it for free. The actual sleep is
         // delegated to `std::thread::sleep` inside the tree interpreter.

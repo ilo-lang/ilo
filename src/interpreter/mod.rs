@@ -467,6 +467,105 @@ pub(crate) fn box_muller_normal(mu: f64, sigma: f64) -> f64 {
     mu + sigma * z
 }
 
+/// POSIX `dirname` on a forward-slash path string. See `Builtin::Dirname`
+/// in the builtin dispatch above for the full semantics + edge-case table.
+///
+/// Implemented over the raw string (not `std::path::Path`) so output is
+/// stable across Unix and Windows builds — ilo's path builtins are
+/// forward-slash-only in 0.12.1; Windows separator handling lands in 0.13.0.
+pub(crate) fn dirname_posix(p: &str) -> String {
+    if p.is_empty() {
+        return String::new();
+    }
+    // Special case: the root is its own dirname (POSIX `dirname /` -> "/").
+    if p == "/" {
+        return "/".to_string();
+    }
+    // Strip a trailing `/` so `"foo/"` is treated as "the dir entry `foo`"
+    // and `dirname "foo/"` -> "foo". Don't strip the only-slash case (handled
+    // above) — that would turn "/" into "".
+    let trimmed = if p.ends_with('/') && p.len() > 1 {
+        &p[..p.len() - 1]
+    } else {
+        p
+    };
+    match trimmed.rfind('/') {
+        // No `/` -> no directory component. POSIX returns "." here; we return
+        // "" so `cat [dirname p, basename p] "/"` round-trips a plain filename
+        // to itself without injecting a phantom `./` prefix. Documented in SPEC.
+        None => String::new(),
+        // The slash is the leading root marker: parent is `/`.
+        Some(0) => "/".to_string(),
+        // Otherwise parent is everything up to (but not including) the slash.
+        Some(i) => trimmed[..i].to_string(),
+    }
+}
+
+/// POSIX `basename` on a forward-slash path string. See `Builtin::Basename`
+/// in the builtin dispatch above for the full semantics + edge-case table.
+pub(crate) fn basename_posix(p: &str) -> String {
+    if p.is_empty() {
+        return String::new();
+    }
+    // `basename /` -> "/" (POSIX edge: root is its own basename).
+    if p == "/" {
+        return "/".to_string();
+    }
+    // Strip trailing `/` so `basename "foo/"` -> "foo".
+    let trimmed = if p.ends_with('/') && p.len() > 1 {
+        &p[..p.len() - 1]
+    } else {
+        p
+    };
+    match trimmed.rfind('/') {
+        None => trimmed.to_string(),
+        Some(i) => trimmed[i + 1..].to_string(),
+    }
+}
+
+/// Join path segments with `/`, collapsing duplicate separators at joints
+/// and dropping empty segments. See `Builtin::Pathjoin` for the full table.
+///
+/// The implementation strips trailing `/` from every segment except the very
+/// first (so a leading `["/", ...]` keeps its absolute root), and strips
+/// leading `/` from every segment except the first. Empty segments after
+/// trimming are dropped.
+pub(crate) fn pathjoin_posix(parts: &[&str]) -> String {
+    let mut out = String::new();
+    let mut first = true;
+    for (idx, seg) in parts.iter().enumerate() {
+        // First segment: preserve leading `/` (the absolute-root marker), but
+        // still trim its trailing `/` to dedupe at the joint.
+        let s = if idx == 0 {
+            seg.trim_end_matches('/')
+        } else {
+            seg.trim_start_matches('/').trim_end_matches('/')
+        };
+        // Special-case the first segment being exactly "/" (or all slashes):
+        // trim_end_matches eats everything, but we want the root preserved.
+        let s = if idx == 0 && !seg.is_empty() && s.is_empty() && seg.starts_with('/') {
+            "/"
+        } else {
+            s
+        };
+        if s.is_empty() {
+            continue;
+        }
+        if first {
+            out.push_str(s);
+            first = false;
+        } else {
+            // Avoid emitting `//` when the previous accumulator already ended
+            // in `/` (which only happens when the first segment was `/`).
+            if !out.ends_with('/') {
+                out.push('/');
+            }
+            out.push_str(s);
+        }
+    }
+    out
+}
+
 /// Recursive depth-first walk over `root`, collecting paths relative to it,
 /// sorted lexicographically. Symlinks are not followed (uses `file_type`,
 /// not `metadata`, on each entry).
@@ -3111,6 +3210,81 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 return Ok(Value::Err(Box::new(Value::Text(Arc::new(e)))));
             }
         }
+    }
+    if builtin == Some(Builtin::Dirname) && args.len() == 1 {
+        // dirname path:t > t — POSIX-style parent directory of `path`.
+        //   "/a/b/c.txt" -> "/a/b"
+        //   "a/b/c.txt"  -> "a/b"
+        //   "/"          -> "/"   (root has no parent; POSIX)
+        //   "foo.txt"    -> ""    (no dir component; matches POSIX, NOT ".")
+        //   "foo/"       -> "foo" (trailing slash treated as empty final segment)
+        //   "/a"         -> "/"   (single-component absolute path)
+        //   ""           -> ""    (total function)
+        // Pure-text implementation deliberately avoids std::path::Path because
+        // its semantics shift between Unix/Windows builds; ilo's path builtins
+        // are Unix forward-slash only in 0.12.1 (see SPEC.md).
+        let p = match &args[0] {
+            Value::Text(s) => s.clone(),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("dirname requires text path, got {:?}", other),
+                ));
+            }
+        };
+        return Ok(Value::Text(Arc::new(dirname_posix(p.as_str()))));
+    }
+    if builtin == Some(Builtin::Basename) && args.len() == 1 {
+        // basename path:t > t — POSIX-style final path segment.
+        //   "/a/b/c.txt" -> "c.txt"
+        //   "a/b/c.txt"  -> "c.txt"
+        //   "/"          -> "/"     (POSIX edge: basename of root is root)
+        //   "foo.txt"    -> "foo.txt"
+        //   "foo/"       -> "foo"   (trailing slash stripped first)
+        //   ""           -> ""
+        let p = match &args[0] {
+            Value::Text(s) => s.clone(),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("basename requires text path, got {:?}", other),
+                ));
+            }
+        };
+        return Ok(Value::Text(Arc::new(basename_posix(p.as_str()))));
+    }
+    if builtin == Some(Builtin::Pathjoin) && args.len() == 1 {
+        // pathjoin parts:L t > t — join list of segments with `/`, collapsing
+        // duplicate separators at joints and dropping empty segments. List-form
+        // (not variadic) so arity inference stays predictable.
+        //   ["a" "b" "c.txt"]   -> "a/b/c.txt"
+        //   ["/a/" "/b/" "c.txt"] -> "/a/b/c.txt"
+        //   []                    -> ""
+        //   ["foo"]               -> "foo"
+        //   ["" "a" ""]           -> "a"
+        //   ["/" "a"]             -> "/a"   (leading absolute root preserved)
+        let parts = match &args[0] {
+            Value::List(xs) => xs.clone(),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("pathjoin requires list of text, got {:?}", other),
+                ));
+            }
+        };
+        let mut segs: Vec<&str> = Vec::with_capacity(parts.len());
+        for p in parts.iter() {
+            match p {
+                Value::Text(s) => segs.push(s.as_str()),
+                other => {
+                    return Err(RuntimeError::new(
+                        "ILO-R009",
+                        format!("pathjoin requires list of text, got element {:?}", other),
+                    ));
+                }
+            }
+        }
+        return Ok(Value::Text(Arc::new(pathjoin_posix(&segs))));
     }
     if builtin == Some(Builtin::Rd) && (args.len() == 1 || args.len() == 2) {
         let path = match &args[0] {

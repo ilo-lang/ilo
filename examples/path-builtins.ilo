@@ -1,0 +1,71 @@
+-- dirname / basename / pathjoin — POSIX-style path manipulation. Unix
+-- forward-slash semantics in 0.12.1 (Windows backslash handling lands in
+-- 0.13.0). Pure-text ops, no Result wrapper. Identical output on the
+-- tree-walking interpreter, the bytecode VM, and Cranelift.
+--
+-- Before these existed, splitting a path into directory + filename took
+-- four builtins: `cat (slc (spl p "/") 0 -1) "/"`. Now it is one call.
+-- See ilo_assessment_feedback.md "Add path-manipulation builtins" for
+-- the rerun11 logs that motivated the addition.
+
+-- Absolute path: parent and final segment.
+dir-abs>t;dirname "/a/b/c.txt"
+base-abs>t;basename "/a/b/c.txt"
+
+-- Relative path: same shape, no leading slash.
+dir-rel>t;dirname "a/b/c.txt"
+base-rel>t;basename "a/b/c.txt"
+
+-- POSIX edge: dirname of root is root; dirname of a single-component
+-- absolute path is root.
+dir-root>t;dirname "/"
+dir-toplevel>t;dirname "/a"
+
+-- POSIX edge: dirname of a plain filename is empty (not "."). This is the
+-- shape that lets cat [dirname p, basename p] round-trip cleanly.
+dir-no-component>t;dirname "foo.txt"
+
+-- Trailing slash: stripped first, then standard POSIX rules. `dirname "foo/"`
+-- becomes `dirname "foo"` (no dir component, returns ""); `basename "foo/"`
+-- becomes `basename "foo"` -> "foo".
+dir-trailing>t;dirname "foo/"
+base-trailing>t;basename "foo/"
+
+-- pathjoin: list of segments, joined with `/`, joint-adjacent slashes
+-- collapsed, empty segments dropped, leading absolute root preserved.
+join-clean>t;pathjoin ["a" "b" "c.txt"]
+join-dedupe>t;pathjoin ["a/" "/b/" "c.txt"]
+join-empty>t;pathjoin []
+join-absolute>t;pathjoin ["/" "a"]
+
+-- Round-trip: split then rejoin yields the original path.
+round-trip>t;p="/var/log/agent.log";pathjoin [dirname p basename p]
+
+-- run: dir-abs
+-- out: /a/b
+-- run: base-abs
+-- out: c.txt
+-- run: dir-rel
+-- out: a/b
+-- run: base-rel
+-- out: c.txt
+-- run: dir-root
+-- out: /
+-- run: dir-toplevel
+-- out: /
+-- run: dir-no-component
+-- out:
+-- run: dir-trailing
+-- out:
+-- run: base-trailing
+-- out: foo
+-- run: join-clean
+-- out: a/b/c.txt
+-- run: join-dedupe
+-- out: a/b/c.txt
+-- run: join-empty
+-- out:
+-- run: join-absolute
+-- out: /a
+-- run: round-trip
+-- out: /var/log/agent.log
