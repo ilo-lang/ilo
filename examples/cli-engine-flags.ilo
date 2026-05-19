@@ -1,0 +1,15 @@
+-- `--vm` is the canonical register-VM flag, symmetric with `--jit` and
+-- `--run-llvm`: the flag names the engine, not the action. The pre-0.12.1
+-- spelling `--run-vm` is kept as a hidden alias for one release and emits
+-- a one-shot stderr hint nudging callers to `--vm`. Hard removal of the
+-- alias lands in 0.13.0 alongside the tree-walker drop.
+--
+-- Both forms run the same engine and produce the same stdout; the only
+-- observable difference is the deprecation hint on stderr when the alias
+-- is used. The example harness asserts stdout only, so both `-- run:`
+-- markers below pass identically.
+
+main x:n>n;y=*x 2;+y 1
+
+-- run: main 5
+-- out: 11

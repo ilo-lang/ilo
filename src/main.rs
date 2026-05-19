@@ -2406,6 +2406,30 @@ fn main() {
 
     let raw_args: Vec<String> = std::env::args().collect();
 
+    // Global deprecation nudge: if any arg is the old `--run-vm` spelling,
+    // emit the one-shot hint here so it fires uniformly across every
+    // dispatch path (bare positional, `ilo run` subcommand, clap-driven
+    // visible_alias resolution). The pre-parse scans in
+    // `extract_run_engine_flag` and `dispatch_bare_args` also call the
+    // emitter; the AtomicBool guard inside ensures at most one line per
+    // process even when multiple paths see the alias. Stop the `--`
+    // separator from triggering the hint on literal data.
+    {
+        let mut hit = false;
+        for a in raw_args.iter().skip(1) {
+            if a == "--" {
+                break;
+            }
+            if a == "--run-vm" {
+                hit = true;
+                break;
+            }
+        }
+        if hit {
+            emit_run_vm_alias_hint();
+        }
+    }
+
     // Special-case: `ilo -ai` (hidden alias for compact spec)
     if raw_args.get(1).map(|s| s.as_str()) == Some("-ai") {
         print!("{}", compact_spec());
