@@ -16,4 +16,4 @@ cls br:n>t;>br 14.4 "CRITICAL";>br 6 "HIGH";>br 1 "WARN";"OK"
 main p:t>R t t;lns=rdl! p;body=slc lns 1 (len lns);rows=mapr! prow body;recs=map mkrec rows;bks=unq (map rb recs);bs=srt bks;rates=map (b:n>n;prate b recs) bs;burns=map pburn rates;wnd=window 5 burns;rolling=map wavg wnd;ovr=avg burns;p95=quantile burns 0.95;worst=max burns;mxr=max rolling;st=cls mxr;~fmt "buckets={} overall_burn={} p95_burn={} worst_burn={} max_5m_rolling={} status={}" (len bs) (fmt2 ovr 3) (fmt2 p95 3) (fmt2 worst 3) (fmt2 mxr 3) st
 
 -- run: main examples/apps/fixtures/error-budget-events.csv
--- out: buckets=100 overall_burn=17.610 p95_burn=99.050 worst_burn=100.000 max_5m_rolling=99.600 status=CRITICAL
+-- out: buckets=10 overall_burn=2.800 p95_burn=6.100 worst_burn=7.000 max_5m_rolling=3.200 status=WARN

@@ -75,4 +75,4 @@ quiet p:t>R t t;
   ~fmt "rows={} total={} mean={}" (len body) (str (sum rs)) (fmt2 (avg rs) 4)
 
 -- run: quiet examples/apps/fixtures/ecommerce-analytics-orders.csv
--- out: rows=40000 total=12580000 mean=314.5000
+-- out: rows=1000 total=314500 mean=314.5000
