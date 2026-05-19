@@ -1829,23 +1829,6 @@ impl RegCompiler {
         }
     }
 
-    /// Search all types for a field name and return its slot index.
-    /// Returns `Some(index)` if the field exists at the same index in all types that have it.
-    /// Returns `None` if different types place this field at different indices (ambiguous).
-    fn search_field_index(&self, field: &str) -> Option<usize> {
-        let mut found_idx = None;
-        for info in self.type_registry.types.iter() {
-            if let Some(idx) = info.fields.iter().position(|f| f == field) {
-                match found_idx {
-                    None => found_idx = Some(idx),
-                    Some(prev) if prev == idx => {} // same index across types, ok
-                    Some(_) => return None, // ambiguous — different index in different types
-                }
-            }
-        }
-        found_idx
-    }
-
     fn compile_program(mut self, program: &Program) -> Result<CompiledProgram, CompileError> {
         // Build type registry from TypeDefs
         for decl in &program.declarations {
@@ -2150,10 +2133,17 @@ impl RegCompiler {
                 let record_reg = self.compile_expr(value);
                 let rec_type = self.reg_record_type[record_reg as usize];
                 for binding in bindings {
+                    // Only resolve to a positional index when the object's
+                    // record type is known statically. For `_`-typed values
+                    // the runtime layout (e.g. `jpar`-alphabetised keys) need
+                    // not match any declared `type`'s field order, so we fall
+                    // through to the name-based dynamic path. See the
+                    // matching comment on `Expr::Field` and json-shaper
+                    // rerun10.
                     let field_idx = if rec_type != u16::MAX {
                         self.type_registry.field_index(rec_type, binding)
                     } else {
-                        self.search_field_index(binding)
+                        None
                     };
                     match field_idx {
                         Some(idx) => {
@@ -3199,12 +3189,26 @@ impl RegCompiler {
                 safe,
             } => {
                 let obj_reg = self.compile_expr(object);
-                // Resolve field to an index using compile-time type info
                 let obj_type = self.reg_record_type[obj_reg as usize];
+                // Resolve field to an index using compile-time type info.
+                //
+                // We only use the positional `OP_RECFLD` fast path when the
+                // object's static record type is known at compile time. If the
+                // object is `_`-typed (e.g. a generic param, or anything coming
+                // out of `jpar`), the runtime record's field order is not
+                // knowable from a declared `type` — declared types are sorted
+                // by source order, while `jpar` records are sorted
+                // alphabetically. Using `search_field_index` here previously
+                // produced silent-wrong output: `it.sku` on a `_`-typed value
+                // would resolve to the offset of `sku` in a same-name `type`
+                // declaration even though the live record had a different
+                // layout. Falling through to the name-based path
+                // (`OP_RECFLD_NAME`) costs one map lookup but is always
+                // correct. See json-shaper rerun10.
                 let field_idx = if obj_type != u16::MAX {
                     self.type_registry.field_index(obj_type, field)
                 } else {
-                    self.search_field_index(field)
+                    None
                 };
                 match field_idx {
                     Some(idx) => {
@@ -5359,14 +5363,19 @@ impl RegCompiler {
                 let obj_reg = self.compile_expr(object);
                 let obj_type = self.reg_record_type[obj_reg as usize];
 
-                // Resolve update field names to indices
+                // Resolve update field names to indices. Same `_`-typed
+                // caveat as `Expr::Field` and `Stmt::Destructure`: for an
+                // object of unknown static record type, the runtime layout
+                // may not match any declared `type`, so we don't trust
+                // `search_field_index` here. Unresolved entries fall through
+                // to the name-keyed fallback emitted by the With codegen.
                 let update_indices: Vec<Option<u8>> = updates
                     .iter()
                     .map(|(name, _)| {
                         let idx = if obj_type != u16::MAX {
                             self.type_registry.field_index(obj_type, name)
                         } else {
-                            self.search_field_index(name)
+                            None
                         };
                         idx.map(|i| i as u8)
                     })
