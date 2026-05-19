@@ -594,6 +594,10 @@ pub(crate) fn is_tree_bridge_eligible(b: crate::builtins::Builtin, argc: usize) 
         // Map[Text, Text] which round-trips through NanVal heap_map cleanly,
         // so the bridge is the right tier for both VM and Cranelift.
         (Builtin::EnvAll, 0) => true,
+        // jkeys json path -> R (L t) t. New companion to mkeys for JSON
+        // objects. Pure (no FnRef args, no I/O), bridge keeps cross-engine
+        // parity with the tree interpreter at the same cost tier as `mkeys`.
+        (Builtin::Jkeys, 2) => true,
         _ => false,
     }
 }
@@ -612,6 +616,7 @@ pub(crate) fn tree_bridge_returns_result(b: crate::builtins::Builtin) -> bool {
             | Builtin::Glob
             | Builtin::EnvAll
             | Builtin::Run
+            | Builtin::Jkeys
     )
 }
 
@@ -10633,11 +10638,13 @@ impl<'a> VM<'a> {
                                     }
                                 }
                                 if found {
-                                    let result_str = match current {
-                                        serde_json::Value::String(s) => s.clone(),
-                                        other => other.to_string(),
-                                    };
-                                    NanVal::heap_ok(NanVal::heap_string(result_str))
+                                    // Return the value at the path as a typed
+                                    // NanVal: arrays → list, objects → record,
+                                    // scalars → matching primitive. Mirrors
+                                    // `jpar`'s `serde_json_to_nanval` path so
+                                    // `mkeys` / `map` / `flt` / `@` / `jkeys`
+                                    // accept the result directly.
+                                    NanVal::heap_ok(serde_json_to_nanval(current.clone()))
                                 } else {
                                     NanVal::heap_err(NanVal::heap_string(format!(
                                         "key not found: {missing_key}"
@@ -17030,11 +17037,10 @@ pub(crate) extern "C" fn jit_jpth(a: u64, b: u64, span_bits: u64) -> u64 {
                 }
             }
             if found {
-                let result_str = match current {
-                    serde_json::Value::String(s) => s.clone(),
-                    other => other.to_string(),
-                };
-                NanVal::heap_ok(NanVal::heap_string(result_str)).0
+                // Return the value at the path as a typed NanVal: arrays →
+                // list, objects → record, scalars → matching primitive. See
+                // OP_JPTH (VM) and the tree-walker for the matching paths.
+                NanVal::heap_ok(serde_json_to_nanval(current.clone())).0
             } else {
                 NanVal::heap_err(NanVal::heap_string(format!("key not found: {missing_key}"))).0
             }
@@ -21841,7 +21847,8 @@ mod tests {
 
     #[test]
     fn vm_jp_array_index() {
-        let source = r#"f j:t p:t>R t t;jpth j p"#;
+        // Post-0.12.1 jpth: numeric leaf returns Number, not Text.
+        let source = r#"f j:t p:t>R _ t;jpth j p"#;
         let result = vm_run(
             source,
             Some("f"),
@@ -21850,10 +21857,7 @@ mod tests {
                 Value::Text(Arc::new("1".to_string())),
             ],
         );
-        assert_eq!(
-            result,
-            Value::Ok(Box::new(Value::Text(Arc::new("20".to_string()))))
-        );
+        assert_eq!(result, Value::Ok(Box::new(Value::Number(20.0))));
     }
 
     #[test]
@@ -29445,7 +29449,8 @@ mod tests {
 
     #[test]
     fn vm_jpth_array_index() {
-        let source = r#"f j:t p:t>R t t;jpth j p"#;
+        // Post-0.12.1 jpth: numeric leaf returns Number, not Text.
+        let source = r#"f j:t p:t>R _ t;jpth j p"#;
         let result = vm_run(
             source,
             Some("f"),
@@ -29454,10 +29459,7 @@ mod tests {
                 Value::Text(Arc::new("1".to_string())),
             ],
         );
-        assert_eq!(
-            result,
-            Value::Ok(Box::new(Value::Text(Arc::new("20".to_string()))))
-        );
+        assert_eq!(result, Value::Ok(Box::new(Value::Number(20.0))));
     }
 
     #[test]
