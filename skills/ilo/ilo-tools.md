@@ -62,7 +62,7 @@ Tool names on the MCP server appear as bindings. Run `ilo tools --mcp path.json`
 ilo tools --mcp m.json [--ilo|--json|--full|--graph]
 ```
 
-`--ilo` emits paste-ready `tool` decls. `--json` is structured. `--graph` is a type-level composition graph.
+`--ilo` emits paste-ready `tool` decls. `--json` is structured: `{"schemaVersion":1,"tools":[...]}` (the envelope wraps the array since 0.12.1 — pre-0.12.1 it was a bare array). `--graph` is a type-level composition graph.
 
 ## Failures
 

@@ -38,4 +38,4 @@ Same `code` three times after applying `hint`: dump source + diagnostics, stop. 
 
 ## Tooling
 
-`ilo check --json` verify only; `--strict` exits 1 on warnings. `ilo run --json` wraps stdout as `{"ok"|"error"}`. `ilo explain CODE --json` structured long-form. `ilo serv` long-lived JSON loop without process spawn.
+`ilo check --json` verify only; `--strict` exits 1 on warnings. `ilo run --json` wraps stdout as `{"schemaVersion":1,"ok"|"error":...}`. `ilo explain CODE --json` structured long-form. `ilo serv` long-lived JSON loop without process spawn (every line carries `schemaVersion:1`). Since 0.12.1 every CLI `--json` envelope carries `schemaVersion:1`, so a single router branch handles every command.

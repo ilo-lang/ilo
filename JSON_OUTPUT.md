@@ -4,64 +4,72 @@ Every ilo subcommand that produces machine-readable output supports a
 `--json` (or `-j`) flag. JSON outputs are pure JSON on `stdout`; any prose
 goes to `stderr`. Plain-text output is the default and is unchanged.
 
-Where it makes sense, new JSON envelopes start with `"schemaVersion": 1`
-so agents can route on the contract and the schema can evolve without
-breaking older consumers. Two long-standing outputs predate this
-convention and keep their original shape:
+Every JSON envelope starts with `"schemaVersion": 1` so agents can route
+on the contract and the schema can evolve without breaking older
+consumers. Six long-standing outputs were brought into the convention
+in 0.12.1: `ilo run`, `ilo graph`, `ilo --ast`, `ilo serv`,
+`ilo tools --json`, and the newly-added `ilo spec --json` mode. For
+five of those six the change is strictly additive — the existing
+envelopes were JSON objects with key sets disjoint from `schemaVersion`,
+so old consumers that never read the new field keep working unchanged.
 
-- `ilo run` (success / error envelopes for program return values)
-- `ilo graph` (always JSON)
-- `ilo --ast` (always JSON, the AST)
-- `ilo serv` (one JSON object per line, request/response)
-- `ilo tools --json`
+The one observable break in 0.12.1 is `ilo tools --json`: its legacy
+shape was a bare JSON array, so wrapping it in an envelope changes the
+top-level type. Indexing consumers should read `.tools[0]` instead of
+`[0]`. The bare-array shape pre-dated the schema-version convention
+and was the last hold-out; bringing it into line means every CLI
+`--json` envelope now answers the same routing question the same way.
 
-These are documented below as-is. New outputs added in 0.13 (`version`,
-`compile` / `build`, `explain`, `skill list`/`get`/`path`/`show`) all
-carry `schemaVersion`.
+Outputs added in 0.13 (`version`, `compile` / `build`, `explain`,
+`skill list`/`get`/`path`/`show`) have always carried `schemaVersion`.
 
 ## Audit table
 
-| Command                     | `--json` support     | Schema versioned? |
-| --------------------------- | -------------------- | ----------------- |
-| `ilo run <file> [args]`     | yes (success + err)  | no (legacy shape) |
-| `ilo <file> [args]`         | yes (success + err)  | no (legacy shape) |
-| `ilo check <file>`          | yes (diagnostics)    | per-diagnostic    |
-| `ilo build <file> -o out`   | yes                  | yes               |
-| `ilo compile <file> -o out` | yes                  | yes               |
-| `ilo graph <file>`          | yes (always JSON)    | no (legacy shape) |
-| `ilo --ast <file>`          | yes (always JSON)    | no (legacy shape) |
-| `ilo tools --json ...`      | yes                  | no (legacy shape) |
-| `ilo serv`                  | yes (JSONL stdio)    | no (legacy shape) |
-| `ilo explain <code>`        | yes                  | yes               |
-| `ilo skill list`            | yes                  | yes               |
-| `ilo skill get <name>`      | yes                  | yes               |
-| `ilo skill path <name>`     | yes                  | yes               |
-| `ilo skill show <name>`     | yes                  | yes               |
-| `ilo version`               | yes                  | yes               |
-| `ilo spec [lang\|ai]`       | no (markdown / text) | n/a               |
-| `ilo repl`                  | no (interactive)     | n/a               |
+| Command                     | `--json` support     | Schema versioned?                |
+| --------------------------- | -------------------- | -------------------------------- |
+| `ilo run <file> [args]`     | yes (success + err)  | yes (0.12.1+)                    |
+| `ilo <file> [args]`         | yes (success + err)  | yes (0.12.1+)                    |
+| `ilo check <file>`          | yes (diagnostics)    | per-diagnostic                   |
+| `ilo build <file> -o out`   | yes                  | yes                              |
+| `ilo compile <file> -o out` | yes                  | yes                              |
+| `ilo graph <file>`          | yes (always JSON)    | yes (0.12.1+)                    |
+| `ilo --ast <file>`          | yes (always JSON)    | yes (0.12.1+)                    |
+| `ilo tools --json ...`      | yes                  | yes (0.12.1+, breaking wrap)     |
+| `ilo serv`                  | yes (JSONL stdio)    | yes (0.12.1+, every line)        |
+| `ilo explain <code>`        | yes                  | yes                              |
+| `ilo skill list`            | yes                  | yes                              |
+| `ilo skill get <name>`      | yes                  | yes                              |
+| `ilo skill path <name>`     | yes                  | yes                              |
+| `ilo skill show <name>`     | yes                  | yes                              |
+| `ilo version`               | yes                  | yes                              |
+| `ilo spec [lang\|ai]`       | yes (wraps prose)    | yes (0.12.1+)                    |
+| `ilo repl`                  | no (interactive)     | n/a (see `ilo serv` for agents)  |
 
-`spec` and `repl` are intentionally not JSON: `spec` emits markdown for
-humans and `ai.txt` for LLMs, and `repl` is interactive.
+`spec` emits markdown for humans by default and `ai.txt` for LLMs; in
+`--json` mode it wraps the prose so the contract matches every other
+emitter. `repl` is interactive and stays out of the JSON contract — the
+JSONL-over-stdio equivalent for agents is `ilo serv`.
 
 ## Schemas
 
-### `ilo run` and bare-file run (legacy shape)
+### `ilo run` and bare-file run
 
 Success:
 
 ```json
-{ "ok": <value-as-json> }
+{ "schemaVersion": 1, "ok": <value-as-json> }
 ```
 
 Failure (`Value::Err` returned from the entry function):
 
 ```json
-{ "error": { "phase": "program", "value": <value-as-json> } }
+{ "schemaVersion": 1, "error": { "phase": "program", "value": <value-as-json> } }
 ```
 
 Lex / parse / type errors are emitted as one diagnostic JSON object per
-error to `stdout`; see `reference/diagnostics.md`.
+error to `stdout`; see `reference/diagnostics.md`. The `schemaVersion`
+field was added in 0.12.1; it is strictly additive and old consumers
+that read `ok` / `error` keep working.
 
 ### `ilo check`
 
@@ -194,37 +202,74 @@ a sample program.
 
 ### `ilo --ast <file>` (always JSON)
 
-Emits the parsed `ast::Program` as pretty JSON. Schema is the
-`serde::Serialize` projection of the AST and is considered internal:
-agents should treat it as opaque and stable within a minor version, but
-not across major version bumps.
+Emits the parsed `ast::Program` as pretty JSON with `"schemaVersion": 1`
+flattened in next to `declarations`:
+
+```json
+{
+  "schemaVersion": 1,
+  "declarations": [ ... ]
+}
+```
+
+The `declarations` shape is the `serde::Serialize` projection of the
+AST and is considered internal: agents should treat it as opaque and
+stable within a minor version, but not across major version bumps.
 
 ### `ilo graph <file>` (always JSON unless `--dot`)
 
 Emits one of `graph::ProgramGraph`, `graph::FnQuery`,
-`graph::ReverseQuery`, or `graph::BudgetQuery` depending on flags. See
-`crate::graph` for the projection.
+`graph::ReverseQuery`, `graph::BudgetQuery`, or `graph::SubgraphQuery`
+depending on flags, each with `"schemaVersion": 1` flattened in at the
+top level. See `crate::graph` for the per-query projection.
 
 ### `ilo serv`
 
 JSON-Lines stdio: one request object per line on `stdin`, one response
-object per line on `stdout`. The schema is documented separately on the
+object per line on `stdout`. Every response carries
+`"schemaVersion": 1` at the top level — including the initial
+`{"schemaVersion": 1, "ready": true}` handshake, every `{"ok": ..., "ms": ...}`
+success, and every `{"error": {"phase": ..., ...}}` failure across the
+`request`, `lex`, `parse`, `verify`, `runtime`, and `program` phases.
+The phase schema and the request shape are documented separately on the
 agent-loop page.
 
 ### `ilo tools --json`
 
 ```json
-[
-  {
-    "name": "tool-name",
-    "source": "mcp" | "http",
-    "description": "...",
-    "params": [{ "name": "x", "type": "n" }],
-    "return": "t"
-  },
-  ...
-]
+{
+  "schemaVersion": 1,
+  "tools": [
+    {
+      "name": "tool-name",
+      "source": "mcp" | "http",
+      "description": "...",
+      "params": [{ "name": "x", "type": "n" }],
+      "return": "t"
+    },
+    ...
+  ]
+}
 ```
+
+The previous (pre-0.12.1) shape was a bare JSON array. Indexing
+consumers should read `.tools[0]` instead of `[0]`.
+
+### `ilo spec --json [lang|ai]`
+
+```json
+{
+  "schemaVersion": 1,
+  "format": "markdown" | "ai-txt",
+  "content": "...the prose..."
+}
+```
+
+`format` discriminates between the human-facing markdown spec (`lang`)
+and the LLM-facing compact `ai.txt` (`ai`). `content` is opaque text:
+agents should not assume a structured shape inside it. Without `--json`
+the command still emits the raw text bodies as before, so existing
+shell pipelines that piped the markdown into a reader are unchanged.
 
 ## Conventions
 
@@ -233,8 +278,8 @@ agent-loop page.
 2. Plain-text output is unchanged. Adding `--json` is strictly additive.
 3. When `--json` is set, prose lines (e.g. `Compiled: out`) move to
    `stderr` so `stdout` is pure JSON.
-4. New JSON envelopes start with `"schemaVersion": 1`. Breaking changes
-   to a versioned envelope bump the major version.
+4. Every JSON envelope starts with `"schemaVersion": 1`. Breaking
+   changes to a versioned envelope bump the major version.
 
 A CI test (`tests/json_output_contracts.rs`) exercises each command
 with `--json` on a known input and asserts the output parses and
