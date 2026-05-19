@@ -5,7 +5,7 @@ description: Use this when choosing between VM, JIT, or AOT execution. Covers th
 
 # ilo execution engines
 
-Three public backends. Default (`ilo file.ilo`) is the register VM; covers ~all programs at strong speed. Pick a specific engine only with a reason.
+Three public backends. Default (`ilo file.ilo`) is the register VM; covers ~all programs at strong speed. Pick another only with a reason.
 
 ## Engines
 
@@ -16,7 +16,7 @@ Three public backends. Default (`ilo file.ilo`) is the register VM; covers ~all 
 | Cranelift AOT | `ilo compile` | 100-1000x | Standalone native (~9 MB). |
 | LLVM JIT | `--run-llvm` | ~Cranelift | Behind `llvm` feature. Rarely needed. |
 
-The tree-walking interpreter is internal-only as of 0.12.1; `--run-tree` and `--run` were removed from the public CLI and now error with the unknown-flag guard. The interpreter stays in-tree as the dispatch target for bridge ops (regex, fmt variadic, fmt2, rd/rdb/rdjl, sleep, ls/walk/glob/run, env-all, jkeys, ct, rsrt, and the closure-bind ctx variants of map/flt/fld/srt); the VM bails to it transparently. Cross-engine parity is pinned by the bridge regression tests.
+Tree-walker is internal-only as of 0.12.1: `--run-tree` / `--run` are gone from the public CLI (unknown-flag error). The interpreter stays in-tree as the VM's bail target for regex, fmt variadic, IO, sleep, ct, rsrt, and closure-bind-ctx HOFs. Cross-engine parity pinned by the bridge regression tests.
 
 ## When to pick which
 
@@ -34,4 +34,4 @@ All three public backends support core ops, lists/maps/records/sums, HOFs, lambd
 
 ## AOT
 
-`ilo compile prog.ilo [-o out] [main] [--bench]`. Output statically linked, ~9 MB, host-arch native. Top-level Result contract matches the source byte-for-byte.
+`ilo compile prog.ilo [-o out] [main] [--bench]`. Output ~9 MB, host-arch native. Top-level Result contract matches source byte-for-byte.
