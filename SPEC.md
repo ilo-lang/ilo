@@ -505,6 +505,8 @@ Called like functions, compiled to dedicated opcodes.
 | `take n xs` | first `n` elements/chars of list or text (n>=0 truncates if n>len; n<0 keeps all but the last `abs n`, Python `xs[:n]`) | same type |
 | `drop n xs` | skip first `n` elements/chars (n>=0 returns the rest; n<0 keeps only the last `abs n`, Python `xs[n:]`) | same type |
 | `rsrt xs` | sort descending (list or text chars) | same type |
+| `rsrt fn xs` | sort descending by key function (returns number or text key) | `L` |
+| `rsrt fn ctx xs` | sort descending by key function with explicit ctx arg (closure-bind alternative; `fn` takes `(elem, ctx)`) | `L` |
 | `uniqby fn xs` | dedupe by key function (first occurrence wins) | `L a` |
 | `zip xs ys` | pairwise pairs of two lists; truncates to shorter input | `L (L _)` |
 | `enumerate xs` | pair each element with its index → `[[i, v], ...]` | `L (L _)` |

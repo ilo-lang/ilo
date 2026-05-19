@@ -21,7 +21,7 @@ Prefix-call: `name arg1 arg2 ...`. Cross-engine unless noted.
 
 ## HOFs
 
-`map f xs`, `flt f xs`, `ct f xs`, `fld f xs init`. Lambdas `(x:n>n;+x 1)`.
+`map f xs`, `flt f xs`, `ct f xs`, `fld f xs init`; `srt fn xs`/`rsrt fn xs` sort-by-key. Lambda: `(x:n>n;+x 1)`.
 
 ## Map
 
