@@ -1083,6 +1083,21 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             )),
         };
     }
+    if builtin == Some(Builtin::MgetOr) && args.len() == 3 {
+        // mget-or m k default — value at key, else default. Same lookup as
+        // mget; never returns nil. Verifier enforces `default:v` matches the
+        // map value type.
+        return match &args[0] {
+            Value::Map(m) => {
+                let key = MapKey::from_value(&args[1], "mget-or")?;
+                Ok(m.get(&key).cloned().unwrap_or_else(|| args[2].clone()))
+            }
+            _ => Err(RuntimeError::new(
+                "ILO-R009",
+                "mget-or: expects map, key, and default".to_string(),
+            )),
+        };
+    }
     if builtin == Some(Builtin::Mhas) && args.len() == 2 {
         return match &args[0] {
             Value::Map(m) => {
@@ -1718,6 +1733,36 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             other => Err(RuntimeError::new(
                 "ILO-R009",
                 format!("at requires a list or text, got {:?}", other),
+            )),
+        };
+    }
+    if builtin == Some(Builtin::LgetOr) && args.len() == 3 {
+        // lget-or xs i default — element at index, else default. Floors the
+        // index like `at`, applies the same negative-index resolution, but
+        // OOB returns default instead of erroring. Verifier enforces
+        // `default:a` matches the list element type.
+        let i = match &args[1] {
+            Value::Number(n) => n.floor() as i64,
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("lget-or: index must be a number, got {:?}", other),
+                ));
+            }
+        };
+        return match &args[0] {
+            Value::List(items) => {
+                let len = items.len() as i64;
+                let adjusted = if i < 0 { i + len } else { i };
+                if adjusted < 0 || adjusted >= len {
+                    Ok(args[2].clone())
+                } else {
+                    Ok(items[adjusted as usize].clone())
+                }
+            }
+            _ => Err(RuntimeError::new(
+                "ILO-R009",
+                "lget-or: expects a list".to_string(),
             )),
         };
     }
