@@ -1,0 +1,18 @@
+-- Timezone-aware event chronology comparator
+-- Lexically compares ISO timestamps
+
+cmp ev1:_ ev2:_>t;
+  t1=ev1.timestamp
+  t2=ev2.timestamp
+  n1=ev1.name
+  n2=ev2.name
+  first=<t1 t2
+  ?(first){true:n1;false:n2}
+
+-- Example: compare Call (14:30 UTC+2) vs Deploy (11:58 UTC-5)
+-- Lexically: "11:58" < "14:30", so Deploy came first
+-- Same day: both May 19
+-- Note: TZ offsets are ignored; only local time is compared
+
+-- run: cmp({name:"Call";timestamp:"2025-05-19T14:30:00+02:00"} {name:"Deploy";timestamp:"2025-05-19T11:58:00-05:00"})
+-- out: "Deploy"
