@@ -12846,13 +12846,10 @@ fn vm_parse_format(fmt: &str, content: &str) -> Result<NanVal, NanVal> {
     match fmt {
         "csv" | "tsv" => {
             let sep = if fmt == "tsv" { '\t' } else { ',' };
-            let rows: Vec<NanVal> = content
-                .lines()
-                .map(|line| {
-                    let fields: Vec<NanVal> = vm_parse_csv_row(line, sep)
-                        .into_iter()
-                        .map(NanVal::heap_string)
-                        .collect();
+            let rows: Vec<NanVal> = vm_parse_csv_content(content, sep)
+                .into_iter()
+                .map(|row| {
+                    let fields: Vec<NanVal> = row.into_iter().map(NanVal::heap_string).collect();
                     NanVal::heap_list(fields)
                 })
                 .collect();
@@ -12865,11 +12862,26 @@ fn vm_parse_format(fmt: &str, content: &str) -> Result<NanVal, NanVal> {
     }
 }
 
-fn vm_parse_csv_row(line: &str, sep: char) -> Vec<String> {
-    let mut fields = Vec::new();
+/// Parse a full CSV/TSV document into rows of fields, RFC 4180 compliant.
+///
+/// Mirrors `interpreter::parse_csv_content`: tracks quote state across
+/// record separators so a quoted field containing an embedded newline is
+/// preserved as a single cell. Accepts both `\n` and `\r\n` as record
+/// terminators outside quotes; inside quotes they are kept verbatim. A
+/// trailing newline does not produce an extra empty row.
+///
+/// History: csv-pipeline rerun10. The VM's vm_parse_format previously
+/// called `content.lines()` then handed each line to a per-line quote
+/// parser, so any cell containing `\n` (which `write_csv_tsv` correctly
+/// emits as a quoted multi-line field) was mis-read as two rows. The
+/// tree-walker had the same bug in `parse_format`; both code paths now
+/// use a single-pass scanner so cross-engine round-trip is byte-stable.
+fn vm_parse_csv_content(content: &str, sep: char) -> Vec<Vec<String>> {
+    let mut rows: Vec<Vec<String>> = Vec::new();
+    let mut row: Vec<String> = Vec::new();
     let mut field = String::new();
     let mut in_quotes = false;
-    let mut chars = line.chars().peekable();
+    let mut chars = content.chars().peekable();
     while let Some(c) = chars.next() {
         if in_quotes {
             if c == '"' {
@@ -12885,13 +12897,25 @@ fn vm_parse_csv_row(line: &str, sep: char) -> Vec<String> {
         } else if c == '"' {
             in_quotes = true;
         } else if c == sep {
-            fields.push(std::mem::take(&mut field));
+            row.push(std::mem::take(&mut field));
+        } else if c == '\n' {
+            row.push(std::mem::take(&mut field));
+            rows.push(std::mem::take(&mut row));
+        } else if c == '\r' {
+            if chars.peek() == Some(&'\n') {
+                chars.next();
+            }
+            row.push(std::mem::take(&mut field));
+            rows.push(std::mem::take(&mut row));
         } else {
             field.push(c);
         }
     }
-    fields.push(field);
-    fields
+    if !field.is_empty() || !row.is_empty() || in_quotes {
+        row.push(field);
+        rows.push(row);
+    }
+    rows
 }
 
 fn nanval_equal(a: NanVal, b: NanVal) -> bool {
@@ -27206,7 +27230,7 @@ mod tests {
         assert_eq!(*inner, Value::Text(Arc::new("hello raw".to_string())));
     }
 
-    // ── vm_parse_csv_row quoted fields (lines 4295-4306) ─────────────────────
+    // ── vm_parse_csv_content quoted fields (lines 4295-4306) ─────────────────
 
     // lines 4295-4306: OP_RD on .csv file with quoted fields (double-quote escaping)
     #[test]
