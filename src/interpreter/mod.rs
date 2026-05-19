@@ -1246,9 +1246,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 pairs.sort_by_key(|(k, _)| (*k).clone());
                 let out: Vec<Value> = pairs
                     .into_iter()
-                    .map(|(k, v)| {
-                        Value::List(Arc::new(vec![map_key_to_value(k), v.clone()]))
-                    })
+                    .map(|(k, v)| Value::List(Arc::new(vec![map_key_to_value(k), v.clone()])))
                     .collect();
                 Ok(Value::List(Arc::new(out)))
             }

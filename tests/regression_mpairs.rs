@@ -59,7 +59,8 @@ fn run_all(src: &str, entry: &str, expected: &str) {
 
 // ── Basic shape: text-keyed map, returns sorted [k, v] pairs ────────────
 
-const MPAIRS_BASIC: &str = "f>L (L _)\n  m = mset (mset (mset mmap \"b\" 2) \"a\" 1) \"c\" 3\n  mpairs m\n";
+const MPAIRS_BASIC: &str =
+    "f>L (L _)\n  m = mset (mset (mset mmap \"b\" 2) \"a\" 1) \"c\" 3\n  mpairs m\n";
 
 #[test]
 fn mpairs_basic_sorted_pairs() {
@@ -73,7 +74,8 @@ fn mpairs_basic_sorted_pairs() {
 // equivalent zip on the same map. Different keys + multiple keys with
 // different cardinalities to keep the sort path honest.
 
-const MPAIRS_INVARIANT: &str = "f>L (L _)\n  m = mset (mset (mset (mset mmap \"q\" 4) \"a\" 1) \"m\" 3) \"b\" 2\n  mpairs m\n";
+const MPAIRS_INVARIANT: &str =
+    "f>L (L _)\n  m = mset (mset (mset (mset mmap \"q\" 4) \"a\" 1) \"m\" 3) \"b\" 2\n  mpairs m\n";
 
 #[test]
 fn mpairs_invariant_matches_mkeys_mvals_output() {
@@ -115,7 +117,8 @@ fn mpairs_single_entry() {
 // MapKey's Ord puts numbers ahead of text and sorts numerics numerically,
 // so 2 < 10 here. A naive string sort would put "10" before "2".
 
-const MPAIRS_NUMERIC_KEYS: &str = "f>L (L _)\n  m = mset (mset (mset mmap 10 \"a\") 2 \"b\") 5 \"c\"\n  mpairs m\n";
+const MPAIRS_NUMERIC_KEYS: &str =
+    "f>L (L _)\n  m = mset (mset (mset mmap 10 \"a\") 2 \"b\") 5 \"c\"\n  mpairs m\n";
 
 #[test]
 fn mpairs_numeric_keys_sort_numerically() {
@@ -124,7 +127,8 @@ fn mpairs_numeric_keys_sort_numerically() {
 
 // ── After mdel: removed key is absent from pairs ────────────────────────
 
-const MPAIRS_AFTER_MDEL: &str = "f>L (L _)\n  m = mset (mset (mset mmap \"a\" 1) \"b\" 2) \"c\" 3\n  mpairs (mdel m \"b\")\n";
+const MPAIRS_AFTER_MDEL: &str =
+    "f>L (L _)\n  m = mset (mset (mset mmap \"a\" 1) \"b\" 2) \"c\" 3\n  mpairs (mdel m \"b\")\n";
 
 #[test]
 fn mpairs_after_mdel_drops_entry() {

@@ -2624,10 +2624,7 @@ fn builtin_check_args(
             // mpairs returns L (L _) — list of 2-element [k, v] pairs.
             // Inner element type is Unknown because key and value types
             // generally differ; agents destructure positionally.
-            (
-                Ty::List(Box::new(Ty::List(Box::new(Ty::Unknown)))),
-                errors,
-            )
+            (Ty::List(Box::new(Ty::List(Box::new(Ty::Unknown)))), errors)
         }
         "mdel" => {
             if let Some(first) = arg_types.first()
