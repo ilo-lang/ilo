@@ -2,11 +2,12 @@
 //
 // Phase 1 (#395) split the monolithic compact spec into six embedded skill
 // modules. Phase 2 added `ilo-examples` and `ilo-edit-loop` (PR #419) for
-// Zero-parity task coverage. Each module is loaded on demand by an agent via
-// `ilo skill get <name>` (or `--json`). These tests guard the structural
-// contract:
+// Zero-parity task coverage. Phase 3 split `ilo-builtins` into four category
+// files (core, math, io, text) for language-growth headroom. Each module is
+// loaded on demand by an agent via `ilo skill get <name>` (or `--json`).
+// These tests guard the structural contract:
 //
-//   - all eight modules exist at known paths
+//   - all eleven modules exist at known paths
 //   - each carries valid Anthropic-format YAML frontmatter (`name`,
 //     `description`)
 //   - every `description` starts with `Use this when`, the routing key agents
@@ -25,7 +26,10 @@ fn repo_root() -> PathBuf {
 
 const SKILL_NAMES: &[&str] = &[
     "ilo-language",
-    "ilo-builtins",
+    "ilo-builtins-core",
+    "ilo-builtins-math",
+    "ilo-builtins-io",
+    "ilo-builtins-text",
     "ilo-errors",
     "ilo-tools",
     "ilo-engines",
@@ -41,12 +45,12 @@ const SKILL_NAMES: &[&str] = &[
 /// catches drift even when CI is bypassed.
 const BYTE_BUDGET_PER_MODULE: usize = 4_000;
 
-/// Total bytes across all six. ~17,500 bytes ≈ 5,150 tokens at ~3.4 bytes
+/// Total bytes across all eleven. ~27,200 bytes ≈ 8,000 tokens at ~3.4 bytes
 /// per cl100k_base token on our content; the tighter tiktoken job in CI
-/// enforces the actual 5,000-token cap. Leaving the byte tripwire a few
+/// enforces the actual 8,000-token cap. Leaving the byte tripwire a few
 /// hundred tokens of slack avoids spurious failures when a single-character
 /// edit lands locally without re-running the Python counter.
-const BYTE_BUDGET_TOTAL: usize = 17_500;
+const BYTE_BUDGET_TOTAL: usize = 27_200;
 
 fn read_skill(name: &str) -> String {
     let p = repo_root().join("skills/ilo").join(format!("{name}.md"));

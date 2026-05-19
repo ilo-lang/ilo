@@ -83,6 +83,7 @@ fn skill_list_json() {
     assert!(first["path"].is_string());
 
     // Phase 2 (PR #419): the listing must include the Zero-parity additions.
+    // Phase 3: ilo-builtins split into category files; check all four.
     // Guards against a future refactor silently dropping a skill from the
     // SKILLS array in src/main.rs.
     let names: Vec<&str> = skills
@@ -91,7 +92,10 @@ fn skill_list_json() {
         .collect();
     for required in [
         "ilo-language",
-        "ilo-builtins",
+        "ilo-builtins-core",
+        "ilo-builtins-math",
+        "ilo-builtins-io",
+        "ilo-builtins-text",
         "ilo-errors",
         "ilo-tools",
         "ilo-engines",
