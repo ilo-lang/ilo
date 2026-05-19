@@ -168,10 +168,7 @@ const NON_TAIL_PRESERVES_SOURCE: &str =
 
 #[test]
 fn non_tail_preserves_source_tree() {
-    assert_eq!(
-        run("--run-vm", NON_TAIL_PRESERVES_SOURCE, "go", "0"),
-        "-1"
-    );
+    assert_eq!(run("--run-vm", NON_TAIL_PRESERVES_SOURCE, "go", "0"), "-1");
 }
 
 #[test]
