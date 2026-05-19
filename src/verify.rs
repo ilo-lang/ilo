@@ -4089,7 +4089,30 @@ impl VerifyContext {
                 then_expr,
                 else_expr,
             } => {
-                self.infer_expr(func, scope, condition, span);
+                let cond_ty = self.infer_expr(func, scope, condition, span);
+                // Defence-in-depth: a ternary cond must type-check to `b`.
+                // Without this guard, non-bool cond values are silently
+                // treated as truthy at runtime — see the ml-tabular rerun11
+                // bug where `?h (> p 0.5) 1 0` mis-parsed the parenthesised
+                // prefix-comparison as an inline lambda and always took
+                // the then-branch. The parser-side fix prevents that
+                // specific mis-parse; this verifier check catches the
+                // broader family (partial-applied fn-refs, Result<b>
+                // without unwrap, any future shape that lands a non-bool
+                // in cond position).
+                if !matches!(cond_ty, Ty::Bool | Ty::Unknown) {
+                    self.err(
+                        "ILO-T038",
+                        func,
+                        format!(
+                            "ternary condition must be a bool, got {cond_ty}"
+                        ),
+                        Some(
+                            "bind the condition first (`c=<expr>;?h c a b`) or use the brace-delimited pattern-match form `?cond{true:a false:b}` which avoids this whole class of bug".into(),
+                        ),
+                        Some(span),
+                    );
+                }
                 let then_ty = self.infer_expr(func, scope, then_expr, span);
                 let else_ty = self.infer_expr(func, scope, else_expr, span);
                 if compatible(&then_ty, &else_ty) {
