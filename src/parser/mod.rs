@@ -2776,6 +2776,17 @@ or write `({fmt_name} \"...\" ...)` so its args are grouped."
             // If we consumed `!` / `!!`, this must be a call (even with zero
             // args if nothing follows).
             if unwrap.is_any() {
+                // Zero-arg builtins with `!` unwrap: `rdin!` / `rdinl!` /
+                // `env-all!` / etc. Never consume args — return immediately as
+                // a 0-arg call. Without this guard the greedy args loop below
+                // would steal the first token of the next statement.
+                if name == "rdin" || name == "rdinl" || name == "env-all" {
+                    return Ok(Expr::Call {
+                        function: name,
+                        args: vec![],
+                        unwrap,
+                    });
+                }
                 let mut args = Vec::new();
                 let outer_arity_known = self.fn_arity.get(&name).copied();
                 while self.can_start_operand() {
@@ -2804,7 +2815,9 @@ or write `({fmt_name} \"...\" ...)` so its args are grouped."
                 || name == "now"
                 || name == "now-ms"
                 || name == "mmap"
-                || name == "env-all")
+                || name == "env-all"
+                || name == "rdin"
+                || name == "rdinl")
                 && !self.can_start_operand()
             {
                 return Ok(Expr::Call {
@@ -3376,7 +3389,13 @@ results first: `r={first_op}a b;…r` keeps each step explicit."
             // still parses as `now(x)` and the verifier can surface its usual
             // arity-mismatch error instead of a confusing ILO-P020 from a
             // bare `x` at the next statement boundary.
-            Some(Token::Ident(name)) if name == "now" || name == "now-ms" || name == "env-all" => {
+            Some(Token::Ident(name))
+                if name == "now"
+                    || name == "now-ms"
+                    || name == "env-all"
+                    || name == "rdin"
+                    || name == "rdinl" =>
+            {
                 let name = name.clone();
                 self.advance();
                 Ok(Expr::Call {
