@@ -11,10 +11,10 @@ Four backends. Default (`ilo file.ilo`) is the register VM; covers ~all programs
 
 | Engine | Flag | Speed | Notes |
 |--|--|--|--|
-| Tree-walk | `--run-tree` | 1x | Feature-complete. Required for capturing lambdas. |
-| VM | `--run-vm` | 10-100x | Default. Captures auto fall-back. |
-| Cranelift JIT | `--jit` | 100-1000x | Opt-in for hot numeric loops; bails to VM on unsupported. |
-| Cranelift AOT | `ilo compile` | 100-1000x | Standalone native (~9 MB). |
+| Tree-walk | `--run-tree` | 1x | Canonical-semantics reference. |
+| VM | `--run-vm` | 10-100x | Default. Native closures. |
+| Cranelift JIT | `--jit` | 100-1000x | Opt-in for hot numeric loops; VM fallback on bailout. |
+| Cranelift AOT | `ilo compile` | 100-1000x | Standalone native (~9.7 MB). Native closures via embedded `CompiledProgram`. |
 | LLVM JIT | `--run-llvm` | ~Cranelift | Behind `llvm` feature. Rarely needed. |
 
 `--run` aliases `--run-tree`.
@@ -28,7 +28,7 @@ Four backends. Default (`ilo file.ilo`) is the register VM; covers ~all programs
 
 ## Feature matrix
 
-All four support core ops, lists/maps/records/sums, HOFs, lambdas (with or without captures), Results, HTTP, JSON, file I/O, MCP and HTTP tools. AOT miscompiles HOFs taking function values; use `--run-vm` for that case.
+All four support core ops, lists/maps/records/sums, HOFs, lambdas (with or without captures), Results, HTTP, JSON, file I/O, MCP and HTTP tools.
 
 ## Benchmarking
 
