@@ -11,6 +11,10 @@
 
 - `rand` alias for `rnd` (universal short-form for random; matches C/Python/Rust/Go/JS naming). Resolves to canonical `rnd` after parsing; rejected as binding or user-fn name via ILO-P011 to prevent silent shadow mis-dispatch. `random` continues to resolve to `rnd` as before.
 
+### Diagnostics
+
+- ILO-T006 on `lst` (and its `lset` alias) now carries a suggestion clarifying that `lst xs i v` is "list set at index" (3 args, returns a new list with index `i` replaced by `v`), not "last element". The 1-arg case (`lst xs`) points at the canonical `at xs -1` for last-element intent; other arities point at the 3-arg signature without misreading the call as a last-element attempt. Surfaced by git-workflow rerun11 - agents reached for `lst xs` and hit an empty-suggestion arity error.
+
 ### Fixed
 
 - `?h cond a b` silent-truthy bug. A paren-grouped prefix-comparison in cond position (`?h (> p 0.5) 1 0`) was mis-parsed as a zero-param inline lambda, lifted into a synthetic decl, and silently always took the then-branch. ml-tabular rerun11's logistic-regression classifier scored 25.75% instead of 84.6%; streaming-tail and devops-sre rerun11 hit the same family. Two-layer fix: the parser now requires a `;` body separator at paren-depth 1 before treating `(> ...)` as an inline lambda, so `(> p 0.5)` parses as a grouped comparison; the verifier additionally rejects (ILO-T038) any ternary cond that doesn't type-check to `b`, catching the broader family (partial-applied fn-refs, `R b E` without unwrap, etc.). Hint steers to bind-first `c=<expr>;?h c a b` or the brace ternary `?cond{...}`.
