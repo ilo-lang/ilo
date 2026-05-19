@@ -1,0 +1,15 @@
+-- AOT entry funcname-argv skip: `./bin funcname args` and `./bin args` both work.
+--
+-- The bug: `generate_main` read argv[1..=param_count] unconditionally.
+-- With `./bin main 42`, argv[1]="main" was bound as `x` instead of 42.
+-- A ternary `?(x > 10){true:1;false:0}` silently picked false because
+-- the string "main" compared incorrectly. The fix calls `ilo_aot_argv_skip`
+-- at runtime: if argv[1] matches the entry function name the arg-binding
+-- loop shifts right by one slot, so both invocation forms are handled.
+
+main x:n>n;?(x>10){true:1;false:0}
+
+-- run: main 42
+-- out: 1
+-- run: main 5
+-- out: 0
