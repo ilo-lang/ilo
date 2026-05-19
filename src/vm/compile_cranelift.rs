@@ -222,6 +222,10 @@ struct HelperFuncs {
     /// list-typed parameter (e.g. `main args:L t`). Wraps non-list shapes
     /// as `[value]` to match the binary-side `parse_cli_args_typed` path.
     aot_parse_arg_list: FuncId,
+    /// `ilo_aot_argv_skip` — detect whether argv[1] is the entry function name
+    /// and return a byte offset (0 or 8) to advance argv by before reading user
+    /// args. Lets `./bin funcname args` and `./bin args` both work correctly.
+    aot_argv_skip: FuncId,
     string_const: FuncId,
     // Linear algebra
     solve: FuncId,
@@ -419,6 +423,7 @@ fn declare_all_helpers(module: &mut ObjectModule) -> HelperFuncs {
         aot_publish_program: declare_helper(module, "ilo_aot_publish_program", 2, 1),
         aot_parse_arg: declare_helper(module, "ilo_aot_parse_arg", 1, 1),
         aot_parse_arg_list: declare_helper(module, "ilo_aot_parse_arg_list", 1, 1),
+        aot_argv_skip: declare_helper(module, "ilo_aot_argv_skip", 3, 1),
         string_const: declare_helper(module, "jit_string_const", 1, 1),
         // Linear algebra
         solve: declare_helper(module, "jit_solve", 3, 1),
@@ -582,6 +587,7 @@ pub fn compile_to_binary(
         &registry_bytes,
         &program_blob,
         &param_is_list,
+        entry_func,
     )?;
 
     // Emit object file
@@ -4329,6 +4335,7 @@ fn serialize_type_registry(registry: &super::TypeRegistry) -> Vec<u8> {
     buf
 }
 
+#[allow(clippy::too_many_arguments)]
 fn generate_main(
     module: &mut ObjectModule,
     user_func_id: FuncId,
@@ -4344,6 +4351,11 @@ fn generate_main(
     // matches the historical behaviour for entry funcs whose AST we couldn't
     // resolve (inline snippets, test harnesses).
     param_is_list: &[bool],
+    // Entry function name, e.g. "main". Used to detect the `./bin funcname
+    // args` invocation form at runtime so the arg-binding loop can skip the
+    // funcname slot when it appears. Without this, `./bin main 42` binds the
+    // string "main" as the first param instead of 42.
+    entry_name: &str,
 ) -> Result<(), String> {
     let mut sig = module.make_signature();
     sig.params.push(AbiParam::new(I32)); // argc
@@ -4365,7 +4377,7 @@ fn generate_main(
     builder.switch_to_block(entry_block);
     builder.seal_block(entry_block);
 
-    let _argc = builder.block_params(entry_block)[0];
+    let argc = builder.block_params(entry_block)[0];
     let argv = builder.block_params(entry_block)[1];
     let mf = MemFlags::new();
 
@@ -4398,19 +4410,37 @@ fn generate_main(
     let parse_arg_fref = module.declare_func_in_func(helpers.aot_parse_arg, builder.func);
     let parse_arg_list_fref = module.declare_func_in_func(helpers.aot_parse_arg_list, builder.func);
 
+    // Detect whether argv[1] is the entry function name (the `./bin funcname
+    // args` form). `ilo_aot_argv_skip` returns 8 if argc >= 2 and argv[1]
+    // matches the embedded name, 0 otherwise. We add this offset to the argv
+    // base so the per-param loop reads from the right slots in both invocation
+    // shapes: `./bin args` and `./bin funcname args`.
+    let argc_i64 = builder.ins().uextend(I64, argc);
+    let entry_name_bytes: Vec<u8> = {
+        let mut b = entry_name.as_bytes().to_vec();
+        b.push(0); // null-terminate
+        b
+    };
+    let name_ptr = create_data_section(module, &mut builder, "ilo_entry_name", &entry_name_bytes)?;
+    let argv_skip_fref = module.declare_func_in_func(helpers.aot_argv_skip, builder.func);
+    let skip_call = builder
+        .ins()
+        .call(argv_skip_fref, &[argc_i64, argv, name_ptr]);
+    let skip_offset = builder.inst_results(skip_call)[0];
+
     // Convert CLI args to NanVal. For each param, pick the right parser:
     //   - `L _` → ilo_aot_parse_arg_list (wraps non-list as `[value]`, mirrors
     //     `parse_cli_args_typed`'s tree/VM coercion path)
     //   - everything else → ilo_aot_parse_arg (number / bool / nil / string)
     //
-    // This is the canonical fix for the 0.12.1 AOT argv binding regression:
-    // before, `main args:L t` was parsed as a single string and `len args`
-    // returned the character count instead of the list length, while
-    // `cat args ","` silently produced `nil` because `cat` requires a `L t`.
+    // argv[1] is the first user arg in `./bin args` form; in `./bin funcname
+    // args` form skip_offset is 8 so we read argv[2] onward. The base offset
+    // `(i + 1) * 8` accounts for argv[0] (the binary name) being slot 0.
     let mut call_args = Vec::with_capacity(param_count);
     for i in 0..param_count {
-        let idx = builder.ins().iconst(I64, ((i + 1) * 8) as i64);
-        let arg_ptr_ptr = builder.ins().iadd(argv, idx);
+        let slot_offset = builder.ins().iconst(I64, ((i + 1) * 8) as i64);
+        let total_offset = builder.ins().iadd(slot_offset, skip_offset);
+        let arg_ptr_ptr = builder.ins().iadd(argv, total_offset);
         let arg_ptr = builder.ins().load(I64, mf, arg_ptr_ptr, 0);
         let is_list = param_is_list.get(i).copied().unwrap_or(false);
         let fref = if is_list {
