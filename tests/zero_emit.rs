@@ -8,13 +8,20 @@
 use std::path::PathBuf;
 use std::process::Command;
 
-use ilo::backend::zero::{emit, ZeroConfig, ZeroMode, DEFAULT_ZERO_PATH};
+use ilo::backend::zero::{default_zero_path, emit, ZeroConfig, ZeroMode};
 
 fn zero_bin() -> Option<String> {
-    if std::path::Path::new(DEFAULT_ZERO_PATH).is_file() {
-        return Some(DEFAULT_ZERO_PATH.to_string());
+    if let Some(p) = default_zero_path() {
+        if p.is_file() {
+            return Some(p.to_string_lossy().into_owned());
+        }
     }
-    if Command::new("zero").arg("--version").output().is_ok() {
+    let ok = Command::new("zero")
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    if ok {
         return Some("zero".to_string());
     }
     None

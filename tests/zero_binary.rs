@@ -9,13 +9,19 @@
 use std::path::Path;
 use std::process::Command;
 
-use ilo::backend::zero::{emit, ZeroConfig, ZeroMode, DEFAULT_ZERO_PATH};
+use ilo::backend::zero::{default_zero_path, emit, ZeroConfig, ZeroMode};
 
 fn zero_available() -> bool {
-    if std::path::Path::new(DEFAULT_ZERO_PATH).is_file() {
-        return true;
+    if let Some(p) = default_zero_path() {
+        if p.is_file() {
+            return true;
+        }
     }
-    Command::new("zero").arg("--version").output().is_ok()
+    Command::new("zero")
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
 }
 
 fn lower(src: &str) -> ilo::hir::Program {

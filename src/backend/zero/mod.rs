@@ -45,9 +45,16 @@ pub use emit::emit_to_string;
 /// The pinned Zero compiler version. Kept in sync with `.zero-version`.
 pub const PINNED_ZERO_VERSION: &str = "0.1.2";
 
-/// Default install path for the pinned Zero compiler. Falls back to
-/// `zero` on PATH when missing.
-pub const DEFAULT_ZERO_PATH: &str = "/Users/dan/.zero/bin/zero";
+/// Default install path for the pinned Zero compiler, relative to `$HOME`.
+/// Resolved lazily by [`resolve_zero_bin`]; falls back to `zero` on PATH
+/// when missing.
+const DEFAULT_ZERO_PATH_REL: &str = ".zero/bin/zero";
+
+/// Resolve the pinned install path against `$HOME` at call time. Returns
+/// `None` if `$HOME` is unset (typical only inside container builds).
+pub fn default_zero_path() -> Option<PathBuf> {
+    std::env::var_os("HOME").map(|h| PathBuf::from(h).join(DEFAULT_ZERO_PATH_REL))
+}
 
 /// The Zero transpile backend.
 #[derive(Debug, Default, Clone, Copy)]
@@ -185,14 +192,24 @@ fn emit_program(hir: &Program, config: ZeroConfig) -> Result<Artefact, BackendEr
 }
 
 /// Resolve which `zero` binary to invoke. Prefers the pinned install at
-/// [`DEFAULT_ZERO_PATH`]; falls back to `zero` on PATH so CI environments
-/// that install elsewhere still work.
+/// `$HOME/.zero/bin/zero` (see [`default_zero_path`]); falls back to
+/// `zero` on PATH so CI environments that install elsewhere still work.
 fn resolve_zero_bin() -> Option<String> {
-    if std::path::Path::new(DEFAULT_ZERO_PATH).is_file() {
-        return Some(DEFAULT_ZERO_PATH.to_string());
+    if let Some(p) = default_zero_path() {
+        if p.is_file() {
+            return Some(p.to_string_lossy().into_owned());
+        }
     }
-    // `which` via PATH probe.
-    if Command::new("zero").arg("--version").output().is_ok() {
+    // `which` via PATH probe. `output().is_ok()` only tells us the process
+    // spawned; we need a successful exit status to know `zero --version`
+    // actually worked. A broken binary on PATH should fall through, not be
+    // reported as working (would surface later as a cryptic ILO-B301).
+    let ok = Command::new("zero")
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    if ok {
         return Some("zero".to_string());
     }
     None
@@ -200,6 +217,9 @@ fn resolve_zero_bin() -> Option<String> {
 
 fn run_zero_build(source: &std::path::Path, out: &std::path::Path) -> Result<(), BackendError> {
     let zero_bin = resolve_zero_bin().ok_or_else(|| {
+        let hint_path = default_zero_path()
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_else(|| format!("~/{}", DEFAULT_ZERO_PATH_REL));
         codegen(
             "ILO-B303",
             format!(
@@ -207,7 +227,7 @@ fn run_zero_build(source: &std::path::Path, out: &std::path::Path) -> Result<(),
                  Install the pinned version with:\n  \
                  curl https://zerolang.ai/install.sh | sh\n\
                  ilo's --0bin path targets zero {}.",
-                DEFAULT_ZERO_PATH, PINNED_ZERO_VERSION
+                hint_path, PINNED_ZERO_VERSION
             ),
         )
     })?;

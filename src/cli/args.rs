@@ -322,7 +322,7 @@ pub struct CompileArgs {
 
     /// Transpile to Zero source then chain through the pinned `zero`
     /// compiler to produce a native binary. Requires `zero` on PATH or
-    /// at `/Users/dan/.zero/bin/zero`.
+    /// at `~/.zero/bin/zero`.
     #[arg(long = "0bin")]
     pub zero_bin: bool,
 }
