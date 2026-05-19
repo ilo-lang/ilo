@@ -1,0 +1,12 @@
+-- Harvested from persona-rerun: doc-discovery (csv2json).
+-- Reads a CSV (header + rows of name,score), filters rows where score>=60,
+-- and emits a JSON array of {name, score} records. Single-line jdmp output.
+
+main p:t>R t t
+ lines=rdl! p
+ rows=tl lines
+ out=map (r:t>t;parts=spl r ",";fmt "{\"name\":\"{}\",\"score\":{}}" (at parts 0) (at parts 1)) (flt (r:t>b;parts=spl r ",";>= (num!! (at parts 1)) 60) rows)
+ ~fmt "[{}]" (cat out ",")
+
+-- run: main examples/apps/fixtures/doc-discovery.csv
+-- out: [{"name":"alice","score":85},{"name":"carol","score":91},{"name":"dave","score":67}]

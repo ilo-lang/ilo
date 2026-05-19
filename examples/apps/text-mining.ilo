@@ -1,0 +1,12 @@
+-- Harvested from persona-rerun: text-mining.
+-- Tokenises a corpus (lowercase + strip non-alnum), filters short tokens,
+-- builds bigrams/trigrams via window 2/3, sorts by frequency desc, and
+-- emits the top 10 of each alongside token-length stats. Corpus path argv.
+
+is-long w:t>b;>(len w) 2
+key2 p:L t>n;r=num (at p 1);?r{~v:v;^e:0}
+join2 w:L t>t;cat w " "
+main p:t>R t t;s=rd! p;clean=rgxsub "[^a-z0-9 ]" " " (lwr s);toks=flt is-long (spl clean " ");bg=window 2 toks;tg=window 3 toks;bgs=map join2 bg;tgs=map join2 tg;f2=frq bgs;f3=frq tgs;k2=mkeys f2;k3=mkeys f3;p2=map (k:t>L t;[k (str (??(mget f2 k) 0))]) k2;p3=map (k:t>L t;[k (str (??(mget f3 k) 0))]) k3;t2=take 10 (rev (srt key2 p2));t3=take 10 (rev (srt key2 p3));m=mmap;m=mset m "bigrams" (jdmp t2);m=mset m "trigrams" (jdmp t3);lens=map len toks;st=mmap;st=mset st "avg" (str (avg lens));st=mset st "median" (str (median lens));st=mset st "p90" (str (quantile lens 0.9));m=mset m "len-stats" (jdmp st);~jdmp m
+
+-- run: main examples/apps/fixtures/text-mining-corpus.txt
+-- out: {"bigrams":"[[\"plain text\",\"34\"],[\"character encoding\",\"9\"],[\"and the\",\"7\"],[\"text file\",\"5\"],[\"rather than\",\"5\"],[\"text and\",\"4\"],[\"rich text\",\"4\"],[\"mime type\",\"4\"],[\"iso 8859\",\"4\"],[\"for example\",\"4\"]]","len-stats":"{\"avg\":\"5.6878306878306875\",\"median\":\"5\",\"p90\":\"9\"}","trigrams":"[[\"www unicode org\",\"3\"],[\"file plain text\",\"3\"],[\"considered plain text\",\"3\"],[\"what encoding was\",\"2\"],[\"utf character encoding\",\"2\"],[\"using the utf\",\"2\"],[\"url https www\",\"2\"],[\"the utf character\",\"2\"],[\"the unicode standard\",\"2\"],[\"the character encoding\",\"2\"]]"}

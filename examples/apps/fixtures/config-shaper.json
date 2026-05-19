@@ -1,0 +1,1 @@
+{"app_name":"web","port":3000,"db":{"host":"localhost","port":5432,"name":"appdb"},"features":{"auth":true,"cache":false},"workers":4}
