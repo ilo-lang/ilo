@@ -1,0 +1,53 @@
+-- Multi-line quoted CSV fields round-trip cleanly.
+-- The writer emits cells containing `\n` as quoted multi-line records per
+-- RFC 4180; the reader tracks quote state across newlines so the same
+-- file reads back with the original row count and cell value.
+-- Regression for csv-pipeline rerun10.
+
+roundtrip>R n t;
+  path="/tmp/ilo_example_csv_multiline.csv";
+  rows=[["name","note","n"],["plain","line\nbreak","2"]];
+  wr! path rows "csv";
+  back=rd! path "csv";
+  ~len back
+
+celllen>R n t;
+  path="/tmp/ilo_example_csv_multiline_cell.csv";
+  rows=[["a","line\nbreak","b"]];
+  wr! path rows "csv";
+  back=rd! path "csv";
+  ~len (at back 0)
+
+-- An embedded double-quote inside a multi-line cell. The writer escapes
+-- the inner quote as `""` per RFC 4180 and wraps the whole cell in `"`.
+-- The reader keeps the cell intact across both the embedded `""` and `\n`.
+-- We assert on cell length (16 chars: `he said "hi"\nfoo`) so the example
+-- harness can compare a single-line stdout value.
+quoteml>R n t;
+  path="/tmp/ilo_example_csv_quote_multiline.csv";
+  rows=[["a","he said \"hi\"\nfoo","b"]];
+  wr! path rows "csv";
+  back=rd! path "csv";
+  ~len (at (at back 0) 1)
+
+-- CRLF inside a quoted cell must be kept verbatim, not collapsed or split.
+-- The writer emits LF row separators; this example constructs a CRLF cell
+-- explicitly and round-trips it.
+crlfcell>R n t;
+  path="/tmp/ilo_example_csv_crlf_cell.csv";
+  rows=[["a","x\r\ny","b"]];
+  wr! path rows "csv";
+  back=rd! path "csv";
+  ~len (at (at back 0) 1)
+
+-- run: roundtrip
+-- out: 2
+
+-- run: celllen
+-- out: 3
+
+-- run: quoteml
+-- out: 16
+
+-- run: crlfcell
+-- out: 4
