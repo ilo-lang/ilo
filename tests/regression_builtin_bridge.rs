@@ -106,11 +106,32 @@ fn fmt_three_holes_mixed_types() {
 }
 
 #[test]
-fn fmt_extra_holes_left_as_literal() {
-    // When the template has more `{}`s than args, the extra placeholders
-    // pass through unchanged. Documented behaviour that the bridge must
-    // preserve across engines.
-    check(r#"f>t;fmt "{} {}" 1"#, "1 {}");
+fn fmt_extra_holes_rejected_at_verify() {
+    // Pre-0.12.1, when a literal template had more `{}`s than value args,
+    // the extra placeholders silently passed through as literal `{}`.
+    // That was the persona footgun — `fmt "x={} y={}" [a, b]` silently
+    // mis-filled (list bound to first slot, second slot left literal).
+    // Verify now rejects any literal-template fmt where slot count !=
+    // value-arg count with ILO-T013.
+    let out = ilo()
+        .args([r#"f>t;fmt "{} {}" 1"#, "--run-vm", "f"])
+        .output()
+        .expect("failed to run ilo");
+    assert!(
+        !out.status.success(),
+        "expected verify error, ilo succeeded"
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let combined = format!("{stderr}{stdout}");
+    assert!(
+        combined.contains("ILO-T013"),
+        "expected ILO-T013, got: {combined}"
+    );
+    assert!(
+        combined.contains("`{}` slot") || combined.contains("'fmt'"),
+        "expected fmt slot diagnostic, got: {combined}"
+    );
 }
 
 // ── rd (2-arg) ─────────────────────────────────────────────────────────
