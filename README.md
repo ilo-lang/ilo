@@ -2,7 +2,7 @@
 
 *A programming language AI agents write, not humans. Named from [Toki Pona](https://sona.pona.la/wiki/ilo) for "tool".*
 
-[![CI](https://github.com/ilo-lang/ilo/actions/workflows/rust.yml/badge.svg)](https://github.com/ilo-lang/ilo/actions/workflows/rust.yml)  [![codecov](https://codecov.io/gh/ilo-lang/ilo/graph/badge.svg?token=4W1SWFLXNW)](https://codecov.io/gh/ilo-lang/ilo)  [![crates.io](https://img.shields.io/crates/v/ilo)](https://crates.io/crates/ilo)  [![npm](https://img.shields.io/npm/v/ilo-lang)](https://www.npmjs.com/package/ilo-lang)  [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![CI](https://github.com/ilo-lang/ilo/actions/workflows/rust.yml/badge.svg)](https://github.com/ilo-lang/ilo/actions/workflows/rust.yml)  [![codecov](https://codecov.io/gh/ilo-lang/ilo/graph/badge.svg?token=4W1SWFLXNW)](https://codecov.io/gh/ilo-lang/ilo)  [![crates.io](https://img.shields.io/crates/v/ilo)](https://crates.io/crates/ilo)  [![npm](https://img.shields.io/npm/v/ilo-lang)](https://www.npmjs.com/package/ilo-lang)  [![skills.sh](https://skills.sh/badge/ilo-lang/ilo)](https://skills.sh/ilo-lang/ilo)  [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 ```
 Python                                    ilo
@@ -65,6 +65,17 @@ npx ilo-lang 'dbl x:n>n;*x 2' 5
 ```bash
 cargo install ilo
 ```
+
+</details>
+
+<details>
+<summary>Agent skills (Claude Code / AI agents)</summary>
+
+```bash
+npx skills add ilo-lang/ilo
+```
+
+Uses the [skills](https://www.npmjs.com/package/skills) npm package (396K+ installs). Installs the ilo Agent Skill into Claude Code or any compatible agent.
 
 </details>
 
