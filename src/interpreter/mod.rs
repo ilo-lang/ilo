@@ -3474,6 +3474,38 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(e.to_string()))))),
         };
     }
+    if builtin == Some(Builtin::Wra) && args.len() == 2 {
+        let path = match &args[0] {
+            Value::Text(s) => s.clone(),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("wra: first arg must be a text path, got {:?}", other),
+                ));
+            }
+        };
+        let content = match &args[1] {
+            Value::Text(s) => (**s).clone(),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("wra: second arg must be text content, got {:?}", other),
+                ));
+            }
+        };
+        use std::io::Write as _;
+        return match std::fs::OpenOptions::new()
+            .append(true)
+            .create(true)
+            .open(path.as_str())
+        {
+            Ok(mut f) => match f.write_all(content.as_bytes()) {
+                Ok(()) => Ok(Value::Ok(Box::new(Value::Text(path)))),
+                Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(e.to_string()))))),
+            },
+            Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(e.to_string()))))),
+        };
+    }
     if builtin == Some(Builtin::Wrl) && args.len() == 2 {
         return match (&args[0], &args[1]) {
             (Value::Text(path), Value::List(lines)) => {
