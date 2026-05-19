@@ -1,0 +1,7 @@
+-- Habit streak analyzer
+-- Input: CSV with date,done columns (90 days)
+-- Output: json representation of parsed CSV
+
+main>t;
+rdres=rd("examples/personas/fixtures/habits.csv");
+?rdres{~v:jdmp v;^e:^"error reading file"}
