@@ -9,7 +9,7 @@ Prefix-call syntax: `name arg1 arg2 ...`. All builtins work cross-engine unless 
 
 ## Math
 
-`abs min max mod flr cel rou rnd rndn clamp`; `sum avg median quantile stdev variance cumsum frq`; `sqrt pow exp log log10 log2`; `sin cos tan asin acos atan atan2`. `asin acos sqrt log` return NaN out-of-domain; clamp at the boundary. NaN propagates; comparisons return false.
+`abs min max mod flr cel rou rnd rndn clamp`; `sum avg median quantile stdev variance cumsum frq`; `sqrt pow exp log log10 log2`; `sin cos tan asin acos atan atan2`. `asin acos sqrt log` return NaN out-of-domain; clamp at the boundary. NaN propagates; comparisons return false. `rnd` is random (aliases: `rand`, `random`), NOT round; `rou` is round (alias: `round`).
 
 ## Text
 
