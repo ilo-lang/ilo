@@ -636,6 +636,13 @@ pub(crate) fn is_tree_bridge_eligible(b: crate::builtins::Builtin, argc: usize) 
         // Map[Text, Text] which round-trips through NanVal heap_map cleanly,
         // so the bridge is the right tier for both VM and Cranelift.
         (Builtin::EnvAll, 0) => true,
+        // Math constants (0.12.1). Zero-arg, no FnRef, return a single f64.
+        // Bridge keeps VM and Cranelift in lockstep with the tree
+        // interpreter without bespoke opcodes — the constant lookup is
+        // cheap enough that a bridge round-trip is in the noise.
+        (Builtin::Pi, 0) => true,
+        (Builtin::Tau, 0) => true,
+        (Builtin::Eu, 0) => true,
         // jkeys json path -> R (L t) t. New companion to mkeys for JSON
         // objects. Pure (no FnRef args, no I/O), bridge keeps cross-engine
         // parity with the tree interpreter at the same cost tier as `mkeys`.

@@ -1691,6 +1691,20 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             )),
         };
     }
+    // Math constants (0.12.1). Zero-arg, no allocation, no error path.
+    // Returning the canonical Rust f64 consts keeps cross-engine values
+    // bit-identical with the VM / Cranelift bridge (which dispatches here)
+    // and with `math.pi` / `math.tau` / `math.e` emitted by the Python
+    // backend, all of which agree on the IEEE-754 representation.
+    if builtin == Some(Builtin::Pi) && args.is_empty() {
+        return Ok(Value::Number(std::f64::consts::PI));
+    }
+    if builtin == Some(Builtin::Tau) && args.is_empty() {
+        return Ok(Value::Number(std::f64::consts::TAU));
+    }
+    if builtin == Some(Builtin::Eu) && args.is_empty() {
+        return Ok(Value::Number(std::f64::consts::E));
+    }
     if builtin == Some(Builtin::Now) && args.is_empty() {
         let ts = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
