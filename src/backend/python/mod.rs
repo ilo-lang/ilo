@@ -61,6 +61,18 @@ impl Backend for PythonBackend {
         _hir: &crate::hir::Program,
         config: Self::Config,
     ) -> Result<Artefact, BackendError> {
+        // Side-channel invariant: caller is expected to lower the same AST
+        // to HIR. Cheap structural check (function-decl count, since HIR
+        // lowering drops Use/Alias) so a future refactor that wires
+        // mismatched programs through the trait surface trips loudly in
+        // debug builds. Doesn't panic in release.
+        debug_assert_eq!(
+            ast_function_decl_count(config.program),
+            hir_function_decl_count(_hir),
+            "PythonBackend: AST and HIR function-decl counts diverged; the \
+             side channel is being fed a different program from the HIR \
+             trait argument",
+        );
         let mut source = emit::emit(config.program);
         // Match the pre-refactor `println!("{}", emit(&program))` behaviour
         // so the on-disk byte stream is identical to what `--emit python`
@@ -91,6 +103,12 @@ pub fn emit<'a>(
     _hir: &crate::hir::Program,
     config: PythonConfig<'a>,
 ) -> Result<Artefact, BackendError> {
+    debug_assert_eq!(
+        ast_function_decl_count(config.program),
+        hir_function_decl_count(_hir),
+        "python::emit: AST and HIR function-decl counts diverged; the side \
+         channel is being fed a different program from the HIR argument",
+    );
     let mut source = emit::emit(config.program);
     if !source.ends_with('\n') {
         source.push('\n');
@@ -103,4 +121,18 @@ pub fn emit<'a>(
         },
         metadata: ArtefactMetadata::default(),
     })
+}
+
+fn ast_function_decl_count(prog: &Program) -> usize {
+    prog.declarations
+        .iter()
+        .filter(|d| matches!(d, crate::ast::Decl::Function { .. }))
+        .count()
+}
+
+fn hir_function_decl_count(prog: &crate::hir::Program) -> usize {
+    prog.decls
+        .iter()
+        .filter(|d| matches!(d, crate::hir::decl::Decl::Function { .. }))
+        .count()
 }

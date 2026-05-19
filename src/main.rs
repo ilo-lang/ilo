@@ -1606,8 +1606,16 @@ fn compile_cmd(args: &[String]) -> i32 {
     }
 
     // `--py`: transpile to Python via the PythonBackend and short-circuit
-    // before the bytecode/Cranelift pipeline runs. The Python backend consumes
-    // the verified AST directly (see `backend/python/mod.rs` module doc).
+    // before the bytecode/Cranelift pipeline runs.
+    //
+    // NOTE: like the Cranelift dispatch below, Python is a HIR-trait-surface
+    // call with a side channel. The `_hir` argument is threaded for
+    // signature parity, but the actual transpile reads `config.program`
+    // (the verified AST) because the current HIR doesn't carry the full
+    // expression-level surface Python emit needs (sum types, full match
+    // shapes, etc.). See `backend/python/mod.rs` module doc and the
+    // Backend trait doc for the wider story. The side channel is
+    // documented and intentional in 0.13.0; it disappears once HIR grows.
     if python_mode {
         // Lower to HIR so the trait surface is HIR-first even if the Python
         // backend currently ignores it. Keeps the dispatch site uniform with

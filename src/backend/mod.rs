@@ -54,6 +54,23 @@ pub mod zero;
 ///
 /// Implementations live in `src/backend/<name>/`. The default install ships
 /// with the Cranelift backend; Stages 5c+ add Python, WASM, and Zero.
+///
+/// ## HIR-first contract (with side channels)
+///
+/// The `emit` signature is HIR-first by design so future stages can swap
+/// backends without touching `main.rs`. Two backends currently consume
+/// additional input via their per-backend `Config` rather than reading the
+/// HIR directly:
+///
+/// - **Cranelift** uses `CraneliftConfig.program: &CompiledProgram` (the
+///   VM-compiled bytecode) because the HIR doesn't yet carry the lowered
+///   control-flow shape Cranelift needs.
+/// - **Python** uses `PythonConfig.program: &Program` (the verified AST)
+///   because the HIR doesn't yet carry the expression-level surface
+///   (sum types, full match shapes) that Python transpile relies on.
+///
+/// Both side channels disappear once HIR grows. The `_hir` argument is
+/// still threaded through so callers can be HIR-only at the boundary.
 pub trait Backend {
     /// Canonical identifier for the backend. Surfaces in diagnostics and
     /// (Stage 5f) the `--backend <name>` CLI flag.
