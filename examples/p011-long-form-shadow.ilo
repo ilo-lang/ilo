@@ -1,0 +1,18 @@
+-- Demonstrates that long-form builtin aliases (`head`, `length`, `tail`,
+-- `concat`, etc.) are reserved as binding names with the same ILO-P011
+-- protection as their canonical short forms (`hd`, `len`, `tl`, `cat`).
+-- Originating papercut: rerun-prompt-generator bound `head=...` and got
+-- silent empty output because the alias resolver rewrote `head` calls to
+-- `hd` (the builtin), bypassing the user variable entirely (0.12.1 fix).
+--
+-- Correct shape: pick a non-alias name (`hdr`, `rest`, `joined`) instead.
+
+main w:t>t
+  xs=[w "world" "ilo"]
+  hdr=hd xs
+  rest=tl xs
+  joined=cat rest " "
+  fmt "{}! {} rocks" hdr joined
+
+-- run: main hello
+-- out: hello! world ilo rocks

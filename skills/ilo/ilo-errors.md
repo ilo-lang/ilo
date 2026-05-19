@@ -14,6 +14,7 @@ description: Use this when reading ILO-XXXX error codes or fixing failures. List
 ## Parse
 
 - **P003 unexpected token** - missing brace/semi, or `=<a b`. Use `<=a b`. Collapse multi-line bodies to `;`-separated.
+- **P011 reserved name** - builtin or alias name used as binding LHS or function name (`head=...`, `length=...`, `flat=...`). The call-site rewrite silently mis-dispatches to the builtin. Rename: `myhd`, `hdr`, `flatv`, etc.
 - **P009 unparenthesised lambda** - wrap `(p:t>r;body)`.
 - **P020 incomplete function header** - header missing `>type;body`; finish it.
 - **P021 double-minus prefix-binop trap** - `- -*a b *c d` ambiguous. Use `- 0 +*a b *c d` or bind first.
