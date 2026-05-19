@@ -6826,4 +6826,48 @@ f a:t b:t>t;join a b"#,
         let bytes = compile_to_object_bytes("f>t;fmt2 3.14159 2");
         assert!(bytes.is_ok(), "FMT2 codegen failed: {:?}", bytes.err());
     }
+
+    // ── entry_param_is_list AST walker ────────────────────────────────────
+    //
+    // Pin the per-param list-ness resolution so the AOT entry shim routes
+    // `L _` params through `ilo_aot_parse_arg_list` and everything else
+    // through the scalar parser. Covers the missed branches from the
+    // 0.12.1 AOT argv fix (entry resolved, entry missing, scalar-only).
+
+    #[test]
+    fn entry_param_is_list_flags_list_typed_param() {
+        let compiled = compile_program("main args:L t>n;len args");
+        let flags = entry_param_is_list(&compiled, "main", 1);
+        assert_eq!(flags, vec![true]);
+    }
+
+    #[test]
+    fn entry_param_is_list_scalar_param_returns_false() {
+        let compiled = compile_program("main s:t>t;s");
+        let flags = entry_param_is_list(&compiled, "main", 1);
+        assert_eq!(flags, vec![false]);
+    }
+
+    #[test]
+    fn entry_param_is_list_mixed_scalar_and_list() {
+        let compiled = compile_program("main name:t xs:L n>t;name");
+        let flags = entry_param_is_list(&compiled, "main", 2);
+        assert_eq!(flags, vec![false, true]);
+    }
+
+    #[test]
+    fn entry_param_is_list_unknown_entry_falls_back_to_false() {
+        let compiled = compile_program("main x:n>n;x");
+        // Asking for a function that doesn't exist in the AST must not
+        // panic and must yield all-false (historical scalar parse path).
+        let flags = entry_param_is_list(&compiled, "missing_fn", 2);
+        assert_eq!(flags, vec![false, false]);
+    }
+
+    #[test]
+    fn entry_param_is_list_param_count_zero() {
+        let compiled = compile_program("main>n;42");
+        let flags = entry_param_is_list(&compiled, "main", 0);
+        assert!(flags.is_empty());
+    }
 }

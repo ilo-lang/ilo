@@ -34916,4 +34916,63 @@ mod aot_publish_tests {
         // story (or an explicit "we only support v_n" cut-over).
         assert_eq!(BLOB_SCHEMA_VERSION, 1);
     }
+
+    // ── ilo_aot_parse_arg_list FFI helper ─────────────────────────────────
+    //
+    // The AOT entry shim calls this on every argv slot bound to a `L _`
+    // param. Direct in-process coverage so the lines aren't only hit via
+    // subprocess AOT runs (which run uninstrumented binaries).
+
+    #[cfg(feature = "cranelift")]
+    fn call_parse_arg_list(s: &str) -> Value {
+        let c = std::ffi::CString::new(s).unwrap();
+        let bits = ilo_aot_parse_arg_list(c.as_ptr() as u64);
+        NanVal(bits).to_value()
+    }
+
+    #[cfg(feature = "cranelift")]
+    #[test]
+    fn aot_parse_arg_list_wraps_scalar_text() {
+        let v = call_parse_arg_list("hello");
+        match v {
+            Value::List(xs) => {
+                assert_eq!(xs.len(), 1);
+                assert!(matches!(&xs[0], Value::Text(s) if s.as_str() == "hello"));
+            }
+            _ => panic!("expected list, got {v:?}"),
+        }
+    }
+
+    #[cfg(feature = "cranelift")]
+    #[test]
+    fn aot_parse_arg_list_bracketed_literal() {
+        let v = call_parse_arg_list("[1,2,3]");
+        match v {
+            Value::List(xs) => {
+                assert_eq!(xs.len(), 3);
+                assert!(matches!(xs[0], Value::Number(n) if n == 1.0));
+            }
+            _ => panic!("expected list, got {v:?}"),
+        }
+    }
+
+    #[cfg(feature = "cranelift")]
+    #[test]
+    fn aot_parse_arg_list_bare_comma_list() {
+        let v = call_parse_arg_list("a,b,c");
+        match v {
+            Value::List(xs) => assert_eq!(xs.len(), 3),
+            _ => panic!("expected list, got {v:?}"),
+        }
+    }
+
+    #[cfg(feature = "cranelift")]
+    #[test]
+    fn aot_parse_arg_list_empty_brackets() {
+        let v = call_parse_arg_list("[]");
+        match v {
+            Value::List(xs) => assert!(xs.is_empty()),
+            _ => panic!("expected list, got {v:?}"),
+        }
+    }
 }

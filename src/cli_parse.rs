@@ -120,3 +120,171 @@ pub fn parse_cli_arg_as_list(s: &str) -> interpreter::Value {
         interpreter::Value::List(std::sync::Arc::new(vec![v]))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::interpreter::Value;
+
+    fn n(v: &Value) -> f64 {
+        if let Value::Number(x) = v {
+            *x
+        } else {
+            panic!("not number: {v:?}")
+        }
+    }
+    fn t(v: &Value) -> String {
+        if let Value::Text(s) = v {
+            (**s).clone()
+        } else {
+            panic!("not text: {v:?}")
+        }
+    }
+    fn list(v: &Value) -> std::sync::Arc<Vec<Value>> {
+        if let Value::List(xs) = v {
+            xs.clone()
+        } else {
+            panic!("not list: {v:?}")
+        }
+    }
+
+    #[test]
+    fn split_top_level_commas_basic() {
+        assert_eq!(split_top_level_commas("a,b,c"), vec!["a", "b", "c"]);
+    }
+
+    #[test]
+    fn split_top_level_commas_respects_brackets() {
+        assert_eq!(
+            split_top_level_commas("[1,2],[3,4]"),
+            vec!["[1,2]", "[3,4]"]
+        );
+    }
+
+    #[test]
+    fn split_top_level_commas_no_split() {
+        assert_eq!(split_top_level_commas("solo"), vec!["solo"]);
+    }
+
+    #[test]
+    fn parse_cli_arg_number() {
+        assert_eq!(n(&parse_cli_arg("42")), 42.0);
+        assert_eq!(n(&parse_cli_arg("3.5")), 3.5);
+        assert_eq!(n(&parse_cli_arg("-1.25")), -1.25);
+    }
+
+    #[test]
+    fn parse_cli_arg_nil() {
+        assert!(matches!(parse_cli_arg("nil"), Value::Nil));
+    }
+
+    #[test]
+    fn parse_cli_arg_bools() {
+        assert!(matches!(parse_cli_arg("true"), Value::Bool(true)));
+        assert!(matches!(parse_cli_arg("false"), Value::Bool(false)));
+    }
+
+    #[test]
+    fn parse_cli_arg_bare_text() {
+        assert_eq!(t(&parse_cli_arg("hello")), "hello");
+    }
+
+    #[test]
+    fn parse_cli_arg_quoted_text_keeps_inner() {
+        assert_eq!(t(&parse_cli_arg("\"hi there\"")), "hi there");
+    }
+
+    #[test]
+    fn parse_cli_arg_bracketed_empty_list() {
+        let v = parse_cli_arg("[]");
+        assert!(list(&v).is_empty());
+    }
+
+    #[test]
+    fn parse_cli_arg_bracketed_list_with_spaces() {
+        let v = parse_cli_arg("[a, b, c]");
+        let xs = list(&v);
+        assert_eq!(xs.len(), 3);
+        assert_eq!(t(&xs[0]), "a");
+        assert_eq!(t(&xs[2]), "c");
+    }
+
+    #[test]
+    fn parse_cli_arg_nested_bracketed_list() {
+        let v = parse_cli_arg("[[1,2],[3,4]]");
+        let xs = list(&v);
+        assert_eq!(xs.len(), 2);
+        let inner = list(&xs[0]);
+        assert_eq!(n(&inner[0]), 1.0);
+        assert_eq!(n(&inner[1]), 2.0);
+    }
+
+    #[test]
+    fn parse_cli_arg_bare_comma_list() {
+        let v = parse_cli_arg("1,2,3");
+        let xs = list(&v);
+        assert_eq!(xs.len(), 3);
+        assert_eq!(n(&xs[0]), 1.0);
+    }
+
+    #[test]
+    fn parse_cli_arg_for_param_text_keeps_numeric_string() {
+        let v = parse_cli_arg_for_param("2", Some(&ast::Type::Text));
+        assert_eq!(t(&v), "2");
+    }
+
+    #[test]
+    fn parse_cli_arg_for_param_text_strips_quotes() {
+        let v = parse_cli_arg_for_param("\"hi\"", Some(&ast::Type::Text));
+        assert_eq!(t(&v), "hi");
+    }
+
+    #[test]
+    fn parse_cli_arg_for_param_no_hint_falls_through() {
+        let v = parse_cli_arg_for_param("42", None);
+        assert_eq!(n(&v), 42.0);
+    }
+
+    #[test]
+    fn parse_cli_arg_for_param_non_text_hint_uses_default() {
+        let v = parse_cli_arg_for_param("42", Some(&ast::Type::Number));
+        assert_eq!(n(&v), 42.0);
+    }
+
+    #[test]
+    fn parse_cli_arg_as_list_wraps_scalar() {
+        let v = parse_cli_arg_as_list("hello");
+        let xs = list(&v);
+        assert_eq!(xs.len(), 1);
+        assert_eq!(t(&xs[0]), "hello");
+    }
+
+    #[test]
+    fn parse_cli_arg_as_list_wraps_number() {
+        let v = parse_cli_arg_as_list("7");
+        let xs = list(&v);
+        assert_eq!(xs.len(), 1);
+        assert_eq!(n(&xs[0]), 7.0);
+    }
+
+    #[test]
+    fn parse_cli_arg_as_list_passes_through_bracketed() {
+        let v = parse_cli_arg_as_list("[a,b,c]");
+        let xs = list(&v);
+        assert_eq!(xs.len(), 3);
+    }
+
+    #[test]
+    fn parse_cli_arg_as_list_passes_through_bare_comma() {
+        let v = parse_cli_arg_as_list("1,2,3");
+        let xs = list(&v);
+        assert_eq!(xs.len(), 3);
+        assert_eq!(n(&xs[2]), 3.0);
+    }
+
+    #[test]
+    fn parse_cli_arg_as_list_empty_brackets() {
+        let v = parse_cli_arg_as_list("[]");
+        assert!(list(&v).is_empty());
+    }
+}
