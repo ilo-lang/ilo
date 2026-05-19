@@ -45,6 +45,7 @@
 
 - `[Records]` coverage in `ai.txt` expanded so the record-declaration syntax (`type name{field:type;...}`, space-separated constructor, strict vs `.?` access, nominal-typing rule, Map cross-reference, ILO-T019/T021/T022 verifier surface) is in the compact spec instead of buried in the long form. Surfaced by saas-platform / doc-discovery rerun11, where six agents had to grep the repo for `type ` because `ilo help ai` was thin on the topic.
 - `skills/ilo/ilo-language.md` now lists the reserved short-builtin names (2-char and 3-char) plus the 4+ char forward-compatibility rule. Surfaced by rerun11: agents kept binding `lst`/`hd`/`rev`/`rd`/`split` etc., tripping ILO-P011, because the reserved list lived only in `SPEC.md` and never made it into the agent-loadable skill. Tight ~80-token addition, neighbouring sections trimmed to stay inside the 5000-token aggregate skill budget.
+- `JSON_OUTPUT.md` updated to reflect that all six emitters brought into the convention in 0.12.1 (`ilo run`, `ilo graph`, `ilo --ast`, `ilo serv`, `ilo tools --json`, `ilo spec --json`) carry `schemaVersion: 1`. Audit table drops the "(legacy shape)" notes and adds an "Agent equivalent" column pointing `ilo repl` users at `ilo serv` and `ilo spec` users at `ilo spec ai`. Conventions section updated to state that every envelope carries `schemaVersion` rather than just new ones.
 
 ### Performance
 
