@@ -28,6 +28,8 @@ SKILL_NAMES = [
     "ilo-tools",
     "ilo-engines",
     "ilo-agent",
+    "ilo-examples",
+    "ilo-edit-loop",
 ]
 
 PER_MODULE_LIMIT = 1000

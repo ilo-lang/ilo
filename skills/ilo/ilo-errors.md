@@ -7,6 +7,8 @@ description: Use this when reading ILO-XXXX error codes or fixing failures. List
 
 `ILO-L###` lex, `ILO-P###` parse, `ILO-T###` type, `ILO-R###` runtime. Run `ilo --explain ILO-XXXX` for the long form.
 
+ilo has no borrow checker, no lifetimes, no ownership rules, no `&`/`&mut`. The four classes above are the registry; ownership errors do not exist.
+
 ## Lex
 
 - **L001 unknown token** - `AND`/`OR`/`\x{}` shorthand. Use `&` `|` `(x:t>r;body)`.
@@ -29,24 +31,21 @@ description: Use this when reading ILO-XXXX error codes or fixing failures. List
 
 ## Runtime
 
-- **R001 division by zero** - guard with `=b 0 ^"..."`.
+- **R001 div-by-zero** - guard with `=b 0 ^"..."`.
 - **R004 wrong main arity** - CLI args don't match signature.
+<<<<<<< HEAD
 - **R012 no functions defined** - typo'd flag swallowed as positional. (Phase 2 captures run natively; ILO-E802 covers the >255 overflow only.)
+=======
+- **R012 capture not supported** - typo'd flag, or capturing lambda on non-tree (auto-fallback usually handles).
+>>>>>>> e8d1ecc437f0632f933bf5bfba17c9bfa06d0067
 - **R020 file not found** - check path or `env "HOME"`.
 - **R030 http error** - non-2xx or network. Match `^e`.
 - **R040 json parse error** - bad `jpar` input. Match `^e`.
 
-## Common patterns
+## Patterns
 
-- `^"divide by zero"`: guard the denominator.
-- Mystery arity after `--engine tree`: not a real flag. Use `--run-tree`, `--run-vm`, `--jit`.
-- `NaN` in output: `asin`/`acos`/`sqrt`/`log` ran out-of-domain upstream; clamp at the boundary.
+`^"divide by zero"`: guard denominator. Mystery arity after `--engine tree`: not a flag, use `--run-tree`/`--run-vm`/`--jit`. `NaN` in output: `asin`/`acos`/`sqrt`/`log` out-of-domain upstream; clamp at boundary.
 
 ## JSON shape
 
-```json
-{"code":"ILO-T004","message":"expected n, got t",
- "span":{"file":"x.ilo","line":3,"col":12,"len":5},"hint":"..."}
-```
-
-Route on `code`; edit at `span`; pass `code` to `ilo --explain` for the long form.
+Diagnostics emit one JSON object per line: `{"code","message","span":{"file","line","col","len"},"hint"}`. Route on `code`; edit at `span`. For the wire shape and repair loop load `ilo-edit-loop`.

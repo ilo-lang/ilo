@@ -229,39 +229,33 @@ fn referenced_scripts_exist() {
 }
 
 #[test]
-fn body_has_canonical_sections() {
-    // Regression test: if someone deletes a section that hosts (and humans)
-    // expect, this fails. The headings below mirror what Claude Code's
-    // skill loader currently surfaces.
+fn body_is_thin_bootstrap() {
+    // Phase 2 (PR #419): SKILL.md is a thin bootstrap pointer. The rich
+    // reference content has moved to the modular `ilo-*.md` files served by
+    // the binary via `ilo skill list/get/path/show`. This test guards the
+    // bootstrap shape so the file does not silently regrow into a monolith.
     let text = skill_md_text();
     let (_fm, body) = split_frontmatter(&text);
-    let required_headings = [
+    for required in [
         "## Setup",
-        "## Load the Full Spec",
-        "## Overview",
-        "## Core Syntax",
-        "## Types",
-        "## Guards",
-        "## Match",
-        "## Results and Error Handling",
-        "## Loops",
-        "## Higher-Order Functions",
-        "## Pipe Operator",
-        "## Records",
-        "## Maps",
-        "## Builtins Reference",
-        "## Naming Convention",
-        "## Running",
-        "## Multi-Function File Rules",
-        "## Examples",
-        "## Common Mistakes",
-    ];
-    for h in required_headings {
+        "## Bootstrap pointer",
+        "## Available skills",
+        "ilo skill list",
+        "ilo-edit-loop",
+        "ilo-examples",
+    ] {
         assert!(
-            body.contains(h),
-            "SKILL.md is missing canonical heading: {h}"
+            body.contains(required),
+            "SKILL.md bootstrap missing required marker: {required}"
         );
     }
+    // Bootstrap cap: the file must stay short. The old monolith was ~50 KB;
+    // a healthy bootstrap is well under 5 KB. Trip if it bloats past 8 KB.
+    assert!(
+        body.len() < 8_000,
+        "SKILL.md body is {} bytes; bootstrap shape should stay well under 8 KB",
+        body.len()
+    );
 }
 
 #[test]
