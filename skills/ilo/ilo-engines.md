@@ -34,7 +34,7 @@ ilo has four execution backends. The default (`ilo file.ilo`) runs the register 
 
 All four backends support: core ops, lists/maps/records/sums, HOFs, inline lambdas (Phase 1 non-capturing and Phase 2 capturing), Results, HTTP, JSON, file I/O, MCP tools, HTTP tool provider.
 
-Phase 2 closure capture (the lambda body references a variable from an enclosing scope) runs natively on tree, VM, and Cranelift JIT: free variables are snapshot by value at the call site and appended to the call frame. The AOT backend currently miscompiles HOFs that take a function value (including capturing closures) and is the only engine that still needs `--run-tree` or `--run-vm` for that case; tracked as a separate fix.
+Phase 2 closure capture (lambda references an outer variable) runs natively on tree, VM, and JIT: free vars snapshot by value at the call site. AOT currently miscompiles HOFs taking function values; use `--run-vm` for that case.
 
 ## Benchmarking
 

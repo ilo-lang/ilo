@@ -31,7 +31,7 @@ description: Use this when reading ILO-XXXX error codes or fixing failures. List
 
 - **R001 division by zero** - guard with `=b 0 ^"..."`.
 - **R004 wrong main arity** - CLI args don't match signature.
-- **R012 no functions / capture not supported** - typo'd flag swallowed as positional, or capturing lambda on a non-tree engine (auto-fallback should handle this).
+- **R012 no functions defined** - typo'd flag swallowed as positional. (Phase 2 captures run natively; ILO-E802 covers the >255 overflow only.)
 - **R020 file not found** - check path or `env "HOME"`.
 - **R030 http error** - non-2xx or network. Match `^e`.
 - **R040 json parse error** - bad `jpar` input. Match `^e`.
