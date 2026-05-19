@@ -67,10 +67,7 @@ fn rgxall1_first_group_flat() {
     // rgxall1: 0 or 1 capture group only — flat L t of the first capture
     // group across every match. Pinned cross-engine to catch any
     // divergence between VM bridge dispatch and a future native lift.
-    check(
-        r#"f>L t;rgxall1 "(\w+)=\d+" "x=1 y=22 z=333""#,
-        "[x, y, z]",
-    );
+    check(r#"f>L t;rgxall1 "(\w+)=\d+" "x=1 y=22 z=333""#, "[x, y, z]");
 }
 
 // ── rgxsub (regex substitution) ────────────────────────────────────────
@@ -83,10 +80,7 @@ fn rgxsub_replaces_all_matches() {
 #[test]
 fn rgxsub_with_backref() {
     // Backref in replacement: $1 expands to first capture group.
-    check(
-        r#"f>t;rgxsub "(\w+)=(\d+)" "$1:$2" "x=1 y=22""#,
-        "x:1 y:22",
-    );
+    check(r#"f>t;rgxsub "(\w+)=(\d+)" "$1:$2" "x=1 y=22""#, "x:1 y:22");
 }
 
 // ── fmt2 (decimal precision formatter) ────────────────────────────────

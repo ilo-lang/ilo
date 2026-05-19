@@ -5,6 +5,7 @@
 ### Breaking
 
 - `ls dir` renamed to `lsd dir`. Six rerun10 personas tripped ILO-P011 on `ls=rdl! p` because `ls` was reserved; rename frees `ls` for user code. `walk`, `glob` unchanged.
+- `--run-tree` and its `--run` alias removed from the public CLI. They now error with the unknown-flag guard. The tree-walker stays in-tree as the dispatch target for the HOF / regex / fmt-variadic / fmt2 / IO / sleep / ct / rsrt / closure-bind-ctx shapes the VM and Cranelift haven't lifted natively yet; the VM bails to it transparently for every op in `is_tree_bridge_eligible`. Use `--run-vm` (the default) for everything else.
 
 ### Fixed
 
@@ -17,7 +18,6 @@
 - VM is the default engine. No need to pass `--run-vm`.
 - `$` is now the `run` sigil (was the HTTP `get` alias). Use `get url` for HTTP.
 - `post` is now `pst`. Drop the vowel like every other I/O verb (`rd`, `wr`, `srt`, `flt`).
-- `--run-tree` is removed. Tree-walker stays inside the VM for HOF dispatch but is no longer user-selectable.
 
 ### Added
 

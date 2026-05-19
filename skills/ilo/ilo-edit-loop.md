@@ -29,7 +29,7 @@ ilo verifies before it runs, every error carries a stable `ILO-XXXX` code, and d
 - **T010 bare `!` rejected** - widen to `>R t e`, use `??`, or match.
 - **P009 unparenthesised lambda** - wrap `(p:t>r;body)`.
 - **T007 calling a value** - shadowed a builtin, or wrote `fn(x)` for `fn x`.
-- **R012 capture not supported** - drop the capture, pass as arg, or `--run-tree`.
+- **R012 capture not supported** - drop the capture or pass as arg (every public backend supports Phase 2 captures natively).
 - **R030 HTTP** - `^e` is a domain outcome, not a panic.
 
 ## Escalation
