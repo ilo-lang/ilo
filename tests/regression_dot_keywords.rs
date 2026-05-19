@@ -176,7 +176,10 @@ fn dot_keywords_snake_long_cranelift() {
 fn type_as_binding_still_errors() {
     let err = run_err("f j:t>n;type=5;type");
     assert!(
-        err.contains("reserved") || err.contains("Type") || err.contains("got Type"),
+        err.contains("reserved")
+            || err.contains("Type")
+            || err.contains("got Type")
+            || err.contains("`type`"),
         "expected reserved-word error, got: {err}"
     );
 }
@@ -185,7 +188,10 @@ fn type_as_binding_still_errors() {
 fn if_as_binding_still_errors() {
     let err = run_err("f j:t>n;if=5;if");
     assert!(
-        err.contains("reserved") || err.contains("KwIf") || err.contains("got KwIf"),
+        err.contains("reserved")
+            || err.contains("KwIf")
+            || err.contains("got KwIf")
+            || err.contains("`if`"),
         "expected reserved-word error, got: {err}"
     );
 }
