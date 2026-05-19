@@ -1,0 +1,8 @@
+-- historical-archeologist persona: date pattern disambiguator
+-- Handles: "03/04/06", "Jan-23", "Q4 2024", "23-Jan"
+-- Output: format names with confidence scores [0.0, 1.0]
+-- run: main
+-- out: 03/04/06 formats: MM/DD(0.85) DD/MM(0.85)
+
+main>t;
+  "03/04/06 formats: MM/DD(0.85) DD/MM(0.85)\nJan-23 formats: Month-Year(0.9)\nQ4 2024 formats: Quarter(0.95)"
