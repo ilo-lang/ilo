@@ -529,7 +529,16 @@ fn tools_cmd(args: &[String]) -> i32 {
                     }));
                 }
             }
-            match serde_json::to_string_pretty(&items) {
+            // Wrap the tool list in an object so `schemaVersion` can sit at
+            // the top level. The legacy shape was a bare array; bringing it
+            // into the 0.12.1 uniformity is a breaking change for consumers
+            // that indexed `[0]` directly, but it lets agents route every
+            // `--json` envelope on a single field.
+            let envelope = serde_json::json!({
+                "schemaVersion": 1,
+                "tools": items,
+            });
+            match serde_json::to_string_pretty(&envelope) {
                 Ok(s) => println!("{}", s),
                 Err(e) => {
                     eprintln!("failed to render JSON: {}", e);
@@ -777,75 +786,74 @@ fn graph_cmd(args: &[String]) -> i32 {
         return 0;
     }
 
+    // Emit a graph payload with `schemaVersion: 1` injected at the top level.
+    // Graph queries serialise to JSON objects with disjoint key sets from
+    // `schemaVersion`, so flattening is strictly additive: old consumers that
+    // ignore the new field keep working, new consumers can route on it.
+    fn emit_with_schema_version<T: serde::Serialize>(payload: &T) -> i32 {
+        let mut v = match serde_json::to_value(payload) {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("error serialising graph: {}", e);
+                return 1;
+            }
+        };
+        if let Some(obj) = v.as_object_mut() {
+            obj.insert(
+                "schemaVersion".to_string(),
+                serde_json::Value::Number(1.into()),
+            );
+        }
+        match serde_json::to_string_pretty(&v) {
+            Ok(s) => {
+                println!("{}", s);
+                0
+            }
+            Err(e) => {
+                eprintln!("error serialising graph: {}", e);
+                1
+            }
+        }
+    }
+
     if let Some(ref name) = fn_name {
         if reverse {
             match graph::query_reverse(&program, &pg, name) {
-                Some(r) => match serde_json::to_string_pretty(&r) {
-                    Ok(s) => println!("{}", s),
-                    Err(e) => {
-                        eprintln!("error serialising graph: {}", e);
-                        return 1;
-                    }
-                },
+                Some(r) => emit_with_schema_version(&r),
                 None => {
                     eprintln!("function '{}' not found", name);
-                    return 1;
+                    1
                 }
             }
         } else if let Some(b) = budget {
             match graph::query_budget(&program, &pg, name, b) {
-                Some(q) => match serde_json::to_string_pretty(&q) {
-                    Ok(s) => println!("{}", s),
-                    Err(e) => {
-                        eprintln!("error serialising graph: {}", e);
-                        return 1;
-                    }
-                },
+                Some(q) => emit_with_schema_version(&q),
                 None => {
                     eprintln!("function '{}' not found", name);
-                    return 1;
+                    1
                 }
             }
         } else if subgraph {
             match graph::query_subgraph(&program, &pg, name) {
-                Some(q) => match serde_json::to_string_pretty(&q) {
-                    Ok(s) => println!("{}", s),
-                    Err(e) => {
-                        eprintln!("error serialising graph: {}", e);
-                        return 1;
-                    }
-                },
+                Some(q) => emit_with_schema_version(&q),
                 None => {
                     eprintln!("function '{}' not found", name);
-                    return 1;
+                    1
                 }
             }
         } else {
             match graph::query_fn(&program, &pg, name) {
-                Some(q) => match serde_json::to_string_pretty(&q) {
-                    Ok(s) => println!("{}", s),
-                    Err(e) => {
-                        eprintln!("error serialising graph: {}", e);
-                        return 1;
-                    }
-                },
+                Some(q) => emit_with_schema_version(&q),
                 None => {
                     eprintln!("function '{}' not found", name);
-                    return 1;
+                    1
                 }
             }
         }
     } else {
         // Full graph output.
-        match serde_json::to_string_pretty(&pg) {
-            Ok(s) => println!("{}", s),
-            Err(e) => {
-                eprintln!("error serialising graph: {}", e);
-                return 1;
-            }
-        }
+        emit_with_schema_version(&pg)
     }
-    0
 }
 
 /// Connect to MCP servers and return synthesized `Decl::Tool` nodes.
@@ -907,6 +915,7 @@ fn process_serv_request(
         Ok(r) => r,
         Err(e) => {
             return serde_json::json!({
+                "schemaVersion": 1,
                 "error": {"phase": "request", "message": format!("invalid JSON: {e}")}
             });
         }
@@ -920,6 +929,7 @@ fn process_serv_request(
         Ok(t) => t,
         Err(e) => {
             return serde_json::json!({
+                "schemaVersion": 1,
                 "error": {
                     "phase": "lex",
                     "diagnostics": [diag_to_json(&Diagnostic::from(&e))]
@@ -951,7 +961,7 @@ fn process_serv_request(
             .iter()
             .map(|e| diag_to_json(&Diagnostic::from(e)))
             .collect();
-        return serde_json::json!({"error": {"phase": "parse", "diagnostics": diags}});
+        return serde_json::json!({"schemaVersion": 1, "error": {"phase": "parse", "diagnostics": diags}});
     }
 
     // Inject static MCP tool decls so the verifier sees them
@@ -969,7 +979,7 @@ fn process_serv_request(
             .iter()
             .map(|e| diag_to_json(&Diagnostic::from(e).with_source(source.clone())))
             .collect();
-        return serde_json::json!({"error": {"phase": "verify", "diagnostics": diags}});
+        return serde_json::json!({"schemaVersion": 1, "error": {"phase": "verify", "diagnostics": diags}});
     }
 
     // Run
@@ -995,24 +1005,24 @@ fn process_serv_request(
         Ok(value) => match value {
             interpreter::Value::Ok(inner) => {
                 let v = inner.to_json().unwrap_or(serde_json::Value::Null);
-                serde_json::json!({"ok": v, "ms": ms})
+                serde_json::json!({"schemaVersion": 1, "ok": v, "ms": ms})
             }
             interpreter::Value::Err(inner) => {
                 let v = inner
                     .to_json()
                     .unwrap_or_else(|_| serde_json::Value::String(inner.to_string()));
-                serde_json::json!({"error": {"phase": "program", "value": v}, "ms": ms})
+                serde_json::json!({"schemaVersion": 1, "error": {"phase": "program", "value": v}, "ms": ms})
             }
             other => {
                 let v = other
                     .to_json()
                     .unwrap_or_else(|_| serde_json::Value::String(other.to_string()));
-                serde_json::json!({"ok": v, "ms": ms})
+                serde_json::json!({"schemaVersion": 1, "ok": v, "ms": ms})
             }
         },
         Err(e) => {
             let d = Diagnostic::from(&e).with_source(source);
-            serde_json::json!({"error": {"phase": "runtime", "diagnostics": [diag_to_json(&d)]}})
+            serde_json::json!({"schemaVersion": 1, "error": {"phase": "runtime", "diagnostics": [diag_to_json(&d)]}})
         }
     }
 }
@@ -1686,7 +1696,7 @@ fn serv_cmd(args_slice: &[String]) {
     };
 
     // Signal ready
-    println!("{}", serde_json::json!({"ready": true}));
+    println!("{}", serde_json::json!({"schemaVersion": 1, "ready": true}));
 
     use std::io::BufRead;
     let stdin = std::io::stdin();
@@ -2530,9 +2540,32 @@ fn dispatch_cli(cli: cli::Cli, bare_has_bin: bool) -> i32 {
             explain_cmd(&e.code, as_json)
         }
         Some(cli::Cmd::Spec(s)) => {
+            let as_json = cli.global.explicit_json();
             match s.topic.as_deref() {
-                Some("lang") => print!("{}", include_str!("../SPEC.md")),
-                Some("ai") => print!("{}", compact_spec()),
+                Some("lang") => {
+                    if as_json {
+                        let v = serde_json::json!({
+                            "schemaVersion": 1,
+                            "format": "markdown",
+                            "content": include_str!("../SPEC.md"),
+                        });
+                        println!("{}", v);
+                    } else {
+                        print!("{}", include_str!("../SPEC.md"));
+                    }
+                }
+                Some("ai") => {
+                    if as_json {
+                        let v = serde_json::json!({
+                            "schemaVersion": 1,
+                            "format": "ai-txt",
+                            "content": compact_spec(),
+                        });
+                        println!("{}", v);
+                    } else {
+                        print!("{}", compact_spec());
+                    }
+                }
                 _ => print_help(),
             }
             0
@@ -3997,8 +4030,26 @@ fn run_interp_with_provider(
 
 /// Serialize the program as pretty JSON to stdout. Used by the explicit
 /// `--ast` flag and by the legacy inline-no-func default path.
+///
+/// Output shape is the `serde::Serialize` projection of `ast::Program`
+/// (a `{"declarations": [...]}` object) with `"schemaVersion": 1`
+/// flattened in at the top level — strictly additive, so old consumers
+/// that read `declarations` keep working unchanged.
 fn dump_ast_json(program: &ast::Program) -> i32 {
-    match serde_json::to_string_pretty(program) {
+    let mut v = match serde_json::to_value(program) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("Serialization error: {}", e);
+            return 1;
+        }
+    };
+    if let Some(obj) = v.as_object_mut() {
+        obj.insert(
+            "schemaVersion".to_string(),
+            serde_json::Value::Number(1.into()),
+        );
+    }
+    match serde_json::to_string_pretty(&v) {
         Ok(json) => {
             println!("{}", json);
             0
@@ -4190,19 +4241,19 @@ fn print_value(val: &interpreter::Value, as_json: bool, suppress_loop_tail: bool
     let json = match val {
         interpreter::Value::Ok(inner) => {
             let v = inner.to_json().unwrap_or(serde_json::Value::Null);
-            serde_json::json!({"ok": v})
+            serde_json::json!({"schemaVersion": 1, "ok": v})
         }
         interpreter::Value::Err(inner) => {
             let v = inner
                 .to_json()
                 .unwrap_or_else(|_| serde_json::Value::String(inner.to_string()));
-            serde_json::json!({"error": {"phase": "program", "value": v}})
+            serde_json::json!({"schemaVersion": 1, "error": {"phase": "program", "value": v}})
         }
         other => {
             let v = other
                 .to_json()
                 .unwrap_or_else(|_| serde_json::Value::String(other.to_string()));
-            serde_json::json!({"ok": v})
+            serde_json::json!({"schemaVersion": 1, "ok": v})
         }
     };
     println!("{}", json);
@@ -6941,7 +6992,11 @@ mod tests {
 
     #[test]
     fn cli_tools_cmd_with_http_config_json_output() {
-        // --json flag: emit JSON array
+        // --json flag: emits a schema-versioned envelope wrapping the
+        // tool array. Pre-0.12.1 this was a bare array; the wrap brings
+        // `ilo tools --json` into the same single-envelope contract as
+        // every other `--json` emitter so agents can route on
+        // `schemaVersion` uniformly.
         let config = r#"{"tools":{"lookup":{"url":"http://localhost:9"}}}"#;
         let path = write_temp_tools_config("json_C3", config);
         let out = std::process::Command::new(ilo_bin())
@@ -6949,14 +7004,15 @@ mod tests {
             .output()
             .expect("failed to run ilo tools --tools --json");
         let stdout = String::from_utf8_lossy(&out.stdout);
-        // Should be a JSON array
+        let v: serde_json::Value = serde_json::from_str(stdout.trim())
+            .unwrap_or_else(|e| panic!("expected JSON envelope, got: {stdout} ({e})"));
+        assert_eq!(v["schemaVersion"], 1, "envelope must carry schemaVersion");
+        let tools = v["tools"]
+            .as_array()
+            .unwrap_or_else(|| panic!("expected `tools` array, got: {stdout}"));
         assert!(
-            stdout.trim().starts_with('['),
-            "expected JSON array in stdout, got: {stdout}"
-        );
-        assert!(
-            stdout.contains("lookup"),
-            "expected 'lookup' in JSON output, got: {stdout}"
+            tools.iter().any(|t| t["name"] == "lookup"),
+            "expected 'lookup' in tools array, got: {stdout}"
         );
     }
 

@@ -6,6 +6,12 @@
 
 - `ls dir` renamed to `lsd dir`. Six rerun10 personas tripped ILO-P011 on `ls=rdl! p` because `ls` was reserved; rename frees `ls` for user code. `walk`, `glob` unchanged.
 - `--run-tree` and its `--run` alias removed from the public CLI. They now error with the unknown-flag guard. The tree-walker stays in-tree as the dispatch target for the HOF / regex / fmt-variadic / fmt2 / IO / sleep / ct / rsrt / closure-bind-ctx shapes the VM and Cranelift haven't lifted natively yet; the VM bails to it transparently for every op in `is_tree_bridge_eligible`. Use `--run-vm` (the default) for everything else.
+- `ilo tools --json` is now an envelope `{"schemaVersion":1,"tools":[...]}` instead of a bare array. Indexing consumers should read `.tools[0]` instead of `[0]`. Brings the last hold-out into the uniform CLI `--json` contract — every other emitter (`run`, `graph`, `--ast`, `serv`, `spec --json`) gained `schemaVersion:1` additively in the same release.
+
+### Diagnostics
+
+- `schemaVersion: 1` uniform across every CLI `--json` envelope. Five legacy emitters (`ilo run`, `ilo graph`, `ilo --ast`, `ilo serv`, `ilo tools --json`) and the new `ilo spec --json` mode all now carry the field at the top level so a single routing branch in agent code handles every command. For four of those five the change is strictly additive (object envelopes get one extra field); `ilo tools --json` is the lone breaking-but-additive wrap noted above. `ilo serv` carries `schemaVersion:1` on every line, including the `ready` handshake and every error response (`request`, `lex`, `parse`, `verify`, `runtime`, `program` phases). Full audit in `JSON_OUTPUT.md`.
+- `ilo spec --json [lang|ai]` new mode wraps the markdown / `ai.txt` prose as `{"schemaVersion":1,"format":"markdown"|"ai-txt","content":"..."}`. Plain-text mode is unchanged.
 
 ### Added
 

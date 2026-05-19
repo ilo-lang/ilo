@@ -1506,7 +1506,7 @@ For a program whose entry function returns a Result, the `~`/`^` wrapper is spli
 | `^e` (Err)       | -            | `^e`         | 1    |
 | any non-Result   | `v`          | -            | 0    |
 
-In `--json` mode the value is always wrapped (`{"ok": v}` / `{"error": {...}}`) and emitted to stdout; exit codes match the plain-mode table.
+In `--json` mode the value is always wrapped (`{"schemaVersion": 1, "ok": v}` / `{"schemaVersion": 1, "error": {...}}`) and emitted to stdout; exit codes match the plain-mode table. The `schemaVersion` field was added in 0.12.1 to every CLI `--json` envelope (`run`, `graph`, `--ast`, `serv`, `tools --json`, `spec --json`) so agents can route on a single field across every command. See `JSON_OUTPUT.md` for the full audit table.
 
 `Display` on `Value::Ok` / `Value::Err` still renders `~v` / `^e` in every other context (nested values, `prnt`, REPL prompts, error messages, debug output) - only the top-level program-return print path is split.
 
