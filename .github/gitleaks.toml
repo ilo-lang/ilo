@@ -5,6 +5,9 @@
 # an allowlist for the placeholder strings that ship in examples/ so the
 # release-gate scanner does not false-positive on demo code.
 #
+# For the full release-gate runbook (when to run, incident procedure, why
+# release-only) see docs/release-secret-scan.md.
+#
 # Run locally:
 #   gitleaks detect --source . --no-git --redact --verbose
 #   gitleaks detect --source . --redact --verbose   # includes git history
