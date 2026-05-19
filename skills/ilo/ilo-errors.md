@@ -7,7 +7,7 @@ description: Use this when reading ILO-XXXX error codes or fixing failures. List
 
 `ILO-L###` lex, `ILO-P###` parse, `ILO-T###` type, `ILO-R###` runtime. Run `ilo --explain ILO-XXXX` for the long form.
 
-ilo has no borrow checker, no lifetimes, no ownership rules, no `&`/`&mut`. The four classes above are the registry; ownership errors do not exist.
+No borrow checker, no lifetimes, no `&`/`&mut`. The four classes above are the full registry.
 
 ## Lex
 
@@ -28,6 +28,7 @@ ilo has no borrow checker, no lifetimes, no ownership rules, no `&`/`&mut`. The 
 - **T006 arity mismatch** - add/remove args to match signature.
 - **T007 not a function** - calling a value. Rename or rebind.
 - **T010 non-result error-propagate** - `!` in a non-`R` fn. Declare `>R t t` or use `??` / match.
+- **T038 non-bool ternary cond** - `?h c a b` cond must be `b`. Bind first.
 
 ## Runtime
 

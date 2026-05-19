@@ -963,6 +963,8 @@ The disambiguator is operand count: **two** operand atoms after `?h` keeps the b
 
 Each of the three operand slots accepts the same shapes as a prefix-binop operand - atom, nested prefix operator, or known-arity call. `?h =a b sev sc "NONE"` parses `sev sc` as `Call(sev, [sc])` in the then-slot, so `Call` results don't have to be bound first or paren-grouped (paren form `(sev sc)` still works as an explicit alternative).
 
+**Condition must be `b`.** The verifier rejects (`ILO-T038`) any ternary whose cond doesn't type-check to `b` - number, text, function-ref, `R T E` without unwrap, etc. This catches the silent-truthy family of bugs where a non-bool cond would otherwise always take the then-branch at runtime. If the cond is more complex than a single ref or comparison, bind it first (`c=<expr>;?h c a b`) or use the brace-delimited ternary `?cond{then}{else}`. The original 0.12.0 bug that motivated this check: `?h (> p 0.5) 1 0` parsed the paren-grouped prefix-comparison as a zero-param inline lambda, lifted it into a synthetic decl, and silently always took the then-branch - both layers (parser disambiguator + verifier type-check) are now hardened against the family.
+
 ### Early Return
 
 `ret expr` explicitly returns from the current function:
