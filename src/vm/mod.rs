@@ -442,6 +442,32 @@ pub(crate) const OP_GRP_BY_KEY: u8 = 180;
 // arm), so we deliberately don't reuse `MapKey` here.
 pub(crate) const OP_UNIQ_BY_KEY: u8 = 181;
 
+// Move-not-clone variant of OP_MOVE. Transfers the NanVal bit pattern from
+// R[B] to R[A] without bumping the RC of any heap payload, then clears R[B]
+// to Nil so the source register drops its reference. Used by the
+// `name = fn(name, ...)` peephole to avoid the extra RC bump that would
+// otherwise defeat OP_MSET's RC=1 in-place fast path inside helper fns.
+//
+// Encoding (ABC):
+//   A = destination register
+//   B = source register (cleared to Nil after move)
+pub(crate) const OP_MOVE_OWN: u8 = 182;
+
+// Move-first-arg variant of OP_CALL. Same frame layout and dispatch as
+// OP_CALL but does not clone_rc the first arg (R[A+1]) when pushing it
+// onto the callee's frame. The compiler emits this when it detects the
+// `name = fn(name, ...)` shape and statically proves the first arg is
+// dead after the call (no aliasing use). Combined with OP_MOVE_OWN on the
+// MOVE-to-args_base step, the callee receives the map at the same RC the
+// caller had — typically RC=1 for accumulator patterns, unlocking the
+// OP_MSET in-place fast path inside the helper.
+//
+// Encoding (ABC):
+//   A = result/first-arg register (same as OP_CALL)
+//   B = func_idx (low byte)  — OR via the AD form like OP_CALL
+//   C = argc
+pub(crate) const OP_CALL_OWN1: u8 = 183;
+
 // Dynamic call by function reference. The callee is a FnRef NanVal sitting
 // in a register; we decode its (kind, id), then either push a VM frame
 // (user fn) or invoke the builtin dispatch path (builtin).
