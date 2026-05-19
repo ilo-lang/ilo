@@ -650,6 +650,19 @@ fn emit_expr(out: &mut String, level: usize, expr: &Expr) -> String {
                     call
                 };
             }
+            if function == "wra" && args.len() == 2 {
+                let pa = emit_expr(out, level, &args[0]);
+                let content = emit_expr(out, level, &args[1]);
+                let call = format!(
+                    "(lambda p, c: (open(p, 'a').write(c), (\"ok\", p))[1])({}, {})",
+                    pa, content
+                );
+                return if unwrap.is_any() {
+                    format!("_ilo_unwrap({})", call)
+                } else {
+                    call
+                };
+            }
             if function == "wr" && args.len() == 2 {
                 let pa = emit_expr(out, level, &args[0]);
                 let content = emit_expr(out, level, &args[1]);
