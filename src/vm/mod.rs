@@ -34482,3 +34482,101 @@ main>n
         }
     }
 }
+
+#[cfg(all(test, feature = "cranelift"))]
+mod aot_publish_tests {
+    //! Direct FFI tests for `ilo_aot_publish_program` and `ilo_aot_fini`.
+    //!
+    //! The cross-engine AOT regression tests in `tests/regression_aot_closures.rs`
+    //! cover the happy path end-to-end by compiling a real binary, but they
+    //! run the publish/fini code inside a child process, so the parent's
+    //! `cargo llvm-cov` instrumentation misses the lines. These tests call
+    //! the `extern "C"` helpers directly from Rust so coverage picks them up,
+    //! and exercise the TLS publish + fini cycle without exec-ing a binary.
+    use super::*;
+    use crate::vm::aot_blob::{BLOB_SCHEMA_VERSION, serialize_program};
+
+    fn compile_simple(src: &str) -> CompiledProgram {
+        let tokens = crate::lexer::lex(src).expect("lex");
+        let token_spans: Vec<_> = tokens
+            .into_iter()
+            .map(|(t, r)| {
+                (
+                    t,
+                    crate::ast::Span {
+                        start: r.start,
+                        end: r.end,
+                    },
+                )
+            })
+            .collect();
+        let (prog, errors) = crate::parser::parse(token_spans);
+        assert!(errors.is_empty(), "parse errors: {:?}", errors);
+        compile(&prog).expect("compile")
+    }
+
+    #[test]
+    fn publish_program_populates_tls_slots() {
+        let prog = compile_simple("add a:n b:n>n;+a b\nmain>n;add 2 3");
+        let bytes = serialize_program(&prog).expect("serialize");
+
+        // Sanity: TLS slots may be set by a previous test; clear so we observe
+        // the publish actually writes them.
+        ilo_aot_fini();
+        ACTIVE_PROGRAM.with(|r| assert!(r.get().is_null()));
+        ACTIVE_FUNC_NAMES.with(|r| assert!(r.get().is_null()));
+        ACTIVE_AST_PROGRAM.with(|r| assert!(r.get().is_null()));
+
+        let rc = ilo_aot_publish_program(bytes.as_ptr() as u64, bytes.len() as u64);
+        assert_eq!(rc, 0, "publish should return 0 on success");
+
+        ACTIVE_PROGRAM.with(|r| assert!(!r.get().is_null(), "ACTIVE_PROGRAM not published"));
+        ACTIVE_FUNC_NAMES.with(|r| assert!(!r.get().is_null(), "ACTIVE_FUNC_NAMES not published"));
+        ACTIVE_AST_PROGRAM
+            .with(|r| assert!(!r.get().is_null(), "ACTIVE_AST_PROGRAM not published"));
+
+        let names_ptr = ACTIVE_FUNC_NAMES.with(|r| r.get());
+        let names = unsafe { &*names_ptr };
+        assert!(names.contains(&"add".to_string()));
+        assert!(names.contains(&"main".to_string()));
+
+        // Cleanup so we don't leak state into other tests in the same process.
+        ilo_aot_fini();
+        ACTIVE_PROGRAM.with(|r| assert!(r.get().is_null(), "fini should null ACTIVE_PROGRAM"));
+        ACTIVE_FUNC_NAMES
+            .with(|r| assert!(r.get().is_null(), "fini should null ACTIVE_FUNC_NAMES"));
+        ACTIVE_AST_PROGRAM
+            .with(|r| assert!(r.get().is_null(), "fini should null ACTIVE_AST_PROGRAM"));
+    }
+
+    #[test]
+    fn publish_program_round_trips_chunks_and_registry() {
+        // Confirms the published CompiledProgram is structurally equivalent
+        // to the source: same chunk count, same func_names, same TLS
+        // pointers reachable.
+        let src = "sq x:n>n;*x x\nmain>L n;map (n:n>n;sq n) [1,2,3]";
+        let prog = compile_simple(src);
+        let original_chunk_count = prog.chunks.len();
+        let original_names = prog.func_names.clone();
+        let bytes = serialize_program(&prog).expect("serialize");
+
+        ilo_aot_fini();
+        let rc = ilo_aot_publish_program(bytes.as_ptr() as u64, bytes.len() as u64);
+        assert_eq!(rc, 0);
+
+        let prog_ptr = ACTIVE_PROGRAM.with(|r| r.get());
+        let pubd = unsafe { &*prog_ptr };
+        assert_eq!(pubd.chunks.len(), original_chunk_count);
+        assert_eq!(pubd.func_names, original_names);
+
+        ilo_aot_fini();
+    }
+
+    #[test]
+    fn blob_schema_version_is_stable() {
+        // Lock the schema version. Bumping it must be intentional - any
+        // change here must come with a corresponding deserialise-compat
+        // story (or an explicit "we only support v_n" cut-over).
+        assert_eq!(BLOB_SCHEMA_VERSION, 1);
+    }
+}
