@@ -3628,9 +3628,21 @@ For variable-position list indexing bind the head first: \
         if !starts_like_lambda {
             return false;
         }
-        // Confirm a `>` exists at paren-depth 0 inside the parens.
+        // Confirm BOTH a `>` and a `;` exist at paren-depth 1 inside the
+        // parens, in that order. The `;` is required because every inline
+        // lambda body is `;`-separated from the return type — without one
+        // there's no body, and the paren contents are some other shape.
+        //
+        // Crucially this rejects prefix-comparison calls in paren-grouped
+        // position: `(> p 0.5)` starts with `>` at depth 1 but has no `;`,
+        // so it's parsed as a grouped expression (a `Call { function: ">" }`)
+        // rather than mis-lifted into a synthetic `__lit_N` zero-param
+        // lambda whose return type swallows `p` and whose body keeps only
+        // `0.5`. That mis-lift was the root cause of the silent-truthy
+        // `?h (> p 0.5) 1 0` bug (ml-tabular rerun11).
         let mut depth = 1usize;
         let mut i = self.pos + 1;
+        let mut saw_gt_at_depth1 = false;
         while let Some(tok) = self.token_at(i) {
             match tok {
                 Token::LParen | Token::LBracket | Token::LBrace => depth += 1,
@@ -3640,7 +3652,8 @@ For variable-position list indexing bind the head first: \
                         return false;
                     }
                 }
-                Token::Greater if depth == 1 => return true,
+                Token::Greater if depth == 1 => saw_gt_at_depth1 = true,
+                Token::Semi if depth == 1 && saw_gt_at_depth1 => return true,
                 _ => {}
             }
             i += 1;

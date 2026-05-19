@@ -1,0 +1,46 @@
+-- `?h cond a b` — cond MUST type-check to `b`. The verifier enforces
+-- this (ILO-T038) so non-bool conds can't silently fall through to
+-- the then-branch.
+--
+-- Background: 0.12.0 had a silent-truthy bug where a parenthesised
+-- prefix-comparison like `(> p 0.5)` in cond position was mis-parsed
+-- as a zero-param inline lambda (`(>n;body)` shares its leading
+-- tokens), the synthesised fn-ref reached `?h` as a non-bool, and
+-- the runtime always took the then-branch — ml-tabular rerun11's
+-- logistic-regression classifier silently scored 25.75% instead of
+-- 84.6%. 0.12.1 fixes the parser to require a `;` body separator
+-- before treating `(> ...)` as a lambda, and adds the verifier
+-- check below as defence-in-depth.
+
+-- Canonical form 1: comparison-derived bool bound to a name first.
+-- The cheapest token-count shape for non-trivial cond.
+clf1 p:n>n;c=> p 0.5;?h c 1 0
+
+-- Canonical form 2: paren-grouped prefix-comparison inline. After
+-- the parser fix this types correctly as `b` and dispatches right.
+clf2 p:n>n;?h (> p 0.5) 1 0
+
+-- Canonical form 3: brace-delimited ternary. Grammar-delimited arms
+-- make the structure impossible to mis-parse, at a small token cost.
+clf3 p:n>n;c=> p 0.5;?c{1}{0}
+
+-- run: clf1 0.7
+-- out: 1
+
+-- run: clf1 0.3
+-- out: 0
+
+-- run: clf2 0.7
+-- out: 1
+
+-- run: clf2 0.3
+-- out: 0
+
+-- run: clf2 0.5
+-- out: 0
+
+-- run: clf3 0.7
+-- out: 1
+
+-- run: clf3 0.3
+-- out: 0
