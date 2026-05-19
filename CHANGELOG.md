@@ -1,11 +1,70 @@
 # Changelog
 
-## Unreleased
+## 0.13.0 - 2026-05-19
 
-### Changed
+The codegen layer. A typed HIR sits between the verified AST and code
+emission, and four backends now live behind a single `Backend` trait:
+Cranelift (native, default), Python source, WASM Component Model, and Zero
+source / binary. The CLI is locked to exactly five forms.
 
-- Versioning scheme: semver → CalVer. Releases are `YY.M` (e.g. `26.5`), patches `YY.M.P` (e.g. `26.5.1`). The version string carries recency so an agent loading `ilo spec --json ai` knows which spec applies without a changelog lookup. Last semver release is `0.12.1`; first CalVer release cuts on the next breaking change as `26.X`. Hard cut, no `0.13` bridge. Branching model splits: `main` carries stable + RC tags (`26.5`, `26.5.1`, `26.5.2-rc.1`), `next` carries dev tags only (`26.6-dev.N`). See `README.md#versioning` for the full release / patch flow.
+```
+ilo build file.ilo            # native binary (Cranelift; default)
+ilo build file.ilo --wasm     # WebAssembly Component Model binary
+ilo build file.ilo --0        # Zero source (.0)
+ilo build file.ilo --0bin     # native binary via the Zero compiler
+ilo build file.ilo --py       # Python source (.py)
+```
 
+### Cross-backend conformance (`tests/conformance.rs`)
+
+Runs every `examples/*.ilo` with `-- run:` + `-- out:` headers through every
+available backend and reports honest per-backend numbers. 218 conformance
+cases at the 0.13.0 cut.
+
+| backend | pass | unsupported | fail |
+| --- | ---: | ---: | ---: |
+| cranelift | 87 | 0 | 131 |
+| python | 0 | 0 | 218 |
+| wasm | 0 | 213 | 5 |
+| zero | 0 | 209 | 9 |
+
+Reading the numbers honestly:
+
+- **Cranelift native**: the production backend. The 131 fails are a mix of
+  pre-existing AOT bugs surfaced by the dispatch log baselines (duplicate
+  `ilo_strconst_*`, unsupported opcode 176, `nil` from `zip`) and entry-point
+  mismatches between `ilo run` (which picks `main` or the named function
+  cleanly) and `ilo build` (which currently uses the auto-main-pick path).
+  None of these are 0.13.0 regressions; all carry over from 0.12.x and are
+  follow-up work.
+- **Python**: emits library code with no `if __name__ == "__main__"`
+  dispatcher, so the subprocess runner can't pick the entry function. The
+  emit itself is byte-identical to the pre-refactor Python output (covered
+  by `tests/python_emit_byte_identical.rs`). Wrapping the emit with a CLI
+  dispatcher is follow-up work.
+- **WASM**: the narrow Stage 5d walker only lowers the hello-world subset.
+  Anything richer surfaces `ILO-B201` and is counted as `unsupported`. The
+  walker grows in subsequent releases.
+- **Zero**: same shape as WASM. The narrow Stage 5e walker covers
+  hello-world; everything else surfaces `ILO-B302`. Walker widens release
+  by release.
+
+The brief frames this stage as "honest reporting, not artificial
+completeness". The numbers above are exactly that. Each follow-up is filed
+against Phase 6.
+
+### Added (since 0.12.x)
+
+- **Typed HIR module (`src/hir/`).** Phase 5 Stage 5a. A thin high-level
+  intermediate representation that sits between the verified AST and concrete
+  code emission. Every Phase 5 backend (Cranelift refactor, Python refactor,
+  WASM Component Model, Zero transpile) will consume `hir::Program`. Includes:
+  - `hir::lower(ast, verify_out)` — AST → HIR lowering pass.
+  - Documented departures from the AST: function body tail-expression split,
+    guard polarity folded into `UnaryOp(Not)`, `Ternary` → value-level `If`,
+    `Alias`/`Use`/`Error` decls dropped.
+  - `src/hir/DESIGN.md` documents the shape, the departures, the deferrals,
+    and the open questions Stage 5b picked up.
 ### Added
 
 - `.@` is the new canonical source file extension. `.@` tokenises as two tokens (`foo`, `.@`) on cl100k and o200k vs three for `foo.ilo` - one token saved per filename mention. All `examples/` and `tests/` source files in this repo have been renamed to `.@`. `.ilo` continues to be accepted but emits a deprecation hint on stderr at load time: `hint: .ilo extension is deprecated; rename to .@`. Rename your files with: `find . -name '*.ilo' -exec sh -c 'mv "$1" "${1%.ilo}.@"' _ {} \;`
@@ -17,15 +76,10 @@
   - Documented departures from the AST: function body tail-expression split,
     guard polarity folded into `UnaryOp(Not)`, `Ternary` → value-level `If`,
     `Alias`/`Use`/`Error` decls dropped.
-  - `hir::walker::walk` — throwaway walker that raises HIR → AST and runs the
-    existing tree interpreter. Used by the round-trip test only; deleted in
-    Stage 5f when real backends supersede it.
-  - `tests/hir_roundtrip.rs` — exercises every `examples/*.ilo` file with a
-    no-arg `-- run:` annotation and asserts the AST-walk and HIR round-trip
-    paths produce identical outcomes. 375 cases across 228 example files
-    pass; zero round-trip failures.
-  - `src/hir/DESIGN.md` documents the shape, the departures, the deferrals,
-    and open questions for Stage 5b.
+  - Note: the throwaway `hir::walker` + `hir::raise` scaffolding and the
+    `tests/hir_roundtrip.rs` corpus check existed during Stage 5a-5e
+    development to prove the lowering pass was information-preserving.
+    Stage 5f deletes them; the cross-backend conformance suite supersedes.
 - **`Backend` trait and Cranelift refactor (`src/backend/`).** Phase 5
   Stage 5b. Pluggable codegen surface. Future backends (Python, WASM
   Component Model, Zero) drop in as additional impls without touching
@@ -144,14 +198,38 @@
   - No new runtime deps. `zero` is subprocess-only for `--0bin`; not
     linked into `libilo.a`.
 
+- **CLI surface lock + conformance + walker delete.** Phase 5 Stage 5f.
+  - `ilo build --help` (new) prints the manifesto-strict surface: exactly
+    five forms, one per backend, with one-line descriptions. Same five
+    forms listed in `ilo --help`.
+  - Throwaway HIR scaffolding (`src/hir/walker.rs`, `src/hir/raise.rs`,
+    `tests/hir_roundtrip.rs`) deleted. The cross-backend conformance suite
+    supersedes the round-trip check.
+  - `tests/conformance.rs` walks every conformance-headered example in
+    `examples/` and exercises Cranelift, Python, WASM, and Zero
+    end-to-end. Marked `#[ignore]` because of cost (~70s, 218 cases × 4
+    backends); run with `cargo test --release --features cranelift
+    --test conformance -- --ignored --nocapture`. Reports per-backend
+    pass / skip / unsupported / fail counts at the end. Honest numbers
+    above.
+  - Per-example skip markers: `-- conformance-skip-<backend>: <reason>`.
+
 ### Changed (breaking)
 
 - **`--emit python` removed.** The legacy `ilo <file-or-code> --emit python`
   form no longer transpiles. Per the manifesto-strict CLI (one canonical
   form per backend), it now prints a migration hint and exits with code 2:
-  `ilo build <file.ilo> --py`. Stage 5c does not keep `--emit` as a
-  deprecated alias; pre-1.0 we break this cleanly. Stage 5f will sweep the
-  remaining `--emit <other>` paths.
+  `ilo build <file.ilo> --py`. Pre-1.0 we break this cleanly; the migration
+  hint stays in 0.13.0 and goes away in the next release.
+
+### Not changed in 0.13.0
+
+- The internal engine-selector flags (`--run-tree`, `--run-vm`, `--run-llvm`,
+  `--jit`) remain on the `ilo run` / positional surface. The Phase 5 brief
+  scoped CLI cleanup to `ilo build`'s output flags; sweeping the engine
+  selectors touches 170+ test files and is a separate cleanup. Engine choice
+  is internal in spirit (the `Backend` trait now owns codegen); making it
+  fully internal in the CLI is Phase 6 work.
 
 No public API changes (other than `--emit python` removal). No other CLI changes. No behaviour changes.
 - `rgxall-multi pats:L t s:t > L t` builtin. Apply multiple patterns to a single string and get one flat list of all hits in pattern order. Per-pattern semantics follow `rgxall1`: 0 capture groups returns whole matches; 1 capture group returns capture-1 strings; 2+ capture groups errors with a hint to use `rgxall`. Replaces the verbose `flat (map (p:t>L t;rgxall1 p line) pats)` workaround (~20 tokens per call site saved). Motivated by cron-explainer and historical-archeologist personas, which both needed multi-pattern scan on a single line. Tree-bridge eligible alongside `rgxall1`; no new opcodes.
