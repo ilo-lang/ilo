@@ -1,0 +1,31 @@
+-- Filesystem metadata primitives (0.12.1). Four atomic singletons rather
+-- than a fat `stat` map — agents pay only for the bit they need:
+--   fsize  path > R n t  (bytes; Err on missing / perm-denied / dir)
+--   mtime  path > R n t  (Unix epoch seconds, f64)
+--   isfile path > b      (false on missing / wrong-kind; follows symlinks)
+--   isdir  path > b      (false on missing / wrong-kind; follows symlinks)
+-- The R-vs-b asymmetry is deliberate: predicates collapse the error tier
+-- into `false` so `?isfile p{...}` stays one token wide; size and mtime
+-- expose the error so callers can branch on missing vs perm-denied vs dir.
+
+-- Roundtrip a known-size temp file through fsize.
+roundtrip>n;p="/tmp/ilo-fsize-example.txt";~wr p "hello";fsize! p
+
+-- Predicates collapse missing into `false` — one-token branch.
+checkmiss>b;isfile "/no/such/path/xyzzy-fsmeta"
+checkdir>b;isdir "/tmp"
+
+-- Predicate over wrong kind — isdir on a file is `false`, not Err.
+dironfile>b;p="/tmp/ilo-fsize-example.txt";~wr p "x";isdir p
+
+-- run: roundtrip
+-- out: 5
+
+-- run: checkmiss
+-- out: false
+
+-- run: checkdir
+-- out: true
+
+-- run: dironfile
+-- out: false
