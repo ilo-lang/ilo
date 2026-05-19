@@ -1379,8 +1379,13 @@ fn repl_cmd() {
 #[cfg(feature = "cranelift")]
 fn compile_cmd(args: &[String]) -> i32 {
     if args.is_empty() {
-        eprintln!("Usage: ilo compile <file-or-code> [-o output] [func]");
+        print_build_help();
         return 1;
+    }
+
+    if args.iter().any(|a| a == "--help" || a == "-h") {
+        print_build_help();
+        return 0;
     }
 
     let mut output_path: Option<String> = None;
@@ -1834,9 +1839,33 @@ fn compile_cmd(args: &[String]) -> i32 {
 }
 
 #[cfg(not(feature = "cranelift"))]
-fn compile_cmd(_args: &[String]) -> i32 {
+fn compile_cmd(args: &[String]) -> i32 {
+    if args.iter().any(|a| a == "--help" || a == "-h") {
+        print_build_help();
+        return 0;
+    }
     eprintln!("Error: AOT compilation requires the cranelift feature (--features cranelift)");
     1
+}
+
+/// Manifesto-strict `ilo build` help. Exactly five forms.
+///
+/// Emitted on stderr so it composes with the friendly-usage handlers in
+/// `main()` (which also use stderr) and matches the wider unix-y convention
+/// of usage/help being a diagnostic rather than program output.
+fn print_build_help() {
+    eprintln!("ilo build — compile an ilo program\n");
+    eprintln!("Usage:");
+    eprintln!("  ilo build <file.ilo>              Native binary (default; Cranelift)");
+    eprintln!("  ilo build <file.ilo> --wasm       WebAssembly Component Model binary");
+    eprintln!("  ilo build <file.ilo> --0          Zero source (.0)");
+    eprintln!("  ilo build <file.ilo> --0bin       Native binary via the Zero compiler");
+    eprintln!("  ilo build <file.ilo> --py         Python source (.py)\n");
+    eprintln!("Options:");
+    eprintln!("  -o <path>          Output path (default: alongside the source)");
+    eprintln!("  --target <name>    For --wasm: wasm32-component (default),");
+    eprintln!("                     wasm32-wasip1, wasm32-wasip2, wasm32-unknown-unknown");
+    eprintln!("  --help / -h        Show this help");
 }
 
 /// Stdio-based agent serve loop.
@@ -2668,6 +2697,18 @@ fn main() {
         std::process::exit(0);
     }
 
+    // `ilo build --help` / `ilo build -h`: print the manifesto-strict build
+    // help and exit 0 before clap or the unknown-flag guard sees it.
+    if raw_args.get(1).map(|s| s.as_str()) == Some("build")
+        && raw_args
+            .iter()
+            .skip(2)
+            .any(|a| a == "--help" || a == "-h")
+    {
+        print_build_help();
+        std::process::exit(0);
+    }
+
     // Friendly usage for `ilo run` / `ilo check` / `ilo build` with no
     // source argument. Without this, clap rejects the missing-positional
     // and we fall through to dispatch_bare_args, which then tries to lex
@@ -2689,7 +2730,7 @@ fn main() {
                 std::process::exit(1);
             }
             "build" => {
-                eprintln!("Usage: ilo build <file.@> [-o out] [func]");
+                print_build_help();
                 std::process::exit(1);
             }
             _ => {}
@@ -4125,7 +4166,7 @@ fn print_help() {
     println!("Usage:");
     println!("  ilo run <file.@> [args...]        Run (verb form; alias for positional)");
     println!("  ilo check <file.@>               Verify without running (exit 0 = clean)");
-    println!("  ilo build <file.@> -o <out>      AOT compile (alias for `compile`)");
+    println!("  ilo build <file.@>               Native binary (Cranelift; default)");
     println!("  ilo <code> [args...]              Run (bytecode VM; use --jit for JIT)");
     println!("  ilo <file.@> [args...]           Run from file (.ilo also accepted)");
     println!("  ilo <code> func [args...]         Run a specific function");
@@ -4172,16 +4213,13 @@ fn print_help() {
     println!("  ilo graph <file> --subgraph         Transitive dependencies");
     println!("  ilo graph <file> --budget N         Limit to N tokens of source");
     println!("  ilo graph <file> --dot              Output as DOT (Graphviz)\n");
-    println!("AOT compilation:");
-    println!("  ilo compile <file> [-o out] [func]  Compile to standalone binary\n");
-    println!("Backends:");
-    println!("  (default)        Register VM (closure-aware, all opcodes supported)");
-    println!(
-        "  --jit            Cranelift JIT (faster on hot numeric loops; falls back to VM on bailout)"
-    );
-    println!(
-        "  --vm             Register VM (canonical form, symmetric with --jit; --run-vm is a deprecated alias)\n"
-    );
+    println!("Compilation (`ilo build`):");
+    println!("  ilo build <file.ilo>              Native binary (Cranelift; default)");
+    println!("  ilo build <file.ilo> --wasm       WebAssembly Component Model");
+    println!("  ilo build <file.ilo> --0          Zero source (.0)");
+    println!("  ilo build <file.ilo> --0bin       Native binary via Zero");
+    println!("  ilo build <file.ilo> --py         Python source");
+    println!("  See `ilo build --help` for all options.\n");
     println!("Examples:");
     println!("  ilo 'f x:n>n;*x 2' 5             Define and call f(5) → 10");
     println!("  ilo 'f xs:L n>n;len xs' 1,2,3     Pass a list → 3");

@@ -391,9 +391,11 @@ fn help_flag_shows_usage() {
     let out = ilo().args(["--help"]).output().expect("failed to run ilo");
     assert!(out.status.success());
     let stdout = String::from_utf8_lossy(&out.stdout);
+    // Stage 5f renamed "Backends:" to the manifesto-strict
+    // "Compilation (`ilo build`):" section.
     assert!(
-        stdout.contains("Backends:"),
-        "expected backends section, got: {}",
+        stdout.contains("Compilation (`ilo build`):"),
+        "expected compilation section, got: {}",
         stdout
     );
 }
@@ -404,8 +406,8 @@ fn help_short_flag_shows_usage() {
     assert!(out.status.success());
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(
-        stdout.contains("Backends:"),
-        "expected backends section, got: {}",
+        stdout.contains("Compilation (`ilo build`):"),
+        "expected compilation section, got: {}",
         stdout
     );
 }
@@ -473,12 +475,20 @@ fn help_shows_usage() {
     let out = ilo().args(["help"]).output().expect("failed to run ilo");
     assert!(out.status.success());
     let stdout = String::from_utf8_lossy(&out.stdout);
+    // Stage 5f: manifesto-strict help drops the engine-selector listings
+    // from the top-level surface. Engine selectors still work on `ilo run`
+    // but aren't user-facing in `ilo --help`.
     assert!(
-        stdout.contains("Backends:"),
-        "expected backends section, got: {}",
+        stdout.contains("Compilation (`ilo build`):"),
+        "expected compilation section, got: {}",
         stdout
     );
     assert!(stdout.contains("--vm"), "expected --vm, got: {}", stdout);
+    assert!(
+        stdout.contains("ilo build <file.ilo> --wasm"),
+        "expected --wasm form in build help, got: {}",
+        stdout
+    );
 }
 
 #[test]
