@@ -3547,6 +3547,29 @@ impl VerifyContext {
                         } else {
                             expected_arity.to_string()
                         };
+                        // Callee-specific hint: `lst`/`lset` is "list set at
+                        // index" (3 args). Agents reaching for it with a single
+                        // arg usually misread the name as "last element" — the
+                        // canonical form for that is `at xs -1`. For other
+                        // wrong arities, point at the correct 3-arg signature
+                        // without the "last element" misread.
+                        let hint = if callee == "lst" {
+                            if args.len() == 1 {
+                                Some(
+                                    "`lst xs i v` updates index i; \
+                                     for \"last element\" use `at xs -1`"
+                                        .to_string(),
+                                )
+                            } else {
+                                Some(
+                                    "`lst xs i v` returns a new list with \
+                                     index i replaced by v"
+                                        .to_string(),
+                                )
+                            }
+                        } else {
+                            None
+                        };
                         self.err(
                             "ILO-T006",
                             func,
@@ -3554,7 +3577,7 @@ impl VerifyContext {
                                 "arity mismatch: '{callee}' expects {arity_desc} args, got {}",
                                 args.len()
                             ),
-                            None,
+                            hint,
                             Some(span),
                         );
                         return Ty::Unknown;
