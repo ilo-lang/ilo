@@ -960,10 +960,10 @@ fn inline_kind_for_opcode(op: u8) -> InlineOpKind {
         // literal index, NOT a register, so the generic "shift by window_base"
         // rewrite in `emit_inlined_body` would corrupt it. If a predicate
         // uses literal indexing it falls back to OP_CALL_DYN.
-        OP_HAS | OP_HD | OP_TL | OP_REV | OP_LEN | OP_MOVE | OP_MOVE_OWN | OP_NOT | OP_NEG | OP_AT
-        | OP_LISTGET | OP_MGET | OP_MHAS | OP_ABS | OP_FLR | OP_CEL | OP_MIN | OP_MAX | OP_STR
-        | OP_NUM | OP_CHR | OP_ORD | OP_UPR | OP_LWR | OP_CAP | OP_CHARS | OP_TRM | OP_ROU
-        | OP_ISNUM | OP_ISTEXT | OP_ISBOOL | OP_ISLIST => InlineOpKind::Abc,
+        OP_HAS | OP_HD | OP_TL | OP_REV | OP_LEN | OP_MOVE | OP_MOVE_OWN | OP_NOT | OP_NEG
+        | OP_AT | OP_LISTGET | OP_MGET | OP_MHAS | OP_ABS | OP_FLR | OP_CEL | OP_MIN | OP_MAX
+        | OP_STR | OP_NUM | OP_CHR | OP_ORD | OP_UPR | OP_LWR | OP_CAP | OP_CHARS | OP_TRM
+        | OP_ROU | OP_ISNUM | OP_ISTEXT | OP_ISBOOL | OP_ISLIST => InlineOpKind::Abc,
 
         // Wrappers — ABC, A and B are regs (C unused / discriminator).
         OP_WRAPOK | OP_WRAPERR | OP_ISOK | OP_ISERR => InlineOpKind::Abc,
@@ -2180,8 +2180,7 @@ impl RegCompiler {
                         && ref_name == name
                         && self.resolve_local(function).is_none()
                         && !crate::builtins::Builtin::is_builtin(function)
-                        && let Some(func_idx) =
-                            self.func_names.iter().position(|n| n == function)
+                        && let Some(func_idx) = self.func_names.iter().position(|n| n == function)
                         && func_idx <= 255
                         && args.len() <= 255
                     {
@@ -4311,13 +4310,12 @@ impl RegCompiler {
                             // still gates on rc_count.
                             let tail_save = self.in_tail_position;
                             self.in_tail_position = false;
-                            let tail_local_reg: Option<u8> = if tail_save
-                                && let Expr::Ref(ref_name) = &args[0]
-                            {
-                                self.resolve_local(ref_name)
-                            } else {
-                                None
-                            };
+                            let tail_local_reg: Option<u8> =
+                                if tail_save && let Expr::Ref(ref_name) = &args[0] {
+                                    self.resolve_local(ref_name)
+                                } else {
+                                    None
+                                };
                             let rb = self.compile_expr(&args[0]);
                             let rc = self.compile_expr(&args[1]);
                             let rd = self.compile_expr(&args[2]);

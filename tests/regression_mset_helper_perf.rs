@@ -163,13 +163,15 @@ fn addto_extra_args_jit() {
 // expression of the fn body. A non-tail mset followed by a use of the
 // original map must keep the source map intact.
 
-const NON_TAIL_PRESERVES_SOURCE: &str = concat!(
-    "go z:n>n;m=mset mmap \"k\" 1;m2=mset m \"j\" 2;??(mget m \"j\") (-1)\n",
-);
+const NON_TAIL_PRESERVES_SOURCE: &str =
+    "go z:n>n;m=mset mmap \"k\" 1;m2=mset m \"j\" 2;??(mget m \"j\") (-1)\n";
 
 #[test]
 fn non_tail_preserves_source_tree() {
-    assert_eq!(run("--run-tree", NON_TAIL_PRESERVES_SOURCE, "go", "0"), "-1");
+    assert_eq!(
+        run("--run-tree", NON_TAIL_PRESERVES_SOURCE, "go", "0"),
+        "-1"
+    );
 }
 
 #[test]
