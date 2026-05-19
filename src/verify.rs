@@ -336,7 +336,7 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("run", &["t", "L t"], "R (M t t) t"),
     ("rd", &["t"], "R ? t"),
     ("rd", &["t", "t"], "R ? t"),
-    ("ls", &["t"], "R (L t) t"),
+    ("lsd", &["t"], "R (L t) t"),
     ("walk", &["t"], "R (L t) t"),
     ("glob", &["t", "t"], "R (L t) t"),
     ("rdl", &["t"], "R (L t) t"),
