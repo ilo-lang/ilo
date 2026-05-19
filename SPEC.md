@@ -220,11 +220,12 @@ Short builtin names are precious surface and ilo reserves a stable subset of the
 **Currently reserved short names (1-3 characters).** Every name in this list is a builtin today and triggers `ILO-P011` if used as a binding or user-function name:
 
 ```
-2-char  at hd tl rd wr ct
+1-char  e
+2-char  at hd pi tl rd wr ct
 3-char  abs avg cap cat cel chr cos det dot env exp fft fld flr flt fmt
         frq get grp has inv len log lsd lst lwr map max min mod now num
         ord pow pst rdb rdl rev rgx rng rnd rou run sin slc spl srt str
-        sum tan trm unq upr wrl zip
+        sum tan tau trm unq upr wrl zip
 ```
 
 `rng` is the short-form alias for the canonical `range` builtin; it is reserved with the same shadow-prevention semantics as a canonical builtin name (binding `rng=...` or declaring `rng x:...` fires `ILO-P011`). `rand` is the short-form alias for the canonical `rnd` builtin (added 0.12.1) and is reserved with the same semantics.
@@ -596,6 +597,9 @@ Called like functions, compiled to dedicated opcodes.
 | `acos n` | arccosine, returns radians in `[0, pi]`; NaN outside `[-1, 1]` | `n` |
 | `atan n` | arctangent, returns radians in `[-pi/2, pi/2]` | `n` |
 | `atan2 y x` | two-argument arctangent (y, x order; radians) | `n` |
+| `pi` | 3.141592653589793 (IEEE-754 f64, `f64::consts::PI`) | `n` |
+| `tau` | 6.283185307179586 (== 2\*pi; one full turn in radians) | `n` |
+| `e` | 2.718281828459045 (Euler's number, `f64::consts::E`) | `n` |
 | `transpose m` | transpose row-major matrix | `L (L n)` |
 | `matmul a b` | matrix product | `L (L n)` |
 | `dot a b` | vector dot product | `n` |
