@@ -1389,6 +1389,8 @@ fn compile_cmd(args: &[String]) -> i32 {
     let mut bench_mode = false;
     let mut as_json = false;
     let mut python_mode = false;
+    let mut wasm_mode = false;
+    let mut wasm_target_arg: Option<String> = None;
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
@@ -1409,6 +1411,17 @@ fn compile_cmd(args: &[String]) -> i32 {
             "--py" => {
                 python_mode = true;
             }
+            "--wasm" => {
+                wasm_mode = true;
+            }
+            "--target" => {
+                i += 1;
+                if i >= args.len() {
+                    eprintln!("Error: --target requires a target name (e.g. wasm32-component)");
+                    return 1;
+                }
+                wasm_target_arg = Some(args[i].clone());
+            }
             _ if source_arg.is_none() => {
                 source_arg = Some(&args[i]);
             }
@@ -1421,6 +1434,14 @@ fn compile_cmd(args: &[String]) -> i32 {
 
     if python_mode && bench_mode {
         eprintln!("Error: --py and --bench are mutually exclusive");
+        return 1;
+    }
+    if wasm_mode && (python_mode || bench_mode) {
+        eprintln!("Error: --wasm is mutually exclusive with --py / --bench");
+        return 1;
+    }
+    if wasm_target_arg.is_some() && !wasm_mode {
+        eprintln!("Error: --target only applies to --wasm builds");
         return 1;
     }
 
@@ -1455,6 +1476,12 @@ fn compile_cmd(args: &[String]) -> i32 {
                 format!("{}.py", source_arg.trim_end_matches(".ilo"))
             } else {
                 "out.py".to_string()
+            }
+        } else if wasm_mode {
+            if source_arg.ends_with(".ilo") {
+                format!("{}.wasm", source_arg.trim_end_matches(".ilo"))
+            } else {
+                "out.wasm".to_string()
             }
         } else if source_arg.ends_with(".ilo") {
             source_arg.trim_end_matches(".ilo").to_string()
@@ -1570,6 +1597,49 @@ fn compile_cmd(args: &[String]) -> i32 {
             }
             Err(e) => {
                 eprintln!("Python transpile error: {}", e);
+                1
+            }
+        };
+    }
+
+    // `--wasm`: emit a WebAssembly module via the WasmBackend. The default
+    // target is wasm32-component (Component Model wrapper); `--target` lets
+    // the user pick wasm32-wasip1, wasm32-wasip2, or wasm32-unknown-unknown.
+    // See `backend/wasm/mod.rs` and `docs/wasm-capabilities.md` for the
+    // per-target capability matrix.
+    if wasm_mode {
+        let target = match wasm_target_arg.as_deref() {
+            None => ilo::backend::wasm::WasmTarget::Component,
+            Some(s) => match ilo::backend::wasm::WasmTarget::parse(s) {
+                Some(t) => t,
+                None => {
+                    eprintln!(
+                        "Error: unknown --target `{}`. Supported: wasm32-wasip1, wasm32-wasip2, wasm32-component, wasm32-unknown-unknown (alias wasm32-web)",
+                        s
+                    );
+                    return 1;
+                }
+            },
+        };
+        let hir = match ilo::hir::lower(&program, &verify_result) {
+            Ok(h) => h,
+            Err(e) => {
+                eprintln!("HIR lowering error: {}", e);
+                return 1;
+            }
+        };
+        let config = ilo::backend::wasm::WasmConfig {
+            target,
+            output_path: std::path::PathBuf::from(&output),
+            entry: func_name.map(|s| s.to_string()),
+        };
+        return match ilo::backend::wasm::emit(&hir, config) {
+            Ok(_artefact) => {
+                eprintln!("Compiled: {}", output);
+                0
+            }
+            Err(e) => {
+                eprintln!("WASM compile error: {}", e);
                 1
             }
         };
@@ -2680,6 +2750,13 @@ fn dispatch_cli(cli: cli::Cli, bare_has_bin: bool) -> i32 {
             }
             if c.py {
                 args.push("--py".into());
+            }
+            if c.wasm {
+                args.push("--wasm".into());
+            }
+            if let Some(ref t) = c.target {
+                args.push("--target".into());
+                args.push(t.clone());
             }
             if let Some(ref f) = c.func {
                 args.push(f.clone());
@@ -3985,6 +4062,7 @@ fn print_help() {
     println!("  ilo <file.@> [args...]           Run from file (.ilo also accepted)");
     println!("  ilo <code> func [args...]         Run a specific function");
     println!("  ilo build <file.ilo> --py         Transpile to Python source");
+    println!("  ilo build <file.ilo> --wasm       Compile to WASM (Component Model by default)");
     println!("  ilo <code> --explain / -x            Annotate each statement with its role");
     println!("  ilo <code> --dense / -d             Reformat (dense wire format)");
     println!("  ilo <code> --expanded / -e          Reformat (expanded human format)");

@@ -300,6 +300,20 @@ pub struct CompileArgs {
     /// `--emit python` flag. Use `ilo build file.ilo --py [-o out.py]`.
     #[arg(long)]
     pub py: bool,
+
+    /// Compile to WebAssembly via the WASM backend (Phase 5 Stage 5d).
+    ///
+    /// Default target is `wasm32-component`. Pick a different target with
+    /// `--target` (e.g. `--target wasm32-wasip1` for plain WASI preview1).
+    #[arg(long)]
+    pub wasm: bool,
+
+    /// WASM target triple (only meaningful with `--wasm`). Accepts
+    /// `wasm32-wasip1`, `wasm32-wasip2`, `wasm32-component`,
+    /// `wasm32-unknown-unknown`, plus the aliases `wasm32-wasi` and
+    /// `wasm32-web`.
+    #[arg(long)]
+    pub target: Option<String>,
 }
 
 // ── Check ──────────────────────────────────────────────────────────────────────
