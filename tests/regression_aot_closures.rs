@@ -187,7 +187,7 @@ fn aot_fld_user_fn() {
 fn aot_grp_by_user_fn() {
     assert_cross_engine(
         "grp-user-fn",
-        "parity n:n>t;=mod n 2 0{\"even\"};\"odd\"\nmain>n;g=grp parity [1,2,3,4];len mkeys g\n",
+        "parity n:n>t;?(=mod n 2 0){\"even\"}{\"odd\"}\nmain>n;g=grp parity [1,2,3,4];len mkeys g\n",
         b"2\n",
     );
 }
@@ -199,7 +199,7 @@ fn aot_grp_by_user_fn() {
 fn aot_uniqby_user_fn() {
     assert_cross_engine(
         "uniqby-user-fn",
-        "parity n:n>t;=mod n 2 0{\"even\"};\"odd\"\nmain>n;u=uniqby parity [1,2,3,4];len u\n",
+        "parity n:n>t;?(=mod n 2 0){\"even\"}{\"odd\"}\nmain>n;u=uniqby parity [1,2,3,4];len u\n",
         b"2\n",
     );
 }
