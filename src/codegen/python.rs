@@ -717,6 +717,23 @@ fn emit_expr(out: &mut String, level: usize, expr: &Expr) -> String {
             if function == "rou" && args.len() == 1 {
                 return format!("float(round({}))", emit_expr(out, level, &args[0]));
             }
+            if function == "argmax" && args.len() == 1 {
+                // Pure Python: avoid numpy dep. Matches first-occurrence-wins
+                // tie-breaking by walking from the front with strict `>`.
+                let xs = emit_expr(out, level, &args[0]);
+                return format!("float(max(range(len({0})), key=lambda __i: {0}[__i]))", xs);
+            }
+            if function == "argmin" && args.len() == 1 {
+                let xs = emit_expr(out, level, &args[0]);
+                return format!("float(min(range(len({0})), key=lambda __i: {0}[__i]))", xs);
+            }
+            if function == "argsort" && args.len() == 1 {
+                let xs = emit_expr(out, level, &args[0]);
+                return format!(
+                    "[float(__i) for __i in sorted(range(len({0})), key=lambda __i: {0}[__i])]",
+                    xs
+                );
+            }
             if function == "srt" && args.len() == 2 {
                 let key_fn = emit_expr(out, level, &args[0]);
                 let xs = emit_expr(out, level, &args[1]);
