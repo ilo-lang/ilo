@@ -204,7 +204,17 @@ impl std::fmt::Display for BackendError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             BackendError::Io(e) => write!(f, "{e}"),
-            BackendError::CodegenFailed { message, .. } => write!(f, "{message}"),
+            // Include the structured code in the rendered form so
+            // downstream consumers (CLI stderr, conformance harness)
+            // can gate on `\bILO-B###\b` without relying on the JSON
+            // path. An empty code (legacy / untyped) is suppressed.
+            BackendError::CodegenFailed { code, message, .. } => {
+                if code.is_empty() {
+                    write!(f, "{message}")
+                } else {
+                    write!(f, "[{code}] {message}")
+                }
+            }
             BackendError::UnsupportedFeature { feature, backend } => write!(
                 f,
                 "backend '{backend}' does not support feature '{feature}'"
