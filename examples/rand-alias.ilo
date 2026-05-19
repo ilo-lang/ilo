@@ -1,0 +1,31 @@
+-- `rand` is a short-form alias for the canonical `rnd` builtin (random).
+-- Added in 0.12.1 because `rand` is the universal short-form across
+-- C / Python / Rust / Go / JS; agents reach for it first. Both forms
+-- below resolve to `rnd` after parsing, so they're behaviourally
+-- identical on every engine.
+--
+-- Disambiguation: `rnd` is random, NOT round. For round use `rou`
+-- (which has its own long-form alias `round`). Mixing them up is the
+-- single most common naming trap personas hit on this builtin.
+
+-- Two-arg form with lo == hi is deterministic: returns exactly that value.
+-- Lets us pin alias and canonical against the same expected output.
+via-alias>n;rand 7 7
+
+via-canonical>n;rnd 7 7
+
+-- Bind, then use: exercises the Ref-position alias rewrite path.
+bind-then-use>n;x=rand 5 5;x
+
+-- `rou` is round, NOT `rnd`. Pin the difference so the example doubles
+-- as documentation of which name does which.
+rou-is-round>n;rou 3.7
+
+-- run: via-alias
+-- out: 7
+-- run: via-canonical
+-- out: 7
+-- run: bind-then-use
+-- out: 5
+-- run: rou-is-round
+-- out: 4
