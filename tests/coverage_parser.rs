@@ -1331,3 +1331,37 @@ fn paren_in_argument() {
 fn record_in_arg_position() {
     ok("type p{x:n}\nid q:p>p;q\nf>p;id (p x:1)");
 }
+
+// ---------------------------------------------------------------------------
+// Short-form alias `rand` → `rnd` parser guards
+// ---------------------------------------------------------------------------
+//
+// These directly exercise the three in-parser rejection paths added for the
+// `rand` alias so coverage doesn't have to ride on subprocess test runs (the
+// codecov build doesn't propagate coverage across `Command::new` spawns).
+
+#[test]
+fn rand_as_top_level_binding_rejected() {
+    // parse_decl top-level shape: `rand=...` before any function decl.
+    fail_code("rand=5", "ILO-P011");
+}
+
+#[test]
+fn rand_as_local_binding_rejected() {
+    // parse_stmt local-binding shape inside a function body: `rand=...`.
+    fail_code("main>n;rand=5;rand", "ILO-P011");
+}
+
+#[test]
+fn rand_as_user_function_name_rejected() {
+    // parse_fn_decl head shape: `rand x:n>n;...`.
+    fail_code("rand x:n>n;+x 1", "ILO-P011");
+}
+
+#[test]
+fn rand_zero_arg_call_parses() {
+    // parse_expr zero-arg-builtin shape: bare `rand` should synthesise a Call
+    // (after alias rewrite to `rnd`), matching the existing zero-arg pattern
+    // for `rnd`/`now`/`mmap`.
+    ok("f>n;rand");
+}
