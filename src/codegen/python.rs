@@ -734,6 +734,27 @@ fn emit_expr(out: &mut String, level: usize, expr: &Expr) -> String {
                 let xs = emit_expr(out, level, &args[0]);
                 return format!("list(dict.fromkeys({}))", xs);
             }
+            if function == "mget-or" && args.len() == 3 {
+                // mget-or m k default — return m.get(k, default). Python's
+                // dict.get does exactly this; the iife pins evaluation order
+                // (m, k, default) so the args render once even when reused.
+                let m = emit_expr(out, level, &args[0]);
+                let k = emit_expr(out, level, &args[1]);
+                let d = emit_expr(out, level, &args[2]);
+                return format!("(lambda _m, _k, _d: _m.get(_k, _d))({}, {}, {})", m, k, d);
+            }
+            if function == "lget-or" && args.len() == 3 {
+                // lget-or xs i default — Python list indexing with default.
+                // Mirrors the tree/VM semantics: floor the index, resolve
+                // negatives against length, return default when OOB.
+                let xs = emit_expr(out, level, &args[0]);
+                let i = emit_expr(out, level, &args[1]);
+                let d = emit_expr(out, level, &args[2]);
+                return format!(
+                    "(lambda _xs, _i, _d: (lambda _idx: _xs[_idx] if 0 <= _idx < len(_xs) else _d)((__import__('math').floor(float(_i)) + len(_xs)) if (__import__('math').floor(float(_i)) < 0) else __import__('math').floor(float(_i))))({}, {}, {})",
+                    xs, i, d
+                );
+            }
             if function == "fmt" && !args.is_empty() {
                 let tmpl = emit_expr(out, level, &args[0]);
                 let rest: Vec<String> =
