@@ -2126,6 +2126,109 @@ impl RegCompiler {
                         self.emit_abc(0, rd, 0, 0);
                         return None;
                     }
+                    // Peephole: `name = fn(name, ...)` for a static user fn —
+                    // emit OP_CALL_OWN1 so the first arg threads into the
+                    // callee without an RC bump. Inside the callee the
+                    // accumulator stays at RC=1, so any in-place mutation
+                    // (OP_MSET, OP_LISTAPPEND, OP_ADD_SS in-place) keeps its
+                    // amortised-O(1) fast path even when the agent factors
+                    // the per-row update into a helper fn.
+                    //
+                    // Audit:
+                    //   * `function` must resolve to a static user fn — if
+                    //     it resolves to a local register first (closure /
+                    //     dynamic FnRef), `resolve_local` would have shunted
+                    //     us through OP_CALL_DYN at line 4922 in the normal
+                    //     compile_expr path. We replicate that check here
+                    //     to keep this peephole safe.
+                    //   * Builtins go through their native opcode emitters
+                    //     and the tree bridge — explicitly skip those.
+                    //   * The `unwrap: UnwrapMode::None` guard keeps us out
+                    //     of the `!` / `!!` paths; those have an extra
+                    //     post-call emit that wants the result register to
+                    //     stay live. (We could lift this later.)
+                    if let Expr::Call {
+                        function,
+                        args,
+                        unwrap: UnwrapMode::None,
+                    } = value
+                        && !args.is_empty()
+                        && let Expr::Ref(ref_name) = &args[0]
+                        && ref_name == name
+                        && self.resolve_local(function).is_none()
+                        && !crate::builtins::Builtin::is_builtin(function)
+                        && let Some(func_idx) =
+                            self.func_names.iter().position(|n| n == function)
+                        && func_idx <= 255
+                        && args.len() <= 255
+                    {
+                        // Compile non-first args. We compile them BEFORE
+                        // reserving the args window so any sub-expression
+                        // register allocations don't collide.
+                        let rest_regs: Vec<u8> =
+                            args.iter().skip(1).map(|e| self.compile_expr(e)).collect();
+
+                        let a = self.alloc_reg(); // result register
+                        let args_base = self.next_reg;
+                        if (self.next_reg as usize) + args.len() > 255 {
+                            self.first_error.get_or_insert_with(|| {
+                                CompileError::CallRegisterOverflow {
+                                    fn_name: self.current_fn_name.clone(),
+                                    callee: function.clone(),
+                                    span: self.current_span,
+                                }
+                            });
+                            self.next_reg = 255;
+                            self.max_reg = 255;
+                            return None;
+                        }
+                        self.next_reg += args.len() as u8;
+                        if self.next_reg > self.max_reg {
+                            self.max_reg = self.next_reg;
+                        }
+
+                        // First arg: move-not-clone from `existing_reg` into
+                        // args_base. Clears existing_reg to Nil — the local
+                        // is re-bound below when we move the result back.
+                        self.emit_abc(OP_MOVE_OWN, args_base, existing_reg, 0);
+                        // Remaining args: normal MOVE (clone-on-push happens
+                        // in OP_CALL_OWN1's push loop for i > 0).
+                        for (i, &arg_reg) in rest_regs.iter().enumerate() {
+                            let target = args_base + 1 + i as u8;
+                            if arg_reg != target {
+                                self.emit_abc(OP_MOVE, target, arg_reg, 0);
+                            }
+                        }
+
+                        let bx = ((func_idx as u16) << 8) | args.len() as u16;
+                        self.emit_abx(OP_CALL_OWN1, a, bx);
+
+                        // Propagate return-type metadata onto the temporary
+                        // result reg so the subsequent OP_MOVE_OWN into
+                        // existing_reg carries the correct type info.
+                        if func_idx < self.func_return_types.len() {
+                            let ret_ty = &self.func_return_types[func_idx];
+                            self.reg_record_type[a as usize] = self.resolve_type_id(ret_ty);
+                            if *ret_ty == Type::Number {
+                                self.reg_is_num[a as usize] = true;
+                            } else {
+                                self.current_all_regs_numeric = false;
+                            }
+                        }
+
+                        // Move result back into the local's existing register.
+                        // OP_MOVE_OWN drops existing_reg's current value (Nil
+                        // from the move-out above, drop is a no-op) and
+                        // installs the result, clearing the temp slot.
+                        self.emit_abc(OP_MOVE_OWN, existing_reg, a, 0);
+                        self.reg_record_type[existing_reg as usize] =
+                            self.reg_record_type[a as usize];
+                        self.reg_is_num[existing_reg as usize] = self.reg_is_num[a as usize];
+                        // Reset next_reg back to before the call window so
+                        // subsequent codegen reuses those slots.
+                        self.next_reg = a;
+                        return None;
+                    }
                     // General re-binding: compile value and move to existing register
                     let reg = self.compile_expr(value);
                     if reg != existing_reg {
