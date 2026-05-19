@@ -1,0 +1,33 @@
+-- prod and cprod builtins. prod xs:L n > n, product of all elements (1 for empty).
+-- cprod xs:L n > L n, running product mirroring cumsum.
+
+-- prod: basic product
+product>n;prod [1, 2, 3, 4, 5]
+
+-- prod: empty list returns multiplicative identity
+empty>n;prod []
+
+-- prod: collapses to zero when list contains zero
+with-zero>n;prod [3, 5, 0, 7]
+
+-- cprod: running product [1, 1*2, 1*2*3, ...]
+running>L n;cprod [1, 2, 3, 4]
+
+-- cprod: empty input returns empty list
+empty-c>L n;cprod []
+
+-- cprod: factorials via running product
+factorials>L n;cprod [1, 2, 3, 4, 5]
+
+-- run: product
+-- out: 120
+-- run: empty
+-- out: 1
+-- run: with-zero
+-- out: 0
+-- run: running
+-- out: [1, 2, 6, 24]
+-- run: empty-c
+-- out: []
+-- run: factorials
+-- out: [1, 2, 6, 24, 120]

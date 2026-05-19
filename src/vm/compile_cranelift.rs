@@ -108,6 +108,8 @@ struct HelperFuncs {
     fft: FuncId,
     ifft: FuncId,
     cumsum: FuncId,
+    prod: FuncId,
+    cprod: FuncId,
     median: FuncId,
     min_lst: FuncId,
     max_lst: FuncId,
@@ -333,6 +335,8 @@ fn declare_all_helpers(module: &mut ObjectModule) -> HelperFuncs {
         fft: declare_helper(module, "jit_fft", 2, 1),
         ifft: declare_helper(module, "jit_ifft", 2, 1),
         cumsum: declare_helper(module, "jit_cumsum", 2, 1),
+        prod: declare_helper(module, "jit_prod", 2, 1),
+        cprod: declare_helper(module, "jit_cprod", 2, 1),
         median: declare_helper(module, "jit_median", 2, 1),
         min_lst: declare_helper(module, "jit_min_lst", 2, 1),
         max_lst: declare_helper(module, "jit_max_lst", 2, 1),
@@ -1119,7 +1123,7 @@ fn compile_function_body(
                 | OP_NOWMS | OP_MOD | OP_CLAMP | OP_POW | OP_SQRT | OP_LOG | OP_EXP | OP_SIN
                 | OP_COS | OP_TAN | OP_LOG10 | OP_LOG2 | OP_ASIN | OP_ACOS | OP_ATAN | OP_ATAN2
                 | OP_MEDIAN | OP_MIN_LST | OP_MAX_LST | OP_QUANTILE | OP_STDEV | OP_VARIANCE
-                | OP_SUM | OP_AVG | OP_DOT | OP_DET | OP_ORD => {
+                | OP_SUM | OP_AVG | OP_DOT | OP_DET | OP_ORD | OP_PROD => {
                     num_write[a] = true;
                 }
                 // LOADK: numeric only when the constant itself is a number.
@@ -1156,9 +1160,9 @@ fn compile_function_body(
                 | OP_CHR | OP_CHARS | OP_UNQ | OP_UNIQBY | OP_PARTITION | OP_FRQ | OP_NUM
                 | OP_SRT_BY_KEY | OP_GRP_BY_KEY | OP_UNIQ_BY_KEY | OP_RGXSUB | OP_ZIP
                 | OP_ENUMERATE | OP_RANGE | OP_WINDOW | OP_WINDOW_VIEW | OP_CHUNKS | OP_CUMSUM
-                | OP_SETUNION | OP_SETINTER | OP_SETDIFF | OP_FFT | OP_IFFT | OP_TRANSPOSE
-                | OP_MATMUL | OP_INV | OP_SOLVE | OP_DTFMT | OP_DTPARSE | OP_FLAT
-                | OP_CALL_BUILTIN_TREE | OP_LOADFN | OP_CALL_DYN => {
+                | OP_CPROD | OP_SETUNION | OP_SETINTER | OP_SETDIFF | OP_FFT | OP_IFFT
+                | OP_TRANSPOSE | OP_MATMUL | OP_INV | OP_SOLVE | OP_DTFMT | OP_DTPARSE
+                | OP_FLAT | OP_CALL_BUILTIN_TREE | OP_LOADFN | OP_CALL_DYN => {
                     non_num_write[a] = true;
                     non_bool_write[a] = true;
                 }
@@ -2713,6 +2717,16 @@ fn compile_function_body(
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
             }
+            OP_CPROD => {
+                // cprod returns a list — no F64-shadow refresh needed.
+                let bv = builder.use_var(vars[b_idx]);
+                let span_bits = super::jit_cranelift::pack_span_bits(chunk.spans[ip]);
+                let span_arg = builder.ins().iconst(I64, span_bits);
+                let fref = get_func_ref(&mut builder, module, helpers.cprod);
+                let call_inst = builder.ins().call(fref, &[bv, span_arg]);
+                let result = builder.inst_results(call_inst)[0];
+                builder.def_var(vars[a_idx], result);
+            }
             OP_MEDIAN => {
                 let bv = builder.use_var(vars[b_idx]);
                 let span_bits = super::jit_cranelift::pack_span_bits(chunk.spans[ip]);
@@ -2773,6 +2787,15 @@ fn compile_function_body(
                 let span_bits = super::jit_cranelift::pack_span_bits(chunk.spans[ip]);
                 let span_arg = builder.ins().iconst(I64, span_bits);
                 let fref = get_func_ref(&mut builder, module, helpers.sum);
+                let call_inst = builder.ins().call(fref, &[bv, span_arg]);
+                let result = builder.inst_results(call_inst)[0];
+                builder.def_var(vars[a_idx], result);
+            }
+            OP_PROD => {
+                let bv = builder.use_var(vars[b_idx]);
+                let span_bits = super::jit_cranelift::pack_span_bits(chunk.spans[ip]);
+                let span_arg = builder.ins().iconst(I64, span_bits);
+                let fref = get_func_ref(&mut builder, module, helpers.prod);
                 let call_inst = builder.ins().call(fref, &[bv, span_arg]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);

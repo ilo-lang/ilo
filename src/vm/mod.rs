@@ -347,6 +347,8 @@ pub(crate) const OP_STDEV: u8 = 143; // R[A] = stdev(R[B])
 pub(crate) const OP_VARIANCE: u8 = 144; // R[A] = variance(R[B])
 pub(crate) const OP_SUM: u8 = 165; // R[A] = sum(R[B])  — empty list = 0
 pub(crate) const OP_AVG: u8 = 166; // R[A] = avg(R[B])  — empty list errors
+pub(crate) const OP_PROD: u8 = 184; // R[A] = prod(R[B])  — empty list = 1
+pub(crate) const OP_CPROD: u8 = 185; // R[A] = cprod(R[B])
 pub(crate) const OP_FLAT: u8 = 174; // R[A] = flat(R[B]) — flatten one level, non-list elements pass through
 // Higher-order: uniqby fn xs — pre-allocated, HOF dispatch not yet wired in VM.
 pub(crate) const OP_UNIQBY: u8 = 116; // R[A] = uniqby(R[B] (fn-ref), R[C] (list))
@@ -3899,6 +3901,19 @@ impl RegCompiler {
                             self.reg_is_num[ra as usize] = true;
                             return ra;
                         }
+                        (Builtin::Prod, 1) => {
+                            let rb = self.compile_expr(&args[0]);
+                            let ra = self.alloc_reg();
+                            self.emit_abc(OP_PROD, ra, rb, 0);
+                            self.reg_is_num[ra as usize] = true;
+                            return ra;
+                        }
+                        (Builtin::Cprod, 1) => {
+                            let rb = self.compile_expr(&args[0]);
+                            let ra = self.alloc_reg();
+                            self.emit_abc(OP_CPROD, ra, rb, 0);
+                            return ra;
+                        }
                         (Builtin::Avg, 1) => {
                             let rb = self.compile_expr(&args[0]);
                             let ra = self.alloc_reg();
@@ -5802,10 +5817,10 @@ fn chunk_is_all_numeric(chunk: &Chunk) -> bool {
             | OP_GETMANY | OP_POST | OP_POSTH | OP_RD | OP_RDL | OP_RDJL | OP_WR | OP_WRL
             | OP_MAPNEW | OP_MGET | OP_MSET | OP_MKEYS | OP_MVALS | OP_HD | OP_AT | OP_LST
             | OP_TL | OP_FMT2 | OP_RGXSUB | OP_ZIP | OP_ENUMERATE | OP_WINDOW | OP_WINDOW_VIEW
-            | OP_FFT | OP_IFFT | OP_RANGE | OP_CHUNKS | OP_CUMSUM | OP_SETUNION | OP_SETINTER
-            | OP_SETDIFF | OP_TRANSPOSE | OP_MATMUL | OP_INV | OP_SOLVE | OP_DTFMT | OP_DTPARSE
-            | OP_FLAT | OP_CALL_BUILTIN_TREE | OP_LOADFN | OP_CALL_DYN | OP_MAKE_CLOSURE
-            | OP_SRT_BY_KEY | OP_GRP_BY_KEY | OP_UNIQ_BY_KEY => {
+            | OP_FFT | OP_IFFT | OP_RANGE | OP_CHUNKS | OP_CUMSUM | OP_CPROD | OP_SETUNION
+            | OP_SETINTER | OP_SETDIFF | OP_TRANSPOSE | OP_MATMUL | OP_INV | OP_SOLVE
+            | OP_DTFMT | OP_DTPARSE | OP_FLAT | OP_CALL_BUILTIN_TREE | OP_LOADFN | OP_CALL_DYN
+            | OP_MAKE_CLOSURE | OP_SRT_BY_KEY | OP_GRP_BY_KEY | OP_UNIQ_BY_KEY => {
                 return false;
             }
             _ => {}
@@ -11989,6 +12004,42 @@ impl<'a> VM<'a> {
                         Err(msg) => vm_err!(VmError::Type(msg)),
                     }
                 }
+                OP_PROD => {
+                    let a = ((inst >> 16) & 0xFF) as usize + base;
+                    let b = ((inst >> 8) & 0xFF) as usize + base;
+                    let v = reg!(b);
+                    match vm_prod(v) {
+                        Ok(out) => reg_set!(a, out),
+                        Err(msg) => vm_err!(VmError::Type(msg)),
+                    }
+                }
+                OP_CPROD => {
+                    let a = ((inst >> 16) & 0xFF) as usize + base;
+                    let b = ((inst >> 8) & 0xFF) as usize + base;
+                    let v = reg!(b);
+                    let result = if v.is_heap() && (v.0 & TAG_MASK) == TAG_LIST {
+                        // SAFETY: TAG_LIST + is_heap() → live List/View Rc.
+                        let items: &[NanVal] = slice_of(unsafe { v.as_heap_ref() });
+                        let mut total = 1.0_f64;
+                        let mut out: Vec<NanVal> = Vec::with_capacity(items.len());
+                        let mut bad = false;
+                        for item in items {
+                            if !item.is_number() {
+                                bad = true;
+                                break;
+                            }
+                            total *= item.as_number();
+                            out.push(NanVal::number(total));
+                        }
+                        if bad {
+                            vm_err!(VmError::Type("cprod: list elements must be numbers"));
+                        }
+                        NanVal::heap_list(out)
+                    } else {
+                        vm_err!(VmError::Type("cprod requires a list of numbers"));
+                    };
+                    reg_set!(a, result);
+                }
                 OP_AVG => {
                     let a = ((inst >> 16) & 0xFF) as usize + base;
                     let b = ((inst >> 8) & 0xFF) as usize + base;
@@ -15714,6 +15765,19 @@ fn vm_sum(v: NanVal) -> Result<NanVal, &'static str> {
     Ok(NanVal::number(total))
 }
 
+/// `prod xs` — product of a list of numbers. Empty list returns 1.0 (multiplicative identity).
+fn vm_prod(v: NanVal) -> Result<NanVal, &'static str> {
+    let items = vm_list_slice(&v, "prod requires a list of numbers")?;
+    let mut total = 1.0_f64;
+    for item in items {
+        if !item.is_number() {
+            return Err("prod: list elements must be numbers");
+        }
+        total *= item.as_number();
+    }
+    Ok(NanVal::number(total))
+}
+
 /// `flat xs` — flatten a list one level. Inner lists are spliced into the
 /// result; non-list elements pass through unchanged. Matches the tree-walker
 /// semantics in `src/interpreter/mod.rs`.
@@ -15828,6 +15892,18 @@ pub(crate) extern "C" fn jit_median(a: u64, span_bits: u64) -> u64 {
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn jit_sum(a: u64, span_bits: u64) -> u64 {
     match vm_sum(NanVal(a)) {
+        Ok(v) => v.0,
+        Err(e) => {
+            jit_set_runtime_error_with_span(VmError::Type(e), span_bits);
+            TAG_NIL
+        }
+    }
+}
+
+#[cfg(feature = "cranelift")]
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn jit_prod(a: u64, span_bits: u64) -> u64 {
+    match vm_prod(NanVal(a)) {
         Ok(v) => v.0,
         Err(e) => {
             jit_set_runtime_error_with_span(VmError::Type(e), span_bits);
@@ -15970,6 +16046,32 @@ pub(crate) extern "C" fn jit_cumsum(a: u64, span_bits: u64) -> u64 {
         VmError::Type("cumsum requires a list of numbers"),
         span_bits,
     );
+    TAG_NIL
+}
+
+#[cfg(feature = "cranelift")]
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn jit_cprod(a: u64, span_bits: u64) -> u64 {
+    let v = NanVal(a);
+    if v.is_heap()
+        && let HeapObj::List(items) = unsafe { v.as_heap_ref() }
+    {
+        let mut total = 1.0_f64;
+        let mut out: Vec<NanVal> = Vec::with_capacity(items.len());
+        for item in items {
+            if !item.is_number() {
+                jit_set_runtime_error_with_span(
+                    VmError::Type("cprod: list elements must be numbers"),
+                    span_bits,
+                );
+                return TAG_NIL;
+            }
+            total *= item.as_number();
+            out.push(NanVal::number(total));
+        }
+        return NanVal::heap_list(out).0;
+    }
+    jit_set_runtime_error_with_span(VmError::Type("cprod requires a list of numbers"), span_bits);
     TAG_NIL
 }
 
