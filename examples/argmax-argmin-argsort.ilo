@@ -8,20 +8,20 @@ valley xs:L n>n;argmin xs
 order xs:L n>L n;argsort xs
 
 -- Tie-breaking: first occurrence wins (numpy convention).
-first-max>n;argmax [2, 2, 2]
-first-min>n;argmin [5, 5, 5]
+first-max>n;argmax [2,2,2]
+first-min>n;argmin [5,5,5]
 
 -- argsort on already-sorted input is the identity permutation.
-identity>L n;argsort [1, 2, 3, 4, 5]
+identity>L n;argsort [1,2,3,4,5]
 
 -- argsort on empty list returns empty list.
 empty-sort>L n;argsort []
 
--- run: peak [3, 1, 4, 1, 5, 9, 2, 6]
+-- run: peak [3,1,4,1,5,9,2,6]
 -- out: 5
--- run: valley [3, 1, 4, 1, 5, 9, 2, 6]
+-- run: valley [3,1,4,1,5,9,2,6]
 -- out: 1
--- run: order [3, 1, 4, 1, 5, 9, 2, 6]
+-- run: order [3,1,4,1,5,9,2,6]
 -- out: [1, 3, 6, 0, 2, 4, 7, 5]
 -- run: first-max
 -- out: 0
