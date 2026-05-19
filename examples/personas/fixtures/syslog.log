@@ -1,0 +1,4 @@
+May 19 23:47:19 webserver nginx: request received
+May 19 23:47:23 webserver nginx: upstream timeout
+May 19 23:47:28 webserver nginx: connection closed
+May 19 23:47:35 webserver sshd: auth accepted

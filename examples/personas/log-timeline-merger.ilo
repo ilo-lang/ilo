@@ -1,0 +1,100 @@
+-- log-timeline-merger: merge three log sources (syslog, ISO, epoch) into a
+-- chronologically-sorted stream. All timestamps normalised to UTC epoch then
+-- re-emitted as ISO 8601 prefixes. Handles year-less syslog by using the
+-- current year from the live clock.
+--
+-- Usage: ilo log-timeline-merger.ilo main <syslog> <iso-log> <epoch-log>
+-- Example: ilo log-timeline-merger.ilo main syslog.log app.log metrics.log
+--
+-- Format detection order (first match wins):
+--   ISO   2026-05-19T23:47:21Z ...
+--   epoch 1747698441 ...
+--   syslog May 19 23:47:21 ...
+
+-- Get current year as text from live clock.
+cur-yr>R t t;dtfmt now "%Y"
+
+-- Parse ISO timestamp from line start. Returns epoch or err.
+-- Pattern: YYYY-MM-DDTHH:MM:SS[Z]
+parse-iso ln:t>R n t;
+ms=rgx "^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z?)" ln;
+=( len ms) 0 ^"no-iso";
+dtparse (hd ms) "%Y-%m-%dT%H:%M:%SZ"
+
+-- Parse syslog timestamp from line start. Appends current year.
+-- Pattern: Mon DD HH:MM:SS (no year)
+parse-sys ln:t yr:t>R n t;
+ms=rgx "^(\w{3}\s+\d+\s+[\d:]+)" ln;
+=( len ms) 0 ^"no-sys";
+ts=+ (hd ms) (fmt " {}" yr);
+dtparse ts "%b %d %H:%M:%S %Y"
+
+-- Parse epoch timestamp from line start. Returns epoch or err.
+-- Pattern: 9-13 digit integer at line start.
+parse-ep ln:t>R n t;
+ms=rgx "^(\d{9,13})\s+" ln;
+=( len ms) 0 ^"no-ep";
+num (hd ms)
+
+-- Detect format and return epoch. Returns err if no format matched.
+detect ln:t yr:t>R n t;
+ri=parse-iso ln;
+?ri{~v:~v;^_:{
+  re=parse-ep ln;
+  ?re{~v2:~v2;^_:{
+    rs=parse-sys ln yr;
+    ?rs{~v3:~v3;^_:^"no-match"}
+  }}
+}}
+
+-- Build a sortable entry: ISO-prefix|original-line, or err if unparseable.
+-- ISO prefix is fixed-width 21 chars so lex sort = time sort.
+norm ln:t yr:t>R t t;
+ep=detect ln yr;
+?ep{~v:{
+  tf=dtfmt v "%Y-%m-%dT%H:%M:%SZ";
+  ?tf{~ts:~(fmt "{}|{}" ts ln);^e:^e}
+};^e:^e}
+
+-- Process a list of lines: return sortable entries, skipping unparseable ones.
+proc-lines ls:L t yr:t>L t;
+out=[];
+@ln ls{
+  r=norm ln yr;
+  ?r{~v:out=+=out v;^_:nil}
+};
+out
+
+-- Strip the 21-char sort prefix ("YYYY-MM-DDTHH:MM:SSZ|") from an entry.
+strip e:t>t;slc e 21 (len e)
+
+-- Main: read three log files, merge, sort, print.
+main args:L t>R t t;
+<( len args) 3 ^"usage: main <syslog-path> <iso-path> <epoch-path>";
+yr-r=cur-yr();
+yr=?yr-r{~v:v;^_:"2026"};
+p1=at args 0;
+p2=at args 1;
+p3=at args 2;
+ls1=rdl! p1;
+ls2=rdl! p2;
+ls3=rdl! p3;
+all=flat [ls1 ls2 ls3];
+entries=proc-lines all yr;
+sorted=srt entries;
+@e sorted{prnt (strip e)};
+~"ok"
+
+-- run: main examples/personas/fixtures/syslog.log examples/personas/fixtures/app.log examples/personas/fixtures/metrics.log
+-- out: 2026-05-19T23:47:18Z api handler started
+-- out: 1747698440 monitor cpu 12.3%
+-- out: May 19 23:47:19 webserver nginx: request received
+-- out: 2026-05-19T23:47:21Z api request processed
+-- out: May 19 23:47:23 webserver nginx: upstream timeout
+-- out: 1747698443 monitor mem 47.1%
+-- out: 2026-05-19T23:47:26Z api db query slow
+-- out: May 19 23:47:28 webserver nginx: connection closed
+-- out: 2026-05-19T23:47:33Z api response sent
+-- out: May 19 23:47:35 webserver sshd: auth accepted
+-- out: 1747698450 monitor disk 88.9%
+-- out: 1747698460 monitor net 1.2Mbps
