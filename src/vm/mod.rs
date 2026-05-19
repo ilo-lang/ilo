@@ -1503,6 +1503,13 @@ struct RegCompiler {
     /// Decl span of the function currently being lowered, used as the
     /// fallback label location for register-cap overflow errors.
     current_fn_span: crate::ast::Span,
+    /// True while lowering the last statement of a function body — used
+    /// by the `mset` builtin emitter to opt into move-semantics on the
+    /// source map register when it knows the source becomes dead at
+    /// OP_RET. The let-stmt `name = mset name k v` peephole already
+    /// covers the rebind shape; this flag covers the tail-position
+    /// `mset m k v` shape inside helper fns reached via OP_CALL_OWN1.
+    in_tail_position: bool,
 }
 
 impl RegCompiler {
@@ -1525,6 +1532,7 @@ impl RegCompiler {
             current_all_regs_numeric: true,
             current_fn_name: String::new(),
             current_fn_span: crate::ast::Span::UNKNOWN,
+            in_tail_position: false,
         }
     }
 
@@ -1940,7 +1948,12 @@ impl RegCompiler {
                     self.reg_record_type[i] = self.resolve_type_id(&p.ty);
                 }
 
+                // Function body root: the last stmt is in tail position.
+                // compile_body propagates this through the loop so only
+                // the final stmt sees in_tail_position = true.
+                self.in_tail_position = true;
                 let result = self.compile_body(body);
+                self.in_tail_position = false;
 
                 let ret_reg = result.unwrap_or_else(|| {
                     let r = self.alloc_reg();
@@ -2001,11 +2014,21 @@ impl RegCompiler {
 
     fn compile_body(&mut self, stmts: &[crate::ast::Spanned<Stmt>]) -> Option<u8> {
         let saved_locals = self.locals.len();
+        let saved_tail = self.in_tail_position;
         let mut result = None;
-        for spanned in stmts {
+        let last_idx = stmts.len().saturating_sub(1);
+        for (i, spanned) in stmts.iter().enumerate() {
             self.current_span = spanned.span;
+            // Tail-position flag: set true only while lowering the final
+            // statement, and only when the parent context is itself a
+            // tail position (so a `cond {...}` body inside a non-tail
+            // statement still sees in_tail_position = false). The
+            // function-body emitter sets in_tail_position = true around
+            // the top-level call to compile_body for the function root.
+            self.in_tail_position = saved_tail && i == last_idx;
             result = self.compile_stmt(&spanned.node);
         }
+        self.in_tail_position = saved_tail;
         self.locals.truncate(saved_locals);
         result
     }
@@ -4274,9 +4297,42 @@ impl RegCompiler {
                             // mset map key val — two-instruction sequence:
                             //   OP_MSET  A=result  B=map  C=key
                             //   data word: A=val_reg (consumed by OP_MSET dispatch; ip advances past it)
+                            //
+                            // Tail-position fast path: when the call sits
+                            // at the tail of a function body AND args[0] is
+                            // a direct Ref to a local register, we know the
+                            // source map dies at OP_RET. We can therefore
+                            // reuse the local's register as both result
+                            // and source — the existing OP_MSET fast path
+                            // (a == b && RC == 1) then fires in place,
+                            // closing the helper-fn perf cliff (see
+                            // OP_CALL_OWN1). Stays a no-op when RC > 1 (a
+                            // captured/aliased map), since the runtime
+                            // still gates on rc_count.
+                            let tail_save = self.in_tail_position;
+                            self.in_tail_position = false;
+                            let tail_local_reg: Option<u8> = if tail_save
+                                && let Expr::Ref(ref_name) = &args[0]
+                            {
+                                self.resolve_local(ref_name)
+                            } else {
+                                None
+                            };
                             let rb = self.compile_expr(&args[0]);
                             let rc = self.compile_expr(&args[1]);
                             let rd = self.compile_expr(&args[2]);
+                            if let Some(local_reg) = tail_local_reg
+                                && local_reg == rb
+                            {
+                                // a == b == local_reg: in-place fast path
+                                // mutates the local. After this emit the
+                                // result is local_reg; the surrounding
+                                // function emitter will pick it up and
+                                // emit OP_RET local_reg.
+                                self.emit_abc(OP_MSET, local_reg, local_reg, rc);
+                                self.emit_abc(0, rd, 0, 0);
+                                return local_reg;
+                            }
                             let ra = self.alloc_reg();
                             self.emit_abc(OP_MSET, ra, rb, rc);
                             self.emit_abc(0, rd, 0, 0);
