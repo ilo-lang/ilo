@@ -639,11 +639,43 @@ mod tests {
     }
 
     #[test]
-    fn engine_flag_run_vm() {
+    fn engine_flag_vm_canonical() {
+        // Canonical post-0.12.1 spelling. Symmetric with --jit / --run-llvm.
+        let cli = Cli::try_parse_from(["ilo", "run", "--vm", "code"]).unwrap();
+        if let Some(Cmd::Run(r)) = cli.cmd {
+            assert!(r.run_vm);
+            assert_eq!(r.effective_engine(), Engine::Vm);
+        } else {
+            panic!("expected Run subcommand");
+        }
+    }
+
+    #[test]
+    fn engine_flag_run_vm_alias_still_parses() {
+        // --run-vm is retained as a visible_alias for one release so
+        // existing carry-forward scripts keep parsing cleanly. The
+        // deprecation hint is emitted at the main() argv-scan layer, not
+        // at clap parse time, so this unit test pins clap-level acceptance
+        // only. The stderr-hint behaviour is covered end-to-end in
+        // tests/regression_vm_flag_rename.rs.
         let cli = Cli::try_parse_from(["ilo", "run", "--run-vm", "code"]).unwrap();
         if let Some(Cmd::Run(r)) = cli.cmd {
+            assert!(r.run_vm);
             assert_eq!(r.effective_engine(), Engine::Vm);
+        } else {
+            panic!("expected Run subcommand");
         }
+    }
+
+    #[test]
+    fn engine_flag_vm_conflicts_with_jit() {
+        // --vm and --jit are mutually exclusive at the clap level.
+        let err = Cli::try_parse_from(["ilo", "run", "--vm", "--jit", "code"]).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("cannot be used with") || msg.contains("conflict"),
+            "expected clap conflict error; got: {msg}"
+        );
     }
 
     #[test]
