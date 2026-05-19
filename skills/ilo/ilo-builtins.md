@@ -13,7 +13,7 @@ Prefix-call syntax: `name arg1 arg2 ...`. All builtins work cross-engine unless 
 
 ## Text
 
-`len str num trm spl cat fmt fmt2 has`; `rgx rgxall rgxall1 rgxsub`; `upr lwr cap padl padr chars ord chr`. `num` returns `R n t`. `spl "a,b,c" ","` -> `["a","b","c"]`. `fmt` slots==args, no splat.
+`len str num trm spl cat fmt fmt2 has`; `rgx rgxall rgxall1 rgxsub`; `upr lwr cap padl padr chars ord chr`. `num` returns `R n t`. `spl "a,b,c" ","` -> `["a","b","c"]`. `fmt` no list splat.
 
 ## List
 
