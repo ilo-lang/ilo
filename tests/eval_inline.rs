@@ -1714,10 +1714,10 @@ fn get_verifier_wrong_type() {
 
 #[test]
 fn dollar_parses_inline() {
-    // $"url" should parse and verify without error. Uses --ast to
+    // Post-0.12.0: `$cmd argv` parses as `run cmd argv`. Uses --ast to
     // inspect the parsed shape without invoking the runtime.
     let out = ilo()
-        .args(["--ast", r#"f url:t>R t t;$url"#])
+        .args(["--ast", r#"f cmd:t argv:L t>R (M t t) t;$cmd argv"#])
         .output()
         .expect("failed to run ilo");
     assert!(
@@ -1727,17 +1727,18 @@ fn dollar_parses_inline() {
     );
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(
-        stdout.contains("get"),
-        "expected 'get' in AST output, got: {}",
+        stdout.contains("run"),
+        "expected 'run' in AST output, got: {}",
         stdout
     );
 }
 
 #[test]
 fn dollar_bang_parses_inline() {
-    // $!url should parse as get! url — enclosing function must return R t t for ! to verify.
+    // Post-0.12.0: `$!cmd argv` parses as `run! cmd argv` — enclosing
+    // function returns M t t so `!` verifies.
     let out = ilo()
-        .args(["--ast", r#"f url:t>R t t;~($!url)"#])
+        .args(["--ast", r#"f cmd:t argv:L t>M t t;~($!cmd argv)"#])
         .output()
         .expect("failed to run ilo");
     assert!(
@@ -1747,8 +1748,8 @@ fn dollar_bang_parses_inline() {
     );
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(
-        stdout.contains("get"),
-        "expected 'get' in AST output, got: {}",
+        stdout.contains("run"),
+        "expected 'run' in AST output, got: {}",
         stdout
     );
 }
@@ -1759,7 +1760,7 @@ fn dollar_bang_parses_inline() {
 fn post_verifier_wrong_type_url() {
     // first arg (url) must be t
     let out = ilo()
-        .args(["f x:n body:t>R t t;post x body", "f", "1", "b"])
+        .args(["f x:n body:t>R t t;pst x body", "f", "1", "b"])
         .output()
         .expect("failed to run ilo");
     let stderr = String::from_utf8_lossy(&out.stderr);
@@ -1773,7 +1774,7 @@ fn post_verifier_wrong_type_url() {
 fn post_verifier_wrong_type_body() {
     // second arg (body) must be t
     let out = ilo()
-        .args(["f url:t x:n>R t t;post url x", "f", "u", "1"])
+        .args(["f url:t x:n>R t t;pst url x", "f", "u", "1"])
         .output()
         .expect("failed to run ilo");
     let stderr = String::from_utf8_lossy(&out.stderr);
@@ -1788,7 +1789,7 @@ fn post_returns_result_type() {
     // post url body should type-check as R t t. Use --ast to inspect
     // the parsed shape without invoking the network at runtime.
     let out = ilo()
-        .args(["--ast", r#"f url:t body:t>R t t;post url body"#])
+        .args(["--ast", r#"f url:t body:t>R t t;pst url body"#])
         .output()
         .expect("failed to run ilo");
     assert!(
@@ -1802,7 +1803,7 @@ fn post_returns_result_type() {
 fn post_appears_in_ast() {
     // post url body — inspect AST via --ast; verify succeeds.
     let out = ilo()
-        .args(["--ast", r#"f url:t body:t>R t t;post url body"#])
+        .args(["--ast", r#"f url:t body:t>R t t;pst url body"#])
         .output()
         .expect("failed to run ilo");
     assert!(
@@ -1812,8 +1813,8 @@ fn post_appears_in_ast() {
     );
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(
-        stdout.contains("post"),
-        "expected 'post' in AST output, got: {stdout}"
+        stdout.contains("pst"),
+        "expected 'pst' in AST output, got: {stdout}"
     );
 }
 
@@ -1983,10 +1984,13 @@ fn use_imports_function_from_file() {
     let lib = "/tmp/ilo_test_math.ilo";
     let main_file = "/tmp/ilo_test_main.ilo";
     std::fs::write(lib, "dbl n:n>n;*n 2\n").unwrap();
-    std::fs::write(main_file, "use \"ilo_test_math.ilo\"\nrun x:n>n;dbl x\n").unwrap();
+    // Renamed user fn from `run` to `myrun` in 0.12.0 — `run` is now a
+    // builtin (argv-list process spawn) and shadows would silently break
+    // dispatch.
+    std::fs::write(main_file, "use \"ilo_test_math.ilo\"\nmyrun x:n>n;dbl x\n").unwrap();
 
     let out = ilo()
-        .args([main_file, "--run-vm", "run", "5"])
+        .args([main_file, "--run-vm", "myrun", "5"])
         .output()
         .expect("failed to run ilo");
     let _ = std::fs::remove_file(lib);

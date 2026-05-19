@@ -135,6 +135,10 @@ pub enum Builtin {
     Post,
     GetMany,
 
+    // Process spawn (argv-list only — no shell, no interpolation, no glob).
+    // See SPEC.md "Process spawn" section for the security framing.
+    Run,
+
     // Map (associative array)
     Mmap,
     Mget,
@@ -261,8 +265,13 @@ impl Builtin {
             "jdmp" => Some(Builtin::Jdmp),
             "jpar" => Some(Builtin::Jpar),
             "rdjl" => Some(Builtin::Rdjl),
+            "run" => Some(Builtin::Run),
             "get" => Some(Builtin::Get),
-            "post" => Some(Builtin::Post),
+            // 0.12.0 rename: `post` → `pst`. Brings post into line with the
+            // I/O compression family (rd, wr, srt, flt, fld, fmt). Clean
+            // break — `post` no longer resolves; the verifier surfaces a
+            // did-you-mean to `pst` via the standard suggestion path.
+            "pst" => Some(Builtin::Post),
             "get-many" => Some(Builtin::GetMany),
             "mmap" => Some(Builtin::Mmap),
             "mget" => Some(Builtin::Mget),
@@ -388,8 +397,9 @@ impl Builtin {
             Builtin::Jdmp => "jdmp",
             Builtin::Jpar => "jpar",
             Builtin::Rdjl => "rdjl",
+            Builtin::Run => "run",
             Builtin::Get => "get",
-            Builtin::Post => "post",
+            Builtin::Post => "pst",
             Builtin::GetMany => "get-many",
             Builtin::Mmap => "mmap",
             Builtin::Mget => "mget",
@@ -552,6 +562,11 @@ impl Builtin {
         // wrapped in Result. Tree-bridge eligible (zero args, no FnRef);
         // see is_tree_bridge_eligible in src/vm/mod.rs.
         Builtin::EnvAll,
+        // `run cmd:t args:L t > R (M t) t` — argv-list process spawn.
+        // No shell, no interpolation, no glob — the principled defence
+        // against shell injection in agent orchestration. See SPEC.md
+        // "Process spawn" + the tree-bridge entry in src/vm/mod.rs.
+        Builtin::Run,
     ];
 
     /// On-wire 8-bit tag for cross-engine builtin dispatch. See `ALL`.
@@ -805,7 +820,7 @@ mod tests {
             "jdmp",
             "jpar",
             "get",
-            "post",
+            "pst",
             "mmap",
             "mget",
             "mset",
@@ -829,6 +844,7 @@ mod tests {
             "dtfmt",
             "dtparse",
             "sleep",
+            "run",
             "ls",
             "walk",
             "glob",
@@ -1030,7 +1046,7 @@ mod tests {
             "jpar",
             "rdjl",
             "get",
-            "post",
+            "pst",
             "get-many",
             "mmap",
             "mget",
@@ -1042,6 +1058,7 @@ mod tests {
             "solve",
             "inv",
             "det",
+            "run",
             "ls",
             "walk",
             "glob",

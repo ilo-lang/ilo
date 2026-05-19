@@ -1,0 +1,28 @@
+-- `run cmd argv > R (M t t) t` — argv-list process spawn. No shell, no
+-- glob, no interpolation. Result Err only on spawn failure; a non-zero
+-- exit code surfaces as Ok({"code":"<n>",...}).
+
+stdout-of>t;m=run!! "echo" ["hi"];??mget m "stdout" ""
+
+code-of-false>t;m=run!! "false" [];??mget m "code" ""
+
+code-of-true>t;m=run!! "true" [];??mget m "code" ""
+
+-- argv entries are passed verbatim — printf proves each list element
+-- is one distinct argv slot, with no shell-style join.
+argv-roundtrip>t;m=run!! "printf" ["%s|%s|%s" "a" "b" "c"];??mget m "stdout" ""
+
+-- $ sigil is the run shortcut (0.12.0 rebind from HTTP get).
+sigil-echo>t;m=$!!"echo" ["hi"];??mget m "stdout" ""
+
+-- engine-skip: jit
+-- run: stdout-of
+-- out: hi
+-- run: code-of-false
+-- out: 1
+-- run: code-of-true
+-- out: 0
+-- run: argv-roundtrip
+-- out: a|b|c
+-- run: sigil-echo
+-- out: hi
