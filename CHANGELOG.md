@@ -9,8 +9,12 @@
 ### Breaking
 
 - `ls dir` renamed to `lsd dir`. Six rerun10 personas tripped ILO-P011 on `ls=rdl! p` because `ls` was reserved; rename frees `ls` for user code. `walk`, `glob` unchanged.
-- `--run-tree` and its `--run` alias removed from the public CLI. They now error with the unknown-flag guard. The tree-walker stays in-tree as the dispatch target for the HOF / regex / fmt-variadic / fmt2 / IO / sleep / ct / rsrt / closure-bind-ctx shapes the VM and Cranelift haven't lifted natively yet; the VM bails to it transparently for every op in `is_tree_bridge_eligible`. Use `--run-vm` (the default) for everything else.
+- `--run-tree` and its `--run` alias removed from the public CLI. They now error with the unknown-flag guard. The tree-walker stays in-tree as the dispatch target for the HOF / regex / fmt-variadic / fmt2 / IO / sleep / ct / rsrt / closure-bind-ctx shapes the VM and Cranelift haven't lifted natively yet; the VM bails to it transparently for every op in `is_tree_bridge_eligible`. Use `--vm` (the default) for everything else.
 - `ilo tools --json` is now an envelope `{"schemaVersion":1,"tools":[...]}` instead of a bare array. Indexing consumers should read `.tools[0]` instead of `[0]`. Brings the last hold-out into the uniform CLI `--json` contract — every other emitter (`run`, `graph`, `--ast`, `serv`, `spec --json`) gained `schemaVersion:1` additively in the same release.
+
+### Renamed
+
+- `--run-vm` renamed to `--vm`, symmetric in shape with `--jit` and `--run-llvm` (where the flag names the engine, not the action). `--run-vm` is retained as a hidden alias for one release; every invocation emits a one-shot stderr hint `hint: --run-vm → --vm (canonical form). The --run-vm alias will be removed in 0.13.0.`. Carry-forward scripts and personas that hard-coded `--run-vm` keep working through 0.12.x and pick up the nudge to update. Hard removal lands in 0.13.0 with the tree-walker drop.
 
 ### Diagnostics
 
