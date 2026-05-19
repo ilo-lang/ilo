@@ -382,3 +382,37 @@ fn format_number(n: f64) -> String {
         format!("{}", n)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use regex::Regex;
+
+    // Regression: see the equivalent test in `backend/wasm/mod.rs` for the
+    // full story. Before this fix `unsupported()` returned
+    // `BackendError::UnsupportedFeature`, which renders without a code and
+    // slipped past the conformance harness's `ILO-B###` gate, so soft
+    // skips were being reported as hard failures.
+    #[test]
+    fn unsupported_emits_ilo_b302_matching_conformance_gate() {
+        let err = unsupported("some-hir-construct");
+        match &err {
+            BackendError::CodegenFailed { code, message, .. } => {
+                assert_eq!(*code, "ILO-B302", "expected unsupported() to use ILO-B302");
+                assert!(
+                    message.contains("some-hir-construct"),
+                    "feature name should survive into the message: {message}"
+                );
+            }
+            other => panic!(
+                "expected CodegenFailed; got {other:?}. UnsupportedFeature would slip past the conformance regex."
+            ),
+        }
+        let rendered = format!("{err}");
+        let re = Regex::new(r"\bILO-B(?:201|202|205|301|302|305)\b").unwrap();
+        assert!(
+            re.is_match(&rendered),
+            "rendered error must match conformance unsupported regex: {rendered}"
+        );
+    }
+}

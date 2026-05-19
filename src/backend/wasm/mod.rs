@@ -327,6 +327,12 @@ fn emit_program(hir: &Program, config: WasmConfig) -> Result<Artefact, BackendEr
                 }
                 detail.push_str(stdout.trim());
             }
+            // Some wasm-tools failures (signals, exec errors) leave both
+            // streams empty. Without a fallback we end up with a stray
+            // trailing `": "` and no useful diagnostic.
+            if detail.is_empty() {
+                detail.push_str("(no output captured)");
+            }
             return Err(codegen(
                 "ILO-B203",
                 format!("wasm-tools component new failed ({}): {}", output.status, detail),
@@ -441,4 +447,42 @@ fn generate_wit(entry: &str) -> String {
          }}\n",
         entry = entry,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use regex::Regex;
+
+    // Regression: the conformance harness gates Outcome::Unsupported on a
+    // `\bILO-B(?:201|202|205|...)\b` regex against stderr. Before this fix
+    // `unsupported()` returned `BackendError::UnsupportedFeature`, whose
+    // Display is `"backend 'wasm' does not support feature 'X'"` — no code,
+    // so walker rejections were misclassified as hard failures. This test
+    // pins both halves: the variant is `CodegenFailed` with code `ILO-B202`,
+    // and the rendered message satisfies the conformance regex.
+    #[test]
+    fn unsupported_emits_ilo_b202_matching_conformance_gate() {
+        let err = unsupported("some-hir-construct");
+        match &err {
+            BackendError::CodegenFailed { code, message, .. } => {
+                assert_eq!(*code, "ILO-B202", "expected unsupported() to use ILO-B202");
+                assert!(
+                    message.contains("some-hir-construct"),
+                    "feature name should survive into the message: {message}"
+                );
+            }
+            other => panic!(
+                "expected CodegenFailed; got {other:?}. UnsupportedFeature would slip past the conformance regex."
+            ),
+        }
+        // The Display path is what reaches the conformance harness via the
+        // `ilo build` stderr stream. It needs to carry the code.
+        let rendered = format!("{err}");
+        let re = Regex::new(r"\bILO-B(?:201|202|205|301|302|305)\b").unwrap();
+        assert!(
+            re.is_match(&rendered),
+            "rendered error must match conformance unsupported regex: {rendered}"
+        );
+    }
 }
