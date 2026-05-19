@@ -238,3 +238,137 @@ fn aot_main_zero_arg_still_works() {
 
     cleanup(&src, &bin);
 }
+
+// ── 7. funcname-argv off-by-one: `./bin main arg` must bind `arg`, not `main`
+//
+// The bug: `generate_main` read argv[1..=param_count] unconditionally, so
+// `./bin main 42` bound "main" as the first param and 42 as the second (or
+// off the end). A ternary `?(x){true:1;false:0}` silently picked false because
+// the string "main" is truthy in ilo but the binding was one slot off, feeding
+// an out-of-bounds or wrong value. The fix calls `ilo_aot_argv_skip` at runtime
+// to detect whether argv[1] matches the entry name and shifts the base by 8
+// bytes when it does, so both `./bin arg` and `./bin funcname arg` are correct.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// `./bin main 42` with a scalar numeric param — must produce 42, not bind "main".
+#[test]
+fn aot_funcname_argv_scalar_number() {
+    let (src, bin) = tmp_paths("fn-argv-num");
+    let source = "main x:n>n;x\n";
+    compile(&src, &bin, source);
+
+    // Without funcname prefix - baseline.
+    assert_eq!(run_bin(&bin, &["42"]), "42");
+
+    // With funcname prefix - the bug would have bound "main" as x.
+    assert_eq!(run_bin(&bin, &["main", "42"]), "42");
+
+    cleanup(&src, &bin);
+}
+
+/// `./bin main hello` with a scalar text param.
+#[test]
+fn aot_funcname_argv_scalar_text() {
+    let (src, bin) = tmp_paths("fn-argv-txt");
+    let source = "main s:t>t;s\n";
+    compile(&src, &bin, source);
+
+    assert_eq!(run_bin(&bin, &["hello"]), "hello");
+    assert_eq!(run_bin(&bin, &["main", "hello"]), "hello");
+
+    cleanup(&src, &bin);
+}
+
+/// Ternary branch on the bound value - this was the silent false-branch symptom.
+#[test]
+fn aot_funcname_argv_ternary_picks_correct_branch() {
+    let (src, bin) = tmp_paths("fn-argv-ternary");
+    // `?(x > 10){true:1;false:0}` - with x=42 should be 1; x bound to "main"
+    // would break the comparison and likely return 0.
+    let source = "main x:n>n;?(x>10){true:1;false:0}\n";
+    compile(&src, &bin, source);
+
+    assert_eq!(
+        run_bin(&bin, &["42"]),
+        "1",
+        "without funcname: x=42 > 10 should be true"
+    );
+    assert_eq!(
+        run_bin(&bin, &["main", "42"]),
+        "1",
+        "with funcname: x=42 > 10 should be true - was silently false before fix"
+    );
+    assert_eq!(
+        run_bin(&bin, &["5"]),
+        "0",
+        "without funcname: x=5 <= 10 should be false"
+    );
+    assert_eq!(
+        run_bin(&bin, &["main", "5"]),
+        "0",
+        "with funcname: x=5 <= 10 should be false"
+    );
+
+    cleanup(&src, &bin);
+}
+
+/// Two-param function with funcname prefix - both args must shift correctly.
+#[test]
+fn aot_funcname_argv_two_params() {
+    let (src, bin) = tmp_paths("fn-argv-2p");
+    let source = "main a:n b:n>n;a+b\n";
+    compile(&src, &bin, source);
+
+    assert_eq!(run_bin(&bin, &["3", "4"]), "7");
+    assert_eq!(run_bin(&bin, &["main", "3", "4"]), "7");
+
+    cleanup(&src, &bin);
+}
+
+/// List-typed param with funcname prefix - must use the list-parse path after skip.
+#[test]
+fn aot_funcname_argv_list_param() {
+    let (src, bin) = tmp_paths("fn-argv-list");
+    let source = "main xs:L n>n;sum xs\n";
+    compile(&src, &bin, source);
+
+    assert_eq!(run_bin(&bin, &["[1,2,3]"]), "6");
+    assert_eq!(run_bin(&bin, &["main", "[1,2,3]"]), "6");
+
+    cleanup(&src, &bin);
+}
+
+/// Zero-arg function with funcname prefix - no args to shift, must not crash.
+#[test]
+fn aot_funcname_argv_zero_params_with_funcname() {
+    let (src, bin) = tmp_paths("fn-argv-zero");
+    let source = "main>n;99\n";
+    compile(&src, &bin, source);
+
+    assert_eq!(run_bin(&bin, &[]), "99");
+    // funcname with no user args: argc=2, argv[1]="main" matches, skip=8.
+    // The param loop runs 0 times so no out-of-bounds access.
+    assert_eq!(run_bin(&bin, &["main"]), "99");
+
+    cleanup(&src, &bin);
+}
+
+/// Cross-engine pin: both invocation forms produce output matching tree and VM.
+#[test]
+fn aot_funcname_argv_cross_engine_pin() {
+    let (src, bin) = tmp_paths("fn-argv-cross");
+    let source = "main x:n>t;str x\n";
+    compile(&src, &bin, source);
+
+    let direct = run_bin(&bin, &["7"]);
+    let with_fn = run_bin(&bin, &["main", "7"]);
+    let tree = run_tree(&src, &["7"]);
+    let vm = run_vm(&src, &["7"]);
+
+    assert_eq!(direct, "7");
+    assert_eq!(with_fn, "7");
+    assert_eq!(direct, tree, "AOT vs tree diverged");
+    assert_eq!(direct, vm, "AOT vs VM diverged");
+
+    cleanup(&src, &bin);
+}

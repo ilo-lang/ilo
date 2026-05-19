@@ -18973,6 +18973,44 @@ pub extern "C" fn ilo_aot_parse_arg_list(ptr: u64) -> u64 {
     NanVal::from_value(&v).0
 }
 
+/// Return the byte offset to advance the argv base by before reading user args.
+///
+/// AOT binaries accept two invocation forms:
+///
+///   `./bin arg1 arg2`            -- argv[1] is the first user arg
+///   `./bin funcname arg1 arg2`   -- argv[1] is the entry function name;
+///                                    user args start at argv[2]
+///
+/// Both forms are used in the wild: `ilo run` and the tree/VM runners emit the
+/// funcname form while direct shell invocations typically omit it.
+///
+/// If `argc >= 2` and the C string at argv[1] equals `entry_name`, returns 8
+/// (one pointer width on a 64-bit host) so the caller shifts the argv base past
+/// the funcname slot. Otherwise returns 0.
+///
+/// Called from the Cranelift-generated `main` wrapper produced by `generate_main`.
+///
+/// # Safety
+///
+/// `argv` must be the argv pointer passed into `main` by the OS. When `argc >= 2`
+/// the OS guarantees argv[0] and argv[1] are valid C-string pointers. `entry_name`
+/// is a pointer to a null-terminated string embedded in the AOT binary's read-only
+/// data section by `generate_main`.
+#[cfg(feature = "cranelift")]
+#[unsafe(no_mangle)]
+pub extern "C" fn ilo_aot_argv_skip(argc: u64, argv: u64, entry_name: u64) -> u64 {
+    if argc < 2 {
+        return 0;
+    }
+    let argv_ptr = argv as *const *const std::ffi::c_char;
+    // SAFETY: argc >= 2 guarantees argv[1] is a valid C-string pointer (OS contract).
+    let arg1_ptr = unsafe { *argv_ptr.add(1) };
+    let name_ptr = entry_name as *const std::ffi::c_char;
+    // SAFETY: both pointers are null-terminated strings as described above.
+    let cmp = unsafe { libc::strcmp(arg1_ptr, name_ptr) };
+    if cmp == 0 { 8 } else { 0 }
+}
+
 // ── Block leader analysis (shared by JIT backends) ──────────────────
 
 /// Identify basic block leaders in bytecode. A leader is:
