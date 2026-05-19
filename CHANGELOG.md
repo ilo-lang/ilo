@@ -54,6 +54,29 @@
   - `tests/aot-baselines/` — `obj-baselines.tsv` + `MANIFEST.md`
     documenting capture point, determinism notes, and regeneration
     procedure.
+- **Python backend refactor (`src/backend/python/`).** Phase 5 Stage 5c.
+  The existing Python transpile (was `src/codegen/python.rs`) now lives
+  behind the `Backend` trait. Validates the trait against a transpile-style
+  backend, complementing Cranelift's direct codegen shape.
+  - `backend::python::PythonBackend` — second concrete impl. Consumes the
+    verified AST via `PythonConfig::program`; HIR is taken as input on the
+    trait surface but currently ignored (HIR does not yet carry the full
+    surface the Python emit needs; lowering it is a later concern).
+  - `ilo build file.ilo --py [-o out.py]` is the canonical CLI form.
+  - `tests/python_emit_byte_identical.rs` + `tests/python-baselines/` —
+    10 baseline `.py` files captured pre-refactor; the test asserts the
+    post-refactor `ilo build --py` output matches byte-for-byte.
+
+### Changed (breaking)
+
+- **`--emit python` removed.** The legacy `ilo <file-or-code> --emit python`
+  form no longer transpiles. Per the manifesto-strict CLI (one canonical
+  form per backend), it now prints a migration hint and exits with code 2:
+  `ilo build <file.ilo> --py`. Stage 5c does not keep `--emit` as a
+  deprecated alias; pre-1.0 we break this cleanly. Stage 5f will sweep the
+  remaining `--emit <other>` paths.
+
+No public API changes (other than `--emit python` removal). No other CLI changes. No behaviour changes.
 - `rgxall-multi pats:L t s:t > L t` builtin. Apply multiple patterns to a single string and get one flat list of all hits in pattern order. Per-pattern semantics follow `rgxall1`: 0 capture groups returns whole matches; 1 capture group returns capture-1 strings; 2+ capture groups errors with a hint to use `rgxall`. Replaces the verbose `flat (map (p:t>L t;rgxall1 p line) pats)` workaround (~20 tokens per call site saved). Motivated by cron-explainer and historical-archeologist personas, which both needed multi-pattern scan on a single line. Tree-bridge eligible alongside `rgxall1`; no new opcodes.
 - `fmod a b` builtin: floor-mod, always non-negative when `b > 0`. Equivalent to Python `a % b` and JS `Math.floor((a % b + b) % b)`. Implemented across VM, JIT, and AOT. Eliminates the `(raw + 7) % 7` workaround that every TZ/weekday persona needed with signed `mod`. `mod` is unchanged (C-style signed remainder).
 - `dtparse-rel s now > R n t` builtin. Resolves a natural-language relative-date phrase to a Unix epoch anchored at `now`. Supported: `today`/`yesterday`/`tomorrow`, `N days/weeks/months ago`, `in N days/weeks/months` (singular + plural), `last/next/this <weekday>` (monday-sunday or mon-sun; `last`/`next` never return today), and ISO-8601 `YYYY-MM-DD` passthrough. Month arithmetic clamps to the last valid day (Jan 31 + 1 month = Feb 28/29). Tree-bridge eligible -- VM and Cranelift pick it up automatically. Eliminates ~40 LoC of date-arithmetic helpers per date persona (P1 #8 from the persona feedback log).
