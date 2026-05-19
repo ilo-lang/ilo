@@ -1388,6 +1388,7 @@ fn compile_cmd(args: &[String]) -> i32 {
     let mut func_name: Option<&str> = None;
     let mut bench_mode = false;
     let mut as_json = false;
+    let mut python_mode = false;
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
@@ -1405,6 +1406,9 @@ fn compile_cmd(args: &[String]) -> i32 {
             "--json" | "-j" => {
                 as_json = true;
             }
+            "--py" => {
+                python_mode = true;
+            }
             _ if source_arg.is_none() => {
                 source_arg = Some(&args[i]);
             }
@@ -1413,6 +1417,11 @@ fn compile_cmd(args: &[String]) -> i32 {
             }
         }
         i += 1;
+    }
+
+    if python_mode && bench_mode {
+        eprintln!("Error: --py and --bench are mutually exclusive");
+        return 1;
     }
 
     let source_arg = match source_arg {
@@ -1437,9 +1446,17 @@ fn compile_cmd(args: &[String]) -> i32 {
         source_arg.to_string()
     };
 
-    // Default output path: strip source extension or use "a.out"
+    // Default output path: strip .ilo extension or use "a.out". With `--py`,
+    // the default is `<basename>.py` so `ilo build foo.ilo --py` writes
+    // `foo.py` next to the source.
     let output = output_path.unwrap_or_else(|| {
-        if source_arg.ends_with(".ilo") {
+        if python_mode {
+            if source_arg.ends_with(".ilo") {
+                format!("{}.py", source_arg.trim_end_matches(".ilo"))
+            } else {
+                "out.py".to_string()
+            }
+        } else if source_arg.ends_with(".ilo") {
             source_arg.trim_end_matches(".ilo").to_string()
         } else if source_arg.ends_with(".@") {
             source_arg.trim_end_matches(".@").to_string()
@@ -1526,6 +1543,36 @@ fn compile_cmd(args: &[String]) -> i32 {
             );
         }
         return 1;
+    }
+
+    // `--py`: transpile to Python via the PythonBackend and short-circuit
+    // before the bytecode/Cranelift pipeline runs. The Python backend consumes
+    // the verified AST directly (see `backend/python/mod.rs` module doc).
+    if python_mode {
+        // Lower to HIR so the trait surface is HIR-first even if the Python
+        // backend currently ignores it. Keeps the dispatch site uniform with
+        // the Cranelift path.
+        let hir = match ilo::hir::lower(&program, &verify_result) {
+            Ok(h) => h,
+            Err(e) => {
+                eprintln!("HIR lowering error: {}", e);
+                return 1;
+            }
+        };
+        let config = ilo::backend::python::PythonConfig {
+            program: &program,
+            output_path: std::path::PathBuf::from(&output),
+        };
+        return match ilo::backend::python::emit(&hir, config) {
+            Ok(_artefact) => {
+                eprintln!("Compiled: {}", output);
+                0
+            }
+            Err(e) => {
+                eprintln!("Python transpile error: {}", e);
+                1
+            }
+        };
     }
 
     // Compile to bytecode
@@ -2630,6 +2677,9 @@ fn dispatch_cli(cli: cli::Cli, bare_has_bin: bool) -> i32 {
             }
             if cli.global.explicit_json() {
                 args.push("--json".into());
+            }
+            if c.py {
+                args.push("--py".into());
             }
             if let Some(ref f) = c.func {
                 args.push(f.clone());

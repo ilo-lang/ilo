@@ -293,6 +293,13 @@ pub struct CompileArgs {
     /// Benchmark binary mode.
     #[arg(long)]
     pub bench: bool,
+
+    /// Transpile to Python source (`.py`) via the Python backend.
+    ///
+    /// Manifesto-strict: this is the canonical replacement for the removed
+    /// `--emit python` flag. Use `ilo build file.ilo --py [-o out.py]`.
+    #[arg(long)]
+    pub py: bool,
 }
 
 // ── Check ──────────────────────────────────────────────────────────────────────
