@@ -385,7 +385,8 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("dtparse", &["t", "t"], "R n t"),
     ("env", &["t"], "R t t"),
     ("env-all", &[], "R (M t t) t"),
-    ("jpth", &["t", "t"], "R t t"),
+    ("jpth", &["t", "t"], "R ? t"),
+    ("jkeys", &["t", "t"], "R (L t) t"),
     ("jdmp", &["any"], "t"),
     ("prnt", &["any"], "any"),
     ("fmt", &["t"], "t"), // variadic: fmt template arg1 arg2 … — checked specially
@@ -1684,7 +1685,32 @@ fn builtin_check_args(
                     });
                 }
             }
-            (Ty::Result(Box::new(Ty::Text), Box::new(Ty::Text)), errors)
+            // Return is `R ? t`: the value at the path is typed (list →
+            // L, object → record, scalar → matching primitive); only its
+            // static shape is unknown to the verifier. Callers that want
+            // a specific narrowing should `!` then `?` / `match` it.
+            (
+                Ty::Result(Box::new(Ty::Unknown), Box::new(Ty::Text)),
+                errors,
+            )
+        }
+        "jkeys" => {
+            for (i, arg) in arg_types.iter().enumerate() {
+                if !compatible(arg, &Ty::Text) {
+                    errors.push(VerifyError {
+                        code: "ILO-T013",
+                        function: func_ctx.to_string(),
+                        message: format!("'jkeys' arg {} expects t, got {arg}", i + 1),
+                        hint: None,
+                        span,
+                        is_warning: false,
+                    });
+                }
+            }
+            (
+                Ty::Result(Box::new(Ty::List(Box::new(Ty::Text))), Box::new(Ty::Text)),
+                errors,
+            )
         }
         "jdmp" => {
             // jdmp accepts any value, no type checking needed

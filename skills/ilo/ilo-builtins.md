@@ -41,7 +41,7 @@ mmap mset mget mhas mdel mkeys mvals
 
 ## JSON
 
-`jpar s` parse, `jpth obj path` pointer lookup (`jpth r "items/0/id"`), `jdmp v` serialize. Numeric map keys stringified in `jdmp`.
+`jpar s` parse, `jpth s path` dot-path (typed), `jkeys s path` sorted object keys, `jdmp v` serialize. Numeric keys stringified in `jdmp`.
 
 ## Time
 

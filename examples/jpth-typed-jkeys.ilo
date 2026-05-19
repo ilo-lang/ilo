@@ -1,0 +1,31 @@
+-- jpth returns typed ilo values for array / object / scalar leaves (0.12.1).
+-- A leaf that's a JSON array comes back as a list you can `len` / `@` / `map`
+-- directly; an object comes back as a record you can `jdmp` round-trip; a
+-- numeric leaf comes back as a Number ready for arithmetic.
+--
+-- `jkeys j p > R (L t) t` is the explicit "give me the keys of the object at
+-- this dot-path" companion to `mkeys`. Empty path = root. Err if the value at
+-- the path is not a JSON object. Sorted output is intentional so cross-engine
+-- diffs stay deterministic.
+--
+-- The originating friction (event-trace-analyser + monorepo-analyst rerun10):
+-- pre-fix jpth on `{"spans":[...]}` returned the stringified array text and
+-- `len` / `map` rejected it; jpth on `{"deps":{"a":..,"b":..}}` returned the
+-- stringified object and `mkeys` rejected it. Both flows now work native.
+
+count-spans j:t>n;r=jpth j "spans";?r{~v:len v;^e:0}
+dep-keys j:t>t;r=jkeys j "dependencies";?r{~v:jdmp v;^e:e}
+root-keys j:t>t;r=jkeys j "";?r{~v:jdmp v;^e:e}
+n-plus-one j:t>n;r=jpth j "n";?r{~v:+ v 1;^e:0}
+
+-- run: count-spans {"spans":[{"id":"a"},{"id":"b"},{"id":"c"}]}
+-- out: 3
+
+-- run: dep-keys {"dependencies":{"left-pad":"1.0","react":"18","axios":"1.6"}}
+-- out: ["axios","left-pad","react"]
+
+-- run: root-keys {"z":1,"a":2,"m":3}
+-- out: ["a","m","z"]
+
+-- run: n-plus-one {"n":42}
+-- out: 43

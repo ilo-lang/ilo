@@ -554,8 +554,30 @@ fn emit_expr(out: &mut String, level: usize, expr: &Expr) -> String {
                 let path_arg = emit_expr(out, level, &args[1]);
                 // Guard JSONPath-shape paths so the Python backend mirrors the
                 // tree / VM / JIT diagnostic instead of crashing with a KeyError.
+                // Return the resolved value as a typed Python value (dict /
+                // list / str / int / float / bool / None) — matches the
+                // tree / VM / JIT `serde_json_to_value` path. Was previously
+                // `str(c) if not isinstance(c, str) else c`, which stringified
+                // arrays and objects and forced agents to re-parse.
                 let call = format!(
-                    "(lambda j, p: (\"err\", f'jpth is dot-path only (e.g. \"a.b.0.c\"), not JSONPath. Got: \"{{p}}\". Drop the leading `$` / `[` / `*` and use dot-separated keys / indices.') if (p.startswith('$.') or p.startswith('$[') or p.startswith('$*') or '*' in p or '[' in p) else (lambda c: (\"ok\", str(c) if not isinstance(c, str) else c))((__import__('functools').reduce(lambda c, k: c[int(k)] if isinstance(c, list) and k.isdigit() else c[k], p.split('.'), __import__('json').loads(j)))))({}, {})",
+                    "(lambda j, p: (\"err\", f'jpth is dot-path only (e.g. \"a.b.0.c\"), not JSONPath. Got: \"{{p}}\". Drop the leading `$` / `[` / `*` and use dot-separated keys / indices.') if (p.startswith('$.') or p.startswith('$[') or p.startswith('$*') or '*' in p or '[' in p) else (lambda c: (\"ok\", c))((__import__('functools').reduce(lambda c, k: c[int(k)] if isinstance(c, list) and k.isdigit() else c[k], p.split('.'), __import__('json').loads(j)))))({}, {})",
+                    json_arg, path_arg
+                );
+                let call = format!("(lambda: {})()", call);
+                return if unwrap.is_any() {
+                    format!("_ilo_unwrap({})", call)
+                } else {
+                    call
+                };
+            }
+            if function == "jkeys" && args.len() == 2 {
+                let json_arg = emit_expr(out, level, &args[0]);
+                let path_arg = emit_expr(out, level, &args[1]);
+                // jkeys json path > R (L t) t — sorted top-level keys of the
+                // JSON object at the dot-path. Empty path = root. Err on
+                // non-object value. Mirrors `mkeys` shape for JSON objects.
+                let call = format!(
+                    "(lambda j, p: (\"err\", f'jpth is dot-path only (e.g. \"a.b.0.c\"), not JSONPath. Got: \"{{p}}\". Drop the leading `$` / `[` / `*` and use dot-separated keys / indices.') if (p.startswith('$.') or p.startswith('$[') or p.startswith('$*') or '*' in p or '[' in p) else (lambda c: (\"ok\", sorted(c.keys())) if isinstance(c, dict) else (\"err\", \"jkeys: value at path is not a JSON object\"))((__import__('functools').reduce(lambda c, k: c[int(k)] if isinstance(c, list) and k.isdigit() else c[k], [s for s in p.split('.') if s != ''], __import__('json').loads(j)))))({}, {})",
                     json_arg, path_arg
                 );
                 let call = format!("(lambda: {})()", call);

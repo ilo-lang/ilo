@@ -3127,11 +3127,13 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                                 ))))));
                             }
                         }
-                        let result_str = match current {
-                            serde_json::Value::String(s) => s.clone(),
-                            other => other.to_string(),
-                        };
-                        Ok(Value::Ok(Box::new(Value::Text(Arc::new(result_str)))))
+                        // Return the value at the path as a typed ilo Value:
+                        // arrays → L, objects → Record, primitives → matching
+                        // scalar. This lets `mkeys`/`map`/`flt`/`@` and the
+                        // `jkeys` builtin accept the result directly instead
+                        // of seeing a stringified blob.
+                        let typed = serde_json_to_value(current.clone());
+                        Ok(Value::Ok(Box::new(typed)))
                     }
                     Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(e.to_string()))))),
                 }
@@ -3139,6 +3141,58 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             _ => Err(RuntimeError::new(
                 "ILO-R009",
                 "jpth requires two text args".to_string(),
+            )),
+        };
+    }
+    if builtin == Some(Builtin::Jkeys) && args.len() == 2 {
+        return match (&args[0], &args[1]) {
+            (Value::Text(json_str), Value::Text(path)) => {
+                if let Some(msg) = crate::builtins::jpth_jsonpath_diagnostic(path) {
+                    return Ok(Value::Err(Box::new(Value::Text(Arc::new(msg)))));
+                }
+                match serde_json::from_str::<serde_json::Value>(json_str) {
+                    Ok(parsed) => {
+                        let mut current = &parsed;
+                        // Empty path = top-level. Skip walk so callers can do
+                        // `jkeys! txt ""` for the root object.
+                        if !path.is_empty() {
+                            for key in path.split('.') {
+                                if let Ok(idx) = key.parse::<usize>() {
+                                    if let Some(v) = current.as_array().and_then(|a| a.get(idx)) {
+                                        current = v;
+                                    } else {
+                                        return Ok(Value::Err(Box::new(Value::Text(Arc::new(
+                                            format!("key not found: {key}"),
+                                        )))));
+                                    }
+                                } else if let Some(v) = current.get(key) {
+                                    current = v;
+                                } else {
+                                    return Ok(Value::Err(Box::new(Value::Text(Arc::new(
+                                        format!("key not found: {key}"),
+                                    )))));
+                                }
+                            }
+                        }
+                        match current.as_object() {
+                            Some(obj) => {
+                                let mut keys: Vec<String> = obj.keys().cloned().collect();
+                                keys.sort();
+                                let items: Vec<Value> =
+                                    keys.into_iter().map(|k| Value::Text(Arc::new(k))).collect();
+                                Ok(Value::Ok(Box::new(Value::List(Arc::new(items)))))
+                            }
+                            None => Ok(Value::Err(Box::new(Value::Text(Arc::new(
+                                "jkeys: value at path is not a JSON object".to_string(),
+                            ))))),
+                        }
+                    }
+                    Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(e.to_string()))))),
+                }
+            }
+            _ => Err(RuntimeError::new(
+                "ILO-R009",
+                "jkeys requires two text args".to_string(),
             )),
         };
     }
@@ -8292,7 +8346,10 @@ mod tests {
 
     #[test]
     fn interp_jp_array_index() {
-        let source = r#"f j:t p:t>R t t;jpth j p"#;
+        // jpth on a numeric leaf now returns Number, not Text — the 0.12.1
+        // typed-jpth change. Same source / args; only the asserted leaf
+        // shape changes (was Text("20"), now Number(20.0)).
+        let source = r#"f j:t p:t>R _ t;jpth j p"#;
         let result = run_str(
             source,
             Some("f"),
@@ -8301,10 +8358,7 @@ mod tests {
                 Value::Text(Arc::new("items.1".to_string())),
             ],
         );
-        assert_eq!(
-            result,
-            Value::Ok(Box::new(Value::Text(Arc::new("20".to_string()))))
-        );
+        assert_eq!(result, Value::Ok(Box::new(Value::Number(20.0))));
     }
 
     #[test]
@@ -9779,10 +9833,11 @@ mod tests {
         assert!(err.contains("wrl"), "got: {err}");
     }
 
-    // L822: jpth array index navigation
+    // L822: jpth array index navigation. Post-0.12.1 jpth returns typed
+    // values (R ? t), so a numeric leaf comes back as Number, not Text.
     #[test]
     fn interpret_jpth_array_index() {
-        let source = r#"f j:t p:t>R t t;jpth j p"#;
+        let source = r#"f j:t p:t>R _ t;jpth j p"#;
         let result = run_str(
             source,
             Some("f"),
@@ -9791,10 +9846,7 @@ mod tests {
                 Value::Text(Arc::new("1".to_string())),
             ],
         );
-        assert_eq!(
-            result,
-            Value::Ok(Box::new(Value::Text(Arc::new("20".to_string()))))
-        );
+        assert_eq!(result, Value::Ok(Box::new(Value::Number(20.0))));
     }
 
     // L839: jpth non-text/non-map args
