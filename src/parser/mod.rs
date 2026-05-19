@@ -507,6 +507,20 @@ impl Parser {
                 "pick a different name like `rg` or `myrng`. Aliases shadow local bindings in call position, so reusing the name silently mis-dispatches.".into(),
             ));
         }
+        // Short-form alias `rand` (resolves to canonical `rnd`) used as binding
+        // name: `rand=5`. Same shadow-in-call-position shape as `rng`; surfaced
+        // separately because `Builtin::is_builtin("rand")` returns false (alias
+        // not canonical).
+        if let Some(Token::Ident(name)) = self.peek()
+            && name == "rand"
+            && self.token_at(self.pos + 1) == Some(&Token::Eq)
+        {
+            return Err(self.error_hint(
+                "ILO-P011",
+                "`rand` is a short-form alias for the `rnd` builtin and cannot be used as a binding name".into(),
+                "pick a different name like `r` or `myrand`. Aliases shadow local bindings in call position, so reusing the name silently mis-dispatches.".into(),
+            ));
+        }
         // Any other builtin name used as binding LHS: `flat=...`, `frq=...`,
         // `map=...`, etc. Personas hit this constantly (pdf-analyst rerun3 #6:
         // `flat=cat ls " "` then `spl flat ". "` mis-dispatched to the builtin
@@ -762,6 +776,13 @@ impl Parser {
                 "ILO-P011",
                 "`rng` is a short-form alias for the `range` builtin and cannot be used as a function name".into(),
                 "rename to something like `myrng` or `rg`. Aliases shadow user functions in calls, so reusing the name silently breaks dispatch.".into(),
+            ));
+        }
+        if name == "rand" {
+            return Err(self.error_hint(
+                "ILO-P011",
+                "`rand` is a short-form alias for the `rnd` builtin and cannot be used as a function name".into(),
+                "rename to something like `myrand` or `r`. Aliases shadow user functions in calls, so reusing the name silently breaks dispatch.".into(),
             ));
         }
         let params = self.parse_params()?;
@@ -1195,6 +1216,15 @@ impl Parser {
                             "ILO-P011",
                             "`rng` is a short-form alias for the `range` builtin and cannot be used as a binding name".into(),
                             "rename to something like `rg` or `myrng`. Aliases shadow local bindings in call position, so reusing the name silently mis-dispatches.".into(),
+                        ));
+                    }
+                    if let Some(Token::Ident(name)) = self.peek()
+                        && name == "rand"
+                    {
+                        return Err(self.error_hint(
+                            "ILO-P011",
+                            "`rand` is a short-form alias for the `rnd` builtin and cannot be used as a binding name".into(),
+                            "rename to something like `r` or `myrand`. Aliases shadow local bindings in call position, so reusing the name silently mis-dispatches.".into(),
                         ));
                     }
                     self.parse_let()
@@ -2751,6 +2781,7 @@ or write `({fmt_name} \"...\" ...)` so its args are grouped."
 
             // Zero-arg builtins: `rnd`/`now`/`now-ms`/`mmap`/`env-all` with no args → Call with empty args
             if (name == "rnd"
+                || name == "rand"
                 || name == "now"
                 || name == "now-ms"
                 || name == "mmap"

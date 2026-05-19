@@ -204,7 +204,7 @@ Short builtin names are precious surface and ilo reserves a stable subset of the
         sum tan trm unq upr wrl zip
 ```
 
-`rng` is the short-form alias for the canonical `range` builtin; it is reserved with the same shadow-prevention semantics as a canonical builtin name (binding `rng=...` or declaring `rng x:...` fires `ILO-P011`).
+`rng` is the short-form alias for the canonical `range` builtin; it is reserved with the same shadow-prevention semantics as a canonical builtin name (binding `rng=...` or declaring `rng x:...` fires `ILO-P011`). `rand` is the short-form alias for the canonical `rnd` builtin (added 0.12.1) and is reserved with the same semantics.
 
 Longer builtin names (`acos`, `asin`, `atan`, `flat`, `take`, `drop`, `mget`, `mset`, `mmap`, `prnt`, `mapr`, `solve`, `clamp`, `cumsum`, `median`, `matmul`, `range`, `window`, `chunks`, `walk`, `glob`, …) are also reserved and rejected by `ILO-P011`, but the short-name namespace above is where carry-forward scripts most often collide, so it gets explicit enumeration.
 
@@ -445,7 +445,7 @@ Called like functions, compiled to dedicated opcodes.
 | `mod a b` | remainder (modulo); errors on zero divisor | `n` |
 | `flr n` | floor (round toward negative infinity) | `n` |
 | `cel n` | ceiling (round toward positive infinity) | `n` |
-| `rnd` | random float in [0, 1) | `n` |
+| `rnd` | random float in [0, 1). NOT round - for round use `rou` (alias: `round`). Aliases: `rand`, `random`. | `n` |
 | `rnd a b` | random integer in [a, b] (inclusive) | `n` |
 | `now` | current Unix timestamp (seconds) | `n` |
 | `now-ms` | current Unix timestamp (milliseconds) | `n` |
@@ -605,6 +605,7 @@ All builtins accept one or more alias names that resolve to the canonical name a
 | `floor` | → | `flr` |
 | `ceil` | → | `cel` |
 | `round` | → | `rou` |
+| `rand` | → | `rnd` |
 | `random` | → | `rnd` |
 | `rng` | → | `range` |
 | `lset` | → | `lst` |

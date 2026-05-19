@@ -449,6 +449,7 @@ const BUILTIN_ALIASES: &[(&str, &str)] = &[
     ("floor", "flr"),
     ("ceil", "cel"),
     ("round", "rou"),
+    ("rand", "rnd"),
     ("random", "rnd"),
     // `rng` is a short-form alias for the canonical `range` builtin. Personas
     // working in numeric / simulation / regression code reach for it first
