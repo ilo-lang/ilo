@@ -1594,16 +1594,30 @@ fn compile_cmd(args: &[String]) -> i32 {
         return 1;
     };
 
-    // AOT compile
-    let start = std::time::Instant::now();
-    let result = if bench_mode {
-        vm::compile_cranelift::compile_to_bench_binary(&compiled, entry, &output)
-    } else {
-        vm::compile_cranelift::compile_to_binary(&compiled, entry, &output)
+    // Lower verified AST to HIR. The Cranelift backend ignores it today
+    // (Stage 5b uses bytecode via the config side-channel) but the dispatch
+    // surface is HIR-first so subsequent stages can swap backends without
+    // touching `main.rs`.
+    let hir = match ilo::hir::lower(&program, &verify_result) {
+        Ok(h) => h,
+        Err(e) => {
+            eprintln!("HIR lowering error: {}", e);
+            return 1;
+        }
     };
+
+    // AOT compile via the backend trait surface.
+    let start = std::time::Instant::now();
+    let config = ilo::backend::cranelift::CraneliftConfig {
+        program: &compiled,
+        entry,
+        output_path: &output,
+        bench: bench_mode,
+    };
+    let result = ilo::backend::cranelift::emit(&hir, config);
     let duration_ms = start.elapsed().as_millis();
     match result {
-        Ok(()) => {
+        Ok(_artefact) => {
             if as_json {
                 let size_bytes = std::fs::metadata(&output).map(|m| m.len()).ok();
                 let v = serde_json::json!({
