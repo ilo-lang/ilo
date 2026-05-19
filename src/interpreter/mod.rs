@@ -3613,6 +3613,92 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         };
         return Ok(Value::Text(Arc::new(dur_fmt(secs))));
     }
+    if builtin == Some(Builtin::Fsize) && args.len() == 1 {
+        // fsize path > R n t — file size in bytes. Err on missing,
+        // permission-denied, or path-is-directory. Symlinks are followed
+        // (matches POSIX `stat`, not `lstat`). Predicate counterpart is
+        // `isfile` which collapses these errors into `false`.
+        let path = match &args[0] {
+            Value::Text(s) => s.clone(),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("fsize requires text path, got {:?}", other),
+                ));
+            }
+        };
+        return match std::fs::metadata(path.as_str()) {
+            Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(e.to_string()))))),
+            Ok(md) if md.is_dir() => Ok(Value::Err(Box::new(Value::Text(Arc::new(format!(
+                "{}: is a directory",
+                path
+            )))))),
+            Ok(md) => Ok(Value::Ok(Box::new(Value::Number(md.len() as f64)))),
+        };
+    }
+    if builtin == Some(Builtin::Mtime) && args.len() == 1 {
+        // mtime path > R n t — last modification time as Unix epoch seconds
+        // (f64). Err on missing or permission-denied. Symlinks followed.
+        // Returns seconds (not ms) to match `now` — `now-ms` exists for
+        // sub-second precision; mtime is a wall-clock timestamp and the
+        // fractional second is preserved as f64.
+        let path = match &args[0] {
+            Value::Text(s) => s.clone(),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("mtime requires text path, got {:?}", other),
+                ));
+            }
+        };
+        return match std::fs::metadata(path.as_str()) {
+            Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(e.to_string()))))),
+            Ok(md) => match md.modified() {
+                Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(e.to_string()))))),
+                Ok(t) => match t.duration_since(std::time::UNIX_EPOCH) {
+                    Ok(d) => Ok(Value::Ok(Box::new(Value::Number(d.as_secs_f64())))),
+                    Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(e.to_string()))))),
+                },
+            },
+        };
+    }
+    if builtin == Some(Builtin::Isfile) && args.len() == 1 {
+        // isfile path > b — true iff path resolves to a regular file
+        // (following symlinks). Missing path, permission-denied, or
+        // directory all return `false` — Python convention. The natural
+        // branch shape is `?isfile p{...}`, so collapsing the error tier
+        // into `false` keeps the call site one token wide.
+        let path = match &args[0] {
+            Value::Text(s) => s.clone(),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("isfile requires text path, got {:?}", other),
+                ));
+            }
+        };
+        let is = std::fs::metadata(path.as_str())
+            .map(|m| m.is_file())
+            .unwrap_or(false);
+        return Ok(Value::Bool(is));
+    }
+    if builtin == Some(Builtin::Isdir) && args.len() == 1 {
+        // isdir path > b — true iff path resolves to a directory (following
+        // symlinks). Missing / perm-denied / not-a-dir all return `false`.
+        let path = match &args[0] {
+            Value::Text(s) => s.clone(),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("isdir requires text path, got {:?}", other),
+                ));
+            }
+        };
+        let is = std::fs::metadata(path.as_str())
+            .map(|m| m.is_dir())
+            .unwrap_or(false);
+        return Ok(Value::Bool(is));
+    }
     if builtin == Some(Builtin::Rd) && (args.len() == 1 || args.len() == 2) {
         let path = match &args[0] {
             Value::Text(s) => s.clone(),

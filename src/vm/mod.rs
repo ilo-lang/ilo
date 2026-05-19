@@ -592,6 +592,15 @@ pub(crate) fn is_tree_bridge_eligible(b: crate::builtins::Builtin, argc: usize) 
         (Builtin::Dirname, 1) => true,
         (Builtin::Basename, 1) => true,
         (Builtin::Pathjoin, 1) => true,
+        // 0.12.1 filesystem metadata primitives. Same shape as ls/walk/glob:
+        // no FnRef args, single text path in, atomic value out. Size/mtime
+        // return Result (auto-unwrap eligible — see tree_bridge_returns_result
+        // below). Predicates return bool, no Result wrap, so they fall through
+        // the standard non-Result bridge path.
+        (Builtin::Fsize, 1) => true,
+        (Builtin::Mtime, 1) => true,
+        (Builtin::Isfile, 1) => true,
+        (Builtin::Isdir, 1) => true,
         // `sleep ms` has no FnRef args and returns Nil; the bridge round-trip
         // is lossless, so VM/Cranelift get it for free. The actual sleep is
         // delegated to `std::thread::sleep` inside the tree interpreter.
@@ -704,6 +713,8 @@ pub(crate) fn tree_bridge_returns_result(b: crate::builtins::Builtin) -> bool {
             | Builtin::Ls
             | Builtin::Walk
             | Builtin::Glob
+            | Builtin::Fsize
+            | Builtin::Mtime
             | Builtin::EnvAll
             | Builtin::Run
             | Builtin::Jkeys
