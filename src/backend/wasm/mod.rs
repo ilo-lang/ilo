@@ -179,10 +179,25 @@ pub fn check_builtin(builtin: &str, target: WasmTarget) -> Result<(), BackendErr
     }
 }
 
+/// Walker rejection helper for HIR constructs the WASM backend doesn't
+/// lower yet. Emits a structured `ILO-B202` so the conformance harness
+/// (and any other consumer that gates on the `ILO-B###` namespace) can
+/// classify this as a soft "unsupported" rather than a hard failure.
+///
+/// The free-form `BackendError::UnsupportedFeature` variant has no error
+/// code, so a message like "backend 'wasm' does not support feature 'X'"
+/// would slip past a `\bILO-B[0-9]{3}\b` gate and be miscounted as a
+/// real failure. Routing through `CodegenFailed` keeps the gate honest.
 fn unsupported(feature: impl Into<String>) -> BackendError {
-    BackendError::UnsupportedFeature {
-        feature: feature.into(),
-        backend: WasmBackend::NAME,
+    let feature = feature.into();
+    BackendError::CodegenFailed {
+        code: "ILO-B202",
+        message: format!(
+            "{} backend does not support feature '{}'",
+            WasmBackend::NAME,
+            feature
+        ),
+        span: None,
     }
 }
 

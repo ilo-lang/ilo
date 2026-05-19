@@ -106,10 +106,24 @@ fn codegen(code: &'static str, message: impl Into<String>) -> BackendError {
     }
 }
 
+/// Walker rejection helper for HIR constructs the Zero backend doesn't
+/// lower yet. Emits a structured `ILO-B302` so the conformance harness
+/// (and any other consumer that gates on the `ILO-B###` namespace) can
+/// classify this as a soft "unsupported" rather than a hard failure.
+///
+/// See the equivalent helper in `backend/wasm/mod.rs` for the full
+/// rationale on why we route through `CodegenFailed` rather than
+/// `BackendError::UnsupportedFeature`.
 fn unsupported(feature: impl Into<String>) -> BackendError {
-    BackendError::UnsupportedFeature {
-        feature: feature.into(),
-        backend: ZeroBackend::NAME,
+    let feature = feature.into();
+    BackendError::CodegenFailed {
+        code: "ILO-B302",
+        message: format!(
+            "{} backend does not support feature '{}'",
+            ZeroBackend::NAME,
+            feature
+        ),
+        span: None,
     }
 }
 

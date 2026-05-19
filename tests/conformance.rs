@@ -199,15 +199,36 @@ fn parse_run(raw: &str) -> (String, Vec<String>) {
 /// Look at backend stderr and decide whether the failure is a
 /// "backend doesn't support this surface yet" soft skip vs a hard fail.
 ///
-/// Gates exclusively on a structured `ILO-B###` code on stderr. We
-/// deliberately don't match against stdout (program output, never
-/// diagnostics) or against free-form prose like `"only lowers"` /
-/// `"Stage 5d"`; a future example whose program text happens to print
-/// that phrase would otherwise get silently reclassified.
+/// Gates on the enumerated *unsupported* subset of the `ILO-B###`
+/// namespace only. We deliberately don't match against stdout (program
+/// output, never diagnostics) or against free-form prose like
+/// `"only lowers"` / `"Stage 5d"`; a future example whose program text
+/// happens to print that phrase would otherwise get silently
+/// reclassified.
+///
+/// The set:
+///   - `ILO-B201` — WASM builtin not supported on this target
+///   - `ILO-B202` — HIR construct unsupported by WASM backend
+///   - `ILO-B205` — WASM entry function not found
+///   - `ILO-B301` — Zero rejected the emitted source
+///   - `ILO-B302` — HIR construct unsupported by Zero backend
+///   - `ILO-B305` — Zero entry function not found
+///
+/// Explicitly excluded so a real backend regression doesn't get
+/// silently reclassified as "unsupported":
+///   - `ILO-B203` — wasm-tools subprocess failure (hard backend bug)
+///   - `ILO-B204` — WASM IO failure (hard backend bug)
+///   - `ILO-B303` — `zero` missing on PATH (gated separately as Skip)
+///   - `ILO-B304` — Zero IO failure (hard backend bug)
+///
+/// If you add a new `ILO-B###` code, audit it here: does it represent
+/// "this corpus is beyond what the backend lowers" (add it) or "the
+/// backend itself broke" (don't)?
 fn is_unsupported(stderr: &str, _stdout: &str) -> bool {
     static RE: OnceLock<regex::Regex> = OnceLock::new();
     let re = RE.get_or_init(|| {
-        regex::Regex::new(r"\bILO-B[0-9]{3}\b").expect("valid backend-error regex")
+        regex::Regex::new(r"\bILO-B(?:201|202|205|301|302|305)\b")
+            .expect("valid backend-error regex")
     });
     stderr.lines().any(|l| re.is_match(l))
 }
