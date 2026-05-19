@@ -59,8 +59,7 @@ Non-last fns end with safe expr (op, index, match, literal, parens). Last fn: an
 
 Fn/binding shadowing builtin or alias fires `ILO-P011`; aliases reserved like canonicals. 2-char safe; 4+ safe except `take drop mget mset flat range`; 3-char safe.
 
-- 2: `at hd tl rd wr ct`
-- 3: `abs avg cap cat cel chr cos det dot env exp fft fld flr flt fmt frq get grp has inv len log lsd lst lwr map max min mod now num ord pow pst rdb rdl rev rgx rng rnd rou run sin slc spl srt str sum tan trm unq upr wrl zip`
+`e` `at hd pi tl rd wr ct` `abs avg cap cat cel chr cos det dot env exp fft fld flr flt fmt frq get grp has inv len log lsd lst lwr map max min mod now num ord pow pst rdb rdl rev rgx rng rnd rou run sin slc spl srt str sum tan tau trm unq upr wrl zip`
 
 ## cross-lang gotchas
 
