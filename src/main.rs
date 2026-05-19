@@ -2816,7 +2816,7 @@ fn dispatch_bare_args(raw_args: Vec<String>, global: &cli::Global) -> i32 {
 
     if args.len() < 2 {
         eprintln!(
-            "Usage: ilo <file-or-code> [args... | --run func args... | --bench func args... | --emit python]"
+            "Usage: ilo <file-or-code> [args... | --run func args... | --bench func args...]"
         );
         eprintln!("       ilo run <file> [args...]                  Run (verb form)");
         eprintln!("       ilo check <file> [--json]                 Verify without running");
@@ -2898,7 +2898,7 @@ fn dispatch_bare_args(raw_args: Vec<String>, global: &cli::Global) -> i32 {
         (args[1].clone(), 2)
     } else if args[1] == "-e" {
         if args.len() < 3 || args[2].is_empty() {
-            eprintln!("Usage: ilo <file-or-code> [args... | --run func args... | --emit python]");
+            eprintln!("Usage: ilo <file-or-code> [args... | --run func args...]");
             return 1;
         }
         (args[2].clone(), 3)
@@ -3524,13 +3524,20 @@ fn dispatch_run(r: cli::RunArgs, mode: OutputMode, explicit_json: bool, no_hints
         print!("{}", codegen::explain::explain(&program, filename));
         0
     } else if let Some(ref target) = r.emit {
+        // Stage 5c (manifesto-strict CLI): `--emit <target>` is removed.
+        // The canonical form is now `ilo build <file> --<target>`. For
+        // python this means `ilo build file.ilo --py`. Print a migration
+        // hint and exit 2 so scripts notice the breakage immediately.
         if target == "python" {
-            println!("{}", ilo::backend::python::emit_to_string(&program));
-            0
+            eprintln!(
+                "error: `--emit python` has been removed. Use `ilo build <file.ilo> --py` instead."
+            );
         } else {
-            eprintln!("Unknown emit target. Supported: python");
-            1
+            eprintln!(
+                "error: `--emit {target}` is not a supported form. The canonical CLI is `ilo build <file.ilo> --py` (Python). See `ilo build --help`."
+            );
         }
+        2
     } else if r.dense {
         println!(
             "{}",
@@ -3977,7 +3984,7 @@ fn print_help() {
     println!("  ilo <code> [args...]              Run (bytecode VM; use --jit for JIT)");
     println!("  ilo <file.@> [args...]           Run from file (.ilo also accepted)");
     println!("  ilo <code> func [args...]         Run a specific function");
-    println!("  ilo <code> --emit python          Transpile to Python");
+    println!("  ilo build <file.ilo> --py         Transpile to Python source");
     println!("  ilo <code> --explain / -x            Annotate each statement with its role");
     println!("  ilo <code> --dense / -d             Reformat (dense wire format)");
     println!("  ilo <code> --expanded / -e          Reformat (expanded human format)");
@@ -4031,7 +4038,7 @@ fn print_help() {
     println!("  ilo 'f x:n>n;*x 2' 5             Define and call f(5) → 10");
     println!("  ilo 'f xs:L n>n;len xs' 1,2,3     Pass a list → 3");
     println!("  ilo program.@ 10 20              Run file with arguments");
-    println!("  ilo 'f x:n>n;*x 2' --emit python Transpile to Python");
+    println!("  ilo build foo.@ --py             Transpile to Python source");
 }
 
 /// Dispatch --run-vm, routing to MCP / HTTP / plain run based on available providers.
@@ -7025,21 +7032,23 @@ mod tests {
     // ── subprocess: --emit unknown target ─────────────────────────────────────
 
     #[test]
-    fn cli_emit_unknown_target_exits_nonzero() {
+    fn cli_emit_legacy_form_exits_with_migration_hint() {
+        // Stage 5c: `--emit <target>` is removed. Invoking it surfaces a
+        // migration hint pointing at the canonical `ilo build <file> --py`
+        // form, and exits with code 2 so scripts notice the breakage.
         let out = std::process::Command::new(ilo_bin())
             .args(["f>n;1", "--emit", "rust"])
             .output()
             .expect("failed to run ilo --emit rust");
-        assert!(
-            !out.status.success(),
-            "expected non-zero exit for unknown emit target"
+        assert_eq!(
+            out.status.code(),
+            Some(2),
+            "expected exit code 2 for legacy --emit form"
         );
         let stderr = String::from_utf8_lossy(&out.stderr);
         assert!(
-            stderr.contains("Unknown emit")
-                || stderr.contains("Supported")
-                || stderr.contains("python"),
-            "expected unknown-emit error in stderr, got: {stderr}"
+            stderr.contains("ilo build") && stderr.contains("--py"),
+            "expected migration hint in stderr, got: {stderr}"
         );
     }
 
@@ -8066,7 +8075,9 @@ mod tests {
     // ── dispatch_bare_args: --emit flag ───────────────────────────────────────
 
     #[test]
-    fn dispatch_bare_args_emit_python_exits_zero() {
+    fn dispatch_bare_args_emit_python_migration_error() {
+        // Stage 5c removed `--emit python`. The legacy form now exits 2 with
+        // a migration hint pointing at `ilo build <file> --py`.
         let global = cli::Global {
             ansi: false,
             text: false,
@@ -8082,11 +8093,11 @@ mod tests {
             ],
             &global,
         );
-        assert_eq!(code, 0);
+        assert_eq!(code, 2);
     }
 
     #[test]
-    fn dispatch_bare_args_emit_unknown_target_exits_one() {
+    fn dispatch_bare_args_emit_unknown_target_migration_error() {
         let global = cli::Global {
             ansi: false,
             text: false,
@@ -8102,7 +8113,8 @@ mod tests {
             ],
             &global,
         );
-        assert_eq!(code, 1);
+        // Stage 5c: any `--emit <target>` form exits 2 with a migration hint.
+        assert_eq!(code, 2);
     }
 
     #[test]
