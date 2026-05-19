@@ -1085,6 +1085,49 @@ have higher caps. See also ILO-T035 (function exceeds the 256-register
 VM cap).
 "#,
     },
+    // ── Engine-specific ──────────────────────────────────────────────────────
+    ErrorEntry {
+        code: "ILO-E801",
+        short: "AOT compile needs an entry function",
+        long: r#"## ILO-E801: AOT compile needs an entry function
+
+`ilo compile <file>` builds a standalone native binary, which means the
+binary's `main()` calls a single entry function. AOT picks that entry
+the same way the in-process engines do:
+
+1. an explicit positional `func` argument wins
+   (`ilo compile foo.ilo -o foo entry-fn`)
+2. otherwise a file with a single user-defined function uses it
+3. otherwise a function called `main` is used if defined
+
+If none of those apply, AOT errors with this code instead of compiling
+the first-declared function as the entry — which historically produced
+a binary that SIGSEGV'd because the chosen function's shape did not
+match the wrapper's expectation.
+
+**Wrong:**
+
+    helper>n;42
+    run>n;helper
+
+Two functions, no `main`, no explicit entry → ILO-E801.
+
+**Fixes:**
+
+- Rename one of the functions to `main`:
+
+      helper>n;42
+      main>n;helper
+
+- Pass the entry function name on the command line:
+
+      ilo compile prog.ilo -o prog run
+
+The other engines (tree / VM / Cranelift JIT) raise the same kind of
+error at the CLI dispatch layer; ILO-E801 is the AOT-side equivalent so
+the failure mode is the same across every engine.
+"#,
+    },
     // ── Warnings ─────────────────────────────────────────────────────────────
     ErrorEntry {
         code: "ILO-W001",
@@ -1237,6 +1280,30 @@ identifies the propagation point for diagnostic purposes.
 
 - ILO-R026 — `!!` panic-unwrap aborts the program instead of propagating.
 - ILO-T025 / ILO-T026 — static checks that `!` is applied correctly.
+"#,
+    },
+    ErrorEntry {
+        code: "ILO-R015",
+        short: "AOT runtime fault",
+        long: r#"## ILO-R015: AOT runtime fault
+
+An AOT-compiled ilo binary received a fatal signal (SIGSEGV, SIGBUS,
+SIGFPE, SIGILL, or SIGABRT) and aborted. Unlike the tree-walker, VM,
+and JIT backends — which surface runtime errors as structured
+`ILO-R###` diagnostics through `JIT_RUNTIME_ERROR` — AOT binaries
+execute as standalone native code, so any hard fault would otherwise
+exit with a raw signal exit code (e.g. 139 for SIGSEGV) and no
+diagnostic on stderr.
+
+The AOT runtime installs an async-signal-safe handler in
+`ilo_aot_init` that writes a single JSON line to stderr identifying
+the signal before letting the default handler terminate the process
+with the conventional exit code (128 + signo).
+
+A hard fault from an AOT binary is always a bug in ilo itself —
+either a codegen issue in the Cranelift AOT backend, or a missing
+runtime check that the other engines apply. Please file an issue
+with the source program and the JSON diagnostic.
 "#,
     },
     ErrorEntry {

@@ -16,7 +16,7 @@ fn ilo() -> Command {
 }
 
 const SLC_REPRO: &str =
-    r#"go>L t;ls=["a","b","c","d","e"];@i 0..3{b=*i 1;b1=+b 1;s=slc ls b b1;p=prnt s};ls"#;
+    r#"go>L t;xs=["a","b","c","d","e"];@i 0..3{b=*i 1;b1=+b 1;s=slc xs b b1;p=prnt s};xs"#;
 const MSET_REPRO: &str = r#"go>M t t;m=mset mmap "init" "x";@i 0..3{b=*i 1;b1=+b 1;ix=slc "abc" b b1;m=mset m ix "v"};m"#;
 // OP_MDEL had the same map-clone RC bug as OP_MSET (HashMap::clone bit-copies
 // NanVals without bumping heap RCs, and HashMap::remove drops the removed entry

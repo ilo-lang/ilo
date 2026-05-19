@@ -1,0 +1,41 @@
+-- ls / walk / glob — filesystem enumeration builtins. All three return a
+-- Result so missing-dir / permission-denied surface as Err and compose
+-- with `!`-unwrap and the `?ok{…}{…}` pattern. Paths are returned relative
+-- to the requested root, with `/` separators on every OS, sorted
+-- lexicographically for deterministic output across machines.
+--
+-- This file uses the repo's own `examples/` directory as a stable fixture so
+-- it runs without setup under the engine-harness (cwd = crate root).
+
+-- `ls dir` — non-recursive listing. Returns just the filenames, not the
+-- full paths; the caller `cat`s them with the dir prefix when they need
+-- absolute references. Empty dirs return `[]`, not Err.
+ls-has-entries dir:t>R b t;es=ls! dir;~>len es 0
+
+-- `walk dir` — recursive DFS, paths relative to `dir`, includes both file
+-- and directory entries (matches `find` shape). Sorted output makes diffs
+-- stable across runs.
+walk-has-entries dir:t>R b t;ps=walk! dir;~>len ps 5
+
+-- `glob dir pat` — shell-style filter on a recursive walk. Pattern syntax:
+--   *     any run within a path segment (does not cross `/`)
+--   ?     a single char within a segment
+--   [abc] / [a-z]   a char class; leading `!` or `^` negates
+--   **    any number of nested segments (recursive)
+--
+-- `**/*.ilo` matches every .ilo file in the tree, including ones in the
+-- immediate dir (the `**` matches zero segments too).
+glob-ilo-count dir:t>R b t;ps=glob! dir "**/*.ilo";~>len ps 0
+
+-- Missing directory surfaces as Err. The agent can pattern-match the
+-- Result or use `?ok` to branch instead of carrying a sentinel value.
+ls-missing>R (L t) t;ls "this-path-must-not-exist-xyzzy"
+
+-- run: ls-has-entries "examples"
+-- out: true
+-- run: walk-has-entries "examples"
+-- out: true
+-- run: glob-ilo-count "examples"
+-- out: true
+-- err: ls-missing
+-- out: ^No such file or directory (os error 2)
