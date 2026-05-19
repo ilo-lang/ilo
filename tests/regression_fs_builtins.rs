@@ -300,8 +300,7 @@ fn walk_skips_permission_denied_subdir_cross_engine() {
     for engine in ENGINES_ALL {
         let out = run_ok(engine, src, &["f", root]);
         assert_eq!(
-            out,
-            "[a.txt, b.txt, locked, readable, readable/c.txt]",
+            out, "[a.txt, b.txt, locked, readable, readable/c.txt]",
             "{engine}: walk skips perm-denied subdir"
         );
     }
