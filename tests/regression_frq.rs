@@ -41,12 +41,12 @@ fn check_string_freq(engine: &str) {
 
 #[test]
 fn frq_strings_tree() {
-    check_string_freq("--run-vm");
+    check_string_freq("--vm");
 }
 
 #[test]
 fn frq_strings_vm() {
-    check_string_freq("--run-vm");
+    check_string_freq("--vm");
 }
 
 #[test]
@@ -69,12 +69,12 @@ fn check_num_freq(engine: &str) {
 
 #[test]
 fn frq_numbers_tree() {
-    check_num_freq("--run-vm");
+    check_num_freq("--vm");
 }
 
 #[test]
 fn frq_numbers_vm() {
-    check_num_freq("--run-vm");
+    check_num_freq("--vm");
 }
 
 #[test]
@@ -95,12 +95,12 @@ fn check_empty(engine: &str) {
 
 #[test]
 fn frq_empty_tree() {
-    check_empty("--run-vm");
+    check_empty("--vm");
 }
 
 #[test]
 fn frq_empty_vm() {
-    check_empty("--run-vm");
+    check_empty("--vm");
 }
 
 #[test]
@@ -119,12 +119,12 @@ fn check_single(engine: &str) {
 
 #[test]
 fn frq_single_tree() {
-    check_single("--run-vm");
+    check_single("--vm");
 }
 
 #[test]
 fn frq_single_vm() {
-    check_single("--run-vm");
+    check_single("--vm");
 }
 
 #[test]
@@ -147,12 +147,12 @@ fn check_mkeys(engine: &str) {
 
 #[test]
 fn frq_mkeys_bare_tree() {
-    check_mkeys("--run-vm");
+    check_mkeys("--vm");
 }
 
 #[test]
 fn frq_mkeys_bare_vm() {
-    check_mkeys("--run-vm");
+    check_mkeys("--vm");
 }
 
 #[test]
@@ -193,12 +193,12 @@ fn check_cross_type(engine: &str) {
 
 #[test]
 fn frq_cross_type_tree() {
-    check_cross_type("--run-vm");
+    check_cross_type("--vm");
 }
 
 #[test]
 fn frq_cross_type_vm() {
-    check_cross_type("--run-vm");
+    check_cross_type("--vm");
 }
 
 #[test]

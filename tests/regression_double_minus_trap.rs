@@ -244,7 +244,7 @@ fn near_miss_second_op_only_one_atom() {
 #[test]
 fn rejects_trap_on_all_engines() {
     let src = "f gl:n s:n b:n om:n>n;- -*gl s *b om";
-    for backend in ["--run-vm", "--jit"] {
+    for backend in ["--vm", "--jit"] {
         let out = ilo()
             .arg("--json")
             .arg(backend)

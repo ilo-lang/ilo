@@ -56,12 +56,12 @@ fn check_fld_binding(engine: &str) {
 
 #[test]
 fn fld_binding_in_body_tree() {
-    check_fld_binding("--run-vm");
+    check_fld_binding("--vm");
 }
 
 #[test]
 fn fld_binding_in_body_vm() {
-    check_fld_binding("--run-vm");
+    check_fld_binding("--vm");
 }
 
 #[test]
@@ -93,12 +93,12 @@ fn check_fld_binding_loop(engine: &str) {
 
 #[test]
 fn fld_binding_in_loop_tree() {
-    check_fld_binding_loop("--run-vm");
+    check_fld_binding_loop("--vm");
 }
 
 #[test]
 fn fld_binding_in_loop_vm() {
-    check_fld_binding_loop("--run-vm");
+    check_fld_binding_loop("--vm");
 }
 
 #[test]
@@ -113,7 +113,7 @@ fn fld_as_builtin_still_works() {
     let out = ilo()
         .args([
             "add x:n y:n>n;+x y;f>n;fld add [1 2 3 4] 0",
-            "--run-vm",
+            "--vm",
             "f",
         ])
         .output()

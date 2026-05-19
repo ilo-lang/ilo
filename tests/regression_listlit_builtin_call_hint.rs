@@ -163,7 +163,7 @@ fn check_all(engine: &str) {
 
 #[test]
 fn listlit_builtin_call_hint_vm() {
-    check_all("--run-vm");
+    check_all("--vm");
 }
 
 #[test]

@@ -36,12 +36,12 @@ fn check_runtime_error(engine: &str, src: &str, kw_any: &[&str]) {
 
 #[test]
 fn hd_empty_list_tree() {
-    check_runtime_error("--run-vm", "f>n;hd []", &["hd", "empty", "ILO-R009"]);
+    check_runtime_error("--vm", "f>n;hd []", &["hd", "empty", "ILO-R009"]);
 }
 
 #[test]
 fn hd_empty_list_vm() {
-    check_runtime_error("--run-vm", "f>n;hd []", &["hd", "empty", "ILO-R004"]);
+    check_runtime_error("--vm", "f>n;hd []", &["hd", "empty", "ILO-R004"]);
 }
 
 #[test]
@@ -52,12 +52,12 @@ fn hd_empty_list_cranelift() {
 
 #[test]
 fn hd_empty_text_tree() {
-    check_runtime_error("--run-vm", "f>t;hd \"\"", &["hd", "empty", "ILO-R009"]);
+    check_runtime_error("--vm", "f>t;hd \"\"", &["hd", "empty", "ILO-R009"]);
 }
 
 #[test]
 fn hd_empty_text_vm() {
-    check_runtime_error("--run-vm", "f>t;hd \"\"", &["hd", "empty", "ILO-R004"]);
+    check_runtime_error("--vm", "f>t;hd \"\"", &["hd", "empty", "ILO-R004"]);
 }
 
 #[test]
@@ -69,7 +69,7 @@ fn hd_empty_text_cranelift() {
 #[test]
 fn hd_on_number_tree() {
     check_runtime_error(
-        "--run-vm",
+        "--vm",
         "f x:n>n;hd x",
         &["hd", "list", "text", "ILO-R009"],
     );
@@ -78,7 +78,7 @@ fn hd_on_number_tree() {
 #[test]
 fn hd_on_number_vm() {
     check_runtime_error(
-        "--run-vm",
+        "--vm",
         "f x:n>n;hd x",
         &["hd", "list", "text", "ILO-R004"],
     );
@@ -110,12 +110,12 @@ fn hd_on_number_cranelift() {
 
 #[test]
 fn tl_empty_list_tree() {
-    check_runtime_error("--run-vm", "f>L n;tl []", &["tl", "empty", "ILO-R009"]);
+    check_runtime_error("--vm", "f>L n;tl []", &["tl", "empty", "ILO-R009"]);
 }
 
 #[test]
 fn tl_empty_list_vm() {
-    check_runtime_error("--run-vm", "f>L n;tl []", &["tl", "empty", "ILO-R004"]);
+    check_runtime_error("--vm", "f>L n;tl []", &["tl", "empty", "ILO-R004"]);
 }
 
 #[test]
@@ -126,12 +126,12 @@ fn tl_empty_list_cranelift() {
 
 #[test]
 fn tl_empty_text_tree() {
-    check_runtime_error("--run-vm", "f>t;tl \"\"", &["tl", "empty", "ILO-R009"]);
+    check_runtime_error("--vm", "f>t;tl \"\"", &["tl", "empty", "ILO-R009"]);
 }
 
 #[test]
 fn tl_empty_text_vm() {
-    check_runtime_error("--run-vm", "f>t;tl \"\"", &["tl", "empty", "ILO-R004"]);
+    check_runtime_error("--vm", "f>t;tl \"\"", &["tl", "empty", "ILO-R004"]);
 }
 
 #[test]

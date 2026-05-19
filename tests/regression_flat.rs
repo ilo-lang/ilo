@@ -29,34 +29,34 @@ fn run_ok(engine: &str, src: &str) -> String {
 #[test]
 fn flat_basic_nested_tree() {
     assert_eq!(
-        run_ok("--run-vm", "f>L n;flat [[1, 2], [3, 4]]"),
+        run_ok("--vm", "f>L n;flat [[1, 2], [3, 4]]"),
         "[1, 2, 3, 4]"
     );
 }
 
 #[test]
 fn flat_empty_outer_tree() {
-    assert_eq!(run_ok("--run-vm", "f>L n;flat []"), "[]");
+    assert_eq!(run_ok("--vm", "f>L n;flat []"), "[]");
 }
 
 #[test]
 fn flat_inner_empties_dropped_tree() {
     // [[1], [], [2]] → [1, 2]
-    assert_eq!(run_ok("--run-vm", "f>L n;flat [[1], [], [2]]"), "[1, 2]");
+    assert_eq!(run_ok("--vm", "f>L n;flat [[1], [], [2]]"), "[1, 2]");
 }
 
 #[test]
 fn flat_single_level_passes_through_tree() {
     // Non-list elements pass through unchanged: flat is "flatten one level",
     // a list of scalars is returned with the scalars in place.
-    assert_eq!(run_ok("--run-vm", "f>L n;flat [1, 2, 3]"), "[1, 2, 3]");
+    assert_eq!(run_ok("--vm", "f>L n;flat [1, 2, 3]"), "[1, 2, 3]");
 }
 
 #[test]
 fn flat_mixed_passes_non_list_through_tree() {
     // Mixed list: nested lists are spliced, scalars are kept in place.
     assert_eq!(
-        run_ok("--run-vm", "f>L n;flat [[1, 2], 3, [4, 5]]"),
+        run_ok("--vm", "f>L n;flat [[1, 2], 3, [4, 5]]"),
         "[1, 2, 3, 4, 5]"
     );
 }

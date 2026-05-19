@@ -26,7 +26,7 @@ fn run_num(engine: &str, src: &str) -> f64 {
 }
 
 fn check_all(src: &str, expected: f64) {
-    for engine in ["--run-vm"] {
+    for engine in ["--vm"] {
         let actual = run_num(engine, src);
         assert!(
             (actual - expected).abs() < 1e-12,

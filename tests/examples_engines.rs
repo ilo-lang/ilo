@@ -3,7 +3,7 @@
 // asserts that each engine produces the same output.
 //
 // Supported engines tested here:
-//   --run-vm     Register VM
+//   --vm     Register VM
 //
 // The tree-walker was removed from the public CLI in the 0.12.x
 // soft-deprecation. It stays in-tree as the runtime for HOF callbacks
@@ -130,7 +130,7 @@ struct Engine {
 fn engines() -> Vec<Engine> {
     vec![Engine {
         name: "vm",
-        flag: "--run-vm",
+        flag: "--vm",
     }]
 }
 

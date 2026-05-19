@@ -61,9 +61,9 @@ fn run_err(engine: &str, src: &str, args: &[&str]) -> String {
 }
 
 #[cfg(feature = "cranelift")]
-const ENGINES_ALL: &[&str] = &["--run-vm", "--jit"];
+const ENGINES_ALL: &[&str] = &["--vm", "--jit"];
 #[cfg(not(feature = "cranelift"))]
-const ENGINES_ALL: &[&str] = &["--run-vm"];
+const ENGINES_ALL: &[&str] = &["--vm"];
 
 // ── Bare-bool ternary as statement (tail expr) ───────────────────────
 
@@ -225,7 +225,7 @@ fn empty_first_brace_falls_through_to_match() {
     // (no then-expression). The shape detector bails and the existing
     // match-arm error surfaces.
     let src = "f h:b>n;?h{}{0}";
-    let err = run_err("--run-vm", src, &["f", "true"]);
+    let err = run_err("--vm", src, &["f", "true"]);
     // Bare error class, not exact message — robust to wording tweaks.
     assert!(
         err.contains("ILO-P") || err.contains("expected"),

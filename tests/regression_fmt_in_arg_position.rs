@@ -66,7 +66,7 @@ fn run_err(engine: &str, src: &str, entry: &str) -> String {
     s
 }
 
-const ENGINES: &[&str] = &["--run-vm"];
+const ENGINES: &[&str] = &["--vm"];
 
 #[cfg(feature = "cranelift")]
 const CRANELIFT_ENGINE: &str = "--jit";
@@ -81,12 +81,12 @@ fn check_prnt_fmt(engine: &str) {
 
 #[test]
 fn prnt_fmt_tree() {
-    check_prnt_fmt("--run-vm");
+    check_prnt_fmt("--vm");
 }
 
 #[test]
 fn prnt_fmt_vm() {
-    check_prnt_fmt("--run-vm");
+    check_prnt_fmt("--vm");
 }
 
 #[test]
@@ -149,12 +149,12 @@ fn wr_fmt_temp(engine: &str) -> String {
 
 #[test]
 fn wr_fmt_tree() {
-    assert_eq!(wr_fmt_temp("--run-vm"), "x=42");
+    assert_eq!(wr_fmt_temp("--vm"), "x=42");
 }
 
 #[test]
 fn wr_fmt_vm() {
-    assert_eq!(wr_fmt_temp("--run-vm"), "x=42");
+    assert_eq!(wr_fmt_temp("--vm"), "x=42");
 }
 
 #[test]
@@ -180,12 +180,12 @@ fn check_prnt_upr_fmt(engine: &str) {
 
 #[test]
 fn prnt_upr_fmt_tree() {
-    check_prnt_upr_fmt("--run-vm");
+    check_prnt_upr_fmt("--vm");
 }
 
 #[test]
 fn prnt_upr_fmt_vm() {
-    check_prnt_upr_fmt("--run-vm");
+    check_prnt_upr_fmt("--vm");
 }
 
 #[test]
@@ -206,12 +206,12 @@ fn check_fmt_bare(engine: &str) {
 
 #[test]
 fn fmt_bare_tree() {
-    check_fmt_bare("--run-vm");
+    check_fmt_bare("--vm");
 }
 
 #[test]
 fn fmt_bare_vm() {
-    check_fmt_bare("--run-vm");
+    check_fmt_bare("--vm");
 }
 
 #[test]
@@ -234,12 +234,12 @@ fn check_fmt_in_list(engine: &str) {
 
 #[test]
 fn fmt_in_list_tree() {
-    check_fmt_in_list("--run-vm");
+    check_fmt_in_list("--vm");
 }
 
 #[test]
 fn fmt_in_list_vm() {
-    check_fmt_in_list("--run-vm");
+    check_fmt_in_list("--vm");
 }
 
 #[test]
@@ -261,12 +261,12 @@ fn check_fmt_paren(engine: &str) {
 
 #[test]
 fn fmt_paren_tree() {
-    check_fmt_paren("--run-vm");
+    check_fmt_paren("--vm");
 }
 
 #[test]
 fn fmt_paren_vm() {
-    check_fmt_paren("--run-vm");
+    check_fmt_paren("--vm");
 }
 
 #[test]
@@ -283,7 +283,7 @@ fn fmt_paren_cranelift() {
 #[test]
 fn fmt_middle_slc_slot0_emits_p018_tree() {
     let src = "f>L n;slc fmt \"x={}\" 1 0 2";
-    let err = run_err("--run-vm", src, "f");
+    let err = run_err("--vm", src, "f");
     assert!(
         err.contains("ILO-P018") && err.contains("must be the last argument to `slc`"),
         "missing ILO-P018 with slc hint: {err}"
@@ -297,7 +297,7 @@ fn fmt_middle_slc_slot0_emits_p018_tree() {
 #[test]
 fn fmt_middle_rgxsub_slot0_emits_p018_tree() {
     let src = "f>t;rgxsub fmt \"p={}\" 1 \"abc\" \"X\"";
-    let err = run_err("--run-vm", src, "f");
+    let err = run_err("--vm", src, "f");
     assert!(
         err.contains("ILO-P018") && err.contains("must be the last argument to `rgxsub`"),
         "missing ILO-P018 with rgxsub hint: {err}"
@@ -309,7 +309,7 @@ fn fmt_middle_user_fn_slot1_emits_p018_tree() {
     // User-defined 3-arg fn — `fmt` at slot 1 is a middle slot, must be
     // rejected with the same diagnostic shape.
     let src = "g x:t y:t z:t>t;cat x cat y z\nf>t;g \"a\" fmt \"b={}\" 1 \"c\"";
-    let err = run_err("--run-vm", src, "f");
+    let err = run_err("--vm", src, "f");
     assert!(
         err.contains("ILO-P018"),
         "missing ILO-P018 for user-fn middle slot: {err}"
@@ -328,7 +328,7 @@ fn fmt_middle_user_fn_slot1_emits_p018_tree() {
 #[test]
 fn fmt_middle_p018_vm() {
     let src = "f>L n;slc fmt \"x={}\" 1 0 2";
-    let err = run_err("--run-vm", src, "f");
+    let err = run_err("--vm", src, "f");
     assert!(err.contains("ILO-P018"), "vm missing ILO-P018: {err}");
 }
 
@@ -361,12 +361,12 @@ fn check_slc_fmt_paren(engine: &str) {
 
 #[test]
 fn slc_fmt_paren_tree() {
-    check_slc_fmt_paren("--run-vm");
+    check_slc_fmt_paren("--vm");
 }
 
 #[test]
 fn slc_fmt_paren_vm() {
-    check_slc_fmt_paren("--run-vm");
+    check_slc_fmt_paren("--vm");
 }
 
 #[test]

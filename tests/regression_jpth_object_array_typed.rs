@@ -33,9 +33,9 @@ fn ilo() -> Command {
 }
 
 #[cfg(feature = "cranelift")]
-const ENGINES: &[&str] = &["--run-vm", "--jit"];
+const ENGINES: &[&str] = &["--vm", "--jit"];
 #[cfg(not(feature = "cranelift"))]
-const ENGINES: &[&str] = &["--run-vm"];
+const ENGINES: &[&str] = &["--vm"];
 
 fn run(engine: &str, src: &str, argv: &[&str]) -> (bool, String, String) {
     let mut cmd = ilo();

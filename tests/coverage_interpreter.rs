@@ -18,7 +18,7 @@ fn ilo() -> Command {
 
 fn ok_out(src: &str, entry: &str, args: &[&str]) -> String {
     let mut cmd = ilo();
-    cmd.arg(src).arg("--run-vm").arg(entry);
+    cmd.arg(src).arg("--vm").arg(entry);
     for a in args {
         cmd.arg(a);
     }
@@ -33,7 +33,7 @@ fn ok_out(src: &str, entry: &str, args: &[&str]) -> String {
 
 fn err_stderr(src: &str, entry: &str, args: &[&str]) -> String {
     let mut cmd = ilo();
-    cmd.arg(src).arg("--run-vm").arg(entry);
+    cmd.arg(src).arg("--vm").arg(entry);
     for a in args {
         cmd.arg(a);
     }

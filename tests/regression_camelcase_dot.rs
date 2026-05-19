@@ -33,7 +33,7 @@ fn run(engine: &str, src: &str, entry: &str, args: &[&str]) -> String {
 
 fn run_err(src: &str) -> String {
     let out = ilo()
-        .args([src, "--run-vm", "f"])
+        .args([src, "--vm", "f"])
         .output()
         .expect("failed to run ilo");
     assert!(!out.status.success(), "expected failure for `{src}`");
@@ -53,12 +53,12 @@ fn check_sigil(engine: &str) {
 
 #[test]
 fn camel_field_sigil_tree() {
-    check_sigil("--run-vm");
+    check_sigil("--vm");
 }
 
 #[test]
 fn camel_field_sigil_vm() {
-    check_sigil("--run-vm");
+    check_sigil("--vm");
 }
 
 #[test]
@@ -80,12 +80,12 @@ fn check_non_sigil(engine: &str) {
 
 #[test]
 fn camel_field_non_sigil_tree() {
-    check_non_sigil("--run-vm");
+    check_non_sigil("--vm");
 }
 
 #[test]
 fn camel_field_non_sigil_vm() {
-    check_non_sigil("--run-vm");
+    check_non_sigil("--vm");
 }
 
 #[test]
@@ -107,12 +107,12 @@ fn check_chained(engine: &str) {
 
 #[test]
 fn camel_field_chained_tree() {
-    check_chained("--run-vm");
+    check_chained("--vm");
 }
 
 #[test]
 fn camel_field_chained_vm() {
-    check_chained("--run-vm");
+    check_chained("--vm");
 }
 
 #[test]
@@ -134,12 +134,12 @@ fn check_digit(engine: &str) {
 
 #[test]
 fn camel_field_digit_tree() {
-    check_digit("--run-vm");
+    check_digit("--vm");
 }
 
 #[test]
 fn camel_field_digit_vm() {
-    check_digit("--run-vm");
+    check_digit("--vm");
 }
 
 #[test]
@@ -152,7 +152,7 @@ fn camel_field_digit_cranelift() {
 #[test]
 fn camel_field_safe_access_tree() {
     let out = run(
-        "--run-vm",
+        "--vm",
         "f j:t>R n t;r=jpar! j;r.?baseSeverity",
         "f",
         &[r#"{"baseSeverity":"HIGH"}"#],
@@ -175,12 +175,12 @@ fn check_mixed(engine: &str) {
 
 #[test]
 fn camel_field_mixed_snake_tree() {
-    check_mixed("--run-vm");
+    check_mixed("--vm");
 }
 
 #[test]
 fn camel_field_mixed_snake_vm() {
-    check_mixed("--run-vm");
+    check_mixed("--vm");
 }
 
 #[test]
@@ -212,7 +212,7 @@ fn camel_binding_still_errors_non_sigil() {
 fn dot_then_plain_ident_unchanged() {
     // `r.foo` (no uppercase) must still parse as a plain field access.
     let out = run(
-        "--run-vm",
+        "--vm",
         "f j:t>R n t;r=jpar! j;r.foo",
         "f",
         &[r#"{"foo":3}"#],

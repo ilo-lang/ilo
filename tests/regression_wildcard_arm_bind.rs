@@ -64,12 +64,12 @@ const WILDCARD_DISCARD: &str = "pn s:t>n;r=num s;?r{~v:v;^_:0}\n";
 
 #[test]
 fn wildcard_discard_ok_tree() {
-    assert_eq!(run("--run-vm", WILDCARD_DISCARD, "pn", "3.14"), "3.14");
+    assert_eq!(run("--vm", WILDCARD_DISCARD, "pn", "3.14"), "3.14");
 }
 
 #[test]
 fn wildcard_discard_ok_vm() {
-    assert_eq!(run("--run-vm", WILDCARD_DISCARD, "pn", "3.14"), "3.14");
+    assert_eq!(run("--vm", WILDCARD_DISCARD, "pn", "3.14"), "3.14");
 }
 
 #[test]
@@ -80,12 +80,12 @@ fn wildcard_discard_ok_cranelift() {
 
 #[test]
 fn wildcard_discard_err_tree() {
-    assert_eq!(run("--run-vm", WILDCARD_DISCARD, "pn", "oops"), "0");
+    assert_eq!(run("--vm", WILDCARD_DISCARD, "pn", "oops"), "0");
 }
 
 #[test]
 fn wildcard_discard_err_vm() {
-    assert_eq!(run("--run-vm", WILDCARD_DISCARD, "pn", "oops"), "0");
+    assert_eq!(run("--vm", WILDCARD_DISCARD, "pn", "oops"), "0");
 }
 
 #[test]
@@ -103,12 +103,12 @@ const REWRAP_UNCHANGED: &str = "f s:t>R n t;r=num s;?r{~_:~_;^_:^\"e\"}\n";
 
 #[test]
 fn rewrap_unchanged_ok_tree() {
-    assert_eq!(run("--run-vm", REWRAP_UNCHANGED, "f", "3.14"), "3.14");
+    assert_eq!(run("--vm", REWRAP_UNCHANGED, "f", "3.14"), "3.14");
 }
 
 #[test]
 fn rewrap_unchanged_ok_vm() {
-    assert_eq!(run("--run-vm", REWRAP_UNCHANGED, "f", "3.14"), "3.14");
+    assert_eq!(run("--vm", REWRAP_UNCHANGED, "f", "3.14"), "3.14");
 }
 
 #[test]
@@ -119,12 +119,12 @@ fn rewrap_unchanged_ok_cranelift() {
 
 #[test]
 fn rewrap_unchanged_err_tree() {
-    assert_eq!(run("--run-vm", REWRAP_UNCHANGED, "f", "oops"), "^e");
+    assert_eq!(run("--vm", REWRAP_UNCHANGED, "f", "oops"), "^e");
 }
 
 #[test]
 fn rewrap_unchanged_err_vm() {
-    assert_eq!(run("--run-vm", REWRAP_UNCHANGED, "f", "oops"), "^e");
+    assert_eq!(run("--vm", REWRAP_UNCHANGED, "f", "oops"), "^e");
 }
 
 #[test]
@@ -142,12 +142,12 @@ const ERR_DEBUG_FMT: &str = "f s:t>t;r=num s;?r{~v:str v;^_:fmt \"err: {}\" _}\n
 
 #[test]
 fn err_debug_fmt_tree() {
-    assert_eq!(run("--run-vm", ERR_DEBUG_FMT, "f", "abc"), "err: abc");
+    assert_eq!(run("--vm", ERR_DEBUG_FMT, "f", "abc"), "err: abc");
 }
 
 #[test]
 fn err_debug_fmt_vm() {
-    assert_eq!(run("--run-vm", ERR_DEBUG_FMT, "f", "abc"), "err: abc");
+    assert_eq!(run("--vm", ERR_DEBUG_FMT, "f", "abc"), "err: abc");
 }
 
 #[test]
@@ -166,12 +166,12 @@ const PLAIN_WILDCARD_BIND: &str = "f x:n>n;?x{1:10;_:_}\n";
 
 #[test]
 fn plain_wildcard_bind_subject_tree() {
-    assert_eq!(run("--run-vm", PLAIN_WILDCARD_BIND, "f", "42"), "42");
+    assert_eq!(run("--vm", PLAIN_WILDCARD_BIND, "f", "42"), "42");
 }
 
 #[test]
 fn plain_wildcard_bind_subject_vm() {
-    assert_eq!(run("--run-vm", PLAIN_WILDCARD_BIND, "f", "42"), "42");
+    assert_eq!(run("--vm", PLAIN_WILDCARD_BIND, "f", "42"), "42");
 }
 
 #[test]
@@ -185,12 +185,12 @@ fn plain_wildcard_bind_subject_cranelift() {
 
 #[test]
 fn plain_wildcard_bind_literal_tree() {
-    assert_eq!(run("--run-vm", PLAIN_WILDCARD_BIND, "f", "1"), "10");
+    assert_eq!(run("--vm", PLAIN_WILDCARD_BIND, "f", "1"), "10");
 }
 
 #[test]
 fn plain_wildcard_bind_literal_vm() {
-    assert_eq!(run("--run-vm", PLAIN_WILDCARD_BIND, "f", "1"), "10");
+    assert_eq!(run("--vm", PLAIN_WILDCARD_BIND, "f", "1"), "10");
 }
 
 #[test]
@@ -207,12 +207,12 @@ const TYPEIS_WILDCARD_BIND: &str = "f x:n>n;?x{n _:+_ 1;_:0}\n";
 
 #[test]
 fn typeis_wildcard_bind_tree() {
-    assert_eq!(run("--run-vm", TYPEIS_WILDCARD_BIND, "f", "5"), "6");
+    assert_eq!(run("--vm", TYPEIS_WILDCARD_BIND, "f", "5"), "6");
 }
 
 #[test]
 fn typeis_wildcard_bind_vm() {
-    assert_eq!(run("--run-vm", TYPEIS_WILDCARD_BIND, "f", "5"), "6");
+    assert_eq!(run("--vm", TYPEIS_WILDCARD_BIND, "f", "5"), "6");
 }
 
 #[test]
@@ -230,12 +230,12 @@ const NAMED_BINDINGS: &str = "f s:t>t;r=num s;?r{~v:str v;^e:+\"err: \" e}\n";
 
 #[test]
 fn named_bindings_ok_tree() {
-    assert_eq!(run("--run-vm", NAMED_BINDINGS, "f", "3.14"), "3.14");
+    assert_eq!(run("--vm", NAMED_BINDINGS, "f", "3.14"), "3.14");
 }
 
 #[test]
 fn named_bindings_ok_vm() {
-    assert_eq!(run("--run-vm", NAMED_BINDINGS, "f", "3.14"), "3.14");
+    assert_eq!(run("--vm", NAMED_BINDINGS, "f", "3.14"), "3.14");
 }
 
 #[test]
@@ -246,12 +246,12 @@ fn named_bindings_ok_cranelift() {
 
 #[test]
 fn named_bindings_err_tree() {
-    assert_eq!(run("--run-vm", NAMED_BINDINGS, "f", "abc"), "err: abc");
+    assert_eq!(run("--vm", NAMED_BINDINGS, "f", "abc"), "err: abc");
 }
 
 #[test]
 fn named_bindings_err_vm() {
-    assert_eq!(run("--run-vm", NAMED_BINDINGS, "f", "abc"), "err: abc");
+    assert_eq!(run("--vm", NAMED_BINDINGS, "f", "abc"), "err: abc");
 }
 
 #[test]

@@ -81,12 +81,12 @@ fn check_all(engine: &str) {
 
 #[test]
 fn nested_generic_types_tree() {
-    check_all("--run-vm");
+    check_all("--vm");
 }
 
 #[test]
 fn nested_generic_types_vm() {
-    check_all("--run-vm");
+    check_all("--vm");
 }
 
 #[test]

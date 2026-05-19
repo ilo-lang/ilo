@@ -36,7 +36,7 @@ fn check_all(src: &str, func: &str, expected: &str) {
     // Split `func` on whitespace so multi-arg invocations like "f 10 3"
     // are passed as separate argv entries (not a single quoted string).
     let argv: Vec<&str> = func.split_whitespace().collect();
-    for engine in ["--run-vm"] {
+    for engine in ["--vm"] {
         let actual = run_ok(engine, src, &argv);
         assert_eq!(
             actual, expected,

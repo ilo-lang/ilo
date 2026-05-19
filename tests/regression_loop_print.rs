@@ -223,12 +223,12 @@ fn check_all(engine: &str) {
 
 #[test]
 fn loop_print_tree() {
-    check_all("--run-vm");
+    check_all("--vm");
 }
 
 #[test]
 fn loop_print_vm() {
-    check_all("--run-vm");
+    check_all("--vm");
 }
 
 #[test]

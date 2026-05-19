@@ -12,7 +12,7 @@
 //   - `ilo <code> --mcp` (missing arg) — error path in dispatch_bare_args
 //   - `ilo <code> --tools` (missing arg) — error path in dispatch_bare_args
 //   - `ilo ''` (empty inline code) — empty-string guard
-//   - `ilo run --run-vm 'code' f 5` — VM execution
+//   - `ilo run --vm 'code' f 5` — VM execution
 //   - `ilo run --run-tree 'code' f 5` — tree-walking interpreter execution
 //   - unknown flag in `ilo tools` — tools_cmd error path
 
@@ -211,31 +211,31 @@ fn empty_inline_code_is_rejected() {
 
 // ── JIT / VM engine paths ─────────────────────────────────────────────────────
 
-/// `ilo run --run-vm 'f x:n>n;*x 2' f 5` should succeed and print 10.
-/// Uses the `run` subcommand to properly route --run-vm through dispatch_run.
+/// `ilo run --vm 'f x:n>n;*x 2' f 5` should succeed and print 10.
+/// Uses the `run` subcommand to properly route --vm through dispatch_run.
 #[test]
 fn run_vm_basic_execution() {
-    let (ok, stdout, stderr) = run_args(&["run", "--run-vm", "f x:n>n;*x 2", "f", "5"]);
-    assert!(ok, "--run-vm should succeed; stderr: {stderr}");
+    let (ok, stdout, stderr) = run_args(&["run", "--vm", "f x:n>n;*x 2", "f", "5"]);
+    assert!(ok, "--vm should succeed; stderr: {stderr}");
     assert_eq!(
         stdout.trim(),
         "10",
-        "--run-vm result should be 10; got stdout: {stdout}"
+        "--vm result should be 10; got stdout: {stdout}"
     );
 }
 
-/// `ilo run --run-vm 'f x:n>n;*x 2' f 5` should succeed and print 10. The
+/// `ilo run --vm 'f x:n>n;*x 2' f 5` should succeed and print 10. The
 /// equivalent --run-tree variant was removed in the 0.12.x soft-deprecation;
-/// this test was repointed to --run-vm so the clap parse path still gets
+/// this test was repointed to --vm so the clap parse path still gets
 /// coverage at the `run` subcommand level.
 #[test]
 fn run_vm_basic_execution_via_subcommand() {
-    let (ok, stdout, stderr) = run_args(&["run", "--run-vm", "f x:n>n;*x 2", "f", "5"]);
-    assert!(ok, "--run-vm should succeed; stderr: {stderr}");
+    let (ok, stdout, stderr) = run_args(&["run", "--vm", "f x:n>n;*x 2", "f", "5"]);
+    assert!(ok, "--vm should succeed; stderr: {stderr}");
     assert_eq!(
         stdout.trim(),
         "10",
-        "--run-vm result should be 10; got: {stdout}"
+        "--vm result should be 10; got: {stdout}"
     );
 }
 
@@ -417,10 +417,10 @@ fn cli_cov_serve_tools_no_path() {
     );
 }
 
-/// `ilo run --run-vm 'f x:n>n;+x 1' nonexistent 5` — VM with undefined fn (L2530-2531)
+/// `ilo run --vm 'f x:n>n;+x 1' nonexistent 5` — VM with undefined fn (L2530-2531)
 #[test]
 fn cli_cov_run_vm_fn_not_found() {
-    let (ok, _stdout, stderr) = run_args(&["run", "--run-vm", "f x:n>n;+x 1", "nonexistent", "5"]);
+    let (ok, _stdout, stderr) = run_args(&["run", "--vm", "f x:n>n;+x 1", "nonexistent", "5"]);
     assert!(!ok, "VM with undefined function should fail");
     assert!(
         stderr.contains("undefined")

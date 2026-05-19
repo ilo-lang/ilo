@@ -54,11 +54,11 @@ fn check_param(engine: &str) {
 
 #[test]
 fn param_index_tree() {
-    check_param("--run-vm");
+    check_param("--vm");
 }
 #[test]
 fn param_index_vm() {
-    check_param("--run-vm");
+    check_param("--vm");
 }
 #[test]
 #[cfg(feature = "cranelift")]
@@ -80,11 +80,11 @@ fn check_range(engine: &str) {
 
 #[test]
 fn range_index_tree() {
-    check_range("--run-vm");
+    check_range("--vm");
 }
 #[test]
 fn range_index_vm() {
-    check_range("--run-vm");
+    check_range("--vm");
 }
 #[test]
 #[cfg(feature = "cranelift")]
@@ -103,11 +103,11 @@ fn check_let(engine: &str) {
 
 #[test]
 fn let_index_tree() {
-    check_let("--run-vm");
+    check_let("--vm");
 }
 #[test]
 fn let_index_vm() {
-    check_let("--run-vm");
+    check_let("--vm");
 }
 #[test]
 #[cfg(feature = "cranelift")]
@@ -133,11 +133,11 @@ fn check_collision(engine: &str) {
 
 #[test]
 fn collision_record_field_tree() {
-    check_collision("--run-vm");
+    check_collision("--vm");
 }
 #[test]
 fn collision_record_field_vm() {
-    check_collision("--run-vm");
+    check_collision("--vm");
 }
 #[test]
 #[cfg(feature = "cranelift")]
@@ -155,7 +155,7 @@ fn nested_chain_tree() {
     let p = write_src("nested_tree", NESTED_SRC);
     let s = run_args(&[
         p.to_str().unwrap(),
-        "--run-vm",
+        "--vm",
         "deep",
         "[[1,2,3],[4,5,6],[7,8,9]]",
         "1",
@@ -169,7 +169,7 @@ fn nested_chain_vm() {
     let p = write_src("nested_vm", NESTED_SRC);
     let s = run_args(&[
         p.to_str().unwrap(),
-        "--run-vm",
+        "--vm",
         "deep",
         "[[1,2,3],[4,5,6],[7,8,9]]",
         "1",

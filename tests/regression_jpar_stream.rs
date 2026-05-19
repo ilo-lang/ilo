@@ -51,7 +51,7 @@ fn run(engine: &str, src: &str, entry: &str, extra: &[&str]) -> String {
 }
 
 fn engines() -> Vec<&'static str> {
-    let mut v = vec!["--run-vm"];
+    let mut v = vec!["--vm"];
     if cfg!(feature = "cranelift") {
         v.push("--jit");
     }
@@ -128,7 +128,7 @@ fn rdjl_first_line_unwraps_to_record_field() {
     let path = temp_path("first");
     write_fixture(&path, "{\"amount\":7}\n{\"amount\":8}\n");
     let got = run(
-        "--run-vm",
+        "--vm",
         FIRST_OK_SRC,
         "head-amt",
         &[path.to_str().unwrap()],
@@ -144,7 +144,7 @@ fn rdjl_malformed_first_line_is_err() {
     let path = temp_path("err");
     write_fixture(&path, "not json\n{\"ok\":true}\n");
     let got = run(
-        "--run-vm",
+        "--vm",
         HEAD_ERR_SRC,
         "head-tag",
         &[path.to_str().unwrap()],

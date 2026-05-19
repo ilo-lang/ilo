@@ -35,12 +35,12 @@ fn check_basic(engine: &str) {
 
 #[test]
 fn zip_basic_tree() {
-    check_basic("--run-vm");
+    check_basic("--vm");
 }
 
 #[test]
 fn zip_basic_vm() {
-    check_basic("--run-vm");
+    check_basic("--vm");
 }
 
 #[test]
@@ -62,12 +62,12 @@ fn check_trunc_long_xs(engine: &str) {
 
 #[test]
 fn zip_trunc_long_xs_tree() {
-    check_trunc_long_xs("--run-vm");
+    check_trunc_long_xs("--vm");
 }
 
 #[test]
 fn zip_trunc_long_xs_vm() {
-    check_trunc_long_xs("--run-vm");
+    check_trunc_long_xs("--vm");
 }
 
 #[test]
@@ -89,12 +89,12 @@ fn check_trunc_long_ys(engine: &str) {
 
 #[test]
 fn zip_trunc_long_ys_tree() {
-    check_trunc_long_ys("--run-vm");
+    check_trunc_long_ys("--vm");
 }
 
 #[test]
 fn zip_trunc_long_ys_vm() {
-    check_trunc_long_ys("--run-vm");
+    check_trunc_long_ys("--vm");
 }
 
 #[test]
@@ -112,12 +112,12 @@ fn check_empty(engine: &str) {
 
 #[test]
 fn zip_empty_tree() {
-    check_empty("--run-vm");
+    check_empty("--vm");
 }
 
 #[test]
 fn zip_empty_vm() {
-    check_empty("--run-vm");
+    check_empty("--vm");
 }
 
 #[test]
@@ -139,12 +139,12 @@ fn check_mixed(engine: &str) {
 
 #[test]
 fn zip_mixed_tree() {
-    check_mixed("--run-vm");
+    check_mixed("--vm");
 }
 
 #[test]
 fn zip_mixed_vm() {
-    check_mixed("--run-vm");
+    check_mixed("--vm");
 }
 
 #[test]

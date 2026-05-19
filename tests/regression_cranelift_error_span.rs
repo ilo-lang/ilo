@@ -60,7 +60,7 @@ fn extract_span(stderr: &str) -> Option<(u32, u32)> {
 /// same source program. Tree is checked too as a sanity baseline.
 #[cfg(feature = "cranelift")]
 fn assert_span_parity(src: &str) {
-    let vm_err = run_err("--run-vm", src);
+    let vm_err = run_err("--vm", src);
     let cl_err = run_err("--jit", src);
 
     let vm_span = extract_span(&vm_err)

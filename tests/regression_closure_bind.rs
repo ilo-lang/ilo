@@ -51,7 +51,7 @@ fn run_ok_on(engine: &str, src: &str, entry: &str, args: &[&str]) -> String {
 }
 
 fn run_all(src: &str, entry: &str, args: &[&str], expected: &str) {
-    for engine in ["--run-vm", "--jit"] {
+    for engine in ["--vm", "--jit"] {
         let actual = run_ok_on(engine, src, entry, args);
         assert_eq!(
             actual, expected,
@@ -64,14 +64,14 @@ fn run_all(src: &str, entry: &str, args: &[&str], expected: &str) {
 // the same diagnostic on every engine, but the verifier runs before any
 // engine-specific dispatch, so we only need one path to confirm.
 fn run_ok(src: &str, entry: &str, args: &[&str]) -> String {
-    run_ok_on("--run-vm", src, entry, args)
+    run_ok_on("--vm", src, entry, args)
 }
 
 fn run_err(src: &str, entry: &str) -> String {
     let path = write_src(entry, src);
     let out = ilo()
         .arg(&path)
-        .arg("--run-vm")
+        .arg("--vm")
         .arg(entry)
         .output()
         .expect("failed to run ilo");

@@ -10,7 +10,7 @@
 //
 // These tests pin VM ≡ JIT byte-for-byte across every bridge op. The
 // tree-walker itself is exercised through the VM bridge path on the
-// `--run-vm` invocation, so cross-engine parity here = cross-engine
+// `--vm` invocation, so cross-engine parity here = cross-engine
 // parity through the bridge. If a future PR3d/PR3e lifts any of these
 // shapes natively, the tests must still pass — they pin the user-
 // observable contract, not the dispatch internals.
@@ -24,9 +24,9 @@
 use std::process::Command;
 
 const ENGINES: &[&str] = if cfg!(feature = "cranelift") {
-    &["--run-vm", "--jit"]
+    &["--vm", "--jit"]
 } else {
-    &["--run-vm"]
+    &["--vm"]
 };
 
 fn ilo() -> Command {

@@ -32,12 +32,12 @@ fn check_basic(engine: &str) {
 
 #[test]
 fn fmt2_basic_tree() {
-    check_basic("--run-vm");
+    check_basic("--vm");
 }
 
 #[test]
 fn fmt2_basic_vm() {
-    check_basic("--run-vm");
+    check_basic("--vm");
 }
 
 #[test]
@@ -55,12 +55,12 @@ fn check_zero_digits(engine: &str) {
 
 #[test]
 fn fmt2_zero_digits_tree() {
-    check_zero_digits("--run-vm");
+    check_zero_digits("--vm");
 }
 
 #[test]
 fn fmt2_zero_digits_vm() {
-    check_zero_digits("--run-vm");
+    check_zero_digits("--vm");
 }
 
 #[test]
@@ -78,12 +78,12 @@ fn check_long_frac(engine: &str) {
 
 #[test]
 fn fmt2_long_frac_tree() {
-    check_long_frac("--run-vm");
+    check_long_frac("--vm");
 }
 
 #[test]
 fn fmt2_long_frac_vm() {
-    check_long_frac("--run-vm");
+    check_long_frac("--vm");
 }
 
 #[test]
@@ -101,12 +101,12 @@ fn check_half_even_up(engine: &str) {
 
 #[test]
 fn fmt2_half_even_up_tree() {
-    check_half_even_up("--run-vm");
+    check_half_even_up("--vm");
 }
 
 #[test]
 fn fmt2_half_even_up_vm() {
-    check_half_even_up("--run-vm");
+    check_half_even_up("--vm");
 }
 
 #[test]
@@ -123,12 +123,12 @@ fn check_half_even_down(engine: &str) {
 
 #[test]
 fn fmt2_half_even_down_tree() {
-    check_half_even_down("--run-vm");
+    check_half_even_down("--vm");
 }
 
 #[test]
 fn fmt2_half_even_down_vm() {
-    check_half_even_down("--run-vm");
+    check_half_even_down("--vm");
 }
 
 #[test]
@@ -146,12 +146,12 @@ fn check_neg_digits(engine: &str) {
 
 #[test]
 fn fmt2_neg_digits_tree() {
-    check_neg_digits("--run-vm");
+    check_neg_digits("--vm");
 }
 
 #[test]
 fn fmt2_neg_digits_vm() {
-    check_neg_digits("--run-vm");
+    check_neg_digits("--vm");
 }
 
 #[test]

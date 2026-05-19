@@ -33,9 +33,9 @@ fn ilo() -> Command {
 }
 
 #[cfg(feature = "cranelift")]
-const ENGINES_ALL: &[&str] = &["--run-vm", "--jit"];
+const ENGINES_ALL: &[&str] = &["--vm", "--jit"];
 #[cfg(not(feature = "cranelift"))]
-const ENGINES_ALL: &[&str] = &["--run-vm"];
+const ENGINES_ALL: &[&str] = &["--vm"];
 
 /// Run `ilo <engine> <src>` and return (stdout, stderr, exit code).
 fn run_full(engine: &str, src: &str) -> (String, String, i32) {
@@ -187,7 +187,7 @@ fn bangbang_on_non_result_rejected_by_verifier() {
     // `len` returns `n`. Both engines route through the same verifier so
     // tree alone suffices for the type check coverage.
     let src = "main >n;len!! \"abc\"";
-    let (_, stderr, code) = run_full("--run-vm", src);
+    let (_, stderr, code) = run_full("--vm", src);
     assert_eq!(code, 1, "expected exit 1");
     assert!(
         stderr.contains("ILO-T025"),

@@ -16,8 +16,8 @@
 //      upfront with a clear "unrecognised flag" message and exit 1.
 //   2. To pass a hyphen-prefixed token as a literal arg, the user inserts
 //      `--` first: `ilo main.ilo -- --foo` or `ilo main.ilo -- --foo=bar`.
-//   3. All recognised long flags (`--run-vm`, `--bench`, etc.) still work.
-//   4. Holds across every engine (default, --run-vm, --jit), the
+//   3. All recognised long flags (`--vm`, `--bench`, etc.) still work.
+//   4. Holds across every engine (default, --vm, --jit), the
 //      bare-positional dispatcher AND the `run` subcommand path.
 
 use std::io::Write;
@@ -148,10 +148,10 @@ fn dash_dash_separator_passes_through_hyphen_args_run_subcmd() {
 fn recognised_run_vm_flag_still_works() {
     let p = temp_main("known_run_vm");
     let path_str = p.to_str().unwrap();
-    let (code, stdout, stderr) = run_args(&["--run-vm", path_str]);
+    let (code, stdout, stderr) = run_args(&["--vm", path_str]);
     assert_eq!(
         code, 0,
-        "--run-vm should still parse and run; stdout=\n{stdout}\nstderr=\n{stderr}"
+        "--vm should still parse and run; stdout=\n{stdout}\nstderr=\n{stderr}"
     );
 }
 
@@ -189,14 +189,14 @@ fn recognised_bench_flag_still_works() {
 fn unknown_flag_rejected_under_run_tree() {
     let p = temp_main("eng_tree");
     let path_str = p.to_str().unwrap();
-    assert_unrecognised(run_args(&["--run-vm", path_str, "--foo"]), "--foo");
+    assert_unrecognised(run_args(&["--vm", path_str, "--foo"]), "--foo");
 }
 
 #[test]
 fn unknown_flag_rejected_under_run_vm() {
     let p = temp_main("eng_vm");
     let path_str = p.to_str().unwrap();
-    assert_unrecognised(run_args(&["--run-vm", path_str, "--foo"]), "--foo");
+    assert_unrecognised(run_args(&["--vm", path_str, "--foo"]), "--foo");
 }
 
 #[cfg(feature = "cranelift")]
@@ -211,7 +211,7 @@ fn unknown_flag_rejected_under_run_cranelift() {
 fn unknown_flag_rejected_under_run_subcmd_run_vm() {
     let p = temp_main("subcmd_vm");
     let path_str = p.to_str().unwrap();
-    assert_unrecognised(run_args(&["run", path_str, "--run-vm", "--foo"]), "--foo");
+    assert_unrecognised(run_args(&["run", path_str, "--vm", "--foo"]), "--foo");
 }
 
 // ── (f) inline source path also guarded ──────────────────────────────────────

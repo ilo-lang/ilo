@@ -34,7 +34,7 @@ fn parse_list(s: &str) -> Vec<f64> {
 }
 
 fn check_all(src: &str, expected: &[f64]) {
-    for engine in ["--run-vm"] {
+    for engine in ["--vm"] {
         let got = parse_list(&run_ok(engine, src));
         assert_eq!(
             got.len(),

@@ -40,9 +40,9 @@ fn run_ok(engine: &str, src: &str, args: &[&str]) -> String {
 }
 
 #[cfg(feature = "cranelift")]
-const ENGINES_ALL: &[&str] = &["--run-vm", "--jit"];
+const ENGINES_ALL: &[&str] = &["--vm", "--jit"];
 #[cfg(not(feature = "cranelift"))]
-const ENGINES_ALL: &[&str] = &["--run-vm"];
+const ENGINES_ALL: &[&str] = &["--vm"];
 
 // ── Tail-expression position ─────────────────────────────────────────
 

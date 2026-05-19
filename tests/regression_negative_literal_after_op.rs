@@ -113,14 +113,14 @@ fn check_id(engine: &str) {
 
 #[test]
 fn neg_after_op_tree() {
-    check_all("--run-vm");
-    check_id("--run-vm");
+    check_all("--vm");
+    check_id("--vm");
 }
 
 #[test]
 fn neg_after_op_vm() {
-    check_all("--run-vm");
-    check_id("--run-vm");
+    check_all("--vm");
+    check_id("--vm");
 }
 
 #[test]

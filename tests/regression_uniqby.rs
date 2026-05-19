@@ -65,7 +65,7 @@ const BASIC_SRC: &str = "fc s:t>t;hd s f xs:L t>L t;uniqby fc xs";
 fn uniqby_basic_dedup_by_key_tree() {
     assert_eq!(
         run_ok(
-            "--run-vm",
+            "--vm",
             BASIC_SRC,
             "f",
             &["[\"apple\",\"ant\",\"banana\",\"blueberry\",\"cherry\"]"],
@@ -78,7 +78,7 @@ fn uniqby_basic_dedup_by_key_tree() {
 
 #[test]
 fn uniqby_empty_list_tree() {
-    assert_eq!(run_ok("--run-vm", BASIC_SRC, "f", &["[]"]), "[]");
+    assert_eq!(run_ok("--vm", BASIC_SRC, "f", &["[]"]), "[]");
 }
 
 // ── All-same-key: keep only the first element ──────────────────────────────
@@ -87,7 +87,7 @@ fn uniqby_empty_list_tree() {
 fn uniqby_all_same_key_keeps_first_tree() {
     assert_eq!(
         run_ok(
-            "--run-vm",
+            "--vm",
             BASIC_SRC,
             "f",
             &["[\"alpha\",\"avocado\",\"apricot\"]"],
@@ -109,7 +109,7 @@ fn uniqby_preserves_order_tree() {
     //   rest → dropped
     // Expected: [1, 2] in original positional order.
     assert_eq!(
-        run_ok("--run-vm", PARITY_SRC, "f", &["[1,3,2,4,5,6]"]),
+        run_ok("--vm", PARITY_SRC, "f", &["[1,3,2,4,5,6]"]),
         "[1, 2]"
     );
 }
@@ -120,7 +120,7 @@ const BAD_FN_SRC: &str = "f xs:L n>L n;uniqby 42 xs";
 
 #[test]
 fn uniqby_wrong_fn_arg_tree() {
-    let err = run_err("--run-vm", BAD_FN_SRC, "f");
+    let err = run_err("--vm", BAD_FN_SRC, "f");
     assert!(
         err.contains("uniqby") || err.contains("fn") || err.contains("function"),
         "got: {err}"
@@ -129,7 +129,7 @@ fn uniqby_wrong_fn_arg_tree() {
 
 #[test]
 fn uniqby_wrong_fn_arg_vm() {
-    let err = run_err("--run-vm", BAD_FN_SRC, "f");
+    let err = run_err("--vm", BAD_FN_SRC, "f");
     assert!(
         err.contains("uniqby") || err.contains("fn") || err.contains("function"),
         "got: {err}"

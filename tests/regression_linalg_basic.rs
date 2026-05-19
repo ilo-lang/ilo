@@ -44,14 +44,14 @@ fn run_err(engine: &str, src: &str) -> String {
 }
 
 fn check_all_str(src: &str, expected: &str) {
-    assert_eq!(run_ok("--run-vm", src), expected, "tree engine");
-    assert_eq!(run_ok("--run-vm", src), expected, "vm engine");
+    assert_eq!(run_ok("--vm", src), expected, "tree engine");
+    assert_eq!(run_ok("--vm", src), expected, "vm engine");
     #[cfg(feature = "cranelift")]
     assert_eq!(run_ok("--jit", src), expected, "cranelift engine");
 }
 
 fn check_all_num(src: &str, expected: f64) {
-    for engine in &["--run-vm"] {
+    for engine in &["--vm"] {
         let actual = run_ok(engine, src).parse::<f64>().expect("number");
         assert!(
             (actual - expected).abs() < 1e-10,
@@ -86,12 +86,12 @@ fn transpose_2x3_yields_3x2() {
 #[test]
 fn transpose_ragged_errors() {
     // tree + vm catch the ragged shape at runtime.
-    let err_tree = run_err("--run-vm", "f>L (L n);transpose [[1,2],[3]]");
+    let err_tree = run_err("--vm", "f>L (L n);transpose [[1,2],[3]]");
     assert!(
         err_tree.contains("transpose") || err_tree.contains("ragged"),
         "tree: got: {err_tree}"
     );
-    let err_vm = run_err("--run-vm", "f>L (L n);transpose [[1,2],[3]]");
+    let err_vm = run_err("--vm", "f>L (L n);transpose [[1,2],[3]]");
     assert!(
         err_vm.contains("transpose") || err_vm.contains("ragged"),
         "vm: got: {err_vm}"
@@ -120,7 +120,7 @@ fn matmul_identity_2x2() {
 fn matmul_shape_mismatch_errors() {
     // 2x3 * 2x2 is invalid (cols(a)=3 != rows(b)=2).
     let err_tree = run_err(
-        "--run-vm",
+        "--vm",
         "f>L (L n);matmul [[1,2,3],[4,5,6]] [[1,2],[3,4]]",
     );
     assert!(
@@ -128,7 +128,7 @@ fn matmul_shape_mismatch_errors() {
         "tree: got: {err_tree}"
     );
     let err_vm = run_err(
-        "--run-vm",
+        "--vm",
         "f>L (L n);matmul [[1,2,3],[4,5,6]] [[1,2],[3,4]]",
     );
     assert!(
@@ -153,12 +153,12 @@ fn dot_with_negatives() {
 
 #[test]
 fn dot_length_mismatch_errors() {
-    let err_tree = run_err("--run-vm", "f>n;dot [1,2,3] [1,2]");
+    let err_tree = run_err("--vm", "f>n;dot [1,2,3] [1,2]");
     assert!(
         err_tree.contains("dot") || err_tree.contains("length"),
         "tree: got: {err_tree}"
     );
-    let err_vm = run_err("--run-vm", "f>n;dot [1,2,3] [1,2]");
+    let err_vm = run_err("--vm", "f>n;dot [1,2,3] [1,2]");
     assert!(
         err_vm.contains("dot") || err_vm.contains("length"),
         "vm: got: {err_vm}"

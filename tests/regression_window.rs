@@ -12,7 +12,7 @@ fn ilo() -> Command {
 fn engines() -> &'static [&'static str] {
     // Tree-walker and register VM cover the same builtin code paths via
     // shared helpers; cranelift JIT defers to the same Rust helper.
-    &["--run-vm"]
+    &["--vm"]
 }
 
 fn run_ok(engine: &str, src: &str, fn_name: &str) -> String {

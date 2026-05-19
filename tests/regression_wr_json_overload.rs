@@ -44,7 +44,7 @@ fn run_err(engine: &str, src: &str, entry: &str) -> String {
 }
 
 fn engines() -> &'static [&'static str] {
-    &["--run-vm"]
+    &["--vm"]
 }
 
 // 3-arg `wr path data "json"` writes serialised JSON.
@@ -106,7 +106,7 @@ fn wr_two_arg_text_still_works() {
 #[test]
 fn wr_unsupported_format_literal_is_verifier_error() {
     let src = r#"f>R t t;wr "/tmp/x" [1,2,3] "not_json""#;
-    let err = run_err("--run-vm", src, "f");
+    let err = run_err("--vm", src, "f");
     assert!(
         err.contains("not_json"),
         "error should mention the bad format literal, got: {err}"
@@ -121,7 +121,7 @@ fn wr_unsupported_format_literal_is_verifier_error() {
 #[test]
 fn wr_format_arg_must_be_text() {
     let src = r#"f>R t t;wr "/tmp/x" [1,2,3] 42"#;
-    let err = run_err("--run-vm", src, "f");
+    let err = run_err("--vm", src, "f");
     assert!(
         err.contains("format") || err.contains("expects t"),
         "should reject numeric format arg, got: {err}"
@@ -133,7 +133,7 @@ fn wr_format_arg_must_be_text() {
 #[test]
 fn wr_two_arg_nontext_data_hints_three_arg_form() {
     let src = r#"f>R t t;wr "/tmp/x" [1,2,3]"#;
-    let err = run_err("--run-vm", src, "f");
+    let err = run_err("--vm", src, "f");
     assert!(
         err.contains("arg 2") && err.contains("t"),
         "expected text-content error on 2-arg wr, got: {err}"

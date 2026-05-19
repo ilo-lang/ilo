@@ -38,9 +38,9 @@ fn run(engine: &str, src: &str, entry: &str) -> String {
 }
 
 #[cfg(feature = "cranelift")]
-const ENGINES_ALL: &[&str] = &["--run-vm", "--jit"];
+const ENGINES_ALL: &[&str] = &["--vm", "--jit"];
 #[cfg(not(feature = "cranelift"))]
-const ENGINES_ALL: &[&str] = &["--run-vm"];
+const ENGINES_ALL: &[&str] = &["--vm"];
 
 #[test]
 fn rnd_remains_the_canonical_name() {
@@ -160,7 +160,7 @@ fn rand_emits_canonical_hint() {
     // First use of `rand` should hint toward `rnd`. Matches the existing
     // `random` / `rng` alias-hint contract.
     let out = ilo()
-        .args(["f>n;rand", "--run-vm", "f"])
+        .args(["f>n;rand", "--vm", "f"])
         .output()
         .expect("failed to run ilo");
     let combined = format!(

@@ -25,9 +25,9 @@ fn ilo() -> Command {
 }
 
 #[cfg(feature = "cranelift")]
-const ENGINES_ALL: &[&str] = &["--run-vm", "--jit"];
+const ENGINES_ALL: &[&str] = &["--vm", "--jit"];
 #[cfg(not(feature = "cranelift"))]
-const ENGINES_ALL: &[&str] = &["--run-vm"];
+const ENGINES_ALL: &[&str] = &["--vm"];
 
 /// Run an ilo source string on `engine`, expect success, return stdout.
 ///
@@ -217,7 +217,7 @@ fn post_is_undefined_after_pst_rename() {
     // 0.12.0 renamed `post` → `pst`. `post u b` must now error
     // ILO-T005 (undefined function) with a did-you-mean to `pst`.
     let stderr = run_err(
-        "--run-vm",
+        "--vm",
         r#"f u:t b:t>R t t;post u b"#,
         &["f", "http://x", "body"],
     );

@@ -66,7 +66,7 @@ fn assert_engine_errs(engine: &str, src: &str, args: &[&str], code: &str, msg: &
 }
 
 fn assert_all_engines_err(src: &str, args: &[&str], code: &str, msg: &str) {
-    for engine in ["--run-vm"] {
+    for engine in ["--vm"] {
         assert_engine_errs(engine, src, args, code, msg);
     }
     #[cfg(feature = "cranelift")]
@@ -91,7 +91,7 @@ fn assert_engine_fails(engine: &str, src: &str, args: &[&str], msg: &str) {
 /// locking in the code). Used for `mod`-by-zero where tree returns R003 and
 /// VM/Cranelift return R004 — pre-existing parity gap.
 fn assert_all_engines_fail(src: &str, args: &[&str], msg: &str) {
-    for engine in ["--run-vm"] {
+    for engine in ["--vm"] {
         assert_engine_fails(engine, src, args, msg);
     }
     #[cfg(feature = "cranelift")]
@@ -159,7 +159,7 @@ fn mod_by_zero_cross_engine_fails() {
 
 #[test]
 fn div_safe_runtime_divisor_cross_engine_agrees() {
-    for engine in ["--run-vm"] {
+    for engine in ["--vm"] {
         let (stdout, _, ec) = run_engine(engine, "f a:n b:n>n;/a b", &["10", "4"]);
         assert_eq!(ec, 0, "engine={engine} unexpected error");
         assert_eq!(stdout.trim(), "2.5", "engine={engine}");
@@ -176,7 +176,7 @@ fn div_safe_runtime_divisor_cross_engine_agrees() {
 fn div_const_nonzero_fast_path_cross_engine_agrees() {
     // OP_DIVK_N with non-zero literal divisor: ensures the compile-time
     // "k != 0 → no guard" branch still emits a working fdiv.
-    for engine in ["--run-vm"] {
+    for engine in ["--vm"] {
         let (stdout, _, ec) = run_engine(engine, "f a:n>n;/a 4", &["10"]);
         assert_eq!(ec, 0, "engine={engine} unexpected error");
         assert_eq!(stdout.trim(), "2.5", "engine={engine}");

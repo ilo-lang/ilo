@@ -38,7 +38,7 @@ fn run(engine: &str, src: &str, entry: &str, args: &[&str]) -> String {
 
 fn run_err(src: &str) -> String {
     let out = ilo()
-        .args([src, "--run-vm", "f"])
+        .args([src, "--vm", "f"])
         .output()
         .expect("failed to run ilo");
     assert!(!out.status.success(), "expected failure for `{src}`");
@@ -59,12 +59,12 @@ fn check_url(engine: &str) {
 
 #[test]
 fn leading_upper_url_tree() {
-    check_url("--run-vm");
+    check_url("--vm");
 }
 
 #[test]
 fn leading_upper_url_vm() {
-    check_url("--run-vm");
+    check_url("--vm");
 }
 
 #[test]
@@ -86,12 +86,12 @@ fn check_id(engine: &str) {
 
 #[test]
 fn leading_upper_id_tree() {
-    check_id("--run-vm");
+    check_id("--vm");
 }
 
 #[test]
 fn leading_upper_id_vm() {
-    check_id("--run-vm");
+    check_id("--vm");
 }
 
 #[test]
@@ -114,12 +114,12 @@ fn check_access_key(engine: &str) {
 
 #[test]
 fn leading_upper_access_key_tree() {
-    check_access_key("--run-vm");
+    check_access_key("--vm");
 }
 
 #[test]
 fn leading_upper_access_key_vm() {
-    check_access_key("--run-vm");
+    check_access_key("--vm");
 }
 
 #[test]
@@ -149,12 +149,12 @@ fn check_safe_url_missing(engine: &str) {
 
 #[test]
 fn leading_upper_safe_url_present_tree() {
-    check_safe_url_present("--run-vm");
+    check_safe_url_present("--vm");
 }
 
 #[test]
 fn leading_upper_safe_url_present_vm() {
-    check_safe_url_present("--run-vm");
+    check_safe_url_present("--vm");
 }
 
 #[test]
@@ -165,12 +165,12 @@ fn leading_upper_safe_url_present_cranelift() {
 
 #[test]
 fn leading_upper_safe_url_missing_tree() {
-    check_safe_url_missing("--run-vm");
+    check_safe_url_missing("--vm");
 }
 
 #[test]
 fn leading_upper_safe_url_missing_vm() {
-    check_safe_url_missing("--run-vm");
+    check_safe_url_missing("--vm");
 }
 
 #[test]
@@ -194,12 +194,12 @@ fn check_url_count(engine: &str) {
 
 #[test]
 fn leading_upper_url_count_tree() {
-    check_url_count("--run-vm");
+    check_url_count("--vm");
 }
 
 #[test]
 fn leading_upper_url_count_vm() {
-    check_url_count("--run-vm");
+    check_url_count("--vm");
 }
 
 #[test]
@@ -232,12 +232,12 @@ fn check_left(engine: &str) {
 
 #[test]
 fn leading_sigil_meta_tree() {
-    check_meta("--run-vm");
+    check_meta("--vm");
 }
 
 #[test]
 fn leading_sigil_meta_vm() {
-    check_meta("--run-vm");
+    check_meta("--vm");
 }
 
 #[test]
@@ -248,12 +248,12 @@ fn leading_sigil_meta_cranelift() {
 
 #[test]
 fn leading_sigil_left_tree() {
-    check_left("--run-vm");
+    check_left("--vm");
 }
 
 #[test]
 fn leading_sigil_left_vm() {
-    check_left("--run-vm");
+    check_left("--vm");
 }
 
 #[test]

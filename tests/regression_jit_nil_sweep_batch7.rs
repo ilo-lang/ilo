@@ -44,8 +44,8 @@ fn check_stdout(engine: &str, src: &str, expected: &str) {
 }
 
 fn check_all(src: &str, expected: &str) {
-    check_stdout("--run-vm", src, expected);
-    check_stdout("--run-vm", src, expected);
+    check_stdout("--vm", src, expected);
+    check_stdout("--vm", src, expected);
     #[cfg(feature = "cranelift")]
     check_stdout("--jit", src, expected);
 }
@@ -65,12 +65,12 @@ fn wr_then_rd_text_cross_engine() {
 
     // wr returns R t t (Ok path on success); we strip with postfix !!.
     check_stdout(
-        "--run-vm",
+        "--vm",
         &format!("f>t;w=wr!! \"{path_tree}\" \"hello\";rd!! \"{path_tree}\""),
         "hello",
     );
     check_stdout(
-        "--run-vm",
+        "--vm",
         &format!("f>t;w=wr!! \"{path_vm}\" \"hello\";rd!! \"{path_vm}\""),
         "hello",
     );
@@ -94,12 +94,12 @@ fn wrl_then_rdl_cross_engine() {
     let _ = std::fs::remove_file(path_cl);
 
     check_stdout(
-        "--run-vm",
+        "--vm",
         &format!("f>n;w=wrl!! \"{path_tree}\" [\"a\" \"b\" \"c\"];es=rdl!! \"{path_tree}\";len es"),
         "3",
     );
     check_stdout(
-        "--run-vm",
+        "--vm",
         &format!("f>n;w=wrl!! \"{path_vm}\" [\"a\" \"b\" \"c\"];es=rdl!! \"{path_vm}\";len es"),
         "3",
     );
@@ -142,8 +142,8 @@ fn rdjl_reads_jsonl_cross_engine() {
         "prep p:t>R t t;wrl p [\"{{\\\"k\\\":1}}\" \"{{\\\"k\\\":2}}\" \"{{\\\"k\\\":3}}\"]\nf>n;w=prep \"{path_cl}\";es=rdjl \"{path_cl}\";len es"
     );
 
-    check_stdout("--run-vm", &prog_tree, "3");
-    check_stdout("--run-vm", &prog_vm, "3");
+    check_stdout("--vm", &prog_tree, "3");
+    check_stdout("--vm", &prog_vm, "3");
     #[cfg(feature = "cranelift")]
     check_stdout("--jit", &prog_cl, "3");
 }

@@ -47,8 +47,8 @@ fn check_stdout(engine: &str, src: &str, expected: &str) {
 }
 
 fn check_all(src: &str, expected: &str) {
-    check_stdout("--run-vm", src, expected);
-    check_stdout("--run-vm", src, expected);
+    check_stdout("--vm", src, expected);
+    check_stdout("--vm", src, expected);
     #[cfg(feature = "cranelift")]
     check_stdout("--jit", src, expected);
 }
@@ -95,8 +95,8 @@ fn cap_string_cross_engine() {
 // content where trim() leaves it alone.
 fn check_all_no_trim(src: &str, expected: &str) {
     for engine in [
-        "--run-vm",
-        "--run-vm",
+        "--vm",
+        "--vm",
         #[cfg(feature = "cranelift")]
         "--jit",
     ] {

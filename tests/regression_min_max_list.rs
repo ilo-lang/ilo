@@ -24,7 +24,7 @@ fn ilo() -> Command {
 }
 
 fn engines() -> &'static [&'static str] {
-    &["--run-vm"]
+    &["--vm"]
 }
 
 fn run_ok(engine: &str, src: &str, fn_name: &str) -> String {

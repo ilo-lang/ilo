@@ -14,9 +14,9 @@ fn ilo() -> Command {
 
 fn engines() -> Vec<&'static str> {
     if cfg!(feature = "cranelift") {
-        vec!["--run-vm", "--jit"]
+        vec!["--vm", "--jit"]
     } else {
-        vec!["--run-vm"]
+        vec!["--vm"]
     }
 }
 

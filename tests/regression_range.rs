@@ -34,12 +34,12 @@ fn check_basic(engine: &str) {
 
 #[test]
 fn range_basic_tree() {
-    check_basic("--run-vm");
+    check_basic("--vm");
 }
 
 #[test]
 fn range_basic_vm() {
-    check_basic("--run-vm");
+    check_basic("--vm");
 }
 
 #[test]
@@ -57,12 +57,12 @@ fn check_empty(engine: &str) {
 
 #[test]
 fn range_empty_tree() {
-    check_empty("--run-vm");
+    check_empty("--vm");
 }
 
 #[test]
 fn range_empty_vm() {
-    check_empty("--run-vm");
+    check_empty("--vm");
 }
 
 #[test]
@@ -80,12 +80,12 @@ fn check_flipped(engine: &str) {
 
 #[test]
 fn range_flipped_tree() {
-    check_flipped("--run-vm");
+    check_flipped("--vm");
 }
 
 #[test]
 fn range_flipped_vm() {
-    check_flipped("--run-vm");
+    check_flipped("--vm");
 }
 
 #[test]
@@ -107,12 +107,12 @@ fn check_neg(engine: &str) {
 
 #[test]
 fn range_neg_tree() {
-    check_neg("--run-vm");
+    check_neg("--vm");
 }
 
 #[test]
 fn range_neg_vm() {
-    check_neg("--run-vm");
+    check_neg("--vm");
 }
 
 #[test]
@@ -133,7 +133,7 @@ fn check_gauss(engine: &str) {
 
 #[test]
 fn range_gauss_tree() {
-    check_gauss("--run-vm");
+    check_gauss("--vm");
 }
 
 // Fractional bounds must error rather than silently truncate. `range 1.9 4.9`
@@ -161,10 +161,10 @@ fn check_frac_errors(engine: &str) {
 
 #[test]
 fn range_fractional_bounds_error_tree() {
-    check_frac_errors("--run-vm");
+    check_frac_errors("--vm");
 }
 
 #[test]
 fn range_fractional_bounds_error_vm() {
-    check_frac_errors("--run-vm");
+    check_frac_errors("--vm");
 }

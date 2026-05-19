@@ -16,7 +16,7 @@
 
 use std::process::Command;
 
-const ENGINES: &[&str] = &["--run-vm", "--jit"];
+const ENGINES: &[&str] = &["--vm", "--jit"];
 
 fn ilo() -> Command {
     Command::new(env!("CARGO_BIN_EXE_ilo"))
@@ -118,7 +118,7 @@ fn rgxall1_multiple_groups_errors_with_hint_to_rgxall() {
 #[test]
 fn rgxall1_invalid_pattern_errors() {
     let out = ilo()
-        .args([r#"f>L t;rgxall1 "(unclosed" "input""#, "--run-vm", "f"])
+        .args([r#"f>L t;rgxall1 "(unclosed" "input""#, "--vm", "f"])
         .output()
         .expect("failed to run ilo");
     assert!(

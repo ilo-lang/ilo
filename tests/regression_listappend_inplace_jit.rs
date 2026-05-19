@@ -74,12 +74,12 @@ const REBIND_50K_NUMERIC_LAST: &str =
 
 #[test]
 fn rebind_50k_numeric_len_tree() {
-    assert_eq!(run("--run-vm", REBIND_50K_NUMERIC_LEN, "demo"), "50000");
+    assert_eq!(run("--vm", REBIND_50K_NUMERIC_LEN, "demo"), "50000");
 }
 
 #[test]
 fn rebind_50k_numeric_len_vm() {
-    assert_eq!(run("--run-vm", REBIND_50K_NUMERIC_LEN, "demo"), "50000");
+    assert_eq!(run("--vm", REBIND_50K_NUMERIC_LEN, "demo"), "50000");
 }
 
 #[test]
@@ -90,12 +90,12 @@ fn rebind_50k_numeric_len_cranelift() {
 
 #[test]
 fn rebind_50k_numeric_last_tree() {
-    assert_eq!(run("--run-vm", REBIND_50K_NUMERIC_LAST, "demo"), "49999");
+    assert_eq!(run("--vm", REBIND_50K_NUMERIC_LAST, "demo"), "49999");
 }
 
 #[test]
 fn rebind_50k_numeric_last_vm() {
-    assert_eq!(run("--run-vm", REBIND_50K_NUMERIC_LAST, "demo"), "49999");
+    assert_eq!(run("--vm", REBIND_50K_NUMERIC_LAST, "demo"), "49999");
 }
 
 #[test]
@@ -114,7 +114,7 @@ fn rebind_50k_numeric_last_cranelift() {
 #[test]
 fn rebind_50k_accumulator_under_15s_tree() {
     let start = Instant::now();
-    let out = run("--run-vm", REBIND_50K_NUMERIC_LEN, "demo");
+    let out = run("--vm", REBIND_50K_NUMERIC_LEN, "demo");
     let elapsed = start.elapsed();
     assert_eq!(out, "50000");
     assert!(
@@ -126,7 +126,7 @@ fn rebind_50k_accumulator_under_15s_tree() {
 #[test]
 fn rebind_50k_accumulator_under_15s_vm() {
     let start = Instant::now();
-    let out = run("--run-vm", REBIND_50K_NUMERIC_LEN, "demo");
+    let out = run("--vm", REBIND_50K_NUMERIC_LEN, "demo");
     let elapsed = start.elapsed();
     assert_eq!(out, "50000");
     assert!(
@@ -166,7 +166,7 @@ const NON_REBIND_DISTINCT_PRESERVES_XS: &str = "f>L n;xs=[1,2,3];ys=+=xs 99;xs";
 #[test]
 fn non_rebind_distinct_preserves_xs_tree() {
     assert_eq!(
-        run("--run-vm", NON_REBIND_DISTINCT_PRESERVES_XS, "f"),
+        run("--vm", NON_REBIND_DISTINCT_PRESERVES_XS, "f"),
         "[1, 2, 3]"
     );
 }
@@ -174,7 +174,7 @@ fn non_rebind_distinct_preserves_xs_tree() {
 #[test]
 fn non_rebind_distinct_preserves_xs_vm() {
     assert_eq!(
-        run("--run-vm", NON_REBIND_DISTINCT_PRESERVES_XS, "f"),
+        run("--vm", NON_REBIND_DISTINCT_PRESERVES_XS, "f"),
         "[1, 2, 3]"
     );
 }
@@ -200,12 +200,12 @@ const REBIND_TEXT_1K_LAST: &str =
 
 #[test]
 fn rebind_text_1k_last_tree() {
-    assert_eq!(run("--run-vm", REBIND_TEXT_1K_LAST, "demo"), "x");
+    assert_eq!(run("--vm", REBIND_TEXT_1K_LAST, "demo"), "x");
 }
 
 #[test]
 fn rebind_text_1k_last_vm() {
-    assert_eq!(run("--run-vm", REBIND_TEXT_1K_LAST, "demo"), "x");
+    assert_eq!(run("--vm", REBIND_TEXT_1K_LAST, "demo"), "x");
 }
 
 #[test]

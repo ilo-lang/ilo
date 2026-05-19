@@ -150,12 +150,12 @@ fn check_all(engine: &str) {
 
 #[test]
 fn prefix_binop_call_tree() {
-    check_all("--run-vm");
+    check_all("--vm");
 }
 
 #[test]
 fn prefix_binop_call_vm() {
-    check_all("--run-vm");
+    check_all("--vm");
 }
 
 #[test]

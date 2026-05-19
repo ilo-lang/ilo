@@ -70,12 +70,12 @@ fn check_all(engine: &str) {
 
 #[test]
 fn list_literal_refs_tree() {
-    check_all("--run-vm");
+    check_all("--vm");
 }
 
 #[test]
 fn list_literal_refs_vm() {
-    check_all("--run-vm");
+    check_all("--vm");
 }
 
 #[test]

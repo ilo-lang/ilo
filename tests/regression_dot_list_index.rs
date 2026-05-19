@@ -25,8 +25,8 @@ fn run_ok(engine: &str, src: &str, entry: &str) -> String {
 }
 
 const ENGINES: &[&str] = &[
-    "--run-vm",
-    "--run-vm",
+    "--vm",
+    "--vm",
     #[cfg(feature = "cranelift")]
     "--jit",
 ];
@@ -54,7 +54,7 @@ fn dot_index_two() {
 #[test]
 fn dot_index_out_of_range_tree_vm() {
     let src = "f>n;xs=[10,20,30];xs.5";
-    for engine in ["--run-vm"] {
+    for engine in ["--vm"] {
         let out = ilo()
             .args([src, engine, "f"])
             .output()
@@ -111,7 +111,7 @@ fn record_field_access_unaffected() {
 fn record_numeric_dot_fails_verify() {
     let src = "type point{x:n;y:n}\nf>n;p=point x:10 y:20;p.0";
     let out = ilo()
-        .args([src, "--run-vm", "f"])
+        .args([src, "--vm", "f"])
         .output()
         .expect("failed to run ilo");
     assert!(

@@ -37,7 +37,7 @@ fn run(engine: &str, src: &str, entry: &str) -> String {
 }
 
 fn check_all_engines(src: &str, entry: &str, expected: &str) {
-    for engine in ["--run-vm"] {
+    for engine in ["--vm"] {
         assert_eq!(
             run(engine, src, entry),
             expected,

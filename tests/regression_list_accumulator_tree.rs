@@ -34,12 +34,12 @@ fn ilo() -> Command {
 
 fn run_tree(src: &str, entry: &str) -> String {
     let out = ilo()
-        .args([src, "--run-vm", entry])
+        .args([src, "--vm", entry])
         .output()
         .expect("failed to run ilo");
     assert!(
         out.status.success(),
-        "ilo --run-vm failed for `{src}`: stderr={}",
+        "ilo --vm failed for `{src}`: stderr={}",
         String::from_utf8_lossy(&out.stderr)
     );
     String::from_utf8_lossy(&out.stdout).trim().to_string()
@@ -152,13 +152,13 @@ fn tree_list_append_scale_5k_under_5s() {
 demo>n;build 5000"#;
     let start = Instant::now();
     let out = ilo()
-        .args([src, "--run-vm", "demo"])
+        .args([src, "--vm", "demo"])
         .output()
         .expect("failed to run ilo");
     let elapsed = start.elapsed();
     assert!(
         out.status.success(),
-        "ilo --run-vm demo failed: stderr={}",
+        "ilo --vm demo failed: stderr={}",
         String::from_utf8_lossy(&out.stderr)
     );
     let stdout = String::from_utf8_lossy(&out.stdout);

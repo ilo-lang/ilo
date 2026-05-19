@@ -11,7 +11,7 @@
 // no post-loop `OP_LEN`.
 //
 // The tests below pin the value-level contract across `--run-tree` (the
-// reference semantics impl, untouched by this change), `--run-vm` (where
+// reference semantics impl, untouched by this change), `--vm` (where
 // the fused emitter lives), and `--jit` (which falls back to
 // the VM on `OP_WINDOW` workloads but otherwise uses its own jit_call_dyn
 // dispatch over `flt`). The fused counter MUST agree bit-for-bit with
@@ -93,7 +93,7 @@ fn run_err(engine: &str, src: &str, entry: &str, args: &[&str]) -> String {
 }
 
 fn run_all(src: &str, entry: &str, args: &[&str], expected: &str) {
-    for engine in ["--run-vm", "--jit"] {
+    for engine in ["--vm", "--jit"] {
         let actual = run_ok(engine, src, entry, args);
         assert_eq!(
             actual, expected,
@@ -211,7 +211,7 @@ fn len_flt_count_nonbool_predicate_errors_vm() {
     // Tree-walker's error message differs slightly (it raises before
     // the VM-specific text); pin the VM path which is the one we're
     // adding here.
-    let err = run_err("--run-vm", COUNT_NONBOOL, "main", &["[1]"]);
+    let err = run_err("--vm", COUNT_NONBOOL, "main", &["[1]"]);
     assert!(
         err.contains("flt") && err.contains("bool"),
         "expected error mentioning both 'flt' and 'bool', got: {err}"

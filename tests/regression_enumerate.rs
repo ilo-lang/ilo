@@ -37,12 +37,12 @@ fn check_strings(engine: &str) {
 
 #[test]
 fn enumerate_strings_tree() {
-    check_strings("--run-vm");
+    check_strings("--vm");
 }
 
 #[test]
 fn enumerate_strings_vm() {
-    check_strings("--run-vm");
+    check_strings("--vm");
 }
 
 #[test]
@@ -60,12 +60,12 @@ fn check_empty(engine: &str) {
 
 #[test]
 fn enumerate_empty_tree() {
-    check_empty("--run-vm");
+    check_empty("--vm");
 }
 
 #[test]
 fn enumerate_empty_vm() {
-    check_empty("--run-vm");
+    check_empty("--vm");
 }
 
 #[test]
@@ -83,12 +83,12 @@ fn check_single(engine: &str) {
 
 #[test]
 fn enumerate_single_tree() {
-    check_single("--run-vm");
+    check_single("--vm");
 }
 
 #[test]
 fn enumerate_single_vm() {
-    check_single("--run-vm");
+    check_single("--vm");
 }
 
 #[test]
@@ -110,12 +110,12 @@ fn check_numbers(engine: &str) {
 
 #[test]
 fn enumerate_numbers_tree() {
-    check_numbers("--run-vm");
+    check_numbers("--vm");
 }
 
 #[test]
 fn enumerate_numbers_vm() {
-    check_numbers("--run-vm");
+    check_numbers("--vm");
 }
 
 #[test]
@@ -137,12 +137,12 @@ fn check_first_pair(engine: &str) {
 
 #[test]
 fn enumerate_first_pair_tree() {
-    check_first_pair("--run-vm");
+    check_first_pair("--vm");
 }
 
 #[test]
 fn enumerate_first_pair_vm() {
-    check_first_pair("--run-vm");
+    check_first_pair("--vm");
 }
 
 #[test]
