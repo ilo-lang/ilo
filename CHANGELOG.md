@@ -26,6 +26,34 @@
     pass; zero round-trip failures.
   - `src/hir/DESIGN.md` documents the shape, the departures, the deferrals,
     and open questions for Stage 5b.
+- **`Backend` trait and Cranelift refactor (`src/backend/`).** Phase 5
+  Stage 5b. Pluggable codegen surface. Future backends (Python, WASM
+  Component Model, Zero) drop in as additional impls without touching
+  the CLI dispatch.
+  - `backend::Backend` — associated `NAME`, associated `Config`, single
+    `emit(&hir, config) -> Result<Artefact, BackendError>` method.
+  - `backend::Artefact { path, kind, metadata }` and
+    `backend::ArtefactKind::{NativeBinary, Wasm, SourceFile { ext }}`.
+  - `backend::BackendError::{Io, CodegenFailed, UnsupportedFeature}`
+    with `to_json()` for `ilo build --json` (JSON shape documented on
+    the method).
+  - `backend::cranelift::CraneliftBackend` — first concrete impl. Wraps
+    the existing `vm::compile_cranelift::compile_to_binary` so codegen
+    is preserved exactly. `CraneliftConfig` carries the bytecode
+    `CompiledProgram` as a documented side-channel until Cranelift is
+    lowered to consume HIR directly (deferred).
+  - `ilo build file.ilo` dispatches through the trait. No CLI change,
+    no user-visible behaviour change.
+  - `ILO_KEEP_OBJ=1` env var preserves the Cranelift `.o` file after
+    linking, for object-level byte-identical regression testing.
+  - `tests/aot_byte_identical.rs` — object-level byte-identical regression
+    against 136 baseline `.o` sha256s captured at Stage 5a tip. The
+    linked-binary level is not suitable because `libilo.a` content
+    changes with every Rust code addition; the `.o` isolates Cranelift
+    codegen output.
+  - `tests/aot-baselines/` — `obj-baselines.tsv` + `MANIFEST.md`
+    documenting capture point, determinism notes, and regeneration
+    procedure.
 - `rgxall-multi pats:L t s:t > L t` builtin. Apply multiple patterns to a single string and get one flat list of all hits in pattern order. Per-pattern semantics follow `rgxall1`: 0 capture groups returns whole matches; 1 capture group returns capture-1 strings; 2+ capture groups errors with a hint to use `rgxall`. Replaces the verbose `flat (map (p:t>L t;rgxall1 p line) pats)` workaround (~20 tokens per call site saved). Motivated by cron-explainer and historical-archeologist personas, which both needed multi-pattern scan on a single line. Tree-bridge eligible alongside `rgxall1`; no new opcodes.
 - `fmod a b` builtin: floor-mod, always non-negative when `b > 0`. Equivalent to Python `a % b` and JS `Math.floor((a % b + b) % b)`. Implemented across VM, JIT, and AOT. Eliminates the `(raw + 7) % 7` workaround that every TZ/weekday persona needed with signed `mod`. `mod` is unchanged (C-style signed remainder).
 - `dtparse-rel s now > R n t` builtin. Resolves a natural-language relative-date phrase to a Unix epoch anchored at `now`. Supported: `today`/`yesterday`/`tomorrow`, `N days/weeks/months ago`, `in N days/weeks/months` (singular + plural), `last/next/this <weekday>` (monday-sunday or mon-sun; `last`/`next` never return today), and ISO-8601 `YYYY-MM-DD` passthrough. Month arithmetic clamps to the last valid day (Jan 31 + 1 month = Feb 28/29). Tree-bridge eligible -- VM and Cranelift pick it up automatically. Eliminates ~40 LoC of date-arithmetic helpers per date persona (P1 #8 from the persona feedback log).
