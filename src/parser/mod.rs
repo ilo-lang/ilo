@@ -558,7 +558,7 @@ impl Parser {
                     "return" =>
                         Some("the last expression in a function body is the return value — no 'return' keyword".to_string()),
                     "if" =>
-                        Some("ilo uses match for conditionals: ?expr{true:... false:...}".to_string()),
+                        Some("ilo uses match for conditionals: ?expr{true:...;false:...}".to_string()),
                     _ => None,
                 };
                 if let Some(hint_msg) = hint {
@@ -586,7 +586,7 @@ impl Parser {
                     Token::KwReturn =>
                         Some("the last expression in a function body is the return value — no 'return' keyword".to_string()),
                     Token::KwIf =>
-                        Some("ilo uses match for conditionals: ?expr{true:... false:...}".to_string()),
+                        Some("ilo uses match for conditionals: ?expr{true:...;false:...}".to_string()),
                     _ => None,
                 };
                 let mut err = self.error("ILO-P001", msg);

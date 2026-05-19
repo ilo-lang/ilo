@@ -1,0 +1,51 @@
+-- Canonical conditional shapes in ilo. This file is the in-context
+-- learning example that backs the reserved-word hint
+-- `?expr{true:...;false:...}` (ILO-P001 on the `if` keyword). When the
+-- hint suggests a syntax shape, that shape MUST round-trip through
+-- the parser — otherwise an agent's first retry hits a second error
+-- and burns tokens. This example pins the three canonical shapes
+-- agents can reach for in place of `if/else`.
+
+-- Shape 1: bool match with explicit `true:` / `false:` arms.
+-- This is the shape the `if`-reserved-word hint points at. Arms are
+-- separated by `;` (NOT a space) — the same rule as every other
+-- `?subj{...}` match form.
+m1 h:b>n;?h{true:1;false:0}
+
+-- Shape 2: bare-bool ternary `?subj{then}{else}` — two positional
+-- brace blocks, no `true:`/`false:` labels. Cheaper to generate when
+-- both arms are single expressions.
+m2 h:b>n;?h{1}{0}
+
+-- Shape 3: bare-bool prefix ternary `?subj a b` — no braces at all.
+-- Cheapest shape (6 chars for `?h 1 0` vs 8 for `?h{1}{0}` vs 12 for
+-- `?h{true:1;false:0}`). Use when both arms are bare atoms.
+m3 h:b>n;?h 1 0
+
+-- Shape 4: general `?h cond a b` prefix-ternary keyword — three
+-- operand atoms after the literal `?h`. The first operand is the
+-- condition; the next two are then/else. Use when the condition is
+-- a more complex bool expression than a single ref.
+m4 x:n>t;cn=>x 0;?h cn "pos" "nonpos"
+
+-- All four shapes return the same value when fed the same condition.
+-- The four-way redundancy is deliberate: agents land on whichever
+-- shape they prefer, and the parser accepts any of them without
+-- forcing a rewrite.
+
+-- run: m1 true
+-- out: 1
+-- run: m1 false
+-- out: 0
+-- run: m2 true
+-- out: 1
+-- run: m2 false
+-- out: 0
+-- run: m3 true
+-- out: 1
+-- run: m3 false
+-- out: 0
+-- run: m4 5
+-- out: pos
+-- run: m4 -1
+-- out: nonpos
