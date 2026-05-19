@@ -460,8 +460,8 @@ Called like functions, compiled to dedicated opcodes.
 | `rd path fmt` | read file with explicit format override (`"csv"`, `"tsv"`, `"json"`, `"raw"`) | `R _ t` |
 | `rdl path` | read file as list of lines | `R (L t) t` |
 | `lsd dir` | list directory entries (filenames only, not full paths; sorted lexicographically; includes both files and subdirs; empty dirs return `[]`, not Err). Renamed from `ls` in 0.12.1 so the natural `ls=rdl! p` binding for "lines" stays free. | `R (L t) t` |
-| `walk dir` | recursive depth-first traversal; paths returned relative to `dir`, sorted; includes both file and directory entries; symlinks not followed | `R (L t) t` |
-| `glob dir pat` | shell-style filter under `dir`: `*`/`?`/`[abc]` within a path segment, `**` across segments; relative-path output, sorted; no matches returns `[]` (not Err) | `R (L t) t` |
+| `walk dir` | recursive depth-first traversal; paths returned relative to `dir`, sorted; includes both file and directory entries; symlinks not followed. Unreadable subdirectories (e.g. permission denied) are silently skipped so one locked sibling does not poison the whole walk; an unreadable root still returns `Err` | `R (L t) t` |
+| `glob dir pat` | shell-style filter under `dir`: `*`/`?`/`[abc]` within a path segment, `**` across segments; relative-path output, sorted; no matches returns `[]` (not Err). Shares `walk`'s traversal so unreadable subdirectories are skipped silently | `R (L t) t` |
 | `rdb s fmt` | parse string/buffer in given format - for data from HTTP, env vars, etc. | `R _ t` |
 | `wr path s` | write text to file (overwrite) | `R t t` |
 | `wr path data "csv"` | write list-of-lists as CSV (with proper quoting) | `R t t` |

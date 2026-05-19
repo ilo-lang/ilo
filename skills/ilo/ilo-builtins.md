@@ -33,7 +33,7 @@ mmap mset mget mhas mdel mkeys mvals
 
 ## I/O
 
-`rd path`, `rdl path`, `rdjl path`, `rdb path`, `wr path s`, `wrl path xs`, `prnt v`. Dir: `lsd dir` (non-recursive), `walk dir` (recursive), `glob dir pat`. All Result-wrapped.
+`rd path`, `rdl path`, `rdjl path`, `rdb path`, `wr path s`, `wrl path xs`, `prnt v`. Dir: `lsd dir` (non-recursive), `walk dir` (recursive), `glob dir pat`. All Result-wrapped. `walk`/`glob` silently skip unreadable subdirs (permission denied etc.) so a single locked sibling doesn't abort the whole traversal; an unreadable root still returns Err.
 
 ## HTTP
 
