@@ -286,7 +286,7 @@ mod tests {
             code: "ILO-P001",
             position: 0,
             span: Span { start: 0, end: 8 },
-            message: "expected declaration, got Ident(\"function\")".to_string(),
+            message: "expected declaration, got identifier `function`".to_string(),
             hint: Some("ilo function syntax: name param:type > return-type; body".to_string()),
         };
         let d = Diagnostic::from(&e);

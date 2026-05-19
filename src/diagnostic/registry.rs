@@ -220,7 +220,19 @@ An incomplete function definition is a common cause.
         long: r#"## ILO-P003: unexpected token
 
 A token was found where a different token was expected. The error
-message names the expected and actual tokens.
+message names the expected and actual tokens using their source
+characters (e.g. ``expected `>`, got `|` ``), not the parser's
+internal token-kind names.
+
+**Example:**
+
+    f x:n|n;x
+
+    ERROR ILO-P003: expected `>`, got `|`
+
+The fix is to use `>` between the parameter list and the return type:
+
+    f x:n>n;x
 "#,
     },
     ErrorEntry {

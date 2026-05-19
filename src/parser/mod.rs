@@ -214,12 +214,19 @@ impl Parser {
                 };
                 let mut err = self.error(
                     "ILO-P003",
-                    format!("expected {:?}, got {:?}", expected, tok),
+                    format!(
+                        "expected {}, got {}",
+                        expected.user_facing_name(),
+                        tok.user_facing_name()
+                    ),
                 );
                 err.hint = hint;
                 Err(err)
             }
-            None => Err(self.error("ILO-P004", format!("expected {:?}, got EOF", expected))),
+            None => Err(self.error(
+                "ILO-P004",
+                format!("expected {}, got end of input", expected.user_facing_name()),
+            )),
         }
     }
 
@@ -233,7 +240,10 @@ impl Parser {
                 if let Some((msg, hint)) = reserved_keyword_message(&tok) {
                     Err(self.error_hint("ILO-P011", msg, hint))
                 } else {
-                    Err(self.error("ILO-P005", format!("expected identifier, got {:?}", tok)))
+                    Err(self.error(
+                        "ILO-P005",
+                        format!("expected identifier, got {}", tok.user_facing_name()),
+                    ))
                 }
             }
             None => Err(self.error("ILO-P006", "expected identifier, got EOF".into())),
@@ -564,7 +574,7 @@ impl Parser {
                 if let Some(hint_msg) = hint {
                     let mut err = self.error(
                         "ILO-P001",
-                        format!("expected declaration, got Ident({ident_str:?})"),
+                        format!("expected declaration, got identifier `{ident_str}`"),
                     );
                     err.hint = Some(hint_msg);
                     return Err(err);
@@ -572,7 +582,7 @@ impl Parser {
                 self.parse_fn_decl()
             }
             Some(tok) => {
-                let msg = format!("expected declaration, got {:?}", tok);
+                let msg = format!("expected declaration, got {}", tok.user_facing_name());
                 let hint = match tok {
                     Token::Plus | Token::Minus | Token::Star | Token::Slash
                     | Token::Greater | Token::Less | Token::GreaterEq | Token::LessEq
@@ -609,7 +619,10 @@ impl Parser {
             Some(tok) => {
                 return Err(self.error(
                     "ILO-P016",
-                    format!("expected a string path after `use`, got {:?}", tok),
+                    format!(
+                        "expected a string path after `use`, got {}",
+                        tok.user_facing_name()
+                    ),
                 ));
             }
             None => {
@@ -1012,7 +1025,10 @@ impl Parser {
                 self.advance();
                 Ok(Type::Named(name))
             }
-            Some(tok) => Err(self.error("ILO-P007", format!("expected type, got {:?}", tok))),
+            Some(tok) => Err(self.error(
+                "ILO-P007",
+                format!("expected type, got {}", tok.user_facing_name()),
+            )),
             None => Err(self.error("ILO-P008", "expected type, got EOF".into())),
         }
     }
@@ -1765,7 +1781,10 @@ impl Parser {
                 };
                 Ok(Pattern::TypeIs { ty, binding })
             }
-            Some(tok) => Err(self.error("ILO-P011", format!("expected pattern, got {:?}", tok))),
+            Some(tok) => Err(self.error(
+                "ILO-P011",
+                format!("expected pattern, got {}", tok.user_facing_name()),
+            )),
             None => Err(self.error("ILO-P012", "expected pattern, got EOF".into())),
         }
     }
@@ -3531,7 +3550,10 @@ results first: `r={first_op}a b;…r` keeps each step explicit."
                 if let Some((msg, hint)) = lambda_keyword_message(&tok) {
                     return Err(self.error_hint("ILO-P009", msg, hint));
                 }
-                Err(self.error("ILO-P009", format!("expected expression, got {:?}", tok)))
+                Err(self.error(
+                    "ILO-P009",
+                    format!("expected expression, got {}", tok.user_facing_name()),
+                ))
             }
             None => Err(ParseError {
                 code: "ILO-P010",
@@ -3700,8 +3722,8 @@ For variable-position list indexing bind the head first: \
             return Err(self.error_hint(
                 "ILO-P003",
                 format!(
-                    "expected `)` to close inline lambda body, got {:?}",
-                    self.peek().unwrap()
+                    "expected `)` to close inline lambda body, got {}",
+                    self.peek().unwrap().user_facing_name()
                 ),
                 "chained calls inside an inline-lambda body need explicit parens: `(a:n x:t>n;+a (kc (body x)))`. The body parses a single prefix call greedily and the trailing idents look like a malformed lambda close.".into(),
             ));
@@ -3996,7 +4018,10 @@ For variable-position list indexing bind the head first: \
                 self.advance();
                 Ok(n)
             }
-            Some(tok) => Err(self.error("ILO-P013", format!("expected number, got {:?}", tok))),
+            Some(tok) => Err(self.error(
+                "ILO-P013",
+                format!("expected number, got {}", tok.user_facing_name()),
+            )),
             None => Err(self.error("ILO-P014", "expected number, got EOF".into())),
         }
     }
@@ -9485,7 +9510,7 @@ mod tests {
         let (_, errors) = parse_str_errors(source);
         let e = errors
             .iter()
-            .find(|e| e.code == "ILO-P003" && e.message.contains("expected LBrace"))
+            .find(|e| e.code == "ILO-P003" && e.message.contains("expected `{`"))
             .expect("expected ILO-P003 LBrace error");
         let hint = e.hint.as_ref().expect("expected hint");
         assert!(
@@ -9516,7 +9541,7 @@ mod tests {
         let (_, errors) = parse_str_errors(source);
         let e = errors
             .iter()
-            .find(|e| e.code == "ILO-P003" && e.message.contains("expected LBrace"))
+            .find(|e| e.code == "ILO-P003" && e.message.contains("expected `{`"))
             .expect("expected ILO-P003 LBrace error");
         let hint = e.hint.as_ref().expect("expected hint");
         assert!(

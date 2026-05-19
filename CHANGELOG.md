@@ -60,6 +60,10 @@
 
 - `mset` accumulator via helper fn no longer pays a ~1000x perf cliff. The canonical DRY refactor `addto m k v > mset m k v` followed by `m = addto m k v` in a loop now runs at the same speed as the inline form. New OP_MOVE_OWN / OP_CALL_OWN1 opcodes thread the first arg into the helper at the caller's RC, and a tail-position rewrite lets the helper's `mset m k v` fire the existing in-place fast path. 40k rows: 25.8s to 0.01s on VM; JIT and AOT linear at 1M rows.
 
+### Diagnostics
+
+- Parser diagnostics (ILO-P001/P003/P004/P005/P007/P009/P011/P013/P016) now render tokens using their source characters (`` `>` ``, `` `{` ``, `` `>>` ``, `` identifier `foo` ``, `` number `42` ``) instead of parser-internal `TokenKind` variant names (`Greater`, `LBrace`, `PipeOp`, `Ident("foo")`, `Number(42.0)`). The old wording `expected Greater, got PipeOp` told an agent nothing about what character it had typed; the new `` expected `>`, got `>>` `` shows the offending bytes directly. Surfaced by agent-repair-loop rerun11.
+
 ## 0.12.0 - 2026-05-19
 
 ### Breaking
