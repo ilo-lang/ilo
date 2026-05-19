@@ -22,13 +22,13 @@ Four backends. Default (`ilo file.ilo`) is the register VM; covers ~all programs
 ## When to pick which
 
 - **VM** default.
-- **`--run-tree`** reference semantics for debugging. Phase 2 captures run natively on VM/JIT, so this is no longer needed for captures.
+- **`--run-tree`** reference semantics for debugging. Captures run natively on VM/JIT.
 - **`--jit`** tight numeric loops; `--bench` confirms it ran.
 - **`ilo compile`** shipping or running without the toolchain.
 
 ## Feature matrix
 
-All four support core ops, lists/maps/records/sums, HOFs, non-capturing lambdas, Results, HTTP, JSON, file I/O, MCP and HTTP tools. Phase 2 capturing lambdas run natively on tree, VM, and JIT (free vars snapshot by value at the call site). AOT miscompiles HOFs taking function values; use `--run-vm` for that case.
+All four support core ops, lists/maps/records/sums, HOFs, lambdas (with or without captures), Results, HTTP, JSON, file I/O, MCP and HTTP tools. AOT miscompiles HOFs taking function values; use `--run-vm` for that case.
 
 ## Benchmarking
 
