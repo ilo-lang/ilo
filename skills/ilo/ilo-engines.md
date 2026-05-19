@@ -22,13 +22,13 @@ Four backends. Default (`ilo file.ilo`) is the register VM; covers ~all programs
 ## When to pick which
 
 - **VM** default.
-- **`--run-tree`** force-pin for debugging (captures auto-fall-back).
+- **`--run-tree`** reference semantics for debugging. Captures run natively on VM/JIT.
 - **`--jit`** tight numeric loops; `--bench` confirms it ran.
 - **`ilo compile`** shipping or running without the toolchain.
 
 ## Feature matrix
 
-All four support core ops, lists/maps/records/sums, HOFs, non-capturing lambdas, Results, HTTP, JSON, file I/O, MCP and HTTP tools. Capturing lambdas: tree only; VM/JIT/AOT silently recompile the affected fn to tree on first hit.
+All four support core ops, lists/maps/records/sums, HOFs, lambdas (with or without captures), Results, HTTP, JSON, file I/O, MCP and HTTP tools. AOT miscompiles HOFs taking function values; use `--run-vm` for that case.
 
 ## Benchmarking
 
