@@ -342,6 +342,10 @@ No public API changes (other than `--emit python` removal). No other CLI changes
 
 - Parser diagnostics (ILO-P001/P003/P004/P005/P007/P009/P011/P013/P016) now render tokens using their source characters (`` `>` ``, `` `{` ``, `` `>>` ``, `` identifier `foo` ``, `` number `42` ``) instead of parser-internal `TokenKind` variant names (`Greater`, `LBrace`, `PipeOp`, `Ident("foo")`, `Number(42.0)`). The old wording `expected Greater, got PipeOp` told an agent nothing about what character it had typed; the new `` expected `>`, got `>>` `` shows the offending bytes directly. Surfaced by agent-repair-loop rerun11.
 
+### Added
+
+- `rand` alias for `rnd` (universal short-form for random; matches C / Python / Rust / Go / JS naming). Closes the round-vs-random muscle-memory trap where agents reach for `rnd` expecting "round" (drop-vowels of `round`) and silently get random floats. Canonical for random stays `rnd`; canonical for rounding stays `rou` (alias `round`).
+
 ## 0.12.0 - 2026-05-19
 
 ### Breaking
