@@ -594,6 +594,10 @@ pub(crate) fn is_tree_bridge_eligible(b: crate::builtins::Builtin, argc: usize) 
         // Map[Text, Text] which round-trips through NanVal heap_map cleanly,
         // so the bridge is the right tier for both VM and Cranelift.
         (Builtin::EnvAll, 0) => true,
+        // jkeys json path -> R (L t) t. New companion to mkeys for JSON
+        // objects. Pure (no FnRef args, no I/O), bridge keeps cross-engine
+        // parity with the tree interpreter at the same cost tier as `mkeys`.
+        (Builtin::Jkeys, 2) => true,
         _ => false,
     }
 }
@@ -612,6 +616,7 @@ pub(crate) fn tree_bridge_returns_result(b: crate::builtins::Builtin) -> bool {
             | Builtin::Glob
             | Builtin::EnvAll
             | Builtin::Run
+            | Builtin::Jkeys
     )
 }
 
@@ -2238,13 +2243,9 @@ impl RegCompiler {
                     self.current.patch_jump(jump_over_else);
                     self.next_reg = result_reg + 1;
                     Some(result_reg)
-                } else {
-                    // Guard (braced or braceless) when truthy: early return.
-                    // The two surface forms — `cond expr` and `cond{body}` —
-                    // share semantics. `braceless` is kept on the AST for
-                    // source-preserving round-trips only. Ternary is handled
-                    // in the else_body branch above and is not early-return.
-                    let _ = braceless;
+                } else if *braceless {
+                    // Braceless guard `cond expr`: early return from the
+                    // enclosing function. Emit OP_RET on the body tail.
                     let body_result = self.compile_body(body);
                     let ret_reg = body_result.unwrap_or_else(|| {
                         let r = self.alloc_reg();
@@ -2256,6 +2257,24 @@ impl RegCompiler {
                     self.current.patch_jump(jump);
                     self.next_reg = saved_next;
                     None
+                } else {
+                    // Braced guard `cond{body}`: conditional execution, no
+                    // early return. The body's tail value is exposed (like a
+                    // ternary's then-branch) so a braced guard at the tail
+                    // of a function or match arm contributes its value, but
+                    // execution falls through to subsequent statements.
+                    // result_reg defaults to Nil when the condition is false.
+                    let result_reg = self.alloc_reg();
+                    let nil_ki = self.current.add_const(Value::Nil);
+                    self.emit_abx(OP_LOADK, result_reg, nil_ki);
+                    let body_result = self.compile_body(body);
+                    let body_reg = body_result.unwrap_or(result_reg);
+                    if body_reg != result_reg {
+                        self.emit_abc(OP_MOVE, result_reg, body_reg, 0);
+                    }
+                    self.current.patch_jump(jump);
+                    self.next_reg = result_reg + 1;
+                    Some(result_reg)
                 }
             }
 
@@ -10633,11 +10652,13 @@ impl<'a> VM<'a> {
                                     }
                                 }
                                 if found {
-                                    let result_str = match current {
-                                        serde_json::Value::String(s) => s.clone(),
-                                        other => other.to_string(),
-                                    };
-                                    NanVal::heap_ok(NanVal::heap_string(result_str))
+                                    // Return the value at the path as a typed
+                                    // NanVal: arrays → list, objects → record,
+                                    // scalars → matching primitive. Mirrors
+                                    // `jpar`'s `serde_json_to_nanval` path so
+                                    // `mkeys` / `map` / `flt` / `@` / `jkeys`
+                                    // accept the result directly.
+                                    NanVal::heap_ok(serde_json_to_nanval(current.clone()))
                                 } else {
                                     NanVal::heap_err(NanVal::heap_string(format!(
                                         "key not found: {missing_key}"
@@ -17030,11 +17051,10 @@ pub(crate) extern "C" fn jit_jpth(a: u64, b: u64, span_bits: u64) -> u64 {
                 }
             }
             if found {
-                let result_str = match current {
-                    serde_json::Value::String(s) => s.clone(),
-                    other => other.to_string(),
-                };
-                NanVal::heap_ok(NanVal::heap_string(result_str)).0
+                // Return the value at the path as a typed NanVal: arrays →
+                // list, objects → record, scalars → matching primitive. See
+                // OP_JPTH (VM) and the tree-walker for the matching paths.
+                NanVal::heap_ok(serde_json_to_nanval(current.clone())).0
             } else {
                 NanVal::heap_err(NanVal::heap_string(format!("key not found: {missing_key}"))).0
             }
@@ -21841,7 +21861,8 @@ mod tests {
 
     #[test]
     fn vm_jp_array_index() {
-        let source = r#"f j:t p:t>R t t;jpth j p"#;
+        // Post-0.12.1 jpth: numeric leaf returns Number, not Text.
+        let source = r#"f j:t p:t>R _ t;jpth j p"#;
         let result = vm_run(
             source,
             Some("f"),
@@ -21850,10 +21871,7 @@ mod tests {
                 Value::Text(Arc::new("1".to_string())),
             ],
         );
-        assert_eq!(
-            result,
-            Value::Ok(Box::new(Value::Text(Arc::new("20".to_string()))))
-        );
+        assert_eq!(result, Value::Ok(Box::new(Value::Number(20.0))));
     }
 
     #[test]
@@ -27608,13 +27626,16 @@ mod tests {
     // ── Guard & ternary ─────────────────────────────────────────────────
 
     #[test]
-    fn vm_braced_guard_early_returns() {
-        // Braced and braceless guards both early-return (option A).
+    fn vm_braced_guard_no_early_return() {
+        // Braced guard is conditional execution; body value is discarded
+        // from the function's return path and execution falls through.
         let source = "f x:n>n;=x 0{99};+x 1";
+        // x=0: guard true, {99} runs, value discarded, falls through to +0 1 = 1
         assert_eq!(
             vm_run(source, Some("f"), vec![Value::Number(0.0)]),
-            Value::Number(99.0)
+            Value::Number(1.0)
         );
+        // x=5: guard false, falls through to +5 1 = 6
         assert_eq!(
             vm_run(source, Some("f"), vec![Value::Number(5.0)]),
             Value::Number(6.0)
@@ -27623,7 +27644,7 @@ mod tests {
 
     #[test]
     fn vm_braceless_guard_still_returns_early() {
-        // Braceless guard still causes early return
+        // Braceless guard causes early return.
         let source = "f x:n>n;=x 0 99;+x 1";
         assert_eq!(
             vm_run(source, Some("f"), vec![Value::Number(0.0)]),
@@ -27636,9 +27657,10 @@ mod tests {
     }
 
     #[test]
-    fn vm_braced_guard_in_loop_uses_ternary_rebind() {
-        // Under option A the canonical find-max idiom is the ternary rebind.
-        let source = "mx xs:L n>n;m=xs.0;@x xs{m=>x m{x}{m}};+m 0";
+    fn vm_braced_guard_in_loop_no_early_return() {
+        // Braced guard inside a loop does NOT early-return; the canonical
+        // find-max idiom `m=xs.0;@x xs{>x m{m=x}};m` works as written.
+        let source = "mx xs:L n>n;m=xs.0;@x xs{>x m{m=x}};+m 0";
         let result = vm_run(
             source,
             Some("mx"),
@@ -29445,7 +29467,8 @@ mod tests {
 
     #[test]
     fn vm_jpth_array_index() {
-        let source = r#"f j:t p:t>R t t;jpth j p"#;
+        // Post-0.12.1 jpth: numeric leaf returns Number, not Text.
+        let source = r#"f j:t p:t>R _ t;jpth j p"#;
         let result = vm_run(
             source,
             Some("f"),
@@ -29454,10 +29477,7 @@ mod tests {
                 Value::Text(Arc::new("1".to_string())),
             ],
         );
-        assert_eq!(
-            result,
-            Value::Ok(Box::new(Value::Text(Arc::new("20".to_string()))))
-        );
+        assert_eq!(result, Value::Ok(Box::new(Value::Number(20.0))));
     }
 
     #[test]

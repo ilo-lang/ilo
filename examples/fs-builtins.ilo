@@ -1,4 +1,4 @@
--- ls / walk / glob — filesystem enumeration builtins. All three return a
+-- lsd / walk / glob — filesystem enumeration builtins. All three return a
 -- Result so missing-dir / permission-denied surface as Err and compose
 -- with `!`-unwrap and the `?ok{…}{…}` pattern. Paths are returned relative
 -- to the requested root, with `/` separators on every OS, sorted
@@ -7,10 +7,10 @@
 -- This file uses the repo's own `examples/` directory as a stable fixture so
 -- it runs without setup under the engine-harness (cwd = crate root).
 
--- `ls dir` — non-recursive listing. Returns just the filenames, not the
+-- `lsd dir` — non-recursive listing. Returns just the filenames, not the
 -- full paths; the caller `cat`s them with the dir prefix when they need
 -- absolute references. Empty dirs return `[]`, not Err.
-ls-has-entries dir:t>R b t;es=ls! dir;~>len es 0
+ls-has-entries dir:t>R b t;es=lsd! dir;~>len es 0
 
 -- `walk dir` — recursive DFS, paths relative to `dir`, includes both file
 -- and directory entries (matches `find` shape). Sorted output makes diffs
@@ -29,7 +29,7 @@ glob-ilo-count dir:t>R b t;ps=glob! dir "**/*.ilo";~>len ps 0
 
 -- Missing directory surfaces as Err. The agent can pattern-match the
 -- Result or use `?ok` to branch instead of carrying a sentinel value.
-ls-missing>R (L t) t;ls "this-path-must-not-exist-xyzzy"
+ls-missing>R (L t) t;lsd "this-path-must-not-exist-xyzzy"
 
 -- run: ls-has-entries "examples"
 -- out: true

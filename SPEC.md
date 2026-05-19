@@ -185,7 +185,7 @@ flat n:n>n;n
 -- ERROR ILO-P011: `flat` is a builtin and cannot be used as a function name
 -- hint: rename to something like `myflat` or `flatof`.
 
-main>n;flat=cat ls " ";spl flat ". "
+main>n;flat=cat xs " ";spl flat ". "
 -- ERROR ILO-P011: `flat` is a builtin and cannot be used as a binding name
 -- hint: rename to something like `myflat` or `flatv`.
 ```
@@ -197,11 +197,11 @@ Short builtin names are precious surface and ilo reserves a stable subset of the
 **Currently reserved short names (1-3 characters).** Every name in this list is a builtin today and triggers `ILO-P011` if used as a binding or user-function name:
 
 ```
-2-char  at hd tl rd wr ct ls
+2-char  at hd tl rd wr ct
 3-char  abs avg cap cat cel chr cos det dot env exp fft fld flr flt fmt
-        frq get grp has inv len log lst lwr map max min mod now num ord
-        pow pst rdb rdl rev rgx rng rnd rou run sin slc spl srt str sum
-        tan trm unq upr wrl zip
+        frq get grp has inv len log lsd lst lwr map max min mod now num
+        ord pow pst rdb rdl rev rgx rng rnd rou run sin slc spl srt str
+        sum tan trm unq upr wrl zip
 ```
 
 `rng` is the short-form alias for the canonical `range` builtin; it is reserved with the same shadow-prevention semantics as a canonical builtin name (binding `rng=...` or declaring `rng x:...` fires `ILO-P011`).
@@ -215,7 +215,7 @@ This gives agents a deterministic safe-name strategy:
 - **3 chars**: prefer unreserved 3-char names where possible. If a future release reserves one, the migration is a 1-character rename plus a changelog entry.
 - **4+ chars**: always safe. New builtins land here first; any short alias is added later only if the long name is unambiguous and the short doesn't shadow a plausible user binding.
 
-When a collision does happen, `ILO-P011` surfaces it at the binding site with a rename suggestion - never silently mis-dispatches at the call site (see the `flat=cat ls " "` example above). Combined with the reserve list, that turns every name-collision incident into a single-character rename instead of a debugging spiral.
+When a collision does happen, `ILO-P011` surfaces it at the binding site with a rename suggestion - never silently mis-dispatches at the call site (see the `flat=cat xs " "` example above). Combined with the reserve list, that turns every name-collision incident into a single-character rename instead of a debugging spiral.
 
 ### Cross-language gotchas
 
@@ -459,7 +459,7 @@ Called like functions, compiled to dedicated opcodes.
 | `rd path` | read file; format auto-detected from extension (`.csv`/`.tsv`→grid, `.json`→graph, else text) | `R _ t` |
 | `rd path fmt` | read file with explicit format override (`"csv"`, `"tsv"`, `"json"`, `"raw"`) | `R _ t` |
 | `rdl path` | read file as list of lines | `R (L t) t` |
-| `ls dir` | list directory entries (filenames only, not full paths; sorted lexicographically; includes both files and subdirs; empty dirs return `[]`, not Err) | `R (L t) t` |
+| `lsd dir` | list directory entries (filenames only, not full paths; sorted lexicographically; includes both files and subdirs; empty dirs return `[]`, not Err). Renamed from `ls` in 0.12.1 so the natural `ls=rdl! p` binding for "lines" stays free. | `R (L t) t` |
 | `walk dir` | recursive depth-first traversal; paths returned relative to `dir`, sorted; includes both file and directory entries; symlinks not followed | `R (L t) t` |
 | `glob dir pat` | shell-style filter under `dir`: `*`/`?`/`[abc]` within a path segment, `**` across segments; relative-path output, sorted; no matches returns `[]` (not Err) | `R (L t) t` |
 | `rdb s fmt` | parse string/buffer in given format - for data from HTTP, env vars, etc. | `R _ t` |
@@ -480,7 +480,8 @@ Called like functions, compiled to dedicated opcodes.
 | `srt fn xs` | sort list by key function (returns number or text key) | `L` |
 | `unq xs` | remove duplicates, preserve order (list or text chars) | same type |
 | `slc xs a b` | slice list or text from index a to b (a, b accept negative indices counting from end; bounds clamp) | same type |
-| `jpth json path` | JSON dot-path lookup, dot-separated keys + numeric array indices (e.g. `"a.b.0.c"`), not JSONPath - leading `$`, `*`, or `[...]` rejected with a diagnostic | `R t t` |
+| `jpth json path` | JSON dot-path lookup, dot-separated keys + numeric array indices (e.g. `"a.b.0.c"`), not JSONPath - leading `$`, `*`, or `[...]` rejected with a diagnostic. Result is typed: arrays → list, objects → record, scalars → matching primitive. | `R _ t` |
+| `jkeys json path` | sorted top-level keys of the JSON object at `path` (empty path = root). Err if the value at the path is not an object. | `R (L t) t` |
 | `jdmp value` | serialise ilo value to JSON text | `t` |
 | `prnt value` | print value to stdout, return it unchanged (passthrough) | same type |
 | `jpar text` | parse JSON text into ilo values | `R _ t` |
@@ -709,13 +710,27 @@ Non-UTF-8 environment variables are silently skipped (same policy as Rust's `std
 
 `jpth` extracts a value from a JSON string by dot-separated path. Array elements are accessed by numeric index. **Note: `jpth` is dot-path only, not JSONPath.** A leading `$`, `*` wildcard, or `[...]` bracket selector triggers a diagnostic error pointing at the dot-path form; iterate arrays yourself with `@i` or `map` if you need wildcard behaviour.
 
+Since 0.12.1 the Ok variant is **typed**: a JSON array comes back as a list (`@`-iterable, `len`-able), a JSON object comes back as a record (`jdmp`-roundtrippable, `jkeys`-enumerable), and scalars come back as the matching ilo primitive (number, text, bool, nil). Pre-0.12.1 every non-string leaf was stringified, forcing a re-parse via `jpar` to iterate. The signature is now `R _ t`.
+
 ```
-jpth json "name"            -- R t t: Ok=extracted value as text, Err=error
+jpth json "name"            -- R _ t: Ok=typed value, Err=error message
 jpth json "user.name"       -- nested path lookup
 jpth json "items.0.name"    -- array index access (dot before index, not [0])
+jpth json "spans"           -- Ok=L _ when the leaf is a JSON array (iterable!)
+jpth json "deps"            -- Ok=record when the leaf is a JSON object
+jpth json "n"               -- Ok=Number 42 (not Text "42") on a numeric leaf
 jpth! json "name"           -- auto-unwrap
 jpth json "$.a.b"           -- ^"jpth is dot-path only ..." (JSONPath rejected)
 jpth json "items.*.name"    -- ^"jpth is dot-path only ..." (no wildcards)
+```
+
+`jkeys json path` returns the **sorted** top-level keys of the JSON object at the dot-path as `L t`. Empty path means root. Errs if the value at the path is not an object. Pairs with `mkeys` (which works on ilo `M` maps) so an agent can enumerate JSON object keys without re-parsing through `jpar`.
+
+```
+jkeys json ""               -- R (L t) t: Ok=sorted root keys
+jkeys json "deps"           -- sorted keys of the "deps" object
+jkeys! json "deps"          -- auto-unwrap
+jkeys json "items"          -- ^"jkeys: value at path is not a JSON object"
 ```
 
 `jdmp` serialises any ilo value to a JSON string:

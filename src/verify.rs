@@ -336,7 +336,7 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("run", &["t", "L t"], "R (M t t) t"),
     ("rd", &["t"], "R ? t"),
     ("rd", &["t", "t"], "R ? t"),
-    ("ls", &["t"], "R (L t) t"),
+    ("lsd", &["t"], "R (L t) t"),
     ("walk", &["t"], "R (L t) t"),
     ("glob", &["t", "t"], "R (L t) t"),
     ("rdl", &["t"], "R (L t) t"),
@@ -385,7 +385,8 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("dtparse", &["t", "t"], "R n t"),
     ("env", &["t"], "R t t"),
     ("env-all", &[], "R (M t t) t"),
-    ("jpth", &["t", "t"], "R t t"),
+    ("jpth", &["t", "t"], "R ? t"),
+    ("jkeys", &["t", "t"], "R (L t) t"),
     ("jdmp", &["any"], "t"),
     ("prnt", &["any"], "any"),
     ("fmt", &["t"], "t"), // variadic: fmt template arg1 arg2 … — checked specially
@@ -1684,7 +1685,32 @@ fn builtin_check_args(
                     });
                 }
             }
-            (Ty::Result(Box::new(Ty::Text), Box::new(Ty::Text)), errors)
+            // Return is `R ? t`: the value at the path is typed (list →
+            // L, object → record, scalar → matching primitive); only its
+            // static shape is unknown to the verifier. Callers that want
+            // a specific narrowing should `!` then `?` / `match` it.
+            (
+                Ty::Result(Box::new(Ty::Unknown), Box::new(Ty::Text)),
+                errors,
+            )
+        }
+        "jkeys" => {
+            for (i, arg) in arg_types.iter().enumerate() {
+                if !compatible(arg, &Ty::Text) {
+                    errors.push(VerifyError {
+                        code: "ILO-T013",
+                        function: func_ctx.to_string(),
+                        message: format!("'jkeys' arg {} expects t, got {arg}", i + 1),
+                        hint: None,
+                        span,
+                        is_warning: false,
+                    });
+                }
+            }
+            (
+                Ty::Result(Box::new(Ty::List(Box::new(Ty::Text))), Box::new(Ty::Text)),
+                errors,
+            )
         }
         "jdmp" => {
             // jdmp accepts any value, no type checking needed
@@ -3206,10 +3232,14 @@ impl VerifyContext {
             } => {
                 let _ = self.infer_expr(func, scope, condition, span);
 
-                // Warn if a guard body is a single identifier matching a function
-                // name (braced or braceless — semantics are unified). Almost
-                // always the author meant to call the function, not return a
-                // function reference as the early-return value.
+                // Warn if a guard body is a single identifier matching a
+                // function name. Two failure modes share the same shape:
+                //   * braceless `cond name` returns the bare fn-ref as the
+                //     early-return value (almost never intentional);
+                //   * braced  `cond{name}` evaluates and discards the fn-ref,
+                //     yielding no useful effect.
+                // In both cases the author almost certainly meant to call
+                // the function — emit a single diagnostic with the call form.
                 if else_body.is_none()
                     && body.len() == 1
                     && let Stmt::Expr(Expr::Ref(ref name)) = body[0].node

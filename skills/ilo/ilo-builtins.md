@@ -33,7 +33,7 @@ mmap mset mget mhas mdel mkeys mvals
 
 ## I/O
 
-`rd path` (whole file `R t t`), `rdl path` (lines), `rdjl path` (json lines), `rdb path` (bytes), `wr path s`, `wrl path xs`, `prnt v`. All file ops Result-wrapped; pair with `!`.
+`rd path`, `rdl path`, `rdjl path`, `rdb path`, `wr path s`, `wrl path xs`, `prnt v`. Dir: `lsd dir` (non-recursive), `walk dir` (recursive), `glob dir pat`. All Result-wrapped.
 
 ## HTTP
 
@@ -41,7 +41,7 @@ mmap mset mget mhas mdel mkeys mvals
 
 ## JSON
 
-`jpar s` parse, `jpth obj path` pointer lookup (`jpth r "items/0/id"`), `jdmp v` serialize. Numeric map keys stringified in `jdmp`.
+`jpar s` parse, `jpth s path` dot-path (typed), `jkeys s path` sorted object keys, `jdmp v` serialize. Numeric keys stringified in `jdmp`.
 
 ## Time
 

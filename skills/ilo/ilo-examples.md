@@ -26,7 +26,7 @@ Pointers into `examples/`. Every entry is a real program the engine harness runs
 
 ## Filesystem
 
-- `fs-builtins.ilo` `rd` / `wr` / `ls`. `csv-tsv-writer.ilo` emit CSV/TSV.
+- `fs-builtins.ilo` `rd` / `wr` / `lsd`. `csv-tsv-writer.ilo` emit CSV/TSV.
 
 ## Error handling
 

@@ -2801,7 +2801,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         return Ok(Value::Text(Arc::new(result)));
     }
     if builtin == Some(Builtin::Ls) && args.len() == 1 {
-        // ls dir > R (L t) t — list non-recursive directory entries (filenames
+        // lsd dir > R (L t) t — list non-recursive directory entries (filenames
         // only, not full paths). Sorted lexicographically for determinism so
         // agent diffs stay stable across runs / filesystems. Missing dir or
         // permission denied surface as Err so the caller can branch with `!`
@@ -3127,11 +3127,13 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                                 ))))));
                             }
                         }
-                        let result_str = match current {
-                            serde_json::Value::String(s) => s.clone(),
-                            other => other.to_string(),
-                        };
-                        Ok(Value::Ok(Box::new(Value::Text(Arc::new(result_str)))))
+                        // Return the value at the path as a typed ilo Value:
+                        // arrays → L, objects → Record, primitives → matching
+                        // scalar. This lets `mkeys`/`map`/`flt`/`@` and the
+                        // `jkeys` builtin accept the result directly instead
+                        // of seeing a stringified blob.
+                        let typed = serde_json_to_value(current.clone());
+                        Ok(Value::Ok(Box::new(typed)))
                     }
                     Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(e.to_string()))))),
                 }
@@ -3139,6 +3141,58 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             _ => Err(RuntimeError::new(
                 "ILO-R009",
                 "jpth requires two text args".to_string(),
+            )),
+        };
+    }
+    if builtin == Some(Builtin::Jkeys) && args.len() == 2 {
+        return match (&args[0], &args[1]) {
+            (Value::Text(json_str), Value::Text(path)) => {
+                if let Some(msg) = crate::builtins::jpth_jsonpath_diagnostic(path) {
+                    return Ok(Value::Err(Box::new(Value::Text(Arc::new(msg)))));
+                }
+                match serde_json::from_str::<serde_json::Value>(json_str) {
+                    Ok(parsed) => {
+                        let mut current = &parsed;
+                        // Empty path = top-level. Skip walk so callers can do
+                        // `jkeys! txt ""` for the root object.
+                        if !path.is_empty() {
+                            for key in path.split('.') {
+                                if let Ok(idx) = key.parse::<usize>() {
+                                    if let Some(v) = current.as_array().and_then(|a| a.get(idx)) {
+                                        current = v;
+                                    } else {
+                                        return Ok(Value::Err(Box::new(Value::Text(Arc::new(
+                                            format!("key not found: {key}"),
+                                        )))));
+                                    }
+                                } else if let Some(v) = current.get(key) {
+                                    current = v;
+                                } else {
+                                    return Ok(Value::Err(Box::new(Value::Text(Arc::new(
+                                        format!("key not found: {key}"),
+                                    )))));
+                                }
+                            }
+                        }
+                        match current.as_object() {
+                            Some(obj) => {
+                                let mut keys: Vec<String> = obj.keys().cloned().collect();
+                                keys.sort();
+                                let items: Vec<Value> =
+                                    keys.into_iter().map(|k| Value::Text(Arc::new(k))).collect();
+                                Ok(Value::Ok(Box::new(Value::List(Arc::new(items)))))
+                            }
+                            None => Ok(Value::Err(Box::new(Value::Text(Arc::new(
+                                "jkeys: value at path is not a JSON object".to_string(),
+                            ))))),
+                        }
+                    }
+                    Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(e.to_string()))))),
+                }
+            }
+            _ => Err(RuntimeError::new(
+                "ILO-R009",
+                "jkeys requires two text args".to_string(),
             )),
         };
     }
@@ -4990,14 +5044,9 @@ fn eval_stmt(env: &mut Env, stmt: &Stmt) -> Result<Option<BodyResult>> {
                     BodyResult::Continue => Ok(Some(BodyResult::Continue)),
                     BodyResult::Value(v) | BodyResult::Return(v) => Ok(Some(BodyResult::Value(v))),
                 }
-            } else if should_run {
-                // Guard (braced or braceless) when truthy: early return from
-                // enclosing function. The two surface forms — `cond expr` and
-                // `cond{body}` — share semantics. `braceless` is kept on the
-                // AST for source-preserving round-trips only. Ternary
-                // `cond{a}{b}` is handled in the else_body branch above and is
-                // not an early-return form.
-                let _ = braceless; // semantics unified; flag retained for formatter
+            } else if should_run && *braceless {
+                // Braceless guard `cond expr`: early return from the
+                // enclosing function.
                 env.push_scope();
                 let result = eval_body(env, body);
                 env.pop_scope();
@@ -5005,6 +5054,23 @@ fn eval_stmt(env: &mut Env, stmt: &Stmt) -> Result<Option<BodyResult>> {
                     BodyResult::Break(v) => Ok(Some(BodyResult::Break(v))),
                     BodyResult::Continue => Ok(Some(BodyResult::Continue)),
                     BodyResult::Value(v) | BodyResult::Return(v) => Ok(Some(BodyResult::Return(v))),
+                }
+            } else if should_run {
+                // Braced guard `cond{body}`: conditional execution. The body
+                // runs but the function does NOT early-return. The body's
+                // tail value becomes the surrounding body's `last` (so a
+                // braced guard at the tail of a function or match arm yields
+                // its body value), but execution continues to subsequent
+                // statements. `ret` inside the body still propagates as
+                // Return; brk/cnt still propagate to the enclosing loop.
+                env.push_scope();
+                let result = eval_body(env, body);
+                env.pop_scope();
+                match result? {
+                    BodyResult::Break(v) => Ok(Some(BodyResult::Break(v))),
+                    BodyResult::Continue => Ok(Some(BodyResult::Continue)),
+                    BodyResult::Return(v) => Ok(Some(BodyResult::Return(v))),
+                    BodyResult::Value(v) => Ok(Some(BodyResult::Value(v))),
                 }
             } else {
                 Ok(None)
@@ -7589,15 +7655,17 @@ mod tests {
     }
 
     #[test]
-    fn interpret_braced_guard_early_returns() {
-        // Braced and braceless guards both early-return (option A unification).
+    fn interpret_braced_guard_no_early_return() {
+        // Braced guard is conditional execution. The body value is discarded
+        // from the function's return path; the function falls through to the
+        // next statement.
         let source = "f x:n>n;=x 0{99};+x 1";
-        // x=0: =x 0 true, body 99 early-returns
+        // x=0: =x 0 true, {99} runs, value discarded, falls through to +0 1 = 1
         assert_eq!(
             run_str(source, Some("f"), vec![Value::Number(0.0)]),
-            Value::Number(99.0)
+            Value::Number(1.0)
         );
-        // x=5: guard false, falls through to +x 1
+        // x=5: guard false, falls through to +5 1 = 6
         assert_eq!(
             run_str(source, Some("f"), vec![Value::Number(5.0)]),
             Value::Number(6.0)
@@ -7606,7 +7674,7 @@ mod tests {
 
     #[test]
     fn interpret_braceless_guard_still_returns_early() {
-        // Braceless guard still causes early return
+        // Braceless guard causes early return.
         let source = "f x:n>n;=x 0 99;+x 1";
         assert_eq!(
             run_str(source, Some("f"), vec![Value::Number(0.0)]),
@@ -7619,10 +7687,10 @@ mod tests {
     }
 
     #[test]
-    fn interpret_braced_guard_in_loop_uses_ternary_rebind() {
-        // Under option A, `>x m{m=x}` in a loop early-returns. The
-        // canonical find-max idiom is the ternary rebind form.
-        let source = "mx xs:L n>n;m=xs.0;@x xs{m=>x m{x}{m}};+m 0";
+    fn interpret_braced_guard_in_loop_no_early_return() {
+        // Braced guard inside a loop does NOT early-return — the canonical
+        // find-max idiom `m=xs.0;@x xs{>x m{m=x}};m` works as written.
+        let source = "mx xs:L n>n;m=xs.0;@x xs{>x m{m=x}};+m 0";
         let result = run_str(
             source,
             Some("mx"),
@@ -8278,7 +8346,10 @@ mod tests {
 
     #[test]
     fn interp_jp_array_index() {
-        let source = r#"f j:t p:t>R t t;jpth j p"#;
+        // jpth on a numeric leaf now returns Number, not Text — the 0.12.1
+        // typed-jpth change. Same source / args; only the asserted leaf
+        // shape changes (was Text("20"), now Number(20.0)).
+        let source = r#"f j:t p:t>R _ t;jpth j p"#;
         let result = run_str(
             source,
             Some("f"),
@@ -8287,10 +8358,7 @@ mod tests {
                 Value::Text(Arc::new("items.1".to_string())),
             ],
         );
-        assert_eq!(
-            result,
-            Value::Ok(Box::new(Value::Text(Arc::new("20".to_string()))))
-        );
+        assert_eq!(result, Value::Ok(Box::new(Value::Number(20.0))));
     }
 
     #[test]
@@ -9765,10 +9833,11 @@ mod tests {
         assert!(err.contains("wrl"), "got: {err}");
     }
 
-    // L822: jpth array index navigation
+    // L822: jpth array index navigation. Post-0.12.1 jpth returns typed
+    // values (R ? t), so a numeric leaf comes back as Number, not Text.
     #[test]
     fn interpret_jpth_array_index() {
-        let source = r#"f j:t p:t>R t t;jpth j p"#;
+        let source = r#"f j:t p:t>R _ t;jpth j p"#;
         let result = run_str(
             source,
             Some("f"),
@@ -9777,10 +9846,7 @@ mod tests {
                 Value::Text(Arc::new("1".to_string())),
             ],
         );
-        assert_eq!(
-            result,
-            Value::Ok(Box::new(Value::Text(Arc::new("20".to_string()))))
-        );
+        assert_eq!(result, Value::Ok(Box::new(Value::Number(20.0))));
     }
 
     // L839: jpth non-text/non-map args
