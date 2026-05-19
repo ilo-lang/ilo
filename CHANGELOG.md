@@ -67,6 +67,43 @@
     10 baseline `.py` files captured pre-refactor; the test asserts the
     post-refactor `ilo build --py` output matches byte-for-byte.
 
+- **WASM Component Model backend (`src/backend/wasm/`).** Phase 5
+  Stage 5d. The first genuinely new backend: emits `.wasm` (and a
+  sibling `.wit`) via the `wasm-encoder` crate. One backend, many
+  edge runtimes (Wasmtime, Cloudflare Workers, Fastly Compute,
+  Vercel Edge, Wasmer).
+  - `ilo build file.ilo --wasm` — defaults to `--target wasm32-component`
+    (Component Model wrapper via `wasm-tools component new` + the
+    bundled WASI preview1 adapter).
+  - `--target wasm32-wasip1` — plain WASI preview1 core module.
+  - `--target wasm32-wasip2` — placeholder for preview2; same encoder
+    output as wasip1 today.
+  - `--target wasm32-unknown-unknown` (alias `wasm32-web`) — browser
+    target with no host imports.
+  - Stage 5d covers the hello-world subset of HIR: top-level `prnt`
+    calls with string, number, or bool literal arguments, plus `Ok` /
+    literal tail expressions. Richer HIR constructs surface as
+    `BackendError::UnsupportedFeature` pointing at the native Cranelift
+    backend; capacity to lower them lands in subsequent stages.
+  - Capability mismatches surface at emit time as
+    `BackendError::CodegenFailed { code: "ILO-B201", .. }` with a hint
+    naming the supported targets. The full per-target builtin matrix
+    lives in `docs/wasm-capabilities.md`.
+  - WASI preview1 adapter bundled in-tree at
+    `assets/wasi-adapter/wasi_snapshot_preview1.reactor.wasm` (~52KB,
+    pinned to Wasmtime v25). Offline builds work; no fetch on first
+    `--wasm` invocation.
+  - New deps: `wasm-encoder = "0.249"` (runtime, MIT / Apache-2.0),
+    `wasmparser = "0.249"` (dev-only validator). `wasm-tools` is invoked
+    as a subprocess for the Component Model wrap, not a library dep.
+  - `tests/wasm_emit.rs` — encoder round-trip + capability matrix +
+    JSON error shape (6 tests).
+  - `tests/wasm_runtime.rs` — Wasmtime-subprocess execution of a WASI
+    hello-world and a 3-line print sequence (2 tests, skipped when
+    `wasmtime` is not on PATH).
+  - Error code namespace `ILO-B2##` reserved for the WASM backend.
+    Cranelift uses `ILO-B1##`, Zero will use `ILO-B3##`, Python `ILO-B4##`.
+
 ### Changed (breaking)
 
 - **`--emit python` removed.** The legacy `ilo <file-or-code> --emit python`
