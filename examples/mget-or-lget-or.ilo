@@ -1,0 +1,26 @@
+-- mget-or m k default: value at key k, or default if missing.
+-- lget-or xs i default: element at index i, or default if OOB.
+-- Both return the element type directly (not O v), no `??` ceremony.
+
+scores>n;m=mmap;m=mset m "alice" 99;m=mset m "bob" 87;mget-or m "alice" 0
+missing>n;m=mmap;m=mset m "alice" 99;mget-or m "carol" 0
+
+third xs:L n>n;lget-or xs 2 -1
+last xs:L n>n;lget-or xs -1 -1
+oob xs:L n>n;lget-or xs 99 -1
+neg-oob xs:L n>n;lget-or xs -99 -1
+
+-- run: scores
+-- out: 99
+-- run: missing
+-- out: 0
+-- run: third [10,20,30]
+-- out: 30
+-- run: third [10]
+-- out: -1
+-- run: last [10,20,30]
+-- out: 30
+-- run: oob [10,20,30]
+-- out: -1
+-- run: neg-oob [10,20,30]
+-- out: -1

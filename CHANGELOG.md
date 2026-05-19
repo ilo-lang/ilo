@@ -11,6 +11,7 @@
 
 - `rand` alias for `rnd` (universal short-form for random; matches C/Python/Rust/Go/JS naming). Resolves to canonical `rnd` after parsing; rejected as binding or user-fn name via ILO-P011 to prevent silent shadow mis-dispatch. `random` continues to resolve to `rnd` as before.
 - `ilo check --strict` flag. Treats every warning-severity diagnostic (ILO-T032 bare `fmt`, ILO-T033 bare `mset`/`+=`/`mdel`, future warning codes) as a hard exit-code failure so CI harnesses can fail-on-warning. The diagnostic stream itself is unchanged: warnings still emit with `severity: "warning"` in the JSON output, only the exit code is elevated. Surfaced by rerun11 ci-gating personas that ran `ilo check src/*.ilo` in CI and missed mset / fmt traps because the verifier exited 0 on warnings.
+- `mget-or m k default > v` and `lget-or xs i default > a`. Defaulted lookups for Map and List that return the element type directly, no `O v` to coalesce, no OOB error for `lget-or`. The verifier enforces that the default matches the container's element/value type so the return shape is `v` / `a`, never `O v`. Both lower through the tree-bridge, so every engine inherits semantics without new opcodes. Closes the manifesto-friction `(mget m k) ?? d` and `i<len?at xs i:d` ceremony agents kept reaching for.
 
 ### Diagnostics
 

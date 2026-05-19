@@ -626,6 +626,13 @@ pub(crate) fn is_tree_bridge_eligible(b: crate::builtins::Builtin, argc: usize) 
         // objects. Pure (no FnRef args, no I/O), bridge keeps cross-engine
         // parity with the tree interpreter at the same cost tier as `mkeys`.
         (Builtin::Jkeys, 2) => true,
+        // 0.12.1: defaulted lookups. Pure (no FnRef, no I/O), shape is
+        // `m k v → v` / `xs i v → v`, so the bridge round-trips cleanly
+        // and VM + Cranelift pick them up at the same cost tier as `mhas`.
+        // Adding native opcodes would duplicate the OP_MGET + OP_AT
+        // dispatch we already pay for; not worth a new opcode in v1.
+        (Builtin::MgetOr, 3) => true,
+        (Builtin::LgetOr, 3) => true,
         _ => false,
     }
 }

@@ -429,6 +429,12 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("mkeys", &["map"], "L t"),
     ("mvals", &["map"], "list"),
     ("mdel", &["map", "t"], "map"),
+    // 0.12.1: defaulted lookups. Return types are the map value / list element
+    // (not optional) — the default supplies the fallback so callers don't have
+    // to `??` the result. The detailed arg-shape check lives in the per-builtin
+    // arms below; this table only feeds arity + suggestion paths.
+    ("mget-or", &["map", "t", "any"], "any"),
+    ("lget-or", &["list", "n", "any"], "any"),
     // Linear algebra
     ("solve", &["L (L n)", "L n"], "L n"),
     ("inv", &["L (L n)"], "L (L n)"),
@@ -806,6 +812,54 @@ fn builtin_check_args(
                 }
             }
             (Ty::Unknown, errors)
+        }
+        "lget-or" => {
+            // lget-or xs i default → element type of xs. Same negative-index
+            // contract as `at`; OOB returns default rather than erroring, so
+            // the default must match the list element type to keep the return
+            // shape `a`, not `O a`.
+            if let Some(arg) = arg_types.get(1)
+                && !compatible(arg, &Ty::Number)
+            {
+                errors.push(VerifyError {
+                    code: "ILO-T013",
+                    function: func_ctx.to_string(),
+                    message: format!("'lget-or' index must be n, got {arg}"),
+                    hint: None,
+                    span,
+                    is_warning: false,
+                });
+            }
+            let elem_ty = match arg_types.first() {
+                Some(Ty::List(inner)) => Some((**inner).clone()),
+                Some(Ty::Unknown) | None => None,
+                Some(other) => {
+                    errors.push(VerifyError {
+                        code: "ILO-T013",
+                        function: func_ctx.to_string(),
+                        message: format!("'lget-or' expects a list, got {other}"),
+                        hint: None,
+                        span,
+                        is_warning: false,
+                    });
+                    None
+                }
+            };
+            if let (Some(elem), Some(def_ty)) = (elem_ty.as_ref(), arg_types.get(2))
+                && !compatible(def_ty, elem)
+            {
+                errors.push(VerifyError {
+                    code: "ILO-T013",
+                    function: func_ctx.to_string(),
+                    message: format!(
+                        "'lget-or' default must match list element type {elem}, got {def_ty}"
+                    ),
+                    hint: None,
+                    span,
+                    is_warning: false,
+                });
+            }
+            (elem_ty.unwrap_or(Ty::Unknown), errors)
         }
         "lst" => {
             // lst xs i v — return new list with index i replaced by v.
@@ -2314,6 +2368,56 @@ fn builtin_check_args(
                 });
             }
             (Ty::Optional(Box::new(val_ty)), errors)
+        }
+        "mget-or" => {
+            // mget-or map key default → value type of map. Same key-type
+            // check as mget; default must match the map's value type so the
+            // return shape is `v`, never `O v`.
+            if let Some(first) = arg_types.first()
+                && !matches!(first, Ty::Map(_, _) | Ty::Unknown)
+            {
+                errors.push(VerifyError {
+                    code: "ILO-T013",
+                    function: func_ctx.to_string(),
+                    message: format!("'mget-or' expects a map, got {first}"),
+                    hint: None,
+                    span,
+                    is_warning: false,
+                });
+            }
+            let (key_ty_decl, val_ty) = match arg_types.first() {
+                Some(Ty::Map(k, v)) => (*k.clone(), *v.clone()),
+                _ => (Ty::Unknown, Ty::Unknown),
+            };
+            if let Some(key_ty) = arg_types.get(1)
+                && !is_valid_map_key_arg(key_ty, &key_ty_decl)
+            {
+                errors.push(VerifyError {
+                    code: "ILO-T013",
+                    function: func_ctx.to_string(),
+                    message: format!(
+                        "'mget-or' key must match map key type {key_ty_decl}, got {key_ty}"
+                    ),
+                    hint: None,
+                    span,
+                    is_warning: false,
+                });
+            }
+            if let Some(def_ty) = arg_types.get(2)
+                && !compatible(def_ty, &val_ty)
+            {
+                errors.push(VerifyError {
+                    code: "ILO-T013",
+                    function: func_ctx.to_string(),
+                    message: format!(
+                        "'mget-or' default must match map value type {val_ty}, got {def_ty}"
+                    ),
+                    hint: None,
+                    span,
+                    is_warning: false,
+                });
+            }
+            (val_ty, errors)
         }
         "mset" => {
             // mset map key val → map (same key type as input map, value type

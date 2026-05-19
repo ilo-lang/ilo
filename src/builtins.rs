@@ -148,6 +148,15 @@ pub enum Builtin {
     Mkeys,
     Mvals,
     Mdel,
+    // `mget-or m k default > v` — value at key, or default if missing.
+    // Same shape as `mget m k > O v` but unwraps with a caller-supplied
+    // fallback. Lowered through the tree-bridge so VM and Cranelift inherit
+    // semantics without new opcodes.
+    MgetOr,
+    // `lget-or xs i default > a` — element at index, or default if OOB.
+    // Same negative-index semantics as `at xs i`; OOB returns default
+    // rather than erroring.
+    LgetOr,
 
     // Linear algebra
     Solve,
@@ -282,6 +291,8 @@ impl Builtin {
             "mkeys" => Some(Builtin::Mkeys),
             "mvals" => Some(Builtin::Mvals),
             "mdel" => Some(Builtin::Mdel),
+            "mget-or" => Some(Builtin::MgetOr),
+            "lget-or" => Some(Builtin::LgetOr),
             "solve" => Some(Builtin::Solve),
             "inv" => Some(Builtin::Inv),
             "det" => Some(Builtin::Det),
@@ -411,6 +422,8 @@ impl Builtin {
             Builtin::Mkeys => "mkeys",
             Builtin::Mvals => "mvals",
             Builtin::Mdel => "mdel",
+            Builtin::MgetOr => "mget-or",
+            Builtin::LgetOr => "lget-or",
             Builtin::Solve => "solve",
             Builtin::Inv => "inv",
             Builtin::Det => "det",
@@ -571,6 +584,11 @@ impl Builtin {
         // against shell injection in agent orchestration. See SPEC.md
         // "Process spawn" + the tree-bridge entry in src/vm/mod.rs.
         Builtin::Run,
+        // 0.12.1: defaulted lookups for Map and List. Both lower through the
+        // tree-bridge (OP_CALL_BUILTIN_TREE), so no new opcodes; appending
+        // here keeps every existing on-wire tag stable.
+        Builtin::MgetOr,
+        Builtin::LgetOr,
     ];
 
     /// On-wire 8-bit tag for cross-engine builtin dispatch. See `ALL`.
@@ -833,6 +851,8 @@ mod tests {
             "mkeys",
             "mvals",
             "mdel",
+            "mget-or",
+            "lget-or",
             "fft",
             "ifft",
             "window",
@@ -1061,6 +1081,8 @@ mod tests {
             "mkeys",
             "mvals",
             "mdel",
+            "mget-or",
+            "lget-or",
             "solve",
             "inv",
             "det",

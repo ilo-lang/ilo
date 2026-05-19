@@ -69,6 +69,7 @@ Dynamic key-value collection. Keys are typed: text (`t`) or integer (`n`). `Int(
 mmap                      -- empty map
 mset m k v               -- return new map with key k set to v
 mget m k                 -- value at key k, or nil
+mget-or m k default      -- value at key k, or default if missing (never nil)
 mhas m k                 -- b: true if key exists
 mkeys m                  -- L t: sorted list of keys
 mvals m                  -- L v: values sorted by key
@@ -497,7 +498,9 @@ Called like functions, compiled to dedicated opcodes.
 | `mkeys m` | sorted list of keys | `L t` |
 | `mvals m` | values sorted by key | `L v` |
 | `mdel m k` | new map with key k removed | `M k v` |
+| `mget-or m k default` | value at key k, or `default` if missing (never nil; default type must match value type) | `v` |
 | `at xs i` | i-th element of list or text (0-indexed; negative counts from end; float `i` auto-floors) | element |
+| `lget-or xs i default` | element at index `i`, or `default` if OOB (negative indices like `at`; never errors on OOB) | `a` |
 | `lst xs i v` | new list with index `i` set to `v` (list update; alias: `lset`) | `L a` |
 | `take n xs` | first `n` elements/chars of list or text (n>=0 truncates if n>len; n<0 keeps all but the last `abs n`, Python `xs[:n]`) | same type |
 | `drop n xs` | skip first `n` elements/chars (n>=0 returns the rest; n<0 keeps only the last `abs n`, Python `xs[n:]`) | same type |
