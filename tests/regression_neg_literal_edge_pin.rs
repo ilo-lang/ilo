@@ -114,12 +114,12 @@ fn check_all(engine: &str) {
 
 #[test]
 fn neg_literal_edge_pin_tree() {
-    check_all("--run-vm");
+    check_all("--vm");
 }
 
 #[test]
 fn neg_literal_edge_pin_vm() {
-    check_all("--run-vm");
+    check_all("--vm");
 }
 
 #[test]

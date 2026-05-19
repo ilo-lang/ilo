@@ -112,12 +112,12 @@ fn check_dashes_in_string(engine: &str) {
 
 #[test]
 fn paren_bound_fmt_tree() {
-    check_paren_bound_fmt("--run-vm");
+    check_paren_bound_fmt("--vm");
 }
 
 #[test]
 fn paren_bound_fmt_vm() {
-    check_paren_bound_fmt("--run-vm");
+    check_paren_bound_fmt("--vm");
 }
 
 #[test]
@@ -128,12 +128,12 @@ fn paren_bound_fmt_cranelift() {
 
 #[test]
 fn comment_between_bindings_tree() {
-    check_comment_between_bindings("--run-vm");
+    check_comment_between_bindings("--vm");
 }
 
 #[test]
 fn comment_between_bindings_vm() {
-    check_comment_between_bindings("--run-vm");
+    check_comment_between_bindings("--vm");
 }
 
 #[test]
@@ -144,12 +144,12 @@ fn comment_between_bindings_cranelift() {
 
 #[test]
 fn stacked_comments_tree() {
-    check_stacked_comments("--run-vm");
+    check_stacked_comments("--vm");
 }
 
 #[test]
 fn stacked_comments_vm() {
-    check_stacked_comments("--run-vm");
+    check_stacked_comments("--vm");
 }
 
 #[test]
@@ -160,12 +160,12 @@ fn stacked_comments_cranelift() {
 
 #[test]
 fn comment_with_punct_tree() {
-    check_comment_with_punct("--run-vm");
+    check_comment_with_punct("--vm");
 }
 
 #[test]
 fn comment_with_punct_vm() {
-    check_comment_with_punct("--run-vm");
+    check_comment_with_punct("--vm");
 }
 
 #[test]
@@ -176,12 +176,12 @@ fn comment_with_punct_cranelift() {
 
 #[test]
 fn dashes_in_string_tree() {
-    check_dashes_in_string("--run-vm");
+    check_dashes_in_string("--vm");
 }
 
 #[test]
 fn dashes_in_string_vm() {
-    check_dashes_in_string("--run-vm");
+    check_dashes_in_string("--vm");
 }
 
 #[test]

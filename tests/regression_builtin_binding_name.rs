@@ -99,14 +99,14 @@ const BINDING_NAMES: &[&str] = &[
 #[test]
 fn builtin_binding_rejected_in_fn_tree() {
     for name in BINDING_NAMES {
-        check_in_fn_binding("--run-vm", name);
+        check_in_fn_binding("--vm", name);
     }
 }
 
 #[test]
 fn builtin_binding_rejected_in_fn_vm() {
     for name in BINDING_NAMES {
-        check_in_fn_binding("--run-vm", name);
+        check_in_fn_binding("--vm", name);
     }
 }
 
@@ -121,14 +121,14 @@ fn builtin_binding_rejected_in_fn_cranelift() {
 #[test]
 fn builtin_binding_rejected_top_level_tree() {
     for name in BINDING_NAMES {
-        check_top_level_binding("--run-vm", name);
+        check_top_level_binding("--vm", name);
     }
 }
 
 #[test]
 fn builtin_binding_rejected_top_level_vm() {
     for name in BINDING_NAMES {
-        check_top_level_binding("--run-vm", name);
+        check_top_level_binding("--vm", name);
     }
 }
 
@@ -169,12 +169,12 @@ fn check_flat_repro(engine: &str) {
 
 #[test]
 fn flat_repro_tree() {
-    check_flat_repro("--run-vm");
+    check_flat_repro("--vm");
 }
 
 #[test]
 fn flat_repro_vm() {
-    check_flat_repro("--run-vm");
+    check_flat_repro("--vm");
 }
 
 #[test]
@@ -201,12 +201,12 @@ fn check_fld_keeps_specific_message(engine: &str) {
 
 #[test]
 fn fld_specific_message_preserved_tree() {
-    check_fld_keeps_specific_message("--run-vm");
+    check_fld_keeps_specific_message("--vm");
 }
 
 #[test]
 fn fld_specific_message_preserved_vm() {
-    check_fld_keeps_specific_message("--run-vm");
+    check_fld_keeps_specific_message("--vm");
 }
 
 #[test]
@@ -237,12 +237,12 @@ fn check_renamed_binding_works(engine: &str) {
 
 #[test]
 fn rename_workaround_binding_tree() {
-    check_renamed_binding_works("--run-vm");
+    check_renamed_binding_works("--vm");
 }
 
 #[test]
 fn rename_workaround_binding_vm() {
-    check_renamed_binding_works("--run-vm");
+    check_renamed_binding_works("--vm");
 }
 
 #[test]

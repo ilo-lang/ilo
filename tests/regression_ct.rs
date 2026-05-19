@@ -16,7 +16,7 @@
 
 use std::process::Command;
 
-const ENGINES: &[&str] = &["--run-vm", "--jit"];
+const ENGINES: &[&str] = &["--vm", "--jit"];
 
 fn ilo() -> Command {
     Command::new(env!("CARGO_BIN_EXE_ilo"))
@@ -109,7 +109,7 @@ fn ct_non_bool_predicate_errors() {
 fn ct_first_arg_must_be_fn_ref() {
     // Verifier rejects non-function first arg with ILO-T013.
     let out = ilo()
-        .args(["f>n;ct 42 [1,2,3]", "--run-vm", "f"])
+        .args(["f>n;ct 42 [1,2,3]", "--vm", "f"])
         .output()
         .expect("failed to run ilo");
     assert!(
@@ -144,7 +144,7 @@ fn ct_does_not_shadow_continue_keyword() {
     // accidentally bumped `cnt` off the reserved-keyword list it would
     // dispatch as an undefined-function call here, not a continue.
     let out = ilo()
-        .args(["f>n;i=0;n=0;wh <i 5{i=+i 1;cnt;n=+n 1};n", "--run-vm", "f"])
+        .args(["f>n;i=0;n=0;wh <i 5{i=+i 1;cnt;n=+n 1};n", "--vm", "f"])
         .output()
         .expect("failed to run ilo");
     assert!(

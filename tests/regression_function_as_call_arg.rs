@@ -60,12 +60,12 @@ fn check_prnt_str(engine: &str) {
 
 #[test]
 fn prnt_str_tree() {
-    check_prnt_str("--run-vm");
+    check_prnt_str("--vm");
 }
 
 #[test]
 fn prnt_str_vm() {
-    check_prnt_str("--run-vm");
+    check_prnt_str("--vm");
 }
 
 // ── 2. hd tl xs — two unary builtins composed ──────────────────────────────
@@ -82,12 +82,12 @@ fn check_hd_tl(engine: &str) {
 
 #[test]
 fn hd_tl_tree() {
-    check_hd_tl("--run-vm");
+    check_hd_tl("--vm");
 }
 
 #[test]
 fn hd_tl_vm() {
-    check_hd_tl("--run-vm");
+    check_hd_tl("--vm");
 }
 
 // ── 3. Mixing 3-arg outer with 2-arg inner ─────────────────────────────────
@@ -104,12 +104,12 @@ fn check_pct(engine: &str) {
 
 #[test]
 fn pct_tree() {
-    check_pct("--run-vm");
+    check_pct("--vm");
 }
 
 #[test]
 fn pct_vm() {
-    check_pct("--run-vm");
+    check_pct("--vm");
 }
 
 // ── 4. Function-as-arg mixed with prefix-binop ─────────────────────────────
@@ -131,12 +131,12 @@ fn check_flr(engine: &str) {
 
 #[test]
 fn flr_tree() {
-    check_flr("--run-vm");
+    check_flr("--vm");
 }
 
 #[test]
 fn flr_vm() {
-    check_flr("--run-vm");
+    check_flr("--vm");
 }
 
 // ── 5. PR #159 regression: prefix-binop in 3rd-arg position still works ────
@@ -149,12 +149,12 @@ fn check_slc(engine: &str) {
 
 #[test]
 fn slc_prefix_arg_still_works_tree() {
-    check_slc("--run-vm");
+    check_slc("--vm");
 }
 
 #[test]
 fn slc_prefix_arg_still_works_vm() {
-    check_slc("--run-vm");
+    check_slc("--vm");
 }
 
 // ── 6. User function as inner call ─────────────────────────────────────────
@@ -169,12 +169,12 @@ fn check_dbl(engine: &str) {
 
 #[test]
 fn user_fn_inner_tree() {
-    check_dbl("--run-vm");
+    check_dbl("--vm");
 }
 
 #[test]
 fn user_fn_inner_vm() {
-    check_dbl("--run-vm");
+    check_dbl("--vm");
 }
 
 // ── 7. HOF first-arg position stays a bare ref (PR #167 unchanged) ─────────
@@ -193,7 +193,7 @@ fn check_fld_max(engine: &str) {
 
 #[test]
 fn fld_max_hof_tree() {
-    check_fld_max("--run-vm");
+    check_fld_max("--vm");
 }
 // VM/Cranelift don't yet support bare-builtin HOF dispatch
 // (see tests/regression_builtins_as_hof.rs), so only tree is exercised here.
@@ -212,6 +212,6 @@ fn check_filter(engine: &str) {
 
 #[test]
 fn filter_alias_tree() {
-    check_filter("--run-vm");
+    check_filter("--vm");
 }
 // VM dispatch for bare user-fn HOF args isn't implemented yet — tree only.

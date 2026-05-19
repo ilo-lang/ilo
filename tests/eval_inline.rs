@@ -159,7 +159,7 @@ fn inline_explicit_run() {
     let out = ilo()
         .args([
             "tot p:n q:n r:n>n;s=*p q;t=*s r;+s t",
-            "--run-vm",
+            "--vm",
             "tot",
             "10",
             "20",
@@ -264,7 +264,7 @@ fn inline_nested_prefix() {
 #[test]
 fn inline_run_vm_mode() {
     let out = ilo()
-        .args(["f x:n>n;*x 2", "--run-vm", "f", "5"])
+        .args(["f x:n>n;*x 2", "--vm", "f", "5"])
         .output()
         .expect("failed to run ilo");
     assert!(
@@ -278,7 +278,7 @@ fn inline_run_vm_mode() {
 #[test]
 fn inline_run_with_func_name() {
     let out = ilo()
-        .args(["f x:n>n;*x 2", "--run-vm", "f", "5"])
+        .args(["f x:n>n;*x 2", "--vm", "f", "5"])
         .output()
         .expect("failed to run ilo");
     assert!(
@@ -477,11 +477,7 @@ fn help_shows_usage() {
         "expected backends section, got: {}",
         stdout
     );
-    assert!(
-        stdout.contains("--run-vm"),
-        "expected --run-vm, got: {}",
-        stdout
-    );
+    assert!(stdout.contains("--vm"), "expected --vm, got: {}", stdout);
 }
 
 #[test]
@@ -504,7 +500,7 @@ fn help_lang_shows_spec() {
 #[test]
 fn inline_run_tree() {
     let out = ilo()
-        .args(["f x:n>n;*x 2", "--run-vm", "f", "5"])
+        .args(["f x:n>n;*x 2", "--vm", "f", "5"])
         .output()
         .expect("failed to run ilo");
     assert!(
@@ -552,7 +548,7 @@ fn legacy_e_flag_still_works() {
         .args([
             "-e",
             "tot p:n q:n r:n>n;s=*p q;t=*s r;+s t",
-            "--run-vm",
+            "--vm",
             "tot",
             "10",
             "20",
@@ -1192,10 +1188,10 @@ fn inline_fmt_basic() {
 
 #[test]
 fn run_vm_runtime_error() {
-    // --run-vm with a program that errors at runtime (division by zero)
-    // Exercises L363-365 in main.rs (error reporting for --run-vm)
+    // --vm with a program that errors at runtime (division by zero)
+    // Exercises L363-365 in main.rs (error reporting for --vm)
     let out = ilo()
-        .args(["f>n;/1 0", "--run-vm", "f"])
+        .args(["f>n;/1 0", "--vm", "f"])
         .output()
         .expect("failed to run ilo");
     assert!(!out.status.success(), "should exit with error");
@@ -1208,10 +1204,10 @@ fn run_vm_runtime_error() {
 
 #[test]
 fn run_interp_runtime_error() {
-    // --run-vm with a program that errors at runtime (division by zero)
+    // --vm with a program that errors at runtime (division by zero)
     // Exercises L379-381 in main.rs (error reporting for the runtime-error path)
     let out = ilo()
-        .args(["f>n;/1 0", "--run-vm", "f"])
+        .args(["f>n;/1 0", "--vm", "f"])
         .output()
         .expect("failed to run ilo");
     assert!(!out.status.success(), "should exit with error");
@@ -1905,7 +1901,7 @@ fn range_basic() {
     // being the function tail; that shape now (correctly) suppresses the
     // top-level print to avoid double-output in print-loops.
     let out = ilo()
-        .args(["f>n;r=0;@i 0..3{r=i};+r 0", "--run-vm", "f"])
+        .args(["f>n;r=0;@i 0..3{r=i};+r 0", "--vm", "f"])
         .output()
         .expect("failed to run ilo");
     assert!(
@@ -1934,7 +1930,7 @@ fn range_with_arg() {
 #[test]
 fn range_empty() {
     let out = ilo()
-        .args(["f>n;@i 5..2{99};0", "--run-vm", "f"])
+        .args(["f>n;@i 5..2{99};0", "--vm", "f"])
         .output()
         .expect("failed to run ilo");
     assert!(
@@ -1953,7 +1949,7 @@ fn alias_basic_run() {
     // `Value::Ok` prints bare (no `~` prefix) — see
     // tests/regression_main_ok_stdout_bare.rs.
     let out = ilo()
-        .args(["-e", "alias res R n t\nf>res;~42", "--run-vm", "f"])
+        .args(["-e", "alias res R n t\nf>res;~42", "--vm", "f"])
         .output()
         .expect("failed to run ilo");
     assert!(
@@ -1967,7 +1963,7 @@ fn alias_basic_run() {
 #[test]
 fn alias_in_param_run() {
     let out = ilo()
-        .args(["-e", "alias num n\nf x:num>num;+x 1", "--run-vm", "f", "5"])
+        .args(["-e", "alias num n\nf x:num>num;+x 1", "--vm", "f", "5"])
         .output()
         .expect("failed to run ilo");
     assert!(
@@ -1991,7 +1987,7 @@ fn use_imports_function_from_file() {
     std::fs::write(main_file, "use \"ilo_test_math.ilo\"\nmyrun x:n>n;dbl x\n").unwrap();
 
     let out = ilo()
-        .args([main_file, "--run-vm", "myrun", "5"])
+        .args([main_file, "--vm", "myrun", "5"])
         .output()
         .expect("failed to run ilo");
     let _ = std::fs::remove_file(lib);
@@ -2045,7 +2041,7 @@ fn use_circular_import_error() {
 fn use_in_inline_code_error() {
     // use in inline code (no file context) should error with ILO-P017
     let out = ilo()
-        .args(["-e", "use \"foo.ilo\"\nf>n;1", "--run-vm", "f"])
+        .args(["-e", "use \"foo.ilo\"\nf>n;1", "--vm", "f"])
         .output()
         .expect("failed to run ilo");
     assert!(!out.status.success());
@@ -2105,7 +2101,7 @@ fn use_transitive_imports() {
     .unwrap();
 
     let out = ilo()
-        .args([file_main, "--run-vm", "main", "2"])
+        .args([file_main, "--vm", "main", "2"])
         .output()
         .expect("failed to run ilo");
     let _ = std::fs::remove_file(file_b);
@@ -2174,7 +2170,7 @@ fn expanded_flag_formats_code() {
 #[test]
 fn json_flag_wraps_ok_result() {
     let out = ilo()
-        .args(["--json", "f x:n>n;*x 2", "--run-vm", "f", "5"])
+        .args(["--json", "f x:n>n;*x 2", "--vm", "f", "5"])
         .output()
         .expect("failed to run ilo");
     assert!(
@@ -2193,7 +2189,7 @@ fn json_flag_wraps_ok_result() {
 #[test]
 fn json_flag_wraps_err_result() {
     let out = ilo()
-        .args(["--json", "-e", "f>R n t;^\"oops\"", "--run-vm", "f"])
+        .args(["--json", "-e", "f>R n t;^\"oops\"", "--vm", "f"])
         .output()
         .expect("failed to run ilo");
     // Entry function returns Value::Err -> exit 1, but in JSON mode the
@@ -2603,7 +2599,7 @@ fn tools_cmd_invalid_tools_config_exits_with_error() {
     std::fs::remove_file(&path).ok();
 }
 
-/// `ilo <prog> --run-vm f --tools <config>` runs via VM with HTTP tools config loaded.
+/// `ilo <prog> --vm f --tools <config>` runs via VM with HTTP tools config loaded.
 /// Covers: main.rs L1351-1371 (run_vm_with_provider http tools path).
 #[test]
 fn run_vm_with_tools_config() {
@@ -2621,9 +2617,9 @@ fn run_vm_with_tools_config() {
 
     // Program doesn't call the tool, so no network needed; just loads config and runs normally
     let out = ilo()
-        .args(["f>n;99", "--run-vm", "f", "--tools", path.to_str().unwrap()])
+        .args(["f>n;99", "--vm", "f", "--tools", path.to_str().unwrap()])
         .output()
-        .expect("failed to run ilo --run-vm --tools");
+        .expect("failed to run ilo --vm --tools");
     let stdout = String::from_utf8_lossy(&out.stdout);
     // Should succeed and print 99
     assert!(

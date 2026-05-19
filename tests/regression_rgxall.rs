@@ -11,7 +11,7 @@
 
 use std::process::Command;
 
-const ENGINES: &[&str] = &["--run-vm", "--jit"];
+const ENGINES: &[&str] = &["--vm", "--jit"];
 
 fn ilo() -> Command {
     Command::new(env!("CARGO_BIN_EXE_ilo"))
@@ -101,7 +101,7 @@ fn rgxall_alternation_absent_groups_filtered() {
 fn rgxall_invalid_pattern_errors() {
     // Unclosed group is a regex compile error; must surface as a runtime error.
     let out = ilo()
-        .args([r#"f>L (L t);rgxall "(unclosed" "input""#, "--run-vm", "f"])
+        .args([r#"f>L (L t);rgxall "(unclosed" "input""#, "--vm", "f"])
         .output()
         .expect("failed to run ilo");
     assert!(

@@ -157,12 +157,12 @@ fn check_engine(engine: &str) {
 
 #[test]
 fn neg_literal_papercut_tree() {
-    check_engine("--run-vm");
+    check_engine("--vm");
 }
 
 #[test]
 fn neg_literal_papercut_vm() {
-    check_engine("--run-vm");
+    check_engine("--vm");
 }
 
 #[test]

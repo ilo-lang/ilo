@@ -23,7 +23,7 @@ if [ ! -x "$ILO" ]; then
 fi
 
 # Engine invocations
-run_vm()   { "$ILO" --run-vm   "$1" 2>&1; }
+run_vm()   { "$ILO" --vm   "$1" 2>&1; }
 run_jit()  { "$ILO" --jit      "$1" 2>&1; }
 run_aot()  {
   local src="$1"

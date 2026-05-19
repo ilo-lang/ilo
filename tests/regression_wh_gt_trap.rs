@@ -44,12 +44,12 @@ fn check_wh_gt_after_let(engine: &str) {
 
 #[test]
 fn wh_gt_after_let_tree() {
-    check_wh_gt_after_let("--run-vm");
+    check_wh_gt_after_let("--vm");
 }
 
 #[test]
 fn wh_gt_after_let_vm() {
-    check_wh_gt_after_let("--run-vm");
+    check_wh_gt_after_let("--vm");
 }
 
 #[test]
@@ -71,12 +71,12 @@ fn check_wh_gt_then_sibling(engine: &str) {
 
 #[test]
 fn wh_gt_then_sibling_tree() {
-    check_wh_gt_then_sibling("--run-vm");
+    check_wh_gt_then_sibling("--vm");
 }
 
 #[test]
 fn wh_gt_then_sibling_vm() {
-    check_wh_gt_then_sibling("--run-vm");
+    check_wh_gt_then_sibling("--vm");
 }
 
 #[test]
@@ -96,12 +96,12 @@ fn check_wh_ge(engine: &str) {
 
 #[test]
 fn wh_ge_tree() {
-    check_wh_ge("--run-vm");
+    check_wh_ge("--vm");
 }
 
 #[test]
 fn wh_ge_vm() {
-    check_wh_ge("--run-vm");
+    check_wh_ge("--vm");
 }
 
 #[test]
@@ -124,12 +124,12 @@ fn check_zero_param_fn_ok(engine: &str) {
 
 #[test]
 fn zero_param_fn_ok_tree() {
-    check_zero_param_fn_ok("--run-vm");
+    check_zero_param_fn_ok("--vm");
 }
 
 #[test]
 fn zero_param_fn_ok_vm() {
-    check_zero_param_fn_ok("--run-vm");
+    check_zero_param_fn_ok("--vm");
 }
 
 #[test]

@@ -63,7 +63,7 @@ const PAIR_SRC: &str = "pr x:n>L n;[x, x] f xs:L n>L n;flatmap pr xs";
 #[test]
 fn flatmap_pair_tree() {
     assert_eq!(
-        run_ok("--run-vm", PAIR_SRC, "f", &["[1,2,3]"]),
+        run_ok("--vm", PAIR_SRC, "f", &["[1,2,3]"]),
         "[1, 1, 2, 2, 3, 3]"
     );
 }
@@ -72,7 +72,7 @@ fn flatmap_pair_tree() {
 
 #[test]
 fn flatmap_empty_input_tree() {
-    assert_eq!(run_ok("--run-vm", PAIR_SRC, "f", &["[]"]), "[]");
+    assert_eq!(run_ok("--vm", PAIR_SRC, "f", &["[]"]), "[]");
 }
 
 // ── fn returns empty list for every element (zero-flatten) ────────────────
@@ -81,7 +81,7 @@ const NONE_SRC: &str = "none x:n>L n;[] f xs:L n>L n;flatmap none xs";
 
 #[test]
 fn flatmap_fn_returns_empty_tree() {
-    assert_eq!(run_ok("--run-vm", NONE_SRC, "f", &["[1,2,3]"]), "[]");
+    assert_eq!(run_ok("--vm", NONE_SRC, "f", &["[1,2,3]"]), "[]");
 }
 
 // ── type variable: list of text, fn returns a list of text ────────────────
@@ -92,12 +92,12 @@ const SPLIT_SRC: &str = "sp s:t>L t;spl s \":\" f xs:L t>L t;flatmap sp xs";
 fn flatmap_split_tree() {
     // ["a:b", "c"] -> [["a","b"], ["c"]] -> ["a", "b", "c"]
     assert_eq!(
-        run_ok("--run-vm", SPLIT_SRC, "f", &["[\"a:b\",\"c\"]"]),
+        run_ok("--vm", SPLIT_SRC, "f", &["[\"a:b\",\"c\"]"]),
         "[a, b, c]"
     );
 }
 
-// ── verifier rejects a non-function in the fn position under --run-vm.
+// ── verifier rejects a non-function in the fn position under --vm.
 // Pinned so a future refactor that drops the flatmap verify arm gets caught
 // on the VM dispatch path too, not just tree.
 
@@ -105,7 +105,7 @@ const BAD_FN_SRC: &str = "f xs:L n>L n;flatmap 42 xs";
 
 #[test]
 fn flatmap_wrong_fn_arg_vm() {
-    let err = run_err("--run-vm", BAD_FN_SRC, "f");
+    let err = run_err("--vm", BAD_FN_SRC, "f");
     assert!(
         err.contains("flatmap") || err.contains("fn") || err.contains("function"),
         "got: {err}"

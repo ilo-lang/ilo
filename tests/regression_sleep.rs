@@ -3,7 +3,7 @@
 // Motivation: pre-fix, ilo had no `sleep`/`wait` primitive, so any
 // polling tail (`wh <dt 2{n2=now;dt=- n2 t0}`) pinned a core at 99% CPU.
 // `sleep` adds the missing primitive; the tree interpreter calls
-// `std::thread::sleep`, and `--run-vm` / `--jit` route through
+// `std::thread::sleep`, and `--vm` / `--jit` route through
 // the generic `OP_CALL_BUILTIN_TREE` bridge (PR #234) so every engine
 // shares one implementation.
 //
@@ -17,7 +17,7 @@
 use std::process::Command;
 use std::time::Instant;
 
-const ENGINES: &[&str] = &["--run-vm", "--jit"];
+const ENGINES: &[&str] = &["--vm", "--jit"];
 
 fn ilo() -> Command {
     Command::new(env!("CARGO_BIN_EXE_ilo"))
@@ -90,12 +90,12 @@ fn sleep_negative_is_a_noop_cross_engine() {
 
 #[test]
 fn sleep_pauses_for_requested_ms_tree() {
-    timing_check("--run-vm", 200);
+    timing_check("--vm", 200);
 }
 
 #[test]
 fn sleep_pauses_for_requested_ms_vm() {
-    timing_check("--run-vm", 200);
+    timing_check("--vm", 200);
 }
 
 #[test]

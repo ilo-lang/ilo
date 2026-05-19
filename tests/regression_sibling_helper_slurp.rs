@@ -40,12 +40,12 @@ fn check_doc_repro(engine: &str) {
 
 #[test]
 fn doc_repro_tree() {
-    check_doc_repro("--run-vm");
+    check_doc_repro("--vm");
 }
 
 #[test]
 fn doc_repro_vm() {
-    check_doc_repro("--run-vm");
+    check_doc_repro("--vm");
 }
 
 #[test]
@@ -66,12 +66,12 @@ fn check_bare_call_then_sibling(engine: &str) {
 
 #[test]
 fn bare_call_then_sibling_tree() {
-    check_bare_call_then_sibling("--run-vm");
+    check_bare_call_then_sibling("--vm");
 }
 
 #[test]
 fn bare_call_then_sibling_vm() {
-    check_bare_call_then_sibling("--run-vm");
+    check_bare_call_then_sibling("--vm");
 }
 
 #[test]
@@ -93,12 +93,12 @@ fn check_record_after_semi(engine: &str) {
 
 #[test]
 fn record_after_semi_tree() {
-    check_record_after_semi("--run-vm");
+    check_record_after_semi("--vm");
 }
 
 #[test]
 fn record_after_semi_vm() {
-    check_record_after_semi("--run-vm");
+    check_record_after_semi("--vm");
 }
 
 #[test]
@@ -119,12 +119,12 @@ fn check_paren_workaround(engine: &str) {
 
 #[test]
 fn paren_workaround_tree() {
-    check_paren_workaround("--run-vm");
+    check_paren_workaround("--vm");
 }
 
 #[test]
 fn paren_workaround_vm() {
-    check_paren_workaround("--run-vm");
+    check_paren_workaround("--vm");
 }
 
 #[test]

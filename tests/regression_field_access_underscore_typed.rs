@@ -64,7 +64,7 @@ fn check_repro(engine: &str) {
 
 #[test]
 fn field_access_underscore_typed_vm() {
-    check_repro("--run-vm");
+    check_repro("--vm");
 }
 
 #[test]
@@ -98,7 +98,7 @@ fn check_rev(engine: &str) {
 
 #[test]
 fn field_access_qty_vm() {
-    check_qty("--run-vm");
+    check_qty("--vm");
 }
 #[test]
 #[cfg(feature = "cranelift")]
@@ -108,7 +108,7 @@ fn field_access_qty_jit() {
 
 #[test]
 fn field_access_rev_vm() {
-    check_rev("--run-vm");
+    check_rev("--vm");
 }
 #[test]
 #[cfg(feature = "cranelift")]
@@ -137,7 +137,7 @@ fn check_typed_fast(engine: &str) {
 
 #[test]
 fn typed_record_fast_path_vm() {
-    check_typed_fast("--run-vm");
+    check_typed_fast("--vm");
 }
 #[test]
 #[cfg(feature = "cranelift")]

@@ -30,7 +30,7 @@ fn run_text(engine: &str, src: &str) -> String {
 }
 
 fn check_all(src: &str, expected: &str) {
-    for engine in ["--run-vm"] {
+    for engine in ["--vm"] {
         let actual = run_text(engine, src);
         assert_eq!(
             actual, expected,

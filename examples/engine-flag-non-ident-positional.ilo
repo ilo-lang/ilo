@@ -1,10 +1,10 @@
--- Engine flags (--run-vm / --jit) now mirror the default engine's
+-- Engine flags (--vm / --jit) now mirror the default engine's
 -- #328 heuristic: when the first positional after the source path is
 -- NOT ident-shaped (e.g. `paper.txt`, `/tmp/x.json`, a number, anything
 -- with a `.` or `/` in it) and `main` is defined, the engine routes to
 -- `main` and passes the positional through as arg #1.
 --
--- Before the fix, `ilo --run-vm main.ilo paper.txt` errored with
+-- Before the fix, `ilo --vm main.ilo paper.txt` errored with
 -- `ILO-R002: undefined function: paper.txt` while default-engine
 -- `ilo main.ilo paper.txt` correctly ran `main "paper.txt"`. Three
 -- rerun7 personas (pdf-analyst, devops-sre, qa-tester) flagged it

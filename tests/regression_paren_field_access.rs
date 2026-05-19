@@ -44,8 +44,8 @@ fn run_ok(engine: &str, src: &str, entry: &str, args: &[&str]) -> String {
 }
 
 const ENGINES: &[&str] = &[
-    "--run-vm",
-    "--run-vm",
+    "--vm",
+    "--vm",
     #[cfg(feature = "cranelift")]
     "--jit",
 ];
@@ -88,7 +88,7 @@ fn inline_lambda_body_paren_field_access_tree() {
     let src = "main rows:L L n ixs:L n>L n;map (i:n>n;(at rows i).2) ixs";
     assert_eq!(
         run_ok(
-            "--run-vm",
+            "--vm",
             src,
             "main",
             &["[[1,2,3],[4,5,6],[7,8,9]]", "[0,1,2]"]

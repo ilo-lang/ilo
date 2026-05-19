@@ -11,7 +11,7 @@
 // explicitly for hot numeric loops.
 //
 // What we assert:
-//   1. `ilo file.ilo` (default) and `ilo file.ilo --run-vm` produce
+//   1. `ilo file.ilo` (default) and `ilo file.ilo --vm` produce
 //      identical stdout for a VM-supported workload.
 //   2. `ilo file.ilo --jit` runs the workload and produces correct output
 //      (the JIT opt-in flag works).
@@ -35,7 +35,7 @@ fn run_args(args: &[&str]) -> (String, String, i32) {
 }
 
 // A VM-supported numeric workload (Cranelift-eligible too — used to assert
-// parity between default and `--run-vm`).
+// parity between default and `--vm`).
 const NUMERIC_SRC: &str = "main x:n>n;y=*x 2;+y 1";
 
 // A modern workload that exercises OP_WINDOW_VIEW (post-#386 Cranelift can
@@ -51,11 +51,11 @@ const LEN_HAS_K_SRC: &str = "f x:n>b;>x 2\nmain>n;xs=[1,2,3,4,5];len (flt f xs)"
 #[test]
 fn default_matches_run_vm_numeric() {
     let (default_out, _, default_code) = run_args(&[NUMERIC_SRC, "main", "7"]);
-    let (vm_out, _, vm_code) = run_args(&["--run-vm", NUMERIC_SRC, "main", "7"]);
+    let (vm_out, _, vm_code) = run_args(&["--vm", NUMERIC_SRC, "main", "7"]);
     assert_eq!(default_code, 0, "default exit");
-    assert_eq!(vm_code, 0, "--run-vm exit");
+    assert_eq!(vm_code, 0, "--vm exit");
     assert_eq!(default_out, "15");
-    assert_eq!(default_out, vm_out, "default vs --run-vm parity");
+    assert_eq!(default_out, vm_out, "default vs --vm parity");
 }
 
 #[test]
@@ -95,8 +95,8 @@ fn default_does_not_emit_jit_fallback_breadcrumb_on_len_has() {
 #[test]
 fn default_matches_run_vm_on_window() {
     let (default_out, _, default_code) = run_args(&[WINDOW_SRC, "main"]);
-    let (vm_out, _, vm_code) = run_args(&["--run-vm", WINDOW_SRC, "main"]);
+    let (vm_out, _, vm_code) = run_args(&["--vm", WINDOW_SRC, "main"]);
     assert_eq!(default_code, 0);
     assert_eq!(vm_code, 0);
-    assert_eq!(default_out, vm_out, "default and --run-vm must agree");
+    assert_eq!(default_out, vm_out, "default and --vm must agree");
 }

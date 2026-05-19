@@ -14,7 +14,7 @@
 //   - sub-arity (missing required positional)
 //   - super-arity (extra positional)
 //   - happy path (exact arity) — unchanged behaviour
-//   - every engine (default, --run-tree, --run-vm, --jit)
+//   - every engine (default, --run-tree, --vm, --jit)
 //   - inline (`ilo 'src' ...`) and file (`ilo main.ilo ...`)
 //   - auto-main file dispatch (`ilo main.ilo` with main taking args)
 //
@@ -62,13 +62,13 @@ fn inline_sub_arity_default_engine() {
 
 #[test]
 fn inline_sub_arity_run_tree() {
-    assert_arity_error(run_args(&["--run-vm", "f x:n>n;+x 1"]), "f", 1, 0);
+    assert_arity_error(run_args(&["--vm", "f x:n>n;+x 1"]), "f", 1, 0);
 }
 
 #[test]
 fn inline_sub_arity_run_vm() {
     // Pre-fix: prints `nil` exit 0. VM setup_call padded with NanVal::nil().
-    assert_arity_error(run_args(&["--run-vm", "f x:n>n;+x 1"]), "f", 1, 0);
+    assert_arity_error(run_args(&["--vm", "f x:n>n;+x 1"]), "f", 1, 0);
 }
 
 #[test]
@@ -102,7 +102,7 @@ fn inline_exact_arity_default_engine() {
 
 #[test]
 fn inline_exact_arity_run_vm() {
-    let (code, stdout, _) = run_args(&["--run-vm", "f x:n>n;+x 1", "f", "5"]);
+    let (code, stdout, _) = run_args(&["--vm", "f x:n>n;+x 1", "f", "5"]);
     assert_eq!(code, 0);
     assert_eq!(stdout.trim(), "6");
 }
@@ -116,7 +116,7 @@ fn inline_exact_arity_run_cranelift() {
 
 #[test]
 fn inline_exact_arity_run_tree() {
-    let (code, stdout, _) = run_args(&["--run-vm", "f x:n>n;+x 1", "f", "5"]);
+    let (code, stdout, _) = run_args(&["--vm", "f x:n>n;+x 1", "f", "5"]);
     assert_eq!(code, 0);
     assert_eq!(stdout.trim(), "6");
 }
@@ -246,7 +246,7 @@ fn file_auto_main_super_arity_default() {
 
 // ── explicit-engine file dispatch ─────────────────────────────────────────────
 //
-// The `--run-vm` / `--jit` engine flag with a file routes
+// The `--vm` / `--jit` engine flag with a file routes
 // non-ident first positional to main (per the #329 / #336 fix). Cover
 // that the arity guard fires regardless of engine.
 
@@ -256,11 +256,11 @@ fn file_main_sub_arity_run_vm() {
     let src = "main x:n y:n>n;+x y\n";
     let path = dir.path().join("two.ilo");
     std::fs::write(&path, src).expect("write");
-    // --run-vm with file + 1 positional that LOOKS like an ident routes
+    // --vm with file + 1 positional that LOOKS like an ident routes
     // to the named function path (engine resolves `main` because no
     // positional is given). Provide one ambiguous positional later.
     let out = ilo()
-        .args(["--run-vm", path.to_str().unwrap()])
+        .args(["--vm", path.to_str().unwrap()])
         .output()
         .expect("spawn");
     let code = out.status.code().unwrap_or(-1);
@@ -292,7 +292,7 @@ fn file_main_sub_arity_run_tree() {
     let path = dir.path().join("two.ilo");
     std::fs::write(&path, src).expect("write");
     let out = ilo()
-        .args(["--run-vm", path.to_str().unwrap()])
+        .args(["--vm", path.to_str().unwrap()])
         .output()
         .expect("spawn");
     let code = out.status.code().unwrap_or(-1);
@@ -308,7 +308,7 @@ fn file_main_exact_arity_run_vm() {
     let path = dir.path().join("two.ilo");
     std::fs::write(&path, src).expect("write");
     let out = ilo()
-        .args(["--run-vm", path.to_str().unwrap(), "main", "3", "4"])
+        .args(["--vm", path.to_str().unwrap(), "main", "3", "4"])
         .output()
         .expect("spawn");
     assert_eq!(out.status.code().unwrap_or(-1), 0);

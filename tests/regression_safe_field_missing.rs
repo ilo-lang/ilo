@@ -79,12 +79,12 @@ fn check_missing(engine: &str) {
 
 #[test]
 fn safe_field_missing_tree() {
-    check_missing("--run-vm");
+    check_missing("--vm");
 }
 
 #[test]
 fn safe_field_missing_vm() {
-    check_missing("--run-vm");
+    check_missing("--vm");
 }
 
 #[test]
@@ -107,12 +107,12 @@ fn check_present(engine: &str) {
 
 #[test]
 fn safe_field_present_tree() {
-    check_present("--run-vm");
+    check_present("--vm");
 }
 
 #[test]
 fn safe_field_present_vm() {
-    check_present("--run-vm");
+    check_present("--vm");
 }
 
 #[test]
@@ -139,12 +139,12 @@ fn check_chained_missing(engine: &str) {
 
 #[test]
 fn safe_field_chained_missing_tree() {
-    check_chained_missing("--run-vm");
+    check_chained_missing("--vm");
 }
 
 #[test]
 fn safe_field_chained_missing_vm() {
-    check_chained_missing("--run-vm");
+    check_chained_missing("--vm");
 }
 
 #[test]
@@ -172,12 +172,12 @@ fn check_chained_present(engine: &str) {
 
 #[test]
 fn safe_field_chained_present_tree() {
-    check_chained_present("--run-vm");
+    check_chained_present("--vm");
 }
 
 #[test]
 fn safe_field_chained_present_vm() {
-    check_chained_present("--run-vm");
+    check_chained_present("--vm");
 }
 
 #[test]
@@ -201,12 +201,12 @@ fn check_nil_object(engine: &str) {
 
 #[test]
 fn safe_field_nil_object_tree() {
-    check_nil_object("--run-vm");
+    check_nil_object("--vm");
 }
 
 #[test]
 fn safe_field_nil_object_vm() {
-    check_nil_object("--run-vm");
+    check_nil_object("--vm");
 }
 
 #[test]
@@ -227,7 +227,7 @@ const STRICT_MISSING: &str = "f j:t>R t t;r=jpar! j;vb=r.missing;~vb";
 
 #[test]
 fn strict_field_missing_still_errors_tree() {
-    let err = run_err("--run-vm", STRICT_MISSING, "f", &[r#"{"a":1}"#]);
+    let err = run_err("--vm", STRICT_MISSING, "f", &[r#"{"a":1}"#]);
     assert!(
         err.contains("ILO-R005") && err.contains("missing"),
         "stderr: {err}"
@@ -236,7 +236,7 @@ fn strict_field_missing_still_errors_tree() {
 
 #[test]
 fn strict_field_missing_still_errors_vm() {
-    let err = run_err("--run-vm", STRICT_MISSING, "f", &[r#"{"a":1}"#]);
+    let err = run_err("--vm", STRICT_MISSING, "f", &[r#"{"a":1}"#]);
     assert!(
         err.contains("ILO-R005") && err.contains("missing"),
         "stderr: {err}"
@@ -270,7 +270,7 @@ fn safe_field_on_typed_list_caught_by_verifier() {
     // mismatch; runtime nil-tolerance is reserved for genuinely-dynamic
     // shapes (jpar records).
     let out = ilo()
-        .args(["f>n;xs=[1,2,3];xs.?name??99", "--run-vm", "f"])
+        .args(["f>n;xs=[1,2,3];xs.?name??99", "--vm", "f"])
         .output()
         .expect("failed to run ilo");
     assert!(
@@ -291,7 +291,7 @@ fn safe_field_on_typed_list_caught_by_verifier() {
 fn safe_field_typo_on_static_record_still_errors() {
     let src = "type pt{x:n;y:n}\nf>n;p=pt x:1 y:2;p.?z";
     let out = ilo()
-        .args([src, "--run-vm", "f"])
+        .args([src, "--vm", "f"])
         .output()
         .expect("failed to run ilo");
     assert!(

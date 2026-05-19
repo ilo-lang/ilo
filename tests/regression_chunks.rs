@@ -48,12 +48,12 @@ fn check_basic(engine: &str) {
 
 #[test]
 fn chunks_basic_tree() {
-    check_basic("--run-vm");
+    check_basic("--vm");
 }
 
 #[test]
 fn chunks_basic_vm() {
-    check_basic("--run-vm");
+    check_basic("--vm");
 }
 
 #[test]
@@ -75,12 +75,12 @@ fn check_exact(engine: &str) {
 
 #[test]
 fn chunks_exact_tree() {
-    check_exact("--run-vm");
+    check_exact("--vm");
 }
 
 #[test]
 fn chunks_exact_vm() {
-    check_exact("--run-vm");
+    check_exact("--vm");
 }
 
 #[test]
@@ -102,12 +102,12 @@ fn check_big_n(engine: &str) {
 
 #[test]
 fn chunks_big_n_tree() {
-    check_big_n("--run-vm");
+    check_big_n("--vm");
 }
 
 #[test]
 fn chunks_big_n_vm() {
-    check_big_n("--run-vm");
+    check_big_n("--vm");
 }
 
 #[test]
@@ -129,12 +129,12 @@ fn check_one(engine: &str) {
 
 #[test]
 fn chunks_one_tree() {
-    check_one("--run-vm");
+    check_one("--vm");
 }
 
 #[test]
 fn chunks_one_vm() {
-    check_one("--run-vm");
+    check_one("--vm");
 }
 
 #[test]
@@ -156,12 +156,12 @@ fn check_zero_err(engine: &str) {
 
 #[test]
 fn chunks_zero_tree() {
-    check_zero_err("--run-vm");
+    check_zero_err("--vm");
 }
 
 #[test]
 fn chunks_zero_vm() {
-    check_zero_err("--run-vm");
+    check_zero_err("--vm");
 }
 
 #[test]
@@ -190,12 +190,12 @@ fn check_empty(engine: &str) {
 
 #[test]
 fn chunks_empty_tree() {
-    check_empty("--run-vm");
+    check_empty("--vm");
 }
 
 #[test]
 fn chunks_empty_vm() {
-    check_empty("--run-vm");
+    check_empty("--vm");
 }
 
 #[test]
@@ -217,12 +217,12 @@ fn check_text(engine: &str) {
 
 #[test]
 fn chunks_text_tree() {
-    check_text("--run-vm");
+    check_text("--vm");
 }
 
 #[test]
 fn chunks_text_vm() {
-    check_text("--run-vm");
+    check_text("--vm");
 }
 
 #[test]
@@ -246,12 +246,12 @@ fn check_partial_trailing(engine: &str) {
 
 #[test]
 fn chunks_partial_trailing_tree() {
-    check_partial_trailing("--run-vm");
+    check_partial_trailing("--vm");
 }
 
 #[test]
 fn chunks_partial_trailing_vm() {
-    check_partial_trailing("--run-vm");
+    check_partial_trailing("--vm");
 }
 
 #[test]

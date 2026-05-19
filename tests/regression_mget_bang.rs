@@ -56,12 +56,12 @@ fn check_present(engine: &str) {
 
 #[test]
 fn mget_bang_present_tree() {
-    check_present("--run-vm");
+    check_present("--vm");
 }
 
 #[test]
 fn mget_bang_present_vm() {
-    check_present("--run-vm");
+    check_present("--vm");
 }
 
 #[test]
@@ -79,12 +79,12 @@ fn check_missing(engine: &str) {
 
 #[test]
 fn mget_bang_missing_tree() {
-    check_missing("--run-vm");
+    check_missing("--vm");
 }
 
 #[test]
 fn mget_bang_missing_vm() {
-    check_missing("--run-vm");
+    check_missing("--vm");
 }
 
 #[test]
@@ -103,12 +103,12 @@ fn check_shortcircuit(engine: &str) {
 
 #[test]
 fn mget_bang_shortcircuit_tree() {
-    check_shortcircuit("--run-vm");
+    check_shortcircuit("--vm");
 }
 
 #[test]
 fn mget_bang_shortcircuit_vm() {
-    check_shortcircuit("--run-vm");
+    check_shortcircuit("--vm");
 }
 
 #[test]
@@ -123,7 +123,7 @@ fn mget_bang_shortcircuit_cranelift() {
 // distinguishes "not a Result" vs "not an Optional".
 #[test]
 fn mget_bang_in_non_optional_fn_rejected() {
-    let stderr = run_err("--run-vm", r#"f>n;m=mmap;mget! m "x""#, "f");
+    let stderr = run_err("--vm", r#"f>n;m=mmap;mget! m "x""#, "f");
     assert!(
         stderr.contains("ILO-T026") && stderr.contains("Optional"),
         "expected ILO-T026 mentioning Optional, got: {stderr}"
@@ -139,12 +139,12 @@ fn check_two_step(engine: &str) {
 
 #[test]
 fn mget_two_step_default_tree() {
-    check_two_step("--run-vm");
+    check_two_step("--vm");
 }
 
 #[test]
 fn mget_two_step_default_vm() {
-    check_two_step("--run-vm");
+    check_two_step("--vm");
 }
 
 #[test]
@@ -162,12 +162,12 @@ fn check_two_step_miss(engine: &str) {
 
 #[test]
 fn mget_two_step_default_miss_tree() {
-    check_two_step_miss("--run-vm");
+    check_two_step_miss("--vm");
 }
 
 #[test]
 fn mget_two_step_default_miss_vm() {
-    check_two_step_miss("--run-vm");
+    check_two_step_miss("--vm");
 }
 
 #[test]
@@ -220,12 +220,12 @@ fn check_result_err(engine: &str) {
 
 #[test]
 fn result_bang_ok_tree() {
-    check_result_ok("--run-vm");
+    check_result_ok("--vm");
 }
 
 #[test]
 fn result_bang_ok_vm() {
-    check_result_ok("--run-vm");
+    check_result_ok("--vm");
 }
 
 #[test]
@@ -236,12 +236,12 @@ fn result_bang_ok_cranelift() {
 
 #[test]
 fn result_bang_err_tree() {
-    check_result_err("--run-vm");
+    check_result_err("--vm");
 }
 
 #[test]
 fn result_bang_err_vm() {
-    check_result_err("--run-vm");
+    check_result_err("--vm");
 }
 
 #[test]
@@ -267,12 +267,12 @@ fn check_dtfmt_err(engine: &str) {
 
 #[test]
 fn dtfmt_bang_err_tree() {
-    check_dtfmt_err("--run-vm");
+    check_dtfmt_err("--vm");
 }
 
 #[test]
 fn dtfmt_bang_err_vm() {
-    check_dtfmt_err("--run-vm");
+    check_dtfmt_err("--vm");
 }
 
 #[test]
@@ -295,12 +295,12 @@ fn check_num_shortcircuit(engine: &str) {
 
 #[test]
 fn num_bang_shortcircuit_tree() {
-    check_num_shortcircuit("--run-vm");
+    check_num_shortcircuit("--vm");
 }
 
 #[test]
 fn num_bang_shortcircuit_vm() {
-    check_num_shortcircuit("--run-vm");
+    check_num_shortcircuit("--vm");
 }
 
 #[test]
@@ -339,12 +339,12 @@ fn check_rdl_err(engine: &str) {
 
 #[test]
 fn rd_bang_err_tree() {
-    check_rd_err("--run-vm");
+    check_rd_err("--vm");
 }
 
 #[test]
 fn rd_bang_err_vm() {
-    check_rd_err("--run-vm");
+    check_rd_err("--vm");
 }
 
 #[test]
@@ -355,12 +355,12 @@ fn rd_bang_err_cranelift() {
 
 #[test]
 fn rdl_bang_err_tree() {
-    check_rdl_err("--run-vm");
+    check_rdl_err("--vm");
 }
 
 #[test]
 fn rdl_bang_err_vm() {
-    check_rdl_err("--run-vm");
+    check_rdl_err("--vm");
 }
 
 #[test]

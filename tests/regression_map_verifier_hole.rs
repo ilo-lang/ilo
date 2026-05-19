@@ -41,9 +41,9 @@ fn write_src(tag: &str, src: &str) -> std::path::PathBuf {
 }
 
 #[cfg(feature = "cranelift")]
-const ENGINES: &[&str] = &["--run-vm", "--jit"];
+const ENGINES: &[&str] = &["--vm", "--jit"];
 #[cfg(not(feature = "cranelift"))]
-const ENGINES: &[&str] = &["--run-vm"];
+const ENGINES: &[&str] = &["--vm"];
 
 /// Run `ilo <src> <engine> <entry>` and assert it failed with a
 /// verifier ILO-T013 on `builtin`. The engine flag is included to

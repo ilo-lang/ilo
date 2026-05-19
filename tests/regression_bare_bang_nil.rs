@@ -16,7 +16,7 @@
 //   - The verifier emits a new `ILO-T034` targeting the bare-ident-bang
 //     shape specifically (with a hint pointing at `?x{~v:v;^e:^e}` or
 //     `scs = producer! ...`), instead of the generic ILO-T005.
-//   - The error fires consistently on default, --run-tree, --run-vm, and
+//   - The error fires consistently on default, --run-tree, --vm, and
 //     --jit, on:
 //       * a Number-valued local (`x=42;x!`)
 //       * a Text-valued local (`s="hi";s!`)
@@ -37,9 +37,9 @@ fn ilo() -> Command {
 }
 
 #[cfg(feature = "cranelift")]
-const ENGINES_ALL: &[&str] = &["--run-vm", "--jit"];
+const ENGINES_ALL: &[&str] = &["--vm", "--jit"];
 #[cfg(not(feature = "cranelift"))]
-const ENGINES_ALL: &[&str] = &["--run-vm"];
+const ENGINES_ALL: &[&str] = &["--vm"];
 
 /// Run `ilo <src> <engine>` and return (stdout, stderr, exit code).
 fn run_engine(engine: &str, src: &str) -> (String, String, i32) {

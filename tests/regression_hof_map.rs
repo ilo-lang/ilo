@@ -10,7 +10,7 @@
 // through the tree-bridge. Every engine now runs `map` end-to-end.
 //
 // The tests below pin the value-level behaviour across `--run-tree`,
-// `--run-vm` and `--jit`. They cover the common shapes that
+// `--vm` and `--jit`. They cover the common shapes that
 // were previously gated with `engine-skip: vm / cranelift`:
 //   - user-function callback (`map sq xs`)
 //   - builtin callback (`map abs xs`)
@@ -56,7 +56,7 @@ fn run_ok(engine: &str, src: &str, entry: &str, args: &[&str]) -> String {
 }
 
 fn run_all(src: &str, entry: &str, args: &[&str], expected: &str) {
-    for engine in ["--run-vm", "--jit"] {
+    for engine in ["--vm", "--jit"] {
         let actual = run_ok(engine, src, entry, args);
         assert_eq!(
             actual, expected,

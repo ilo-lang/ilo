@@ -51,7 +51,7 @@ fn run(engine: &str, src: &str, entry: &str, extra: &[&str]) -> String {
 }
 
 fn engines() -> Vec<&'static str> {
-    let mut v = vec!["--run-vm"];
+    let mut v = vec!["--vm"];
     if cfg!(feature = "cranelift") {
         v.push("--jit");
     }
@@ -127,12 +127,7 @@ const FIRST_OK_SRC: &str = "head-amt p:t>n;es=rdjl p;e=hd es;?e{~v:v.amount;^er:
 fn rdjl_first_line_unwraps_to_record_field() {
     let path = temp_path("first");
     write_fixture(&path, "{\"amount\":7}\n{\"amount\":8}\n");
-    let got = run(
-        "--run-vm",
-        FIRST_OK_SRC,
-        "head-amt",
-        &[path.to_str().unwrap()],
-    );
+    let got = run("--vm", FIRST_OK_SRC, "head-amt", &[path.to_str().unwrap()]);
     assert_eq!(got, "7");
     let _ = std::fs::remove_file(&path);
 }
@@ -143,12 +138,7 @@ const HEAD_ERR_SRC: &str = "head-tag p:t>n;es=rdjl p;e=hd es;?e{~v:1;^er:0}";
 fn rdjl_malformed_first_line_is_err() {
     let path = temp_path("err");
     write_fixture(&path, "not json\n{\"ok\":true}\n");
-    let got = run(
-        "--run-vm",
-        HEAD_ERR_SRC,
-        "head-tag",
-        &[path.to_str().unwrap()],
-    );
+    let got = run("--vm", HEAD_ERR_SRC, "head-tag", &[path.to_str().unwrap()]);
     // First line is unparseable, so head returns the Err arm (0).
     assert_eq!(got, "0");
     let _ = std::fs::remove_file(&path);

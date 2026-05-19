@@ -43,18 +43,18 @@ fn check_eq(engine: &str, src: &str, expected: &str) {
 
 #[test]
 fn at_text_ascii_tree() {
-    check_eq("--run-vm", ASCII_FIRST_SRC, "h");
-    check_eq("--run-vm", ASCII_LAST_SRC, "o");
-    check_eq("--run-vm", ASCII_NEG_LAST_SRC, "o");
-    check_eq("--run-vm", ASCII_NEG_FIRST_SRC, "h");
+    check_eq("--vm", ASCII_FIRST_SRC, "h");
+    check_eq("--vm", ASCII_LAST_SRC, "o");
+    check_eq("--vm", ASCII_NEG_LAST_SRC, "o");
+    check_eq("--vm", ASCII_NEG_FIRST_SRC, "h");
 }
 
 #[test]
 fn at_text_ascii_vm() {
-    check_eq("--run-vm", ASCII_FIRST_SRC, "h");
-    check_eq("--run-vm", ASCII_LAST_SRC, "o");
-    check_eq("--run-vm", ASCII_NEG_LAST_SRC, "o");
-    check_eq("--run-vm", ASCII_NEG_FIRST_SRC, "h");
+    check_eq("--vm", ASCII_FIRST_SRC, "h");
+    check_eq("--vm", ASCII_LAST_SRC, "o");
+    check_eq("--vm", ASCII_NEG_LAST_SRC, "o");
+    check_eq("--vm", ASCII_NEG_FIRST_SRC, "h");
 }
 
 #[test]
@@ -75,18 +75,18 @@ const UNI_NEG_LAST_SRC: &str = "f>t;at \"naïve\" -1";
 
 #[test]
 fn at_text_unicode_tree() {
-    check_eq("--run-vm", UNI_MID_SRC, "ï");
-    check_eq("--run-vm", UNI_LAST_SRC, "e");
-    check_eq("--run-vm", UNI_NEG_MID_SRC, "ï");
-    check_eq("--run-vm", UNI_NEG_LAST_SRC, "e");
+    check_eq("--vm", UNI_MID_SRC, "ï");
+    check_eq("--vm", UNI_LAST_SRC, "e");
+    check_eq("--vm", UNI_NEG_MID_SRC, "ï");
+    check_eq("--vm", UNI_NEG_LAST_SRC, "e");
 }
 
 #[test]
 fn at_text_unicode_vm() {
-    check_eq("--run-vm", UNI_MID_SRC, "ï");
-    check_eq("--run-vm", UNI_LAST_SRC, "e");
-    check_eq("--run-vm", UNI_NEG_MID_SRC, "ï");
-    check_eq("--run-vm", UNI_NEG_LAST_SRC, "e");
+    check_eq("--vm", UNI_MID_SRC, "ï");
+    check_eq("--vm", UNI_LAST_SRC, "e");
+    check_eq("--vm", UNI_NEG_MID_SRC, "ï");
+    check_eq("--vm", UNI_NEG_LAST_SRC, "e");
 }
 
 #[test]
@@ -121,12 +121,12 @@ fn check_text_oor_error(engine: &str) {
 
 #[test]
 fn at_text_oor_tree() {
-    check_text_oor_error("--run-vm");
+    check_text_oor_error("--vm");
 }
 
 #[test]
 fn at_text_oor_vm() {
-    check_text_oor_error("--run-vm");
+    check_text_oor_error("--vm");
 }
 
 #[test]
@@ -158,12 +158,12 @@ fn check_at_loop(engine: &str) {
 
 #[test]
 fn at_loop_over_built_string_tree() {
-    check_at_loop("--run-vm");
+    check_at_loop("--vm");
 }
 
 #[test]
 fn at_loop_over_built_string_vm() {
-    check_at_loop("--run-vm");
+    check_at_loop("--vm");
 }
 
 #[test]

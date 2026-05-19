@@ -1,12 +1,12 @@
-// Tests for flexible placement of `--run-vm` / `--jit` / `--run-llvm`
+// Tests for flexible placement of `--vm` / `--jit` / `--run-llvm`
 // engine flags in bare-args invocations.
 //
 // The flag should be accepted in any of these positions:
-//   ilo <code-or-file> --run-vm [func] [args...]   (canonical)
-//   ilo <code-or-file> [func] [args...] --run-vm   (trailing)
-//   ilo --run-vm <code-or-file> [func] [args...]   (leading)
+//   ilo <code-or-file> --vm [func] [args...]   (canonical)
+//   ilo <code-or-file> [func] [args...] --vm   (trailing)
+//   ilo --vm <code-or-file> [func] [args...]   (leading)
 //
-// Conflicting flags (e.g. --run-vm --jit) must still error out.
+// Conflicting flags (e.g. --vm --jit) must still error out.
 //
 // Note: `--run-tree` / `--run` were removed from the public CLI surface as
 // part of the tree-walker soft-deprecation (0.12.x). Tests at the bottom of
@@ -35,26 +35,26 @@ fn write_temp_ilo(content: &str) -> (tempfile::TempDir, std::path::PathBuf) {
     (dir, path)
 }
 
-// ── inline code, --run-vm in every position ───────────────────────────────────
+// ── inline code, --vm in every position ───────────────────────────────────
 
 #[test]
 fn run_vm_flag_after_code_before_func() {
-    let (ok, stdout, stderr) = run_args(&["f x:n>n;*x 2", "--run-vm", "f", "5"]);
+    let (ok, stdout, stderr) = run_args(&["f x:n>n;*x 2", "--vm", "f", "5"]);
     assert!(ok, "canonical placement should work; stderr: {stderr}");
     assert_eq!(stdout.trim(), "10");
 }
 
 #[test]
 fn run_vm_flag_after_func() {
-    let (ok, stdout, stderr) = run_args(&["f x:n>n;*x 2", "f", "5", "--run-vm"]);
-    assert!(ok, "trailing --run-vm should work; stderr: {stderr}");
+    let (ok, stdout, stderr) = run_args(&["f x:n>n;*x 2", "f", "5", "--vm"]);
+    assert!(ok, "trailing --vm should work; stderr: {stderr}");
     assert_eq!(stdout.trim(), "10");
 }
 
 #[test]
 fn run_vm_flag_before_code() {
-    let (ok, stdout, stderr) = run_args(&["--run-vm", "f x:n>n;*x 2", "f", "5"]);
-    assert!(ok, "leading --run-vm should work; stderr: {stderr}");
+    let (ok, stdout, stderr) = run_args(&["--vm", "f x:n>n;*x 2", "f", "5"]);
+    assert!(ok, "leading --vm should work; stderr: {stderr}");
     assert_eq!(stdout.trim(), "10");
 }
 
@@ -81,12 +81,12 @@ fn run_cranelift_flag_before_code_accepted() {
     );
 }
 
-// ── file path: --run-vm before and after the filename ─────────────────────────
+// ── file path: --vm before and after the filename ─────────────────────────
 
 #[test]
 fn run_vm_flag_after_file_path() {
     let (_dir, path) = write_temp_ilo("main>n;5");
-    let (ok, stdout, stderr) = run_args(&[path.to_str().unwrap(), "--run-vm", "main"]);
+    let (ok, stdout, stderr) = run_args(&[path.to_str().unwrap(), "--vm", "main"]);
     assert!(ok, "stderr: {stderr}");
     assert_eq!(stdout.trim(), "5");
 }
@@ -94,7 +94,7 @@ fn run_vm_flag_after_file_path() {
 #[test]
 fn run_vm_flag_before_file_path() {
     let (_dir, path) = write_temp_ilo("main>n;5");
-    let (ok, stdout, stderr) = run_args(&["--run-vm", path.to_str().unwrap(), "main"]);
+    let (ok, stdout, stderr) = run_args(&["--vm", path.to_str().unwrap(), "main"]);
     assert!(ok, "stderr: {stderr}");
     assert_eq!(stdout.trim(), "5");
 }
@@ -102,7 +102,7 @@ fn run_vm_flag_before_file_path() {
 #[test]
 fn run_vm_flag_trailing_after_file_and_func() {
     let (_dir, path) = write_temp_ilo("main>n;5");
-    let (ok, stdout, stderr) = run_args(&[path.to_str().unwrap(), "main", "--run-vm"]);
+    let (ok, stdout, stderr) = run_args(&[path.to_str().unwrap(), "main", "--vm"]);
     assert!(ok, "stderr: {stderr}");
     assert_eq!(stdout.trim(), "5");
 }
@@ -111,7 +111,7 @@ fn run_vm_flag_trailing_after_file_and_func() {
 
 #[test]
 fn conflicting_run_flags_error() {
-    let (ok, _stdout, stderr) = run_args(&["--run-vm", "--jit", "f>n;5", "f"]);
+    let (ok, _stdout, stderr) = run_args(&["--vm", "--jit", "f>n;5", "f"]);
     assert!(!ok, "conflicting engine flags should error");
     assert!(
         stderr.contains("mutually exclusive"),
@@ -121,7 +121,7 @@ fn conflicting_run_flags_error() {
 
 #[test]
 fn conflicting_run_flags_trailing_error() {
-    let (ok, _stdout, stderr) = run_args(&["f>n;5", "f", "--run-vm", "--jit"]);
+    let (ok, _stdout, stderr) = run_args(&["f>n;5", "f", "--vm", "--jit"]);
     assert!(!ok, "conflicting engine flags should error");
     assert!(
         stderr.contains("mutually exclusive"),
@@ -133,7 +133,7 @@ fn conflicting_run_flags_trailing_error() {
 
 #[test]
 fn repeated_same_run_flag_ok() {
-    let (ok, stdout, stderr) = run_args(&["--run-vm", "f>n;5", "f", "--run-vm"]);
+    let (ok, stdout, stderr) = run_args(&["--vm", "f>n;5", "f", "--vm"]);
     assert!(
         ok,
         "repeating the same engine flag should not conflict; stderr: {stderr}"
@@ -171,7 +171,7 @@ fn run_alias_now_rejected() {
 
 #[test]
 fn run_subcommand_path_unchanged() {
-    let (ok, stdout, stderr) = run_args(&["run", "--run-vm", "f>n;5", "f"]);
+    let (ok, stdout, stderr) = run_args(&["run", "--vm", "f>n;5", "f"]);
     assert!(
         ok,
         "clap subcommand path should still work; stderr: {stderr}"

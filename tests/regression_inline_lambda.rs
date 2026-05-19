@@ -60,7 +60,7 @@ fn run_engine(engine: &str, src: &str, entry: &str, args: &[&str]) -> String {
 /// Use this by default — closure capture works natively on tree, VM,
 /// and Cranelift after #384 + #385 + #387.
 fn run_all(src: &str, entry: &str, args: &[&str], expected: &str) {
-    for engine in ["--run-vm", "--jit"] {
+    for engine in ["--vm", "--jit"] {
         let actual = run_engine(engine, src, entry, args);
         assert_eq!(
             actual, expected,
@@ -75,7 +75,7 @@ fn run_all(src: &str, entry: &str, args: &[&str], expected: &str) {
 ///   - the test intentionally probes tree-walker-specific semantics
 ///     (e.g. a verifier error whose wording differs per engine).
 fn run_tree_only(src: &str, entry: &str, args: &[&str], expected: &str) {
-    let actual = run_engine("--run-vm", src, entry, args);
+    let actual = run_engine("--vm", src, entry, args);
     assert_eq!(
         actual, expected,
         "tree produced {actual:?}, expected {expected:?} for src `{src}`"

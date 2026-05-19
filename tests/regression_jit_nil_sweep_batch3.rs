@@ -46,8 +46,8 @@ fn check_stdout(engine: &str, src: &str, expected: &str) {
 
 // Run a check across all three engines and assert identical output.
 fn check_all(src: &str, expected: &str) {
-    check_stdout("--run-vm", src, expected);
-    check_stdout("--run-vm", src, expected);
+    check_stdout("--vm", src, expected);
+    check_stdout("--vm", src, expected);
     #[cfg(feature = "cranelift")]
     check_stdout("--jit", src, expected);
 }
@@ -130,12 +130,12 @@ fn divide_by_zero_errors(engine: &str) {
 
 #[test]
 fn div_by_zero_tree() {
-    divide_by_zero_errors("--run-vm");
+    divide_by_zero_errors("--vm");
 }
 
 #[test]
 fn div_by_zero_vm() {
-    divide_by_zero_errors("--run-vm");
+    divide_by_zero_errors("--vm");
 }
 
 // Note: Cranelift CLI div-by-zero behaviour for always-num inline path

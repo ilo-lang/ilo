@@ -157,12 +157,12 @@ fn check_all(engine: &str) {
 
 #[test]
 fn multiline_fn_body_tree() {
-    check_all("--run-vm");
+    check_all("--vm");
 }
 
 #[test]
 fn multiline_fn_body_vm() {
-    check_all("--run-vm");
+    check_all("--vm");
 }
 
 #[test]

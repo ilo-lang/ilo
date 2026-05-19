@@ -3,7 +3,7 @@
 // Before this fix, the VM compiler had no dispatch arm for `Builtin::Sum`
 // or `Builtin::Avg`, so any call fell through to the named-function lookup
 // and failed with "Compile error: undefined function: sum" (and likewise
-// for `avg`) on both `--run-vm` and `--jit`. The tree-walking
+// for `avg`) on both `--vm` and `--jit`. The tree-walking
 // interpreter handled both builtins directly and worked correctly.
 //
 // These tests pin the behaviour across all three engines: happy paths,
@@ -45,9 +45,9 @@ fn run_err(engine: &str, src: &str, entry: &str) -> String {
 }
 
 #[cfg(feature = "cranelift")]
-const ENGINES_ALL: &[&str] = &["--run-vm", "--jit"];
+const ENGINES_ALL: &[&str] = &["--vm", "--jit"];
 #[cfg(not(feature = "cranelift"))]
-const ENGINES_ALL: &[&str] = &["--run-vm"];
+const ENGINES_ALL: &[&str] = &["--vm"];
 
 // ── sum ──────────────────────────────────────────────────────────────
 

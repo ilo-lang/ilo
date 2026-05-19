@@ -206,12 +206,12 @@ fn check_all(engine: &str) {
 
 #[test]
 fn plus_literal_operand_order_tree() {
-    check_all("--run-vm");
+    check_all("--vm");
 }
 
 #[test]
 fn plus_literal_operand_order_vm() {
-    check_all("--run-vm");
+    check_all("--vm");
 }
 
 #[test]

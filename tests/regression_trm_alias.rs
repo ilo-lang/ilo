@@ -28,9 +28,9 @@ fn run(engine: &str, src: &str, entry: &str, arg: &str) -> String {
 }
 
 #[cfg(feature = "cranelift")]
-const ENGINES_ALL: &[&str] = &["--run-vm", "--jit"];
+const ENGINES_ALL: &[&str] = &["--vm", "--jit"];
 #[cfg(not(feature = "cranelift"))]
-const ENGINES_ALL: &[&str] = &["--run-vm"];
+const ENGINES_ALL: &[&str] = &["--vm"];
 
 const TRM_SRC: &str = "f s:t>t;trm s";
 const TRIM_SRC: &str = "f s:t>t;trim s";

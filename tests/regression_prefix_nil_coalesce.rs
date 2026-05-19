@@ -150,12 +150,12 @@ fn check_all(engine: &str) {
 
 #[test]
 fn prefix_nil_coalesce_tree() {
-    check_all("--run-vm");
+    check_all("--vm");
 }
 
 #[test]
 fn prefix_nil_coalesce_vm() {
-    check_all("--run-vm");
+    check_all("--vm");
 }
 
 #[test]

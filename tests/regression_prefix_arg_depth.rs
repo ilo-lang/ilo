@@ -34,12 +34,12 @@ fn check_slc(engine: &str) {
 
 #[test]
 fn slc_with_prefix_arg_tree() {
-    check_slc("--run-vm");
+    check_slc("--vm");
 }
 
 #[test]
 fn slc_with_prefix_arg_vm() {
-    check_slc("--run-vm");
+    check_slc("--vm");
 }
 
 #[test]
@@ -77,12 +77,12 @@ fn check_three_arg_prefix(engine: &str) {
 
 #[test]
 fn three_arg_prefix_tree() {
-    check_three_arg_prefix("--run-vm");
+    check_three_arg_prefix("--vm");
 }
 
 #[test]
 fn three_arg_prefix_vm() {
-    check_three_arg_prefix("--run-vm");
+    check_three_arg_prefix("--vm");
 }
 
 #[test]
@@ -122,12 +122,12 @@ fn check_infix_on_call(engine: &str) {
 
 #[test]
 fn infix_on_call_result_tree() {
-    check_infix_on_call("--run-vm");
+    check_infix_on_call("--vm");
 }
 
 #[test]
 fn infix_on_call_result_vm() {
-    check_infix_on_call("--run-vm");
+    check_infix_on_call("--vm");
 }
 
 #[test]
@@ -172,12 +172,12 @@ fn check_abs_guard(engine: &str) {
 
 #[test]
 fn abs_guard_tree() {
-    check_abs_guard("--run-vm");
+    check_abs_guard("--vm");
 }
 
 #[test]
 fn abs_guard_vm() {
-    check_abs_guard("--run-vm");
+    check_abs_guard("--vm");
 }
 
 #[test]
@@ -221,12 +221,12 @@ fn check_single_atom_after_op(engine: &str) {
 
 #[test]
 fn single_atom_after_op_tree() {
-    check_single_atom_after_op("--run-vm");
+    check_single_atom_after_op("--vm");
 }
 
 #[test]
 fn single_atom_after_op_vm() {
-    check_single_atom_after_op("--run-vm");
+    check_single_atom_after_op("--vm");
 }
 
 #[test]

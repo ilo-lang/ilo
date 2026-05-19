@@ -50,7 +50,7 @@ fn approx_num_loose(engine: &str, src: &str, args: &[&str], expected: f64, tol: 
 }
 
 fn engines() -> Vec<&'static str> {
-    let mut v = vec!["--run-vm"];
+    let mut v = vec!["--vm"];
     if cfg!(feature = "cranelift") {
         v.push("--jit");
     }

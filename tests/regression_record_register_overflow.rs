@@ -150,7 +150,7 @@ const SIZES: &[usize] = &[1, 16, 60, 150, 220];
 fn record_size_sweep_tree() {
     for &n in SIZES {
         let probe = n - 1;
-        check_record("--run-vm", n, probe);
+        check_record("--vm", n, probe);
     }
 }
 
@@ -158,7 +158,7 @@ fn record_size_sweep_tree() {
 fn record_size_sweep_vm() {
     for &n in SIZES {
         let probe = n - 1;
-        check_record("--run-vm", n, probe);
+        check_record("--vm", n, probe);
     }
 }
 
@@ -175,7 +175,7 @@ fn record_size_sweep_cranelift() {
 fn with_size_sweep_tree() {
     for &n in SIZES {
         let probe = n - 1;
-        check_with("--run-vm", n, probe);
+        check_with("--vm", n, probe);
     }
 }
 
@@ -183,7 +183,7 @@ fn with_size_sweep_tree() {
 fn with_size_sweep_vm() {
     for &n in SIZES {
         let probe = n - 1;
-        check_with("--run-vm", n, probe);
+        check_with("--vm", n, probe);
     }
 }
 
@@ -198,12 +198,12 @@ fn with_size_sweep_cranelift() {
 
 #[test]
 fn record_leading_locals_tree() {
-    check_record_leading_locals("--run-vm");
+    check_record_leading_locals("--vm");
 }
 
 #[test]
 fn record_leading_locals_vm() {
-    check_record_leading_locals("--run-vm");
+    check_record_leading_locals("--vm");
 }
 
 #[test]
@@ -214,12 +214,12 @@ fn record_leading_locals_cranelift() {
 
 #[test]
 fn with_leading_locals_tree() {
-    check_with_leading_locals("--run-vm");
+    check_with_leading_locals("--vm");
 }
 
 #[test]
 fn with_leading_locals_vm() {
-    check_with_leading_locals("--run-vm");
+    check_with_leading_locals("--vm");
 }
 
 #[test]
@@ -242,7 +242,7 @@ fn with_preserves_untouched_fields_vm() {
         type_fields.join(";"),
         inits.join(" "),
     );
-    let out = run("--run-vm", &src, "go");
+    let out = run("--vm", &src, "go");
     assert_eq!(out, "140");
 }
 
@@ -276,7 +276,7 @@ fn with_does_not_mutate_original_vm() {
         zeroes.join(" "),
         updates.join(" "),
     );
-    let out = run("--run-vm", &src, "go");
+    let out = run("--vm", &src, "go");
     assert_eq!(out, "0", "original record should be untouched after with");
 }
 
@@ -326,7 +326,7 @@ fn record_with_string_fields_vm() {
         type_fields.join(";"),
         inits.join(" "),
     );
-    let out = run("--run-vm", &src, "go");
+    let out = run("--vm", &src, "go");
     assert_eq!(out, "s140");
 }
 

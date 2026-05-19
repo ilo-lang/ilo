@@ -20,6 +20,12 @@
 -- now print "ok", and the underlying state still round-trips
 -- through the file on disk so `load` sees what `save` wrote.
 
+-- engine-skip: vm
+-- Skipped in examples_engines to avoid parallel-test interference: this
+-- example writes to a shared /tmp file and examples.rs already exercises
+-- it with the default (VM) engine. Two simultaneous ilo processes writing
+-- to the same path produce non-deterministic interleaving.
+
 path>t;"/tmp/ilo-cli-tasks-save-ok.txt"
 
 load>L t;r=rdl path();?r{~v:v;^e:[]}

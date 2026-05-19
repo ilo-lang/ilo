@@ -18,7 +18,7 @@ fn tool_call_stub_via_interp() {
     let prog = r#"tool mytool"a helper" x:t>R _ t
 main x:t>R _ t;mytool x"#;
     let out = ilo()
-        .args([prog, "--run-vm", "main", "hello"])
+        .args([prog, "--vm", "main", "hello"])
         .output()
         .expect("ilo failed to start");
     assert!(
@@ -38,7 +38,7 @@ fn tool_call_stub_via_vm() {
     let prog = r#"tool mytool"a helper" x:t>R _ t
 main x:t>R _ t;mytool x"#;
     let out = ilo()
-        .args([prog, "--run-vm", "main", "hello"])
+        .args([prog, "--vm", "main", "hello"])
         .output()
         .expect("ilo failed to start");
     assert!(
@@ -64,7 +64,7 @@ main x:t>R _ t;mytool x"#;
             prog,
             "--tools",
             "/nonexistent/path/to/config.json",
-            "--run-vm",
+            "--vm",
             "main",
             "hello",
         ])
@@ -104,7 +104,7 @@ fn tools_flag_with_valid_config() {
 main x:t>t;"hello""#;
 
     let out = ilo()
-        .args([prog, "--tools", &path, "--run-vm", "main", "world"])
+        .args([prog, "--tools", &path, "--vm", "main", "world"])
         .output()
         .expect("ilo failed to start");
 
@@ -153,7 +153,7 @@ fn tools_flag_invalid_json_config() {
     let prog = r#"tool mytool"a helper" x:t>R _ t
 main x:t>R _ t;mytool x"#;
     let out = ilo()
-        .args([prog, "--tools", &path, "--run-vm", "main", "hello"])
+        .args([prog, "--tools", &path, "--vm", "main", "hello"])
         .output()
         .expect("ilo failed to start");
 
@@ -182,7 +182,7 @@ fn vm_tool_stub_returns_ok_nil() {
     let prog = r#"tool mytool"a helper" x:t>R _ t
 f>R _ t;mytool "test""#;
     let out = ilo()
-        .args([prog, "--run-vm", "f"])
+        .args([prog, "--vm", "f"])
         .output()
         .expect("ilo failed to start");
     assert!(
@@ -200,7 +200,7 @@ fn vm_multiple_tool_stubs() {
 tool b"second" x:t>R _ t
 f>R _ t;b "test""#;
     let out = ilo()
-        .args([prog, "--run-vm", "f"])
+        .args([prog, "--vm", "f"])
         .output()
         .expect("ilo failed to start");
     assert!(
@@ -219,7 +219,7 @@ f>R _ t;b "test""#;
 fn get_builtin_real_http() {
     let prog = "main x:t>R t t;$x";
     let out = ilo()
-        .args([prog, "--run-vm", "main", "https://httpbin.org/get"])
+        .args([prog, "--vm", "main", "https://httpbin.org/get"])
         .output()
         .expect("ilo failed to start");
     assert!(
@@ -446,14 +446,7 @@ mod http_tests {
         let prog = r#"tool double"doubles a number" x:n>R n n
 main x:n>R n n;double x"#;
         let out = std::process::Command::new(env!("CARGO_BIN_EXE_ilo"))
-            .args([
-                prog,
-                "--tools",
-                p.to_str().unwrap(),
-                "--run-vm",
-                "main",
-                "2",
-            ])
+            .args([prog, "--tools", p.to_str().unwrap(), "--vm", "main", "2"])
             .output()
             .expect("ilo failed to start");
 
@@ -474,14 +467,7 @@ main x:n>R n n;double x"#;
         let prog = r#"tool double"doubles a number" x:n>R n n
 main x:n>R n n;double x"#;
         let out = std::process::Command::new(env!("CARGO_BIN_EXE_ilo"))
-            .args([
-                prog,
-                "--tools",
-                p.to_str().unwrap(),
-                "--run-vm",
-                "main",
-                "2",
-            ])
+            .args([prog, "--tools", p.to_str().unwrap(), "--vm", "main", "2"])
             .output()
             .expect("ilo failed to start");
 
@@ -521,14 +507,7 @@ main x:n>R n n;double x"#;
         let prog = r#"tool double"doubles a number" x:n>R n n
 main x:n>R n n;double x"#;
         let out = std::process::Command::new(env!("CARGO_BIN_EXE_ilo"))
-            .args([
-                prog,
-                "--tools",
-                p.to_str().unwrap(),
-                "--run-vm",
-                "main",
-                "2",
-            ])
+            .args([prog, "--tools", p.to_str().unwrap(), "--vm", "main", "2"])
             .output()
             .expect("ilo failed to start");
 

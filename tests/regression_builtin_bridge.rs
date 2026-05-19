@@ -1,6 +1,6 @@
 // Regression coverage for the generic `OP_CALL_BUILTIN_TREE` bridge that
 // lets tree-only builtins (rgx, rgxall, fmt variadic, 2-arg rd, rdb) run
-// under `--run-vm` and `--jit` via interpreter fallback.
+// under `--vm` and `--jit` via interpreter fallback.
 //
 // Pre-fix, these all failed at VM compile time with
 // `Compile error: undefined function: <name>` because the VM emitter fell
@@ -15,7 +15,7 @@
 
 use std::process::Command;
 
-const ENGINES: &[&str] = &["--run-vm", "--jit"];
+const ENGINES: &[&str] = &["--vm", "--jit"];
 
 fn ilo() -> Command {
     Command::new(env!("CARGO_BIN_EXE_ilo"))

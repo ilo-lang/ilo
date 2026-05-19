@@ -11,7 +11,7 @@ Three public backends. Default (`ilo file.ilo`) is the register VM; covers ~all 
 
 | Engine | Flag | Speed | Notes |
 |--|--|--|--|
-| VM | `--run-vm` | 10-100x | Default. Captures run natively. |
+| VM | `--vm` | 10-100x | Default. Captures run natively. |
 | Cranelift JIT | `--jit` | 100-1000x | Opt-in for hot numeric loops; bails to VM on unsupported. |
 | Cranelift AOT | `ilo compile` | 100-1000x | Standalone native (~9 MB). |
 | LLVM JIT | `--run-llvm` | ~Cranelift | Behind `llvm` feature. Rarely needed. |

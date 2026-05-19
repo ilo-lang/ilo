@@ -127,12 +127,12 @@ fn check_all(engine: &str) {
 
 #[test]
 fn minus_zero_decl_tree() {
-    check_all("--run-vm");
+    check_all("--vm");
 }
 
 #[test]
 fn minus_zero_decl_vm() {
-    check_all("--run-vm");
+    check_all("--vm");
 }
 
 #[test]

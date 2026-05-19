@@ -39,12 +39,12 @@ fn check_num_index(engine: &str) {
 
 #[test]
 fn at_num_index_tree() {
-    check_num_index("--run-vm");
+    check_num_index("--vm");
 }
 
 #[test]
 fn at_num_index_vm() {
-    check_num_index("--run-vm");
+    check_num_index("--vm");
 }
 
 #[test]
@@ -62,12 +62,12 @@ fn check_text_index(engine: &str) {
 
 #[test]
 fn at_text_index_tree() {
-    check_text_index("--run-vm");
+    check_text_index("--vm");
 }
 
 #[test]
 fn at_text_index_vm() {
-    check_text_index("--run-vm");
+    check_text_index("--vm");
 }
 
 #[test]
@@ -85,12 +85,12 @@ fn check_first(engine: &str) {
 
 #[test]
 fn at_first_tree() {
-    check_first("--run-vm");
+    check_first("--vm");
 }
 
 #[test]
 fn at_first_vm() {
-    check_first("--run-vm");
+    check_first("--vm");
 }
 
 #[test]
@@ -108,12 +108,12 @@ fn check_last(engine: &str) {
 
 #[test]
 fn at_last_tree() {
-    check_last("--run-vm");
+    check_last("--vm");
 }
 
 #[test]
 fn at_last_vm() {
-    check_last("--run-vm");
+    check_last("--vm");
 }
 
 #[test]
@@ -150,12 +150,12 @@ fn check_oor_error(engine: &str) {
 
 #[test]
 fn at_out_of_range_tree() {
-    check_oor_error("--run-vm");
+    check_oor_error("--vm");
 }
 
 #[test]
 fn at_out_of_range_vm() {
-    check_oor_error("--run-vm");
+    check_oor_error("--vm");
 }
 
 #[test]
@@ -174,12 +174,12 @@ fn check_neg_last(engine: &str) {
 
 #[test]
 fn at_negative_last_tree() {
-    check_neg_last("--run-vm");
+    check_neg_last("--vm");
 }
 
 #[test]
 fn at_negative_last_vm() {
-    check_neg_last("--run-vm");
+    check_neg_last("--vm");
 }
 
 #[test]
@@ -197,12 +197,12 @@ fn check_neg_first(engine: &str) {
 
 #[test]
 fn at_negative_first_tree() {
-    check_neg_first("--run-vm");
+    check_neg_first("--vm");
 }
 
 #[test]
 fn at_negative_first_vm() {
-    check_neg_first("--run-vm");
+    check_neg_first("--vm");
 }
 
 #[test]
@@ -220,12 +220,12 @@ fn check_neg_text(engine: &str) {
 
 #[test]
 fn at_negative_text_tree() {
-    check_neg_text("--run-vm");
+    check_neg_text("--vm");
 }
 
 #[test]
 fn at_negative_text_vm() {
-    check_neg_text("--run-vm");
+    check_neg_text("--vm");
 }
 
 #[test]
@@ -259,12 +259,12 @@ fn check_neg_oor_error(engine: &str) {
 
 #[test]
 fn at_negative_oor_tree() {
-    check_neg_oor_error("--run-vm");
+    check_neg_oor_error("--vm");
 }
 
 #[test]
 fn at_negative_oor_vm() {
-    check_neg_oor_error("--run-vm");
+    check_neg_oor_error("--vm");
 }
 
 #[test]
@@ -291,12 +291,12 @@ fn check_float_integral(engine: &str) {
 
 #[test]
 fn at_float_integral_tree() {
-    check_float_integral("--run-vm");
+    check_float_integral("--vm");
 }
 
 #[test]
 fn at_float_integral_vm() {
-    check_float_integral("--run-vm");
+    check_float_integral("--vm");
 }
 
 #[test]
@@ -313,12 +313,12 @@ fn check_float_frac(engine: &str) {
 
 #[test]
 fn at_float_frac_tree() {
-    check_float_frac("--run-vm");
+    check_float_frac("--vm");
 }
 
 #[test]
 fn at_float_frac_vm() {
-    check_float_frac("--run-vm");
+    check_float_frac("--vm");
 }
 
 #[test]
@@ -335,12 +335,12 @@ fn check_neg_float(engine: &str) {
 
 #[test]
 fn at_negative_float_tree() {
-    check_neg_float("--run-vm");
+    check_neg_float("--vm");
 }
 
 #[test]
 fn at_negative_float_vm() {
-    check_neg_float("--run-vm");
+    check_neg_float("--vm");
 }
 
 #[test]
@@ -358,12 +358,12 @@ fn check_neg_half(engine: &str) {
 
 #[test]
 fn at_negative_half_tree() {
-    check_neg_half("--run-vm");
+    check_neg_half("--vm");
 }
 
 #[test]
 fn at_negative_half_vm() {
-    check_neg_half("--run-vm");
+    check_neg_half("--vm");
 }
 
 #[test]
@@ -387,12 +387,12 @@ fn check_computed_float(engine: &str) {
 
 #[test]
 fn at_computed_float_tree() {
-    check_computed_float("--run-vm");
+    check_computed_float("--vm");
 }
 
 #[test]
 fn at_computed_float_vm() {
-    check_computed_float("--run-vm");
+    check_computed_float("--vm");
 }
 
 #[test]
@@ -425,12 +425,12 @@ fn check_non_numeric_error(engine: &str) {
 
 #[test]
 fn at_non_numeric_tree() {
-    check_non_numeric_error("--run-vm");
+    check_non_numeric_error("--vm");
 }
 
 #[test]
 fn at_non_numeric_vm() {
-    check_non_numeric_error("--run-vm");
+    check_non_numeric_error("--vm");
 }
 
 #[test]

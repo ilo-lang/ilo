@@ -72,14 +72,14 @@ const BUILTIN_NAMES: &[&str] = &[
 #[test]
 fn builtin_fn_name_rejected_tree() {
     for name in BUILTIN_NAMES {
-        check_single_decl("--run-vm", name);
+        check_single_decl("--vm", name);
     }
 }
 
 #[test]
 fn builtin_fn_name_rejected_vm() {
     for name in BUILTIN_NAMES {
-        check_single_decl("--run-vm", name);
+        check_single_decl("--vm", name);
     }
 }
 
@@ -120,12 +120,12 @@ fn check_lst_repro(engine: &str) {
 
 #[test]
 fn lst_repro_tree() {
-    check_lst_repro("--run-vm");
+    check_lst_repro("--vm");
 }
 
 #[test]
 fn lst_repro_vm() {
-    check_lst_repro("--run-vm");
+    check_lst_repro("--vm");
 }
 
 #[test]
@@ -156,12 +156,12 @@ fn check_renamed_works(engine: &str) {
 
 #[test]
 fn rename_workaround_tree() {
-    check_renamed_works("--run-vm");
+    check_renamed_works("--vm");
 }
 
 #[test]
 fn rename_workaround_vm() {
-    check_renamed_works("--run-vm");
+    check_renamed_works("--vm");
 }
 
 #[test]
@@ -176,7 +176,7 @@ fn rename_workaround_cranelift() {
 #[test]
 fn lst_builtin_still_works() {
     let out = ilo()
-        .args(["main>L n;lst [1 2 3] 0 42", "--run-vm", "main"])
+        .args(["main>L n;lst [1 2 3] 0 42", "--vm", "main"])
         .output()
         .expect("failed to run ilo");
     assert!(

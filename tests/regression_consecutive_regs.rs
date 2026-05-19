@@ -61,12 +61,12 @@ fn check_mset(engine: &str) {
 
 #[test]
 fn slc_in_loop_tree() {
-    check_slc("--run-vm");
+    check_slc("--vm");
 }
 
 #[test]
 fn slc_in_loop_vm() {
-    check_slc("--run-vm");
+    check_slc("--vm");
 }
 
 #[test]
@@ -77,12 +77,12 @@ fn slc_in_loop_cranelift() {
 
 #[test]
 fn mset_in_loop_tree() {
-    check_mset("--run-vm");
+    check_mset("--vm");
 }
 
 #[test]
 fn mset_in_loop_vm() {
-    check_mset("--run-vm");
+    check_mset("--vm");
 }
 
 #[test]
@@ -104,12 +104,12 @@ fn check_mdel(engine: &str) {
 
 #[test]
 fn mdel_in_loop_tree() {
-    check_mdel("--run-vm");
+    check_mdel("--vm");
 }
 
 #[test]
 fn mdel_in_loop_vm() {
-    check_mdel("--run-vm");
+    check_mdel("--vm");
 }
 
 #[test]

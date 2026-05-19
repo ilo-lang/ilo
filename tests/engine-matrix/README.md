@@ -10,7 +10,7 @@ Engines exercised:
 
 | Engine            | Invocation                                                |
 |-------------------|-----------------------------------------------------------|
-| Register VM       | `ilo --run-vm FILE`                                       |
+| Register VM       | `ilo --vm FILE`                                       |
 | Cranelift JIT     | `ilo --jit FILE`                                          |
 | Cranelift AOT     | `ilo compile FILE -o out && ./out`                        |
 

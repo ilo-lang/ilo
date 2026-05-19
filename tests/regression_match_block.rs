@@ -34,9 +34,9 @@ fn run(engine: &str, src: &str, entry: &str) -> String {
 }
 
 #[cfg(feature = "cranelift")]
-const ENGINES_ALL: &[&str] = &["--run-vm", "--jit"];
+const ENGINES_ALL: &[&str] = &["--vm", "--jit"];
 #[cfg(not(feature = "cranelift"))]
-const ENGINES_ALL: &[&str] = &["--run-vm"];
+const ENGINES_ALL: &[&str] = &["--vm"];
 
 // Single-expression arms (existing behaviour) must keep working unchanged.
 const SINGLE_EXPR: &str = r#"f>n;?2{0:0;1:1;2:42;_:99}"#;

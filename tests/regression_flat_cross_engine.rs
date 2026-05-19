@@ -3,7 +3,7 @@
 // Before this fix, the VM compiler had no dispatch arm for `Builtin::Flat`
 // and Cranelift had no helper wired through, so any call fell through to
 // the named-function lookup and failed with
-// "Compile error: undefined function: flat" on both `--run-vm` and
+// "Compile error: undefined function: flat" on both `--vm` and
 // `--jit`. The tree-walking interpreter handled it directly and
 // worked correctly.
 //
@@ -44,9 +44,9 @@ fn run_err(engine: &str, src: &str, entry: &str) -> String {
 }
 
 #[cfg(feature = "cranelift")]
-const ENGINES_ALL: &[&str] = &["--run-vm", "--jit"];
+const ENGINES_ALL: &[&str] = &["--vm", "--jit"];
 #[cfg(not(feature = "cranelift"))]
-const ENGINES_ALL: &[&str] = &["--run-vm"];
+const ENGINES_ALL: &[&str] = &["--vm"];
 
 // ── happy paths ─────────────────────────────────────────────────────────
 

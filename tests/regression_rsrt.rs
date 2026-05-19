@@ -36,12 +36,12 @@ fn check_nums(engine: &str) {
 
 #[test]
 fn rsrt_nums_tree() {
-    check_nums("--run-vm");
+    check_nums("--vm");
 }
 
 #[test]
 fn rsrt_nums_vm() {
-    check_nums("--run-vm");
+    check_nums("--vm");
 }
 
 #[test]
@@ -63,12 +63,12 @@ fn check_text(engine: &str) {
 
 #[test]
 fn rsrt_text_tree() {
-    check_text("--run-vm");
+    check_text("--vm");
 }
 
 #[test]
 fn rsrt_text_vm() {
-    check_text("--run-vm");
+    check_text("--vm");
 }
 
 #[test]
@@ -86,12 +86,12 @@ fn check_empty(engine: &str) {
 
 #[test]
 fn rsrt_empty_tree() {
-    check_empty("--run-vm");
+    check_empty("--vm");
 }
 
 #[test]
 fn rsrt_empty_vm() {
-    check_empty("--run-vm");
+    check_empty("--vm");
 }
 
 #[test]
@@ -110,12 +110,12 @@ fn check_single(engine: &str) {
 
 #[test]
 fn rsrt_single_tree() {
-    check_single("--run-vm");
+    check_single("--vm");
 }
 
 #[test]
 fn rsrt_single_vm() {
-    check_single("--run-vm");
+    check_single("--vm");
 }
 
 #[test]
@@ -138,12 +138,12 @@ fn check_typevar(engine: &str) {
 
 #[test]
 fn rsrt_typevar_tree() {
-    check_typevar("--run-vm");
+    check_typevar("--vm");
 }
 
 #[test]
 fn rsrt_typevar_vm() {
-    check_typevar("--run-vm");
+    check_typevar("--vm");
 }
 
 #[test]
@@ -162,12 +162,12 @@ fn check_str_asc(engine: &str) {
 
 #[test]
 fn rsrt_str_asc_tree() {
-    check_str_asc("--run-vm");
+    check_str_asc("--vm");
 }
 
 #[test]
 fn rsrt_str_asc_vm() {
-    check_str_asc("--run-vm");
+    check_str_asc("--vm");
 }
 
 #[test]
@@ -185,12 +185,12 @@ fn check_str_desc(engine: &str) {
 
 #[test]
 fn rsrt_str_desc_tree() {
-    check_str_desc("--run-vm");
+    check_str_desc("--vm");
 }
 
 #[test]
 fn rsrt_str_desc_vm() {
-    check_str_desc("--run-vm");
+    check_str_desc("--vm");
 }
 
 #[test]

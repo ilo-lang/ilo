@@ -68,12 +68,12 @@ fn assert_err_exit_plain(engine: &str) {
 
 #[test]
 fn main_err_exits_one_tree() {
-    assert_err_exit_plain("--run-vm");
+    assert_err_exit_plain("--vm");
 }
 
 #[test]
 fn main_err_exits_one_vm() {
-    assert_err_exit_plain("--run-vm");
+    assert_err_exit_plain("--vm");
 }
 
 #[test]
@@ -114,12 +114,12 @@ fn assert_err_exit_json(engine: &str) {
 
 #[test]
 fn main_err_exits_one_json_tree() {
-    assert_err_exit_json("--run-vm");
+    assert_err_exit_json("--vm");
 }
 
 #[test]
 fn main_err_exits_one_json_vm() {
-    assert_err_exit_json("--run-vm");
+    assert_err_exit_json("--vm");
 }
 
 #[test]
@@ -154,12 +154,12 @@ fn assert_ok_exit(engine: &str) {
 
 #[test]
 fn main_ok_exits_zero_tree() {
-    assert_ok_exit("--run-vm");
+    assert_ok_exit("--vm");
 }
 
 #[test]
 fn main_ok_exits_zero_vm() {
-    assert_ok_exit("--run-vm");
+    assert_ok_exit("--vm");
 }
 
 #[test]

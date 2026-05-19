@@ -4,7 +4,7 @@
 --
 -- Before this fix (v0.11.6 regression introduced by PR #336), calling
 -- `ilo 'f x:n>n;+x 1'` with no positional arg returned `nil` and exit
--- 0 silently on the default engine, --run-vm, and --jit. The
+-- 0 silently on the default engine, --vm, and --jit. The
 -- tree interpreter alone caught it. The mechanism was that PR #336
 -- made `JitCallError::NotEligible` fall through to `vm::run`, but the
 -- VM's `setup_call` had never checked arity — it pre-allocated

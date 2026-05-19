@@ -1512,7 +1512,7 @@ In `--json` mode the value is always wrapped (`{"schemaVersion": 1, "ok": v}` / 
 
 `Display` on `Value::Ok` / `Value::Err` still renders `~v` / `^e` in every other context (nested values, `prnt`, REPL prompts, error messages, debug output) - only the top-level program-return print path is split.
 
-The contract applies uniformly to in-process runners (`ilo prog.ilo`, `--run-vm`, `--jit`) and to AOT-compiled standalone binaries from `ilo compile`. Both strip the top-level `~`/`^` wrapper on stdout, route `^e` to stderr, and use the same exit codes - output is byte-for-byte identical across every backend.
+The contract applies uniformly to in-process runners (`ilo prog.ilo`, `--vm`, `--jit`) and to AOT-compiled standalone binaries from `ilo compile`. Both strip the top-level `~`/`^` wrapper on stdout, route `^e` to stderr, and use the same exit codes - output is byte-for-byte identical across every backend.
 
 ### Idiomatic hints
 
@@ -1546,7 +1546,7 @@ ilo serv                          -- long-lived JSON request/response loop
 
 **`ilo check --strict`.** Treats every warning-severity diagnostic (ILO-T032 bare `fmt`, ILO-T033 bare `mset` / `+=` / `mdel`, future warning codes) as a hard exit-code failure. The diagnostic stream itself is unchanged: warnings still emit with `severity: "warning"` in the JSON output, so editor integrations that route by severity stay correct. Only the exit code is elevated. CI harnesses that gate merges on `ilo check` should use `--strict` so warnings can't slip through silently; for interactive use, the default (warnings-are-advisory) is the right behaviour.
 
-**Default-run.** Inline programs (`ilo 'code'`) and single-function files run their entry function with the remaining CLI args; no explicit function name needed. Multi-function files auto-pick a function called `main` when no positional func arg is supplied. The same heuristic applies to the explicit engine flags - `--run-vm` and `--jit` both auto-pick `main` on multi-fn files, matching the default-engine behaviour. With no `main` declared, supply a function-name argument.
+**Default-run.** Inline programs (`ilo 'code'`) and single-function files run their entry function with the remaining CLI args; no explicit function name needed. Multi-function files auto-pick a function called `main` when no positional func arg is supplied. The same heuristic applies to the explicit engine flags - `--vm` and `--jit` both auto-pick `main` on multi-fn files, matching the default-engine behaviour. With no `main` declared, supply a function-name argument.
 
 **AOT entry-pick.** `ilo compile file.ilo -o out` (alias `ilo build`) follows the same entry-pick rules as the in-process engines: a single user-defined function is used directly; on multi-function files the entry is `main` if defined, otherwise the explicit positional `func` arg (`ilo compile file.ilo -o out run`); otherwise the compile fails with `ILO-E801` and exits 1 without writing a binary. AOT does not fall back to "first declared function" - that historical default produced binaries that called the wrong entry symbol and SIGSEGV'd at runtime.
 

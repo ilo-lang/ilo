@@ -70,18 +70,12 @@ const ADDSS_NON_REBIND_PRESERVES_A: &str =
 
 #[test]
 fn addss_non_rebind_preserves_a_tree() {
-    assert_eq!(
-        run("--run-vm", ADDSS_NON_REBIND_PRESERVES_A, "go", "1"),
-        "k1"
-    );
+    assert_eq!(run("--vm", ADDSS_NON_REBIND_PRESERVES_A, "go", "1"), "k1");
 }
 
 #[test]
 fn addss_non_rebind_preserves_a_vm() {
-    assert_eq!(
-        run("--run-vm", ADDSS_NON_REBIND_PRESERVES_A, "go", "1"),
-        "k1"
-    );
+    assert_eq!(run("--vm", ADDSS_NON_REBIND_PRESERVES_A, "go", "1"), "k1");
 }
 
 #[test]
@@ -99,7 +93,7 @@ const ADDSS_NON_REBIND_B_GETS_RESULT: &str =
 #[test]
 fn addss_non_rebind_b_gets_result_tree() {
     assert_eq!(
-        run("--run-vm", ADDSS_NON_REBIND_B_GETS_RESULT, "go", "1"),
+        run("--vm", ADDSS_NON_REBIND_B_GETS_RESULT, "go", "1"),
         "k1_x"
     );
 }
@@ -107,7 +101,7 @@ fn addss_non_rebind_b_gets_result_tree() {
 #[test]
 fn addss_non_rebind_b_gets_result_vm() {
     assert_eq!(
-        run("--run-vm", ADDSS_NON_REBIND_B_GETS_RESULT, "go", "1"),
+        run("--vm", ADDSS_NON_REBIND_B_GETS_RESULT, "go", "1"),
         "k1_x"
     );
 }
@@ -130,7 +124,7 @@ const ADDSS_NON_REBIND_BOTH_VISIBLE: &str =
 #[test]
 fn addss_non_rebind_both_visible_tree() {
     assert_eq!(
-        run("--run-vm", ADDSS_NON_REBIND_BOTH_VISIBLE, "go", "1"),
+        run("--vm", ADDSS_NON_REBIND_BOTH_VISIBLE, "go", "1"),
         "k1|k1_x"
     );
 }
@@ -138,7 +132,7 @@ fn addss_non_rebind_both_visible_tree() {
 #[test]
 fn addss_non_rebind_both_visible_vm() {
     assert_eq!(
-        run("--run-vm", ADDSS_NON_REBIND_BOTH_VISIBLE, "go", "1"),
+        run("--vm", ADDSS_NON_REBIND_BOTH_VISIBLE, "go", "1"),
         "k1|k1_x"
     );
 }
@@ -164,7 +158,7 @@ const ADD_UNTYPED_NON_REBIND_PRESERVES_A: &str = "go n:n>t;a=fmt \"k{}\" n;b=+a 
 #[test]
 fn add_untyped_non_rebind_preserves_a_tree() {
     assert_eq!(
-        run("--run-vm", ADD_UNTYPED_NON_REBIND_PRESERVES_A, "go", "1"),
+        run("--vm", ADD_UNTYPED_NON_REBIND_PRESERVES_A, "go", "1"),
         "k1"
     );
 }
@@ -172,7 +166,7 @@ fn add_untyped_non_rebind_preserves_a_tree() {
 #[test]
 fn add_untyped_non_rebind_preserves_a_vm() {
     assert_eq!(
-        run("--run-vm", ADD_UNTYPED_NON_REBIND_PRESERVES_A, "go", "1"),
+        run("--vm", ADD_UNTYPED_NON_REBIND_PRESERVES_A, "go", "1"),
         "k1"
     );
 }
@@ -198,18 +192,12 @@ const ADD_REBIND_ACCUMULATOR: &str = "go n:n>t;s=\"\";@i 0..n{s=+s \"x\"};s";
 
 #[test]
 fn add_rebind_accumulator_tree() {
-    assert_eq!(
-        run("--run-vm", ADD_REBIND_ACCUMULATOR, "go", "100").len(),
-        100
-    );
+    assert_eq!(run("--vm", ADD_REBIND_ACCUMULATOR, "go", "100").len(), 100);
 }
 
 #[test]
 fn add_rebind_accumulator_vm() {
-    assert_eq!(
-        run("--run-vm", ADD_REBIND_ACCUMULATOR, "go", "100").len(),
-        100
-    );
+    assert_eq!(run("--vm", ADD_REBIND_ACCUMULATOR, "go", "100").len(), 100);
 }
 
 #[test]
@@ -229,12 +217,12 @@ const ADDSS_NON_REBIND_RC_GT_1: &str =
 
 #[test]
 fn addss_non_rebind_rc_gt_1_tree() {
-    assert_eq!(run("--run-vm", ADDSS_NON_REBIND_RC_GT_1, "go", "1"), "k1");
+    assert_eq!(run("--vm", ADDSS_NON_REBIND_RC_GT_1, "go", "1"), "k1");
 }
 
 #[test]
 fn addss_non_rebind_rc_gt_1_vm() {
-    assert_eq!(run("--run-vm", ADDSS_NON_REBIND_RC_GT_1, "go", "1"), "k1");
+    assert_eq!(run("--vm", ADDSS_NON_REBIND_RC_GT_1, "go", "1"), "k1");
 }
 
 #[test]
@@ -256,12 +244,12 @@ const ADD_SELF_CONCAT: &str = "go n:n>t;s=fmt \"k{}\" n;s=+s s;s";
 
 #[test]
 fn add_self_concat_tree() {
-    assert_eq!(run("--run-vm", ADD_SELF_CONCAT, "go", "1"), "k1k1");
+    assert_eq!(run("--vm", ADD_SELF_CONCAT, "go", "1"), "k1k1");
 }
 
 #[test]
 fn add_self_concat_vm() {
-    assert_eq!(run("--run-vm", ADD_SELF_CONCAT, "go", "1"), "k1k1");
+    assert_eq!(run("--vm", ADD_SELF_CONCAT, "go", "1"), "k1k1");
 }
 
 #[test]
@@ -277,12 +265,12 @@ const ADDSS_SELF_CONCAT: &str = "go s:t>t;s=+s s;s";
 
 #[test]
 fn addss_self_concat_tree() {
-    assert_eq!(run("--run-vm", ADDSS_SELF_CONCAT, "go", "ab"), "abab");
+    assert_eq!(run("--vm", ADDSS_SELF_CONCAT, "go", "ab"), "abab");
 }
 
 #[test]
 fn addss_self_concat_vm() {
-    assert_eq!(run("--run-vm", ADDSS_SELF_CONCAT, "go", "ab"), "abab");
+    assert_eq!(run("--vm", ADDSS_SELF_CONCAT, "go", "ab"), "abab");
 }
 
 #[test]
