@@ -162,6 +162,13 @@ pub enum Builtin {
     Solve,
     Inv,
     Det,
+    // Index-returning aggregates (numpy convention).
+    // argmax xs:L n > n — index of max element.
+    // argmin xs:L n > n — index of min element.
+    // argsort xs:L n > L n — sorted index permutation (ascending).
+    Argmax,
+    Argmin,
+    Argsort,
 }
 
 impl Builtin {
@@ -296,6 +303,9 @@ impl Builtin {
             "solve" => Some(Builtin::Solve),
             "inv" => Some(Builtin::Inv),
             "det" => Some(Builtin::Det),
+            "argmax" => Some(Builtin::Argmax),
+            "argmin" => Some(Builtin::Argmin),
+            "argsort" => Some(Builtin::Argsort),
             _ => None,
         }
     }
@@ -427,6 +437,9 @@ impl Builtin {
             Builtin::Solve => "solve",
             Builtin::Inv => "inv",
             Builtin::Det => "det",
+            Builtin::Argmax => "argmax",
+            Builtin::Argmin => "argmin",
+            Builtin::Argsort => "argsort",
         }
     }
 
@@ -589,6 +602,13 @@ impl Builtin {
         // here keeps every existing on-wire tag stable.
         Builtin::MgetOr,
         Builtin::LgetOr,
+        // Index-returning aggregates (numpy convention). Pure list ops:
+        // tree-bridge eligible, no FnRef args, no I/O. Closes the
+        // `srt fn (enumerate xs)` + extract-first pattern that three
+        // rerun12 personas converged on. Appended to preserve tags.
+        Builtin::Argmax,
+        Builtin::Argmin,
+        Builtin::Argsort,
     ];
 
     /// On-wire 8-bit tag for cross-engine builtin dispatch. See `ALL`.
@@ -873,6 +893,9 @@ mod tests {
             "lsd",
             "walk",
             "glob",
+            "argmax",
+            "argmin",
+            "argsort",
         ];
         for name in &all {
             let b = Builtin::from_name(name).unwrap_or_else(|| panic!("missing builtin: {name}"));

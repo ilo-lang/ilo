@@ -527,6 +527,9 @@ Called like functions, compiled to dedicated opcodes.
 | `quantile xs p` | sample quantile (linear interp; `p` clamped to `[0, 1]`) | `n` |
 | `stdev xs` | sample standard deviation (divides by N-1) | `n` |
 | `variance xs` | sample variance (divides by N-1) | `n` |
+| `argmax xs` | index of the maximum element (first occurrence wins on ties; errors on empty list) | `n` |
+| `argmin xs` | index of the minimum element (first occurrence wins on ties; errors on empty list) | `n` |
+| `argsort xs` | sorted-index permutation ascending - stable sort, indices of smallest to largest (empty list returns `[]`) | `L n` |
 | `setunion a b` | set union of two lists (deduped, sorted output) | `L a` |
 | `setinter a b` | set intersection (deduped, sorted) | `L a` |
 | `setdiff a b` | set difference `a - b` (deduped, sorted) | `L a` |

@@ -1361,6 +1361,95 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             )),
         };
     }
+    if matches!(builtin, Some(Builtin::Argmax | Builtin::Argmin)) && args.len() == 1 {
+        // arg{max,min} xs:L n > n — index of the {max,min} element. numpy
+        // convention: first occurrence wins on ties (strict `<`/`>`).
+        // NaN-propagation: any NaN element makes the result NaN (mirrors
+        // `max`/`min` 1-arg list form on NaN — see `vm_min_max_lst`).
+        let items = match &args[0] {
+            Value::List(l) => l,
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("{name}: arg must be a list, got {:?}", other),
+                ));
+            }
+        };
+        if items.is_empty() {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!("{name}: cannot take {name} of an empty list"),
+            ));
+        }
+        let is_min = builtin == Some(Builtin::Argmin);
+        let mut best_idx: usize = 0;
+        let mut best_val: Option<f64> = None;
+        for (i, item) in items.iter().enumerate() {
+            match item {
+                Value::Number(n) => {
+                    if n.is_nan() {
+                        return Ok(Value::Number(f64::NAN));
+                    }
+                    match best_val {
+                        None => {
+                            best_val = Some(*n);
+                            best_idx = i;
+                        }
+                        Some(cur) => {
+                            let better = if is_min { *n < cur } else { *n > cur };
+                            if better {
+                                best_val = Some(*n);
+                                best_idx = i;
+                            }
+                        }
+                    }
+                }
+                other => {
+                    return Err(RuntimeError::new(
+                        "ILO-R009",
+                        format!("{name}: list elements must be numbers, got {:?}", other),
+                    ));
+                }
+            }
+        }
+        return Ok(Value::Number(best_idx as f64));
+    }
+    if builtin == Some(Builtin::Argsort) && args.len() == 1 {
+        // argsort xs:L n > L n — sorted-index permutation (ascending).
+        // Empty list returns empty list. Stable sort (preserves original
+        // index order on ties), matching numpy's stable kind default for
+        // small inputs.
+        let items = match &args[0] {
+            Value::List(l) => l,
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("argsort: arg must be a list, got {:?}", other),
+                ));
+            }
+        };
+        if items.is_empty() {
+            return Ok(Value::List(Arc::new(Vec::new())));
+        }
+        // Validate element types up-front so type errors surface before sort.
+        for item in items.iter() {
+            if !matches!(item, Value::Number(_)) {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("argsort: list elements must be numbers, got {:?}", item),
+                ));
+            }
+        }
+        let mut idxs: Vec<usize> = (0..items.len()).collect();
+        idxs.sort_by(|&a, &b| {
+            let (Value::Number(x), Value::Number(y)) = (&items[a], &items[b]) else {
+                unreachable!()
+            };
+            x.partial_cmp(y).unwrap_or(std::cmp::Ordering::Equal)
+        });
+        let out: Vec<Value> = idxs.into_iter().map(|i| Value::Number(i as f64)).collect();
+        return Ok(Value::List(Arc::new(out)));
+    }
     if matches!(builtin, Some(Builtin::Min | Builtin::Max)) && args.len() == 1 {
         // 1-arg list form: returns the min/max element of a list of numbers.
         // Mirrors `avg`/`median` ergonomics so `max [1 2 3]` == 3.

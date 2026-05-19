@@ -633,6 +633,14 @@ pub(crate) fn is_tree_bridge_eligible(b: crate::builtins::Builtin, argc: usize) 
         // dispatch we already pay for; not worth a new opcode in v1.
         (Builtin::MgetOr, 3) => true,
         (Builtin::LgetOr, 3) => true,
+        // argmax / argmin / argsort — pure list-of-number aggregates that
+        // return an index (or list of indices). No FnRef args, no I/O.
+        // Tree-bridge keeps cross-engine parity at the same cost tier as
+        // `median`/`stdev`-equivalents without burning native opcodes for
+        // an ergonomic-tier additive builtin.
+        (Builtin::Argmax, 1) => true,
+        (Builtin::Argmin, 1) => true,
+        (Builtin::Argsort, 1) => true,
         _ => false,
     }
 }
@@ -16178,6 +16186,14 @@ pub(crate) fn tree_bridge_propagates_error(b: crate::builtins::Builtin) -> bool 
             // ct raises ILO-R009 on non-bool predicate returns. Same
             // class as srt/rsrt key-fn type errors that already propagate.
             | Builtin::Ct
+            // argmax/argmin raise ILO-R009 on empty list (matches
+            // `max`/`min` 1-arg list form). argsort does not raise on
+            // empty but is listed here for symmetry — the allow-list is
+            // about which builtins MAY raise; non-raising calls just
+            // never trigger the propagation path.
+            | Builtin::Argmax
+            | Builtin::Argmin
+            | Builtin::Argsort
     )
 }
 

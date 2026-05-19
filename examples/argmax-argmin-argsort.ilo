@@ -1,0 +1,33 @@
+-- argmax xs: index of the maximum element (first occurrence wins on ties).
+-- argmin xs: index of the minimum element (first occurrence wins on ties).
+-- argsort xs: sorted-index permutation ascending (stable; empty list returns []).
+-- Replaces the verbose `srt fn (enumerate xs)` + extract-first pattern.
+
+peak xs:L n>n;argmax xs
+valley xs:L n>n;argmin xs
+order xs:L n>L n;argsort xs
+
+-- Tie-breaking: first occurrence wins (numpy convention).
+first-max>n;argmax [2,2,2]
+first-min>n;argmin [5,5,5]
+
+-- argsort on already-sorted input is the identity permutation.
+identity>L n;argsort [1,2,3,4,5]
+
+-- argsort on empty list returns empty list.
+empty-sort>L n;argsort []
+
+-- run: peak [3,1,4,1,5,9,2,6]
+-- out: 5
+-- run: valley [3,1,4,1,5,9,2,6]
+-- out: 1
+-- run: order [3,1,4,1,5,9,2,6]
+-- out: [1, 3, 6, 0, 2, 4, 7, 5]
+-- run: first-max
+-- out: 0
+-- run: first-min
+-- out: 0
+-- run: identity
+-- out: [0, 1, 2, 3, 4]
+-- run: empty-sort
+-- out: []
