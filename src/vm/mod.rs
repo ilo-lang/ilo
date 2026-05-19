@@ -12415,6 +12415,103 @@ impl<'a> VM<'a> {
                         Err(msg) => vm_err!(VmError::Type(msg)),
                     }
                 }
+                OP_MOVE_OWN => {
+                    // Move-not-clone variant of OP_MOVE. Transfers the bit
+                    // pattern from R[B] to R[A] without bumping or dropping
+                    // any RC, then clears R[B] to Nil so the source slot
+                    // doesn't double-drop on frame teardown. Used by the
+                    // `name = fn(name, ...)` peephole to thread the first
+                    // arg into the callee at the same RC the caller had,
+                    // unlocking OP_MSET's in-place fast path inside helper
+                    // fns.
+                    let a = ((inst >> 16) & 0xFF) as usize + base;
+                    let b = ((inst >> 8) & 0xFF) as usize + base;
+                    let v = reg!(b);
+                    // SAFETY: a, b are in-frame register slots by the
+                    // compiler's register-allocation invariant. We must
+                    // drop the existing value at R[a] (reg_set! pattern)
+                    // and overwrite R[b] without dropping its old value
+                    // since ownership transferred into R[a].
+                    unsafe {
+                        let slot_a = self.stack.as_mut_ptr().add(a);
+                        (*slot_a).drop_rc();
+                        *slot_a = v;
+                        // Note: if a == b, we already overwrote R[a]=R[b]
+                        // with itself, and clearing here would zap the
+                        // value we just stored. Guard against that.
+                        if a != b {
+                            *self.stack.as_mut_ptr().add(b) = NanVal::nil();
+                        }
+                    }
+                }
+                OP_CALL_OWN1 => {
+                    // Move-first-arg variant of OP_CALL. Identical to
+                    // OP_CALL except the first arg (R[A+1]) is pushed onto
+                    // the callee's stack without a clone_rc bump, and its
+                    // source register is cleared to Nil to preserve the
+                    // RC invariant. Encoding matches OP_CALL exactly so
+                    // the compiler can swap the opcode in place.
+                    let a = ((inst >> 16) & 0xFF) as u8;
+                    let bx = (inst & 0xFFFF) as usize;
+                    let func_idx = (bx >> 8) as u16;
+                    let n_args = bx & 0xFF;
+
+                    // SAFETY: frames is non-empty while execute() is running.
+                    unsafe { self.frames.last_mut().unwrap_unchecked() }.ip = ip;
+
+                    let new_base = self.stack.len();
+                    let callee_all_numeric =
+                        unsafe { self.program.chunks.get_unchecked(func_idx as usize) }
+                            .all_regs_numeric;
+                    for i in 0..n_args {
+                        let src_idx = base + a as usize + 1 + i;
+                        let v = reg!(src_idx);
+                        if i == 0 {
+                            // Move-arg path: don't clone_rc, and clear the
+                            // source slot so the caller's frame doesn't
+                            // double-drop the same RC on OP_RET teardown.
+                            // SAFETY: src_idx is the caller's in-frame
+                            // register slot for arg 0.
+                            unsafe {
+                                *self.stack.as_mut_ptr().add(src_idx) = NanVal::nil();
+                            }
+                        } else if !callee_all_numeric && !v.is_number() {
+                            v.clone_rc();
+                        }
+                        self.stack.push(v);
+                    }
+
+                    let reg_count = self.program.chunks[func_idx as usize].reg_count as usize;
+                    let new_len = new_base + reg_count;
+                    let old_len = self.stack.len();
+                    if new_len > old_len {
+                        self.stack.reserve(new_len - old_len);
+                        let nil = NanVal::nil();
+                        let ptr = self.stack.as_mut_ptr();
+                        for i in old_len..new_len {
+                            // SAFETY: writing into newly-reserved capacity
+                            // before set_len makes the slot a valid Nil.
+                            unsafe {
+                                ptr.add(i).write(nil);
+                            }
+                        }
+                        // SAFETY: capacity was just reserved.
+                        unsafe {
+                            self.stack.set_len(new_len);
+                        }
+                    }
+
+                    self.frames.push(CallFrame {
+                        chunk_idx: func_idx,
+                        ip: 0,
+                        stack_base: new_base,
+                        result_reg: a,
+                    });
+
+                    ci = func_idx as usize;
+                    ip = 0;
+                    base = new_base;
+                }
                 _ => vm_err!(VmError::UnknownOpcode { op }),
             }
         }
