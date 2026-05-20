@@ -1,0 +1,10 @@
+-- SSH key auditor: parse authorized_keys, extract metadata, flag weak types
+-- Limitations: base64 decode, sha256 hash, RSA bit extraction not available yet
+
+is-weak typ:t > b; has ["ssh-dss" "ecdsa-sha2-nistp224"] typ
+
+parse-line line:t > O (M t t);parts=spl line " ";?>=len parts 2 (mset (mset (mset (mmap) "type" (at parts 0)) "b64" (at parts 1)) "comment" (??at parts 2 "")) nil
+
+format-row row:M t t > t;type=??mget row "type" "";b64=??mget row "b64" "";comment=??mget row "comment" "";weak=is-weak type;status=?weak "WEAK" "OK";cat [type " | " (slc b64 0 12) " | " comment " | " status " | " "N/A"] ""
+
+main > t;r=rdl "examples/personas/fixtures/sample-authorized_keys";?r{~_:(header=cat ["Type" " | " "B64-Prefix" " | " "Comment" " | " "Status" " | " "Fingerprint"] "";parsed=flt (map parse-line _) unq;out=cat (+=rows [header] (map format-row parsed)) "\n";out)} (^e)
