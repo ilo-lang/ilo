@@ -17,7 +17,14 @@ Prefix-call: `name arg1 arg2 ...`. Cross-engine unless noted.
 
 ## Regex
 
-`rgx s pat` first match, `rgxall s pat` all matches, `rgxall1 s pat` first capture group of each match, `rgxall-multi pats s` multi-pattern flat-match (each pattern follows rgxall1 semantics; results concat in pattern order), `rgxsub s pat repl` substitute.
+Signatures (pat first, string last):
+
+- `rgx pat s > L t` — first match: list of [whole, cap1, cap2, ...]
+- `rgxall pat s > L t` — all whole matches
+- `rgxall1 pat s > L t` — capture-group 1 of every match
+- `rgxsub pat repl s > t` — substitute first match
+- `rgxsuball pat repl s > t` — substitute all matches
+- `rgxall-multi pats s > L t` — multi-pattern flat-match (each pattern follows rgxall1 semantics; results concat in pattern order)
 
 ## Formatting
 
