@@ -18,7 +18,7 @@
 /// use ilo::caps::{Caps, Policy};
 ///
 /// // Block all network access
-/// let caps = Caps {
+/// let caps = Caps::Restricted {
 ///     net:   Policy::List(vec![]),
 ///     read:  Policy::All,
 ///     write: Policy::All,
