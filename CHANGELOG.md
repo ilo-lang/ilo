@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.13.0 - 2026-05-19
+## Unreleased
 
 The codegen layer. A typed HIR sits between the verified AST and code
 emission, and four backends now live behind a single `Backend` trait:
@@ -19,7 +19,7 @@ ilo build file.ilo --py       # Python source (.py)
 
 Runs every `examples/*.ilo` with `-- run:` + `-- out:` headers through every
 available backend and reports honest per-backend numbers. 218 conformance
-cases at the 0.13.0 cut.
+cases at the CalVer cut (26.X).
 
 | backend | pass | unsupported | fail |
 | --- | ---: | ---: | ---: |
@@ -35,7 +35,7 @@ Reading the numbers honestly:
   `ilo_strconst_*`, unsupported opcode 176, `nil` from `zip`) and entry-point
   mismatches between `ilo run` (which picks `main` or the named function
   cleanly) and `ilo build` (which currently uses the auto-main-pick path).
-  None of these are 0.13.0 regressions; all carry over from 0.12.x and are
+  None of these are 26.X regressions; all carry over from 0.12.x and are
   follow-up work.
 - **Python**: emits library code with no `if __name__ == "__main__"`
   dispatcher, so the subprocess runner can't pick the entry function. The
@@ -220,9 +220,9 @@ against Phase 6.
   form no longer transpiles. Per the manifesto-strict CLI (one canonical
   form per backend), it now prints a migration hint and exits with code 2:
   `ilo build <file.ilo> --py`. Pre-1.0 we break this cleanly; the migration
-  hint stays in 0.13.0 and goes away in the next release.
+  hint stays in 26.X and goes away in the next release.
 
-### Not changed in 0.13.0
+### Not changed in 26.X
 
 - The internal engine-selector flags (`--run-tree`, `--run-vm`, `--run-llvm`,
   `--jit`) remain on the `ilo run` / positional surface. The Phase 5 brief
@@ -252,7 +252,7 @@ No public API changes (other than `--emit python` removal). No other CLI changes
 
 ### Renamed
 
-- `--run-vm` renamed to `--vm`, symmetric in shape with `--jit` and `--run-llvm` (where the flag names the engine, not the action). `--run-vm` is retained as a hidden alias for one release; every invocation emits a one-shot stderr hint `hint: --run-vm → --vm (canonical form). The --run-vm alias will be removed in 0.13.0.`. Carry-forward scripts and personas that hard-coded `--run-vm` keep working through 0.12.x and pick up the nudge to update. Hard removal lands in 0.13.0 with the tree-walker drop.
+- `--run-vm` renamed to `--vm`, symmetric in shape with `--jit` and `--run-llvm` (where the flag names the engine, not the action). `--run-vm` is retained as a hidden alias for one release; every invocation emits a one-shot stderr hint `hint: --run-vm → --vm (canonical form). The --run-vm alias will be removed in 26.X.`. Carry-forward scripts and personas that hard-coded `--run-vm` keep working through 0.12.x and pick up the nudge to update. Hard removal lands in 26.X with the tree-walker drop.
 
 ### Diagnostics
 
@@ -271,7 +271,7 @@ No public API changes (other than `--emit python` removal). No other CLI changes
 - `ilo check --strict` flag. Treats every warning-severity diagnostic (ILO-T032 bare `fmt`, ILO-T033 bare `mset`/`+=`/`mdel`, future warning codes) as a hard exit-code failure so CI harnesses can fail-on-warning. The diagnostic stream itself is unchanged: warnings still emit with `severity: "warning"` in the JSON output, only the exit code is elevated. Surfaced by rerun11 ci-gating personas that ran `ilo check src/*.ilo` in CI and missed mset / fmt traps because the verifier exited 0 on warnings.
 - `mget-or m k default > v` and `lget-or xs i default > a`. Defaulted lookups for Map and List that return the element type directly, no `O v` to coalesce, no OOB error for `lget-or`. The verifier enforces that the default matches the container's element/value type so the return shape is `v` / `a`, never `O v`. Both lower through the tree-bridge, so every engine inherits semantics without new opcodes. Closes the manifesto-friction `(mget m k) ?? d` and `i<len?at xs i:d` ceremony agents kept reaching for.
 - `argmax xs > n`, `argmin xs > n`, `argsort xs > L n`. Index-returning aggregates with numpy naming. `argmax` returns the 0-based index of the maximum element (first occurrence wins on ties); `argmin` the same for minimum; `argsort` returns the stable sorted-index permutation ascending (smallest to largest, empty list returns `[]`). All three error on empty input except `argsort`. All lower through the tree-bridge, so VM and Cranelift inherit them without new opcodes. Closes the `srt fn (enumerate xs)` + extract-first pattern agents converged on for argmax/argmin-style queries.
-- `dirname path > t`, `basename path > t`, `pathjoin parts:L t > t` path-manipulation builtins. POSIX semantics with Unix forward-slash separator (Windows backslash handling deferred to 0.13.0). `dirname` returns `""` (not `"."`) for plain filenames so `pathjoin [dirname p basename p]` round-trips without injecting a phantom `./` prefix. `pathjoin` is list-form (not variadic) to avoid the ILO-P101 arity-inference trap. Pure text ops, no I/O, no Result wrapper, tree-bridge eligible so VM and Cranelift inherit cross-engine parity for free. Closes the four-builtin `cat (slc (spl p "/") 0 -1) "/"` dance every filesystem persona was paying.
+- `dirname path > t`, `basename path > t`, `pathjoin parts:L t > t` path-manipulation builtins. POSIX semantics with Unix forward-slash separator (Windows backslash handling deferred to a future release). `dirname` returns `""` (not `"."`) for plain filenames so `pathjoin [dirname p basename p]` round-trips without injecting a phantom `./` prefix. `pathjoin` is list-form (not variadic) to avoid the ILO-P101 arity-inference trap. Pure text ops, no I/O, no Result wrapper, tree-bridge eligible so VM and Cranelift inherit cross-engine parity for free. Closes the four-builtin `cat (slc (spl p "/") 0 -1) "/"` dance every filesystem persona was paying.
 - `rdin > R t t` and `rdinl > R (L t) t`. Stdin read primitives. `rdin` reads all of stdin as text; `rdinl` reads it line by line with newlines stripped. Both return Err on I/O failure and on WASM targets (where stdin is unavailable). Both are 0-arg and lower through the tree-bridge so VM and Cranelift inherit them without new opcodes. Unblocks the Unix-pipeline persona class: programs can now receive piped input directly instead of reading a file or embedding data in argv. Closes the gap surfaced in the rerun12 lang-surface proposal (#5 rdin/rdinl ADOPT).
 - Math constants `pi` (3.141592653589793), `tau` (6.283185307179586), `e` (2.718281828459045). Zero-arg builtins returning the canonical IEEE-754 `f64` value. Tree-bridge-eligible, so VM and Cranelift JIT/AOT inherit with no new opcodes; Python codegen emits `math.pi` / `math.tau` / `math.e`. Stops agents hardcoding `3.14159...` or reconstructing pi via `* 2 (atan2 0 -1)` - both shapes surfaced in fft-peak rerun12. Note: because `e` is now a builtin name, any existing code using `e` as a local binding will get an ILO-P011 diagnostic on upgrade; rename to `ev`, `er`, or similar.
 - `default-on-err r d > T` builtin. Unwraps `R T E` to `T`, returning `d` if the result is Err. The Result mirror of `??` (nil-coalesce for `O T`). Kills the common `?r{~v:v;^_:default}` pattern when the error payload is unused. Lowers through the tree-bridge (2-arg, pure), so VM and Cranelift JIT inherit semantics without a new opcode. Verifier emits ILO-T040 when the first arg is not `R T E` (hint steers at `??` only when the first arg is Optional, avoiding misleading steers for plain `n`/`t`/`b` first args); ILO-T042 when the default's type doesn't match the Ok type (split from T040 so the agent can target the right arg); ILO-T041 when `??` is used on a Result value (steering to `default-on-err`). T041 is intentionally suppressed when the lhs type is `Unknown` (e.g. type-variable params, `_`-typed values) to avoid false positives on generic code; regression-tested.
