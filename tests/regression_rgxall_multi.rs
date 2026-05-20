@@ -156,6 +156,11 @@ fn rgxall_multi_non_text_pattern_in_list_errors() {
 }
 
 #[test]
+fn rgxall_multi_non_text_second_arg_errors() {
+    check_error(r#"f>L t;rgxall-multi ["\d+"] 42"#, "rgxall-multi");
+}
+
+#[test]
 fn rgxall_multi_invalid_regex_errors() {
     check_error(
         r#"f>L t;rgxall-multi ["(unclosed"] "input""#,
