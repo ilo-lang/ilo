@@ -8,6 +8,9 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  # Interpreter tests exercise deep recursion (e.g. fib(10)), which can blow
+  # the 8 MiB default thread stack on Linux debug builds. 16 MiB is enough.
+  RUST_MIN_STACK: 16777216
 
 jobs:
   lint:
