@@ -7067,9 +7067,12 @@ impl NanVal {
                 // the registry is unavailable (e.g. standalone unit tests that
                 // don't go through jit_call_dyn).
                 let registry_ptr = ACTIVE_REGISTRY.with(|r| r.get());
-                let (field_names, num_fields_mask): (Vec<String>, u64) = if !registry_ptr.is_null() {
+                let (field_names, num_fields_mask): (Vec<String>, u64) = if !registry_ptr.is_null()
+                {
                     let registry = unsafe { &*registry_ptr };
-                    if let Some(ti) = registry.name_to_id.get(type_name.as_str())
+                    if let Some(ti) = registry
+                        .name_to_id
+                        .get(type_name.as_str())
                         .and_then(|&id| registry.types.get(id as usize))
                     {
                         (ti.fields.clone(), ti.num_fields)
