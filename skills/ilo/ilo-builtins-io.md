@@ -17,7 +17,10 @@ Prefix-call: `name arg1 arg2 ...`. Cross-engine unless noted.
 
 ## HTTP
 
-`get url` (alias `$`, `R t t`), `post url body`, `get-many urls` (parallel).
+`get url` (`R t t`), `get url headers` (with `M t t` custom headers), `get-to url timeout-ms` (explicit ms timeout).
+`pst url body` (`R t t`), `pst url body headers`, `pst-to url body timeout-ms`.
+`get-many urls` (parallel fan-out, `L (R t t)`).
+Timeout variants round up to the nearest second. Err on timeout or connection failure.
 
 ## JSON
 

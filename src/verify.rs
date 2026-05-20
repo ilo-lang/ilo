@@ -333,6 +333,9 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     // compression family (rd, wr, srt, flt, fld, fmt).
     ("pst", &["t", "t"], "R t t"),
     ("pst", &["t", "t", "M t t"], "R t t"),
+    // get-to / pst-to — timeout variants. Third arg is timeout in milliseconds.
+    ("get-to", &["t", "n"], "R t t"),
+    ("pst-to", &["t", "t", "n"], "R t t"),
     ("get-many", &["L t"], "L (R t t)"),
     ("run", &["t", "L t"], "R (M t t) t"),
     ("rd", &["t"], "R ? t"),
@@ -1694,6 +1697,63 @@ fn builtin_check_args(
                         is_warning: false,
                     });
                 }
+            }
+            (Ty::Result(Box::new(Ty::Text), Box::new(Ty::Text)), errors)
+        }
+        "get-to" => {
+            // get-to url timeout-ms — 2-arg; timeout-ms is n (milliseconds)
+            if let Some(arg) = arg_types.first()
+                && !compatible(arg, &Ty::Text)
+            {
+                errors.push(VerifyError {
+                    code: "ILO-T013",
+                    function: func_ctx.to_string(),
+                    message: format!("'get-to' expects t (url), got {arg}"),
+                    hint: None,
+                    span,
+                    is_warning: false,
+                });
+            }
+            if let Some(arg) = arg_types.get(1)
+                && !compatible(arg, &Ty::Number)
+            {
+                errors.push(VerifyError {
+                    code: "ILO-T013",
+                    function: func_ctx.to_string(),
+                    message: format!("'get-to' expects n (timeout-ms), got {arg}"),
+                    hint: None,
+                    span,
+                    is_warning: false,
+                });
+            }
+            (Ty::Result(Box::new(Ty::Text), Box::new(Ty::Text)), errors)
+        }
+        "pst-to" => {
+            // pst-to url body timeout-ms — 3-arg; timeout-ms is n (milliseconds)
+            for (i, arg) in arg_types.iter().enumerate().take(2) {
+                if !compatible(arg, &Ty::Text) {
+                    let label = if i == 0 { "url" } else { "body" };
+                    errors.push(VerifyError {
+                        code: "ILO-T013",
+                        function: func_ctx.to_string(),
+                        message: format!("'pst-to' expects t ({label}), got {arg}"),
+                        hint: None,
+                        span,
+                        is_warning: false,
+                    });
+                }
+            }
+            if let Some(arg) = arg_types.get(2)
+                && !compatible(arg, &Ty::Number)
+            {
+                errors.push(VerifyError {
+                    code: "ILO-T013",
+                    function: func_ctx.to_string(),
+                    message: format!("'pst-to' expects n (timeout-ms), got {arg}"),
+                    hint: None,
+                    span,
+                    is_warning: false,
+                });
             }
             (Ty::Result(Box::new(Ty::Text), Box::new(Ty::Text)), errors)
         }
