@@ -3416,7 +3416,9 @@ impl VerifyContext {
                         (Ty::Text, Ty::Number) => {
                             Some("use 'num' to parse text (returns R n t)".to_string())
                         }
-                        _ => None,
+                        _ => Some(format!(
+                            "change the return expression to {expected}, or update the return type annotation"
+                        )),
                     };
                     let last_span = body.last().map(|s| s.span);
                     self.err(
@@ -3608,7 +3610,10 @@ impl VerifyContext {
                             "ILO-T009",
                             func,
                             format!("destructure requires a record type, got {other}"),
-                            None,
+                            Some(
+                                "ensure the value is a named record type before destructuring"
+                                    .to_string(),
+                            ),
                             Some(span),
                         );
                         for binding in bindings {
@@ -4448,7 +4453,7 @@ impl VerifyContext {
                                     "ILO-T017",
                                     func,
                                     format!("field '{fname}' of '{type_name}' expects {fty}, got {actual}"),
-                                    None,
+                                    Some(format!("provide a {fty} value for '{fname}'")),
                                     Some(span),
                                 );
                             }
@@ -4636,7 +4641,7 @@ impl VerifyContext {
                             "ternary branches have different types: {} vs {}",
                             then_ty, else_ty
                         ),
-                        None,
+                        Some("both branches of a ternary must return the same type".to_string()),
                         Some(span),
                     );
                     then_ty
@@ -4687,7 +4692,7 @@ impl VerifyContext {
                             "ILO-T020",
                             func,
                             format!("'with' on non-record type {other}"),
-                            None,
+                            Some("'with' only works on named record types - ensure the value is a record".to_string()),
                             Some(span),
                         );
                         Ty::Unknown
@@ -6157,12 +6162,17 @@ mod tests {
     }
 
     #[test]
-    fn suggestion_t008_unrelated_mismatch_no_hint() {
-        // bool → number: no specific hint
+    fn suggestion_t008_unrelated_mismatch_has_generic_hint() {
+        // bool → number: generic fallback hint added
         let result = parse_and_verify("f x:b>n;x");
         let errors = result.unwrap_err();
         let e = errors.iter().find(|e| e.code == "ILO-T008").unwrap();
-        assert!(e.hint.is_none());
+        // The fallback now provides a generic hint pointing at the return annotation
+        let hint = e
+            .hint
+            .as_ref()
+            .expect("expected generic hint for T008 bool->n mismatch");
+        assert!(hint.contains("return") || hint.contains("annotation"));
     }
 
     #[test]
