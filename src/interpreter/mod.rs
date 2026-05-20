@@ -3073,6 +3073,100 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             }
         };
     }
+    if builtin == Some(Builtin::GetTo) && args.len() == 2 {
+        let url = match &args[0] {
+            Value::Text(u) => u.clone(),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("get-to requires text (url), got {:?}", other),
+                ));
+            }
+        };
+        let timeout_ms = match &args[1] {
+            Value::Number(n) => *n,
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("get-to requires n (timeout-ms), got {:?}", other),
+                ));
+            }
+        };
+        // minreq takes whole seconds; round up from milliseconds
+        let timeout_secs = ((timeout_ms / 1000.0).ceil() as u64).max(1);
+        return {
+            #[cfg(feature = "http")]
+            {
+                let req = minreq::get(url.as_str()).with_timeout(timeout_secs);
+                match req.send() {
+                    Ok(resp) => match resp.as_str() {
+                        Ok(body) => {
+                            Ok(Value::Ok(Box::new(Value::Text(Arc::new(body.to_string())))))
+                        }
+                        Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(format!(
+                            "response is not valid UTF-8: {e}"
+                        )))))),
+                    },
+                    Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(e.to_string()))))),
+                }
+            }
+            #[cfg(not(feature = "http"))]
+            {
+                let _ = (url, timeout_secs);
+                Ok(Value::Err(Box::new(Value::Text(
+                    "http feature not enabled".to_string().into(),
+                ))))
+            }
+        };
+    }
+    if builtin == Some(Builtin::PstTo) && args.len() == 3 {
+        let (url, body) = match (&args[0], &args[1]) {
+            (Value::Text(u), Value::Text(b)) => (u.clone(), b.clone()),
+            _ => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!(
+                        "pst-to requires (t, t, n), got ({:?}, {:?}, {:?})",
+                        args[0], args[1], args[2]
+                    ),
+                ));
+            }
+        };
+        let timeout_ms = match &args[2] {
+            Value::Number(n) => *n,
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("pst-to requires n (timeout-ms), got {:?}", other),
+                ));
+            }
+        };
+        let timeout_secs = ((timeout_ms / 1000.0).ceil() as u64).max(1);
+        return {
+            #[cfg(feature = "http")]
+            {
+                let req = minreq::post(url.as_str())
+                    .with_body(body.as_str())
+                    .with_timeout(timeout_secs);
+                match req.send() {
+                    Ok(resp) => match resp.as_str() {
+                        Ok(b) => Ok(Value::Ok(Box::new(Value::Text(Arc::new(b.to_string()))))),
+                        Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(format!(
+                            "response is not valid UTF-8: {e}"
+                        )))))),
+                    },
+                    Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(e.to_string()))))),
+                }
+            }
+            #[cfg(not(feature = "http"))]
+            {
+                let _ = (url, body, timeout_secs);
+                Ok(Value::Err(Box::new(Value::Text(
+                    "http feature not enabled".to_string().into(),
+                ))))
+            }
+        };
+    }
     if builtin == Some(Builtin::Run) && args.len() == 2 {
         // run cmd:t args:L t  >  R (M t t) t
         //

@@ -698,6 +698,12 @@ pub(crate) fn is_tree_bridge_eligible(b: crate::builtins::Builtin, argc: usize) 
         // 2-arg, returns T unwrapped from R T E or the default d. Tree-bridge
         // keeps cross-engine parity without a new opcode.
         (Builtin::DefaultOnErr, 2) => true,
+        // get-to url ms / pst-to url body ms — HTTP with explicit timeout.
+        // Same bridge contract as `run`: returns Result, no FnRef args, the
+        // tree interpreter handles the actual minreq call. VM and Cranelift
+        // JIT/AOT pick them up at zero opcode cost.
+        (Builtin::GetTo, 2) => true,
+        (Builtin::PstTo, 3) => true,
         _ => false,
     }
 }
@@ -724,6 +730,8 @@ pub(crate) fn tree_bridge_returns_result(b: crate::builtins::Builtin) -> bool {
             | Builtin::Wra
             | Builtin::DtparseRel
             | Builtin::DurParse
+            | Builtin::GetTo
+            | Builtin::PstTo
     )
 }
 

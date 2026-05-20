@@ -152,6 +152,15 @@ pub enum Builtin {
     Get,
     Post,
     GetMany,
+    // `get-to url timeout-ms > R t t` — like `get` but with an explicit
+    // per-request timeout (milliseconds). Rounds up to nearest whole second
+    // for minreq (which takes u64 seconds). Returns Err when the deadline
+    // is exceeded, identical to a connection error from the caller's view.
+    // Tree-bridge eligible; no new native opcode needed.
+    GetTo,
+    // `pst-to url body timeout-ms > R t t` — like `pst` but with an explicit
+    // per-request timeout. Same millisecond-to-second rounding as `get-to`.
+    PstTo,
 
     // Process spawn (argv-list only — no shell, no interpolation, no glob).
     // See SPEC.md "Process spawn" section for the security framing.
@@ -352,6 +361,8 @@ impl Builtin {
             // did-you-mean to `pst` via the standard suggestion path.
             "pst" => Some(Builtin::Post),
             "get-many" => Some(Builtin::GetMany),
+            "get-to" => Some(Builtin::GetTo),
+            "pst-to" => Some(Builtin::PstTo),
             "mmap" => Some(Builtin::Mmap),
             "mget" => Some(Builtin::Mget),
             "mset" => Some(Builtin::Mset),
@@ -509,6 +520,8 @@ impl Builtin {
             Builtin::Get => "get",
             Builtin::Post => "pst",
             Builtin::GetMany => "get-many",
+            Builtin::GetTo => "get-to",
+            Builtin::PstTo => "pst-to",
             Builtin::Mmap => "mmap",
             Builtin::Mget => "mget",
             Builtin::Mset => "mset",
@@ -760,6 +773,13 @@ impl Builtin {
         Builtin::Mtime,
         Builtin::Isfile,
         Builtin::Isdir,
+        // 0.12.1: HTTP builtins with explicit per-request timeout. Appended
+        // last to preserve every existing on-wire tag. Tree-bridge eligible
+        // so VM and Cranelift JIT/AOT inherit them without new opcodes.
+        // minreq `with_timeout` takes whole seconds; millisecond values are
+        // rounded up (ceil(ms / 1000)) so 1 ms => 1 s, 1001 ms => 2 s.
+        Builtin::GetTo,
+        Builtin::PstTo,
     ];
 
     /// On-wire 8-bit tag for cross-engine builtin dispatch. See `ALL`.
@@ -1021,6 +1041,8 @@ mod tests {
             "jpar-list",
             "get",
             "pst",
+            "get-to",
+            "pst-to",
             "mmap",
             "mget",
             "mset",
@@ -1273,6 +1295,8 @@ mod tests {
             "get",
             "pst",
             "get-many",
+            "get-to",
+            "pst-to",
             "mmap",
             "mget",
             "mset",

@@ -4167,6 +4167,10 @@ fn builtin_arity_tables() -> (HashMap<String, usize>, HashMap<String, Vec<bool>>
         // Duration parse / format. Single fixed-arity args, no FnRef slots.
         ("dur-parse", 1, &[]),
         ("dur-fmt", 1, &[]),
+        // HTTP timeout variants: fixed arity so eager parsing works correctly.
+        // get-to url timeout-ms (2-arg), pst-to url body timeout-ms (3-arg).
+        ("get-to", 2, &[]),
+        ("pst-to", 3, &[]),
         // Note: omitted by design — these have overloads or zero-arg forms
         // best left to the existing greedy/zero-arg paths:
         //   rnd, now, mmap (0-arg, special-cased above)
