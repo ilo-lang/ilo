@@ -73,6 +73,7 @@ mget-or m k default      -- value at key k, or default if missing (never nil)
 mhas m k                 -- b: true if key exists
 mkeys m                  -- L t: sorted list of keys
 mvals m                  -- L v: values sorted by key
+mpairs m                 -- L (L _): sorted [k, v] pairs; mpairs m == zip (mkeys m) (mvals m)
 mdel m k                 -- return new map with key k removed
 len m                     -- number of entries
 ```
@@ -503,6 +504,7 @@ Called like functions, compiled to dedicated opcodes.
 | `mhas m k` | true if key exists | `b` |
 | `mkeys m` | sorted list of keys | `L t` |
 | `mvals m` | values sorted by key | `L v` |
+| `mpairs m` | sorted [k, v] pairs; `mpairs m == zip (mkeys m) (mvals m)` | `L (L _)` |
 | `mdel m k` | new map with key k removed | `M k v` |
 | `mget-or m k default` | value at key k, or `default` if missing (never nil; default type must match value type) | `v` |
 | `at xs i` | i-th element of list or text (0-indexed; negative counts from end; float `i` auto-floors) | element |

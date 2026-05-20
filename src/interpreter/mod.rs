@@ -1239,6 +1239,23 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             )),
         };
     }
+    if builtin == Some(Builtin::Mpairs) && args.len() == 1 {
+        return match &args[0] {
+            Value::Map(m) => {
+                let mut pairs: Vec<(&MapKey, &Value)> = m.iter().collect();
+                pairs.sort_by_key(|(k, _)| (*k).clone());
+                let out: Vec<Value> = pairs
+                    .into_iter()
+                    .map(|(k, v)| Value::List(Arc::new(vec![map_key_to_value(k), v.clone()])))
+                    .collect();
+                Ok(Value::List(Arc::new(out)))
+            }
+            _ => Err(RuntimeError::new(
+                "ILO-R009",
+                "mpairs: expects a map".to_string(),
+            )),
+        };
+    }
     if builtin == Some(Builtin::Mdel) && args.len() == 2 {
         let mut it = args.into_iter();
         let map_val = it.next().unwrap();

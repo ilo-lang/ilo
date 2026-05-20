@@ -1,0 +1,18 @@
+-- mpairs m > L (L _) — sorted-by-key list of [k, v] 2-element lists.
+-- Invariant: mpairs m == zip (mkeys m) (mvals m). Use instead of the
+-- common `map (fn k > [k (mget m k)]) (mkeys m)` cascade.
+
+pairs>L (L _);m=mset (mset (mset mmap "b" 2) "a" 1) "c" 3;mpairs m
+
+-- Empty map returns an empty list.
+empty>L (L _);mpairs mmap
+
+-- Numeric keys sort numerically (not lexicographically): 2 < 5 < 10.
+nums>L (L _);m=mset (mset (mset mmap 10 "a") 2 "b") 5 "c";mpairs m
+
+-- run: pairs
+-- out: [[a, 1], [b, 2], [c, 3]]
+-- run: empty
+-- out: []
+-- run: nums
+-- out: [[2, b], [5, c], [10, a]]
