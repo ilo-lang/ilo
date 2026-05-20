@@ -159,7 +159,8 @@ fn in_n_months() {
     }
 }
 
-// Month-end clamping: Jan 31 + 1 month should clamp to Feb 28 (2024 is a leap year → Feb 29).
+// Month-end clamping: Jan 31 + 1 month clamps to the last valid day of February.
+// In 2024 (a leap year) that's Feb 29, so the result is 2024-02-29 = 1709164800.
 #[test]
 fn month_end_clamp() {
     // now = 2024-01-31 = 1706659200
@@ -267,6 +268,44 @@ fn unknown_phrase_returns_err() {
             combined.contains("dtparse-rel") || combined.contains("unrecognised"),
             "engine={e}: expected Err with 'dtparse-rel', got stdout={stdout:?} stderr={stderr:?}"
         );
+    }
+}
+
+// Regression for the suffix-strip false-positive: a phrase like "in this day"
+// or "in some day" used to slip through the "in N day(s)" arm because
+// `strip_suffix(" day")` matched the trailing 4 chars and the integer parser
+// then failed on the non-digit remainder, surfacing a misleading
+// "invalid day count" error instead of the unrecognised-phrase fallback.
+// Same risk class for `" day(s)/week(s)/month(s)"` suffixes; covered together.
+#[test]
+fn non_digit_count_falls_through_to_unrecognised_phrase() {
+    let cases = [
+        ("in this day", "in 0 days"),    // " day" suffix, non-digit remainder
+        ("in some days", "in 0 days"),   // " days" suffix, non-digit remainder
+        ("for week ago", "0 weeks ago"), // " week ago" suffix, non-digit remainder
+        ("over the month ago", "0 months ago"), // " month ago" suffix, non-digit remainder
+        ("in some months", "in 0 months"),
+    ];
+    for (phrase, _hint) in cases {
+        let src = format!("f>R n t;dtparse-rel \"{phrase}\" 1705276800");
+        for e in engines() {
+            let (ok, stdout, stderr) = run_result(e, &src, "f");
+            assert!(!ok, "engine={e} phrase={phrase:?}: expected Err exit 1");
+            let combined = format!("{stdout}{stderr}");
+            // Must surface the unrecognised-phrase error, NOT "invalid <unit> count".
+            assert!(
+                combined.contains("unrecognised") || combined.contains("expected"),
+                "engine={e} phrase={phrase:?}: expected unrecognised-phrase Err, \
+                 got stdout={stdout:?} stderr={stderr:?}"
+            );
+            assert!(
+                !combined.contains("invalid day count")
+                    && !combined.contains("invalid week count")
+                    && !combined.contains("invalid month count"),
+                "engine={e} phrase={phrase:?}: leaked 'invalid <unit> count' error \
+                 from suffix-strip false positive, got stdout={stdout:?} stderr={stderr:?}"
+            );
+        }
     }
 }
 

@@ -6702,56 +6702,60 @@ fn dtparse_rel(phrase: &str, now_epoch: f64) -> Value {
         };
     }
 
+    // Helper: only treat a stripped remainder as a count phrase if it's
+    // an all-digit non-empty token. Without this, a leftover word fragment
+    // (e.g. "wednes" from a hypothetical "wednesday" mis-strip, or "this"
+    // from "in this day") would fall through to the int parser and surface
+    // as a misleading "invalid <unit> count" error instead of the
+    // unrecognised-phrase fallback. Digit-only also gates negatives out
+    // (the `-` sign is rejected before parse, so the `n >= 0` branch in
+    // each arm only fires for genuine non-negative integers).
+    fn parse_unsigned_count(rest: &str) -> Option<i64> {
+        let t = rest.trim();
+        if t.is_empty() || !t.bytes().all(|b| b.is_ascii_digit()) {
+            return None;
+        }
+        t.parse::<i64>().ok()
+    }
+
     // "N day(s) ago" / "in N day(s)"
     let ago_days = s
         .strip_suffix(" days ago")
         .or_else(|| s.strip_suffix(" day ago"));
-    if let Some(rest) = ago_days {
-        return match rest.trim().parse::<i64>() {
-            Ok(n) if n >= 0 => {
-                let d = today - Duration::days(n);
-                make_ok(d.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp())
-            }
-            _ => make_err(format!("dtparse-rel: invalid day count in '{phrase}'")),
-        };
+    if let Some(rest) = ago_days
+        && let Some(n) = parse_unsigned_count(rest)
+    {
+        let d = today - Duration::days(n);
+        return make_ok(d.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp());
     }
     let in_days = s
         .strip_prefix("in ")
         .and_then(|r| r.strip_suffix(" days").or_else(|| r.strip_suffix(" day")));
-    if let Some(rest) = in_days {
-        return match rest.trim().parse::<i64>() {
-            Ok(n) if n >= 0 => {
-                let d = today + Duration::days(n);
-                make_ok(d.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp())
-            }
-            _ => make_err(format!("dtparse-rel: invalid day count in '{phrase}'")),
-        };
+    if let Some(rest) = in_days
+        && let Some(n) = parse_unsigned_count(rest)
+    {
+        let d = today + Duration::days(n);
+        return make_ok(d.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp());
     }
 
     // "N week(s) ago" / "in N week(s)"
     let ago_weeks = s
         .strip_suffix(" weeks ago")
         .or_else(|| s.strip_suffix(" week ago"));
-    if let Some(rest) = ago_weeks {
-        return match rest.trim().parse::<i64>() {
-            Ok(n) if n >= 0 => {
-                let d = today - Duration::weeks(n);
-                make_ok(d.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp())
-            }
-            _ => make_err(format!("dtparse-rel: invalid week count in '{phrase}'")),
-        };
+    if let Some(rest) = ago_weeks
+        && let Some(n) = parse_unsigned_count(rest)
+    {
+        let d = today - Duration::weeks(n);
+        return make_ok(d.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp());
     }
     let in_weeks = s
         .strip_prefix("in ")
         .and_then(|r| r.strip_suffix(" weeks").or_else(|| r.strip_suffix(" week")));
-    if let Some(rest) = in_weeks {
-        return match rest.trim().parse::<i64>() {
-            Ok(n) if n >= 0 => {
-                let d = today + Duration::weeks(n);
-                make_ok(d.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp())
-            }
-            _ => make_err(format!("dtparse-rel: invalid week count in '{phrase}'")),
-        };
+    if let Some(rest) = in_weeks
+        && let Some(n) = parse_unsigned_count(rest)
+    {
+        let d = today + Duration::weeks(n);
+        return make_ok(d.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp());
     }
 
     // "N month(s) ago" / "in N month(s)"
@@ -6776,30 +6780,30 @@ fn dtparse_rel(phrase: &str, now_epoch: f64) -> Value {
     let ago_months = s
         .strip_suffix(" months ago")
         .or_else(|| s.strip_suffix(" month ago"));
-    if let Some(rest) = ago_months {
-        return match rest.trim().parse::<i32>() {
-            Ok(n) if n >= 0 => match add_months(today, -n) {
-                Some(d) => make_ok(d.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp()),
-                None => make_err(format!(
-                    "dtparse-rel: month arithmetic out of range in '{phrase}'"
-                )),
-            },
-            _ => make_err(format!("dtparse-rel: invalid month count in '{phrase}'")),
+    if let Some(rest) = ago_months
+        && let Some(n) = parse_unsigned_count(rest)
+    {
+        let n = n as i32;
+        return match add_months(today, -n) {
+            Some(d) => make_ok(d.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp()),
+            None => make_err(format!(
+                "dtparse-rel: month arithmetic out of range in '{phrase}'"
+            )),
         };
     }
     let in_months = s.strip_prefix("in ").and_then(|r| {
         r.strip_suffix(" months")
             .or_else(|| r.strip_suffix(" month"))
     });
-    if let Some(rest) = in_months {
-        return match rest.trim().parse::<i32>() {
-            Ok(n) if n >= 0 => match add_months(today, n) {
-                Some(d) => make_ok(d.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp()),
-                None => make_err(format!(
-                    "dtparse-rel: month arithmetic out of range in '{phrase}'"
-                )),
-            },
-            _ => make_err(format!("dtparse-rel: invalid month count in '{phrase}'")),
+    if let Some(rest) = in_months
+        && let Some(n) = parse_unsigned_count(rest)
+    {
+        let n = n as i32;
+        return match add_months(today, n) {
+            Some(d) => make_ok(d.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp()),
+            None => make_err(format!(
+                "dtparse-rel: month arithmetic out of range in '{phrase}'"
+            )),
         };
     }
 

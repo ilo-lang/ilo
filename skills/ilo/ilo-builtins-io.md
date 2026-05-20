@@ -29,4 +29,4 @@ Prefix-call: `name arg1 arg2 ...`. Cross-engine unless noted.
 
 ## Time
 
-`now` (s), `now-ms`, `sleep ms`, `clock`.
+`now` (s), `now-ms`, `sleep ms`, `clock`. Date parsing/formatting (`dtfmt`, `dtparse`, `dtparse-rel`) lives in `ilo-builtins-text`.
