@@ -1,0 +1,31 @@
+-- Parse X.509 PEM cert and output JSON with subject CN, issuer CN, dates, key type
+
+main>t;
+  tmp="/tmp/cert" + (0|rnd|string) + ".pem";
+  pem=rd "/dev/stdin";
+  wr tmp pem "";
+
+  subj-out=run "openssl" ["x509" "-noout" "-subject" "-in" tmp];
+  subj-parts=spl "CN=" subj-out;
+  subj-cn=trim (hd (spl "," (get 1 subj-parts)));
+
+  iss-out=run "openssl" ["x509" "-noout" "-issuer" "-in" tmp];
+  iss-parts=spl "CN=" iss-out;
+  iss-cn=trim (hd (spl "," (get 1 iss-parts)));
+
+  dates-out=run "openssl" ["x509" "-noout" "-dates" "-in" tmp];
+  dates-lines=spl "\n" dates-out;
+  nb-line=hd dates-lines;
+  na-line=get 1 dates-lines;
+  nb=trim (get 1 (spl "=" nb-line));
+  na=trim (get 1 (spl "=" na-line));
+
+  key-out=run "openssl" ["x509" "-noout" "-text" "-in" tmp];
+  key-part=get 1 (spl "Public-Key:" key-out);
+  key-type=trim (hd (spl "\n" key-part));
+
+  rc=run "rm" [tmp];
+
+  fmt {subject-cn issuer-cn not-before not-after key-type expiry}
+
+main
