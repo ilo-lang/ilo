@@ -54,44 +54,26 @@ last-week-start nw:n>n;dtparse-rel!! "last monday" nw
 
 ## Duration
 
-`dur-parse s > R n t` — parse human duration string into seconds. Accepts `s/m/h/d/w` abbreviations, full names (week/day/hour/minute/second, singular + plural), decimal quantities, mixed sequences ("3h 30m", "1.5 hours", "1 week 2 days", "90s"). Months are **not** supported ("3mo", "3 months" both error — a month is not a fixed number of seconds; use day counts instead). A leading `-` is sticky: it applies to every following token until an explicit `+` resets it, so `"-1m 30s"` = `-90`. Err if empty or no unit found.
+`dur-parse s > R n t` — parse human duration into seconds. Accepts `s/m/h/d/w`, full names (singular + plural), decimals, mixed ("3h 30m", "1.5 hours", "1 week 2 days"). Months unsupported (not fixed length). Leading `-` is sticky: `"-1m 30s"` = -90. Err if empty or no unit found.
 
-`dur-fmt n > t` — format seconds as human-readable duration. Drops zero parts; uses largest units ("2h 42m", "1 day", "30s"). Zero returns "0s". Negative values emit a single leading minus (`-90` → `"-1m 30s"`) which round-trips back through `dur-parse`. Fractional seconds are preserved with up to 3 decimal places, trailing zeros stripped (`90.5` → `"1m 30.5s"`, `0.5` → `"0.5s"`).
+`dur-fmt n > t` — seconds to human-readable. Drops zero parts; largest units. Zero = "0s". Negative emits leading minus. Fractional seconds preserved up to 3dp.
 
 ```
-secs = dur-parse! "3h 30m"  -- 12600
-dur-fmt secs                 -- "3h 30m"
-dur-fmt 86400                -- "1 day"
-dur-fmt 90                   -- "1m 30s"
-dur-fmt 90.5                 -- "1m 30.5s"
-dur-fmt -90                  -- "-1m 30s"
-dur-parse! "-1h 30m"         -- -5400 (sticky sign)
+dur-parse! "3h 30m"  -- 12600
+dur-fmt 9720         -- "2h 42m"
+dur-fmt -90          -- "-1m 30s"
+dur-parse! "-1h 30m" -- -5400 (sticky sign)
 ```
 
 ## Crypto
 
-`sha256 s > t` — SHA-256 hex digest (lowercase, 64 chars) of UTF-8 bytes of `s`.
-
-`hmac-sha256 key body > t` — HMAC-SHA256 lowercase hex. Use for webhook sig verification and API signing.
-
-`base64-enc s > t` / `base64-dec s > R t t` — standard base64 (RFC 4648, with `=` padding).
-
-`base64url-enc s > t` / `base64url-dec s > R t t` — base64url (no padding, `-`/`_` alphabet). Use for JWT.
-
-`hex-enc bytes:L n > t` / `hex-dec s > R (L n) t` — hex encode/decode. Each byte must be 0-255.
-
-`ct-eq a:t b:t > b` — constant-time equality. **Always** use instead of `==` when comparing secrets.
+`sha256 s > t` SHA-256 lowercase hex. `hmac-sha256 key body > t` HMAC-SHA256 hex (webhook signing, API auth). `base64-enc/dec s > t/R t t` standard base64 with `=` padding. `base64url-enc/dec s > t/R t t` url-safe no-pad (JWT). `hex-enc bytes:L n > t` 0-255 list to hex. `hex-dec s > R (L n) t` hex to byte list. `ct-eq a b > b` constant-time equality — use instead of `==` for secrets.
 
 ```
 sha256 "abc"                  -- ba7816bf...
-hmac-sha256 "key" "payload"   -- hex digest
-base64-enc "hello"            -- "aGVsbG8="
-base64-dec! "aGVsbG8="        -- "hello"
-base64url-enc "hello"         -- "aGVsbG8" (no padding)
-hex-enc [255, 0, 16]          -- "ff0010"
-hex-dec! "ff0010"             -- [255, 0, 16]
+hmac-sha256 "key" "payload"   -- 64-char hex
+base64-dec! (base64-enc "hi") -- "hi"
+hex-dec! (hex-enc [255,0,16]) -- [255,0,16]
 ct-eq sig expected            -- bool, no timing leak
-
--- webhook verification
-verify sig:t body:t>b;expected=hmac-sha256 "secret" body;ct-eq expected sig
+-- webhook: verify sig:t body:t>b;ct-eq (hmac-sha256 "secret" body) sig
 ```
