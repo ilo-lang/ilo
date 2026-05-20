@@ -1333,27 +1333,40 @@ pub(crate) fn lu_solve(lu: &[Vec<f64>], piv: &[usize], b: &[f64]) -> Vec<f64> {
     x
 }
 
-fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
-    // Builtins — resolve name to enum once, then dispatch via match
-    let builtin = Builtin::from_name(name);
-    if builtin == Some(Builtin::Len) {
-        if args.len() != 1 {
-            return Err(RuntimeError::new(
-                "ILO-R009",
-                format!("len: expected 1 arg, got {}", args.len()),
-            ));
-        }
-        return match &args[0] {
-            Value::Text(s) => Ok(Value::Number(s.len() as f64)),
-            Value::List(l) => Ok(Value::Number(l.len() as f64)),
-            Value::Map(m) => Ok(Value::Number(m.len() as f64)),
-            other => Err(RuntimeError::new(
-                "ILO-R009",
-                format!("len requires string, list, or map, got {:?}", other),
-            )),
-        };
+/// Resolve a function reference value to a name string.
+/// Called by higher-order builtins (map, flt, fld, ...) to extract
+/// the function name from FnRef, Text (CLI arg), or Closure variants.
+fn resolve_fn_ref(val: &Value) -> Option<String> {
+    match val {
+        Value::FnRef(n) => Some(n.clone()),
+        Value::Text(n) => Some((**n).clone()),
+        Value::Closure { fn_name, .. } => Some(fn_name.clone()),
+        _ => None,
     }
-    // Map builtins
+}
+
+/// Extract trailing capture values from a Closure value.
+/// Returns an empty vec for plain FnRef/Text references.
+fn closure_captures(val: &Value) -> Vec<Value> {
+    match val {
+        Value::Closure { captures, .. } => captures.clone(),
+        _ => Vec::new(),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Per-family builtin dispatchers.  Every function is marked #[inline(never)]
+// to prevent the compiler from merging its stack frame with call_function's.
+// In debug builds rustc reserves a slot for every local in a frame even when
+// branches are mutually exclusive; splitting the ~130-arm chain into ~12
+// leaf functions limits each frame to the locals of one builtin family.
+// Release builds are unaffected -- the optimiser already dead-code-eliminates
+// untaken branches independently of this split.
+// ---------------------------------------------------------------------------
+
+/// Map-family builtins: mmap, mget, mset, mget-or, mhas, mkeys, mvals, mpairs, mdel.
+#[inline(never)]
+fn dispatch_map_builtins(builtin: Option<Builtin>, name: &str, args: Vec<Value>) -> Result<Value> {
     if builtin == Some(Builtin::Mmap) && args.is_empty() {
         return Ok(Value::Map(Arc::new(HashMap::new())));
     }
@@ -1480,6 +1493,22 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             )),
         };
     }
+    Err(RuntimeError::new(
+        "ILO-R009",
+        format!(
+            "builtin '{name}': wrong number of args (got {})",
+            args.len()
+        ),
+    ))
+}
+
+/// Linear-algebra decomposition family: det, inv, solve.
+#[inline(never)]
+fn dispatch_linalg_builtins(
+    builtin: Option<Builtin>,
+    name: &str,
+    args: Vec<Value>,
+) -> Result<Value> {
     if builtin == Some(Builtin::Det) && args.len() == 1 {
         let mat = matrix_from_value(&args[0], "det")?;
         let n = mat.len();
@@ -1578,6 +1607,19 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             x.into_iter().map(Value::Number).collect(),
         )));
     }
+    Err(RuntimeError::new(
+        "ILO-R009",
+        format!(
+            "builtin '{name}': wrong number of args (got {})",
+            args.len()
+        ),
+    ))
+}
+
+/// Math/numeric family: str, num, abs, mod, fmod, clamp, min, max, argmax, argmin, argsort,
+/// flr, cel, rou, transcendentals, pow, atan2, pi, tau, eu, now, now-ms, sleep, rndn.
+#[inline(never)]
+fn dispatch_math_builtins(builtin: Option<Builtin>, name: &str, args: Vec<Value>) -> Result<Value> {
     if builtin == Some(Builtin::Str) {
         if args.len() != 1 {
             return Err(RuntimeError::new(
@@ -1994,6 +2036,22 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             )),
         };
     }
+    Err(RuntimeError::new(
+        "ILO-R009",
+        format!(
+            "builtin '{name}': wrong number of args (got {})",
+            args.len()
+        ),
+    ))
+}
+
+/// Date/time and random family: dtfmt, dtparse, dtparse-rel, rnd.
+#[inline(never)]
+fn dispatch_datetime_builtins(
+    builtin: Option<Builtin>,
+    name: &str,
+    args: Vec<Value>,
+) -> Result<Value> {
     if builtin == Some(Builtin::Dtfmt) && args.len() == 2 {
         return match (&args[0], &args[1]) {
             (Value::Number(epoch), Value::Text(fmt_str)) => {
@@ -2081,6 +2139,22 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             };
         }
     }
+    Err(RuntimeError::new(
+        "ILO-R009",
+        format!(
+            "builtin '{name}': wrong number of args (got {})",
+            args.len()
+        ),
+    ))
+}
+
+/// Basic sequence/string ops: spl, cat, has, hd, at, lget-or, default-on-err.
+#[inline(never)]
+fn dispatch_basic_builtins(
+    builtin: Option<Builtin>,
+    name: &str,
+    args: Vec<Value>,
+) -> Result<Value> {
     if builtin == Some(Builtin::Spl) && args.len() == 2 {
         return match (&args[0], &args[1]) {
             (Value::Text(s), Value::Text(sep)) => {
@@ -2245,6 +2319,25 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             )),
         };
     }
+    Err(RuntimeError::new(
+        "ILO-R009",
+        format!(
+            "builtin '{name}': wrong number of args (got {})",
+            args.len()
+        ),
+    ))
+}
+
+/// List-manipulation family: lst, window, zip, enumerate, range, chunks,
+/// setunion/inter/diff, tl, rev, srt (1-arg and key-fn), rsrt, slc, take, drop.
+/// Srt/Rsrt key-fn variants call call_function so env is required.
+#[inline(never)]
+fn dispatch_list_builtins(
+    env: &mut Env,
+    builtin: Option<Builtin>,
+    name: &str,
+    args: Vec<Value>,
+) -> Result<Value> {
     if builtin == Some(Builtin::Lst) && args.len() == 3 {
         let idx = match &args[1] {
             Value::Number(n) => {
@@ -2926,6 +3019,18 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             )),
         };
     }
+    Err(RuntimeError::new(
+        "ILO-R009",
+        format!(
+            "builtin '{name}': wrong number of args (got {})",
+            args.len()
+        ),
+    ))
+}
+
+/// I/O / HTTP family: get, get-many, pst, get-to, pst-to, run.
+#[inline(never)]
+fn dispatch_io_builtins(builtin: Option<Builtin>, name: &str, args: Vec<Value>) -> Result<Value> {
     if builtin == Some(Builtin::Get) && (args.len() == 1 || args.len() == 2) {
         let url = match &args[0] {
             Value::Text(u) => u.clone(),
@@ -3219,6 +3324,18 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         };
         return Ok(run_spawn(cmd.as_str(), &argv));
     }
+    Err(RuntimeError::new(
+        "ILO-R009",
+        format!(
+            "builtin '{name}': wrong number of args (got {})",
+            args.len()
+        ),
+    ))
+}
+
+/// Text-processing family: trm, upr, lwr, cap, padl, padr, ord, chr, chars, unq, fmt2, fmt.
+#[inline(never)]
+fn dispatch_text_builtins(builtin: Option<Builtin>, name: &str, args: Vec<Value>) -> Result<Value> {
     if builtin == Some(Builtin::Trm) && args.len() == 1 {
         return match &args[0] {
             Value::Text(s) => Ok(Value::Text(Arc::new(s.trim().to_string()))),
@@ -3477,8 +3594,8 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                     "ILO-R009",
                     format!(
                         "fmt only supports bare `{{}}` placeholders, got `{}`. \
-                         For decimal precision use `fmt \"...{{}}\" (fmt2 v 2)`; \
-                         for width / padding use `padl (str n) 6` (space-pad).",
+                     For decimal precision use `fmt \"...{{}}\" (fmt2 v 2)`; \
+                     for width / padding use `padl (str n) 6` (space-pad).",
                         spec
                     ),
                 ));
@@ -3488,6 +3605,19 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         }
         return Ok(Value::Text(Arc::new(result)));
     }
+    Err(RuntimeError::new(
+        "ILO-R009",
+        format!(
+            "builtin '{name}': wrong number of args (got {})",
+            args.len()
+        ),
+    ))
+}
+
+/// Filesystem / local I/O family: ls, walk, glob, dirname, basename, pathjoin,
+/// dur-parse, dur-fmt, fsize, mtime, isfile, isdir, rd, rdb, rdl, rdin, rdinl, wr, wra, wrl.
+#[inline(never)]
+fn dispatch_fs_builtins(builtin: Option<Builtin>, name: &str, args: Vec<Value>) -> Result<Value> {
     if builtin == Some(Builtin::Ls) && args.len() == 1 {
         // lsd dir > R (L t) t — list non-recursive directory entries (filenames
         // only, not full paths). Sorted lexicographically for determinism so
@@ -4025,6 +4155,18 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             )),
         };
     }
+    Err(RuntimeError::new(
+        "ILO-R009",
+        format!(
+            "builtin '{name}': wrong number of args (got {})",
+            args.len()
+        ),
+    ))
+}
+
+/// JSON and environment family: jpth, jkeys, prnt, jdmp, jpar, jpar-list, rdjl, env, env-all.
+#[inline(never)]
+fn dispatch_json_builtins(builtin: Option<Builtin>, name: &str, args: Vec<Value>) -> Result<Value> {
     if builtin == Some(Builtin::Jpth) && args.len() == 2 {
         return match (&args[0], &args[1]) {
             (Value::Text(json_str), Value::Text(path)) => {
@@ -4232,28 +4374,24 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         return Ok(Value::Ok(Box::new(Value::Map(Arc::new(map)))));
     }
 
-    // Higher-order builtins: map, flt, fld
-    // A function reference can be Value::FnRef(name) or Value::Text(Arc::new(name)) when the
-    // function name was passed as a CLI string argument. Inline lambdas with
-    // free-var capture produce Value::Closure, which carries the lifted fn
-    // name plus by-value capture snapshots to append after the per-item args.
-    fn resolve_fn_ref(val: &Value) -> Option<String> {
-        match val {
-            Value::FnRef(n) => Some(n.clone()),
-            Value::Text(n) => Some((**n).clone()),
-            Value::Closure { fn_name, .. } => Some(fn_name.clone()),
-            _ => None,
-        }
-    }
-    // Extract trailing captures from a closure value, if any. Closures carry
-    // by-value snapshots of free variables that get appended after the
-    // per-item args at each HOF call. Returns empty for plain FnRef/Text.
-    fn closure_captures(val: &Value) -> Vec<Value> {
-        match val {
-            Value::Closure { captures, .. } => captures.clone(),
-            _ => Vec::new(),
-        }
-    }
+    Err(RuntimeError::new(
+        "ILO-R009",
+        format!(
+            "builtin '{name}': wrong number of args (got {})",
+            args.len()
+        ),
+    ))
+}
+
+/// Higher-order function family: map, mapr, flt, ct, fld, partition, flatmap, uniqby, grp, frq.
+/// These call call_function recursively so they need env.
+#[inline(never)]
+fn dispatch_hof_builtins(
+    env: &mut Env,
+    builtin: Option<Builtin>,
+    name: &str,
+    args: Vec<Value>,
+) -> Result<Value> {
     if builtin == Some(Builtin::Map) && (args.len() == 2 || args.len() == 3) {
         let fn_name = resolve_fn_ref(&args[0]).ok_or_else(|| {
             RuntimeError::new(
@@ -4704,53 +4842,19 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             .collect();
         return Ok(Value::Map(Arc::new(map)));
     }
-    if builtin == Some(Builtin::Frq) && args.len() == 1 {
-        let items = match &args[0] {
-            Value::List(l) => l,
-            other => {
-                return Err(RuntimeError::new(
-                    "ILO-R009",
-                    format!("frq: arg must be a list, got {:?}", other),
-                ));
-            }
-        };
-        let mut counts: std::collections::HashMap<MapKey, usize> = std::collections::HashMap::new();
-        for item in items.iter() {
-            // Build a typed `MapKey` so the resulting map preserves the element
-            // type. Heterogeneous lists where text and number variants share a
-            // print form (e.g. `Number(1)` and `Text("1")`) are now correctly
-            // kept distinct — they were merged into a single key in the
-            // pre-MapKey era.
-            let map_key = match item {
-                Value::Text(s) => MapKey::Text((**s).clone()),
-                Value::Number(n) => {
-                    if !n.is_finite() {
-                        return Err(RuntimeError::new(
-                            "ILO-R009",
-                            format!("frq: numeric element must be finite, got {n}"),
-                        ));
-                    }
-                    MapKey::Int(n.floor() as i64)
-                }
-                Value::Bool(b) => MapKey::Text(format!("{b}")),
-                other => {
-                    return Err(RuntimeError::new(
-                        "ILO-R009",
-                        format!(
-                            "frq: list elements must be text, number, or bool, got {:?}",
-                            other
-                        ),
-                    ));
-                }
-            };
-            *counts.entry(map_key).or_insert(0) += 1;
-        }
-        let map: HashMap<MapKey, Value> = counts
-            .into_iter()
-            .map(|(k, v)| (k, Value::Number(v as f64)))
-            .collect();
-        return Ok(Value::Map(Arc::new(map)));
-    }
+    Err(RuntimeError::new(
+        "ILO-R009",
+        format!(
+            "builtin '{name}': wrong number of args (got {})",
+            args.len()
+        ),
+    ))
+}
+
+/// Linear-algebra (matrix ops) + statistics family:
+/// transpose, matmul, dot, sum, prod, cumsum, cprod, avg, median, quantile, variance, stdev.
+#[inline(never)]
+fn dispatch_stat_builtins(builtin: Option<Builtin>, name: &str, args: Vec<Value>) -> Result<Value> {
     if builtin == Some(Builtin::Transpose) && args.len() == 1 {
         let rows = match &args[0] {
             Value::List(l) => l,
@@ -5293,6 +5397,22 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         let sse: f64 = nums.iter().map(|x| (x - mean).powi(2)).sum();
         return Ok(Value::Number((sse / (n - 1) as f64).sqrt()));
     }
+    Err(RuntimeError::new(
+        "ILO-R009",
+        format!(
+            "builtin '{name}': wrong number of args (got {})",
+            args.len()
+        ),
+    ))
+}
+
+/// Regex family + flat: rgx, rgxall, rgxall1, rgxall-multi, rgxsub, flat.
+#[inline(never)]
+fn dispatch_regex_builtins(
+    builtin: Option<Builtin>,
+    name: &str,
+    args: Vec<Value>,
+) -> Result<Value> {
     if builtin == Some(Builtin::Rgx) && args.len() == 2 {
         let pattern = match &args[0] {
             Value::Text(s) => s.as_str(),
@@ -5600,6 +5720,18 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         }
         return Ok(Value::List(Arc::new(result)));
     }
+    Err(RuntimeError::new(
+        "ILO-R009",
+        format!(
+            "builtin '{name}': wrong number of args (got {})",
+            args.len()
+        ),
+    ))
+}
+
+/// FFT family: fft, ifft.
+#[inline(never)]
+fn dispatch_fft_builtins(builtin: Option<Builtin>, name: &str, args: Vec<Value>) -> Result<Value> {
     if builtin == Some(Builtin::Fft) && args.len() == 1 {
         let items = match &args[0] {
             Value::List(l) => l,
@@ -5701,83 +5833,302 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         return Ok(Value::List(Arc::new(result)));
     }
 
-    // Dynamic dispatch: callee resolved to a FnRef at runtime
-    // (e.g. calling a function passed as a parameter: `fn x` where fn:F n n)
-    // This is handled by looking up `name` in scope within eval_expr, not here.
+    Err(RuntimeError::new(
+        "ILO-R009",
+        format!(
+            "builtin '{name}': wrong number of args (got {})",
+            args.len()
+        ),
+    ))
+}
 
-    let decl = env.function(name)?;
-    match decl {
-        Decl::Function {
-            params,
-            body,
-            name: func_name,
-            ..
-        } => {
-            if args.len() != params.len() {
+fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
+    // Resolve the builtin name once, then route to the appropriate family
+    // dispatcher. Each dispatcher is #[inline(never)] so its locals live in
+    // a separate stack frame; this limits per-recursion-frame pressure to the
+    // routing code below regardless of how many builtins exist.
+    let builtin = Builtin::from_name(name);
+    match builtin {
+        Some(Builtin::Len) => {
+            if args.len() != 1 {
                 return Err(RuntimeError::new(
-                    "ILO-R004",
-                    format!(
-                        "{}: expected {} args, got {}",
-                        name,
-                        params.len(),
-                        args.len()
-                    ),
+                    "ILO-R009",
+                    format!("len: expected 1 arg, got {}", args.len()),
                 ));
             }
-            // Isolate the callee's scope from the caller's variables.
-            let saved_vars = std::mem::take(&mut env.vars);
-            let saved_marks = std::mem::replace(&mut env.scope_marks, vec![0]);
-            for (param, arg) in params.iter().zip(args) {
-                env.define(&param.name, arg);
-            }
-            env.call_stack.push(func_name.clone());
-            let result = eval_body(env, &body);
-            env.call_stack.pop();
-            env.vars = saved_vars;
-            env.scope_marks = saved_marks;
-            match result? {
-                BodyResult::Value(v) | BodyResult::Return(v) | BodyResult::Break(v) => Ok(v),
-                BodyResult::Continue => Ok(Value::Nil),
+            match &args[0] {
+                Value::Text(s) => Ok(Value::Number(s.len() as f64)),
+                Value::List(l) => Ok(Value::Number(l.len() as f64)),
+                Value::Map(m) => Ok(Value::Number(m.len() as f64)),
+                other => Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("len requires string, list, or map, got {:?}", other),
+                )),
             }
         }
-        Decl::Tool { name, .. } => {
-            if let Some(ref _provider) = env.tool_provider {
-                #[cfg(feature = "tools")]
-                {
-                    if let Some(ref rt) = env.tokio_runtime {
-                        return rt
-                            .block_on(_provider.call(&name, args))
-                            .map_err(|e| RuntimeError::new("ILO-R099", e.to_string()));
+        Some(
+            Builtin::Mmap
+            | Builtin::Mget
+            | Builtin::Mset
+            | Builtin::MgetOr
+            | Builtin::Mhas
+            | Builtin::Mkeys
+            | Builtin::Mvals
+            | Builtin::Mpairs
+            | Builtin::Mdel,
+        ) => dispatch_map_builtins(builtin, name, args),
+
+        Some(Builtin::Det | Builtin::Inv | Builtin::Solve) => {
+            dispatch_linalg_builtins(builtin, name, args)
+        }
+
+        Some(
+            Builtin::Str
+            | Builtin::Num
+            | Builtin::Abs
+            | Builtin::Mod
+            | Builtin::Fmod
+            | Builtin::Clamp
+            | Builtin::Min
+            | Builtin::Max
+            | Builtin::Argmax
+            | Builtin::Argmin
+            | Builtin::Argsort
+            | Builtin::Flr
+            | Builtin::Cel
+            | Builtin::Rou
+            | Builtin::Sqrt
+            | Builtin::Log
+            | Builtin::Exp
+            | Builtin::Sin
+            | Builtin::Cos
+            | Builtin::Tan
+            | Builtin::Log10
+            | Builtin::Log2
+            | Builtin::Asin
+            | Builtin::Acos
+            | Builtin::Atan
+            | Builtin::Pow
+            | Builtin::Atan2
+            | Builtin::Pi
+            | Builtin::Tau
+            | Builtin::Eu
+            | Builtin::Now
+            | Builtin::NowMs
+            | Builtin::Sleep
+            | Builtin::Rndn,
+        ) => dispatch_math_builtins(builtin, name, args),
+
+        Some(Builtin::Dtfmt | Builtin::Dtparse | Builtin::DtparseRel | Builtin::Rnd) => {
+            dispatch_datetime_builtins(builtin, name, args)
+        }
+
+        Some(
+            Builtin::Spl
+            | Builtin::Cat
+            | Builtin::Has
+            | Builtin::Hd
+            | Builtin::At
+            | Builtin::LgetOr
+            | Builtin::DefaultOnErr,
+        ) => dispatch_basic_builtins(builtin, name, args),
+
+        Some(
+            Builtin::Lst
+            | Builtin::Window
+            | Builtin::Zip
+            | Builtin::Enumerate
+            | Builtin::Range
+            | Builtin::Chunks
+            | Builtin::Setunion
+            | Builtin::Setinter
+            | Builtin::Setdiff
+            | Builtin::Tl
+            | Builtin::Rev
+            | Builtin::Srt
+            | Builtin::Rsrt
+            | Builtin::Slc
+            | Builtin::Take
+            | Builtin::Drop,
+        ) => dispatch_list_builtins(env, builtin, name, args),
+
+        Some(
+            Builtin::Get
+            | Builtin::GetMany
+            | Builtin::Post
+            | Builtin::GetTo
+            | Builtin::PstTo
+            | Builtin::Run,
+        ) => dispatch_io_builtins(builtin, name, args),
+
+        Some(
+            Builtin::Trm
+            | Builtin::Upr
+            | Builtin::Lwr
+            | Builtin::Cap
+            | Builtin::Padl
+            | Builtin::Padr
+            | Builtin::Ord
+            | Builtin::Chr
+            | Builtin::Chars
+            | Builtin::Unq
+            | Builtin::Fmt
+            | Builtin::Fmt2,
+        ) => dispatch_text_builtins(builtin, name, args),
+
+        Some(
+            Builtin::Ls
+            | Builtin::Walk
+            | Builtin::Glob
+            | Builtin::Dirname
+            | Builtin::Basename
+            | Builtin::Pathjoin
+            | Builtin::DurParse
+            | Builtin::DurFmt
+            | Builtin::Fsize
+            | Builtin::Mtime
+            | Builtin::Isfile
+            | Builtin::Isdir
+            | Builtin::Rd
+            | Builtin::Rdb
+            | Builtin::Rdl
+            | Builtin::Rdin
+            | Builtin::Rdinl
+            | Builtin::Wr
+            | Builtin::Wra
+            | Builtin::Wrl,
+        ) => dispatch_fs_builtins(builtin, name, args),
+
+        Some(
+            Builtin::Jpth
+            | Builtin::Jkeys
+            | Builtin::Prnt
+            | Builtin::Jdmp
+            | Builtin::Jpar
+            | Builtin::JparList
+            | Builtin::Rdjl
+            | Builtin::Env
+            | Builtin::EnvAll,
+        ) => dispatch_json_builtins(builtin, name, args),
+
+        Some(
+            Builtin::Map
+            | Builtin::Mapr
+            | Builtin::Flt
+            | Builtin::Ct
+            | Builtin::Fld
+            | Builtin::Partition
+            | Builtin::Flatmap
+            | Builtin::Uniqby
+            | Builtin::Grp
+            | Builtin::Frq,
+        ) => dispatch_hof_builtins(env, builtin, name, args),
+
+        Some(
+            Builtin::Transpose
+            | Builtin::Matmul
+            | Builtin::Dot
+            | Builtin::Sum
+            | Builtin::Prod
+            | Builtin::Cumsum
+            | Builtin::Cprod
+            | Builtin::Avg
+            | Builtin::Median
+            | Builtin::Quantile
+            | Builtin::Variance
+            | Builtin::Stdev,
+        ) => dispatch_stat_builtins(builtin, name, args),
+
+        Some(
+            Builtin::Rgx
+            | Builtin::Rgxall
+            | Builtin::Rgxall1
+            | Builtin::RgxallMulti
+            | Builtin::Rgxsub
+            | Builtin::Flat,
+        ) => dispatch_regex_builtins(builtin, name, args),
+
+        Some(Builtin::Fft | Builtin::Ifft) => dispatch_fft_builtins(builtin, name, args),
+
+        // Not a builtin -- look up as a user-defined function or tool declaration.
+        None => {
+            let decl = env.function(name)?;
+            match decl {
+                Decl::Function {
+                    params,
+                    body,
+                    name: func_name,
+                    ..
+                } => {
+                    if args.len() != params.len() {
+                        return Err(RuntimeError::new(
+                            "ILO-R004",
+                            format!(
+                                "{}: expected {} args, got {}",
+                                name,
+                                params.len(),
+                                args.len()
+                            ),
+                        ));
+                    }
+                    // Isolate the callee's scope from the caller's variables.
+                    let saved_vars = std::mem::take(&mut env.vars);
+                    let saved_marks = std::mem::replace(&mut env.scope_marks, vec![0]);
+                    for (param, arg) in params.iter().zip(args) {
+                        env.define(&param.name, arg);
+                    }
+                    env.call_stack.push(func_name.clone());
+                    let result = eval_body(env, &body);
+                    env.call_stack.pop();
+                    env.vars = saved_vars;
+                    env.scope_marks = saved_marks;
+                    match result? {
+                        BodyResult::Value(v) | BodyResult::Return(v) | BodyResult::Break(v) => {
+                            Ok(v)
+                        }
+                        BodyResult::Continue => Ok(Value::Nil),
                     }
                 }
-                // No async runtime available (or `tools` feature disabled);
-                // fall through to stub.
-                let args_str: Vec<String> = args.iter().map(|a| format!("{a}")).collect();
-                eprintln!("tool call (no runtime): {}({})", name, args_str.join(", "));
-                Ok(Value::Ok(Box::new(Value::Nil)))
-            } else {
-                // No provider: stub behaviour (matches original)
-                let args_str: Vec<String> = args.iter().map(|a| format!("{a}")).collect();
-                eprintln!("tool call: {}({})", name, args_str.join(", "));
-                Ok(Value::Ok(Box::new(Value::Nil)))
+                Decl::Tool { name, .. } => {
+                    if let Some(ref _provider) = env.tool_provider {
+                        #[cfg(feature = "tools")]
+                        {
+                            if let Some(ref rt) = env.tokio_runtime {
+                                return rt
+                                    .block_on(_provider.call(&name, args))
+                                    .map_err(|e| RuntimeError::new("ILO-R099", e.to_string()));
+                            }
+                        }
+                        // No async runtime available (or `tools` feature disabled);
+                        // fall through to stub.
+                        let args_str: Vec<String> = args.iter().map(|a| format!("{a}")).collect();
+                        eprintln!("tool call (no runtime): {}({})", name, args_str.join(", "));
+                        Ok(Value::Ok(Box::new(Value::Nil)))
+                    } else {
+                        // No provider: stub behaviour (matches original)
+                        let args_str: Vec<String> = args.iter().map(|a| format!("{a}")).collect();
+                        eprintln!("tool call: {}({})", name, args_str.join(", "));
+                        Ok(Value::Ok(Box::new(Value::Nil)))
+                    }
+                }
+                Decl::TypeDef { .. } => Err(RuntimeError::new(
+                    "ILO-R004",
+                    format!("{} is a type, not callable", name),
+                )),
+                Decl::Alias { .. } => Err(RuntimeError::new(
+                    "ILO-R004",
+                    format!("{} is a type alias, not callable", name),
+                )),
+                Decl::Use { .. } => Err(RuntimeError::new(
+                    "ILO-R002",
+                    format!("{} is an unresolved import", name),
+                )),
+                Decl::Error { .. } => Err(RuntimeError::new(
+                    "ILO-R002",
+                    format!("{} failed to parse", name),
+                )),
             }
         }
-        Decl::TypeDef { .. } => Err(RuntimeError::new(
-            "ILO-R004",
-            format!("{} is a type, not callable", name),
-        )),
-        Decl::Alias { .. } => Err(RuntimeError::new(
-            "ILO-R004",
-            format!("{} is a type alias, not callable", name),
-        )),
-        Decl::Use { .. } => Err(RuntimeError::new(
-            "ILO-R002",
-            format!("{} is an unresolved import", name),
-        )),
-        Decl::Error { .. } => Err(RuntimeError::new(
-            "ILO-R002",
-            format!("{} failed to parse", name),
-        )),
     }
 }
 
