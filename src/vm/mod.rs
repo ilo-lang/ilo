@@ -7059,15 +7059,39 @@ impl NanVal {
                 NanVal::heap_map(nan_map)
             }
             Value::Record { type_name, fields } => {
-                let field_names: Vec<String> = fields.keys().cloned().collect();
+                // OP_RECFLD uses positional field indices that must match the
+                // type's declaration order.  HashMap iteration order is
+                // non-deterministic (AHash random seed), so we must NOT rely on
+                // `fields.keys()` order.  Look up the canonical order from
+                // ACTIVE_REGISTRY first; fall back to HashMap order only when
+                // the registry is unavailable (e.g. standalone unit tests that
+                // don't go through jit_call_dyn).
+                let registry_ptr = ACTIVE_REGISTRY.with(|r| r.get());
+                let (field_names, num_fields_mask): (Vec<String>, u64) = if !registry_ptr.is_null() {
+                    let registry = unsafe { &*registry_ptr };
+                    if let Some(ti) = registry.name_to_id.get(type_name.as_str())
+                        .and_then(|&id| registry.types.get(id as usize))
+                    {
+                        (ti.fields.clone(), ti.num_fields)
+                    } else {
+                        (fields.keys().cloned().collect(), 0)
+                    }
+                } else {
+                    (fields.keys().cloned().collect(), 0)
+                };
                 let type_info = Rc::new(TypeInfo {
                     name: type_name.clone(),
                     fields: field_names.clone(),
-                    num_fields: 0,
+                    num_fields: num_fields_mask,
                 });
                 let flat: Box<[NanVal]> = field_names
                     .iter()
-                    .map(|k| NanVal::from_value_with_program(&fields[k], func_names))
+                    .map(|k| {
+                        fields
+                            .get(k.as_str())
+                            .map(|v| NanVal::from_value_with_program(v, func_names))
+                            .unwrap_or_else(NanVal::nil)
+                    })
                     .collect::<Vec<_>>()
                     .into_boxed_slice();
                 NanVal::heap_record(type_info, flat)
