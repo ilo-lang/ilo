@@ -452,37 +452,115 @@ fn declare_all_helpers(module: &mut ObjectModule) -> HelperFuncs {
 
 // ── Linker flags ────────────────────────────────────────────────────
 
+/// Read `build.target-dir` from a `.cargo/config.toml` file. Returns `None`
+/// if the file is absent, unreadable, or has no `target-dir` entry.
+///
+/// Ad-hoc parser: scans for a `target-dir = "..."` line inside a `[build]`
+/// section. Good enough for the worktree-isolation case we care about; we
+/// deliberately avoid pulling in a `toml` dep just for this.
+fn cargo_config_target_dir(config_path: &std::path::Path) -> Option<String> {
+    let text = std::fs::read_to_string(config_path).ok()?;
+    let mut in_build = false;
+    for raw in text.lines() {
+        let line = raw.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        if let Some(section) = line.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
+            in_build = section.trim() == "build";
+            continue;
+        }
+        if !in_build {
+            continue;
+        }
+        // Match `target-dir = "..."` (single or double quotes, with optional whitespace).
+        let rest = match line.strip_prefix("target-dir") {
+            Some(r) => r.trim_start(),
+            None => continue,
+        };
+        let rest = match rest.strip_prefix('=') {
+            Some(r) => r.trim(),
+            None => continue,
+        };
+        let value = rest
+            .strip_prefix('"')
+            .and_then(|r| r.split_once('"').map(|(v, _)| v))
+            .or_else(|| {
+                rest.strip_prefix('\'')
+                    .and_then(|r| r.split_once('\'').map(|(v, _)| v))
+            })?;
+        if !value.is_empty() {
+            return Some(value.to_string());
+        }
+    }
+    None
+}
+
+/// Probe candidate libilo.a paths for a given target directory, preferring
+/// release over debug.
+fn libilo_a_in(target_dir: &str) -> Option<String> {
+    for profile in ["release", "debug"] {
+        let p = format!("{}/{}/libilo.a", target_dir, profile);
+        if std::path::Path::new(&p).exists() {
+            return Some(p);
+        }
+    }
+    None
+}
+
 /// Find libilo.a path for linking.
+///
+/// Probes, in order:
+///   1. `CARGO_TARGET_DIR` env var (release, then debug)
+///   2. `build.target-dir` from `$CARGO_MANIFEST_DIR/.cargo/config.toml`
+///   3. `$CARGO_MANIFEST_DIR/target` (release, then debug)
+///   4. Workspace parent `target` dir (release, then debug)
+///
+/// The first two entries are what make this work inside an isolated
+/// worktree whose target dir is redirected out of the tree.
 fn find_libilo_a() -> Result<String, String> {
-    // Try target/release first, then target/debug
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
-    let release_path = format!("{}/target/release/libilo.a", manifest_dir);
-    if std::path::Path::new(&release_path).exists() {
-        return Ok(release_path);
-    }
-    let debug_path = format!("{}/target/debug/libilo.a", manifest_dir);
-    if std::path::Path::new(&debug_path).exists() {
-        return Ok(debug_path);
-    }
-    // Also try parent directory (workspace root)
-    let parent = std::path::Path::new(manifest_dir)
-        .parent()
-        .map(|p| p.to_string_lossy().to_string())
-        .unwrap_or_default();
-    if !parent.is_empty() {
-        let ws_release = format!("{}/target/release/libilo.a", parent);
-        if std::path::Path::new(&ws_release).exists() {
-            return Ok(ws_release);
-        }
-        let ws_debug = format!("{}/target/debug/libilo.a", parent);
-        if std::path::Path::new(&ws_debug).exists() {
-            return Ok(ws_debug);
+    let mut searched: Vec<String> = Vec::new();
+
+    // 1. CARGO_TARGET_DIR env var.
+    if let Ok(td) = std::env::var("CARGO_TARGET_DIR") {
+        if !td.is_empty() {
+            if let Some(p) = libilo_a_in(&td) {
+                return Ok(p);
+            }
+            searched.push(format!("{}/{{release,debug}}/libilo.a", td));
         }
     }
+
+    // 2. .cargo/config.toml -> build.target-dir.
+    let config_path = std::path::Path::new(manifest_dir).join(".cargo/config.toml");
+    if let Some(td) = cargo_config_target_dir(&config_path) {
+        if let Some(p) = libilo_a_in(&td) {
+            return Ok(p);
+        }
+        searched.push(format!("{}/{{release,debug}}/libilo.a", td));
+    }
+
+    // 3. Manifest-dir `target/`.
+    let manifest_target = format!("{}/target", manifest_dir);
+    if let Some(p) = libilo_a_in(&manifest_target) {
+        return Ok(p);
+    }
+    searched.push(format!("{}/{{release,debug}}/libilo.a", manifest_target));
+
+    // 4. Workspace parent `target/`.
+    if let Some(parent) = std::path::Path::new(manifest_dir).parent() {
+        let ws_target = format!("{}/target", parent.to_string_lossy());
+        if let Some(p) = libilo_a_in(&ws_target) {
+            return Ok(p);
+        }
+        searched.push(format!("{}/{{release,debug}}/libilo.a", ws_target));
+    }
+
     Err(format!(
         "cannot find libilo.a — build with `cargo build --release --features cranelift` first.\n\
-         Searched: {}, {}",
-        release_path, debug_path
+         Searched: {}",
+        searched.join(", ")
     ))
 }
 
@@ -7082,4 +7160,105 @@ f a:t b:t>t;join a b"#,
         let flags = entry_param_is_list(&compiled, "main", 0);
         assert!(flags.is_empty());
     }
+
+    // ── find_libilo_a / cargo_config_target_dir ─────────────────────────
+
+    fn unique_tmp_dir(tag: &str) -> std::path::PathBuf {
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+        let mut p = std::env::temp_dir();
+        p.push(format!("ilo_test_libilo_{tag}_{}_{n}", std::process::id()));
+        std::fs::create_dir_all(&p).unwrap();
+        p
+    }
+
+    fn touch(path: &std::path::Path) {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        std::fs::write(path, b"").unwrap();
+    }
+
+    #[test]
+    fn cargo_config_target_dir_parses_double_quoted() {
+        let dir = unique_tmp_dir("cfg_dq");
+        let cfg = dir.join("config.toml");
+        std::fs::write(
+            &cfg,
+            "[build]\ntarget-dir = \"/tmp/somewhere\"\n# comment\n",
+        )
+        .unwrap();
+        assert_eq!(
+            cargo_config_target_dir(&cfg).as_deref(),
+            Some("/tmp/somewhere")
+        );
+    }
+
+    #[test]
+    fn cargo_config_target_dir_parses_single_quoted() {
+        let dir = unique_tmp_dir("cfg_sq");
+        let cfg = dir.join("config.toml");
+        std::fs::write(&cfg, "[build]\ntarget-dir = '/tmp/elsewhere'\n").unwrap();
+        assert_eq!(
+            cargo_config_target_dir(&cfg).as_deref(),
+            Some("/tmp/elsewhere")
+        );
+    }
+
+    #[test]
+    fn cargo_config_target_dir_ignores_other_sections() {
+        let dir = unique_tmp_dir("cfg_other");
+        let cfg = dir.join("config.toml");
+        // `target-dir` outside `[build]` must be ignored.
+        std::fs::write(
+            &cfg,
+            "[net]\ntarget-dir = \"/wrong\"\n\n[build]\nrustflags = []\n",
+        )
+        .unwrap();
+        assert_eq!(cargo_config_target_dir(&cfg), None);
+    }
+
+    #[test]
+    fn cargo_config_target_dir_missing_file() {
+        let dir = unique_tmp_dir("cfg_missing");
+        let cfg = dir.join("nonexistent.toml");
+        assert_eq!(cargo_config_target_dir(&cfg), None);
+    }
+
+    #[test]
+    fn libilo_a_in_prefers_release_over_debug() {
+        let dir = unique_tmp_dir("probe");
+        let dir_s = dir.to_string_lossy().into_owned();
+        touch(&dir.join("release/libilo.a"));
+        touch(&dir.join("debug/libilo.a"));
+        let got = libilo_a_in(&dir_s).expect("should find release");
+        assert!(
+            got.ends_with("/release/libilo.a"),
+            "expected release path, got {got}"
+        );
+    }
+
+    #[test]
+    fn libilo_a_in_falls_back_to_debug() {
+        let dir = unique_tmp_dir("probe_dbg");
+        let dir_s = dir.to_string_lossy().into_owned();
+        touch(&dir.join("debug/libilo.a"));
+        let got = libilo_a_in(&dir_s).expect("should find debug");
+        assert!(got.ends_with("/debug/libilo.a"));
+    }
+
+    #[test]
+    fn libilo_a_in_returns_none_when_absent() {
+        let dir = unique_tmp_dir("probe_none");
+        let dir_s = dir.to_string_lossy().into_owned();
+        assert_eq!(libilo_a_in(&dir_s), None);
+    }
+
+    // Note: we can't unit-test `find_libilo_a` end-to-end without mutating
+    // process-global state (CARGO_TARGET_DIR) and racing other tests. The
+    // env-var and config-file branches are exercised by `libilo_a_in` +
+    // `cargo_config_target_dir` above, and the integration happens for real
+    // every time `cargo test --release --features cranelift` runs inside an
+    // isolated worktree (the AOT tests link successfully iff the lookup
+    // honours `.cargo/config.toml`).
 }
