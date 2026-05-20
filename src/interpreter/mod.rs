@@ -6347,10 +6347,6 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                     ),
                 ));
             }
-            // Isolate the callee's scope from the caller's variables. We
-            // restore on every exit path (including trampoline-internal
-            // fall-back to a regular call when a TailCall payload resolves
-            // to something other than a user-fn).
             let saved_vars = std::mem::take(&mut env.vars);
             let saved_marks = std::mem::replace(&mut env.scope_marks, vec![0]);
 
@@ -6379,48 +6375,38 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                     Ok(BodyResult::TailCall {
                         callee,
                         args: ta_args,
-                    }) => {
-                        // Resolve the tail-call target. If it's another
-                        // user-fn, loop with the new params/body/args.
-                        // Otherwise (e.g. resolved to a tool or somehow a
-                        // builtin we missed), fall back to a normal call.
-                        match env.function(&callee) {
-                            Ok(Decl::Function {
-                                params: np,
-                                body: nb,
-                                name: nn,
-                                ..
-                            }) => {
-                                if ta_args.len() != np.len() {
-                                    break Err(RuntimeError::new(
-                                        "ILO-R004",
-                                        format!(
-                                            "{}: expected {} args, got {}",
-                                            callee,
-                                            np.len(),
-                                            ta_args.len()
-                                        ),
-                                    ));
-                                }
-                                cur_params = np;
-                                cur_body = nb;
-                                cur_args = ta_args;
-                                cur_func_name = nn;
-                                continue;
+                    }) => match env.function(&callee) {
+                        Ok(Decl::Function {
+                            params: np,
+                            body: nb,
+                            name: nn,
+                            ..
+                        }) => {
+                            if ta_args.len() != np.len() {
+                                break Err(RuntimeError::new(
+                                    "ILO-R004",
+                                    format!(
+                                        "{}: expected {} args, got {}",
+                                        callee,
+                                        np.len(),
+                                        ta_args.len()
+                                    ),
+                                ));
                             }
-                            _ => {
-                                // Fallback: callee isn't a user-fn (e.g. a
-                                // tool dispatched via Decl::Tool). Recurse
-                                // through call_function, which sets up its
-                                // own scope isolation. This path is rare in
-                                // practice — try_synthesize_tail_call only
-                                // emits TailCall when env.function(callee)
-                                // was a Decl::Function at synth time.
-                                let r = call_function(env, &callee, ta_args);
-                                break r;
-                            }
+                            cur_params = np;
+                            cur_body = nb;
+                            cur_args = ta_args;
+                            cur_func_name = nn;
+                            continue;
                         }
-                    }
+                        _ => {
+                            // Fallback: callee isn't a Decl::Function (e.g.
+                            // a tool). try_synthesize_tail_call should have
+                            // ruled this out at synth time, but defending
+                            // against drift between synth and resolve.
+                            break call_function(env, &callee, ta_args);
+                        }
+                    },
                 }
             };
             env.vars = saved_vars;
@@ -6548,6 +6534,14 @@ fn serde_json_to_value(v: serde_json::Value) -> Value {
 ///   practice; the common `fac n=...fac -n 1` pattern hits the direct path).
 /// - Tools (`Decl::Tool`) intentionally do not TCO — they're an effect
 ///   boundary, not a recursive computation.
+///
+/// `#[inline(never)]` so the helper's frame stays separate from
+/// `eval_stmt`'s. `eval_stmt` is on the hot path for every statement; if
+/// this helper inlined, its `Vec<Value>` arg-buffer would bloat every
+/// `eval_stmt` frame and tip moderately-deep non-tail recursion (e.g.
+/// `fib 10`'s 177 nested frames) into stack overflow on tight-limit CI
+/// builds.
+#[inline(never)]
 fn try_synthesize_tail_call(env: &mut Env, expr: &Expr) -> Option<Result<(String, Vec<Value>)>> {
     let Expr::Call {
         function,
@@ -7078,17 +7072,7 @@ fn eval_stmt(env: &mut Env, stmt: &Stmt, is_tail: bool) -> Result<Option<BodyRes
             }
             Ok(Some(BodyResult::Value(last)))
         }
-        Stmt::Return(expr) => {
-            // `ret expr` always carries the function's return value, so
-            // expr is always in tail position. Synthesise a TailCall when
-            // the expression is a direct user-fn call.
-            if let Some(result) = try_synthesize_tail_call(env, expr) {
-                let (callee, args) = result?;
-                return Ok(Some(BodyResult::TailCall { callee, args }));
-            }
-            let val = eval_expr(env, expr)?;
-            Ok(Some(BodyResult::Return(val)))
-        }
+        Stmt::Return(expr) => eval_return_stmt(env, expr),
         Stmt::Break(expr) => {
             let val = match expr {
                 Some(e) => eval_expr(env, e)?,
@@ -7098,18 +7082,46 @@ fn eval_stmt(env: &mut Env, stmt: &Stmt, is_tail: bool) -> Result<Option<BodyRes
         }
         Stmt::Continue => Ok(Some(BodyResult::Continue)),
         Stmt::Expr(expr) => {
-            // A bare expression statement is in tail position only when its
-            // body said so (e.g. it's the last stmt of a function body, or a
-            // tail-arm of a match, or a braceless guard). If is_tail, try
-            // the tail-call peephole; otherwise evaluate normally.
-            if is_tail && let Some(result) = try_synthesize_tail_call(env, expr) {
-                let (callee, args) = result?;
-                return Ok(Some(BodyResult::TailCall { callee, args }));
+            // Tail context: dispatch via the helper so the TailCall
+            // synthesis locals (Option<Result<(String, Vec<Value>)>>) stay
+            // out of eval_stmt's frame on the non-tail hot path.
+            if is_tail {
+                eval_tail_expr_stmt(env, expr)
+            } else {
+                let val = eval_expr(env, expr)?;
+                Ok(Some(BodyResult::Value(val)))
             }
-            let val = eval_expr(env, expr)?;
-            Ok(Some(BodyResult::Value(val)))
         }
     }
+}
+
+/// Tail-position `ret expr` handler. Extracted from `eval_stmt`'s match
+/// arm so the TailCall synth's locals (Option<Result<(String, Vec<Value>)>>,
+/// ~56 bytes) stay out of `eval_stmt`'s frame on the non-tail hot path.
+/// Matters for moderately-deep non-tail recursion on debug builds with
+/// tight test-thread stacks (~2MB): every saved byte per eval_stmt frame
+/// multiplies across hundreds of nested frames.
+#[inline(never)]
+fn eval_return_stmt(env: &mut Env, expr: &Expr) -> Result<Option<BodyResult>> {
+    if let Some(result) = try_synthesize_tail_call(env, expr) {
+        let (callee, args) = result?;
+        return Ok(Some(BodyResult::TailCall { callee, args }));
+    }
+    let val = eval_expr(env, expr)?;
+    Ok(Some(BodyResult::Return(val)))
+}
+
+/// Tail-position bare-expression-statement handler. Same frame-isolation
+/// rationale as `eval_return_stmt`. Only reached when `eval_stmt`'s
+/// `is_tail` arg is true (last stmt of a body in tail position).
+#[inline(never)]
+fn eval_tail_expr_stmt(env: &mut Env, expr: &Expr) -> Result<Option<BodyResult>> {
+    if let Some(result) = try_synthesize_tail_call(env, expr) {
+        let (callee, args) = result?;
+        return Ok(Some(BodyResult::TailCall { callee, args }));
+    }
+    let val = eval_expr(env, expr)?;
+    Ok(Some(BodyResult::Value(val)))
 }
 
 fn eval_expr(env: &mut Env, expr: &Expr) -> Result<Value> {
