@@ -89,6 +89,21 @@ struct VerifyContext {
     aliases: HashMap<String, Ty>,
     errors: Vec<VerifyError>,
     in_loop: bool,
+    /// Function names whose declaration failed to parse. Populated from
+    /// `Program.parse_failed_fns` at the start of `verify`. Two effects:
+    ///   1. We skip type-checking the body of any function in this set (its
+    ///      AST is poison, so any diagnostic we emit would be a cascade off
+    ///      the parse error the user already has).
+    ///   2. When emitting `ILO-T005 undefined function 'X'`, if X is in this
+    ///      set we collapse all call-site emissions into ONE diagnostic per
+    ///      function name with a cross-reference back to the parse error.
+    ///      Without this, ONE broken function body produces N undefined-
+    ///      function errors (one per call site), burying the root cause.
+    parse_failed_fns: HashMap<String, ParseFailRef>,
+    /// Tracks which parse-failed function names we've already emitted the
+    /// collapsed `ILO-T005` cross-reference for, so call sites #2..N stay
+    /// silent. Reset per `verify()` call (lives on VerifyContext).
+    suppressed_undef_reported: std::collections::HashSet<String>,
 }
 
 type Scope = Vec<HashMap<String, Ty>>;
@@ -3273,6 +3288,8 @@ impl VerifyContext {
             aliases: HashMap::new(),
             errors: Vec::new(),
             in_loop: false,
+            parse_failed_fns: HashMap::new(),
+            suppressed_undef_reported: std::collections::HashSet::new(),
         }
     }
 
@@ -3605,6 +3622,16 @@ impl VerifyContext {
                 ..
             } = decl
             {
+                // Cascade suppression: skip type-checking any function whose
+                // declaration failed to parse. Its body AST is poison (the
+                // parser returned `Decl::Error` instead, so by definition we
+                // can't be here for a *current* parse-failed function — but
+                // an earlier `use`-included file or partial recovery can
+                // surface a Decl::Function we still don't trust). The user
+                // already has the parse error.
+                if self.parse_failed_fns.contains_key(name) {
+                    continue;
+                }
                 let mut scope: Scope = vec![HashMap::new()];
                 for p in params {
                     scope_insert(
@@ -4088,6 +4115,27 @@ impl VerifyContext {
                     // Pure builtin used as a value (e.g. `fld max xs 0`).
                     // Promote to Ty::Fn so HOF args type-check.
                     fn_ty
+                } else if let Some(fail_ref) = self.parse_failed_fns.get(name).cloned() {
+                    // Cascade suppression: bare reference to a parse-failed
+                    // function. Rare in practice (agents call far more than
+                    // they reference) but still emits one collapsed
+                    // cross-reference rather than letting every reference
+                    // produce ILO-T004 undefined-variable noise.
+                    if self.suppressed_undef_reported.insert(name.to_string()) {
+                        self.err(
+                            "ILO-T005",
+                            func,
+                            format!(
+                                "undefined function '{name}': its definition failed to parse",
+                            ),
+                            Some(format!(
+                                "fix the parse error first (see {} reported earlier in this file); other references to '{name}' are suppressed until then",
+                                fail_ref.code,
+                            )),
+                            Some(span),
+                        );
+                    }
+                    Ty::Unknown
                 } else {
                     let mut candidates: Vec<String> = scope
                         .iter()
@@ -4446,6 +4494,32 @@ impl VerifyContext {
                     }
                     Ty::Unknown
                 } else {
+                    // Cascade suppression: if `callee` is a function whose
+                    // declaration failed to parse, the user already has the
+                    // root-cause parse error. Emit ONE collapsed
+                    // cross-reference per parse-failed fn (on the first call
+                    // site only) and stay silent at the remaining N-1 call
+                    // sites. Without this, ONE broken function body
+                    // produces N undefined-function errors; see the
+                    // cron-explainer persona run (286 ILO-T005 from ~10
+                    // root causes) for why this matters.
+                    if let Some(fail_ref) = self.parse_failed_fns.get(callee).cloned() {
+                        if self.suppressed_undef_reported.insert(callee.to_string()) {
+                            self.err(
+                                "ILO-T005",
+                                func,
+                                format!(
+                                    "undefined function '{callee}': its definition failed to parse",
+                                ),
+                                Some(format!(
+                                    "fix the parse error first (see {} reported earlier in this file); other call sites of '{callee}' are suppressed until then",
+                                    fail_ref.code,
+                                )),
+                                Some(span),
+                            );
+                        }
+                        return Ty::Unknown;
+                    }
                     // Suggest in-scope variables/params first, then user functions, then
                     // builtins. closest_match picks the shortest distance, but when the
                     // name truly is undefined we still want a useful suggestion across
@@ -5212,6 +5286,7 @@ pub struct VerifyResult {
 /// Returns errors and warnings separately.
 pub fn verify(program: &Program) -> VerifyResult {
     let mut ctx = VerifyContext::new();
+    ctx.parse_failed_fns = program.parse_failed_fns.clone();
 
     // Phase 1: collect declarations
     ctx.collect_declarations(program);
@@ -6572,6 +6647,7 @@ mod tests {
                 },
             ],
             source: None,
+            parse_failed_fns: Default::default(),
         };
         let result = verify(&prog);
         assert!(
@@ -6613,6 +6689,7 @@ mod tests {
                 },
             ],
             source: None,
+            parse_failed_fns: Default::default(),
         };
         let errors = &verify(&prog).errors;
         assert!(
@@ -6657,6 +6734,7 @@ mod tests {
                 },
             ],
             source: None,
+            parse_failed_fns: Default::default(),
         };
         let errors = &verify(&prog).errors;
         assert!(
@@ -8651,6 +8729,7 @@ mod tests {
                 span: Span::UNKNOWN,
             }],
             source: None,
+            parse_failed_fns: Default::default(),
         };
         let result = verify(&prog);
         assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
@@ -8896,6 +8975,7 @@ mod tests {
                 span: Span::UNKNOWN,
             }],
             source: None,
+            parse_failed_fns: Default::default(),
         };
         let result = verify(&prog);
         // Should not panic; the Unknown binding is just a permissive fallback
@@ -8917,6 +8997,7 @@ mod tests {
                 span: Span::UNKNOWN,
             }],
             source: None,
+            parse_failed_fns: Default::default(),
         };
         let result = verify(&prog);
         assert!(
@@ -8953,6 +9034,7 @@ mod tests {
                 span: Span::UNKNOWN,
             }],
             source: None,
+            parse_failed_fns: Default::default(),
         };
         let result = verify(&prog);
         assert!(
