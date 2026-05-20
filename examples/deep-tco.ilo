@@ -1,0 +1,31 @@
+-- Tail-call optimisation: a function that recurses in tail position runs
+-- to arbitrary depth without consuming host-stack frames. The tree
+-- interpreter trampolines tail calls; VM and Cranelift gain matching
+-- support in subsequent PRs.
+
+-- Count down from n to 0 via tail recursion. Each call is in tail
+-- position (the function's last statement), so the trampoline rebinds the
+-- parameter in place rather than recursing.
+count-down n:n>n;=n 0 0;count-down -n 1
+
+-- Sum a list via tail-recursive accumulator. The recursive call is the
+-- function's tail; `acc` carries the partial sum across iterations.
+sum-acc xs:L n acc:n>n;empty=len xs;=empty 0 acc;sum-acc tl xs +acc hd xs
+
+sum-1k >n;xs=rng 0 1000;sum-acc xs 0
+
+main >n;count-down 1000
+
+-- The values exercised here are shallow enough that the bytecode VM
+-- handles them via its software call stack (the VM doesn't host-recurse
+-- on user-fn calls). The tree-interpreter trampoline shipped in this PR
+-- is what makes the `count-down 1_000_000` shape work — exercised by
+-- tests/regression_tco.rs, which drives the tree interpreter directly via
+-- the library API. VM and Cranelift gain OP_TAILCALL / return_call in
+-- subsequent PRs so they too run to arbitrary depth.
+-- run: main
+-- out: 0
+-- run: count-down 1000
+-- out: 0
+-- run: sum-1k
+-- out: 499500
