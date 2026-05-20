@@ -54,26 +54,8 @@ last-week-start nw:n>n;dtparse-rel!! "last monday" nw
 
 ## Duration
 
-`dur-parse s > R n t` — parse human duration into seconds. Accepts `s/m/h/d/w`, full names (singular + plural), decimals, mixed ("3h 30m", "1.5 hours", "1 week 2 days"). Months unsupported (not fixed length). Leading `-` is sticky: `"-1m 30s"` = -90. Err if empty or no unit found.
-
-`dur-fmt n > t` — seconds to human-readable. Drops zero parts; largest units. Zero = "0s". Negative emits leading minus. Fractional seconds preserved up to 3dp.
-
-```
-dur-parse! "3h 30m"  -- 12600
-dur-fmt 9720         -- "2h 42m"
-dur-fmt -90          -- "-1m 30s"
-dur-parse! "-1h 30m" -- -5400 (sticky sign)
-```
+`dur-parse s > R n t` parse human duration to seconds (`s/m/h/d/w`, decimals, mixed "3h 30m"). Leading `-` sticky. `dur-fmt n > t` seconds to human-readable; drops zero parts.
 
 ## Crypto
 
-`sha256 s > t` SHA-256 lowercase hex. `hmac-sha256 key body > t` HMAC-SHA256 hex (webhook signing, API auth). `base64-enc/dec s > t/R t t` standard base64 with `=` padding. `base64url-enc/dec s > t/R t t` url-safe no-pad (JWT). `hex-enc bytes:L n > t` 0-255 list to hex. `hex-dec s > R (L n) t` hex to byte list. `ct-eq a b > b` constant-time equality — use instead of `==` for secrets.
-
-```
-sha256 "abc"                  -- ba7816bf...
-hmac-sha256 "key" "payload"   -- 64-char hex
-base64-dec! (base64-enc "hi") -- "hi"
-hex-dec! (hex-enc [255,0,16]) -- [255,0,16]
-ct-eq sig expected            -- bool, no timing leak
--- webhook: verify sig:t body:t>b;ct-eq (hmac-sha256 "secret" body) sig
-```
+`sha256 s > t` SHA-256 hex. `hmac-sha256 key body > t` HMAC-SHA256 hex. `base64-enc s > t` / `base64-dec s > R t t` standard (padded). `base64url-enc s > t` / `base64url-dec s > R t t` url-safe no-pad. `hex-enc bytes:L n > t` / `hex-dec s > R (L n) t`. `ct-eq a b > b` constant-time equality (use for secrets, not `==`).
