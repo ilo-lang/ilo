@@ -1,0 +1,5 @@
+-- Bitcoin chain-tip monitor: poll mempool height, log blocks, K iterations with N-sec sleeps
+
+poll iter:n prev:n>_;>=iter 3{true:prnt "done" false:(r=get "https://mempool.space/api/blocks/tip/height";?r{~v:(h=num(trm v);cnd=!(=h prev);?cnd{true:(prnt(fmt "{} block {}" (now)h);run "sleep"["5"];poll(+iter 1)h) false:(run "sleep"["5"];poll(+iter 1)prev)}) ^_:(run "sleep"["5"];poll(+iter 1)prev)})}
+
+main>_;poll 0 0
