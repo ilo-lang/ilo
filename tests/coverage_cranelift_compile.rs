@@ -282,7 +282,7 @@ fn aot_cov_padrc() {
 
 #[test]
 fn aot_cov_dtfmt() {
-    expect_codegen_ok("dtfmt", "f e:n fm:t>R t t;dtfmt e fm");
+    expect_codegen_ok("dtfmt", "f ts:n fm:t>R t t;dtfmt ts fm");
 }
 
 #[test]

@@ -14,7 +14,7 @@
 //   - The inline default-engine path now runs verify when it will
 //     auto-run (matching the auto-run heuristic in dispatch).
 //   - The verifier emits a new `ILO-T034` targeting the bare-ident-bang
-//     shape specifically (with a hint pointing at `?x{~v:v;^e:^e}` or
+//     shape specifically (with a hint pointing at `?x{~v:v;^er:^e}` or
 //     `scs = producer! ...`), instead of the generic ILO-T005.
 //   - The error fires consistently on default, --run-tree, --vm, and
 //     --jit, on:

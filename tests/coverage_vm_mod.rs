@@ -984,7 +984,7 @@ fn match_literal_number() {
 
 #[test]
 fn match_result_arms() {
-    let src = "g x:n>R n t;>=x 0 ~x;^\"neg\";f x:n>t;r=g x;?r{~v:str v;^e:e}";
+    let src = "g x:n>R n t;>=x 0 ~x;^\"neg\";f x:n>t;r=g x;?r{~v:str v;^er:er}";
     for e in ENGINES_ALL {
         let out = ilo().args([src, e, "f", "7"]).output().expect("ilo");
         assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "7");

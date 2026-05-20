@@ -830,20 +830,20 @@ fn match_ok_arm_on_option_subject() {
 
 #[test]
 fn match_err_arm_on_option_subject() {
-    let src = "main>n;m=mmap;m=mset m \"k\" 5;?(mget m \"k\"){^e:0;_:9}";
+    let src = "main>n;m=mmap;m=mset m \"k\" 5;?(mget m \"k\"){^er:0;_:9}";
     assert_err(src, "ILO-T035", "main");
 }
 
 #[test]
 fn match_both_ok_and_err_arm_on_option_subject() {
-    let src = "main>n;m=mmap;m=mset m \"k\" 5;?(mget m \"k\"){~v:v;^e:0;_:9}";
+    let src = "main>n;m=mmap;m=mset m \"k\" 5;?(mget m \"k\"){~v:v;^er:0;_:9}";
     assert_err(src, "ILO-T035", "main");
 }
 
-// Negative: `~v:` / `^e:` on a Result subject still verify cleanly.
+// Negative: `~v:` / `^er:` on a Result subject still verify cleanly.
 #[test]
 fn match_ok_arm_on_result_subject_ok() {
-    let src = "main>n;r=num \"5\";?r{~v:v;^e:0}";
+    let src = "main>n;r=num \"5\";?r{~v:v;^er:0}";
     assert_ok(src, "main");
 }
 

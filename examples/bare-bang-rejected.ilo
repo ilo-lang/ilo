@@ -13,7 +13,7 @@
 -- The two correct shapes are:
 --
 -- (1) Match on a Result-valued binding to inspect Ok / Err:
---       ?score{~v:v;^e:0}
+--       ?score{~v:v;^er:0}
 --
 -- (2) Auto-unwrap at the producer's call site, then reference the
 --     resulting value without `!`:
@@ -21,7 +21,7 @@
 --       use-scs scs
 
 -- Happy path A: match on a Result-valued local.
-inspect-result>R n t;score=lookup-score 1;?score{~v:~v;^e:^e}
+inspect-result>R n t;score=lookup-score 1;?score{~v:~v;^er:^er}
 
 -- Helper used by `inspect-result` — returns a Result, exercised by the
 -- engine harness through `inspect-result` rather than directly. Braceless

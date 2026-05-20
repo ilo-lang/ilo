@@ -1,11 +1,11 @@
 // Regression tests for the two-symptom Result-match bug originally reported as:
 //
 //   mk>R t t;~"got"
-//   main>t;r=mk;?r{~v:v;^e:e;_:"x"}   -- returned "x" instead of "got"
+//   main>t;r=mk;?r{~v:v;^er:er;_:"x"}   -- returned "x" instead of "got"
 //
 // Root cause: a bare reference to a zero-arg user function (`mk`) in a value
 // position resolved to a function reference (Ty::Fn), not a call. `r` was
-// therefore a function value, not a Result, so the `~v:` and `^e:` arms never
+// therefore a function value, not a Result, so the `~v:` and `^er:` arms never
 // matched at runtime and the wildcard fired. The same misdiagnosis caused the
 // verifier to demand a `_:` wildcard (ILO-T024) for what looked like a Result
 // subject but was actually Ty::Fn.
@@ -14,7 +14,7 @@
 // existing `now`/`now-ms`/`mmap`/`rnd` precedent). After the fix:
 //   * `r=mk` calls `mk` and `r` is the Result.
 //   * The verifier's existing option-(a) exhaustiveness rule accepts the
-//     canonical two-arm form `?r{~v:v;^e:e}` with no wildcard required.
+//     canonical two-arm form `?r{~v:v;^er:er}` with no wildcard required.
 //   * Runtime returns "got" — the wildcard, when present, never preempts
 //     specific arms because `r` is a real Result value.
 //
@@ -48,7 +48,7 @@ const ENGINES_ALL: &[&str] = &["--vm"];
 // Canonical originating repro: zero-arg fn `mk` returning Ok, matched with
 // both specific arms AND a trailing wildcard. Specific arm must win.
 const ZERO_ARG_OK_WITH_WILDCARD: &str = r#"mk>R t t;~"got"
-main>t;r=mk;?r{~v:v;^e:e;_:"x"}"#;
+main>t;r=mk;?r{~v:v;^er:er;_:"x"}"#;
 
 #[test]
 fn zero_arg_result_ok_specific_arm_wins_over_wildcard_cross_engine() {
@@ -62,7 +62,7 @@ fn zero_arg_result_ok_specific_arm_wins_over_wildcard_cross_engine() {
 // run correctly across every engine. Zero-arg fn so we exercise the bare-ref
 // auto-call path.
 const ZERO_ARG_OK_TWO_ARM: &str = r#"mk>R t t;~"got"
-main>t;r=mk;?r{~v:v;^e:e}"#;
+main>t;r=mk;?r{~v:v;^er:er}"#;
 
 #[test]
 fn zero_arg_result_two_arm_exhaustive_cross_engine() {
@@ -74,7 +74,7 @@ fn zero_arg_result_two_arm_exhaustive_cross_engine() {
 
 // Mirror of the above for the Err branch — zero-arg fn returning `^"boom"`.
 const ZERO_ARG_ERR_TWO_ARM: &str = r#"mk>R t t;^"boom"
-main>t;r=mk;?r{~v:v;^e:e}"#;
+main>t;r=mk;?r{~v:v;^er:er}"#;
 
 #[test]
 fn zero_arg_result_two_arm_err_branch_cross_engine() {
@@ -87,7 +87,7 @@ fn zero_arg_result_two_arm_err_branch_cross_engine() {
 // Multi-arg fn version — option (a) was always meant to cover this; pin it
 // cross-engine so the verifier change can never silently regress.
 const MULTI_ARG_RESULT_TWO_ARM: &str = r#"div a:n b:n>R n t;=b 0 ^"zero";~/a b
-main>t;r=div 10 2;?r{~v:str v;^e:e}"#;
+main>t;r=div 10 2;?r{~v:str v;^er:er}"#;
 
 #[test]
 fn multi_arg_result_two_arm_exhaustive_cross_engine() {

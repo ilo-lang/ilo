@@ -7,7 +7,7 @@
 //   "🔴 CLI string-to-number coercion silently corrupts t-typed params.
 //    When a function declares arg:t and the CLI receives "2", the value
 //    passed in is a number at runtime, not text. num "2" then returns nil
-//    (which then breaks the ?r{~i:..;^e:..} match because there's no nil
+//    (which then breaks the ?r{~i:..;^er:..} match because there's no nil
 //    arm)."
 //
 // This test exercises every engine (default JIT, --run-tree, --vm,
@@ -48,11 +48,11 @@ fn run_engine(path: &str, func: &str, arg: &str, engine_flag: Option<&str>) -> S
 
 // ── num round-trip through a `t` param ────────────────────────────────────────
 
-/// `f arg:t>n; r=num arg; ?r{~i:i;^e:0-1}` with CLI input `"2"` must
+/// `f arg:t>n; r=num arg; ?r{~i:i;^er:0-1}` with CLI input `"2"` must
 /// return `2` (not `-1`, not `nil`) on every engine.
 #[test]
 fn text_param_with_digit_input_num_unwraps_across_engines() {
-    let src = "f arg:t>n;r=num arg;?r{~i:i;^e:0 - 1}\n";
+    let src = "f arg:t>n;r=num arg;?r{~i:i;^er:0 - 1}\n";
     let (_dir, path) = write_temp(src);
     let p = path.to_str().unwrap();
 
@@ -69,7 +69,7 @@ fn text_param_with_digit_input_num_unwraps_across_engines() {
 /// the fix doesn't make `num` accept everything.
 #[test]
 fn text_param_with_non_numeric_input_hits_err_arm_across_engines() {
-    let src = "f arg:t>n;r=num arg;?r{~i:i;^e:0 - 1}\n";
+    let src = "f arg:t>n;r=num arg;?r{~i:i;^er:0 - 1}\n";
     let (_dir, path) = write_temp(src);
     let p = path.to_str().unwrap();
 

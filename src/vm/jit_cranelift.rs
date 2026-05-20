@@ -5615,7 +5615,7 @@ mod tests {
     #[test]
     fn cranelift_5_args() {
         let result = jit_run_numeric(
-            "f a:n b:n c:n d:n e:n>n;+a +b +c +d e",
+            "f a:n b:n c:n d:n ev:n>n;+a +b +c +d ev",
             "f",
             &[1.0, 2.0, 3.0, 4.0, 5.0],
         );
@@ -5625,7 +5625,7 @@ mod tests {
     #[test]
     fn cranelift_6_args() {
         let result = jit_run_numeric(
-            "f a:n b:n c:n d:n e:n f0:n>n;+a +b +c +d +e f0",
+            "f a:n b:n c:n d:n ev:n f0:n>n;+a +b +c +d +ev f0",
             "f",
             &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
         );
@@ -5635,7 +5635,7 @@ mod tests {
     #[test]
     fn cranelift_7_args() {
         let result = jit_run_numeric(
-            "f a:n b:n c:n d:n e:n f0:n g0:n>n;+a +b +c +d +e +f0 g0",
+            "f a:n b:n c:n d:n ev:n f0:n g0:n>n;+a +b +c +d +ev +f0 g0",
             "f",
             &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0],
         );
@@ -5645,7 +5645,7 @@ mod tests {
     #[test]
     fn cranelift_8_args() {
         let result = jit_run_numeric(
-            "f a:n b:n c:n d:n e:n f0:n g0:n h:n>n;+a +b +c +d +e +f0 +g0 h",
+            "f a:n b:n c:n d:n ev:n f0:n g0:n h:n>n;+a +b +c +d +ev +f0 +g0 h",
             "f",
             &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0],
         );
@@ -5655,7 +5655,7 @@ mod tests {
     #[test]
     fn cranelift_9_args_hits_fallback() {
         let tokens: Vec<crate::lexer::Token> = crate::lexer::lex(
-            "f a:n b:n c:n d:n e:n f0:n g0:n h:n i:n>n;+a +b +c +d +e +f0 +g0 +h i",
+            "f a:n b:n c:n d:n ev:n f0:n g0:n h:n i:n>n;+a +b +c +d +ev +f0 +g0 +h i",
         )
         .unwrap()
         .into_iter()
@@ -6599,8 +6599,8 @@ mod tests {
     fn cranelift_is_inlinable_too_many_regs() {
         // 17-param function: reg_count=17 > 16 → is_inlinable=false → direct call
         let result = jit_run_numeric(
-            "sum17 a:n b:n c:n d:n e:n f:n g:n h:n i:n j:n k:n l:n m:n nn:n o:n p:n q:n>n;\
-             +a +b +c +d +e +f +g +h +i +j +k +l +m +nn +o +p q\n\
+            "sum17 a:n b:n c:n d:n ev:n f:n g:n h:n i:n j:n k:n l:n m:n nn:n o:n p:n q:n>n;\
+             +a +b +c +d +ev +f +g +h +i +j +k +l +m +nn +o +p q\n\
              caller>n;sum17 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17",
             "caller",
             &[],

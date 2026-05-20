@@ -113,7 +113,7 @@ fn run_unknown_cmd_returns_err_cross_engine() {
     // Spawn failure (command not found) must surface as Err. We branch
     // on the Result so the test exits cleanly (status=success) and we
     // can assert on the Err message.
-    let src = r#"f>t;r=run "no-such-cmd-xyz123-ilo-test" [];?r{~_:"unexpected ok";^e:e}"#;
+    let src = r#"f>t;r=run "no-such-cmd-xyz123-ilo-test" [];?r{~_:"unexpected ok";^er:er}"#;
     for engine in ENGINES_ALL {
         let out = run_ok(engine, src, &["f"]);
         assert!(

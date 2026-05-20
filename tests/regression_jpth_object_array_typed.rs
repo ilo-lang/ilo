@@ -56,11 +56,11 @@ fn jpth_array_field_returns_iterable_list() {
     // The event-trace-analyser repro: `{"spans":[{...},{...}]}`. Before the
     // fix `jpth blob "spans"` returned a text blob and `len ss` raised a
     // type error. After the fix the Ok variant is `L _`, so `len` reports
-    // element count directly. We `?r{~v:..;^e:..}`-match to satisfy the
+    // element count directly. We `?r{~v:..;^er:..}`-match to satisfy the
     // non-Result-returning main; the test is on the happy path so the Err
     // arm only ever fires on regression.
     let json = r#"{"spans":[{"id":"a"},{"id":"b"},{"id":"c"}]}"#;
-    let src = r#"main j:t>n;r=jpth j "spans";?r{~v:len v;^e:0}"#;
+    let src = r#"main j:t>n;r=jpth j "spans";?r{~v:len v;^er:0}"#;
     for engine in ENGINES {
         let (ok, stdout, stderr) = run(engine, src, &[json]);
         assert!(
@@ -84,7 +84,7 @@ fn jpth_object_field_returns_typed_value() {
     // rejected it. After the fix the Ok variant is a record; jdmp round-trips
     // and we assert both keys are present (avoiding sort-order assumptions).
     let json = r#"{"dependencies":{"a":"1","b":"2"}}"#;
-    let src = r#"main j:t>t;r=jpth j "dependencies";?r{~v:jdmp v;^e:e}"#;
+    let src = r#"main j:t>t;r=jpth j "dependencies";?r{~v:jdmp v;^er:er}"#;
     for engine in ENGINES {
         let (ok, stdout, stderr) = run(engine, src, &[json]);
         assert!(
@@ -105,7 +105,7 @@ fn jpth_numeric_leaf_returns_number() {
     // Pre-fix `jpth blob "n"` on `{"n":42}` returned Text("42"). Post-fix it
     // returns Number(42), so arithmetic works directly without `num!`.
     let json = r#"{"n":42}"#;
-    let src = r#"main j:t>n;r=jpth j "n";?r{~v:+ v 1;^e:0}"#;
+    let src = r#"main j:t>n;r=jpth j "n";?r{~v:+ v 1;^er:0}"#;
     for engine in ENGINES {
         let (ok, stdout, stderr) = run(engine, src, &[json]);
         assert!(
@@ -128,7 +128,7 @@ fn jkeys_returns_sorted_top_level_keys() {
     // without shelling out to jq. Sorted output is intentional so cross-engine
     // diffs stay deterministic.
     let json = r#"{"deps":{"left-pad":"1.0","react":"18","axios":"1.6"}}"#;
-    let src = r#"main j:t>t;r=jkeys j "deps";?r{~v:jdmp v;^e:e}"#;
+    let src = r#"main j:t>t;r=jkeys j "deps";?r{~v:jdmp v;^er:er}"#;
     for engine in ENGINES {
         let (ok, stdout, stderr) = run(engine, src, &[json]);
         assert!(
@@ -148,7 +148,7 @@ fn jkeys_returns_sorted_top_level_keys() {
 fn jkeys_on_root_with_empty_path() {
     // Empty path == top-level keys. Mirrors `mkeys` over a freshly-parsed map.
     let json = r#"{"z":1,"a":2,"m":3}"#;
-    let src = r#"main j:t>t;r=jkeys j "";?r{~v:jdmp v;^e:e}"#;
+    let src = r#"main j:t>t;r=jkeys j "";?r{~v:jdmp v;^er:er}"#;
     for engine in ENGINES {
         let (ok, stdout, stderr) = run(engine, src, &[json]);
         assert!(
@@ -166,10 +166,10 @@ fn jkeys_on_root_with_empty_path() {
 fn jkeys_on_non_object_returns_err() {
     // Calling jkeys on an array or scalar surfaces an Err so the caller can
     // branch instead of silently getting an empty list and assuming a
-    // key-less object existed. We use the `?r{~v:..;^e:..}` Result match to
+    // key-less object existed. We use the `?r{~v:..;^er:..}` Result match to
     // force the Err arm and emit a string the test can grep for.
     let json = r#"{"xs":[1,2,3]}"#;
-    let src = r#"main j:t>t;r=jkeys j "xs";?r{~v:jdmp v;^e:cat ["ERR:",e] ""}"#;
+    let src = r#"main j:t>t;r=jkeys j "xs";?r{~v:jdmp v;^er:cat ["ERR:",er] ""}"#;
     for engine in ENGINES {
         let (ok, stdout, stderr) = run(engine, src, &[json]);
         assert!(

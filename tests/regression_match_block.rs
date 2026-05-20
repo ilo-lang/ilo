@@ -1,6 +1,6 @@
 // Regression tests for match arm brace-block bodies:
 //
-//   ?expr{~v:{stmt;stmt;final-expr} ^e:body}
+//   ?expr{~v:{stmt;stmt;final-expr} ^er:body}
 //
 // Before the fix, the parser rejected `{` immediately after the arm `:` with
 // `ILO-P009: expected expression, got LBrace`. Personas paid a helper-function
@@ -50,7 +50,7 @@ fn single_expr_arm_preserved_cross_engine() {
 }
 
 // Brace-block arm with a local binding and a final expression.
-const BLOCK_WITH_LOCAL: &str = r#"f>n;r=num "10";?r{~v:{d=*v 2;+d 1};^e:0}"#;
+const BLOCK_WITH_LOCAL: &str = r#"f>n;r=num "10";?r{~v:{d=*v 2;+d 1};^er:0}"#;
 
 #[test]
 fn brace_block_with_local_cross_engine() {
@@ -61,7 +61,7 @@ fn brace_block_with_local_cross_engine() {
 }
 
 // Brace-block on the Err arm too.
-const BLOCK_ON_ERR: &str = r#"f>t;r=num "oops";?r{~v:str v;^e:{tag="err: ";+tag e}}"#;
+const BLOCK_ON_ERR: &str = r#"f>t;r=num "oops";?r{~v:str v;^er:{tag="err: ";+tag er}}"#;
 
 #[test]
 fn brace_block_on_err_cross_engine() {
@@ -72,7 +72,7 @@ fn brace_block_on_err_cross_engine() {
 }
 
 // Nested match: brace-block body contains another match expression.
-const NESTED_MATCH: &str = r#"f>t;r=num "0";?r{~v:{?v{0:"zero";_:"nonzero"}};^e:"bad"}"#;
+const NESTED_MATCH: &str = r#"f>t;r=num "0";?r{~v:{?v{0:"zero";_:"nonzero"}};^er:"bad"}"#;
 
 #[test]
 fn nested_match_in_block_cross_engine() {
@@ -97,7 +97,7 @@ fn bool_match_brace_blocks_cross_engine() {
 
 // Existing inline `;`-separated arm body must keep working — the brace-block
 // path is purely additive.
-const INLINE_SEMI: &str = r#"f>n;r=num "10";?r{~v:d=*v 2;+d 1;^e:0}"#;
+const INLINE_SEMI: &str = r#"f>n;r=num "10";?r{~v:d=*v 2;+d 1;^er:0}"#;
 
 #[test]
 fn inline_semi_arm_body_preserved_cross_engine() {
@@ -108,7 +108,7 @@ fn inline_semi_arm_body_preserved_cross_engine() {
 }
 
 // Match-as-expression in RHS of a binding, with a brace-block arm body.
-const MATCH_EXPR_BLOCK: &str = r#"f>n;r=num "5";x=?r{~v:{d=*v 3;+d 1};^e:0};+x 0"#;
+const MATCH_EXPR_BLOCK: &str = r#"f>n;r=num "5";x=?r{~v:{d=*v 3;+d 1};^er:0};+x 0"#;
 
 #[test]
 fn match_expr_brace_block_cross_engine() {

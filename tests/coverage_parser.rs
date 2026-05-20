@@ -362,7 +362,7 @@ fn stmt_destructure() {
 
 #[test]
 fn stmt_match_no_subject() {
-    ok("f>n;?{~v:v;^e:0;_:1}");
+    ok("f>n;?{~v:v;^er:0;_:1}");
 }
 
 #[test]
@@ -492,7 +492,7 @@ fn stmt_braceless_guard_dangling_token() {
 
 #[test]
 fn pattern_err_bind() {
-    ok("f x:R n t>t;?x{~v:\"ok\";^e:e}");
+    ok("f x:R n t>t;?x{~v:\"ok\";^er:er}");
 }
 
 #[test]
@@ -502,7 +502,7 @@ fn pattern_err_wildcard() {
 
 #[test]
 fn pattern_ok_wildcard() {
-    ok("f x:R n t>n;?x{~_:1;^e:0}");
+    ok("f x:R n t>n;?x{~_:1;^er:0}");
 }
 
 #[test]
@@ -1131,7 +1131,7 @@ fn fn_decl_body_with_match_arms_brace_form() {
 
 #[test]
 fn caret_in_expr_position() {
-    ok("f>R n t;e=^\"x\";e");
+    ok("f>R n t;ev=^\"x\";e");
 }
 
 #[test]

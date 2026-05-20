@@ -374,7 +374,7 @@ fn match_bare_bool_with_let_body_suggests_eq_true_form() {
 #[test]
 fn match_bare_bool_does_not_fire_on_real_pattern() {
     // `~v:body` is a real Ok-pattern arm — must not trigger the hint.
-    run_ok("go>R n t;r=~5;?r{~v:v;^e:0}");
+    run_ok("go>R n t;r=~5;?r{~v:v;^er:0}");
 }
 
 #[test]

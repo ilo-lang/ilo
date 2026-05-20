@@ -6572,7 +6572,7 @@ mod tests {
 
     #[test]
     fn interpret_match_ok_err_patterns() {
-        let source = r#"f x:R n t>n;?x{^e:0;~v:v}"#;
+        let source = r#"f x:R n t>n;?x{^er:0;~v:v}"#;
         let ok_result = run_str(
             source,
             Some("f"),
@@ -10731,7 +10731,7 @@ mod tests {
     fn interpret_range_end_not_number() {
         // ForRange where end is not a number — needs tricky setup
         // The range start/end are evaluated, if end is text it errors
-        let source = "f s:n e:n>n;@i s..e{i}";
+        let source = "f s:n en:n>n;@i s..en{i}";
         let result = run_str(
             source,
             Some("f"),
@@ -11294,7 +11294,7 @@ mod tests {
     fn interpret_for_range_non_number_end_error() {
         // @i 0..z{i} — end is text → error at line 1361
         let err = run_str_err(
-            "f e:t>n;@i 0..e{i}",
+            "f en:t>n;@i 0..en{i}",
             Some("f"),
             vec![Value::Text(Arc::new("b".to_string()))],
         );

@@ -136,7 +136,7 @@ fn rewrap_unchanged_err_cranelift() {
 // ── `^_:fmt "err: {}" _` — debug-log the unbound name ───────────────────────
 //
 // `_` in an err-wildcard arm now refers to the inner error text, so a
-// throwaway debug formatter composes without renaming to `^e:fmt ... e`.
+// throwaway debug formatter composes without renaming to `^er:fmt ... e`.
 
 const ERR_DEBUG_FMT: &str = "f s:t>t;r=num s;?r{~v:str v;^_:fmt \"err: {}\" _}\n";
 
@@ -226,7 +226,7 @@ fn typeis_wildcard_bind_cranelift() {
 // The fix removed the `binding != "_"` guard everywhere; named bindings
 // (the common case) must continue to work end-to-end.
 
-const NAMED_BINDINGS: &str = "f s:t>t;r=num s;?r{~v:str v;^e:+\"err: \" e}\n";
+const NAMED_BINDINGS: &str = "f s:t>t;r=num s;?r{~v:str v;^er:+\"err: \" er}\n";
 
 #[test]
 fn named_bindings_ok_tree() {
