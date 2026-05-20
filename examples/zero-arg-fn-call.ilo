@@ -1,0 +1,17 @@
+-- Demonstrates correct 0-arg function call forms in ilo.
+-- A 0-arg function auto-expands in statement/assignment position,
+-- but needs explicit `name()` in value position (e.g. operand of `+`).
+
+-- `stamp` returns a fixed value (not time-dependent, safe for tests).
+stamp>n;42
+
+-- In statement/assignment position: auto-expands to a call. Returns 42.
+get-val>n;stamp
+
+-- In value position: use stamp() explicitly to get the value.
+add-one>n;+(stamp()) 1
+
+main>b;=add-one() 43
+
+-- run: main
+-- out: true

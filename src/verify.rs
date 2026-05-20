@@ -3693,10 +3693,34 @@ impl VerifyContext {
             Expr::Ref(name) => {
                 if let Some(ty) = scope_lookup(scope, name) {
                     ty.clone()
-                } else if let Some(sig) = self.functions.get(name) {
-                    // Function name used as a value — resolve to Ty::Fn
-                    let params: Vec<Ty> = sig.params.iter().map(|(_, t)| t.clone()).collect();
-                    Ty::Fn(params, Box::new(sig.return_type.clone()))
+                } else if let Some((params, ret)) = self.functions.get(name).map(|sig| {
+                    let p: Vec<Ty> = sig.params.iter().map(|(_, t)| t.clone()).collect();
+                    let r = sig.return_type.clone();
+                    (p, r)
+                }) {
+                    // Function name used as a value — resolve to Ty::Fn.
+                    // ILO-T039: a 0-arg user function used as a bare reference
+                    // almost always means the agent forgot to call it. In ilo,
+                    // 0-arg functions are called with a bare name in statement
+                    // position (auto-expanded) or with `name()` in value position.
+                    // A `Ref("name")` that resolves to `Fn([], ret)` is almost
+                    // never intentional — the result is a function value, not a
+                    // `ret`. Emit a hint so the agent gets the correction inline.
+                    if params.is_empty() {
+                        self.err(
+                            "ILO-T039",
+                            func,
+                            format!(
+                                "'{name}' is a 0-arg function used as a value reference, not a call"
+                            ),
+                            Some(format!(
+                                "call it with '{name}()' to get the return value; \
+                                 bare '{name}' in value position is a function reference, not a call result"
+                            )),
+                            Some(span),
+                        );
+                    }
+                    Ty::Fn(params, Box::new(ret))
                 } else if let Some(fn_ty) = builtin_as_fn_ty(name) {
                     // Pure builtin used as a value (e.g. `fld max xs 0`).
                     // Promote to Ty::Fn so HOF args type-check.

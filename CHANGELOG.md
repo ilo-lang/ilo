@@ -35,6 +35,7 @@
 
 ### Diagnostics
 
+- ILO-T039: 0-arg user function used as a bare reference in value position. When an agent writes `v = my-fn` or `+my-fn 100` and `my-fn` takes no arguments, ilo now emits ILO-T039 with a hint pointing at `my-fn()` as the correct call form. Previously the agent received a silent type error or a generic type-mismatch diagnostic with no actionable suggestion, costing one or more retries.
 - ILO-T006 on `lst` (and its `lset` alias) now carries a suggestion clarifying that `lst xs i v` is "list set at index" (3 args, returns a new list with index `i` replaced by `v`), not "last element". The 1-arg case (`lst xs`) points at the canonical `at xs -1` for last-element intent; other arities point at the 3-arg signature without misreading the call as a last-element attempt. Surfaced by git-workflow rerun11 - agents reached for `lst xs` and hit an empty-suggestion arity error.
 - ILO-T013 on `cat "a" "b"` (the string-concat instinct from Python/JS) now suggests `fmt "{}{}" a b` or `+a b` as the canonical text-concat shapes. `cat` is list-concat; the verifier used to flag the type error but leave the user to guess the fix, costing one round-trip on every new-write. Surfaced by scaffold rerun11.
 

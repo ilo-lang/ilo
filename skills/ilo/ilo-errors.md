@@ -28,6 +28,7 @@ description: Use this when reading ILO-XXXX error codes or fixing failures. List
 - **T010 non-result error-propagate** - `!` in a non-`R` fn. Declare `>R t t` or use `??` / match.
 - **T013 builtin arg type** - `cat` is list-concat; text uses `fmt`/`+`.
 - **T038 non-bool ternary cond** - `?h c a b` cond must be `b`. Bind first.
+- **T039 0-arg fn as value** - `f` is a 0-arg fn used as a ref, not a call. Use `f()` in value position.
 
 ## Runtime
 
