@@ -362,6 +362,16 @@ pub fn normalize_newlines_with_map(source: &str) -> (String, Vec<u32>) {
     }
 
     while let Some((i, c)) = iter.next() {
+        // Windows CRLF: consume the `\r` silently when it is immediately
+        // followed by `\n`. The `\n` is then handled on the next iteration
+        // as a normal newline, preserving correct line/column accounting.
+        // Standalone `\r` (old Mac line endings) is treated as whitespace
+        // and passed through to the logos error path unchanged.
+        if c == '\r' && iter.peek().map(|(_, ch)| *ch) == Some('\n') {
+            // Do not push `\r` to output; do not update last_significant.
+            // The `\n` on the next iteration does all the work.
+            continue;
+        }
         if c == '"' {
             // Pass through string literal content verbatim so `--` inside a
             // string isn't mistaken for a comment, `\n` (if ever present
