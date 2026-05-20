@@ -58,16 +58,28 @@ fn python_emit_byte_identical_to_baselines() {
 
     for baseline in &entries {
         // baseline filename is `<example>.ilo.py`; strip the trailing `.py`
-        // to get the corresponding `examples/<example>.ilo` source.
+        // to get the corresponding source path. Examples may use either the
+        // legacy `.ilo` extension or the newer `.@` extension (Phase 5 rename),
+        // so we probe both.
         let stem = baseline
             .file_stem()
             .and_then(|s| s.to_str())
             .expect("baseline filename must be utf8");
-        let source = format!("examples/{stem}");
-        if !std::path::Path::new(&source).exists() {
-            compile_failures.push(format!("{stem}: source missing at {source}"));
+        // Strip a trailing `.ilo` if present to get the bare name, then probe
+        // for `.@` first (new convention), falling back to the full stem path.
+        let bare = stem.strip_suffix(".ilo").unwrap_or(stem);
+        let source_at = format!("examples/{bare}.@");
+        let source_ilo = format!("examples/{stem}");
+        let source = if std::path::Path::new(&source_at).exists() {
+            source_at
+        } else if std::path::Path::new(&source_ilo).exists() {
+            source_ilo
+        } else {
+            compile_failures.push(format!(
+                "{stem}: source missing at {source_ilo} (also tried {source_at})"
+            ));
             continue;
-        }
+        };
 
         let out_path = tmp_path(stem);
         let out = Command::new(env!("CARGO_BIN_EXE_ilo"))
