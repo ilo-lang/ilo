@@ -4937,6 +4937,91 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         };
         return Ok(Value::List(Arc::new(result)));
     }
+    if builtin == Some(Builtin::RgxallMulti) && args.len() == 2 {
+        // rgxall-multi pats:L t line:t > L t
+        //
+        // For each pattern in `pats`, run rgxall1 semantics (0 groups →
+        // whole matches; 1 group → capture-1 strings) and concatenate the
+        // results in pattern order into a single flat list.
+        //
+        // This is equivalent to:
+        //   flat (map (p:t>L t;rgxall1 p line) pats)
+        // but saves ~20 tokens per call site. The cron-explainer and
+        // historical-archeologist personas both reached for exactly this shape.
+        //
+        // Error conditions follow rgxall1:
+        //   - non-list first arg → ILO-R009
+        //   - non-text element in pats → ILO-R009
+        //   - invalid regex → ILO-R009
+        //   - pattern with 2+ capture groups → ILO-R009 (use rgxall per group)
+        let pats = match &args[0] {
+            Value::List(xs) => xs.clone(),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!(
+                        "rgxall-multi: first arg must be a list of patterns, got {:?}",
+                        other
+                    ),
+                ));
+            }
+        };
+        let input = match &args[1] {
+            Value::Text(s) => s.clone(),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!(
+                        "rgxall-multi: second arg must be a string, got {:?}",
+                        other
+                    ),
+                ));
+            }
+        };
+        let mut result: Vec<Value> = Vec::new();
+        for (i, pat_val) in pats.iter().enumerate() {
+            let pattern = match pat_val {
+                Value::Text(s) => s.as_str(),
+                other => {
+                    return Err(RuntimeError::new(
+                        "ILO-R009",
+                        format!(
+                            "rgxall-multi: pats[{i}] must be a string pattern, got {:?}",
+                            other
+                        ),
+                    ));
+                }
+            };
+            let re = regex::Regex::new(pattern).map_err(|e| {
+                RuntimeError::new(
+                    "ILO-R009",
+                    format!("rgxall-multi: invalid regex pattern at index {i}: {e}"),
+                )
+            })?;
+            let group_count = re.captures_len().saturating_sub(1);
+            if group_count >= 2 {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!(
+                        "rgxall-multi: pattern at index {i} has {group_count} capture groups; rgxall-multi only supports 0 or 1 per pattern. Use rgxall for L (L t) with every group preserved."
+                    ),
+                ));
+            }
+            if group_count == 1 {
+                re.captures_iter(input.as_str())
+                    .filter_map(|caps| {
+                        caps.get(1)
+                            .map(|m| Value::Text(Arc::new(m.as_str().to_string())))
+                    })
+                    .for_each(|v| result.push(v));
+            } else {
+                re.find_iter(input.as_str())
+                    .map(|m| Value::Text(Arc::new(m.as_str().to_string())))
+                    .for_each(|v| result.push(v));
+            }
+        }
+        return Ok(Value::List(Arc::new(result)));
+    }
     if builtin == Some(Builtin::Rgxsub) && args.len() == 3 {
         let pattern = match &args[0] {
             Value::Text(s) => s.as_str(),

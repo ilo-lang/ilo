@@ -571,6 +571,9 @@ pub(crate) fn is_tree_bridge_eligible(b: crate::builtins::Builtin, argc: usize) 
         // rgxall1: flat first-capture-group convenience (L t) over rgxall.
         // Bridge contract identical to rgxall.
         (Builtin::Rgxall1, 2) => true,
+        // rgxall-multi: multi-pattern flat-match. Same bridge contract as
+        // rgxall1 — no FnRef args, no Result wrapper, can raise ILO-R009.
+        (Builtin::RgxallMulti, 2) => true,
         (Builtin::Fmt, _) if argc >= 1 => true,
         (Builtin::Rd, 2) => true,
         (Builtin::Rdb, 2) => true,
@@ -16340,6 +16343,9 @@ pub(crate) fn tree_bridge_propagates_error(b: crate::builtins::Builtin) -> bool 
             // input issue. Surface it on Cranelift in lockstep with
             // tree/VM rather than silently degenerating to nil.
             | Builtin::Rgxall1
+            // rgxall-multi raises ILO-R009 on the same conditions as
+            // rgxall1 (invalid pattern, >1 group on a per-pattern check).
+            | Builtin::RgxallMulti
             // ct raises ILO-R009 on non-bool predicate returns. Same
             // class as srt/rsrt key-fn type errors that already propagate.
             | Builtin::Ct

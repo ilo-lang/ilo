@@ -433,6 +433,7 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("rgxall", &["t", "t"], "L (L t)"),
     ("rgxall1", &["t", "t"], "L t"),
     ("rgxsub", &["t", "t", "t"], "t"),
+    ("rgxall-multi", &["list", "t"], "L t"),
     // Map builtins (M k v type)
     ("mmap", &[], "map"),
     ("mget", &["map", "t"], "optional"),
