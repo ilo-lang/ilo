@@ -1330,33 +1330,33 @@ mod tests {
 
     #[test]
     fn emit_example_01() {
-        let py = parse_file_and_emit("examples/01-simple-function.ilo");
+        let py = parse_file_and_emit("examples/01-simple-function.@");
         assert!(py.contains("def tot("));
         assert!(py.contains("return (s + t)"));
     }
 
     #[test]
     fn emit_example_02() {
-        let py = parse_file_and_emit("examples/02-with-dependencies.ilo");
+        let py = parse_file_and_emit("examples/02-with-dependencies.@");
         assert!(py.contains("def prc("));
     }
 
     #[test]
     fn emit_example_03() {
-        let py = parse_file_and_emit("examples/03-data-transform.ilo");
+        let py = parse_file_and_emit("examples/03-data-transform.@");
         assert!(py.contains("def cls("));
         assert!(py.contains("def sms("));
     }
 
     #[test]
     fn emit_example_04() {
-        let py = parse_file_and_emit("examples/04-tool-interaction.ilo");
+        let py = parse_file_and_emit("examples/04-tool-interaction.@");
         assert!(py.contains("def ntf("));
     }
 
     #[test]
     fn emit_example_05() {
-        let py = parse_file_and_emit("examples/05-workflow.ilo");
+        let py = parse_file_and_emit("examples/05-workflow.@");
         assert!(py.contains("def chk("));
     }
 
@@ -2151,7 +2151,7 @@ mod tests {
             source: None,
         };
         prog.declarations.push(Decl::Use {
-            path: "x.ilo".into(),
+            path: "x.@".into(),
             only: None,
             span: Span::UNKNOWN,
         });

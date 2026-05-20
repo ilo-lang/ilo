@@ -383,7 +383,7 @@ do not need braces:
         short: "use-import failed",
         long: r#"## ILO-P017: use-import failed
 
-A `use "path.ilo"` declaration could not be resolved. Possible causes:
+A `use "path.@"` declaration could not be resolved. Possible causes:
 
 - The path is not reachable from a file context (inline code via
   `ilo '<src>'` has no base directory to resolve against)
@@ -432,7 +432,7 @@ treats it as a single operand.
         short: "use-import name not found",
         long: r#"## ILO-P019: use-import name not found
 
-A `use "path.ilo" { name }` declaration listed a name that does not
+A `use "path.@" { name }` declaration listed a name that does not
 exist in the imported file. The other names in the list are still
 imported; only the missing ones produce this diagnostic.
 
@@ -1145,7 +1145,7 @@ binary's `main()` calls a single entry function. AOT picks that entry
 the same way the in-process engines do:
 
 1. an explicit positional `func` argument wins
-   (`ilo compile foo.ilo -o foo entry-fn`)
+   (`ilo compile foo.@ -o foo entry-fn`)
 2. otherwise a file with a single user-defined function uses it
 3. otherwise a function called `main` is used if defined
 

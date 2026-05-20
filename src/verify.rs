@@ -8112,7 +8112,7 @@ mod tests {
             .collect();
         let (mut program, _) = crate::parser::parse(token_spans);
         program.declarations.push(Decl::Use {
-            path: "x.ilo".into(),
+            path: "x.@".into(),
             only: None,
             span: Span::UNKNOWN,
         });

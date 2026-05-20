@@ -318,9 +318,9 @@ mod tests {
     #[test]
     fn explain_with_filename_prefix() {
         let prog = parse_prog("f x:n>n;x");
-        let out = explain(&prog, Some("my.ilo"));
+        let out = explain(&prog, Some("my.@"));
         assert!(
-            out.starts_with("file: my.ilo\n"),
+            out.starts_with("file: my.@\n"),
             "missing filename prefix: {out}"
         );
     }
@@ -548,7 +548,7 @@ mod tests {
         use crate::ast::{Decl, Span};
         let mut prog = parse_prog("f>n;42");
         prog.declarations.push(Decl::Use {
-            path: "x.ilo".into(),
+            path: "x.@".into(),
             only: None,
             span: Span::UNKNOWN,
         });

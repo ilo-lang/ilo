@@ -596,7 +596,7 @@ impl Parser {
         }
     }
 
-    /// `use "path/to/file.ilo"` or `use "path/to/file.ilo" [name1 name2]`
+    /// `use "path/to/file.@"` or `use "path/to/file.@" [name1 name2]`
     fn parse_use_decl(&mut self) -> Result<Decl> {
         let start = self.peek_span();
         self.expect(&Token::Use)?;
@@ -5621,7 +5621,7 @@ mod tests {
 
     #[test]
     fn parse_example_01_simple_function() {
-        let prog = parse_file("examples/01-simple-function.ilo");
+        let prog = parse_file("examples/01-simple-function.@");
         assert_eq!(prog.declarations.len(), 1);
         let Decl::Function {
             name,
@@ -5641,7 +5641,7 @@ mod tests {
 
     #[test]
     fn parse_example_02_with_dependencies() {
-        let prog = parse_file("examples/02-with-dependencies.ilo");
+        let prog = parse_file("examples/02-with-dependencies.@");
         assert_eq!(prog.declarations.len(), 1);
         let Decl::Function {
             name, return_type, ..
@@ -7194,21 +7194,21 @@ mod tests {
 
     #[test]
     fn parse_use_basic() {
-        let prog = parse_str(r#"use "lib.ilo""#);
+        let prog = parse_str(r#"use "lib.@""#);
         let Decl::Use { path, only, .. } = &prog.declarations[0] else {
             panic!("expected Use")
         };
-        assert_eq!(path, "lib.ilo");
+        assert_eq!(path, "lib.@");
         assert!(only.is_none());
     }
 
     #[test]
     fn parse_use_with_scoped_imports() {
-        let prog = parse_str(r#"use "lib.ilo" [foo bar]"#);
+        let prog = parse_str(r#"use "lib.@" [foo bar]"#);
         let Decl::Use { path, only, .. } = &prog.declarations[0] else {
             panic!("expected Use")
         };
-        assert_eq!(path, "lib.ilo");
+        assert_eq!(path, "lib.@");
         let names = only.as_ref().unwrap();
         assert_eq!(names, &["foo", "bar"]);
     }
@@ -7226,7 +7226,7 @@ mod tests {
 
     #[test]
     fn parse_use_empty_bracket_list_error() {
-        let (_, errors) = parse_str_errors(r#"use "lib.ilo" []"#);
+        let (_, errors) = parse_str_errors(r#"use "lib.@" []"#);
         assert!(!errors.is_empty());
         assert!(
             errors
@@ -7866,8 +7866,8 @@ mod tests {
 
     #[test]
     fn use_unclosed_bracket_list_error() {
-        // `use "file.ilo" [foo` — unclosed `[` without closing `]`
-        let (_, errors) = parse_str_errors(r#"use "file.ilo" [foo"#);
+        // `use "file.@" [foo` — unclosed `[` without closing `]`
+        let (_, errors) = parse_str_errors(r#"use "file.@" [foo"#);
         assert!(!errors.is_empty(), "expected parse error for unclosed [");
         assert!(
             errors
@@ -7880,10 +7880,10 @@ mod tests {
 
     #[test]
     fn use_bracket_list_with_reserved_word_errors() {
-        // `use "file.ilo" [if]` — `if` inside `[...]` triggers expect_ident → ILO-P011
+        // `use "file.@" [if]` — `if` inside `[...]` triggers expect_ident → ILO-P011
         let tokens = vec![
             (Token::Use, Span::UNKNOWN),
-            (Token::Text("file.ilo".into()), Span::UNKNOWN),
+            (Token::Text("file.@".into()), Span::UNKNOWN),
             (Token::LBracket, Span::UNKNOWN),
             (Token::KwIf, Span::UNKNOWN),
             (Token::RBracket, Span::UNKNOWN),
