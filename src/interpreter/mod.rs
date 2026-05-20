@@ -3971,6 +3971,49 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         }
         return Ok(run_spawn(cmd.as_str(), &argv));
     }
+    if builtin == Some(Builtin::Run2) && args.len() == 2 {
+        // run2 cmd:t args:L t  >  R RunResult t
+        //
+        // Like `run` but returns a typed Record{stdout:t; stderr:t; exit:n}
+        // instead of a loose Map. Non-zero exit is NOT an error; Err only on
+        // spawn failure (cmd not found, permission denied, etc.).
+        let cmd = match &args[0] {
+            Value::Text(s) => s.clone(),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("run2 requires text (cmd), got {:?}", other),
+                ));
+            }
+        };
+        let argv: Vec<String> = match &args[1] {
+            Value::List(items) => {
+                let mut out = Vec::with_capacity(items.len());
+                for (i, v) in items.iter().enumerate() {
+                    match v {
+                        Value::Text(s) => out.push((**s).clone()),
+                        other => {
+                            return Err(RuntimeError::new(
+                                "ILO-R009",
+                                format!(
+                                    "run2 argv must be L t (text list); element {i} is {:?}",
+                                    other
+                                ),
+                            ));
+                        }
+                    }
+                }
+                out
+            }
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("run2 argv must be L t (text list), got {:?}", other),
+                ));
+            }
+        };
+        return Ok(run_spawn_structured(cmd.as_str(), &argv));
+    }
     if builtin == Some(Builtin::Trm) && args.len() == 1 {
         return match &args[0] {
             Value::Text(s) => Ok(Value::Text(Arc::new(s.trim().to_string()))),
@@ -8135,10 +8178,126 @@ pub(crate) fn run_spawn(cmd: &str, argv: &[String]) -> Value {
     Value::Ok(Box::new(Value::Map(Arc::new(m))))
 }
 
+/// `run2 cmd argv > R RunResult t` — structured process spawn.
+///
+/// Same concurrency / cap / UTF-8-lossy policy as `run_spawn`. Returns a
+/// typed Record{stdout:t; stderr:t; exit:n} wrapped in `Ok`. The `exit`
+/// field is an f64 (ilo's number type): normal exit codes are non-negative
+/// integers; signal-killed processes on Unix surface as -1.0 so callers
+/// can branch on `r.exit < 0`.
+#[cfg(not(target_family = "wasm"))]
+pub(crate) fn run_spawn_structured(cmd: &str, argv: &[String]) -> Value {
+    use std::process::{Command, Stdio};
+
+    let mut command = Command::new(cmd);
+    command
+        .args(argv)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    let mut child = match command.spawn() {
+        Ok(c) => c,
+        Err(e) => {
+            return Value::Err(Box::new(Value::Text(Arc::new(format!(
+                "run2: failed to spawn {cmd:?}: {e}"
+            )))));
+        }
+    };
+
+    let mut stdout_pipe = child.stdout.take();
+    let mut stderr_pipe = child.stderr.take();
+
+    let (stdout_res, stderr_res) = std::thread::scope(|s| {
+        let so = s.spawn(|| -> std::result::Result<Vec<u8>, String> {
+            let mut buf = Vec::new();
+            if let Some(p) = stdout_pipe.as_mut() {
+                read_capped(p, &mut buf, RUN_OUTPUT_CAP)?;
+            }
+            Ok(buf)
+        });
+        let se = s.spawn(|| -> std::result::Result<Vec<u8>, String> {
+            let mut buf = Vec::new();
+            if let Some(p) = stderr_pipe.as_mut() {
+                read_capped(p, &mut buf, RUN_OUTPUT_CAP)?;
+            }
+            Ok(buf)
+        });
+        let so = so
+            .join()
+            .unwrap_or_else(|_| Err("stdout reader panicked".to_string()));
+        let se = se
+            .join()
+            .unwrap_or_else(|_| Err("stderr reader panicked".to_string()));
+        (so, se)
+    });
+
+    let stdout_buf = match stdout_res {
+        Ok(b) => b,
+        Err(e) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Value::Err(Box::new(Value::Text(Arc::new(format!(
+                "run2: stdout capture failed: {e}"
+            )))));
+        }
+    };
+    let stderr_buf = match stderr_res {
+        Ok(b) => b,
+        Err(e) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Value::Err(Box::new(Value::Text(Arc::new(format!(
+                "run2: stderr capture failed: {e}"
+            )))));
+        }
+    };
+
+    let status = match child.wait() {
+        Ok(s) => s,
+        Err(e) => {
+            return Value::Err(Box::new(Value::Text(Arc::new(format!(
+                "run2: wait failed: {e}"
+            )))));
+        }
+    };
+
+    let stdout = String::from_utf8_lossy(&stdout_buf).into_owned();
+    let stderr = String::from_utf8_lossy(&stderr_buf).into_owned();
+
+    // exit as f64: normal code or -1 for signal-killed processes.
+    let exit_code: f64 = status.code().map(|c| c as f64).unwrap_or_else(|| {
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::ExitStatusExt;
+            if status.signal().is_some() {
+                return -1.0;
+            }
+        }
+        -1.0
+    });
+
+    let mut fields = HashMap::with_capacity(3);
+    fields.insert("stdout".to_string(), Value::Text(Arc::new(stdout)));
+    fields.insert("stderr".to_string(), Value::Text(Arc::new(stderr)));
+    fields.insert("exit".to_string(), Value::Number(exit_code));
+    Value::Ok(Box::new(Value::Record {
+        type_name: "RunResult".to_string(),
+        fields,
+    }))
+}
+
 #[cfg(target_family = "wasm")]
 pub(crate) fn run_spawn(_cmd: &str, _argv: &[String]) -> Value {
     Value::Err(Box::new(Value::Text(Arc::new(
         "run: process spawn not available on wasm".to_string(),
+    ))))
+}
+
+#[cfg(target_family = "wasm")]
+pub(crate) fn run_spawn_structured(_cmd: &str, _argv: &[String]) -> Value {
+    Value::Err(Box::new(Value::Text(Arc::new(
+        "run2: process spawn not available on wasm".to_string(),
     ))))
 }
 
@@ -14097,5 +14256,74 @@ mod tests {
             }
             other => panic!("expected Text, got {other:?}"),
         }
+    }
+    // ── run2 cross-engine regression tests ──────────────────────────────
+
+    #[test]
+    #[cfg(not(target_family = "wasm"))]
+    fn run2_echo_stdout_is_record() {
+        // echo populates stdout; exit is 0; stderr is empty.
+        let src = r#"f>_;r=run2!! "echo" ["hello"];r"#;
+        let v = run_str(src, Some("f"), vec![]);
+        match v {
+            Value::Record {
+                ref type_name,
+                ref fields,
+            } => {
+                assert_eq!(type_name, "RunResult");
+                assert_eq!(
+                    fields.get("stdout"),
+                    Some(&Value::Text(Arc::new("hello\n".to_string())))
+                );
+                assert_eq!(
+                    fields.get("stderr"),
+                    Some(&Value::Text(Arc::new(String::new())))
+                );
+                assert_eq!(fields.get("exit"), Some(&Value::Number(0.0)));
+            }
+            other => panic!("expected RunResult record, got {:?}", other),
+        }
+    }
+
+    #[test]
+    #[cfg(not(target_family = "wasm"))]
+    fn run2_false_exit_nonzero() {
+        // `false` exits 1; not an Err -- exit field carries the code as a number.
+        let src = r#"f>n;r=run2!! "false" [];r.exit"#;
+        assert_eq!(run_str(src, Some("f"), vec![]), Value::Number(1.0));
+    }
+
+    #[test]
+    #[cfg(not(target_family = "wasm"))]
+    fn run2_true_exit_zero() {
+        let src = r#"f>n;r=run2!! "true" [];r.exit"#;
+        assert_eq!(run_str(src, Some("f"), vec![]), Value::Number(0.0));
+    }
+
+    #[test]
+    #[cfg(not(target_family = "wasm"))]
+    fn run2_nonexistent_is_err() {
+        // Spawn failure surfaces as Err, not Ok.
+        let src = r#"f>b;r=run2 "no-such-command-xyz-run2" [];?r{~v:false;^e:true}"#;
+        assert_eq!(run_str(src, Some("f"), vec![]), Value::Bool(true));
+    }
+
+    #[test]
+    #[cfg(not(target_family = "wasm"))]
+    fn run2_stderr_captured() {
+        // Verify stdout and stderr are captured into separate fields.
+        // echo puts text in stdout; stderr should be empty (len 0).
+        let src = r#"f>n;r=run2!! "echo" ["hello"];len r.stdout"#;
+        let v = run_str(src, Some("f"), vec![]);
+        // "hello\n" is 6 bytes/chars
+        assert_eq!(v, Value::Number(6.0));
+    }
+
+    #[test]
+    #[cfg(not(target_family = "wasm"))]
+    fn run2_exit_is_number_not_text() {
+        // Regression: exit must be Number, not Text (run uses Text for code).
+        let src = r#"f>b;r=run2!! "true" [];?r.exit{0:true;_:false}"#;
+        assert_eq!(run_str(src, Some("f"), vec![]), Value::Bool(true));
     }
 }
