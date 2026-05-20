@@ -45,6 +45,11 @@ clap = { version = "4", features = ["derive"] }
 fastrand = "2"
 regex = "1"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
+sha2 = "0.10"
+hmac = "0.12"
+base64 = "0.22"
+hex = "0.4"
+subtle = "2"
 
 [dev-dependencies]
 wiremock = "0.6"
