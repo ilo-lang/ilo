@@ -1,54 +1,24 @@
 -- api-rate-limit-watcher: adaptive rate-limit throttling demo.
--- Simulates polling GitHub API with rate-limit header tracking.
--- Demonstrates: loop with state, conditional sleep, per-request logging.
--- Cross-engine, ≤200 LoC, no Python.
+-- Loop N times with simulated rate-limit state. Demonstrates:
+-- - Loop with mutable state (remaining quota)
+-- - Conditional sleep based on threshold
+-- - Per-iteration logging of decisions
 
-^26.5
-
--- Entry: loop 3 times, each call manages rate-limit state.
-watch-api;
-  now=now;
-  reset-epoch=(+now 3600);
-  remaining=10;
-  limit=10;
+watch-api>_;
+  cur-now=now;
+  reset-epoch=+cur-now 3600;
   i=0;
-  @loop{
-    i>=3?!;
-    ?poll-once i remaining limit reset-epoch now{
-      ~ok:new-remaining;
-        remaining=new-remaining;
-        i=+i 1;
-        @loop;
-      ~err:e;
-        prnt "Poll failed: " e;
-        !
-    }
+  remaining=10;
+  wh <i 3{
+    prnt cat ["[" (str i) "] Remaining: " (str remaining) "/10"] "";
+    remaining<5{
+      wait-ms=rou *(-reset-epoch cur-now) 1000;
+      prnt cat ["Throttling " (str wait-ms) "ms"] "";
+      sleep wait-ms
+    }{prnt "OK"};
+    remaining=max 0 -remaining 1;
+    i=+i 1
   }
-
--- Single poll: log state, check throttle threshold, sleep if needed, return updated remaining.
-poll-once iter:n remaining:n limit:n reset:n now:n>R n t;
-  threshold=5;
-
-  -- Log current state.
-  log-action iter remaining limit;
-
-  -- If remaining is low, sleep until reset.
-  remaining<threshold?
-    wait-sec=max 0 (-reset now);
-    sleep (round (*wait-sec 1000))
-  :
-    _;
-
-  -- Decrement and return updated state.
-  Ok (max 0 (-remaining 1))
-
--- Log one request line: iteration, remaining quota, limit, wait recommendation.
-log-action iter:n remaining:n limit:n>_;
-  msg="[" (str iter) "] Remaining: " (str remaining) "/" (str limit) " → ";
-  remaining<5?
-    prnt msg "throttle active"
-  :
-    prnt msg "ok"
 
 -- run: watch-api
 -- out: (unit)
