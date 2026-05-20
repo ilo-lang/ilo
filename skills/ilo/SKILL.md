@@ -32,9 +32,10 @@ Every skill subcommand accepts `--json`. The envelope is `{schemaVersion: 1, ...
 
 ## Available skills
 
-Eleven task-focused skills cover the surface. Load only the slices the current task needs (typical: 1-2 modules):
+Twelve task-focused skills cover the surface. Load only the slices the current task needs (typical: 1-2 modules):
 
-- `ilo-language` writing or reviewing .ilo source: syntax, types, guards, match, pipes, records, Results.
+- `ilo-language` writing or reviewing .ilo source: syntax, types, guards, match, pipes, Results, loops, lambdas.
+- `ilo-language-records` writing ilo code with record types: declarations, construction, field access, destructuring, update syntax, safe navigation. Load alongside `ilo-language` when your code uses `type`.
 - `ilo-builtins-core` core builtins: type coercions (`len str num trm`), list ops, HOFs, map ops.
 - `ilo-builtins-math` math builtins: arithmetic, trig, constants (`pi tau e`), random, statistics.
 - `ilo-builtins-io` I/O builtins: file read/write, HTTP, JSON, path ops, env, time, process.
