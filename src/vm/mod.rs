@@ -7092,15 +7092,69 @@ impl NanVal {
                 NanVal::heap_map(nan_map)
             }
             Value::Record { type_name, fields } => {
-                let field_names: Vec<String> = fields.keys().cloned().collect();
+                // OP_RECFLD uses positional field indices that must match the
+                // type's declaration order.  HashMap iteration order is
+                // non-deterministic (AHash random seed), so we must NOT rely on
+                // `fields.keys()` order.  Resolution preference:
+                //   1. ACTIVE_REGISTRY by type_name — the canonical declaration
+                //      order, always set during JIT / VM dispatch (TLS read at
+                //      call time, not baked at JIT compile time — see
+                //      `jit_get_registry_ptr` for the AOT companion accessor).
+                //   2. Sorted HashMap keys — deterministic but arbitrary; only
+                //      reached for synthetic Values whose type isn't registered
+                //      (e.g. ad-hoc unit tests building Value::Record by hand
+                //      without going through the compiler).  Sorted to avoid
+                //      silently re-introducing the AHash bug if the registry
+                //      lookup somehow misses.
+                let registry_ptr = ACTIVE_REGISTRY.with(|r| r.get());
+                let (field_names, num_fields_mask): (Vec<String>, u64) = if !registry_ptr.is_null()
+                {
+                    // SAFETY: ACTIVE_REGISTRY is published by
+                    // `with_active_registry` / `set_active_registry` for the
+                    // duration of every VM entry and cleared by the drop
+                    // guard. The pointer is read fresh each call (no JIT-time
+                    // baking), so even if `JitFunction` is cached across
+                    // entries in future, the registry pointer remains valid.
+                    let registry = unsafe { &*registry_ptr };
+                    if let Some(ti) = registry
+                        .name_to_id
+                        .get(type_name.as_str())
+                        .and_then(|&id| registry.types.get(id as usize))
+                    {
+                        (ti.fields.clone(), ti.num_fields)
+                    } else {
+                        // Registry available but type missing.  Legitimate
+                        // for dynamic-record sources that don't flow through
+                        // OP_RECNEW: the canonical case is `jpar` /
+                        // `serde_json_to_value`, which stamps every parsed
+                        // object as `Value::Record { type_name: "json", .. }`
+                        // and is then read positionally via OP_RECFLD or by
+                        // name via OP_RECFLD_NAME depending on the param's
+                        // static type.  Sort deterministically so both
+                        // dispatch paths see the same flat layout every run
+                        // (no AHash randomness).
+                        let mut names: Vec<String> = fields.keys().cloned().collect();
+                        names.sort();
+                        (names, 0)
+                    }
+                } else {
+                    let mut names: Vec<String> = fields.keys().cloned().collect();
+                    names.sort();
+                    (names, 0)
+                };
                 let type_info = Rc::new(TypeInfo {
                     name: type_name.clone(),
                     fields: field_names.clone(),
-                    num_fields: 0,
+                    num_fields: num_fields_mask,
                 });
                 let flat: Box<[NanVal]> = field_names
                     .iter()
-                    .map(|k| NanVal::from_value_with_program(&fields[k], func_names))
+                    .map(|k| {
+                        fields
+                            .get(k.as_str())
+                            .map(|v| NanVal::from_value_with_program(v, func_names))
+                            .unwrap_or_else(NanVal::nil)
+                    })
                     .collect::<Vec<_>>()
                     .into_boxed_slice();
                 NanVal::heap_record(type_info, flat)
