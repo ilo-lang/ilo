@@ -1525,6 +1525,29 @@ fn num_err() {
     assert_eq!(ok_out(src, "main", &[]), "99");
 }
 
+// Polymorphic `num`: numeric input is identity-wrapped Ok. Pre-fix this
+// failed verification with "'num' expects t, got n". Exercises the
+// tree-walker path that the public CLI no longer dispatches to but that
+// HOF callbacks still bail to for VM/Cranelift.
+#[test]
+fn num_identity_on_number() {
+    let src = "main>n;r=num 42;?r{~v:v;^_:0}";
+    assert_eq!(ok_out(src, "main", &[]), "42");
+}
+
+#[test]
+fn num_identity_on_float() {
+    let src = "main>n;r=num 3.14;?r{~v:v;^_:0}";
+    assert_eq!(ok_out(src, "main", &[]), "3.14");
+}
+
+#[test]
+fn num_static_number_param() {
+    // Verifier now accepts `num` on a statically-typed Number argument.
+    let src = "main x:n>n;r=num x;?r{~v:v;^_:0}";
+    assert_eq!(ok_out(src, "main", &["42"]), "42");
+}
+
 // ---------------------------------------------------------------------------
 // File I/O: rd / rdl / rdb / wr / wrl / rdjl — Ok and Err paths
 // ---------------------------------------------------------------------------

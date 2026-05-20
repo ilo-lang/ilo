@@ -1,0 +1,17 @@
+-- `num` is polymorphic: it accepts text (parses) or number (identity). Saves
+-- the verbose str-roundtrip when a JSON body comes back as a bare number from
+-- jpar!, which is the recurring pattern in agent code that reads numeric APIs.
+
+from-text>n;num!! "42"
+from-number>n;num!! 42
+from-float>n;num!! 3.14
+from-jpar>R n t;num (jpar! "42")
+
+-- run: from-text
+-- out: 42
+-- run: from-number
+-- out: 42
+-- run: from-float
+-- out: 3.14
+-- run: from-jpar
+-- out: 42
