@@ -5,11 +5,13 @@ description: Use this when writing or reviewing .ilo source. Prefix notation, ty
 
 # ilo language
 
-Prefix-notation, strongly-typed, verified pre-run. Bodies single-line, `;`-separated. RC-managed; type checker enforces shape only.
+Prefix-notation, strongly-typed, verified pre-run. Bodies `;`-separated (single-line) or newline-separated (multi-line indented). RC-managed; type checker enforces shape only.
 
 ## fn
 
 `tot p:n q:n r:n>n;s=*p q;t=*s r;+s t`. No param parens. `>` returns. `;` separates. Last expr returns. Zero-arg: `make-id()`.
+
+Multi-line indented form (newline = `;` inside an indented body): `tot p:n q:n r:n>n` / `  s=*p q` / `  t=*s r` / `  +s t`. Newlines inside `[...]`/`(...)` are whitespace, not separators. CRLF (`\r\n`) is normalised to LF before parsing.
 
 ## types
 
