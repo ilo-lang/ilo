@@ -25,7 +25,7 @@ over the full repository history. All downstream jobs (`build`, `build-wasm`,
 
 Placeholder credentials shipped in `examples/` (especially `examples/apps/*`
 for LLM-client and ScrapingBee demos) are explicitly allowed in
-[`.gitleaks.toml`](./.gitleaks.toml). The current allow regex set:
+[`.github/gitleaks.toml`](./.github/gitleaks.toml). The current allow regex set:
 
 - `SCRAPINGBEE_KEY_PLACEHOLDER_set_via_env_in_real_use`
 - `sk-PLACEHOLDER[-_A-Za-z0-9]*`
@@ -63,4 +63,4 @@ feedback fast and still blocks the public artifact path.
 3. Once rotated, scrub the secret from history (`git filter-repo` or
    BFG), force-push the cleaned history, and re-cut the tag.
 4. If the finding is a false positive on a new placeholder shape, extend the
-   allowlist in `.gitleaks.toml` in a follow-up PR and re-cut the tag.
+   allowlist in `.github/gitleaks.toml` in a follow-up PR and re-cut the tag.
