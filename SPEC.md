@@ -501,6 +501,7 @@ Called like functions, compiled to dedicated opcodes.
 | `b64u s` | base64url-encode UTF-8 bytes of `s` (RFC 4648 §5, no padding, `-`/`_` alphabet). Total. | `t` |
 | `b64u-dec s` | inverse of `b64u`; Err on invalid base64url or non-UTF-8 decoded bytes | `R t t` |
 | `run cmd argv` | spawn `cmd` with argv list — see [Process spawn](#process-spawn) for the no-shell-no-glob security model | `R (M t t) t` |
+| `run2 cmd argv` | like `run` but returns a typed `RunResult` record (`r.stdout`, `r.stderr`, `r.exit` as `n`) instead of a loose map; Err only on spawn failure | `R RunResult t` |
 | `env key` | read environment variable | `R t t` |
 | `env-all` | snapshot the full process environment as `M t t` | `R (M t t) t` |
 | `rd path` | read file; format auto-detected from extension (`.csv`/`.tsv`→grid, `.json`→graph, else text) | `R _ t` |
@@ -865,7 +866,9 @@ Behind the `http` feature flag (on by default). Without the feature, `get`/`pst`
 
 ### Process spawn
 
-ilo provides one process-spawn primitive: `run cmd argv > R (M t t) t`. The signature is deliberately narrow: the first argument is the program (text), the second is the argv list (`L t`), and the result is a `Result` whose `Ok` carries a three-key Map of stdout / stderr / code as text.
+ilo provides two process-spawn primitives: `run` and `run2`. Both share the same no-shell-no-glob security model and the same concurrency / cap / UTF-8 policy; they differ only in what the `Ok` payload looks like.
+
+**`run cmd argv > R (M t t) t`** — loose Map with text fields `stdout`, `stderr`, `code` (exit code as text):
 
 **Output map schema.** On `Ok`, the map has exactly these three keys, all `t`-valued:
 
@@ -886,17 +889,30 @@ err=mget r.! "stderr"            -- ""
 $"git" ["status", "--short"]     -- equivalent: $ is the sigil shortcut for run
 ```
 
-**No shell, no interpolation, no glob.** The argv list is passed directly to `std::process::Command::args`. There is no `sh -c`, no string concatenation between `cmd` and `argv`, and no glob expansion. This is the principled defence against shell injection: ilo refuses to provide an injection vector while still providing controlled exec. Compared to bash + `jq`, the argv-list discipline and the typed Result + Map handle make `run` materially safer for agent orchestration.
+**`run2 cmd argv > R RunResult t`** — typed Record with dot-access (`r.stdout`, `r.stderr`, `r.exit`). `exit` is a number (`n`), not text, so numeric comparisons work directly:
 
-**Non-zero exit is NOT an error.** `Err` is reserved for spawn failures (command not found, permission denied, kernel-level pipe failure, output cap exceeded). A child that returns a non-zero exit code surfaces as `Ok({"stdout":..., "stderr":..., "code":"<n>"})`; the caller inspects `code` and branches as needed. This matches Python's `subprocess.run` semantics.
+```
+r=run2!! "echo" ["hi"]           -- RunResult{stdout:"hi\n"; stderr:""; exit:0}
+r.stdout                         -- "hi\n"
+r.exit                           -- 0  (number, not "0")
+?{<0 r.exit : "signal-killed" ; =0 r.exit : "ok" ; "failed"}
+```
 
-**Inherits parent env + cwd.** The first version provides no env or cwd override. Set the parent env / cwd before invoking ilo if you need a different shape.
+Prefer `run2` for new code. `run` is kept for compatibility.
+
+**No shell, no interpolation, no glob.** The argv list is passed directly to `std::process::Command::args`. There is no `sh -c`, no string concatenation between `cmd` and `argv`, and no glob expansion. This is the principled defence against shell injection: ilo refuses to provide an injection vector while still providing controlled exec. Compared to bash + `jq`, the argv-list discipline and the typed Result + Record/Map handle make `run`/`run2` materially safer for agent orchestration.
+
+**Non-zero exit is NOT an error.** `Err` is reserved for spawn failures (command not found, permission denied, kernel-level pipe failure, output cap exceeded). A child that returns a non-zero exit code surfaces as `Ok`; the caller inspects `exit` (or `code` for `run`) and branches as needed. This matches Python's `subprocess.run` semantics.
+
+**`run2` exit on signal.** On Unix, a signal-killed process has no exit code. `run2` surfaces this as `exit: -1` so the caller can branch on `<0 r.exit`. `run` uses the string `"signal:<n>"` for the same case.
+
+**Inherits parent env + cwd.** Neither primitive provides env or cwd override. Set the parent env / cwd before invoking ilo if you need a different shape.
 
 **Captured output is capped at 10 MiB per stream.** Either stream exceeding the cap returns an `Err` rather than partial capture so downstream JSON pipelines never see a truncated payload.
 
-**Stdin for child processes.** `run` spawns children with stdin closed (previously `/dev/null`). Use `rdin` / `rdinl` to read the **parent** program's own stdin from the shell pipeline. `rdin` reads all of stdin as text; `rdinl` reads it line by line.
+**Stdin for child processes.** Both primitives spawn children with stdin closed. Use `rdin` / `rdinl` to read the **parent** program's own stdin from the shell pipeline. `rdin` reads all of stdin as text; `rdinl` reads it line by line.
 
-Behind the same default build profile as `get`/`pst`; on `wasm32` targets, `run` returns `Err("run: process spawn not available on wasm")`.
+Behind the same default build profile as `get`/`pst`; on `wasm32` targets, both return `Err("run: process spawn not available on wasm")`.
 
 `env` reads an environment variable by name, returning `Ok(value)` or `Err("env var 'KEY' not set")`:
 
