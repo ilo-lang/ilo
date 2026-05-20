@@ -37,9 +37,9 @@ fn run(engine: &str, src: &str, args: &[&str]) -> (bool, String, String) {
 }
 
 fn check_offset(engine: &str, tz: &str, epoch: i64, expected: i64) {
-    let src = format!(r#"f tz:t n:n>R n t;tz-offset tz n"#);
+    let src = r#"f tz:t n:n>R n t;tz-offset tz n"#;
     let epoch_str = epoch.to_string();
-    let (ok, stdout, stderr) = run(engine, &src, &["f", tz, &epoch_str]);
+    let (ok, stdout, stderr) = run(engine, src, &["f", tz, &epoch_str]);
     assert!(ok, "{engine}: tz-offset {tz:?} {epoch} failed: {stderr}");
     let got: i64 = stdout
         .parse()
