@@ -78,7 +78,10 @@ fn rgxall_multi_no_match_returns_empty() {
 #[test]
 fn rgxall_multi_single_captureless_pattern() {
     // Single pattern, no capture groups — whole matches.
-    check(r#"f>L t;rgxall-multi ["\d+"] "a1 b22 c333""#, "[1, 22, 333]");
+    check(
+        r#"f>L t;rgxall-multi ["\d+"] "a1 b22 c333""#,
+        "[1, 22, 333]",
+    );
 }
 
 #[test]
@@ -144,18 +147,12 @@ fn rgxall_multi_equivalent_to_flat_map_rgxall1() {
 
 #[test]
 fn rgxall_multi_non_list_first_arg_errors() {
-    check_error(
-        r#"f>L t;rgxall-multi "\d+" "input""#,
-        "rgxall-multi",
-    );
+    check_error(r#"f>L t;rgxall-multi "\d+" "input""#, "rgxall-multi");
 }
 
 #[test]
 fn rgxall_multi_non_text_pattern_in_list_errors() {
-    check_error(
-        r#"f>L t;rgxall-multi [1 "\d+"] "input""#,
-        "rgxall-multi",
-    );
+    check_error(r#"f>L t;rgxall-multi [1 "\d+"] "input""#, "rgxall-multi");
 }
 
 #[test]
@@ -169,8 +166,5 @@ fn rgxall_multi_invalid_regex_errors() {
 #[test]
 fn rgxall_multi_two_group_pattern_errors_with_hint() {
     // Pattern with 2 capture groups should error with a message pointing at rgxall.
-    check_error(
-        r#"f>L t;rgxall-multi ["(\w+)=(\d+)"] "x=1""#,
-        "rgxall",
-    );
+    check_error(r#"f>L t;rgxall-multi ["(\w+)=(\d+)"] "x=1""#, "rgxall");
 }

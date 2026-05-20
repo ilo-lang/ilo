@@ -4971,10 +4971,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             other => {
                 return Err(RuntimeError::new(
                     "ILO-R009",
-                    format!(
-                        "rgxall-multi: second arg must be a string, got {:?}",
-                        other
-                    ),
+                    format!("rgxall-multi: second arg must be a string, got {:?}", other),
                 ));
             }
         };
