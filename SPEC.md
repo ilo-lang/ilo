@@ -616,6 +616,10 @@ Called like functions, compiled to dedicated opcodes.
 | `dtparse-rel s now` | parse relative-date phrase to epoch; `now` is the anchor epoch | `R n t` |
 | `dur-parse s` | parse human duration string ("3h 30m", "1 week 2 days", "1.5 hours", "90s") into seconds. Lenient: accepts abbreviations `s`/`m`/`h`/`d`/`w`, full names (singular + plural), decimal quantities, mixed sequences. Err if empty or no unit found | `R n t` |
 | `dur-fmt n` | format seconds as human-readable duration ("2h 42m", "1 day", "30s"). Drops zero parts; uses largest applicable units. Zero returns "0s". Negative values format with a leading "-" | `t` |
+| `add-mo dt n` | add N calendar months to epoch `dt`, snapping to last day of month when needed (e.g. Jan 31 + 1 = Feb 28/29). N may be negative. Returns epoch at 00:00 UTC | `n` |
+| `last-dom dt` | epoch of the last day of the month containing `dt`, at 00:00 UTC (e.g. any Feb 2024 epoch → 2024-02-29 00:00 UTC) | `n` |
+| `next-business-day dt` | next weekday after `dt` (skips Sat/Sun). Fri→Mon, Sat→Mon, Sun→Mon, Mon-Thu→next day. Returns epoch at 00:00 UTC | `n` |
+| `day-of-week dt` | day of week for epoch `dt`: 0=Sun, 1=Mon, 2=Tue, 3=Wed, 4=Thu, 5=Fri, 6=Sat | `n` |
 | `rdjl path` | read JSONL file as `L (R _ t)`: one parse result per non-empty line | `L (R _ t)` |
 | `get-many urls` | concurrent HTTP GET fan-out (max 10 parallel), preserves order | `L (R t t)` |
 | `sleep ms` | pause current engine for `ms` milliseconds; returns nil | `_` |
@@ -739,6 +743,37 @@ emits a single leading minus rather than signing each part.
 (`0.5 -> "0.5s"`) and for mixed values where the seconds component carries
 a fraction (`90.5 -> "1m 30.5s"`). Fractional minutes / hours / days / weeks
 are decomposed into smaller units before formatting.
+
+### Calendar arithmetic (`add-mo`, `last-dom`, `next-business-day`, `day-of-week`)
+
+Four builtins for month-level and business-day date arithmetic. All take Unix epoch seconds (as returned by `now`, `dtparse`, etc.) and return epoch seconds at 00:00 UTC. All are tree-bridge eligible: VM and Cranelift dispatch through the same interpreter arm without extra opcodes.
+
+`add-mo dt:n n:n > n` — add N calendar months to epoch `dt`. N may be negative. End-of-month snap: if the resulting month is shorter than the source day, the day is clamped to the last valid day (e.g. Jan 31 + 1 mo = Feb 28/29).
+
+`last-dom dt:n > n` — epoch of the last day of the month that contains `dt`, at 00:00 UTC. Uses the first-of-next-minus-one algorithm so it handles Dec correctly.
+
+`next-business-day dt:n > n` — the next weekday after `dt` (i.e. `dt + 1` for Mon-Thu, `dt + 3` for Fri, `dt + 2` for Sat, `dt + 1` for Sun). Returns 00:00 UTC on the result date.
+
+`day-of-week dt:n > n` — 0=Sun, 1=Mon, 2=Tue, 3=Wed, 4=Thu, 5=Fri, 6=Sat. Zero-based with Sunday=0 (JS/POSIX convention), giving a direct index into 7-element arrays.
+
+```
+-- Epoch anchors used below
+jan31_2024 = 1706659200    -- 2024-01-31 00:00 UTC
+
+add-mo jan31_2024 1        -- 1709164800  (2024-02-29, leap year snap)
+add-mo jan31_2024 -1       -- 1703980800  (2023-12-31)
+add-mo jan31_2024 12       -- 1738281600  (2025-01-31, same day next year)
+
+last-dom jan31_2024        -- 1706659200  (already the last day, returns itself)
+last-dom 1707955200        -- 1709164800  (2024-02-15 -> last day of Feb 2024 = Feb 29)
+
+next-business-day 1705622400   -- 1705881600  (Fri 2024-01-19 -> Mon 2024-01-22)
+next-business-day 1705795200   -- 1705881600  (Sun 2024-01-21 -> Mon 2024-01-22)
+
+day-of-week jan31_2024     -- 3  (Wednesday)
+day-of-week 1705276800     -- 1  (2024-01-15, Monday)
+day-of-week 0              -- 4  (1970-01-01, Thursday)
+```
 
 ### Set operations
 
