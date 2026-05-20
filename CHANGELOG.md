@@ -5,6 +5,9 @@
 ### Added
 
 - `ILO-P102` diagnostic for top-level `name=expr` bindings outside any function declaration. Catches the "forgot the `main>_;` wrapper" misparse that k-means and linear-regression personas hit when chaining imperative bindings at the top level. Without the wrapper the parser used to either die on the bare `=` (a bare `ILO-P003`) or, when a prior `name>type;body` decl was in scope, slurp the whole chain into that fn's body and emit a wall of misleading `ILO-T005` cascades anchored on the wrong line. `ILO-P102` collapses both shapes into a single diagnostic that names the offending binding and suggests the `main>_;` wrapper. Parser-only change; identical output across VM and JIT.
+### Fixed
+
+- Cascading `ILO-T005 undefined function 'X'` errors from a single parse failure now collapse to one diagnostic per parse-failed function with a cross-reference back to the originating parse error. Previously, ONE broken function body produced N undefined-function errors (one per call site), burying the root cause; the cron-explainer persona logged 286 ILO-T005, 107 ILO-P009, and 47 ILO-P001 from roughly 10 root causes in a single run. The parser now records function names whose return-type or body failed to parse on `Program.parse_failed_fns`, and the verifier (1) skips type-checking those functions' bodies (their AST is poison) and (2) emits one collapsed `ILO-T005` per parse-failed name with a hint pointing at the root parse error code. Real undefined-function errors (typos, missing imports) still surface normally with the usual suggestion text.
 
 ### Changed
 
