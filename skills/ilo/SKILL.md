@@ -61,7 +61,7 @@ Every builtin name and control-flow keyword is reserved. Using any as a binding 
 
 **3-char control-flow**: `brk` (break) `cnt` (continue) `ret` (return)
 
-**4-char+**: `acos` `asin` `atan` `argmax` `argmin` `argsort` `basename` `chars` `chunks` `clamp` `cprod` `cumsum` `dirname` `dot` `drop` `dtfmt` `dtparse` `dtparse-rel` `enumerate` `flat` `flatmap` `fmod` `fmt2` `fsize` `glob` `ifft` `inv` `isdir` `isfile` `jdmp` `jkeys` `jpar` `jpth` `len` `mapr` `matmul` `mdel` `median` `mget` `mhas` `mkeys` `mmap` `mpairs` `mset` `mtime` `mvals` `padl` `padr` `partition` `pathjoin` `prnt` `prod` `quantile` `range` `rdb` `rdin` `rdinl` `rdjl` `rdl` `rndn` `rsrt` `setdiff` `setinter` `setunion` `sleep` `solve` `sqrt` `stdev` `take` `transpose` `uniqby` `variance` `walk` `window` `wra` `wrl`
+**4-char+**: `acos` `asin` `atan` `argmax` `argmin` `argsort` `basename` `base64-dec` `base64-enc` `base64url-dec` `base64url-enc` `chars` `chunks` `clamp` `cprod` `cumsum` `ct-eq` `default-on-err` `dirname` `dot` `drop` `dtfmt` `dtparse` `dtparse-rel` `dur-fmt` `dur-parse` `enumerate` `env-all` `flat` `flatmap` `fmod` `fmt2` `fsize` `get-many` `get-to` `glob` `hex-dec` `hex-enc` `hmac-sha256` `ifft` `inv` `isdir` `isfile` `jdmp` `jkeys` `jpar` `jpar-list` `jpth` `len` `lget-or` `mapr` `matmul` `mdel` `median` `mget` `mget-or` `mhas` `mkeys` `mmap` `mpairs` `mset` `mtime` `mvals` `now-ms` `padl` `padr` `partition` `pathjoin` `prnt` `prod` `pst-to` `quantile` `range` `rdb` `rdin` `rdinl` `rdjl` `rdl` `rgxall` `rgxall-multi` `rgxall1` `rgxsub` `rndn` `rsrt` `setdiff` `setinter` `setunion` `sha256` `sleep` `solve` `sqrt` `stdev` `take` `transpose` `uniqby` `variance` `walk` `window` `wra` `wrl`
 
 ## Compatibility note
 
