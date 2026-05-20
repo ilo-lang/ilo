@@ -312,6 +312,7 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("max", &["n", "n"], "n"),
     ("max", &["list"], "n"),
     ("mod", &["n", "n"], "n"),
+    ("fmod", &["n", "n"], "n"),
     ("clamp", &["n", "n", "n"], "n"),
     ("pow", &["n", "n"], "n"),
     ("sqrt", &["n"], "n"),
@@ -529,7 +530,7 @@ fn builtin_as_fn_ty(name: &str) -> Option<Ty> {
         // 1-arg n->n
         "abs" | "flr" | "cel" | "rou" => Ty::Fn(vec![n.clone()], Box::new(n)),
         // 2-arg n,n->n (suitable as fld accumulator)
-        "min" | "max" | "mod" => Ty::Fn(vec![n.clone(), n.clone()], Box::new(n)),
+        "min" | "max" | "mod" | "fmod" => Ty::Fn(vec![n.clone(), n.clone()], Box::new(n)),
         // 1-arg list->n
         "sum" | "prod" | "avg" | "median" | "stdev" | "variance" => {
             Ty::Fn(vec![Ty::List(Box::new(n.clone()))], Box::new(n))
@@ -658,7 +659,7 @@ fn builtin_check_args(
             }
             (Ty::Number, errors)
         }
-        "min" | "max" | "mod" | "pow" | "atan2" | "clamp" => {
+        "min" | "max" | "mod" | "fmod" | "pow" | "atan2" | "clamp" => {
             for (i, arg) in arg_types.iter().enumerate() {
                 if !compatible(arg, &Ty::Number) {
                     errors.push(VerifyError {
@@ -8811,7 +8812,7 @@ mod tests {
         for n in ["abs", "flr", "cel", "rou"] {
             assert!(builtin_as_fn_ty(n).is_some(), "{n} should promote");
         }
-        for n in ["min", "max", "mod"] {
+        for n in ["min", "max", "mod", "fmod"] {
             assert!(builtin_as_fn_ty(n).is_some(), "{n} should promote");
         }
         for n in ["sum", "avg", "trm", "str", "num", "jdmp", "len"] {

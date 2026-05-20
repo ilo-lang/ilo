@@ -1448,6 +1448,28 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             )),
         };
     }
+    if builtin == Some(Builtin::Fmod) && args.len() == 2 {
+        return match (&args[0], &args[1]) {
+            (Value::Number(a), Value::Number(b)) => {
+                if *b == 0.0 {
+                    Err(RuntimeError::new("ILO-R003", "modulo by zero".to_string()))
+                } else {
+                    // floor-mod: always non-negative when b > 0.
+                    // Equivalent to Python's % and JS Math.floor((a % b + b) % b).
+                    let r = a % b;
+                    Ok(Value::Number(if r != 0.0 && r.signum() != b.signum() {
+                        r + b
+                    } else {
+                        r
+                    }))
+                }
+            }
+            _ => Err(RuntimeError::new(
+                "ILO-R009",
+                "fmod requires two numbers".to_string(),
+            )),
+        };
+    }
     if builtin == Some(Builtin::Clamp) && args.len() == 3 {
         return match (&args[0], &args[1], &args[2]) {
             (Value::Number(x), Value::Number(lo), Value::Number(hi)) => {
