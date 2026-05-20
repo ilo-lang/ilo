@@ -1,0 +1,14 @@
+-- Validate PR refs in CHANGELOG.md
+-- Extracts #NNN, queries gh API for merge status
+-- Returns 0 if valid, 1 if orphaned
+
+main version:t > n{log "Parsing CHANGELOG.md...";changelog=rd "CHANGELOG.md";lines=spl changelog "\n";pr-refs=extract-pr-numbers lines;prnt "Found {len(pr-refs)} PR references";results=map validate-pr pr-refs;bad=flt is-bad results;?(len bad)>0{prnt "Orphaned: {len(bad)}";mp print-bad bad;1}{prnt "All {len(results)} references valid.";0}}
+
+is-bad r:t > b{!= (. r "ok") "yes"}
+
+print-bad r:t > n{prnt "  {(. r \"num\")}: {(. r \"reason\")}"}
+
+extract-pr-numbers lines:L t > L t{flat (map (line:t>L t;rgxall1 "#([0-9]+)" line) lines);unq}
+
+validate-pr num:t > M t{resp=run "gh" ["api" "repos/ilo-lang/ilo/pulls/{num}"];?(r? resp){~ok:{"num":num "ok":"no" "reason":"API error"};ok:{json=.;merged=rgx? "\"merged\": true" json;?(merged){true:{"num":num "ok":"yes" "reason":""};false:{"num":num "ok":"no" "reason":"not merged"}}}}}
+
