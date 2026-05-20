@@ -3793,6 +3793,227 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             .unwrap_or(false);
         return Ok(Value::Bool(is));
     }
+    // -----------------------------------------------------------------------
+    // Crypto primitives (0.12.1)
+    // -----------------------------------------------------------------------
+    if builtin == Some(Builtin::Sha256) && args.len() == 1 {
+        // sha256 s > t — SHA-256 hex digest (lowercase) of the UTF-8 bytes of s.
+        use sha2::{Digest, Sha256};
+        let s = match &args[0] {
+            Value::Text(s) => s.clone(),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("sha256 requires text, got {:?}", other),
+                ));
+            }
+        };
+        let mut hasher = Sha256::new();
+        hasher.update(s.as_bytes());
+        let digest = hasher.finalize();
+        return Ok(Value::Text(Arc::new(hex::encode(digest))));
+    }
+    if builtin == Some(Builtin::HmacSha256) && args.len() == 2 {
+        // hmac-sha256 key body > t — HMAC-SHA256 of body under key, lowercase hex.
+        use hmac::{Hmac, Mac};
+        use sha2::Sha256;
+        let key = match &args[0] {
+            Value::Text(s) => s.clone(),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("hmac-sha256: key must be text, got {:?}", other),
+                ));
+            }
+        };
+        let body = match &args[1] {
+            Value::Text(s) => s.clone(),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("hmac-sha256: body must be text, got {:?}", other),
+                ));
+            }
+        };
+        let mut mac =
+            Hmac::<Sha256>::new_from_slice(key.as_bytes()).expect("HMAC accepts any key length");
+        mac.update(body.as_bytes());
+        let result = mac.finalize();
+        return Ok(Value::Text(Arc::new(hex::encode(result.into_bytes()))));
+    }
+    if builtin == Some(Builtin::Base64Enc) && args.len() == 1 {
+        // base64-enc s > t — standard base64 (RFC 4648 §4, with padding).
+        use base64::Engine as _;
+        let s = match &args[0] {
+            Value::Text(s) => s.clone(),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("base64-enc requires text, got {:?}", other),
+                ));
+            }
+        };
+        let encoded = base64::engine::general_purpose::STANDARD.encode(s.as_bytes());
+        return Ok(Value::Text(Arc::new(encoded)));
+    }
+    if builtin == Some(Builtin::Base64Dec) && args.len() == 1 {
+        // base64-dec s > R t t — decode standard base64; Err on invalid input.
+        use base64::Engine as _;
+        let s = match &args[0] {
+            Value::Text(s) => s.clone(),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("base64-dec requires text, got {:?}", other),
+                ));
+            }
+        };
+        return match base64::engine::general_purpose::STANDARD.decode(s.as_bytes()) {
+            Ok(bytes) => match String::from_utf8(bytes) {
+                Ok(decoded) => Ok(Value::Ok(Box::new(Value::Text(Arc::new(decoded))))),
+                Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(format!(
+                    "base64-dec: decoded bytes are not valid UTF-8: {}",
+                    e
+                )))))),
+            },
+            Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(format!(
+                "base64-dec: {}",
+                e
+            )))))),
+        };
+    }
+    if builtin == Some(Builtin::Base64UrlEnc) && args.len() == 1 {
+        // base64url-enc s > t — base64url (RFC 4648 §5, no padding).
+        use base64::Engine as _;
+        let s = match &args[0] {
+            Value::Text(s) => s.clone(),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("base64url-enc requires text, got {:?}", other),
+                ));
+            }
+        };
+        let encoded = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(s.as_bytes());
+        return Ok(Value::Text(Arc::new(encoded)));
+    }
+    if builtin == Some(Builtin::Base64UrlDec) && args.len() == 1 {
+        // base64url-dec s > R t t — decode base64url; Err on invalid input.
+        use base64::Engine as _;
+        let s = match &args[0] {
+            Value::Text(s) => s.clone(),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("base64url-dec requires text, got {:?}", other),
+                ));
+            }
+        };
+        return match base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(s.as_bytes()) {
+            Ok(bytes) => match String::from_utf8(bytes) {
+                Ok(decoded) => Ok(Value::Ok(Box::new(Value::Text(Arc::new(decoded))))),
+                Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(format!(
+                    "base64url-dec: decoded bytes are not valid UTF-8: {}",
+                    e
+                )))))),
+            },
+            Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(format!(
+                "base64url-dec: {}",
+                e
+            )))))),
+        };
+    }
+    if builtin == Some(Builtin::HexEnc) && args.len() == 1 {
+        // hex-enc bytes > t — encode a list of integers 0-255 as lowercase hex.
+        let list = match &args[0] {
+            Value::List(xs) => xs.clone(),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("hex-enc requires a list of numbers (0-255), got {:?}", other),
+                ));
+            }
+        };
+        let mut byte_buf: Vec<u8> = Vec::with_capacity(list.len());
+        for (i, v) in list.iter().enumerate() {
+            match v {
+                Value::Number(n) => {
+                    let b = *n as i64;
+                    if !(0..=255).contains(&b) || n.fract() != 0.0 {
+                        return Err(RuntimeError::new(
+                            "ILO-R009",
+                            format!(
+                                "hex-enc: element {} ({}) is not an integer in 0-255",
+                                i, n
+                            ),
+                        ));
+                    }
+                    byte_buf.push(b as u8);
+                }
+                other => {
+                    return Err(RuntimeError::new(
+                        "ILO-R009",
+                        format!(
+                            "hex-enc: element {} must be a number, got {:?}",
+                            i, other
+                        ),
+                    ));
+                }
+            }
+        }
+        return Ok(Value::Text(Arc::new(hex::encode(byte_buf))));
+    }
+    if builtin == Some(Builtin::HexDec) && args.len() == 1 {
+        // hex-dec s > R (L n) t — decode hex string to list of byte values (0-255).
+        let s = match &args[0] {
+            Value::Text(s) => s.clone(),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("hex-dec requires text, got {:?}", other),
+                ));
+            }
+        };
+        return match hex::decode(s.as_str()) {
+            Ok(bytes) => {
+                let list: Vec<Value> = bytes.iter().map(|b| Value::Number(*b as f64)).collect();
+                Ok(Value::Ok(Box::new(Value::List(Arc::new(list)))))
+            }
+            Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(format!(
+                "hex-dec: {}",
+                e
+            )))))),
+        };
+    }
+    if builtin == Some(Builtin::CtEq) && args.len() == 2 {
+        // ct-eq a b > b — constant-time text equality. Resists timing attacks.
+        use subtle::ConstantTimeEq;
+        let a = match &args[0] {
+            Value::Text(s) => s.clone(),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("ct-eq: first argument must be text, got {:?}", other),
+                ));
+            }
+        };
+        let b = match &args[1] {
+            Value::Text(s) => s.clone(),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("ct-eq: second argument must be text, got {:?}", other),
+                ));
+            }
+        };
+        // Compare byte-by-byte in constant time. Lengths are compared first
+        // without branching on the result (subtle's contract).
+        let eq: bool = a.as_bytes().ct_eq(b.as_bytes()).into();
+        return Ok(Value::Bool(eq));
+    }
+    // -----------------------------------------------------------------------
+    // End crypto primitives
+    // -----------------------------------------------------------------------
     if builtin == Some(Builtin::Rd) && (args.len() == 1 || args.len() == 2) {
         let path = match &args[0] {
             Value::Text(s) => s.clone(),
