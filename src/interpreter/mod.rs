@@ -602,10 +602,10 @@ pub(crate) fn dur_parse(s: &str) -> std::result::Result<f64, String> {
         rest = trimmed;
 
         // Consume an optional leading sign.
-        let (sign, rest2) = if rest.starts_with('-') {
-            (-1.0_f64, &rest[1..])
-        } else if rest.starts_with('+') {
-            (1.0_f64, &rest[1..])
+        let (sign, rest2) = if let Some(r) = rest.strip_prefix('-') {
+            (-1.0_f64, r)
+        } else if let Some(r) = rest.strip_prefix('+') {
+            (1.0_f64, r)
         } else {
             (1.0_f64, rest)
         };
