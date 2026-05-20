@@ -2565,9 +2565,7 @@ fn builtin_check_args(
                         message: format!(
                             "'default-on-err' expects R T E as first argument, got {other}"
                         ),
-                        hint: Some(
-                            "use `?? v d` for Optional (O T), not Result (R T E)".into(),
-                        ),
+                        hint: Some("use `?? v d` for Optional (O T), not Result (R T E)".into()),
                         span,
                         is_warning: false,
                     });
