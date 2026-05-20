@@ -7090,14 +7090,16 @@ impl NanVal {
                     {
                         (ti.fields.clone(), ti.num_fields)
                     } else {
-                        // Registry available but type missing — a compiled
-                        // program should never produce this.  Fail loudly in
-                        // debug; in release, fall back to sorted order so
-                        // OP_RECFLD at least reads positions deterministically.
-                        debug_assert!(
-                            false,
-                            "Value::Record type {type_name:?} missing from ACTIVE_REGISTRY",
-                        );
+                        // Registry available but type missing.  Legitimate
+                        // for dynamic-record sources that don't flow through
+                        // OP_RECNEW: the canonical case is `jpar` /
+                        // `serde_json_to_value`, which stamps every parsed
+                        // object as `Value::Record { type_name: "json", .. }`
+                        // and is then read positionally via OP_RECFLD or by
+                        // name via OP_RECFLD_NAME depending on the param's
+                        // static type.  Sort deterministically so both
+                        // dispatch paths see the same flat layout every run
+                        // (no AHash randomness).
                         let mut names: Vec<String> = fields.keys().cloned().collect();
                         names.sort();
                         (names, 0)
