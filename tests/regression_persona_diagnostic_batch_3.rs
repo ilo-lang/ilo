@@ -77,7 +77,7 @@ fn lambda_with_parens_still_works() {
 // ---------------------------------------------------------------------------
 
 const RSRT_SWAP: &str =
-    "mkey c:n e:t>n;+c (len e);main>L t;ctx=10;xs=[\"bb\" \"a\" \"ccc\"];rsrt mkey ctx xs";
+    "mkey c:n el:t>n;+c (len el);main>L t;ctx=10;xs=[\"bb\" \"a\" \"ccc\"];rsrt mkey ctx xs";
 
 fn check_rsrt_swap(engine: &str) {
     let (ok, stderr) = run_inline(engine, RSRT_SWAP, "main");
@@ -115,7 +115,8 @@ fn rsrt_swap_cranelift() {
 // Same shape but with `srt`.
 #[test]
 fn srt_swap_tree() {
-    let src = "mkey c:n e:t>n;+c (len e);main>L t;ctx=10;xs=[\"bb\" \"a\" \"ccc\"];srt mkey ctx xs";
+    let src =
+        "mkey c:n el:t>n;+c (len el);main>L t;ctx=10;xs=[\"bb\" \"a\" \"ccc\"];srt mkey ctx xs";
     let (ok, stderr) = run_inline("--vm", src, "main");
     assert!(!ok);
     assert!(stderr.contains("params look swapped"), "stderr={stderr}");
@@ -124,7 +125,7 @@ fn srt_swap_tree() {
 // Same shape with `map`.
 #[test]
 fn map_swap_tree() {
-    let src = "f c:n e:t>n;+c (len e);main>L n;ctx=10;xs=[\"bb\" \"a\" \"ccc\"];map f ctx xs";
+    let src = "f c:n el:t>n;+c (len el);main>L n;ctx=10;xs=[\"bb\" \"a\" \"ccc\"];map f ctx xs";
     let (ok, stderr) = run_inline("--vm", src, "main");
     assert!(!ok);
     assert!(stderr.contains("params look swapped"), "stderr={stderr}");
@@ -133,7 +134,7 @@ fn map_swap_tree() {
 // Same shape with `flt`.
 #[test]
 fn flt_swap_tree() {
-    let src = "f c:n e:t>b;>(len e) c;main>L t;ctx=1;xs=[\"bb\" \"a\" \"ccc\"];flt f ctx xs";
+    let src = "f c:n el:t>b;>(len el) c;main>L t;ctx=1;xs=[\"bb\" \"a\" \"ccc\"];flt f ctx xs";
     let (ok, stderr) = run_inline("--vm", src, "main");
     assert!(!ok);
     assert!(stderr.contains("params look swapped"), "stderr={stderr}");
@@ -143,7 +144,7 @@ fn flt_swap_tree() {
 #[test]
 fn rsrt_correct_order_passes() {
     let src =
-        "mkey e:t c:n>n;+c (len e);main>L t;ctx=10;xs=[\"bb\" \"a\" \"ccc\"];rsrt mkey ctx xs";
+        "mkey el:t c:n>n;+c (len el);main>L t;ctx=10;xs=[\"bb\" \"a\" \"ccc\"];rsrt mkey ctx xs";
     let (ok, stderr) = run_inline("--vm", src, "main");
     assert!(ok, "stderr={stderr}");
 }

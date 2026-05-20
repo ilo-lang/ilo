@@ -139,7 +139,7 @@ fn match_arm_body_parse_error_lands_on_offending_token() {
     // normalization as the rest of multi-line syntax, so the offset map
     // has to thread through here too. Without it, the ILO-P011 span
     // drifted forward to a downstream arm separator.
-    let src = "main>n\n  r = num \"1\"\n  y = ?r{\n    ~v:{\n      a = 2\n      rev = +a v\n      *a 3\n    }\n    ^e:0\n  }\n  y\n";
+    let src = "main>n\n  r = num \"1\"\n  y = ?r{\n    ~v:{\n      a = 2\n      rev = +a v\n      *a 3\n    }\n    ^er:0\n  }\n  y\n";
     let path = write_tmp("match-arm", src);
     let err = run_err_json_file(&path);
     let line = first_error_line(&err);
@@ -169,7 +169,7 @@ fn function_last_statement_parse_error_lands_on_last_line() {
     // Fault on the final statement of a long multi-line body. Drift
     // historically pushed the span back to an earlier statement because
     // each preceding line shed indent and gained a `;`.
-    let src = "main>n\n  a = 1\n  b = 2\n  c = 3\n  d = 4\n  e = 5\n  rev = 6\n";
+    let src = "main>n\n  a = 1\n  b = 2\n  c = 3\n  d = 4\n  f = 5\n  rev = 6\n";
     let path = write_tmp("last-stmt", src);
     let err = run_err_json_file(&path);
     let (line, start) = first_error_line_and_start(&err);

@@ -2787,7 +2787,8 @@ or write `({fmt_name} \"...\" ...)` so its args are grouped."
                 return self.parse_record(name);
             }
 
-            // Zero-arg builtins: `rnd`/`now`/`now-ms`/`mmap`/`env-all` with no args → Call with empty args
+            // Zero-arg builtins: `rnd`/`now`/`now-ms`/`mmap`/`env-all`/`pi`/`tau`/`e`
+            // with no args → Call with empty args
             if (name == "rnd"
                 || name == "rand"
                 || name == "now"
@@ -2795,7 +2796,10 @@ or write `({fmt_name} \"...\" ...)` so its args are grouped."
                 || name == "mmap"
                 || name == "env-all"
                 || name == "rdin"
-                || name == "rdinl")
+                || name == "rdinl"
+                || name == "pi"
+                || name == "tau"
+                || name == "e")
                 && !self.can_start_operand()
             {
                 return Ok(Expr::Call {
@@ -3372,7 +3376,10 @@ results first: `r={first_op}a b;…r` keeps each step explicit."
                     || name == "now-ms"
                     || name == "env-all"
                     || name == "rdin"
-                    || name == "rdinl" =>
+                    || name == "rdinl"
+                    || name == "pi"
+                    || name == "tau"
+                    || name == "e" =>
             {
                 let name = name.clone();
                 self.advance();

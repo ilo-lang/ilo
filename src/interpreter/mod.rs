@@ -1691,6 +1691,20 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             )),
         };
     }
+    // Math constants (0.12.1). Zero-arg, no allocation, no error path.
+    // Returning the canonical Rust f64 consts keeps cross-engine values
+    // bit-identical with the VM / Cranelift bridge (which dispatches here)
+    // and with `math.pi` / `math.tau` / `math.e` emitted by the Python
+    // backend, all of which agree on the IEEE-754 representation.
+    if builtin == Some(Builtin::Pi) && args.is_empty() {
+        return Ok(Value::Number(std::f64::consts::PI));
+    }
+    if builtin == Some(Builtin::Tau) && args.is_empty() {
+        return Ok(Value::Number(std::f64::consts::TAU));
+    }
+    if builtin == Some(Builtin::Eu) && args.is_empty() {
+        return Ok(Value::Number(std::f64::consts::E));
+    }
     if builtin == Some(Builtin::Now) && args.is_empty() {
         let ts = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -6672,7 +6686,7 @@ mod tests {
 
     #[test]
     fn interpret_match_ok_err_patterns() {
-        let source = r#"f x:R n t>n;?x{^e:0;~v:v}"#;
+        let source = r#"f x:R n t>n;?x{^er:0;~v:v}"#;
         let ok_result = run_str(
             source,
             Some("f"),
@@ -10831,7 +10845,7 @@ mod tests {
     fn interpret_range_end_not_number() {
         // ForRange where end is not a number — needs tricky setup
         // The range start/end are evaluated, if end is text it errors
-        let source = "f s:n e:n>n;@i s..e{i}";
+        let source = "f s:n en:n>n;@i s..en{i}";
         let result = run_str(
             source,
             Some("f"),
@@ -11394,7 +11408,7 @@ mod tests {
     fn interpret_for_range_non_number_end_error() {
         // @i 0..z{i} — end is text → error at line 1361
         let err = run_str_err(
-            "f e:t>n;@i 0..e{i}",
+            "f en:t>n;@i 0..en{i}",
             Some("f"),
             vec![Value::Text(Arc::new("b".to_string()))],
         );

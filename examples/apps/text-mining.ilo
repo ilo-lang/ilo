@@ -4,7 +4,7 @@
 -- emits the top 10 of each alongside token-length stats. Corpus path argv.
 
 is-long w:t>b;>(len w) 2
-key2 p:L t>n;r=num (at p 1);?r{~v:v;^e:0}
+key2 p:L t>n;r=num (at p 1);?r{~v:v;^er:0}
 join2 w:L t>t;cat w " "
 main p:t>R t t;s=rd! p;clean=rgxsub "[^a-z0-9 ]" " " (lwr s);toks=flt is-long (spl clean " ");bg=window 2 toks;tg=window 3 toks;bgs=map join2 bg;tgs=map join2 tg;f2=frq bgs;f3=frq tgs;k2=mkeys f2;k3=mkeys f3;p2=map (k:t>L t;[k (str (??(mget f2 k) 0))]) k2;p3=map (k:t>L t;[k (str (??(mget f3 k) 0))]) k3;t2=take 10 (rev (srt key2 p2));t3=take 10 (rev (srt key2 p3));m=mmap;m=mset m "bigrams" (jdmp t2);m=mset m "trigrams" (jdmp t3);lens=map len toks;st=mmap;st=mset st "avg" (str (avg lens));st=mset st "median" (str (median lens));st=mset st "p90" (str (quantile lens 0.9));m=mset m "len-stats" (jdmp st);~jdmp m
 

@@ -1,0 +1,26 @@
+-- Math constants — pi, tau, e. Added 0.12.1 so agents stop hardcoding
+-- `3.14159...` or reconstructing pi via `* 2 (atan2 0 -1)` (fft-peak
+-- rerun12 surfaced both shapes). All three are zero-arg builtins
+-- returning the canonical IEEE-754 double-precision value.
+
+-- pi: half a turn in radians.
+get-pi>n;pi
+-- run: get-pi
+-- out: 3.141592653589793
+
+-- tau: a full turn in radians (== 2*pi). Useful when "one revolution"
+-- is the natural unit, e.g. FFT bin frequencies, polar angle sweeps.
+get-tau>n;tau
+-- run: get-tau
+-- out: 6.283185307179586
+
+-- e: Euler's number. Base of the natural log; `exp 1` agrees.
+get-e>n;e
+-- run: get-e
+-- out: 2.718281828459045
+
+-- Constants compose in expressions like any number. Round-trip:
+-- a sine sweep over a half-turn should land cleanly at the midpoint.
+sin-at-half-pi>n;sin (/ pi 2)
+-- run: sin-at-half-pi
+-- out: 1

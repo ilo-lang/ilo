@@ -5909,8 +5909,8 @@ f a:t b:t>t;join a b"#,
     fn codegen_cov_callee_too_many_regs() {
         // 17-parameter function: reg_count = 17 > 16 → is_inlinable returns false
         let bytes = compile_to_object_bytes(
-            "sum17 a:n b:n c:n d:n e:n f:n g:n h:n i:n j:n k:n l:n m:n nn:n o:n p:n q:n>n;\
-             +a +b +c +d +e +f +g +h +i +j +k +l +m +nn +o +p q\n\
+            "sum17 a:n b:n c:n d:n ev:n f:n g:n h:n i:n j:n k:n l:n m:n nn:n o:n p:n q:n>n;\
+             +a +b +c +d +ev +f +g +h +i +j +k +l +m +nn +o +p q\n\
              caller>n;sum17 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17",
         );
         assert!(

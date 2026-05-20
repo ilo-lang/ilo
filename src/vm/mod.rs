@@ -639,6 +639,13 @@ pub(crate) fn is_tree_bridge_eligible(b: crate::builtins::Builtin, argc: usize) 
         // Map[Text, Text] which round-trips through NanVal heap_map cleanly,
         // so the bridge is the right tier for both VM and Cranelift.
         (Builtin::EnvAll, 0) => true,
+        // Math constants (0.12.1). Zero-arg, no FnRef, return a single f64.
+        // Bridge keeps VM and Cranelift in lockstep with the tree
+        // interpreter without bespoke opcodes — the constant lookup is
+        // cheap enough that a bridge round-trip is in the noise.
+        (Builtin::Pi, 0) => true,
+        (Builtin::Tau, 0) => true,
+        (Builtin::Eu, 0) => true,
         // jkeys json path -> R (L t) t. New companion to mkeys for JSON
         // objects. Pure (no FnRef args, no I/O), bridge keeps cross-engine
         // parity with the tree interpreter at the same cost tier as `mkeys`.
@@ -19572,7 +19579,7 @@ mod tests {
     fn vm_tool_call_match() {
         // match on tool result
         let source =
-            "tool fetch\"get\" url:t>R _ t\nf>t;r=fetch \"http://x\";?r{~v:\"ok\";^e:\"err\"}";
+            "tool fetch\"get\" url:t>R _ t\nf>t;r=fetch \"http://x\";?r{~v:\"ok\";^er:\"err\"}";
         let result = vm_run(source, Some("f"), vec![]);
         assert_eq!(result, Value::Text(Arc::new("ok".to_string())));
     }
@@ -19605,7 +19612,7 @@ mod tests {
 
     #[test]
     fn vm_match_ok_err_patterns() {
-        let source = r#"f x:R n t>n;?x{^e:0;~v:v}"#;
+        let source = r#"f x:R n t>n;?x{^er:0;~v:v}"#;
         let ok_result = vm_run(
             source,
             Some("f"),
@@ -19973,7 +19980,7 @@ mod tests {
         // This is the FizzBuzz bug: for n=3, e=true, f=false, &e f=false (correct),
         // but e's register was clobbered to false, so e{"Fizz"} didn't fire.
         // Braced guards are now conditional execution, use `ret` for early return.
-        let source = r#"f n:n>t;a=flr /n 3;b=flr /n 5;c=*a 3;d=*b 5;e= =c n;f= =d n;&e f{ret "FizzBuzz"};e{ret "Fizz"};f{ret "Buzz"};str n"#;
+        let source = r#"f n:n>t;a=flr /n 3;b=flr /n 5;c=*a 3;d=*b 5;ev= =c n;fv= =d n;&ev fv{ret "FizzBuzz"};ev{ret "Fizz"};fv{ret "Buzz"};str n"#;
         assert_eq!(
             vm_run(source, Some("f"), vec![Value::Number(3.0)]),
             Value::Text(Arc::new("Fizz".to_string()))
@@ -20460,9 +20467,9 @@ mod tests {
 
     #[test]
     fn vm_assign_equality_with_double_eq() {
-        // e= ==c n: assignment e = (== c n) — space between = and ==
+        // ev= ==c n: assignment ev = (== c n) — space between = and ==
         // Braced guard is conditional execution, use ternary for value
-        let source = "f x:n>t;e= ==x 3;e{\"match\"}{\"nope\"}";
+        let source = "f x:n>t;ev= ==x 3;ev{\"match\"}{\"nope\"}";
         assert_eq!(
             vm_run(source, Some("f"), vec![Value::Number(3.0)]),
             Value::Text(Arc::new("match".to_string()))
@@ -27448,7 +27455,7 @@ mod tests {
         // wrap takes a dummy n arg; ^(info code:a) wraps arena record in Err.
         // The match extracts the record via ^e and reads field .code.
         let src =
-            "type info{code:n} wrap a:n>R n info;^info code:a\nf>n;r=wrap 99;?r{^e:e.code;~_:0}";
+            "type info{code:n} wrap a:n>R n info;^info code:a\nf>n;r=wrap 99;?r{^er:er.code;~_:0}";
         let result = vm_run(src, Some("f"), vec![]);
         assert_eq!(result, Value::Number(99.0));
     }
@@ -27693,7 +27700,7 @@ mod tests {
         // slc xs start end — pass text values for start/end
         // We call slc with a list and two text args (bypassing verifier)
         let err = vm_run_err(
-            r#"f xs:L n s:t e:t>L n;slc xs s e"#,
+            r#"f xs:L n s:t en:t>L n;slc xs s en"#,
             Some("f"),
             vec![
                 Value::List(Arc::new(vec![Value::Number(1.0), Value::Number(2.0)])),
@@ -27798,7 +27805,7 @@ mod tests {
     fn vm_jdmp_err_value() {
         // jpar on invalid JSON returns Err(text). jdmp on that Err hits line 4224.
         let result = vm_run(
-            r#"f s:t>t;e=jpar s;jdmp e"#,
+            r#"f s:t>t;ev=jpar s;jdmp ev"#,
             Some("f"),
             vec![Value::Text(Arc::new("not json".to_string()))],
         );
@@ -28660,7 +28667,7 @@ mod tests {
 
     #[test]
     fn vm_range_end_not_number() {
-        let source = "f s:n e:n>n;@i s..e{i}";
+        let source = "f s:n en:n>n;@i s..en{i}";
         assert_eq!(
             vm_run(
                 source,
@@ -28697,7 +28704,7 @@ mod tests {
     #[test]
     fn vm_for_range_non_number_end_error() {
         let err = vm_run_err(
-            "f e:t>n;@i 0..e{i}",
+            "f en:t>n;@i 0..en{i}",
             Some("f"),
             vec![Value::Text(Arc::new("b".to_string()))],
         );
@@ -31075,7 +31082,7 @@ mod tests {
     fn vm_arena_full_large_record() {
         // 5-field record fills arena faster: 8 + 5*8 = 48 bytes each.
         // 65536 / 48 = 1365. Need ~1366 allocations.
-        let src = "type big{a:n;b:n;c:n;d:n;e:n} f>n;i=0;r=big a:0 b:0 c:0 d:0 e:0;wh <i 1500{b=+i 1;c=+i 2;d=+i 3;e=+i 4;r=big a:i b:b c:c d:d e:e;i=b};r.a";
+        let src = "type big{a:n;b:n;c:n;d:n;q:n} f>n;i=0;r=big a:0 b:0 c:0 d:0 q:0;wh <i 1500{b=+i 1;c=+i 2;d=+i 3;qv=+i 4;r=big a:i b:b c:c d:d q:qv;i=b};r.a";
         let result = vm_run(src, Some("f"), vec![]);
         assert_eq!(result, Value::Number(1499.0));
     }
@@ -32667,7 +32674,7 @@ f>n;r=mk 10 20;+r.x r.y";
     #[test]
     fn vm_cov_unwrap_err_value() {
         // Unwrapping an Err via match pattern extracts the inner value
-        let src = r#"f>t;r=^"oops";?r{^e:e;~v:"ok"}"#;
+        let src = r#"f>t;r=^"oops";?r{^ev:ev;~v:"ok"}"#;
         let result = vm_run(src, Some("f"), vec![]);
         assert_eq!(result, Value::Text(Arc::new("oops".to_string())));
     }
@@ -32675,14 +32682,14 @@ f>n;r=mk 10 20;+r.x r.y";
     // ── OP_ISOK / OP_ISERR ────────────────────────────────────────────────
     #[test]
     fn vm_cov_isok_true() {
-        let src = r#"f>n;r=~42;?r{~v:v;^e:0}"#;
+        let src = r#"f>n;r=~42;?r{~v:v;^er:0}"#;
         let result = vm_run(src, Some("f"), vec![]);
         assert_eq!(result, Value::Number(42.0));
     }
 
     #[test]
     fn vm_cov_iserr_true() {
-        let src = r#"f>n;r=^"e";?r{~v:1;^e:0}"#;
+        let src = r#"f>n;r=^"e";?r{~v:1;^ev:0}"#;
         let result = vm_run(src, Some("f"), vec![]);
         assert_eq!(result, Value::Number(0.0));
     }
@@ -34829,8 +34836,8 @@ big x:n>n
   b=*a 2
   c=-b 1
   d=/c 1
-  e=+d 1
-  f=*e 1
+  ev=+d 1
+  f=*ev 1
   g=-f 0
   h=+g 0
   +h 1

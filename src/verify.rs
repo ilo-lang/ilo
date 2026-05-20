@@ -390,6 +390,10 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("rndn", &["n", "n"], "n"),
     ("now", &[], "n"),
     ("now-ms", &[], "n"),
+    // Math constants (0.12.1). Zero-arg builtins returning f64 constants.
+    ("pi", &[], "n"),
+    ("tau", &[], "n"),
+    ("e", &[], "n"),
     ("sleep", &["n"], "_"),
     ("dtfmt", &["n", "t"], "R t t"),
     ("dtparse", &["t", "t"], "R n t"),

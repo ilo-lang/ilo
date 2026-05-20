@@ -3,7 +3,7 @@
 -- dot-path form, so agents reaching for textbook JSONPath get a clear pointer
 -- instead of a misleading `key not found: $`.
 
-probe path:t>t;j="{\"vulnerabilities\":[{\"cve\":{\"id\":\"CVE-1\"}}]}";r=jpth j path;?r{~v:v;^e:e}
+probe path:t>t;j="{\"vulnerabilities\":[{\"cve\":{\"id\":\"CVE-1\"}}]}";r=jpth j path;?r{~v:v;^er:er}
 
 -- run: probe vulnerabilities.0.cve.id
 -- out: CVE-1
