@@ -147,7 +147,7 @@ fn total_byte_budget_respected() {
     assert!(
         total <= BYTE_BUDGET_TOTAL,
         "total skills size is {total} bytes, over the aggregate budget of {BYTE_BUDGET_TOTAL}. \
-         The hard 5,000-token cap is enforced by the tiktoken CI job."
+         The hard 8,000-token cap is enforced by the tiktoken CI job."
     );
 }
 
