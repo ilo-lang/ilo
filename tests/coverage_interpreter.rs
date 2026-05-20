@@ -1154,8 +1154,36 @@ fn solve_vector_length_mismatch() {
 }
 
 // ---------------------------------------------------------------------------
-// JSON: jpar / jdmp / jpth
+// JSON: jpar / jpar-list / jdmp / jpth
 // ---------------------------------------------------------------------------
+
+#[test]
+fn jpar_list_array_ok() {
+    // jpar-list on a JSON array returns R (L _) t; unwrap and count elements.
+    let src = "main>R n t;xs=jpar-list! \"[1,2,3]\";~len xs";
+    assert_eq!(ok_out(src, "main", &[]), "3");
+}
+
+#[test]
+fn jpar_list_foreach_ok() {
+    // P0b/5f: @x (jpar-list! body) type-checks because jpar-list! -> L _.
+    // Sum numeric array to verify iteration works.
+    let src = "main>R n t;total=0;@x (jpar-list! \"[1,2,3]\"){total=+total x};~total";
+    assert_eq!(ok_out(src, "main", &[]), "6");
+}
+
+#[test]
+fn jpar_list_non_array_returns_err() {
+    // jpar-list on a JSON object returns Err (not an array).
+    let src = "main>t;r=jpar-list \"{\\\"x\\\":1}\";?r{~_:\"ok\";^_:\"err\"}";
+    assert_eq!(ok_out(src, "main", &[]), "err");
+}
+
+#[test]
+fn jpar_list_invalid_json_returns_err() {
+    let src = "main>t;r=jpar-list \"{bad}\";?r{~_:\"ok\";^_:\"err\"}";
+    assert_eq!(ok_out(src, "main", &[]), "err");
+}
 
 #[test]
 fn jpar_jdmp_roundtrip() {
