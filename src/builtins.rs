@@ -132,6 +132,7 @@ pub enum Builtin {
     Rgxall,
     Rgxall1,
     Rgxsub,
+    RgxallMulti,
 
     // JSON
     Jpth,
@@ -300,6 +301,7 @@ impl Builtin {
             "rgxall" => Some(Builtin::Rgxall),
             "rgxall1" => Some(Builtin::Rgxall1),
             "rgxsub" => Some(Builtin::Rgxsub),
+            "rgxall-multi" => Some(Builtin::RgxallMulti),
             "jpth" => Some(Builtin::Jpth),
             "jkeys" => Some(Builtin::Jkeys),
             "jdmp" => Some(Builtin::Jdmp),
@@ -447,6 +449,7 @@ impl Builtin {
             Builtin::Rgxall => "rgxall",
             Builtin::Rgxall1 => "rgxall1",
             Builtin::Rgxsub => "rgxsub",
+            Builtin::RgxallMulti => "rgxall-multi",
             Builtin::Jpth => "jpth",
             Builtin::Jkeys => "jkeys",
             Builtin::Jdmp => "jdmp",
@@ -665,6 +668,13 @@ impl Builtin {
         // `map (fn k > [k (mget m k)]) (mkeys m)` cascade — one builtin call
         // instead of lambda + mkeys + mget per iteration. Added in 0.12.1.
         Builtin::Mpairs,
+        // `rgxall-multi pats:L t line:t > L t` — multi-pattern flat-match.
+        // Equivalent to `flat (map (p:t>L t;rgxall1 p line) pats)` but saves
+        // ~20 tokens per call site. cron-explainer and historical-archeologist
+        // both wanted this: apply several patterns to one line and get a single
+        // flat list of all hits in pattern order. Tree-bridge eligible alongside
+        // rgxall1 — same dispatch path, no new opcodes.
+        Builtin::RgxallMulti,
     ];
 
     /// On-wire 8-bit tag for cross-engine builtin dispatch. See `ALL`.
@@ -917,6 +927,7 @@ mod tests {
             "rgxall",
             "rgxall1",
             "rgxsub",
+            "rgxall-multi",
             "jpth",
             "jkeys",
             "jdmp",
@@ -1157,6 +1168,7 @@ mod tests {
             "rgxall",
             "rgxall1",
             "rgxsub",
+            "rgxall-multi",
             "jpth",
             "jkeys",
             "jdmp",

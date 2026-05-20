@@ -4126,6 +4126,7 @@ fn builtin_arity_tables() -> (HashMap<String, usize>, HashMap<String, Vec<bool>>
         ("rgxall", 2, &[]),
         ("rgxall1", 2, &[]),
         ("rgxsub", 3, &[]),
+        ("rgxall-multi", 2, &[]),
         // Range: arity 2 here so the alias mirror picks up `rng` and the
         // parser can eagerly consume `rng 0 n` as a nested call in arg
         // position (e.g. `sum rng 0 10`). Without this, bare `rng` parses
