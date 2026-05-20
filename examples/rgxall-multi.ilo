@@ -1,0 +1,34 @@
+-- rgxall-multi pats:L t s:t -> L t: multi-pattern flat-match.
+--
+-- Apply several patterns to one string and get a single flat list of all
+-- hits in pattern order. Equivalent to:
+--   flat (map (p:t>L t;rgxall1 p s) pats)
+-- but saves ~20 tokens per call site.
+--
+-- The cron-explainer and historical-archeologist personas both needed this
+-- shape: scan a log line for timestamps, then for event codes, then for
+-- usernames, and collect all hits together.
+--
+-- 0-group patterns: whole matches. 1-group patterns: capture-1 strings.
+
+-- Mix captureless and single-capture patterns on one string.
+-- "\d+" -> whole matches of digits; "([a-z]+)=" -> capture-1 (key names)
+hits>L t;rgxall-multi ["\d+" "([a-z]+)="] "errors=3 retries=1 ok=true"
+
+-- Pure captureless: collect date, event code, then all numbers from a log entry.
+toks>L t;rgxall-multi ["\d{4}-\d{2}-\d{2}" "[A-Z]+" "\d+"] "2024-01-15 ERR code=42 retries=3"
+
+-- Empty-pattern list returns empty list.
+none>L t;rgxall-multi [] "anything goes here"
+
+-- No matches on any pattern: empty list.
+nomatch>L t;rgxall-multi ["\d+"] "no digits here"
+
+-- run: hits
+-- out: [3, 1, errors, retries, ok]
+-- run: toks
+-- out: [2024-01-15, ERR, 2024, 01, 15, 42, 3]
+-- run: none
+-- out: []
+-- run: nomatch
+-- out: []
