@@ -2528,6 +2528,119 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             )),
         };
     }
+    if builtin == Some(Builtin::Urlenc) && args.len() == 1 {
+        // urlenc s > t — RFC 3986 percent-encode every byte that isn't
+        // in the unreserved set ALPHA / DIGIT / `-` / `.` / `_` / `~`.
+        // Total: always returns Text.
+        use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, utf8_percent_encode};
+        // RFC 3986 unreserved set minus alphanumeric.
+        const UNRESERVED_PUNCT: &AsciiSet = &NON_ALPHANUMERIC
+            .remove(b'-')
+            .remove(b'.')
+            .remove(b'_')
+            .remove(b'~');
+        let s = match &args[0] {
+            Value::Text(s) => s.clone(),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("urlenc requires text, got {:?}", other),
+                ));
+            }
+        };
+        let encoded: String = utf8_percent_encode(s.as_str(), UNRESERVED_PUNCT).collect();
+        return Ok(Value::Text(Arc::new(encoded)));
+    }
+    if builtin == Some(Builtin::Urldec) && args.len() == 1 {
+        // urldec s > R t t — inverse of urlenc. Returns Err on invalid
+        // percent escapes (the `percent-encoding` crate is lenient and
+        // passes through stray `%`, so we additionally validate that
+        // every `%` is followed by two hex digits) or on non-UTF-8
+        // decoded bytes.
+        let s = match &args[0] {
+            Value::Text(s) => s.clone(),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("urldec requires text, got {:?}", other),
+                ));
+            }
+        };
+        // Validate percent escapes up-front so silent passthrough doesn't
+        // mask malformed input. The crate's decode_utf8 returns Ok for
+        // "abc%" / "abc%2", which would defeat the R t t contract.
+        let bytes = s.as_bytes();
+        let mut i = 0;
+        while i < bytes.len() {
+            if bytes[i] == b'%' {
+                if i + 2 >= bytes.len()
+                    || !bytes[i + 1].is_ascii_hexdigit()
+                    || !bytes[i + 2].is_ascii_hexdigit()
+                {
+                    return Ok(Value::Err(Box::new(Value::Text(Arc::new(format!(
+                        "urldec: invalid percent escape at byte {}",
+                        i
+                    ))))));
+                }
+                i += 3;
+            } else {
+                i += 1;
+            }
+        }
+        return match percent_encoding::percent_decode_str(s.as_str()).decode_utf8() {
+            Ok(cow) => Ok(Value::Ok(Box::new(Value::Text(Arc::new(cow.into_owned()))))),
+            Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(format!(
+                "urldec: invalid UTF-8 in decoded bytes: {}",
+                e
+            )))))),
+        };
+    }
+    if builtin == Some(Builtin::B64u) && args.len() == 1 {
+        // b64u s > t — base64url-encode the UTF-8 bytes of s using the
+        // URL-safe alphabet (RFC 4648 §5: `-`/`_` instead of `+`/`/`)
+        // with padding stripped. Total: always returns Text.
+        use base64::Engine;
+        use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+        let s = match &args[0] {
+            Value::Text(s) => s.clone(),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("b64u requires text, got {:?}", other),
+                ));
+            }
+        };
+        return Ok(Value::Text(Arc::new(URL_SAFE_NO_PAD.encode(s.as_bytes()))));
+    }
+    if builtin == Some(Builtin::B64uDec) && args.len() == 1 {
+        // b64u-dec s > R t t — inverse of b64u. Err on invalid base64url
+        // (wrong alphabet, bad padding) or on decoded bytes that aren't
+        // valid UTF-8.
+        use base64::Engine;
+        use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+        let s = match &args[0] {
+            Value::Text(s) => s.clone(),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("b64u-dec requires text, got {:?}", other),
+                ));
+            }
+        };
+        return match URL_SAFE_NO_PAD.decode(s.as_bytes()) {
+            Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(format!(
+                "b64u-dec: invalid base64url input: {}",
+                e
+            )))))),
+            Ok(bytes) => match String::from_utf8(bytes) {
+                Ok(text) => Ok(Value::Ok(Box::new(Value::Text(Arc::new(text))))),
+                Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(format!(
+                    "b64u-dec: decoded bytes are not valid UTF-8: {}",
+                    e
+                )))))),
+            },
+        };
+    }
     if builtin == Some(Builtin::Lst) && args.len() == 3 {
         let idx = match &args[1] {
             Value::Number(n) => {
