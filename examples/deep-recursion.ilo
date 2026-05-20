@@ -1,0 +1,25 @@
+-- Deep recursive fib and fold: exercises the call_function stack-frame
+-- decomposition that prevents stack overflows in debug builds. Before the
+-- fix a monolithic ~4500-line call_function caused each user-fn frame to
+-- consume several hundred KiB; after the fix, 14 #[inline(never)] family
+-- dispatchers keep each frame O(one family's locals).
+
+-- fib n returns the nth Fibonacci number (1-indexed: fib 1=1, fib 2=1).
+fib n:n>n;<=n 1 n;a=fib -n 1;b=fib -n 2;+a b
+
+-- add is used as a HOF argument to fld below.
+add a:n b:n>n;+a b
+
+-- sumto computes 0+1+...+(n-1) = n*(n-1)/2 via fld.
+sumto n:n>n;fld add (range 0 n) 0
+
+-- run: fib 10
+-- out: 55
+-- run: fib 20
+-- out: 6765
+-- run: fib 30
+-- out: 832040
+-- run: sumto 100
+-- out: 4950
+-- run: sumto 1000
+-- out: 499500
