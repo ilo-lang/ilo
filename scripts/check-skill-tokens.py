@@ -26,6 +26,7 @@ import tiktoken
 
 SKILL_NAMES = [
     "ilo-language",
+    "ilo-language-records",
     "ilo-builtins-core",
     "ilo-builtins-math",
     "ilo-builtins-io",
