@@ -1,0 +1,76 @@
+-- Bitcoin transaction decoder: fetch tx from mempool.space, decode, output tables
+-- Decodes inputs (prev txid+vout), outputs (value+script+type), calculates fee
+
+script-type hex:t>t;
+  prefix=substr hex 0 4;
+  ?(=prefix "1976"){"P2PKH"}{
+    ?(=prefix "a914"){"P2SH"}{
+      ?(=prefix "0014"){"P2WPKH"}{
+        ?(=prefix "0020"){"P2WSH"}{
+          ?(=prefix "5120"){"P2TR"}{"unknown"}
+        }
+      }
+    }
+  }
+
+main txid:t>t;
+  url=+"https://mempool.space/api/tx/" txid;
+  json=get! url;
+  tx=jpar! json;
+  confs=?? tx.?status.?confirmations "pending";
+
+  ins=?? tx.?vin @[];
+  outs=?? tx.?vout @[];
+
+  -- Sum inputs
+  in-sum=0;
+  @i 0..len ins{
+    val=?? (at ins i).?prevout.?value 0;
+    in-sum=+in-sum val
+  };
+
+  -- Sum outputs
+  out-sum=0;
+  @i 0..len outs{
+    val=?? (at outs i).?value 0;
+    out-sum=+out-sum val
+  };
+
+  fee=-in-sum out-sum;
+  sz=?? tx.?size 1;
+
+  res="";
+  res=+res "TX: " txid "\n";
+  res=+res "Confirmations: " confs "\n";
+  res=+res "\n=== INPUTS ===\n";
+  res=+res "Idx\tPrev TXID (8)\tVout\tValue\n";
+
+  @i 0..len ins{
+    inp=at ins i;
+    tid=?? inp.?txid "";
+    vout=?? inp.?vout "?";
+    val=?? inp.?prevout.?value 0;
+    tid-short=substr tid 0 8;
+    res=+res str i "\t" tid-short "\t" vout "\t" str val "\n"
+  };
+
+  res=+res "\n=== OUTPUTS ===\n";
+  res=+res "Idx\tValue\t\tScript (8)\tType\n";
+
+  @i 0..len outs{
+    out=at outs i;
+    val=?? out.?value 0;
+    scr=?? out.?scriptpubkey "";
+    scr-short=substr scr 0 8;
+    typ=script-type scr-short;
+    res=+res str i "\t" str val "\t\t" scr-short "\t" typ "\n"
+  };
+
+  res=+res "\n=== SUMMARY ===\n";
+  res=+res "Inputs: " str len ins "\n";
+  res=+res "Outputs: " str len outs "\n";
+  res=+res "Fee (sat): " str fee "\n";
+  res=+res "Size (B): " str sz "\n";
+  rate=?(>sz 0){=/ fee sz}{=0};
+  res=+res "Fee rate (sat/B): " ~fmt "{:.2}" rate "\n";
+  res
