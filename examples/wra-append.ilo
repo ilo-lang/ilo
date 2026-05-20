@@ -1,0 +1,8 @@
+-- wra path s: append text to a file (create if missing). Returns R t t.
+-- wra creates on first call and appends on subsequent calls.
+-- Contrast with wr which overwrites.
+
+-- run: append-count
+-- out: 2
+
+append-count>n;path="/tmp/ilo-wra-append-ex.txt";w=wr!! path "";w=wra!! path "line1\n";w=wra!! path "line2\n";lines=rdl!! path;rc=run "rm" [path];len lines

@@ -4106,6 +4106,7 @@ fn builtin_arity_tables() -> (HashMap<String, usize>, HashMap<String, Vec<bool>>
         // I/O
         ("prnt", 1, &[]),
         ("wr", 2, &[]),
+        ("wra", 2, &[]),
         ("wrl", 2, &[]),
         ("trm", 1, &[]),
         ("upr", 1, &[]),
