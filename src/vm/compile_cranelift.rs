@@ -4391,9 +4391,14 @@ fn entry_should_suppress_auto_echo(program: &CompiledProgram, entry_func: &str) 
         return false;
     };
 
-    // Case 1: bare `prnt` call at tail.
-    if let ast::Stmt::Expr(ast::Expr::Call { function, .. }) = &last.node {
-        if function == "prnt" {
+    // Case 1: bare `prnt` call at tail whose argument is not `~`/`^`
+    // wrapped. Must match `program_result_should_suppress` in src/main.rs
+    // exactly: the Ok/Err exclusion preserves the `prnt ~"x"` two-line
+    // contract (wrapper-visible from prnt + bare from auto-echo) that
+    // programs use to surface a Result alongside the stripped value.
+    if let ast::Stmt::Expr(ast::Expr::Call { function, args, .. }) = &last.node {
+        if function == "prnt" && !matches!(args.first(), Some(ast::Expr::Ok(_) | ast::Expr::Err(_)))
+        {
             return true;
         }
     }

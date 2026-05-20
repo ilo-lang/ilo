@@ -4261,10 +4261,23 @@ fn program_result_should_suppress(program: &ast::Program, func_name: Option<&str
         return false;
     };
 
-    // Case 1: last statement is a `prnt` call. `prnt` already printed its
-    // argument; suppressing the auto-echo prevents the double-print.
-    if let ast::Stmt::Expr(ast::Expr::Call { function, .. }) = &last.node {
-        if function == "prnt" {
+    // Case 1: last statement is a `prnt` call whose argument is not an
+    // `~`/`^` (Ok/Err) wrap. `prnt` already printed its argument via
+    // `Display`, and the runtime auto-echo would print the same value again.
+    //
+    // The Ok/Err exclusion matters because the auto-echo strips the top-level
+    // Ok wrapper (PR #255) before printing, so for `prnt ~"x"` the two
+    // outputs are intentionally different: `~x` (from prnt, wrapper visible
+    // via Display) and `x` (from auto-echo, wrapper stripped). That pattern
+    // is load-bearing for programs that use `prnt` to surface a Result for
+    // diagnostics while still letting the bare value flow to a shell
+    // consumer. Suppressing it would lose the stripped bare line.
+    //
+    // The bare case (`prnt "active renewed"`, `prnt 42`, etc.) has identical
+    // outputs in both prints, which is the P0 #3 papercut the personas hit.
+    if let ast::Stmt::Expr(ast::Expr::Call { function, args, .. }) = &last.node {
+        if function == "prnt" && !matches!(args.first(), Some(ast::Expr::Ok(_) | ast::Expr::Err(_)))
+        {
             return true;
         }
     }
@@ -6847,6 +6860,34 @@ mod tests {
         assert!(
             !program_result_should_suppress(&prog, None),
             "plain expr at tail must not suppress"
+        );
+    }
+
+    /// `prnt ~"x"` at tail must NOT suppress: prnt prints `~x` (Display
+    /// preserves the wrapper), and the auto-echo prints `x` (Ok wrapper
+    /// stripped). Both lines are intentional and useful. This is the
+    /// `prnt_wrapper_preserved` contract pinned in
+    /// `tests/regression_main_ok_stdout_bare.rs`.
+    #[test]
+    fn no_suppress_prnt_of_ok_wrap_at_tail() {
+        let prog = make_program("m>R t t;prnt ~\"x\"");
+        assert!(
+            !program_result_should_suppress(&prog, None),
+            "prnt of `~v` at tail must NOT suppress (auto-echo strips the wrapper to a different line)"
+        );
+    }
+
+    /// Same contract for `^e` (Err) — `prnt ^"oops"` prints `^oops` and
+    /// then `^oops` goes to stderr (exit 1). The stderr-routing for Err is
+    /// independent of the suppression flag (`print_value` always routes
+    /// `Value::Err` to stderr), so suppression here would silently lose the
+    /// inner-prnt's stdout line.
+    #[test]
+    fn no_suppress_prnt_of_err_wrap_at_tail() {
+        let prog = make_program("m>R t t;prnt ^\"oops\"");
+        assert!(
+            !program_result_should_suppress(&prog, None),
+            "prnt of `^e` at tail must NOT suppress"
         );
     }
 
