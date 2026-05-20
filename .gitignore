@@ -1,4 +1,5 @@
 /target
+.cargo/
 npm/ilo.wasm
 .env
 __pycache__/

@@ -1,1 +1,1 @@
-ntf uid:t msg:t>R _ t;get-user uid;?{^e:^+"Lookup failed: "e;~d:!d.verified{ret ^"Email not verified"};send-email d.email "Notification" msg;?{^e:^+"Send failed: "e;~_:~_}}
+ntf uid:t msg:t>R _ t;get-user uid;?{^er:^+"Lookup failed: "er;~d:!d.verified{ret ^"Email not verified"};send-email d.email "Notification" msg;?{^er:^+"Send failed: "er;~_:~_}}

@@ -7,7 +7,7 @@ dist x:n y:n>n;a=*x x;b=*y y;sqrt +a b
 ci p:n r:n y:n>n;g=+1 r;f=pow g y;*p f
 
 -- Log/exp round-trip
-rt x:n>n;e=exp x;log e
+rt x:n>n;v=exp x;log v
 
 -- run: dist 3 4
 -- out: 5

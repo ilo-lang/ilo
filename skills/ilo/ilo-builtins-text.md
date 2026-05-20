@@ -17,7 +17,7 @@ Prefix-call: `name arg1 arg2 ...`. Cross-engine unless noted.
 
 ## Regex
 
-`rgx s pat` first match, `rgxall s pat` all matches, `rgxall1 s pat` first capture group of each match, `rgxsub s pat repl` substitute.
+`rgx s pat` first match, `rgxall s pat` all matches, `rgxall1 s pat` first capture group of each match, `rgxall-multi pats s` multi-pattern flat-match (each pattern follows rgxall1 semantics; results concat in pattern order), `rgxsub s pat repl` substitute.
 
 ## Formatting
 
@@ -30,3 +30,33 @@ Prefix-call: `name arg1 arg2 ...`. Cross-engine unless noted.
 ## Date parsing
 
 `dtparse s fmt` parse date string to timestamp; `dtfmt ts fmt` format timestamp to string.
+
+`dtparse-rel s now` parse a relative-date phrase to a Unix epoch anchored at `now`. Supported phrases:
+- `today`, `yesterday`, `tomorrow`
+- `N days ago`, `in N days` (also `N day ago`, `in N day`)
+- `N weeks ago`, `in N weeks`; `N months ago`, `in N months`
+- `last <weekday>`, `next <weekday>`, `this <weekday>` - weekdays: `monday`-`sunday` or `mon`-`sun`; `last`/`next` never return today
+- ISO-8601 `YYYY-MM-DD` passthrough (ignores `now`)
+
+Returns `R n t`. Pass `(now)` as the anchor for live programs.
+
+```
+deadline nw:n>n;dtparse-rel!! "in 3 days" nw
+last-week-start nw:n>n;dtparse-rel!! "last monday" nw
+```
+
+## Duration
+
+`dur-parse s > R n t` — parse human duration string into seconds. Accepts `s/m/h/d/w` abbreviations, full names (week/day/hour/minute/second, singular + plural), decimal quantities, mixed sequences ("3h 30m", "1.5 hours", "1 week 2 days", "90s"). Months are **not** supported ("3mo", "3 months" both error — a month is not a fixed number of seconds; use day counts instead). A leading `-` is sticky: it applies to every following token until an explicit `+` resets it, so `"-1m 30s"` = `-90`. Err if empty or no unit found.
+
+`dur-fmt n > t` — format seconds as human-readable duration. Drops zero parts; uses largest units ("2h 42m", "1 day", "30s"). Zero returns "0s". Negative values emit a single leading minus (`-90` → `"-1m 30s"`) which round-trips back through `dur-parse`. Fractional seconds are preserved with up to 3 decimal places, trailing zeros stripped (`90.5` → `"1m 30.5s"`, `0.5` → `"0.5s"`).
+
+```
+secs = dur-parse! "3h 30m"  -- 12600
+dur-fmt secs                 -- "3h 30m"
+dur-fmt 86400                -- "1 day"
+dur-fmt 90                   -- "1m 30s"
+dur-fmt 90.5                 -- "1m 30.5s"
+dur-fmt -90                  -- "-1m 30s"
+dur-parse! "-1h 30m"         -- -5400 (sticky sign)
+```

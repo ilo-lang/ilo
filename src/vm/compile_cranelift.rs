@@ -37,6 +37,8 @@ struct HelperFuncs {
     /// which silently produced NaN on a zero divisor; routing through the
     /// helper restores tree + VM parity.
     mod_fn: FuncId,
+    /// Floor-mod helper: always non-negative when divisor > 0.
+    fmod_fn: FuncId,
     eq: FuncId,
     ne: FuncId,
     gt: FuncId,
@@ -265,6 +267,7 @@ fn declare_all_helpers(module: &mut ObjectModule) -> HelperFuncs {
         div: declare_helper(module, "jit_div", 3, 1),
         raise_divzero: declare_helper(module, "jit_raise_divzero", 1, 1),
         mod_fn: declare_helper(module, "jit_mod", 3, 1),
+        fmod_fn: declare_helper(module, "jit_fmod", 3, 1),
         eq: declare_helper(module, "jit_eq", 2, 1),
         ne: declare_helper(module, "jit_ne", 2, 1),
         gt: declare_helper(module, "jit_gt", 3, 1),
@@ -1122,10 +1125,10 @@ fn compile_function_body(
                 OP_ADD_NN | OP_SUB_NN | OP_MUL_NN | OP_DIV_NN | OP_ADDK_N | OP_SUBK_N
                 | OP_MULK_N | OP_DIVK_N | OP_LEN | OP_LEN_HAS_K_COUNT | OP_ABS | OP_MIN
                 | OP_MAX | OP_FLR | OP_CEL | OP_ROU | OP_RND0 | OP_RND2 | OP_RNDN | OP_NOW
-                | OP_NOWMS | OP_MOD | OP_CLAMP | OP_POW | OP_SQRT | OP_LOG | OP_EXP | OP_SIN
-                | OP_COS | OP_TAN | OP_LOG10 | OP_LOG2 | OP_ASIN | OP_ACOS | OP_ATAN | OP_ATAN2
-                | OP_MEDIAN | OP_MIN_LST | OP_MAX_LST | OP_QUANTILE | OP_STDEV | OP_VARIANCE
-                | OP_SUM | OP_AVG | OP_DOT | OP_DET | OP_ORD | OP_PROD => {
+                | OP_NOWMS | OP_MOD | OP_FMOD | OP_CLAMP | OP_POW | OP_SQRT | OP_LOG | OP_EXP
+                | OP_SIN | OP_COS | OP_TAN | OP_LOG10 | OP_LOG2 | OP_ASIN | OP_ACOS | OP_ATAN
+                | OP_ATAN2 | OP_MEDIAN | OP_MIN_LST | OP_MAX_LST | OP_QUANTILE | OP_STDEV
+                | OP_VARIANCE | OP_SUM | OP_AVG | OP_DOT | OP_DET | OP_ORD | OP_PROD => {
                     num_write[a] = true;
                 }
                 // LOADK: numeric only when the constant itself is a number.
@@ -1880,6 +1883,22 @@ fn compile_function_body(
                 let span_bits = super::jit_cranelift::pack_span_bits(chunk.spans[ip]);
                 let span_arg = builder.ins().iconst(I64, span_bits);
                 let fref = get_func_ref(&mut builder, module, helpers.mod_fn);
+                let call_inst = builder.ins().call(fref, &[bv, cv, span_arg]);
+                let result = builder.inst_results(call_inst)[0];
+                builder.def_var(vars[a_idx], result);
+                if a_idx < reg_count && reg_always_num[a_idx] {
+                    let rf = builder.ins().bitcast(F64, mf, result);
+                    builder.def_var(f64_vars[a_idx], rf);
+                }
+            }
+            OP_FMOD => {
+                // Floor-mod: always non-negative when divisor > 0. Routes through
+                // `jit_fmod` helper for zero-divisor error parity. Mirrors OP_MOD.
+                let bv = builder.use_var(vars[b_idx]);
+                let cv = builder.use_var(vars[c_idx]);
+                let span_bits = super::jit_cranelift::pack_span_bits(chunk.spans[ip]);
+                let span_arg = builder.ins().iconst(I64, span_bits);
+                let fref = get_func_ref(&mut builder, module, helpers.fmod_fn);
                 let call_inst = builder.ins().call(fref, &[bv, cv, span_arg]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
@@ -5909,8 +5928,8 @@ f a:t b:t>t;join a b"#,
     fn codegen_cov_callee_too_many_regs() {
         // 17-parameter function: reg_count = 17 > 16 → is_inlinable returns false
         let bytes = compile_to_object_bytes(
-            "sum17 a:n b:n c:n d:n e:n f:n g:n h:n i:n j:n k:n l:n m:n nn:n o:n p:n q:n>n;\
-             +a +b +c +d +e +f +g +h +i +j +k +l +m +nn +o +p q\n\
+            "sum17 a:n b:n c:n d:n ev:n f:n g:n h:n i:n j:n k:n l:n m:n nn:n o:n p:n q:n>n;\
+             +a +b +c +d +ev +f +g +h +i +j +k +l +m +nn +o +p q\n\
              caller>n;sum17 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17",
         );
         assert!(

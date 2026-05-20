@@ -13,10 +13,10 @@
 -- `len` / `map` rejected it; jpth on `{"deps":{"a":..,"b":..}}` returned the
 -- stringified object and `mkeys` rejected it. Both flows now work native.
 
-count-spans j:t>n;r=jpth j "spans";?r{~v:len v;^e:0}
-dep-keys j:t>t;r=jkeys j "dependencies";?r{~v:jdmp v;^e:e}
-root-keys j:t>t;r=jkeys j "";?r{~v:jdmp v;^e:e}
-n-plus-one j:t>n;r=jpth j "n";?r{~v:+ v 1;^e:0}
+count-spans j:t>n;r=jpth j "spans";?r{~v:len v;^er:0}
+dep-keys j:t>t;r=jkeys j "dependencies";?r{~v:jdmp v;^er:er}
+root-keys j:t>t;r=jkeys j "";?r{~v:jdmp v;^er:er}
+n-plus-one j:t>n;r=jpth j "n";?r{~v:+ v 1;^er:0}
 
 -- run: count-spans {"spans":[{"id":"a"},{"id":"b"},{"id":"c"}]}
 -- out: 3

@@ -203,6 +203,7 @@ pub(crate) const OP_POST: u8 = 83; // R[A] = http_post(R[B], R[C])  (returns R t
 pub(crate) const OP_GETH: u8 = 84; // R[A] = http_get(R[B], headers=R[C])  (returns R t t)
 pub(crate) const OP_POSTH: u8 = 85; // ABx: R[A] = http_post(R[B], body=R[bx>>8], headers=R[bx&0xFF])
 pub(crate) const OP_MOD: u8 = 86; // R[A] = R[B] % R[C]  (modulo / remainder)
+pub(crate) const OP_FMOD: u8 = 187; // R[A] = floor_mod(R[B], R[C])  (always non-negative when C > 0)
 pub(crate) const OP_ROU: u8 = 87; // R[A] = round(R[B])
 
 // Fused foreach opcodes — minimize dispatch overhead for list iteration
@@ -571,6 +572,9 @@ pub(crate) fn is_tree_bridge_eligible(b: crate::builtins::Builtin, argc: usize) 
         // rgxall1: flat first-capture-group convenience (L t) over rgxall.
         // Bridge contract identical to rgxall.
         (Builtin::Rgxall1, 2) => true,
+        // rgxall-multi: multi-pattern flat-match. Same bridge contract as
+        // rgxall1 — no FnRef args, no Result wrapper, can raise ILO-R009.
+        (Builtin::RgxallMulti, 2) => true,
         (Builtin::Fmt, _) if argc >= 1 => true,
         (Builtin::Rd, 2) => true,
         (Builtin::Rdb, 2) => true,
@@ -636,6 +640,13 @@ pub(crate) fn is_tree_bridge_eligible(b: crate::builtins::Builtin, argc: usize) 
         // Map[Text, Text] which round-trips through NanVal heap_map cleanly,
         // so the bridge is the right tier for both VM and Cranelift.
         (Builtin::EnvAll, 0) => true,
+        // Math constants (0.12.1). Zero-arg, no FnRef, return a single f64.
+        // Bridge keeps VM and Cranelift in lockstep with the tree
+        // interpreter without bespoke opcodes — the constant lookup is
+        // cheap enough that a bridge round-trip is in the noise.
+        (Builtin::Pi, 0) => true,
+        (Builtin::Tau, 0) => true,
+        (Builtin::Eu, 0) => true,
         // jkeys json path -> R (L t) t. New companion to mkeys for JSON
         // objects. Pure (no FnRef args, no I/O), bridge keeps cross-engine
         // parity with the tree interpreter at the same cost tier as `mkeys`.
@@ -647,7 +658,7 @@ pub(crate) fn is_tree_bridge_eligible(b: crate::builtins::Builtin, argc: usize) 
         // dispatch we already pay for; not worth a new opcode in v1.
         (Builtin::MgetOr, 3) => true,
         (Builtin::LgetOr, 3) => true,
-        // argmax / argmin / argsort — pure list-of-number aggregates that
+        // argmax / argmin / argsort - pure list-of-number aggregates that
         // return an index (or list of indices). No FnRef args, no I/O.
         // Tree-bridge keeps cross-engine parity at the same cost tier as
         // `median`/`stdev`-equivalents without burning native opcodes for
@@ -662,6 +673,21 @@ pub(crate) fn is_tree_bridge_eligible(b: crate::builtins::Builtin, argc: usize) 
         // unwrap path unchanged).
         (Builtin::Rdin, 0) => true,
         (Builtin::Rdinl, 0) => true,
+        // wra path s - append text to file. Same bridge contract as wr 2-arg:
+        // no FnRef args, returns R t t, round-trips cleanly through NanVal.
+        (Builtin::Wra, 2) => true,
+        // dtparse-rel s now -> R n t. Pure (no FnRef, no I/O), returns Result.
+        // Tree-bridge gives VM + Cranelift cross-engine parity for free.
+        (Builtin::DtparseRel, 2) => true,
+        // dur-parse / dur-fmt — pure text<->number ops, no FnRef args, no I/O.
+        // dur-parse returns R n t; dur-fmt is total (always returns Text).
+        // Tree-bridge gives VM + Cranelift cross-engine parity at zero opcode cost.
+        (Builtin::DurParse, 1) => true,
+        (Builtin::DurFmt, 1) => true,
+        // default-on-err r d — Result mirror of ??. Pure (no FnRef, no I/O),
+        // 2-arg, returns T unwrapped from R T E or the default d. Tree-bridge
+        // keeps cross-engine parity without a new opcode.
+        (Builtin::DefaultOnErr, 2) => true,
         _ => false,
     }
 }
@@ -683,6 +709,9 @@ pub(crate) fn tree_bridge_returns_result(b: crate::builtins::Builtin) -> bool {
             | Builtin::Jkeys
             | Builtin::Rdin
             | Builtin::Rdinl
+            | Builtin::Wra
+            | Builtin::DtparseRel
+            | Builtin::DurParse
     )
 }
 
@@ -979,7 +1008,7 @@ fn inline_kind_for_opcode(op: u8) -> InlineOpKind {
     match op {
         // Numeric / generic arithmetic — ABC, three reg fields.
         OP_ADD | OP_SUB | OP_MUL | OP_DIV | OP_EQ | OP_NE | OP_GT | OP_LT | OP_GE | OP_LE
-        | OP_MOD => InlineOpKind::Abc,
+        | OP_MOD | OP_FMOD => InlineOpKind::Abc,
         OP_ADD_NN | OP_SUB_NN | OP_MUL_NN | OP_DIV_NN => InlineOpKind::Abc,
 
         // _Reg-and-Const_ shape: A and B are regs, C is a constant-pool
@@ -3621,6 +3650,14 @@ impl RegCompiler {
                             let rc = self.compile_expr(&args[1]);
                             let ra = self.alloc_reg();
                             self.emit_abc(OP_MOD, ra, rb, rc);
+                            self.reg_is_num[ra as usize] = true;
+                            return ra;
+                        }
+                        (Builtin::Fmod, 2) => {
+                            let rb = self.compile_expr(&args[0]);
+                            let rc = self.compile_expr(&args[1]);
+                            let ra = self.alloc_reg();
+                            self.emit_abc(OP_FMOD, ra, rb, rc);
                             self.reg_is_num[ra as usize] = true;
                             return ra;
                         }
@@ -7059,15 +7096,69 @@ impl NanVal {
                 NanVal::heap_map(nan_map)
             }
             Value::Record { type_name, fields } => {
-                let field_names: Vec<String> = fields.keys().cloned().collect();
+                // OP_RECFLD uses positional field indices that must match the
+                // type's declaration order.  HashMap iteration order is
+                // non-deterministic (AHash random seed), so we must NOT rely on
+                // `fields.keys()` order.  Resolution preference:
+                //   1. ACTIVE_REGISTRY by type_name — the canonical declaration
+                //      order, always set during JIT / VM dispatch (TLS read at
+                //      call time, not baked at JIT compile time — see
+                //      `jit_get_registry_ptr` for the AOT companion accessor).
+                //   2. Sorted HashMap keys — deterministic but arbitrary; only
+                //      reached for synthetic Values whose type isn't registered
+                //      (e.g. ad-hoc unit tests building Value::Record by hand
+                //      without going through the compiler).  Sorted to avoid
+                //      silently re-introducing the AHash bug if the registry
+                //      lookup somehow misses.
+                let registry_ptr = ACTIVE_REGISTRY.with(|r| r.get());
+                let (field_names, num_fields_mask): (Vec<String>, u64) = if !registry_ptr.is_null()
+                {
+                    // SAFETY: ACTIVE_REGISTRY is published by
+                    // `with_active_registry` / `set_active_registry` for the
+                    // duration of every VM entry and cleared by the drop
+                    // guard. The pointer is read fresh each call (no JIT-time
+                    // baking), so even if `JitFunction` is cached across
+                    // entries in future, the registry pointer remains valid.
+                    let registry = unsafe { &*registry_ptr };
+                    if let Some(ti) = registry
+                        .name_to_id
+                        .get(type_name.as_str())
+                        .and_then(|&id| registry.types.get(id as usize))
+                    {
+                        (ti.fields.clone(), ti.num_fields)
+                    } else {
+                        // Registry available but type missing.  Legitimate
+                        // for dynamic-record sources that don't flow through
+                        // OP_RECNEW: the canonical case is `jpar` /
+                        // `serde_json_to_value`, which stamps every parsed
+                        // object as `Value::Record { type_name: "json", .. }`
+                        // and is then read positionally via OP_RECFLD or by
+                        // name via OP_RECFLD_NAME depending on the param's
+                        // static type.  Sort deterministically so both
+                        // dispatch paths see the same flat layout every run
+                        // (no AHash randomness).
+                        let mut names: Vec<String> = fields.keys().cloned().collect();
+                        names.sort();
+                        (names, 0)
+                    }
+                } else {
+                    let mut names: Vec<String> = fields.keys().cloned().collect();
+                    names.sort();
+                    (names, 0)
+                };
                 let type_info = Rc::new(TypeInfo {
                     name: type_name.clone(),
                     fields: field_names.clone(),
-                    num_fields: 0,
+                    num_fields: num_fields_mask,
                 });
                 let flat: Box<[NanVal]> = field_names
                     .iter()
-                    .map(|k| NanVal::from_value_with_program(&fields[k], func_names))
+                    .map(|k| {
+                        fields
+                            .get(k.as_str())
+                            .map(|v| NanVal::from_value_with_program(v, func_names))
+                            .unwrap_or_else(NanVal::nil)
+                    })
                     .collect::<Vec<_>>()
                     .into_boxed_slice();
                 NanVal::heap_record(type_info, flat)
@@ -10171,6 +10262,29 @@ impl<'a> VM<'a> {
                         vm_err!(VmError::Type("modulo by zero"));
                     }
                     reg_set!(a, NanVal::number(vb.as_number() % nc));
+                }
+                OP_FMOD => {
+                    let a = ((inst >> 16) & 0xFF) as usize + base;
+                    let b = ((inst >> 8) & 0xFF) as usize + base;
+                    let c = (inst & 0xFF) as usize + base;
+                    let vb = reg!(b);
+                    let vc = reg!(c);
+                    if !vb.is_number() || !vc.is_number() {
+                        vm_err!(VmError::Type("fmod requires numbers"));
+                    }
+                    let nc = vc.as_number();
+                    if nc == 0.0 {
+                        vm_err!(VmError::Type("fmod: modulo by zero"));
+                    }
+                    // NaN/Inf propagate via f64 % semantics, matching every
+                    // other math builtin (`abs`, `sqrt`, `pow`, `/`).
+                    let r = vb.as_number() % nc;
+                    let result = if r != 0.0 && r.signum() != nc.signum() {
+                        r + nc
+                    } else {
+                        r
+                    };
+                    reg_set!(a, NanVal::number(result));
                 }
                 OP_CLAMP => {
                     // Two-instruction sequence: OP_CLAMP A=result B=x C=lo; data word A=hi_reg
@@ -14013,6 +14127,32 @@ pub(crate) extern "C" fn jit_mod(a: u64, b: u64, span_bits: u64) -> u64 {
 
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
+pub(crate) extern "C" fn jit_fmod(a: u64, b: u64, span_bits: u64) -> u64 {
+    let av = NanVal(a);
+    let bv = NanVal(b);
+    if av.is_number() && bv.is_number() {
+        let dv = bv.as_number();
+        if dv == 0.0 {
+            jit_set_runtime_error_with_span(VmError::Type("fmod: modulo by zero"), span_bits);
+            return TAG_NIL;
+        }
+        // NaN/Inf propagate via f64 % semantics, matching every other
+        // math builtin (`abs`, `sqrt`, `pow`, `/`).
+        let r = av.as_number() % dv;
+        let result = if r != 0.0 && r.signum() != dv.signum() {
+            r + dv
+        } else {
+            r
+        };
+        NanVal::number(result).0
+    } else {
+        jit_set_runtime_error_with_span(VmError::Type("fmod requires numbers"), span_bits);
+        TAG_NIL
+    }
+}
+
+#[cfg(feature = "cranelift")]
+#[unsafe(no_mangle)]
 pub(crate) extern "C" fn jit_clamp(x: u64, lo: u64, hi: u64, span_bits: u64) -> u64 {
     let xv = NanVal(x);
     let lv = NanVal(lo);
@@ -16336,6 +16476,9 @@ pub(crate) fn tree_bridge_propagates_error(b: crate::builtins::Builtin) -> bool 
             // input issue. Surface it on Cranelift in lockstep with
             // tree/VM rather than silently degenerating to nil.
             | Builtin::Rgxall1
+            // rgxall-multi raises ILO-R009 on the same conditions as
+            // rgxall1 (invalid pattern, >1 group on a per-pattern check).
+            | Builtin::RgxallMulti
             // ct raises ILO-R009 on non-bool predicate returns. Same
             // class as srt/rsrt key-fn type errors that already propagate.
             | Builtin::Ct
@@ -19562,7 +19705,7 @@ mod tests {
     fn vm_tool_call_match() {
         // match on tool result
         let source =
-            "tool fetch\"get\" url:t>R _ t\nf>t;r=fetch \"http://x\";?r{~v:\"ok\";^e:\"err\"}";
+            "tool fetch\"get\" url:t>R _ t\nf>t;r=fetch \"http://x\";?r{~v:\"ok\";^er:\"err\"}";
         let result = vm_run(source, Some("f"), vec![]);
         assert_eq!(result, Value::Text(Arc::new("ok".to_string())));
     }
@@ -19595,7 +19738,7 @@ mod tests {
 
     #[test]
     fn vm_match_ok_err_patterns() {
-        let source = r#"f x:R n t>n;?x{^e:0;~v:v}"#;
+        let source = r#"f x:R n t>n;?x{^er:0;~v:v}"#;
         let ok_result = vm_run(
             source,
             Some("f"),
@@ -19963,7 +20106,7 @@ mod tests {
         // This is the FizzBuzz bug: for n=3, e=true, f=false, &e f=false (correct),
         // but e's register was clobbered to false, so e{"Fizz"} didn't fire.
         // Braced guards are now conditional execution, use `ret` for early return.
-        let source = r#"f n:n>t;a=flr /n 3;b=flr /n 5;c=*a 3;d=*b 5;e= =c n;f= =d n;&e f{ret "FizzBuzz"};e{ret "Fizz"};f{ret "Buzz"};str n"#;
+        let source = r#"f n:n>t;a=flr /n 3;b=flr /n 5;c=*a 3;d=*b 5;ev= =c n;fv= =d n;&ev fv{ret "FizzBuzz"};ev{ret "Fizz"};fv{ret "Buzz"};str n"#;
         assert_eq!(
             vm_run(source, Some("f"), vec![Value::Number(3.0)]),
             Value::Text(Arc::new("Fizz".to_string()))
@@ -20450,9 +20593,9 @@ mod tests {
 
     #[test]
     fn vm_assign_equality_with_double_eq() {
-        // e= ==c n: assignment e = (== c n) — space between = and ==
+        // ev= ==c n: assignment ev = (== c n) — space between = and ==
         // Braced guard is conditional execution, use ternary for value
-        let source = "f x:n>t;e= ==x 3;e{\"match\"}{\"nope\"}";
+        let source = "f x:n>t;ev= ==x 3;ev{\"match\"}{\"nope\"}";
         assert_eq!(
             vm_run(source, Some("f"), vec![Value::Number(3.0)]),
             Value::Text(Arc::new("match".to_string()))
@@ -27438,7 +27581,7 @@ mod tests {
         // wrap takes a dummy n arg; ^(info code:a) wraps arena record in Err.
         // The match extracts the record via ^e and reads field .code.
         let src =
-            "type info{code:n} wrap a:n>R n info;^info code:a\nf>n;r=wrap 99;?r{^e:e.code;~_:0}";
+            "type info{code:n} wrap a:n>R n info;^info code:a\nf>n;r=wrap 99;?r{^er:er.code;~_:0}";
         let result = vm_run(src, Some("f"), vec![]);
         assert_eq!(result, Value::Number(99.0));
     }
@@ -27683,7 +27826,7 @@ mod tests {
         // slc xs start end — pass text values for start/end
         // We call slc with a list and two text args (bypassing verifier)
         let err = vm_run_err(
-            r#"f xs:L n s:t e:t>L n;slc xs s e"#,
+            r#"f xs:L n s:t en:t>L n;slc xs s en"#,
             Some("f"),
             vec![
                 Value::List(Arc::new(vec![Value::Number(1.0), Value::Number(2.0)])),
@@ -27788,7 +27931,7 @@ mod tests {
     fn vm_jdmp_err_value() {
         // jpar on invalid JSON returns Err(text). jdmp on that Err hits line 4224.
         let result = vm_run(
-            r#"f s:t>t;e=jpar s;jdmp e"#,
+            r#"f s:t>t;ev=jpar s;jdmp ev"#,
             Some("f"),
             vec![Value::Text(Arc::new("not json".to_string()))],
         );
@@ -28650,7 +28793,7 @@ mod tests {
 
     #[test]
     fn vm_range_end_not_number() {
-        let source = "f s:n e:n>n;@i s..e{i}";
+        let source = "f s:n en:n>n;@i s..en{i}";
         assert_eq!(
             vm_run(
                 source,
@@ -28687,7 +28830,7 @@ mod tests {
     #[test]
     fn vm_for_range_non_number_end_error() {
         let err = vm_run_err(
-            "f e:t>n;@i 0..e{i}",
+            "f en:t>n;@i 0..en{i}",
             Some("f"),
             vec![Value::Text(Arc::new("b".to_string()))],
         );
@@ -31065,7 +31208,7 @@ mod tests {
     fn vm_arena_full_large_record() {
         // 5-field record fills arena faster: 8 + 5*8 = 48 bytes each.
         // 65536 / 48 = 1365. Need ~1366 allocations.
-        let src = "type big{a:n;b:n;c:n;d:n;e:n} f>n;i=0;r=big a:0 b:0 c:0 d:0 e:0;wh <i 1500{b=+i 1;c=+i 2;d=+i 3;e=+i 4;r=big a:i b:b c:c d:d e:e;i=b};r.a";
+        let src = "type big{a:n;b:n;c:n;d:n;q:n} f>n;i=0;r=big a:0 b:0 c:0 d:0 q:0;wh <i 1500{b=+i 1;c=+i 2;d=+i 3;qv=+i 4;r=big a:i b:b c:c d:d q:qv;i=b};r.a";
         let result = vm_run(src, Some("f"), vec![]);
         assert_eq!(result, Value::Number(1499.0));
     }
@@ -32657,7 +32800,7 @@ f>n;r=mk 10 20;+r.x r.y";
     #[test]
     fn vm_cov_unwrap_err_value() {
         // Unwrapping an Err via match pattern extracts the inner value
-        let src = r#"f>t;r=^"oops";?r{^e:e;~v:"ok"}"#;
+        let src = r#"f>t;r=^"oops";?r{^ev:ev;~v:"ok"}"#;
         let result = vm_run(src, Some("f"), vec![]);
         assert_eq!(result, Value::Text(Arc::new("oops".to_string())));
     }
@@ -32665,14 +32808,14 @@ f>n;r=mk 10 20;+r.x r.y";
     // ── OP_ISOK / OP_ISERR ────────────────────────────────────────────────
     #[test]
     fn vm_cov_isok_true() {
-        let src = r#"f>n;r=~42;?r{~v:v;^e:0}"#;
+        let src = r#"f>n;r=~42;?r{~v:v;^er:0}"#;
         let result = vm_run(src, Some("f"), vec![]);
         assert_eq!(result, Value::Number(42.0));
     }
 
     #[test]
     fn vm_cov_iserr_true() {
-        let src = r#"f>n;r=^"e";?r{~v:1;^e:0}"#;
+        let src = r#"f>n;r=^"e";?r{~v:1;^ev:0}"#;
         let result = vm_run(src, Some("f"), vec![]);
         assert_eq!(result, Value::Number(0.0));
     }
@@ -34819,8 +34962,8 @@ big x:n>n
   b=*a 2
   c=-b 1
   d=/c 1
-  e=+d 1
-  f=*e 1
+  ev=+d 1
+  f=*ev 1
   g=-f 0
   h=+g 0
   +h 1

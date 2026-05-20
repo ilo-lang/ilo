@@ -312,6 +312,7 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("max", &["n", "n"], "n"),
     ("max", &["list"], "n"),
     ("mod", &["n", "n"], "n"),
+    ("fmod", &["n", "n"], "n"),
     ("clamp", &["n", "n", "n"], "n"),
     ("pow", &["n", "n"], "n"),
     ("sqrt", &["n"], "n"),
@@ -351,6 +352,7 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("rdin", &[], "R t t"),
     ("rdinl", &[], "R (L t) t"),
     ("wr", &["t", "t"], "R t t"),
+    ("wra", &["t", "t"], "R t t"),
     ("wrl", &["t", "L t"], "R t t"),
     ("trm", &["t"], "t"),
     ("upr", &["t"], "t"),
@@ -389,9 +391,14 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("rndn", &["n", "n"], "n"),
     ("now", &[], "n"),
     ("now-ms", &[], "n"),
+    // Math constants (0.12.1). Zero-arg builtins returning f64 constants.
+    ("pi", &[], "n"),
+    ("tau", &[], "n"),
+    ("e", &[], "n"),
     ("sleep", &["n"], "_"),
     ("dtfmt", &["n", "t"], "R t t"),
     ("dtparse", &["t", "t"], "R n t"),
+    ("dtparse-rel", &["t", "n"], "R n t"),
     ("env", &["t"], "R t t"),
     ("env-all", &[], "R (M t t) t"),
     ("jpth", &["t", "t"], "R ? t"),
@@ -432,6 +439,7 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("rgxall", &["t", "t"], "L (L t)"),
     ("rgxall1", &["t", "t"], "L t"),
     ("rgxsub", &["t", "t", "t"], "t"),
+    ("rgxall-multi", &["list", "t"], "L t"),
     // Map builtins (M k v type)
     ("mmap", &[], "map"),
     ("mget", &["map", "t"], "optional"),
@@ -457,6 +465,15 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("argmax", &["L n"], "n"),
     ("argmin", &["L n"], "n"),
     ("argsort", &["L n"], "L n"),
+    // Duration parse / format. Tree-bridge eligible, no FnRef args.
+    // dur-parse returns R n t so malformed input surfaces as a typed error.
+    // dur-fmt is total — always produces Text.
+    ("dur-parse", &["t"], "R n t"),
+    ("dur-fmt", &["n"], "t"),
+    // Result unwrap with default. Per-builtin arm below handles the detailed
+    // type check (ok-type vs default must match); this entry feeds arity +
+    // suggestion paths.
+    ("default-on-err", &["R any t", "any"], "any"),
 ];
 
 fn builtin_arity(name: &str) -> Option<usize> {
@@ -523,7 +540,7 @@ fn builtin_as_fn_ty(name: &str) -> Option<Ty> {
         // 1-arg n->n
         "abs" | "flr" | "cel" | "rou" => Ty::Fn(vec![n.clone()], Box::new(n)),
         // 2-arg n,n->n (suitable as fld accumulator)
-        "min" | "max" | "mod" => Ty::Fn(vec![n.clone(), n.clone()], Box::new(n)),
+        "min" | "max" | "mod" | "fmod" => Ty::Fn(vec![n.clone(), n.clone()], Box::new(n)),
         // 1-arg list->n
         "sum" | "prod" | "avg" | "median" | "stdev" | "variance" => {
             Ty::Fn(vec![Ty::List(Box::new(n.clone()))], Box::new(n))
@@ -652,7 +669,7 @@ fn builtin_check_args(
             }
             (Ty::Number, errors)
         }
-        "min" | "max" | "mod" | "pow" | "atan2" | "clamp" => {
+        "min" | "max" | "mod" | "fmod" | "pow" | "atan2" | "clamp" => {
             for (i, arg) in arg_types.iter().enumerate() {
                 if !compatible(arg, &Ty::Number) {
                     errors.push(VerifyError {
@@ -1709,7 +1726,7 @@ fn builtin_check_args(
                 errors,
             )
         }
-        "wr" | "wrl" => {
+        "wr" | "wra" | "wrl" => {
             if let Some(arg) = arg_types.first()
                 && !compatible(arg, &Ty::Text)
             {
@@ -1725,6 +1742,7 @@ fn builtin_check_args(
             // 2-arg form: wr path content — content must be text.
             // 3-arg form: wr path data fmt — data may be any serialisable type;
             // fmt selects the encoder (csv/tsv/json) and must be text.
+            // wra is always 2-arg: wra path content — content must be text.
             if name == "wr"
                 && arg_types.len() < 3
                 && let Some(arg) = arg_types.get(1)
@@ -1737,6 +1755,19 @@ fn builtin_check_args(
                     hint: Some(
                         "for typed data use the 3-arg form: wr path data \"json\"".to_string(),
                     ),
+                    span,
+                    is_warning: false,
+                });
+            }
+            if name == "wra"
+                && let Some(arg) = arg_types.get(1)
+                && !compatible(arg, &Ty::Text)
+            {
+                errors.push(VerifyError {
+                    code: "ILO-T013",
+                    function: func_ctx.to_string(),
+                    message: format!("'wra' arg 2 expects t (content), got {arg}"),
+                    hint: None,
                     span,
                     is_warning: false,
                 });
@@ -1907,6 +1938,33 @@ fn builtin_check_args(
                     function: func_ctx.to_string(),
                     message: format!("'dtparse' second arg must be t (format), got {arg}"),
                     hint: None,
+                    span,
+                    is_warning: false,
+                });
+            }
+            (Ty::Result(Box::new(Ty::Number), Box::new(Ty::Text)), errors)
+        }
+        "dtparse-rel" => {
+            if let Some(arg) = arg_types.first()
+                && !compatible(arg, &Ty::Text)
+            {
+                errors.push(VerifyError {
+                    code: "ILO-T013",
+                    function: func_ctx.to_string(),
+                    message: format!("'dtparse-rel' first arg must be t (phrase), got {arg}"),
+                    hint: None,
+                    span,
+                    is_warning: false,
+                });
+            }
+            if let Some(arg) = arg_types.get(1)
+                && !compatible(arg, &Ty::Number)
+            {
+                errors.push(VerifyError {
+                    code: "ILO-T013",
+                    function: func_ctx.to_string(),
+                    message: format!("'dtparse-rel' second arg must be n (now epoch), got {arg}"),
+                    hint: Some("pass the current epoch: dtparse-rel phrase (now)".to_string()),
                     span,
                     is_warning: false,
                 });
@@ -2492,6 +2550,54 @@ fn builtin_check_args(
                 });
             }
             (val_ty, errors)
+        }
+        "default-on-err" => {
+            // default-on-err r d → T (the Ok-type of r).
+            // First arg must be R T E; default must match T so the return
+            // shape is `T`, never `O T` or `R T E`.
+            let ok_ty = match arg_types.first() {
+                Some(Ty::Result(ok, _)) => *ok.clone(),
+                Some(Ty::Unknown) | None => Ty::Unknown,
+                Some(other) => {
+                    // Hint only steers to `??` when the agent reached for the
+                    // wrong unwrap for an Optional. For any other type the right
+                    // fix is to make the first arg a Result, not to switch op.
+                    let hint = if matches!(other, Ty::Optional(_)) {
+                        Some("use `?? v d` for Optional (O T), not `default-on-err` (R T E)".into())
+                    } else {
+                        None
+                    };
+                    errors.push(VerifyError {
+                        code: "ILO-T040",
+                        function: func_ctx.to_string(),
+                        message: format!(
+                            "'default-on-err' expects R T E as first argument, got {other}"
+                        ),
+                        hint,
+                        span,
+                        is_warning: false,
+                    });
+                    Ty::Unknown
+                }
+            };
+            if let (Some(def_ty), false) = (arg_types.get(1), matches!(ok_ty, Ty::Unknown))
+                && !compatible(def_ty, &ok_ty)
+            {
+                // ILO-T042: distinct from ILO-T040 (which is "first arg shape
+                // wrong"). T042 fires when the Ok type is known but the default
+                // doesn't match it, so the agent can target the correct arg.
+                errors.push(VerifyError {
+                    code: "ILO-T042",
+                    function: func_ctx.to_string(),
+                    message: format!(
+                        "'default-on-err' default must match Ok type {ok_ty}, got {def_ty}"
+                    ),
+                    hint: None,
+                    span,
+                    is_warning: false,
+                });
+            }
+            (ok_ty, errors)
         }
         "mset" => {
             // mset map key val → map (same key type as input map, value type
@@ -4416,6 +4522,27 @@ impl VerifyContext {
             Expr::NilCoalesce { value, default } => {
                 let val_ty = self.infer_expr(func, scope, value, span);
                 let def_ty = self.infer_expr(func, scope, default, span);
+                // Emit a diagnostic when the left-hand side is a Result type.
+                // The single most common agent mistake: `??num s 0` where `num`
+                // returns `R n t`, not `O n`. `??` is nil-coalesce for Optional;
+                // for Result use `default-on-err r d`.
+                //
+                // Intentionally NOT firing on `Ty::Unknown`: type-variable
+                // params and `_`-typed values can carry either Optional or
+                // Result, so a hint here would be a false positive on generic
+                // code. The match below only triggers on a concrete
+                // `Ty::Result(..)` for the same reason.
+                if let Ty::Result(_, _) = &val_ty {
+                    self.err(
+                        "ILO-T041",
+                        func,
+                        "`??` is nil-coalesce for `O T` (Optional), not `R T E` (Result)".into(),
+                        Some(
+                            "use `default-on-err r d` to unwrap a Result with a fallback, or `?r{~v:v ^_:default}` for full control".into(),
+                        ),
+                        Some(span),
+                    );
+                }
                 match val_ty {
                     Ty::Nil => def_ty,
                     Ty::Optional(inner) => *inner,
@@ -8791,7 +8918,7 @@ mod tests {
         for n in ["abs", "flr", "cel", "rou"] {
             assert!(builtin_as_fn_ty(n).is_some(), "{n} should promote");
         }
-        for n in ["min", "max", "mod"] {
+        for n in ["min", "max", "mod", "fmod"] {
             assert!(builtin_as_fn_ty(n).is_some(), "{n} should promote");
         }
         for n in ["sum", "avg", "trm", "str", "num", "jdmp", "len"] {

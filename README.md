@@ -121,27 +121,26 @@ CalVer. Releases are `YY.M` (e.g. `26.5`), patches within a month are `YY.M.P` (
 
 ### Branches
 
-| Branch | Purpose              | Tags                              |
-|--------|----------------------|-----------------------------------|
-| `main` | Current release line | `26.5`, `26.5.1`, `26.5.2-rc.1`   |
-| `next` | Upcoming release     | `26.6-dev.1`, `26.6-dev.2`        |
+| Branch | Purpose                     | Tags                                       |
+|--------|-----------------------------|--------------------------------------------|
+| `main` | Current release line, patches | `26.5`, `26.5.1`, `26.5.1-dev.N`         |
+| `next` | Next release                  | `26.6-dev.N`, then clean `26.6` on cut    |
 
-- `main` never carries `-dev` tags
-- `next` never carries stable tags — it merges to `main` first
+Universal scheme: `-dev.N` is the only in-flight marker on either branch. Clean (no suffix) means soaked, ready, published. No RC tag.
 
-### Release flow
+### Release flow (next release)
 
 1. Work lands on `next`
-2. Optional dev snapshots tagged `26.6-dev.N`
-3. Ship: merge `next` → `main`, tag `26.6` on `main`
-4. `next` continues for `26.7`
+2. Iterations tagged `26.6-dev.1`, `26.6-dev.2`, …
+3. When soaked: merge `next` → `main`, cut clean `26.6` tag on `main`
+4. `next` continues for `26.7-dev.1`
 
-### Patch flow
+### Patch flow (current release fix)
 
 1. Fix lands on `main` (direct or short-lived fix branch)
-2. Tag `26.5.1` on `main`
-3. Merge `main` → `next` to carry the fix forward
-4. RCs cut from `main` only, tagged `26.5.2-rc.1`
+2. Iterations tagged `26.5.1-dev.1`, `26.5.1-dev.2`, …
+3. When soaked: cut clean `26.5.1` tag on `main`
+4. Merge `main` → `next` to carry the fix forward (auto via `sync-next.yml`)
 
 ### Migration from 0.x
 

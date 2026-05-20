@@ -16,9 +16,9 @@ type event{user-id:t;action:t;ts:n;meta:t}
 
 -- === VALIDATION ===
 
-vld-email e:t>R t t
-  !has e "@" ^"invalid email"
-  ~e
+vld-email em:t>R t t
+  !has em "@" ^"invalid email"
+  ~em
 
 vld-plan p:t>R t t
   s=S "free" "pro" "enterprise"
@@ -133,18 +133,18 @@ log-event uid:t action:t>event
 count-events events:L event action:t>n
   len flt is-action events
 
-is-action e:event>b
-  =e.action "login"
+is-action ev:event>b
+  =ev.action "login"
 
 active-users events:L event window:n>L t
   recent=flt in-window events
   unq map get-uid recent
 
-in-window e:event>b
-  >e.ts -now 86400
+in-window ev:event>b
+  >ev.ts -now 86400
 
-get-uid e:event>t
-  e.user-id
+get-uid ev:event>t
+  ev.user-id
 
 -- === ORCHESTRATION ===
 

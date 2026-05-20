@@ -62,6 +62,7 @@ struct HelperFuncs {
     num: FuncId,
     abs: FuncId,
     mod_fn: FuncId,
+    fmod_fn: FuncId,
     clamp: FuncId,
     min: FuncId,
     max: FuncId,
@@ -275,6 +276,7 @@ fn register_helpers(builder: &mut JITBuilder) {
         ("jit_num", jit_num as *const u8),
         ("jit_abs", jit_abs as *const u8),
         ("jit_mod", jit_mod as *const u8),
+        ("jit_fmod", jit_fmod as *const u8),
         ("jit_clamp", jit_clamp as *const u8),
         ("jit_min", jit_min as *const u8),
         ("jit_max", jit_max as *const u8),
@@ -469,6 +471,7 @@ fn declare_all_helpers(module: &mut JITModule) -> HelperFuncs {
         num: declare_helper(module, "jit_num", 2, 1),
         abs: declare_helper(module, "jit_abs", 2, 1),
         mod_fn: declare_helper(module, "jit_mod", 3, 1),
+        fmod_fn: declare_helper(module, "jit_fmod", 3, 1),
         clamp: declare_helper(module, "jit_clamp", 4, 1),
         min: declare_helper(module, "jit_min", 3, 1),
         max: declare_helper(module, "jit_max", 3, 1),
@@ -1172,7 +1175,7 @@ fn compile_function_body(
                 | OP_ADDK_N | OP_SUBK_N | OP_MULK_N | OP_DIVK_N
                 | OP_LEN | OP_LEN_HAS_K_COUNT | OP_ABS | OP_MIN | OP_MAX
                 | OP_FLR | OP_CEL | OP_ROU | OP_RND0 | OP_RND2 | OP_RNDN | OP_NOW | OP_NOWMS
-                | OP_MOD | OP_CLAMP | OP_POW | OP_SQRT | OP_LOG | OP_EXP | OP_SIN | OP_COS
+                | OP_MOD | OP_FMOD | OP_CLAMP | OP_POW | OP_SQRT | OP_LOG | OP_EXP | OP_SIN | OP_COS
                 | OP_TAN | OP_LOG10 | OP_LOG2 | OP_ASIN | OP_ACOS | OP_ATAN | OP_ATAN2
                 | OP_MEDIAN | OP_MIN_LST | OP_MAX_LST | OP_QUANTILE
                 | OP_STDEV | OP_VARIANCE | OP_SUM | OP_PROD | OP_AVG | OP_DOT
@@ -2363,6 +2366,21 @@ fn compile_function_body(
                 let span_bits = pack_span_bits(chunk.spans[ip]);
                 let span_arg = builder.ins().iconst(I64, span_bits);
                 let fref = get_func_ref(&mut builder, module, helpers.mod_fn);
+                let call_inst = builder.ins().call(fref, &[bv, cv, span_arg]);
+                let result = builder.inst_results(call_inst)[0];
+                builder.def_var(vars[a_idx], result);
+                if a_idx < reg_count && reg_always_num[a_idx] {
+                    let mf = cranelift_codegen::ir::MemFlags::new();
+                    let rf = builder.ins().bitcast(F64, mf, result);
+                    builder.def_var(f64_vars[a_idx], rf);
+                }
+            }
+            OP_FMOD => {
+                let bv = builder.use_var(vars[b_idx]);
+                let cv = builder.use_var(vars[c_idx]);
+                let span_bits = pack_span_bits(chunk.spans[ip]);
+                let span_arg = builder.ins().iconst(I64, span_bits);
+                let fref = get_func_ref(&mut builder, module, helpers.fmod_fn);
                 let call_inst = builder.ins().call(fref, &[bv, cv, span_arg]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
@@ -5615,7 +5633,7 @@ mod tests {
     #[test]
     fn cranelift_5_args() {
         let result = jit_run_numeric(
-            "f a:n b:n c:n d:n e:n>n;+a +b +c +d e",
+            "f a:n b:n c:n d:n ev:n>n;+a +b +c +d ev",
             "f",
             &[1.0, 2.0, 3.0, 4.0, 5.0],
         );
@@ -5625,7 +5643,7 @@ mod tests {
     #[test]
     fn cranelift_6_args() {
         let result = jit_run_numeric(
-            "f a:n b:n c:n d:n e:n f0:n>n;+a +b +c +d +e f0",
+            "f a:n b:n c:n d:n ev:n f0:n>n;+a +b +c +d +ev f0",
             "f",
             &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
         );
@@ -5635,7 +5653,7 @@ mod tests {
     #[test]
     fn cranelift_7_args() {
         let result = jit_run_numeric(
-            "f a:n b:n c:n d:n e:n f0:n g0:n>n;+a +b +c +d +e +f0 g0",
+            "f a:n b:n c:n d:n ev:n f0:n g0:n>n;+a +b +c +d +ev +f0 g0",
             "f",
             &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0],
         );
@@ -5645,7 +5663,7 @@ mod tests {
     #[test]
     fn cranelift_8_args() {
         let result = jit_run_numeric(
-            "f a:n b:n c:n d:n e:n f0:n g0:n h:n>n;+a +b +c +d +e +f0 +g0 h",
+            "f a:n b:n c:n d:n ev:n f0:n g0:n h:n>n;+a +b +c +d +ev +f0 +g0 h",
             "f",
             &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0],
         );
@@ -5655,7 +5673,7 @@ mod tests {
     #[test]
     fn cranelift_9_args_hits_fallback() {
         let tokens: Vec<crate::lexer::Token> = crate::lexer::lex(
-            "f a:n b:n c:n d:n e:n f0:n g0:n h:n i:n>n;+a +b +c +d +e +f0 +g0 +h i",
+            "f a:n b:n c:n d:n ev:n f0:n g0:n h:n i:n>n;+a +b +c +d +ev +f0 +g0 +h i",
         )
         .unwrap()
         .into_iter()
@@ -6599,8 +6617,8 @@ mod tests {
     fn cranelift_is_inlinable_too_many_regs() {
         // 17-param function: reg_count=17 > 16 → is_inlinable=false → direct call
         let result = jit_run_numeric(
-            "sum17 a:n b:n c:n d:n e:n f:n g:n h:n i:n j:n k:n l:n m:n nn:n o:n p:n q:n>n;\
-             +a +b +c +d +e +f +g +h +i +j +k +l +m +nn +o +p q\n\
+            "sum17 a:n b:n c:n d:n ev:n f:n g:n h:n i:n j:n k:n l:n m:n nn:n o:n p:n q:n>n;\
+             +a +b +c +d +ev +f +g +h +i +j +k +l +m +nn +o +p q\n\
              caller>n;sum17 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17",
             "caller",
             &[],

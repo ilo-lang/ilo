@@ -18,6 +18,7 @@ pub enum Builtin {
     Min,
     Max,
     Mod,
+    Fmod,
     Clamp,
     Pow,
     Sqrt,
@@ -94,6 +95,7 @@ pub enum Builtin {
     NowMs,
     Dtfmt,
     Dtparse,
+    DtparseRel,
     Sleep,
 
     // I/O
@@ -107,6 +109,7 @@ pub enum Builtin {
     Rdin,
     Rdinl,
     Wr,
+    Wra,
     Wrl,
     Prnt,
     Env,
@@ -131,6 +134,7 @@ pub enum Builtin {
     Rgxall,
     Rgxall1,
     Rgxsub,
+    RgxallMulti,
 
     // JSON
     Jpth,
@@ -185,6 +189,29 @@ pub enum Builtin {
     Dirname,
     Basename,
     Pathjoin,
+
+    // Math constants (zero-arg). Added 0.12.1 so agents stop hardcoding
+    // `3.14159...` or reconstructing pi via `* 2 (atan2 0 -1)` — fft-peak
+    // rerun12 surfaced both shapes. Tree-bridge-eligible so VM / Cranelift
+    // inherit for free; Python codegen emits `math.pi` / `math.tau` / `math.e`.
+    Pi,
+    Tau,
+    Eu,
+
+    // Duration parse / format.
+    // `dur-parse s > R n t` — parse a human-readable duration string ("3 weeks
+    // 2 days 5 hours", "4h 32m", "1d", "1.5 hours") into seconds (f64). Lenient:
+    // accepts unit abbreviations s/m/h/d/w and full names (singular + plural).
+    // `dur-fmt n > t` — format seconds as human-readable "4h 32m", "2 days 1
+    // hour", "30s". Drops zero parts; always uses the largest applicable unit.
+    // Both are tree-bridge eligible — pure text ↔ number ops, no I/O.
+    DurParse,
+    DurFmt,
+
+    // `default-on-err r d > T` — unwrap `R T E` to `T`, using `d:T` if `Err`.
+    // Mirror of `??` for Result: `?? v d` is nil-coalesce for `O T`; this is
+    // the Result equivalent. Tree-bridge eligible (2-arg, pure, no FnRef).
+    DefaultOnErr,
 }
 
 impl Builtin {
@@ -201,6 +228,7 @@ impl Builtin {
             "min" => Some(Builtin::Min),
             "max" => Some(Builtin::Max),
             "mod" => Some(Builtin::Mod),
+            "fmod" => Some(Builtin::Fmod),
             "clamp" => Some(Builtin::Clamp),
             "pow" => Some(Builtin::Pow),
             "sqrt" => Some(Builtin::Sqrt),
@@ -269,6 +297,7 @@ impl Builtin {
             "now-ms" => Some(Builtin::NowMs),
             "dtfmt" => Some(Builtin::Dtfmt),
             "dtparse" => Some(Builtin::Dtparse),
+            "dtparse-rel" => Some(Builtin::DtparseRel),
             "sleep" => Some(Builtin::Sleep),
             "rd" => Some(Builtin::Rd),
             "rdl" => Some(Builtin::Rdl),
@@ -276,6 +305,7 @@ impl Builtin {
             "rdin" => Some(Builtin::Rdin),
             "rdinl" => Some(Builtin::Rdinl),
             "wr" => Some(Builtin::Wr),
+            "wra" => Some(Builtin::Wra),
             "wrl" => Some(Builtin::Wrl),
             "prnt" => Some(Builtin::Prnt),
             "env" => Some(Builtin::Env),
@@ -298,6 +328,7 @@ impl Builtin {
             "rgxall" => Some(Builtin::Rgxall),
             "rgxall1" => Some(Builtin::Rgxall1),
             "rgxsub" => Some(Builtin::Rgxsub),
+            "rgxall-multi" => Some(Builtin::RgxallMulti),
             "jpth" => Some(Builtin::Jpth),
             "jkeys" => Some(Builtin::Jkeys),
             "jdmp" => Some(Builtin::Jdmp),
@@ -330,6 +361,12 @@ impl Builtin {
             "dirname" => Some(Builtin::Dirname),
             "basename" => Some(Builtin::Basename),
             "pathjoin" => Some(Builtin::Pathjoin),
+            "pi" => Some(Builtin::Pi),
+            "tau" => Some(Builtin::Tau),
+            "e" => Some(Builtin::Eu),
+            "dur-parse" => Some(Builtin::DurParse),
+            "dur-fmt" => Some(Builtin::DurFmt),
+            "default-on-err" => Some(Builtin::DefaultOnErr),
             _ => None,
         }
     }
@@ -347,6 +384,7 @@ impl Builtin {
             Builtin::Min => "min",
             Builtin::Max => "max",
             Builtin::Mod => "mod",
+            Builtin::Fmod => "fmod",
             Builtin::Clamp => "clamp",
             Builtin::Pow => "pow",
             Builtin::Sqrt => "sqrt",
@@ -415,6 +453,7 @@ impl Builtin {
             Builtin::NowMs => "now-ms",
             Builtin::Dtfmt => "dtfmt",
             Builtin::Dtparse => "dtparse",
+            Builtin::DtparseRel => "dtparse-rel",
             Builtin::Sleep => "sleep",
             Builtin::Rd => "rd",
             Builtin::Rdl => "rdl",
@@ -422,6 +461,7 @@ impl Builtin {
             Builtin::Rdin => "rdin",
             Builtin::Rdinl => "rdinl",
             Builtin::Wr => "wr",
+            Builtin::Wra => "wra",
             Builtin::Wrl => "wrl",
             Builtin::Prnt => "prnt",
             Builtin::Env => "env",
@@ -444,6 +484,7 @@ impl Builtin {
             Builtin::Rgxall => "rgxall",
             Builtin::Rgxall1 => "rgxall1",
             Builtin::Rgxsub => "rgxsub",
+            Builtin::RgxallMulti => "rgxall-multi",
             Builtin::Jpth => "jpth",
             Builtin::Jkeys => "jkeys",
             Builtin::Jdmp => "jdmp",
@@ -472,6 +513,12 @@ impl Builtin {
             Builtin::Dirname => "dirname",
             Builtin::Basename => "basename",
             Builtin::Pathjoin => "pathjoin",
+            Builtin::Pi => "pi",
+            Builtin::Tau => "tau",
+            Builtin::Eu => "e",
+            Builtin::DurParse => "dur-parse",
+            Builtin::DurFmt => "dur-fmt",
+            Builtin::DefaultOnErr => "default-on-err",
         }
     }
 
@@ -495,6 +542,7 @@ impl Builtin {
         Builtin::Min,
         Builtin::Max,
         Builtin::Mod,
+        Builtin::Fmod,
         Builtin::Clamp,
         Builtin::Pow,
         Builtin::Sqrt,
@@ -561,10 +609,12 @@ impl Builtin {
         Builtin::Now,
         Builtin::Dtfmt,
         Builtin::Dtparse,
+        Builtin::DtparseRel,
         Builtin::Rd,
         Builtin::Rdl,
         Builtin::Rdb,
         Builtin::Wr,
+        Builtin::Wra,
         Builtin::Wrl,
         Builtin::Prnt,
         Builtin::Env,
@@ -661,6 +711,28 @@ impl Builtin {
         // `map (fn k > [k (mget m k)]) (mkeys m)` cascade — one builtin call
         // instead of lambda + mkeys + mget per iteration. Added in 0.12.1.
         Builtin::Mpairs,
+        // `rgxall-multi pats:L t line:t > L t` — multi-pattern flat-match.
+        // Equivalent to `flat (map (p:t>L t;rgxall1 p line) pats)` but saves
+        // ~20 tokens per call site. cron-explainer and historical-archeologist
+        // both wanted this: apply several patterns to one line and get a single
+        // flat list of all hits in pattern order. Tree-bridge eligible alongside
+        // rgxall1 — same dispatch path, no new opcodes.
+        Builtin::RgxallMulti,
+        // Math constants (0.12.1). Appended last to preserve on-wire tag
+        // stability for every prior builtin. Zero-arg, tree-bridge-eligible.
+        Builtin::Pi,
+        Builtin::Tau,
+        Builtin::Eu,
+        // Duration parse / format. Tree-bridge eligible: pure text↔number, no
+        // I/O, no FnRef args. DurParse returns R n t so that malformed input
+        // surfaces as a typed error at the boundary. DurFmt is total (always
+        // returns a text string). Appended here to preserve every existing tag.
+        Builtin::DurParse,
+        Builtin::DurFmt,
+        // `default-on-err r d > T` — Result mirror of `??`. Unwraps `R T E`
+        // to `T`, returning `d` on `Err`. Kills the common `?r{~v:v ^_:default}`
+        // pattern. Tree-bridge eligible (2-arg, pure). Added in 0.12.1.
+        Builtin::DefaultOnErr,
     ];
 
     /// On-wire 8-bit tag for cross-engine builtin dispatch. See `ALL`.
@@ -833,6 +905,7 @@ mod tests {
             "min",
             "max",
             "mod",
+            "fmod",
             "clamp",
             "pow",
             "sqrt",
@@ -894,6 +967,7 @@ mod tests {
             "rdl",
             "rdb",
             "wr",
+            "wra",
             "wrl",
             "prnt",
             "env",
@@ -912,6 +986,7 @@ mod tests {
             "rgxall",
             "rgxall1",
             "rgxsub",
+            "rgxall-multi",
             "jpth",
             "jkeys",
             "jdmp",
@@ -943,6 +1018,7 @@ mod tests {
             "rdjl",
             "dtfmt",
             "dtparse",
+            "dtparse-rel",
             "sleep",
             "run",
             "lsd",
@@ -956,6 +1032,11 @@ mod tests {
             "pathjoin",
             "rdin",
             "rdinl",
+            "pi",
+            "tau",
+            "e",
+            "dur-parse",
+            "dur-fmt",
         ];
         for name in &all {
             let b = Builtin::from_name(name).unwrap_or_else(|| panic!("missing builtin: {name}"));
@@ -1061,6 +1142,7 @@ mod tests {
             "min",
             "max",
             "mod",
+            "fmod",
             "clamp",
             "pow",
             "sqrt",
@@ -1129,10 +1211,12 @@ mod tests {
             "now-ms",
             "dtfmt",
             "dtparse",
+            "dtparse-rel",
             "rd",
             "rdl",
             "rdb",
             "wr",
+            "wra",
             "wrl",
             "prnt",
             "env",
@@ -1151,6 +1235,7 @@ mod tests {
             "rgxall",
             "rgxall1",
             "rgxsub",
+            "rgxall-multi",
             "jpth",
             "jkeys",
             "jdmp",
@@ -1181,6 +1266,11 @@ mod tests {
             "pathjoin",
             "rdin",
             "rdinl",
+            "pi",
+            "tau",
+            "e",
+            "dur-parse",
+            "dur-fmt",
         ] {
             let b = Builtin::from_name(name).unwrap_or_else(|| panic!("no builtin: {name}"));
             let t = b.tag();

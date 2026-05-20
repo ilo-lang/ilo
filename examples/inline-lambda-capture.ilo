@@ -24,7 +24,8 @@ bump xs:L n by:n>L n;map (x:n>n;+x by) xs
 between xs:L n lo:n hi:n>L n;flt (x:n>b;&(>=x lo) <=x hi) xs
 
 -- Capture a text value: keep words containing the captured substring.
-contains ws:L t needle:t>L t;flt (w:t>b;has w needle) ws
+-- Note: `contains` is a builtin alias for `has`, so we use a different name.
+keep-sub ws:L t needle:t>L t;flt (w:t>b;has w needle) ws
 
 -- Weighted sum: the per-item weight is captured.
 wsum xs:L n w:n>n;fld (a:n x:n>n;+a *x w) xs 0
@@ -37,7 +38,7 @@ wsum xs:L n w:n>n;fld (a:n x:n>n;+a *x w) xs 0
 -- out: [11, 12, 13]
 -- run: between [1,3,5,7,9,11] 3 7
 -- out: [3, 5, 7]
--- run: contains ["apple","banana","apricot"] "ap"
+-- run: keep-sub ["apple","banana","apricot"] "ap"
 -- out: [apple, apricot]
 -- run: wsum [1,2,3,4] 5
 -- out: 50

@@ -117,11 +117,11 @@ fn rdjl_mixed_lines_each_wrapped() {
 
 // ── tree-only: verify Ok and Err entries are distinguishable ─────────
 //
-// `?r{~v:..;^e:..}` Result-matching is supported on the tree-walker.
+// `?r{~v:..;^er:..}` Result-matching is supported on the tree-walker.
 // The VM/JIT lack higher-order builtins for the same expressivity, so
 // the structural Ok/Err assertion is tree-only — the count tests above
 // already confirm the entry shape on the other engines.
-const FIRST_OK_SRC: &str = "head-amt p:t>n;es=rdjl p;e=hd es;?e{~v:v.amount;^er:999}";
+const FIRST_OK_SRC: &str = "head-amt p:t>n;es=rdjl p;ev=hd es;?ev{~v:v.amount;^er:999}";
 
 #[test]
 fn rdjl_first_line_unwraps_to_record_field() {
@@ -132,7 +132,7 @@ fn rdjl_first_line_unwraps_to_record_field() {
     let _ = std::fs::remove_file(&path);
 }
 
-const HEAD_ERR_SRC: &str = "head-tag p:t>n;es=rdjl p;e=hd es;?e{~v:1;^er:0}";
+const HEAD_ERR_SRC: &str = "head-tag p:t>n;es=rdjl p;ev=hd es;?ev{~v:1;^er:0}";
 
 #[test]
 fn rdjl_malformed_first_line_is_err() {

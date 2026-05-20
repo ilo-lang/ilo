@@ -530,6 +530,18 @@ fn emit_expr(out: &mut String, level: usize, expr: &Expr) -> String {
             if function == "now" && args.is_empty() {
                 return "(__import__('time').time())".to_string();
             }
+            // Math constants (0.12.1). `math.pi` / `math.tau` / `math.e`
+            // agree bit-for-bit with Rust's `f64::consts::{PI,TAU,E}`, so
+            // cross-engine output matches the tree / VM / Cranelift bridge.
+            if function == "pi" && args.is_empty() {
+                return "(__import__('math').pi)".to_string();
+            }
+            if function == "tau" && args.is_empty() {
+                return "(__import__('math').tau)".to_string();
+            }
+            if function == "e" && args.is_empty() {
+                return "(__import__('math').e)".to_string();
+            }
             if function == "now-ms" && args.is_empty() {
                 // Mirrors `Builtin::NowMs` across the other engines.
                 // `time.time()` returns seconds-as-float; multiply by
@@ -643,6 +655,19 @@ fn emit_expr(out: &mut String, level: usize, expr: &Expr) -> String {
                 let call = format!(
                     "(lambda p: (\"ok\", open(p).read().splitlines()) if __import__('os.path', fromlist=['']).exists(p) else (\"err\", f\"{{p}}: no such file\"))({})",
                     arg
+                );
+                return if unwrap.is_any() {
+                    format!("_ilo_unwrap({})", call)
+                } else {
+                    call
+                };
+            }
+            if function == "wra" && args.len() == 2 {
+                let pa = emit_expr(out, level, &args[0]);
+                let content = emit_expr(out, level, &args[1]);
+                let call = format!(
+                    "(lambda p, c: (open(p, 'a').write(c), (\"ok\", p))[1])({}, {})",
+                    pa, content
                 );
                 return if unwrap.is_any() {
                     format!("_ilo_unwrap({})", call)

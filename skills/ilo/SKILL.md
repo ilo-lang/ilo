@@ -32,13 +32,14 @@ Every skill subcommand accepts `--json`. The envelope is `{schemaVersion: 1, ...
 
 ## Available skills
 
-Eleven task-focused skills cover the surface. Load only the slices the current task needs (typical: 1-2 modules):
+Twelve task-focused skills cover the surface. Load only the slices the current task needs (typical: 1-2 modules):
 
-- `ilo-language` writing or reviewing .ilo source: syntax, types, guards, match, pipes, records, Results.
+- `ilo-language` writing or reviewing .ilo source: syntax, types, guards, match, pipes, Results, loops, lambdas.
+- `ilo-language-records` writing ilo code with record types: declarations, construction, field access, destructuring, update syntax, safe navigation. Load alongside `ilo-language` when your code uses `type`.
 - `ilo-builtins-core` core builtins: type coercions (`len str num trm`), list ops, HOFs, map ops.
 - `ilo-builtins-math` math builtins: arithmetic, trig, constants (`pi tau e`), random, statistics.
 - `ilo-builtins-io` I/O builtins: file read/write, HTTP, JSON, path ops, env, time, process.
-- `ilo-builtins-text` text builtins: manipulation, regex, formatting (`fmt fmt2`), CSV/TSV, date parsing.
+- `ilo-builtins-text` text builtins: manipulation, regex, formatting (`fmt fmt2`), CSV/TSV, date parsing (`dtfmt`, `dtparse`, `dtparse-rel` for relative phrases).
 - `ilo-errors` reading ILO-XXXX codes: lex / parse / type / runtime classes with one-line cause + fix.
 - `ilo-tools` declaring and using external tools: MCP servers and HTTP providers.
 - `ilo-engines` picking an execution backend: tree, VM, JIT, AOT.

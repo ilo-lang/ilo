@@ -189,7 +189,7 @@ fn len_flt_count_inlineable_predicate() {
 // expression) so the inliner rejects it and the OP_CALL_DYN path
 // inside the fused counter takes over. The count must still be right.
 const COUNT_BRANCHY: &str =
-    "branchy x:n>b;d=*x 2;e=+d 1;f=*e e;>f 10\nmain xs:L n>n;len (flt branchy xs)";
+    "branchy x:n>b;d=*x 2;ev=+d 1;f=*ev ev;>f 10\nmain xs:L n>n;len (flt branchy xs)";
 
 #[test]
 fn len_flt_count_non_inlineable_predicate() {

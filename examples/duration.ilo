@@ -1,0 +1,45 @@
+-- Duration builtins: dur-parse (text -> R n t) and dur-fmt (n -> t).
+-- dur-parse is lenient: accepts abbreviations (s/m/h/d/w), full names
+-- (singular + plural), mixed sequences, and decimal quantities.
+-- dur-fmt formats seconds as human-readable text; drops zero parts.
+
+-- Parse abbreviated form: "3h 30m" = 12600 seconds.
+parse-3h30m>R n t;dur-parse "3h 30m"
+
+-- Parse long form with week and day units.
+parse-1w2d>R n t;dur-parse "1 week 2 days"
+
+-- Parse decimal quantity: "1.5 hours" = 5400 seconds.
+parse-1pt5h>R n t;dur-parse "1.5 hours"
+
+-- Format 9720 seconds as "2h 42m".
+fmt-9720>t;dur-fmt 9720
+
+-- Format exactly one day.
+fmt-86400>t;dur-fmt 86400
+
+-- Format 90 seconds as "1m 30s".
+fmt-90>t;dur-fmt 90
+
+-- Format zero seconds.
+fmt-0>t;dur-fmt 0
+
+-- Round-trip: "2 days 3 hours" parses and re-formats.
+roundtrip-2d3h>R t t;n=dur-parse! "2 days 3 hours";~dur-fmt n
+
+-- run: parse-3h30m
+-- out: 12600
+-- run: parse-1w2d
+-- out: 777600
+-- run: parse-1pt5h
+-- out: 5400
+-- run: fmt-9720
+-- out: 2h 42m
+-- run: fmt-86400
+-- out: 1 day
+-- run: fmt-90
+-- out: 1m 30s
+-- run: fmt-0
+-- out: 0s
+-- run: roundtrip-2d3h
+-- out: 2 days 3h

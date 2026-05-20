@@ -6,7 +6,7 @@
 prow ln:t>R (L n) t;ps=spl ln ",";tt=num! at ps 0;l=num! at ps 1;st=num! at ps 2;~[tt l st]
 okev ev:L n>n;l=at ev 1;st=at ev 2;?h (& (=st 200) (<l 300)) 1 0
 bk ev:L n>n;flr (/ (at ev 0) 60)
-mkrec e:L n>L n;[(bk e) (okev e)]
+mkrec ev:L n>L n;[(bk ev) (okev ev)]
 rb r:L n>n;at r 0
 rok r:L n>n;at r 1
 prate b:n recs:L (L n)>n;ms=flt (r:L n>b;=(at r 0) b) recs;g=sum (map rok ms);tot=len ms;?h (=tot 0) 1 (/ g tot)

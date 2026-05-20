@@ -566,6 +566,213 @@ pub(crate) fn pathjoin_posix(parts: &[&str]) -> String {
     out
 }
 
+/// Parse a human-readable duration string into total seconds (f64).
+///
+/// Accepts mixed sequences of `<number><unit>` pairs, optionally separated by
+/// spaces. Numbers may be integers or decimals. Unit names accepted:
+///
+/// | abbreviation | full names                    | multiplier (seconds) |
+/// |---|---|---|
+/// | `w`          | week, weeks                   | 604800               |
+/// | `d`          | day, days                     | 86400                |
+/// | `h`          | hour, hours, hr, hrs          | 3600                 |
+/// | `m`          | min, mins, minute, minutes    | 60                   |
+/// | `s`          | sec, secs, second, seconds    | 1                    |
+///
+/// Examples: `"3 weeks 2 days 5 hours"`, `"4h 32m"`, `"1d"`, `"1.5 hours"`,
+/// `"90s"`, `"2w3d"`.
+///
+/// Returns `Err` if the input is blank or no valid unit pair is found.
+pub(crate) fn dur_parse(s: &str) -> std::result::Result<f64, String> {
+    let s = s.trim();
+    if s.is_empty() {
+        return Err("dur-parse: empty input".to_string());
+    }
+    let mut total = 0.0_f64;
+    let mut found_any = false;
+    // Sign is "sticky": a leading `-` applies to every following token until
+    // an explicit `+` (or another `-`) resets it. This makes the round-trip
+    // `dur-fmt -> dur-parse` symmetric for negative multi-part durations
+    // such as "-1m 30s" (= -90), where the formatter emits a single leading
+    // minus rather than signing every token.
+    let mut sign = 1.0_f64;
+
+    // Walk through the string matching <number> <ws?> <unit> sequences.
+    let mut rest = s;
+    while !rest.is_empty() {
+        // Skip leading whitespace and separators.
+        let trimmed = rest.trim_start_matches(|c: char| c.is_ascii_whitespace() || c == ',');
+        if trimmed.is_empty() {
+            break;
+        }
+        rest = trimmed;
+
+        // Consume an optional sign — updates the sticky running sign.
+        if let Some(r) = rest.strip_prefix('-') {
+            sign = -1.0_f64;
+            rest = r;
+        } else if let Some(r) = rest.strip_prefix('+') {
+            sign = 1.0_f64;
+            rest = r;
+        }
+
+        // Consume the number (integer or decimal).
+        let num_end = rest
+            .find(|c: char| !c.is_ascii_digit() && c != '.')
+            .unwrap_or(rest.len());
+        if num_end == 0 {
+            // No digit at current position — skip one char (handles garbage).
+            let skip = rest.chars().next().map(|c| c.len_utf8()).unwrap_or(1);
+            rest = &rest[skip..];
+            continue;
+        }
+        let num_str = &rest[..num_end];
+        let num: f64 = match num_str.parse() {
+            Ok(n) => n,
+            Err(_) => {
+                // Malformed number; skip past it.
+                rest = &rest[num_end..];
+                continue;
+            }
+        };
+        rest = &rest[num_end..];
+
+        // Skip optional whitespace between number and unit.
+        rest = rest.trim_start_matches(|c: char| c.is_ascii_whitespace());
+
+        // Consume the unit (letters only).
+        let unit_end = rest
+            .find(|c: char| !c.is_ascii_alphabetic())
+            .unwrap_or(rest.len());
+        if unit_end == 0 {
+            // No unit — skip (bare number without unit is not a duration token).
+            continue;
+        }
+        let unit = &rest[..unit_end];
+        rest = &rest[unit_end..];
+
+        let multiplier: f64 = match unit.to_ascii_lowercase().as_str() {
+            "w" | "week" | "weeks" => 604_800.0,
+            "d" | "day" | "days" => 86_400.0,
+            "h" | "hr" | "hrs" | "hour" | "hours" => 3_600.0,
+            "m" | "min" | "mins" | "minute" | "minutes" => 60.0,
+            "s" | "sec" | "secs" | "second" | "seconds" => 1.0,
+            _ => {
+                // Unknown unit — skip this token pair.
+                continue;
+            }
+        };
+        total += sign * num * multiplier;
+        found_any = true;
+    }
+
+    if !found_any {
+        return Err(format!("dur-parse: no recognised unit in {:?}", s));
+    }
+    Ok(total)
+}
+
+/// Format a duration given in seconds into a human-readable string.
+///
+/// Uses the largest applicable unit; drops zero parts; always includes at
+/// least one part. Fractional seconds are preserved on the seconds
+/// component with up to 3 decimal places, trailing zeros stripped, so the
+/// `dur-fmt -> dur-parse` round-trip is information-preserving for any
+/// value representable to ~3dp on the seconds digit.
+///
+/// Negative values format with a single leading minus rather than signing
+/// each token. The matching `dur-parse` treats a leading `-` as sticky
+/// (applies to every following token until an explicit `+` resets it), so
+/// `dur-fmt(-90)` → `"-1m 30s"` parses back to `-90`.
+///
+/// | input (s)    | output         |
+/// |---|---|
+/// | 0            | "0s"           |
+/// | 0.5          | "0.5s"         |
+/// | 45           | "45s"          |
+/// | 90           | "1m 30s"       |
+/// | 90.5         | "1m 30.5s"     |
+/// | 3600         | "1h"           |
+/// | 9720         | "2h 42m"       |
+/// | 86400        | "1 day"        |
+/// | 604800       | "1 week"       |
+/// | -90          | "-1m 30s"      |
+pub(crate) fn dur_fmt(secs: f64) -> String {
+    if !secs.is_finite() {
+        return format!("{secs}");
+    }
+    let negative = secs < 0.0;
+    let total_secs = secs.abs();
+
+    // Work in integer seconds + fractional part.
+    let whole = total_secs.trunc() as u64;
+    let frac = total_secs - whole as f64;
+
+    let weeks = whole / 604_800;
+    let rem = whole % 604_800;
+    let days = rem / 86_400;
+    let rem = rem % 86_400;
+    let hours = rem / 3_600;
+    let rem = rem % 3_600;
+    let minutes = rem / 60;
+    let seconds = rem % 60;
+
+    let mut parts: Vec<String> = Vec::with_capacity(5);
+    if weeks > 0 {
+        parts.push(if weeks == 1 {
+            "1 week".to_string()
+        } else {
+            format!("{weeks} weeks")
+        });
+    }
+    if days > 0 {
+        parts.push(if days == 1 {
+            "1 day".to_string()
+        } else {
+            format!("{days} days")
+        });
+    }
+    if hours > 0 {
+        parts.push(if hours == 1 {
+            "1h".to_string()
+        } else {
+            format!("{hours}h")
+        });
+    }
+    if minutes > 0 {
+        parts.push(format!("{minutes}m"));
+    }
+    // Seconds: show if nonzero, or if we still have a fractional part to
+    // carry. If everything else is 0, show "0s". Fractional seconds are
+    // always emitted when present (with up to 3 decimal places, trailing
+    // zeros stripped), so `dur-fmt -> dur-parse` round-trips without losing
+    // sub-second precision.
+    let has_frac = frac > 1e-9;
+    if seconds > 0 || has_frac {
+        if has_frac {
+            let total_s = seconds as f64 + frac;
+            let formatted = format!("{:.3}", total_s);
+            let formatted = formatted.trim_end_matches('0').trim_end_matches('.');
+            parts.push(format!("{formatted}s"));
+        } else {
+            parts.push(format!("{seconds}s"));
+        }
+    }
+
+    if parts.is_empty() {
+        // Input was exactly zero — render explicitly so callers always get
+        // at least one component back.
+        parts.push("0s".to_string());
+    }
+
+    let joined = parts.join(" ");
+    if negative {
+        format!("-{joined}")
+    } else {
+        joined
+    }
+}
+
 /// Recursive depth-first walk over `root`, collecting paths relative to it,
 /// sorted lexicographically. Symlinks are not followed (uses `file_type`,
 /// not `metadata`, on each entry).
@@ -1448,6 +1655,33 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             )),
         };
     }
+    if builtin == Some(Builtin::Fmod) && args.len() == 2 {
+        return match (&args[0], &args[1]) {
+            (Value::Number(a), Value::Number(b)) => {
+                if *b == 0.0 {
+                    Err(RuntimeError::new(
+                        "ILO-R003",
+                        "fmod: modulo by zero".to_string(),
+                    ))
+                } else {
+                    // floor-mod: always non-negative when b > 0.
+                    // Equivalent to Python's % and JS Math.floor((a % b + b) % b).
+                    // NaN/Inf inputs propagate via f64 % semantics, matching
+                    // every other math builtin (`abs`, `sqrt`, `pow`, `/`).
+                    let r = a % b;
+                    Ok(Value::Number(if r != 0.0 && r.signum() != b.signum() {
+                        r + b
+                    } else {
+                        r
+                    }))
+                }
+            }
+            _ => Err(RuntimeError::new(
+                "ILO-R009",
+                "fmod requires two numbers".to_string(),
+            )),
+        };
+    }
     if builtin == Some(Builtin::Clamp) && args.len() == 3 {
         return match (&args[0], &args[1], &args[2]) {
             (Value::Number(x), Value::Number(lo), Value::Number(hi)) => {
@@ -1691,6 +1925,20 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             )),
         };
     }
+    // Math constants (0.12.1). Zero-arg, no allocation, no error path.
+    // Returning the canonical Rust f64 consts keeps cross-engine values
+    // bit-identical with the VM / Cranelift bridge (which dispatches here)
+    // and with `math.pi` / `math.tau` / `math.e` emitted by the Python
+    // backend, all of which agree on the IEEE-754 representation.
+    if builtin == Some(Builtin::Pi) && args.is_empty() {
+        return Ok(Value::Number(std::f64::consts::PI));
+    }
+    if builtin == Some(Builtin::Tau) && args.is_empty() {
+        return Ok(Value::Number(std::f64::consts::TAU));
+    }
+    if builtin == Some(Builtin::Eu) && args.is_empty() {
+        return Ok(Value::Number(std::f64::consts::E));
+    }
     if builtin == Some(Builtin::Now) && args.is_empty() {
         let ts = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -1795,6 +2043,17 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             _ => Err(RuntimeError::new(
                 "ILO-R009",
                 "dtparse requires two text args".to_string(),
+            )),
+        };
+    }
+    if builtin == Some(Builtin::DtparseRel) && args.len() == 2 {
+        return match (&args[0], &args[1]) {
+            (Value::Text(phrase), Value::Number(now_epoch)) => {
+                Ok(dtparse_rel(phrase.as_str(), *now_epoch))
+            }
+            _ => Err(RuntimeError::new(
+                "ILO-R009",
+                "dtparse-rel requires text phrase and number epoch".to_string(),
             )),
         };
     }
@@ -1968,6 +2227,21 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             _ => Err(RuntimeError::new(
                 "ILO-R009",
                 "lget-or: expects a list".to_string(),
+            )),
+        };
+    }
+    if builtin == Some(Builtin::DefaultOnErr) && args.len() == 2 {
+        // default-on-err r d — unwrap R T E to T, returning d on Err.
+        // Mirror of `??` for Result. Pure: no I/O, no FnRef.
+        return match &args[0] {
+            Value::Ok(inner) => Ok(*inner.clone()),
+            Value::Err(_) => Ok(args[1].clone()),
+            other => Err(RuntimeError::new(
+                "ILO-R009",
+                format!(
+                    "default-on-err: first argument must be R T E (Ok or Err), got {:?}",
+                    other
+                ),
             )),
         };
     }
@@ -3303,6 +3577,42 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         }
         return Ok(Value::Text(Arc::new(pathjoin_posix(&segs))));
     }
+    if builtin == Some(Builtin::DurParse) && args.len() == 1 {
+        // dur-parse s:t > R n t — parse a human duration string into seconds.
+        // Accepts mixed unit sequences: "3 weeks 2 days 5 hours", "4h 32m",
+        // "1d", "1.5 hours". Lenient: case-insensitive, optional space between
+        // number and unit, singular/plural, standard abbreviations s/m/h/d/w.
+        // Returns Err on empty input or if no recognisable unit is found.
+        let s = match &args[0] {
+            Value::Text(s) => s.clone(),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("dur-parse requires text, got {:?}", other),
+                ));
+            }
+        };
+        match dur_parse(s.as_str()) {
+            Ok(secs) => return Ok(Value::Ok(Box::new(Value::Number(secs)))),
+            Err(msg) => return Ok(Value::Err(Box::new(Value::Text(Arc::new(msg.to_string()))))),
+        }
+    }
+    if builtin == Some(Builtin::DurFmt) && args.len() == 1 {
+        // dur-fmt n:n > t — format seconds as human-readable duration.
+        // Output uses the largest applicable unit; zero parts are dropped.
+        // E.g. 9720 -> "2h 42m", 86400 -> "1d", 90 -> "1m 30s", 45 -> "45s".
+        // Negative seconds formatted with a leading "-". Zero returns "0s".
+        let secs = match &args[0] {
+            Value::Number(n) => *n,
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("dur-fmt requires a number (seconds), got {:?}", other),
+                ));
+            }
+        };
+        return Ok(Value::Text(Arc::new(dur_fmt(secs))));
+    }
     if builtin == Some(Builtin::Rd) && (args.len() == 1 || args.len() == 2) {
         let path = match &args[0] {
             Value::Text(s) => s.clone(),
@@ -3471,6 +3781,38 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         };
         return match std::fs::write(path.as_str(), &content) {
             Ok(()) => Ok(Value::Ok(Box::new(Value::Text(path)))),
+            Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(e.to_string()))))),
+        };
+    }
+    if builtin == Some(Builtin::Wra) && args.len() == 2 {
+        let path = match &args[0] {
+            Value::Text(s) => s.clone(),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("wra: first arg must be a text path, got {:?}", other),
+                ));
+            }
+        };
+        let content = match &args[1] {
+            Value::Text(s) => (**s).clone(),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("wra: second arg must be text content, got {:?}", other),
+                ));
+            }
+        };
+        use std::io::Write as _;
+        return match std::fs::OpenOptions::new()
+            .append(true)
+            .create(true)
+            .open(path.as_str())
+        {
+            Ok(mut f) => match f.write_all(content.as_bytes()) {
+                Ok(()) => Ok(Value::Ok(Box::new(Value::Text(path)))),
+                Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(e.to_string()))))),
+            },
             Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(e.to_string()))))),
         };
     }
@@ -4903,6 +5245,88 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 .map(|m| Value::Text(Arc::new(m.as_str().to_string())))
                 .collect()
         };
+        return Ok(Value::List(Arc::new(result)));
+    }
+    if builtin == Some(Builtin::RgxallMulti) && args.len() == 2 {
+        // rgxall-multi pats:L t line:t > L t
+        //
+        // For each pattern in `pats`, run rgxall1 semantics (0 groups →
+        // whole matches; 1 group → capture-1 strings) and concatenate the
+        // results in pattern order into a single flat list.
+        //
+        // This is equivalent to:
+        //   flat (map (p:t>L t;rgxall1 p line) pats)
+        // but saves ~20 tokens per call site. The cron-explainer and
+        // historical-archeologist personas both reached for exactly this shape.
+        //
+        // Error conditions follow rgxall1:
+        //   - non-list first arg → ILO-R009
+        //   - non-text element in pats → ILO-R009
+        //   - invalid regex → ILO-R009
+        //   - pattern with 2+ capture groups → ILO-R009 (use rgxall per group)
+        let pats = match &args[0] {
+            Value::List(xs) => xs.clone(),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!(
+                        "rgxall-multi: first arg must be a list of patterns, got {:?}",
+                        other
+                    ),
+                ));
+            }
+        };
+        let input = match &args[1] {
+            Value::Text(s) => s.clone(),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("rgxall-multi: second arg must be a string, got {:?}", other),
+                ));
+            }
+        };
+        let mut result: Vec<Value> = Vec::new();
+        for (i, pat_val) in pats.iter().enumerate() {
+            let pattern = match pat_val {
+                Value::Text(s) => s.as_str(),
+                other => {
+                    return Err(RuntimeError::new(
+                        "ILO-R009",
+                        format!(
+                            "rgxall-multi: pats[{i}] must be a string pattern, got {:?}",
+                            other
+                        ),
+                    ));
+                }
+            };
+            let re = regex::Regex::new(pattern).map_err(|e| {
+                RuntimeError::new(
+                    "ILO-R009",
+                    format!("rgxall-multi: invalid regex pattern at index {i}: {e}"),
+                )
+            })?;
+            let group_count = re.captures_len().saturating_sub(1);
+            if group_count >= 2 {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!(
+                        "rgxall-multi: pattern at index {i} has {group_count} capture groups; rgxall-multi only supports 0 or 1 per pattern. Use rgxall for L (L t) with every group preserved."
+                    ),
+                ));
+            }
+            if group_count == 1 {
+                re.captures_iter(input.as_str())
+                    .filter_map(|caps| {
+                        caps.get(1)
+                            .map(|m| Value::Text(Arc::new(m.as_str().to_string())))
+                    })
+                    .for_each(|v| result.push(v));
+            } else {
+                re.find_iter(input.as_str())
+                    .map(|m| Value::Text(Arc::new(m.as_str().to_string())))
+                    .for_each(|v| result.push(v));
+            }
+        }
         return Ok(Value::List(Arc::new(result)));
     }
     if builtin == Some(Builtin::Rgxsub) && args.len() == 3 {
@@ -6427,6 +6851,232 @@ pub(crate) fn get_many_fetch(urls: &[String]) -> Vec<Value> {
     results
 }
 
+/// Parse a relative-date phrase into a Unix epoch (seconds), anchored at
+/// `now_epoch`.
+///
+/// Supports:
+///   today / yesterday / tomorrow
+///   N days ago / in N days
+///   N weeks ago / in N weeks
+///   N months ago / in N months
+///   last <weekday> / next <weekday> / this <weekday>
+///   ISO-8601 date literals (YYYY-MM-DD) — delegates to chrono
+///
+/// Returns `Value::Ok(Number(epoch))` on success, `Value::Err(Text(msg))` on
+/// failure. Never panics.
+fn dtparse_rel(phrase: &str, now_epoch: f64) -> Value {
+    use chrono::{Datelike, Duration, NaiveDate, TimeZone, Utc, Weekday};
+
+    let make_ok = |epoch: i64| Value::Ok(Box::new(Value::Number(epoch as f64)));
+    let make_err = |msg: String| Value::Err(Box::new(Value::Text(Arc::new(msg))));
+
+    // Anchor date (UTC, floored to whole seconds).
+    let now_secs = if now_epoch.is_finite() {
+        now_epoch as i64
+    } else {
+        return make_err(format!(
+            "dtparse-rel: now epoch is not finite ({now_epoch})"
+        ));
+    };
+    let now_dt = match Utc.timestamp_opt(now_secs, 0).single() {
+        Some(dt) => dt,
+        None => return make_err(format!("dtparse-rel: now epoch out of range ({now_secs})")),
+    };
+    let today: NaiveDate = now_dt.date_naive();
+
+    let s = phrase.trim().to_ascii_lowercase();
+
+    // Simple keywords.
+    if s == "today" {
+        let epoch = today.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp();
+        return make_ok(epoch);
+    }
+    if s == "yesterday" {
+        let d = today - Duration::days(1);
+        return make_ok(d.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp());
+    }
+    if s == "tomorrow" {
+        let d = today + Duration::days(1);
+        return make_ok(d.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp());
+    }
+
+    // Helper: parse a weekday name (long or short).
+    fn parse_weekday(name: &str) -> Option<Weekday> {
+        match name {
+            "monday" | "mon" => Some(Weekday::Mon),
+            "tuesday" | "tue" => Some(Weekday::Tue),
+            "wednesday" | "wed" => Some(Weekday::Wed),
+            "thursday" | "thu" => Some(Weekday::Thu),
+            "friday" | "fri" => Some(Weekday::Fri),
+            "saturday" | "sat" => Some(Weekday::Sat),
+            "sunday" | "sun" => Some(Weekday::Sun),
+            _ => None,
+        }
+    }
+
+    // "last <weekday>" — the most recent past occurrence, never today.
+    if let Some(day_name) = s.strip_prefix("last ") {
+        return match parse_weekday(day_name.trim()) {
+            None => make_err(format!("dtparse-rel: unknown weekday '{day_name}'")),
+            Some(target) => {
+                let today_num = today.weekday().num_days_from_monday(); // 0=Mon
+                let target_num = target.num_days_from_monday();
+                // Days back: at least 1, at most 7.
+                let diff = (today_num + 7 - target_num) % 7;
+                let diff = if diff == 0 { 7 } else { diff };
+                let d = today - Duration::days(diff as i64);
+                make_ok(d.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp())
+            }
+        };
+    }
+
+    // "next <weekday>" — the next future occurrence, never today.
+    if let Some(day_name) = s.strip_prefix("next ") {
+        return match parse_weekday(day_name.trim()) {
+            None => make_err(format!("dtparse-rel: unknown weekday '{day_name}'")),
+            Some(target) => {
+                let today_num = today.weekday().num_days_from_monday();
+                let target_num = target.num_days_from_monday();
+                let diff = (target_num + 7 - today_num) % 7;
+                let diff = if diff == 0 { 7 } else { diff };
+                let d = today + Duration::days(diff as i64);
+                make_ok(d.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp())
+            }
+        };
+    }
+
+    // "this <weekday>" — the occurrence within the current week (Mon-Sun).
+    // If today is that weekday, returns today. If already past in this week,
+    // returns that past day. If not yet reached, returns the future day.
+    if let Some(day_name) = s.strip_prefix("this ") {
+        return match parse_weekday(day_name.trim()) {
+            None => make_err(format!("dtparse-rel: unknown weekday '{day_name}'")),
+            Some(target) => {
+                let today_num = today.weekday().num_days_from_monday() as i64;
+                let target_num = target.num_days_from_monday() as i64;
+                let d = today + Duration::days(target_num - today_num);
+                make_ok(d.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp())
+            }
+        };
+    }
+
+    // Helper: only treat a stripped remainder as a count phrase if it's
+    // an all-digit non-empty token. Without this, a leftover word fragment
+    // (e.g. "wednes" from a hypothetical "wednesday" mis-strip, or "this"
+    // from "in this day") would fall through to the int parser and surface
+    // as a misleading "invalid <unit> count" error instead of the
+    // unrecognised-phrase fallback. Digit-only also gates negatives out
+    // (the `-` sign is rejected before parse, so the `n >= 0` branch in
+    // each arm only fires for genuine non-negative integers).
+    fn parse_unsigned_count(rest: &str) -> Option<i64> {
+        let t = rest.trim();
+        if t.is_empty() || !t.bytes().all(|b| b.is_ascii_digit()) {
+            return None;
+        }
+        t.parse::<i64>().ok()
+    }
+
+    // "N day(s) ago" / "in N day(s)"
+    let ago_days = s
+        .strip_suffix(" days ago")
+        .or_else(|| s.strip_suffix(" day ago"));
+    if let Some(rest) = ago_days
+        && let Some(n) = parse_unsigned_count(rest)
+    {
+        let d = today - Duration::days(n);
+        return make_ok(d.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp());
+    }
+    let in_days = s
+        .strip_prefix("in ")
+        .and_then(|r| r.strip_suffix(" days").or_else(|| r.strip_suffix(" day")));
+    if let Some(rest) = in_days
+        && let Some(n) = parse_unsigned_count(rest)
+    {
+        let d = today + Duration::days(n);
+        return make_ok(d.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp());
+    }
+
+    // "N week(s) ago" / "in N week(s)"
+    let ago_weeks = s
+        .strip_suffix(" weeks ago")
+        .or_else(|| s.strip_suffix(" week ago"));
+    if let Some(rest) = ago_weeks
+        && let Some(n) = parse_unsigned_count(rest)
+    {
+        let d = today - Duration::weeks(n);
+        return make_ok(d.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp());
+    }
+    let in_weeks = s
+        .strip_prefix("in ")
+        .and_then(|r| r.strip_suffix(" weeks").or_else(|| r.strip_suffix(" week")));
+    if let Some(rest) = in_weeks
+        && let Some(n) = parse_unsigned_count(rest)
+    {
+        let d = today + Duration::weeks(n);
+        return make_ok(d.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp());
+    }
+
+    // "N month(s) ago" / "in N month(s)"
+    // Month arithmetic: add/subtract calendar months, clamping to last day of month.
+    fn add_months(date: NaiveDate, months: i32) -> Option<NaiveDate> {
+        let total_months = date.year() * 12 + (date.month() as i32 - 1) + months;
+        let y = total_months.div_euclid(12);
+        let m = (total_months.rem_euclid(12) + 1) as u32;
+        let max_day = days_in_month(y, m);
+        let d = date.day().min(max_day);
+        NaiveDate::from_ymd_opt(y, m, d)
+    }
+    fn days_in_month(year: i32, month: u32) -> u32 {
+        let next = if month == 12 {
+            NaiveDate::from_ymd_opt(year + 1, 1, 1)
+        } else {
+            NaiveDate::from_ymd_opt(year, month + 1, 1)
+        };
+        (next.unwrap() - NaiveDate::from_ymd_opt(year, month, 1).unwrap()).num_days() as u32
+    }
+
+    let ago_months = s
+        .strip_suffix(" months ago")
+        .or_else(|| s.strip_suffix(" month ago"));
+    if let Some(rest) = ago_months
+        && let Some(n) = parse_unsigned_count(rest)
+    {
+        let n = n as i32;
+        return match add_months(today, -n) {
+            Some(d) => make_ok(d.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp()),
+            None => make_err(format!(
+                "dtparse-rel: month arithmetic out of range in '{phrase}'"
+            )),
+        };
+    }
+    let in_months = s.strip_prefix("in ").and_then(|r| {
+        r.strip_suffix(" months")
+            .or_else(|| r.strip_suffix(" month"))
+    });
+    if let Some(rest) = in_months
+        && let Some(n) = parse_unsigned_count(rest)
+    {
+        let n = n as i32;
+        return match add_months(today, n) {
+            Some(d) => make_ok(d.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp()),
+            None => make_err(format!(
+                "dtparse-rel: month arithmetic out of range in '{phrase}'"
+            )),
+        };
+    }
+
+    // ISO-8601 date literal passthrough (YYYY-MM-DD).
+    if let Ok(nd) = chrono::NaiveDate::parse_from_str(phrase.trim(), "%Y-%m-%d") {
+        let epoch = nd.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp();
+        return make_ok(epoch);
+    }
+
+    make_err(format!(
+        "dtparse-rel: unrecognised phrase '{phrase}' — expected: today/yesterday/tomorrow, \
+N days/weeks/months ago, in N days/weeks/months, last/next/this <weekday>, or YYYY-MM-DD"
+    ))
+}
+
 #[cfg(test)]
 #[allow(clippy::approx_constant)]
 mod tests {
@@ -6558,7 +7208,7 @@ mod tests {
 
     #[test]
     fn interpret_match_ok_err_patterns() {
-        let source = r#"f x:R n t>n;?x{^e:0;~v:v}"#;
+        let source = r#"f x:R n t>n;?x{^er:0;~v:v}"#;
         let ok_result = run_str(
             source,
             Some("f"),
@@ -10717,7 +11367,7 @@ mod tests {
     fn interpret_range_end_not_number() {
         // ForRange where end is not a number — needs tricky setup
         // The range start/end are evaluated, if end is text it errors
-        let source = "f s:n e:n>n;@i s..e{i}";
+        let source = "f s:n en:n>n;@i s..en{i}";
         let result = run_str(
             source,
             Some("f"),
@@ -11280,7 +11930,7 @@ mod tests {
     fn interpret_for_range_non_number_end_error() {
         // @i 0..z{i} — end is text → error at line 1361
         let err = run_str_err(
-            "f e:t>n;@i 0..e{i}",
+            "f en:t>n;@i 0..en{i}",
             Some("f"),
             vec![Value::Text(Arc::new("b".to_string()))],
         );
@@ -11834,5 +12484,122 @@ mod tests {
         let source = "f>n;rndn -3 0";
         let result = run_str(source, Some("f"), vec![]);
         assert_eq!(result, Value::Number(-3.0));
+    }
+
+    // --- Duration helper coverage --------------------------------------
+
+    #[test]
+    fn dur_parse_basic_abbreviations() {
+        assert_eq!(super::dur_parse("3h 30m"), Ok(12_600.0));
+        assert_eq!(super::dur_parse("1d"), Ok(86_400.0));
+        assert_eq!(super::dur_parse("2w"), Ok(1_209_600.0));
+    }
+
+    #[test]
+    fn dur_parse_full_unit_names() {
+        assert_eq!(super::dur_parse("1 week 2 days"), Ok(777_600.0));
+        assert_eq!(super::dur_parse("1 hour"), Ok(3_600.0));
+        assert_eq!(super::dur_parse("30 seconds"), Ok(30.0));
+        assert_eq!(super::dur_parse("5 minutes"), Ok(300.0));
+    }
+
+    #[test]
+    fn dur_parse_decimal_quantity() {
+        assert_eq!(super::dur_parse("1.5 hours"), Ok(5_400.0));
+        assert_eq!(super::dur_parse("0.5s"), Ok(0.5));
+    }
+
+    #[test]
+    fn dur_parse_negative_first_token_is_sticky() {
+        // Sticky sign: the leading `-` applies to every following token so
+        // "-1m 30s" parses as -90, not -30. This guarantees round-trip
+        // symmetry with dur-fmt which emits a single leading minus for
+        // negative durations.
+        assert_eq!(super::dur_parse("-1m 30s"), Ok(-90.0));
+        assert_eq!(super::dur_parse("-1h 30m"), Ok(-5_400.0));
+    }
+
+    #[test]
+    fn dur_parse_explicit_sign_resets_sticky() {
+        assert_eq!(super::dur_parse("-1m +30s"), Ok(-30.0));
+        assert_eq!(super::dur_parse("+1h -10m"), Ok(3_000.0));
+    }
+
+    #[test]
+    fn dur_parse_months_rejected() {
+        // Months are not supported (variable length). "3mo", "3 months",
+        // "3M" all fall through to the no-unit-matched error path.
+        assert!(super::dur_parse("3mo").is_err());
+        assert!(super::dur_parse("3 months").is_err());
+        assert!(super::dur_parse("3 month").is_err());
+    }
+
+    #[test]
+    fn dur_parse_unknown_unit_skipped() {
+        // Unknown unit on its own is an error; mixed with a valid token
+        // the unknown is dropped and the valid token wins.
+        assert!(super::dur_parse("3xyz").is_err());
+        assert_eq!(super::dur_parse("3xyz 5s"), Ok(5.0));
+    }
+
+    #[test]
+    fn dur_parse_empty_and_whitespace() {
+        assert!(super::dur_parse("").is_err());
+        assert!(super::dur_parse("   ").is_err());
+    }
+
+    #[test]
+    fn dur_parse_no_recognised_unit() {
+        assert!(super::dur_parse("hello").is_err());
+        assert!(super::dur_parse("42").is_err());
+    }
+
+    #[test]
+    fn dur_fmt_basic() {
+        assert_eq!(super::dur_fmt(0.0), "0s");
+        assert_eq!(super::dur_fmt(90.0), "1m 30s");
+        assert_eq!(super::dur_fmt(9_720.0), "2h 42m");
+        assert_eq!(super::dur_fmt(86_400.0), "1 day");
+        assert_eq!(super::dur_fmt(604_800.0), "1 week");
+    }
+
+    #[test]
+    fn dur_fmt_preserves_fractional_seconds() {
+        // Sub-second fractions are preserved, with trailing zeros stripped.
+        assert_eq!(super::dur_fmt(0.5), "0.5s");
+        // Fractions on top of whole seconds are also preserved (the prior
+        // implementation silently truncated these).
+        assert_eq!(super::dur_fmt(90.5), "1m 30.5s");
+        assert_eq!(super::dur_fmt(1.75), "1.75s");
+    }
+
+    #[test]
+    fn dur_fmt_negative_round_trips() {
+        // Negative durations emit a single leading minus, and dur-parse's
+        // sticky sign restores the full value on round-trip.
+        assert_eq!(super::dur_fmt(-90.0), "-1m 30s");
+        assert_eq!(super::dur_parse(&super::dur_fmt(-90.0)), Ok(-90.0));
+        assert_eq!(super::dur_parse(&super::dur_fmt(-5_400.0)), Ok(-5_400.0));
+    }
+
+    #[test]
+    fn dur_fmt_non_finite_passthrough() {
+        assert_eq!(super::dur_fmt(f64::INFINITY), "inf");
+        assert_eq!(super::dur_fmt(f64::NEG_INFINITY), "-inf");
+        assert_eq!(super::dur_fmt(f64::NAN), "NaN");
+    }
+
+    #[test]
+    fn dur_round_trip_examples() {
+        for &secs in &[
+            0.0_f64, 1.0, 30.0, 90.0, 3_600.0, 9_720.0, 86_400.0, 604_800.0,
+        ] {
+            let s = super::dur_fmt(secs);
+            assert_eq!(
+                super::dur_parse(&s),
+                Ok(secs),
+                "round-trip failed for {secs}"
+            );
+        }
     }
 }

@@ -12,10 +12,10 @@ f-to-t>t;str 3.14
 neg-to-t>t;str -7
 
 -- Text to number: ok case
-t-to-n>t;r=num "42";?r{~v:str v;^e:"err"}
+t-to-n>t;r=num "42";?r{~v:str v;^er:"err"}
 
 -- Text to number: error case
-bad-parse>t;r=num "abc";?r{~v:"ok";^e:+"bad: " e}
+bad-parse>t;r=num "abc";?r{~v:"ok";^er:+"bad: " er}
 
 -- run: n-to-t
 -- out: 42

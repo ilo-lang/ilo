@@ -143,7 +143,7 @@ fn env_all_keys_contains_canary() {
 // parse_pratt. The verifier then sees a Result-returning call and
 // downstream consumers (mkeys, len, mget on the Ok arm) type-check
 // against the inner `M t t`.
-const BARE_CALL_SRC: &str = "f>R n t;r=env-all;?r{~m:~len m;^e:^e}";
+const BARE_CALL_SRC: &str = "f>R n t;r=env-all;?r{~m:~len m;^er:^e}";
 
 #[test]
 fn env_all_bare_call_parses_as_zero_arg() {

@@ -1179,7 +1179,7 @@ fn jpth_basic() {
 
 #[test]
 fn jpth_missing_key_returns_err() {
-    let src = "main>t;r=jpth \"{\\\"a\\\":1}\" \"b\";?r{~v:v;^e:e}";
+    let src = "main>t;r=jpth \"{\\\"a\\\":1}\" \"b\";?r{~v:v;^er:er}";
     let s = ok_out(src, "main", &[]);
     assert!(s.contains("not found"), "out={s}");
 }
@@ -1206,9 +1206,9 @@ fn env_missing_returns_err() {
 
 #[test]
 fn match_ok_err_patterns() {
-    let src = "main>t;r=~42;?r{~v:str v;^e:e}";
+    let src = "main>t;r=~42;?r{~v:str v;^er:er}";
     assert_eq!(ok_out(src, "main", &[]), "42");
-    let src2 = "main>t;r=^\"bad\";?r{~v:\"ok\";^e:e}";
+    let src2 = "main>t;r=^\"bad\";?r{~v:\"ok\";^er:er}";
     assert_eq!(ok_out(src2, "main", &[]), "bad");
 }
 
@@ -1456,7 +1456,7 @@ fn negate_non_number_errors() {
 
 #[test]
 fn dtfmt_basic() {
-    let src = "main>t;r=dtfmt 0 \"%Y\";?r{~v:v;^e:e}";
+    let src = "main>t;r=dtfmt 0 \"%Y\";?r{~v:v;^er:er}";
     assert_eq!(ok_out(src, "main", &[]), "1970");
 }
 

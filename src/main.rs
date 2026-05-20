@@ -48,9 +48,15 @@ struct Skill {
 const SKILLS: &[Skill] = &[
     Skill {
         name: "ilo-language",
-        description: "Use this when writing or reviewing .ilo source. Covers prefix notation, type sigils, guards, match, pipes, records, and Result handling.",
+        description: "Use this when writing or reviewing .ilo source. Covers prefix notation, type sigils, guards, match, pipes, Results, loops, and lambdas.",
         path: "skills/ilo/ilo-language.md",
         content: include_str!("../skills/ilo/ilo-language.md"),
+    },
+    Skill {
+        name: "ilo-language-records",
+        description: "Use this when writing ilo code that declares or uses record types. Covers type declarations, construction, field access, destructuring, update syntax, and safe navigation.",
+        path: "skills/ilo/ilo-language-records.md",
+        content: include_str!("../skills/ilo/ilo-language-records.md"),
     },
     Skill {
         name: "ilo-builtins-core",

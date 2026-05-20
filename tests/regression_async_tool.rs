@@ -37,7 +37,7 @@ async fn get_many_all_ok() {
     let out = ilo()
         .args([
             r#"f us:L t>t;rs=get-many us;cat (map pick rs) "|"
-pick r:R t t>t;?r{~v:v;^e:e}"#,
+pick r:R t t>t;?r{~v:v;^er:er}"#,
             "f",
             &urls,
         ])

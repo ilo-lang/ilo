@@ -220,14 +220,15 @@ Short builtin names are precious surface and ilo reserves a stable subset of the
 **Currently reserved short names (1-3 characters).** Every name in this list is a builtin today and triggers `ILO-P011` if used as a binding or user-function name:
 
 ```
-2-char  at hd tl rd wr ct
+1-char  e
+2-char  at hd pi tl rd wr ct
 3-char  abs avg cap cat cel chr cos det dot env exp fft fld flr flt fmt
         frq get grp has inv len log lsd lst lwr map max min mod now num
         ord pow pst rdb rdl rev rgx rng rnd rou run sin slc spl srt str
-        sum tan trm unq upr wrl zip
+        sum tan tau trm unq upr wra wrl zip
 ```
 
-`rng` is the short-form alias for the canonical `range` builtin; it is reserved with the same shadow-prevention semantics as a canonical builtin name (binding `rng=...` or declaring `rng x:...` fires `ILO-P011`). `rand` is the short-form alias for the canonical `rnd` builtin (added 0.12.1) and is reserved with the same semantics.
+All builtin aliases (`head`, `length`, `filter`, `concat`, `tail`, `sort`, `reverse`, `flatten`, `contains`, `group`, `average`, `print`, `trim`, `split`, `format`, `regex`, `read`, `readlines`, `readbuf`, `write`, `writelines`, `lset`, `floor`, `ceil`, `round`, `rand`, `random`, `rng`, `string`, `number`, `slice`, `unique`, `fold`) are reserved with the same shadow-prevention semantics as canonical builtin names. Binding an alias name or using it as a user-function name fires `ILO-P011` at parse time with the canonical form in the diagnostic, since the call-site rewrite to the canonical builtin silently bypasses any user binding of the same name. Previously only `rng` and `rand` had individual guards; as of 0.12.1 every alias in the table above is covered by a single `resolve_alias` check, so new aliases automatically inherit the protection when added to the table.
 
 Longer builtin names (`acos`, `asin`, `atan`, `flat`, `take`, `drop`, `mget`, `mset`, `mmap`, `prnt`, `mapr`, `solve`, `clamp`, `cumsum`, `cprod`, `median`, `matmul`, `range`, `window`, `chunks`, `walk`, `glob`, `prod`, …) are also reserved and rejected by `ILO-P011`, but the short-name namespace above is where carry-forward scripts most often collide, so it gets explicit enumeration.
 
@@ -465,7 +466,8 @@ Called like functions, compiled to dedicated opcodes.
 | `min xs` | minimum element of a numeric list (error if empty) | `n` |
 | `max a b` | maximum of two numbers | `n` |
 | `max xs` | maximum element of a numeric list (error if empty) | `n` |
-| `mod a b` | remainder (modulo); errors on zero divisor | `n` |
+| `mod a b` | C-style signed remainder; result sign matches dividend. Errors on zero divisor. For negative inputs use `fmod`. | `n` |
+| `fmod a b` | Floor-mod: always non-negative when `b > 0`. Equivalent to Python `a % b`. Errors on zero divisor. NaN/Inf inputs propagate via IEEE 754 (same policy as every other math builtin). Use instead of `(a % b + b) % b` workarounds for weekday/timezone arithmetic. | `n` |
 | `flr n` | floor (round toward negative infinity) | `n` |
 | `cel n` | ceiling (round toward positive infinity) | `n` |
 | `rnd` | random float in [0, 1). NOT round - for round use `rou` (alias: `round`). Aliases: `rand`, `random`. | `n` |
@@ -495,6 +497,7 @@ Called like functions, compiled to dedicated opcodes.
 | `wr path data "csv"` | write list-of-lists as CSV (with proper quoting) | `R t t` |
 | `wr path data "tsv"` | write list-of-lists as TSV | `R t t` |
 | `wr path data "json"` | write any value as pretty JSON | `R t t` |
+| `wra path s` | append text to file (create if missing) | `R t t` |
 | `wrl path xs` | write list of lines to file (joins with `\n`) | `R t t` |
 | `trm s` | trim leading and trailing whitespace | `t` |
 | `spl t sep` | split text by separator | `L t` |
@@ -546,6 +549,7 @@ Called like functions, compiled to dedicated opcodes.
 | `fld fn xs init` | left fold: `fn (fn (fn init x0) x1) ...` | accumulator |
 | `flatmap fn xs` | map then flatten one level | `L b` |
 | `mapr fn xs` | map with short-circuit Result propagation: collects Ok values, returns first Err | `R (L b) e` |
+| `default-on-err r d` | unwrap `R T E` to `T`, returning `d` if Err; verifier requires `d` matches Ok type. Mirror of `??` for Result (`??` is nil-coalesce for `O T` only - use `default-on-err` for Result). Prefer over `?r{~v:v;^_:d}` when no error payload is needed. ILO-T040 when first arg is not `R T E` (hint steers at `??` only when first arg is Optional); ILO-T042 when the default's type doesn't match the Ok type; ILO-T041 when `??` is used on a Result. T041 is suppressed when the lhs type is `Unknown` (e.g. type-variable params) to avoid false positives on generic code | `T` |
 | `partition fn xs` | split list into `[passing, failing]` by predicate | `L (L a)` |
 | `chunks n xs` | non-overlapping chunks of size `n` (final chunk may be shorter) | `L (L a)` |
 | `window n xs` | sliding windows of size `n` (drops trailing partial; empty if n > len) | `L (L a)` |
@@ -575,9 +579,13 @@ Called like functions, compiled to dedicated opcodes.
 | `padr s w pc` | right-pad to width `w` with 1-character string `pc` (e.g. `"."` for dot-leader alignment) | `t` |
 | `rgxall pat s` | every regex match as `L (L t)` (no-group: each match in a 1-elem list) | `L (L t)` |
 | `rgxall1 pat s` | flat first-capture-group convenience: 0 groups → `L t` of whole matches; 1 group → `L t` of capture-1 strings; 2+ groups errors | `L t` |
+| `rgxall-multi pats s` | multi-pattern flat-match: apply each pattern in `pats:L t` to `s`, concat all hits in pattern order; per-pattern semantics follow `rgxall1` (0 groups → whole matches; 1 group → capture-1 strings; 2+ groups errors) | `L t` |
 | `rgxsub pat repl s` | regex substitute all matches; `$1`, `$2`, ... reference capture groups | `t` |
 | `dtfmt epoch fmt` | format Unix epoch as text (strftime, UTC) | `R t t` |
 | `dtparse s fmt` | parse text to Unix epoch (strftime, UTC) | `R n t` |
+| `dtparse-rel s now` | parse relative-date phrase to epoch; `now` is the anchor epoch | `R n t` |
+| `dur-parse s` | parse human duration string ("3h 30m", "1 week 2 days", "1.5 hours", "90s") into seconds. Lenient: accepts abbreviations `s`/`m`/`h`/`d`/`w`, full names (singular + plural), decimal quantities, mixed sequences. Err if empty or no unit found | `R n t` |
+| `dur-fmt n` | format seconds as human-readable duration ("2h 42m", "1 day", "30s"). Drops zero parts; uses largest applicable units. Zero returns "0s". Negative values format with a leading "-" | `t` |
 | `rdjl path` | read JSONL file as `L (R _ t)`: one parse result per non-empty line | `L (R _ t)` |
 | `get-many urls` | concurrent HTTP GET fan-out (max 10 parallel), preserves order | `L (R t t)` |
 | `sleep ms` | pause current engine for `ms` milliseconds; returns nil | `_` |
@@ -596,6 +604,9 @@ Called like functions, compiled to dedicated opcodes.
 | `acos n` | arccosine, returns radians in `[0, pi]`; NaN outside `[-1, 1]` | `n` |
 | `atan n` | arctangent, returns radians in `[-pi/2, pi/2]` | `n` |
 | `atan2 y x` | two-argument arctangent (y, x order; radians) | `n` |
+| `pi` | 3.141592653589793 (IEEE-754 f64, `f64::consts::PI`) | `n` |
+| `tau` | 6.283185307179586 (== 2\*pi; one full turn in radians) | `n` |
+| `e` | 2.718281828459045 (Euler's number, `f64::consts::E`) | `n` |
 | `transpose m` | transpose row-major matrix | `L (L n)` |
 | `matmul a b` | matrix product | `L (L n)` |
 | `dot a b` | vector dot product | `n` |
@@ -612,7 +623,7 @@ Called like functions, compiled to dedicated opcodes.
 
 > **`wr` and `wrl` return the written path, not a status.** Both succeed with `~path` (the file path you passed in), not `~"ok"` or nil. A `save` helper that ends with a bare `wrl "tasks.txt" xs` therefore returns `~"tasks.txt"`, and every successful mutation echoes the state-file path to stdout - noise for any caller piping output. Discard the path and return a clean status string instead: `save xs:L t>R t t;r=wrl "tasks.txt" xs;?r{~_:~"ok";^e:^e}`. The error arm still propagates `wrl`'s message. See [`examples/cli-tasks-save-ok.ilo`](examples/cli-tasks-save-ok.ilo) for the full shape.
 
-### Datetime (`dtfmt` / `dtparse`)
+### Datetime (`dtfmt` / `dtparse` / `dtparse-rel`)
 
 UTC only. Format strings follow strftime conventions (`%Y-%m-%d %H:%M:%S`, `%s`, etc).
 
@@ -621,6 +632,80 @@ dtfmt 1700000000 "%Y-%m-%d"          -- R t t: Ok="2023-11-14", Err if out of ra
 dtparse "2024-01-15" "%Y-%m-%d"       -- R n t: Ok=epoch seconds, Err if unparseable
 dtfmt! e "%H:%M:%S"                   -- auto-unwrap inside R-returning fn
 ```
+
+`dtparse-rel s now` resolves a natural-language relative-date phrase to a Unix epoch anchored at `now`.  Phrases supported:
+
+- `today`, `yesterday`, `tomorrow`
+- `N days ago`, `in N days` (also `N day ago`, `in N day`)
+- `N weeks ago`, `in N weeks`
+- `N months ago`, `in N months` (end-of-month clamping: `Jan 31 + 1 month = Feb 28/29`)
+- `last <weekday>`, `next <weekday>`, `this <weekday>` — weekdays as `monday`–`sunday` or short `mon`–`sun`; `last`/`next` never return today
+- ISO-8601 date literal `YYYY-MM-DD` — passthrough to `dtparse` (ignores `now`)
+
+```
+-- now = 1705276800 (2024-01-15, Monday)
+dtparse-rel!! "yesterday" (now)          -- 2024-01-14 00:00 UTC
+dtparse-rel!! "3 days ago" (now)         -- 2024-01-12 00:00 UTC
+dtparse-rel!! "in 2 weeks" (now)         -- 2024-01-29 00:00 UTC
+dtparse-rel!! "last friday" (now)        -- 2024-01-12 00:00 UTC
+dtparse-rel!! "next wednesday" (now)     -- 2024-01-17 00:00 UTC
+dtparse-rel!! "2023-12-25" (now)         -- 1703462400 (ignores now)
+```
+
+Unrecognised phrases return `Err` with a message listing valid forms. All times are midnight UTC.
+
+### Duration (`dur-parse` / `dur-fmt`)
+
+`dur-parse s > R n t` — parse a human-readable duration string into total seconds as a float.
+`dur-fmt n > t` — format seconds as a human-readable duration string.
+
+Both are tree-bridge eligible: VM and Cranelift dispatch through the same interpreter arm.
+
+Accepted units for `dur-parse`:
+
+| abbreviation | full names                  |
+|---|---|
+| `w`          | week, weeks                 |
+| `d`          | day, days                   |
+| `h`          | hour, hours, hr, hrs        |
+| `m`          | min, mins, minute, minutes  |
+| `s`          | sec, secs, second, seconds  |
+
+```
+dur-parse "3h 30m"               -- R n t: Ok=12600, Err if no unit found
+dur-parse "1 week 2 days"        -- R n t: Ok=777600
+dur-parse "1.5 hours"            -- R n t: Ok=5400
+dur-parse "4h32m"                -- no space between number and unit: Ok=16320
+dur-parse! s                     -- auto-unwrap inside R-returning fn
+
+dur-fmt 9720                     -- "2h 42m"
+dur-fmt 86400                    -- "1 day"
+dur-fmt 90                       -- "1m 30s"
+dur-fmt 90.5                     -- "1m 30.5s" (fractional seconds preserved)
+dur-fmt 0                        -- "0s"
+dur-fmt -90                      -- "-1m 30s" (single leading minus)
+
+-- Round-trip: parse -> seconds -> format
+n = dur-parse! "2 days 3 hours"
+dur-fmt n                        -- "2 days 3h"
+```
+
+**Months are not supported.** `mo`, `month`, `months`, `M` are deliberately
+omitted because a month is not a fixed number of seconds. Strings like
+`"3mo"` or `"3 months"` produce a `no recognised unit` error. Use explicit
+day counts (e.g. `"30 days"`, `"90 days"`).
+
+**Sticky sign.** A leading `-` in `dur-parse` is sticky: it applies to every
+following token until an explicit `+` resets it. So `"-1m 30s"` parses to
+`-90`, and `"-1h +10m"` parses to `-3000`. This makes the round-trip
+`dur-fmt -> dur-parse` symmetric for negative durations, where `dur-fmt`
+emits a single leading minus rather than signing each part.
+
+**Fractional seconds.** `dur-fmt` renders sub-second fractions with up to
+3 decimal places (trailing zeros stripped), both for sub-second inputs
+(`0.5 -> "0.5s"`) and for mixed values where the seconds component carries
+a fraction (`90.5 -> "1m 30.5s"`). Fractional minutes / hours / days / weeks
+are decomposed into smaller units before formatting.
 
 ### Set operations
 
@@ -684,7 +769,7 @@ rng 0 10    -- works, but emits: hint: `rng` → `range` (canonical form)
 range 0 10  -- canonical - no hint
 ```
 
-Short-form aliases (where the alias is shorter than the canonical) follow the same shadow-prevention rule as canonical builtins: `rng=...` as a binding or function name is rejected at parse time with `ILO-P011` so the call-site rewrite cannot silently mis-dispatch.
+Every alias - both short-form (`rng`, `rand`) and long-form (`head`, `length`, `filter`, `concat`, ...) - follows the same shadow-prevention rule as canonical builtins: using an alias name as a binding LHS or user-function name is rejected at parse time with `ILO-P011`. The alias resolver rewrites call-position uses to the canonical builtin, so if the bind were allowed the user variable would be silently bypassed and the builtin called instead. For example, `head=fmt "### {}" t` then `cat [head body] "\n"` would rewrite `head` in call position to `hd`, emitting empty output with no error. The parser intercepts every alias in all three positions (top-level binding, local binding inside a function, user function declaration) with a rename hint. The full alias table is listed above; every entry triggers `ILO-P011` in all three contexts.
 
 `get` and `pst` return `Ok(body)` on success, `Err(message)` on failure (connection error, timeout, DNS failure, etc).
 
@@ -1585,7 +1670,7 @@ ilo serv                          -- long-lived JSON request/response loop
 
 **Default engine.** The bytecode register VM is the default execution path. It supports every opcode (closures with Phase 2 capture, listview windows, fused len-of-filter, every modern shape), and avoids the JIT compile-and-bail cost paid by the pre-v0.11.9 Cranelift-first default whenever a program touched an opcode the JIT couldn't handle. Cranelift JIT is opt-in via `--jit`; on opt-in, the JIT runs hot numeric loops and falls back to the VM on bailout. Phase 2 captures run natively on every public backend - VM, JIT, and AOT (`ilo compile`); AOT embeds the postcard `CompiledProgram` blob into the binary's `.rodata` so dispatch helpers can re-enter the VM on user-fn callbacks the same way the in-process runners do. For long-running workloads where the JIT pays for itself, opt in explicitly; for most agent workloads the VM is the right default.
 
-**Tree-walker is internal-only.** The tree-walking interpreter is no longer user-selectable: `--run-tree` and its `--run` alias were removed from the public CLI in 0.12.1 (they now error with the unknown-flag guard). The interpreter stays in-tree as the dispatch target for HOF / regex / fmt-variadic / IO / sleep / ct / rsrt / closure-bind-ctx shapes the VM and Cranelift haven't lifted natively yet - the VM bails to it transparently for the ops listed by `is_tree_bridge_eligible` (`rgx`, `rgxall`, `rgxall1`, `rgxsub`, `fmt`, `fmt2`, `rd`, `rdb`, `rdjl`, `rdin`, `rdinl`, `sleep`, `lsd`, `walk`, `glob`, `dirname`, `basename`, `pathjoin`, `run`, `env-all`, `jkeys`, `ct` 2-arg and 3-arg, `rsrt` 2-arg and 3-arg, and the closure-bind ctx variants of `map`/`flt`/`fld`/`srt`). Cross-engine parity for those shapes is pinned by `tests/regression_builtin_bridge.rs` and `tests/regression_tree_bridge_invariants.rs`. 0.13.0+ is on track for a hard drop once the bridge consumers are lifted natively and the shared runtime types (`Value`, `MapKey`, `RuntimeError`, math helpers) are extracted from `src/interpreter/` to a non-engine module.
+**Tree-walker is internal-only.** The tree-walking interpreter is no longer user-selectable: `--run-tree` and its `--run` alias were removed from the public CLI in 0.12.1 (they now error with the unknown-flag guard). The interpreter stays in-tree as the dispatch target for HOF / regex / fmt-variadic / IO / sleep / ct / rsrt / closure-bind-ctx shapes the VM and Cranelift haven't lifted natively yet - the VM bails to it transparently for the ops listed by `is_tree_bridge_eligible` (`rgx`, `rgxall`, `rgxall1`, `rgxall-multi`, `rgxsub`, `fmt`, `fmt2`, `rd`, `rdb`, `rdjl`, `rdin`, `rdinl`, `sleep`, `lsd`, `walk`, `glob`, `dirname`, `basename`, `pathjoin`, `run`, `env-all`, `jkeys`, `ct` 2-arg and 3-arg, `rsrt` 2-arg and 3-arg, `dur-parse`, `dur-fmt`, and the closure-bind ctx variants of `map`/`flt`/`fld`/`srt`). Cross-engine parity for those shapes is pinned by `tests/regression_builtin_bridge.rs` and `tests/regression_tree_bridge_invariants.rs`. 0.13.0+ is on track for a hard drop once the bridge consumers are lifted natively and the shared runtime types (`Value`, `MapKey`, `RuntimeError`, math helpers) are extracted from `src/interpreter/` to a non-engine module.
 
 **Subcommand dispatch.** The first positional argument is interpreted as a function name when it has the shape of an ilo identifier - `[a-z][a-z0-9]*(-[a-z0-9]+)*` - so `ilo file.ilo list-orders` routes to the `list-orders` function. Args that don't match the ident shape (file paths like `/tmp/data.json`, numbers, sigils, bracketed lists, anything with a `.` or `/`) route to `main` (or the entry function) as a positional CLI arg instead. Trailing dashes (`foo-`), doubled dashes (`foo--bar`), and negative numbers (`-1`) are not idents and pass through as data.
 

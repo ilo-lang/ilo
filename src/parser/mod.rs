@@ -500,35 +500,24 @@ impl Parser {
                 "pick a different name like `field` or `folder`".into(),
             ));
         }
-        // Short-form alias `rng` (resolves to canonical `range`) used as
-        // binding name: `rng=5`. Without this guard the assignment is allowed
-        // but a later `rng args` call gets rewritten by the alias resolver to
-        // `range args`, silently mis-dispatching to the builtin. Same shape as
-        // the canonical-builtin-binding rejection below; surfaced separately
-        // because `Builtin::is_builtin("rng")` returns false (rng is an alias,
-        // not a canonical name).
+        // Builtin alias used as binding name: `head=...`, `length=...`,
+        // `rng=...`, etc. The alias resolver rewrites later calls to the
+        // canonical builtin (`head xs` → `hd xs`), so the bind is accepted
+        // silently and call-position uses mis-dispatch to the builtin —
+        // returning empty output rather than erroring. Surfaced separately
+        // from the canonical-builtin guard below because `Builtin::is_builtin`
+        // returns false for alias names (aliases are not canonical).
+        // Originating: rerun-prompt-generator + changelog-validator rerun12
+        // (both bound `head=...`, got empty output, no diagnostic).
         if let Some(Token::Ident(name)) = self.peek()
-            && name == "rng"
             && self.token_at(self.pos + 1) == Some(&Token::Eq)
+            && let Some(canonical) = resolve_alias(name)
         {
+            let name = name.clone();
             return Err(self.error_hint(
                 "ILO-P011",
-                "`rng` is a short-form alias for the `range` builtin and cannot be used as a binding name".into(),
-                "pick a different name like `rg` or `myrng`. Aliases shadow local bindings in call position, so reusing the name silently mis-dispatches.".into(),
-            ));
-        }
-        // Short-form alias `rand` (resolves to canonical `rnd`) used as binding
-        // name: `rand=5`. Same shadow-in-call-position shape as `rng`; surfaced
-        // separately because `Builtin::is_builtin("rand")` returns false (alias
-        // not canonical).
-        if let Some(Token::Ident(name)) = self.peek()
-            && name == "rand"
-            && self.token_at(self.pos + 1) == Some(&Token::Eq)
-        {
-            return Err(self.error_hint(
-                "ILO-P011",
-                "`rand` is a short-form alias for the `rnd` builtin and cannot be used as a binding name".into(),
-                "pick a different name like `r` or `myrand`. Aliases shadow local bindings in call position, so reusing the name silently mis-dispatches.".into(),
+                format!("`{name}` is an alias for the `{canonical}` builtin and cannot be used as a binding name"),
+                format!("rename to something like `my{name}` or `{name}v`, or pick a 4+ char neutral name. Aliases shadow local bindings in call position, so reusing the name silently mis-dispatches to `{canonical}`."),
             ));
         }
         // Any other builtin name used as binding LHS: `flat=...`, `frq=...`,
@@ -781,21 +770,14 @@ impl Parser {
                 ),
             ));
         }
-        // Short-form builtin alias (`rng` → `range`): same shadow-in-call-position
-        // problem as a canonical builtin name, surfaced here because
-        // `Builtin::is_builtin` doesn't include aliases.
-        if name == "rng" {
+        // Builtin alias (`rng` → `range`, `head` → `hd`, etc.): same
+        // shadow-in-call-position problem as a canonical builtin name, surfaced
+        // here because `Builtin::is_builtin` doesn't include aliases.
+        if let Some(canonical) = resolve_alias(&name) {
             return Err(self.error_hint(
                 "ILO-P011",
-                "`rng` is a short-form alias for the `range` builtin and cannot be used as a function name".into(),
-                "rename to something like `myrng` or `rg`. Aliases shadow user functions in calls, so reusing the name silently breaks dispatch.".into(),
-            ));
-        }
-        if name == "rand" {
-            return Err(self.error_hint(
-                "ILO-P011",
-                "`rand` is a short-form alias for the `rnd` builtin and cannot be used as a function name".into(),
-                "rename to something like `myrand` or `r`. Aliases shadow user functions in calls, so reusing the name silently breaks dispatch.".into(),
+                format!("`{name}` is an alias for the `{canonical}` builtin and cannot be used as a function name"),
+                format!("rename to something like `my{name}` or `{name}of`. Aliases shadow user functions in calls, so reusing the name silently breaks dispatch to `{canonical}`."),
             ));
         }
         let params = self.parse_params()?;
@@ -1222,25 +1204,21 @@ impl Parser {
                             format!("rename to something like `my{name}` or `{name}v`. Builtins shadow local bindings in call position, so reusing the name silently mis-dispatches."),
                         ));
                     }
-                    // Short-form alias for a builtin (`rng` → `range`): same
-                    // shadow problem as a canonical builtin name. `Builtin::is_builtin`
-                    // returns false for aliases, so this needs its own check.
+                    // Builtin alias used as binding name (`rng`, `head`,
+                    // `length`, etc.). The alias resolver later rewrites the
+                    // call to the canonical builtin, so the binding is
+                    // silently accepted and call-position uses mis-dispatch
+                    // (returning empty output rather than erroring).
+                    // `Builtin::is_builtin` returns false for aliases, so this
+                    // needs its own check.
                     if let Some(Token::Ident(name)) = self.peek()
-                        && name == "rng"
+                        && let Some(canonical) = resolve_alias(name)
                     {
+                        let name = name.clone();
                         return Err(self.error_hint(
                             "ILO-P011",
-                            "`rng` is a short-form alias for the `range` builtin and cannot be used as a binding name".into(),
-                            "rename to something like `rg` or `myrng`. Aliases shadow local bindings in call position, so reusing the name silently mis-dispatches.".into(),
-                        ));
-                    }
-                    if let Some(Token::Ident(name)) = self.peek()
-                        && name == "rand"
-                    {
-                        return Err(self.error_hint(
-                            "ILO-P011",
-                            "`rand` is a short-form alias for the `rnd` builtin and cannot be used as a binding name".into(),
-                            "rename to something like `r` or `myrand`. Aliases shadow local bindings in call position, so reusing the name silently mis-dispatches.".into(),
+                            format!("`{name}` is an alias for the `{canonical}` builtin and cannot be used as a binding name"),
+                            format!("rename to something like `my{name}` or `{name}v`, or pick a 4+ char neutral name. Aliases shadow local bindings in call position, so reusing the name silently mis-dispatches to `{canonical}`."),
                         ));
                     }
                     self.parse_let()
@@ -2809,7 +2787,8 @@ or write `({fmt_name} \"...\" ...)` so its args are grouped."
                 return self.parse_record(name);
             }
 
-            // Zero-arg builtins: `rnd`/`now`/`now-ms`/`mmap`/`env-all` with no args → Call with empty args
+            // Zero-arg builtins: `rnd`/`now`/`now-ms`/`mmap`/`env-all`/`pi`/`tau`/`e`
+            // with no args → Call with empty args
             if (name == "rnd"
                 || name == "rand"
                 || name == "now"
@@ -2817,7 +2796,10 @@ or write `({fmt_name} \"...\" ...)` so its args are grouped."
                 || name == "mmap"
                 || name == "env-all"
                 || name == "rdin"
-                || name == "rdinl")
+                || name == "rdinl"
+                || name == "pi"
+                || name == "tau"
+                || name == "e")
                 && !self.can_start_operand()
             {
                 return Ok(Expr::Call {
@@ -3394,7 +3376,10 @@ results first: `r={first_op}a b;…r` keeps each step explicit."
                     || name == "now-ms"
                     || name == "env-all"
                     || name == "rdin"
-                    || name == "rdinl" =>
+                    || name == "rdinl"
+                    || name == "pi"
+                    || name == "tau"
+                    || name == "e" =>
             {
                 let name = name.clone();
                 self.advance();
@@ -4128,6 +4113,7 @@ fn builtin_arity_tables() -> (HashMap<String, usize>, HashMap<String, Vec<bool>>
         // I/O
         ("prnt", 1, &[]),
         ("wr", 2, &[]),
+        ("wra", 2, &[]),
         ("wrl", 2, &[]),
         ("trm", 1, &[]),
         ("upr", 1, &[]),
@@ -4147,6 +4133,7 @@ fn builtin_arity_tables() -> (HashMap<String, usize>, HashMap<String, Vec<bool>>
         ("rgxall", 2, &[]),
         ("rgxall1", 2, &[]),
         ("rgxsub", 3, &[]),
+        ("rgxall-multi", 2, &[]),
         // Range: arity 2 here so the alias mirror picks up `rng` and the
         // parser can eagerly consume `rng 0 n` as a nested call in arg
         // position (e.g. `sum rng 0 10`). Without this, bare `rng` parses
@@ -4169,6 +4156,9 @@ fn builtin_arity_tables() -> (HashMap<String, usize>, HashMap<String, Vec<bool>>
         ("dirname", 1, &[]),
         ("basename", 1, &[]),
         ("pathjoin", 1, &[]),
+        // Duration parse / format. Single fixed-arity args, no FnRef slots.
+        ("dur-parse", 1, &[]),
+        ("dur-fmt", 1, &[]),
         // Note: omitted by design — these have overloads or zero-arg forms
         // best left to the existing greedy/zero-arg paths:
         //   rnd, now, mmap (0-arg, special-cased above)
