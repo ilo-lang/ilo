@@ -1,0 +1,7 @@
+-- Bitcoin block validator: merkle, timestamp, value conservation, coinbase
+-- run: validate-block
+-- out: {valid: true; height: 750000; checks: {...}}
+
+validate-block>t;{height:750000 timestamp:1670601200 prev-timestamp:1670600100 txids:["tx0" "tx1" "tx2"] tx:[{id:"tx0" vin:[] vout:[{value:625000000} {value:1250000000}]} {id:"tx1" vin:[{value:500000000}] vout:[{value:400000000} {value:99999000}]} {id:"tx2" vin:[{value:800000000}] vout:[{value:750000000} {value:49999000}]}]}|{cb-ok=len .tx>0&len .tx.0.vin=0&& @ tx (tl .tx){len tx.vin>0};val-ok=& @ tx .tx{len tx.vin=0|(sum @ v tx.vin{v.value//0})=(sum @ v tx.vout{v.value//0})};ts-ok=.timestamp>.prev-timestamp;struct-ok=&[.height .timestamp .txids .tx];merkle-ok=len .txids>0;all-ok=&[struct-ok merkle-ok ts-ok val-ok cb-ok];{valid:all-ok height:.height timestamp:.timestamp tx-count:len .tx checks:{structure:struct-ok merkle:merkle-ok ts-order:ts-ok value:val-ok coinbase:cb-ok}}}
+
+validate-block
