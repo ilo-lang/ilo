@@ -7500,7 +7500,7 @@ pub fn run_with_caps(
     compiled: &CompiledProgram,
     func_name: Option<&str>,
     args: Vec<Value>,
-    caps: Caps,
+    caps: Arc<Caps>,
 ) -> Result<Value, VmRuntimeError> {
     let target = match func_name {
         Some(name) => name.to_string(),
@@ -7691,7 +7691,7 @@ struct VM<'a> {
     #[cfg(feature = "tools")]
     tokio_runtime: Option<&'a tokio::runtime::Runtime>,
     /// CLI capability policy.
-    caps: Caps,
+    caps: Arc<Caps>,
 }
 
 impl<'a> Drop for VM<'a> {
@@ -7714,11 +7714,11 @@ impl<'a> VM<'a> {
             tool_provider: None,
             #[cfg(feature = "tools")]
             tokio_runtime: None,
-            caps: Caps::default(),
+            caps: Arc::new(Caps::default()),
         }
     }
 
-    fn new_with_caps(program: &'a CompiledProgram, caps: Caps) -> Self {
+    fn new_with_caps(program: &'a CompiledProgram, caps: Arc<Caps>) -> Self {
         VM {
             program,
             stack: Vec::with_capacity(4096),
@@ -7748,7 +7748,7 @@ impl<'a> VM<'a> {
             tool_provider: Some(provider),
             #[cfg(feature = "tools")]
             tokio_runtime: Some(runtime),
-            caps: Caps::default(),
+            caps: Arc::new(Caps::default()),
         }
     }
 
@@ -22290,11 +22290,10 @@ mod tests {
 
     #[test]
     fn vm_braceless_guard_fibonacci() {
-        // Use fib(7)=13; see interpreter version for rationale.
         let source = "fib n:n>n;<=n 1 n;a=fib -n 1;b=fib -n 2;+a b";
         assert_eq!(
-            vm_run(source, Some("fib"), vec![Value::Number(7.0)]),
-            Value::Number(13.0)
+            vm_run(source, Some("fib"), vec![Value::Number(10.0)]),
+            Value::Number(55.0)
         );
     }
 

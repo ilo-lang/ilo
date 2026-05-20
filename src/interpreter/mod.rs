@@ -236,7 +236,7 @@ struct Env {
     #[cfg(feature = "tools")]
     tokio_runtime: Option<std::sync::Arc<tokio::runtime::Runtime>>,
     /// CLI capability policy — checked at IO builtin call sites.
-    caps: Caps,
+    caps: Arc<Caps>,
 }
 
 impl Env {
@@ -249,11 +249,11 @@ impl Env {
             tool_provider: None,
             #[cfg(feature = "tools")]
             tokio_runtime: None,
-            caps: Caps::default(),
+            caps: Arc::new(Caps::default()),
         }
     }
 
-    fn with_caps(caps: Caps) -> Self {
+    fn with_caps(caps: Arc<Caps>) -> Self {
         Env {
             vars: Vec::new(),
             scope_marks: vec![0],
@@ -278,14 +278,14 @@ impl Env {
             tool_provider: Some(provider),
             #[cfg(feature = "tools")]
             tokio_runtime: Some(runtime),
-            caps: Caps::default(),
+            caps: Arc::new(Caps::default()),
         }
     }
 
     fn with_tools_and_caps(
         provider: std::sync::Arc<dyn crate::tools::ToolProvider>,
         #[cfg(feature = "tools")] runtime: std::sync::Arc<tokio::runtime::Runtime>,
-        caps: Caps,
+        caps: Arc<Caps>,
     ) -> Self {
         Env {
             vars: Vec::new(),
@@ -392,7 +392,7 @@ pub fn run_with_caps(
     program: &Program,
     func_name: Option<&str>,
     args: Vec<Value>,
-    caps: Caps,
+    caps: Arc<Caps>,
 ) -> Result<Value> {
     run_with_env(program, func_name, args, Env::with_caps(caps))
 }
@@ -463,7 +463,7 @@ pub fn run_with_tools_and_caps(
     args: Vec<Value>,
     provider: std::sync::Arc<dyn crate::tools::ToolProvider>,
     #[cfg(feature = "tools")] runtime: std::sync::Arc<tokio::runtime::Runtime>,
-    caps: Caps,
+    caps: Arc<Caps>,
 ) -> Result<Value> {
     let env = Env::with_tools_and_caps(
         provider,
@@ -9309,13 +9309,10 @@ mod tests {
 
     #[test]
     fn interpret_braceless_guard_fibonacci() {
-        // Use fib(7)=13 rather than fib(10)=55 to stay within the default
-        // debug-build stack on CI Linux runners. The recursion depth of ~12
-        // still exercises the braceless-guard path end-to-end.
         let source = "fib n:n>n;<=n 1 n;a=fib -n 1;b=fib -n 2;+a b";
         assert_eq!(
-            run_str(source, Some("fib"), vec![Value::Number(7.0)]),
-            Value::Number(13.0)
+            run_str(source, Some("fib"), vec![Value::Number(10.0)]),
+            Value::Number(55.0)
         );
     }
 

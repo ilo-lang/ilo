@@ -14,6 +14,7 @@ use ilo::parser;
 use ilo::tools;
 use ilo::verify;
 use ilo::vm;
+use std::sync::Arc;
 
 use clap::Parser as _;
 use cli::args::OutputMode;
@@ -3292,15 +3293,15 @@ fn check_cmd(source_arg: &str, mode: OutputMode, _explicit_json: bool, strict: b
 /// unrestricted mode). As soon as any `--allow-*` flag is set, the policy
 /// switches to `Caps::Restricted` and only explicitly permitted targets are
 /// allowed.
-fn build_caps(r: &cli::RunArgs) -> Caps {
+fn build_caps(r: &cli::RunArgs) -> Arc<Caps> {
     let any = r.allow_net.is_some()
         || r.allow_read.is_some()
         || r.allow_write.is_some()
         || r.allow_run.is_some();
     if !any {
-        return Caps::Permissive;
+        return Arc::new(Caps::Permissive);
     }
-    Caps::Restricted {
+    Arc::new(Caps::Restricted {
         net: r
             .allow_net
             .as_deref()
@@ -3321,7 +3322,7 @@ fn build_caps(r: &cli::RunArgs) -> Caps {
             .as_deref()
             .map(Caps::parse_allow)
             .unwrap_or(Policy::All),
-    }
+    })
 }
 
 /// Dispatch the `run` subcommand via parsed RunArgs.  Returns exit code.
@@ -4089,7 +4090,7 @@ fn run_vm_with_provider(
     mode: OutputMode,
     explicit_json: bool,
     suppress_loop_tail: bool,
-    caps: Caps,
+    caps: Arc<Caps>,
 ) -> i32 {
     #[cfg(feature = "tools")]
     if let Some(provider) = mcp_provider {
@@ -4164,7 +4165,7 @@ fn run_interp_with_provider(
     source: &str,
     mode: OutputMode,
     explicit_json: bool,
-    caps: Caps,
+    caps: Arc<Caps>,
 ) -> i32 {
     let suppress = program_result_should_suppress(program, func_name);
     #[cfg(feature = "tools")]
@@ -4277,7 +4278,7 @@ fn run_default(
     source: &str,
     mode: OutputMode,
     explicit_json: bool,
-    caps: Caps,
+    caps: Arc<Caps>,
 ) -> i32 {
     // CLI-boundary arity guard. Restores the strict arity contract the tree
     // interpreter has enforced since v0.11.5 (interpreter/mod.rs:4152) at the
@@ -6125,7 +6126,7 @@ mod tests {
             OutputMode::Text,
             false,
             false,
-            Caps::default(),
+            Arc::new(Caps::default()),
         );
     }
 
@@ -6145,7 +6146,7 @@ mod tests {
             OutputMode::Json,
             true,
             false,
-            Caps::default(),
+            Arc::new(Caps::default()),
         );
     }
 
@@ -6166,7 +6167,7 @@ mod tests {
             "f x:n>n;*x 2",
             OutputMode::Text,
             false,
-            Caps::default(),
+            Arc::new(Caps::default()),
         );
     }
 
@@ -6185,7 +6186,7 @@ mod tests {
             "f x:n>n;+x 1",
             OutputMode::Json,
             true,
-            Caps::default(),
+            Arc::new(Caps::default()),
         );
     }
 
@@ -6201,7 +6202,7 @@ mod tests {
             "f x:n>n;*x 2",
             OutputMode::Text,
             false,
-            Caps::default(),
+            Arc::new(Caps::default()),
         );
     }
 
@@ -6215,7 +6216,7 @@ mod tests {
             "greet name:t>t;cat \"hi \" name",
             OutputMode::Text,
             false,
-            Caps::default(),
+            Arc::new(Caps::default()),
         );
     }
 
@@ -6229,7 +6230,7 @@ mod tests {
             "double x:n>n;*x 2",
             OutputMode::Text,
             false,
-            Caps::default(),
+            Arc::new(Caps::default()),
         );
     }
 
@@ -9590,7 +9591,7 @@ mod tests {
             "",
             OutputMode::Text,
             false,
-            Caps::default(),
+            Arc::new(Caps::default()),
         );
         // VM ran the program → exit 0.
         assert_eq!(code, 0);
@@ -9669,7 +9670,7 @@ mod tests {
             OutputMode::Text,
             false,
             false,
-            Caps::default(),
+            Arc::new(Caps::default()),
         );
         assert_eq!(code, 1);
     }
@@ -9691,7 +9692,7 @@ mod tests {
             "f>n;/1 0",
             OutputMode::Text,
             false,
-            Caps::default(),
+            Arc::new(Caps::default()),
         );
         assert_eq!(code, 1);
     }
@@ -9709,7 +9710,7 @@ mod tests {
             "f>n;g 1",
             OutputMode::Text,
             false,
-            Caps::default(),
+            Arc::new(Caps::default()),
         );
         assert_eq!(code, 1);
     }
