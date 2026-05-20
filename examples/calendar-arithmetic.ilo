@@ -1,0 +1,13 @@
+-- Calendar arithmetic builtins: add-mo, last-dom, next-business-day, day-of-week.
+-- run: demo
+-- out: 1709164800
+
+-- add-mo dt:n n:n > n  — add N calendar months, snapping end-of-month.
+-- last-dom dt:n > n    — epoch of last day of month at 00:00 UTC.
+-- next-business-day dt:n > n — next weekday (skip Sat/Sun).
+-- day-of-week dt:n > n — 0=Sun 1=Mon 2=Tue 3=Wed 4=Thu 5=Fri 6=Sat.
+
+-- 2024-01-31 00:00 UTC = 1706659200
+-- Jan 31 2024 + 1 month = Feb 29 2024 (leap year snap) = 1709164800
+demo > n
+  add-mo 1706659200 1
