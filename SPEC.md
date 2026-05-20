@@ -680,12 +680,31 @@ dur-parse! s                     -- auto-unwrap inside R-returning fn
 dur-fmt 9720                     -- "2h 42m"
 dur-fmt 86400                    -- "1 day"
 dur-fmt 90                       -- "1m 30s"
+dur-fmt 90.5                     -- "1m 30.5s" (fractional seconds preserved)
 dur-fmt 0                        -- "0s"
+dur-fmt -90                      -- "-1m 30s" (single leading minus)
 
 -- Round-trip: parse -> seconds -> format
 n = dur-parse! "2 days 3 hours"
 dur-fmt n                        -- "2 days 3h"
 ```
+
+**Months are not supported.** `mo`, `month`, `months`, `M` are deliberately
+omitted because a month is not a fixed number of seconds. Strings like
+`"3mo"` or `"3 months"` produce a `no recognised unit` error. Use explicit
+day counts (e.g. `"30 days"`, `"90 days"`).
+
+**Sticky sign.** A leading `-` in `dur-parse` is sticky: it applies to every
+following token until an explicit `+` resets it. So `"-1m 30s"` parses to
+`-90`, and `"-1h +10m"` parses to `-3000`. This makes the round-trip
+`dur-fmt -> dur-parse` symmetric for negative durations, where `dur-fmt`
+emits a single leading minus rather than signing each part.
+
+**Fractional seconds.** `dur-fmt` renders sub-second fractions with up to
+3 decimal places (trailing zeros stripped), both for sub-second inputs
+(`0.5 -> "0.5s"`) and for mixed values where the seconds component carries
+a fraction (`90.5 -> "1m 30.5s"`). Fractional minutes / hours / days / weeks
+are decomposed into smaller units before formatting.
 
 ### Set operations
 
