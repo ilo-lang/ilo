@@ -49,6 +49,20 @@ Twelve task-focused skills cover the surface. Load only the slices the current t
 
 The content lives in `skills/ilo/<name>.md`. The installed binary serves the same files via `include_str!`, so the bundled copy and the served copy cannot drift.
 
+## Reserved names (ILO-P011)
+
+Every builtin name and control-flow keyword is reserved. Using any as a binding triggers ILO-P011. Use 4+ character descriptive names (`item`, `rows`, `accum`, `total`, `count`, `index`, `result`) to stay clear of this class of error permanently.
+
+**1-char**: `e` (Euler's number — math constant)
+
+**2-char**: `at` `ct` `hd` `rd` `tl` `wr` `wh` (while-loop keyword)
+
+**3-char builtins**: `abs` `avg` `cap` `cat` `cel` `chr` `cos` `det` `dot` `env` `exp` `fft` `fld` `flt` `fmt` `frq` `get` `grp` `has` `inv` `log` `lsd` `lst` `lwr` `map` `max` `min` `mod` `now` `ord` `pi` `pow` `pst` `rdb` `rdl` `rev` `rgx` `rnd` `rou` `run` `sin` `slc` `spl` `srt` `sum` `tan` `tau` `trm` `unq` `upr` `wra` `wrl` `zip`
+
+**3-char control-flow**: `brk` (break) `cnt` (continue) `ret` (return)
+
+**4-char+**: `acos` `asin` `atan` `argmax` `argmin` `argsort` `basename` `chars` `chunks` `clamp` `cprod` `cumsum` `dirname` `dot` `drop` `dtfmt` `dtparse` `dtparse-rel` `enumerate` `flat` `flatmap` `fmod` `fmt2` `fsize` `glob` `ifft` `inv` `isdir` `isfile` `jdmp` `jkeys` `jpar` `jpth` `len` `mapr` `matmul` `mdel` `median` `mget` `mhas` `mkeys` `mmap` `mpairs` `mset` `mtime` `mvals` `padl` `padr` `partition` `pathjoin` `prnt` `prod` `quantile` `range` `rdb` `rdin` `rdinl` `rdjl` `rdl` `rndn` `rsrt` `setdiff` `setinter` `setunion` `sleep` `solve` `sqrt` `stdev` `take` `transpose` `uniqby` `variance` `walk` `window` `wra` `wrl`
+
 ## Compatibility note
 
 ilo has no borrow checker, no lifetime annotations, no ownership rules. Values are RC-managed; the type checker enforces shape only. There is no `&`, no `&mut`, no `'a`. If an agent is reaching for lifetime-style reasoning in ilo, it has the wrong mental model.
