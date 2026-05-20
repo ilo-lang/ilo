@@ -103,6 +103,66 @@ fn arith_mod_zero_divisor_errors() {
     }
 }
 
+// ── fmod (floor-mod) ──────────────────────────────────────────────────
+
+#[test]
+fn fmod_positive_inputs() {
+    // Positive inputs: fmod and mod agree
+    for e in ENGINES_ALL {
+        assert_eq!(run_ok(e, "f>n;fmod 17 5", "f"), "2");
+        assert_eq!(run_ok(e, "f>n;fmod 10 3", "f"), "1");
+    }
+}
+
+#[test]
+fn fmod_negative_dividend() {
+    // Signed mod gives -1 for (-1 % 7); fmod gives 6
+    for e in ENGINES_ALL {
+        assert_eq!(run_ok(e, "f>n;fmod -1 7", "f"), "6");
+        assert_eq!(run_ok(e, "f>n;fmod -7 7", "f"), "0");
+        assert_eq!(run_ok(e, "f>n;fmod -8 7", "f"), "6");
+    }
+}
+
+#[test]
+fn fmod_fractional() {
+    // 1.5 fmod 1.0 = 0.5 (positive); -1.5 fmod 1.0 = 0.5
+    for e in ENGINES_ALL {
+        assert_eq!(run_ok(e, "f>n;fmod 1.5 1", "f"), "0.5");
+        assert_eq!(run_ok(e, "f>n;fmod -1.5 1", "f"), "0.5");
+    }
+}
+
+#[test]
+fn fmod_zero_dividend() {
+    for e in ENGINES_ALL {
+        assert_eq!(run_ok(e, "f>n;fmod 0 7", "f"), "0");
+    }
+}
+
+#[test]
+fn fmod_zero_divisor_errors() {
+    let src = "f>n;fmod 1 0";
+    for e in ENGINES_ALL {
+        let stderr = run_err(e, src, "f");
+        assert!(
+            stderr.to_lowercase().contains("fmod")
+                || stderr.contains("zero")
+                || stderr.contains("divis"),
+            "{e}: stderr={stderr}"
+        );
+    }
+}
+
+#[test]
+fn fmod_non_number_errors() {
+    let src = "f>n;fmod \"a\" 7";
+    for e in ENGINES_ALL {
+        let stderr = run_err(e, src, "f");
+        assert!(!stderr.is_empty(), "{e}: expected error for non-number fmod");
+    }
+}
+
 // ── min/max scalar and list ────────────────────────────────────────────
 
 #[test]

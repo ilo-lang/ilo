@@ -1,0 +1,17 @@
+-- fmod: floor-mod, always non-negative when divisor is positive.
+-- Eliminates the (raw + 7) % 7 workaround needed with signed `mod`.
+
+-- Weekday normalisation: map any integer offset to 0..6 without workaround.
+weekday offset:n>n;fmod offset 7
+
+-- Circular ring position (e.g. hour hand on a 12-hour clock).
+ring-pos n:n steps:n>n;fmod n steps
+
+-- run: weekday -1
+-- out: 6
+-- run: weekday 8
+-- out: 1
+-- run: ring-pos -3 12
+-- out: 9
+-- run: ring-pos 14 12
+-- out: 2
