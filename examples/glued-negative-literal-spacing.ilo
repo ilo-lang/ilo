@@ -1,0 +1,36 @@
+-- Glued-negative-literal spacing rule. The lexer packs a leading `-` with no
+-- preceding space into the number token, so `a -1.5` is `Number(a),
+-- Number(-1.5)` not `a, Minus, 1.5`. This is load-bearing for call-arg forms
+-- (`mod n -2`, `sub 5 -3`) and list literals (`[1 -2 3]`), but it means a
+-- naked `0 -1.5` at statement position is a parse error.
+--
+-- This example pins the three idiomatic forms:
+--   - `a - b` with spaces both sides for subtraction (canonical).
+--   - glued `-N` for call arguments and list elements (load-bearing).
+--   - `(-N)` parens for a bare negative value as an expression.
+
+-- Canonical subtraction: spaces both sides.
+sub > n
+  0 - 1.5
+
+-- Glued negative literal as a call argument.
+modn n:n > n
+  mod n -2
+
+-- Glued negative literal as a list element.
+midlist > n
+  l=[1 -2 3]
+  at l 1
+
+-- Parenthesised negation as an expression.
+neg > n
+  (-1.5)
+
+-- run: sub
+-- out: -1.5
+-- run: modn 7
+-- out: 1
+-- run: midlist
+-- out: -2
+-- run: neg
+-- out: -1.5
