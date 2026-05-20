@@ -1,0 +1,66 @@
+-- Persona: cross-engine example test runner
+-- Walk examples/*.ilo, extract -- run: + -- out: markers
+
+parse-markers lines:L t>L (L t)
+  pairs=[]
+  i=0
+  wh <i (len lines){
+    line=at lines i
+    >=(len line) 8{
+      pre=slc line 0 8
+      ="-- run: " pre{
+        func=trm (slc line 8 (len line))
+        i=+i 1
+        <i (len lines){
+          i=+i 1
+        }{
+          out-line=at lines i
+          >=(len out-line) 8{
+            outpre=slc out-line 0 8
+            ="-- out: " outpre{
+              expected=trm (slc out-line 8 (len out-line))
+              pairs=+=pairs [func expected]
+              i=+i 1
+            }{
+              i=+i 1
+            }
+          }{
+            i=+i 1
+          }
+        }
+      }{
+        i=+i 1
+      }
+    }{
+      i=+i 1
+    }
+  }
+  pairs
+
+is-ilo-file f:t>b;>=(len f) 4{=(slc f (- (len f) 3) (len f)) "ilo"}{false}
+
+main>t
+  prnt "ilo: cross-engine example test harness"
+  examples-dir="examples"
+  all-files=default-on-err (lsd examples-dir) []
+  ilo-files=flt is-ilo-file all-files
+
+  prnt (fmt "Found {} .ilo files" (len ilo-files))
+
+  total=0
+  @file ilo-files{
+    file-path=fmt "examples/{}" file
+    lines=default-on-err (rdl file-path) []
+    pairs=parse-markers lines
+    count=len pairs
+    total=+total count
+    >count 0{
+      prnt (fmt "  {} : {} test cases" file count)
+    }{
+      "skip"
+    }
+  }
+
+  prnt ""
+  prnt (fmt "Total test cases: {}" total)
+  "Done"
