@@ -536,6 +536,33 @@ impl Parser {
                 format!("rename to something like `my{name}` or `{name}v`. Builtins shadow local bindings in call position, so reusing the name silently mis-dispatches."),
             ));
         }
+        // Generic top-level `name=expr` shape: a binding written at the top
+        // level without a `main>_;` wrapper (or any function header). The
+        // builtin/alias/reserved-keyword guards above have already taken the
+        // specific cases; what remains is the plain-identifier misparse that
+        // k-means and linear-regression personas hit when they chain
+        // `pts=gen-pts; cs0=[...]; cs1=iter cs0 pts; prnt cs2` at the top
+        // level. Without this guard the parser stumbles into `parse_fn_decl`
+        // and either emits a bare `ILO-P003 expected '>'` (no actionable
+        // hint) or — when a prior fn decl has already started — slurps the
+        // whole chain into that fn's body, producing a wall of ILO-T005
+        // cascades anchored on the wrong function. Surface one clear hint
+        // pointing at the `main>_;` fix and let `sync_to_decl_boundary`
+        // skip the doomed chain.
+        if let Some(Token::Ident(name)) = self.peek()
+            && self.token_at(self.pos + 1) == Some(&Token::Eq)
+        {
+            let name = name.clone();
+            return Err(self.error_hint(
+                "ILO-P102",
+                format!(
+                    "top-level `{name}=...` binding outside any function declaration"
+                ),
+                format!(
+                    "ilo programs need a function header. Wrap imperative chains in `main>_;` (e.g. `main>_;{name}=...;...;prnt result`) or give this binding a proper signature like `{name}>n;<expr>`"
+                ),
+            ));
+        }
         match self.peek() {
             Some(Token::Type) => self.parse_type_decl(),
             Some(Token::Tool) => self.parse_tool_decl(),
@@ -3293,6 +3320,21 @@ results first: `r={first_op}a b;…r` keeps each step explicit."
     fn can_start_operand(&self) -> bool {
         // If the upcoming token is an Ident that begins a new declaration, stop here.
         if self.is_fn_decl_start(self.pos) {
+            return false;
+        }
+        // A top-level (un-indented) newline before the next token ends any
+        // ongoing call-arg / operand chain. Without this, a bare `cs` at the
+        // end of one function's body greedily eats the first identifier on the
+        // next (un-indented) line as a call argument - the k-means /
+        // linear-regression "top-level chain without `main>_;` wrapper"
+        // misparse, where `cs\npts=gen-pts;...` parses as `(cs pts) = gen-pts`
+        // and slurps the whole chain into the previous fn's body. Stopping at
+        // a decl boundary lets the outer decl loop see the orphaned chain and
+        // surface a single ILO-P102 hint instead of a cascade of ILO-T005s.
+        if self.boundary_at_cursor().is_some()
+            && matches!(self.peek(), Some(Token::Ident(_)))
+            && self.token_at(self.pos + 1) == Some(&Token::Eq)
+        {
             return false;
         }
         self.can_start_atom()
