@@ -33,7 +33,14 @@ fn run_args(args: &[&str]) -> String {
 }
 
 fn write_src(name: &str, contents: &str) -> std::path::PathBuf {
-    let dir = std::env::temp_dir().join(format!("ilo_dot_var_idx_{name}"));
+    // Disambiguate per-process and per-call so two tests sharing the same
+    // engine (e.g. param_index_tree and param_index_vm both running --vm)
+    // don't race on the same temp path under parallel test execution.
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+    let pid = std::process::id();
+    let seq = SEQ.fetch_add(1, Ordering::Relaxed);
+    let dir = std::env::temp_dir().join(format!("ilo_dot_var_idx_{name}_{pid}_{seq}"));
     std::fs::create_dir_all(&dir).unwrap();
     let p = dir.join("prog.ilo");
     std::fs::write(&p, contents).unwrap();
