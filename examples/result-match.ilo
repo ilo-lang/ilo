@@ -3,14 +3,14 @@
 -- Auto-unwrap with ! propagates Err to the calling function.
 
 -- Parse a text literal and match the result
-parse-ok>t;r=num "3.14";?r{~v:str v;^e:"err"}
+parse-ok>t;r=num "3.14";?r{~v:str v;^er:"err"}
 
-parse-bad>t;r=num "oops";?r{~v:"ok";^e:"err: "+e}
+parse-bad>t;r=num "oops";?r{~v:"ok";^er:"err: "+er}
 
 -- Safe division returning R n t, matched at call site
 safe-div a:n b:n>R n t;=b 0 ^"zero";~/a b
 
-div-msg a:n b:n>t;r=safe-div a b;?r{~v:str v;^e:"fail: "+e}
+div-msg a:n b:n>t;r=safe-div a b;?r{~v:str v;^er:"fail: "+er}
 
 -- Auto-unwrap: inner returns R; outer propagates Err automatically
 inner x:n>R n t;~*x 2

@@ -10,11 +10,11 @@
 -- Here `save xs` returns whatever `wrl` returns, which is the
 -- ok-wrapped path. Fix: match on `wrl`'s result, discard the path
 -- on success, and return `~"ok"` as a clean status string. Errors
--- still propagate via the `^e:^e` arm.
+-- still propagate via the `^er:^er` arm.
 --
 -- The fixed shape is:
 --
---   save xs:L t>R t t;r=wrl "..." xs;?r{~_:~"ok";^e:^e}
+--   save xs:L t>R t t;r=wrl "..." xs;?r{~_:~"ok";^er:^er}
 --
 -- This example pins the contract across every engine: mutations
 -- now print "ok", and the underlying state still round-trips
@@ -28,9 +28,9 @@
 
 path>t;"/tmp/ilo-cli-tasks-save-ok.txt"
 
-load>L t;r=rdl path();?r{~v:v;^e:[]}
+load>L t;r=rdl path();?r{~v:v;^er:[]}
 
-save xs:L t>R t t;r=wrl path() xs;?r{~_:~"ok";^e:^e}
+save xs:L t>R t t;r=wrl path() xs;?r{~_:~"ok";^er:^er}
 
 addtask txt:t>R t t;xs=load();ln=fmt "[ ] {}" txt;xs=+=xs ln;save xs
 
@@ -38,7 +38,7 @@ mark1 ln:t>t;n=len ln;rst=slc ln 3 n;+"[x]" rst
 
 domark k:n>R t t;xs=load();n=len xs;<k 1 ^"index out of range";>k n ^"index out of range";out=[];tgt=- k 1;@j 0..n{ln=at xs j;nl=mark1 ln;new=?=j tgt nl ln;out=+=out new};save out
 
-donetask idx:t>R t t;r=num idx;?r{~v:domark v;^e:^"bad index"}
+donetask idx:t>R t t;r=num idx;?r{~v:domark v;^er:^"bad index"}
 
 cleartask>R t t;save []
 

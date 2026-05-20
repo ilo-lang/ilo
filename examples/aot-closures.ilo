@@ -39,8 +39,8 @@ main>L n;
   b=map-lambda-capture
   c=map-closure-bind
   d=fld-user-fn
-  e=fnref-return-call
-  [hd a, hd b, hd c, d, e]
+  ef=fnref-return-call
+  [hd a, hd b, hd c, d, ef]
 
 -- run: main
 -- out: [2, 11, 11, 10, 25]

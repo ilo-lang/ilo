@@ -112,7 +112,7 @@ fn vm_call_register_overflow_names_caller_and_callee() {
     // Caller: `caller a:n>n; x1..x250 = ...; callee x1 x2 ... x10`
     // The 250 saved locals + result_reg + 10 arg slots > 256.
     let mut src = String::new();
-    src.push_str("callee a:n b:n c:n d:n e:n f:n g:n h:n i:n j:n>n;+a 0;");
+    src.push_str("callee a:n b:n c:n d:n ev:n f:n g:n h:n i:n j:n>n;+a 0;");
     src.push_str("caller a:n>n;x1=+a 1");
     for i in 2..=250 {
         src.push_str(&format!(";x{i}=+x{} 1", i - 1));
@@ -145,7 +145,7 @@ fn vm_call_register_overflow_names_caller_and_callee() {
 #[test]
 fn vm_call_register_overflow_diagnostic_carries_ilo_t036() {
     let mut src = String::new();
-    src.push_str("callee a:n b:n c:n d:n e:n f:n g:n h:n i:n j:n>n;+a 0;");
+    src.push_str("callee a:n b:n c:n d:n ev:n f:n g:n h:n i:n j:n>n;+a 0;");
     src.push_str("caller a:n>n;x1=+a 1");
     for i in 2..=250 {
         src.push_str(&format!(";x{i}=+x{} 1", i - 1));

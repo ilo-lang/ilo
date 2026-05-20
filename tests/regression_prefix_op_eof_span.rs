@@ -103,7 +103,7 @@ fn assert_not_line1_col1(name: &str, payload: &str) {
 #[test]
 fn prefix_plus_at_eof_spans_past_col1() {
     // `g=+ a` followed by EOF — second operand missing.
-    let src = "main>n;a=1;b=2;c=3;d=4;e=5;f=6;g=+ a";
+    let src = "main>n;a=1;b=2;c=3;d=4;ev=5;f=6;g=+ a";
     let payload = run_expect_parse_err("plus", src);
     assert_not_line1_col1("plus", &payload);
     // ILO-P010 is the expected code, not P001 (which would mean the
@@ -116,7 +116,7 @@ fn prefix_plus_at_eof_spans_past_col1() {
 
 #[test]
 fn prefix_star_at_eof_spans_past_col1() {
-    let src = "main>n;a=1;b=2;c=3;d=4;e=5;f=6;g=* a";
+    let src = "main>n;a=1;b=2;c=3;d=4;ev=5;f=6;g=* a";
     let payload = run_expect_parse_err("star", src);
     assert_not_line1_col1("star", &payload);
     assert!(payload.contains("ILO-P010"));
@@ -124,7 +124,7 @@ fn prefix_star_at_eof_spans_past_col1() {
 
 #[test]
 fn prefix_slash_at_eof_spans_past_col1() {
-    let src = "main>n;a=1;b=2;c=3;d=4;e=5;f=6;g=/ a";
+    let src = "main>n;a=1;b=2;c=3;d=4;ev=5;f=6;g=/ a";
     let payload = run_expect_parse_err("slash", src);
     assert_not_line1_col1("slash", &payload);
     assert!(payload.contains("ILO-P010"));
@@ -132,7 +132,7 @@ fn prefix_slash_at_eof_spans_past_col1() {
 
 #[test]
 fn prefix_less_at_eof_spans_past_col1() {
-    let src = "main>n;a=1;b=2;c=3;d=4;e=5;f=6;g=< a";
+    let src = "main>n;a=1;b=2;c=3;d=4;ev=5;f=6;g=< a";
     let payload = run_expect_parse_err("less", src);
     assert_not_line1_col1("less", &payload);
     assert!(payload.contains("ILO-P010"));
@@ -140,7 +140,7 @@ fn prefix_less_at_eof_spans_past_col1() {
 
 #[test]
 fn prefix_greater_at_eof_spans_past_col1() {
-    let src = "main>n;a=1;b=2;c=3;d=4;e=5;f=6;g=> a";
+    let src = "main>n;a=1;b=2;c=3;d=4;ev=5;f=6;g=> a";
     let payload = run_expect_parse_err("greater", src);
     assert_not_line1_col1("greater", &payload);
     assert!(payload.contains("ILO-P010"));
@@ -148,7 +148,7 @@ fn prefix_greater_at_eof_spans_past_col1() {
 
 #[test]
 fn prefix_le_at_eof_spans_past_col1() {
-    let src = "main>n;a=1;b=2;c=3;d=4;e=5;f=6;g=<= a";
+    let src = "main>n;a=1;b=2;c=3;d=4;ev=5;f=6;g=<= a";
     let payload = run_expect_parse_err("le", src);
     assert_not_line1_col1("le", &payload);
     assert!(payload.contains("ILO-P010"));
@@ -156,7 +156,7 @@ fn prefix_le_at_eof_spans_past_col1() {
 
 #[test]
 fn prefix_ge_at_eof_spans_past_col1() {
-    let src = "main>n;a=1;b=2;c=3;d=4;e=5;f=6;g=>= a";
+    let src = "main>n;a=1;b=2;c=3;d=4;ev=5;f=6;g=>= a";
     let payload = run_expect_parse_err("ge", src);
     assert_not_line1_col1("ge", &payload);
     assert!(payload.contains("ILO-P010"));
@@ -169,7 +169,7 @@ fn bare_minus_at_eof_spans_past_col1() {
     // The cleanest reproduction of the scientific-researcher symptom:
     // a long line ending in a bare `-` would previously report line 1
     // col 1 regardless of how far down the line the `-` actually sat.
-    let src = "main>n;a=1;b=2;c=3;d=4;e=5;f=6;-";
+    let src = "main>n;a=1;b=2;c=3;d=4;ev=5;f=6;-";
     let payload = run_expect_parse_err("bare_minus", src);
     assert_not_line1_col1("bare_minus", &payload);
     assert!(payload.contains("ILO-P010"));
@@ -184,7 +184,7 @@ fn bare_minus_at_eof_spans_past_col1() {
 
 #[test]
 fn bare_slash_at_eof_spans_past_col1() {
-    let src = "main>n;a=1;b=2;c=3;d=4;e=5;f=6;/";
+    let src = "main>n;a=1;b=2;c=3;d=4;ev=5;f=6;/";
     let payload = run_expect_parse_err("bare_slash", src);
     assert_not_line1_col1("bare_slash", &payload);
     assert!(payload.contains("ILO-P010"));

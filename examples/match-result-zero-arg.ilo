@@ -3,10 +3,10 @@
 -- referenced bare (`r=mk`), so `r` is the Result, not a function reference.
 
 mk-ok>R t t;~"got"
-ok-msg>t;r=mk-ok;?r{~v:v;^e:e}
+ok-msg>t;r=mk-ok;?r{~v:v;^er:er}
 
 mk-err>R t t;^"boom"
-err-msg>t;r=mk-err;?r{~v:v;^e:e}
+err-msg>t;r=mk-err;?r{~v:v;^er:er}
 
 -- run: ok-msg
 -- out: got

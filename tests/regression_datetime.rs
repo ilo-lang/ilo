@@ -48,7 +48,7 @@ fn dtfmt_epoch_zero() {
     // dtfmt now returns R t t; use `!` to auto-unwrap, then ~ to re-wrap so
     // the enclosing R-returning fn matches.
     check_text(
-        "f e:n>R t t;v=dtfmt! e \"%Y-%m-%d\";~v",
+        "f ts:n>R t t;v=dtfmt! ts \"%Y-%m-%d\";~v",
         &["f", "0"],
         "1970-01-01",
     );
@@ -57,7 +57,7 @@ fn dtfmt_epoch_zero() {
 #[test]
 fn dtfmt_jan_2025() {
     check_text(
-        "f e:n>R t t;v=dtfmt! e \"%Y-%m-%d\";~v",
+        "f ts:n>R t t;v=dtfmt! ts \"%Y-%m-%d\";~v",
         &["f", "1735689600"],
         "2025-01-01",
     );
@@ -83,7 +83,7 @@ fn dtparse_jan_2025_auto_unwrap() {
 fn dtparse_round_trip() {
     // Parse a date back to epoch, then format it again, must be lossless.
     // We wrap in Ok at the end since `!` requires R-returning enclosing fn.
-    let src = r#"f s:t>R t t;e=dtparse! s "%Y-%m-%d";d=dtfmt! e "%Y-%m-%d";~d"#;
+    let src = r#"f s:t>R t t;ev=dtparse! s "%Y-%m-%d";d=dtfmt! ev "%Y-%m-%d";~d"#;
     for engine in ENGINES {
         let (ok, stdout, stderr) = run(engine, src, &["f", "2025-01-01"]);
         assert!(ok, "{engine}: ilo failed: {stderr}");

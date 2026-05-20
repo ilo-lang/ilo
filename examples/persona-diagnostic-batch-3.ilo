@@ -6,7 +6,7 @@
 --                                    fld (a:n k:t>n;+a (kc (body k))) kws 0
 --   rsrt fn ctx xs swap              canonical: fn binds (element, ctx),
 --                                    not (ctx, element).
---                                    by-len e:t c:n>n;+c (len e)
+--                                    by-len el:t c:n>n;+c (len el)
 --   list-literal `;`                 canonical: whitespace or commas:
 --                                    [1 2 3] or [1, 2, 3], never [1;2;3]
 --
@@ -23,7 +23,7 @@ sum-kws kws:L t>n;fld (a:n k:t>n;+a (kc (body k))) kws 0
 -- rsrt/srt fn ctx xs: the lambda binds the list element FIRST, then
 -- the ctx slot. Writing `(c:ctx e:elem>k;...)` is the persona reflex
 -- and now surfaces a hint at verify time.
-by-len-with-offset e:t c:n>n;+c (len e)
+by-len-with-offset el:t c:n>n;+c (len el)
 top-strings xs:L t off:n>L t;rsrt by-len-with-offset off xs
 
 -- List literals use whitespace (commas optional). `;` is the
