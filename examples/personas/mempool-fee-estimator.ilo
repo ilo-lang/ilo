@@ -1,0 +1,31 @@
+-- Mempool fee estimator: fetch BTC mempool, compute percentiles.
+
+main>R t t;
+  base="https://mempool.space";
+  blks=get (cat [base "/api/v1/fees/mempool-blocks"] "");
+  recs=get (cat [base "/api/v1/fees/recommended"] "");
+  bt=?blks{~b:b;^_:^"no mempool blocks"};
+  rt=?recs{~b:b;^_:^"no recommended fees"};
+  ba=jpar! bt;
+  rs=jpar! rt;
+  rates=[];
+  @b ba {@t b {f=jpth b "feeRate";rates=?f{~x:rates=+=rates x;^_:rates}}};
+  sorted=srt rates;
+  n=len sorted;
+  i10=flr ((n - 1) * 0.10);
+  i25=flr ((n - 1) * 0.25);
+  i50=flr ((n - 1) * 0.50);
+  i75=flr ((n - 1) * 0.75);
+  i95=flr ((n - 1) * 0.95);
+  p10=rou (at sorted i10);
+  p25=rou (at sorted i25);
+  p50=rou (at sorted i50);
+  p75=rou (at sorted i75);
+  p95=rou (at sorted i95);
+  nxt=jpth rs "fastestFee";
+  h3=jpth rs "halfHourFee";
+  h1=jpth rs "hourFee";
+  ~fmt "mempool n={} p10={} p25={} p50={} p75={} p95={} next={} 3h={} 1h={}" n p10 p25 p50 p75 p95 nxt h3 h1
+
+-- run: main
+-- out: (requires live network access)
