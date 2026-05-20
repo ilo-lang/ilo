@@ -207,6 +207,11 @@ pub enum Builtin {
     // Both are tree-bridge eligible — pure text ↔ number ops, no I/O.
     DurParse,
     DurFmt,
+
+    // `default-on-err r d > T` — unwrap `R T E` to `T`, using `d:T` if `Err`.
+    // Mirror of `??` for Result: `?? v d` is nil-coalesce for `O T`; this is
+    // the Result equivalent. Tree-bridge eligible (2-arg, pure, no FnRef).
+    DefaultOnErr,
 }
 
 impl Builtin {
@@ -361,6 +366,7 @@ impl Builtin {
             "e" => Some(Builtin::Eu),
             "dur-parse" => Some(Builtin::DurParse),
             "dur-fmt" => Some(Builtin::DurFmt),
+            "default-on-err" => Some(Builtin::DefaultOnErr),
             _ => None,
         }
     }
@@ -512,6 +518,7 @@ impl Builtin {
             Builtin::Eu => "e",
             Builtin::DurParse => "dur-parse",
             Builtin::DurFmt => "dur-fmt",
+            Builtin::DefaultOnErr => "default-on-err",
         }
     }
 
@@ -722,6 +729,10 @@ impl Builtin {
         // returns a text string). Appended here to preserve every existing tag.
         Builtin::DurParse,
         Builtin::DurFmt,
+        // `default-on-err r d > T` — Result mirror of `??`. Unwraps `R T E`
+        // to `T`, returning `d` on `Err`. Kills the common `?r{~v:v ^_:default}`
+        // pattern. Tree-bridge eligible (2-arg, pure). Added in 0.12.1.
+        Builtin::DefaultOnErr,
     ];
 
     /// On-wire 8-bit tag for cross-engine builtin dispatch. See `ALL`.
