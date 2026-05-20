@@ -226,6 +226,34 @@ pub enum Builtin {
     // Mirror of `??` for Result: `?? v d` is nil-coalesce for `O T`; this is
     // the Result equivalent. Tree-bridge eligible (2-arg, pure, no FnRef).
     DefaultOnErr,
+
+    // Crypto primitives (0.12.1). Pure text-or-bytes-via-text ops; all
+    // tree-bridge eligible so VM and Cranelift inherit for free.
+    //
+    // `sha256 s > t` — SHA-256 hex digest (lowercase) of the UTF-8 bytes of `s`.
+    Sha256,
+    // `hmac-sha256 key body > t` — HMAC-SHA256 of `body` under `key`; returns
+    // lowercase hex. RFC 4231 vectors match.
+    HmacSha256,
+    // `base64-enc s > t` — standard base64 (RFC 4648 §4, with padding).
+    Base64Enc,
+    // `base64-dec s > R t t` — decode standard base64; Err on invalid input.
+    Base64Dec,
+    // `base64url-enc s > t` — base64url (RFC 4648 §5, no padding). Suitable
+    // for JWT header/payload segments.
+    Base64UrlEnc,
+    // `base64url-dec s > R t t` — decode base64url; Err on invalid input.
+    Base64UrlDec,
+    // `hex-enc bytes > t` — encode a list of integers 0-255 as lowercase hex.
+    HexEnc,
+    // `hex-dec s > R (L n) t` — decode a hex string to a list of byte values
+    // (each in 0-255). Err on odd-length or non-hex input.
+    HexDec,
+    // `ct-eq a b > b` — constant-time text equality. Returns bool without
+    // short-circuiting on mismatch, resisting timing side-channels. Use when
+    // comparing secrets (HMAC digests, tokens). Returns false for unequal
+    // lengths without leaking which is longer.
+    CtEq,
 }
 
 impl Builtin {
@@ -388,6 +416,15 @@ impl Builtin {
             "dur-parse" => Some(Builtin::DurParse),
             "dur-fmt" => Some(Builtin::DurFmt),
             "default-on-err" => Some(Builtin::DefaultOnErr),
+            "sha256" => Some(Builtin::Sha256),
+            "hmac-sha256" => Some(Builtin::HmacSha256),
+            "base64-enc" => Some(Builtin::Base64Enc),
+            "base64-dec" => Some(Builtin::Base64Dec),
+            "base64url-enc" => Some(Builtin::Base64UrlEnc),
+            "base64url-dec" => Some(Builtin::Base64UrlDec),
+            "hex-enc" => Some(Builtin::HexEnc),
+            "hex-dec" => Some(Builtin::HexDec),
+            "ct-eq" => Some(Builtin::CtEq),
             _ => None,
         }
     }
@@ -547,6 +584,15 @@ impl Builtin {
             Builtin::DurParse => "dur-parse",
             Builtin::DurFmt => "dur-fmt",
             Builtin::DefaultOnErr => "default-on-err",
+            Builtin::Sha256 => "sha256",
+            Builtin::HmacSha256 => "hmac-sha256",
+            Builtin::Base64Enc => "base64-enc",
+            Builtin::Base64Dec => "base64-dec",
+            Builtin::Base64UrlEnc => "base64url-enc",
+            Builtin::Base64UrlDec => "base64url-dec",
+            Builtin::HexEnc => "hex-enc",
+            Builtin::HexDec => "hex-dec",
+            Builtin::CtEq => "ct-eq",
         }
     }
 
@@ -780,6 +826,18 @@ impl Builtin {
         // rounded up (ceil(ms / 1000)) so 1 ms => 1 s, 1001 ms => 2 s.
         Builtin::GetTo,
         Builtin::PstTo,
+        // Crypto primitives (0.12.1). Appended last to preserve every existing
+        // on-wire tag. All are tree-bridge eligible - pure text-or-bytes-via-text,
+        // no FnRef args, no I/O. See is_tree_bridge_eligible in src/vm/mod.rs.
+        Builtin::Sha256,
+        Builtin::HmacSha256,
+        Builtin::Base64Enc,
+        Builtin::Base64Dec,
+        Builtin::Base64UrlEnc,
+        Builtin::Base64UrlDec,
+        Builtin::HexEnc,
+        Builtin::HexDec,
+        Builtin::CtEq,
     ];
 
     /// On-wire 8-bit tag for cross-engine builtin dispatch. See `ALL`.

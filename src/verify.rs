@@ -487,6 +487,17 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     // type check (ok-type vs default must match); this entry feeds arity +
     // suggestion paths.
     ("default-on-err", &["R any t", "any"], "any"),
+    // Crypto primitives (0.12.1). All tree-bridge eligible — pure text/bytes
+    // ops, no FnRef args, no I/O.
+    ("sha256", &["t"], "t"),
+    ("hmac-sha256", &["t", "t"], "t"),
+    ("base64-enc", &["t"], "t"),
+    ("base64-dec", &["t"], "R t t"),
+    ("base64url-enc", &["t"], "t"),
+    ("base64url-dec", &["t"], "R t t"),
+    ("hex-enc", &["L n"], "t"),
+    ("hex-dec", &["t"], "R (L n) t"),
+    ("ct-eq", &["t", "t"], "b"),
 ];
 
 fn builtin_arity(name: &str) -> Option<usize> {

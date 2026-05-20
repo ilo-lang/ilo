@@ -704,6 +704,18 @@ pub(crate) fn is_tree_bridge_eligible(b: crate::builtins::Builtin, argc: usize) 
         // JIT/AOT pick them up at zero opcode cost.
         (Builtin::GetTo, 2) => true,
         (Builtin::PstTo, 3) => true,
+        // Crypto primitives (0.12.1). All pure: no FnRef args, no I/O.
+        // Tree-bridge gives VM + Cranelift cross-engine parity at zero opcode
+        // cost - these are not hot-path (called once per request, not in loops).
+        (Builtin::Sha256, 1) => true,
+        (Builtin::HmacSha256, 2) => true,
+        (Builtin::Base64Enc, 1) => true,
+        (Builtin::Base64Dec, 1) => true,
+        (Builtin::Base64UrlEnc, 1) => true,
+        (Builtin::Base64UrlDec, 1) => true,
+        (Builtin::HexEnc, 1) => true,
+        (Builtin::HexDec, 1) => true,
+        (Builtin::CtEq, 2) => true,
         _ => false,
     }
 }
@@ -732,6 +744,9 @@ pub(crate) fn tree_bridge_returns_result(b: crate::builtins::Builtin) -> bool {
             | Builtin::DurParse
             | Builtin::GetTo
             | Builtin::PstTo
+            | Builtin::Base64Dec
+            | Builtin::Base64UrlDec
+            | Builtin::HexDec
     )
 }
 
