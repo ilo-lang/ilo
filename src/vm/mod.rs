@@ -178,7 +178,7 @@ pub(crate) const OP_ENV: u8 = 60; // R[A] = env(R[B])  (returns R t t)
 pub(crate) const OP_JPTH: u8 = 61; // R[A] = jpth(R[B], R[C])  (JSON path lookup → R t t)
 pub(crate) const OP_JDMP: u8 = 62; // R[A] = jdmp(R[B])  (value to JSON string → t)
 pub(crate) const OP_JPAR: u8 = 63; // R[A] = jpar(R[B])  (parse JSON string → R ? t)
-pub(crate) const OP_JPAR_LIST: u8 = 187; // R[A] = jpar-list(R[B])  (parse JSON array string → R (L ?) t)
+pub(crate) const OP_JPAR_LIST: u8 = 188; // R[A] = jpar-list(R[B])  (parse JSON array string → R (L ?) t)
 pub(crate) const OP_RECFLD_NAME: u8 = 64; // R[A] = R[B].field where C = constant pool index of field name (dynamic/fallback)
 pub(crate) const OP_JMPNN: u8 = 56; // if R[A] is not nil, jump by signed Bx (ABx mode)
 pub(crate) const OP_ISNUM: u8 = 65; // R[A] = R[B] is Number
