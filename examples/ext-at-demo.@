@@ -1,0 +1,4 @@
+-- .@ is the canonical source extension; saves one token per filename vs .ilo
+-- run: main
+-- out: 42
+main>n;+40 2

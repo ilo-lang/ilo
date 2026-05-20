@@ -1,8 +1,8 @@
--- imports.ilo — demonstrates use "file.ilo" import system
+-- imports.@ - demonstrates use "file.@" import system
 --
--- Imports all declarations from math-lib.ilo into a flat namespace.
+-- Imports all declarations from math-lib.@ into a flat namespace.
 -- dbl, half, sq, abs-val are now available as if defined here.
-use "math-lib.ilo"
+use "math-lib.@"
 
 -- round-trip: double then halve should give original
 -- bind to variable (non-last function must end with binary expr)
@@ -11,7 +11,7 @@ round-trip n:n>n;h=half n;r=dbl h;+r 0
 -- distance from origin (absolute value)
 dist n:n>n;v=abs-val n;+v 0
 
--- hypotenuse squared: a² + b²  (last function — bare binary is fine)
+-- hypotenuse squared: a² + b²  (last function - bare binary is fine)
 hyp-sq a:n b:n>n;sa=sq a;sb=sq b;+sa sb
 
 -- run: round-trip 10
