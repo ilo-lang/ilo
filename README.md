@@ -145,7 +145,31 @@ CalVer. Releases are `YY.M` (e.g. `26.5`), patches within a month are `YY.M.P` (
 
 ### Migration from 0.x
 
-Last semver release: `0.12.1`. First CalVer release cuts on the next breaking change as `26.X`. Hard cut, no `0.13` bridge.
+Last semver release: `0.12.1`. First CalVer release cuts on the next breaking change as `26.X`. Hard cut, no `0.13` bridge. The file version pragma ships with the CalVer cut; existing 0.x files have no pragma and the verifier must not error on a missing pragma during the transition.
+
+### File version pragma
+
+ilo source files declare the minimum required runtime with a top-of-file sigil:
+
+```
+^26.5
+-- rest of file
+```
+
+- Sigil-led (principle 4), ~3 tokens (principle 1)
+- `^` carries "at minimum" semantics — agents read it correctly without a spec lookup
+- First-class syntax, not a magic comment
+- Position: first line, no leading whitespace
+
+Verifier behaviour:
+
+| Case                                                    | Result                              |
+|---------------------------------------------------------|-------------------------------------|
+| Pragma absent                                           | Assume latest installed runtime, warn (not error) |
+| File targets older than runtime, breaking change between| Fail with migration pointer         |
+| File targets newer than runtime                         | Fail asking to upgrade              |
+
+Tooling: `ilo --version-of <file>` reads the pragma; the formatter canonicalises position.
 
 ## What it looks like
 
