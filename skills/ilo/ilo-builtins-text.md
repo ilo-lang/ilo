@@ -30,3 +30,17 @@ Prefix-call: `name arg1 arg2 ...`. Cross-engine unless noted.
 ## Date parsing
 
 `dtparse s fmt` parse date string to timestamp; `dtfmt ts fmt` format timestamp to string.
+
+`dtparse-rel s now` parse a relative-date phrase to a Unix epoch anchored at `now`. Supported phrases:
+- `today`, `yesterday`, `tomorrow`
+- `N days ago`, `in N days` (also `N day ago`, `in N day`)
+- `N weeks ago`, `in N weeks`; `N months ago`, `in N months`
+- `last <weekday>`, `next <weekday>`, `this <weekday>` - weekdays: `monday`-`sunday` or `mon`-`sun`; `last`/`next` never return today
+- ISO-8601 `YYYY-MM-DD` passthrough (ignores `now`)
+
+Returns `R n t`. Pass `(now)` as the anchor for live programs.
+
+```
+deadline nw:n>n;dtparse-rel!! "in 3 days" nw
+last-week-start nw:n>n;dtparse-rel!! "last monday" nw
+```

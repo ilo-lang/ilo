@@ -582,6 +582,7 @@ Called like functions, compiled to dedicated opcodes.
 | `rgxsub pat repl s` | regex substitute all matches; `$1`, `$2`, ... reference capture groups | `t` |
 | `dtfmt epoch fmt` | format Unix epoch as text (strftime, UTC) | `R t t` |
 | `dtparse s fmt` | parse text to Unix epoch (strftime, UTC) | `R n t` |
+| `dtparse-rel s now` | parse relative-date phrase to epoch; `now` is the anchor epoch | `R n t` |
 | `rdjl path` | read JSONL file as `L (R _ t)`: one parse result per non-empty line | `L (R _ t)` |
 | `get-many urls` | concurrent HTTP GET fan-out (max 10 parallel), preserves order | `L (R t t)` |
 | `sleep ms` | pause current engine for `ms` milliseconds; returns nil | `_` |
@@ -619,7 +620,7 @@ Called like functions, compiled to dedicated opcodes.
 
 > **`wr` and `wrl` return the written path, not a status.** Both succeed with `~path` (the file path you passed in), not `~"ok"` or nil. A `save` helper that ends with a bare `wrl "tasks.txt" xs` therefore returns `~"tasks.txt"`, and every successful mutation echoes the state-file path to stdout - noise for any caller piping output. Discard the path and return a clean status string instead: `save xs:L t>R t t;r=wrl "tasks.txt" xs;?r{~_:~"ok";^e:^e}`. The error arm still propagates `wrl`'s message. See [`examples/cli-tasks-save-ok.ilo`](examples/cli-tasks-save-ok.ilo) for the full shape.
 
-### Datetime (`dtfmt` / `dtparse`)
+### Datetime (`dtfmt` / `dtparse` / `dtparse-rel`)
 
 UTC only. Format strings follow strftime conventions (`%Y-%m-%d %H:%M:%S`, `%s`, etc).
 
@@ -628,6 +629,27 @@ dtfmt 1700000000 "%Y-%m-%d"          -- R t t: Ok="2023-11-14", Err if out of ra
 dtparse "2024-01-15" "%Y-%m-%d"       -- R n t: Ok=epoch seconds, Err if unparseable
 dtfmt! e "%H:%M:%S"                   -- auto-unwrap inside R-returning fn
 ```
+
+`dtparse-rel s now` resolves a natural-language relative-date phrase to a Unix epoch anchored at `now`.  Phrases supported:
+
+- `today`, `yesterday`, `tomorrow`
+- `N days ago`, `in N days` (also `N day ago`, `in N day`)
+- `N weeks ago`, `in N weeks`
+- `N months ago`, `in N months` (end-of-month clamping: `Jan 31 + 1 month = Feb 28/29`)
+- `last <weekday>`, `next <weekday>`, `this <weekday>` — weekdays as `monday`–`sunday` or short `mon`–`sun`; `last`/`next` never return today
+- ISO-8601 date literal `YYYY-MM-DD` — passthrough to `dtparse` (ignores `now`)
+
+```
+-- now = 1705276800 (2024-01-15, Monday)
+dtparse-rel!! "yesterday" (now)          -- 2024-01-14 00:00 UTC
+dtparse-rel!! "3 days ago" (now)         -- 2024-01-12 00:00 UTC
+dtparse-rel!! "in 2 weeks" (now)         -- 2024-01-29 00:00 UTC
+dtparse-rel!! "last friday" (now)        -- 2024-01-12 00:00 UTC
+dtparse-rel!! "next wednesday" (now)     -- 2024-01-17 00:00 UTC
+dtparse-rel!! "2023-12-25" (now)         -- 1703462400 (ignores now)
+```
+
+Unrecognised phrases return `Err` with a message listing valid forms. All times are midnight UTC.
 
 ### Set operations
 
