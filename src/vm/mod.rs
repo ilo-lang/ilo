@@ -634,6 +634,10 @@ pub(crate) fn is_tree_bridge_eligible(b: crate::builtins::Builtin, argc: usize) 
         (Builtin::Mtime, 1) => true,
         (Builtin::Isfile, 1) => true,
         (Builtin::Isdir, 1) => true,
+        // `tz-offset tz epoch` — 2-arg, no FnRef, returns R n t. Tree-bridge
+        // routes VM and Cranelift through the chrono-tz impl in the interpreter
+        // without needing a dedicated opcode.
+        (Builtin::TzOffset, 2) => true,
         // `sleep ms` has no FnRef args and returns Nil; the bridge round-trip
         // is lossless, so VM/Cranelift get it for free. The actual sleep is
         // delegated to `std::thread::sleep` inside the tree interpreter.
@@ -804,6 +808,7 @@ pub(crate) fn tree_bridge_returns_result(b: crate::builtins::Builtin) -> bool {
             | Builtin::PstTo
             | Builtin::Urldec
             | Builtin::B64uDec
+            | Builtin::TzOffset
     )
 }
 

@@ -107,6 +107,10 @@ pub enum Builtin {
     Dtparse,
     DtparseRel,
     Sleep,
+    // `tz-offset tz:t epoch:n > R n t` — UTC offset in seconds for the given
+    // IANA timezone at the given Unix epoch. Handles DST transitions correctly
+    // via chrono-tz. Returns Err on unknown timezone name.
+    TzOffset,
 
     // I/O
     Rd,
@@ -361,6 +365,7 @@ impl Builtin {
             "dtparse" => Some(Builtin::Dtparse),
             "dtparse-rel" => Some(Builtin::DtparseRel),
             "sleep" => Some(Builtin::Sleep),
+            "tz-offset" => Some(Builtin::TzOffset),
             "rd" => Some(Builtin::Rd),
             "rdl" => Some(Builtin::Rdl),
             "rdb" => Some(Builtin::Rdb),
@@ -533,6 +538,7 @@ impl Builtin {
             Builtin::Dtparse => "dtparse",
             Builtin::DtparseRel => "dtparse-rel",
             Builtin::Sleep => "sleep",
+            Builtin::TzOffset => "tz-offset",
             Builtin::Rd => "rd",
             Builtin::Rdl => "rdl",
             Builtin::Rdb => "rdb",
@@ -881,6 +887,11 @@ impl Builtin {
         // no Result wrapper). Appended last to preserve every existing on-wire
         // tag.
         Builtin::Where,
+        // `tz-offset tz:t epoch:n > R n t` — UTC offset in seconds for the
+        // given IANA timezone at the given Unix epoch. DST-aware via chrono-tz.
+        // Returns Err on unknown timezone name. Tree-bridge eligible (2-arg,
+        // no FnRef). Appended to preserve all prior on-wire tags.
+        Builtin::TzOffset,
     ];
 
     /// On-wire 8-bit tag for cross-engine builtin dispatch. See `ALL`.

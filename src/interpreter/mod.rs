@@ -4351,6 +4351,52 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             .unwrap_or(false);
         return Ok(Value::Bool(is));
     }
+    if builtin == Some(Builtin::TzOffset) && args.len() == 2 {
+        // tz-offset tz:t epoch:n > R n t
+        // Returns the UTC offset in seconds for the named IANA timezone at
+        // the given Unix epoch. DST transitions are handled by chrono-tz:
+        // the offset reflects the actual local time rule at that instant.
+        // Returns Err on unknown timezone name. Positive = east of UTC.
+        let tz_name = match &args[0] {
+            Value::Text(s) => s.clone(),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("tz-offset: first arg must be text tz name, got {:?}", other),
+                ));
+            }
+        };
+        let epoch = match &args[1] {
+            Value::Number(n) => *n,
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!(
+                        "tz-offset: second arg must be number epoch, got {:?}",
+                        other
+                    ),
+                ));
+            }
+        };
+        let tz: chrono_tz::Tz = match tz_name.parse() {
+            Ok(t) => t,
+            Err(_) => {
+                return Ok(Value::Err(Box::new(Value::Text(Arc::new(format!(
+                    "tz-offset: unknown timezone {:?}",
+                    tz_name.as_str()
+                ))))));
+            }
+        };
+        // Convert epoch seconds to a chrono::DateTime in the target tz.
+        // from_timestamp gives a UTC DateTime; with_timezone applies the tz rules.
+        // fix() on TzOffset yields a FixedOffset which carries local_minus_utc().
+        let secs = epoch as i64;
+        let utc_dt = chrono::DateTime::from_timestamp(secs, 0).unwrap_or_default();
+        let local_dt = utc_dt.with_timezone(&tz);
+        use chrono::offset::Offset as _;
+        let offset_secs = local_dt.offset().fix().local_minus_utc() as f64;
+        return Ok(Value::Ok(Box::new(Value::Number(offset_secs))));
+    }
     if builtin == Some(Builtin::Rd) && (args.len() == 1 || args.len() == 2) {
         let path = match &args[0] {
             Value::Text(s) => s.clone(),
