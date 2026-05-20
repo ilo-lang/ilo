@@ -1641,6 +1641,98 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             x.into_iter().map(Value::Number).collect(),
         )));
     }
+    if builtin == Some(Builtin::Lstsq) && args.len() == 2 {
+        // Ordinary least squares via the normal equations:
+        //   b = solve (Xᵀ X) (Xᵀ y)
+        // Composes existing transpose / matmul / solve helpers so VM and
+        // Cranelift inherit semantics through the tree bridge with no new
+        // opcodes. Numerically inferior to QR/SVD for ill-conditioned
+        // designs — agents who need that should reach for a dedicated
+        // library; lstsq covers the well-conditioned OLS happy path that
+        // collapses the 5-line recipe into one call.
+        let xm = matrix_from_value(&args[0], "lstsq")?;
+        let ys = vec_from_value(&args[1], "lstsq")?;
+        let n_rows = xm.len();
+        if n_rows == 0 {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                "lstsq: empty design matrix".to_string(),
+            ));
+        }
+        let n_cols = xm[0].len();
+        if n_cols == 0 {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                "lstsq: design matrix has zero columns".to_string(),
+            ));
+        }
+        for row in &xm {
+            if row.len() != n_cols {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!(
+                        "lstsq: ragged design matrix (expected {n_cols} cols, got {})",
+                        row.len()
+                    ),
+                ));
+            }
+        }
+        if ys.len() != n_rows {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!(
+                    "lstsq: ys length {} must match design matrix row count {n_rows}",
+                    ys.len()
+                ),
+            ));
+        }
+        if n_cols > n_rows {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!(
+                    "lstsq: underdetermined system ({n_cols} columns > {n_rows} rows); normal-equation OLS requires rows >= columns"
+                ),
+            ));
+        }
+        // Xᵀ — n_cols × n_rows
+        let mut xt: Vec<Vec<f64>> = vec![vec![0.0; n_rows]; n_cols];
+        for (i, row) in xm.iter().enumerate() {
+            for (j, &v) in row.iter().enumerate() {
+                xt[j][i] = v;
+            }
+        }
+        // XᵀX — n_cols × n_cols
+        let mut xtx: Vec<Vec<f64>> = vec![vec![0.0; n_cols]; n_cols];
+        for i in 0..n_cols {
+            for j in 0..n_cols {
+                let mut s = 0.0;
+                for k in 0..n_rows {
+                    s += xt[i][k] * xm[k][j];
+                }
+                xtx[i][j] = s;
+            }
+        }
+        // Xᵀy — length n_cols
+        let mut xty: Vec<f64> = vec![0.0; n_cols];
+        for i in 0..n_cols {
+            let mut s = 0.0;
+            for k in 0..n_rows {
+                s += xt[i][k] * ys[k];
+            }
+            xty[i] = s;
+        }
+        let (lu, piv, _det, singular) = lu_decompose(xtx);
+        if singular {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                "lstsq: normal-equation matrix XᵀX is singular (rank-deficient design)".to_string(),
+            ));
+        }
+        let x = lu_solve(&lu, &piv, &xty);
+        return Ok(Value::List(Arc::new(
+            x.into_iter().map(Value::Number).collect(),
+        )));
+    }
     if builtin == Some(Builtin::Str) {
         if args.len() != 1 {
             return Err(RuntimeError::new(

@@ -230,7 +230,7 @@ Short builtin names are precious surface and ilo reserves a stable subset of the
 
 All builtin aliases (`head`, `length`, `filter`, `concat`, `tail`, `sort`, `reverse`, `flatten`, `contains`, `group`, `average`, `print`, `trim`, `split`, `format`, `regex`, `read`, `readlines`, `readbuf`, `write`, `writelines`, `lset`, `floor`, `ceil`, `round`, `rand`, `random`, `rng`, `string`, `number`, `slice`, `unique`, `fold`) are reserved with the same shadow-prevention semantics as canonical builtin names. Binding an alias name or using it as a user-function name fires `ILO-P011` at parse time with the canonical form in the diagnostic, since the call-site rewrite to the canonical builtin silently bypasses any user binding of the same name. Previously only `rng` and `rand` had individual guards; as of 0.12.1 every alias in the table above is covered by a single `resolve_alias` check, so new aliases automatically inherit the protection when added to the table.
 
-Longer builtin names (`acos`, `asin`, `atan`, `flat`, `take`, `drop`, `mget`, `mset`, `mmap`, `prnt`, `mapr`, `solve`, `clamp`, `cumsum`, `cprod`, `median`, `matmul`, `range`, `window`, `chunks`, `walk`, `glob`, `prod`, `fsize`, `mtime`, `isfile`, `isdir`, …) are also reserved and rejected by `ILO-P011`, but the short-name namespace above is where carry-forward scripts most often collide, so it gets explicit enumeration.
+Longer builtin names (`acos`, `asin`, `atan`, `flat`, `take`, `drop`, `mget`, `mset`, `mmap`, `prnt`, `mapr`, `solve`, `lstsq`, `clamp`, `cumsum`, `cprod`, `median`, `matmul`, `range`, `window`, `chunks`, `walk`, `glob`, `prod`, `fsize`, `mtime`, `isfile`, `isdir`, …) are also reserved and rejected by `ILO-P011`, but the short-name namespace above is where carry-forward scripts most often collide, so it gets explicit enumeration.
 
 **Forward-compatibility rule.** Future ilo releases add new builtins under names **4 characters or longer**. A 2-character name that is not on this list today is safe to use as a binding or function name and stays safe across releases. A 3-character name that is not on this list is _highly likely_ to stay safe but is not a hard promise - the 3-char surface is already dense, and a rare ergonomic win may justify an addition, called out in the changelog.
 
@@ -626,6 +626,7 @@ Called like functions, compiled to dedicated opcodes.
 | `solve a b` | solve `Ax = b` via LU with partial pivoting; errors on singular/non-square | `L n` |
 | `inv a` | matrix inverse; errors on singular/non-square | `L (L n)` |
 | `det a` | determinant; errors on non-square | `n` |
+| `lstsq xm ys` | ordinary least squares: returns coefficients `b` minimising `\|xm·b - ys\|²` via the normal equations (`solve (Xᵀ X) (Xᵀ y)`). Errors on rank-deficient design, underdetermined system (cols > rows), or row/length mismatch | `L n` |
 | `fft xs` | discrete FFT: real samples → `L [re, im]`; zero-padded to next power of 2 | `L (L n)` |
 | `ifft pairs` | inverse FFT; imaginary part dropped on return | `L n` |
 | `fmt2 x digits` | format number `x` to `digits` decimal places (half-to-even rounding; `digits` clamped to `0..=20`). Compose with `fmt` for template + precision: `fmt "x={}" (fmt2 v 2)` | `t` |
@@ -727,6 +728,7 @@ are decomposed into smaller units before formatting.
 ### Linear algebra
 
 `transpose`, `matmul`, `matvec`, `dot`, `solve`, `inv`, `det` operate on row-major matrices (`L (L n)`) and flat vectors (`L n`). `solve`, `inv`, `det` use LU decomposition with partial pivoting and raise on singular or non-square inputs. `matvec xm ys` is matrix-vector product as a flat vector; it skips the `flatten matmul xm (map (y:n>L n;[y]) ys)` ceremony needed to coerce a vector into a column matrix. These ship as host-vetted builtins because hand-rolled implementations risk silent precision loss.
+`transpose`, `matmul`, `dot`, `solve`, `inv`, `det`, `lstsq` operate on row-major matrices (`L (L n)`) and flat vectors (`L n`). `solve`, `inv`, `det` use LU decomposition with partial pivoting and raise on singular or non-square inputs. `lstsq` is a thin wrapper around the normal equations (`solve (Xᵀ X) (Xᵀ y)`) — closed-form OLS at the same precision tier as `solve`; numerically inferior to QR/SVD for ill-conditioned designs. These ship as host-vetted builtins because hand-rolled implementations risk silent precision loss.
 
 ### FFT
 
