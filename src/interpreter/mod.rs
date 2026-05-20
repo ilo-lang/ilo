@@ -1839,6 +1839,17 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             )),
         };
     }
+    if builtin == Some(Builtin::DtparseRel) && args.len() == 2 {
+        return match (&args[0], &args[1]) {
+            (Value::Text(phrase), Value::Number(now_epoch)) => {
+                Ok(dtparse_rel(phrase.as_str(), *now_epoch))
+            }
+            _ => Err(RuntimeError::new(
+                "ILO-R009",
+                "dtparse-rel requires text phrase and number epoch".to_string(),
+            )),
+        };
+    }
     if builtin == Some(Builtin::Rnd) {
         if args.is_empty() {
             return Ok(Value::Number(fastrand::f64()));
@@ -6580,6 +6591,228 @@ pub(crate) fn get_many_fetch(urls: &[String]) -> Vec<Value> {
         }
     }
     results
+}
+
+/// Parse a relative-date phrase into a Unix epoch (seconds), anchored at
+/// `now_epoch`.
+///
+/// Supports:
+///   today / yesterday / tomorrow
+///   N days ago / in N days
+///   N weeks ago / in N weeks
+///   N months ago / in N months
+///   last <weekday> / next <weekday> / this <weekday>
+///   ISO-8601 date literals (YYYY-MM-DD) — delegates to chrono
+///
+/// Returns `Value::Ok(Number(epoch))` on success, `Value::Err(Text(msg))` on
+/// failure. Never panics.
+fn dtparse_rel(phrase: &str, now_epoch: f64) -> Value {
+    use chrono::{Datelike, Duration, NaiveDate, TimeZone, Utc, Weekday};
+
+    let make_ok = |epoch: i64| Value::Ok(Box::new(Value::Number(epoch as f64)));
+    let make_err = |msg: String| Value::Err(Box::new(Value::Text(Arc::new(msg))));
+
+    // Anchor date (UTC, floored to whole seconds).
+    let now_secs = if now_epoch.is_finite() {
+        now_epoch as i64
+    } else {
+        return make_err(format!(
+            "dtparse-rel: now epoch is not finite ({now_epoch})"
+        ));
+    };
+    let now_dt = match Utc.timestamp_opt(now_secs, 0).single() {
+        Some(dt) => dt,
+        None => return make_err(format!("dtparse-rel: now epoch out of range ({now_secs})")),
+    };
+    let today: NaiveDate = now_dt.date_naive();
+
+    let s = phrase.trim().to_ascii_lowercase();
+
+    // Simple keywords.
+    if s == "today" {
+        let epoch = today.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp();
+        return make_ok(epoch);
+    }
+    if s == "yesterday" {
+        let d = today - Duration::days(1);
+        return make_ok(d.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp());
+    }
+    if s == "tomorrow" {
+        let d = today + Duration::days(1);
+        return make_ok(d.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp());
+    }
+
+    // Helper: parse a weekday name (long or short).
+    fn parse_weekday(name: &str) -> Option<Weekday> {
+        match name {
+            "monday" | "mon" => Some(Weekday::Mon),
+            "tuesday" | "tue" => Some(Weekday::Tue),
+            "wednesday" | "wed" => Some(Weekday::Wed),
+            "thursday" | "thu" => Some(Weekday::Thu),
+            "friday" | "fri" => Some(Weekday::Fri),
+            "saturday" | "sat" => Some(Weekday::Sat),
+            "sunday" | "sun" => Some(Weekday::Sun),
+            _ => None,
+        }
+    }
+
+    // "last <weekday>" — the most recent past occurrence, never today.
+    if let Some(day_name) = s.strip_prefix("last ") {
+        return match parse_weekday(day_name.trim()) {
+            None => make_err(format!("dtparse-rel: unknown weekday '{day_name}'")),
+            Some(target) => {
+                let today_num = today.weekday().num_days_from_monday(); // 0=Mon
+                let target_num = target.num_days_from_monday();
+                // Days back: at least 1, at most 7.
+                let diff = (today_num + 7 - target_num) % 7;
+                let diff = if diff == 0 { 7 } else { diff };
+                let d = today - Duration::days(diff as i64);
+                make_ok(d.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp())
+            }
+        };
+    }
+
+    // "next <weekday>" — the next future occurrence, never today.
+    if let Some(day_name) = s.strip_prefix("next ") {
+        return match parse_weekday(day_name.trim()) {
+            None => make_err(format!("dtparse-rel: unknown weekday '{day_name}'")),
+            Some(target) => {
+                let today_num = today.weekday().num_days_from_monday();
+                let target_num = target.num_days_from_monday();
+                let diff = (target_num + 7 - today_num) % 7;
+                let diff = if diff == 0 { 7 } else { diff };
+                let d = today + Duration::days(diff as i64);
+                make_ok(d.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp())
+            }
+        };
+    }
+
+    // "this <weekday>" — the occurrence within the current week (Mon-Sun).
+    // If today is that weekday, returns today. If already past in this week,
+    // returns that past day. If not yet reached, returns the future day.
+    if let Some(day_name) = s.strip_prefix("this ") {
+        return match parse_weekday(day_name.trim()) {
+            None => make_err(format!("dtparse-rel: unknown weekday '{day_name}'")),
+            Some(target) => {
+                let today_num = today.weekday().num_days_from_monday() as i64;
+                let target_num = target.num_days_from_monday() as i64;
+                let d = today + Duration::days(target_num - today_num);
+                make_ok(d.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp())
+            }
+        };
+    }
+
+    // "N day(s) ago" / "in N day(s)"
+    let ago_days = s
+        .strip_suffix(" days ago")
+        .or_else(|| s.strip_suffix(" day ago"));
+    if let Some(rest) = ago_days {
+        return match rest.trim().parse::<i64>() {
+            Ok(n) if n >= 0 => {
+                let d = today - Duration::days(n);
+                make_ok(d.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp())
+            }
+            _ => make_err(format!("dtparse-rel: invalid day count in '{phrase}'")),
+        };
+    }
+    let in_days = s
+        .strip_prefix("in ")
+        .and_then(|r| r.strip_suffix(" days").or_else(|| r.strip_suffix(" day")));
+    if let Some(rest) = in_days {
+        return match rest.trim().parse::<i64>() {
+            Ok(n) if n >= 0 => {
+                let d = today + Duration::days(n);
+                make_ok(d.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp())
+            }
+            _ => make_err(format!("dtparse-rel: invalid day count in '{phrase}'")),
+        };
+    }
+
+    // "N week(s) ago" / "in N week(s)"
+    let ago_weeks = s
+        .strip_suffix(" weeks ago")
+        .or_else(|| s.strip_suffix(" week ago"));
+    if let Some(rest) = ago_weeks {
+        return match rest.trim().parse::<i64>() {
+            Ok(n) if n >= 0 => {
+                let d = today - Duration::weeks(n);
+                make_ok(d.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp())
+            }
+            _ => make_err(format!("dtparse-rel: invalid week count in '{phrase}'")),
+        };
+    }
+    let in_weeks = s
+        .strip_prefix("in ")
+        .and_then(|r| r.strip_suffix(" weeks").or_else(|| r.strip_suffix(" week")));
+    if let Some(rest) = in_weeks {
+        return match rest.trim().parse::<i64>() {
+            Ok(n) if n >= 0 => {
+                let d = today + Duration::weeks(n);
+                make_ok(d.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp())
+            }
+            _ => make_err(format!("dtparse-rel: invalid week count in '{phrase}'")),
+        };
+    }
+
+    // "N month(s) ago" / "in N month(s)"
+    // Month arithmetic: add/subtract calendar months, clamping to last day of month.
+    fn add_months(date: NaiveDate, months: i32) -> Option<NaiveDate> {
+        let total_months = date.year() * 12 + (date.month() as i32 - 1) + months;
+        let y = total_months.div_euclid(12);
+        let m = (total_months.rem_euclid(12) + 1) as u32;
+        let max_day = days_in_month(y, m);
+        let d = date.day().min(max_day);
+        NaiveDate::from_ymd_opt(y, m, d)
+    }
+    fn days_in_month(year: i32, month: u32) -> u32 {
+        let next = if month == 12 {
+            NaiveDate::from_ymd_opt(year + 1, 1, 1)
+        } else {
+            NaiveDate::from_ymd_opt(year, month + 1, 1)
+        };
+        (next.unwrap() - NaiveDate::from_ymd_opt(year, month, 1).unwrap()).num_days() as u32
+    }
+
+    let ago_months = s
+        .strip_suffix(" months ago")
+        .or_else(|| s.strip_suffix(" month ago"));
+    if let Some(rest) = ago_months {
+        return match rest.trim().parse::<i32>() {
+            Ok(n) if n >= 0 => match add_months(today, -n) {
+                Some(d) => make_ok(d.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp()),
+                None => make_err(format!(
+                    "dtparse-rel: month arithmetic out of range in '{phrase}'"
+                )),
+            },
+            _ => make_err(format!("dtparse-rel: invalid month count in '{phrase}'")),
+        };
+    }
+    let in_months = s.strip_prefix("in ").and_then(|r| {
+        r.strip_suffix(" months")
+            .or_else(|| r.strip_suffix(" month"))
+    });
+    if let Some(rest) = in_months {
+        return match rest.trim().parse::<i32>() {
+            Ok(n) if n >= 0 => match add_months(today, n) {
+                Some(d) => make_ok(d.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp()),
+                None => make_err(format!(
+                    "dtparse-rel: month arithmetic out of range in '{phrase}'"
+                )),
+            },
+            _ => make_err(format!("dtparse-rel: invalid month count in '{phrase}'")),
+        };
+    }
+
+    // ISO-8601 date literal passthrough (YYYY-MM-DD).
+    if let Ok(nd) = chrono::NaiveDate::parse_from_str(phrase.trim(), "%Y-%m-%d") {
+        let epoch = nd.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp();
+        return make_ok(epoch);
+    }
+
+    make_err(format!(
+        "dtparse-rel: unrecognised phrase '{phrase}' — expected: today/yesterday/tomorrow, \
+N days/weeks/months ago, in N days/weeks/months, last/next/this <weekday>, or YYYY-MM-DD"
+    ))
 }
 
 #[cfg(test)]

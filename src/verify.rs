@@ -398,6 +398,7 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("sleep", &["n"], "_"),
     ("dtfmt", &["n", "t"], "R t t"),
     ("dtparse", &["t", "t"], "R n t"),
+    ("dtparse-rel", &["t", "n"], "R n t"),
     ("env", &["t"], "R t t"),
     ("env-all", &[], "R (M t t) t"),
     ("jpth", &["t", "t"], "R ? t"),
@@ -1928,6 +1929,33 @@ fn builtin_check_args(
                     function: func_ctx.to_string(),
                     message: format!("'dtparse' second arg must be t (format), got {arg}"),
                     hint: None,
+                    span,
+                    is_warning: false,
+                });
+            }
+            (Ty::Result(Box::new(Ty::Number), Box::new(Ty::Text)), errors)
+        }
+        "dtparse-rel" => {
+            if let Some(arg) = arg_types.first()
+                && !compatible(arg, &Ty::Text)
+            {
+                errors.push(VerifyError {
+                    code: "ILO-T013",
+                    function: func_ctx.to_string(),
+                    message: format!("'dtparse-rel' first arg must be t (phrase), got {arg}"),
+                    hint: None,
+                    span,
+                    is_warning: false,
+                });
+            }
+            if let Some(arg) = arg_types.get(1)
+                && !compatible(arg, &Ty::Number)
+            {
+                errors.push(VerifyError {
+                    code: "ILO-T013",
+                    function: func_ctx.to_string(),
+                    message: format!("'dtparse-rel' second arg must be n (now epoch), got {arg}"),
+                    hint: Some("pass the current epoch: dtparse-rel phrase (now)".to_string()),
                     span,
                     is_warning: false,
                 });
