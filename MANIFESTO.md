@@ -29,6 +29,8 @@ A named argument like `amount: 42` costs more tokens than positional `42`. We in
 **What the agent cares about:** "How many tokens will this cost me end-to-end?"
 **How this helps:** The language is as terse as possible *without increasing retry rate*. Where there's a tradeoff between generation cost and error rate, we optimise for total cost.
 
+We measured the tokenizer; `.@` saves one token per filename.
+
 **Prefix notation** eliminates parentheses and saves tokens at every nesting level. `(a * b) + c` becomes `+*a b c` - 4 fewer characters, 1 fewer token. Deeper nesting saves more: `((a + b) * c) >= 100` becomes `>=*+a b c 100` - 7 fewer characters, 3 fewer tokens. Across 25 expression patterns, prefix notation saves 22% of tokens and 42% of characters vs infix. See the [prefix-vs-infix benchmark](research/explorations/prefix-vs-infix/) for the full analysis.
 
 **Guards instead of if/else** eliminate nesting depth. In a traditional language, conditional logic stacks:
