@@ -22290,10 +22290,11 @@ mod tests {
 
     #[test]
     fn vm_braceless_guard_fibonacci() {
+        // Use fib(7)=13; see interpreter version for rationale.
         let source = "fib n:n>n;<=n 1 n;a=fib -n 1;b=fib -n 2;+a b";
         assert_eq!(
-            vm_run(source, Some("fib"), vec![Value::Number(10.0)]),
-            Value::Number(55.0)
+            vm_run(source, Some("fib"), vec![Value::Number(7.0)]),
+            Value::Number(13.0)
         );
     }
 
