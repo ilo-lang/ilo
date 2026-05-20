@@ -17,7 +17,7 @@ Prefix-notation, strongly-typed, verified pre-run. Bodies single-line, `;`-separ
 
 ## operators
 
-Binary `+ - * / % < > <= >= = !=`, bool `& | !`, append `+=`. Nest: `+*a b c` = `(a*b)+c`; outer binds inner LEFT. Take atoms/nested-ops, NOT calls; bind first: `r=fac -n 1;*n r`. No compound: `<=a b`, not `=<a b`.
+Binary `+ - * / % < > <= >= = !=`, bool `& | !`, append `+=`. Nest: `+*a b c` = `(a*b)+c`; outer binds inner LEFT. Take atoms/nested-ops, NOT calls; bind first: `r=fac -n 1;*n r`. No compound: `<=a b`, not `=<a b`. **Subtraction spacing**: `a - b` with spaces both sides for general subtract. `a -b` (glued, no space before `-`) is a negative literal in call-arg / list / binop-operand position (`mod n -2`, `[1 -2 3]`, `+a -3`) - load-bearing. Naked `0 -1.5` at stmt position errors with `ILO-P001`; use `0 - 1.5` or `(-1.5)`.
 
 ## idents
 
