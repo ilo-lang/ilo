@@ -2917,6 +2917,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
     }
     if builtin == Some(Builtin::RandBytes) && args.len() == 1 {
         return eval_rand_bytes(&args[0]);
+    }
     if builtin == Some(Builtin::Seed) && args.len() == 1 {
         return match &args[0] {
             Value::Number(n) => {

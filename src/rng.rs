@@ -80,7 +80,7 @@ pub fn normal(mu: f64, sigma: f64) -> f64 {
     }
     // Avoid u1 == 0 so ln() stays finite.
     let mut u1 = f64();
-    while u1 <= std::f64::MIN_POSITIVE {
+    while u1 <= f64::MIN_POSITIVE {
         u1 = f64();
     }
     let u2 = f64();
