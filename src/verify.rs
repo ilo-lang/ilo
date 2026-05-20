@@ -417,6 +417,7 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("fmt", &["t"], "t"), // variadic: fmt template arg1 arg2 … — checked specially
     ("fmt2", &["n", "n"], "t"),
     ("jpar", &["t"], "R ? t"),
+    ("jpar-list", &["t"], "R (L ?) t"),
     ("rdjl", &["t"], "L (R ? t)"),
     // Higher-order: map/flt/fld take a function ref as first arg (special-cased in builtin_check_args)
     ("map", &["fn", "list"], "list"),
@@ -1909,6 +1910,28 @@ fn builtin_check_args(
             }
             (
                 Ty::Result(Box::new(Ty::Unknown), Box::new(Ty::Text)),
+                errors,
+            )
+        }
+        "jpar-list" => {
+            if let Some(arg) = arg_types.first()
+                && !compatible(arg, &Ty::Text)
+            {
+                errors.push(VerifyError {
+                    code: "ILO-T013",
+                    function: func_ctx.to_string(),
+                    message: format!("'jpar-list' expects t, got {arg}"),
+                    hint: None,
+                    span,
+                    is_warning: false,
+                });
+            }
+            // Returns R (L ?) t — unwrapping with ! yields L ? which foreach accepts.
+            (
+                Ty::Result(
+                    Box::new(Ty::List(Box::new(Ty::Unknown))),
+                    Box::new(Ty::Text),
+                ),
                 errors,
             )
         }
@@ -7581,6 +7604,30 @@ mod tests {
         assert!(
             errs.iter()
                 .any(|e| e.code == "ILO-T013" && e.message.contains("jpar"))
+        );
+    }
+
+    #[test]
+    fn jpar_list_foreach_ok() {
+        // P0b/5f: jpar-list! returns R (L ?) t; unwrapped ok is L ? which foreach accepts.
+        assert!(
+            parse_and_verify("f body:t>R t t;xs=jpar-list! body;@x xs{prnt x};~\"ok\"").is_ok()
+        );
+    }
+
+    #[test]
+    fn jpar_list_foreach_inline_ok() {
+        // P0b/5f: inline form — @x (jpar-list! body) — also type-checks.
+        assert!(parse_and_verify("f body:t>R t t;@x (jpar-list! body){prnt x};~\"ok\"").is_ok());
+    }
+
+    #[test]
+    fn jpar_list_wrong_type() {
+        // jpar-list expects t; passing n should error
+        let errs = parse_and_verify("f x:n>R n t;jpar-list x").unwrap_err();
+        assert!(
+            errs.iter()
+                .any(|e| e.code == "ILO-T013" && e.message.contains("jpar-list"))
         );
     }
 

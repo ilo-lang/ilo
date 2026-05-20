@@ -21,7 +21,7 @@ Prefix-call: `name arg1 arg2 ...`. Cross-engine unless noted.
 
 ## JSON
 
-`jpar s` parse, `jpth s path` dot-path (typed), `jkeys s path` sorted object keys, `jdmp v` serialize. Numeric keys stringified in `jdmp`.
+`jpar s` parse (`R _ t`), `jpar-list s` parse and assert array (`R (L _) t` — use when you know the response is an array: `@x (jpar-list! body){...}`), `jpth s path` dot-path (typed), `jkeys s path` sorted object keys, `jdmp v` serialize. Numeric keys stringified in `jdmp`.
 
 ## Environment / process
 

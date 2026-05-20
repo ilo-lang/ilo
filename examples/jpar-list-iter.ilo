@@ -1,0 +1,19 @@
+-- jpar-list: parse a JSON array and iterate it with @.
+-- Returns R (L _) t so jpar-list! unwraps directly to a list that foreach accepts.
+-- Fixes P0b/5f: previously @x (jpar! body) would fail type-check when the
+-- enclosing function did not return R, forcing awkward workarounds.
+
+sum-fees body:t>R n t;fees=jpar-list! body;total=0;@x fees{total=+total x.fee};~total
+
+first-item body:t>R _ t;xs=jpar-list! body;~hd xs
+
+count-items body:t>R n t;xs=jpar-list! body;~len xs
+
+-- run: sum-fees [{"fee":50},{"fee":100}]
+-- out: 150
+
+-- run: first-item [1,2,3]
+-- out: 1
+
+-- run: count-items [10,20,30,40]
+-- out: 4

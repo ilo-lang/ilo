@@ -991,6 +991,34 @@ fn jpar_invalid_errors() {
     }
 }
 
+// P0b/5f: jpar-list — typed array variant, cross-engine
+#[test]
+fn jpar_list_array_count() {
+    // jpar-list! on a JSON array -> L _; len gives element count.
+    let src = "f>R n t;xs=jpar-list! \"[10,20,30]\";~len xs";
+    for e in ENGINES_ALL {
+        assert_eq!(run_ok(e, src, "f"), "3");
+    }
+}
+
+#[test]
+fn jpar_list_foreach_cross_engine() {
+    // @x (jpar-list! ...) type-checks and iterates correctly on every engine.
+    let src = "f>R n t;total=0;@x (jpar-list! \"[1,2,3]\"){total=+total x};~total";
+    for e in ENGINES_ALL {
+        assert_eq!(run_ok(e, src, "f"), "6");
+    }
+}
+
+#[test]
+fn jpar_list_non_array_err() {
+    // jpar-list on a non-array JSON value returns Err.
+    let src = "f>t;r=jpar-list \"{\\\"a\\\":1}\";?r{~_:\"ok\";^_:\"err\"}";
+    for e in ENGINES_ALL {
+        assert_eq!(run_ok(e, src, "f"), "err");
+    }
+}
+
 // ── env ────────────────────────────────────────────────────────────────
 
 #[test]

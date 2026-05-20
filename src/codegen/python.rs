@@ -714,6 +714,21 @@ fn emit_expr(out: &mut String, level: usize, expr: &Expr) -> String {
                     call
                 };
             }
+            if function == "jpar-list" && args.len() == 1 {
+                let arg = emit_expr(out, level, &args[0]);
+                // Map Python json types to the same names the tree/VM/JIT
+                // backends use (object/null/bool/number/string), so error
+                // text is identical across backends.
+                let call = format!(
+                    "(lambda s: (lambda v: (\"ok\", v) if isinstance(v, list) else (\"err\", \"jpar-list: expected JSON array, got \" + ({{dict: \"object\", type(None): \"null\", bool: \"bool\", int: \"number\", float: \"number\", str: \"string\"}}.get(type(v), type(v).__name__))))(__import__('json').loads(s)))({})",
+                    arg
+                );
+                return if unwrap.is_any() {
+                    format!("_ilo_unwrap({})", call)
+                } else {
+                    call
+                };
+            }
 
             // Path manipulation builtins — pure-text Unix forward-slash
             // semantics. POSIX dirname/basename + list-form pathjoin. See

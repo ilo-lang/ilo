@@ -148,6 +148,7 @@ struct HelperFuncs {
     jpth: FuncId,
     jdmp: FuncId,
     jpar: FuncId,
+    jpar_list: FuncId,
     rdjl: FuncId,
     call: FuncId,
     // Type predicates
@@ -366,6 +367,7 @@ fn register_helpers(builder: &mut JITBuilder) {
         ("jit_jpth", jit_jpth as *const u8),
         ("jit_jdmp", jit_jdmp as *const u8),
         ("jit_jpar", jit_jpar as *const u8),
+        ("jit_jpar_list", jit_jpar_list as *const u8),
         ("jit_rdjl", jit_rdjl as *const u8),
         ("jit_call", jit_call as *const u8),
         // Type predicates
@@ -561,6 +563,7 @@ fn declare_all_helpers(module: &mut JITModule) -> HelperFuncs {
         jpth: declare_helper(module, "jit_jpth", 3, 1),
         jdmp: declare_helper(module, "jit_jdmp", 1, 1),
         jpar: declare_helper(module, "jit_jpar", 2, 1),
+        jpar_list: declare_helper(module, "jit_jpar_list", 2, 1),
         rdjl: declare_helper(module, "jit_rdjl", 2, 1),
         call: declare_helper(module, "jit_call", 4, 1),
         // Type predicates
@@ -1216,7 +1219,7 @@ fn compile_function_body(
                 | OP_SETUNION | OP_SETINTER | OP_SETDIFF
                 | OP_INV | OP_SOLVE
                 | OP_SPL | OP_CAT | OP_GET | OP_POST | OP_GETH | OP_POSTH | OP_GETMANY
-                | OP_ENV | OP_JPTH | OP_JDMP | OP_JPAR | OP_RDJL
+                | OP_ENV | OP_JPTH | OP_JDMP | OP_JPAR | OP_JPAR_LIST | OP_RDJL
                 | OP_MAPNEW | OP_MGET | OP_MSET | OP_MDEL | OP_MKEYS | OP_MVALS | OP_MPAIRS
                 | OP_LISTNEW | OP_LISTAPPEND
                 | OP_RECNEW | OP_RECWITH | OP_RECNEW_EMPTY | OP_RECCOPY
