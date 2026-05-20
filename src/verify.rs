@@ -470,6 +470,10 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     // dur-fmt is total — always produces Text.
     ("dur-parse", &["t"], "R n t"),
     ("dur-fmt", &["n"], "t"),
+    // Result unwrap with default. Per-builtin arm below handles the detailed
+    // type check (ok-type vs default must match); this entry feeds arity +
+    // suggestion paths.
+    ("default-on-err", &["R any t", "any"], "any"),
 ];
 
 fn builtin_arity(name: &str) -> Option<usize> {
@@ -2547,6 +2551,54 @@ fn builtin_check_args(
             }
             (val_ty, errors)
         }
+        "default-on-err" => {
+            // default-on-err r d → T (the Ok-type of r).
+            // First arg must be R T E; default must match T so the return
+            // shape is `T`, never `O T` or `R T E`.
+            let ok_ty = match arg_types.first() {
+                Some(Ty::Result(ok, _)) => *ok.clone(),
+                Some(Ty::Unknown) | None => Ty::Unknown,
+                Some(other) => {
+                    // Hint only steers to `??` when the agent reached for the
+                    // wrong unwrap for an Optional. For any other type the right
+                    // fix is to make the first arg a Result, not to switch op.
+                    let hint = if matches!(other, Ty::Optional(_)) {
+                        Some("use `?? v d` for Optional (O T), not `default-on-err` (R T E)".into())
+                    } else {
+                        None
+                    };
+                    errors.push(VerifyError {
+                        code: "ILO-T040",
+                        function: func_ctx.to_string(),
+                        message: format!(
+                            "'default-on-err' expects R T E as first argument, got {other}"
+                        ),
+                        hint,
+                        span,
+                        is_warning: false,
+                    });
+                    Ty::Unknown
+                }
+            };
+            if let (Some(def_ty), false) = (arg_types.get(1), matches!(ok_ty, Ty::Unknown))
+                && !compatible(def_ty, &ok_ty)
+            {
+                // ILO-T042: distinct from ILO-T040 (which is "first arg shape
+                // wrong"). T042 fires when the Ok type is known but the default
+                // doesn't match it, so the agent can target the correct arg.
+                errors.push(VerifyError {
+                    code: "ILO-T042",
+                    function: func_ctx.to_string(),
+                    message: format!(
+                        "'default-on-err' default must match Ok type {ok_ty}, got {def_ty}"
+                    ),
+                    hint: None,
+                    span,
+                    is_warning: false,
+                });
+            }
+            (ok_ty, errors)
+        }
         "mset" => {
             // mset map key val → map (same key type as input map, value type
             // inferred from the third arg if not previously known).
@@ -4470,6 +4522,27 @@ impl VerifyContext {
             Expr::NilCoalesce { value, default } => {
                 let val_ty = self.infer_expr(func, scope, value, span);
                 let def_ty = self.infer_expr(func, scope, default, span);
+                // Emit a diagnostic when the left-hand side is a Result type.
+                // The single most common agent mistake: `??num s 0` where `num`
+                // returns `R n t`, not `O n`. `??` is nil-coalesce for Optional;
+                // for Result use `default-on-err r d`.
+                //
+                // Intentionally NOT firing on `Ty::Unknown`: type-variable
+                // params and `_`-typed values can carry either Optional or
+                // Result, so a hint here would be a false positive on generic
+                // code. The match below only triggers on a concrete
+                // `Ty::Result(..)` for the same reason.
+                if let Ty::Result(_, _) = &val_ty {
+                    self.err(
+                        "ILO-T041",
+                        func,
+                        "`??` is nil-coalesce for `O T` (Optional), not `R T E` (Result)".into(),
+                        Some(
+                            "use `default-on-err r d` to unwrap a Result with a fallback, or `?r{~v:v ^_:default}` for full control".into(),
+                        ),
+                        Some(span),
+                    );
+                }
                 match val_ty {
                     Ty::Nil => def_ty,
                     Ty::Optional(inner) => *inner,

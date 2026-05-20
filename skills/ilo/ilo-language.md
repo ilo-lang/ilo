@@ -13,7 +13,7 @@ Prefix-notation, strongly-typed, verified pre-run. Bodies single-line, `;`-separ
 
 ## types
 
-`n` num, `t` text, `b` bool, `_` nil/any. `L n` list, `M t n` map, `R n t` result, `O n` optional, `S a b c` sum (closed, runtime `t`), `F n t` fn-type. Named: `order`. Type vars: any letter except `n t b`. `?? x d` nil-coalesce; unwraps `O T`.
+`n` num, `t` text, `b` bool, `_` nil/any. `L n` list, `M t n` map, `R n t` result, `O n` optional, `S a b c` sum (closed, runtime `t`), `F n t` fn-type. Named: `order`. Type vars: any letter except `n t b`. `?? x d` nil-coalesce; unwraps `O T` only. For `R T E` use `default-on-err r d`.
 
 ## operators
 
@@ -33,7 +33,7 @@ Flat early returns at statement: `cls sp:n>t;>=sp 1000 "gold";>=sp 500 "silver";
 
 ## results
 
-`div a:n b:n>R n t;=b 0 ^"divide by zero";~/a b`. `!` auto-unwraps in `R`-fns (`d=get! url`). `!!` panic-unwraps on `^e`/`nil`.
+`div a:n b:n>R n t;=b 0 ^"divide by zero";~/a b`. `!` auto-unwraps in `R`-fns (`d=get! url`). `!!` panic-unwraps on `^e`/`nil`. `default-on-err r d` unwraps `R T E` to `T` with `d` on Err (Result mirror of `??`; use when the error payload is unused).
 
 ## loops
 

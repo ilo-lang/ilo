@@ -2230,6 +2230,21 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             )),
         };
     }
+    if builtin == Some(Builtin::DefaultOnErr) && args.len() == 2 {
+        // default-on-err r d — unwrap R T E to T, returning d on Err.
+        // Mirror of `??` for Result. Pure: no I/O, no FnRef.
+        return match &args[0] {
+            Value::Ok(inner) => Ok(*inner.clone()),
+            Value::Err(_) => Ok(args[1].clone()),
+            other => Err(RuntimeError::new(
+                "ILO-R009",
+                format!(
+                    "default-on-err: first argument must be R T E (Ok or Err), got {:?}",
+                    other
+                ),
+            )),
+        };
+    }
     if builtin == Some(Builtin::Lst) && args.len() == 3 {
         let idx = match &args[1] {
             Value::Number(n) => {

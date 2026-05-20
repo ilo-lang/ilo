@@ -549,6 +549,7 @@ Called like functions, compiled to dedicated opcodes.
 | `fld fn xs init` | left fold: `fn (fn (fn init x0) x1) ...` | accumulator |
 | `flatmap fn xs` | map then flatten one level | `L b` |
 | `mapr fn xs` | map with short-circuit Result propagation: collects Ok values, returns first Err | `R (L b) e` |
+| `default-on-err r d` | unwrap `R T E` to `T`, returning `d` if Err; verifier requires `d` matches Ok type. Mirror of `??` for Result (`??` is nil-coalesce for `O T` only - use `default-on-err` for Result). Prefer over `?r{~v:v;^_:d}` when no error payload is needed. ILO-T040 when first arg is not `R T E` (hint steers at `??` only when first arg is Optional); ILO-T042 when the default's type doesn't match the Ok type; ILO-T041 when `??` is used on a Result. T041 is suppressed when the lhs type is `Unknown` (e.g. type-variable params) to avoid false positives on generic code | `T` |
 | `partition fn xs` | split list into `[passing, failing]` by predicate | `L (L a)` |
 | `chunks n xs` | non-overlapping chunks of size `n` (final chunk may be shorter) | `L (L a)` |
 | `window n xs` | sliding windows of size `n` (drops trailing partial; empty if n > len) | `L (L a)` |

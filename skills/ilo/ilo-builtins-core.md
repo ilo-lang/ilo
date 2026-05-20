@@ -11,6 +11,10 @@ Prefix-call: `name arg1 arg2 ...`. Cross-engine unless noted.
 
 `len str num trm`. `num` returns `R n t`. `str v` coerces any value to text.
 
+## Result unwrap
+
+`default-on-err r d` - unwrap `R T E` to `T`, returning `d` if Err. Mirror of `??` for Result (`??` is nil-coalesce for `O T` only). `default-on-err (num s) 0` replaces `?r{~v:v;^_:0}`. Verifier enforces `d` matches Ok type (ILO-T040). Using `??` on a Result triggers ILO-T041 pointing here.
+
 ## List
 
 `len hd tl at lst take drop slc`; `rev srt rsrt unq uniqby flat grp zip enumerate range`; `chunks window flatmap partition`; `setunion setinter setdiff`. `at xs i` floors floats; negative indexes from end (same for `slc take drop`). Bounds clamp. `lst xs i v` = set index (alias `lset`); last element = `at xs -1`.

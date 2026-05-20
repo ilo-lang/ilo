@@ -1,0 +1,37 @@
+-- default-on-err r d — unwrap R T E to T, returning d if Err.
+--
+-- The Result mirror of `??` (nil-coalesce for O T). Use when you have a
+-- Result from num, rd, get, env, etc. and want a safe fallback without
+-- writing a full match arm:
+--
+--   v = default-on-err (num s) 0    -- 0 if s is not a number
+--
+-- Prefer over `?r{~v:v;^_:d}` when the error payload is unused.
+-- Verifier checks that d matches the Ok type (ILO-T040 on mismatch).
+-- Using `??` on a Result triggers ILO-T041 with a hint pointing here.
+
+-- Ok path: num "42" succeeds, inner value returned.
+ok-num>n;default-on-err (num "42") 0
+
+-- Err path: num "bad" fails, default 0 returned.
+err-num>n;default-on-err (num "bad") 0
+
+-- Ok path with text type.
+ok-text>t;r=~"hello";default-on-err r "fallback"
+
+-- Err path with text type.
+err-text>t;r=^"oops";default-on-err r "fallback"
+
+-- Chained: two calls, results used in arithmetic.
+chain>n;a=default-on-err (num "10") 0;b=default-on-err (num "bad") 0;+ a b
+
+-- run: ok-num
+-- out: 42
+-- run: err-num
+-- out: 0
+-- run: ok-text
+-- out: hello
+-- run: err-text
+-- out: fallback
+-- run: chain
+-- out: 10
