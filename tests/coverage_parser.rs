@@ -94,17 +94,17 @@ fn alias_decl() {
 
 #[test]
 fn use_decl_plain() {
-    ok("use \"lib/foo.ilo\"");
+    ok("use \"lib/foo.@\"");
 }
 
 #[test]
 fn use_decl_with_names() {
-    ok("use \"lib/foo.ilo\" [a b c]");
+    ok("use \"lib/foo.@\" [a b c]");
 }
 
 #[test]
 fn use_decl_with_empty_names_fails() {
-    fail_code("use \"lib/foo.ilo\" []", "ILO-P016");
+    fail_code("use \"lib/foo.@\" []", "ILO-P016");
 }
 
 #[test]
@@ -1006,7 +1006,7 @@ fn match_brace_ternary_in_expr_position() {
 
 #[test]
 fn use_decl_unclosed_brackets() {
-    fail_code("use \"x.ilo\" [a b", "ILO-P016");
+    fail_code("use \"x.@\" [a b", "ILO-P016");
 }
 
 #[test]
@@ -1257,7 +1257,7 @@ fn expr_call_with_text_arg() {
 
 #[test]
 fn use_decl_after_use_path_extra_tokens_ok() {
-    ok("use \"x.ilo\"\nmain>n;42");
+    ok("use \"x.@\"\nmain>n;42");
 }
 
 #[test]

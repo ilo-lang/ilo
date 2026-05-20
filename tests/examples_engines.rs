@@ -1,4 +1,4 @@
-// Multi-engine integration tests: runs all *.ilo examples that have
+// Multi-engine integration tests: runs all *.@ and *.ilo examples that have
 // -- run: / -- out: annotations through every available engine and
 // asserts that each engine produces the same output.
 //
@@ -29,7 +29,12 @@ fn find_examples() -> Vec<PathBuf> {
     paths
 }
 
-/// Collect *.ilo files from `dir` and one level of subdirectories.
+/// Check whether a path has an ilo source extension: `.@` or `.ilo`.
+fn is_ilo_source(p: &std::path::Path) -> bool {
+    p.extension().map(|e| e == "ilo" || e == "@").unwrap_or(false)
+}
+
+/// Collect *.@ and *.ilo files from `dir` and one level of subdirectories.
 /// This lets us group real-world harvested programs under `examples/apps/`
 /// while keeping the flat top-level layout for the language-feature examples.
 fn collect_ilo(dir: &std::path::Path, out: &mut Vec<PathBuf>) {
@@ -40,17 +45,17 @@ fn collect_ilo(dir: &std::path::Path, out: &mut Vec<PathBuf>) {
     for e in entries.filter_map(|e| e.ok()) {
         let p = e.path();
         if p.is_dir() {
-            // One level of recursion is enough for examples/apps/<group>/file.ilo
+            // One level of recursion is enough for examples/apps/<group>/file.@
             // and keeps the harness's traversal cost bounded.
             if let Ok(sub) = std::fs::read_dir(&p) {
                 for s in sub.filter_map(|s| s.ok()) {
                     let sp = s.path();
-                    if sp.extension().map(|e| e == "ilo").unwrap_or(false) {
+                    if is_ilo_source(&sp) {
                         out.push(sp);
                     }
                 }
             }
-        } else if p.extension().map(|e| e == "ilo").unwrap_or(false) {
+        } else if is_ilo_source(&p) {
             out.push(p);
         }
     }
@@ -137,7 +142,7 @@ fn engines() -> Vec<Engine> {
 #[test]
 fn examples_all_engines() {
     let files = find_examples();
-    assert!(!files.is_empty(), "no .ilo files found in examples/");
+    assert!(!files.is_empty(), "no source files found in examples/");
 
     let all_engines = engines();
     let mut total = 0;

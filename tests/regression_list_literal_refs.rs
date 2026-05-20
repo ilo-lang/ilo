@@ -41,7 +41,7 @@ fn check_all(engine: &str) {
     assert_eq!(run(engine, NUMERIC, "f"), "[1, 2, 3]", "numeric {engine}");
     assert_eq!(run(engine, COMMA_REFS, "f"), "[1, 2, 3]", "comma {engine}");
     // Refined rule (see `regression_listlit_fnref_greedy.rs` and
-    // `examples/listlit-fnref-greedy.ilo`): bare locals like `a`, `b`,
+    // `examples/listlit-fnref-greedy.@`): bare locals like `a`, `b`,
     // `c` (not in `fn_arity`) stay as list elements - the assertions
     // above pin that branch. A known function (builtin or declared fn)
     // followed by operands eats EXACTLY its arity, so `[str n]` or

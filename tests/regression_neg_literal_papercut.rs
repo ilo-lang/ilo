@@ -25,7 +25,7 @@ fn run(engine: &str, src: &str, args: &[&str]) -> String {
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let seq = COUNTER.fetch_add(1, Ordering::SeqCst);
     let path = std::env::temp_dir().join(format!(
-        "ilo_neg_papercut_{}_{}_{}.ilo",
+        "ilo_neg_papercut_{}_{}_{}.@",
         std::process::id(),
         seq,
         engine.trim_start_matches("--"),

@@ -2,7 +2,7 @@
 // the VM and Cranelift JIT silently nil-padded missing CLI args instead of
 // erroring (interactive-cli rerun7).
 //
-// Reproduces: `ilo main.ilo add` on a tracker script that declared
+// Reproduces: `ilo main.@ add` on a tracker script that declared
 // `add txt:t>R t t;...` returned exit 0 and wrote the literal string
 // "[ ] nil" to tasks.txt. v0.11.5 errored correctly via the tree
 // interpreter's arity guard; PR #336's listview reshape made
@@ -15,8 +15,8 @@
 //   - super-arity (extra positional)
 //   - happy path (exact arity) — unchanged behaviour
 //   - every engine (default, --run-tree, --vm, --jit)
-//   - inline (`ilo 'src' ...`) and file (`ilo main.ilo ...`)
-//   - auto-main file dispatch (`ilo main.ilo` with main taking args)
+//   - inline (`ilo 'src' ...`) and file (`ilo main.@ ...`)
+//   - auto-main file dispatch (`ilo main.@` with main taking args)
 //
 // The contract is "strict arity, every engine, loud ILO-R004". Sub-arity
 // must never coerce to nil. Super-arity must never silently drop extras.
@@ -125,7 +125,7 @@ fn inline_exact_arity_run_tree() {
 //
 // The interactive-cli tracker is a multi-function file that routes
 // subcommands through `main cmd:t arg:t>...`. Pre-fix:
-//   `ilo main.ilo add` resolved entry to `main`, parsed CLI as `["add"]`
+//   `ilo main.@ add` resolved entry to `main`, parsed CLI as `["add"]`
 //   (one positional), then VM `setup_call` padded `arg` with nil. The
 //   `?cmd{"add":add arg;...}` body then evaluated `add nil` -> wrote
 //   `[ ] nil` to tasks.txt silently.
@@ -141,14 +141,14 @@ fn write_tracker(dir: &std::path::Path) -> std::path::PathBuf {
     let src = r#"add txt:t>R t t;ln=fmt "[ ] {}" txt;wrl "tasks.txt" [ln]
 main cmd:t arg:t>R t t;?cmd{"add":add arg;_:^"usage"}
 "#;
-    let path = dir.join("tracker.ilo");
+    let path = dir.join("tracker.@");
     std::fs::write(&path, src).expect("write tracker");
     path
 }
 
 #[test]
 fn file_auto_main_sub_arity_default() {
-    // `ilo tracker.ilo add` — `add` is a declared function, so the
+    // `ilo tracker.@ add` — `add` is a declared function, so the
     // default-engine CLI routes directly to `add txt:t` with no positional
     // args. Pre-fix: VM nil-padded `txt`, ran `wrl "tasks.txt" ["[ ] nil"]`,
     // silently wrote corrupt data to disk and exited 0. Post-fix: the
@@ -175,7 +175,7 @@ fn file_auto_main_sub_arity_default() {
 
 #[test]
 fn file_auto_main_no_positional_routes_to_main() {
-    // Bare `ilo tracker.ilo` (no positionals) auto-runs `main`. Main
+    // Bare `ilo tracker.@` (no positionals) auto-runs `main`. Main
     // declares 2 params (cmd, arg) — supply none -> the CLI guard
     // reports `main: expected 2 args, got 0`. Pinning this shape
     // because the auto-pick-main heuristic (#329) is the other path
@@ -223,7 +223,7 @@ fn file_auto_main_exact_arity_writes_task() {
 
 #[test]
 fn file_auto_main_super_arity_default() {
-    // `ilo tracker.ilo add "buy milk" extra` — routes to `add txt:t` with
+    // `ilo tracker.@ add "buy milk" extra` — routes to `add txt:t` with
     // 2 positional args. Pre-fix: VM ignored the extra and wrote `[ ] buy
     // milk` (extras silently dropped — the second half of the rerun7
     // report). Post-fix: ILO-R004 fires with `add: expected 1 args, got 2`.
@@ -254,7 +254,7 @@ fn file_auto_main_super_arity_default() {
 fn file_main_sub_arity_run_vm() {
     let dir = tempfile::tempdir().expect("tempdir");
     let src = "main x:n y:n>n;+x y\n";
-    let path = dir.path().join("two.ilo");
+    let path = dir.path().join("two.@");
     std::fs::write(&path, src).expect("write");
     // --vm with file + 1 positional that LOOKS like an ident routes
     // to the named function path (engine resolves `main` because no
@@ -273,7 +273,7 @@ fn file_main_sub_arity_run_vm() {
 fn file_main_sub_arity_run_cranelift() {
     let dir = tempfile::tempdir().expect("tempdir");
     let src = "main x:n y:n>n;+x y\n";
-    let path = dir.path().join("two.ilo");
+    let path = dir.path().join("two.@");
     std::fs::write(&path, src).expect("write");
     let out = ilo()
         .args(["--jit", path.to_str().unwrap()])
@@ -289,7 +289,7 @@ fn file_main_sub_arity_run_cranelift() {
 fn file_main_sub_arity_run_tree() {
     let dir = tempfile::tempdir().expect("tempdir");
     let src = "main x:n y:n>n;+x y\n";
-    let path = dir.path().join("two.ilo");
+    let path = dir.path().join("two.@");
     std::fs::write(&path, src).expect("write");
     let out = ilo()
         .args(["--vm", path.to_str().unwrap()])
@@ -305,7 +305,7 @@ fn file_main_sub_arity_run_tree() {
 fn file_main_exact_arity_run_vm() {
     let dir = tempfile::tempdir().expect("tempdir");
     let src = "main x:n y:n>n;+x y\n";
-    let path = dir.path().join("two.ilo");
+    let path = dir.path().join("two.@");
     std::fs::write(&path, src).expect("write");
     let out = ilo()
         .args(["--vm", path.to_str().unwrap(), "main", "3", "4"])

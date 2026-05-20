@@ -35,7 +35,7 @@ fn run_args(args: &[&str]) -> String {
 fn write_src(name: &str, contents: &str) -> std::path::PathBuf {
     let dir = std::env::temp_dir().join(format!("ilo_dot_var_idx_{name}"));
     std::fs::create_dir_all(&dir).unwrap();
-    let p = dir.join("prog.ilo");
+    let p = dir.join("prog.@");
     std::fs::write(&p, contents).unwrap();
     p
 }

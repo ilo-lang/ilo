@@ -75,7 +75,7 @@ fn write_src(src: &str, name: &str) -> String {
 #[test]
 fn at_list_oob_has_rich_message_and_r009_on_every_engine() {
     let src = "g xs:L n>n;at xs 99\nmain>n;xs=[1,2,3];g xs\n";
-    let path = write_src(src, "at_list_oob.ilo");
+    let path = write_src(src, "at_list_oob.@");
     for (engine, stderr) in run_on_all_engines(&path, "main") {
         assert!(
             stderr.contains("ILO-R009"),
@@ -93,7 +93,7 @@ fn at_list_oob_has_rich_message_and_r009_on_every_engine() {
 #[test]
 fn at_text_oob_has_rich_message_and_r009_on_every_engine() {
     let src = "g s:t>t;at s 50\nmain>t;s=\"hi\";g s\n";
-    let path = write_src(src, "at_text_oob.ilo");
+    let path = write_src(src, "at_text_oob.@");
     for (engine, stderr) in run_on_all_engines(&path, "main") {
         assert!(
             stderr.contains("ILO-R009"),
@@ -111,7 +111,7 @@ fn at_text_oob_has_rich_message_and_r009_on_every_engine() {
 #[test]
 fn lst_oob_has_rich_message_and_r009_on_every_engine() {
     let src = "g xs:L n>L n;lst xs 99 0\nmain>L n;xs=[1,2,3];g xs\n";
-    let path = write_src(src, "lst_oob.ilo");
+    let path = write_src(src, "lst_oob.@");
     for (engine, stderr) in run_on_all_engines(&path, "main") {
         assert!(
             stderr.contains("ILO-R009"),
@@ -130,7 +130,7 @@ fn lst_oob_has_rich_message_and_r009_on_every_engine() {
 #[test]
 fn call_stack_notes_match_across_engines_two_levels() {
     let src = "g xs:L n>n;at xs 99\nmain>n;xs=[1,2,3];g xs\n";
-    let path = write_src(src, "callstack_two_levels.ilo");
+    let path = write_src(src, "callstack_two_levels.@");
     for (engine, stderr) in run_on_all_engines(&path, "main") {
         assert!(
             stderr.contains("\"called from 'main'\""),
@@ -150,7 +150,7 @@ fn call_stack_notes_match_across_engines_two_levels() {
 #[test]
 fn call_stack_notes_match_across_engines_three_levels() {
     let src = "g xs:L n>n;at xs 99\nh xs:L n>n;a=g xs;+ a 1\nmain>n;xs=[1,2,3];h xs\n";
-    let path = write_src(src, "callstack_three_levels.ilo");
+    let path = write_src(src, "callstack_three_levels.@");
     for (engine, stderr) in run_on_all_engines(&path, "main") {
         for expected in [
             "\"called from 'main'\"",
@@ -171,7 +171,7 @@ fn call_stack_notes_match_across_engines_three_levels() {
 #[test]
 fn call_stack_notes_present_when_entry_errors_directly() {
     let src = "main>n;xs=[1,2,3];at xs 99\n";
-    let path = write_src(src, "callstack_entry_only.ilo");
+    let path = write_src(src, "callstack_entry_only.@");
     for (engine, stderr) in run_on_all_engines(&path, "main") {
         assert!(
             stderr.contains("\"called from 'main'\""),

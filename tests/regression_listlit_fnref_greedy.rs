@@ -36,7 +36,7 @@ fn write_src(name: &str, src: &str) -> std::path::PathBuf {
     let n = COUNTER.fetch_add(1, Ordering::Relaxed);
     let mut path = std::env::temp_dir();
     path.push(format!(
-        "ilo_listlit_fnref_{name}_{}_{n}.ilo",
+        "ilo_listlit_fnref_{name}_{}_{n}.@",
         std::process::id()
     ));
     std::fs::write(&path, src).expect("write src");

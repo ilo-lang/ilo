@@ -45,7 +45,7 @@ fn write_src(src: &str, tag: &str) -> std::path::PathBuf {
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let seq = COUNTER.fetch_add(1, Ordering::SeqCst);
     let path = std::env::temp_dir().join(format!(
-        "ilo_loop_print_{}_{}_{}.ilo",
+        "ilo_loop_print_{}_{}_{}.@",
         std::process::id(),
         seq,
         tag,

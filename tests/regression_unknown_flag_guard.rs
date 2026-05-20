@@ -1,6 +1,6 @@
 // Regression coverage for the v0.11.7 rerun8 unknown-flag silent-consume trap.
 //
-// Reproduces: `ilo main.ilo --engine tree` and `ilo main.ilo --foo` used to
+// Reproduces: `ilo main.@ --engine tree` and `ilo main.@ --foo` used to
 // silently consume the unknown long flag as a positional arg (because
 // `Cli::args` and `RunArgs::rest` use `trailing_var_arg = true,
 // allow_hyphen_values = true` so clap collects every unrecognised
@@ -15,7 +15,7 @@
 //      `--word=value` equals form) that isn't a recognised flag is rejected
 //      upfront with a clear "unrecognised flag" message and exit 1.
 //   2. To pass a hyphen-prefixed token as a literal arg, the user inserts
-//      `--` first: `ilo main.ilo -- --foo` or `ilo main.ilo -- --foo=bar`.
+//      `--` first: `ilo main.@ -- --foo` or `ilo main.@ -- --foo=bar`.
 //   3. All recognised long flags (`--vm`, `--bench`, etc.) still work.
 //   4. Holds across every engine (default, --vm, --jit), the
 //      bare-positional dispatcher AND the `run` subcommand path.
@@ -55,13 +55,13 @@ fn assert_unrecognised(out: (i32, String, String), flag: &str) {
     );
 }
 
-// Write a temp .ilo file with `main:n>n;42` (no required args). Returns the
+// Write a temp .@ file with `main:n>n;42` (no required args). Returns the
 // path. We use a unique-per-test path so parallel test runs don't collide.
 fn temp_main(tag: &str) -> std::path::PathBuf {
     let dir = std::env::temp_dir();
-    let p = dir.join(format!("ilo_unknown_flag_guard_{tag}.ilo"));
-    let mut f = std::fs::File::create(&p).expect("create temp .ilo");
-    f.write_all(b"main>n;42\n").expect("write temp .ilo");
+    let p = dir.join(format!("ilo_unknown_flag_guard_{tag}.@"));
+    let mut f = std::fs::File::create(&p).expect("create temp .@");
+    f.write_all(b"main>n;42\n").expect("write temp .@");
     p
 }
 
@@ -90,7 +90,7 @@ fn bare_unknown_hyphenated_flag_rejected() {
 
 #[test]
 fn bare_unknown_flag_in_source_position_rejected() {
-    // `ilo --engine main.ilo` — flag in args[1] (the source slot). Without
+    // `ilo --engine main.@` — flag in args[1] (the source slot). Without
     // the guard this would be treated as inline code and surface as a lex
     // error rather than a clear flag-shape diagnostic.
     assert_unrecognised(run_args(&["--engine", "tree"]), "--engine");

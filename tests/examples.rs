@@ -1,4 +1,4 @@
-// Integration tests: runs all *.ilo files in examples/ that have
+// Integration tests: runs all *.@ files in examples/ that have
 // -- run: / -- out: annotations and asserts the output matches.
 //
 // Annotation format (anywhere in the file, usually at the bottom):
@@ -88,7 +88,7 @@ fn parse_cases(src: &str) -> Vec<TestCase> {
 #[test]
 fn examples() {
     let files = find_examples();
-    assert!(!files.is_empty(), "no .ilo files found in examples/");
+    assert!(!files.is_empty(), "no .@ files found in examples/");
 
     let mut total = 0;
     let mut failures: Vec<String> = Vec::new();

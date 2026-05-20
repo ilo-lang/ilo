@@ -22,7 +22,7 @@ fn ilo() -> Command {
 
 fn write_temp(content: &str) -> (tempfile::TempDir, std::path::PathBuf) {
     let dir = tempfile::tempdir().expect("tempdir");
-    let path = dir.path().join("prog.ilo");
+    let path = dir.path().join("prog.@");
     std::fs::write(&path, content).expect("write temp ilo");
     (dir, path)
 }

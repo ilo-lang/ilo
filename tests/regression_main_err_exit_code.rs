@@ -186,7 +186,7 @@ fn main_err_exits_one_default_engine() {
     // test is single-instance, but the harness can run multiple binaries in
     // parallel.)
     let path = std::env::temp_dir().join(format!(
-        "ilo_regression_main_err_default_{}.ilo",
+        "ilo_regression_main_err_default_{}.@",
         std::process::id()
     ));
     std::fs::write(&path, ERR_SRC).expect("write temp ilo file");

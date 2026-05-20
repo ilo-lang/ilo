@@ -30,7 +30,7 @@ fn run_args(args: &[&str]) -> (bool, String, String) {
 
 fn write_temp_ilo(content: &str) -> (tempfile::TempDir, std::path::PathBuf) {
     let dir = tempfile::tempdir().expect("tempdir");
-    let path = dir.path().join("test.ilo");
+    let path = dir.path().join("test.@");
     std::fs::write(&path, content).expect("write temp ilo");
     (dir, path)
 }

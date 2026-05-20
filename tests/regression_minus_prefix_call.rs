@@ -34,7 +34,7 @@ fn run(engine: &str, src: &str, entry: &str) -> String {
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let seq = COUNTER.fetch_add(1, Ordering::SeqCst);
     let path = std::env::temp_dir().join(format!(
-        "ilo_minus_prefix_call_{}_{}.ilo",
+        "ilo_minus_prefix_call_{}_{}.@",
         std::process::id(),
         seq
     ));
