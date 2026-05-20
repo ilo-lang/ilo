@@ -1219,7 +1219,7 @@ fn compile_function_body(
                 | OP_SETUNION | OP_SETINTER | OP_SETDIFF
                 | OP_INV | OP_SOLVE
                 | OP_SPL | OP_CAT | OP_GET | OP_POST | OP_GETH | OP_POSTH | OP_GETMANY
-                | OP_ENV | OP_JPTH | OP_JDMP | OP_JPAR | OP_RDJL
+                | OP_ENV | OP_JPTH | OP_JDMP | OP_JPAR | OP_JPAR_LIST | OP_RDJL
                 | OP_MAPNEW | OP_MGET | OP_MSET | OP_MDEL | OP_MKEYS | OP_MVALS | OP_MPAIRS
                 | OP_LISTNEW | OP_LISTAPPEND
                 | OP_RECNEW | OP_RECWITH | OP_RECNEW_EMPTY | OP_RECCOPY
