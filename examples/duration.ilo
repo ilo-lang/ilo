@@ -1,0 +1,30 @@
+-- Duration builtins: dur-parse (text -> R n t) and dur-fmt (n -> t).
+-- dur-parse is lenient: accepts abbreviations (s/m/h/d/w), full names
+-- (singular + plural), mixed sequences, and decimal quantities.
+-- dur-fmt formats seconds as human-readable text; drops zero parts.
+
+-- Parse a human duration string into seconds.
+parse-dur s:t>R n t;dur-parse s
+
+-- Format seconds as a human-readable string.
+fmt-dur n:n>t;dur-fmt n
+
+-- Round-trip: parse then format.
+round-trip s:t>R t t;n=dur-parse! s;~dur-fmt n
+
+-- run: parse-dur "3h 30m"
+-- out: 12600
+-- run: parse-dur "1 week 2 days"
+-- out: 777600
+-- run: parse-dur "1.5 hours"
+-- out: 5400
+-- run: fmt-dur 9720
+-- out: 2h 42m
+-- run: fmt-dur 86400
+-- out: 1 day
+-- run: fmt-dur 90
+-- out: 1m 30s
+-- run: fmt-dur 0
+-- out: 0s
+-- run: round-trip "2 days 3 hours"
+-- out: 2 days 3h
