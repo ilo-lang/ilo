@@ -4,6 +4,7 @@
 mod cli;
 
 use ilo::ast;
+use ilo::caps::{Caps, Policy};
 use ilo::codegen;
 use ilo::diagnostic;
 use ilo::graph;
@@ -2954,6 +2955,10 @@ fn dispatch_bare_args(raw_args: Vec<String>, global: &cli::Global) -> i32 {
                     ast: false,
                     tools_path: tools_config_path,
                     mcp_path: mcp_config_path,
+                    allow_net: None,
+                    allow_read: None,
+                    allow_write: None,
+                    allow_run: None,
                     rest: args[m + 1..].to_vec(),
                 };
                 return dispatch_run(run_args, mode, explicit_json, no_hints);
@@ -2975,6 +2980,10 @@ fn dispatch_bare_args(raw_args: Vec<String>, global: &cli::Global) -> i32 {
                     ast: false,
                     tools_path: tools_config_path,
                     mcp_path: mcp_config_path,
+                    allow_net: None,
+                    allow_read: None,
+                    allow_write: None,
+                    allow_run: None,
                     rest: vec![],
                 };
                 return dispatch_run(run_args, mode, explicit_json, no_hints);
@@ -3001,6 +3010,10 @@ fn dispatch_bare_args(raw_args: Vec<String>, global: &cli::Global) -> i32 {
                     ast: false,
                     tools_path: tools_config_path,
                     mcp_path: mcp_config_path,
+                    allow_net: None,
+                    allow_read: None,
+                    allow_write: None,
+                    allow_run: None,
                     rest: vec![],
                 };
                 return dispatch_run(run_args, mode, explicit_json, no_hints);
@@ -3022,6 +3035,10 @@ fn dispatch_bare_args(raw_args: Vec<String>, global: &cli::Global) -> i32 {
                     ast: false,
                     tools_path: tools_config_path,
                     mcp_path: mcp_config_path,
+                    allow_net: None,
+                    allow_read: None,
+                    allow_write: None,
+                    allow_run: None,
                     rest: vec![],
                 };
                 return dispatch_run(run_args, mode, explicit_json, no_hints);
@@ -3043,6 +3060,10 @@ fn dispatch_bare_args(raw_args: Vec<String>, global: &cli::Global) -> i32 {
                     ast: false,
                     tools_path: tools_config_path,
                     mcp_path: mcp_config_path,
+                    allow_net: None,
+                    allow_read: None,
+                    allow_write: None,
+                    allow_run: None,
                     rest: vec![],
                 };
                 return dispatch_run(run_args, mode, explicit_json, no_hints);
@@ -3076,6 +3097,10 @@ fn dispatch_bare_args(raw_args: Vec<String>, global: &cli::Global) -> i32 {
         ast: pre_ast,
         tools_path: tools_config_path,
         mcp_path: mcp_config_path,
+        allow_net: None,
+        allow_read: None,
+        allow_write: None,
+        allow_run: None,
         rest,
     };
     dispatch_run(run_args, mode, explicit_json, no_hints)
@@ -3261,6 +3286,44 @@ fn check_cmd(source_arg: &str, mode: OutputMode, _explicit_json: bool, strict: b
     }
 }
 
+/// Build a `Caps` from the `--allow-*` flags on a `RunArgs`.
+///
+/// If none of the flags are present, returns `Caps::Permissive` (backwards-compatible
+/// unrestricted mode). As soon as any `--allow-*` flag is set, the policy
+/// switches to `Caps::Restricted` and only explicitly permitted targets are
+/// allowed.
+fn build_caps(r: &cli::RunArgs) -> Caps {
+    let any = r.allow_net.is_some()
+        || r.allow_read.is_some()
+        || r.allow_write.is_some()
+        || r.allow_run.is_some();
+    if !any {
+        return Caps::Permissive;
+    }
+    Caps::Restricted {
+        net: r
+            .allow_net
+            .as_deref()
+            .map(Caps::parse_allow)
+            .unwrap_or(Policy::All),
+        read: r
+            .allow_read
+            .as_deref()
+            .map(Caps::parse_allow)
+            .unwrap_or(Policy::All),
+        write: r
+            .allow_write
+            .as_deref()
+            .map(Caps::parse_allow)
+            .unwrap_or(Policy::All),
+        run: r
+            .allow_run
+            .as_deref()
+            .map(Caps::parse_allow)
+            .unwrap_or(Policy::All),
+    }
+}
+
 /// Dispatch the `run` subcommand via parsed RunArgs.  Returns exit code.
 fn dispatch_run(r: cli::RunArgs, mode: OutputMode, explicit_json: bool, no_hints: bool) -> i32 {
     // Reject unknown `--flag` tokens in the positional tail. `RunArgs::rest`
@@ -3281,6 +3344,9 @@ fn dispatch_run(r: cli::RunArgs, mode: OutputMode, explicit_json: bool, no_hints
     if let Some(idx) = r.rest.iter().position(|s| s == "--") {
         r.rest.remove(idx);
     }
+
+    // Build capability policy from --allow-* flags.
+    let caps = build_caps(&r);
 
     let source_arg = &r.source;
 
@@ -3553,6 +3619,7 @@ fn dispatch_run(r: cli::RunArgs, mode: OutputMode, explicit_json: bool, no_hints
                     mode,
                     explicit_json,
                     suppress,
+                    caps,
                 )
             }
             cli::Engine::Tree => {
@@ -3582,6 +3649,7 @@ fn dispatch_run(r: cli::RunArgs, mode: OutputMode, explicit_json: bool, no_hints
                     &source,
                     mode,
                     explicit_json,
+                    caps,
                 )
             }
             cli::Engine::Default => {
@@ -3726,7 +3794,15 @@ fn dispatch_run(r: cli::RunArgs, mode: OutputMode, explicit_json: bool, no_hints
                     }
                 };
 
-                run_default(&program, func_name, run_args, &source, mode, explicit_json)
+                run_default(
+                    &program,
+                    func_name,
+                    run_args,
+                    &source,
+                    mode,
+                    explicit_json,
+                    caps,
+                )
             }
         }
     };
@@ -4013,6 +4089,7 @@ fn run_vm_with_provider(
     mode: OutputMode,
     explicit_json: bool,
     suppress_loop_tail: bool,
+    caps: Caps,
 ) -> i32 {
     #[cfg(feature = "tools")]
     if let Some(provider) = mcp_provider {
@@ -4062,7 +4139,7 @@ fn run_vm_with_provider(
         };
     }
 
-    match vm::run(compiled, func_name, args) {
+    match vm::run_with_caps(compiled, func_name, args, caps) {
         Ok(val) => {
             print_value(&val, explicit_json, suppress_loop_tail);
             program_exit_code(&val)
@@ -4087,17 +4164,19 @@ fn run_interp_with_provider(
     source: &str,
     mode: OutputMode,
     explicit_json: bool,
+    caps: Caps,
 ) -> i32 {
     let suppress = program_result_should_suppress(program, func_name);
     #[cfg(feature = "tools")]
     if let Some(provider) = mcp_provider {
         let rt = std::sync::Arc::new(mcp_rt.expect("runtime present with mcp_provider"));
-        match interpreter::run_with_tools(
+        match interpreter::run_with_tools_and_caps(
             program,
             func_name,
             args,
             std::sync::Arc::new(provider),
             rt,
+            caps,
         ) {
             Ok(val) => {
                 print_value(&val, explicit_json, suppress);
@@ -4126,13 +4205,14 @@ fn run_interp_with_provider(
                 .build()
                 .expect("tokio runtime"),
         );
-        return match interpreter::run_with_tools(
+        return match interpreter::run_with_tools_and_caps(
             program,
             func_name,
             args,
             provider,
             #[cfg(feature = "tools")]
             runtime,
+            caps,
         ) {
             Ok(val) => {
                 print_value(&val, explicit_json, suppress);
@@ -4145,7 +4225,7 @@ fn run_interp_with_provider(
         };
     }
 
-    match interpreter::run(program, func_name, args) {
+    match interpreter::run_with_caps(program, func_name, args, caps) {
         Ok(val) => {
             print_value(&val, explicit_json, suppress);
             program_exit_code(&val)
@@ -4197,6 +4277,7 @@ fn run_default(
     source: &str,
     mode: OutputMode,
     explicit_json: bool,
+    caps: Caps,
 ) -> i32 {
     // CLI-boundary arity guard. Restores the strict arity contract the tree
     // interpreter has enforced since v0.11.5 (interpreter/mod.rs:4152) at the
@@ -4220,7 +4301,7 @@ fn run_default(
     // reference semantics and the last-resort fallback for any program the
     // VM compile/run rejects (e.g. shapes the VM doesn't yet support).
     if let Ok(compiled) = vm::compile(program) {
-        match vm::run(&compiled, func_name, args.clone()) {
+        match vm::run_with_caps(&compiled, func_name, args.clone(), caps.clone()) {
             Ok(val) => {
                 print_value(&val, explicit_json, suppress);
                 return program_exit_code(&val);
@@ -4236,7 +4317,7 @@ fn run_default(
     }
 
     // Fall back to interpreter
-    match interpreter::run(program, func_name, args) {
+    match interpreter::run_with_caps(program, func_name, args, caps) {
         Ok(val) => {
             print_value(&val, explicit_json, suppress);
             program_exit_code(&val)
@@ -6044,6 +6125,7 @@ mod tests {
             OutputMode::Text,
             false,
             false,
+            Caps::default(),
         );
     }
 
@@ -6063,6 +6145,7 @@ mod tests {
             OutputMode::Json,
             true,
             false,
+            Caps::default(),
         );
     }
 
@@ -6083,6 +6166,7 @@ mod tests {
             "f x:n>n;*x 2",
             OutputMode::Text,
             false,
+            Caps::default(),
         );
     }
 
@@ -6101,6 +6185,7 @@ mod tests {
             "f x:n>n;+x 1",
             OutputMode::Json,
             true,
+            Caps::default(),
         );
     }
 
@@ -6116,6 +6201,7 @@ mod tests {
             "f x:n>n;*x 2",
             OutputMode::Text,
             false,
+            Caps::default(),
         );
     }
 
@@ -6129,6 +6215,7 @@ mod tests {
             "greet name:t>t;cat \"hi \" name",
             OutputMode::Text,
             false,
+            Caps::default(),
         );
     }
 
@@ -6142,6 +6229,7 @@ mod tests {
             "double x:n>n;*x 2",
             OutputMode::Text,
             false,
+            Caps::default(),
         );
     }
 
@@ -9028,6 +9116,10 @@ mod tests {
             ast: false,
             tools_path: None,
             mcp_path: None,
+            allow_net: None,
+            allow_read: None,
+            allow_write: None,
+            allow_run: None,
             rest: vec![],
         };
         let code = dispatch_run(run_args, OutputMode::Text, false, false);
@@ -9054,6 +9146,10 @@ mod tests {
             ast: false,
             tools_path: Some("/tmp/t.json".to_string()),
             mcp_path: Some("/tmp/m.json".to_string()),
+            allow_net: None,
+            allow_read: None,
+            allow_write: None,
+            allow_run: None,
             rest: vec![],
         };
         let code = dispatch_run(run_args, OutputMode::Text, false, false);
@@ -9084,6 +9180,10 @@ mod tests {
             ast: false,
             tools_path: None,
             mcp_path: None,
+            allow_net: None,
+            allow_read: None,
+            allow_write: None,
+            allow_run: None,
             rest: vec![],
         };
         let code = dispatch_run(run_args, OutputMode::Text, false, false);
@@ -9111,6 +9211,10 @@ mod tests {
             ast: false,
             tools_path: None,
             mcp_path: None,
+            allow_net: None,
+            allow_read: None,
+            allow_write: None,
+            allow_run: None,
             rest: vec!["f".to_string(), "1".to_string()],
         };
         // no_hints = false → hints emitted (to stderr, so just verify no panic)
@@ -9136,6 +9240,10 @@ mod tests {
             ast: false,
             tools_path: None,
             mcp_path: None,
+            allow_net: None,
+            allow_read: None,
+            allow_write: None,
+            allow_run: None,
             rest: vec!["f".to_string(), "1".to_string()],
         };
         // no_hints = true → hints suppressed
@@ -9163,6 +9271,10 @@ mod tests {
             ast: false,
             tools_path: None,
             mcp_path: None,
+            allow_net: None,
+            allow_read: None,
+            allow_write: None,
+            allow_run: None,
             rest: vec![],
         };
         let code = dispatch_run(run_args, OutputMode::Text, false, false);
@@ -9190,6 +9302,10 @@ mod tests {
             ast: false,
             tools_path: None,
             mcp_path: None,
+            allow_net: None,
+            allow_read: None,
+            allow_write: None,
+            allow_run: None,
             rest: vec!["f".to_string(), "1".to_string()],
         };
         let code = dispatch_run(run_args, OutputMode::Text, false, false);
@@ -9474,6 +9590,7 @@ mod tests {
             "",
             OutputMode::Text,
             false,
+            Caps::default(),
         );
         // VM ran the program → exit 0.
         assert_eq!(code, 0);
@@ -9552,6 +9669,7 @@ mod tests {
             OutputMode::Text,
             false,
             false,
+            Caps::default(),
         );
         assert_eq!(code, 1);
     }
@@ -9573,6 +9691,7 @@ mod tests {
             "f>n;/1 0",
             OutputMode::Text,
             false,
+            Caps::default(),
         );
         assert_eq!(code, 1);
     }
@@ -9590,6 +9709,7 @@ mod tests {
             "f>n;g 1",
             OutputMode::Text,
             false,
+            Caps::default(),
         );
         assert_eq!(code, 1);
     }
