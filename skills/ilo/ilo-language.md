@@ -29,11 +29,7 @@ Flat early returns at statement: `cls sp:n>t;>=sp 1000 "gold";>=sp 500 "silver";
 
 ## match
 
-`?r{~v:v;^e:^+"failed: "e;_:"unknown"}`. Arms: `"lit":body`, `42:body`, `~v:body` ok-bind, `^e:body` err-bind, `_:body` else. Multi-token subject: `?(mod x 3){0:a;1:b;_:c}`.
-
-## conditional
-
-Three shapes on a bool `c`, pick the cheapest that fits: `?h c a b` (prefix-ternary, no braces, atoms only), `c{a}{b}` (brace-ternary, two arms), `c{body}` (braced-conditional, single arm). `?h c{...}` is ALWAYS wrong, drop the `?h` or drop the braces.
+`?r{~v:v;^e:^+"failed: "e;_:"unknown"}`. Arms: `"lit":body`, `42:body`, `~v:body` ok-bind, `^e:body` err-bind, `_:body` else. Multi-token subj wraps: `?(e){…}`.
 
 ## results
 
