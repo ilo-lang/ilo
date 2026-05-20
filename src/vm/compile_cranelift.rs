@@ -164,6 +164,12 @@ struct HelperFuncs {
     /// `jit_prt_main_result` in `src/vm/mod.rs`. Returns a u64 exit code
     /// (0 or 1) that `generate_main` truncates to i32 for `main`.
     prt_main: FuncId,
+    /// AOT main-result printer, suppression variant. Same exit-code contract
+    /// as `prt_main` but suppresses the happy-path stdout print — used when
+    /// the entry function's body ends with a `prnt` call (which already
+    /// printed) or a loop-tail (which already printed via the loop body).
+    /// Err still goes to stderr with exit 1.
+    prt_main_suppress: FuncId,
     trm: FuncId,
     upr: FuncId,
     lwr: FuncId,
@@ -389,6 +395,7 @@ fn declare_all_helpers(module: &mut ObjectModule) -> HelperFuncs {
         // Print, trim, uniq
         prt: declare_helper(module, "jit_prt", 1, 1),
         prt_main: declare_helper(module, "jit_prt_main_result", 1, 1),
+        prt_main_suppress: declare_helper(module, "jit_prt_main_result_suppress", 1, 1),
         trm: declare_helper(module, "jit_trm", 2, 1),
         upr: declare_helper(module, "jit_upr", 2, 1),
         lwr: declare_helper(module, "jit_lwr", 2, 1),
@@ -586,6 +593,7 @@ pub fn compile_to_binary(
     // AST didn't survive into `CompiledProgram` (rare; mostly test paths)
     // fall back to all-false, preserving the historical scalar-parse path.
     let param_is_list = entry_param_is_list(program, entry_func, entry_chunk.param_count as usize);
+    let suppress_auto_echo = entry_should_suppress_auto_echo(program, entry_func);
 
     // Generate main()
     generate_main(
@@ -597,6 +605,7 @@ pub fn compile_to_binary(
         &program_blob,
         &param_is_list,
         entry_func,
+        suppress_auto_echo,
     )?;
 
     // Emit object file
@@ -4367,6 +4376,99 @@ fn entry_param_is_list(
         .collect()
 }
 
+/// AOT counterpart to `program_result_should_suppress` in `src/main.rs`. The
+/// tree/VM/JIT engines route the entry-function result through `print_value`
+/// in main.rs, which consults that helper to decide whether the runtime
+/// auto-echo would duplicate a stdout line the program already wrote. AOT
+/// binaries skip main.rs entirely (they're standalone executables linking
+/// libilo.a), so the same suppression rule has to be evaluated at compile
+/// time here and threaded through to `generate_main`, which then picks
+/// between the printing and suppression helper variants.
+///
+/// Mirrors the rules in `program_result_should_suppress`:
+///   1. Last statement is a bare `prnt` call → suppress (the builtin already
+///      printed; auto-echo of the return value duplicates it).
+///   2. Last statement is `@`/`wh` loop with no early-return path → suppress
+///      (loop body's tail print would duplicate as the program tail).
+///
+/// Returns false when the AST is unavailable (e.g. some test paths that
+/// build CompiledProgram without the full AST) — printing-too-much is the
+/// safer failure mode than silently swallowing a value.
+fn entry_should_suppress_auto_echo(program: &CompiledProgram, entry_func: &str) -> bool {
+    use crate::ast;
+    let Some(ast_program) = program.ast.as_ref() else {
+        return false;
+    };
+    let body = ast_program.declarations.iter().find_map(|d| match d {
+        ast::Decl::Function { name, body, .. } if name == entry_func => Some(body),
+        _ => None,
+    });
+    let Some(body) = body else {
+        return false;
+    };
+    let Some(last) = body.last() else {
+        return false;
+    };
+
+    // Case 1: bare `prnt` call at tail whose argument is not `~`/`^`
+    // wrapped. Must match `program_result_should_suppress` in src/main.rs
+    // exactly: the Ok/Err exclusion preserves the `prnt ~"x"` two-line
+    // contract (wrapper-visible from prnt + bare from auto-echo) that
+    // programs use to surface a Result alongside the stripped value.
+    if let ast::Stmt::Expr(ast::Expr::Call { function, args, .. }) = &last.node {
+        if function == "prnt" && !matches!(args.first(), Some(ast::Expr::Ok(_) | ast::Expr::Err(_)))
+        {
+            return true;
+        }
+    }
+
+    // Case 2: loop at tail with no early-return path.
+    let ends_with_loop = matches!(
+        last.node,
+        ast::Stmt::ForEach { .. } | ast::Stmt::ForRange { .. } | ast::Stmt::While { .. }
+    );
+    if !ends_with_loop {
+        return false;
+    }
+    !body_has_early_return_ast(body)
+}
+
+/// AOT-side mirror of `body_has_early_return` in `src/main.rs`. Lifted here
+/// rather than imported so the AOT codegen path doesn't have a hard
+/// dependency on main.rs (this crate is also consumed as `libilo` by the
+/// AOT runtime build).
+fn body_has_early_return_ast(body: &[crate::ast::Spanned<crate::ast::Stmt>]) -> bool {
+    for s in body {
+        if stmt_has_early_return_ast(&s.node) {
+            return true;
+        }
+    }
+    false
+}
+
+fn stmt_has_early_return_ast(stmt: &crate::ast::Stmt) -> bool {
+    use crate::ast;
+    match stmt {
+        ast::Stmt::Return(_) => true,
+        ast::Stmt::Guard {
+            braceless: true, ..
+        } => true,
+        ast::Stmt::Guard {
+            body, else_body, ..
+        } => {
+            body_has_early_return_ast(body)
+                || else_body
+                    .as_ref()
+                    .is_some_and(|b| body_has_early_return_ast(b))
+        }
+        ast::Stmt::Match { arms, .. } => arms.iter().any(|a| body_has_early_return_ast(&a.body)),
+        ast::Stmt::ForEach { body, .. }
+        | ast::Stmt::ForRange { body, .. }
+        | ast::Stmt::While { body, .. } => body_has_early_return_ast(body),
+        _ => false,
+    }
+}
+
 /// Generate the `main(argc, argv)` entry point.
 /// Serialize a TypeRegistry to bytes for embedding in AOT binaries.
 /// Format: `type_name\0num_fields_bitmask\0field1\0field2\0...\0\n` per type.
@@ -4407,6 +4509,13 @@ fn generate_main(
     // funcname slot when it appears. Without this, `./bin main 42` binds the
     // string "main" as the first param instead of 42.
     entry_name: &str,
+    // When true, the entry function's body ends with a syntactic form that
+    // already wrote its happy-path output to stdout (a `prnt` call at the
+    // tail, or a `@`/`wh` loop with no early-return). The generated `main`
+    // routes the return value through the suppression helper instead of
+    // the printing one so the AOT binary matches the in-process runners'
+    // `print_value` behaviour. Err always surfaces to stderr with exit 1.
+    suppress_auto_echo: bool,
 ) -> Result<(), String> {
     let mut sig = module.make_signature();
     sig.params.push(AbiParam::new(I32)); // argc
@@ -4513,7 +4622,18 @@ fn generate_main(
     // a top-level `~v` prints bare on stdout (exit 0); a top-level `^e`
     // prints `^e` on stderr (exit 1). The helper returns the desired exit
     // code packed in a u64; we truncate to i32 for `main`.
-    let prt_main_fref = module.declare_func_in_func(helpers.prt_main, builder.func);
+    //
+    // When `suppress_auto_echo` is set, route through the suppression
+    // variant instead — the entry function's tail already wrote stdout
+    // (via a `prnt` call or a loop body) and re-printing the return value
+    // would double-print. Mirrors the `print_value` / `suppress_loop_tail`
+    // branch the in-process runners take in `src/main.rs`.
+    let prt_helper = if suppress_auto_echo {
+        helpers.prt_main_suppress
+    } else {
+        helpers.prt_main
+    };
+    let prt_main_fref = module.declare_func_in_func(prt_helper, builder.func);
     let call_prt = builder.ins().call(prt_main_fref, &[result]);
     let exit_u64 = builder.inst_results(call_prt)[0];
 

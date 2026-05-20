@@ -221,11 +221,11 @@ fn check_all(engine: &str) {
     );
 }
 
-#[test]
-fn loop_print_tree() {
-    check_all("--vm");
-}
-
+// VM coverage. Historically there was a sibling `loop_print_tree` that
+// ran against `--run-tree`; the tree-walker was soft-deprecated and its
+// CLI flag swept to `--run-vm` (PR #99d4580) and then to `--vm`
+// (PR #7baa333), so the tree-named test was duplicating the VM one and
+// has been removed. JIT / AOT siblings are below.
 #[test]
 fn loop_print_vm() {
     check_all("--vm");

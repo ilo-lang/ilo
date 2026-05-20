@@ -4237,12 +4237,18 @@ fn stmt_has_early_return(stmt: &ast::Stmt) -> bool {
 
 /// Top-level auto-print suppression rule for the program's final value.
 ///
-/// Returns true when the program's syntactic entry-function body ends with a
-/// `@`/`wh` loop AND has no early-return path. In that case the loop's
-/// last-body-value bubbles up as the program result, and re-printing it on top
-/// of whatever the loop body already printed (e.g. via `prnt`) just duplicates
-/// the last item. Functions are still free to use loop-as-expression value
-/// internally; this is purely about the final stdout line at the top level.
+/// Returns true when the program's syntactic entry-function body ends with:
+///
+/// 1. A `@`/`wh` loop with no early-return path — re-printing the loop's tail
+///    value duplicates whatever `prnt` already wrote inside the loop.
+///
+/// 2. A bare `prnt` call — `prnt` already writes its argument to stdout; the
+///    runtime auto-printing the return value (which is the same argument) would
+///    produce a double-print. This is the "P0 #3 papercut" caught by the
+///    subscription-renewer and cron-explainer personas.
+///
+/// Functions are still free to use `prnt` internally (non-tail position) — this
+/// rule is purely about the final statement of the top-level entry function.
 fn program_result_should_suppress(program: &ast::Program, func_name: Option<&str>) -> bool {
     let entry_body: Option<&Vec<ast::Spanned<ast::Stmt>>> = match func_name {
         Some(name) => program.declarations.iter().find_map(|d| match d {
@@ -4260,6 +4266,29 @@ fn program_result_should_suppress(program: &ast::Program, func_name: Option<&str
     let Some(last) = body.last() else {
         return false;
     };
+
+    // Case 1: last statement is a `prnt` call whose argument is not an
+    // `~`/`^` (Ok/Err) wrap. `prnt` already printed its argument via
+    // `Display`, and the runtime auto-echo would print the same value again.
+    //
+    // The Ok/Err exclusion matters because the auto-echo strips the top-level
+    // Ok wrapper (PR #255) before printing, so for `prnt ~"x"` the two
+    // outputs are intentionally different: `~x` (from prnt, wrapper visible
+    // via Display) and `x` (from auto-echo, wrapper stripped). That pattern
+    // is load-bearing for programs that use `prnt` to surface a Result for
+    // diagnostics while still letting the bare value flow to a shell
+    // consumer. Suppressing it would lose the stripped bare line.
+    //
+    // The bare case (`prnt "active renewed"`, `prnt 42`, etc.) has identical
+    // outputs in both prints, which is the P0 #3 papercut the personas hit.
+    if let ast::Stmt::Expr(ast::Expr::Call { function, args, .. }) = &last.node {
+        if function == "prnt" && !matches!(args.first(), Some(ast::Expr::Ok(_) | ast::Expr::Err(_)))
+        {
+            return true;
+        }
+    }
+
+    // Case 2: last statement is a loop with no early-return.
     let ends_with_loop = matches!(
         last.node,
         ast::Stmt::ForEach { .. } | ast::Stmt::ForRange { .. } | ast::Stmt::While { .. }
@@ -6768,6 +6797,104 @@ mod tests {
         );
         let val = interpreter::Value::Map(std::sync::Arc::new(m));
         print_value(&val, false, false);
+    }
+
+    // ── program_result_should_suppress ───────────────────────────────────────
+
+    /// A bare `prnt` call as the last statement must suppress the auto-echo so
+    /// the value isn't printed twice (P0 #3).
+    #[test]
+    fn suppress_prnt_at_tail() {
+        // `main>_; prnt "hello"` — last stmt is a prnt call
+        let prog = make_program("main>_;prnt \"hello\"");
+        assert!(
+            program_result_should_suppress(&prog, None),
+            "prnt at tail should suppress auto-print"
+        );
+    }
+
+    /// `print` (long-form alias for `prnt`) resolves to `prnt` via
+    /// `ast::resolve_aliases` before `program_result_should_suppress` is
+    /// called in production. Test mirrors production by running resolve_aliases.
+    #[test]
+    fn suppress_print_alias_at_tail() {
+        let tokens = lexer::lex("main>_;print \"hello\"").unwrap();
+        let token_spans: Vec<_> = tokens
+            .into_iter()
+            .map(|(t, r)| {
+                (
+                    t,
+                    ast::Span {
+                        start: r.start,
+                        end: r.end,
+                    },
+                )
+            })
+            .collect();
+        let (mut prog, _) = parser::parse(token_spans);
+        ast::resolve_aliases(&mut prog);
+        assert!(
+            program_result_should_suppress(&prog, None),
+            "print alias at tail should suppress after alias resolution"
+        );
+    }
+
+    /// When `prnt` is NOT the last statement the auto-echo must still fire.
+    #[test]
+    fn no_suppress_prnt_not_at_tail() {
+        let prog = make_program("main>_;prnt \"hi\";\"final\"");
+        assert!(
+            !program_result_should_suppress(&prog, None),
+            "prnt not at tail must not suppress"
+        );
+    }
+
+    /// A loop at tail (original behaviour) still suppresses.
+    #[test]
+    fn suppress_loop_at_tail_unchanged() {
+        let prog = make_program("main>_;@x [1 2 3]{prnt x}");
+        assert!(
+            program_result_should_suppress(&prog, None),
+            "loop at tail should still suppress"
+        );
+    }
+
+    /// A plain expression at tail (no loop, no prnt) must NOT suppress.
+    #[test]
+    fn no_suppress_plain_expr_at_tail() {
+        let prog = make_program("main>_;\"hello\"");
+        assert!(
+            !program_result_should_suppress(&prog, None),
+            "plain expr at tail must not suppress"
+        );
+    }
+
+    /// `prnt ~"x"` at tail must NOT suppress: prnt prints `~x` (Display
+    /// preserves the wrapper), and the auto-echo prints `x` (Ok wrapper
+    /// stripped). Both lines are intentional and useful. This is the
+    /// `prnt_wrapper_preserved` contract pinned in
+    /// `tests/regression_main_ok_stdout_bare.rs`.
+    #[test]
+    fn no_suppress_prnt_of_ok_wrap_at_tail() {
+        let prog = make_program("m>R t t;prnt ~\"x\"");
+        assert!(
+            !program_result_should_suppress(&prog, None),
+            "prnt of `~v` at tail must NOT suppress (auto-echo strips the wrapper to a different line)"
+        );
+    }
+
+    /// Same contract for `^e` (Err) — `prnt ^"oops"` prints `^oops` and
+    /// then `^oops` goes to stderr (exit 1). The stderr-routing for Err is
+    /// independent of the suppression flag (`print_value` always routes
+    /// `Value::Err` to stderr), so suppression here would silently lose the
+    /// inner-prnt's stdout line.
+    #[test]
+    fn no_suppress_prnt_of_err_wrap_at_tail() {
+        let prog = make_program("m>R t t;prnt ^\"oops\"");
+        assert!(
+            !program_result_should_suppress(&prog, None),
+            "prnt of `^e` at tail must NOT suppress"
+        );
     }
 
     // ── subprocess helpers ────────────────────────────────────────────────────

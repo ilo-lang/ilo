@@ -18233,6 +18233,31 @@ pub(crate) extern "C" fn jit_prt_main_result(v: u64) -> u64 {
     0
 }
 
+/// AOT entry-point print, suppression variant. Same as `jit_prt_main_result`
+/// except that the Ok/plain stdout-print arms are suppressed — used when the
+/// entry function's body ends with a `prnt` call (or a loop containing
+/// `prnt`) so the AOT binary does not double-print. The Err arm is
+/// preserved: a top-level `^e` still prints to stderr with exit 1 because
+/// suppression is purely about avoiding duplicated happy-path output, not
+/// about swallowing program failure (matches `print_value`'s plain-mode
+/// behaviour at `src/main.rs`'s `suppress_loop_tail` branch).
+#[cfg(feature = "cranelift")]
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn jit_prt_main_result_suppress(v: u64) -> u64 {
+    let nv = NanVal(v);
+    let tag = v & TAG_MASK;
+    if tag == TAG_ERR {
+        // Err must always print to stderr — see `print_value` comment.
+        eprintln!("{}", nv.to_value());
+        nv.clone_rc();
+        return 1;
+    }
+    // Ok / Number / Bool / Nil / heap-value: suppress the print but still
+    // own the rc-bump so the value is dropped cleanly by `aot_fini`.
+    nv.clone_rc();
+    0
+}
+
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn jit_trm(v: u64, span_bits: u64) -> u64 {
