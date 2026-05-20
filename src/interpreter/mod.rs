@@ -4053,6 +4053,34 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             )),
         };
     }
+    if builtin == Some(Builtin::JparList) && args.len() == 1 {
+        return match &args[0] {
+            Value::Text(s) => match serde_json::from_str::<serde_json::Value>(s) {
+                Ok(serde_json::Value::Array(arr)) => {
+                    let items: Vec<Value> = arr.into_iter().map(serde_json_to_value).collect();
+                    Ok(Value::Ok(Box::new(Value::List(Arc::new(items)))))
+                }
+                Ok(other) => {
+                    let kind = match &other {
+                        serde_json::Value::Object(_) => "object",
+                        serde_json::Value::Null => "null",
+                        serde_json::Value::Bool(_) => "bool",
+                        serde_json::Value::Number(_) => "number",
+                        serde_json::Value::String(_) => "string",
+                        serde_json::Value::Array(_) => unreachable!(),
+                    };
+                    Ok(Value::Err(Box::new(Value::Text(Arc::new(format!(
+                        "jpar-list: expected JSON array, got {kind}"
+                    ))))))
+                }
+                Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(e.to_string()))))),
+            },
+            other => Err(RuntimeError::new(
+                "ILO-R009",
+                format!("jpar-list requires text, got {:?}", other),
+            )),
+        };
+    }
     if builtin == Some(Builtin::Rdjl) && args.len() == 1 {
         return match &args[0] {
             Value::Text(path) => match std::fs::read_to_string(path.as_str()) {

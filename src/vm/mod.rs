@@ -178,6 +178,7 @@ pub(crate) const OP_ENV: u8 = 60; // R[A] = env(R[B])  (returns R t t)
 pub(crate) const OP_JPTH: u8 = 61; // R[A] = jpth(R[B], R[C])  (JSON path lookup → R t t)
 pub(crate) const OP_JDMP: u8 = 62; // R[A] = jdmp(R[B])  (value to JSON string → t)
 pub(crate) const OP_JPAR: u8 = 63; // R[A] = jpar(R[B])  (parse JSON string → R ? t)
+pub(crate) const OP_JPAR_LIST: u8 = 187; // R[A] = jpar-list(R[B])  (parse JSON array string → R (L ?) t)
 pub(crate) const OP_RECFLD_NAME: u8 = 64; // R[A] = R[B].field where C = constant pool index of field name (dynamic/fallback)
 pub(crate) const OP_JMPNN: u8 = 56; // if R[A] is not nil, jump by signed Bx (ABx mode)
 pub(crate) const OP_ISNUM: u8 = 65; // R[A] = R[B] is Number
@@ -4365,6 +4366,16 @@ impl RegCompiler {
                             }
                             return ra;
                         }
+                        (Builtin::JparList, 1) => {
+                            let rb = self.compile_expr(&args[0]);
+                            let ra = self.alloc_reg();
+                            self.emit_abc(OP_JPAR_LIST, ra, rb, 0);
+                            if unwrap.is_any() {
+                                self.emit_result_unwrap(ra, *unwrap);
+                                self.next_reg = ra + 1;
+                            }
+                            return ra;
+                        }
                         (Builtin::Rdjl, 1) => {
                             // rdjl path → L (R _ t). Not a Result-returning op, so `!`
                             // is unsupported here; the verifier rejects it via the
@@ -5880,10 +5891,10 @@ fn chunk_is_all_numeric(chunk: &Chunk) -> bool {
             OP_RECNEW | OP_LISTNEW | OP_RECWITH | OP_RECNEW_EMPTY | OP_RECCOPY | OP_RECSETFIELD
             | OP_WRAPOK | OP_WRAPERR | OP_STR | OP_CAT | OP_SPL | OP_REV | OP_SRT | OP_SRTDESC
             | OP_SLC | OP_TAKE | OP_DROP | OP_UNQ | OP_UNIQBY | OP_FRQ | OP_PARTITION
-            | OP_LISTAPPEND | OP_JPAR | OP_JDMP | OP_CSVDMP | OP_ENV | OP_GET | OP_GETH
-            | OP_GETMANY | OP_POST | OP_POSTH | OP_RD | OP_RDL | OP_RDJL | OP_WR | OP_WRL
-            | OP_MAPNEW | OP_MGET | OP_MSET | OP_MKEYS | OP_MVALS | OP_MPAIRS | OP_HD | OP_AT
-            | OP_LST | OP_TL | OP_FMT2 | OP_RGXSUB | OP_ZIP | OP_ENUMERATE | OP_WINDOW
+            | OP_LISTAPPEND | OP_JPAR | OP_JPAR_LIST | OP_JDMP | OP_CSVDMP | OP_ENV | OP_GET
+            | OP_GETH | OP_GETMANY | OP_POST | OP_POSTH | OP_RD | OP_RDL | OP_RDJL | OP_WR
+            | OP_WRL | OP_MAPNEW | OP_MGET | OP_MSET | OP_MKEYS | OP_MVALS | OP_MPAIRS | OP_HD
+            | OP_AT | OP_LST | OP_TL | OP_FMT2 | OP_RGXSUB | OP_ZIP | OP_ENUMERATE | OP_WINDOW
             | OP_WINDOW_VIEW | OP_FFT | OP_IFFT | OP_RANGE | OP_CHUNKS | OP_CUMSUM | OP_CPROD
             | OP_SETUNION | OP_SETINTER | OP_SETDIFF | OP_TRANSPOSE | OP_MATMUL | OP_INV
             | OP_SOLVE | OP_DTFMT | OP_DTPARSE | OP_FLAT | OP_CALL_BUILTIN_TREE | OP_LOADFN
@@ -11111,6 +11122,43 @@ impl<'a> VM<'a> {
                     };
                     let result = match serde_json::from_str::<serde_json::Value>(text) {
                         Ok(parsed) => NanVal::heap_ok(serde_json_to_nanval(parsed)),
+                        Err(e) => NanVal::heap_err(NanVal::heap_string(e.to_string())),
+                    };
+                    reg_set!(a, result);
+                }
+                OP_JPAR_LIST => {
+                    let a = ((inst >> 16) & 0xFF) as usize + base;
+                    let b = ((inst >> 8) & 0xFF) as usize + base;
+                    let v = reg!(b);
+                    if !v.is_string() {
+                        vm_err!(VmError::Type("jpar-list requires a string"));
+                    }
+                    // SAFETY: is_string() confirmed heap-tagged string with live RC.
+                    let text = unsafe {
+                        match v.as_heap_ref() {
+                            HeapObj::Str(s) => s,
+                            _ => unreachable!(),
+                        }
+                    };
+                    let result = match serde_json::from_str::<serde_json::Value>(text) {
+                        Ok(serde_json::Value::Array(arr)) => {
+                            let items: Vec<NanVal> =
+                                arr.into_iter().map(serde_json_to_nanval).collect();
+                            NanVal::heap_ok(NanVal::heap_list(items))
+                        }
+                        Ok(other) => {
+                            let kind = match &other {
+                                serde_json::Value::Object(_) => "object",
+                                serde_json::Value::Null => "null",
+                                serde_json::Value::Bool(_) => "bool",
+                                serde_json::Value::Number(_) => "number",
+                                serde_json::Value::String(_) => "string",
+                                serde_json::Value::Array(_) => unreachable!(),
+                            };
+                            NanVal::heap_err(NanVal::heap_string(format!(
+                                "jpar-list: expected JSON array, got {kind}"
+                            )))
+                        }
                         Err(e) => NanVal::heap_err(NanVal::heap_string(e.to_string())),
                     };
                     reg_set!(a, result);
@@ -17728,6 +17776,43 @@ pub(crate) extern "C" fn jit_jpar(a: u64, span_bits: u64) -> u64 {
     };
     match serde_json::from_str::<serde_json::Value>(text) {
         Ok(parsed) => NanVal::heap_ok(serde_json_to_nanval(parsed)).0,
+        Err(e) => NanVal::heap_err(NanVal::heap_string(e.to_string())).0,
+    }
+}
+
+#[cfg(feature = "cranelift")]
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn jit_jpar_list(a: u64, span_bits: u64) -> u64 {
+    let v = NanVal(a);
+    if !v.is_string() {
+        jit_set_runtime_error_with_span(VmError::Type("jpar-list requires a string"), span_bits);
+        return TAG_NIL;
+    }
+    let text = unsafe {
+        match v.as_heap_ref() {
+            HeapObj::Str(s) => s,
+            _ => unreachable!(),
+        }
+    };
+    match serde_json::from_str::<serde_json::Value>(text) {
+        Ok(serde_json::Value::Array(arr)) => {
+            let items: Vec<NanVal> = arr.into_iter().map(serde_json_to_nanval).collect();
+            NanVal::heap_ok(NanVal::heap_list(items)).0
+        }
+        Ok(other) => {
+            let kind = match &other {
+                serde_json::Value::Object(_) => "object",
+                serde_json::Value::Null => "null",
+                serde_json::Value::Bool(_) => "bool",
+                serde_json::Value::Number(_) => "number",
+                serde_json::Value::String(_) => "string",
+                serde_json::Value::Array(_) => unreachable!(),
+            };
+            NanVal::heap_err(NanVal::heap_string(format!(
+                "jpar-list: expected JSON array, got {kind}"
+            )))
+            .0
+        }
         Err(e) => NanVal::heap_err(NanVal::heap_string(e.to_string())).0,
     }
 }
@@ -25584,6 +25669,47 @@ mod tests {
             assert!(is_nil(r));
             let err = jit_take_runtime_error().expect("expected pending error");
             assert!(matches!(err.0, VmError::Type(msg) if msg.contains("jpar")));
+        }
+
+        // ── jit_jpar_list (P0b/5f) ─────────────────────────────────────────
+
+        #[test]
+        fn jit_jpar_list_valid_array() {
+            let r = jit_jpar_list(str_val("[1,2,3]"), 0);
+            let rv = NanVal(r);
+            assert!(rv.is_heap());
+            let HeapObj::OkVal(_) = (unsafe { rv.as_heap_ref() }) else {
+                panic!("expected OkVal")
+            };
+        }
+
+        #[test]
+        fn jit_jpar_list_non_array_returns_err() {
+            let r = jit_jpar_list(str_val(r#"{"x":1}"#), 0);
+            let rv = NanVal(r);
+            assert!(rv.is_heap());
+            let HeapObj::ErrVal(_) = (unsafe { rv.as_heap_ref() }) else {
+                panic!("expected ErrVal for non-array JSON")
+            };
+        }
+
+        #[test]
+        fn jit_jpar_list_invalid_json_returns_err() {
+            let r = jit_jpar_list(str_val("not json"), 0);
+            let rv = NanVal(r);
+            assert!(rv.is_heap());
+            let HeapObj::ErrVal(_) = (unsafe { rv.as_heap_ref() }) else {
+                panic!("expected ErrVal for invalid JSON")
+            };
+        }
+
+        #[test]
+        fn jit_jpar_list_non_string_signals_runtime_error() {
+            let _ = jit_take_runtime_error();
+            let r = jit_jpar_list(TAG_NIL, 0);
+            assert!(is_nil(r));
+            let err = jit_take_runtime_error().expect("expected pending error");
+            assert!(matches!(err.0, VmError::Type(msg) if msg.contains("jpar-list")));
         }
 
         // ── jit_rdjl (batch 7) ─────────────────────────────────────────────

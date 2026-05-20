@@ -140,6 +140,7 @@ struct HelperFuncs {
     jpth: FuncId,
     jdmp: FuncId,
     jpar: FuncId,
+    jpar_list: FuncId,
     rdjl: FuncId,
     call: FuncId,
     // Type predicates
@@ -375,6 +376,7 @@ fn declare_all_helpers(module: &mut ObjectModule) -> HelperFuncs {
         jpth: declare_helper(module, "jit_jpth", 3, 1),
         jdmp: declare_helper(module, "jit_jdmp", 1, 1),
         jpar: declare_helper(module, "jit_jpar", 2, 1),
+        jpar_list: declare_helper(module, "jit_jpar_list", 2, 1),
         rdjl: declare_helper(module, "jit_rdjl", 2, 1),
         call: declare_helper(module, "jit_call", 4, 1),
         // Type predicates
@@ -1167,12 +1169,12 @@ fn compile_function_body(
                 | OP_LISTGET | OP_INDEX | OP_STR | OP_HD | OP_AT | OP_FMT2 | OP_TL | OP_REV
                 | OP_SRT | OP_SRTDESC | OP_SLC | OP_TAKE | OP_DROP | OP_SPL | OP_CAT | OP_GET
                 | OP_POST | OP_GETH | OP_POSTH | OP_GETMANY | OP_ENV | OP_JPTH | OP_JDMP
-                | OP_JPAR | OP_RDJL | OP_MAPNEW | OP_MGET | OP_MSET | OP_MDEL | OP_MKEYS
-                | OP_MVALS | OP_MPAIRS | OP_LISTNEW | OP_LISTAPPEND | OP_RECNEW | OP_RECWITH
-                | OP_RECNEW_EMPTY | OP_RECCOPY | OP_PRT | OP_RD | OP_RDL | OP_WR | OP_WRL
-                | OP_TRM | OP_UPR | OP_LWR | OP_CAP | OP_PADL | OP_PADR | OP_PADLC | OP_PADRC
-                | OP_CHR | OP_CHARS | OP_UNQ | OP_UNIQBY | OP_PARTITION | OP_FRQ | OP_NUM
-                | OP_SRT_BY_KEY | OP_GRP_BY_KEY | OP_UNIQ_BY_KEY | OP_RGXSUB | OP_ZIP
+                | OP_JPAR | OP_JPAR_LIST | OP_RDJL | OP_MAPNEW | OP_MGET | OP_MSET | OP_MDEL
+                | OP_MKEYS | OP_MVALS | OP_MPAIRS | OP_LISTNEW | OP_LISTAPPEND | OP_RECNEW
+                | OP_RECWITH | OP_RECNEW_EMPTY | OP_RECCOPY | OP_PRT | OP_RD | OP_RDL | OP_WR
+                | OP_WRL | OP_TRM | OP_UPR | OP_LWR | OP_CAP | OP_PADL | OP_PADR | OP_PADLC
+                | OP_PADRC | OP_CHR | OP_CHARS | OP_UNQ | OP_UNIQBY | OP_PARTITION | OP_FRQ
+                | OP_NUM | OP_SRT_BY_KEY | OP_GRP_BY_KEY | OP_UNIQ_BY_KEY | OP_RGXSUB | OP_ZIP
                 | OP_ENUMERATE | OP_RANGE | OP_WINDOW | OP_WINDOW_VIEW | OP_CHUNKS | OP_CUMSUM
                 | OP_CPROD | OP_SETUNION | OP_SETINTER | OP_SETDIFF | OP_FFT | OP_IFFT
                 | OP_TRANSPOSE | OP_MATMUL | OP_INV | OP_SOLVE | OP_DTFMT | OP_DTPARSE
@@ -3863,6 +3865,15 @@ fn compile_function_body(
                 let span_bits = super::jit_cranelift::pack_span_bits(chunk.spans[ip]);
                 let span_arg = builder.ins().iconst(I64, span_bits);
                 let fref = get_func_ref(&mut builder, module, helpers.jpar);
+                let call_inst = builder.ins().call(fref, &[bv, span_arg]);
+                let result = builder.inst_results(call_inst)[0];
+                builder.def_var(vars[a_idx], result);
+            }
+            OP_JPAR_LIST => {
+                let bv = builder.use_var(vars[b_idx]);
+                let span_bits = super::jit_cranelift::pack_span_bits(chunk.spans[ip]);
+                let span_arg = builder.ins().iconst(I64, span_bits);
+                let fref = get_func_ref(&mut builder, module, helpers.jpar_list);
                 let call_inst = builder.ins().call(fref, &[bv, span_arg]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
