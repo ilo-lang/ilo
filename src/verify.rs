@@ -302,7 +302,7 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     // We use special strings to describe signatures
     ("len", &["list_or_text"], "n"),
     ("str", &["n"], "t"),
-    ("num", &["t"], "R n t"),
+    ("num", &["t_or_n"], "R n t"),
     ("abs", &["n"], "n"),
     ("flr", &["n"], "n"),
     ("cel", &["n"], "n"),
@@ -633,13 +633,17 @@ fn builtin_check_args(
             (Ty::Text, errors)
         }
         "num" => {
+            // num is polymorphic: accepts text (parses) or number (identity).
+            // Return type is always R n t so existing callers and exhaustive
+            // match arms keep working. Widening only — no breaking change.
             if let Some(arg) = arg_types.first()
                 && !compatible(arg, &Ty::Text)
+                && !compatible(arg, &Ty::Number)
             {
                 errors.push(VerifyError {
                     code: "ILO-T013",
                     function: func_ctx.to_string(),
-                    message: format!("'num' expects t, got {arg}"),
+                    message: format!("'num' expects t or n, got {arg}"),
                     hint: None,
                     span,
                     is_warning: false,
@@ -5733,13 +5737,29 @@ mod tests {
 
     #[test]
     fn builtin_num_wrong_type() {
-        let result = parse_and_verify("f x:n>R n t;num x");
+        // `num` is polymorphic: text or number are both fine. Bool is not.
+        // Pre-fix this asserted that `num x:n` failed; post-fix it passes.
+        let result = parse_and_verify("f x:b>R n t;num x");
         assert!(result.is_err());
         let errors = result.unwrap_err();
         assert!(
             errors
                 .iter()
-                .any(|e| e.message.contains("'num' expects t, got n"))
+                .any(|e| e.message.contains("'num' expects t or n, got b")),
+            "expected num bool error, got: {:?}",
+            errors.iter().map(|e| &e.message).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn builtin_num_accepts_number_arg() {
+        // Polymorphic widening: a statically-typed Number argument now
+        // verifies, producing identity-wrapped Ok at runtime.
+        let result = parse_and_verify("f x:n>R n t;num x");
+        assert!(
+            result.is_ok(),
+            "num should accept Number input post-polymorphism, got: {:?}",
+            result.err()
         );
     }
 
