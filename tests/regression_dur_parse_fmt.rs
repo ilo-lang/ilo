@@ -363,3 +363,70 @@ fn dur_fmt_wrong_type_errors() {
         "VM: expected dur-fmt error, got: {stderr}"
     );
 }
+
+// ── Negative + fractional round-trip (cross-engine) ─────────────────────────
+
+#[test]
+fn dur_fmt_negative_emits_single_leading_minus() {
+    let src = "f>t;dur-fmt -90";
+    for e in ENGINES {
+        assert_eq!(run_ok(e, src, "f"), "-1m 30s", "engine={e}");
+    }
+}
+
+#[test]
+fn dur_parse_negative_is_sticky_across_tokens() {
+    // Sticky sign: leading `-` applies to every following token until an
+    // explicit `+` resets it. So `-1m 30s` = -90 (not -30), which is what
+    // makes the dur-fmt -> dur-parse round-trip symmetric for negatives.
+    let src = "f>R n t;dur-parse \"-1m 30s\"";
+    for e in ENGINES {
+        assert_eq!(parse_num(&run_ok(e, src, "f")), -90.0, "engine={e}");
+    }
+}
+
+#[test]
+fn dur_round_trip_negative_multi_part() {
+    // End-to-end: fmt(-5400) -> "-1h 30m" -> parse -> -5400.
+    let src = "f>R n t;dur-parse (dur-fmt -5400)";
+    for e in ENGINES {
+        assert_eq!(parse_num(&run_ok(e, src, "f")), -5400.0, "engine={e}");
+    }
+}
+
+#[test]
+fn dur_fmt_preserves_fractional_seconds() {
+    // 90.5 -> "1m 30.5s" — the previous implementation truncated to "1m 30s".
+    let src = "f>t;dur-fmt 90.5";
+    for e in ENGINES {
+        assert_eq!(run_ok(e, src, "f"), "1m 30.5s", "engine={e}");
+    }
+}
+
+#[test]
+fn dur_round_trip_fractional_seconds() {
+    // End-to-end: fmt(90.5) -> "1m 30.5s" -> parse -> 90.5.
+    let src = "f>R n t;dur-parse (dur-fmt 90.5)";
+    for e in ENGINES {
+        assert_eq!(parse_num(&run_ok(e, src, "f")), 90.5, "engine={e}");
+    }
+}
+
+#[test]
+fn dur_parse_months_rejected() {
+    // Months are deliberately unsupported (variable length). All these
+    // forms should error rather than silently parse.
+    for src in [
+        "f>R n t;dur-parse \"3mo\"",
+        "f>R n t;dur-parse \"3 months\"",
+        "f>R n t;dur-parse \"3 month\"",
+    ] {
+        for e in ENGINES {
+            let stderr = run_err(e, src, "f");
+            assert!(
+                stderr.contains("dur-parse") || stderr.contains("no recognised unit"),
+                "engine={e} src={src}: expected dur-parse error, got: {stderr}"
+            );
+        }
+    }
+}
