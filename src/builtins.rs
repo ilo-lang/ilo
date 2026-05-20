@@ -829,7 +829,6 @@ impl Builtin {
         // rounded up (ceil(ms / 1000)) so 1 ms => 1 s, 1001 ms => 2 s.
         Builtin::GetTo,
         Builtin::PstTo,
-<<<<<<< HEAD
         // `matvec xm ys > L n` — native matrix-vector multiply. Tree-bridge
         // eligible: composes the same row/vector helpers as `matmul`, so VM
         // and Cranelift inherit through the bridge without new opcodes.
@@ -848,7 +847,6 @@ impl Builtin {
         // wrap). Appended last to preserve on-wire tags. Backed by `getrandom`, not
         // `fastrand` — cryptographic randomness must never be seeded.
         Builtin::RandBytes,
-=======
         // 0.12.1: URL + base64url encoding cluster. Appended last to preserve
         // every existing on-wire tag. Tree-bridge eligible — pure text-in /
         // text-out, no FnRef args, no I/O. Backed by the `percent-encoding`
@@ -859,7 +857,6 @@ impl Builtin {
         Builtin::Urldec,
         Builtin::B64u,
         Builtin::B64uDec,
->>>>>>> 7b25068d (add urlenc/urldec/b64u/b64u-dec builtin registrations)
     ];
 
     /// On-wire 8-bit tag for cross-engine builtin dispatch. See `ALL`.
