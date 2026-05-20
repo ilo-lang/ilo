@@ -1,6 +1,12 @@
 -- map fn xs: when fn reads a record field the result must be the field
 -- value regardless of engine. JIT previously returned wrong values due to
 -- non-deterministic HashMap iteration in the Value->NanVal conversion path.
+--
+-- Engine coverage: the examples_engines harness only registers --vm today
+-- (the tree-walker is soft-deprecated and JIT/AOT aren't in the harness
+-- list yet). The JIT and AOT engines are exercised against this same
+-- program via tests/regression_hof_map.rs::map_record_field_* which
+-- drives --vm, --jit, and `ilo compile` end-to-end.
 
 type prs{nm:t;off:n}
 get-nm p:prs>t;p.nm

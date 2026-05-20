@@ -7062,13 +7062,26 @@ impl NanVal {
                 // OP_RECFLD uses positional field indices that must match the
                 // type's declaration order.  HashMap iteration order is
                 // non-deterministic (AHash random seed), so we must NOT rely on
-                // `fields.keys()` order.  Look up the canonical order from
-                // ACTIVE_REGISTRY first; fall back to HashMap order only when
-                // the registry is unavailable (e.g. standalone unit tests that
-                // don't go through jit_call_dyn).
+                // `fields.keys()` order.  Resolution preference:
+                //   1. ACTIVE_REGISTRY by type_name — the canonical declaration
+                //      order, always set during JIT / VM dispatch (TLS read at
+                //      call time, not baked at JIT compile time — see
+                //      `jit_get_registry_ptr` for the AOT companion accessor).
+                //   2. Sorted HashMap keys — deterministic but arbitrary; only
+                //      reached for synthetic Values whose type isn't registered
+                //      (e.g. ad-hoc unit tests building Value::Record by hand
+                //      without going through the compiler).  Sorted to avoid
+                //      silently re-introducing the AHash bug if the registry
+                //      lookup somehow misses.
                 let registry_ptr = ACTIVE_REGISTRY.with(|r| r.get());
                 let (field_names, num_fields_mask): (Vec<String>, u64) = if !registry_ptr.is_null()
                 {
+                    // SAFETY: ACTIVE_REGISTRY is published by
+                    // `with_active_registry` / `set_active_registry` for the
+                    // duration of every VM entry and cleared by the drop
+                    // guard. The pointer is read fresh each call (no JIT-time
+                    // baking), so even if `JitFunction` is cached across
+                    // entries in future, the registry pointer remains valid.
                     let registry = unsafe { &*registry_ptr };
                     if let Some(ti) = registry
                         .name_to_id
@@ -7077,10 +7090,22 @@ impl NanVal {
                     {
                         (ti.fields.clone(), ti.num_fields)
                     } else {
-                        (fields.keys().cloned().collect(), 0)
+                        // Registry available but type missing — a compiled
+                        // program should never produce this.  Fail loudly in
+                        // debug; in release, fall back to sorted order so
+                        // OP_RECFLD at least reads positions deterministically.
+                        debug_assert!(
+                            false,
+                            "Value::Record type {type_name:?} missing from ACTIVE_REGISTRY",
+                        );
+                        let mut names: Vec<String> = fields.keys().cloned().collect();
+                        names.sort();
+                        (names, 0)
                     }
                 } else {
-                    (fields.keys().cloned().collect(), 0)
+                    let mut names: Vec<String> = fields.keys().cloned().collect();
+                    names.sort();
+                    (names, 0)
                 };
                 let type_info = Rc::new(TypeInfo {
                     name: type_name.clone(),
