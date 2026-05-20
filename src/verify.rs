@@ -396,6 +396,8 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("pst-to", &["t", "t", "n"], "R t t"),
     ("get-many", &["L t"], "L (R t t)"),
     ("run", &["t", "L t"], "R (M t t) t"),
+    // run2: structured spawn — typed Record instead of loose Map.
+    ("run2", &["t", "L t"], "R RunResult t"),
     ("rd", &["t"], "R ? t"),
     ("rd", &["t", "t"], "R ? t"),
     ("lsd", &["t"], "R (L t) t"),
@@ -3389,6 +3391,50 @@ fn builtin_check_args(
             (
                 Ty::Result(
                     Box::new(Ty::Map(Box::new(Ty::Text), Box::new(Ty::Text))),
+                    Box::new(Ty::Text),
+                ),
+                errors,
+            )
+        }
+        "run2" => {
+            // run2 cmd:t args:L t  >  R RunResult t
+            // Structured process spawn. Returns a typed Record{stdout;stderr;exit}
+            // instead of the loose Map that `run` returns. Err only on spawn failure.
+            if let Some(arg) = arg_types.first()
+                && !compatible(arg, &Ty::Text)
+            {
+                errors.push(VerifyError {
+                    code: "ILO-T013",
+                    function: func_ctx.to_string(),
+                    message: format!("'run2' expects t (cmd), got {arg}"),
+                    hint: Some(
+                        "first arg is the program path or name, e.g. run2 \"echo\" [\"hi\"]"
+                            .to_string(),
+                    ),
+                    span,
+                    is_warning: false,
+                });
+            }
+            if let Some(arg) = arg_types.get(1) {
+                let list_text = Ty::List(Box::new(Ty::Text));
+                if !compatible(arg, &list_text) {
+                    errors.push(VerifyError {
+                        code: "ILO-T013",
+                        function: func_ctx.to_string(),
+                        message: format!("'run2' args slot expects L t, got {arg}"),
+                        hint: Some(
+                            "second arg is the argv list (no shell interpolation), e.g. \
+                             run2 \"git\" [\"status\", \"--short\"]"
+                                .to_string(),
+                        ),
+                        span,
+                        is_warning: false,
+                    });
+                }
+            }
+            (
+                Ty::Result(
+                    Box::new(Ty::Named("RunResult".to_string())),
                     Box::new(Ty::Text),
                 ),
                 errors,
