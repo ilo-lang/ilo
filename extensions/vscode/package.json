@@ -44,6 +44,7 @@
           "ilo-lang"
         ],
         "extensions": [
+          ".@",
           ".ilo"
         ],
         "configuration": "./language-configuration/ilo.json"

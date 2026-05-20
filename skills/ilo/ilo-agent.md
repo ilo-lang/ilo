@@ -23,10 +23,10 @@ Every skill subcommand accepts `--json`. `ilo skill list --json` returns `{schem
 ## Running
 
 ```
-ilo file.ilo                       auto-pick main
-ilo file.ilo func a b              call named fn
-ilo 'f x:n>n;+x 1' 5               inline source
-ilo --jit file.ilo --bench main    JIT + bench
+ilo file.@                         auto-pick main
+ilo file.@ func a b                call named fn
+ilo 'f x:n>n;+x 1' 5              inline source
+ilo --jit file.@ --bench main     JIT + bench
 ```
 
 First positional dispatches to a fn when it has ident shape. Otherwise (paths, numbers, sigils, negatives) routes to `main`. Unknown `--flag` shapes are rejected, not consumed.

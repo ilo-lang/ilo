@@ -19595,7 +19595,7 @@ mod tests {
 
     #[test]
     fn vm_tot() {
-        let source = std::fs::read_to_string("examples/01-simple-function.ilo").unwrap();
+        let source = std::fs::read_to_string("examples/01-simple-function.@").unwrap();
         let result = vm_run(
             &source,
             Some("tot"),

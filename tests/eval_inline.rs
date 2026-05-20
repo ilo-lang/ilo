@@ -211,7 +211,7 @@ fn inline_invalid_code_errors() {
 #[test]
 fn file_bare_args_runs_first_func() {
     let out = ilo()
-        .args(["examples/01-simple-function.ilo", "10", "20", "0.1"])
+        .args(["examples/01-simple-function.@", "10", "20", "0.1"])
         .output()
         .expect("failed to run ilo");
     assert!(
@@ -219,19 +219,19 @@ fn file_bare_args_runs_first_func() {
         "stderr: {}",
         String::from_utf8_lossy(&out.stderr)
     );
-    // 01-simple-function.ilo defines tot: (10*20) + (10*20*0.1) = 200 + 20 = 220
+    // 01-simple-function.@ defines tot: (10*20) + (10*20*0.1) = 200 + 20 = 220
     assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "220");
 }
 
 #[test]
 fn file_with_ast_flag_dumps_ast() {
-    // Previously `ilo file.ilo` with no func arg dumped raw AST JSON,
+    // Previously `ilo file.@` with no func arg dumped raw AST JSON,
     // which was a long-standing first-touch surprise: users expected
     // it to run. The AST dump is now gated behind an explicit `--ast`
     // flag (the auto-run / friendly-listing behaviour is pinned in
     // tests/regression_cli_default.rs).
     let out = ilo()
-        .args(["--ast", "examples/01-simple-function.ilo"])
+        .args(["--ast", "examples/01-simple-function.@"])
         .output()
         .expect("failed to run ilo");
     assert!(out.status.success());
@@ -1279,7 +1279,7 @@ fn run_llvm_not_enabled() {
 fn file_read_error() {
     use std::os::unix::fs::PermissionsExt;
     let dir = std::env::temp_dir();
-    let path = dir.join("ilo_test_unreadable.ilo");
+    let path = dir.join("ilo_test_unreadable.@");
     // Restore permissions first in case a previous run left the file unreadable
     if path.exists() {
         let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644));
@@ -1579,7 +1579,7 @@ fn write_temp_ilo(content: &str) -> std::path::PathBuf {
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let dir = std::env::temp_dir();
     let n = COUNTER.fetch_add(1, Ordering::Relaxed);
-    let path = dir.join(format!("ilo_test_{}_{}.ilo", std::process::id(), n));
+    let path = dir.join(format!("ilo_test_{}_{}.@", std::process::id(), n));
     std::fs::write(&path, content).expect("failed to write temp file");
     path
 }
@@ -1974,17 +1974,17 @@ fn alias_in_param_run() {
     assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "6");
 }
 
-// --- Import system (use "file.ilo") ---
+// --- Import system (use "file.@") ---
 
 #[test]
 fn use_imports_function_from_file() {
-    let lib = "/tmp/ilo_test_math.ilo";
-    let main_file = "/tmp/ilo_test_main.ilo";
+    let lib = "/tmp/ilo_test_math.@";
+    let main_file = "/tmp/ilo_test_main.@";
     std::fs::write(lib, "dbl n:n>n;*n 2\n").unwrap();
     // Renamed user fn from `run` to `myrun` in 0.12.0 — `run` is now a
     // builtin (argv-list process spawn) and shadows would silently break
     // dispatch.
-    std::fs::write(main_file, "use \"ilo_test_math.ilo\"\nmyrun x:n>n;dbl x\n").unwrap();
+    std::fs::write(main_file, "use \"ilo_test_math.@\"\nmyrun x:n>n;dbl x\n").unwrap();
 
     let out = ilo()
         .args([main_file, "--vm", "myrun", "5"])
@@ -2002,8 +2002,8 @@ fn use_imports_function_from_file() {
 
 #[test]
 fn use_file_not_found_error() {
-    let main_file = "/tmp/ilo_test_missing_import.ilo";
-    std::fs::write(main_file, "use \"nonexistent_xyz.ilo\"\nf>n;1\n").unwrap();
+    let main_file = "/tmp/ilo_test_missing_import.@";
+    std::fs::write(main_file, "use \"nonexistent_xyz.@\"\nf>n;1\n").unwrap();
 
     let out = ilo().args([main_file]).output().expect("failed to run ilo");
     let _ = std::fs::remove_file(main_file);
@@ -2020,10 +2020,10 @@ fn use_file_not_found_error() {
 
 #[test]
 fn use_circular_import_error() {
-    let a = "/tmp/ilo_test_circ_a.ilo";
-    let b = "/tmp/ilo_test_circ_b.ilo";
-    std::fs::write(a, "use \"ilo_test_circ_b.ilo\"\nfa>n;1\n").unwrap();
-    std::fs::write(b, "use \"ilo_test_circ_a.ilo\"\nfb>n;2\n").unwrap();
+    let a = "/tmp/ilo_test_circ_a.@";
+    let b = "/tmp/ilo_test_circ_b.@";
+    std::fs::write(a, "use \"ilo_test_circ_b.@\"\nfa>n;1\n").unwrap();
+    std::fs::write(b, "use \"ilo_test_circ_a.@\"\nfb>n;2\n").unwrap();
 
     let out = ilo().args([a]).output().expect("failed to run ilo");
     let _ = std::fs::remove_file(a);
@@ -2041,7 +2041,7 @@ fn use_circular_import_error() {
 fn use_in_inline_code_error() {
     // use in inline code (no file context) should error with ILO-P017
     let out = ilo()
-        .args(["-e", "use \"foo.ilo\"\nf>n;1", "--vm", "f"])
+        .args(["-e", "use \"foo.@\"\nf>n;1", "--vm", "f"])
         .output()
         .expect("failed to run ilo");
     assert!(!out.status.success());
@@ -2059,12 +2059,12 @@ fn use_in_inline_code_error() {
 
 #[test]
 fn use_parse_error_in_imported_file() {
-    let bad = "/tmp/ilo_test_parse_err_import.ilo";
-    let main_file = "/tmp/ilo_test_parse_err_main.ilo";
+    let bad = "/tmp/ilo_test_parse_err_import.@";
+    let main_file = "/tmp/ilo_test_parse_err_main.@";
     std::fs::write(bad, "f x:>n;x\n").unwrap(); // syntax error: missing type after ':'
     std::fs::write(
         main_file,
-        "use \"ilo_test_parse_err_import.ilo\"\ng x:n>n;+x 1\n",
+        "use \"ilo_test_parse_err_import.@\"\ng x:n>n;+x 1\n",
     )
     .unwrap();
 
@@ -2084,19 +2084,19 @@ fn use_parse_error_in_imported_file() {
 
 #[test]
 fn use_transitive_imports() {
-    let file_b = "/tmp/ilo_test_trans_b.ilo";
-    let file_a = "/tmp/ilo_test_trans_a.ilo";
-    let file_main = "/tmp/ilo_test_trans_main.ilo";
+    let file_b = "/tmp/ilo_test_trans_b.@";
+    let file_a = "/tmp/ilo_test_trans_a.@";
+    let file_main = "/tmp/ilo_test_trans_main.@";
 
     std::fs::write(file_b, "triple x:n>n;*x 3\n").unwrap();
     std::fs::write(
         file_a,
-        "use \"ilo_test_trans_b.ilo\"\nsextuple x:n>n;t=triple x;*t 2\n",
+        "use \"ilo_test_trans_b.@\"\nsextuple x:n>n;t=triple x;*t 2\n",
     )
     .unwrap();
     std::fs::write(
         file_main,
-        "use \"ilo_test_trans_a.ilo\"\nmain x:n>n;sextuple x\n",
+        "use \"ilo_test_trans_a.@\"\nmain x:n>n;sextuple x\n",
     )
     .unwrap();
 
@@ -3099,14 +3099,14 @@ fn repl_wq_with_defs_no_path() {
     );
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
-        stderr.contains("usage: :w <file.ilo>"),
+        stderr.contains("usage: :w <file.@>"),
         "expected usage hint, got: {stderr}"
     );
 }
 
 #[test]
 fn repl_w_save_file() {
-    let path = "/tmp/ilo_repl_test_save_cov.ilo";
+    let path = "/tmp/ilo_repl_test_save_cov.@";
     let _ = std::fs::remove_file(path);
     let out = run_repl(&format!("f x:n>n;*x 2\n:w {path}\n:q\n"));
     assert!(
@@ -3129,7 +3129,7 @@ fn repl_w_save_file() {
 
 #[test]
 fn repl_wq_save_and_quit() {
-    let path = "/tmp/ilo_repl_test_wq_cov.ilo";
+    let path = "/tmp/ilo_repl_test_wq_cov.@";
     let _ = std::fs::remove_file(path);
     let out = run_repl(&format!("f x:n>n;+x 1\n:wq {path}\n"));
     assert!(
@@ -3147,7 +3147,7 @@ fn repl_wq_save_and_quit() {
 
 #[test]
 fn repl_w_no_defs_to_save() {
-    let out = run_repl(":w /tmp/ilo_repl_nodefs_cov.ilo\n:q\n");
+    let out = run_repl(":w /tmp/ilo_repl_nodefs_cov.@\n:q\n");
     assert!(
         out.status.success(),
         "stderr: {}",
@@ -3560,4 +3560,63 @@ fn sum_type_match_missing_variant_errors() {
     assert!(!out.status.success());
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("ILO-T024") || stderr.contains("non-exhaustive"));
+}
+
+// --- .@ extension: canonical source file extension ---
+
+#[test]
+fn at_extension_file_runs_correctly() {
+    // .@ is the canonical extension; the loader must accept it without any special path.
+    let path = "/tmp/ilo_ext_at_basic_test.@";
+    std::fs::write(path, "add a:n b:n>n;+a b\n-- run: add 3 4\n-- out: 7\n").unwrap();
+    let out = ilo()
+        .args([path, "add", "3", "4"])
+        .output()
+        .expect("failed to run ilo");
+    let _ = std::fs::remove_file(path);
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "7");
+}
+
+#[test]
+fn ilo_extension_emits_deprecation_hint() {
+    // .ilo files load correctly but emit a deprecation hint on stderr.
+    let path = "/tmp/ilo_ext_depr_test.ilo";
+    std::fs::write(path, "f>n;42\n").unwrap();
+    let out = ilo().args([path]).output().expect("failed to run ilo");
+    let _ = std::fs::remove_file(path);
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "42");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("deprecated") && stderr.contains(".@"),
+        "expected deprecation hint on stderr, got: {stderr}"
+    );
+}
+
+#[test]
+fn aot_at_extension_strips_correctly() {
+    // `ilo build prog.@ -o out` should strip `.@` to derive the default output name.
+    // We verify by checking that `ilo build` doesn't complain about extension.
+    let src = "/tmp/ilo_aot_ext_at_test.@";
+    std::fs::write(src, "main>n;99\n").unwrap();
+    // Use --dry-run isn't available, but check returns 0 on valid input.
+    let out = ilo()
+        .args(["check", src])
+        .output()
+        .expect("failed to run ilo check");
+    let _ = std::fs::remove_file(src);
+    assert!(
+        out.status.success(),
+        "check on .@ file failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
 }

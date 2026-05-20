@@ -1,14 +1,14 @@
-// Regression: `ilo file.ilo` with no func name used to dump raw AST JSON,
+// Regression: `ilo file.@` with no func name used to dump raw AST JSON,
 // which was a long-running first-touch surprise documented repeatedly in
 // the assessment log (entries at lines 527, 623, 816, 839, 936, 1045).
 //
 // New behaviour:
-//   * `ilo file.ilo`           with exactly one fn → runs that fn
-//   * `ilo file.ilo`           with `main` defined → runs main
-//   * `ilo file.ilo`           multi-fn without main → friendly listing,
+//   * `ilo file.@`           with exactly one fn → runs that fn
+//   * `ilo file.@`           with `main` defined → runs main
+//   * `ilo file.@`           multi-fn without main → friendly listing,
 //                                                      exits 1
-//   * `ilo file.ilo func args` keeps working unchanged
-//   * `ilo --ast file.ilo`     dumps the AST as JSON (explicit flag,
+//   * `ilo file.@ func args` keeps working unchanged
+//   * `ilo --ast file.@`     dumps the AST as JSON (explicit flag,
 //                              works before or after the source)
 //   * `ilo '<code>'`           inline auto-runs main or single fn;
 //                              falls back to AST-dump only when there's
@@ -38,7 +38,7 @@ fn run(args: &[&str]) -> (bool, String, String) {
 
 fn write_temp(content: &str) -> (tempfile::TempDir, std::path::PathBuf) {
     let dir = tempfile::tempdir().expect("tempdir");
-    let path = dir.path().join("prog.ilo");
+    let path = dir.path().join("prog.@");
     std::fs::write(&path, content).expect("write temp ilo");
     (dir, path)
 }
@@ -275,7 +275,7 @@ fn synthetic_lambda_decls_hidden_from_multi_fn_listing() {
 
 // ── unknown subcommand: friendly error, not silent first-fn dispatch ──────────
 //
-// Originating bug: `ilo file.ilo wibble x` on a multi-fn file used to
+// Originating bug: `ilo file.@ wibble x` on a multi-fn file used to
 // silently route to the FIRST declared function with `["wibble", "x"]`
 // as positional args. The user saw a misleading arity error
 // (`helper: expected 1 args, got 2`) far from the cause. Reported as
@@ -356,7 +356,7 @@ fn single_fn_file_treats_unknown_leading_token_as_arg() {
     // For single-fn files (one user function, no `main`), the
     // pre-existing convention is that any positional args are passed
     // through to that sole function. The unknown-subcommand check
-    // must NOT fire here — otherwise `ilo dbl.ilo 21` would refuse to
+    // must NOT fire here — otherwise `ilo dbl.@ 21` would refuse to
     // run `dbl 21` and demand an explicit subcommand name. This is
     // the auto-run contract from #307 / the SKILL.md "Inline programs
     // and single-function files" rule.
@@ -384,7 +384,7 @@ fn multi_fn_file_numeric_leading_arg_passes_through_to_entry_fn() {
     // numeric leading arg is clearly data, not a typoed subcommand, so
     // it must still pass through to the first declared function — the
     // long-standing contract that `tests/eval_inline.rs`
-    // unwrap_*_inline pins (`ilo file.ilo 42` where the multi-fn file
+    // unwrap_*_inline pins (`ilo file.@ 42` where the multi-fn file
     // defines an `outer x:n>R n t` entry routes `42` to `outer`).
     //
     // Without the shape guard, the unknown-subcommand error fired on
@@ -557,7 +557,7 @@ fn run_engine_single_fn_no_args_still_runs(engine_flag: &str) {
     // the sole declared fn. The fix preserves that path unchanged.
     // (Single-fn + positional-args on engine flags is a pre-existing
     // limitation: positional args are still parsed as the func name
-    // first, so `--run-tree file.ilo 21` errors with `undefined
+    // first, so `--run-tree file.@ 21` errors with `undefined
     // function: 21` on main. Out of scope for this fix.)
     let (_dir, path) = write_temp("entry>n;42\n");
     let (ok, stdout, stderr) = run(&[engine_flag, path.to_str().unwrap()]);
@@ -583,7 +583,7 @@ fn run_cranelift_flag_single_fn_no_args_still_runs() {
 
 // ── hyphenated unknown subcommand: friendly error (PR #320 follow-up) ─────────
 //
-// Originating bug (interactive-cli rerun6 P1): `ilo file.ilo list-orders`
+// Originating bug (interactive-cli rerun6 P1): `ilo file.@ list-orders`
 // on a multi-fn file silently routed to the FIRST declared function with
 // `["list-orders"]` as positional args, producing a misleading
 // `load: expected 0 args` error. PR #320 added the unknown-subcommand
@@ -657,7 +657,7 @@ fn trailing_dash_falls_through_as_data() {
 
 // ── non-ident leading arg with `main` defined: route to `main` ─────────────────
 //
-// Originating bug (gis-analyst rerun6): `ilo main_v5.ilo top200.csv` on
+// Originating bug (gis-analyst rerun6): `ilo main_v5.@ top200.csv` on
 // a multi-fn file used to silently route the non-ident-shaped arg
 // `top200.csv` to the FIRST declared function (e.g. `hav`) rather than
 // to `main`. The presence of `main` is a strong intent signal that the
@@ -725,7 +725,7 @@ fn non_ident_path_arg_routes_to_main_devops_sre_shape() {
     // independently surfaced via a different persona workload. A
     // multi-fn file with a named-helper field-access (`gs i:_>...`
     // taking a struct/record and reading `i.field`) and a `main` taking
-    // a JSON path. Pre-fix: `ilo probe.ilo /tmp/inc.json` routed the
+    // a JSON path. Pre-fix: `ilo probe.@ /tmp/inc.json` routed the
     // path positional (`/` + `.` make it non-ident-shaped) to the
     // first-declared `gs`, hitting a field-access type mismatch on a
     // raw text arg. Post-fix: the path flows into `main` as intended.
@@ -765,7 +765,7 @@ fn known_func_name_overrides_main_routing() {
 // is NO positional after the engine flag, mirroring half of #328. The
 // other half (#328: non-ident first positional routes to `main` with the
 // positional as arg #1) didn't get propagated, so the default-engine path
-// `ilo main.ilo paper.txt` correctly runs `main "paper.txt"` but every
+// `ilo main.@ paper.txt` correctly runs `main "paper.txt"` but every
 // explicit-engine variant (`--run-tree`, `--vm`, `--jit`)
 // hard-failed with `ILO-R002: undefined function: paper.txt`.
 //

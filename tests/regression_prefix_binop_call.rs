@@ -34,7 +34,7 @@ fn run(engine: &str, src: &str, entry: &str) -> String {
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let seq = COUNTER.fetch_add(1, Ordering::SeqCst);
     let path = std::env::temp_dir().join(format!(
-        "ilo_prefix_binop_call_{}_{}.ilo",
+        "ilo_prefix_binop_call_{}_{}.@",
         std::process::id(),
         seq
     ));
@@ -82,7 +82,7 @@ const PREFIX_TERNARY_CALL_EMPTY: &str = "main>n;q=[];?>len q 0 100 0";
 
 // Negative regression: `wh >v 0` with a bare local `v` (no fn_arity
 // entry) must still work — falls through to `parse_operand` unchanged.
-// Exact shape from the historic `examples/wh-gt-condition.ilo`.
+// Exact shape from the historic `examples/wh-gt-condition.@`.
 const WH_BARE_LOCAL: &str = "main>n;v=3;wh >v 0{v=- v 1};v";
 
 // Builtin in left-operand slot via prefix `=`: `==len xs 3` (equality

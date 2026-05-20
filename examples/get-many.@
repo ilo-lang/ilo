@@ -10,4 +10,4 @@ count-ok urls:L t>n;rs=get-many urls;len (flt is-ok rs)
 is-ok r:R t t>b;?r{~_:true;^_:false}
 
 -- Examples are not executed against the live network in CI, so no `-- run:` line.
--- To try locally: ilo examples/get-many.ilo fetch-all "https://example.com,https://example.org"
+-- To try locally: ilo examples/get-many.@ fetch-all "https://example.com,https://example.org"

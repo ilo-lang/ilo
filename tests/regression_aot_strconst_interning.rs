@@ -39,7 +39,7 @@ static COUNTER: AtomicU32 = AtomicU32::new(0);
 fn tmp_paths(tag: &str) -> (PathBuf, PathBuf) {
     let n = COUNTER.fetch_add(1, Ordering::Relaxed);
     let pid = std::process::id();
-    let src = std::env::temp_dir().join(format!("ilo-strconst-{tag}-{pid}-{n}.ilo"));
+    let src = std::env::temp_dir().join(format!("ilo-strconst-{tag}-{pid}-{n}.@"));
     let bin = std::env::temp_dir().join(format!("ilo-strconst-{tag}-{pid}-{n}.bin"));
     (src, bin)
 }

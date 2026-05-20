@@ -11,9 +11,9 @@
 // explicitly for hot numeric loops.
 //
 // What we assert:
-//   1. `ilo file.ilo` (default) and `ilo file.ilo --vm` produce
+//   1. `ilo file.@` (default) and `ilo file.@ --vm` produce
 //      identical stdout for a VM-supported workload.
-//   2. `ilo file.ilo --jit` runs the workload and produces correct output
+//   2. `ilo file.@ --jit` runs the workload and produces correct output
 //      (the JIT opt-in flag works).
 //   3. Default invocation of a JIT-eligible workload completes WITHOUT a
 //      JIT-fallback breadcrumb on stderr (proves we're using the VM
