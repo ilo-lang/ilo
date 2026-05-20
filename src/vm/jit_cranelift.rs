@@ -336,6 +336,7 @@ fn register_helpers(builder: &mut JITBuilder) {
         ("jit_stdev", jit_stdev as *const u8),
         ("jit_variance", jit_variance as *const u8),
         ("jit_sum", jit_sum as *const u8),
+        ("jit_prod", jit_prod as *const u8),
         ("jit_avg", jit_avg as *const u8),
         ("jit_flat", jit_flat as *const u8),
         ("jit_slc", jit_slc as *const u8),

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Fixed
+
+- `prod xs` on the Cranelift JIT no longer falls back to the bytecode VM. The `jit_prod` extern-C helper existed and the JIT codegen emitted a call to it, but `register_helpers` in `src/vm/jit_cranelift.rs` was missing the `("jit_prod", jit_prod as *const u8)` symbol entry, so the JIT panicked with `can't resolve symbol jit_prod` and silently bailed. Output was still correct but acceleration was defeated. `sum`, `avg`, `min`, `max` were unaffected — only `prod` got missed when it was added. Surfaced by the monte-carlo persona.
+
 ### Changed
 
 - Versioning scheme: semver → CalVer. Releases are `YY.M` (e.g. `26.5`), patches `YY.M.P` (e.g. `26.5.1`). The version string carries recency so an agent loading `ilo spec --json ai` knows which spec applies without a changelog lookup. Last semver release is `0.12.1`; first CalVer release cuts on the next breaking change as `26.X`. Hard cut, no `0.13` bridge. Branching model splits: `main` carries stable + RC tags (`26.5`, `26.5.1`, `26.5.2-rc.1`), `next` carries dev tags only (`26.6-dev.N`). See `README.md#versioning` for the full release / patch flow.
