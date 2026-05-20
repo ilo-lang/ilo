@@ -1538,6 +1538,30 @@ fib n:n>n;<=n 1 n;a=fib -n 1;b=fib -n 2;+a b
 - `a=fib -n 1;b=fib -n 2` - two recursive calls, each with prefix arg
 - `+a b` - add results
 
+### Tail-call optimisation
+
+ilo guarantees that **tail calls do not consume host-stack frames**. A function that recurses only in tail position can run to arbitrary depth — the runtime trampolines the call by rebinding parameters in place rather than pushing a frame.
+
+The manifesto's "Constrained" rule (every feature must pay for itself in tokens) vetoed adding a `loop` keyword. Instead, tail-recursive accumulator patterns are the canonical idiom for iteration beyond what `@` foreach covers, and the TCO guarantee makes them safe at any depth.
+
+A call is in **tail position** when its return value is the function's return value: the last statement of the body, the expression of a `ret` statement, an arm of a tail-position `?` match, or the body of a braceless guard. Calls inside `@` foreach, `@` range, `wh` loops, or as operands of further computation are NOT in tail position.
+
+```
+-- Tail-recursive countdown — runs to arbitrary depth.
+count-down n:n>n;=n 0 0;count-down -n 1
+
+-- Tail-recursive accumulator — sums a list without growing the host stack.
+sum-acc xs:L n acc:n>n;empty=len xs;=empty 0 acc;sum-acc tl xs +acc hd xs
+```
+
+Constraints on the tail-call peephole:
+- The callee must be a direct user-defined function name (not a FnRef in scope, not a closure, not a builtin, not a tool).
+- The call must have no auto-unwrap (`!` / `!!`) — those forms inspect the result before deciding whether to propagate.
+
+These constraints leave the common shapes (recursive accumulators, state machines, mutual recursion via direct names) covered. Other shapes still recurse the host stack as before; for deep recursion through non-tail-eligible shapes, restructure into an accumulator.
+
+Tree interpreter support shipped in 0.12.x. Bytecode VM (`--vm`) and Cranelift (`--jit`, AOT) gain matching support in subsequent PRs; until then, deep recursion via those engines uses each engine's own stack model (the VM's software stack tolerates much deeper recursion than host-stack recursion; the JIT recurses the host stack and is bounded by it).
+
 ### Multi-statement bodies
 
 Semicolons separate statements. Last expression is the return value.
