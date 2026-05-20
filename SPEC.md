@@ -593,6 +593,15 @@ Called like functions, compiled to dedicated opcodes.
 | `dtparse-rel s now` | parse relative-date phrase to epoch; `now` is the anchor epoch | `R n t` |
 | `dur-parse s` | parse human duration string ("3h 30m", "1 week 2 days", "1.5 hours", "90s") into seconds. Lenient: accepts abbreviations `s`/`m`/`h`/`d`/`w`, full names (singular + plural), decimal quantities, mixed sequences. Err if empty or no unit found | `R n t` |
 | `dur-fmt n` | format seconds as human-readable duration ("2h 42m", "1 day", "30s"). Drops zero parts; uses largest applicable units. Zero returns "0s". Negative values format with a leading "-" | `t` |
+| `sha256 s` | SHA-256 hex digest (lowercase) of the UTF-8 bytes of `s` | `t` |
+| `hmac-sha256 key body` | HMAC-SHA256 of `body` under `key`; returns lowercase hex. Use for webhook signature verification and API request signing | `t` |
+| `base64-enc s` | standard base64 encode (RFC 4648 §4, with `=` padding) | `t` |
+| `base64-dec s` | standard base64 decode; Err on invalid input (non-base64 chars) | `R t t` |
+| `base64url-enc s` | base64url encode (RFC 4648 §5, no padding, URL-safe `-`/`_` alphabet). Use for JWT header/payload segments | `t` |
+| `base64url-dec s` | base64url decode; Err on invalid input | `R t t` |
+| `hex-enc bytes` | encode a list of integers 0-255 as lowercase hex string | `t` |
+| `hex-dec s` | decode a hex string to a list of byte values (each 0-255). Err on odd-length or non-hex input | `R (L n) t` |
+| `ct-eq a b` | constant-time text equality - returns `true` iff `a == b` without leaking timing info via short-circuit. Use when comparing secrets (HMAC digests, tokens) | `b` |
 | `rdjl path` | read JSONL file as `L (R _ t)`: one parse result per non-empty line | `L (R _ t)` |
 | `get-many urls` | concurrent HTTP GET fan-out (max 10 parallel), preserves order | `L (R t t)` |
 | `sleep ms` | pause current engine for `ms` milliseconds; returns nil | `_` |
@@ -713,6 +722,44 @@ emits a single leading minus rather than signing each part.
 (`0.5 -> "0.5s"`) and for mixed values where the seconds component carries
 a fraction (`90.5 -> "1m 30.5s"`). Fractional minutes / hours / days / weeks
 are decomposed into smaller units before formatting.
+
+### Crypto primitives
+
+`sha256`, `hmac-sha256`, `base64-enc`, `base64-dec`, `base64url-enc`, `base64url-dec`, `hex-enc`, `hex-dec`, `ct-eq` are tree-bridge eligible: they dispatch through the tree interpreter so VM and Cranelift share identical semantics.
+
+`sha256 s > t` — SHA-256 hex digest (lowercase) of the UTF-8 bytes of `s`. Input is always treated as text; if you need to hash raw bytes, encode them as a string via `hex-enc` first.
+
+`hmac-sha256 key body > t` — HMAC-SHA256 of `body` under `key`, lowercase hex. Both arguments are text. Typical use is webhook signature verification (`ct-eq (hmac-sha256 secret payload) sig`) and API request signing.
+
+`base64-enc s > t` / `base64-dec s > R t t` — standard base64 (RFC 4648 §4) with `=` padding. `base64-dec` returns `R t t`; the Ok branch holds the decoded text string (valid UTF-8), the Err branch holds the reason. Non-UTF-8 decoded bytes always Err.
+
+`base64url-enc s > t` / `base64url-dec s > R t t` — base64url (RFC 4648 §5): URL-safe `-`/`_` alphabet, no padding. Use for JWT header and payload segments.
+
+`hex-enc bytes:L n > t` — encode a list of integers 0-255 as lowercase hex. Each element must be a whole number in `[0, 255]`; ILO-R009 on out-of-range values.
+
+`hex-dec s > R (L n) t` — decode a hex string (upper- or lowercase) to a list of byte values (each 0-255). Err on odd-length input or non-hex characters.
+
+`ct-eq a:t b:t > b` — constant-time text equality. Returns `true` iff `a == b` without short-circuiting on the first differing byte, preventing timing attacks. Always use `ct-eq` rather than `==` when comparing secrets.
+
+```
+-- sha256
+sha256 ""            -- e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+sha256 "abc"         -- ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad
+len (sha256 "x")     -- 64 (always)
+
+-- hmac
+hmac-sha256 "secret" "payload"  -- lowercase hex
+
+-- base64 round-trip
+base64-dec! (base64-enc "hello")  -- "hello"
+base64url-dec! (base64url-enc "hello")  -- "hello"
+
+-- hex round-trip
+hex-dec! (hex-enc [72, 101, 108, 108, 111])  -- [72, 101, 108, 108, 111]
+
+-- webhook verification pattern
+verify sig:t body:t>b;expected=hmac-sha256 "secret" body;ct-eq expected sig
+```
 
 ### Set operations
 

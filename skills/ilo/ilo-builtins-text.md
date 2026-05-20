@@ -1,6 +1,6 @@
 ---
 name: ilo-builtins-text
-description: Use this when calling text builtins. Manipulation, regex, formatting (fmt, fmt2), CSV/TSV, and date parsing.
+description: Use this when calling text builtins. Manipulation, regex, formatting (fmt, fmt2), CSV/TSV, date parsing, and crypto (sha256, hmac-sha256, base64, hex, ct-eq).
 ---
 
 # ilo builtins - text
@@ -66,4 +66,32 @@ dur-fmt 90                   -- "1m 30s"
 dur-fmt 90.5                 -- "1m 30.5s"
 dur-fmt -90                  -- "-1m 30s"
 dur-parse! "-1h 30m"         -- -5400 (sticky sign)
+```
+
+## Crypto
+
+`sha256 s > t` — SHA-256 hex digest (lowercase, 64 chars) of UTF-8 bytes of `s`.
+
+`hmac-sha256 key body > t` — HMAC-SHA256 lowercase hex. Use for webhook sig verification and API signing.
+
+`base64-enc s > t` / `base64-dec s > R t t` — standard base64 (RFC 4648, with `=` padding).
+
+`base64url-enc s > t` / `base64url-dec s > R t t` — base64url (no padding, `-`/`_` alphabet). Use for JWT.
+
+`hex-enc bytes:L n > t` / `hex-dec s > R (L n) t` — hex encode/decode. Each byte must be 0-255.
+
+`ct-eq a:t b:t > b` — constant-time equality. **Always** use instead of `==` when comparing secrets.
+
+```
+sha256 "abc"                  -- ba7816bf...
+hmac-sha256 "key" "payload"   -- hex digest
+base64-enc "hello"            -- "aGVsbG8="
+base64-dec! "aGVsbG8="        -- "hello"
+base64url-enc "hello"         -- "aGVsbG8" (no padding)
+hex-enc [255, 0, 16]          -- "ff0010"
+hex-dec! "ff0010"             -- [255, 0, 16]
+ct-eq sig expected            -- bool, no timing leak
+
+-- webhook verification
+verify sig:t body:t>b;expected=hmac-sha256 "secret" body;ct-eq expected sig
 ```

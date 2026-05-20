@@ -1,0 +1,67 @@
+-- Crypto primitives: sha256, hmac-sha256, base64-enc/dec, base64url-enc/dec,
+-- hex-enc/dec, ct-eq. All are tree-bridge eligible (pure text/bytes ops).
+
+-- sha256 s > t: SHA-256 hex digest (lowercase) of the UTF-8 bytes of s.
+hash-empty>t;sha256 ""
+hash-abc>t;sha256 "abc"
+hash-len>n;len (sha256 "test")
+
+-- hmac-sha256 key body > t: HMAC-SHA256, returns lowercase hex.
+-- Use for webhook signature verification and API request signing.
+hmac-demo>t;hmac-sha256 "secret-key" "payload-data"
+hmac-len>n;len (hmac-sha256 "k" "v")
+
+-- base64-enc s > t: standard base64 (RFC 4648, with padding).
+-- base64-dec s > R t t: decode; Err on invalid input.
+b64-enc>t;base64-enc "hello"
+b64-dec>R t t;base64-dec "aGVsbG8="
+b64-roundtrip>R t t;base64-dec (base64-enc "hello, world!")
+
+-- base64url-enc s > t: base64url (no padding, URL-safe alphabet).
+-- base64url-dec s > R t t: decode; Err on invalid input.
+-- Use for JWT header and payload segments.
+b64url-enc>t;base64url-enc "hello"
+b64url-roundtrip>R t t;base64url-dec (base64url-enc "hello, world!")
+
+-- hex-enc bytes:L n > t: encode a list of integers 0-255 as lowercase hex.
+-- hex-dec s > R (L n) t: decode hex string to list of byte values.
+hex-enc-demo>t;hex-enc [0, 255, 16]
+hex-dec-demo>R (L n) t;hex-dec "00ff10"
+hex-roundtrip>R (L n) t;hex-dec (hex-enc [72, 101, 108, 108, 111])
+
+-- ct-eq a:t b:t > b: constant-time text equality. No timing side-channels.
+-- Use when comparing secrets such as HMAC digests or tokens.
+ct-eq-true>b;ct-eq "abc" "abc"
+ct-eq-false>b;ct-eq "abc" "xyz"
+ct-eq-hmac>b;expected=hmac-sha256 "key" "payload";received=hmac-sha256 "key" "payload";ct-eq expected received
+
+-- run: hash-empty
+-- out: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+-- run: hash-abc
+-- out: ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad
+-- run: hash-len
+-- out: 64
+-- run: hmac-len
+-- out: 64
+-- run: b64-enc
+-- out: aGVsbG8=
+-- run: b64-dec
+-- out: hello
+-- run: b64-roundtrip
+-- out: hello, world!
+-- run: b64url-enc
+-- out: aGVsbG8
+-- run: b64url-roundtrip
+-- out: hello, world!
+-- run: hex-enc-demo
+-- out: 00ff10
+-- run: hex-dec-demo
+-- out: [0, 255, 16]
+-- run: hex-roundtrip
+-- out: [72, 101, 108, 108, 111]
+-- run: ct-eq-true
+-- out: true
+-- run: ct-eq-false
+-- out: false
+-- run: ct-eq-hmac
+-- out: true
