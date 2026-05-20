@@ -684,6 +684,10 @@ pub(crate) fn is_tree_bridge_eligible(b: crate::builtins::Builtin, argc: usize) 
         // Tree-bridge gives VM + Cranelift cross-engine parity at zero opcode cost.
         (Builtin::DurParse, 1) => true,
         (Builtin::DurFmt, 1) => true,
+        // default-on-err r d — Result mirror of ??. Pure (no FnRef, no I/O),
+        // 2-arg, returns T unwrapped from R T E or the default d. Tree-bridge
+        // keeps cross-engine parity without a new opcode.
+        (Builtin::DefaultOnErr, 2) => true,
         _ => false,
     }
 }
