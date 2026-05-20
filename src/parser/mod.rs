@@ -908,7 +908,11 @@ impl Parser {
                 position: self.pos,
                 span: self.prev_span(),
                 message: msg.to_string(),
-                hint: None,
+                hint: if code == "ILO-P007" {
+                    Some("add a type annotation: n (number), t (text), b (bool), L n (list), or a type name".to_string())
+                } else {
+                    None
+                },
             });
         }
         match self.peek().cloned() {
@@ -996,9 +1000,11 @@ impl Parser {
                     types.push(self.parse_type()?);
                 }
                 if types.is_empty() {
-                    return Err(
-                        self.error("ILO-P009", "F type requires at least a return type".into())
-                    );
+                    return Err(self.error_hint(
+                        "ILO-P009",
+                        "F type requires at least a return type".into(),
+                        "write the return type after F, e.g. `F n` (no-arg fn returning n) or `F n>t` (n->t)".to_string(),
+                    ));
                 }
                 let return_type = types.pop().expect("F type requires at least a return type");
                 Ok(Type::Fn(types, Box::new(return_type)))
@@ -1007,9 +1013,10 @@ impl Parser {
                 self.advance();
                 Ok(Type::Named(name))
             }
-            Some(tok) => Err(self.error(
+            Some(tok) => Err(self.error_hint(
                 "ILO-P007",
                 format!("expected type, got {}", tok.user_facing_name()),
+                "valid types: n, t, b, L n, R n t, F n>n, or a record type name".to_string(),
             )),
             None => Err(self.error("ILO-P008", "expected type, got EOF".into())),
         }
@@ -3554,9 +3561,10 @@ results first: `r={first_op}a b;…r` keeps each step explicit."
                 if let Some((msg, hint)) = lambda_keyword_message(&tok) {
                     return Err(self.error_hint("ILO-P009", msg, hint));
                 }
-                Err(self.error(
+                Err(self.error_hint(
                     "ILO-P009",
                     format!("expected expression, got {}", tok.user_facing_name()),
+                    "a value or expression is required here: a literal, variable name, or function call".to_string(),
                 ))
             }
             None => Err(ParseError {
