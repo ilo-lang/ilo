@@ -215,7 +215,8 @@ fn base64url_enc_no_plus_or_slash() {
     for e in ENGINES {
         assert_eq!(run_ok(e, src, "f"), "false", "engine={e}");
     }
-    let src2 = r#"f>b;s=base64url-enc "hello world this is a test string for url safety";has s "/""#;
+    let src2 =
+        r#"f>b;s=base64url-enc "hello world this is a test string for url safety";has s "/""#;
     for e in ENGINES {
         assert_eq!(run_ok(e, src2, "f"), "false", "engine={e}");
     }
@@ -286,7 +287,11 @@ fn hex_round_trip() {
     // hex-dec(hex-enc(bytes)) == bytes
     let src = "f>R (L n) t;bytes=[72, 101, 108, 108, 111];hex-dec (hex-enc bytes)";
     for e in ENGINES {
-        assert_eq!(run_ok(e, src, "f"), "[72, 101, 108, 108, 111]", "engine={e}");
+        assert_eq!(
+            run_ok(e, src, "f"),
+            "[72, 101, 108, 108, 111]",
+            "engine={e}"
+        );
     }
 }
 
@@ -401,8 +406,14 @@ fn sha256_output_is_valid_hex_decodable() {
     for e in ENGINES {
         let out = run_ok(e, src, "f");
         // Result is a list of 32 numbers
-        assert!(out.starts_with('['), "engine={e}: expected list, got: {out}");
+        assert!(
+            out.starts_with('['),
+            "engine={e}: expected list, got: {out}"
+        );
         let count = out.split(',').count();
-        assert_eq!(count, 32, "engine={e}: expected 32 bytes, got {count}: {out}");
+        assert_eq!(
+            count, 32,
+            "engine={e}: expected 32 bytes, got {count}: {out}"
+        );
     }
 }

@@ -3930,7 +3930,10 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             other => {
                 return Err(RuntimeError::new(
                     "ILO-R009",
-                    format!("hex-enc requires a list of numbers (0-255), got {:?}", other),
+                    format!(
+                        "hex-enc requires a list of numbers (0-255), got {:?}",
+                        other
+                    ),
                 ));
             }
         };
@@ -3942,10 +3945,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                     if !(0..=255).contains(&b) || n.fract() != 0.0 {
                         return Err(RuntimeError::new(
                             "ILO-R009",
-                            format!(
-                                "hex-enc: element {} ({}) is not an integer in 0-255",
-                                i, n
-                            ),
+                            format!("hex-enc: element {} ({}) is not an integer in 0-255", i, n),
                         ));
                     }
                     byte_buf.push(b as u8);
@@ -3953,10 +3953,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 other => {
                     return Err(RuntimeError::new(
                         "ILO-R009",
-                        format!(
-                            "hex-enc: element {} must be a number, got {:?}",
-                            i, other
-                        ),
+                        format!("hex-enc: element {} must be a number, got {:?}", i, other),
                     ));
                 }
             }
