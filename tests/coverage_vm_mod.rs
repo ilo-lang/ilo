@@ -159,7 +159,10 @@ fn fmod_non_number_errors() {
     let src = "f>n;fmod \"a\" 7";
     for e in ENGINES_ALL {
         let stderr = run_err(e, src, "f");
-        assert!(!stderr.is_empty(), "{e}: expected error for non-number fmod");
+        assert!(
+            !stderr.is_empty(),
+            "{e}: expected error for non-number fmod"
+        );
     }
 }
 
