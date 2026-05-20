@@ -590,6 +590,12 @@ pub(crate) fn dur_parse(s: &str) -> std::result::Result<f64, String> {
     }
     let mut total = 0.0_f64;
     let mut found_any = false;
+    // Sign is "sticky": a leading `-` applies to every following token until
+    // an explicit `+` (or another `-`) resets it. This makes the round-trip
+    // `dur-fmt -> dur-parse` symmetric for negative multi-part durations
+    // such as "-1m 30s" (= -90), where the formatter emits a single leading
+    // minus rather than signing every token.
+    let mut sign = 1.0_f64;
 
     // Walk through the string matching <number> <ws?> <unit> sequences.
     let mut rest = s;
@@ -601,15 +607,14 @@ pub(crate) fn dur_parse(s: &str) -> std::result::Result<f64, String> {
         }
         rest = trimmed;
 
-        // Consume an optional leading sign.
-        let (sign, rest2) = if let Some(r) = rest.strip_prefix('-') {
-            (-1.0_f64, r)
+        // Consume an optional sign — updates the sticky running sign.
+        if let Some(r) = rest.strip_prefix('-') {
+            sign = -1.0_f64;
+            rest = r;
         } else if let Some(r) = rest.strip_prefix('+') {
-            (1.0_f64, r)
-        } else {
-            (1.0_f64, rest)
-        };
-        rest = rest2;
+            sign = 1.0_f64;
+            rest = r;
+        }
 
         // Consume the number (integer or decimal).
         let num_end = rest
@@ -670,21 +675,28 @@ pub(crate) fn dur_parse(s: &str) -> std::result::Result<f64, String> {
 /// Format a duration given in seconds into a human-readable string.
 ///
 /// Uses the largest applicable unit; drops zero parts; always includes at
-/// least one part. Fractional seconds are shown for the seconds component
-/// when the value is non-zero and less than 1 second, otherwise truncated.
+/// least one part. Fractional seconds are preserved on the seconds
+/// component with up to 3 decimal places, trailing zeros stripped, so the
+/// `dur-fmt -> dur-parse` round-trip is information-preserving for any
+/// value representable to ~3dp on the seconds digit.
+///
+/// Negative values format with a single leading minus rather than signing
+/// each token. The matching `dur-parse` treats a leading `-` as sticky
+/// (applies to every following token until an explicit `+` resets it), so
+/// `dur-fmt(-90)` → `"-1m 30s"` parses back to `-90`.
 ///
 /// | input (s)    | output         |
 /// |---|---|
 /// | 0            | "0s"           |
+/// | 0.5          | "0.5s"         |
 /// | 45           | "45s"          |
 /// | 90           | "1m 30s"       |
+/// | 90.5         | "1m 30.5s"     |
 /// | 3600         | "1h"           |
 /// | 9720         | "2h 42m"       |
-/// | 86400        | "1d"           |
-/// | 604800       | "1w"           |
+/// | 86400        | "1 day"        |
+/// | 604800       | "1 week"       |
 /// | -90          | "-1m 30s"      |
-///
-/// Fractional seconds example: `0.5 -> "0.5s"`, `1.75 -> "1s"` (truncated).
 pub(crate) fn dur_fmt(secs: f64) -> String {
     if !secs.is_finite() {
         return format!("{secs}");
@@ -730,13 +742,15 @@ pub(crate) fn dur_fmt(secs: f64) -> String {
     if minutes > 0 {
         parts.push(format!("{minutes}m"));
     }
-    // Seconds: show if nonzero or if we have a fractional part with no
-    // larger component rendering. If everything else is 0, show "0s".
-    if seconds > 0 || (frac > 0.0 && parts.is_empty()) {
-        let total_s = seconds as f64 + if parts.is_empty() { frac } else { 0.0 };
-        if frac > 1e-9 && parts.is_empty() {
-            // Sub-second or fractional: render with up to 3 sig figs.
-            // Strip trailing zeros.
+    // Seconds: show if nonzero, or if we still have a fractional part to
+    // carry. If everything else is 0, show "0s". Fractional seconds are
+    // always emitted when present (with up to 3 decimal places, trailing
+    // zeros stripped), so `dur-fmt -> dur-parse` round-trips without losing
+    // sub-second precision.
+    let has_frac = frac > 1e-9;
+    if seconds > 0 || has_frac {
+        if has_frac {
+            let total_s = seconds as f64 + frac;
             let formatted = format!("{:.3}", total_s);
             let formatted = formatted.trim_end_matches('0').trim_end_matches('.');
             parts.push(format!("{formatted}s"));
@@ -746,14 +760,9 @@ pub(crate) fn dur_fmt(secs: f64) -> String {
     }
 
     if parts.is_empty() {
-        // Everything was 0 — either 0 input or sub-second with no frac.
-        if frac > 1e-9 {
-            let formatted = format!("{:.3}", frac);
-            let formatted = formatted.trim_end_matches('0').trim_end_matches('.');
-            parts.push(format!("{formatted}s"));
-        } else {
-            parts.push("0s".to_string());
-        }
+        // Input was exactly zero — render explicitly so callers always get
+        // at least one component back.
+        parts.push("0s".to_string());
     }
 
     let joined = parts.join(" ");
@@ -12460,5 +12469,122 @@ mod tests {
         let source = "f>n;rndn -3 0";
         let result = run_str(source, Some("f"), vec![]);
         assert_eq!(result, Value::Number(-3.0));
+    }
+
+    // --- Duration helper coverage --------------------------------------
+
+    #[test]
+    fn dur_parse_basic_abbreviations() {
+        assert_eq!(super::dur_parse("3h 30m"), Ok(12_600.0));
+        assert_eq!(super::dur_parse("1d"), Ok(86_400.0));
+        assert_eq!(super::dur_parse("2w"), Ok(1_209_600.0));
+    }
+
+    #[test]
+    fn dur_parse_full_unit_names() {
+        assert_eq!(super::dur_parse("1 week 2 days"), Ok(777_600.0));
+        assert_eq!(super::dur_parse("1 hour"), Ok(3_600.0));
+        assert_eq!(super::dur_parse("30 seconds"), Ok(30.0));
+        assert_eq!(super::dur_parse("5 minutes"), Ok(300.0));
+    }
+
+    #[test]
+    fn dur_parse_decimal_quantity() {
+        assert_eq!(super::dur_parse("1.5 hours"), Ok(5_400.0));
+        assert_eq!(super::dur_parse("0.5s"), Ok(0.5));
+    }
+
+    #[test]
+    fn dur_parse_negative_first_token_is_sticky() {
+        // Sticky sign: the leading `-` applies to every following token so
+        // "-1m 30s" parses as -90, not -30. This guarantees round-trip
+        // symmetry with dur-fmt which emits a single leading minus for
+        // negative durations.
+        assert_eq!(super::dur_parse("-1m 30s"), Ok(-90.0));
+        assert_eq!(super::dur_parse("-1h 30m"), Ok(-5_400.0));
+    }
+
+    #[test]
+    fn dur_parse_explicit_sign_resets_sticky() {
+        assert_eq!(super::dur_parse("-1m +30s"), Ok(-30.0));
+        assert_eq!(super::dur_parse("+1h -10m"), Ok(3_000.0));
+    }
+
+    #[test]
+    fn dur_parse_months_rejected() {
+        // Months are not supported (variable length). "3mo", "3 months",
+        // "3M" all fall through to the no-unit-matched error path.
+        assert!(super::dur_parse("3mo").is_err());
+        assert!(super::dur_parse("3 months").is_err());
+        assert!(super::dur_parse("3 month").is_err());
+    }
+
+    #[test]
+    fn dur_parse_unknown_unit_skipped() {
+        // Unknown unit on its own is an error; mixed with a valid token
+        // the unknown is dropped and the valid token wins.
+        assert!(super::dur_parse("3xyz").is_err());
+        assert_eq!(super::dur_parse("3xyz 5s"), Ok(5.0));
+    }
+
+    #[test]
+    fn dur_parse_empty_and_whitespace() {
+        assert!(super::dur_parse("").is_err());
+        assert!(super::dur_parse("   ").is_err());
+    }
+
+    #[test]
+    fn dur_parse_no_recognised_unit() {
+        assert!(super::dur_parse("hello").is_err());
+        assert!(super::dur_parse("42").is_err());
+    }
+
+    #[test]
+    fn dur_fmt_basic() {
+        assert_eq!(super::dur_fmt(0.0), "0s");
+        assert_eq!(super::dur_fmt(90.0), "1m 30s");
+        assert_eq!(super::dur_fmt(9_720.0), "2h 42m");
+        assert_eq!(super::dur_fmt(86_400.0), "1 day");
+        assert_eq!(super::dur_fmt(604_800.0), "1 week");
+    }
+
+    #[test]
+    fn dur_fmt_preserves_fractional_seconds() {
+        // Sub-second fractions are preserved, with trailing zeros stripped.
+        assert_eq!(super::dur_fmt(0.5), "0.5s");
+        // Fractions on top of whole seconds are also preserved (the prior
+        // implementation silently truncated these).
+        assert_eq!(super::dur_fmt(90.5), "1m 30.5s");
+        assert_eq!(super::dur_fmt(1.75), "1.75s");
+    }
+
+    #[test]
+    fn dur_fmt_negative_round_trips() {
+        // Negative durations emit a single leading minus, and dur-parse's
+        // sticky sign restores the full value on round-trip.
+        assert_eq!(super::dur_fmt(-90.0), "-1m 30s");
+        assert_eq!(super::dur_parse(&super::dur_fmt(-90.0)), Ok(-90.0));
+        assert_eq!(super::dur_parse(&super::dur_fmt(-5_400.0)), Ok(-5_400.0));
+    }
+
+    #[test]
+    fn dur_fmt_non_finite_passthrough() {
+        assert_eq!(super::dur_fmt(f64::INFINITY), "inf");
+        assert_eq!(super::dur_fmt(f64::NEG_INFINITY), "-inf");
+        assert_eq!(super::dur_fmt(f64::NAN), "NaN");
+    }
+
+    #[test]
+    fn dur_round_trip_examples() {
+        for &secs in &[
+            0.0_f64, 1.0, 30.0, 90.0, 3_600.0, 9_720.0, 86_400.0, 604_800.0,
+        ] {
+            let s = super::dur_fmt(secs);
+            assert_eq!(
+                super::dur_parse(&s),
+                Ok(secs),
+                "round-trip failed for {secs}"
+            );
+        }
     }
 }
