@@ -4156,6 +4156,9 @@ fn builtin_arity_tables() -> (HashMap<String, usize>, HashMap<String, Vec<bool>>
         ("dirname", 1, &[]),
         ("basename", 1, &[]),
         ("pathjoin", 1, &[]),
+        // Duration parse / format. Single fixed-arity args, no FnRef slots.
+        ("dur-parse", 1, &[]),
+        ("dur-fmt", 1, &[]),
         // Note: omitted by design — these have overloads or zero-arg forms
         // best left to the existing greedy/zero-arg paths:
         //   rnd, now, mmap (0-arg, special-cased above)

@@ -679,6 +679,11 @@ pub(crate) fn is_tree_bridge_eligible(b: crate::builtins::Builtin, argc: usize) 
         // dtparse-rel s now -> R n t. Pure (no FnRef, no I/O), returns Result.
         // Tree-bridge gives VM + Cranelift cross-engine parity for free.
         (Builtin::DtparseRel, 2) => true,
+        // dur-parse / dur-fmt — pure text<->number ops, no FnRef args, no I/O.
+        // dur-parse returns R n t; dur-fmt is total (always returns Text).
+        // Tree-bridge gives VM + Cranelift cross-engine parity at zero opcode cost.
+        (Builtin::DurParse, 1) => true,
+        (Builtin::DurFmt, 1) => true,
         _ => false,
     }
 }
@@ -702,6 +707,7 @@ pub(crate) fn tree_bridge_returns_result(b: crate::builtins::Builtin) -> bool {
             | Builtin::Rdinl
             | Builtin::Wra
             | Builtin::DtparseRel
+            | Builtin::DurParse
     )
 }
 

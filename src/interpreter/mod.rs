@@ -566,6 +566,213 @@ pub(crate) fn pathjoin_posix(parts: &[&str]) -> String {
     out
 }
 
+/// Parse a human-readable duration string into total seconds (f64).
+///
+/// Accepts mixed sequences of `<number><unit>` pairs, optionally separated by
+/// spaces. Numbers may be integers or decimals. Unit names accepted:
+///
+/// | abbreviation | full names                    | multiplier (seconds) |
+/// |---|---|---|
+/// | `w`          | week, weeks                   | 604800               |
+/// | `d`          | day, days                     | 86400                |
+/// | `h`          | hour, hours, hr, hrs          | 3600                 |
+/// | `m`          | min, mins, minute, minutes    | 60                   |
+/// | `s`          | sec, secs, second, seconds    | 1                    |
+///
+/// Examples: `"3 weeks 2 days 5 hours"`, `"4h 32m"`, `"1d"`, `"1.5 hours"`,
+/// `"90s"`, `"2w3d"`.
+///
+/// Returns `Err` if the input is blank or no valid unit pair is found.
+pub(crate) fn dur_parse(s: &str) -> std::result::Result<f64, String> {
+    let s = s.trim();
+    if s.is_empty() {
+        return Err("dur-parse: empty input".to_string());
+    }
+    let mut total = 0.0_f64;
+    let mut found_any = false;
+    // Sign is "sticky": a leading `-` applies to every following token until
+    // an explicit `+` (or another `-`) resets it. This makes the round-trip
+    // `dur-fmt -> dur-parse` symmetric for negative multi-part durations
+    // such as "-1m 30s" (= -90), where the formatter emits a single leading
+    // minus rather than signing every token.
+    let mut sign = 1.0_f64;
+
+    // Walk through the string matching <number> <ws?> <unit> sequences.
+    let mut rest = s;
+    while !rest.is_empty() {
+        // Skip leading whitespace and separators.
+        let trimmed = rest.trim_start_matches(|c: char| c.is_ascii_whitespace() || c == ',');
+        if trimmed.is_empty() {
+            break;
+        }
+        rest = trimmed;
+
+        // Consume an optional sign — updates the sticky running sign.
+        if let Some(r) = rest.strip_prefix('-') {
+            sign = -1.0_f64;
+            rest = r;
+        } else if let Some(r) = rest.strip_prefix('+') {
+            sign = 1.0_f64;
+            rest = r;
+        }
+
+        // Consume the number (integer or decimal).
+        let num_end = rest
+            .find(|c: char| !c.is_ascii_digit() && c != '.')
+            .unwrap_or(rest.len());
+        if num_end == 0 {
+            // No digit at current position — skip one char (handles garbage).
+            let skip = rest.chars().next().map(|c| c.len_utf8()).unwrap_or(1);
+            rest = &rest[skip..];
+            continue;
+        }
+        let num_str = &rest[..num_end];
+        let num: f64 = match num_str.parse() {
+            Ok(n) => n,
+            Err(_) => {
+                // Malformed number; skip past it.
+                rest = &rest[num_end..];
+                continue;
+            }
+        };
+        rest = &rest[num_end..];
+
+        // Skip optional whitespace between number and unit.
+        rest = rest.trim_start_matches(|c: char| c.is_ascii_whitespace());
+
+        // Consume the unit (letters only).
+        let unit_end = rest
+            .find(|c: char| !c.is_ascii_alphabetic())
+            .unwrap_or(rest.len());
+        if unit_end == 0 {
+            // No unit — skip (bare number without unit is not a duration token).
+            continue;
+        }
+        let unit = &rest[..unit_end];
+        rest = &rest[unit_end..];
+
+        let multiplier: f64 = match unit.to_ascii_lowercase().as_str() {
+            "w" | "week" | "weeks" => 604_800.0,
+            "d" | "day" | "days" => 86_400.0,
+            "h" | "hr" | "hrs" | "hour" | "hours" => 3_600.0,
+            "m" | "min" | "mins" | "minute" | "minutes" => 60.0,
+            "s" | "sec" | "secs" | "second" | "seconds" => 1.0,
+            _ => {
+                // Unknown unit — skip this token pair.
+                continue;
+            }
+        };
+        total += sign * num * multiplier;
+        found_any = true;
+    }
+
+    if !found_any {
+        return Err(format!("dur-parse: no recognised unit in {:?}", s));
+    }
+    Ok(total)
+}
+
+/// Format a duration given in seconds into a human-readable string.
+///
+/// Uses the largest applicable unit; drops zero parts; always includes at
+/// least one part. Fractional seconds are preserved on the seconds
+/// component with up to 3 decimal places, trailing zeros stripped, so the
+/// `dur-fmt -> dur-parse` round-trip is information-preserving for any
+/// value representable to ~3dp on the seconds digit.
+///
+/// Negative values format with a single leading minus rather than signing
+/// each token. The matching `dur-parse` treats a leading `-` as sticky
+/// (applies to every following token until an explicit `+` resets it), so
+/// `dur-fmt(-90)` → `"-1m 30s"` parses back to `-90`.
+///
+/// | input (s)    | output         |
+/// |---|---|
+/// | 0            | "0s"           |
+/// | 0.5          | "0.5s"         |
+/// | 45           | "45s"          |
+/// | 90           | "1m 30s"       |
+/// | 90.5         | "1m 30.5s"     |
+/// | 3600         | "1h"           |
+/// | 9720         | "2h 42m"       |
+/// | 86400        | "1 day"        |
+/// | 604800       | "1 week"       |
+/// | -90          | "-1m 30s"      |
+pub(crate) fn dur_fmt(secs: f64) -> String {
+    if !secs.is_finite() {
+        return format!("{secs}");
+    }
+    let negative = secs < 0.0;
+    let total_secs = secs.abs();
+
+    // Work in integer seconds + fractional part.
+    let whole = total_secs.trunc() as u64;
+    let frac = total_secs - whole as f64;
+
+    let weeks = whole / 604_800;
+    let rem = whole % 604_800;
+    let days = rem / 86_400;
+    let rem = rem % 86_400;
+    let hours = rem / 3_600;
+    let rem = rem % 3_600;
+    let minutes = rem / 60;
+    let seconds = rem % 60;
+
+    let mut parts: Vec<String> = Vec::with_capacity(5);
+    if weeks > 0 {
+        parts.push(if weeks == 1 {
+            "1 week".to_string()
+        } else {
+            format!("{weeks} weeks")
+        });
+    }
+    if days > 0 {
+        parts.push(if days == 1 {
+            "1 day".to_string()
+        } else {
+            format!("{days} days")
+        });
+    }
+    if hours > 0 {
+        parts.push(if hours == 1 {
+            "1h".to_string()
+        } else {
+            format!("{hours}h")
+        });
+    }
+    if minutes > 0 {
+        parts.push(format!("{minutes}m"));
+    }
+    // Seconds: show if nonzero, or if we still have a fractional part to
+    // carry. If everything else is 0, show "0s". Fractional seconds are
+    // always emitted when present (with up to 3 decimal places, trailing
+    // zeros stripped), so `dur-fmt -> dur-parse` round-trips without losing
+    // sub-second precision.
+    let has_frac = frac > 1e-9;
+    if seconds > 0 || has_frac {
+        if has_frac {
+            let total_s = seconds as f64 + frac;
+            let formatted = format!("{:.3}", total_s);
+            let formatted = formatted.trim_end_matches('0').trim_end_matches('.');
+            parts.push(format!("{formatted}s"));
+        } else {
+            parts.push(format!("{seconds}s"));
+        }
+    }
+
+    if parts.is_empty() {
+        // Input was exactly zero — render explicitly so callers always get
+        // at least one component back.
+        parts.push("0s".to_string());
+    }
+
+    let joined = parts.join(" ");
+    if negative {
+        format!("-{joined}")
+    } else {
+        joined
+    }
+}
+
 /// Recursive depth-first walk over `root`, collecting paths relative to it,
 /// sorted lexicographically. Symlinks are not followed (uses `file_type`,
 /// not `metadata`, on each entry).
@@ -3354,6 +3561,42 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             }
         }
         return Ok(Value::Text(Arc::new(pathjoin_posix(&segs))));
+    }
+    if builtin == Some(Builtin::DurParse) && args.len() == 1 {
+        // dur-parse s:t > R n t — parse a human duration string into seconds.
+        // Accepts mixed unit sequences: "3 weeks 2 days 5 hours", "4h 32m",
+        // "1d", "1.5 hours". Lenient: case-insensitive, optional space between
+        // number and unit, singular/plural, standard abbreviations s/m/h/d/w.
+        // Returns Err on empty input or if no recognisable unit is found.
+        let s = match &args[0] {
+            Value::Text(s) => s.clone(),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("dur-parse requires text, got {:?}", other),
+                ));
+            }
+        };
+        match dur_parse(s.as_str()) {
+            Ok(secs) => return Ok(Value::Ok(Box::new(Value::Number(secs)))),
+            Err(msg) => return Ok(Value::Err(Box::new(Value::Text(Arc::new(msg.to_string()))))),
+        }
+    }
+    if builtin == Some(Builtin::DurFmt) && args.len() == 1 {
+        // dur-fmt n:n > t — format seconds as human-readable duration.
+        // Output uses the largest applicable unit; zero parts are dropped.
+        // E.g. 9720 -> "2h 42m", 86400 -> "1d", 90 -> "1m 30s", 45 -> "45s".
+        // Negative seconds formatted with a leading "-". Zero returns "0s".
+        let secs = match &args[0] {
+            Value::Number(n) => *n,
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("dur-fmt requires a number (seconds), got {:?}", other),
+                ));
+            }
+        };
+        return Ok(Value::Text(Arc::new(dur_fmt(secs))));
     }
     if builtin == Some(Builtin::Rd) && (args.len() == 1 || args.len() == 2) {
         let path = match &args[0] {
@@ -12226,5 +12469,122 @@ mod tests {
         let source = "f>n;rndn -3 0";
         let result = run_str(source, Some("f"), vec![]);
         assert_eq!(result, Value::Number(-3.0));
+    }
+
+    // --- Duration helper coverage --------------------------------------
+
+    #[test]
+    fn dur_parse_basic_abbreviations() {
+        assert_eq!(super::dur_parse("3h 30m"), Ok(12_600.0));
+        assert_eq!(super::dur_parse("1d"), Ok(86_400.0));
+        assert_eq!(super::dur_parse("2w"), Ok(1_209_600.0));
+    }
+
+    #[test]
+    fn dur_parse_full_unit_names() {
+        assert_eq!(super::dur_parse("1 week 2 days"), Ok(777_600.0));
+        assert_eq!(super::dur_parse("1 hour"), Ok(3_600.0));
+        assert_eq!(super::dur_parse("30 seconds"), Ok(30.0));
+        assert_eq!(super::dur_parse("5 minutes"), Ok(300.0));
+    }
+
+    #[test]
+    fn dur_parse_decimal_quantity() {
+        assert_eq!(super::dur_parse("1.5 hours"), Ok(5_400.0));
+        assert_eq!(super::dur_parse("0.5s"), Ok(0.5));
+    }
+
+    #[test]
+    fn dur_parse_negative_first_token_is_sticky() {
+        // Sticky sign: the leading `-` applies to every following token so
+        // "-1m 30s" parses as -90, not -30. This guarantees round-trip
+        // symmetry with dur-fmt which emits a single leading minus for
+        // negative durations.
+        assert_eq!(super::dur_parse("-1m 30s"), Ok(-90.0));
+        assert_eq!(super::dur_parse("-1h 30m"), Ok(-5_400.0));
+    }
+
+    #[test]
+    fn dur_parse_explicit_sign_resets_sticky() {
+        assert_eq!(super::dur_parse("-1m +30s"), Ok(-30.0));
+        assert_eq!(super::dur_parse("+1h -10m"), Ok(3_000.0));
+    }
+
+    #[test]
+    fn dur_parse_months_rejected() {
+        // Months are not supported (variable length). "3mo", "3 months",
+        // "3M" all fall through to the no-unit-matched error path.
+        assert!(super::dur_parse("3mo").is_err());
+        assert!(super::dur_parse("3 months").is_err());
+        assert!(super::dur_parse("3 month").is_err());
+    }
+
+    #[test]
+    fn dur_parse_unknown_unit_skipped() {
+        // Unknown unit on its own is an error; mixed with a valid token
+        // the unknown is dropped and the valid token wins.
+        assert!(super::dur_parse("3xyz").is_err());
+        assert_eq!(super::dur_parse("3xyz 5s"), Ok(5.0));
+    }
+
+    #[test]
+    fn dur_parse_empty_and_whitespace() {
+        assert!(super::dur_parse("").is_err());
+        assert!(super::dur_parse("   ").is_err());
+    }
+
+    #[test]
+    fn dur_parse_no_recognised_unit() {
+        assert!(super::dur_parse("hello").is_err());
+        assert!(super::dur_parse("42").is_err());
+    }
+
+    #[test]
+    fn dur_fmt_basic() {
+        assert_eq!(super::dur_fmt(0.0), "0s");
+        assert_eq!(super::dur_fmt(90.0), "1m 30s");
+        assert_eq!(super::dur_fmt(9_720.0), "2h 42m");
+        assert_eq!(super::dur_fmt(86_400.0), "1 day");
+        assert_eq!(super::dur_fmt(604_800.0), "1 week");
+    }
+
+    #[test]
+    fn dur_fmt_preserves_fractional_seconds() {
+        // Sub-second fractions are preserved, with trailing zeros stripped.
+        assert_eq!(super::dur_fmt(0.5), "0.5s");
+        // Fractions on top of whole seconds are also preserved (the prior
+        // implementation silently truncated these).
+        assert_eq!(super::dur_fmt(90.5), "1m 30.5s");
+        assert_eq!(super::dur_fmt(1.75), "1.75s");
+    }
+
+    #[test]
+    fn dur_fmt_negative_round_trips() {
+        // Negative durations emit a single leading minus, and dur-parse's
+        // sticky sign restores the full value on round-trip.
+        assert_eq!(super::dur_fmt(-90.0), "-1m 30s");
+        assert_eq!(super::dur_parse(&super::dur_fmt(-90.0)), Ok(-90.0));
+        assert_eq!(super::dur_parse(&super::dur_fmt(-5_400.0)), Ok(-5_400.0));
+    }
+
+    #[test]
+    fn dur_fmt_non_finite_passthrough() {
+        assert_eq!(super::dur_fmt(f64::INFINITY), "inf");
+        assert_eq!(super::dur_fmt(f64::NEG_INFINITY), "-inf");
+        assert_eq!(super::dur_fmt(f64::NAN), "NaN");
+    }
+
+    #[test]
+    fn dur_round_trip_examples() {
+        for &secs in &[
+            0.0_f64, 1.0, 30.0, 90.0, 3_600.0, 9_720.0, 86_400.0, 604_800.0,
+        ] {
+            let s = super::dur_fmt(secs);
+            assert_eq!(
+                super::dur_parse(&s),
+                Ok(secs),
+                "round-trip failed for {secs}"
+            );
+        }
     }
 }

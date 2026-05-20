@@ -465,6 +465,11 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("argmax", &["L n"], "n"),
     ("argmin", &["L n"], "n"),
     ("argsort", &["L n"], "L n"),
+    // Duration parse / format. Tree-bridge eligible, no FnRef args.
+    // dur-parse returns R n t so malformed input surfaces as a typed error.
+    // dur-fmt is total — always produces Text.
+    ("dur-parse", &["t"], "R n t"),
+    ("dur-fmt", &["n"], "t"),
 ];
 
 fn builtin_arity(name: &str) -> Option<usize> {
