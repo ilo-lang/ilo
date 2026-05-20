@@ -10206,8 +10206,10 @@ impl<'a> VM<'a> {
                     }
                     let nc = vc.as_number();
                     if nc == 0.0 {
-                        vm_err!(VmError::Type("modulo by zero"));
+                        vm_err!(VmError::Type("fmod: modulo by zero"));
                     }
+                    // NaN/Inf propagate via f64 % semantics, matching every
+                    // other math builtin (`abs`, `sqrt`, `pow`, `/`).
                     let r = vb.as_number() % nc;
                     let result = if r != 0.0 && r.signum() != nc.signum() {
                         r + nc
@@ -14063,9 +14065,11 @@ pub(crate) extern "C" fn jit_fmod(a: u64, b: u64, span_bits: u64) -> u64 {
     if av.is_number() && bv.is_number() {
         let dv = bv.as_number();
         if dv == 0.0 {
-            jit_set_runtime_error_with_span(VmError::Type("modulo by zero"), span_bits);
+            jit_set_runtime_error_with_span(VmError::Type("fmod: modulo by zero"), span_bits);
             return TAG_NIL;
         }
+        // NaN/Inf propagate via f64 % semantics, matching every other
+        // math builtin (`abs`, `sqrt`, `pow`, `/`).
         let r = av.as_number() % dv;
         let result = if r != 0.0 && r.signum() != dv.signum() {
             r + dv

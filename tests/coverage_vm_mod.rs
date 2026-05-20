@@ -153,27 +153,54 @@ fn fmod_negative_divisor() {
 
 #[test]
 fn fmod_zero_divisor_errors() {
+    // Error message must include "fmod" to distinguish from `mod`'s
+    // identical-shape zero-divisor error.
     let src = "f>n;fmod 1 0";
     for e in ENGINES_ALL {
-        let stderr = run_err(e, src, "f");
+        let stderr = run_err(e, src, "f").to_lowercase();
         assert!(
-            stderr.to_lowercase().contains("fmod")
-                || stderr.contains("zero")
-                || stderr.contains("divis"),
-            "{e}: stderr={stderr}"
+            stderr.contains("fmod"),
+            "{e}: expected 'fmod' in stderr, got: {stderr}"
+        );
+        assert!(
+            stderr.contains("zero") || stderr.contains("divis"),
+            "{e}: expected zero/divis in stderr, got: {stderr}"
         );
     }
 }
 
 #[test]
 fn fmod_non_number_errors() {
-    let src = "f>n;fmod \"a\" 7";
+    // Message must mention either "fmod" or "number" so the agent knows
+    // which call site is bad. Cover both arg positions.
+    for src in ["f>n;fmod \"a\" 7", "f>n;fmod 7 \"a\""] {
+        for e in ENGINES_ALL {
+            let stderr = run_err(e, src, "f").to_lowercase();
+            assert!(
+                stderr.contains("fmod") || stderr.contains("number"),
+                "{e} src={src}: expected 'fmod' or 'number' in stderr, got: {stderr}"
+            );
+        }
+    }
+}
+
+#[test]
+fn fmod_nan_propagates() {
+    // NaN propagation is intentional and matches every other math builtin
+    // (`abs`, `sqrt`, `pow`, `/`) — see ilo-builtins-math.md "NaN propagates;
+    // comparisons false". Pinned here to prevent silent semantics drift.
     for e in ENGINES_ALL {
-        let stderr = run_err(e, src, "f");
-        assert!(
-            !stderr.is_empty(),
-            "{e}: expected error for non-number fmod"
-        );
+        // sqrt -1 produces NaN; fmod NaN 7 must produce NaN, not error.
+        assert_eq!(run_ok(e, "f>n;x=sqrt -1;fmod x 7", "f"), "NaN");
+    }
+}
+
+#[test]
+fn fmod_inf_divisor_returns_dividend() {
+    // x % Inf = x in IEEE 754; floor-correction is a no-op since signs match
+    // when x is finite and divisor is +Inf. Pinned to lock semantics.
+    for e in ENGINES_ALL {
+        assert_eq!(run_ok(e, "f>n;d=pow 10 1000;fmod 5 d", "f"), "5");
     }
 }
 

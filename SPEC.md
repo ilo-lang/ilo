@@ -467,7 +467,7 @@ Called like functions, compiled to dedicated opcodes.
 | `max a b` | maximum of two numbers | `n` |
 | `max xs` | maximum element of a numeric list (error if empty) | `n` |
 | `mod a b` | C-style signed remainder; result sign matches dividend. Errors on zero divisor. For negative inputs use `fmod`. | `n` |
-| `fmod a b` | Floor-mod: always non-negative when `b > 0`. Equivalent to Python `a % b`. Errors on zero divisor. Use instead of `(a % b + b) % b` workarounds for weekday/timezone arithmetic. | `n` |
+| `fmod a b` | Floor-mod: always non-negative when `b > 0`. Equivalent to Python `a % b`. Errors on zero divisor. NaN/Inf inputs propagate via IEEE 754 (same policy as every other math builtin). Use instead of `(a % b + b) % b` workarounds for weekday/timezone arithmetic. | `n` |
 | `flr n` | floor (round toward negative infinity) | `n` |
 | `cel n` | ceiling (round toward positive infinity) | `n` |
 | `rnd` | random float in [0, 1). NOT round - for round use `rou` (alias: `round`). Aliases: `rand`, `random`. | `n` |

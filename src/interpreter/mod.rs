@@ -1452,10 +1452,15 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         return match (&args[0], &args[1]) {
             (Value::Number(a), Value::Number(b)) => {
                 if *b == 0.0 {
-                    Err(RuntimeError::new("ILO-R003", "modulo by zero".to_string()))
+                    Err(RuntimeError::new(
+                        "ILO-R003",
+                        "fmod: modulo by zero".to_string(),
+                    ))
                 } else {
                     // floor-mod: always non-negative when b > 0.
                     // Equivalent to Python's % and JS Math.floor((a % b + b) % b).
+                    // NaN/Inf inputs propagate via f64 % semantics, matching
+                    // every other math builtin (`abs`, `sqrt`, `pow`, `/`).
                     let r = a % b;
                     Ok(Value::Number(if r != 0.0 && r.signum() != b.signum() {
                         r + b
