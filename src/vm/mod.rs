@@ -1,5 +1,6 @@
 use crate::ast::*;
 use crate::builtins::{Builtin, CharAtResult, char_at_signed};
+use crate::caps::Caps;
 use crate::interpreter::{MapKey, Value};
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -7493,6 +7494,37 @@ pub fn compile(program: &Program) -> Result<CompiledProgram, CompileError> {
     Ok(prog)
 }
 
+/// Run the VM with a capability policy applied. IO ops that violate the policy
+/// return `Value::Err(...)` rather than executing.
+pub fn run_with_caps(
+    compiled: &CompiledProgram,
+    func_name: Option<&str>,
+    args: Vec<Value>,
+    caps: Caps,
+) -> Result<Value, VmRuntimeError> {
+    let target = match func_name {
+        Some(name) => name.to_string(),
+        None => compiled
+            .func_names
+            .first()
+            .ok_or_else(|| VmRuntimeError {
+                error: VmError::NoFunctionsDefined,
+                span: None,
+                call_stack: Vec::new(),
+            })?
+            .clone(),
+    };
+    let func_idx = compiled.func_index(&target).ok_or_else(|| VmRuntimeError {
+        error: VmError::UndefinedFunction {
+            name: target.clone(),
+        },
+        span: None,
+        call_stack: Vec::new(),
+    })?;
+    check_entry_arity(compiled, func_idx, &target, args.len())?;
+    VM::new_with_caps(compiled, caps).call(func_idx, args)
+}
+
 pub fn run(
     compiled: &CompiledProgram,
     func_name: Option<&str>,
@@ -7658,6 +7690,8 @@ struct VM<'a> {
     tool_provider: Option<&'a dyn crate::tools::ToolProvider>,
     #[cfg(feature = "tools")]
     tokio_runtime: Option<&'a tokio::runtime::Runtime>,
+    /// CLI capability policy.
+    caps: Caps,
 }
 
 impl<'a> Drop for VM<'a> {
@@ -7680,6 +7714,22 @@ impl<'a> VM<'a> {
             tool_provider: None,
             #[cfg(feature = "tools")]
             tokio_runtime: None,
+            caps: Caps::default(),
+        }
+    }
+
+    fn new_with_caps(program: &'a CompiledProgram, caps: Caps) -> Self {
+        VM {
+            program,
+            stack: Vec::with_capacity(4096),
+            frames: Vec::with_capacity(64),
+            arena: BumpArena::new(),
+            last_ci: 0,
+            last_ip: 0,
+            tool_provider: None,
+            #[cfg(feature = "tools")]
+            tokio_runtime: None,
+            caps,
         }
     }
 
@@ -7698,6 +7748,7 @@ impl<'a> VM<'a> {
             tool_provider: Some(provider),
             #[cfg(feature = "tools")]
             tokio_runtime: Some(runtime),
+            caps: Caps::default(),
         }
     }
 
@@ -8411,6 +8462,10 @@ impl<'a> VM<'a> {
                             _ => unreachable!(),
                         }
                     };
+                    if let Err(msg) = self.caps.check_read(&path) {
+                        reg_set!(a, NanVal::heap_err(NanVal::heap_string(msg)));
+                        continue;
+                    }
                     let fmt = std::path::Path::new(&path)
                         .extension()
                         .and_then(|e| e.to_str())
@@ -8439,6 +8494,10 @@ impl<'a> VM<'a> {
                             _ => unreachable!(),
                         }
                     };
+                    if let Err(msg) = self.caps.check_read(&path) {
+                        reg_set!(a, NanVal::heap_err(NanVal::heap_string(msg)));
+                        continue;
+                    }
                     let result = match std::fs::read_to_string(&path) {
                         Ok(content) => {
                             let lines: Vec<NanVal> = content
@@ -8475,6 +8534,10 @@ impl<'a> VM<'a> {
                         };
                         (p, c)
                     };
+                    if let Err(msg) = self.caps.check_write(&path) {
+                        reg_set!(a, NanVal::heap_err(NanVal::heap_string(msg)));
+                        continue;
+                    }
                     let result = match std::fs::write(&path, &content) {
                         Ok(()) => NanVal::heap_ok(NanVal::heap_string(path)),
                         Err(e) => NanVal::heap_err(NanVal::heap_string(e.to_string())),
@@ -8497,6 +8560,10 @@ impl<'a> VM<'a> {
                             _ => unreachable!(),
                         }
                     };
+                    if let Err(msg) = self.caps.check_write(&path) {
+                        reg_set!(a, NanVal::heap_err(NanVal::heap_string(msg)));
+                        continue;
+                    }
                     let result = if (vc.0 & TAG_MASK) == TAG_LIST && vc.is_heap() {
                         // SAFETY: TAG_LIST + is_heap() → live List/View Rc.
                         let lines: &[NanVal] = slice_of(unsafe { vc.as_heap_ref() });
@@ -10845,16 +10912,20 @@ impl<'a> VM<'a> {
                     if !v.is_string() {
                         vm_err!(VmError::Type("get requires a string"));
                     }
+                    // SAFETY: is_string() confirmed heap-tagged string with live RC.
+                    let url_str: String = unsafe {
+                        match v.as_heap_ref() {
+                            HeapObj::Str(s) => s.as_str().to_owned(),
+                            _ => unreachable!(),
+                        }
+                    };
+                    if let Err(msg) = self.caps.check_net(&url_str) {
+                        reg_set!(a, NanVal::heap_err(NanVal::heap_string(msg)));
+                        continue;
+                    }
                     #[cfg(feature = "http")]
                     let result = {
-                        // SAFETY: is_string() confirmed heap-tagged string with live RC.
-                        let url = unsafe {
-                            match v.as_heap_ref() {
-                                HeapObj::Str(s) => s,
-                                _ => unreachable!(),
-                            }
-                        };
-                        match minreq::get(url.as_str()).send() {
+                        match minreq::get(&url_str).send() {
                             Ok(resp) => match resp.as_str() {
                                 Ok(body) => NanVal::heap_ok(NanVal::heap_string(body.to_string())),
                                 Err(e) => NanVal::heap_err(NanVal::heap_string(format!(
@@ -10879,22 +10950,25 @@ impl<'a> VM<'a> {
                     if !vb.is_string() || !vc.is_string() {
                         vm_err!(VmError::Type("pst requires two strings (url, body)"));
                     }
+                    // SAFETY: is_string() confirmed heap-tagged string with live RC.
+                    let (url_str, body_str) = unsafe {
+                        let u = match vb.as_heap_ref() {
+                            HeapObj::Str(s) => s.as_str().to_owned(),
+                            _ => unreachable!(),
+                        };
+                        let b = match vc.as_heap_ref() {
+                            HeapObj::Str(s) => s.as_str().to_owned(),
+                            _ => unreachable!(),
+                        };
+                        (u, b)
+                    };
+                    if let Err(msg) = self.caps.check_net(&url_str) {
+                        reg_set!(a, NanVal::heap_err(NanVal::heap_string(msg)));
+                        continue;
+                    }
                     #[cfg(feature = "http")]
                     let result = {
-                        // SAFETY: is_string() confirmed heap-tagged string with live RC.
-                        let url = unsafe {
-                            match vb.as_heap_ref() {
-                                HeapObj::Str(s) => s,
-                                _ => unreachable!(),
-                            }
-                        };
-                        let body = unsafe {
-                            match vc.as_heap_ref() {
-                                HeapObj::Str(s) => s,
-                                _ => unreachable!(),
-                            }
-                        };
-                        match minreq::post(url.as_str()).with_body(body.as_str()).send() {
+                        match minreq::post(&url_str).with_body(body_str.as_str()).send() {
                             Ok(resp) => match resp.as_str() {
                                 Ok(b) => NanVal::heap_ok(NanVal::heap_string(b.to_string())),
                                 Err(e) => NanVal::heap_err(NanVal::heap_string(format!(
@@ -10928,6 +11002,10 @@ impl<'a> VM<'a> {
                                 _ => unreachable!(),
                             }
                         };
+                        if let Err(msg) = self.caps.check_net(&url) {
+                            reg_set!(a, NanVal::heap_err(NanVal::heap_string(msg)));
+                            continue;
+                        }
                         let mut req = minreq::get(url.as_str());
                         if vc.is_heap()
                             && let HeapObj::Map(m) = unsafe { vc.as_heap_ref() }
@@ -10984,6 +11062,18 @@ impl<'a> VM<'a> {
                         };
                         urls.push(s);
                     }
+                    // Cap check: block if any URL violates the net policy.
+                    let mut cap_blocked = false;
+                    for url in &urls {
+                        if let Err(msg) = self.caps.check_net(url) {
+                            reg_set!(a, NanVal::heap_err(NanVal::heap_string(msg)));
+                            cap_blocked = true;
+                            break;
+                        }
+                    }
+                    if cap_blocked {
+                        continue;
+                    }
                     let values = crate::interpreter::get_many_fetch(&urls);
                     let nan_items: Vec<NanVal> = values.iter().map(NanVal::from_value).collect();
                     let result = NanVal::heap_list(nan_items);
@@ -11012,6 +11102,10 @@ impl<'a> VM<'a> {
                                 _ => unreachable!(),
                             }
                         };
+                        if let Err(msg) = self.caps.check_net(&url) {
+                            reg_set!(a, NanVal::heap_err(NanVal::heap_string(msg)));
+                            continue;
+                        }
                         let body_str = unsafe {
                             match vc.as_heap_ref() {
                                 HeapObj::Str(s) => s.as_str().to_owned(),
