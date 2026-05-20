@@ -88,6 +88,7 @@ struct HelperFuncs {
     rnd0: FuncId,
     rnd2: FuncId,
     rndn: FuncId,
+    seed: FuncId,
     now: FuncId,
     now_ms: FuncId,
     env: FuncId,
@@ -303,6 +304,7 @@ fn register_helpers(builder: &mut JITBuilder) {
         ("jit_rnd0", jit_rnd0 as *const u8),
         ("jit_rnd2", jit_rnd2 as *const u8),
         ("jit_rndn", jit_rndn as *const u8),
+        ("jit_seed", jit_seed as *const u8),
         ("jit_now", jit_now as *const u8),
         ("jit_now_ms", jit_now_ms as *const u8),
         ("jit_env", jit_env as *const u8),
@@ -500,6 +502,7 @@ fn declare_all_helpers(module: &mut JITModule) -> HelperFuncs {
         rnd0: declare_helper(module, "jit_rnd0", 0, 1),
         rnd2: declare_helper(module, "jit_rnd2", 2, 1),
         rndn: declare_helper(module, "jit_rndn", 2, 1),
+        seed: declare_helper(module, "jit_seed", 1, 1),
         now: declare_helper(module, "jit_now", 0, 1),
         now_ms: declare_helper(module, "jit_now_ms", 0, 1),
         env: declare_helper(module, "jit_env", 1, 1),
@@ -1228,7 +1231,7 @@ fn compile_function_body(
                 | OP_PADL | OP_PADR | OP_PADLC | OP_PADRC | OP_CHR | OP_CHARS | OP_UNQ | OP_UNIQBY | OP_PARTITION | OP_FRQ | OP_NUM
                 | OP_SRT_BY_KEY | OP_GRP_BY_KEY | OP_UNIQ_BY_KEY
                 | OP_RGXSUB | OP_TRANSPOSE | OP_MATMUL | OP_DTFMT | OP_DTPARSE
-                | OP_FLAT | OP_CALL_BUILTIN_TREE | OP_LOADFN | OP_CALL_DYN => {
+                | OP_FLAT | OP_CALL_BUILTIN_TREE | OP_LOADFN | OP_CALL_DYN | OP_SEED => {
                     non_num_write[a] = true;
                     non_bool_write[a] = true;
                 }
@@ -2618,6 +2621,13 @@ fn compile_function_body(
                     let rf = builder.ins().bitcast(F64, mf, result);
                     builder.def_var(f64_vars[a_idx], rf);
                 }
+            }
+            OP_SEED => {
+                let bv = builder.use_var(vars[b_idx]);
+                let fref = get_func_ref(&mut builder, module, helpers.seed);
+                let call_inst = builder.ins().call(fref, &[bv]);
+                let result = builder.inst_results(call_inst)[0];
+                builder.def_var(vars[a_idx], result);
             }
             OP_NOW => {
                 let fref = get_func_ref(&mut builder, module, helpers.now);

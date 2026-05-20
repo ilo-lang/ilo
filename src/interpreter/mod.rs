@@ -532,21 +532,11 @@ fn run_with_env(
 /// Graph formats ("json")      → Ok(parsed JSON) or Err(parse error message).
 /// Raw/unknown                 → Ok(plain Text).
 /// Box-Muller transform: sample from N(mu, sigma) using two uniform [0,1) samples.
-/// Uses fastrand to mirror the rnd builtin's RNG.
+/// Delegates to the shared `crate::rng` module so all engines produce the same sequence.
+/// Kept as a thin wrapper because it is exercised directly in unit tests.
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn box_muller_normal(mu: f64, sigma: f64) -> f64 {
-    // sigma == 0: distribution is a point mass at mu. Short-circuit so we
-    // never hit 0 * inf = NaN when u1 underflows.
-    if sigma == 0.0 {
-        return mu;
-    }
-    // Avoid u1 == 0 so ln() is finite. fastrand::f64() is in [0, 1).
-    let mut u1 = fastrand::f64();
-    while u1 <= f64::MIN_POSITIVE {
-        u1 = fastrand::f64();
-    }
-    let u2 = fastrand::f64();
-    let z = (-2.0 * u1.ln()).sqrt() * (2.0 * std::f64::consts::PI * u2).cos();
-    mu + sigma * z
+    crate::rng::normal(mu, sigma)
 }
 
 /// Base64url-no-pad encoder. Alphabet per RFC 4648 §5 (URL-safe: `-` / `_`),
@@ -2830,7 +2820,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
     if builtin == Some(Builtin::Rndn) && args.len() == 2 {
         return match (&args[0], &args[1]) {
             (Value::Number(mu), Value::Number(sigma)) => {
-                Ok(Value::Number(box_muller_normal(*mu, *sigma)))
+                Ok(Value::Number(crate::rng::normal(*mu, *sigma)))
             }
             _ => Err(RuntimeError::new(
                 "ILO-R009",
@@ -2903,7 +2893,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
     }
     if builtin == Some(Builtin::Rnd) {
         if args.is_empty() {
-            return Ok(Value::Number(fastrand::f64()));
+            return Ok(Value::Number(crate::rng::f64()));
         }
         if args.len() == 2 {
             return match (&args[0], &args[1]) {
@@ -2916,7 +2906,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                             format!("rnd: lower bound {} > upper bound {}", lo, hi),
                         ));
                     }
-                    Ok(Value::Number(fastrand::i64(lo..=hi) as f64))
+                    Ok(Value::Number(crate::rng::i64_range(lo, hi) as f64))
                 }
                 _ => Err(RuntimeError::new(
                     "ILO-R009",
@@ -2927,6 +2917,17 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
     }
     if builtin == Some(Builtin::RandBytes) && args.len() == 1 {
         return eval_rand_bytes(&args[0]);
+    if builtin == Some(Builtin::Seed) && args.len() == 1 {
+        return match &args[0] {
+            Value::Number(n) => {
+                crate::rng::seed(*n as u64);
+                Ok(Value::Nil)
+            }
+            other => Err(RuntimeError::new(
+                "ILO-R009",
+                format!("seed requires a number, got {other:?}"),
+            )),
+        };
     }
     if builtin == Some(Builtin::Spl) && args.len() == 2 {
         return match (&args[0], &args[1]) {
@@ -14258,7 +14259,7 @@ mod tests {
 
     #[test]
     fn box_muller_finite_for_nonzero_sigma() {
-        fastrand::seed(42);
+        crate::rng::seed(42);
         for _ in 0..200 {
             let v = box_muller_normal(0.0, 1.0);
             assert!(v.is_finite(), "got non-finite {v}");
