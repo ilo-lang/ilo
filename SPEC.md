@@ -4,6 +4,27 @@ ilo is a token-optimised programming language for AI agents. Every design choice
 
 ---
 
+## File version pragma
+
+Optional.
+
+```
+^26.5
+-- rest of file
+```
+
+Top-of-file declaration of the minimum required runtime. First line, no leading whitespace. Sigil-led (principle 4), ~3 tokens (principle 1). First-class syntax, not a magic comment - the lexer recognises `^<YY.M>` only at file start, so `^` elsewhere keeps its `return err` meaning.
+
+| Case                                                     | Verifier                            |
+|----------------------------------------------------------|-------------------------------------|
+| Pragma absent                                            | Assume latest installed runtime, no diagnostic |
+| File targets older than runtime, breaking change between | Fail with migration pointer         |
+| File targets newer than runtime                          | Fail asking to upgrade              |
+
+Tooling: `ilo --version-of <file>` reads the pragma (returns nothing when absent); the formatter canonicalises position when present, never inserts one. Ships with the CalVer cut; 0.x files have no pragma and verify silently.
+
+---
+
 ## Functions
 
 ```

@@ -2745,11 +2745,11 @@ fn dispatch_bare_args(raw_args: Vec<String>, global: &cli::Global) -> i32 {
         eprintln!("       ilo help | -h     Show usage and examples");
         eprintln!("       ilo help lang     Show language specification");
         eprintln!("       ilo help ai | -ai Compact spec for LLM consumption");
-        eprintln!("       ilo --version | -V");
+        eprintln!("       ilo --version | -V | -v");
         return 1;
     }
 
-    if args[1] == "--version" || args[1] == "-V" {
+    if args[1] == "--version" || args[1] == "-V" || args[1] == "-v" {
         println!("ilo {}", env!("CARGO_PKG_VERSION"));
         return 0;
     }
@@ -3901,7 +3901,7 @@ fn print_help() {
     println!("  ilo help lang                     Show language specification");
     println!("  ilo help ai | ilo -ai             Compact spec for LLM consumption");
     println!("  ilo --explain ILO-T005            Explain an error code");
-    println!("  ilo --version | -V                Print version\n");
+    println!("  ilo --version | -V | -v           Print version\n");
     println!("Output format (errors):");
     println!("  --ansi / -a   Force ANSI colour output (default when stderr is a TTY)");
     println!("  --text / -t   Force plain text output (no colour)");
@@ -7857,6 +7857,18 @@ mod tests {
             no_hints: false,
         };
         let code = dispatch_bare_args(vec!["ilo".to_string(), "-V".to_string()], &global);
+        assert_eq!(code, 0);
+    }
+
+    #[test]
+    fn dispatch_bare_args_version_lowercase_exits_zero() {
+        let global = cli::Global {
+            ansi: false,
+            text: false,
+            json: false,
+            no_hints: false,
+        };
+        let code = dispatch_bare_args(vec!["ilo".to_string(), "-v".to_string()], &global);
         assert_eq!(code, 0);
     }
 

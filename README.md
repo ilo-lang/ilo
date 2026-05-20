@@ -2,6 +2,8 @@
 
 *A programming language AI agents write, not humans. Named from [Toki Pona](https://sona.pona.la/wiki/ilo) for "tool".*
 
+> Experimental pre 1.0 language, expect breaking changes
+
 [![CI](https://github.com/ilo-lang/ilo/actions/workflows/rust.yml/badge.svg)](https://github.com/ilo-lang/ilo/actions/workflows/rust.yml)  [![codecov](https://codecov.io/gh/ilo-lang/ilo/graph/badge.svg?token=4W1SWFLXNW)](https://codecov.io/gh/ilo-lang/ilo)  [![crates.io](https://img.shields.io/crates/v/ilo)](https://crates.io/crates/ilo)  [![npm](https://img.shields.io/npm/v/ilo-lang)](https://www.npmjs.com/package/ilo-lang)  [![skills.sh](https://skills.sh/badge/ilo-lang/ilo)](https://skills.sh/ilo-lang/ilo)  [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 ```
@@ -112,6 +114,62 @@ ilo build program.ilo -o ./bin            # AOT compile
 ## Editor support
 
 Syntax highlighting, snippets, and `--` comment handling for `.ilo` files ships in [`extensions/vscode/`](./extensions/vscode/). Install into Cursor with `cd extensions/vscode && npm run install:cursor`. VS Code marketplace publish is tracked separately.
+
+## Versioning
+
+CalVer. Releases are `YY.M` (e.g. `26.5`), patches within a month are `YY.M.P` (e.g. `26.5.1`). The version string carries recency: an agent loading `ilo spec --json ai` knows which spec applies from the version alone, no changelog lookup needed. Token-conservative (manifesto principle 1) vs semver's `0.12.1`.
+
+### Branches
+
+| Branch | Purpose              | Tags                              |
+|--------|----------------------|-----------------------------------|
+| `main` | Current release line | `26.5`, `26.5.1`, `26.5.2-rc.1`   |
+| `next` | Upcoming release     | `26.6-dev.1`, `26.6-dev.2`        |
+
+- `main` never carries `-dev` tags
+- `next` never carries stable tags — it merges to `main` first
+
+### Release flow
+
+1. Work lands on `next`
+2. Optional dev snapshots tagged `26.6-dev.N`
+3. Ship: merge `next` → `main`, tag `26.6` on `main`
+4. `next` continues for `26.7`
+
+### Patch flow
+
+1. Fix lands on `main` (direct or short-lived fix branch)
+2. Tag `26.5.1` on `main`
+3. Merge `main` → `next` to carry the fix forward
+4. RCs cut from `main` only, tagged `26.5.2-rc.1`
+
+### Migration from 0.x
+
+Last semver release: `0.12.1`. First CalVer release cuts on the next breaking change as `26.X`. Hard cut, no `0.13` bridge. The file version pragma ships with the CalVer cut and is optional — existing 0.x files have no pragma and verify without a diagnostic.
+
+### File version pragma
+
+Optional. ilo source files may declare the minimum required runtime with a top-of-file sigil:
+
+```
+^26.5
+-- rest of file
+```
+
+- Sigil-led (principle 4), ~3 tokens (principle 1)
+- `^` carries "at minimum" semantics — agents read it correctly without a spec lookup
+- First-class syntax, not a magic comment
+- Position: first line, no leading whitespace
+
+Verifier behaviour:
+
+| Case                                                    | Result                              |
+|---------------------------------------------------------|-------------------------------------|
+| Pragma absent                                           | Assume latest installed runtime, no diagnostic |
+| File targets older than runtime, breaking change between| Fail with migration pointer         |
+| File targets newer than runtime                         | Fail asking to upgrade              |
+
+Tooling: `ilo --version-of <file>` reads the pragma (returns nothing when absent); the formatter canonicalises position when present, never inserts one.
 
 ## What it looks like
 

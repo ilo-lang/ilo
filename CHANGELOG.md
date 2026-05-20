@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- Versioning scheme: semver → CalVer. Releases are `YY.M` (e.g. `26.5`), patches `YY.M.P` (e.g. `26.5.1`). The version string carries recency so an agent loading `ilo spec --json ai` knows which spec applies without a changelog lookup. Last semver release is `0.12.1`; first CalVer release cuts on the next breaking change as `26.X`. Hard cut, no `0.13` bridge. Branching model splits: `main` carries stable + RC tags (`26.5`, `26.5.1`, `26.5.2-rc.1`), `next` carries dev tags only (`26.6-dev.N`). See `README.md#versioning` for the full release / patch flow.
+
+### Added
+
+- File version pragma (optional). Top-of-file sigil `^26.5` declares the minimum required runtime. Sigil-led (principle 4), ~3 tokens (principle 1), first-class syntax (not a magic comment). Must be on the first line with no leading whitespace when present. Verifier: absent pragma silently assumes the latest installed runtime (no diagnostic) so existing 0.x files and any unannotated file keep verifying as-is; a pragma older than the runtime with a known breaking change between fails with a migration pointer; a pragma newer than the runtime fails asking to upgrade. Tooling: `ilo --version-of <file>` reads the pragma and returns nothing when absent; the formatter canonicalises position when present and never inserts one. Ships with the CalVer cut.
+
 ## 0.12.1
 
 ### Security
