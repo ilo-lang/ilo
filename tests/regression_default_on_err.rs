@@ -106,14 +106,11 @@ fn check_all(engine: &str) {
 }
 
 #[test]
-fn default_on_err_tree() {
-    // Tree interpreter via --run-vm (tree-bridge path).
-    check_all("--run-vm");
-}
-
-#[test]
 fn default_on_err_vm() {
-    check_all("--run-vm");
+    // --vm exercises the register VM, which routes default-on-err through
+    // the tree-bridge (is_tree_bridge_eligible(DefaultOnErr, 2) = true), so
+    // this run covers both the VM dispatch and the tree-walker arm.
+    check_all("--vm");
 }
 
 #[cfg(feature = "cranelift")]
@@ -126,12 +123,13 @@ fn default_on_err_cranelift() {
 
 #[test]
 fn default_on_err_wrong_default_type_rejected() {
-    // R n t with default "text" must be caught by the verifier as ILO-T040.
+    // R n t with default "text" — Ok type known, default mismatched. Distinct
+    // from "first arg isn't a Result", so emits ILO-T042, not T040.
     let src = r#"f>n;default-on-err (num "42") "wrong""#;
-    let stderr = run_file_expect_err("--run-vm", src);
+    let stderr = run_file_expect_err("--vm", src);
     assert!(
-        stderr.contains("ILO-T040"),
-        "expected ILO-T040 for wrong default type, got: {stderr}"
+        stderr.contains("ILO-T042"),
+        "expected ILO-T042 for wrong default type, got: {stderr}"
     );
     assert!(
         stderr.contains("default-on-err"),
@@ -141,12 +139,34 @@ fn default_on_err_wrong_default_type_rejected() {
 
 #[test]
 fn default_on_err_non_result_arg_rejected() {
-    // Passing a plain number (not a Result) must emit ILO-T040.
+    // Passing a plain number (not a Result) must emit ILO-T040 (shape error).
+    // Plain `n` is neither Result nor Optional, so the hint should NOT suggest
+    // `??` — that path is reserved for the Optional confusion case below.
     let src = r#"f>n;default-on-err 42 0"#;
-    let stderr = run_file_expect_err("--run-vm", src);
+    let stderr = run_file_expect_err("--vm", src);
     assert!(
         stderr.contains("ILO-T040"),
         "expected ILO-T040 for non-result first arg, got: {stderr}"
+    );
+    assert!(
+        !stderr.contains("use `?? v d` for Optional"),
+        "hint should not steer to ?? when first arg is plain n: {stderr}"
+    );
+}
+
+#[test]
+fn default_on_err_optional_arg_hints_at_nil_coalesce() {
+    // First arg is `O T` (Optional), not `R T E`. T040 fires AND the hint
+    // should steer the agent to `??`, which is the correct unwrap for Optional.
+    let src = "mk x:n>O n;>=x 1{x}\nf>n;v=mk 0;default-on-err v 99";
+    let stderr = run_file_expect_err("--vm", src);
+    assert!(
+        stderr.contains("ILO-T040"),
+        "expected ILO-T040 for Optional first arg, got: {stderr}"
+    );
+    assert!(
+        stderr.contains("?? v d"),
+        "expected hint to steer at `?? v d` for Optional, got: {stderr}"
     );
 }
 
@@ -157,7 +177,7 @@ fn nil_coalesce_on_result_emits_ilo_t041() {
     // The classic agent mistake: `?? (num s) 0` — num returns R n t, not O n.
     // The verifier must emit ILO-T041 pointing to default-on-err.
     let src = r#"f>n;s="42";??(num s)0"#;
-    let stderr = run_file_expect_err("--run-vm", src);
+    let stderr = run_file_expect_err("--vm", src);
     assert!(
         stderr.contains("ILO-T041"),
         "expected ILO-T041 for ?? on Result, got: {stderr}"
@@ -174,5 +194,32 @@ fn nil_coalesce_on_optional_still_works() {
     // mk returns n when guard fires, nil otherwise.
     let src = "mk x:n>n;>=x 1{x}\nf>n;v=mk 0;v??99";
     // Should run without error; no ILO-T041.
-    assert_eq!(run_file("--run-vm", src, "f"), "99");
+    assert_eq!(run_file("--vm", src, "f"), "99");
+}
+
+#[test]
+fn nil_coalesce_on_unknown_skips_ilo_t041() {
+    // T041 fires only when the lhs type is concretely `Ty::Result(..)`. If the
+    // lhs is `Ty::Unknown` (e.g. an `_`-typed function param), the verifier
+    // doesn't know whether it's Optional or Result, so it must NOT emit T041 —
+    // a false positive there would block legitimate generic code. This pins
+    // the intentional skip on the `Ty::Unknown` branch of the NilCoalesce arm.
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let seq = COUNTER.fetch_add(1, Ordering::SeqCst);
+    let path = std::env::temp_dir().join(format!(
+        "ilo_default_on_err_unknown_{}_{}.ilo",
+        std::process::id(),
+        seq
+    ));
+    // `x:a` is a type variable, treated as `Ty::Unknown` by the verifier.
+    std::fs::write(&path, "g x:a>a;x??0\nf>n;g 7").unwrap();
+    let out = ilo()
+        .args([path.to_str().unwrap(), "--vm", "f"])
+        .output()
+        .expect("failed to run ilo");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        !stderr.contains("ILO-T041"),
+        "ILO-T041 should not fire when lhs type is Unknown: {stderr}"
+    );
 }
