@@ -52,10 +52,12 @@ repo). Briefs there set the why; PRs here implement the how.
 
 ## Pull Requests
 
-1. Fork the repo and create a feature branch from `main`
+1. Fork the repo and create a feature branch from `next`
 2. Make your changes
 3. Ensure `cargo test` and `cargo clippy` pass
 4. Submit a PR with a clear description of the change
+
+Patches against the current release line (a fix for `26.5` that needs to ship as `26.5.1`) branch from `main` instead. See [README.md#versioning](README.md#versioning) for the full branch / tag model.
 
 ## Architecture
 
