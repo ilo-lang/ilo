@@ -778,6 +778,12 @@ pub(crate) fn is_tree_bridge_eligible(b: crate::builtins::Builtin, argc: usize) 
         // select; VM and Cranelift inherit through the bridge at zero opcode
         // cost. Length-mismatch errors propagate via tree_bridge_propagates_error.
         (Builtin::Where, 3) => true,
+        // Calendar arithmetic (0.12.2). Pure epoch->epoch/n ops, no FnRef, no I/O.
+        // Tree-bridge gives VM + Cranelift cross-engine parity at zero opcode cost.
+        (Builtin::AddMo, 2) => true,
+        (Builtin::LastDom, 1) => true,
+        (Builtin::NextBusinessDay, 1) => true,
+        (Builtin::DayOfWeek, 1) => true,
         _ => false,
     }
 }

@@ -275,6 +275,19 @@ pub enum Builtin {
     // over the `map (i:n>_;?h (at cond i) (at xs i) (at ys i)) (range 0 (len xs))`
     // recipe; the manifesto framing for NumPy-familiar agents.
     Where,
+    // Calendar arithmetic (0.12.2). All four are tree-bridge eligible: pure
+    // epoch ↔ epoch / epoch ↔ number, no FnRef args, no I/O.
+    //
+    // `add-mo dt:n n:n > n` — add N calendar months to an epoch, snapping
+    // end-of-month (Jan 31 + 1 = Feb 28/29). N may be negative.
+    // `last-dom dt:n > n`  — epoch of the last day of the month containing dt,
+    // at 00:00 UTC.
+    // `next-business-day dt:n > n` — next weekday after dt (skip Sat/Sun).
+    // `day-of-week dt:n > n` — day of week: 0=Sun, 1=Mon … 6=Sat.
+    AddMo,
+    LastDom,
+    NextBusinessDay,
+    DayOfWeek,
 }
 
 impl Builtin {
@@ -447,6 +460,10 @@ impl Builtin {
             "b64u" => Some(Builtin::B64u),
             "b64u-dec" => Some(Builtin::B64uDec),
             "where" => Some(Builtin::Where),
+            "add-mo" => Some(Builtin::AddMo),
+            "last-dom" => Some(Builtin::LastDom),
+            "next-business-day" => Some(Builtin::NextBusinessDay),
+            "day-of-week" => Some(Builtin::DayOfWeek),
             _ => None,
         }
     }
@@ -616,6 +633,10 @@ impl Builtin {
             Builtin::B64u => "b64u",
             Builtin::B64uDec => "b64u-dec",
             Builtin::Where => "where",
+            Builtin::AddMo => "add-mo",
+            Builtin::LastDom => "last-dom",
+            Builtin::NextBusinessDay => "next-business-day",
+            Builtin::DayOfWeek => "day-of-week",
         }
     }
 
@@ -831,6 +852,13 @@ impl Builtin {
         // to `T`, returning `d` on `Err`. Kills the common `?r{~v:v ^_:default}`
         // pattern. Tree-bridge eligible (2-arg, pure). Added in 0.12.1.
         Builtin::DefaultOnErr,
+        // Calendar arithmetic (0.12.2). Pure epoch↔epoch/n ops, no FnRef, no I/O.
+        // Tree-bridge eligible: VM + Cranelift inherit for free without new opcodes.
+        // Appended to preserve all existing on-wire tags.
+        Builtin::AddMo,
+        Builtin::LastDom,
+        Builtin::NextBusinessDay,
+        Builtin::DayOfWeek,
         // 0.12.1 filesystem metadata primitives. Atomic singletons rather
         // than a fat `stat path > R (M t t) t`: agents that want size pay
         // size cost, agents that want a predicate pay predicate cost. Size
@@ -1226,6 +1254,10 @@ mod tests {
             "dur-fmt",
             "rand-bytes",
             "where",
+            "add-mo",
+            "last-dom",
+            "next-business-day",
+            "day-of-week",
         ];
         for name in &all {
             let b = Builtin::from_name(name).unwrap_or_else(|| panic!("missing builtin: {name}"));
@@ -1468,6 +1500,10 @@ mod tests {
             "dur-fmt",
             "rand-bytes",
             "where",
+            "add-mo",
+            "last-dom",
+            "next-business-day",
+            "day-of-week",
         ] {
             let b = Builtin::from_name(name).unwrap_or_else(|| panic!("no builtin: {name}"));
             let t = b.tag();

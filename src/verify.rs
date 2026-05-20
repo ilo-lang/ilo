@@ -563,6 +563,15 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("urldec", &["t"], "R t t"),
     ("b64u", &["t"], "t"),
     ("b64u-dec", &["t"], "R t t"),
+    // Calendar arithmetic (0.12.2). Pure epoch↔epoch/n ops, tree-bridge eligible.
+    // add-mo: add N calendar months (N may be negative), end-of-month snap.
+    // last-dom: epoch of the last day of the containing month at 00:00 UTC.
+    // next-business-day: next weekday (skip Sat/Sun).
+    // day-of-week: 0=Sun, 1=Mon, 2=Tue, 3=Wed, 4=Thu, 5=Fri, 6=Sat.
+    ("add-mo", &["n", "n"], "n"),
+    ("last-dom", &["n"], "n"),
+    ("next-business-day", &["n"], "n"),
+    ("day-of-week", &["n"], "n"),
 ];
 
 fn builtin_arity(name: &str) -> Option<usize> {
