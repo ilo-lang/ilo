@@ -704,6 +704,7 @@ pub(crate) fn is_tree_bridge_eligible(b: crate::builtins::Builtin, argc: usize) 
         // JIT/AOT pick them up at zero opcode cost.
         (Builtin::GetTo, 2) => true,
         (Builtin::PstTo, 3) => true,
+<<<<<<< HEAD
         // matvec xm ys -> L n. Pure (no FnRef, no I/O), 2-arg, returns a
         // flat vector. Tree-bridge keeps cross-engine parity with the
         // tree interpreter at the same cost tier as `transpose`/`matmul`
@@ -723,6 +724,16 @@ pub(crate) fn is_tree_bridge_eligible(b: crate::builtins::Builtin, argc: usize) 
         // opcode cost. NOT eligible for any constant-folding / common-subexpression
         // pass: the whole point is that two calls return different bytes.
         (Builtin::RandBytes, 1) => true,
+=======
+        // URL + base64url encoding cluster. All pure text-in / text-out,
+        // no FnRef args, no I/O. Tree-bridge keeps VM + Cranelift in
+        // lockstep without new opcodes. Decoders return R t t; encoders
+        // are total.
+        (Builtin::Urlenc, 1) => true,
+        (Builtin::Urldec, 1) => true,
+        (Builtin::B64u, 1) => true,
+        (Builtin::B64uDec, 1) => true,
+>>>>>>> 7b25068d (add urlenc/urldec/b64u/b64u-dec builtin registrations)
         _ => false,
     }
 }
@@ -751,6 +762,8 @@ pub(crate) fn tree_bridge_returns_result(b: crate::builtins::Builtin) -> bool {
             | Builtin::DurParse
             | Builtin::GetTo
             | Builtin::PstTo
+            | Builtin::Urldec
+            | Builtin::B64uDec
     )
 }
 
