@@ -77,6 +77,12 @@ pub struct Parser {
     lifted_decls: Vec<Decl>,
     /// Monotonic counter for synthetic lambda names.
     lambda_counter: usize,
+    /// Function names whose declaration was recognised at the header (name
+    /// plus signature parsed) but whose return-type or body parse then
+    /// errored. Surfaced on `Program.parse_failed_fns` so the verifier can
+    /// suppress the cascade of `ILO-T005 undefined function 'X'` errors at
+    /// every call site (the parse error already covered the root cause).
+    parse_failed_fns: HashMap<String, ParseFailRef>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -139,6 +145,7 @@ impl Parser {
             no_whitespace_call: false,
             lifted_decls: Vec::new(),
             lambda_counter: 0,
+            parse_failed_fns: HashMap::new(),
         }
     }
 
@@ -419,6 +426,7 @@ impl Parser {
             Program {
                 declarations,
                 source: None,
+                parse_failed_fns: std::mem::take(&mut self.parse_failed_fns),
             },
             errors,
         )
@@ -940,11 +948,11 @@ impl Parser {
                 ),
             ));
         }
-        self.expect(&Token::Greater)?;
+        self.expect_or_record_fail(&Token::Greater, &name)?;
         // Same check between `>` and the return type: `f2 a:n>\n` must report
         // against `f2`, not against whatever ident starts the next line.
-        self.check_fn_header_boundary(&name, start)?;
-        let return_type = self.parse_type()?;
+        self.check_fn_header_boundary_or_record(&name, start)?;
+        let return_type = self.parse_type_or_record_fail(&name)?;
         // The header/body boundary is normally a `;`, but a newline (filtered
         // out before parsing) leaves no separator. Accept either: consume a
         // `;` if present, otherwise fall straight into the body.
@@ -962,9 +970,9 @@ impl Parser {
         // Skip the brace-block path when the leading `{` is a destructure
         // pattern (`f p:pt>n;{x}=p;...`) — that's a statement, not a wrap.
         let body = if self.peek() == Some(&Token::LBrace) && !self.is_destructure_pattern() {
-            self.parse_brace_body()?
+            self.parse_brace_body_or_record(&name)?
         } else {
-            self.parse_body_with(true)?
+            self.parse_body_or_record(&name)?
         };
         let end = self.prev_span();
         Ok(Decl::Function {
@@ -974,6 +982,69 @@ impl Parser {
             body,
             span: start.merge(end),
         })
+    }
+
+    /// Record `name` as a parse-failed function so the verifier can suppress
+    /// cascading `undefined function` errors at its call sites. Only the
+    /// FIRST error per function is recorded (later ones would just be noise
+    /// from the parser recovering through the broken body).
+    fn record_parse_failure(&mut self, name: &str, err: &ParseError) {
+        self.parse_failed_fns
+            .entry(name.to_string())
+            .or_insert(ParseFailRef {
+                code: err.code,
+                span: err.span,
+            });
+    }
+
+    fn expect_or_record_fail(&mut self, tok: &Token, name: &str) -> Result<Span> {
+        match self.expect(tok) {
+            Ok(s) => Ok(s),
+            Err(e) => {
+                self.record_parse_failure(name, &e);
+                Err(e)
+            }
+        }
+    }
+
+    fn check_fn_header_boundary_or_record(&mut self, name: &str, start: Span) -> Result<()> {
+        match self.check_fn_header_boundary(name, start) {
+            Ok(()) => Ok(()),
+            Err(e) => {
+                self.record_parse_failure(name, &e);
+                Err(e)
+            }
+        }
+    }
+
+    fn parse_type_or_record_fail(&mut self, name: &str) -> Result<Type> {
+        match self.parse_type() {
+            Ok(t) => Ok(t),
+            Err(e) => {
+                self.record_parse_failure(name, &e);
+                Err(e)
+            }
+        }
+    }
+
+    fn parse_brace_body_or_record(&mut self, name: &str) -> Result<Vec<Spanned<Stmt>>> {
+        match self.parse_brace_body() {
+            Ok(b) => Ok(b),
+            Err(e) => {
+                self.record_parse_failure(name, &e);
+                Err(e)
+            }
+        }
+    }
+
+    fn parse_body_or_record(&mut self, name: &str) -> Result<Vec<Spanned<Stmt>>> {
+        match self.parse_body_with(true) {
+            Ok(b) => Ok(b),
+            Err(e) => {
+                self.record_parse_failure(name, &e);
+                Err(e)
+            }
+        }
     }
 
     /// Span of the previously consumed token.
