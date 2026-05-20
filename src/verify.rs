@@ -468,6 +468,7 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("tau", &[], "n"),
     ("e", &[], "n"),
     ("sleep", &["n"], "_"),
+    ("tz-offset", &["t", "n"], "R n t"),
     ("dtfmt", &["n", "t"], "R t t"),
     ("dtparse", &["t", "t"], "R n t"),
     ("dtparse-rel", &["t", "n"], "R n t"),
@@ -925,6 +926,36 @@ fn builtin_check_args(
                 });
             }
             (Ty::Bool, errors)
+        }
+        // `tz-offset tz:t epoch:n > R n t` — IANA timezone offset at a Unix
+        // epoch. Hand-written so the bang verifier auto-unwraps the R n t
+        // and type errors on non-text tz name / non-number epoch fire correctly.
+        "tz-offset" => {
+            if let Some(tz_arg) = arg_types.first()
+                && !compatible(tz_arg, &Ty::Text)
+            {
+                errors.push(VerifyError {
+                    code: "ILO-T013",
+                    function: func_ctx.to_string(),
+                    message: format!("'tz-offset' first arg must be t (tz name), got {tz_arg}"),
+                    hint: None,
+                    span,
+                    is_warning: false,
+                });
+            }
+            if let Some(epoch_arg) = arg_types.get(1)
+                && !compatible(epoch_arg, &Ty::Number)
+            {
+                errors.push(VerifyError {
+                    code: "ILO-T013",
+                    function: func_ctx.to_string(),
+                    message: format!("'tz-offset' second arg must be n (epoch), got {epoch_arg}"),
+                    hint: None,
+                    span,
+                    is_warning: false,
+                });
+            }
+            (Ty::Result(Box::new(Ty::Number), Box::new(Ty::Text)), errors)
         }
         "hd" => {
             if let Some(arg) = arg_types.first() {
