@@ -1396,6 +1396,105 @@ pub(crate) fn lu_solve(lu: &[Vec<f64>], piv: &[usize], b: &[f64]) -> Vec<f64> {
     x
 }
 
+/// Ordinary least squares via the normal equations.
+///
+/// Returns coefficients `b` minimising `||xm·b - ys||²`. Composes the
+/// `solve (Xᵀ X) (Xᵀ y)` recipe inline (no intermediate `Value` allocs)
+/// rather than dispatching back through the builtin table. Same precision
+/// tier as `solve` (LU with partial pivoting); numerically inferior to
+/// QR/SVD for ill-conditioned designs.
+///
+/// `#[inline(never)]` keeps this body out of `call_function`'s already-huge
+/// frame — same pattern as #506/#494 for sha2/hmac and caps fields. Failure
+/// to do so causes a `cargo nextest` stack-overflow regression on the
+/// braceless-guard fibonacci test in CI (deeper recursion budget than `cargo
+/// test`).
+#[inline(never)]
+fn lstsq_run(xm_val: &Value, ys_val: &Value) -> Result<Value> {
+    let xm = matrix_from_value(xm_val, "lstsq")?;
+    let ys = vec_from_value(ys_val, "lstsq")?;
+    let n_rows = xm.len();
+    if n_rows == 0 {
+        return Err(RuntimeError::new(
+            "ILO-R009",
+            "lstsq: empty design matrix".to_string(),
+        ));
+    }
+    let n_cols = xm[0].len();
+    if n_cols == 0 {
+        return Err(RuntimeError::new(
+            "ILO-R009",
+            "lstsq: design matrix has zero columns".to_string(),
+        ));
+    }
+    for row in &xm {
+        if row.len() != n_cols {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!(
+                    "lstsq: ragged design matrix (expected {n_cols} cols, got {})",
+                    row.len()
+                ),
+            ));
+        }
+    }
+    if ys.len() != n_rows {
+        return Err(RuntimeError::new(
+            "ILO-R009",
+            format!(
+                "lstsq: ys length {} must match design matrix row count {n_rows}",
+                ys.len()
+            ),
+        ));
+    }
+    if n_cols > n_rows {
+        return Err(RuntimeError::new(
+            "ILO-R009",
+            format!(
+                "lstsq: underdetermined system ({n_cols} columns > {n_rows} rows); normal-equation OLS requires rows >= columns"
+            ),
+        ));
+    }
+    // Xᵀ — n_cols × n_rows
+    let mut xt: Vec<Vec<f64>> = vec![vec![0.0; n_rows]; n_cols];
+    for (i, row) in xm.iter().enumerate() {
+        for (j, &v) in row.iter().enumerate() {
+            xt[j][i] = v;
+        }
+    }
+    // XᵀX — n_cols × n_cols
+    let mut xtx: Vec<Vec<f64>> = vec![vec![0.0; n_cols]; n_cols];
+    for i in 0..n_cols {
+        for j in 0..n_cols {
+            let mut s = 0.0;
+            for k in 0..n_rows {
+                s += xt[i][k] * xm[k][j];
+            }
+            xtx[i][j] = s;
+        }
+    }
+    // Xᵀy — length n_cols
+    let mut xty: Vec<f64> = vec![0.0; n_cols];
+    for i in 0..n_cols {
+        let mut s = 0.0;
+        for k in 0..n_rows {
+            s += xt[i][k] * ys[k];
+        }
+        xty[i] = s;
+    }
+    let (lu, piv, _det, singular) = lu_decompose(xtx);
+    if singular {
+        return Err(RuntimeError::new(
+            "ILO-R009",
+            "lstsq: normal-equation matrix XᵀX is singular (rank-deficient design)".to_string(),
+        ));
+    }
+    let x = lu_solve(&lu, &piv, &xty);
+    Ok(Value::List(Arc::new(
+        x.into_iter().map(Value::Number).collect(),
+    )))
+}
+
 fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
     // Builtins — resolve name to enum once, then dispatch via match
     let builtin = Builtin::from_name(name);
@@ -1642,96 +1741,12 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         )));
     }
     if builtin == Some(Builtin::Lstsq) && args.len() == 2 {
-        // Ordinary least squares via the normal equations:
-        //   b = solve (Xᵀ X) (Xᵀ y)
-        // Composes existing transpose / matmul / solve helpers so VM and
-        // Cranelift inherit semantics through the tree bridge with no new
-        // opcodes. Numerically inferior to QR/SVD for ill-conditioned
-        // designs — agents who need that should reach for a dedicated
-        // library; lstsq covers the well-conditioned OLS happy path that
-        // collapses the 5-line recipe into one call.
-        let xm = matrix_from_value(&args[0], "lstsq")?;
-        let ys = vec_from_value(&args[1], "lstsq")?;
-        let n_rows = xm.len();
-        if n_rows == 0 {
-            return Err(RuntimeError::new(
-                "ILO-R009",
-                "lstsq: empty design matrix".to_string(),
-            ));
-        }
-        let n_cols = xm[0].len();
-        if n_cols == 0 {
-            return Err(RuntimeError::new(
-                "ILO-R009",
-                "lstsq: design matrix has zero columns".to_string(),
-            ));
-        }
-        for row in &xm {
-            if row.len() != n_cols {
-                return Err(RuntimeError::new(
-                    "ILO-R009",
-                    format!(
-                        "lstsq: ragged design matrix (expected {n_cols} cols, got {})",
-                        row.len()
-                    ),
-                ));
-            }
-        }
-        if ys.len() != n_rows {
-            return Err(RuntimeError::new(
-                "ILO-R009",
-                format!(
-                    "lstsq: ys length {} must match design matrix row count {n_rows}",
-                    ys.len()
-                ),
-            ));
-        }
-        if n_cols > n_rows {
-            return Err(RuntimeError::new(
-                "ILO-R009",
-                format!(
-                    "lstsq: underdetermined system ({n_cols} columns > {n_rows} rows); normal-equation OLS requires rows >= columns"
-                ),
-            ));
-        }
-        // Xᵀ — n_cols × n_rows
-        let mut xt: Vec<Vec<f64>> = vec![vec![0.0; n_rows]; n_cols];
-        for (i, row) in xm.iter().enumerate() {
-            for (j, &v) in row.iter().enumerate() {
-                xt[j][i] = v;
-            }
-        }
-        // XᵀX — n_cols × n_cols
-        let mut xtx: Vec<Vec<f64>> = vec![vec![0.0; n_cols]; n_cols];
-        for i in 0..n_cols {
-            for j in 0..n_cols {
-                let mut s = 0.0;
-                for k in 0..n_rows {
-                    s += xt[i][k] * xm[k][j];
-                }
-                xtx[i][j] = s;
-            }
-        }
-        // Xᵀy — length n_cols
-        let mut xty: Vec<f64> = vec![0.0; n_cols];
-        for i in 0..n_cols {
-            let mut s = 0.0;
-            for k in 0..n_rows {
-                s += xt[i][k] * ys[k];
-            }
-            xty[i] = s;
-        }
-        let (lu, piv, _det, singular) = lu_decompose(xtx);
-        if singular {
-            return Err(RuntimeError::new(
-                "ILO-R009",
-                "lstsq: normal-equation matrix XᵀX is singular (rank-deficient design)".to_string(),
-            ));
-        }
-        let x = lu_solve(&lu, &piv, &xty);
-        return Ok(Value::List(Arc::new(
-            x.into_iter().map(Value::Number).collect(),
-        )));
+        // Out-of-line helper to keep this arm's frame off the giant
+        // `call_function` stack frame. Same pattern documented in #506
+        // for sha2/hmac and #494 for caps fields: each builtin arm adds
+        // frame bloat that compounds with deep recursion through
+        // tree-walking tests like `interpret_braceless_guard_fibonacci`.
+        return lstsq_run(&args[0], &args[1]);
     }
     if builtin == Some(Builtin::Str) {
         if args.len() != 1 {
