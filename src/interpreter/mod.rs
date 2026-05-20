@@ -4327,7 +4327,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             None => {
                 return Err(RuntimeError::new(
                     "ILO-R009",
-                    format!("add-mo: result out of calendar range"),
+                    "add-mo: result out of calendar range".to_string(),
                 ));
             }
         }
