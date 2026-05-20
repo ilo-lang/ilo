@@ -197,6 +197,16 @@ pub enum Builtin {
     Pi,
     Tau,
     Eu,
+
+    // Duration parse / format.
+    // `dur-parse s > R n t` — parse a human-readable duration string ("3 weeks
+    // 2 days 5 hours", "4h 32m", "1d", "1.5 hours") into seconds (f64). Lenient:
+    // accepts unit abbreviations s/m/h/d/w and full names (singular + plural).
+    // `dur-fmt n > t` — format seconds as human-readable "4h 32m", "2 days 1
+    // hour", "30s". Drops zero parts; always uses the largest applicable unit.
+    // Both are tree-bridge eligible — pure text ↔ number ops, no I/O.
+    DurParse,
+    DurFmt,
 }
 
 impl Builtin {
@@ -349,6 +359,8 @@ impl Builtin {
             "pi" => Some(Builtin::Pi),
             "tau" => Some(Builtin::Tau),
             "e" => Some(Builtin::Eu),
+            "dur-parse" => Some(Builtin::DurParse),
+            "dur-fmt" => Some(Builtin::DurFmt),
             _ => None,
         }
     }
@@ -498,6 +510,8 @@ impl Builtin {
             Builtin::Pi => "pi",
             Builtin::Tau => "tau",
             Builtin::Eu => "e",
+            Builtin::DurParse => "dur-parse",
+            Builtin::DurFmt => "dur-fmt",
         }
     }
 
@@ -702,6 +716,12 @@ impl Builtin {
         Builtin::Pi,
         Builtin::Tau,
         Builtin::Eu,
+        // Duration parse / format. Tree-bridge eligible: pure text↔number, no
+        // I/O, no FnRef args. DurParse returns R n t so that malformed input
+        // surfaces as a typed error at the boundary. DurFmt is total (always
+        // returns a text string). Appended here to preserve every existing tag.
+        Builtin::DurParse,
+        Builtin::DurFmt,
     ];
 
     /// On-wire 8-bit tag for cross-engine builtin dispatch. See `ALL`.
@@ -1004,6 +1024,8 @@ mod tests {
             "pi",
             "tau",
             "e",
+            "dur-parse",
+            "dur-fmt",
         ];
         for name in &all {
             let b = Builtin::from_name(name).unwrap_or_else(|| panic!("missing builtin: {name}"));
@@ -1236,6 +1258,8 @@ mod tests {
             "pi",
             "tau",
             "e",
+            "dur-parse",
+            "dur-fmt",
         ] {
             let b = Builtin::from_name(name).unwrap_or_else(|| panic!("no builtin: {name}"));
             let t = b.tag();

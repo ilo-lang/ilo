@@ -566,6 +566,204 @@ pub(crate) fn pathjoin_posix(parts: &[&str]) -> String {
     out
 }
 
+/// Parse a human-readable duration string into total seconds (f64).
+///
+/// Accepts mixed sequences of `<number><unit>` pairs, optionally separated by
+/// spaces. Numbers may be integers or decimals. Unit names accepted:
+///
+/// | abbreviation | full names                    | multiplier (seconds) |
+/// |---|---|---|
+/// | `w`          | week, weeks                   | 604800               |
+/// | `d`          | day, days                     | 86400                |
+/// | `h`          | hour, hours, hr, hrs          | 3600                 |
+/// | `m`          | min, mins, minute, minutes    | 60                   |
+/// | `s`          | sec, secs, second, seconds    | 1                    |
+///
+/// Examples: `"3 weeks 2 days 5 hours"`, `"4h 32m"`, `"1d"`, `"1.5 hours"`,
+/// `"90s"`, `"2w3d"`.
+///
+/// Returns `Err` if the input is blank or no valid unit pair is found.
+pub(crate) fn dur_parse(s: &str) -> std::result::Result<f64, String> {
+    let s = s.trim();
+    if s.is_empty() {
+        return Err("dur-parse: empty input".to_string());
+    }
+    let mut total = 0.0_f64;
+    let mut found_any = false;
+
+    // Walk through the string matching <number> <ws?> <unit> sequences.
+    let mut rest = s;
+    while !rest.is_empty() {
+        // Skip leading whitespace and separators.
+        let trimmed = rest.trim_start_matches(|c: char| c.is_ascii_whitespace() || c == ',');
+        if trimmed.is_empty() {
+            break;
+        }
+        rest = trimmed;
+
+        // Consume an optional leading sign.
+        let (sign, rest2) = if rest.starts_with('-') {
+            (-1.0_f64, &rest[1..])
+        } else if rest.starts_with('+') {
+            (1.0_f64, &rest[1..])
+        } else {
+            (1.0_f64, rest)
+        };
+        rest = rest2;
+
+        // Consume the number (integer or decimal).
+        let num_end = rest
+            .find(|c: char| !c.is_ascii_digit() && c != '.')
+            .unwrap_or(rest.len());
+        if num_end == 0 {
+            // No digit at current position — skip one char (handles garbage).
+            let skip = rest.chars().next().map(|c| c.len_utf8()).unwrap_or(1);
+            rest = &rest[skip..];
+            continue;
+        }
+        let num_str = &rest[..num_end];
+        let num: f64 = match num_str.parse() {
+            Ok(n) => n,
+            Err(_) => {
+                // Malformed number; skip past it.
+                rest = &rest[num_end..];
+                continue;
+            }
+        };
+        rest = &rest[num_end..];
+
+        // Skip optional whitespace between number and unit.
+        rest = rest.trim_start_matches(|c: char| c.is_ascii_whitespace());
+
+        // Consume the unit (letters only).
+        let unit_end = rest
+            .find(|c: char| !c.is_ascii_alphabetic())
+            .unwrap_or(rest.len());
+        if unit_end == 0 {
+            // No unit — skip (bare number without unit is not a duration token).
+            continue;
+        }
+        let unit = &rest[..unit_end];
+        rest = &rest[unit_end..];
+
+        let multiplier: f64 = match unit.to_ascii_lowercase().as_str() {
+            "w" | "week" | "weeks" => 604_800.0,
+            "d" | "day" | "days" => 86_400.0,
+            "h" | "hr" | "hrs" | "hour" | "hours" => 3_600.0,
+            "m" | "min" | "mins" | "minute" | "minutes" => 60.0,
+            "s" | "sec" | "secs" | "second" | "seconds" => 1.0,
+            _ => {
+                // Unknown unit — skip this token pair.
+                continue;
+            }
+        };
+        total += sign * num * multiplier;
+        found_any = true;
+    }
+
+    if !found_any {
+        return Err(format!("dur-parse: no recognised unit in {:?}", s));
+    }
+    Ok(total)
+}
+
+/// Format a duration given in seconds into a human-readable string.
+///
+/// Uses the largest applicable unit; drops zero parts; always includes at
+/// least one part. Fractional seconds are shown for the seconds component
+/// when the value is non-zero and less than 1 second, otherwise truncated.
+///
+/// | input (s)    | output         |
+/// |---|---|
+/// | 0            | "0s"           |
+/// | 45           | "45s"          |
+/// | 90           | "1m 30s"       |
+/// | 3600         | "1h"           |
+/// | 9720         | "2h 42m"       |
+/// | 86400        | "1d"           |
+/// | 604800       | "1w"           |
+/// | -90          | "-1m 30s"      |
+///
+/// Fractional seconds example: `0.5 -> "0.5s"`, `1.75 -> "1s"` (truncated).
+pub(crate) fn dur_fmt(secs: f64) -> String {
+    if !secs.is_finite() {
+        return format!("{secs}");
+    }
+    let negative = secs < 0.0;
+    let total_secs = secs.abs();
+
+    // Work in integer seconds + fractional part.
+    let whole = total_secs.trunc() as u64;
+    let frac = total_secs - whole as f64;
+
+    let weeks = whole / 604_800;
+    let rem = whole % 604_800;
+    let days = rem / 86_400;
+    let rem = rem % 86_400;
+    let hours = rem / 3_600;
+    let rem = rem % 3_600;
+    let minutes = rem / 60;
+    let seconds = rem % 60;
+
+    let mut parts: Vec<String> = Vec::with_capacity(5);
+    if weeks > 0 {
+        parts.push(if weeks == 1 {
+            "1 week".to_string()
+        } else {
+            format!("{weeks} weeks")
+        });
+    }
+    if days > 0 {
+        parts.push(if days == 1 {
+            "1 day".to_string()
+        } else {
+            format!("{days} days")
+        });
+    }
+    if hours > 0 {
+        parts.push(if hours == 1 {
+            "1h".to_string()
+        } else {
+            format!("{hours}h")
+        });
+    }
+    if minutes > 0 {
+        parts.push(format!("{minutes}m"));
+    }
+    // Seconds: show if nonzero or if we have a fractional part with no
+    // larger component rendering. If everything else is 0, show "0s".
+    if seconds > 0 || (frac > 0.0 && parts.is_empty()) {
+        let total_s = seconds as f64 + if parts.is_empty() { frac } else { 0.0 };
+        if frac > 1e-9 && parts.is_empty() {
+            // Sub-second or fractional: render with up to 3 sig figs.
+            // Strip trailing zeros.
+            let formatted = format!("{:.3}", total_s);
+            let formatted = formatted.trim_end_matches('0').trim_end_matches('.');
+            parts.push(format!("{formatted}s"));
+        } else {
+            parts.push(format!("{seconds}s"));
+        }
+    }
+
+    if parts.is_empty() {
+        // Everything was 0 — either 0 input or sub-second with no frac.
+        if frac > 1e-9 {
+            let formatted = format!("{:.3}", frac);
+            let formatted = formatted.trim_end_matches('0').trim_end_matches('.');
+            parts.push(format!("{formatted}s"));
+        } else {
+            parts.push("0s".to_string());
+        }
+    }
+
+    let joined = parts.join(" ");
+    if negative {
+        format!("-{joined}")
+    } else {
+        joined
+    }
+}
+
 /// Recursive depth-first walk over `root`, collecting paths relative to it,
 /// sorted lexicographically. Symlinks are not followed (uses `file_type`,
 /// not `metadata`, on each entry).
@@ -3354,6 +3552,42 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             }
         }
         return Ok(Value::Text(Arc::new(pathjoin_posix(&segs))));
+    }
+    if builtin == Some(Builtin::DurParse) && args.len() == 1 {
+        // dur-parse s:t > R n t — parse a human duration string into seconds.
+        // Accepts mixed unit sequences: "3 weeks 2 days 5 hours", "4h 32m",
+        // "1d", "1.5 hours". Lenient: case-insensitive, optional space between
+        // number and unit, singular/plural, standard abbreviations s/m/h/d/w.
+        // Returns Err on empty input or if no recognisable unit is found.
+        let s = match &args[0] {
+            Value::Text(s) => s.clone(),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("dur-parse requires text, got {:?}", other),
+                ));
+            }
+        };
+        match dur_parse(s.as_str()) {
+            Ok(secs) => return Ok(Value::Ok(Box::new(Value::Number(secs)))),
+            Err(msg) => return Ok(Value::Err(Box::new(Value::Text(Arc::new(msg.to_string()))))),
+        }
+    }
+    if builtin == Some(Builtin::DurFmt) && args.len() == 1 {
+        // dur-fmt n:n > t — format seconds as human-readable duration.
+        // Output uses the largest applicable unit; zero parts are dropped.
+        // E.g. 9720 -> "2h 42m", 86400 -> "1d", 90 -> "1m 30s", 45 -> "45s".
+        // Negative seconds formatted with a leading "-". Zero returns "0s".
+        let secs = match &args[0] {
+            Value::Number(n) => *n,
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("dur-fmt requires a number (seconds), got {:?}", other),
+                ));
+            }
+        };
+        return Ok(Value::Text(Arc::new(dur_fmt(secs))));
     }
     if builtin == Some(Builtin::Rd) && (args.len() == 1 || args.len() == 2) {
         let path = match &args[0] {
