@@ -2559,13 +2559,21 @@ fn builtin_check_args(
                 Some(Ty::Result(ok, _)) => *ok.clone(),
                 Some(Ty::Unknown) | None => Ty::Unknown,
                 Some(other) => {
+                    // Hint only steers to `??` when the agent reached for the
+                    // wrong unwrap for an Optional. For any other type the right
+                    // fix is to make the first arg a Result, not to switch op.
+                    let hint = if matches!(other, Ty::Optional(_)) {
+                        Some("use `?? v d` for Optional (O T), not `default-on-err` (R T E)".into())
+                    } else {
+                        None
+                    };
                     errors.push(VerifyError {
                         code: "ILO-T040",
                         function: func_ctx.to_string(),
                         message: format!(
                             "'default-on-err' expects R T E as first argument, got {other}"
                         ),
-                        hint: Some("use `?? v d` for Optional (O T), not Result (R T E)".into()),
+                        hint,
                         span,
                         is_warning: false,
                     });
@@ -2575,8 +2583,11 @@ fn builtin_check_args(
             if let (Some(def_ty), false) = (arg_types.get(1), matches!(ok_ty, Ty::Unknown))
                 && !compatible(def_ty, &ok_ty)
             {
+                // ILO-T042: distinct from ILO-T040 (which is "first arg shape
+                // wrong"). T042 fires when the Ok type is known but the default
+                // doesn't match it, so the agent can target the correct arg.
                 errors.push(VerifyError {
-                    code: "ILO-T040",
+                    code: "ILO-T042",
                     function: func_ctx.to_string(),
                     message: format!(
                         "'default-on-err' default must match Ok type {ok_ty}, got {def_ty}"
@@ -4515,6 +4526,12 @@ impl VerifyContext {
                 // The single most common agent mistake: `??num s 0` where `num`
                 // returns `R n t`, not `O n`. `??` is nil-coalesce for Optional;
                 // for Result use `default-on-err r d`.
+                //
+                // Intentionally NOT firing on `Ty::Unknown`: type-variable
+                // params and `_`-typed values can carry either Optional or
+                // Result, so a hint here would be a false positive on generic
+                // code. The match below only triggers on a concrete
+                // `Ty::Result(..)` for the same reason.
                 if let Ty::Result(_, _) = &val_ty {
                     self.err(
                         "ILO-T041",
