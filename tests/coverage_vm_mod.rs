@@ -141,6 +141,17 @@ fn fmod_zero_dividend() {
 }
 
 #[test]
+fn fmod_negative_divisor() {
+    // Floor-mod with b < 0: result sign matches divisor (Python semantics).
+    // -3 % -7 = -3 (already in range); 3 % -7 = -4 (3 + (-7)); -10 % -7 = -3.
+    for e in ENGINES_ALL {
+        assert_eq!(run_ok(e, "f>n;fmod -3 -7", "f"), "-3");
+        assert_eq!(run_ok(e, "f>n;fmod 3 -7", "f"), "-4");
+        assert_eq!(run_ok(e, "f>n;fmod -10 -7", "f"), "-3");
+    }
+}
+
+#[test]
 fn fmod_zero_divisor_errors() {
     let src = "f>n;fmod 1 0";
     for e in ENGINES_ALL {
