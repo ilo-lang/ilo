@@ -8,6 +8,8 @@
 
 ### Added
 
+- `rgxall-multi pats:L t s:t > L t` builtin. Apply multiple patterns to a single string and get one flat list of all hits in pattern order. Per-pattern semantics follow `rgxall1`: 0 capture groups returns whole matches; 1 capture group returns capture-1 strings; 2+ capture groups errors with a hint to use `rgxall`. Replaces the verbose `flat (map (p:t>L t;rgxall1 p line) pats)` workaround (~20 tokens per call site saved). Motivated by cron-explainer and historical-archeologist personas, which both needed multi-pattern scan on a single line. Tree-bridge eligible alongside `rgxall1`; no new opcodes.
+
 - File version pragma (optional). Top-of-file sigil `^26.5` declares the minimum required runtime. Sigil-led (principle 4), ~3 tokens (principle 1), first-class syntax (not a magic comment). Must be on the first line with no leading whitespace when present. Verifier: absent pragma silently assumes the latest installed runtime (no diagnostic) so existing 0.x files and any unannotated file keep verifying as-is; a pragma older than the runtime with a known breaking change between fails with a migration pointer; a pragma newer than the runtime fails asking to upgrade. Tooling: `ilo --version-of <file>` reads the pragma and returns nothing when absent; the formatter canonicalises position when present and never inserts one. Ships with the CalVer cut.
 
 ## 0.12.1
