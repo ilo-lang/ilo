@@ -48,7 +48,7 @@ struct Skill {
 const SKILLS: &[Skill] = &[
     Skill {
         name: "ilo-language",
-        description: "Use this when writing or reviewing .ilo source. Covers prefix notation, type sigils, guards, match, pipes, Results, loops, and lambdas.",
+        description: "Use this when writing or reviewing .@ source (canonical; .ilo accepted with deprecation warning). Covers prefix notation, type sigils, guards, match, pipes, records, and Result handling.",
         path: "skills/ilo/ilo-language.md",
         content: include_str!("../skills/ilo/ilo-language.md"),
     },
@@ -108,7 +108,7 @@ const SKILLS: &[Skill] = &[
     },
     Skill {
         name: "ilo-examples",
-        description: "Use this when looking for a runnable pattern for the kind of task you are doing. Curated index of `examples/*.ilo` grouped by what each one demonstrates.",
+        description: "Use this when looking for a runnable pattern for the kind of task you are doing. Curated index of `examples/*.@` grouped by what each one demonstrates.",
         path: "skills/ilo/ilo-examples.md",
         content: include_str!("../skills/ilo/ilo-examples.md"),
     },
@@ -279,6 +279,18 @@ fn skill_show_cmd(name: &str, as_json: bool) -> i32 {
 
 /// `ilo version` — plain prints `ilo X.Y.Z`, `--json` emits a structured
 /// envelope so agent tooling can route on the version without parsing.
+/// Emit a deprecation hint when the user loads a `.ilo` file.
+/// `.@` is the canonical extension from 0.13.0 onwards; `.ilo` is retained
+/// for backward compatibility but nudges users toward the shorter form.
+fn maybe_warn_ilo_ext(source_arg: &str) {
+    if source_arg.ends_with(".ilo") {
+        eprintln!(
+            "hint: .ilo extension is deprecated; rename to .@ \
+             (saves 1 token/filename on LLM tokenisers)"
+        );
+    }
+}
+
 fn version_cmd(as_json: bool) -> i32 {
     if as_json {
         let v = serde_json::json!({
@@ -1171,7 +1183,7 @@ fn repl_cmd() {
                     if defs.is_empty() {
                         eprintln!("no definitions to save");
                     } else {
-                        eprintln!("usage: :w <file.ilo>");
+                        eprintln!("usage: :w <file.@>");
                     }
                     continue;
                 }
@@ -1180,7 +1192,7 @@ fn repl_cmd() {
                     let path = match input.split_once(' ') {
                         Some((_, p)) => p.trim(),
                         None => {
-                            eprintln!("usage: :w <file.ilo>");
+                            eprintln!("usage: :w <file.@>");
                             continue;
                         }
                     };
@@ -1413,6 +1425,7 @@ fn compile_cmd(args: &[String]) -> i32 {
 
     // Read source from file or treat as inline code
     let source = if std::path::Path::new(source_arg).is_file() {
+        maybe_warn_ilo_ext(source_arg);
         match std::fs::read_to_string(source_arg) {
             Ok(s) => s,
             Err(e) => {
@@ -1424,10 +1437,12 @@ fn compile_cmd(args: &[String]) -> i32 {
         source_arg.to_string()
     };
 
-    // Default output path: strip .ilo extension or use "a.out"
+    // Default output path: strip source extension or use "a.out"
     let output = output_path.unwrap_or_else(|| {
         if source_arg.ends_with(".ilo") {
             source_arg.trim_end_matches(".ilo").to_string()
+        } else if source_arg.ends_with(".@") {
+            source_arg.trim_end_matches(".@").to_string()
         } else {
             "a.out".to_string()
         }
@@ -2470,18 +2485,18 @@ fn main() {
     if raw_args.len() == 2 {
         match raw_args[1].as_str() {
             "run" => {
-                eprintln!("Usage: ilo run <file.ilo> [func] [args...]");
+                eprintln!("Usage: ilo run <file.@> [func] [args...]");
                 eprintln!("       ilo run <inline-code> [func] [args...]");
                 std::process::exit(1);
             }
             "check" => {
-                eprintln!("Usage: ilo check <file.ilo>");
+                eprintln!("Usage: ilo check <file.@>");
                 eprintln!("       ilo check <inline-code>");
-                eprintln!("       ilo check <file.ilo> --json   (machine-readable diagnostics)");
+                eprintln!("       ilo check <file.@> --json   (machine-readable diagnostics)");
                 std::process::exit(1);
             }
             "build" => {
-                eprintln!("Usage: ilo build <file.ilo> [-o out] [func]");
+                eprintln!("Usage: ilo build <file.@> [-o out] [func]");
                 std::process::exit(1);
             }
             _ => {}
@@ -3113,6 +3128,7 @@ fn resolve_engine_func_name<'a>(
 fn check_cmd(source_arg: &str, mode: OutputMode, _explicit_json: bool, strict: bool) -> i32 {
     // Read source from file or treat as inline code.
     let (source, is_file) = if std::path::Path::new(source_arg).is_file() {
+        maybe_warn_ilo_ext(source_arg);
         match std::fs::read_to_string(source_arg) {
             Ok(s) => (s, true),
             Err(e) => {
@@ -3240,6 +3256,7 @@ fn dispatch_run(r: cli::RunArgs, mode: OutputMode, explicit_json: bool, no_hints
 
     // Read source from file or treat as inline code
     let (source, is_file) = if std::path::Path::new(source_arg).is_file() {
+        maybe_warn_ilo_ext(source_arg);
         let s = match std::fs::read_to_string(source_arg) {
             Ok(s) => s,
             Err(e) => {
@@ -3890,11 +3907,11 @@ fn run_llvm_engine(_program: &ast::Program, rest: &[String]) -> i32 {
 fn print_help() {
     println!("ilo — a programming language for AI agents\n");
     println!("Usage:");
-    println!("  ilo run <file.ilo> [args...]      Run (verb form; alias for positional)");
-    println!("  ilo check <file.ilo>              Verify without running (exit 0 = clean)");
-    println!("  ilo build <file.ilo> -o <out>     AOT compile (alias for `compile`)");
+    println!("  ilo run <file.@> [args...]        Run (verb form; alias for positional)");
+    println!("  ilo check <file.@>               Verify without running (exit 0 = clean)");
+    println!("  ilo build <file.@> -o <out>      AOT compile (alias for `compile`)");
     println!("  ilo <code> [args...]              Run (bytecode VM; use --jit for JIT)");
-    println!("  ilo <file.ilo> [args...]          Run from file");
+    println!("  ilo <file.@> [args...]           Run from file (.ilo also accepted)");
     println!("  ilo <code> func [args...]         Run a specific function");
     println!("  ilo <code> --emit python          Transpile to Python");
     println!("  ilo <code> --explain / -x            Annotate each statement with its role");
@@ -3949,7 +3966,7 @@ fn print_help() {
     println!("Examples:");
     println!("  ilo 'f x:n>n;*x 2' 5             Define and call f(5) → 10");
     println!("  ilo 'f xs:L n>n;len xs' 1,2,3     Pass a list → 3");
-    println!("  ilo program.ilo 10 20             Run file with arguments");
+    println!("  ilo program.@ 10 20              Run file with arguments");
     println!("  ilo 'f x:n>n;*x 2' --emit python Transpile to Python");
 }
 
@@ -5760,7 +5777,7 @@ mod tests {
     #[test]
     fn decl_name_use_returns_none() {
         let d = ast::Decl::Use {
-            path: "lib.ilo".into(),
+            path: "lib.@".into(),
             only: None,
             span: ast::Span { start: 0, end: 0 },
         };
@@ -5790,14 +5807,14 @@ mod tests {
     #[test]
     fn resolve_imports_only_filter_keeps_named_decl() {
         use std::io::Write;
-        let lib_path = "/tmp/ilo_test_resolve_only_F2G7.ilo";
+        let lib_path = "/tmp/ilo_test_resolve_only_F2G7.@";
         let mut f = std::fs::File::create(lib_path).unwrap();
         writeln!(f, "dbl n:n>n;*n 2").unwrap();
         writeln!(f, "half n:n>n;/n 2").unwrap();
         drop(f);
 
         let use_decl = ast::Decl::Use {
-            path: "ilo_test_resolve_only_F2G7.ilo".into(),
+            path: "ilo_test_resolve_only_F2G7.@".into(),
             only: Some(vec!["dbl".into()]),
             span: ast::Span { start: 0, end: 0 },
         };
@@ -5824,13 +5841,13 @@ mod tests {
     #[test]
     fn resolve_imports_only_filter_warns_missing_name() {
         use std::io::Write;
-        let lib_path = "/tmp/ilo_test_resolve_missing_H4K9.ilo";
+        let lib_path = "/tmp/ilo_test_resolve_missing_H4K9.@";
         let mut f = std::fs::File::create(lib_path).unwrap();
         writeln!(f, "dbl n:n>n;*n 2").unwrap();
         drop(f);
 
         let use_decl = ast::Decl::Use {
-            path: "ilo_test_resolve_missing_H4K9.ilo".into(),
+            path: "ilo_test_resolve_missing_H4K9.@".into(),
             only: Some(vec!["dbl".into(), "nonexistent".into()]),
             span: ast::Span { start: 0, end: 0 },
         };
@@ -6075,7 +6092,7 @@ mod tests {
     #[test]
     fn resolve_imports_inline_code_emits_p017() {
         let use_decl = ast::Decl::Use {
-            path: "something.ilo".into(),
+            path: "something.@".into(),
             only: None,
             span: ast::Span { start: 0, end: 20 },
         };
@@ -6090,7 +6107,7 @@ mod tests {
     #[test]
     fn resolve_imports_file_not_found_emits_p017() {
         let use_decl = ast::Decl::Use {
-            path: "nonexistent_xyz_99999.ilo".into(),
+            path: "nonexistent_xyz_99999.@".into(),
             only: None,
             span: ast::Span { start: 0, end: 30 },
         };
@@ -6200,11 +6217,11 @@ mod tests {
 
     #[test]
     fn resolve_imports_parse_error_in_imported_file() {
-        let bad_path = "/tmp/ilo_unit_bad_parse_imports.ilo";
+        let bad_path = "/tmp/ilo_unit_bad_parse_imports.@";
         std::fs::write(bad_path, "f x:>n;x").expect("write bad file");
 
         let decls = vec![ast::Decl::Use {
-            path: "ilo_unit_bad_parse_imports.ilo".into(),
+            path: "ilo_unit_bad_parse_imports.@".into(),
             only: None,
             span: ast::Span { start: 0, end: 0 },
         }];
@@ -6228,18 +6245,18 @@ mod tests {
 
     #[test]
     fn resolve_imports_transitive() {
-        let file_b = "/tmp/ilo_unit_trans_b_Q3R8.ilo";
-        let file_a = "/tmp/ilo_unit_trans_a_Q3R8.ilo";
+        let file_b = "/tmp/ilo_unit_trans_b_Q3R8.@";
+        let file_a = "/tmp/ilo_unit_trans_a_Q3R8.@";
 
         std::fs::write(file_b, "triple x:n>n;*x 3").expect("write B");
         std::fs::write(
             file_a,
-            "use \"ilo_unit_trans_b_Q3R8.ilo\"\nsextuple x:n>n;t=triple x;*t 2",
+            "use \"ilo_unit_trans_b_Q3R8.@\"\nsextuple x:n>n;t=triple x;*t 2",
         )
         .expect("write A");
 
         let decls = vec![ast::Decl::Use {
-            path: "ilo_unit_trans_a_Q3R8.ilo".into(),
+            path: "ilo_unit_trans_a_Q3R8.@".into(),
             only: None,
             span: ast::Span { start: 0, end: 0 },
         }];
@@ -7230,7 +7247,7 @@ mod tests {
     #[test]
     fn resolve_imports_no_base_dir_emits_error() {
         // `use` without a file context → ILO-P017 error (lines 699-703)
-        let decls = vec![make_use_decl("math.ilo")];
+        let decls = vec![make_use_decl("math.@")];
         let mut visited = std::collections::HashSet::new();
         let mut diagnostics = Vec::new();
         let result = resolve_imports(decls, None, &mut visited, &mut diagnostics);
@@ -7242,24 +7259,24 @@ mod tests {
     #[test]
     fn resolve_imports_file_not_found_emits_error() {
         // Import a non-existent file → ILO-P017 (lines 711-716)
-        let decls = vec![make_use_decl("nonexistent_file_xyz.ilo")];
+        let decls = vec![make_use_decl("nonexistent_file_xyz.@")];
         let mut visited = std::collections::HashSet::new();
         let mut diagnostics = Vec::new();
         let dir = std::path::Path::new("/tmp");
         let result = resolve_imports(decls, Some(dir), &mut visited, &mut diagnostics);
         assert!(result.is_empty());
         assert!(!diagnostics.is_empty());
-        assert!(diagnostics[0].message.contains("nonexistent_file_xyz.ilo"));
+        assert!(diagnostics[0].message.contains("nonexistent_file_xyz.@"));
     }
 
     #[test]
     fn resolve_imports_circular_emits_error() {
         // Pre-populate visited with a file that we then try to import → ILO-P018 (lines 721-726)
-        let path = "/tmp/ilo_circ_test.ilo";
+        let path = "/tmp/ilo_circ_test.@";
         std::fs::write(path, "f>n;1").unwrap();
         let canonical = std::fs::canonicalize(path).unwrap();
 
-        let decls = vec![make_use_decl("ilo_circ_test.ilo")];
+        let decls = vec![make_use_decl("ilo_circ_test.@")];
         let mut visited = std::collections::HashSet::new();
         visited.insert(canonical);
         let mut diagnostics = Vec::new();
@@ -7274,9 +7291,9 @@ mod tests {
     #[test]
     fn resolve_imports_lex_error_in_imported_file() {
         // Import a file with invalid syntax → lex error pushed to diagnostics (lines 743-745)
-        let path = "/tmp/ilo_lex_err_test.ilo";
+        let path = "/tmp/ilo_lex_err_test.@";
         std::fs::write(path, "MyFunc invalid_UpperCase").unwrap();
-        let decls = vec![make_use_decl("ilo_lex_err_test.ilo")];
+        let decls = vec![make_use_decl("ilo_lex_err_test.@")];
         let mut visited = std::collections::HashSet::new();
         let mut diagnostics = Vec::new();
         let dir = std::path::Path::new("/tmp");
@@ -7289,16 +7306,16 @@ mod tests {
     fn resolve_imports_read_error_after_canonicalize() {
         // Create a real file, canonicalize it, then delete it — when resolve_imports
         // tries to read_to_string after canonicalize, it gets Err → lines 731-737.
-        let path = "/tmp/ilo_read_err_test.ilo";
+        let path = "/tmp/ilo_read_err_test.@";
         std::fs::write(path, "f>n;1").unwrap();
-        // Create a symlink-like path that canonicalizes to /tmp/ilo_read_err_test_gone.ilo
+        // Create a symlink-like path that canonicalizes to /tmp/ilo_read_err_test_gone.@
         // Instead: just test file-not-found by giving a path whose parent exists but file doesn't.
         // Use a path that doesn't exist at all — canonicalize will Err → covers lines 711-716 again.
         // To hit the read_to_string Err path (731-737), we'd need canonicalize to succeed but
         // read to fail — which requires platform tricks. Skip that specific sub-path.
         std::fs::remove_file(path).ok();
         // Simple verification: non-existent path hits the canonical error (711-716)
-        let decls = vec![make_use_decl("ilo_read_err_test.ilo")];
+        let decls = vec![make_use_decl("ilo_read_err_test.@")];
         let mut visited = std::collections::HashSet::new();
         let mut diagnostics = Vec::new();
         let dir = std::path::Path::new("/tmp");
@@ -7496,7 +7513,7 @@ mod tests {
     fn resolve_imports_directory_triggers_read_error() {
         // Importing a path that resolves to a directory: canonicalize succeeds,
         // but read_to_string fails ("Is a directory") → covers lines 731-737.
-        let dir_name = "ilo_test_dir_import_Z9.ilo";
+        let dir_name = "ilo_test_dir_import_Z9.@";
         let dir_path = format!("/tmp/{dir_name}");
         std::fs::create_dir_all(&dir_path).unwrap();
 
@@ -8706,7 +8723,7 @@ mod tests {
     #[test]
     fn graph_cmd_fn_flag_missing_name_returns_one() {
         // Create a temp file for graph_cmd to parse
-        let path = "/tmp/ilo_graph_test_fn_missing.ilo";
+        let path = "/tmp/ilo_graph_test_fn_missing.@";
         std::fs::write(path, "f x:n>n;+x 1").unwrap();
         let code = graph_cmd(&[path.to_string(), "--fn".to_string()]);
         assert_eq!(code, 1);
@@ -8715,7 +8732,7 @@ mod tests {
 
     #[test]
     fn graph_cmd_budget_flag_missing_number_returns_one() {
-        let path = "/tmp/ilo_graph_test_budget_missing.ilo";
+        let path = "/tmp/ilo_graph_test_budget_missing.@";
         std::fs::write(path, "f x:n>n;+x 1").unwrap();
         let code = graph_cmd(&[path.to_string(), "--budget".to_string()]);
         assert_eq!(code, 1);
@@ -8724,7 +8741,7 @@ mod tests {
 
     #[test]
     fn graph_cmd_budget_invalid_value_returns_one() {
-        let path = "/tmp/ilo_graph_test_budget_invalid.ilo";
+        let path = "/tmp/ilo_graph_test_budget_invalid.@";
         std::fs::write(path, "f x:n>n;+x 1").unwrap();
         let code = graph_cmd(&[
             path.to_string(),
@@ -8737,7 +8754,7 @@ mod tests {
 
     #[test]
     fn graph_cmd_unknown_flag_returns_one() {
-        let path = "/tmp/ilo_graph_test_unknown_flag.ilo";
+        let path = "/tmp/ilo_graph_test_unknown_flag.@";
         std::fs::write(path, "f x:n>n;+x 1").unwrap();
         let code = graph_cmd(&[path.to_string(), "--nonexistent-flag".to_string()]);
         assert_eq!(code, 1);
@@ -8746,13 +8763,13 @@ mod tests {
 
     #[test]
     fn graph_cmd_file_not_found_returns_one() {
-        let code = graph_cmd(&["/tmp/ilo_no_such_file_99999.ilo".to_string()]);
+        let code = graph_cmd(&["/tmp/ilo_no_such_file_99999.@".to_string()]);
         assert_eq!(code, 1);
     }
 
     #[test]
     fn graph_cmd_fn_not_found_returns_one() {
-        let path = "/tmp/ilo_graph_test_fn_notfound.ilo";
+        let path = "/tmp/ilo_graph_test_fn_notfound.@";
         std::fs::write(path, "f x:n>n;+x 1").unwrap();
         let code = graph_cmd(&[
             path.to_string(),
@@ -8765,7 +8782,7 @@ mod tests {
 
     #[test]
     fn graph_cmd_fn_reverse_not_found_returns_one() {
-        let path = "/tmp/ilo_graph_test_rev_notfound.ilo";
+        let path = "/tmp/ilo_graph_test_rev_notfound.@";
         std::fs::write(path, "f x:n>n;+x 1").unwrap();
         let code = graph_cmd(&[
             path.to_string(),
@@ -8779,7 +8796,7 @@ mod tests {
 
     #[test]
     fn graph_cmd_fn_subgraph_not_found_returns_one() {
-        let path = "/tmp/ilo_graph_test_sub_notfound.ilo";
+        let path = "/tmp/ilo_graph_test_sub_notfound.@";
         std::fs::write(path, "f x:n>n;+x 1").unwrap();
         let code = graph_cmd(&[
             path.to_string(),
@@ -8793,7 +8810,7 @@ mod tests {
 
     #[test]
     fn graph_cmd_fn_budget_not_found_returns_one() {
-        let path = "/tmp/ilo_graph_test_bud_notfound.ilo";
+        let path = "/tmp/ilo_graph_test_bud_notfound.@";
         std::fs::write(path, "f x:n>n;+x 1").unwrap();
         let code = graph_cmd(&[
             path.to_string(),
@@ -9097,7 +9114,7 @@ mod tests {
 
     #[test]
     fn graph_cmd_dot_output_exits_zero() {
-        let path = "/tmp/ilo_graph_dot_test_unit.ilo";
+        let path = "/tmp/ilo_graph_dot_test_unit.@";
         std::fs::write(path, "f x:n>n;+x 1 g x:n>n;f x").unwrap();
         let code = graph_cmd(&[path.to_string(), "--dot".to_string()]);
         assert_eq!(code, 0);
@@ -9106,7 +9123,7 @@ mod tests {
 
     #[test]
     fn graph_cmd_fn_success_exits_zero() {
-        let path = "/tmp/ilo_graph_fn_success.ilo";
+        let path = "/tmp/ilo_graph_fn_success.@";
         std::fs::write(path, "f x:n>n;+x 1").unwrap();
         let code = graph_cmd(&[path.to_string(), "--fn".to_string(), "f".to_string()]);
         assert_eq!(code, 0);
@@ -9115,7 +9132,7 @@ mod tests {
 
     #[test]
     fn graph_cmd_fn_reverse_success_exits_zero() {
-        let path = "/tmp/ilo_graph_rev_success.ilo";
+        let path = "/tmp/ilo_graph_rev_success.@";
         std::fs::write(path, "helper x:n>n;*x 2 main x:n>n;helper x").unwrap();
         let code = graph_cmd(&[
             path.to_string(),
@@ -9129,7 +9146,7 @@ mod tests {
 
     #[test]
     fn graph_cmd_fn_subgraph_success_exits_zero() {
-        let path = "/tmp/ilo_graph_sub_success.ilo";
+        let path = "/tmp/ilo_graph_sub_success.@";
         std::fs::write(path, "helper x:n>n;*x 2 main x:n>n;helper x").unwrap();
         let code = graph_cmd(&[
             path.to_string(),
@@ -9143,7 +9160,7 @@ mod tests {
 
     #[test]
     fn graph_cmd_fn_budget_success_exits_zero() {
-        let path = "/tmp/ilo_graph_bud_success.ilo";
+        let path = "/tmp/ilo_graph_bud_success.@";
         std::fs::write(path, "f x:n>n;+x 1").unwrap();
         let code = graph_cmd(&[
             path.to_string(),
@@ -9158,7 +9175,7 @@ mod tests {
 
     #[test]
     fn graph_cmd_full_json_success_exits_zero() {
-        let path = "/tmp/ilo_graph_full_json.ilo";
+        let path = "/tmp/ilo_graph_full_json.@";
         std::fs::write(path, "f x:n>n;+x 1 g x:n>n;f x").unwrap();
         let code = graph_cmd(&[path.to_string()]);
         assert_eq!(code, 0);
