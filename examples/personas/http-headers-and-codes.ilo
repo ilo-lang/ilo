@@ -1,0 +1,44 @@
+-- http-headers-and-codes: httpbin.org test grid
+-- GET /headers w/ custom headers, verify echo
+-- GET /status/{code}, verify response
+-- GET /response-headers?X-Custom=foo, parse
+-- POST /post w/ JSON body, verify echo
+
+code-to-url code:n>t;cat ["https://httpbin.org/status/" (str code)] ""
+
+check-headers>t;
+  hdr=mmap;hdr=mset hdr "Authorization" "Bearer test";hdr=mset hdr "X-API-Key" "abc";
+  r=get "https://httpbin.org/headers" hdr;
+  ?r{~_:"PASS: GET /headers";^_:"FAIL: get /headers"}
+
+check-status>t;
+  codes=[200 201 204 301 400 401 403 404 418 429 500 503];
+  urls=map code-to-url codes;
+  rs=get-many urls;
+  ok=len (flt (r:R t t>b;?r{~_:true;^_:false}) rs);
+  cat ["PASS: GET /status: " (str ok) "/" (str (len codes))] ""
+
+check-resp-headers>t;
+  hdr=mmap;
+  r=get "https://httpbin.org/response-headers?X-Custom=foo" hdr;
+  ?r{~_:"PASS: GET /response-headers";^_:"FAIL: get /response-headers"}
+
+check-post>t;
+  body="{\"user\":\"alice\",\"action\":\"login\",\"timestamp\":1234567890}";
+  hdr=mmap;hdr=mset hdr "Content-Type" "application/json";
+  r=pst "https://httpbin.org/post" body hdr;
+  ?r{~_:"PASS: POST /post";^_:"FAIL: pst /post"}
+
+main>t;
+  t1=check-headers();
+  t2=check-status();
+  t3=check-resp-headers();
+  t4=check-post();
+  cat [t1 t2 t3 t4] "\n"
+
+-- run: main
+-- out:
+--   PASS: GET /headers
+--   PASS: GET /status: 12/12
+--   PASS: GET /response-headers
+--   PASS: POST /post
