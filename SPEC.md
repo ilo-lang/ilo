@@ -476,8 +476,10 @@ Called like functions, compiled to dedicated opcodes.
 | `now-ms` | current Unix timestamp (milliseconds) | `n` |
 | `get url` | HTTP GET | `R t t` |
 | `get url headers` | HTTP GET with custom headers (`M t t` map) | `R t t` |
+| `get-to url timeout-ms` | HTTP GET with explicit timeout (milliseconds); Err if deadline exceeded | `R t t` |
 | `pst url body` | HTTP POST with text body (renamed from `post` in 0.12.0) | `R t t` |
 | `pst url body headers` | HTTP POST with body and custom headers (`M t t` map) | `R t t` |
+| `pst-to url body timeout-ms` | HTTP POST with explicit timeout (milliseconds); Err if deadline exceeded | `R t t` |
 | `run cmd argv` | spawn `cmd` with argv list — see [Process spawn](#process-spawn) for the no-shell-no-glob security model | `R (M t t) t` |
 | `env key` | read environment variable | `R t t` |
 | `env-all` | snapshot the full process environment as `M t t` | `R (M t t) t` |
@@ -792,9 +794,13 @@ h=mmap
 h=mset h "x-api-key" "secret"
 r=get url h      -- GET with x-api-key header
 r=pst url body h -- POST with x-api-key header
+
+-- Explicit timeouts (milliseconds; rounds up to nearest second internally)
+r=get-to url 5000       -- GET with 5 s timeout; Err if exceeded
+r=pst-to url body 3000  -- POST with 3 s timeout
 ```
 
-Behind the `http` feature flag (on by default). Without the feature, `get`/`pst` return `Err("http feature not enabled")`.
+Behind the `http` feature flag (on by default). Without the feature, `get`/`pst`/`get-to`/`pst-to` return `Err("http feature not enabled")`.
 
 ### Process spawn
 
