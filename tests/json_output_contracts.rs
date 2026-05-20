@@ -92,6 +92,7 @@ fn skill_list_json() {
         .collect();
     for required in [
         "ilo-language",
+        "ilo-language-records",
         "ilo-builtins-core",
         "ilo-builtins-math",
         "ilo-builtins-io",
@@ -112,10 +113,10 @@ fn skill_list_json() {
 
 #[test]
 fn skill_get_phase2_skills_json() {
-    // Phase 2: every new skill must round-trip through `skill get --json`
+    // Phase 2+: every new skill must round-trip through `skill get --json`
     // with a non-trivial content body. This catches an include_str! path
     // typo or an empty file landing in the binary.
-    for name in ["ilo-examples", "ilo-edit-loop"] {
+    for name in ["ilo-examples", "ilo-edit-loop", "ilo-language-records"] {
         let (ok, v, _) = run_stdout_json(&["skill", "get", name, "--json"]);
         assert!(ok, "skill get {name} --json should succeed");
         assert_eq!(v["schemaVersion"], 1);
