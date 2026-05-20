@@ -8980,11 +8980,17 @@ mod tests {
 
     #[test]
     fn interpret_braceless_guard_fibonacci() {
-        let source = "fib n:n>n;<=n 1 n;a=fib -n 1;b=fib -n 2;+a b";
-        assert_eq!(
-            run_str(source, Some("fib"), vec![Value::Number(10.0)]),
-            Value::Number(55.0)
-        );
+        // Run in a thread with an explicit 8 MiB stack. In debug builds the
+        // sha2/hmac frames push each interpreter call frame past the default
+        // 2 MiB stack limit when running fib(10) recursively.
+        let source = "fib n:n>n;<=n 1 n;a=fib -n 1;b=fib -n 2;+a b".to_owned();
+        let result = std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(move || run_str(&source, Some("fib"), vec![Value::Number(10.0)]))
+            .unwrap()
+            .join()
+            .unwrap();
+        assert_eq!(result, Value::Number(55.0));
     }
 
     #[test]
