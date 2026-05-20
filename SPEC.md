@@ -583,6 +583,8 @@ Called like functions, compiled to dedicated opcodes.
 | `dtfmt epoch fmt` | format Unix epoch as text (strftime, UTC) | `R t t` |
 | `dtparse s fmt` | parse text to Unix epoch (strftime, UTC) | `R n t` |
 | `dtparse-rel s now` | parse relative-date phrase to epoch; `now` is the anchor epoch | `R n t` |
+| `dur-parse s` | parse human duration string ("3h 30m", "1 week 2 days", "1.5 hours", "90s") into seconds. Lenient: accepts abbreviations `s`/`m`/`h`/`d`/`w`, full names (singular + plural), decimal quantities, mixed sequences. Err if empty or no unit found | `R n t` |
+| `dur-fmt n` | format seconds as human-readable duration ("2h 42m", "1 day", "30s"). Drops zero parts; uses largest applicable units. Zero returns "0s". Negative values format with a leading "-" | `t` |
 | `rdjl path` | read JSONL file as `L (R _ t)`: one parse result per non-empty line | `L (R _ t)` |
 | `get-many urls` | concurrent HTTP GET fan-out (max 10 parallel), preserves order | `L (R t t)` |
 | `sleep ms` | pause current engine for `ms` milliseconds; returns nil | `_` |
@@ -650,6 +652,40 @@ dtparse-rel!! "2023-12-25" (now)         -- 1703462400 (ignores now)
 ```
 
 Unrecognised phrases return `Err` with a message listing valid forms. All times are midnight UTC.
+
+### Duration (`dur-parse` / `dur-fmt`)
+
+`dur-parse s > R n t` — parse a human-readable duration string into total seconds as a float.
+`dur-fmt n > t` — format seconds as a human-readable duration string.
+
+Both are tree-bridge eligible: VM and Cranelift dispatch through the same interpreter arm.
+
+Accepted units for `dur-parse`:
+
+| abbreviation | full names                  |
+|---|---|
+| `w`          | week, weeks                 |
+| `d`          | day, days                   |
+| `h`          | hour, hours, hr, hrs        |
+| `m`          | min, mins, minute, minutes  |
+| `s`          | sec, secs, second, seconds  |
+
+```
+dur-parse "3h 30m"               -- R n t: Ok=12600, Err if no unit found
+dur-parse "1 week 2 days"        -- R n t: Ok=777600
+dur-parse "1.5 hours"            -- R n t: Ok=5400
+dur-parse "4h32m"                -- no space between number and unit: Ok=16320
+dur-parse! s                     -- auto-unwrap inside R-returning fn
+
+dur-fmt 9720                     -- "2h 42m"
+dur-fmt 86400                    -- "1 day"
+dur-fmt 90                       -- "1m 30s"
+dur-fmt 0                        -- "0s"
+
+-- Round-trip: parse -> seconds -> format
+n = dur-parse! "2 days 3 hours"
+dur-fmt n                        -- "2 days 3h"
+```
 
 ### Set operations
 
@@ -1614,7 +1650,7 @@ ilo serv                          -- long-lived JSON request/response loop
 
 **Default engine.** The bytecode register VM is the default execution path. It supports every opcode (closures with Phase 2 capture, listview windows, fused len-of-filter, every modern shape), and avoids the JIT compile-and-bail cost paid by the pre-v0.11.9 Cranelift-first default whenever a program touched an opcode the JIT couldn't handle. Cranelift JIT is opt-in via `--jit`; on opt-in, the JIT runs hot numeric loops and falls back to the VM on bailout. Phase 2 captures run natively on every public backend - VM, JIT, and AOT (`ilo compile`); AOT embeds the postcard `CompiledProgram` blob into the binary's `.rodata` so dispatch helpers can re-enter the VM on user-fn callbacks the same way the in-process runners do. For long-running workloads where the JIT pays for itself, opt in explicitly; for most agent workloads the VM is the right default.
 
-**Tree-walker is internal-only.** The tree-walking interpreter is no longer user-selectable: `--run-tree` and its `--run` alias were removed from the public CLI in 0.12.1 (they now error with the unknown-flag guard). The interpreter stays in-tree as the dispatch target for HOF / regex / fmt-variadic / IO / sleep / ct / rsrt / closure-bind-ctx shapes the VM and Cranelift haven't lifted natively yet - the VM bails to it transparently for the ops listed by `is_tree_bridge_eligible` (`rgx`, `rgxall`, `rgxall1`, `rgxall-multi`, `rgxsub`, `fmt`, `fmt2`, `rd`, `rdb`, `rdjl`, `rdin`, `rdinl`, `sleep`, `lsd`, `walk`, `glob`, `dirname`, `basename`, `pathjoin`, `run`, `env-all`, `jkeys`, `ct` 2-arg and 3-arg, `rsrt` 2-arg and 3-arg, and the closure-bind ctx variants of `map`/`flt`/`fld`/`srt`). Cross-engine parity for those shapes is pinned by `tests/regression_builtin_bridge.rs` and `tests/regression_tree_bridge_invariants.rs`. 0.13.0+ is on track for a hard drop once the bridge consumers are lifted natively and the shared runtime types (`Value`, `MapKey`, `RuntimeError`, math helpers) are extracted from `src/interpreter/` to a non-engine module.
+**Tree-walker is internal-only.** The tree-walking interpreter is no longer user-selectable: `--run-tree` and its `--run` alias were removed from the public CLI in 0.12.1 (they now error with the unknown-flag guard). The interpreter stays in-tree as the dispatch target for HOF / regex / fmt-variadic / IO / sleep / ct / rsrt / closure-bind-ctx shapes the VM and Cranelift haven't lifted natively yet - the VM bails to it transparently for the ops listed by `is_tree_bridge_eligible` (`rgx`, `rgxall`, `rgxall1`, `rgxall-multi`, `rgxsub`, `fmt`, `fmt2`, `rd`, `rdb`, `rdjl`, `rdin`, `rdinl`, `sleep`, `lsd`, `walk`, `glob`, `dirname`, `basename`, `pathjoin`, `run`, `env-all`, `jkeys`, `ct` 2-arg and 3-arg, `rsrt` 2-arg and 3-arg, `dur-parse`, `dur-fmt`, and the closure-bind ctx variants of `map`/`flt`/`fld`/`srt`). Cross-engine parity for those shapes is pinned by `tests/regression_builtin_bridge.rs` and `tests/regression_tree_bridge_invariants.rs`. 0.13.0+ is on track for a hard drop once the bridge consumers are lifted natively and the shared runtime types (`Value`, `MapKey`, `RuntimeError`, math helpers) are extracted from `src/interpreter/` to a non-engine module.
 
 **Subcommand dispatch.** The first positional argument is interpreted as a function name when it has the shape of an ilo identifier - `[a-z][a-z0-9]*(-[a-z0-9]+)*` - so `ilo file.ilo list-orders` routes to the `list-orders` function. Args that don't match the ident shape (file paths like `/tmp/data.json`, numbers, sigils, bracketed lists, anything with a `.` or `/`) route to `main` (or the entry function) as a positional CLI arg instead. Trailing dashes (`foo-`), doubled dashes (`foo--bar`), and negative numbers (`-1`) are not idents and pass through as data.
 

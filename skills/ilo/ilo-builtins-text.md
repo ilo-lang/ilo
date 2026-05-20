@@ -44,3 +44,16 @@ Returns `R n t`. Pass `(now)` as the anchor for live programs.
 deadline nw:n>n;dtparse-rel!! "in 3 days" nw
 last-week-start nw:n>n;dtparse-rel!! "last monday" nw
 ```
+
+## Duration
+
+`dur-parse s > R n t` — parse human duration string into seconds. Accepts `s/m/h/d/w` abbreviations, full names (week/day/hour/minute/second, singular + plural), decimal quantities, mixed sequences ("3h 30m", "1.5 hours", "1 week 2 days", "90s"). Err if empty or no unit found.
+
+`dur-fmt n > t` — format seconds as human-readable duration. Drops zero parts; uses largest units ("2h 42m", "1 day", "30s"). Zero returns "0s".
+
+```
+secs = dur-parse! "3h 30m"  -- 12600
+dur-fmt secs                 -- "3h 30m"
+dur-fmt 86400                -- "1 day"
+dur-fmt 90                   -- "1m 30s"
+```
