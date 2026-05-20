@@ -79,6 +79,9 @@ pub enum Builtin {
     Zip,
     Enumerate,
     Range,
+    Linspace,
+    Ones,
+    Rep,
     Window,
     Chunks,
     Setunion,
@@ -359,6 +362,9 @@ impl Builtin {
             "zip" => Some(Builtin::Zip),
             "enumerate" => Some(Builtin::Enumerate),
             "range" => Some(Builtin::Range),
+            "linspace" => Some(Builtin::Linspace),
+            "ones" => Some(Builtin::Ones),
+            "rep" => Some(Builtin::Rep),
             "window" => Some(Builtin::Window),
             "chunks" => Some(Builtin::Chunks),
             "setunion" => Some(Builtin::Setunion),
@@ -537,6 +543,9 @@ impl Builtin {
             Builtin::Zip => "zip",
             Builtin::Enumerate => "enumerate",
             Builtin::Range => "range",
+            Builtin::Linspace => "linspace",
+            Builtin::Ones => "ones",
+            Builtin::Rep => "rep",
             Builtin::Window => "window",
             Builtin::Chunks => "chunks",
             Builtin::Setunion => "setunion",
@@ -932,6 +941,15 @@ impl Builtin {
         // loose M t t that `run` returns, giving clean dot-access. Appended
         // last to preserve every existing on-wire tag; tree-bridge eligible.
         Builtin::Run2,
+        // Numeric prelude (0.12.1). Three list constructors hit repeatedly by
+        // linear-regression (linspace for evenly-spaced sample points),
+        // distance-matrix (ones for a design-matrix column), and monte-carlo
+        // (rep for seeding accumulators). Tree-bridge eligible — pure, no
+        // FnRef args, no I/O, no Result wrapper. Appended last to preserve
+        // every existing on-wire tag.
+        Builtin::Linspace,
+        Builtin::Ones,
+        Builtin::Rep,
     ];
 
     /// On-wire 8-bit tag for cross-engine builtin dispatch. See `ALL`.
@@ -1270,6 +1288,9 @@ mod tests {
             "last-dom",
             "next-business-day",
             "day-of-week",
+            "linspace",
+            "ones",
+            "rep",
         ];
         for name in &all {
             let b = Builtin::from_name(name).unwrap_or_else(|| panic!("missing builtin: {name}"));
@@ -1516,6 +1537,9 @@ mod tests {
             "last-dom",
             "next-business-day",
             "day-of-week",
+            "linspace",
+            "ones",
+            "rep",
         ] {
             let b = Builtin::from_name(name).unwrap_or_else(|| panic!("no builtin: {name}"));
             let t = b.tag();

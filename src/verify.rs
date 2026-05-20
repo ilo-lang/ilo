@@ -440,6 +440,12 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("zip", &["list", "list"], "list"),
     ("enumerate", &["list"], "list"),
     ("range", &["n", "n"], "L n"),
+    // Numeric prelude: evenly-spaced floats (numpy-style endpoint=True),
+    // a list of ones, and `n` copies of any value. `rep`'s element type
+    // is generic — return type tracks the second argument.
+    ("linspace", &["n", "n", "n"], "L n"),
+    ("ones", &["n"], "L n"),
+    ("rep", &["n", "any"], "list"),
     ("window", &["n", "list"], "list"),
     ("chunks", &["n", "L a"], "L (L a)"),
     ("setunion", &["list", "list"], "list"),
@@ -802,6 +808,57 @@ fn builtin_check_args(
                 }
             }
             (Ty::List(Box::new(Ty::Number)), errors)
+        }
+        "linspace" => {
+            // linspace a b n — three numbers, returns L n.
+            for (i, arg) in arg_types.iter().enumerate() {
+                if !compatible(arg, &Ty::Number) {
+                    errors.push(VerifyError {
+                        code: "ILO-T013",
+                        function: func_ctx.to_string(),
+                        message: format!("'linspace' arg {} expects n, got {arg}", i + 1),
+                        hint: None,
+                        span,
+                        is_warning: false,
+                    });
+                }
+            }
+            (Ty::List(Box::new(Ty::Number)), errors)
+        }
+        "ones" => {
+            // ones n — single number arg, returns L n.
+            if let Some(arg) = arg_types.first()
+                && !compatible(arg, &Ty::Number)
+            {
+                errors.push(VerifyError {
+                    code: "ILO-T013",
+                    function: func_ctx.to_string(),
+                    message: format!("'ones' arg 1 expects n, got {arg}"),
+                    hint: None,
+                    span,
+                    is_warning: false,
+                });
+            }
+            (Ty::List(Box::new(Ty::Number)), errors)
+        }
+        "rep" => {
+            // rep n v — n copies of v. Return type is L T, where T is the
+            // type of the second argument (so the verifier can flow element
+            // type through downstream consumers, just like zip/enumerate).
+            if let Some(arg) = arg_types.first()
+                && !compatible(arg, &Ty::Number)
+            {
+                errors.push(VerifyError {
+                    code: "ILO-T013",
+                    function: func_ctx.to_string(),
+                    message: format!("'rep' arg 1 expects n, got {arg}"),
+                    hint: None,
+                    span,
+                    is_warning: false,
+                });
+            }
+            let elem = arg_types.get(1).cloned().unwrap_or(Ty::Unknown);
+            (Ty::List(Box::new(elem)), errors)
         }
         "rnd" => {
             for (i, arg) in arg_types.iter().enumerate() {
