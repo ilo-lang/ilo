@@ -235,8 +235,8 @@ fn is_unsupported(stderr: &str, _stdout: &str) -> bool {
 #[derive(Debug)]
 enum Outcome {
     Pass,
-    Skip(&'static str),
-    Unsupported(String),
+    Skip(#[allow(dead_code)] &'static str),
+    Unsupported(#[allow(dead_code)] String),
     Fail(String),
 }
 

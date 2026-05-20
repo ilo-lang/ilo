@@ -32,7 +32,11 @@
 //! `ilo build`, but the corpus is small (~136 examples) and the wall time
 //! is acceptable as a release-gate.
 
-#![cfg(feature = "cranelift")]
+// Byte-identity baselines were captured on macOS 15.5 arm64 (Mach-O AArch64
+// object files). Linux CI emits ELF x86-64 objects, which differ at the
+// binary level even for identical source. Gate the test to the capture
+// platform so CI stays green; re-capture when migrating to Linux-only CI.
+#![cfg(all(feature = "cranelift", target_os = "macos", target_arch = "aarch64"))]
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
