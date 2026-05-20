@@ -176,17 +176,19 @@ fn dur_parse_empty_string_errors() {
     for e in ENGINES {
         // Should succeed at runtime (returns Ok/Err Result), but result is Err.
         // We run as `dur-parse! ""` to force error propagation.
-        let out = ilo()
-            .args([src, e, "f"])
-            .output()
-            .expect("ilo");
+        let out = ilo().args([src, e, "f"]).output().expect("ilo");
         // The program itself succeeds (no crash), output should start with "^"
         // (Err indicator) when printed by the engine.
         let stdout = String::from_utf8_lossy(&out.stdout).to_string();
         // The result is Err; printed as "^..." without auto-unwrap.
         // We check that it's not an Ok number.
         assert!(
-            !stdout.trim().chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false),
+            !stdout
+                .trim()
+                .chars()
+                .next()
+                .map(|c| c.is_ascii_digit())
+                .unwrap_or(false),
             "engine={e}: expected Err result, got numeric stdout: {stdout}"
         );
     }
