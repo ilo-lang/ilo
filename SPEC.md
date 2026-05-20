@@ -227,7 +227,7 @@ Short builtin names are precious surface and ilo reserves a stable subset of the
         sum tan trm unq upr wrl zip
 ```
 
-`rng` is the short-form alias for the canonical `range` builtin; it is reserved with the same shadow-prevention semantics as a canonical builtin name (binding `rng=...` or declaring `rng x:...` fires `ILO-P011`). `rand` is the short-form alias for the canonical `rnd` builtin (added 0.12.1) and is reserved with the same semantics.
+All builtin aliases (`head`, `length`, `filter`, `concat`, `tail`, `sort`, `reverse`, `flatten`, `contains`, `group`, `average`, `print`, `trim`, `split`, `format`, `regex`, `read`, `readlines`, `readbuf`, `write`, `writelines`, `lset`, `floor`, `ceil`, `round`, `rand`, `random`, `rng`, `string`, `number`, `slice`, `unique`, `fold`) are reserved with the same shadow-prevention semantics as canonical builtin names. Binding an alias name or using it as a user-function name fires `ILO-P011` at parse time with the canonical form in the diagnostic, since the call-site rewrite to the canonical builtin silently bypasses any user binding of the same name. Previously only `rng` and `rand` had individual guards; as of 0.12.1 every alias in the table above is covered by a single `resolve_alias` check, so new aliases automatically inherit the protection when added to the table.
 
 Longer builtin names (`acos`, `asin`, `atan`, `flat`, `take`, `drop`, `mget`, `mset`, `mmap`, `prnt`, `mapr`, `solve`, `clamp`, `cumsum`, `cprod`, `median`, `matmul`, `range`, `window`, `chunks`, `walk`, `glob`, `prod`, …) are also reserved and rejected by `ILO-P011`, but the short-name namespace above is where carry-forward scripts most often collide, so it gets explicit enumeration.
 
@@ -684,7 +684,7 @@ rng 0 10    -- works, but emits: hint: `rng` → `range` (canonical form)
 range 0 10  -- canonical - no hint
 ```
 
-Short-form aliases (where the alias is shorter than the canonical) follow the same shadow-prevention rule as canonical builtins: `rng=...` as a binding or function name is rejected at parse time with `ILO-P011` so the call-site rewrite cannot silently mis-dispatch.
+Every alias - both short-form (`rng`, `rand`) and long-form (`head`, `length`, `filter`, `concat`, ...) - follows the same shadow-prevention rule as canonical builtins: using an alias name as a binding LHS or user-function name is rejected at parse time with `ILO-P011`. The alias resolver rewrites call-position uses to the canonical builtin, so if the bind were allowed the user variable would be silently bypassed and the builtin called instead. For example, `head=fmt "### {}" t` then `cat [head body] "\n"` would rewrite `head` in call position to `hd`, emitting empty output with no error. The parser intercepts every alias in all three positions (top-level binding, local binding inside a function, user function declaration) with a rename hint. The full alias table is listed above; every entry triggers `ILO-P011` in all three contexts.
 
 `get` and `pst` return `Ok(body)` on success, `Err(message)` on failure (connection error, timeout, DNS failure, etc).
 
