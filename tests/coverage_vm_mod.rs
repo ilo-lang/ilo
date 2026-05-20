@@ -103,6 +103,107 @@ fn arith_mod_zero_divisor_errors() {
     }
 }
 
+// ── fmod (floor-mod) ──────────────────────────────────────────────────
+
+#[test]
+fn fmod_positive_inputs() {
+    // Positive inputs: fmod and mod agree
+    for e in ENGINES_ALL {
+        assert_eq!(run_ok(e, "f>n;fmod 17 5", "f"), "2");
+        assert_eq!(run_ok(e, "f>n;fmod 10 3", "f"), "1");
+    }
+}
+
+#[test]
+fn fmod_negative_dividend() {
+    // Signed mod gives -1 for (-1 % 7); fmod gives 6
+    for e in ENGINES_ALL {
+        assert_eq!(run_ok(e, "f>n;fmod -1 7", "f"), "6");
+        assert_eq!(run_ok(e, "f>n;fmod -7 7", "f"), "0");
+        assert_eq!(run_ok(e, "f>n;fmod -8 7", "f"), "6");
+    }
+}
+
+#[test]
+fn fmod_fractional() {
+    // 1.5 fmod 1.0 = 0.5 (positive); -1.5 fmod 1.0 = 0.5
+    for e in ENGINES_ALL {
+        assert_eq!(run_ok(e, "f>n;fmod 1.5 1", "f"), "0.5");
+        assert_eq!(run_ok(e, "f>n;fmod -1.5 1", "f"), "0.5");
+    }
+}
+
+#[test]
+fn fmod_zero_dividend() {
+    for e in ENGINES_ALL {
+        assert_eq!(run_ok(e, "f>n;fmod 0 7", "f"), "0");
+    }
+}
+
+#[test]
+fn fmod_negative_divisor() {
+    // Floor-mod with b < 0: result sign matches divisor (Python semantics).
+    // -3 % -7 = -3 (already in range); 3 % -7 = -4 (3 + (-7)); -10 % -7 = -3.
+    for e in ENGINES_ALL {
+        assert_eq!(run_ok(e, "f>n;fmod -3 -7", "f"), "-3");
+        assert_eq!(run_ok(e, "f>n;fmod 3 -7", "f"), "-4");
+        assert_eq!(run_ok(e, "f>n;fmod -10 -7", "f"), "-3");
+    }
+}
+
+#[test]
+fn fmod_zero_divisor_errors() {
+    // Error message must include "fmod" to distinguish from `mod`'s
+    // identical-shape zero-divisor error.
+    let src = "f>n;fmod 1 0";
+    for e in ENGINES_ALL {
+        let stderr = run_err(e, src, "f").to_lowercase();
+        assert!(
+            stderr.contains("fmod"),
+            "{e}: expected 'fmod' in stderr, got: {stderr}"
+        );
+        assert!(
+            stderr.contains("zero") || stderr.contains("divis"),
+            "{e}: expected zero/divis in stderr, got: {stderr}"
+        );
+    }
+}
+
+#[test]
+fn fmod_non_number_errors() {
+    // Message must mention either "fmod" or "number" so the agent knows
+    // which call site is bad. Cover both arg positions.
+    for src in ["f>n;fmod \"a\" 7", "f>n;fmod 7 \"a\""] {
+        for e in ENGINES_ALL {
+            let stderr = run_err(e, src, "f").to_lowercase();
+            assert!(
+                stderr.contains("fmod") || stderr.contains("number"),
+                "{e} src={src}: expected 'fmod' or 'number' in stderr, got: {stderr}"
+            );
+        }
+    }
+}
+
+#[test]
+fn fmod_nan_propagates() {
+    // NaN propagation is intentional and matches every other math builtin
+    // (`abs`, `sqrt`, `pow`, `/`) — see ilo-builtins-math.md "NaN propagates;
+    // comparisons false". Pinned here to prevent silent semantics drift.
+    for e in ENGINES_ALL {
+        // sqrt -1 produces NaN; fmod NaN 7 must produce NaN, not error.
+        assert_eq!(run_ok(e, "f>n;x=sqrt -1;fmod x 7", "f"), "NaN");
+    }
+}
+
+#[test]
+fn fmod_inf_divisor_returns_dividend() {
+    // x % Inf = x in IEEE 754; floor-correction is a no-op since signs match
+    // when x is finite and divisor is +Inf. Pinned to lock semantics.
+    for e in ENGINES_ALL {
+        assert_eq!(run_ok(e, "f>n;d=pow 10 1000;fmod 5 d", "f"), "5");
+    }
+}
+
 // ── min/max scalar and list ────────────────────────────────────────────
 
 #[test]

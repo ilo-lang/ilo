@@ -203,6 +203,7 @@ pub(crate) const OP_POST: u8 = 83; // R[A] = http_post(R[B], R[C])  (returns R t
 pub(crate) const OP_GETH: u8 = 84; // R[A] = http_get(R[B], headers=R[C])  (returns R t t)
 pub(crate) const OP_POSTH: u8 = 85; // ABx: R[A] = http_post(R[B], body=R[bx>>8], headers=R[bx&0xFF])
 pub(crate) const OP_MOD: u8 = 86; // R[A] = R[B] % R[C]  (modulo / remainder)
+pub(crate) const OP_FMOD: u8 = 187; // R[A] = floor_mod(R[B], R[C])  (always non-negative when C > 0)
 pub(crate) const OP_ROU: u8 = 87; // R[A] = round(R[B])
 
 // Fused foreach opcodes — minimize dispatch overhead for list iteration
@@ -993,7 +994,7 @@ fn inline_kind_for_opcode(op: u8) -> InlineOpKind {
     match op {
         // Numeric / generic arithmetic — ABC, three reg fields.
         OP_ADD | OP_SUB | OP_MUL | OP_DIV | OP_EQ | OP_NE | OP_GT | OP_LT | OP_GE | OP_LE
-        | OP_MOD => InlineOpKind::Abc,
+        | OP_MOD | OP_FMOD => InlineOpKind::Abc,
         OP_ADD_NN | OP_SUB_NN | OP_MUL_NN | OP_DIV_NN => InlineOpKind::Abc,
 
         // _Reg-and-Const_ shape: A and B are regs, C is a constant-pool
@@ -3635,6 +3636,14 @@ impl RegCompiler {
                             let rc = self.compile_expr(&args[1]);
                             let ra = self.alloc_reg();
                             self.emit_abc(OP_MOD, ra, rb, rc);
+                            self.reg_is_num[ra as usize] = true;
+                            return ra;
+                        }
+                        (Builtin::Fmod, 2) => {
+                            let rb = self.compile_expr(&args[0]);
+                            let rc = self.compile_expr(&args[1]);
+                            let ra = self.alloc_reg();
+                            self.emit_abc(OP_FMOD, ra, rb, rc);
                             self.reg_is_num[ra as usize] = true;
                             return ra;
                         }
@@ -10186,6 +10195,29 @@ impl<'a> VM<'a> {
                     }
                     reg_set!(a, NanVal::number(vb.as_number() % nc));
                 }
+                OP_FMOD => {
+                    let a = ((inst >> 16) & 0xFF) as usize + base;
+                    let b = ((inst >> 8) & 0xFF) as usize + base;
+                    let c = (inst & 0xFF) as usize + base;
+                    let vb = reg!(b);
+                    let vc = reg!(c);
+                    if !vb.is_number() || !vc.is_number() {
+                        vm_err!(VmError::Type("fmod requires numbers"));
+                    }
+                    let nc = vc.as_number();
+                    if nc == 0.0 {
+                        vm_err!(VmError::Type("fmod: modulo by zero"));
+                    }
+                    // NaN/Inf propagate via f64 % semantics, matching every
+                    // other math builtin (`abs`, `sqrt`, `pow`, `/`).
+                    let r = vb.as_number() % nc;
+                    let result = if r != 0.0 && r.signum() != nc.signum() {
+                        r + nc
+                    } else {
+                        r
+                    };
+                    reg_set!(a, NanVal::number(result));
+                }
                 OP_CLAMP => {
                     // Two-instruction sequence: OP_CLAMP A=result B=x C=lo; data word A=hi_reg
                     let a = ((inst >> 16) & 0xFF) as usize + base;
@@ -14021,6 +14053,32 @@ pub(crate) extern "C" fn jit_mod(a: u64, b: u64, span_bits: u64) -> u64 {
         NanVal::number(av.as_number() % dv).0
     } else {
         jit_set_runtime_error_with_span(VmError::Type("mod requires numbers"), span_bits);
+        TAG_NIL
+    }
+}
+
+#[cfg(feature = "cranelift")]
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn jit_fmod(a: u64, b: u64, span_bits: u64) -> u64 {
+    let av = NanVal(a);
+    let bv = NanVal(b);
+    if av.is_number() && bv.is_number() {
+        let dv = bv.as_number();
+        if dv == 0.0 {
+            jit_set_runtime_error_with_span(VmError::Type("fmod: modulo by zero"), span_bits);
+            return TAG_NIL;
+        }
+        // NaN/Inf propagate via f64 % semantics, matching every other
+        // math builtin (`abs`, `sqrt`, `pow`, `/`).
+        let r = av.as_number() % dv;
+        let result = if r != 0.0 && r.signum() != dv.signum() {
+            r + dv
+        } else {
+            r
+        };
+        NanVal::number(result).0
+    } else {
+        jit_set_runtime_error_with_span(VmError::Type("fmod requires numbers"), span_bits);
         TAG_NIL
     }
 }
