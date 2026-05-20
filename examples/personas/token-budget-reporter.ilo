@@ -1,0 +1,4 @@
+-- Token budget reporter: skill docs byte counter
+main>_; r=run "find" ["skills/ilo" "-name" "*.md" "-type" "f"]; ?r{^e:^"find error"; ~out: txt=str out; paths=split txt "\n"; @p paths {p2=trm p; >(len p2) 0 {sz=len (read! p2); prnt (+ p2 (+ ": " (str sz)))}}}
+
+-- run: main
