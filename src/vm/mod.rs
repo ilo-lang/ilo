@@ -676,6 +676,9 @@ pub(crate) fn is_tree_bridge_eligible(b: crate::builtins::Builtin, argc: usize) 
         // wra path s - append text to file. Same bridge contract as wr 2-arg:
         // no FnRef args, returns R t t, round-trips cleanly through NanVal.
         (Builtin::Wra, 2) => true,
+        // dtparse-rel s now -> R n t. Pure (no FnRef, no I/O), returns Result.
+        // Tree-bridge gives VM + Cranelift cross-engine parity for free.
+        (Builtin::DtparseRel, 2) => true,
         _ => false,
     }
 }
@@ -698,6 +701,7 @@ pub(crate) fn tree_bridge_returns_result(b: crate::builtins::Builtin) -> bool {
             | Builtin::Rdin
             | Builtin::Rdinl
             | Builtin::Wra
+            | Builtin::DtparseRel
     )
 }
 

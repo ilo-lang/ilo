@@ -1,0 +1,62 @@
+-- dtparse-rel s now: resolve a relative-date phrase to a Unix epoch.
+-- Anchored at a caller-supplied epoch so personas can pass (now) for live use.
+-- All test cases use nw=1705276800 (2024-01-15 00:00:00 UTC, Monday).
+
+-- Simple keywords.
+get-today nw:n>n;dtparse-rel!! "today" nw
+get-yesterday nw:n>n;dtparse-rel!! "yesterday" nw
+get-tomorrow nw:n>n;dtparse-rel!! "tomorrow" nw
+
+-- N units ago / in N units.
+three-days-ago nw:n>n;dtparse-rel!! "3 days ago" nw
+in-five-days nw:n>n;dtparse-rel!! "in 5 days" nw
+two-weeks-ago nw:n>n;dtparse-rel!! "2 weeks ago" nw
+in-one-week nw:n>n;dtparse-rel!! "in 1 week" nw
+one-month-ago nw:n>n;dtparse-rel!! "1 month ago" nw
+in-two-months nw:n>n;dtparse-rel!! "in 2 months" nw
+
+-- Weekday navigation (nw = Monday 2024-01-15).
+last-fri nw:n>n;dtparse-rel!! "last friday" nw
+next-fri nw:n>n;dtparse-rel!! "next friday" nw
+this-wed nw:n>n;dtparse-rel!! "this wednesday" nw
+
+-- Short weekday names.
+last-mon-short nw:n>n;dtparse-rel!! "last mon" nw
+next-sat-short nw:n>n;dtparse-rel!! "next sat" nw
+
+-- ISO-8601 passthrough: result is independent of anchor epoch.
+iso-xmas nw:n>n;dtparse-rel!! "2023-12-25" nw
+
+-- Error path: unrecognised phrase returns Err.
+bad-phrase nw:n>R n t;dtparse-rel "sometime soon" nw
+
+-- run: get-today 1705276800
+-- out: 1705276800
+-- run: get-yesterday 1705276800
+-- out: 1705190400
+-- run: get-tomorrow 1705276800
+-- out: 1705363200
+-- run: three-days-ago 1705276800
+-- out: 1705017600
+-- run: in-five-days 1705276800
+-- out: 1705708800
+-- run: two-weeks-ago 1705276800
+-- out: 1704067200
+-- run: in-one-week 1705276800
+-- out: 1705881600
+-- run: one-month-ago 1705276800
+-- out: 1702598400
+-- run: in-two-months 1705276800
+-- out: 1710460800
+-- run: last-fri 1705276800
+-- out: 1705017600
+-- run: next-fri 1705276800
+-- out: 1705622400
+-- run: this-wed 1705276800
+-- out: 1705449600
+-- run: last-mon-short 1705276800
+-- out: 1704672000
+-- run: next-sat-short 1705276800
+-- out: 1705708800
+-- run: iso-xmas 1705276800
+-- out: 1703462400
