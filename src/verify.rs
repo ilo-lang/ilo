@@ -345,6 +345,15 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("dirname", &["t"], "t"),
     ("basename", &["t"], "t"),
     ("pathjoin", &["L t"], "t"),
+    // 0.12.1 filesystem metadata primitives. Asymmetry by design: size and
+    // mtime return Result (open-and-stat can fail), predicates return bool
+    // (Python convention — `false` collapses missing / perm-denied / wrong-
+    // kind into the natural `?isfile p{...}` branch). Predicates follow
+    // symlinks; size/mtime errors on dir, missing, or permission-denied.
+    ("fsize", &["t"], "R n t"),
+    ("mtime", &["t"], "R n t"),
+    ("isfile", &["t"], "b"),
+    ("isdir", &["t"], "b"),
     ("rdl", &["t"], "R (L t) t"),
     ("rdb", &["t", "t"], "R ? t"),
     // stdin read primitives (0.12.1). rdin reads all stdin; rdinl reads lines.
@@ -796,6 +805,41 @@ fn builtin_check_args(
                         is_warning: false,
                     }),
                 }
+            }
+            (Ty::Bool, errors)
+        }
+        // Filesystem metadata (0.12.1). Hand-written arms so the bang verifier
+        // can fire ILO-T025 on `isfile!`/`isdir!` (bool, not Result, no
+        // unwrap) and so `fsize!`/`mtime!` correctly auto-unwrap the R n t.
+        // Without these the BUILTINS-table fallback returns Ty::Unknown,
+        // which silently disables both checks.
+        "fsize" | "mtime" => {
+            if let Some(arg) = arg_types.first()
+                && !compatible(arg, &Ty::Text)
+            {
+                errors.push(VerifyError {
+                    code: "ILO-T013",
+                    function: func_ctx.to_string(),
+                    message: format!("'{name}' expects path:t, got {arg}"),
+                    hint: None,
+                    span,
+                    is_warning: false,
+                });
+            }
+            (Ty::Result(Box::new(Ty::Number), Box::new(Ty::Text)), errors)
+        }
+        "isfile" | "isdir" => {
+            if let Some(arg) = arg_types.first()
+                && !compatible(arg, &Ty::Text)
+            {
+                errors.push(VerifyError {
+                    code: "ILO-T013",
+                    function: func_ctx.to_string(),
+                    message: format!("'{name}' expects path:t, got {arg}"),
+                    hint: None,
+                    span,
+                    is_warning: false,
+                });
             }
             (Ty::Bool, errors)
         }

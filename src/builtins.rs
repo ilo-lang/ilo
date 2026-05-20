@@ -116,6 +116,10 @@ pub enum Builtin {
     Ls,
     Walk,
     Glob,
+    Fsize,
+    Mtime,
+    Isfile,
+    Isdir,
     EnvAll,
 
     // String
@@ -312,6 +316,10 @@ impl Builtin {
             "lsd" => Some(Builtin::Ls),
             "walk" => Some(Builtin::Walk),
             "glob" => Some(Builtin::Glob),
+            "fsize" => Some(Builtin::Fsize),
+            "mtime" => Some(Builtin::Mtime),
+            "isfile" => Some(Builtin::Isfile),
+            "isdir" => Some(Builtin::Isdir),
             "env-all" => Some(Builtin::EnvAll),
             "trm" => Some(Builtin::Trm),
             "upr" => Some(Builtin::Upr),
@@ -468,6 +476,10 @@ impl Builtin {
             Builtin::Ls => "lsd",
             Builtin::Walk => "walk",
             Builtin::Glob => "glob",
+            Builtin::Fsize => "fsize",
+            Builtin::Mtime => "mtime",
+            Builtin::Isfile => "isfile",
+            Builtin::Isdir => "isdir",
             Builtin::EnvAll => "env-all",
             Builtin::Trm => "trm",
             Builtin::Upr => "upr",
@@ -733,6 +745,17 @@ impl Builtin {
         // to `T`, returning `d` on `Err`. Kills the common `?r{~v:v ^_:default}`
         // pattern. Tree-bridge eligible (2-arg, pure). Added in 0.12.1.
         Builtin::DefaultOnErr,
+        // 0.12.1 filesystem metadata primitives. Atomic singletons rather
+        // than a fat `stat path > R (M t t) t`: agents that want size pay
+        // size cost, agents that want a predicate pay predicate cost. Size
+        // / mtime return Result (open-and-stat can fail); predicates return
+        // bool (Python convention - `false` collapses missing / perm-denied
+        // / wrong-kind into the natural branch). All four are tree-bridge
+        // eligible; no native opcodes.
+        Builtin::Fsize,
+        Builtin::Mtime,
+        Builtin::Isfile,
+        Builtin::Isdir,
     ];
 
     /// On-wire 8-bit tag for cross-engine builtin dispatch. See `ALL`.
