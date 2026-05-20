@@ -27,7 +27,6 @@
 /// assert!(caps.check_net("evil.example").is_err());
 /// assert!(caps.check_net("good.example").is_err()); // still blocked — list is empty
 /// ```
-
 /// Allowlist policy for a single capability dimension.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Policy {
@@ -38,9 +37,10 @@ pub enum Policy {
 }
 
 /// Per-process capability set derived from `--allow-*` CLI flags.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub enum Caps {
     /// No `--allow-*` flags were passed; all IO is permitted (legacy behaviour).
+    #[default]
     Permissive,
     /// At least one `--allow-*` flag was passed; enforce the sub-policies.
     Restricted {
@@ -49,12 +49,6 @@ pub enum Caps {
         write: Policy,
         run: Policy,
     },
-}
-
-impl Default for Caps {
-    fn default() -> Self {
-        Caps::Permissive
-    }
 }
 
 impl Caps {

@@ -7,7 +7,6 @@
 use ilo::caps::{Caps, Policy};
 use ilo::interpreter::{self, Value};
 use ilo::{lexer, parser, vm};
-use std::sync::Arc;
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
