@@ -31,7 +31,9 @@ fn find_examples() -> Vec<PathBuf> {
 
 /// Check whether a path has an ilo source extension: `.@` or `.ilo`.
 fn is_ilo_source(p: &std::path::Path) -> bool {
-    p.extension().map(|e| e == "ilo" || e == "@").unwrap_or(false)
+    p.extension()
+        .map(|e| e == "ilo" || e == "@")
+        .unwrap_or(false)
 }
 
 /// Collect *.@ and *.ilo files from `dir` and one level of subdirectories.

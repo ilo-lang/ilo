@@ -3587,10 +3587,7 @@ fn ilo_extension_emits_deprecation_hint() {
     // .ilo files load correctly but emit a deprecation hint on stderr.
     let path = "/tmp/ilo_ext_depr_test.ilo";
     std::fs::write(path, "f>n;42\n").unwrap();
-    let out = ilo()
-        .args([path])
-        .output()
-        .expect("failed to run ilo");
+    let out = ilo().args([path]).output().expect("failed to run ilo");
     let _ = std::fs::remove_file(path);
     assert!(
         out.status.success(),

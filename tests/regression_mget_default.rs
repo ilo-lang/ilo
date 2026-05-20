@@ -22,11 +22,8 @@ fn run_file(engine: &str, src: &str, entry: &str) -> String {
     use std::sync::atomic::{AtomicU64, Ordering};
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let seq = COUNTER.fetch_add(1, Ordering::SeqCst);
-    let path = std::env::temp_dir().join(format!(
-        "ilo_mget_default_{}_{}.@",
-        std::process::id(),
-        seq
-    ));
+    let path =
+        std::env::temp_dir().join(format!("ilo_mget_default_{}_{}.@", std::process::id(), seq));
     std::fs::write(&path, src).unwrap();
     let out = ilo()
         .args([path.to_str().unwrap(), engine, entry])

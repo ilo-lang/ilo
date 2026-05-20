@@ -27,11 +27,8 @@ fn ilo() -> Command {
 fn run(engine: &str, src: &str, entry: &str, args: &[&str]) -> String {
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let seq = COUNTER.fetch_add(1, Ordering::SeqCst);
-    let path = std::env::temp_dir().join(format!(
-        "ilo_plus_literal_{}_{}.@",
-        std::process::id(),
-        seq
-    ));
+    let path =
+        std::env::temp_dir().join(format!("ilo_plus_literal_{}_{}.@", std::process::id(), seq));
     std::fs::write(&path, src).unwrap();
     let mut cmd_args: Vec<&str> = vec![path.to_str().unwrap(), engine, entry];
     cmd_args.extend_from_slice(args);
