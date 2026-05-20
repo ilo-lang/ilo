@@ -520,6 +520,7 @@ Called like functions, compiled to dedicated opcodes.
 | `jdmp value` | serialise ilo value to JSON text | `t` |
 | `prnt value` | print value to stdout, return it unchanged (passthrough) | same type |
 | `jpar text` | parse JSON text into ilo values | `R _ t` |
+| `jpar-list text` | parse JSON text, assert top-level is array, return typed list | `R (L _) t` |
 | `grp fn xs` | group list by key function | `M t (L a)` |
 | `flat xs` | flatten one level of nesting | `L a` |
 | `sum xs` | sum of numeric list (0 for empty) | `n` |
@@ -877,6 +878,17 @@ jpar text                   -- R _ t: Ok=parsed value, Err=parse error
 r=jpar! "{\"x\":1}"        -- r is a json record, access with r.x
 ```
 
+`jpar-list` is a typed companion: it parses the JSON string and **asserts the top-level value is an array**. The result is `R (L _) t`, so `jpar-list! body` unwraps directly to a list that `@` can iterate — no intermediate binding or type annotation needed:
+
+```
+jpar-list text              -- R (L _) t: Ok=list of parsed values, Err=parse or type error
+-- iterate a JSON array response body:
+@x (jpar-list! body){prnt x}
+-- or bind first:
+xs=jpar-list! body;@i 0..len xs{prnt (at xs i)}
+```
+
+Use `jpar` when the JSON top-level shape is unknown (object, array, scalar). Use `jpar-list` when you know the response is an array and want to iterate it immediately.
 
 ---
 
