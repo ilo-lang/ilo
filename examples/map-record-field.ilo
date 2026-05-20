@@ -1,0 +1,16 @@
+-- map fn xs: when fn reads a record field the result must be the field
+-- value regardless of engine. JIT previously returned wrong values due to
+-- non-deterministic HashMap iteration in the Value->NanVal conversion path.
+
+type prs{nm:t;off:n}
+get-nm p:prs>t;p.nm
+get-off p:prs>n;p.off
+
+main>t
+  ps=[prs nm:"London" off:1 prs nm:"NewYork" off:-4 prs nm:"Tokyo" off:9]
+  nms=map get-nm ps
+  offs=map get-off ps
+  fmt "{} {}" (cat nms ",") (cat (map str offs) ",")
+
+-- run: main
+-- out: London,NewYork,Tokyo 1,-4,9

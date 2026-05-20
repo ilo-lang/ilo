@@ -125,3 +125,61 @@ const MAP_TAIL: &str = "dbl x:n>n;*x 2\nmain xs:L n>L n;map dbl xs";
 fn map_tail_position_user_fn() {
     run_all(MAP_TAIL, "main", &["[5, 10, 15]"], "[10, 20, 30]");
 }
+
+// ── Record-field access through map ─────────────────────────────────────
+
+// Regression: JIT `map fn xs` where fn reads a typed record field returned
+// wrong (non-text) values. Root cause: Value::Record (HashMap) was
+// converted back to a heap NanVal in non-deterministic key order, so
+// OP_RECFLD's positional index resolved to the wrong slot.
+//
+// Test `map get-nm` and `map get-off` on a 3-element typed record list,
+// covering both text and number field types.  Needs to pass on every engine.
+
+// Programs use semicolons to chain statements within the function body
+// so the Rust string literal works without indentation.
+const MAP_RECORD_FIELD: &str = concat!(
+    "type prs{nm:t;off:n}\n",
+    "get-nm p:prs>t;p.nm\n",
+    "get-off p:prs>n;p.off\n",
+    "main>t\n",
+    "  ps=[prs nm:\"London\" off:1 prs nm:\"NewYork\" off:-4 prs nm:\"Tokyo\" off:9]\n",
+    "  nms=map get-nm ps\n",
+    "  offs=map get-off ps\n",
+    "  fmt \"{} {}\" (cat nms \",\") (cat (map str offs) \",\")",
+);
+
+#[test]
+fn map_record_field_text_jit_vm_parity() {
+    // Pins that map get-nm returns text field values (not numerics or garbage)
+    // on both VM and JIT.  Before the fix this was non-deterministic on JIT.
+    run_all(MAP_RECORD_FIELD, "main", &[], "London,NewYork,Tokyo 1,-4,9");
+}
+
+#[test]
+fn map_record_field_single_element() {
+    // Single-element variant — one trip through the OP_CALL_DYN loop.
+    const SINGLE: &str = concat!(
+        "type prs{nm:t;off:n}\n",
+        "get-nm p:prs>t;p.nm\n",
+        "main>t\n",
+        "  ps=[prs nm:\"London\" off:1]\n",
+        "  nms=map get-nm ps\n",
+        "  cat nms \",\"",
+    );
+    run_all(SINGLE, "main", &[], "London");
+}
+
+#[test]
+fn map_record_field_number_field() {
+    // Ensure numeric field access also lands in the correct slot on JIT.
+    const NUM_FIELD: &str = concat!(
+        "type prs{nm:t;off:n}\n",
+        "get-off p:prs>n;p.off\n",
+        "main>t\n",
+        "  ps=[prs nm:\"London\" off:1 prs nm:\"NewYork\" off:-4]\n",
+        "  offs=map get-off ps\n",
+        "  cat (map str offs) \",\"",
+    );
+    run_all(NUM_FIELD, "main", &[], "1,-4");
+}
