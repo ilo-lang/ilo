@@ -8,7 +8,7 @@
 
 ### Added
 
-- File version pragma. Top-of-file sigil `^26.5` declares the minimum required runtime. Sigil-led (principle 4), ~3 tokens (principle 1), first-class syntax (not a magic comment). Must be on the first line with no leading whitespace. Verifier: absent pragma warns and assumes the latest installed runtime so existing 0.x files keep verifying through the transition; a pragma older than the runtime with a known breaking change between fails with a migration pointer; a pragma newer than the runtime fails asking to upgrade. Tooling: `ilo --version-of <file>` reads the pragma; the formatter canonicalises position. Ships with the CalVer cut.
+- File version pragma (optional). Top-of-file sigil `^26.5` declares the minimum required runtime. Sigil-led (principle 4), ~3 tokens (principle 1), first-class syntax (not a magic comment). Must be on the first line with no leading whitespace when present. Verifier: absent pragma silently assumes the latest installed runtime (no diagnostic) so existing 0.x files and any unannotated file keep verifying as-is; a pragma older than the runtime with a known breaking change between fails with a migration pointer; a pragma newer than the runtime fails asking to upgrade. Tooling: `ilo --version-of <file>` reads the pragma and returns nothing when absent; the formatter canonicalises position when present and never inserts one. Ships with the CalVer cut.
 
 ## 0.12.1
 
