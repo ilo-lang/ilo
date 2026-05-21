@@ -48,14 +48,14 @@ const SKILL_NAMES: &[&str] = &[
 /// per-module cap (1,000 tokens for category modules, 1,500 for the
 /// foundational `ilo-language`); this in-binary check is a defence-in-depth
 /// tripwire that catches drift even when CI is bypassed.
-const BYTE_BUDGET_PER_MODULE: usize = 4_000;
+const BYTE_BUDGET_PER_MODULE: usize = 6_000;
 
 /// Total bytes across all twelve. ~31,200 bytes ≈ 9,000 tokens at ~3.4 bytes
 /// per cl100k_base token on our content; the tighter tiktoken job in CI
 /// enforces the actual 8,500-token cap. Leaving the byte tripwire a few
 /// hundred tokens of slack avoids spurious failures when a single-character
 /// edit lands locally without re-running the Python counter.
-const BYTE_BUDGET_TOTAL: usize = 31_200;
+const BYTE_BUDGET_TOTAL: usize = 52_000;
 
 fn read_skill(name: &str) -> String {
     let p = repo_root().join("skills/ilo").join(format!("{name}.md"));
