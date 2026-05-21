@@ -44,6 +44,10 @@ AOT-compiled binaries (`ilo compile`) follow the same contract byte-for-byte.
 
 `ilo serv [--mcp m.json] [--tools http.json]` is a long-lived JSON request/response loop on stdin/stdout. Send `{"program":"fn p:n>n;*p 2","func":"fn","args":[21]}`, get `{"ok": 42}` or `{"error":{...}}`. Cuts process-spawn overhead to zero.
 
+## AST depth cap
+
+Parser nesting is capped at 256 by default — guards `ilo serv` and any other context that compiles untrusted source against `((((...((1+1))))...))` DoS payloads that would otherwise blow the parser stack. Hand-written ilo rarely exceeds depth 10. Override with `--max-ast-depth N` on `ilo`, `ilo run`, `ilo check`, `ilo build`, or `ilo serv` when a real program needs more. Hitting the cap surfaces as `ILO-P103`.
+
 ## Branching
 
 Failures / repair: `ilo-edit-loop`. Runnable patterns: `ilo-examples`. Tools: `ilo-tools`. Engine pick: `ilo-engines`.

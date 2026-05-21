@@ -257,6 +257,7 @@ Common shapes reached for from other languages. The parser and lexer surface eac
 | `- -*a b *c d` (double-minus)    | `- 0 +*a b *c d` (negate the sum)        | `ILO-P021`  |
 | `[k fmt2 v 2]` (call in list)    | `[k (fmt2 v 2)]` or bind-first           | `ILO-P101`  |
 | `pts=gen-pts;cs0=[...];prnt cs0` at top level | `main>_;pts=gen-pts;cs0=[...];prnt cs0` (wrap in `main>_;`) | `ILO-P102` |
+| `((((...((1+1))))...))` 1000 deep | bind intermediates, or pass `--max-ast-depth N` | `ILO-P103` |
 
 Each case fires a hint pointing at the canonical form; the agent's first retry should be the right one. Identifier-shaped collisions with builtin names (`len=...`, `sin=...`) are rejected with `ILO-P011` plus a rename suggestion.
 
@@ -265,6 +266,8 @@ The list-literal call trap (`ILO-P101`) catches the case where a variadic builti
 The top-level chain trap (`ILO-P102`) catches a bare `name=expr` at the top level. ilo requires every binding to live inside a function body; a top-level `pts=gen-pts;cs0=[[...]]; ...; prnt cs2` without a `main>_;` (or any) header used to either die on the `=` (a bare `ILO-P003`) or get slurped into a previous function's body and emit a wall of misleading `ILO-T005` cascades on the wrong line. `ILO-P102` collapses both shapes into a single diagnostic that names the offending binding and suggests the canonical `main>_;` wrapper.
 
 The double-minus trap (`ILO-P021`) catches the silent-miscompile shape `- -<op> a b <op> c d` for `<op>` in `{+,*,/}`. Read intuitively as `-(a*b) - (c*d)` but parses as `-((a*b) - (c*d)) = -(a*b) + (c*d)` because the inner `-` greedily consumes both prefix-binop groups as binary subtract and the outer `-` falls back to unary negate. Fix by negating the sum (`- 0 +*a b *c d`) or binding first (`p=*a b;q=*c d;- 0 +p q`). Single-atom variants like `- -a b` remain accepted since they're unambiguous.
+
+The AST depth cap (`ILO-P103`) catches deeply nested source that would otherwise blow the parser stack. Any context that compiles untrusted text - `ilo serv`, the bare-positional dispatch, the `--ast` dump - is exposed to a payload of the shape `((((...((1+1))))...))` 1000 levels deep that recurses straight through the OS thread stack. The default cap of 256 is far above anything hand-written (the in-tree examples top out under 20) and low enough to keep the worst-case stack frame in `parse_atom`/`parse_expr` inside the default 8 MB main-thread stack. Override with `--max-ast-depth N` on `ilo`, `ilo run`, `ilo check`, `ilo build`, and `ilo serv` when a legitimate program needs deeper nesting.
 
 ---
 
@@ -1712,6 +1715,8 @@ ilo program.ilo --ast            -- print parsed AST as JSON and exit
 ilo --explain ILO-T004           -- print error explanation and exit
 ilo help ai                      -- compact AI spec to stdout (= contents of ai.txt)
 ilo serv                          -- long-lived JSON request/response loop
+ilo --max-ast-depth N <sub>       -- cap parser nesting at N (default 256; protects `ilo serv`
+                                     and other untrusted-source paths from DoS payloads, raises ILO-P103)
 ```
 
 **Verb-noun aliases.** `ilo run <file>` is an exact alias for the bare positional `ilo <file>` - same dispatch, same engine selection, same arg handling. `ilo build <file> -o <out>` is an alias for `ilo compile <file> -o <out>`. Both exist to match the toolchain conventions used by `cargo`, `go`, and `zero` so agents and humans can guess the command name without consulting the help text. The bare positional forms remain fully supported for backwards compatibility; nothing has been removed.

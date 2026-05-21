@@ -18,6 +18,7 @@ description: Use this when reading ILO-XXXX error codes or fixing failures. List
 - **P009 unparenthesised lambda** - wrap `(p:t>r;body)`.
 - **P020 incomplete function header** - header missing `>type;body`; finish it.
 - **P021 double-minus prefix-binop trap** - `- -*a b *c d` ambiguous. Use `- 0 +*a b *c d` or bind first.
+- **P103 AST nesting depth exceeded** - parser refused source nesting more than 256 levels deep (DoS guard for `ilo serv`). Flatten by binding intermediates, or raise the cap with `--max-ast-depth N`.
 
 ## Type
 
