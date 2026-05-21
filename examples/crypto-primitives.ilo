@@ -1,0 +1,59 @@
+-- Crypto primitives cluster: sha256, hmac-sha256, b64, b64-dec, hex, ct-eq.
+-- All tree-bridge eligible (pure text-in / text-or-bool-out, no FnRef args,
+-- no I/O), so VM and Cranelift inherit cross-engine parity for free.
+--
+-- sha256 / hmac-sha256: lowercase hex digest output. Use ct-eq to verify
+-- HMAC signatures without leaking timing info through `=`.
+-- b64 / b64-dec: standard base64 (RFC 4648 §4) with `=` padding. Distinct
+-- from b64u / b64u-dec which use the URL-safe alphabet, no padding.
+-- hex: lowercase hex encode of the UTF-8 bytes of the input text.
+
+-- SHA-256 of the empty string. NIST FIPS-180 test vector: 64 lowercase
+-- hex chars, all callers must agree on this byte for byte.
+sha-empty>t;sha256 ""
+
+-- SHA-256 of "abc". The other FIPS-180 anchor vector.
+sha-abc>t;sha256 "abc"
+
+-- HMAC-SHA256 RFC 4231 test case 2: key "Jefe", message
+-- "what do ya want for nothing?". Pinning this catches any future drift
+-- in the underlying HMAC implementation.
+hmac-rfc2>t;hmac-sha256 "Jefe" "what do ya want for nothing?"
+
+-- Standard base64 round-trip. RFC 4648 §4: "foobar" -> "Zm9vYmFy".
+b64-roundtrip>t;b64-dec! (b64 "foobar")
+
+-- Standard base64 encode of "Ma" -> "TWE=" (one `=` padding char).
+-- Distinct from b64u which strips padding.
+b64-padded>t;b64 "Ma"
+
+-- Hex encode of "abc" -> "616263". Three input bytes, six output chars.
+hex-abc>t;hex "abc"
+
+-- Constant-time equality on equal inputs.
+ct-eq-yes>b;ct-eq "secret123" "secret123"
+
+-- Constant-time equality on unequal inputs (same length).
+ct-eq-no>b;ct-eq "secret123" "secret124"
+
+-- Constant-time equality on different-length inputs returns false.
+ct-eq-len>b;ct-eq "short" "longer"
+
+-- run: sha-empty
+-- out: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+-- run: sha-abc
+-- out: ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad
+-- run: hmac-rfc2
+-- out: 5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843
+-- run: b64-roundtrip
+-- out: foobar
+-- run: b64-padded
+-- out: TWE=
+-- run: hex-abc
+-- out: 616263
+-- run: ct-eq-yes
+-- out: true
+-- run: ct-eq-no
+-- out: false
+-- run: ct-eq-len
+-- out: false
