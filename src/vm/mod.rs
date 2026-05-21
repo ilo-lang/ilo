@@ -723,7 +723,6 @@ pub(crate) fn is_tree_bridge_eligible(b: crate::builtins::Builtin, argc: usize) 
         // opcode cost. NOT eligible for any constant-folding / common-subexpression
         // pass: the whole point is that two calls return different bytes.
         (Builtin::RandBytes, 1) => true,
-<<<<<<< HEAD
         // URL + base64url encoding cluster. All pure text-in / text-out,
         // no FnRef args, no I/O. Tree-bridge keeps VM + Cranelift in
         // lockstep without new opcodes. Decoders return R t t; encoders
@@ -732,14 +731,12 @@ pub(crate) fn is_tree_bridge_eligible(b: crate::builtins::Builtin, argc: usize) 
         (Builtin::Urldec, 1) => true,
         (Builtin::B64u, 1) => true,
         (Builtin::B64uDec, 1) => true,
-=======
         // ewm xs a — exponential moving average. Pure number-list reducer, no
         // FnRef args, no Result wrapper. Same bridge contract as the
         // cumsum/cprod aggregate family; tree interpreter handles the actual
         // recurrence. VM and Cranelift inherit cross-engine parity at zero
         // opcode cost.
         (Builtin::Ewm, 2) => true,
->>>>>>> 0d9d3570 (add ewm builtin for exponential moving average)
         _ => false,
     }
 }
