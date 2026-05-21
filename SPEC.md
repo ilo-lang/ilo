@@ -732,8 +732,7 @@ are decomposed into smaller units before formatting.
 
 ### Linear algebra
 
-`transpose`, `matmul`, `matvec`, `dot`, `solve`, `inv`, `det` operate on row-major matrices (`L (L n)`) and flat vectors (`L n`). `solve`, `inv`, `det` use LU decomposition with partial pivoting and raise on singular or non-square inputs. `matvec xm ys` is matrix-vector product as a flat vector; it skips the `flatten matmul xm (map (y:n>L n;[y]) ys)` ceremony needed to coerce a vector into a column matrix. These ship as host-vetted builtins because hand-rolled implementations risk silent precision loss.
-`transpose`, `matmul`, `dot`, `solve`, `inv`, `det`, `lstsq` operate on row-major matrices (`L (L n)`) and flat vectors (`L n`). `solve`, `inv`, `det` use LU decomposition with partial pivoting and raise on singular or non-square inputs. `lstsq` is a thin wrapper around the normal equations (`solve (Xᵀ X) (Xᵀ y)`) — closed-form OLS at the same precision tier as `solve`; numerically inferior to QR/SVD for ill-conditioned designs. These ship as host-vetted builtins because hand-rolled implementations risk silent precision loss.
+`transpose`, `matmul`, `matvec`, `dot`, `solve`, `inv`, `det`, `lstsq` operate on row-major matrices (`L (L n)`) and flat vectors (`L n`). `solve`, `inv`, `det` use LU decomposition with partial pivoting and raise on singular or non-square inputs. `matvec xm ys` is matrix-vector product as a flat vector; it skips the `flatten matmul xm (map (y:n>L n;[y]) ys)` ceremony needed to coerce a vector into a column matrix. `lstsq` is a thin wrapper around the normal equations (`solve (Xᵀ X) (Xᵀ y)`) — closed-form OLS at the same precision tier as `solve`; numerically inferior to QR/SVD for ill-conditioned designs. These ship as host-vetted builtins because hand-rolled implementations risk silent precision loss.
 
 ### FFT
 
