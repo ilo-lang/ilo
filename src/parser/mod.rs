@@ -3424,7 +3424,7 @@ or write `({fmt_name} \"...\" ...)` so its args are grouped."
                                 "list literal element starts with builtin `{name}` followed by operands; wrap the call in parens or bind it first"
                             ),
                             format!(
-                                "list-literal elements are atoms by default. Either write `({name} <args>)` to call as one element, or bind first: `x={name} <args>;[... x ...]`"
+                                "list-literal elements are atoms by default. Either write `({name} <args>)` or `{name}(<args>)` to call as one element, or bind first: `x={name} <args>;[... x ...]`"
                             ),
                         ));
                     }
