@@ -1,0 +1,24 @@
+-- Bare call as a match scrutinee. Lets you write `?fn args {arms}`
+-- inline without first binding the result to a name. Same shape as
+-- `?(fn args){...}` but without the parens — both forms accepted.
+
+safe-div a:n b:n>R n t;=b 0 ^"zero";~/a b
+
+-- Bare-call subject — no parens, no rebind.
+direct a:n b:n>t;?safe-div a b{~v:str v;^er:"fail: "+er}
+
+-- Parens still work, identical semantics.
+paren a:n b:n>t;?(safe-div a b){~v:str v;^er:"fail: "+er}
+
+-- Inline inside a loop body — the most common reason agents need
+-- this: result-handling per element without exiting the loop.
+sum-or-skip xs:L n>t;acc="";@x xs{s=?safe-div 10 x{~v:str v;^_:"-"};acc=acc+s};acc
+
+-- run: direct 10 2
+-- out: 5
+-- run: direct 10 0
+-- out: fail: zero
+-- run: paren 10 2
+-- out: 5
+-- run: sum-or-skip [2,4,0]
+-- out: 52.5-
