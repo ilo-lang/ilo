@@ -1,0 +1,48 @@
+-- Triple-quoted multi-line strings (`"""..."""`). Same surface as
+-- regular `"..."`: same escape decoding, same `{name}` interpolation.
+-- The only difference is raw newlines are allowed inside the literal,
+-- so multi-line content doesn't need `cat`-concatenation. When the
+-- closing `"""` sits on its own line, the leading newline is dropped
+-- and the common leading whitespace is stripped (Python / `indoc!`
+-- convention), so indented source produces clean output.
+
+-- Single-line: behaves exactly like `"hello"`.
+single>n;len """hello"""
+
+-- Inline multi-line: raw newline preserved verbatim.
+-- "foo" + "\n" + "bar" = 7 chars.
+inline-nl>n;len """foo
+bar"""
+
+-- Dedented form: closing `"""` on its own line strips indentation and
+-- preserves the terminating `\n`. Result is "hello\nworld\n" = 12 chars.
+dedent>n
+  len """
+  hello
+  world
+  """
+
+-- Escape sequences still decode the same way inside `"""..."""`.
+-- `\n` is one byte, so "a\nb" is 3 chars.
+escapes>n;len """a\nb"""
+
+-- Interpolation `{name}` works identically; lowers to the same `fmt`
+-- desugar as the single-quoted form.
+greet>t
+  name="dan"
+  """hi {name}"""
+
+-- run: single
+-- out: 5
+
+-- run: inline-nl
+-- out: 7
+
+-- run: dedent
+-- out: 12
+
+-- run: escapes
+-- out: 3
+
+-- run: greet
+-- out: hi dan

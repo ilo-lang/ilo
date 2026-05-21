@@ -500,6 +500,40 @@ spl text "\n"       -- split file content into lines
 spl pdf  "\f"       -- split pdftotext output into pages
 ```
 
+### Triple-quoted strings: `"""..."""`
+
+Same surface as `"..."` (same escape decoding, same `{name}` interpolation)
+with two extra affordances:
+
+1. Raw newlines are allowed inside the literal, so multi-line content
+   does not need `cat`-concatenation or `\n` escapes.
+2. When the closing `"""` sits on its own line, the leading newline is
+   dropped and the common leading whitespace (matching the indent of
+   the closing-`"""` line) is stripped from every content line. The
+   terminating `\n` of the last content line is preserved. This is the
+   Python PEP 257 / Rust `indoc!` convention, so indented source produces
+   clean output.
+
+```
+banner>t
+  """
+  line one
+  line two
+  """              -- value is "line one\nline two\n"
+
+inline>t
+  """foo
+  bar"""           -- value is "foo\n  bar" (no dedent: closing inline)
+
+len """hello"""    -- 5 (single-line form, no newline)
+len """"""         -- 0 (empty body)
+```
+
+Inside `"""..."""` a single `"` is literal: only `"""` ends the literal.
+Escapes (`\n`, `\t`, ...) and `{name}` interpolation decode identically
+to the single-quoted form, so triple-quoted is a drop-in upgrade rather
+than a parallel surface.
+
 ### Interpolation: `{name}`
 
 A bare `{name}` slot inside a double-quoted string desugars at parse time
