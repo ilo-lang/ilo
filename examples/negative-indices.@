@@ -1,25 +1,26 @@
 -- Negative indices on slice-shaped builtins count from the end of the
--- list or text, matching Python semantics already in place for `at xs i`.
+-- list or text, matching Python semantics already in place for `at xs i`,
+-- with one ergonomic exception on `slc`'s end bound (see below).
 --
 --   slc xs s e   accepts negative s and e. `slc xs -1 (len xs)` is the
---                last element as a 1-element list; `slc xs 0 -1` drops
---                the last element; bounds clamp, never wrap.
+--                last element as a 1-element list. `slc xs -3 -1` keeps
+--                Python-style semantics when start is negative (the
+--                penultimate window). When start is non-negative and
+--                end is exactly -1, the end is read as "to end of
+--                list/text" (see `slc-to-end.ilo`).
 --   take n xs    with n<0 keeps all but the last |n|. Equivalent to
---                Python's xs[:n]. `take -1 [10,20,30]` is [10,20].
+--                Python's xs[:n]. `take -1 [10,20,30]` is [10,20]. Use
+--                this when you want to "drop the last element".
 --   drop n xs    with n<0 keeps only the last |n|. Equivalent to
 --                Python's xs[n:]. `drop -1 [10,20,30]` is [30].
---
--- Closes the quant-trader fencepost (`@i 1..np` loops produce np-1 results,
--- so the equity curve ends at length np; `at eq np` errored, and the
--- workaround was `npm=- np 1`). With negative indices everywhere, the same
--- pattern is `slc eq 0 -1` — no separate binding, no off-by-one risk.
 
 last-element xs:L n>L n;slc xs -1 (len xs)
-drop-last xs:L n>L n;slc xs 0 -1
+drop-last xs:L n>L n;take -1 xs
 keep-last-two xs:L n>L n;slc xs -2 (len xs)
 all-but-last xs:L n>L n;take -1 xs
 only-last-two xs:L n>L n;drop -2 xs
-trim-edges s:t>t;slc s 1 -1
+trim-edges s:t>t;slc s 1 (- (len s) 1)
+penultimate xs:L n>L n;slc xs -3 -1
 
 -- run: last-element [10,20,30,40,50]
 -- out: [50]
@@ -33,3 +34,5 @@ trim-edges s:t>t;slc s 1 -1
 -- out: [40, 50]
 -- run: trim-edges "(quoted)"
 -- out: quoted
+-- run: penultimate [10,20,30,40,50]
+-- out: [30, 40]

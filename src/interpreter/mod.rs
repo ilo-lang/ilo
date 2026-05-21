@@ -1,5 +1,6 @@
 use crate::ast::*;
 use crate::builtins::{Builtin, CharAtResult, char_at_signed};
+use crate::caps::Caps;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -161,12 +162,19 @@ impl std::fmt::Display for Value {
                 write!(f, "]")
             }
             Value::Record { type_name, fields } => {
+                // Sort keys lexicographically so Display is deterministic
+                // across engines (tree/VM/Cranelift). The underlying field
+                // storage is a HashMap, whose iteration order varies; agents
+                // diffing `prnt`/`fmt` output across engines need a stable
+                // canonical order. See ilo_assessment_feedback #5bg.
                 write!(f, "{} {{", type_name)?;
-                for (i, (k, v)) in fields.iter().enumerate() {
+                let mut keys: Vec<&String> = fields.keys().collect();
+                keys.sort();
+                for (i, k) in keys.iter().enumerate() {
                     if i > 0 {
                         write!(f, ", ")?;
                     }
-                    write!(f, "{}: {}", k, v)?;
+                    write!(f, "{}: {}", k, fields[*k])?;
                 }
                 write!(f, "}}")
             }
@@ -234,6 +242,8 @@ struct Env {
     tool_provider: Option<std::sync::Arc<dyn crate::tools::ToolProvider>>,
     #[cfg(feature = "tools")]
     tokio_runtime: Option<std::sync::Arc<tokio::runtime::Runtime>>,
+    /// CLI capability policy — checked at IO builtin call sites.
+    caps: Arc<Caps>,
 }
 
 impl Env {
@@ -246,6 +256,20 @@ impl Env {
             tool_provider: None,
             #[cfg(feature = "tools")]
             tokio_runtime: None,
+            caps: Arc::new(Caps::default()),
+        }
+    }
+
+    fn with_caps(caps: Arc<Caps>) -> Self {
+        Env {
+            vars: Vec::new(),
+            scope_marks: vec![0],
+            functions: HashMap::new(),
+            call_stack: Vec::new(),
+            tool_provider: None,
+            #[cfg(feature = "tools")]
+            tokio_runtime: None,
+            caps,
         }
     }
 
@@ -261,6 +285,24 @@ impl Env {
             tool_provider: Some(provider),
             #[cfg(feature = "tools")]
             tokio_runtime: Some(runtime),
+            caps: Arc::new(Caps::default()),
+        }
+    }
+
+    fn with_tools_and_caps(
+        provider: std::sync::Arc<dyn crate::tools::ToolProvider>,
+        #[cfg(feature = "tools")] runtime: std::sync::Arc<tokio::runtime::Runtime>,
+        caps: Arc<Caps>,
+    ) -> Self {
+        Env {
+            vars: Vec::new(),
+            scope_marks: vec![0],
+            functions: HashMap::new(),
+            call_stack: Vec::new(),
+            tool_provider: Some(provider),
+            #[cfg(feature = "tools")]
+            tokio_runtime: Some(runtime),
+            caps,
         }
     }
 
@@ -345,10 +387,32 @@ enum BodyResult {
     Break(Value),
     /// Continue to next loop iteration
     Continue,
+    /// Tail call: the body's final value would be the result of calling
+    /// `callee` with `args`. The trampoline in `call_function` picks this up
+    /// and rebinds parameters instead of recursing into Rust, so deep tail
+    /// recursion runs in constant host-stack space.
+    ///
+    /// Only synthesised in tail position (last stmt of a body that is itself
+    /// in tail position of its enclosing call). Only synthesised when the
+    /// callee resolves to a user-defined function with no auto-unwrap (`!` /
+    /// `!!`) on the call site, because both unwrap forms need to inspect the
+    /// callee's return value before deciding whether to propagate.
+    TailCall { callee: String, args: Vec<Value> },
 }
 
 pub fn run(program: &Program, func_name: Option<&str>, args: Vec<Value>) -> Result<Value> {
     run_with_env(program, func_name, args, Env::new())
+}
+
+/// Run with a capability policy. Operations that violate the policy return
+/// `Value::Err(...)` rather than executing; they do NOT panic or abort.
+pub fn run_with_caps(
+    program: &Program,
+    func_name: Option<&str>,
+    args: Vec<Value>,
+    caps: Arc<Caps>,
+) -> Result<Value> {
+    run_with_env(program, func_name, args, Env::with_caps(caps))
 }
 
 /// Dispatch a builtin call from the VM/Cranelift tree-bridge (`OP_CALL_BUILTIN_TREE`).
@@ -410,6 +474,24 @@ pub fn run_with_tools(
     run_with_env(program, func_name, args, env)
 }
 
+/// Run with tools AND a capability policy.
+pub fn run_with_tools_and_caps(
+    program: &Program,
+    func_name: Option<&str>,
+    args: Vec<Value>,
+    provider: std::sync::Arc<dyn crate::tools::ToolProvider>,
+    #[cfg(feature = "tools")] runtime: std::sync::Arc<tokio::runtime::Runtime>,
+    caps: Arc<Caps>,
+) -> Result<Value> {
+    let env = Env::with_tools_and_caps(
+        provider,
+        #[cfg(feature = "tools")]
+        runtime,
+        caps,
+    );
+    run_with_env(program, func_name, args, env)
+}
+
 fn run_with_env(
     program: &Program,
     func_name: Option<&str>,
@@ -450,21 +532,148 @@ fn run_with_env(
 /// Graph formats ("json")      → Ok(parsed JSON) or Err(parse error message).
 /// Raw/unknown                 → Ok(plain Text).
 /// Box-Muller transform: sample from N(mu, sigma) using two uniform [0,1) samples.
-/// Uses fastrand to mirror the rnd builtin's RNG.
+/// Delegates to the shared `crate::rng` module so all engines produce the same sequence.
+/// Kept as a thin wrapper because it is exercised directly in unit tests.
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn box_muller_normal(mu: f64, sigma: f64) -> f64 {
-    // sigma == 0: distribution is a point mass at mu. Short-circuit so we
-    // never hit 0 * inf = NaN when u1 underflows.
-    if sigma == 0.0 {
-        return mu;
+    crate::rng::normal(mu, sigma)
+}
+
+/// Base64url-no-pad encoder. Alphabet per RFC 4648 §5 (URL-safe: `-` / `_`),
+/// no `=` padding. Total — never fails — and allocation-free apart from the
+/// returned `String`.
+///
+/// Kept as a small in-file helper rather than pulling the `base64` crate so
+/// the cryptographic-random path stays additive against current main, which
+/// does not yet have the crypto primitives family (those land in a separate
+/// branch). When the crypto branch merges, this helper can be folded into the
+/// shared base64url encoder without changing `rand-bytes` semantics.
+#[inline]
+fn b64url_no_pad_encode(bytes: &[u8]) -> String {
+    const ALPHA: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+    // Output length: ceil(n * 4 / 3) with the trailing `=` chars stripped.
+    let n = bytes.len();
+    let cap = n.div_ceil(3) * 4;
+    let mut out = Vec::with_capacity(cap);
+    let mut chunks = bytes.chunks_exact(3);
+    for chunk in chunks.by_ref() {
+        let b0 = chunk[0];
+        let b1 = chunk[1];
+        let b2 = chunk[2];
+        out.push(ALPHA[(b0 >> 2) as usize]);
+        out.push(ALPHA[(((b0 & 0b11) << 4) | (b1 >> 4)) as usize]);
+        out.push(ALPHA[(((b1 & 0b1111) << 2) | (b2 >> 6)) as usize]);
+        out.push(ALPHA[(b2 & 0b111111) as usize]);
     }
-    // Avoid u1 == 0 so ln() is finite. fastrand::f64() is in [0, 1).
-    let mut u1 = fastrand::f64();
-    while u1 <= f64::MIN_POSITIVE {
-        u1 = fastrand::f64();
+    let rem = chunks.remainder();
+    match rem.len() {
+        1 => {
+            let b0 = rem[0];
+            out.push(ALPHA[(b0 >> 2) as usize]);
+            out.push(ALPHA[((b0 & 0b11) << 4) as usize]);
+        }
+        2 => {
+            let b0 = rem[0];
+            let b1 = rem[1];
+            out.push(ALPHA[(b0 >> 2) as usize]);
+            out.push(ALPHA[(((b0 & 0b11) << 4) | (b1 >> 4)) as usize]);
+            out.push(ALPHA[((b1 & 0b1111) << 2) as usize]);
+        }
+        _ => {}
     }
-    let u2 = fastrand::f64();
-    let z = (-2.0 * u1.ln()).sqrt() * (2.0 * std::f64::consts::PI * u2).cos();
-    mu + sigma * z
+    // SAFETY: every byte pushed is from ALPHA, which is ASCII-only.
+    debug_assert!(out.iter().all(|b| b.is_ascii()));
+    String::from_utf8(out).expect("base64url alphabet is ASCII-only")
+}
+
+/// `rand-bytes n > t` — generate `n` cryptographically random bytes from the
+/// platform CSPRNG (via the `getrandom` crate), return as a base64url-no-pad
+/// text. Distinct from `rnd` (seedable uniform float for simulations) and
+/// `rndn` (seedable Normal float): this is the path agents need for JWT `jti`,
+/// CSRF tokens, session IDs, and nonces.
+///
+/// Output is base64url with no padding so the result drops straight into
+/// HTTP headers, cookies, and query strings without further encoding. Callers
+/// that need raw bytes can decode with `b64u-dec` once that lands; in the
+/// meantime the encoded form is what every realistic use case wants.
+///
+/// `#[inline(never)]` matches the recurring stack-overflow guard pattern
+/// used by other tree-bridge implementations — keeps the dispatch site small
+/// even in release builds, where this is invoked from the hot path.
+#[inline(never)]
+pub(crate) fn eval_rand_bytes(arg: &Value) -> Result<Value> {
+    let n_f = match arg {
+        Value::Number(n) => *n,
+        other => {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!("rand-bytes requires a number, got {other:?}"),
+            ));
+        }
+    };
+    if !n_f.is_finite() {
+        return Err(RuntimeError::new(
+            "ILO-R009",
+            format!("rand-bytes: n is not finite ({n_f})"),
+        ));
+    }
+    if n_f < 0.0 {
+        return Err(RuntimeError::new(
+            "ILO-R009",
+            format!("rand-bytes: n must be non-negative, got {n_f}"),
+        ));
+    }
+    // Cap at 1 MiB. Larger CSPRNG draws are almost certainly a bug (typo in
+    // the byte count, mismatched units); cheaper to surface as ILO-R009 than
+    // to allocate gigabytes of base64 output. 1 MiB raw → ~1.4 MB encoded.
+    const MAX_BYTES: f64 = 1024.0 * 1024.0;
+    if n_f > MAX_BYTES {
+        return Err(RuntimeError::new(
+            "ILO-R009",
+            format!(
+                "rand-bytes: n={n_f} exceeds 1 MiB cap; if you really need this much CSPRNG output, call rand-bytes in a loop"
+            ),
+        ));
+    }
+    let n = n_f as usize;
+    if n == 0 {
+        return Ok(Value::Text(Arc::new(String::new())));
+    }
+    let mut buf = vec![0u8; n];
+    if let Err(e) = getrandom::getrandom(&mut buf) {
+        return Err(RuntimeError::new(
+            "ILO-R009",
+            format!("rand-bytes: CSPRNG read failed: {e}"),
+        ));
+    }
+    Ok(Value::Text(Arc::new(b64url_no_pad_encode(&buf))))
+}
+
+/// Exponential moving average over `xs` with smoothing factor `a` in [0, 1].
+///
+/// Recurrence: `ewm[0] = xs[0]`, `ewm[i] = a*xs[i] + (1-a)*ewm[i-1]`.
+/// Boundary cases: `a = 0` freezes at `xs[0]`; `a = 1` reproduces `xs`.
+/// Caller validates `a` and element types; this fn assumes `xs` is a list
+/// of `f64` and `0 <= a <= 1`.
+///
+/// Marked `#[inline(never)]` from the start: the tree-walker dispatch hot
+/// path inlines aggressively and stack-overflows surface there first for
+/// recursive number-list reducers under deep persona workloads. Keeping
+/// the loop in its own frame insulates the dispatcher.
+#[inline(never)]
+pub(crate) fn ewm_compute(xs: &[f64], a: f64) -> Vec<f64> {
+    if xs.is_empty() {
+        return Vec::new();
+    }
+    let one_minus_a = 1.0 - a;
+    let mut out: Vec<f64> = Vec::with_capacity(xs.len());
+    let mut prev = xs[0];
+    out.push(prev);
+    for &x in &xs[1..] {
+        prev = a * x + one_minus_a * prev;
+        out.push(prev);
+    }
+    out
 }
 
 /// POSIX `dirname` on a forward-slash path string. See `Builtin::Dirname`
@@ -579,6 +788,134 @@ pub(crate) fn pathjoin_posix(parts: &[&str]) -> String {
 /// | `m`          | min, mins, minute, minutes    | 60                   |
 /// | `s`          | sec, secs, second, seconds    | 1                    |
 ///
+/// Parsed `fmt` placeholder spec. Lean by design — agents compose `fmt2`
+/// / `padl` / `padr` for anything off the spec.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum FmtSpec {
+    /// `{}` — default `Display`.
+    Bare,
+    /// `{.Nf}` or `{:.Nf}` — N decimal places. Number arg required.
+    Precision(usize),
+    /// `{:N}` — right-align Display to width N (space-pad). Any arg type.
+    WidthRight(usize),
+    /// `{:Nd}` — integer right-align to width N. Number arg required.
+    IntWidth(usize),
+    /// `{:<N}` — left-align Display to width N (space-pad). Any arg type.
+    WidthLeft(usize),
+}
+
+/// Parse a `{...}` spec body. Returns None for syntactically valid braces
+/// that aren't one of the four supported shapes — callers raise ILO-R009
+/// / ILO-T013 with the offending literal so agents see what they wrote.
+///
+/// Accepts the literal placeholder text including the outer braces:
+///   "{}", "{.2f}", "{:.3f}", "{:5}", "{:5d}", "{:<5}".
+pub(crate) fn parse_fmt_spec(spec: &str) -> Option<FmtSpec> {
+    let inner = spec.strip_prefix('{')?.strip_suffix('}')?;
+    if inner.is_empty() {
+        return Some(FmtSpec::Bare);
+    }
+    // `{.Nf}` — no colon, precision shorthand.
+    if let Some(rest) = inner.strip_prefix('.')
+        && let Some(digits) = rest.strip_suffix('f')
+        && !digits.is_empty()
+        && digits.chars().all(|c| c.is_ascii_digit())
+    {
+        return digits.parse::<usize>().ok().map(FmtSpec::Precision);
+    }
+    // The remaining specs all start with `:`.
+    let body = inner.strip_prefix(':')?;
+    // `:.Nf`
+    if let Some(rest) = body.strip_prefix('.')
+        && let Some(digits) = rest.strip_suffix('f')
+        && !digits.is_empty()
+        && digits.chars().all(|c| c.is_ascii_digit())
+    {
+        return digits.parse::<usize>().ok().map(FmtSpec::Precision);
+    }
+    // Width digits are space-pad only — zero-padded widths (`{:06d}`) are
+    // deliberately out of scope. Reject any leading `0` on a multi-digit
+    // width so agents see a clear error instead of silently getting a
+    // space-padded value.
+    let is_plain_width = |s: &str| {
+        !s.is_empty()
+            && s.chars().all(|c| c.is_ascii_digit())
+            && !(s.len() > 1 && s.starts_with('0'))
+    };
+    // `:<N` — left-align width.
+    if let Some(digits) = body.strip_prefix('<')
+        && is_plain_width(digits)
+    {
+        return digits.parse::<usize>().ok().map(FmtSpec::WidthLeft);
+    }
+    // `:Nd` — integer width.
+    if let Some(digits) = body.strip_suffix('d')
+        && is_plain_width(digits)
+    {
+        return digits.parse::<usize>().ok().map(FmtSpec::IntWidth);
+    }
+    // `:N` — width (string or stringified value).
+    if is_plain_width(body) {
+        return body.parse::<usize>().ok().map(FmtSpec::WidthRight);
+    }
+    None
+}
+
+/// Apply a parsed spec to a single arg. Returns Err with a short hint when
+/// the arg type doesn't fit the spec (e.g. `{:Nd}` with a non-number).
+pub(crate) fn apply_fmt_spec(spec: &FmtSpec, arg: &Value) -> std::result::Result<String, String> {
+    match spec {
+        FmtSpec::Bare => Ok(format!("{}", arg)),
+        FmtSpec::Precision(n) => match arg {
+            Value::Number(x) => Ok(format!("{:.*}", *n, x)),
+            other => Err(format!(
+                "decimal-precision spec requires a number, got {:?}",
+                other
+            )),
+        },
+        FmtSpec::IntWidth(w) => match arg {
+            Value::Number(x) => {
+                // Truncate toward zero — matches `str` for integer-valued
+                // doubles and keeps `{:5d}` predictable for floats like
+                // 42.9 (renders `42`, not `43`). Round explicitly via `rou`
+                // if you want rounding.
+                let n = *x as i64;
+                let s = n.to_string();
+                Ok(pad_left(&s, *w))
+            }
+            other => Err(format!("`d` width spec requires a number, got {:?}", other)),
+        },
+        FmtSpec::WidthRight(w) => {
+            let s = format!("{}", arg);
+            Ok(pad_left(&s, *w))
+        }
+        FmtSpec::WidthLeft(w) => {
+            let s = format!("{}", arg);
+            Ok(pad_right(&s, *w))
+        }
+    }
+}
+
+fn pad_left(s: &str, width: usize) -> String {
+    let n = s.chars().count();
+    if n >= width {
+        s.to_string()
+    } else {
+        let pad = " ".repeat(width - n);
+        format!("{pad}{s}")
+    }
+}
+
+fn pad_right(s: &str, width: usize) -> String {
+    let n = s.chars().count();
+    if n >= width {
+        s.to_string()
+    } else {
+        let pad = " ".repeat(width - n);
+        format!("{s}{pad}")
+    }
+}
+
 /// Examples: `"3 weeks 2 days 5 hours"`, `"4h 32m"`, `"1d"`, `"1.5 hours"`,
 /// `"90s"`, `"2w3d"`.
 ///
@@ -1070,6 +1407,69 @@ fn parse_csv_content(content: &str, sep: char) -> Vec<Vec<String>> {
 // ── Linear algebra helpers ──────────────────────────────────────────
 
 /// Coerce a `Value` into a row-major matrix `Vec<Vec<f64>>`.
+/// Native matrix-vector multiply: row-by-row dot product.
+///
+/// `matvec xm ys` returns the flat vector `r` where
+/// `r[i] = sum_j xm[i][j] * ys[j]`. Skips the wrap-as-column-matrix +
+/// `flatten` ceremony required to use `matmul` for this case — the
+/// common shape `flatten matmul xm (map (y:n>L n;[y]) ys)` collapses
+/// to a single `matvec xm ys` call.
+///
+/// `#[inline(never)]` keeps this body out of `call_function`'s already-
+/// huge frame, same pattern as the recurring stack-overflow band-aid in
+/// #494 / #506 / lstsq (#515 / #5am). `cargo nextest` runs with a tighter
+/// stack budget than `cargo test`, so an inlined arm trips the deep
+/// braceless-guard fibonacci recursion test in CI even when local
+/// tests pass.
+#[inline(never)]
+fn matvec_run(xm_val: &Value, ys_val: &Value) -> Result<Value> {
+    let xm = matrix_from_value(xm_val, "matvec")?;
+    let ys = vec_from_value(ys_val, "matvec")?;
+    let n_rows = xm.len();
+    if n_rows == 0 {
+        return Err(RuntimeError::new(
+            "ILO-R009",
+            "matvec: empty matrix".to_string(),
+        ));
+    }
+    let n_cols = xm[0].len();
+    if n_cols == 0 {
+        return Err(RuntimeError::new(
+            "ILO-R009",
+            "matvec: matrix has zero columns".to_string(),
+        ));
+    }
+    for row in &xm {
+        if row.len() != n_cols {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!(
+                    "matvec: ragged rows (expected {n_cols} cols, got {})",
+                    row.len()
+                ),
+            ));
+        }
+    }
+    if ys.len() != n_cols {
+        return Err(RuntimeError::new(
+            "ILO-R009",
+            format!(
+                "matvec: dim mismatch (matrix has {n_cols} cols, ys has {})",
+                ys.len()
+            ),
+        ));
+    }
+    let mut out: Vec<Value> = Vec::with_capacity(n_rows);
+    for row in &xm {
+        let mut s = 0.0_f64;
+        for (k, &v) in row.iter().enumerate() {
+            s += v * ys[k];
+        }
+        out.push(Value::Number(s));
+    }
+    Ok(Value::List(Arc::new(out)))
+}
+
 fn matrix_from_value(v: &Value, name: &str) -> Result<Vec<Vec<f64>>> {
     let rows = match v {
         Value::List(rs) => rs,
@@ -1333,6 +1733,608 @@ pub(crate) fn lu_solve(lu: &[Vec<f64>], piv: &[usize], b: &[f64]) -> Vec<f64> {
     x
 }
 
+/// Ordinary least squares via the normal equations.
+///
+/// Returns coefficients `b` minimising `||xm·b - ys||²`. Composes the
+/// `solve (Xᵀ X) (Xᵀ y)` recipe inline (no intermediate `Value` allocs)
+/// rather than dispatching back through the builtin table. Same precision
+/// tier as `solve` (LU with partial pivoting); numerically inferior to
+/// QR/SVD for ill-conditioned designs.
+///
+/// `#[inline(never)]` keeps this body out of `call_function`'s already-huge
+/// frame — same pattern as #506/#494 for sha2/hmac and caps fields. Failure
+/// to do so causes a `cargo nextest` stack-overflow regression on the
+/// braceless-guard fibonacci test in CI (deeper recursion budget than `cargo
+/// test`).
+#[inline(never)]
+fn lstsq_run(xm_val: &Value, ys_val: &Value) -> Result<Value> {
+    let xm = matrix_from_value(xm_val, "lstsq")?;
+    let ys = vec_from_value(ys_val, "lstsq")?;
+    let n_rows = xm.len();
+    if n_rows == 0 {
+        return Err(RuntimeError::new(
+            "ILO-R009",
+            "lstsq: empty design matrix".to_string(),
+        ));
+    }
+    let n_cols = xm[0].len();
+    if n_cols == 0 {
+        return Err(RuntimeError::new(
+            "ILO-R009",
+            "lstsq: design matrix has zero columns".to_string(),
+        ));
+    }
+    for row in &xm {
+        if row.len() != n_cols {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!(
+                    "lstsq: ragged design matrix (expected {n_cols} cols, got {})",
+                    row.len()
+                ),
+            ));
+        }
+    }
+    if ys.len() != n_rows {
+        return Err(RuntimeError::new(
+            "ILO-R009",
+            format!(
+                "lstsq: ys length {} must match design matrix row count {n_rows}",
+                ys.len()
+            ),
+        ));
+    }
+    if n_cols > n_rows {
+        return Err(RuntimeError::new(
+            "ILO-R009",
+            format!(
+                "lstsq: underdetermined system ({n_cols} columns > {n_rows} rows); normal-equation OLS requires rows >= columns"
+            ),
+        ));
+    }
+    // Xᵀ — n_cols × n_rows
+    let mut xt: Vec<Vec<f64>> = vec![vec![0.0; n_rows]; n_cols];
+    for (i, row) in xm.iter().enumerate() {
+        for (j, &v) in row.iter().enumerate() {
+            xt[j][i] = v;
+        }
+    }
+    // XᵀX — n_cols × n_cols
+    let mut xtx: Vec<Vec<f64>> = vec![vec![0.0; n_cols]; n_cols];
+    for i in 0..n_cols {
+        for j in 0..n_cols {
+            let mut s = 0.0;
+            for k in 0..n_rows {
+                s += xt[i][k] * xm[k][j];
+            }
+            xtx[i][j] = s;
+        }
+    }
+    // Xᵀy — length n_cols
+    let mut xty: Vec<f64> = vec![0.0; n_cols];
+    for i in 0..n_cols {
+        let mut s = 0.0;
+        for k in 0..n_rows {
+            s += xt[i][k] * ys[k];
+        }
+        xty[i] = s;
+    }
+    let (lu, piv, _det, singular) = lu_decompose(xtx);
+    if singular {
+        return Err(RuntimeError::new(
+            "ILO-R009",
+            "lstsq: normal-equation matrix XᵀX is singular (rank-deficient design)".to_string(),
+        ));
+    }
+    let x = lu_solve(&lu, &piv, &xty);
+    Ok(Value::List(Arc::new(
+        x.into_iter().map(Value::Number).collect(),
+    )))
+}
+
+// ── URL + base64url encoding cluster ────────────────────────────────────────
+//
+// Each builtin lives in its own #[inline(never)] helper so the call_function
+// dispatch frame stays small. With four large arms inlined into the dispatch
+// switch the debug-build stack frame of call_function grew past the default
+// 2 MiB thread stack and tripped the fib(10) recursion test on Linux CI.
+
+#[inline(never)]
+fn urlenc_impl(arg: &Value) -> Result<Value> {
+    // urlenc s > t — RFC 3986 percent-encode every byte that isn't in the
+    // unreserved set ALPHA / DIGIT / `-` / `.` / `_` / `~`. Total.
+    use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, utf8_percent_encode};
+    const UNRESERVED_PUNCT: &AsciiSet = &NON_ALPHANUMERIC
+        .remove(b'-')
+        .remove(b'.')
+        .remove(b'_')
+        .remove(b'~');
+    let s = match arg {
+        Value::Text(s) => s.clone(),
+        other => {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!("urlenc requires text, got {:?}", other),
+            ));
+        }
+    };
+    let encoded: String = utf8_percent_encode(s.as_str(), UNRESERVED_PUNCT).collect();
+    Ok(Value::Text(Arc::new(encoded)))
+}
+
+#[inline(never)]
+fn urldec_impl(arg: &Value) -> Result<Value> {
+    // urldec s > R t t — inverse of urlenc. Err on stray `%` not followed by
+    // two hex digits or on decoded bytes that aren't valid UTF-8.
+    let s = match arg {
+        Value::Text(s) => s.clone(),
+        other => {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!("urldec requires text, got {:?}", other),
+            ));
+        }
+    };
+    // Validate percent escapes up-front so silent passthrough doesn't mask
+    // malformed input. The crate's decode_utf8 returns Ok for "abc%" / "abc%2",
+    // which would defeat the R t t contract.
+    let bytes = s.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' {
+            if i + 2 >= bytes.len()
+                || !bytes[i + 1].is_ascii_hexdigit()
+                || !bytes[i + 2].is_ascii_hexdigit()
+            {
+                return Ok(Value::Err(Box::new(Value::Text(Arc::new(format!(
+                    "urldec: invalid percent escape at byte {}",
+                    i
+                ))))));
+            }
+            i += 3;
+        } else {
+            i += 1;
+        }
+    }
+    match percent_encoding::percent_decode_str(s.as_str()).decode_utf8() {
+        Ok(cow) => Ok(Value::Ok(Box::new(Value::Text(Arc::new(cow.into_owned()))))),
+        Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(format!(
+            "urldec: invalid UTF-8 in decoded bytes: {}",
+            e
+        )))))),
+    }
+}
+
+#[inline(never)]
+fn b64u_impl(arg: &Value) -> Result<Value> {
+    // b64u s > t — base64url-encode the UTF-8 bytes of s using the URL-safe
+    // alphabet (RFC 4648 §5: `-`/`_` instead of `+`/`/`) with padding stripped.
+    // Total.
+    use base64::Engine;
+    use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+    let s = match arg {
+        Value::Text(s) => s.clone(),
+        other => {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!("b64u requires text, got {:?}", other),
+            ));
+        }
+    };
+    Ok(Value::Text(Arc::new(URL_SAFE_NO_PAD.encode(s.as_bytes()))))
+}
+
+#[inline(never)]
+fn b64u_dec_impl(arg: &Value) -> Result<Value> {
+    // b64u-dec s > R t t — inverse of b64u. Err on input outside the
+    // base64url alphabet, on `=` padding (strict no-pad round-trip), or on
+    // decoded bytes that aren't valid UTF-8.
+    use base64::Engine;
+    use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+    let s = match arg {
+        Value::Text(s) => s.clone(),
+        other => {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!("b64u-dec requires text, got {:?}", other),
+            ));
+        }
+    };
+    match URL_SAFE_NO_PAD.decode(s.as_bytes()) {
+        Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(format!(
+            "b64u-dec: invalid base64url input: {}",
+            e
+        )))))),
+        Ok(bytes) => match String::from_utf8(bytes) {
+            Ok(text) => Ok(Value::Ok(Box::new(Value::Text(Arc::new(text))))),
+            Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(format!(
+                "b64u-dec: decoded bytes are not valid UTF-8: {}",
+                e
+            )))))),
+        },
+    }
+}
+
+// ── Crypto primitives cluster ───────────────────────────────────────────────
+//
+// `sha256`, `hmac-sha256`, `b64`, `b64-dec`, `hex`, `ct-eq`. All tree-bridge
+// eligible: pure text-in / text-or-bool-out, no FnRef args, no I/O. VM and
+// Cranelift inherit cross-engine parity through the existing bridge at zero
+// opcode cost.
+//
+// Each helper is `#[inline(never)]` so the call_function dispatch frame stays
+// small (same pattern as the URL + base64url cluster and the calendar
+// arithmetic helpers — inlining all of these into the dispatch switch tips
+// debug-build stack frames past the default 2 MiB pthread stack on Linux CI).
+
+#[inline(never)]
+fn sha256_impl(arg: &Value) -> Result<Value> {
+    // sha256 s > t — SHA-256 of the UTF-8 bytes of s, returned as a lowercase
+    // hex string. Total: no error path. 32 raw bytes → 64 hex chars.
+    use sha2::{Digest, Sha256};
+    let s = match arg {
+        Value::Text(s) => s.clone(),
+        other => {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!("sha256 requires text, got {:?}", other),
+            ));
+        }
+    };
+    let mut h = Sha256::new();
+    h.update(s.as_bytes());
+    let digest = h.finalize();
+    Ok(Value::Text(Arc::new(hex::encode(digest))))
+}
+
+#[inline(never)]
+fn hmac_sha256_impl(key_arg: &Value, msg_arg: &Value) -> Result<Value> {
+    // hmac-sha256 key:t msg:t > t — HMAC-SHA256 of msg under key. Returns the
+    // 32-byte MAC as a lowercase hex string. Use with `ct-eq` to verify
+    // signatures without leaking timing info.
+    use hmac::{Hmac, Mac};
+    use sha2::Sha256;
+    let key = match key_arg {
+        Value::Text(s) => s.clone(),
+        other => {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!("hmac-sha256: key must be text, got {:?}", other),
+            ));
+        }
+    };
+    let msg = match msg_arg {
+        Value::Text(s) => s.clone(),
+        other => {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!("hmac-sha256: msg must be text, got {:?}", other),
+            ));
+        }
+    };
+    // `Hmac::<Sha256>::new_from_slice` only errors on disallowed key length,
+    // which for HMAC-SHA256 is never (any byte length is allowed). The
+    // `expect` documents that invariant.
+    let mut mac =
+        <Hmac<Sha256>>::new_from_slice(key.as_bytes()).expect("HMAC-SHA256 accepts any key length");
+    mac.update(msg.as_bytes());
+    let tag = mac.finalize().into_bytes();
+    Ok(Value::Text(Arc::new(hex::encode(tag))))
+}
+
+#[inline(never)]
+fn b64_impl(arg: &Value) -> Result<Value> {
+    // b64 s > t — standard base64 (RFC 4648 §4) encode of the UTF-8 bytes of
+    // s, with `=` padding. Distinct from `b64u` which uses the URL-safe
+    // alphabet and strips padding. Total.
+    use base64::Engine;
+    use base64::engine::general_purpose::STANDARD;
+    let s = match arg {
+        Value::Text(s) => s.clone(),
+        other => {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!("b64 requires text, got {:?}", other),
+            ));
+        }
+    };
+    Ok(Value::Text(Arc::new(STANDARD.encode(s.as_bytes()))))
+}
+
+#[inline(never)]
+fn b64_dec_impl(arg: &Value) -> Result<Value> {
+    // b64-dec s > R t t — inverse of b64. Err on input outside the standard
+    // base64 alphabet, or on decoded bytes that aren't valid UTF-8. Uses the
+    // strict standard engine (requires `=` padding to match the encoder).
+    use base64::Engine;
+    use base64::engine::general_purpose::STANDARD;
+    let s = match arg {
+        Value::Text(s) => s.clone(),
+        other => {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!("b64-dec requires text, got {:?}", other),
+            ));
+        }
+    };
+    match STANDARD.decode(s.as_bytes()) {
+        Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(format!(
+            "b64-dec: invalid base64 input: {}",
+            e
+        )))))),
+        Ok(bytes) => match String::from_utf8(bytes) {
+            Ok(text) => Ok(Value::Ok(Box::new(Value::Text(Arc::new(text))))),
+            Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(format!(
+                "b64-dec: decoded bytes are not valid UTF-8: {}",
+                e
+            )))))),
+        },
+    }
+}
+
+#[inline(never)]
+fn hex_impl(arg: &Value) -> Result<Value> {
+    // hex s > t — lowercase hex encode of the UTF-8 bytes of s. Total:
+    // every byte maps to exactly 2 hex chars. Companion to sha256 / hmac-sha256
+    // which already emit hex; use `hex` when you need to encode arbitrary
+    // text bytes for transport (e.g. binary marshalling, logging escapes).
+    let s = match arg {
+        Value::Text(s) => s.clone(),
+        other => {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!("hex requires text, got {:?}", other),
+            ));
+        }
+    };
+    Ok(Value::Text(Arc::new(hex::encode(s.as_bytes()))))
+}
+
+#[inline(never)]
+fn ct_eq_impl(a_arg: &Value, b_arg: &Value) -> Result<Value> {
+    // ct-eq a:t b:t > b — constant-time text equality. Returns true iff the
+    // UTF-8 byte sequences of a and b are identical, comparing in constant
+    // time (no short-circuit on the first differing byte). Use when comparing
+    // secrets (HMAC digests, session tokens, API keys) so a timing attacker
+    // can't binary-search the secret one byte at a time.
+    //
+    // For different-length inputs we return `false` without invoking the
+    // constant-time path; length is not secret in practice (HMAC digests are
+    // fixed-length, tokens are emitted with a known size).
+    use subtle::ConstantTimeEq;
+    let a = match a_arg {
+        Value::Text(s) => s.clone(),
+        other => {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!("ct-eq: first arg must be text, got {:?}", other),
+            ));
+        }
+    };
+    let b = match b_arg {
+        Value::Text(s) => s.clone(),
+        other => {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!("ct-eq: second arg must be text, got {:?}", other),
+            ));
+        }
+    };
+    if a.len() != b.len() {
+        return Ok(Value::Bool(false));
+    }
+    let eq: bool = a.as_bytes().ct_eq(b.as_bytes()).into();
+    Ok(Value::Bool(eq))
+}
+
+// ── Calendar arithmetic cluster ─────────────────────────────────────────────
+//
+// Each builtin lives in its own #[inline(never)] helper so the call_function
+// dispatch frame stays small. Four chrono-heavy arms inlined into the
+// dispatch switch pushed call_function's debug-build stack frame past the
+// default 2 MiB pthread stack on Linux CI, tripping the fib(10) recursion
+// in `interpret_braceless_guard_fibonacci`. Same pattern as the URL +
+// base64url cluster above and lstsq (#515).
+
+#[inline(never)]
+fn add_mo_impl(epoch_arg: &Value, months_arg: &Value) -> Result<Value> {
+    // add-mo dt:n n:n > n — add N calendar months to epoch, snapping
+    // end-of-month. N may be negative. Jan 31 + 1 mo = Feb 28/29.
+    // Returns the resulting epoch at 00:00 UTC.
+    use chrono::{Datelike, NaiveDate, TimeZone, Utc};
+    let epoch = match epoch_arg {
+        Value::Number(n) => *n,
+        other => {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!(
+                    "add-mo: first arg must be a number (epoch), got {:?}",
+                    other
+                ),
+            ));
+        }
+    };
+    let months = match months_arg {
+        Value::Number(n) => *n as i32,
+        other => {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!(
+                    "add-mo: second arg must be a number (months), got {:?}",
+                    other
+                ),
+            ));
+        }
+    };
+    let secs = epoch as i64;
+    let dt = match Utc.timestamp_opt(secs, 0).single() {
+        Some(d) => d,
+        None => {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!("add-mo: epoch out of range: {epoch}"),
+            ));
+        }
+    };
+    let date = dt.date_naive();
+    fn add_months_snap(date: NaiveDate, months: i32) -> Option<NaiveDate> {
+        // Compute total months since year-0 in i64 so adding i32::MAX (or
+        // i32::MIN) months to any chrono-representable year cannot wrap.
+        // Pre-fix this was i32 arithmetic: `date.year() * 12 + months`
+        // overflowed at i32::MAX months, panicking in debug and silently
+        // wrapping to a valid date in release. The widened path now either
+        // produces a valid NaiveDate or returns None, which the caller
+        // surfaces as a clean ILO-R009 "result out of calendar range".
+        let total: i64 = (date.year() as i64) * 12 + (date.month() as i64 - 1) + (months as i64);
+        let y_i64 = total.div_euclid(12);
+        let m = (total.rem_euclid(12) + 1) as u32;
+        let y: i32 = i32::try_from(y_i64).ok()?;
+        let max_day = {
+            let next = if m == 12 {
+                NaiveDate::from_ymd_opt(y.checked_add(1)?, 1, 1)
+            } else {
+                NaiveDate::from_ymd_opt(y, m + 1, 1)
+            };
+            (next? - NaiveDate::from_ymd_opt(y, m, 1)?).num_days() as u32
+        };
+        NaiveDate::from_ymd_opt(y, m, date.day().min(max_day))
+    }
+    match add_months_snap(date, months) {
+        Some(d) => {
+            let ts = d.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp();
+            Ok(Value::Number(ts as f64))
+        }
+        None => Err(RuntimeError::new(
+            "ILO-R009",
+            "add-mo: result out of calendar range".to_string(),
+        )),
+    }
+}
+
+#[inline(never)]
+fn last_dom_impl(arg: &Value) -> Result<Value> {
+    // last-dom dt:n > n — epoch of the last day of the month containing dt
+    // at 00:00 UTC. E.g. any Feb 2024 epoch -> 2024-02-29 00:00 UTC.
+    use chrono::{Datelike, NaiveDate, TimeZone, Utc};
+    let epoch = match arg {
+        Value::Number(n) => *n,
+        other => {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!("last-dom: arg must be a number (epoch), got {:?}", other),
+            ));
+        }
+    };
+    let secs = epoch as i64;
+    let dt = match Utc.timestamp_opt(secs, 0).single() {
+        Some(d) => d,
+        None => {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!("last-dom: epoch out of range: {epoch}"),
+            ));
+        }
+    };
+    let date = dt.date_naive();
+    let y = date.year();
+    let m = date.month();
+    // First day of next month minus one day = last day of this month.
+    let first_next = if m == 12 {
+        NaiveDate::from_ymd_opt(y + 1, 1, 1)
+    } else {
+        NaiveDate::from_ymd_opt(y, m + 1, 1)
+    };
+    match first_next {
+        Some(next) => {
+            let last = next.pred_opt().unwrap();
+            let ts = last.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp();
+            Ok(Value::Number(ts as f64))
+        }
+        None => Err(RuntimeError::new(
+            "ILO-R009",
+            "last-dom: month arithmetic out of range".to_string(),
+        )),
+    }
+}
+
+#[inline(never)]
+fn next_business_day_impl(arg: &Value) -> Result<Value> {
+    // next-business-day dt:n > n — next weekday after dt (skip Sat/Sun).
+    // If dt is Mon-Thu the result is the next day.
+    // If dt is Fri the result is the following Mon.
+    // If dt is Sat the result is Mon (+2). If dt is Sun the result is Mon (+1).
+    // Returns the resulting epoch at 00:00 UTC.
+    use chrono::{Datelike, Duration, NaiveDate, TimeZone, Utc, Weekday};
+    let epoch = match arg {
+        Value::Number(n) => *n,
+        other => {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!(
+                    "next-business-day: arg must be a number (epoch), got {:?}",
+                    other
+                ),
+            ));
+        }
+    };
+    let secs = epoch as i64;
+    let dt = match Utc.timestamp_opt(secs, 0).single() {
+        Some(d) => d,
+        None => {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!("next-business-day: epoch out of range: {epoch}"),
+            ));
+        }
+    };
+    let date: NaiveDate = dt.date_naive();
+    let days_ahead: i64 = match date.weekday() {
+        Weekday::Fri => 3,
+        Weekday::Sat => 2,
+        _ => 1,
+    };
+    let next = date + Duration::days(days_ahead);
+    let ts = next.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp();
+    Ok(Value::Number(ts as f64))
+}
+
+#[inline(never)]
+fn day_of_week_impl(arg: &Value) -> Result<Value> {
+    // day-of-week dt:n > n — 0=Sun, 1=Mon, 2=Tue, 3=Wed, 4=Thu, 5=Fri, 6=Sat.
+    // Follows the JS/ISO convention where Sunday=0 (not 7), giving agents a
+    // zero-based index usable directly with range-based dispatch.
+    use chrono::{Datelike, TimeZone, Utc, Weekday};
+    let epoch = match arg {
+        Value::Number(n) => *n,
+        other => {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!("day-of-week: arg must be a number (epoch), got {:?}", other),
+            ));
+        }
+    };
+    let secs = epoch as i64;
+    let dt = match Utc.timestamp_opt(secs, 0).single() {
+        Some(d) => d,
+        None => {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!("day-of-week: epoch out of range: {epoch}"),
+            ));
+        }
+    };
+    let dow: u32 = match dt.date_naive().weekday() {
+        Weekday::Sun => 0,
+        Weekday::Mon => 1,
+        Weekday::Tue => 2,
+        Weekday::Wed => 3,
+        Weekday::Thu => 4,
+        Weekday::Fri => 5,
+        Weekday::Sat => 6,
+    };
+    Ok(Value::Number(dow as f64))
+}
+
 fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
     // Builtins — resolve name to enum once, then dispatch via match
     let builtin = Builtin::from_name(name);
@@ -1578,6 +2580,14 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             x.into_iter().map(Value::Number).collect(),
         )));
     }
+    if builtin == Some(Builtin::Lstsq) && args.len() == 2 {
+        // Out-of-line helper to keep this arm's frame off the giant
+        // `call_function` stack frame. Same pattern documented in #506
+        // for sha2/hmac and #494 for caps fields: each builtin arm adds
+        // frame bloat that compounds with deep recursion through
+        // tree-walking tests like `interpret_braceless_guard_fibonacci`.
+        return lstsq_run(&args[0], &args[1]);
+    }
     if builtin == Some(Builtin::Str) {
         if args.len() != 1 {
             return Err(RuntimeError::new(
@@ -1619,9 +2629,13 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                     Err(_) => Ok(Value::Err(Box::new(Value::Text(s.clone())))),
                 }
             }
+            // num is polymorphic: numeric input is identity-wrapped Ok(n).
+            // Closes the `num (jpar! body)` pattern where JSON bodies that
+            // are bare numbers used to need the str→num roundtrip.
+            Value::Number(n) => Ok(Value::Ok(Box::new(Value::Number(*n)))),
             other => Err(RuntimeError::new(
                 "ILO-R009",
-                format!("num requires text, got {:?}", other),
+                format!("num requires text or number, got {:?}", other),
             )),
         };
     }
@@ -1986,7 +3000,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
     if builtin == Some(Builtin::Rndn) && args.len() == 2 {
         return match (&args[0], &args[1]) {
             (Value::Number(mu), Value::Number(sigma)) => {
-                Ok(Value::Number(box_muller_normal(*mu, *sigma)))
+                Ok(Value::Number(crate::rng::normal(*mu, *sigma)))
             }
             _ => Err(RuntimeError::new(
                 "ILO-R009",
@@ -2059,7 +3073,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
     }
     if builtin == Some(Builtin::Rnd) {
         if args.is_empty() {
-            return Ok(Value::Number(fastrand::f64()));
+            return Ok(Value::Number(crate::rng::f64()));
         }
         if args.len() == 2 {
             return match (&args[0], &args[1]) {
@@ -2072,7 +3086,7 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                             format!("rnd: lower bound {} > upper bound {}", lo, hi),
                         ));
                     }
-                    Ok(Value::Number(fastrand::i64(lo..=hi) as f64))
+                    Ok(Value::Number(crate::rng::i64_range(lo, hi) as f64))
                 }
                 _ => Err(RuntimeError::new(
                     "ILO-R009",
@@ -2080,6 +3094,21 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 )),
             };
         }
+    }
+    if builtin == Some(Builtin::RandBytes) && args.len() == 1 {
+        return eval_rand_bytes(&args[0]);
+    }
+    if builtin == Some(Builtin::Seed) && args.len() == 1 {
+        return match &args[0] {
+            Value::Number(n) => {
+                crate::rng::seed(*n as u64);
+                Ok(Value::Nil)
+            }
+            other => Err(RuntimeError::new(
+                "ILO-R009",
+                format!("seed requires a number, got {other:?}"),
+            )),
+        };
     }
     if builtin == Some(Builtin::Spl) && args.len() == 2 {
         return match (&args[0], &args[1]) {
@@ -2245,6 +3274,36 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             )),
         };
     }
+    if builtin == Some(Builtin::Urlenc) && args.len() == 1 {
+        return urlenc_impl(&args[0]);
+    }
+    if builtin == Some(Builtin::Urldec) && args.len() == 1 {
+        return urldec_impl(&args[0]);
+    }
+    if builtin == Some(Builtin::B64u) && args.len() == 1 {
+        return b64u_impl(&args[0]);
+    }
+    if builtin == Some(Builtin::B64uDec) && args.len() == 1 {
+        return b64u_dec_impl(&args[0]);
+    }
+    if builtin == Some(Builtin::Sha256) && args.len() == 1 {
+        return sha256_impl(&args[0]);
+    }
+    if builtin == Some(Builtin::HmacSha256) && args.len() == 2 {
+        return hmac_sha256_impl(&args[0], &args[1]);
+    }
+    if builtin == Some(Builtin::B64) && args.len() == 1 {
+        return b64_impl(&args[0]);
+    }
+    if builtin == Some(Builtin::B64Dec) && args.len() == 1 {
+        return b64_dec_impl(&args[0]);
+    }
+    if builtin == Some(Builtin::HexEnc) && args.len() == 1 {
+        return hex_impl(&args[0]);
+    }
+    if builtin == Some(Builtin::CtEq) && args.len() == 2 {
+        return ct_eq_impl(&args[0], &args[1]);
+    }
     if builtin == Some(Builtin::Lst) && args.len() == 3 {
         let idx = match &args[1] {
             Value::Number(n) => {
@@ -2400,6 +3459,102 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 "range requires two numbers".to_string(),
             )),
         };
+    }
+    if builtin == Some(Builtin::Linspace) && args.len() == 3 {
+        // linspace a b n — n evenly-spaced floats from a to b inclusive
+        // (numpy endpoint=True). n=0 returns []; n=1 returns [a]; n>=2 includes
+        // both endpoints; equal endpoints repeat the value.
+        let (a, b, n_raw) = match (&args[0], &args[1], &args[2]) {
+            (Value::Number(a), Value::Number(b), Value::Number(n)) => (*a, *b, *n),
+            _ => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    "linspace requires three numbers (a b n)".to_string(),
+                ));
+            }
+        };
+        if n_raw.fract() != 0.0 || n_raw < 0.0 {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!("linspace: n must be a non-negative integer, got {n_raw}"),
+            ));
+        }
+        let n = n_raw as u64;
+        if n > 1_000_000 {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!("linspace too large: {n} elements (max 1000000)"),
+            ));
+        }
+        if n == 0 {
+            return Ok(Value::List(Arc::new(Vec::new())));
+        }
+        if n == 1 {
+            return Ok(Value::List(Arc::new(vec![Value::Number(a)])));
+        }
+        let mut out = Vec::with_capacity(n as usize);
+        let step = (b - a) / ((n - 1) as f64);
+        for i in 0..n {
+            out.push(Value::Number(a + step * (i as f64)));
+        }
+        // Pin the final element exactly to b to avoid float-accumulated drift.
+        if let Some(last) = out.last_mut() {
+            *last = Value::Number(b);
+        }
+        return Ok(Value::List(Arc::new(out)));
+    }
+    if builtin == Some(Builtin::Ones) && args.len() == 1 {
+        let n_raw = match &args[0] {
+            Value::Number(n) => *n,
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("ones: count must be a number, got {:?}", other),
+                ));
+            }
+        };
+        if n_raw.fract() != 0.0 || n_raw < 0.0 {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!("ones: count must be a non-negative integer, got {n_raw}"),
+            ));
+        }
+        let n = n_raw as u64;
+        if n > 1_000_000 {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!("ones too large: {n} elements (max 1000000)"),
+            ));
+        }
+        let out = vec![Value::Number(1.0); n as usize];
+        return Ok(Value::List(Arc::new(out)));
+    }
+    if builtin == Some(Builtin::Rep) && args.len() == 2 {
+        let n_raw = match &args[0] {
+            Value::Number(n) => *n,
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("rep: count must be a number, got {:?}", other),
+                ));
+            }
+        };
+        if n_raw.fract() != 0.0 || n_raw < 0.0 {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!("rep: count must be a non-negative integer, got {n_raw}"),
+            ));
+        }
+        let n = n_raw as u64;
+        if n > 1_000_000 {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!("rep too large: {n} elements (max 1000000)"),
+            ));
+        }
+        let v = &args[1];
+        let out = vec![v.clone(); n as usize];
+        return Ok(Value::List(Arc::new(out)));
     }
     if builtin == Some(Builtin::Chunks) && args.len() == 2 {
         let n_raw = match &args[0] {
@@ -2797,9 +3952,14 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         )));
     }
     if builtin == Some(Builtin::Slc) && args.len() == 3 {
-        // Both bounds accept negative integers Python-style:
-        // `slc xs -1 0` is empty, `slc xs 0 -1` drops the last element,
-        // `slc xs -2 (len xs)` returns the last two elements.
+        // Bounds accept negative integers Python-style, with one ergonomic
+        // exception on the end bound:
+        //   `slc xs -1 (len xs)` returns the last element
+        //   `slc xs -2 (len xs)` returns the last two elements
+        //   `slc xs -3 -1`       returns the penultimate window (Python-style)
+        //   `slc xs 0 -1`        returns the WHOLE list (-1 = "to end" sugar
+        //                        when start is non-negative; see
+        //                        `resolve_slc_end` in builtins.rs)
         let start_raw = match &args[1] {
             Value::Number(n) => {
                 if n.fract() != 0.0 {
@@ -2837,14 +3997,14 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         return match &args[0] {
             Value::List(items) => {
                 let len = items.len();
-                let end = crate::builtins::resolve_slice_bound(end_raw, len);
+                let end = crate::builtins::resolve_slc_end(start_raw, end_raw, len);
                 let start = crate::builtins::resolve_slice_bound(start_raw, len).min(end);
                 Ok(Value::List(Arc::new(items[start..end].to_vec())))
             }
             Value::Text(s) => {
                 let chars: Vec<char> = s.chars().collect();
                 let len = chars.len();
-                let end = crate::builtins::resolve_slice_bound(end_raw, len);
+                let end = crate::builtins::resolve_slc_end(start_raw, end_raw, len);
                 let start = crate::builtins::resolve_slice_bound(start_raw, len).min(end);
                 Ok(Value::Text(Arc::new(chars[start..end].iter().collect())))
             }
@@ -2936,6 +4096,9 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 ));
             }
         };
+        if let Err(msg) = env.caps.check_net(url.as_str()) {
+            return Ok(Value::Err(Box::new(Value::Text(Arc::new(msg)))));
+        }
         let headers = if args.len() == 2 {
             match &args[1] {
                 Value::Map(m) => m
@@ -3013,6 +4176,13 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 ));
             }
         };
+        // Cap check: verify each URL before issuing any requests.
+        for url in &urls {
+            if let Err(msg) = env.caps.check_net(url) {
+                // Return the first blocked URL as a single Err in the list's envelope.
+                return Ok(Value::Err(Box::new(Value::Text(Arc::new(msg)))));
+            }
+        }
         return Ok(Value::List(Arc::new(get_many_fetch(&urls))));
     }
     if builtin == Some(Builtin::Post) && (args.len() == 2 || args.len() == 3) {
@@ -3025,6 +4195,9 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 ));
             }
         };
+        if let Err(msg) = env.caps.check_net(url.as_str()) {
+            return Ok(Value::Err(Box::new(Value::Text(Arc::new(msg)))));
+        }
         let headers = if args.len() == 3 {
             match &args[2] {
                 Value::Map(m) => m
@@ -3067,6 +4240,246 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             #[cfg(not(feature = "http"))]
             {
                 let _ = (url, body, headers);
+                Ok(Value::Err(Box::new(Value::Text(
+                    "http feature not enabled".to_string().into(),
+                ))))
+            }
+        };
+    }
+    // HTTP verb cluster (#5z). Same shape as `pst` (PUT, PATCH) or `get`
+    // (DELETE, HEAD, OPTIONS) — optional 3rd-arg (PUT/PAT) or 2nd-arg
+    // (DEL/HD/OPT) `M t t` headers map. Returns `R t t`.
+    if matches!(builtin, Some(Builtin::Put) | Some(Builtin::Pat))
+        && (args.len() == 2 || args.len() == 3)
+    {
+        let name = builtin.unwrap().name();
+        let (url, body) = match (&args[0], &args[1]) {
+            (Value::Text(u), Value::Text(b)) => (u.clone(), b.clone()),
+            _ => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("{name} requires (t, t), got ({:?}, {:?})", args[0], args[1]),
+                ));
+            }
+        };
+        if let Err(msg) = env.caps.check_net(url.as_str()) {
+            return Ok(Value::Err(Box::new(Value::Text(Arc::new(msg)))));
+        }
+        let headers = if args.len() == 3 {
+            match &args[2] {
+                Value::Map(m) => m
+                    .iter()
+                    .map(|(k, v)| {
+                        let vs: String = match v {
+                            Value::Text(s) => (**s).clone(),
+                            other => format!("{other:?}"),
+                        };
+                        (k.to_display_string(), vs)
+                    })
+                    .collect::<Vec<_>>(),
+                other => {
+                    return Err(RuntimeError::new(
+                        "ILO-R009",
+                        format!("{name} headers must be M t t, got {:?}", other),
+                    ));
+                }
+            }
+        } else {
+            vec![]
+        };
+        return {
+            #[cfg(feature = "http")]
+            {
+                let mut req = match builtin {
+                    Some(Builtin::Put) => minreq::put(url.as_str()),
+                    Some(Builtin::Pat) => minreq::patch(url.as_str()),
+                    _ => unreachable!(),
+                }
+                .with_body(body.as_str());
+                for (k, v) in &headers {
+                    req = req.with_header(k.as_str(), v.as_str());
+                }
+                match req.send() {
+                    Ok(resp) => match resp.as_str() {
+                        Ok(b) => Ok(Value::Ok(Box::new(Value::Text(Arc::new(b.to_string()))))),
+                        Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(format!(
+                            "response is not valid UTF-8: {e}"
+                        )))))),
+                    },
+                    Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(e.to_string()))))),
+                }
+            }
+            #[cfg(not(feature = "http"))]
+            {
+                let _ = (url, body, headers);
+                Ok(Value::Err(Box::new(Value::Text(
+                    "http feature not enabled".to_string().into(),
+                ))))
+            }
+        };
+    }
+    if matches!(
+        builtin,
+        Some(Builtin::Del) | Some(Builtin::Hed) | Some(Builtin::Opt)
+    ) && (args.len() == 1 || args.len() == 2)
+    {
+        let name = builtin.unwrap().name();
+        let url = match &args[0] {
+            Value::Text(u) => u.clone(),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("{name} requires text (url), got {:?}", other),
+                ));
+            }
+        };
+        if let Err(msg) = env.caps.check_net(url.as_str()) {
+            return Ok(Value::Err(Box::new(Value::Text(Arc::new(msg)))));
+        }
+        let headers = if args.len() == 2 {
+            match &args[1] {
+                Value::Map(m) => m
+                    .iter()
+                    .map(|(k, v)| {
+                        let vs: String = match v {
+                            Value::Text(s) => (**s).clone(),
+                            other => format!("{other:?}"),
+                        };
+                        (k.to_display_string(), vs)
+                    })
+                    .collect::<Vec<_>>(),
+                other => {
+                    return Err(RuntimeError::new(
+                        "ILO-R009",
+                        format!("{name} headers must be M t t, got {:?}", other),
+                    ));
+                }
+            }
+        } else {
+            vec![]
+        };
+        return {
+            #[cfg(feature = "http")]
+            {
+                let mut req = match builtin {
+                    Some(Builtin::Del) => minreq::delete(url.as_str()),
+                    Some(Builtin::Hed) => minreq::head(url.as_str()),
+                    Some(Builtin::Opt) => minreq::options(url.as_str()),
+
+                    _ => unreachable!(),
+                };
+                for (k, v) in &headers {
+                    req = req.with_header(k.as_str(), v.as_str());
+                }
+                match req.send() {
+                    Ok(resp) => match resp.as_str() {
+                        Ok(body) => {
+                            Ok(Value::Ok(Box::new(Value::Text(Arc::new(body.to_string())))))
+                        }
+                        Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(format!(
+                            "response is not valid UTF-8: {e}"
+                        )))))),
+                    },
+                    Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(e.to_string()))))),
+                }
+            }
+            #[cfg(not(feature = "http"))]
+            {
+                let _ = (url, headers);
+                Ok(Value::Err(Box::new(Value::Text(
+                    "http feature not enabled".to_string().into(),
+                ))))
+            }
+        };
+    }
+    if builtin == Some(Builtin::GetTo) && args.len() == 2 {
+        let url = match &args[0] {
+            Value::Text(u) => u.clone(),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("get-to requires text (url), got {:?}", other),
+                ));
+            }
+        };
+        let timeout_ms = match &args[1] {
+            Value::Number(n) => *n,
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("get-to requires n (timeout-ms), got {:?}", other),
+                ));
+            }
+        };
+        // minreq takes whole seconds; round up from milliseconds
+        let timeout_secs = ((timeout_ms / 1000.0).ceil() as u64).max(1);
+        return {
+            #[cfg(feature = "http")]
+            {
+                let req = minreq::get(url.as_str()).with_timeout(timeout_secs);
+                match req.send() {
+                    Ok(resp) => match resp.as_str() {
+                        Ok(body) => {
+                            Ok(Value::Ok(Box::new(Value::Text(Arc::new(body.to_string())))))
+                        }
+                        Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(format!(
+                            "response is not valid UTF-8: {e}"
+                        )))))),
+                    },
+                    Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(e.to_string()))))),
+                }
+            }
+            #[cfg(not(feature = "http"))]
+            {
+                let _ = (url, timeout_secs);
+                Ok(Value::Err(Box::new(Value::Text(
+                    "http feature not enabled".to_string().into(),
+                ))))
+            }
+        };
+    }
+    if builtin == Some(Builtin::PstTo) && args.len() == 3 {
+        let (url, body) = match (&args[0], &args[1]) {
+            (Value::Text(u), Value::Text(b)) => (u.clone(), b.clone()),
+            _ => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!(
+                        "pst-to requires (t, t, n), got ({:?}, {:?}, {:?})",
+                        args[0], args[1], args[2]
+                    ),
+                ));
+            }
+        };
+        let timeout_ms = match &args[2] {
+            Value::Number(n) => *n,
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("pst-to requires n (timeout-ms), got {:?}", other),
+                ));
+            }
+        };
+        let timeout_secs = ((timeout_ms / 1000.0).ceil() as u64).max(1);
+        return {
+            #[cfg(feature = "http")]
+            {
+                let req = minreq::post(url.as_str())
+                    .with_body(body.as_str())
+                    .with_timeout(timeout_secs);
+                match req.send() {
+                    Ok(resp) => match resp.as_str() {
+                        Ok(b) => Ok(Value::Ok(Box::new(Value::Text(Arc::new(b.to_string()))))),
+                        Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(format!(
+                            "response is not valid UTF-8: {e}"
+                        )))))),
+                    },
+                    Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(e.to_string()))))),
+                }
+            }
+            #[cfg(not(feature = "http"))]
+            {
+                let _ = (url, body, timeout_secs);
                 Ok(Value::Err(Box::new(Value::Text(
                     "http feature not enabled".to_string().into(),
                 ))))
@@ -3123,7 +4536,53 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 ));
             }
         };
+        if let Err(msg) = env.caps.check_run(cmd.as_str()) {
+            return Ok(Value::Err(Box::new(Value::Text(Arc::new(msg)))));
+        }
         return Ok(run_spawn(cmd.as_str(), &argv));
+    }
+    if builtin == Some(Builtin::Run2) && args.len() == 2 {
+        // run2 cmd:t args:L t  >  R RunResult t
+        //
+        // Like `run` but returns a typed Record{stdout:t; stderr:t; exit:n}
+        // instead of a loose Map. Non-zero exit is NOT an error; Err only on
+        // spawn failure (cmd not found, permission denied, etc.).
+        let cmd = match &args[0] {
+            Value::Text(s) => s.clone(),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("run2 requires text (cmd), got {:?}", other),
+                ));
+            }
+        };
+        let argv: Vec<String> = match &args[1] {
+            Value::List(items) => {
+                let mut out = Vec::with_capacity(items.len());
+                for (i, v) in items.iter().enumerate() {
+                    match v {
+                        Value::Text(s) => out.push((**s).clone()),
+                        other => {
+                            return Err(RuntimeError::new(
+                                "ILO-R009",
+                                format!(
+                                    "run2 argv must be L t (text list); element {i} is {:?}",
+                                    other
+                                ),
+                            ));
+                        }
+                    }
+                }
+                out
+            }
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("run2 argv must be L t (text list), got {:?}", other),
+                ));
+            }
+        };
+        return Ok(run_spawn_structured(cmd.as_str(), &argv));
     }
     if builtin == Some(Builtin::Trm) && args.len() == 1 {
         return match &args[0] {
@@ -3359,35 +4818,63 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         let mut arg_idx = 1;
         let mut chars = template.chars().peekable();
         while let Some(c) = chars.next() {
-            if c == '{' && chars.peek() == Some(&'}') {
-                chars.next();
-                if arg_idx < args.len() {
-                    result.push_str(&format!("{}", args[arg_idx]));
-                    arg_idx += 1;
-                } else {
-                    result.push_str("{}");
-                }
-            } else if c == '{' && chars.peek() == Some(&':') {
-                // Reject printf-style format specs explicitly so callers don't
-                // silently get the literal template back. `fmt` only supports
-                // bare `{}` placeholders; richer formatting composes from
-                // smaller builtins instead.
+            if c == '{'
+                && (chars.peek() == Some(&'}')
+                    || chars.peek() == Some(&':')
+                    || chars.peek() == Some(&'.'))
+            {
+                // Collect spec body up to '}'.
                 let mut spec = String::from("{");
+                let mut terminated = false;
                 for sc in chars.by_ref() {
                     spec.push(sc);
                     if sc == '}' {
+                        terminated = true;
                         break;
                     }
                 }
-                return Err(RuntimeError::new(
-                    "ILO-R009",
-                    format!(
-                        "fmt only supports bare `{{}}` placeholders, got `{}`. \
-                         For decimal precision use `fmt \"...{{}}\" (fmt2 v 2)`; \
-                         for width / padding use `padl (str n) 6` (space-pad).",
-                        spec
-                    ),
-                ));
+                if !terminated {
+                    // Unterminated brace — leave as literal (matches the old
+                    // permissive behaviour for `{a:1}` style non-placeholder
+                    // text that just happens to start with `{`).
+                    result.push_str(&spec);
+                    continue;
+                }
+                match parse_fmt_spec(&spec) {
+                    Some(FmtSpec::Bare) => {
+                        if arg_idx < args.len() {
+                            result.push_str(&format!("{}", args[arg_idx]));
+                            arg_idx += 1;
+                        } else {
+                            result.push_str("{}");
+                        }
+                    }
+                    Some(spec_kind) => {
+                        if arg_idx >= args.len() {
+                            return Err(RuntimeError::new(
+                                "ILO-R009",
+                                format!("fmt template spec `{spec}` has no matching value arg"),
+                            ));
+                        }
+                        let rendered = apply_fmt_spec(&spec_kind, &args[arg_idx]).map_err(|e| {
+                            RuntimeError::new("ILO-R009", format!("fmt spec `{spec}`: {e}"))
+                        })?;
+                        result.push_str(&rendered);
+                        arg_idx += 1;
+                    }
+                    None => {
+                        return Err(RuntimeError::new(
+                            "ILO-R009",
+                            format!(
+                                "fmt: unsupported placeholder spec `{spec}`. \
+                                 Supported: `{{}}`, `{{.Nf}}` / `{{:.Nf}}` (decimal places), \
+                                 `{{:N}}` (right-align width), `{{:Nd}}` (integer width), \
+                                 `{{:<N}}` (left-align width). Zero-padded widths and hex/sign \
+                                 are out of scope; compose via `fmt2` / `padl` / `padr`."
+                            ),
+                        ));
+                    }
+                }
             } else {
                 result.push(c);
             }
@@ -3451,6 +4938,9 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 ));
             }
         };
+        if let Err(msg) = env.caps.check_read(dir.as_str()) {
+            return Ok(Value::Err(Box::new(Value::Text(Arc::new(msg)))));
+        }
         let root = std::path::PathBuf::from(dir.as_str());
         match walk_collect(&root) {
             Ok(out) => {
@@ -3487,6 +4977,9 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 ));
             }
         };
+        if let Err(msg) = env.caps.check_read(dir.as_str()) {
+            return Ok(Value::Err(Box::new(Value::Text(Arc::new(msg)))));
+        }
         let root = std::path::PathBuf::from(dir.as_str());
         match walk_collect(&root) {
             Ok(all) => {
@@ -3613,6 +5106,150 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         };
         return Ok(Value::Text(Arc::new(dur_fmt(secs))));
     }
+    if builtin == Some(Builtin::AddMo) && args.len() == 2 {
+        return add_mo_impl(&args[0], &args[1]);
+    }
+    if builtin == Some(Builtin::LastDom) && args.len() == 1 {
+        return last_dom_impl(&args[0]);
+    }
+    if builtin == Some(Builtin::NextBusinessDay) && args.len() == 1 {
+        return next_business_day_impl(&args[0]);
+    }
+    if builtin == Some(Builtin::DayOfWeek) && args.len() == 1 {
+        return day_of_week_impl(&args[0]);
+    }
+    if builtin == Some(Builtin::Fsize) && args.len() == 1 {
+        // fsize path > R n t — file size in bytes. Err on missing,
+        // permission-denied, or path-is-directory. Symlinks are followed
+        // (matches POSIX `stat`, not `lstat`). Predicate counterpart is
+        // `isfile` which collapses these errors into `false`.
+        let path = match &args[0] {
+            Value::Text(s) => s.clone(),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("fsize requires text path, got {:?}", other),
+                ));
+            }
+        };
+        return match std::fs::metadata(path.as_str()) {
+            Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(e.to_string()))))),
+            Ok(md) if md.is_dir() => Ok(Value::Err(Box::new(Value::Text(Arc::new(format!(
+                "{}: is a directory",
+                path
+            )))))),
+            Ok(md) => Ok(Value::Ok(Box::new(Value::Number(md.len() as f64)))),
+        };
+    }
+    if builtin == Some(Builtin::Mtime) && args.len() == 1 {
+        // mtime path > R n t — last modification time as Unix epoch seconds
+        // (f64). Err on missing or permission-denied. Symlinks followed.
+        // Returns seconds (not ms) to match `now` — `now-ms` exists for
+        // sub-second precision; mtime is a wall-clock timestamp and the
+        // fractional second is preserved as f64.
+        let path = match &args[0] {
+            Value::Text(s) => s.clone(),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("mtime requires text path, got {:?}", other),
+                ));
+            }
+        };
+        return match std::fs::metadata(path.as_str()) {
+            Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(e.to_string()))))),
+            Ok(md) => match md.modified() {
+                Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(e.to_string()))))),
+                Ok(t) => match t.duration_since(std::time::UNIX_EPOCH) {
+                    Ok(d) => Ok(Value::Ok(Box::new(Value::Number(d.as_secs_f64())))),
+                    Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(e.to_string()))))),
+                },
+            },
+        };
+    }
+    if builtin == Some(Builtin::Isfile) && args.len() == 1 {
+        // isfile path > b — true iff path resolves to a regular file
+        // (following symlinks). Missing path, permission-denied, or
+        // directory all return `false` — Python convention. The natural
+        // branch shape is `?isfile p{...}`, so collapsing the error tier
+        // into `false` keeps the call site one token wide.
+        let path = match &args[0] {
+            Value::Text(s) => s.clone(),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("isfile requires text path, got {:?}", other),
+                ));
+            }
+        };
+        let is = std::fs::metadata(path.as_str())
+            .map(|m| m.is_file())
+            .unwrap_or(false);
+        return Ok(Value::Bool(is));
+    }
+    if builtin == Some(Builtin::Isdir) && args.len() == 1 {
+        // isdir path > b — true iff path resolves to a directory (following
+        // symlinks). Missing / perm-denied / not-a-dir all return `false`.
+        let path = match &args[0] {
+            Value::Text(s) => s.clone(),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("isdir requires text path, got {:?}", other),
+                ));
+            }
+        };
+        let is = std::fs::metadata(path.as_str())
+            .map(|m| m.is_dir())
+            .unwrap_or(false);
+        return Ok(Value::Bool(is));
+    }
+    if builtin == Some(Builtin::TzOffset) && args.len() == 2 {
+        // tz-offset tz:t epoch:n > R n t
+        // Returns the UTC offset in seconds for the named IANA timezone at
+        // the given Unix epoch. DST transitions are handled by chrono-tz:
+        // the offset reflects the actual local time rule at that instant.
+        // Returns Err on unknown timezone name. Positive = east of UTC.
+        let tz_name = match &args[0] {
+            Value::Text(s) => s.clone(),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("tz-offset: first arg must be text tz name, got {:?}", other),
+                ));
+            }
+        };
+        let epoch = match &args[1] {
+            Value::Number(n) => *n,
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!(
+                        "tz-offset: second arg must be number epoch, got {:?}",
+                        other
+                    ),
+                ));
+            }
+        };
+        let tz: chrono_tz::Tz = match tz_name.parse() {
+            Ok(t) => t,
+            Err(_) => {
+                return Ok(Value::Err(Box::new(Value::Text(Arc::new(format!(
+                    "tz-offset: unknown timezone {:?}",
+                    tz_name.as_str()
+                ))))));
+            }
+        };
+        // Convert epoch seconds to a chrono::DateTime in the target tz.
+        // from_timestamp gives a UTC DateTime; with_timezone applies the tz rules.
+        // fix() on TzOffset yields a FixedOffset which carries local_minus_utc().
+        let secs = epoch as i64;
+        let utc_dt = chrono::DateTime::from_timestamp(secs, 0).unwrap_or_default();
+        let local_dt = utc_dt.with_timezone(&tz);
+        use chrono::offset::Offset as _;
+        let offset_secs = local_dt.offset().fix().local_minus_utc() as f64;
+        return Ok(Value::Ok(Box::new(Value::Number(offset_secs))));
+    }
     if builtin == Some(Builtin::Rd) && (args.len() == 1 || args.len() == 2) {
         let path = match &args[0] {
             Value::Text(s) => s.clone(),
@@ -3623,6 +5260,9 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 ));
             }
         };
+        if let Err(msg) = env.caps.check_read(path.as_str()) {
+            return Ok(Value::Err(Box::new(Value::Text(Arc::new(msg)))));
+        }
         let fmt = if args.len() == 2 {
             match &args[1] {
                 Value::Text(s) => s.as_str().to_owned(),
@@ -3675,16 +5315,21 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
     }
     if builtin == Some(Builtin::Rdl) && args.len() == 1 {
         return match &args[0] {
-            Value::Text(path) => match std::fs::read_to_string(path.as_str()) {
-                Ok(content) => {
-                    let lines: Vec<Value> = content
-                        .lines()
-                        .map(|l| Value::Text(Arc::new(l.to_string())))
-                        .collect();
-                    Ok(Value::Ok(Box::new(Value::List(Arc::new(lines)))))
+            Value::Text(path) => {
+                if let Err(msg) = env.caps.check_read(path.as_str()) {
+                    return Ok(Value::Err(Box::new(Value::Text(Arc::new(msg)))));
                 }
-                Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(e.to_string()))))),
-            },
+                match std::fs::read_to_string(path.as_str()) {
+                    Ok(content) => {
+                        let lines: Vec<Value> = content
+                            .lines()
+                            .map(|l| Value::Text(Arc::new(l.to_string())))
+                            .collect();
+                        Ok(Value::Ok(Box::new(Value::List(Arc::new(lines)))))
+                    }
+                    Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(e.to_string()))))),
+                }
+            }
             other => Err(RuntimeError::new(
                 "ILO-R009",
                 format!("rdl requires text path, got {:?}", other),
@@ -3711,6 +5356,9 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 ));
             }
         };
+        if let Err(msg) = env.caps.check_write(path.as_str()) {
+            return Ok(Value::Err(Box::new(Value::Text(Arc::new(msg)))));
+        }
         let content = if args.len() == 3 {
             let fmt = match &args[2] {
                 Value::Text(s) => s.clone(),
@@ -3794,6 +5442,9 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 ));
             }
         };
+        if let Err(msg) = env.caps.check_write(path.as_str()) {
+            return Ok(Value::Err(Box::new(Value::Text(Arc::new(msg)))));
+        }
         let content = match &args[1] {
             Value::Text(s) => (**s).clone(),
             other => {
@@ -3817,6 +5468,11 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         };
     }
     if builtin == Some(Builtin::Wrl) && args.len() == 2 {
+        if let Value::Text(path) = &args[0] {
+            if let Err(msg) = env.caps.check_write(path.as_str()) {
+                return Ok(Value::Err(Box::new(Value::Text(Arc::new(msg)))));
+            }
+        }
         return match (&args[0], &args[1]) {
             (Value::Text(path), Value::List(lines)) => {
                 let mut content = String::new();
@@ -3948,7 +5604,11 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             .into_iter()
             .next()
             .expect("prnt: arity=1 guaranteed by caller");
-        println!("{v}");
+        let s = format!("{v}");
+        // +1 for the trailing newline `println!` adds. Charging it keeps the
+        // byte budget honest against a `wh true{prnt 0}` runaway.
+        crate::runtime_guard::record_output(s.len() + 1);
+        println!("{s}");
         return Ok(v);
     }
     if builtin == Some(Builtin::Jdmp) && args.len() == 1 {
@@ -3964,6 +5624,34 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             other => Err(RuntimeError::new(
                 "ILO-R009",
                 format!("jpar requires text, got {:?}", other),
+            )),
+        };
+    }
+    if builtin == Some(Builtin::JparList) && args.len() == 1 {
+        return match &args[0] {
+            Value::Text(s) => match serde_json::from_str::<serde_json::Value>(s) {
+                Ok(serde_json::Value::Array(arr)) => {
+                    let items: Vec<Value> = arr.into_iter().map(serde_json_to_value).collect();
+                    Ok(Value::Ok(Box::new(Value::List(Arc::new(items)))))
+                }
+                Ok(other) => {
+                    let kind = match &other {
+                        serde_json::Value::Object(_) => "object",
+                        serde_json::Value::Null => "null",
+                        serde_json::Value::Bool(_) => "bool",
+                        serde_json::Value::Number(_) => "number",
+                        serde_json::Value::String(_) => "string",
+                        serde_json::Value::Array(_) => unreachable!(),
+                    };
+                    Ok(Value::Err(Box::new(Value::Text(Arc::new(format!(
+                        "jpar-list: expected JSON array, got {kind}"
+                    ))))))
+                }
+                Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(e.to_string()))))),
+            },
+            other => Err(RuntimeError::new(
+                "ILO-R009",
+                format!("jpar-list requires text, got {:?}", other),
             )),
         };
     }
@@ -4725,6 +6413,14 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         }
         return Ok(Value::List(Arc::new(out)));
     }
+    if builtin == Some(Builtin::Matvec) && args.len() == 2 {
+        // Out-of-line helper to keep this arm's frame off the giant
+        // `call_function` stack frame. Same pattern as #506 (sha2/hmac),
+        // #494 (caps fields), and the lstsq extraction in #515: each
+        // additional inline arm grows the dispatch frame and trips
+        // `cargo nextest`'s tighter stack budget on deep recursion tests.
+        return matvec_run(&args[0], &args[1]);
+    }
     if builtin == Some(Builtin::Dot) && args.len() == 2 {
         let xs = match &args[0] {
             Value::List(l) => l,
@@ -4866,6 +6562,109 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                     return Err(RuntimeError::new(
                         "ILO-R009",
                         format!("cprod: list elements must be numbers, got {:?}", other),
+                    ));
+                }
+            }
+        }
+        return Ok(Value::List(Arc::new(out)));
+    }
+    if builtin == Some(Builtin::Ewm) && args.len() == 2 {
+        let items = match &args[0] {
+            Value::List(l) => l,
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("ewm: first arg must be a list, got {:?}", other),
+                ));
+            }
+        };
+        let a = match &args[1] {
+            Value::Number(n) => *n,
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("ewm: second arg a must be a number, got {:?}", other),
+                ));
+            }
+        };
+        if !(0.0..=1.0).contains(&a) {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!("ewm: smoothing factor a must be in [0, 1], got {}", a),
+            ));
+        }
+        let mut nums: Vec<f64> = Vec::with_capacity(items.len());
+        for item in items.iter() {
+            match item {
+                Value::Number(n) => nums.push(*n),
+                other => {
+                    return Err(RuntimeError::new(
+                        "ILO-R009",
+                        format!("ewm: list elements must be numbers, got {:?}", other),
+                    ));
+                }
+            }
+        }
+        let out: Vec<Value> = ewm_compute(&nums, a)
+            .into_iter()
+            .map(Value::Number)
+            .collect();
+        return Ok(Value::List(Arc::new(out)));
+    }
+    if builtin == Some(Builtin::Where) && args.len() == 3 {
+        // where cond xs ys > L a — parallel-list conditional select.
+        // For each i: output[i] = xs[i] if cond[i] else ys[i].
+        // All three lists must have the same length.
+        let cond = match &args[0] {
+            Value::List(items) => items,
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("where: first arg (cond) must be a list, got {:?}", other),
+                ));
+            }
+        };
+        let xs = match &args[1] {
+            Value::List(items) => items,
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("where: second arg (xs) must be a list, got {:?}", other),
+                ));
+            }
+        };
+        let ys = match &args[2] {
+            Value::List(items) => items,
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("where: third arg (ys) must be a list, got {:?}", other),
+                ));
+            }
+        };
+        if cond.len() != xs.len() || cond.len() != ys.len() {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!(
+                    "where: length mismatch — cond={}, xs={}, ys={}; all three lists must be the same length",
+                    cond.len(),
+                    xs.len(),
+                    ys.len()
+                ),
+            ));
+        }
+        let mut out = Vec::with_capacity(cond.len());
+        for (i, c) in cond.iter().enumerate() {
+            match c {
+                Value::Bool(true) => out.push(xs[i].clone()),
+                Value::Bool(false) => out.push(ys[i].clone()),
+                other => {
+                    return Err(RuntimeError::new(
+                        "ILO-R009",
+                        format!(
+                            "where: cond element at index {} must be a bool, got {:?}",
+                            i, other
+                        ),
                     ));
                 }
             }
@@ -5505,6 +7304,13 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             name: func_name,
             ..
         } => {
+            // Trampoline: tail-position user-fn calls inside the body surface
+            // as `BodyResult::TailCall { callee, args }`. We pick those up
+            // here and rebind parameters in place instead of recursing into
+            // Rust. Effect: a function that recurses only in tail position
+            // runs to arbitrary depth on the tree interpreter without
+            // touching the host call stack. VM and Cranelift backends gain
+            // matching support in subsequent PRs.
             if args.len() != params.len() {
                 return Err(RuntimeError::new(
                     "ILO-R004",
@@ -5516,21 +7322,71 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                     ),
                 ));
             }
-            // Isolate the callee's scope from the caller's variables.
             let saved_vars = std::mem::take(&mut env.vars);
             let saved_marks = std::mem::replace(&mut env.scope_marks, vec![0]);
-            for (param, arg) in params.iter().zip(args) {
-                env.define(&param.name, arg);
-            }
-            env.call_stack.push(func_name.clone());
-            let result = eval_body(env, &body);
-            env.call_stack.pop();
+
+            let mut cur_params = params;
+            let mut cur_body = body;
+            let mut cur_args = args;
+            let mut cur_func_name = func_name;
+
+            let final_result = loop {
+                env.vars.clear();
+                env.scope_marks.clear();
+                env.scope_marks.push(0);
+                for (param, arg) in cur_params.iter().zip(cur_args) {
+                    env.define(&param.name, arg);
+                }
+                env.call_stack.push(cur_func_name.clone());
+                let result = eval_body(env, &cur_body, true);
+                env.call_stack.pop();
+
+                match result {
+                    Err(e) => break Err(e),
+                    Ok(BodyResult::Value(v))
+                    | Ok(BodyResult::Return(v))
+                    | Ok(BodyResult::Break(v)) => break Ok(v),
+                    Ok(BodyResult::Continue) => break Ok(Value::Nil),
+                    Ok(BodyResult::TailCall {
+                        callee,
+                        args: ta_args,
+                    }) => match env.function(&callee) {
+                        Ok(Decl::Function {
+                            params: np,
+                            body: nb,
+                            name: nn,
+                            ..
+                        }) => {
+                            if ta_args.len() != np.len() {
+                                break Err(RuntimeError::new(
+                                    "ILO-R004",
+                                    format!(
+                                        "{}: expected {} args, got {}",
+                                        callee,
+                                        np.len(),
+                                        ta_args.len()
+                                    ),
+                                ));
+                            }
+                            cur_params = np;
+                            cur_body = nb;
+                            cur_args = ta_args;
+                            cur_func_name = nn;
+                            continue;
+                        }
+                        _ => {
+                            // Fallback: callee isn't a Decl::Function (e.g.
+                            // a tool). try_synthesize_tail_call should have
+                            // ruled this out at synth time, but defending
+                            // against drift between synth and resolve.
+                            break call_function(env, &callee, ta_args);
+                        }
+                    },
+                }
+            };
             env.vars = saved_vars;
             env.scope_marks = saved_marks;
-            match result? {
-                BodyResult::Value(v) | BodyResult::Return(v) | BodyResult::Break(v) => Ok(v),
-                BodyResult::Continue => Ok(Value::Nil),
-            }
+            final_result
         }
         Decl::Tool { name, .. } => {
             if let Some(ref _provider) = env.tool_provider {
@@ -5633,13 +7489,86 @@ fn serde_json_to_value(v: serde_json::Value) -> Value {
     }
 }
 
-fn eval_body(env: &mut Env, stmts: &[Spanned<Stmt>]) -> Result<BodyResult> {
+/// If `expr` is a direct `Expr::Call name args` with no auto-unwrap, the args
+/// evaluate successfully, and `name` resolves to a user-defined function in
+/// `env`, evaluate the args and return `(name, arg_values)` so the caller can
+/// synthesise a `BodyResult::TailCall`.
+///
+/// Returns `None` when the expression isn't shaped like a TCO-eligible call,
+/// in which case the caller falls back to regular `eval_expr`. Returns
+/// `Some(Err(_))` if arg evaluation itself fails (e.g. nested call errored or
+/// propagated via `!`); propagating that error rather than swallowing it
+/// preserves the no-TCO semantics for failure paths.
+///
+/// Constraints (intentionally narrow for the tree-interpreter trampoline):
+/// - `unwrap` must be `None` — `!`/`!!` inspect the call result before
+///   propagating, so they can't be TCO'd without re-checking inside the
+///   trampoline (left for a follow-up).
+/// - `function` must be a direct user-fn name, not a scope-bound FnRef or
+///   Closure. FnRef-via-scope tail calls remain on the host stack (rare in
+///   practice; the common `fac n=...fac -n 1` pattern hits the direct path).
+/// - Tools (`Decl::Tool`) intentionally do not TCO — they're an effect
+///   boundary, not a recursive computation.
+///
+/// `#[inline(never)]` so the helper's frame stays separate from
+/// `eval_stmt`'s. `eval_stmt` is on the hot path for every statement; if
+/// this helper inlined, its `Vec<Value>` arg-buffer would bloat every
+/// `eval_stmt` frame and tip moderately-deep non-tail recursion (e.g.
+/// `fib 10`'s 177 nested frames) into stack overflow on tight-limit CI
+/// builds.
+#[inline(never)]
+fn try_synthesize_tail_call(env: &mut Env, expr: &Expr) -> Option<Result<(String, Vec<Value>)>> {
+    let Expr::Call {
+        function,
+        args,
+        unwrap,
+    } = expr
+    else {
+        return None;
+    };
+    if unwrap.is_any() {
+        return None;
+    }
+    // Reject if the callee name is shadowed in local scope by a non-fn
+    // binding, or by a FnRef/Closure (those use the dynamic-dispatch path
+    // in eval_expr and aren't worth duplicating here).
+    if env.vars.iter().rev().any(|(k, _)| k == function.as_str()) {
+        return None;
+    }
+    // Resolve callee as a user-fn. Builtins, tools, type defs etc. fall back
+    // to the normal call path. Builtin shadowing of a user fn name isn't a
+    // thing in ilo (verifier rejects it), but we still check function() first
+    // — the trampoline only handles Decl::Function payloads.
+    let decl = env.functions.get(function.as_str())?;
+    if !matches!(decl, Decl::Function { .. }) {
+        return None;
+    }
+    // Evaluate args. Any error here is surfaced as Some(Err(_)) so the
+    // caller propagates it the same way eval_expr would.
+    let mut arg_vals = Vec::with_capacity(args.len());
+    for arg in args {
+        match eval_expr(env, arg) {
+            Ok(v) => arg_vals.push(v),
+            Err(e) => return Some(Err(e)),
+        }
+    }
+    Some(Ok((function.clone(), arg_vals)))
+}
+
+fn eval_body(env: &mut Env, stmts: &[Spanned<Stmt>], is_tail: bool) -> Result<BodyResult> {
     let mut last = Value::Nil;
-    for spanned in stmts.iter() {
-        match eval_stmt(env, &spanned.node) {
+    let n = stmts.len();
+    for (i, spanned) in stmts.iter().enumerate() {
+        // Tail position only propagates to the LAST statement. Earlier
+        // statements are not in tail position by definition.
+        let stmt_is_tail = is_tail && i + 1 == n;
+        match eval_stmt(env, &spanned.node, stmt_is_tail) {
             Ok(Some(BodyResult::Return(v))) => return Ok(BodyResult::Return(v)),
             Ok(Some(BodyResult::Break(v))) => return Ok(BodyResult::Break(v)),
             Ok(Some(BodyResult::Continue)) => return Ok(BodyResult::Continue),
+            Ok(Some(BodyResult::TailCall { callee, args })) => {
+                return Ok(BodyResult::TailCall { callee, args });
+            }
             Ok(Some(BodyResult::Value(v))) => last = v,
             Ok(None) => {}
             Err(mut e) => {
@@ -5829,7 +7758,7 @@ fn eval_self_rebind_concat(env: &mut Env, rhs_expr: &Expr, prev: Value) -> Resul
     }
 }
 
-fn eval_stmt(env: &mut Env, stmt: &Stmt) -> Result<Option<BodyResult>> {
+fn eval_stmt(env: &mut Env, stmt: &Stmt, is_tail: bool) -> Result<Option<BodyResult>> {
     match stmt {
         Stmt::Let { name, value } => {
             // Peephole: `m = mset m k v` self-rebind. Drop env's binding to Nil
@@ -5915,25 +7844,36 @@ fn eval_stmt(env: &mut Env, stmt: &Stmt) -> Result<Option<BodyResult>> {
             let truth = is_truthy(&cond);
             let should_run = if *negated { !truth } else { truth };
             if let Some(else_b) = else_body {
-                // Ternary: cond{then}{else} — produces value, no early return
+                // Ternary: cond{then}{else} — produces value, no early
+                // return. The chosen branch inherits the outer tail
+                // position: if the ternary is the last stmt of a function
+                // body, both branches are in tail position.
                 let chosen = if should_run { body } else { else_b };
                 env.push_scope();
-                let result = eval_body(env, chosen);
+                let result = eval_body(env, chosen, is_tail);
                 env.pop_scope();
                 match result? {
                     BodyResult::Break(v) => Ok(Some(BodyResult::Break(v))),
                     BodyResult::Continue => Ok(Some(BodyResult::Continue)),
+                    BodyResult::TailCall { callee, args } => {
+                        Ok(Some(BodyResult::TailCall { callee, args }))
+                    }
                     BodyResult::Value(v) | BodyResult::Return(v) => Ok(Some(BodyResult::Value(v))),
                 }
             } else if should_run && *braceless {
                 // Braceless guard `cond expr`: early return from the
-                // enclosing function.
+                // enclosing function. The body is always in tail position
+                // relative to the function — the value it produces becomes
+                // the function's return, so a tail call inside trampolines.
                 env.push_scope();
-                let result = eval_body(env, body);
+                let result = eval_body(env, body, true);
                 env.pop_scope();
                 match result? {
                     BodyResult::Break(v) => Ok(Some(BodyResult::Break(v))),
                     BodyResult::Continue => Ok(Some(BodyResult::Continue)),
+                    BodyResult::TailCall { callee, args } => {
+                        Ok(Some(BodyResult::TailCall { callee, args }))
+                    }
                     BodyResult::Value(v) | BodyResult::Return(v) => Ok(Some(BodyResult::Return(v))),
                 }
             } else if should_run {
@@ -5944,12 +7884,20 @@ fn eval_stmt(env: &mut Env, stmt: &Stmt) -> Result<Option<BodyResult>> {
                 // its body value), but execution continues to subsequent
                 // statements. `ret` inside the body still propagates as
                 // Return; brk/cnt still propagate to the enclosing loop.
+                //
+                // Inheriting `is_tail`: if the braced guard is the last stmt
+                // of a function body AND its branch is taken, the branch's
+                // tail call is the function's tail call. Safe to pass
+                // through.
                 env.push_scope();
-                let result = eval_body(env, body);
+                let result = eval_body(env, body, is_tail);
                 env.pop_scope();
                 match result? {
                     BodyResult::Break(v) => Ok(Some(BodyResult::Break(v))),
                     BodyResult::Continue => Ok(Some(BodyResult::Continue)),
+                    BodyResult::TailCall { callee, args } => {
+                        Ok(Some(BodyResult::TailCall { callee, args }))
+                    }
                     BodyResult::Return(v) => Ok(Some(BodyResult::Return(v))),
                     BodyResult::Value(v) => Ok(Some(BodyResult::Value(v))),
                 }
@@ -5968,12 +7916,18 @@ fn eval_stmt(env: &mut Env, stmt: &Stmt) -> Result<Option<BodyResult>> {
                     for (name, val) in bindings {
                         env.define(&name, val);
                     }
-                    let result = eval_body(env, &arm.body);
+                    // Arm body inherits the match's tail position: a tail
+                    // call in the taken arm of a tail-position match
+                    // trampolines through.
+                    let result = eval_body(env, &arm.body, is_tail);
                     env.pop_scope();
                     match result? {
                         BodyResult::Return(v) => return Ok(Some(BodyResult::Return(v))),
                         BodyResult::Break(v) => return Ok(Some(BodyResult::Break(v))),
                         BodyResult::Continue => return Ok(Some(BodyResult::Continue)),
+                        BodyResult::TailCall { callee, args } => {
+                            return Ok(Some(BodyResult::TailCall { callee, args }));
+                        }
                         BodyResult::Value(v) => return Ok(Some(BodyResult::Value(v))),
                     }
                 }
@@ -5992,7 +7946,11 @@ fn eval_stmt(env: &mut Env, stmt: &Stmt) -> Result<Option<BodyResult>> {
                     for item in items.iter().cloned() {
                         env.push_scope();
                         env.define(binding, item);
-                        let result = eval_body(env, body);
+                        // Loop bodies are never in tail position: control
+                        // returns to the loop header after each iteration,
+                        // so a "tail call" inside a loop must materialise as
+                        // a normal call. Pass `false`.
+                        let result = eval_body(env, body, false);
                         env.pop_scope();
                         match result? {
                             BodyResult::Return(v) => {
@@ -6003,6 +7961,13 @@ fn eval_stmt(env: &mut Env, stmt: &Stmt) -> Result<Option<BodyResult>> {
                                 break;
                             }
                             BodyResult::Continue => continue,
+                            BodyResult::TailCall { .. } => {
+                                // Unreachable: loop body is_tail = false, so
+                                // try_synthesize_tail_call is never invoked
+                                // in this branch. Fall through with Nil to
+                                // keep the match exhaustive without panic.
+                                unreachable!("TailCall escaping non-tail loop body");
+                            }
                             BodyResult::Value(v) => last = v,
                         }
                     }
@@ -6036,7 +8001,8 @@ fn eval_stmt(env: &mut Env, stmt: &Stmt) -> Result<Option<BodyResult>> {
             for i in s..e {
                 env.push_scope();
                 env.define(binding, Value::Number(i as f64));
-                let result = eval_body(env, body);
+                // Range body is not in tail position; see ForEach above.
+                let result = eval_body(env, body, false);
                 env.pop_scope();
                 match result? {
                     BodyResult::Return(v) => {
@@ -6047,6 +8013,9 @@ fn eval_stmt(env: &mut Env, stmt: &Stmt) -> Result<Option<BodyResult>> {
                         break;
                     }
                     BodyResult::Continue => continue,
+                    BodyResult::TailCall { .. } => {
+                        unreachable!("TailCall escaping non-tail range body");
+                    }
                     BodyResult::Value(v) => last = v,
                 }
             }
@@ -6059,7 +8028,8 @@ fn eval_stmt(env: &mut Env, stmt: &Stmt) -> Result<Option<BodyResult>> {
                 if !is_truthy(&cond) {
                     break;
                 }
-                let result = eval_body(env, body);
+                // While body is not in tail position; see ForEach above.
+                let result = eval_body(env, body, false);
                 match result? {
                     BodyResult::Return(v) => {
                         return Ok(Some(BodyResult::Return(v)));
@@ -6069,15 +8039,15 @@ fn eval_stmt(env: &mut Env, stmt: &Stmt) -> Result<Option<BodyResult>> {
                         break;
                     }
                     BodyResult::Continue => continue,
+                    BodyResult::TailCall { .. } => {
+                        unreachable!("TailCall escaping non-tail while body");
+                    }
                     BodyResult::Value(v) => last = v,
                 }
             }
             Ok(Some(BodyResult::Value(last)))
         }
-        Stmt::Return(expr) => {
-            let val = eval_expr(env, expr)?;
-            Ok(Some(BodyResult::Return(val)))
-        }
+        Stmt::Return(expr) => eval_return_stmt(env, expr),
         Stmt::Break(expr) => {
             let val = match expr {
                 Some(e) => eval_expr(env, e)?,
@@ -6087,10 +8057,46 @@ fn eval_stmt(env: &mut Env, stmt: &Stmt) -> Result<Option<BodyResult>> {
         }
         Stmt::Continue => Ok(Some(BodyResult::Continue)),
         Stmt::Expr(expr) => {
-            let val = eval_expr(env, expr)?;
-            Ok(Some(BodyResult::Value(val)))
+            // Tail context: dispatch via the helper so the TailCall
+            // synthesis locals (Option<Result<(String, Vec<Value>)>>) stay
+            // out of eval_stmt's frame on the non-tail hot path.
+            if is_tail {
+                eval_tail_expr_stmt(env, expr)
+            } else {
+                let val = eval_expr(env, expr)?;
+                Ok(Some(BodyResult::Value(val)))
+            }
         }
     }
+}
+
+/// Tail-position `ret expr` handler. Extracted from `eval_stmt`'s match
+/// arm so the TailCall synth's locals (Option<Result<(String, Vec<Value>)>>,
+/// ~56 bytes) stay out of `eval_stmt`'s frame on the non-tail hot path.
+/// Matters for moderately-deep non-tail recursion on debug builds with
+/// tight test-thread stacks (~2MB): every saved byte per eval_stmt frame
+/// multiplies across hundreds of nested frames.
+#[inline(never)]
+fn eval_return_stmt(env: &mut Env, expr: &Expr) -> Result<Option<BodyResult>> {
+    if let Some(result) = try_synthesize_tail_call(env, expr) {
+        let (callee, args) = result?;
+        return Ok(Some(BodyResult::TailCall { callee, args }));
+    }
+    let val = eval_expr(env, expr)?;
+    Ok(Some(BodyResult::Return(val)))
+}
+
+/// Tail-position bare-expression-statement handler. Same frame-isolation
+/// rationale as `eval_return_stmt`. Only reached when `eval_stmt`'s
+/// `is_tail` arg is true (last stmt of a body in tail position).
+#[inline(never)]
+fn eval_tail_expr_stmt(env: &mut Env, expr: &Expr) -> Result<Option<BodyResult>> {
+    if let Some(result) = try_synthesize_tail_call(env, expr) {
+        let (callee, args) = result?;
+        return Ok(Some(BodyResult::TailCall { callee, args }));
+    }
+    let val = eval_expr(env, expr)?;
+    Ok(Some(BodyResult::Value(val)))
 }
 
 fn eval_expr(env: &mut Env, expr: &Expr) -> Result<Value> {
@@ -6277,13 +8283,20 @@ fn eval_expr(env: &mut Env, expr: &Expr) -> Result<Value> {
                     for (name, val) in bindings {
                         env.define(&name, val);
                     }
-                    let result = eval_body(env, &arm.body);
+                    // Value-producing match: the arm body is mid-expression,
+                    // not in tail position of any function. Pass false so no
+                    // TailCall is synthesised — the resulting Value flows
+                    // back into the surrounding expression normally.
+                    let result = eval_body(env, &arm.body, false);
                     env.pop_scope();
                     return match result? {
                         BodyResult::Value(v) | BodyResult::Return(v) | BodyResult::Break(v) => {
                             Ok(v)
                         }
                         BodyResult::Continue => Ok(Value::Nil),
+                        BodyResult::TailCall { .. } => {
+                            unreachable!("TailCall escaping value-producing Match arm")
+                        }
                     };
                 }
             }
@@ -6767,10 +8780,126 @@ pub(crate) fn run_spawn(cmd: &str, argv: &[String]) -> Value {
     Value::Ok(Box::new(Value::Map(Arc::new(m))))
 }
 
+/// `run2 cmd argv > R RunResult t` — structured process spawn.
+///
+/// Same concurrency / cap / UTF-8-lossy policy as `run_spawn`. Returns a
+/// typed Record{stdout:t; stderr:t; exit:n} wrapped in `Ok`. The `exit`
+/// field is an f64 (ilo's number type): normal exit codes are non-negative
+/// integers; signal-killed processes on Unix surface as -1.0 so callers
+/// can branch on `r.exit < 0`.
+#[cfg(not(target_family = "wasm"))]
+pub(crate) fn run_spawn_structured(cmd: &str, argv: &[String]) -> Value {
+    use std::process::{Command, Stdio};
+
+    let mut command = Command::new(cmd);
+    command
+        .args(argv)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    let mut child = match command.spawn() {
+        Ok(c) => c,
+        Err(e) => {
+            return Value::Err(Box::new(Value::Text(Arc::new(format!(
+                "run2: failed to spawn {cmd:?}: {e}"
+            )))));
+        }
+    };
+
+    let mut stdout_pipe = child.stdout.take();
+    let mut stderr_pipe = child.stderr.take();
+
+    let (stdout_res, stderr_res) = std::thread::scope(|s| {
+        let so = s.spawn(|| -> std::result::Result<Vec<u8>, String> {
+            let mut buf = Vec::new();
+            if let Some(p) = stdout_pipe.as_mut() {
+                read_capped(p, &mut buf, RUN_OUTPUT_CAP)?;
+            }
+            Ok(buf)
+        });
+        let se = s.spawn(|| -> std::result::Result<Vec<u8>, String> {
+            let mut buf = Vec::new();
+            if let Some(p) = stderr_pipe.as_mut() {
+                read_capped(p, &mut buf, RUN_OUTPUT_CAP)?;
+            }
+            Ok(buf)
+        });
+        let so = so
+            .join()
+            .unwrap_or_else(|_| Err("stdout reader panicked".to_string()));
+        let se = se
+            .join()
+            .unwrap_or_else(|_| Err("stderr reader panicked".to_string()));
+        (so, se)
+    });
+
+    let stdout_buf = match stdout_res {
+        Ok(b) => b,
+        Err(e) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Value::Err(Box::new(Value::Text(Arc::new(format!(
+                "run2: stdout capture failed: {e}"
+            )))));
+        }
+    };
+    let stderr_buf = match stderr_res {
+        Ok(b) => b,
+        Err(e) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Value::Err(Box::new(Value::Text(Arc::new(format!(
+                "run2: stderr capture failed: {e}"
+            )))));
+        }
+    };
+
+    let status = match child.wait() {
+        Ok(s) => s,
+        Err(e) => {
+            return Value::Err(Box::new(Value::Text(Arc::new(format!(
+                "run2: wait failed: {e}"
+            )))));
+        }
+    };
+
+    let stdout = String::from_utf8_lossy(&stdout_buf).into_owned();
+    let stderr = String::from_utf8_lossy(&stderr_buf).into_owned();
+
+    // exit as f64: normal code or -1 for signal-killed processes.
+    let exit_code: f64 = status.code().map(|c| c as f64).unwrap_or_else(|| {
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::ExitStatusExt;
+            if status.signal().is_some() {
+                return -1.0;
+            }
+        }
+        -1.0
+    });
+
+    let mut fields = HashMap::with_capacity(3);
+    fields.insert("stdout".to_string(), Value::Text(Arc::new(stdout)));
+    fields.insert("stderr".to_string(), Value::Text(Arc::new(stderr)));
+    fields.insert("exit".to_string(), Value::Number(exit_code));
+    Value::Ok(Box::new(Value::Record {
+        type_name: "RunResult".to_string(),
+        fields,
+    }))
+}
+
 #[cfg(target_family = "wasm")]
 pub(crate) fn run_spawn(_cmd: &str, _argv: &[String]) -> Value {
     Value::Err(Box::new(Value::Text(Arc::new(
         "run: process spawn not available on wasm".to_string(),
+    ))))
+}
+
+#[cfg(target_family = "wasm")]
+pub(crate) fn run_spawn_structured(_cmd: &str, _argv: &[String]) -> Value {
+    Value::Err(Box::new(Value::Text(Arc::new(
+        "run2: process spawn not available on wasm".to_string(),
     ))))
 }
 
@@ -7871,8 +10000,20 @@ mod tests {
 
     #[test]
     fn err_num_wrong_type() {
-        let err = run_str_err("f x:n>R n t;num x", Some("f"), vec![Value::Number(1.0)]);
-        assert!(err.contains("num requires text"));
+        // Post-polymorphism, only non-text-non-number args still error at
+        // runtime. Bool is the canonical "neither" case.
+        let err = run_str_err("f x:b>R n t;num x", Some("f"), vec![Value::Bool(true)]);
+        assert!(
+            err.contains("num requires text or number"),
+            "expected polymorphic num error, got: {err}"
+        );
+    }
+
+    #[test]
+    fn num_on_number_is_identity() {
+        // Polymorphic widening: numeric input is identity-wrapped Ok.
+        let result = run_str("f x:n>R n t;num x", Some("f"), vec![Value::Number(42.0)]);
+        assert_eq!(result, Value::Ok(Box::new(Value::Number(42.0))));
     }
 
     #[test]
@@ -8439,6 +10580,7 @@ mod tests {
                 },
             ],
             source: None,
+            parse_failed_fns: Default::default(),
         }
     }
 
@@ -8516,6 +10658,7 @@ mod tests {
                 },
             ],
             source: None,
+            parse_failed_fns: Default::default(),
         };
         let result = run(&prog, Some("a"), vec![Value::Number(1.0)]).unwrap();
         assert_eq!(
@@ -12465,7 +14608,7 @@ mod tests {
 
     #[test]
     fn box_muller_finite_for_nonzero_sigma() {
-        fastrand::seed(42);
+        crate::rng::seed(42);
         for _ in 0..200 {
             let v = box_muller_normal(0.0, 1.0);
             assert!(v.is_finite(), "got non-finite {v}");
@@ -12601,5 +14744,188 @@ mod tests {
                 "round-trip failed for {secs}"
             );
         }
+    }
+
+    // ── rand-bytes / base64url-no-pad encoder ────────────────────────────────
+    //
+    // The encoder is internal to the interpreter (no third-party base64
+    // dep yet on main), so we pin it against known RFC 4648 §5 vectors here.
+    // If anyone tweaks the byte-shuffle these break immediately.
+
+    #[test]
+    fn b64url_no_pad_empty() {
+        assert_eq!(super::b64url_no_pad_encode(b""), "");
+    }
+
+    #[test]
+    fn b64url_no_pad_one_byte() {
+        // "f" -> "Zg" (single trailing-byte branch, rem.len() == 1)
+        assert_eq!(super::b64url_no_pad_encode(b"f"), "Zg");
+    }
+
+    #[test]
+    fn b64url_no_pad_two_bytes() {
+        // "fo" -> "Zm8" (two trailing-bytes branch, rem.len() == 2)
+        assert_eq!(super::b64url_no_pad_encode(b"fo"), "Zm8");
+    }
+
+    #[test]
+    fn b64url_no_pad_three_bytes() {
+        // "foo" -> "Zm9v" (exact 3-byte multiple, no remainder)
+        assert_eq!(super::b64url_no_pad_encode(b"foo"), "Zm9v");
+    }
+
+    #[test]
+    fn b64url_no_pad_canonical_hello() {
+        // Standard b64 of "hello" is "aGVsbG8=" — strip the `=` for no-pad.
+        assert_eq!(super::b64url_no_pad_encode(b"hello"), "aGVsbG8");
+    }
+
+    #[test]
+    fn b64url_no_pad_url_safe_chars() {
+        // Input chosen so the standard b64 output contains `+` and `/`,
+        // which the url-safe alphabet must rewrite to `-` and `_`.
+        // Bytes [0xfb, 0xff, 0xbf] -> std b64 "+/+/" -> url-safe "-_-_".
+        assert_eq!(super::b64url_no_pad_encode(&[0xfb, 0xff, 0xbf]), "-_-_");
+    }
+
+    #[test]
+    fn b64url_no_pad_length_formula() {
+        // Output length = ceil(n * 4 / 3) for non-zero n, with the trailing
+        // `=` chars dropped. Pins the length contract that callers rely on
+        // (e.g. `len (rand-bytes 16) == 22` for a jti token).
+        for n in 0..=64 {
+            let bytes = vec![0xa5u8; n];
+            let encoded = super::b64url_no_pad_encode(&bytes);
+            let expected = if n == 0 {
+                0
+            } else {
+                // ceil(n/3)*4 minus padding chars
+                let pad = match n % 3 {
+                    1 => 2,
+                    2 => 1,
+                    _ => 0,
+                };
+                n.div_ceil(3) * 4 - pad
+            };
+            assert_eq!(encoded.len(), expected, "n={n}: encoded={encoded:?}");
+        }
+    }
+
+    #[test]
+    fn rand_bytes_negative_returns_err() {
+        let r = super::eval_rand_bytes(&Value::Number(-1.0));
+        assert!(matches!(&r, Err(e) if e.code == "ILO-R009"), "got {r:?}");
+    }
+
+    #[test]
+    fn rand_bytes_non_finite_returns_err() {
+        for n in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            let r = super::eval_rand_bytes(&Value::Number(n));
+            assert!(
+                matches!(&r, Err(e) if e.code == "ILO-R009"),
+                "n={n} got {r:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn rand_bytes_over_cap_returns_err() {
+        let r = super::eval_rand_bytes(&Value::Number(2.0 * 1024.0 * 1024.0));
+        assert!(matches!(&r, Err(e) if e.code == "ILO-R009"), "got {r:?}");
+    }
+
+    #[test]
+    fn rand_bytes_zero_returns_empty_text() {
+        let r = super::eval_rand_bytes(&Value::Number(0.0)).expect("Ok");
+        match r {
+            Value::Text(s) => assert_eq!(s.as_str(), ""),
+            other => panic!("expected Text(\"\"), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn rand_bytes_16_returns_22_char_text() {
+        let r = super::eval_rand_bytes(&Value::Number(16.0)).expect("Ok");
+        match r {
+            Value::Text(s) => {
+                assert_eq!(s.len(), 22, "got {s:?}");
+                assert!(
+                    s.chars()
+                        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'),
+                    "non-b64url char in {s:?}"
+                );
+            }
+            other => panic!("expected Text, got {other:?}"),
+        }
+    }
+    // ── run2 cross-engine regression tests ──────────────────────────────
+
+    #[test]
+    #[cfg(not(target_family = "wasm"))]
+    fn run2_echo_stdout_is_record() {
+        // echo populates stdout; exit is 0; stderr is empty.
+        let src = r#"f>_;r=run2!! "echo" ["hello"];r"#;
+        let v = run_str(src, Some("f"), vec![]);
+        match v {
+            Value::Record {
+                ref type_name,
+                ref fields,
+            } => {
+                assert_eq!(type_name, "RunResult");
+                assert_eq!(
+                    fields.get("stdout"),
+                    Some(&Value::Text(Arc::new("hello\n".to_string())))
+                );
+                assert_eq!(
+                    fields.get("stderr"),
+                    Some(&Value::Text(Arc::new(String::new())))
+                );
+                assert_eq!(fields.get("exit"), Some(&Value::Number(0.0)));
+            }
+            other => panic!("expected RunResult record, got {:?}", other),
+        }
+    }
+
+    #[test]
+    #[cfg(not(target_family = "wasm"))]
+    fn run2_false_exit_nonzero() {
+        // `false` exits 1; not an Err -- exit field carries the code as a number.
+        let src = r#"f>n;r=run2!! "false" [];r.exit"#;
+        assert_eq!(run_str(src, Some("f"), vec![]), Value::Number(1.0));
+    }
+
+    #[test]
+    #[cfg(not(target_family = "wasm"))]
+    fn run2_true_exit_zero() {
+        let src = r#"f>n;r=run2!! "true" [];r.exit"#;
+        assert_eq!(run_str(src, Some("f"), vec![]), Value::Number(0.0));
+    }
+
+    #[test]
+    #[cfg(not(target_family = "wasm"))]
+    fn run2_nonexistent_is_err() {
+        // Spawn failure surfaces as Err, not Ok.
+        let src = r#"f>b;r=run2 "no-such-command-xyz-run2" [];?r{~v:false;^e:true}"#;
+        assert_eq!(run_str(src, Some("f"), vec![]), Value::Bool(true));
+    }
+
+    #[test]
+    #[cfg(not(target_family = "wasm"))]
+    fn run2_stderr_captured() {
+        // Verify stdout and stderr are captured into separate fields.
+        // echo puts text in stdout; stderr should be empty (len 0).
+        let src = r#"f>n;r=run2!! "echo" ["hello"];len r.stdout"#;
+        let v = run_str(src, Some("f"), vec![]);
+        // "hello\n" is 6 bytes/chars
+        assert_eq!(v, Value::Number(6.0));
+    }
+
+    #[test]
+    #[cfg(not(target_family = "wasm"))]
+    fn run2_exit_is_number_not_text() {
+        // Regression: exit must be Number, not Text (run uses Text for code).
+        let src = r#"f>b;r=run2!! "true" [];?r.exit{0:true;_:false}"#;
+        assert_eq!(run_str(src, Some("f"), vec![]), Value::Bool(true));
     }
 }

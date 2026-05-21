@@ -340,7 +340,11 @@ pub fn normalize_newlines(source: &str) -> String {
 /// because `;` characters that replace `\n` (and indentation that gets
 /// stripped) shift every following byte.
 pub fn normalize_newlines_with_map(source: &str) -> (String, Vec<u32>) {
-    if !source.contains('\n') {
+    // Fast path: nothing the normaliser cares about. Triple-quoted
+    // strings (`"""..."""`) need rewriting even on single-line input
+    // because logos's string regex can't span them, so we can't take
+    // the identity shortcut when the source contains `"""`.
+    if !source.contains('\n') && !source.contains("\"\"\"") {
         // Identity case: the lexer sees exactly the source bytes, so the
         // map is the identity over `0..=source.len()`.
         let len = source.len();
@@ -383,7 +387,124 @@ pub fn normalize_newlines_with_map(source: &str) -> (String, Vec<u32>) {
     }
 
     while let Some((i, c)) = iter.next() {
+        // Windows CRLF: consume the `\r` silently when it is immediately
+        // followed by `\n`. The `\n` is then handled on the next iteration
+        // as a normal newline, preserving correct line/column accounting.
+        // Standalone `\r` (old Mac line endings) is treated as whitespace
+        // and passed through to the logos error path unchanged.
+        if c == '\r' && iter.peek().map(|(_, ch)| *ch) == Some('\n') {
+            // Do not push `\r` to output; do not update last_significant.
+            // The `\n` on the next iteration does all the work.
+            continue;
+        }
         if c == '"' {
+            // Triple-quoted multi-line string (`"""..."""`). Detect by
+            // checking whether the next two source bytes are also `"`. If
+            // so, scan to the closing `"""`, apply indent stripping when
+            // the closing delimiter sits on its own line, and emit the
+            // result as a synthesised single-line `"..."` literal so
+            // logos's existing string regex consumes it. Each emitted
+            // byte is mapped back to the source byte that produced it
+            // (or the nearest source byte, for escape chars synthesised
+            // to encode raw newlines / quotes).
+            let src_bytes = source.as_bytes();
+            if src_bytes.get(i + 1) == Some(&b'"') && src_bytes.get(i + 2) == Some(&b'"') {
+                // Consume the two extra `"` from the iterator (`c` is the
+                // first one, already taken). The opening sits at byte `i`.
+                iter.next();
+                iter.next();
+                // Find the closing `"""`. Inside a triple-quoted string,
+                // `\"` is *not* an escape; we don't peel escapes here.
+                // logos decodes the synthesised single-quoted form. So we
+                // scan raw bytes for the next `"""` sequence.
+                let content_start = i + 3;
+                let mut j = content_start;
+                while j + 2 < src_bytes.len()
+                    && !(src_bytes[j] == b'"'
+                        && src_bytes[j + 1] == b'"'
+                        && src_bytes[j + 2] == b'"')
+                {
+                    j += 1;
+                }
+                let (content_end, close_end) = if j + 2 < src_bytes.len() {
+                    (j, j + 3)
+                } else {
+                    // Unterminated: scan to EOF, leave it to logos to
+                    // surface as a lex error against the synthesised form.
+                    (src_bytes.len(), src_bytes.len())
+                };
+                // Advance the iterator past the entire triple-quoted span
+                // (content + closing `"""`, if present).
+                while let Some(&(pi, _)) = iter.peek() {
+                    if pi >= close_end {
+                        break;
+                    }
+                    iter.next();
+                }
+                let raw = &source[content_start..content_end];
+                let stripped = strip_triple_indent(raw);
+                // Emit synthesised single-quoted string. Each emitted byte
+                // points back at the source byte that produced it; injected
+                // escape backslashes are mapped to the offending raw byte.
+                push_char_with(&mut out, &mut map, '"', i);
+                let stripped_chars: Vec<(usize, char)> = stripped.bytes.char_indices().collect();
+                let mut k = 0usize;
+                while k < stripped_chars.len() {
+                    let (b_off, ch) = stripped_chars[k];
+                    let orig = stripped.src_offsets[b_off] + content_start;
+                    match ch {
+                        '\n' => {
+                            // Encode raw newline as `\n` escape so the
+                            // synthesised single-quoted form lexes cleanly.
+                            push_str_with(&mut out, &mut map, "\\n", orig);
+                        }
+                        '\r' => {
+                            push_str_with(&mut out, &mut map, "\\r", orig);
+                        }
+                        '"' => {
+                            // Bare `"` inside triple-quoted content must
+                            // be escaped in the synthesised single-quoted
+                            // form. (Real `"""` triplets are the closing
+                            // delimiter; they never appear in content.)
+                            push_str_with(&mut out, &mut map, "\\\"", orig);
+                        }
+                        '\\' => {
+                            // Pass `\` + following char through verbatim
+                            // so existing escape sequences (`\n`, `\t`,
+                            // `\"`, ...) still decode the same way they
+                            // do in `"..."`. A `\` immediately before a
+                            // raw newline becomes `\\n` so the escape
+                            // remains well-formed.
+                            push_char_with(&mut out, &mut map, '\\', orig);
+                            if k + 1 < stripped_chars.len() {
+                                let (nb_off, nch) = stripped_chars[k + 1];
+                                let norig = stripped.src_offsets[nb_off] + content_start;
+                                match nch {
+                                    '\n' => push_char_with(&mut out, &mut map, 'n', norig),
+                                    '\r' => push_char_with(&mut out, &mut map, 'r', norig),
+                                    _ => push_char_with(&mut out, &mut map, nch, norig),
+                                }
+                                k += 2;
+                                continue;
+                            }
+                        }
+                        _ => {
+                            push_char_with(&mut out, &mut map, ch, orig);
+                        }
+                    }
+                    k += 1;
+                }
+                // Closing `"`. Map to the first byte of the closing
+                // `"""` if present, else EOF.
+                let close_pos = if close_end > content_end {
+                    content_end
+                } else {
+                    source.len().saturating_sub(1)
+                };
+                push_char_with(&mut out, &mut map, '"', close_pos);
+                last_significant = Some('"');
+                continue;
+            }
             // Pass through string literal content verbatim so `--` inside a
             // string isn't mistaken for a comment, `\n` (if ever present
             // inside a string) isn't rewritten to `;`, and `(`/`[` inside
@@ -524,6 +645,173 @@ pub fn normalize_newlines_with_map(source: &str) -> (String, Vec<u32>) {
     debug_assert_eq!(map.len(), out.len() + 1);
 
     (out, map)
+}
+
+/// Result of indent-stripping a triple-quoted string body.
+///
+/// `bytes` is the resulting content; `src_offsets[i]` is the byte offset
+/// into the *original* triple-quoted content (i.e. `&source[content_start..
+/// content_end]`) that produced byte `i` of `bytes`. The vector has one
+/// entry per byte of `bytes`, and is used by `normalize_newlines_with_map`
+/// to keep span attribution accurate for tokens emitted from the
+/// synthesised single-quoted form.
+struct StrippedTriple {
+    bytes: String,
+    src_offsets: Vec<usize>,
+}
+
+/// Apply indent stripping to the body of a triple-quoted string.
+///
+/// Rules:
+/// - If the body contains no newline, return it unchanged. (Single-line
+///   form `"""x"""` behaves exactly like `"x"`.)
+/// - Otherwise, treat the body as a sequence of lines split on `\n`.
+/// - If the body starts with a newline (i.e. the opening `"""` is the
+///   last thing on its line), drop that leading newline.
+/// - If the body ends with whitespace-then-EOF immediately before the
+///   closing `"""` (i.e. the closing `"""` sits on its own line), strip
+///   the trailing whitespace-only line and compute the common leading
+///   whitespace prefix across the remaining non-blank lines (matching
+///   Rust's `indoc!` macro / Python `textwrap.dedent`). The terminating
+///   `\n` of the last content line is preserved.
+/// - Otherwise keep the body verbatim (closing `"""` is inline).
+fn strip_triple_indent(raw: &str) -> StrippedTriple {
+    let bytes = raw.as_bytes();
+    if !bytes.contains(&b'\n') {
+        // Single-line case: pass through unchanged.
+        let src_offsets: Vec<usize> = (0..bytes.len()).collect();
+        return StrippedTriple {
+            bytes: raw.to_string(),
+            src_offsets,
+        };
+    }
+
+    // Identify a leading newline (opening `"""` ends the line). Optional
+    // `\r` before `\n` is handled by treating CRLF as a single newline
+    // boundary at the start.
+    let mut start = 0usize;
+    if bytes.first() == Some(&b'\n') {
+        start = 1;
+    } else if bytes.len() >= 2 && bytes[0] == b'\r' && bytes[1] == b'\n' {
+        start = 2;
+    }
+
+    // Detect "closing `"""` on its own line": the body, after the leading
+    // newline drop, ends with `\n` followed only by spaces/tabs. If so,
+    // we'll strip that trailing whitespace-only line AND compute the
+    // common indent across the remaining content lines.
+    let (end, dedent_active) = {
+        let mut last_nl: Option<usize> = None;
+        for (k, &b) in bytes[start..].iter().enumerate() {
+            if b == b'\n' {
+                last_nl = Some(start + k);
+            }
+        }
+        match last_nl {
+            Some(nl) => {
+                let after_nl = &bytes[nl + 1..];
+                if after_nl.iter().all(|&b| b == b' ' || b == b'\t') {
+                    // Keep the terminating `\n` of the last content line
+                    // in the output (matches `indoc!`); drop everything
+                    // after it (the closing-`"""`-line indent).
+                    (nl + 1, true)
+                } else {
+                    (bytes.len(), false)
+                }
+            }
+            None => (bytes.len(), false),
+        }
+    };
+
+    let inner = &raw[start..end];
+    if !dedent_active {
+        let src_offsets: Vec<usize> = (start..end).collect();
+        return StrippedTriple {
+            bytes: inner.to_string(),
+            src_offsets,
+        };
+    }
+
+    // `inner` ends in `\n` (we kept the terminating newline). Splitting
+    // on `\n` produces an empty trailing element which we deliberately
+    // don't emit; the loop appends `\n` only between adjacent elements.
+    let lines: Vec<&str> = inner.split('\n').collect();
+    // The trailing indent line (whitespace between final content `\n`
+    // and the closing `"""`) is also a dedent constraint, so that the
+    // closing delimiter's indentation can define the baseline (PEP 257
+    // intuition).
+    let closing_indent = &raw[end..];
+    let mut common: Option<&str> = None;
+    for line in lines.iter() {
+        if line.chars().all(|c| c == ' ' || c == '\t') {
+            // Blank/whitespace-only line: not a constraint.
+            continue;
+        }
+        let lead: &str = {
+            let mut byte_end = 0;
+            for (off, ch) in line.char_indices() {
+                if ch == ' ' || ch == '\t' {
+                    byte_end = off + ch.len_utf8();
+                } else {
+                    break;
+                }
+            }
+            &line[..byte_end]
+        };
+        common = Some(match common {
+            None => lead,
+            Some(prev) => common_prefix(prev, lead),
+        });
+    }
+    let common: &str = match (common, closing_indent.is_empty()) {
+        (Some(c), false) => common_prefix(c, closing_indent),
+        (Some(c), true) => c,
+        (None, _) => closing_indent,
+    };
+    let strip_len = common.len();
+
+    let mut out_bytes = String::with_capacity(inner.len());
+    let mut src_offsets: Vec<usize> = Vec::with_capacity(inner.len());
+    let mut line_offset_in_inner = 0usize;
+    for (li, line) in lines.iter().enumerate() {
+        let line_bytes = line.as_bytes();
+        let drop = if line_bytes.starts_with(common.as_bytes()) {
+            strip_len
+        } else if line.chars().all(|c| c == ' ' || c == '\t') {
+            line_bytes.len()
+        } else {
+            0
+        };
+        let line_abs_start = start + line_offset_in_inner;
+        for (off, ch) in line[drop..].char_indices() {
+            let abs = line_abs_start + drop + off;
+            out_bytes.push(ch);
+            for _ in 0..ch.len_utf8() {
+                src_offsets.push(abs);
+            }
+        }
+        if li + 1 < lines.len() {
+            out_bytes.push('\n');
+            src_offsets.push(line_abs_start + line.len());
+        }
+        line_offset_in_inner += line.len() + 1; // +1 for the `\n` separator
+    }
+    debug_assert_eq!(out_bytes.len(), src_offsets.len());
+    StrippedTriple {
+        bytes: out_bytes,
+        src_offsets,
+    }
+}
+
+/// Common byte prefix of two whitespace-only strings.
+fn common_prefix<'a>(a: &'a str, b: &str) -> &'a str {
+    let ab = a.as_bytes();
+    let bb = b.as_bytes();
+    let mut i = 0;
+    while i < ab.len() && i < bb.len() && ab[i] == bb[i] {
+        i += 1;
+    }
+    &a[..i]
 }
 
 /// Lex source code into a stream of tokens with positions.

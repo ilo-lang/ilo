@@ -8,18 +8,21 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  # Interpreter tests exercise deep recursion (e.g. fib(10)), which can blow
+  # the 8 MiB default thread stack on Linux debug builds. 16 MiB is enough.
+  RUST_MIN_STACK: 16777216
 
 jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v5
+    - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
     - name: Check formatting
       run: cargo fmt --all -- --check
     - name: Clippy
       run: cargo clippy --workspace --all-targets -- -D warnings
     - name: Set up Python
-      uses: actions/setup-python@v5
+      uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
       with:
         python-version: '3.12'
     - name: Install skills-ref (agentskills.io reference validator)
@@ -29,11 +32,19 @@ jobs:
     - name: Install tiktoken
       run: pip install tiktoken
     - name: Enforce modular-skill token budget (cl100k_base)
-      # Each ilo-*.md skill must be ≤ 1,000 tokens; total ≤ 5,000. The
-      # in-binary tests/skill_modular.rs enforces a byte proxy for the same
-      # limit, but this step is the canonical check using the same tokeniser
+      # Each ilo-*.md skill must be ≤ 1,000 tokens, with one exception:
+      # ilo-language (the foundational module) is capped at ≤ 1,500.
+      # Aggregate across all modules ≤ 8,500. The in-binary
+      # tests/skill_modular.rs enforces a byte proxy for the same limit,
+      # but this step is the canonical check using the same tokeniser
       # an agent host uses to size the context window.
       run: python3 scripts/check-skill-tokens.py
+    - name: Shellcheck install.sh
+      run: shellcheck -s sh scripts/install/install.sh
+    - name: Verify install.sh sha256 verification (offline regression test)
+      # Stubs curl and exercises happy / tamper / missing-asset paths so a
+      # refactor can't silently drop the supply-chain integrity check.
+      run: bash scripts/install/test-install-sh.sh
 
   skill-validate:
     # Validate skills/ilo/SKILL.md against the agentskills.io reference
@@ -41,7 +52,7 @@ jobs:
     # (Claude Code, Claude Desktop, Codex, etc.) before the Rust tests run.
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v5
+    - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
     - name: Install skills-ref
       run: npm install -g skills-ref
     - name: Validate skill
@@ -52,9 +63,9 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v5
+    - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
     - name: Install cargo-nextest
-      uses: taiki-e/install-action@v2
+      uses: taiki-e/install-action@65851e10cd6c377f11a60e600abc07cb08643468 # v2
       with:
         tool: nextest
     - name: Build
@@ -67,7 +78,7 @@ jobs:
       run: cargo nextest run --profile ci
     - name: Upload test results to Codecov
       if: ${{ !cancelled() }}
-      uses: codecov/codecov-action@v6
+      uses: codecov/codecov-action@e79a6962e0d4c0c17b229090214935d2e33f8354 # v6
       with:
         files: target/nextest/ci/junit.xml
         report_type: test_results
@@ -76,9 +87,9 @@ jobs:
   coverage:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v5
+    - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
     - name: Install cargo-llvm-cov
-      uses: taiki-e/install-action@v2
+      uses: taiki-e/install-action@65851e10cd6c377f11a60e600abc07cb08643468 # v2
       with:
         tool: cargo-llvm-cov
     - name: Build libilo.a (needed by AOT tests)
@@ -86,7 +97,7 @@ jobs:
     - name: Generate coverage
       run: cargo llvm-cov --workspace --lcov --output-path lcov.info
     - name: Upload to Codecov
-      uses: codecov/codecov-action@v6
+      uses: codecov/codecov-action@e79a6962e0d4c0c17b229090214935d2e33f8354 # v6
       with:
         files: lcov.info
         fail_ci_if_error: false

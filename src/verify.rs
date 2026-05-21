@@ -89,6 +89,21 @@ struct VerifyContext {
     aliases: HashMap<String, Ty>,
     errors: Vec<VerifyError>,
     in_loop: bool,
+    /// Function names whose declaration failed to parse. Populated from
+    /// `Program.parse_failed_fns` at the start of `verify`. Two effects:
+    ///   1. We skip type-checking the body of any function in this set (its
+    ///      AST is poison, so any diagnostic we emit would be a cascade off
+    ///      the parse error the user already has).
+    ///   2. When emitting `ILO-T005 undefined function 'X'`, if X is in this
+    ///      set we collapse all call-site emissions into ONE diagnostic per
+    ///      function name with a cross-reference back to the parse error.
+    ///      Without this, ONE broken function body produces N undefined-
+    ///      function errors (one per call site), burying the root cause.
+    parse_failed_fns: HashMap<String, ParseFailRef>,
+    /// Tracks which parse-failed function names we've already emitted the
+    /// collapsed `ILO-T005` cross-reference for, so call sites #2..N stay
+    /// silent. Reset per `verify()` call (lives on VerifyContext).
+    suppressed_undef_reported: std::collections::HashSet<String>,
 }
 
 type Scope = Vec<HashMap<String, Ty>>;
@@ -264,6 +279,51 @@ fn kebab_subtract_hint<'a>(
     }
 }
 
+/// Hint for the `name expr` shape when `name` is non-callable and the single
+/// argument is a simple value (literal number / bool / text, or a bare ref).
+///
+/// Triggers on the classic ambiguity in assignment-RHS:
+///
+/// ```text
+/// dx=xj 0-xi
+/// ```
+///
+/// which parses as `dx=(xj 0) - xi` — a call `xj(0)` whose result is then
+/// fed into the outer Subtract. The agent almost certainly meant
+/// `dx=xj - xi` (= `-xj xi` in ilo's prefix form) or
+/// `dx=xj + (0-xi)` (= `+xj -0 xi`). Either way the misparse happens
+/// because whitespace-juxtaposition is the call syntax in ilo, and any
+/// bare token following a bound name is greedily eaten as its argument.
+///
+/// Detection at the inner call site (rather than the outer BinOp) is
+/// intentional: this is where the type-check first notices that the
+/// bound name isn't callable, so the diagnostic anchors exactly on the
+/// offending span. The shape `<bound-name> <literal-or-ref>` with a
+/// single arg is the high-precision signal — real call sites of a
+/// not-actually-callable value are rare.
+///
+/// Returns `None` when the shape doesn't match, so callers can fall
+/// through to the standard hint.
+fn call_vs_binop_hint(callee: &str, args: &[Expr]) -> Option<String> {
+    if args.len() != 1 {
+        return None;
+    }
+    // Only fire when the single arg is something that could plausibly
+    // be the LHS of an intended binop: a numeric literal or a bare ref.
+    // Bool/text literals don't trigger the confusion in practice.
+    let arg_src = match &args[0] {
+        Expr::Literal(Literal::Number(n)) => format!("{n}"),
+        Expr::Ref(n) => n.clone(),
+        _ => return None,
+    };
+    Some(format!(
+        "this parsed as a call `{callee} {arg_src}` (whitespace-juxtaposition is call syntax in ilo). \
+        If you meant a binary operation between `{callee}` and `{arg_src}`, ilo uses prefix operators: \
+        write `+{callee} {arg_src}` (add), `-{callee} {arg_src}` (subtract), `*{callee} {arg_src}` (multiply), or `/{callee} {arg_src}` (divide). \
+        See ILO-T005 `--explain` for the call-vs-binop gotcha."
+    ))
+}
+
 fn closest_match<'a>(name: &str, candidates: impl Iterator<Item = &'a String>) -> Option<String> {
     let mut best: Option<(String, usize)> = None;
     for candidate in candidates {
@@ -302,7 +362,7 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     // We use special strings to describe signatures
     ("len", &["list_or_text"], "n"),
     ("str", &["n"], "t"),
-    ("num", &["t"], "R n t"),
+    ("num", &["t_or_n"], "R n t"),
     ("abs", &["n"], "n"),
     ("flr", &["n"], "n"),
     ("cel", &["n"], "n"),
@@ -333,8 +393,26 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     // compression family (rd, wr, srt, flt, fld, fmt).
     ("pst", &["t", "t"], "R t t"),
     ("pst", &["t", "t", "M t t"], "R t t"),
+    // get-to / pst-to — timeout variants. Third arg is timeout in milliseconds.
+    ("get-to", &["t", "n"], "R t t"),
+    ("pst-to", &["t", "t", "n"], "R t t"),
+    // HTTP verb cluster (#5z). Same shape as `pst` / `get` — optional `M t t`
+    // headers map, returns `R t t`. `del`/`hd`/`opt` mirror `get`; `put`/`pat`
+    // mirror `pst`.
+    ("put", &["t", "t"], "R t t"),
+    ("put", &["t", "t", "M t t"], "R t t"),
+    ("pat", &["t", "t"], "R t t"),
+    ("pat", &["t", "t", "M t t"], "R t t"),
+    ("del", &["t"], "R t t"),
+    ("del", &["t", "M t t"], "R t t"),
+    ("hed", &["t"], "R t t"),
+    ("hed", &["t", "M t t"], "R t t"),
+    ("opt", &["t"], "R t t"),
+    ("opt", &["t", "M t t"], "R t t"),
     ("get-many", &["L t"], "L (R t t)"),
     ("run", &["t", "L t"], "R (M t t) t"),
+    // run2: structured spawn — typed Record instead of loose Map.
+    ("run2", &["t", "L t"], "R RunResult t"),
     ("rd", &["t"], "R ? t"),
     ("rd", &["t", "t"], "R ? t"),
     ("lsd", &["t"], "R (L t) t"),
@@ -345,6 +423,15 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("dirname", &["t"], "t"),
     ("basename", &["t"], "t"),
     ("pathjoin", &["L t"], "t"),
+    // 0.12.1 filesystem metadata primitives. Asymmetry by design: size and
+    // mtime return Result (open-and-stat can fail), predicates return bool
+    // (Python convention — `false` collapses missing / perm-denied / wrong-
+    // kind into the natural `?isfile p{...}` branch). Predicates follow
+    // symlinks; size/mtime errors on dir, missing, or permission-denied.
+    ("fsize", &["t"], "R n t"),
+    ("mtime", &["t"], "R n t"),
+    ("isfile", &["t"], "b"),
+    ("isdir", &["t"], "b"),
     ("rdl", &["t"], "R (L t) t"),
     ("rdb", &["t", "t"], "R ? t"),
     // stdin read primitives (0.12.1). rdin reads all stdin; rdinl reads lines.
@@ -368,6 +455,12 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("zip", &["list", "list"], "list"),
     ("enumerate", &["list"], "list"),
     ("range", &["n", "n"], "L n"),
+    // Numeric prelude: evenly-spaced floats (numpy-style endpoint=True),
+    // a list of ones, and `n` copies of any value. `rep`'s element type
+    // is generic — return type tracks the second argument.
+    ("linspace", &["n", "n", "n"], "L n"),
+    ("ones", &["n"], "L n"),
+    ("rep", &["n", "any"], "list"),
     ("window", &["n", "list"], "list"),
     ("chunks", &["n", "L a"], "L (L a)"),
     ("setunion", &["list", "list"], "list"),
@@ -389,6 +482,9 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("drop", &["n", "list_or_text"], "list_or_text"),
     ("rnd", &[], "n"),
     ("rndn", &["n", "n"], "n"),
+    // rand-bytes n > t — cryptographically random bytes, base64url-no-pad encoded.
+    ("rand-bytes", &["n"], "t"),
+    ("seed", &["n"], "_"),
     ("now", &[], "n"),
     ("now-ms", &[], "n"),
     // Math constants (0.12.1). Zero-arg builtins returning f64 constants.
@@ -396,6 +492,7 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("tau", &[], "n"),
     ("e", &[], "n"),
     ("sleep", &["n"], "_"),
+    ("tz-offset", &["t", "n"], "R n t"),
     ("dtfmt", &["n", "t"], "R t t"),
     ("dtparse", &["t", "t"], "R n t"),
     ("dtparse-rel", &["t", "n"], "R n t"),
@@ -408,6 +505,7 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("fmt", &["t"], "t"), // variadic: fmt template arg1 arg2 … — checked specially
     ("fmt2", &["n", "n"], "t"),
     ("jpar", &["t"], "R ? t"),
+    ("jpar-list", &["t"], "R (L ?) t"),
     ("rdjl", &["t"], "L (R ? t)"),
     // Higher-order: map/flt/fld take a function ref as first arg (special-cased in builtin_check_args)
     ("map", &["fn", "list"], "list"),
@@ -425,6 +523,11 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("prod", &["L n"], "n"),
     ("cumsum", &["L n"], "L n"),
     ("cprod", &["L n"], "L n"),
+    ("ewm", &["L n", "n"], "L n"),
+    // where cond:L b xs:L a ys:L a > L a — parallel-list conditional select.
+    // Element type of xs/ys is preserved in the output (handled in the
+    // per-builtin arm below; this entry feeds arity + suggestion paths).
+    ("where", &["L b", "list", "list"], "list"),
     ("avg", &["list"], "n"),
     ("median", &["list"], "n"),
     ("quantile", &["list", "n"], "n"),
@@ -434,6 +537,7 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("ifft", &["list"], "list"),
     ("transpose", &["L (L n)"], "L (L n)"),
     ("matmul", &["L (L n)", "L (L n)"], "L (L n)"),
+    ("matvec", &["L (L n)", "L n"], "L n"),
     ("dot", &["L n", "L n"], "n"),
     ("rgx", &["t", "t"], "L t"),
     ("rgxall", &["t", "t"], "L (L t)"),
@@ -459,6 +563,9 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("solve", &["L (L n)", "L n"], "L n"),
     ("inv", &["L (L n)"], "L (L n)"),
     ("det", &["L (L n)"], "n"),
+    // lstsq xm ys > L n — ordinary least squares (normal equations).
+    // Closed-form OLS over a design matrix and observed values.
+    ("lstsq", &["L (L n)", "L n"], "L n"),
     // Index-returning aggregates. numpy convention: argmax/argmin return
     // the index of the max/min element; argsort returns the sorted-index
     // permutation (ascending).
@@ -474,6 +581,31 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     // type check (ok-type vs default must match); this entry feeds arity +
     // suggestion paths.
     ("default-on-err", &["R any t", "any"], "any"),
+    // URL + base64url encoding cluster. Encoders are total (text → text);
+    // decoders return Result so malformed input surfaces at the boundary.
+    ("urlenc", &["t"], "t"),
+    ("urldec", &["t"], "R t t"),
+    ("b64u", &["t"], "t"),
+    ("b64u-dec", &["t"], "R t t"),
+    // Crypto primitives cluster (0.12.x). sha256 / hmac-sha256 return
+    // lowercase hex; b64 / b64-dec are standard base64 (with `=` padding,
+    // distinct from b64u / b64u-dec); hex encodes UTF-8 bytes as lowercase
+    // hex; ct-eq is constant-time text equality (for HMAC verification).
+    ("sha256", &["t"], "t"),
+    ("hmac-sha256", &["t", "t"], "t"),
+    ("b64", &["t"], "t"),
+    ("b64-dec", &["t"], "R t t"),
+    ("hex", &["t"], "t"),
+    ("ct-eq", &["t", "t"], "b"),
+    // Calendar arithmetic (0.12.2). Pure epoch↔epoch/n ops, tree-bridge eligible.
+    // add-mo: add N calendar months (N may be negative), end-of-month snap.
+    // last-dom: epoch of the last day of the containing month at 00:00 UTC.
+    // next-business-day: next weekday (skip Sat/Sun).
+    // day-of-week: 0=Sun, 1=Mon, 2=Tue, 3=Wed, 4=Thu, 5=Fri, 6=Sat.
+    ("add-mo", &["n", "n"], "n"),
+    ("last-dom", &["n"], "n"),
+    ("next-business-day", &["n"], "n"),
+    ("day-of-week", &["n"], "n"),
 ];
 
 fn builtin_arity(name: &str) -> Option<usize> {
@@ -608,13 +740,17 @@ fn builtin_check_args(
             (Ty::Text, errors)
         }
         "num" => {
+            // num is polymorphic: accepts text (parses) or number (identity).
+            // Return type is always R n t so existing callers and exhaustive
+            // match arms keep working. Widening only — no breaking change.
             if let Some(arg) = arg_types.first()
                 && !compatible(arg, &Ty::Text)
+                && !compatible(arg, &Ty::Number)
             {
                 errors.push(VerifyError {
                     code: "ILO-T013",
                     function: func_ctx.to_string(),
-                    message: format!("'num' expects t, got {arg}"),
+                    message: format!("'num' expects t or n, got {arg}"),
                     hint: None,
                     span,
                     is_warning: false,
@@ -698,6 +834,57 @@ fn builtin_check_args(
                 }
             }
             (Ty::List(Box::new(Ty::Number)), errors)
+        }
+        "linspace" => {
+            // linspace a b n — three numbers, returns L n.
+            for (i, arg) in arg_types.iter().enumerate() {
+                if !compatible(arg, &Ty::Number) {
+                    errors.push(VerifyError {
+                        code: "ILO-T013",
+                        function: func_ctx.to_string(),
+                        message: format!("'linspace' arg {} expects n, got {arg}", i + 1),
+                        hint: None,
+                        span,
+                        is_warning: false,
+                    });
+                }
+            }
+            (Ty::List(Box::new(Ty::Number)), errors)
+        }
+        "ones" => {
+            // ones n — single number arg, returns L n.
+            if let Some(arg) = arg_types.first()
+                && !compatible(arg, &Ty::Number)
+            {
+                errors.push(VerifyError {
+                    code: "ILO-T013",
+                    function: func_ctx.to_string(),
+                    message: format!("'ones' arg 1 expects n, got {arg}"),
+                    hint: None,
+                    span,
+                    is_warning: false,
+                });
+            }
+            (Ty::List(Box::new(Ty::Number)), errors)
+        }
+        "rep" => {
+            // rep n v — n copies of v. Return type is L T, where T is the
+            // type of the second argument (so the verifier can flow element
+            // type through downstream consumers, just like zip/enumerate).
+            if let Some(arg) = arg_types.first()
+                && !compatible(arg, &Ty::Number)
+            {
+                errors.push(VerifyError {
+                    code: "ILO-T013",
+                    function: func_ctx.to_string(),
+                    message: format!("'rep' arg 1 expects n, got {arg}"),
+                    hint: None,
+                    span,
+                    is_warning: false,
+                });
+            }
+            let elem = arg_types.get(1).cloned().unwrap_or(Ty::Unknown);
+            (Ty::List(Box::new(elem)), errors)
         }
         "rnd" => {
             for (i, arg) in arg_types.iter().enumerate() {
@@ -798,6 +985,71 @@ fn builtin_check_args(
                 }
             }
             (Ty::Bool, errors)
+        }
+        // Filesystem metadata (0.12.1). Hand-written arms so the bang verifier
+        // can fire ILO-T025 on `isfile!`/`isdir!` (bool, not Result, no
+        // unwrap) and so `fsize!`/`mtime!` correctly auto-unwrap the R n t.
+        // Without these the BUILTINS-table fallback returns Ty::Unknown,
+        // which silently disables both checks.
+        "fsize" | "mtime" => {
+            if let Some(arg) = arg_types.first()
+                && !compatible(arg, &Ty::Text)
+            {
+                errors.push(VerifyError {
+                    code: "ILO-T013",
+                    function: func_ctx.to_string(),
+                    message: format!("'{name}' expects path:t, got {arg}"),
+                    hint: None,
+                    span,
+                    is_warning: false,
+                });
+            }
+            (Ty::Result(Box::new(Ty::Number), Box::new(Ty::Text)), errors)
+        }
+        "isfile" | "isdir" => {
+            if let Some(arg) = arg_types.first()
+                && !compatible(arg, &Ty::Text)
+            {
+                errors.push(VerifyError {
+                    code: "ILO-T013",
+                    function: func_ctx.to_string(),
+                    message: format!("'{name}' expects path:t, got {arg}"),
+                    hint: None,
+                    span,
+                    is_warning: false,
+                });
+            }
+            (Ty::Bool, errors)
+        }
+        // `tz-offset tz:t epoch:n > R n t` — IANA timezone offset at a Unix
+        // epoch. Hand-written so the bang verifier auto-unwraps the R n t
+        // and type errors on non-text tz name / non-number epoch fire correctly.
+        "tz-offset" => {
+            if let Some(tz_arg) = arg_types.first()
+                && !compatible(tz_arg, &Ty::Text)
+            {
+                errors.push(VerifyError {
+                    code: "ILO-T013",
+                    function: func_ctx.to_string(),
+                    message: format!("'tz-offset' first arg must be t (tz name), got {tz_arg}"),
+                    hint: None,
+                    span,
+                    is_warning: false,
+                });
+            }
+            if let Some(epoch_arg) = arg_types.get(1)
+                && !compatible(epoch_arg, &Ty::Number)
+            {
+                errors.push(VerifyError {
+                    code: "ILO-T013",
+                    function: func_ctx.to_string(),
+                    message: format!("'tz-offset' second arg must be n (epoch), got {epoch_arg}"),
+                    hint: None,
+                    span,
+                    is_warning: false,
+                });
+            }
+            (Ty::Result(Box::new(Ty::Number), Box::new(Ty::Text)), errors)
         }
         "hd" => {
             if let Some(arg) = arg_types.first() {
@@ -1621,16 +1873,16 @@ fn builtin_check_args(
             }
             (Ty::Result(Box::new(Ty::Text), Box::new(Ty::Text)), errors)
         }
-        "pst" => {
-            // pst url body          — 2-arg (HTTP POST; renamed from `post` in 0.12.0)
-            // pst url body headers  — 3-arg: headers is M t t
+        "pst" | "put" | "pat" => {
+            // pst|put|pat url body          — 2-arg
+            // pst|put|pat url body headers  — 3-arg: headers is M t t
             for (i, arg) in arg_types.iter().enumerate().take(2) {
                 if !compatible(arg, &Ty::Text) {
                     let label = if i == 0 { "url" } else { "body" };
                     errors.push(VerifyError {
                         code: "ILO-T013",
                         function: func_ctx.to_string(),
-                        message: format!("'pst' expects t ({label}), got {arg}"),
+                        message: format!("'{name}' expects t ({label}), got {arg}"),
                         hint: None,
                         span,
                         is_warning: false,
@@ -1643,12 +1895,99 @@ fn builtin_check_args(
                     errors.push(VerifyError {
                         code: "ILO-T013",
                         function: func_ctx.to_string(),
-                        message: format!("'pst' headers arg expects M t t, got {arg}"),
+                        message: format!("'{name}' headers arg expects M t t, got {arg}"),
                         hint: None,
                         span,
                         is_warning: false,
                     });
                 }
+            }
+            (Ty::Result(Box::new(Ty::Text), Box::new(Ty::Text)), errors)
+        }
+        "del" | "hed" | "opt" => {
+            // del|hed|opt url          — 1-arg
+            // del|hed|opt url headers  — 2-arg: headers is M t t
+            if let Some(arg) = arg_types.first()
+                && !compatible(arg, &Ty::Text)
+            {
+                errors.push(VerifyError {
+                    code: "ILO-T013",
+                    function: func_ctx.to_string(),
+                    message: format!("'{name}' expects t (url), got {arg}"),
+                    hint: None,
+                    span,
+                    is_warning: false,
+                });
+            }
+            if let Some(arg) = arg_types.get(1) {
+                let map_ty = Ty::Map(Box::new(Ty::Text), Box::new(Ty::Text));
+                if !compatible(arg, &map_ty) {
+                    errors.push(VerifyError {
+                        code: "ILO-T013",
+                        function: func_ctx.to_string(),
+                        message: format!("'{name}' headers arg expects M t t, got {arg}"),
+                        hint: None,
+                        span,
+                        is_warning: false,
+                    });
+                }
+            }
+            (Ty::Result(Box::new(Ty::Text), Box::new(Ty::Text)), errors)
+        }
+        "get-to" => {
+            // get-to url timeout-ms — 2-arg; timeout-ms is n (milliseconds)
+            if let Some(arg) = arg_types.first()
+                && !compatible(arg, &Ty::Text)
+            {
+                errors.push(VerifyError {
+                    code: "ILO-T013",
+                    function: func_ctx.to_string(),
+                    message: format!("'get-to' expects t (url), got {arg}"),
+                    hint: None,
+                    span,
+                    is_warning: false,
+                });
+            }
+            if let Some(arg) = arg_types.get(1)
+                && !compatible(arg, &Ty::Number)
+            {
+                errors.push(VerifyError {
+                    code: "ILO-T013",
+                    function: func_ctx.to_string(),
+                    message: format!("'get-to' expects n (timeout-ms), got {arg}"),
+                    hint: None,
+                    span,
+                    is_warning: false,
+                });
+            }
+            (Ty::Result(Box::new(Ty::Text), Box::new(Ty::Text)), errors)
+        }
+        "pst-to" => {
+            // pst-to url body timeout-ms — 3-arg; timeout-ms is n (milliseconds)
+            for (i, arg) in arg_types.iter().enumerate().take(2) {
+                if !compatible(arg, &Ty::Text) {
+                    let label = if i == 0 { "url" } else { "body" };
+                    errors.push(VerifyError {
+                        code: "ILO-T013",
+                        function: func_ctx.to_string(),
+                        message: format!("'pst-to' expects t ({label}), got {arg}"),
+                        hint: None,
+                        span,
+                        is_warning: false,
+                    });
+                }
+            }
+            if let Some(arg) = arg_types.get(2)
+                && !compatible(arg, &Ty::Number)
+            {
+                errors.push(VerifyError {
+                    code: "ILO-T013",
+                    function: func_ctx.to_string(),
+                    message: format!("'pst-to' expects n (timeout-ms), got {arg}"),
+                    hint: None,
+                    span,
+                    is_warning: false,
+                });
             }
             (Ty::Result(Box::new(Ty::Text), Box::new(Ty::Text)), errors)
         }
@@ -1865,6 +2204,28 @@ fn builtin_check_args(
             }
             (
                 Ty::Result(Box::new(Ty::Unknown), Box::new(Ty::Text)),
+                errors,
+            )
+        }
+        "jpar-list" => {
+            if let Some(arg) = arg_types.first()
+                && !compatible(arg, &Ty::Text)
+            {
+                errors.push(VerifyError {
+                    code: "ILO-T013",
+                    function: func_ctx.to_string(),
+                    message: format!("'jpar-list' expects t, got {arg}"),
+                    hint: None,
+                    span,
+                    is_warning: false,
+                });
+            }
+            // Returns R (L ?) t — unwrapping with ! yields L ? which foreach accepts.
+            (
+                Ty::Result(
+                    Box::new(Ty::List(Box::new(Ty::Unknown))),
+                    Box::new(Ty::Text),
+                ),
                 errors,
             )
         }
@@ -2450,6 +2811,131 @@ fn builtin_check_args(
             }
             (Ty::List(Box::new(Ty::Number)), errors)
         }
+        "ewm" => {
+            // ewm xs:L n a:n > L n — exponential moving average.
+            if let Some(arg) = arg_types.first() {
+                match arg {
+                    Ty::List(inner) => {
+                        if !compatible(inner, &Ty::Number) {
+                            errors.push(VerifyError {
+                                code: "ILO-T013",
+                                function: func_ctx.to_string(),
+                                message: format!("'ewm' expects L n, got L {inner}"),
+                                hint: None,
+                                span,
+                                is_warning: false,
+                            });
+                        }
+                    }
+                    Ty::Unknown => {}
+                    other => errors.push(VerifyError {
+                        code: "ILO-T013",
+                        function: func_ctx.to_string(),
+                        message: format!("'ewm' expects L n, got {other}"),
+                        hint: None,
+                        span,
+                        is_warning: false,
+                    }),
+                }
+            }
+            if let Some(arg) = arg_types.get(1)
+                && !compatible(arg, &Ty::Number)
+            {
+                errors.push(VerifyError {
+                    code: "ILO-T013",
+                    function: func_ctx.to_string(),
+                    message: format!("'ewm' second arg a must be n, got {arg}"),
+                    hint: None,
+                    span,
+                    is_warning: false,
+                });
+            }
+            (Ty::List(Box::new(Ty::Number)), errors)
+        }
+        "where" => {
+            // where cond:L b xs:L a ys:L a > L a — parallel-list conditional
+            // select. Element type of xs/ys is preserved in the output. xs and
+            // ys element types must unify; length mismatch is a runtime check.
+            let cond_inner = match arg_types.first() {
+                Some(Ty::List(inner)) => Some((**inner).clone()),
+                Some(Ty::Unknown) | None => None,
+                Some(other) => {
+                    errors.push(VerifyError {
+                        code: "ILO-T013",
+                        function: func_ctx.to_string(),
+                        message: format!("'where' arg 1 (cond) expects L b, got {other}"),
+                        hint: None,
+                        span,
+                        is_warning: false,
+                    });
+                    None
+                }
+            };
+            if let Some(inner) = &cond_inner
+                && !compatible(inner, &Ty::Bool)
+            {
+                errors.push(VerifyError {
+                    code: "ILO-T013",
+                    function: func_ctx.to_string(),
+                    message: format!("'where' arg 1 (cond) expects L b, got L {inner}"),
+                    hint: None,
+                    span,
+                    is_warning: false,
+                });
+            }
+            let elem_a = match arg_types.get(1) {
+                Some(Ty::List(inner)) => Some((**inner).clone()),
+                Some(Ty::Unknown) | None => None,
+                Some(other) => {
+                    errors.push(VerifyError {
+                        code: "ILO-T013",
+                        function: func_ctx.to_string(),
+                        message: format!("'where' arg 2 (xs) expects a list, got {other}"),
+                        hint: None,
+                        span,
+                        is_warning: false,
+                    });
+                    None
+                }
+            };
+            let elem_b = match arg_types.get(2) {
+                Some(Ty::List(inner)) => Some((**inner).clone()),
+                Some(Ty::Unknown) | None => None,
+                Some(other) => {
+                    errors.push(VerifyError {
+                        code: "ILO-T013",
+                        function: func_ctx.to_string(),
+                        message: format!("'where' arg 3 (ys) expects a list, got {other}"),
+                        hint: None,
+                        span,
+                        is_warning: false,
+                    });
+                    None
+                }
+            };
+            // Element types must unify (xs and ys must carry the same payload).
+            if let (Some(a), Some(b)) = (&elem_a, &elem_b)
+                && !compatible(a, b)
+            {
+                errors.push(VerifyError {
+                    code: "ILO-T013",
+                    function: func_ctx.to_string(),
+                    message: format!(
+                        "'where' xs and ys element types must match, got L {a} and L {b}"
+                    ),
+                    hint: None,
+                    span,
+                    is_warning: false,
+                });
+            }
+            let inner = match (elem_a, elem_b) {
+                (Some(a), Some(b)) if compatible(&a, &b) => a,
+                (Some(a), None) => a,
+                (None, Some(b)) => b,
+                _ => Ty::Unknown,
+            };
+            (Ty::List(Box::new(inner)), errors)
+        }
         "flat" => {
             // flat xs:L (L a) → L a — flatten one level
             let inner = match arg_types.first() {
@@ -2815,6 +3301,44 @@ fn builtin_check_args(
             }
             (Ty::List(Box::new(Ty::List(Box::new(Ty::Number)))), errors)
         }
+        "matvec" => {
+            // matvec xm:L (L n) ys:L n → L n
+            if let Some(arg) = arg_types.first() {
+                let ok = match arg {
+                    Ty::List(inner) => matches!(inner.as_ref(), Ty::List(_) | Ty::Unknown),
+                    Ty::Unknown => true,
+                    _ => false,
+                };
+                if !ok {
+                    errors.push(VerifyError {
+                        code: "ILO-T013",
+                        function: func_ctx.to_string(),
+                        message: format!("'matvec' first arg must be L (L n), got {arg}"),
+                        hint: None,
+                        span,
+                        is_warning: false,
+                    });
+                }
+            }
+            if let Some(arg) = arg_types.get(1) {
+                let ok = match arg {
+                    Ty::List(inner) => compatible(inner, &Ty::Number),
+                    Ty::Unknown => true,
+                    _ => false,
+                };
+                if !ok {
+                    errors.push(VerifyError {
+                        code: "ILO-T013",
+                        function: func_ctx.to_string(),
+                        message: format!("'matvec' second arg must be L n, got {arg}"),
+                        hint: None,
+                        span,
+                        is_warning: false,
+                    });
+                }
+            }
+            (Ty::List(Box::new(Ty::Number)), errors)
+        }
         "dot" => {
             // dot xs:L n ys:L n → n
             for (i, arg) in arg_types.iter().enumerate() {
@@ -2880,6 +3404,35 @@ fn builtin_check_args(
                 });
             }
             (matrix_ty, errors)
+        }
+        "lstsq" => {
+            let matrix_ty = Ty::List(Box::new(Ty::List(Box::new(Ty::Number))));
+            let vec_ty = Ty::List(Box::new(Ty::Number));
+            if let Some(arg) = arg_types.first()
+                && !compatible(arg, &matrix_ty)
+            {
+                errors.push(VerifyError {
+                    code: "ILO-T013",
+                    function: func_ctx.to_string(),
+                    message: format!("'lstsq' first arg expects L (L n), got {arg}"),
+                    hint: None,
+                    span,
+                    is_warning: false,
+                });
+            }
+            if let Some(arg) = arg_types.get(1)
+                && !compatible(arg, &vec_ty)
+            {
+                errors.push(VerifyError {
+                    code: "ILO-T013",
+                    function: func_ctx.to_string(),
+                    message: format!("'lstsq' second arg expects L n, got {arg}"),
+                    hint: None,
+                    span,
+                    is_warning: false,
+                });
+            }
+            (vec_ty, errors)
         }
         "det" => {
             let matrix_ty = Ty::List(Box::new(Ty::List(Box::new(Ty::Number))));
@@ -2956,6 +3509,50 @@ fn builtin_check_args(
                 errors,
             )
         }
+        "run2" => {
+            // run2 cmd:t args:L t  >  R RunResult t
+            // Structured process spawn. Returns a typed Record{stdout;stderr;exit}
+            // instead of the loose Map that `run` returns. Err only on spawn failure.
+            if let Some(arg) = arg_types.first()
+                && !compatible(arg, &Ty::Text)
+            {
+                errors.push(VerifyError {
+                    code: "ILO-T013",
+                    function: func_ctx.to_string(),
+                    message: format!("'run2' expects t (cmd), got {arg}"),
+                    hint: Some(
+                        "first arg is the program path or name, e.g. run2 \"echo\" [\"hi\"]"
+                            .to_string(),
+                    ),
+                    span,
+                    is_warning: false,
+                });
+            }
+            if let Some(arg) = arg_types.get(1) {
+                let list_text = Ty::List(Box::new(Ty::Text));
+                if !compatible(arg, &list_text) {
+                    errors.push(VerifyError {
+                        code: "ILO-T013",
+                        function: func_ctx.to_string(),
+                        message: format!("'run2' args slot expects L t, got {arg}"),
+                        hint: Some(
+                            "second arg is the argv list (no shell interpolation), e.g. \
+                             run2 \"git\" [\"status\", \"--short\"]"
+                                .to_string(),
+                        ),
+                        span,
+                        is_warning: false,
+                    });
+                }
+            }
+            (
+                Ty::Result(
+                    Box::new(Ty::Named("RunResult".to_string())),
+                    Box::new(Ty::Text),
+                ),
+                errors,
+            )
+        }
         "sleep" => {
             // sleep ms:n -> _   (blocks the current engine for `ms` milliseconds,
             // returns nil so it composes naturally as a statement in any block).
@@ -3021,6 +3618,8 @@ impl VerifyContext {
             aliases: HashMap::new(),
             errors: Vec::new(),
             in_loop: false,
+            parse_failed_fns: HashMap::new(),
+            suppressed_undef_reported: std::collections::HashSet::new(),
         }
     }
 
@@ -3353,6 +3952,16 @@ impl VerifyContext {
                 ..
             } = decl
             {
+                // Cascade suppression: skip type-checking any function whose
+                // declaration failed to parse. Its body AST is poison (the
+                // parser returned `Decl::Error` instead, so by definition we
+                // can't be here for a *current* parse-failed function — but
+                // an earlier `use`-included file or partial recovery can
+                // surface a Decl::Function we still don't trust). The user
+                // already has the parse error.
+                if self.parse_failed_fns.contains_key(name) {
+                    continue;
+                }
                 let mut scope: Scope = vec![HashMap::new()];
                 for p in params {
                     scope_insert(
@@ -3372,7 +3981,9 @@ impl VerifyContext {
                         (Ty::Text, Ty::Number) => {
                             Some("use 'num' to parse text (returns R n t)".to_string())
                         }
-                        _ => None,
+                        _ => Some(format!(
+                            "change the return expression to {expected}, or update the return type annotation"
+                        )),
                     };
                     let last_span = body.last().map(|s| s.span);
                     self.err(
@@ -3564,7 +4175,10 @@ impl VerifyContext {
                             "ILO-T009",
                             func,
                             format!("destructure requires a record type, got {other}"),
-                            None,
+                            Some(
+                                "ensure the value is a named record type before destructuring"
+                                    .to_string(),
+                            ),
                             Some(span),
                         );
                         for binding in bindings {
@@ -3645,6 +4259,36 @@ impl VerifyContext {
                 body,
             } => {
                 let coll_ty = self.infer_expr(func, scope, collection, span);
+                // ILO-W002: `@x (jpar! body){...}` is a common pattern that
+                // typechecks (jpar's Ok type is `?` / Unknown so foreach lets
+                // it through) but is almost always wrong: at runtime the
+                // top-level JSON value has to be a list for iteration to
+                // succeed, and even then `jpar!`'s polymorphic return is
+                // awkward to thread through wrapping functions. `jpar-list!`
+                // asserts list-ness at parse time and returns `L ?`, which
+                // composes cleanly. Surface the hint at the @ site so the
+                // agent doesn't have to discover `jpar-list` by accident.
+                if let Expr::Call {
+                    function: callee,
+                    unwrap,
+                    ..
+                } = collection
+                    && callee == "jpar"
+                    && unwrap.is_any()
+                {
+                    let op = if unwrap.is_panic() { "!!" } else { "!" };
+                    self.warn(
+                        "ILO-W002",
+                        func,
+                        format!(
+                            "iterating `jpar{op}` result: the parsed JSON may not be a list at runtime"
+                        ),
+                        Some(format!(
+                            "use `jpar-list{op}` instead: it asserts the top-level JSON is an array and returns a list ready to iterate"
+                        )),
+                        Some(span),
+                    );
+                }
                 let elem_ty = match &coll_ty {
                     Ty::List(inner) => *inner.clone(),
                     Ty::Unknown => Ty::Unknown,
@@ -3831,6 +4475,27 @@ impl VerifyContext {
                     // Pure builtin used as a value (e.g. `fld max xs 0`).
                     // Promote to Ty::Fn so HOF args type-check.
                     fn_ty
+                } else if let Some(fail_ref) = self.parse_failed_fns.get(name).cloned() {
+                    // Cascade suppression: bare reference to a parse-failed
+                    // function. Rare in practice (agents call far more than
+                    // they reference) but still emits one collapsed
+                    // cross-reference rather than letting every reference
+                    // produce ILO-T004 undefined-variable noise.
+                    if self.suppressed_undef_reported.insert(name.to_string()) {
+                        self.err(
+                            "ILO-T005",
+                            func,
+                            format!(
+                                "undefined function '{name}': its definition failed to parse",
+                            ),
+                            Some(format!(
+                                "fix the parse error first (see {} reported earlier in this file); other references to '{name}' are suppressed until then",
+                                fail_ref.code,
+                            )),
+                            Some(span),
+                        );
+                    }
+                    Ty::Unknown
                 } else {
                     let mut candidates: Vec<String> = scope
                         .iter()
@@ -3891,9 +4556,9 @@ impl VerifyContext {
                         args.len() == 1 || args.len() == 2
                     } else if callee == "wr" {
                         args.len() == 2 || args.len() == 3
-                    } else if callee == "get" {
+                    } else if matches!(callee.as_str(), "get" | "del" | "hed" | "opt") {
                         args.len() == 1 || args.len() == 2
-                    } else if callee == "pst" {
+                    } else if matches!(callee.as_str(), "pst" | "put" | "pat") {
                         args.len() == 2 || args.len() == 3
                     } else if callee == "padl" || callee == "padr" {
                         // padl s w  /  padl s w padchar
@@ -3912,9 +4577,12 @@ impl VerifyContext {
                             "2 or 3".to_string()
                         } else if callee == "fld" {
                             "3 or 4".to_string()
-                        } else if callee == "rd" || callee == "get" {
+                        } else if matches!(callee.as_str(), "rd" | "get" | "del" | "hed" | "opt") {
                             "1 or 2".to_string()
-                        } else if matches!(callee.as_str(), "pst" | "wr" | "padl" | "padr") {
+                        } else if matches!(
+                            callee.as_str(),
+                            "pst" | "put" | "pat" | "wr" | "padl" | "padr"
+                        ) {
                             "2 or 3".to_string()
                         } else if callee == "min" || callee == "max" {
                             "1 or 2".to_string()
@@ -3973,35 +4641,53 @@ impl VerifyContext {
                     if callee == "fmt"
                         && let Some(Expr::Literal(Literal::Text(tmpl))) = args.first()
                     {
+                        // Tokenize placeholders the same way the interpreter
+                        // does — anything that opens with `{` followed by `}`
+                        // / `:` / `.` is a placeholder candidate; everything
+                        // else stays a literal (so `{a:1}` survives).
                         let mut iter = tmpl.chars().peekable();
                         let mut bad: Option<String> = None;
                         let mut slot_count: usize = 0;
                         while let Some(c) = iter.next() {
-                            if c == '{' && iter.peek() == Some(&'}') {
-                                iter.next();
-                                slot_count += 1;
-                            } else if c == '{' && iter.peek() == Some(&':') {
+                            if c == '{'
+                                && (iter.peek() == Some(&'}')
+                                    || iter.peek() == Some(&':')
+                                    || iter.peek() == Some(&'.'))
+                            {
                                 let mut spec = String::from("{");
+                                let mut terminated = false;
                                 for sc in iter.by_ref() {
                                     spec.push(sc);
                                     if sc == '}' {
+                                        terminated = true;
                                         break;
                                     }
                                 }
-                                bad = Some(spec);
-                                break;
+                                if !terminated {
+                                    // Unterminated — interpreter treats as
+                                    // literal, so we say nothing here.
+                                    continue;
+                                }
+                                match crate::interpreter::parse_fmt_spec(&spec) {
+                                    Some(_) => slot_count += 1,
+                                    None => {
+                                        bad = Some(spec);
+                                        break;
+                                    }
+                                }
                             }
                         }
                         if let Some(spec) = bad {
                             self.err(
                                 "ILO-T013",
                                 func,
-                                format!(
-                                    "'fmt' only supports bare `{{}}` placeholders, got `{spec}`"
-                                ),
+                                format!("'fmt' unsupported placeholder spec `{spec}`"),
                                 Some(
-                                    "for decimal precision use `fmt \"...{}\" (fmt2 v 2)`; \
-                                     for width / padding use `padl (str n) 6` (space-pad)"
+                                    "supported specs: `{}`, `{.Nf}` / `{:.Nf}` (decimal places), \
+                                     `{:N}` (right-align width), `{:Nd}` (integer width), \
+                                     `{:<N}` (left-align width). For zero-padded widths use \
+                                     `padl (str n) 6` with a custom char; compose `fmt2` for \
+                                     fancier number formatting."
                                         .to_string(),
                                 ),
                                 Some(span),
@@ -4174,6 +4860,11 @@ impl VerifyContext {
                             Some(span),
                         );
                     } else {
+                        let suggestion = call_vs_binop_hint(callee, args).unwrap_or_else(|| {
+                            format!(
+                                "'{callee}' is bound as {bound_ty} in this scope; only functions can be called"
+                            )
+                        });
                         self.err(
                             "ILO-T005",
                             func,
@@ -4181,14 +4872,38 @@ impl VerifyContext {
                                 "'{callee}' is a {bound_ty}, not a function (called with {} args)",
                                 args.len()
                             ),
-                            Some(format!(
-                                "'{callee}' is bound as {bound_ty} in this scope; only functions can be called"
-                            )),
+                            Some(suggestion),
                             Some(span),
                         );
                     }
                     Ty::Unknown
                 } else {
+                    // Cascade suppression: if `callee` is a function whose
+                    // declaration failed to parse, the user already has the
+                    // root-cause parse error. Emit ONE collapsed
+                    // cross-reference per parse-failed fn (on the first call
+                    // site only) and stay silent at the remaining N-1 call
+                    // sites. Without this, ONE broken function body
+                    // produces N undefined-function errors; see the
+                    // cron-explainer persona run (286 ILO-T005 from ~10
+                    // root causes) for why this matters.
+                    if let Some(fail_ref) = self.parse_failed_fns.get(callee).cloned() {
+                        if self.suppressed_undef_reported.insert(callee.to_string()) {
+                            self.err(
+                                "ILO-T005",
+                                func,
+                                format!(
+                                    "undefined function '{callee}': its definition failed to parse",
+                                ),
+                                Some(format!(
+                                    "fix the parse error first (see {} reported earlier in this file); other call sites of '{callee}' are suppressed until then",
+                                    fail_ref.code,
+                                )),
+                                Some(span),
+                            );
+                        }
+                        return Ty::Unknown;
+                    }
                     // Suggest in-scope variables/params first, then user functions, then
                     // builtins. closest_match picks the shortest distance, but when the
                     // name truly is undefined we still want a useful suggestion across
@@ -4205,7 +4920,8 @@ impl VerifyContext {
                         candidates.push(n.to_string());
                     }
                     let hint = closest_match(callee, candidates.iter())
-                        .map(|s| format!("did you mean '{s}'?"));
+                        .map(|s| format!("did you mean '{s}'?"))
+                        .or_else(|| call_vs_binop_hint(callee, args));
                     self.err(
                         "ILO-T005",
                         func,
@@ -4404,7 +5120,7 @@ impl VerifyContext {
                                     "ILO-T017",
                                     func,
                                     format!("field '{fname}' of '{type_name}' expects {fty}, got {actual}"),
-                                    None,
+                                    Some(format!("provide a {fty} value for '{fname}'")),
                                     Some(span),
                                 );
                             }
@@ -4479,7 +5195,52 @@ impl VerifyContext {
                 }
             }
 
-            Expr::Index { object, safe, .. } => {
+            Expr::Index {
+                object,
+                index,
+                safe,
+            } => {
+                // Special-case: `name.N` where `name` is an unbound identifier.
+                // Without this, the generic ILO-T004 fires with a closest-match
+                // hint that's actively misleading for the most common cause —
+                // agents reaching for `tup.0` / `pair.0` tuple syntax after a
+                // `zip xs ys`, which returns `L (L n)` (list of lists), not
+                // tuples. ilo has no tuple type; the correct shape is
+                // `at <name> <N>`. Detect the pattern at the Index site so we
+                // can name a concrete `at` call in the hint and short-circuit
+                // before the generic Ref diagnostic fires.
+                if let Expr::Ref(name) = object.as_ref() {
+                    let bound = scope_lookup(scope, name).is_some()
+                        || self.functions.contains_key(name)
+                        || is_builtin(name)
+                        || builtin_as_fn_ty(name).is_some();
+                    if !bound {
+                        let mut candidates: Vec<String> = scope
+                            .iter()
+                            .flat_map(|frame| frame.keys().cloned())
+                            .collect();
+                        candidates.extend(self.functions.keys().cloned());
+                        let did_you_mean = closest_match(name, candidates.iter());
+                        let at_hint = format!(
+                            "if `{name}` is meant to be a pair from `zip xs ys`, \
+note that `zip` returns `L (L n)` (list of lists), not tuples. \
+Index with `at {name} {index}` after binding `{name}` from the outer list. \
+ilo has no tuple type."
+                        );
+                        let hint = match did_you_mean {
+                            Some(s) => Some(format!("did you mean '{s}'? Otherwise: {at_hint}")),
+                            None => Some(at_hint),
+                        };
+                        self.err(
+                            "ILO-T004",
+                            func,
+                            format!("undefined variable '{name}'"),
+                            hint,
+                            Some(span),
+                        );
+                        return Ty::Unknown;
+                    }
+                }
                 let obj_ty = self.infer_expr(func, scope, object, span);
                 if *safe && obj_ty == Ty::Nil {
                     return Ty::Nil;
@@ -4592,7 +5353,7 @@ impl VerifyContext {
                             "ternary branches have different types: {} vs {}",
                             then_ty, else_ty
                         ),
-                        None,
+                        Some("both branches of a ternary must return the same type".to_string()),
                         Some(span),
                     );
                     then_ty
@@ -4643,7 +5404,7 @@ impl VerifyContext {
                             "ILO-T020",
                             func,
                             format!("'with' on non-record type {other}"),
-                            None,
+                            Some("'with' only works on named record types - ensure the value is a record".to_string()),
                             Some(span),
                         );
                         Ty::Unknown
@@ -4955,6 +5716,7 @@ pub struct VerifyResult {
 /// Returns errors and warnings separately.
 pub fn verify(program: &Program) -> VerifyResult {
     let mut ctx = VerifyContext::new();
+    ctx.parse_failed_fns = program.parse_failed_fns.clone();
 
     // Phase 1: collect declarations
     ctx.collect_declarations(program);
@@ -5522,13 +6284,29 @@ mod tests {
 
     #[test]
     fn builtin_num_wrong_type() {
-        let result = parse_and_verify("f x:n>R n t;num x");
+        // `num` is polymorphic: text or number are both fine. Bool is not.
+        // Pre-fix this asserted that `num x:n` failed; post-fix it passes.
+        let result = parse_and_verify("f x:b>R n t;num x");
         assert!(result.is_err());
         let errors = result.unwrap_err();
         assert!(
             errors
                 .iter()
-                .any(|e| e.message.contains("'num' expects t, got n"))
+                .any(|e| e.message.contains("'num' expects t or n, got b")),
+            "expected num bool error, got: {:?}",
+            errors.iter().map(|e| &e.message).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn builtin_num_accepts_number_arg() {
+        // Polymorphic widening: a statically-typed Number argument now
+        // verifies, producing identity-wrapped Ok at runtime.
+        let result = parse_and_verify("f x:n>R n t;num x");
+        assert!(
+            result.is_ok(),
+            "num should accept Number input post-polymorphism, got: {:?}",
+            result.err()
         );
     }
 
@@ -6113,12 +6891,17 @@ mod tests {
     }
 
     #[test]
-    fn suggestion_t008_unrelated_mismatch_no_hint() {
-        // bool → number: no specific hint
+    fn suggestion_t008_unrelated_mismatch_has_generic_hint() {
+        // bool → number: generic fallback hint added
         let result = parse_and_verify("f x:b>n;x");
         let errors = result.unwrap_err();
         let e = errors.iter().find(|e| e.code == "ILO-T008").unwrap();
-        assert!(e.hint.is_none());
+        // The fallback now provides a generic hint pointing at the return annotation
+        let hint = e
+            .hint
+            .as_ref()
+            .expect("expected generic hint for T008 bool->n mismatch");
+        assert!(hint.contains("return") || hint.contains("annotation"));
     }
 
     #[test]
@@ -6294,6 +7077,7 @@ mod tests {
                 },
             ],
             source: None,
+            parse_failed_fns: Default::default(),
         };
         let result = verify(&prog);
         assert!(
@@ -6335,6 +7119,7 @@ mod tests {
                 },
             ],
             source: None,
+            parse_failed_fns: Default::default(),
         };
         let errors = &verify(&prog).errors;
         assert!(
@@ -6379,6 +7164,7 @@ mod tests {
                 },
             ],
             source: None,
+            parse_failed_fns: Default::default(),
         };
         let errors = &verify(&prog).errors;
         assert!(
@@ -7531,6 +8317,111 @@ mod tests {
     }
 
     #[test]
+    fn jpar_list_foreach_ok() {
+        // P0b/5f: jpar-list! returns R (L ?) t; unwrapped ok is L ? which foreach accepts.
+        assert!(
+            parse_and_verify("f body:t>R t t;xs=jpar-list! body;@x xs{prnt x};~\"ok\"").is_ok()
+        );
+    }
+
+    #[test]
+    fn jpar_list_foreach_inline_ok() {
+        // P0b/5f: inline form — @x (jpar-list! body) — also type-checks.
+        assert!(parse_and_verify("f body:t>R t t;@x (jpar-list! body){prnt x};~\"ok\"").is_ok());
+    }
+
+    #[test]
+    fn jpar_bang_in_foreach_warns() {
+        // Pending 5f: `@x (jpar! body){...}` typechecks (jpar's Ok is `?`),
+        // but at runtime the parsed JSON has to be a list, and the polymorphic
+        // return is awkward to thread. Verifier should emit ILO-W002 steering
+        // the agent at `jpar-list!`.
+        let result = parse_and_verify_full("f body:t>R t t;@x (jpar! body){prnt x};~\"ok\"");
+        assert!(
+            result.errors.is_empty(),
+            "should not be an error: {:?}",
+            result.errors
+        );
+        let w002: Vec<_> = result
+            .warnings
+            .iter()
+            .filter(|w| w.code == "ILO-W002")
+            .collect();
+        assert_eq!(
+            w002.len(),
+            1,
+            "expected one ILO-W002, got {:?}",
+            result.warnings
+        );
+        assert!(
+            w002[0].message.contains("jpar!"),
+            "warning message should mention jpar!: {}",
+            w002[0].message
+        );
+        assert!(
+            w002[0]
+                .hint
+                .as_deref()
+                .is_some_and(|h| h.contains("jpar-list!")),
+            "hint should point at jpar-list!: {:?}",
+            w002[0].hint
+        );
+    }
+
+    #[test]
+    fn jpar_bang_bang_in_foreach_warns() {
+        // Same hint should fire for the panic variant `jpar!!`.
+        let result = parse_and_verify_full("f body:t>t;@x (jpar!! body){prnt x};~\"ok\"");
+        let w002: Vec<_> = result
+            .warnings
+            .iter()
+            .filter(|w| w.code == "ILO-W002")
+            .collect();
+        assert_eq!(w002.len(), 1);
+        assert!(w002[0].message.contains("jpar!!"));
+        assert!(
+            w002[0]
+                .hint
+                .as_deref()
+                .is_some_and(|h| h.contains("jpar-list!!"))
+        );
+    }
+
+    #[test]
+    fn jpar_list_in_foreach_no_warn() {
+        // jpar-list! is the recommended form: must NOT trigger ILO-W002.
+        let result = parse_and_verify_full("f body:t>R t t;@x (jpar-list! body){prnt x};~\"ok\"");
+        assert!(result.errors.is_empty());
+        assert!(
+            result.warnings.iter().all(|w| w.code != "ILO-W002"),
+            "jpar-list! should not warn: {:?}",
+            result.warnings
+        );
+    }
+
+    #[test]
+    fn jpar_no_bang_in_foreach_no_warn() {
+        // Bare `jpar` (no unwrap) returns R, which fails the foreach with
+        // ILO-T014 — that's a separate, fine error path. The W002 hint is
+        // specific to the `jpar!` / `jpar!!` pattern.
+        let result = parse_and_verify_full("f body:t>t;@x (jpar body){prnt x};~\"ok\"");
+        assert!(
+            result.warnings.iter().all(|w| w.code != "ILO-W002"),
+            "bare jpar should not trigger W002"
+        );
+    }
+
+    #[test]
+    fn jpar_list_wrong_type() {
+        // jpar-list expects t; passing n should error
+        let errs = parse_and_verify("f x:n>R n t;jpar-list x").unwrap_err();
+        assert!(
+            errs.iter()
+                .any(|e| e.code == "ILO-T013" && e.message.contains("jpar-list"))
+        );
+    }
+
+    #[test]
     fn jdmp_any_type_ok() {
         // jdmp accepts any value — number should verify ok
         assert!(parse_and_verify("f x:n>t;jdmp x").is_ok());
@@ -8349,6 +9240,7 @@ mod tests {
                 span: Span::UNKNOWN,
             }],
             source: None,
+            parse_failed_fns: Default::default(),
         };
         let result = verify(&prog);
         assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
@@ -8594,6 +9486,7 @@ mod tests {
                 span: Span::UNKNOWN,
             }],
             source: None,
+            parse_failed_fns: Default::default(),
         };
         let result = verify(&prog);
         // Should not panic; the Unknown binding is just a permissive fallback
@@ -8615,6 +9508,7 @@ mod tests {
                 span: Span::UNKNOWN,
             }],
             source: None,
+            parse_failed_fns: Default::default(),
         };
         let result = verify(&prog);
         assert!(
@@ -8651,6 +9545,7 @@ mod tests {
                 span: Span::UNKNOWN,
             }],
             source: None,
+            parse_failed_fns: Default::default(),
         };
         let result = verify(&prog);
         assert!(

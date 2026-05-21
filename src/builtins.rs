@@ -37,6 +37,7 @@ pub enum Builtin {
     Prod,
     Cumsum,
     Cprod,
+    Ewm,
     Avg,
     Median,
     Quantile,
@@ -49,6 +50,14 @@ pub enum Builtin {
     Transpose,
     Matmul,
     Dot,
+    // `matvec xm ys > L n` — native matrix-vector multiply. Returns the
+    // dot product of each row of `xm` with `ys`. Skips the
+    // wrap-as-column-matrix + flatten ceremony required to use `matmul`
+    // for this case (`flatten matmul xm (map (y:n>L n;[y]) ys)`).
+    // Tree-bridge eligible: composes existing matrix/vector helpers so
+    // VM and Cranelift inherit through the bridge without new opcodes.
+    // Added in 0.12.1.
+    Matvec,
 
     // Collections
     Len,
@@ -70,6 +79,9 @@ pub enum Builtin {
     Zip,
     Enumerate,
     Range,
+    Linspace,
+    Ones,
+    Rep,
     Window,
     Chunks,
     Setunion,
@@ -91,12 +103,18 @@ pub enum Builtin {
     // Random / time
     Rnd,
     Rndn,
+    RandBytes,
+    Seed,
     Now,
     NowMs,
     Dtfmt,
     Dtparse,
     DtparseRel,
     Sleep,
+    // `tz-offset tz:t epoch:n > R n t` — UTC offset in seconds for the given
+    // IANA timezone at the given Unix epoch. Handles DST transitions correctly
+    // via chrono-tz. Returns Err on unknown timezone name.
+    TzOffset,
 
     // I/O
     Rd,
@@ -116,6 +134,10 @@ pub enum Builtin {
     Ls,
     Walk,
     Glob,
+    Fsize,
+    Mtime,
+    Isfile,
+    Isdir,
     EnvAll,
 
     // String
@@ -141,16 +163,45 @@ pub enum Builtin {
     Jkeys,
     Jdmp,
     Jpar,
+    JparList,
     Rdjl,
 
     // HTTP
     Get,
     Post,
     GetMany,
+    // `get-to url timeout-ms > R t t` — like `get` but with an explicit
+    // per-request timeout (milliseconds). Rounds up to nearest whole second
+    // for minreq (which takes u64 seconds). Returns Err when the deadline
+    // is exceeded, identical to a connection error from the caller's view.
+    // Tree-bridge eligible; no new native opcode needed.
+    GetTo,
+    // `pst-to url body timeout-ms > R t t` — like `pst` but with an explicit
+    // per-request timeout. Same millisecond-to-second rounding as `get-to`.
+    PstTo,
+    // HTTP verb cluster (#5z). Same shape as `pst`/`get`: optional 3rd-arg
+    // `M t t` headers map; returns `R t t`. Tree-bridge eligible — no
+    // dedicated VM opcodes, the tree interpreter performs the actual minreq
+    // call. Verb cluster intentionally limited to the seven safe methods
+    // (GET/POST/PUT/PATCH/DELETE/HEAD/OPTIONS); TRACE/CONNECT are excluded
+    // (CONNECT is for tunnelling, TRACE is footgun-grade — both unsafe to
+    // expose without proxy framing). `del` takes only the URL — DELETE bodies
+    // exist in the RFC but no major API honours them, so we keep the surface
+    // tight and add the headers variant only.
+    Put,
+    Pat,
+    Del,
+    Hed,
+    Opt,
 
     // Process spawn (argv-list only — no shell, no interpolation, no glob).
     // See SPEC.md "Process spawn" section for the security framing.
     Run,
+    // `run2 cmd:t args:L t > R RunResult t` — structured process spawn.
+    // Like `run` but returns a typed Record instead of a loose Map, giving
+    // clean dot-access: r.stdout, r.stderr, r.exit (n, not t). Non-zero
+    // exit is NOT an error; Err only on spawn failure. Tree-bridge eligible.
+    Run2,
 
     // Map (associative array)
     Mmap,
@@ -175,6 +226,14 @@ pub enum Builtin {
     Solve,
     Inv,
     Det,
+    // `lstsq xm ys > L n` — ordinary least squares via the normal equations:
+    // `b = solve (matmul (transpose xm) xm) (matmul (transpose xm) ys)`.
+    // Collapses the 5-line OLS recipe into a single call. Same precision
+    // tier as `solve`/`inv`/`det` (LU with partial pivoting); ill-conditioned
+    // designs surface as `ILO-R009` from the inner `solve`. Tree-bridge
+    // eligible — no new opcodes, VM and Cranelift inherit semantics through
+    // the bridge. Added in 0.12.1.
+    Lstsq,
     // Index-returning aggregates (numpy convention).
     // argmax xs:L n > n — index of max element.
     // argmin xs:L n > n — index of min element.
@@ -212,6 +271,64 @@ pub enum Builtin {
     // Mirror of `??` for Result: `?? v d` is nil-coalesce for `O T`; this is
     // the Result equivalent. Tree-bridge eligible (2-arg, pure, no FnRef).
     DefaultOnErr,
+
+    // URL + base64url encoding cluster (0.12.1). Both are token-cheap
+    // primitives for the OAuth / JWT / webhook-signature workflows that
+    // dominated the bearer-token, jwt-signer and webhook-receiver personas.
+    // All four are tree-bridge eligible — pure text-in / text-out with no
+    // I/O and no FnRef args.
+    // `urlenc s > t` — RFC 3986 percent-encode. Unreserved chars (`-._~` and
+    //   ALPHA/DIGIT) stay literal; everything else is `%HH`.
+    // `urldec s > R t t` — inverse. Err on invalid percent escapes or
+    //   non-UTF-8 decoded bytes.
+    // `b64u s > t` — base64url-encode the UTF-8 bytes of `s`, no padding
+    //   (RFC 4648 §5: `-`/`_` substituted for `+`/`/`).
+    // `b64u-dec s > R t t` — inverse. Err on invalid base64 or non-UTF-8
+    //   decoded bytes.
+    Urlenc,
+    Urldec,
+    B64u,
+    B64uDec,
+
+    // Crypto primitives cluster (0.12.x). All tree-bridge eligible: pure
+    // text-in / text-or-bool-out, no FnRef args, no I/O wrap. VM and Cranelift
+    // inherit cross-engine parity without new opcodes.
+    // `sha256 s > t` — SHA-256 of the UTF-8 bytes of `s`, lowercase hex.
+    // `hmac-sha256 key:t msg:t > t` — HMAC-SHA256, lowercase hex.
+    // `b64 s > t` — standard base64 encode (RFC 4648 §4, `=` padding).
+    // `b64-dec s > R t t` — standard base64 decode; Err on invalid input
+    //   or non-UTF-8 decoded bytes.
+    // `hex s > t` — lowercase hex encode of UTF-8 bytes of `s`.
+    // `ct-eq a:t b:t > b` — constant-time text equality. Use when comparing
+    //   secrets (HMAC digests, tokens) to avoid timing leaks.
+    Sha256,
+    HmacSha256,
+    B64,
+    B64Dec,
+    HexEnc,
+    CtEq,
+
+    // `where cond xs ys > L a` — parallel-list conditional select.
+    // NumPy `np.where` equivalent: for each i, output[i] = xs[i] if cond[i] else ys[i].
+    // All three lists must have the same length; mismatch raises ILO-R009.
+    // The element type of `xs` and `ys` is preserved in the output. Tree-bridge
+    // eligible (no FnRef args, no I/O, no Result wrapper). Saves ~50 tokens
+    // over the `map (i:n>_;?h (at cond i) (at xs i) (at ys i)) (range 0 (len xs))`
+    // recipe; the manifesto framing for NumPy-familiar agents.
+    Where,
+    // Calendar arithmetic (0.12.2). All four are tree-bridge eligible: pure
+    // epoch ↔ epoch / epoch ↔ number, no FnRef args, no I/O.
+    //
+    // `add-mo dt:n n:n > n` — add N calendar months to an epoch, snapping
+    // end-of-month (Jan 31 + 1 = Feb 28/29). N may be negative.
+    // `last-dom dt:n > n`  — epoch of the last day of the month containing dt,
+    // at 00:00 UTC.
+    // `next-business-day dt:n > n` — next weekday after dt (skip Sat/Sun).
+    // `day-of-week dt:n > n` — day of week: 0=Sun, 1=Mon … 6=Sat.
+    AddMo,
+    LastDom,
+    NextBusinessDay,
+    DayOfWeek,
 }
 
 impl Builtin {
@@ -247,6 +364,7 @@ impl Builtin {
             "prod" => Some(Builtin::Prod),
             "cumsum" => Some(Builtin::Cumsum),
             "cprod" => Some(Builtin::Cprod),
+            "ewm" => Some(Builtin::Ewm),
             "avg" => Some(Builtin::Avg),
             "median" => Some(Builtin::Median),
             "quantile" => Some(Builtin::Quantile),
@@ -256,6 +374,7 @@ impl Builtin {
             "ifft" => Some(Builtin::Ifft),
             "transpose" => Some(Builtin::Transpose),
             "matmul" => Some(Builtin::Matmul),
+            "matvec" => Some(Builtin::Matvec),
             "dot" => Some(Builtin::Dot),
             "len" => Some(Builtin::Len),
             "hd" => Some(Builtin::Hd),
@@ -276,6 +395,9 @@ impl Builtin {
             "zip" => Some(Builtin::Zip),
             "enumerate" => Some(Builtin::Enumerate),
             "range" => Some(Builtin::Range),
+            "linspace" => Some(Builtin::Linspace),
+            "ones" => Some(Builtin::Ones),
+            "rep" => Some(Builtin::Rep),
             "window" => Some(Builtin::Window),
             "chunks" => Some(Builtin::Chunks),
             "setunion" => Some(Builtin::Setunion),
@@ -293,12 +415,15 @@ impl Builtin {
             "mapr" => Some(Builtin::Mapr),
             "rnd" => Some(Builtin::Rnd),
             "rndn" => Some(Builtin::Rndn),
+            "rand-bytes" => Some(Builtin::RandBytes),
+            "seed" => Some(Builtin::Seed),
             "now" => Some(Builtin::Now),
             "now-ms" => Some(Builtin::NowMs),
             "dtfmt" => Some(Builtin::Dtfmt),
             "dtparse" => Some(Builtin::Dtparse),
             "dtparse-rel" => Some(Builtin::DtparseRel),
             "sleep" => Some(Builtin::Sleep),
+            "tz-offset" => Some(Builtin::TzOffset),
             "rd" => Some(Builtin::Rd),
             "rdl" => Some(Builtin::Rdl),
             "rdb" => Some(Builtin::Rdb),
@@ -312,6 +437,10 @@ impl Builtin {
             "lsd" => Some(Builtin::Ls),
             "walk" => Some(Builtin::Walk),
             "glob" => Some(Builtin::Glob),
+            "fsize" => Some(Builtin::Fsize),
+            "mtime" => Some(Builtin::Mtime),
+            "isfile" => Some(Builtin::Isfile),
+            "isdir" => Some(Builtin::Isdir),
             "env-all" => Some(Builtin::EnvAll),
             "trm" => Some(Builtin::Trm),
             "upr" => Some(Builtin::Upr),
@@ -333,8 +462,10 @@ impl Builtin {
             "jkeys" => Some(Builtin::Jkeys),
             "jdmp" => Some(Builtin::Jdmp),
             "jpar" => Some(Builtin::Jpar),
+            "jpar-list" => Some(Builtin::JparList),
             "rdjl" => Some(Builtin::Rdjl),
             "run" => Some(Builtin::Run),
+            "run2" => Some(Builtin::Run2),
             "get" => Some(Builtin::Get),
             // 0.12.0 rename: `post` → `pst`. Brings post into line with the
             // I/O compression family (rd, wr, srt, flt, fld, fmt). Clean
@@ -342,6 +473,13 @@ impl Builtin {
             // did-you-mean to `pst` via the standard suggestion path.
             "pst" => Some(Builtin::Post),
             "get-many" => Some(Builtin::GetMany),
+            "get-to" => Some(Builtin::GetTo),
+            "pst-to" => Some(Builtin::PstTo),
+            "put" => Some(Builtin::Put),
+            "pat" => Some(Builtin::Pat),
+            "del" => Some(Builtin::Del),
+            "hed" => Some(Builtin::Hed),
+            "opt" => Some(Builtin::Opt),
             "mmap" => Some(Builtin::Mmap),
             "mget" => Some(Builtin::Mget),
             "mset" => Some(Builtin::Mset),
@@ -355,6 +493,7 @@ impl Builtin {
             "solve" => Some(Builtin::Solve),
             "inv" => Some(Builtin::Inv),
             "det" => Some(Builtin::Det),
+            "lstsq" => Some(Builtin::Lstsq),
             "argmax" => Some(Builtin::Argmax),
             "argmin" => Some(Builtin::Argmin),
             "argsort" => Some(Builtin::Argsort),
@@ -367,6 +506,21 @@ impl Builtin {
             "dur-parse" => Some(Builtin::DurParse),
             "dur-fmt" => Some(Builtin::DurFmt),
             "default-on-err" => Some(Builtin::DefaultOnErr),
+            "urlenc" => Some(Builtin::Urlenc),
+            "urldec" => Some(Builtin::Urldec),
+            "b64u" => Some(Builtin::B64u),
+            "b64u-dec" => Some(Builtin::B64uDec),
+            "sha256" => Some(Builtin::Sha256),
+            "hmac-sha256" => Some(Builtin::HmacSha256),
+            "b64" => Some(Builtin::B64),
+            "b64-dec" => Some(Builtin::B64Dec),
+            "hex" => Some(Builtin::HexEnc),
+            "ct-eq" => Some(Builtin::CtEq),
+            "where" => Some(Builtin::Where),
+            "add-mo" => Some(Builtin::AddMo),
+            "last-dom" => Some(Builtin::LastDom),
+            "next-business-day" => Some(Builtin::NextBusinessDay),
+            "day-of-week" => Some(Builtin::DayOfWeek),
             _ => None,
         }
     }
@@ -403,6 +557,7 @@ impl Builtin {
             Builtin::Prod => "prod",
             Builtin::Cumsum => "cumsum",
             Builtin::Cprod => "cprod",
+            Builtin::Ewm => "ewm",
             Builtin::Avg => "avg",
             Builtin::Median => "median",
             Builtin::Quantile => "quantile",
@@ -412,6 +567,7 @@ impl Builtin {
             Builtin::Ifft => "ifft",
             Builtin::Transpose => "transpose",
             Builtin::Matmul => "matmul",
+            Builtin::Matvec => "matvec",
             Builtin::Dot => "dot",
             Builtin::Len => "len",
             Builtin::Hd => "hd",
@@ -432,6 +588,9 @@ impl Builtin {
             Builtin::Zip => "zip",
             Builtin::Enumerate => "enumerate",
             Builtin::Range => "range",
+            Builtin::Linspace => "linspace",
+            Builtin::Ones => "ones",
+            Builtin::Rep => "rep",
             Builtin::Window => "window",
             Builtin::Chunks => "chunks",
             Builtin::Setunion => "setunion",
@@ -449,12 +608,15 @@ impl Builtin {
             Builtin::Mapr => "mapr",
             Builtin::Rnd => "rnd",
             Builtin::Rndn => "rndn",
+            Builtin::RandBytes => "rand-bytes",
+            Builtin::Seed => "seed",
             Builtin::Now => "now",
             Builtin::NowMs => "now-ms",
             Builtin::Dtfmt => "dtfmt",
             Builtin::Dtparse => "dtparse",
             Builtin::DtparseRel => "dtparse-rel",
             Builtin::Sleep => "sleep",
+            Builtin::TzOffset => "tz-offset",
             Builtin::Rd => "rd",
             Builtin::Rdl => "rdl",
             Builtin::Rdb => "rdb",
@@ -468,6 +630,10 @@ impl Builtin {
             Builtin::Ls => "lsd",
             Builtin::Walk => "walk",
             Builtin::Glob => "glob",
+            Builtin::Fsize => "fsize",
+            Builtin::Mtime => "mtime",
+            Builtin::Isfile => "isfile",
+            Builtin::Isdir => "isdir",
             Builtin::EnvAll => "env-all",
             Builtin::Trm => "trm",
             Builtin::Upr => "upr",
@@ -489,11 +655,20 @@ impl Builtin {
             Builtin::Jkeys => "jkeys",
             Builtin::Jdmp => "jdmp",
             Builtin::Jpar => "jpar",
+            Builtin::JparList => "jpar-list",
             Builtin::Rdjl => "rdjl",
             Builtin::Run => "run",
+            Builtin::Run2 => "run2",
             Builtin::Get => "get",
             Builtin::Post => "pst",
             Builtin::GetMany => "get-many",
+            Builtin::GetTo => "get-to",
+            Builtin::PstTo => "pst-to",
+            Builtin::Put => "put",
+            Builtin::Pat => "pat",
+            Builtin::Del => "del",
+            Builtin::Hed => "hed",
+            Builtin::Opt => "opt",
             Builtin::Mmap => "mmap",
             Builtin::Mget => "mget",
             Builtin::Mset => "mset",
@@ -507,6 +682,7 @@ impl Builtin {
             Builtin::Solve => "solve",
             Builtin::Inv => "inv",
             Builtin::Det => "det",
+            Builtin::Lstsq => "lstsq",
             Builtin::Argmax => "argmax",
             Builtin::Argmin => "argmin",
             Builtin::Argsort => "argsort",
@@ -519,6 +695,21 @@ impl Builtin {
             Builtin::DurParse => "dur-parse",
             Builtin::DurFmt => "dur-fmt",
             Builtin::DefaultOnErr => "default-on-err",
+            Builtin::Urlenc => "urlenc",
+            Builtin::Urldec => "urldec",
+            Builtin::B64u => "b64u",
+            Builtin::B64uDec => "b64u-dec",
+            Builtin::Sha256 => "sha256",
+            Builtin::HmacSha256 => "hmac-sha256",
+            Builtin::B64 => "b64",
+            Builtin::B64Dec => "b64-dec",
+            Builtin::HexEnc => "hex",
+            Builtin::CtEq => "ct-eq",
+            Builtin::Where => "where",
+            Builtin::AddMo => "add-mo",
+            Builtin::LastDom => "last-dom",
+            Builtin::NextBusinessDay => "next-business-day",
+            Builtin::DayOfWeek => "day-of-week",
         }
     }
 
@@ -606,6 +797,7 @@ impl Builtin {
         Builtin::Mapr,
         Builtin::Rnd,
         Builtin::Rndn,
+        Builtin::Seed,
         Builtin::Now,
         Builtin::Dtfmt,
         Builtin::Dtparse,
@@ -636,6 +828,7 @@ impl Builtin {
         Builtin::Jkeys,
         Builtin::Jdmp,
         Builtin::Jpar,
+        Builtin::JparList,
         Builtin::Rdjl,
         Builtin::Get,
         Builtin::Post,
@@ -733,6 +926,115 @@ impl Builtin {
         // to `T`, returning `d` on `Err`. Kills the common `?r{~v:v ^_:default}`
         // pattern. Tree-bridge eligible (2-arg, pure). Added in 0.12.1.
         Builtin::DefaultOnErr,
+        // Calendar arithmetic (0.12.2). Pure epoch↔epoch/n ops, no FnRef, no I/O.
+        // Tree-bridge eligible: VM + Cranelift inherit for free without new opcodes.
+        // Appended to preserve all existing on-wire tags.
+        Builtin::AddMo,
+        Builtin::LastDom,
+        Builtin::NextBusinessDay,
+        Builtin::DayOfWeek,
+        // 0.12.1 filesystem metadata primitives. Atomic singletons rather
+        // than a fat `stat path > R (M t t) t`: agents that want size pay
+        // size cost, agents that want a predicate pay predicate cost. Size
+        // / mtime return Result (open-and-stat can fail); predicates return
+        // bool (Python convention - `false` collapses missing / perm-denied
+        // / wrong-kind into the natural branch). All four are tree-bridge
+        // eligible; no native opcodes.
+        Builtin::Fsize,
+        Builtin::Mtime,
+        Builtin::Isfile,
+        Builtin::Isdir,
+        // 0.12.1: HTTP builtins with explicit per-request timeout. Appended
+        // last to preserve every existing on-wire tag. Tree-bridge eligible
+        // so VM and Cranelift JIT/AOT inherit them without new opcodes.
+        // minreq `with_timeout` takes whole seconds; millisecond values are
+        // rounded up (ceil(ms / 1000)) so 1 ms => 1 s, 1001 ms => 2 s.
+        Builtin::GetTo,
+        Builtin::PstTo,
+        // `matvec xm ys > L n` — native matrix-vector multiply. Tree-bridge
+        // eligible: composes the same row/vector helpers as `matmul`, so VM
+        // and Cranelift inherit through the bridge without new opcodes.
+        // Appended to preserve every existing tag.
+        Builtin::Matvec,
+        // `lstsq xm ys > L n` — ordinary least squares via the normal
+        // equations. Tree-bridge eligible: composes existing transpose /
+        // matmul / solve so VM and Cranelift inherit through the bridge
+        // without new opcodes. Appended to preserve every existing tag.
+        Builtin::Lstsq,
+        // `rand-bytes n > t` — cryptographically random bytes, base64url-no-pad encoded.
+        // Distinct from `rnd` (uniform float) and `rndn` (Normal float): this is the
+        // CSPRNG path agents need for jti / CSRF tokens / session IDs / nonces. Output
+        // is base64url-no-pad so it drops straight into headers, cookies, query strings
+        // without further encoding. Tree-bridge eligible (arity 1, no FnRef, no I/O
+        // wrap). Appended last to preserve on-wire tags. Backed by `getrandom`, not
+        // `fastrand` — cryptographic randomness must never be seeded.
+        Builtin::RandBytes,
+        // 0.12.1: URL + base64url encoding cluster. Appended last to preserve
+        // every existing on-wire tag. Tree-bridge eligible — pure text-in /
+        // text-out, no FnRef args, no I/O. Backed by the `percent-encoding`
+        // and `base64` crates. The two decoders return Result so malformed
+        // input surfaces as a typed error at the boundary; the two encoders
+        // are total (always produce Text).
+        Builtin::Urlenc,
+        Builtin::Urldec,
+        Builtin::B64u,
+        Builtin::B64uDec,
+        // ewm xs a > L n — exponential moving average with smoothing factor a
+        // in [0, 1]. Pure number-list reducer; tree-bridge eligible alongside
+        // the cumsum/cprod aggregate family. Appended last to preserve every
+        // existing on-wire tag.
+        Builtin::Ewm,
+        // where cond xs ys > L a — parallel-list conditional select (NumPy
+        // np.where equivalent). Tree-bridge eligible (3-arg, no FnRef, no I/O,
+        // no Result wrapper). Appended last to preserve every existing on-wire
+        // tag.
+        Builtin::Where,
+        // `tz-offset tz:t epoch:n > R n t` — UTC offset in seconds for the
+        // given IANA timezone at the given Unix epoch. DST-aware via chrono-tz.
+        // Returns Err on unknown timezone name. Tree-bridge eligible (2-arg,
+        // no FnRef). Appended to preserve all prior on-wire tags.
+        Builtin::TzOffset,
+        // `run2 cmd:t args:L t > R RunResult t` - structured process spawn.
+        // Returns a typed Record{stdout:t; stderr:t; exit:n} rather than the
+        // loose M t t that `run` returns, giving clean dot-access. Appended
+        // last to preserve every existing on-wire tag; tree-bridge eligible.
+        Builtin::Run2,
+        // Numeric prelude (0.12.1). Three list constructors hit repeatedly by
+        // linear-regression (linspace for evenly-spaced sample points),
+        // distance-matrix (ones for a design-matrix column), and monte-carlo
+        // (rep for seeding accumulators). Tree-bridge eligible — pure, no
+        // FnRef args, no I/O, no Result wrapper. Appended last to preserve
+        // every existing on-wire tag.
+        Builtin::Linspace,
+        Builtin::Ones,
+        Builtin::Rep,
+        // HTTP verb cluster (#5z). Tree-bridge eligible — same shape as `pst`
+        // (optional headers, R t t return). Appended last to preserve every
+        // existing on-wire tag.
+        Builtin::Put,
+        Builtin::Pat,
+        Builtin::Del,
+        Builtin::Hed,
+        Builtin::Opt,
+        // Crypto primitives cluster (0.12.x). All tree-bridge eligible — pure
+        // text-in / text-or-bool-out, no FnRef args, no I/O. VM and Cranelift
+        // JIT inherit through the existing bridge at zero opcode cost. Order
+        // here is the on-wire dispatch order; appended last to preserve every
+        // existing tag.
+        //
+        // sha256 / hmac-sha256: lowercase hex digest output. Backed by `sha2`
+        // and `hmac` crates from the RustCrypto suite.
+        // b64 / b64-dec: standard base64 with `=` padding (RFC 4648 §4),
+        // distinct from b64u / b64u-dec which use the URL-safe alphabet.
+        // hex: lowercase hex encode of the UTF-8 bytes of the input text.
+        // ct-eq: constant-time text equality. Use when comparing secrets
+        // (HMAC digests, tokens) so a short-circuit `=` doesn't leak timing.
+        Builtin::Sha256,
+        Builtin::HmacSha256,
+        Builtin::B64,
+        Builtin::B64Dec,
+        Builtin::HexEnc,
+        Builtin::CtEq,
     ];
 
     /// On-wire 8-bit tag for cross-engine builtin dispatch. See `ALL`.
@@ -815,6 +1117,28 @@ pub(crate) fn resolve_slice_bound(raw: i64, len: usize) -> usize {
     let len_i = len as i64;
     let adjusted = if raw < 0 { raw + len_i } else { raw };
     adjusted.clamp(0, len_i) as usize
+}
+
+/// Resolve `slc`'s `end` bound with the `-1 = to end` sugar.
+///
+/// `slc` historically treated negative end indices as Python-style relative
+/// offsets, so `slc s 0 -1` dropped the last element. Agents trained on
+/// Python/JS keep reaching for `-1` to mean "to end of string/list" instead,
+/// so we add a narrow ergonomic exception: when `start_raw >= 0` and
+/// `end_raw == -1`, treat the end as `len`. All other shapes (negative
+/// start, or end < -1) keep the Python-style relative-offset behaviour via
+/// [`resolve_slice_bound`].
+///
+/// This is intentionally `-1` only, not "any negative end". Treating every
+/// negative end as "to end" would silently break the existing
+/// `slc xs -3 -1` / `slc "hello" -99 -1` shapes that already rely on the
+/// Python semantics.
+#[inline]
+pub(crate) fn resolve_slc_end(start_raw: i64, end_raw: i64, len: usize) -> usize {
+    if start_raw >= 0 && end_raw == -1 {
+        return len;
+    }
+    resolve_slice_bound(end_raw, len)
 }
 
 /// Resolve `take n xs` against `len`, returning the prefix length to retain.
@@ -924,6 +1248,7 @@ mod tests {
             "prod",
             "cumsum",
             "cprod",
+            "ewm",
             "avg",
             "median",
             "quantile",
@@ -961,6 +1286,7 @@ mod tests {
             "flatmap",
             "mapr",
             "rnd",
+            "seed",
             "now",
             "now-ms",
             "rd",
@@ -991,8 +1317,16 @@ mod tests {
             "jkeys",
             "jdmp",
             "jpar",
+            "jpar-list",
             "get",
             "pst",
+            "get-to",
+            "pst-to",
+            "put",
+            "pat",
+            "del",
+            "hed",
+            "opt",
             "mmap",
             "mget",
             "mset",
@@ -1009,12 +1343,14 @@ mod tests {
             "chunks",
             "transpose",
             "matmul",
+            "matvec",
             "dot",
             "rndn",
             "get-many",
             "solve",
             "inv",
             "det",
+            "lstsq",
             "rdjl",
             "dtfmt",
             "dtparse",
@@ -1037,6 +1373,21 @@ mod tests {
             "e",
             "dur-parse",
             "dur-fmt",
+            "rand-bytes",
+            "where",
+            "add-mo",
+            "last-dom",
+            "next-business-day",
+            "day-of-week",
+            "linspace",
+            "ones",
+            "rep",
+            "sha256",
+            "hmac-sha256",
+            "b64",
+            "b64-dec",
+            "hex",
+            "ct-eq",
         ];
         for name in &all {
             let b = Builtin::from_name(name).unwrap_or_else(|| panic!("missing builtin: {name}"));
@@ -1161,6 +1512,7 @@ mod tests {
             "prod",
             "cumsum",
             "cprod",
+            "ewm",
             "avg",
             "median",
             "quantile",
@@ -1170,6 +1522,7 @@ mod tests {
             "ifft",
             "transpose",
             "matmul",
+            "matvec",
             "dot",
             "len",
             "hd",
@@ -1240,10 +1593,18 @@ mod tests {
             "jkeys",
             "jdmp",
             "jpar",
+            "jpar-list",
             "rdjl",
             "get",
             "pst",
             "get-many",
+            "get-to",
+            "pst-to",
+            "put",
+            "pat",
+            "del",
+            "hed",
+            "opt",
             "mmap",
             "mget",
             "mset",
@@ -1257,6 +1618,7 @@ mod tests {
             "solve",
             "inv",
             "det",
+            "lstsq",
             "run",
             "lsd",
             "walk",
@@ -1271,6 +1633,21 @@ mod tests {
             "e",
             "dur-parse",
             "dur-fmt",
+            "rand-bytes",
+            "where",
+            "add-mo",
+            "last-dom",
+            "next-business-day",
+            "day-of-week",
+            "linspace",
+            "ones",
+            "rep",
+            "sha256",
+            "hmac-sha256",
+            "b64",
+            "b64-dec",
+            "hex",
+            "ct-eq",
         ] {
             let b = Builtin::from_name(name).unwrap_or_else(|| panic!("no builtin: {name}"));
             let t = b.tag();

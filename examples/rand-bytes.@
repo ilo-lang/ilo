@@ -1,0 +1,36 @@
+-- `rand-bytes n > t` — cryptographically random bytes, encoded as
+-- base64url-no-pad text. Distinct from `rnd` (uniform float in [0, 1))
+-- and `rndn` (Normal float): rand-bytes is the CSPRNG path for jti
+-- claims, CSRF tokens, session IDs, and nonces.
+--
+-- Output is base64url-no-pad (RFC 4648 §5, URL-safe `-`/`_` alphabet,
+-- no `=` padding) so the result drops straight into headers, cookies,
+-- and query strings without further encoding.
+--
+-- Encoded length is deterministic: ceil(n * 4 / 3) characters with the
+-- trailing `=` chars stripped. The bytes themselves are random.
+
+-- 16 raw bytes → 22 base64url chars. This is the canonical jti / CSRF
+-- token size: 128 bits of entropy, fits in a cookie or URL parameter.
+jti-len>n;len (rand-bytes 16)
+
+-- 32 raw bytes → 43 base64url chars. Standard session-id / nonce size:
+-- 256 bits of entropy.
+session-len>n;len (rand-bytes 32)
+
+-- Zero is a degenerate but valid input: zero bytes encode to the empty
+-- string. Pins the no-allocation path.
+zero-len>n;len (rand-bytes 0)
+
+-- Two independent calls return different output. False-fail rate is
+-- 2^-128 (vanishingly small).
+distinct>t;a=rand-bytes 16;b=rand-bytes 16;?(=a b){true:"same";false:"diff"}
+
+-- run: jti-len
+-- out: 22
+-- run: session-len
+-- out: 43
+-- run: zero-len
+-- out: 0
+-- run: distinct
+-- out: diff

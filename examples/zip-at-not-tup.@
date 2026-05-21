@@ -1,0 +1,12 @@
+-- zip xs ys returns L (L n) — a list of two-element lists, not tuples.
+-- ilo has no tuple type. Index pairs with `at pair 0` / `at pair 1`,
+-- not `pair.0` / `pair.1`. (Field-access syntax works only when the
+-- pair name is bound; the common bug is reaching for `tup.0` where
+-- `tup` was never bound — see ILO-T004 hint for that case.)
+
+dotp xs:L n ys:L n>n;
+  zs=zip xs ys;
+  fld (s:n pair:L n>n;+s *at pair 0 at pair 1) zs 0
+
+-- run: dotp [1,2,3] [10,20,30]
+-- out: 140

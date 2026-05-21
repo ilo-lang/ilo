@@ -25,9 +25,13 @@ Every skill subcommand accepts `--json`. `ilo skill list --json` returns `{schem
 ```
 ilo file.@                         auto-pick main
 ilo file.@ func a b                call named fn
-ilo 'f x:n>n;+x 1' 5              inline source
-ilo --jit file.@ --bench main     JIT + bench
+ilo 'f x:n>n;+x 1' 5               inline source
+ilo --jit file.@ --bench main      JIT + bench
+ilo file.@ --bench main --json     bench output as NDJSON
+ilo file.@ --bench main --json --silent  suppress program stdout
 ```
+
+`--silent` / `-s` mutes program-level `prnt` (and `prnv` / `jprn` / JIT prints) for the run. Paired with `--bench --json` it gives agent harnesses (e.g. persona cost rollup) a clean JSON stream on stdout instead of 10k+ lines of benchmarked output. Stderr is never silenced.
 
 First positional dispatches to a fn when it has ident shape. Otherwise (paths, numbers, sigils, negatives) routes to `main`. Unknown `--flag` shapes are rejected, not consumed.
 
@@ -40,19 +44,19 @@ First positional dispatches to a fn when it has ident shape. Otherwise (paths, n
 
 AOT-compiled binaries (`ilo compile`) follow the same contract byte-for-byte.
 
+**Auto-echo suppression.** An entry-fn ending in a bare `prnt` call, a tail loop with no early return, or — when the body has an unconditional top-level `prnt` — a wrapped string-literal tail `~"text"` / `^"text"` (status sentinel) does NOT auto-echo its return value. The collision-avoidance rules let you write `m>R t t;prnt "report";~"ok"` and get clean `report\n` on stdout instead of `report\nok\n`. A no-prnt function returning `~"ok"` (e.g. `addtask`) still emits `ok` — the wrapped literal IS the output. `~v` where `v` is a binding or call always auto-echoes; only string LITERAL sentinels are dropped.
+
 ## Serv mode
 
 `ilo serv [--mcp m.json] [--tools http.json]` is a long-lived JSON request/response loop on stdin/stdout. Send `{"program":"fn p:n>n;*p 2","func":"fn","args":[21]}`, get `{"ok": 42}` or `{"error":{...}}`. Cuts process-spawn overhead to zero.
 
-## Agent-natural surface (experimental, compat/agent-natural branch)
+## AST depth cap
 
-On this branch and in 0.13.0-natural mode, lead with the agent-natural forms in generated code:
+Parser nesting is capped at 256 by default — guards `ilo serv` and any other context that compiles untrusted source against `((((...((1+1))))...))` DoS payloads that would otherwise blow the parser stack. Hand-written ilo rarely exceeds depth 10. Override with `--max-ast-depth N` on `ilo`, `ilo run`, `ilo check`, `ilo build`, or `ilo serv` when a real program needs more. Hitting the cap surfaces as `ILO-P103`.
 
-- `if cond { a } else { b }` for value-producing conditionals; `if cond { body }` for the no-else statement form.
-- `for x in xs { body }` and `for i in a..b { body }` for loops; `while cond { body }` for while.
-- Match arms accept brace-block bodies: `?r{~v:{d=*v 2;+d 1};^e:body}`.
+## Runtime + output caps
 
-The prefix/`?h`/`@`/`wh` forms still parse for backwards compatibility. See `SPEC-AGENT-NATURAL.md` for the falsification criterion this experiment is being measured against.
+`ilo run`: wall-clock 60 s (`ILO-R016`), stdout ~100 MB (`ILO-R017`). Override: `--max-runtime SECS` / `--max-output-bytes BYTES` (0 disables). Hitting either = missing loop increment or no base case.
 
 ## Branching
 

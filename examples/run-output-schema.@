@@ -1,0 +1,24 @@
+-- `run cmd argv > R (M t t) t`, the Ok map has exactly three keys, all
+-- text: stdout (captured stdout), stderr (captured stderr), code (decimal
+-- exit code as text). This example pins that schema as a regression so
+-- agents can rely on all three keys being present and t-valued.
+
+schema-stdout>t;m=run!! "echo" ["hello"];??mget m "stdout" "<missing>"
+
+schema-stderr>t;m=run!! "echo" ["hello"];??mget m "stderr" "<missing>"
+
+schema-code>t;m=run!! "echo" ["hello"];??mget m "code" "<missing>"
+
+-- All three keys present on a non-zero exit: code surfaces in the Ok
+-- map, not as an Err.
+nonzero-code>t;m=run!! "false" [];??mget m "code" "<missing>"
+
+-- engine-skip: jit
+-- run: schema-stdout
+-- out: hello
+-- run: schema-stderr
+-- out:
+-- run: schema-code
+-- out: 0
+-- run: nonzero-code
+-- out: 1

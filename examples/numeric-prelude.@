@@ -1,0 +1,38 @@
+-- Numeric prelude: linspace, ones, rep. Three list constructors that
+-- save ~5-10 LoC per call site for regression / matrix / monte-carlo work.
+
+-- linspace a b n: n evenly-spaced floats from a to b inclusive (numpy
+-- endpoint=True). n=0 returns []; n=1 returns [a]; equal endpoints repeat.
+ls-basic >L n;linspace 0 10 5
+ls-one >L n;linspace 0 10 1
+ls-empty >L n;linspace 0 10 0
+ls-equal >L n;linspace 5 5 3
+
+-- ones n: n copies of 1.0. Useful for design-matrix columns (sum (ones n) = n).
+ones-five >L n;ones 5
+ones-empty >L n;ones 0
+
+-- rep n v: n copies of v, element type follows v. Useful for seeding
+-- accumulators (`rep 8 0`) or constant lookup tables.
+rep-num >L n;rep 3 7
+rep-text >L t;rep 3 "x"
+rep-empty >L n;rep 0 99
+
+-- run: ls-basic
+-- out: [0, 2.5, 5, 7.5, 10]
+-- run: ls-one
+-- out: [0]
+-- run: ls-empty
+-- out: []
+-- run: ls-equal
+-- out: [5, 5, 5]
+-- run: ones-five
+-- out: [1, 1, 1, 1, 1]
+-- run: ones-empty
+-- out: []
+-- run: rep-num
+-- out: [7, 7, 7]
+-- run: rep-text
+-- out: [x, x, x]
+-- run: rep-empty
+-- out: []

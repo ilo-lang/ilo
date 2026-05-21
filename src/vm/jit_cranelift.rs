@@ -88,6 +88,7 @@ struct HelperFuncs {
     rnd0: FuncId,
     rnd2: FuncId,
     rndn: FuncId,
+    seed: FuncId,
     now: FuncId,
     now_ms: FuncId,
     env: FuncId,
@@ -148,6 +149,7 @@ struct HelperFuncs {
     jpth: FuncId,
     jdmp: FuncId,
     jpar: FuncId,
+    jpar_list: FuncId,
     rdjl: FuncId,
     call: FuncId,
     // Type predicates
@@ -302,6 +304,7 @@ fn register_helpers(builder: &mut JITBuilder) {
         ("jit_rnd0", jit_rnd0 as *const u8),
         ("jit_rnd2", jit_rnd2 as *const u8),
         ("jit_rndn", jit_rndn as *const u8),
+        ("jit_seed", jit_seed as *const u8),
         ("jit_now", jit_now as *const u8),
         ("jit_now_ms", jit_now_ms as *const u8),
         ("jit_env", jit_env as *const u8),
@@ -335,6 +338,7 @@ fn register_helpers(builder: &mut JITBuilder) {
         ("jit_stdev", jit_stdev as *const u8),
         ("jit_variance", jit_variance as *const u8),
         ("jit_sum", jit_sum as *const u8),
+        ("jit_prod", jit_prod as *const u8),
         ("jit_avg", jit_avg as *const u8),
         ("jit_flat", jit_flat as *const u8),
         ("jit_slc", jit_slc as *const u8),
@@ -366,6 +370,7 @@ fn register_helpers(builder: &mut JITBuilder) {
         ("jit_jpth", jit_jpth as *const u8),
         ("jit_jdmp", jit_jdmp as *const u8),
         ("jit_jpar", jit_jpar as *const u8),
+        ("jit_jpar_list", jit_jpar_list as *const u8),
         ("jit_rdjl", jit_rdjl as *const u8),
         ("jit_call", jit_call as *const u8),
         // Type predicates
@@ -497,6 +502,7 @@ fn declare_all_helpers(module: &mut JITModule) -> HelperFuncs {
         rnd0: declare_helper(module, "jit_rnd0", 0, 1),
         rnd2: declare_helper(module, "jit_rnd2", 2, 1),
         rndn: declare_helper(module, "jit_rndn", 2, 1),
+        seed: declare_helper(module, "jit_seed", 1, 1),
         now: declare_helper(module, "jit_now", 0, 1),
         now_ms: declare_helper(module, "jit_now_ms", 0, 1),
         env: declare_helper(module, "jit_env", 1, 1),
@@ -561,6 +567,7 @@ fn declare_all_helpers(module: &mut JITModule) -> HelperFuncs {
         jpth: declare_helper(module, "jit_jpth", 3, 1),
         jdmp: declare_helper(module, "jit_jdmp", 1, 1),
         jpar: declare_helper(module, "jit_jpar", 2, 1),
+        jpar_list: declare_helper(module, "jit_jpar_list", 2, 1),
         rdjl: declare_helper(module, "jit_rdjl", 2, 1),
         call: declare_helper(module, "jit_call", 4, 1),
         // Type predicates
@@ -1216,7 +1223,7 @@ fn compile_function_body(
                 | OP_SETUNION | OP_SETINTER | OP_SETDIFF
                 | OP_INV | OP_SOLVE
                 | OP_SPL | OP_CAT | OP_GET | OP_POST | OP_GETH | OP_POSTH | OP_GETMANY
-                | OP_ENV | OP_JPTH | OP_JDMP | OP_JPAR | OP_RDJL
+                | OP_ENV | OP_JPTH | OP_JDMP | OP_JPAR | OP_JPAR_LIST | OP_RDJL
                 | OP_MAPNEW | OP_MGET | OP_MSET | OP_MDEL | OP_MKEYS | OP_MVALS | OP_MPAIRS
                 | OP_LISTNEW | OP_LISTAPPEND
                 | OP_RECNEW | OP_RECWITH | OP_RECNEW_EMPTY | OP_RECCOPY
@@ -1224,7 +1231,7 @@ fn compile_function_body(
                 | OP_PADL | OP_PADR | OP_PADLC | OP_PADRC | OP_CHR | OP_CHARS | OP_UNQ | OP_UNIQBY | OP_PARTITION | OP_FRQ | OP_NUM
                 | OP_SRT_BY_KEY | OP_GRP_BY_KEY | OP_UNIQ_BY_KEY
                 | OP_RGXSUB | OP_TRANSPOSE | OP_MATMUL | OP_DTFMT | OP_DTPARSE
-                | OP_FLAT | OP_CALL_BUILTIN_TREE | OP_LOADFN | OP_CALL_DYN => {
+                | OP_FLAT | OP_CALL_BUILTIN_TREE | OP_LOADFN | OP_CALL_DYN | OP_SEED => {
                     non_num_write[a] = true;
                     non_bool_write[a] = true;
                 }
@@ -1232,7 +1239,14 @@ fn compile_function_body(
                 // OP_CALL_OWN1 has the identical encoding and result-write
                 // shape (move-not-clone on first arg only changes RC
                 // bookkeeping, not the result Variable type).
-                OP_CALL | OP_CALL_OWN1 => {
+                OP_CALL | OP_CALL_OWN1 | OP_TAILCALL => {
+                    // OP_TAILCALL has the same encoding + result-write
+                    // shape as OP_CALL (the result slot is irrelevant at
+                    // runtime since we never return to the caller frame,
+                    // but the type-inference pass still tracks A so that
+                    // a misclassified TAILCALL emitted in a non-tail
+                    // position would surface as a type mismatch instead
+                    // of silent corruption).
                     let bx = (inst & 0xFFFF) as usize;
                     let func_idx = bx >> 8;
                     if func_idx < program.chunks.len()
@@ -2607,6 +2621,13 @@ fn compile_function_body(
                     let rf = builder.ins().bitcast(F64, mf, result);
                     builder.def_var(f64_vars[a_idx], rf);
                 }
+            }
+            OP_SEED => {
+                let bv = builder.use_var(vars[b_idx]);
+                let fref = get_func_ref(&mut builder, module, helpers.seed);
+                let call_inst = builder.ins().call(fref, &[bv]);
+                let result = builder.inst_results(call_inst)[0];
+                builder.def_var(vars[a_idx], result);
             }
             OP_NOW => {
                 let fref = get_func_ref(&mut builder, module, helpers.now);
@@ -4392,7 +4413,7 @@ fn compile_function_body(
                 }
                 // else: blocks not found → JIT bails (should not happen in practice)
             }
-            OP_CALL | OP_CALL_OWN1 => {
+            OP_CALL | OP_CALL_OWN1 | OP_TAILCALL => {
                 // OP_CALL_OWN1 is the move-not-clone first-arg variant of
                 // OP_CALL used by the let-stmt peephole. In the Cranelift
                 // JIT/AOT model args are passed as SSA Variable values
@@ -4404,6 +4425,15 @@ fn compile_function_body(
                 // the source-register clear on the caller side is a
                 // no-op under SSA: the moved-out Variable just isn't
                 // referenced again.
+                //
+                // OP_TAILCALL: bytecode-VM tail-call elimination opcode.
+                // For Cranelift we lower it identically to OP_CALL for
+                // now — semantically correct (the callee's return value
+                // flows back to be returned by the next OP_RET), but the
+                // host stack still grows by one frame per call. PR3 of
+                // the TCO series will switch this to Cranelift's
+                // `return_call` for true tail-call elimination, lifting
+                // the JIT/AOT host-stack bound to match the VM.
                 let a = ((inst >> 16) & 0xFF) as u8;
                 let bx = (inst & 0xFFFF) as usize;
                 let func_idx = bx >> 8;

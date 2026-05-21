@@ -1,0 +1,24 @@
+-- `slc xs s -1` with non-negative `s` reads the end as "to end of
+-- list/text". This is an ergonomic exception to ilo's otherwise
+-- Python-style negative-index handling: if you carry a Python/JS mental
+-- model where `-1` means "the end", it just works without computing
+-- `(len xs)` at the call site.
+--
+-- The sugar is intentionally narrow:
+--   - sugar fires only when `s >= 0` AND `e == -1`
+--   - any other negative end (e.g. `-2`) keeps Python-style semantics
+--   - negative starts also keep Python-style (so `slc xs -3 -1` is the
+--     penultimate window, not "from the third-from-last to the end")
+--
+-- If you want the "drop last" Python shape, use `take -1 xs` instead.
+
+drop-prefix xs:L n>L n;slc xs 2 -1
+suffix-from i:n xs:L n>L n;slc xs i -1
+tail-of-string s:t>t;slc s 1 -1
+
+-- run: drop-prefix [10,20,30,40,50]
+-- out: [30, 40, 50]
+-- run: suffix-from 3 [10,20,30,40,50]
+-- out: [40, 50]
+-- run: tail-of-string "hello"
+-- out: ello

@@ -127,9 +127,16 @@ fn lst_oob_has_rich_message_and_r009_on_every_engine() {
 // (c): Cranelift's call_stack now matches tree/VM. The repro is the
 // db-analyst report's exact shape: main calls g, g raises OOB, every
 // engine reports notes=["called from 'main'", "called from 'g'"].
+//
+// The body uses `r=g xs;+ r 0` rather than a bare `g xs` so the call
+// to `g` sits OUT of tail position. Without that, the VM-side
+// OP_TAILCALL (TCO PR2) would replace main's frame with g's and drop
+// "called from 'main'" from the notes -- the documented TCO
+// trade-off, pinned independently by
+// `vm_error_call_stack_drops_tail_caller` in src/vm/mod.rs tests.
 #[test]
 fn call_stack_notes_match_across_engines_two_levels() {
-    let src = "g xs:L n>n;at xs 99\nmain>n;xs=[1,2,3];g xs\n";
+    let src = "g xs:L n>n;at xs 99\nmain>n;xs=[1,2,3];r=g xs;+ r 0\n";
     let path = write_src(src, "callstack_two_levels.@");
     for (engine, stderr) in run_on_all_engines(&path, "main") {
         assert!(
@@ -143,13 +150,17 @@ fn call_stack_notes_match_across_engines_two_levels() {
     }
 }
 
-// (c) stress: three-level call chain (main → h → g). Cranelift's
-// pre-fix behaviour was `notes:[]`; tree/VM produced all three. With the
-// per-thread JIT call-stack snapshot at error-set time, Cranelift now
-// reports all three names too.
+// (c) stress: three-level call chain (main -> h -> g). Cranelift's
+// pre-fix behaviour was `notes:[]`; tree/VM produced all three. With
+// the per-thread JIT call-stack snapshot at error-set time, Cranelift
+// now reports all three names too.
+//
+// Same TCO note as above: main's call to h is bound through a local
+// + binop so it does not sit in tail position. h's call to g was
+// already non-tail (the original `a=g xs;+ a 1` shape).
 #[test]
 fn call_stack_notes_match_across_engines_three_levels() {
-    let src = "g xs:L n>n;at xs 99\nh xs:L n>n;a=g xs;+ a 1\nmain>n;xs=[1,2,3];h xs\n";
+    let src = "g xs:L n>n;at xs 99\nh xs:L n>n;a=g xs;+ a 1\nmain>n;xs=[1,2,3];r=h xs;+ r 0\n";
     let path = write_src(src, "callstack_three_levels.@");
     for (engine, stderr) in run_on_all_engines(&path, "main") {
         for expected in [

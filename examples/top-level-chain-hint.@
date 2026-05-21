@@ -1,0 +1,24 @@
+-- Top-level imperative chains need a `main>_;` wrapper.
+--
+-- Personas reach for a Python-style imperative chain at the top level:
+--
+--     pts=gen-pts
+--     cs0=[[4.8 4.9][6.2 7.1]]
+--     cs1=iter cs0 pts
+--     prnt cs1
+--
+-- In ilo every binding has to live inside a function body. Without a
+-- header to anchor the chain, the parser either dies on the bare `=`
+-- (ILO-P003) or slurps the whole chain into a previous function's
+-- body and emits a cascade of misleading ILO-T005s.
+--
+-- ILO-P102 catches this shape at parse time and points at the fix:
+-- wrap the chain in `main>_;`. The same code, with one header line on
+-- top, runs cleanly.
+
+-- The fixed shape: `main>_;` is the conventional zero-arg entry point.
+-- `_` tells ilo to infer the return type from the body.
+main>_;pts=[1 2 3];cs0=[4 5 6];cs1=pts;prnt cs1
+
+-- run: main
+-- out: [1, 2, 3]

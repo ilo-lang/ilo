@@ -3,9 +3,51 @@ use crate::builtins::Builtin;
 use crate::lexer::Token;
 use std::collections::HashMap;
 
+/// Default cap on AST nesting depth. Borrowed from Zero (rocicorp/mono#6000)
+/// after the same "untrusted source can blow the parser stack" attack surface
+/// surfaced for ilo: `ilo serv` and the bare-positional dispatch both compile
+/// arbitrary text, and a 1 MB blob of `((((...((1+1))))...))` will recurse
+/// straight through the OS thread stack on tree-walker parsers.
+///
+/// 256 is far above anything a human or agent writes by hand (the deepest
+/// expression in the in-tree examples is under 20) and small enough that even
+/// the worst-case stack frame in `parse_atom`/`parse_expr` stays inside the
+/// default 8 MB main-thread stack with plenty of headroom. Override via
+/// `--max-ast-depth N` on `ilo`, `ilo run`, `ilo check`, `ilo build`, and
+/// `ilo serv`.
+pub const DEFAULT_MAX_AST_DEPTH: usize = 256;
+
+/// Process-wide override for the AST-depth cap, set once by CLI entry points
+/// when `--max-ast-depth N` is parsed. A `0` value means "use the default".
+/// Every call into `parser::parse` (or `Parser::new`) reads this so dozens of
+/// internal call sites don't have to thread the value through. Tests can clear
+/// it back to 0 if they care; in practice it's only written by `fn main`.
+static MAX_AST_DEPTH_OVERRIDE: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+
+/// Install a process-wide AST-depth cap. Called by CLI entry points after
+/// parsing `--max-ast-depth N`. Subsequent calls to `parser::parse` /
+/// `Parser::new` pick this up automatically.
+pub fn set_max_ast_depth_override(cap: usize) {
+    MAX_AST_DEPTH_OVERRIDE.store(cap, std::sync::atomic::Ordering::Relaxed);
+}
+
+fn effective_max_ast_depth() -> usize {
+    let v = MAX_AST_DEPTH_OVERRIDE.load(std::sync::atomic::Ordering::Relaxed);
+    if v == 0 { DEFAULT_MAX_AST_DEPTH } else { v }
+}
+
 pub struct Parser {
     tokens: Vec<(Token, Span)>,
     pos: usize,
+    /// Current nesting depth across recursive parse helpers. Incremented at
+    /// the entry of `parse_expr`, `parse_stmt`, `parse_decl`, `parse_atom`,
+    /// `parse_pattern`, and `parse_type` via `DepthGuard`. When `depth >=
+    /// max_depth` the next entry returns `ILO-P103` instead of recursing.
+    depth: usize,
+    /// Cap on `depth`. Default `DEFAULT_MAX_AST_DEPTH`; overridable from the
+    /// CLI for both `ilo` and `ilo serv` via `--max-ast-depth`.
+    max_depth: usize,
     /// Parallel to `tokens` with length `tokens.len() + 1`. Entry `i` is
     /// `Some(span)` iff at least one unindented `Token::Newline` (a top-level
     /// declaration boundary, as produced by `lexer::normalize_newlines`) sat
@@ -42,6 +84,12 @@ pub struct Parser {
     lifted_decls: Vec<Decl>,
     /// Monotonic counter for synthetic lambda names.
     lambda_counter: usize,
+    /// Function names whose declaration was recognised at the header (name
+    /// plus signature parsed) but whose return-type or body parse then
+    /// errored. Surfaced on `Program.parse_failed_fns` so the verifier can
+    /// suppress the cascade of `ILO-T005 undefined function 'X'` errors at
+    /// every call site (the parse error already covered the root cause).
+    parse_failed_fns: HashMap<String, ParseFailRef>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -58,6 +106,12 @@ type Result<T> = std::result::Result<T, ParseError>;
 
 impl Parser {
     pub fn new(tokens: Vec<(Token, Span)>) -> Self {
+        Self::new_with_max_depth(tokens, effective_max_ast_depth())
+    }
+
+    /// Construct a parser with a custom AST-depth cap. See `DEFAULT_MAX_AST_DEPTH`
+    /// for the rationale on the default; the CLI plumbs `--max-ast-depth` here.
+    pub fn new_with_max_depth(tokens: Vec<(Token, Span)>, max_depth: usize) -> Self {
         // Filter out newlines — idea9 uses ; as separator. Each surviving
         // `Token::Newline` came out of `lexer::normalize_newlines`, which
         // converts indented continuations into `;` and only keeps a literal
@@ -90,6 +144,8 @@ impl Parser {
         Parser {
             tokens: filtered,
             pos: 0,
+            depth: 0,
+            max_depth: max_depth.max(1),
             decl_boundary,
             fn_arity,
             fn_param_is_fn,
@@ -97,6 +153,38 @@ impl Parser {
             no_whitespace_call: false,
             lifted_decls: Vec::new(),
             lambda_counter: 0,
+            parse_failed_fns: HashMap::new(),
+        }
+    }
+
+    /// Check that incrementing `depth` would stay within `max_depth`. Returns
+    /// `ILO-P103` otherwise. Call this at the very top of every recursive
+    /// parse entry point — paired with `depth_inc()` / `depth_dec()` (or the
+    /// `DepthGuard` RAII helper) so an early-return via `?` still decrements.
+    fn check_depth(&self) -> Result<()> {
+        if self.depth >= self.max_depth {
+            let cap = self.max_depth;
+            Err(self.error_hint(
+                "ILO-P103",
+                format!("AST nesting depth exceeded {cap}"),
+                format!(
+                    "deeply nested input is almost always a DoS vector against `ilo serv` or a generated payload, not real source. raise the cap with `--max-ast-depth N` if a legitimate program needs more than {cap} levels of nesting."
+                ),
+            ))
+        } else {
+            Ok(())
+        }
+    }
+
+    fn depth_inc(&mut self) {
+        self.depth += 1;
+    }
+
+    fn depth_dec(&mut self) {
+        // Saturating: depth invariants in tests/asserts catch bugs without
+        // panicking a real CLI run.
+        if self.depth > 0 {
+            self.depth -= 1;
         }
     }
 
@@ -346,6 +434,7 @@ impl Parser {
             Program {
                 declarations,
                 source: None,
+                parse_failed_fns: std::mem::take(&mut self.parse_failed_fns),
             },
             errors,
         )
@@ -467,6 +556,14 @@ impl Parser {
     }
 
     fn parse_decl(&mut self) -> Result<Decl> {
+        self.check_depth()?;
+        self.depth_inc();
+        let result = self.parse_decl_body();
+        self.depth_dec();
+        result
+    }
+
+    fn parse_decl_body(&mut self) -> Result<Decl> {
         // Reserved-keyword binding attempts: `var=5`, `let=5`, `if=5`, ...
         // Surface the friendly ILO-P011 message before any expression-level
         // cascade fires. Use the binding-context hint (rename to a non-reserved
@@ -544,6 +641,33 @@ impl Parser {
                 format!("rename to something like `my{name}` or `{name}v`. Builtins shadow local bindings in call position, so reusing the name silently mis-dispatches."),
             ));
         }
+        // Generic top-level `name=expr` shape: a binding written at the top
+        // level without a `main>_;` wrapper (or any function header). The
+        // builtin/alias/reserved-keyword guards above have already taken the
+        // specific cases; what remains is the plain-identifier misparse that
+        // k-means and linear-regression personas hit when they chain
+        // `pts=gen-pts; cs0=[...]; cs1=iter cs0 pts; prnt cs2` at the top
+        // level. Without this guard the parser stumbles into `parse_fn_decl`
+        // and either emits a bare `ILO-P003 expected '>'` (no actionable
+        // hint) or — when a prior fn decl has already started — slurps the
+        // whole chain into that fn's body, producing a wall of ILO-T005
+        // cascades anchored on the wrong function. Surface one clear hint
+        // pointing at the `main>_;` fix and let `sync_to_decl_boundary`
+        // skip the doomed chain.
+        if let Some(Token::Ident(name)) = self.peek()
+            && self.token_at(self.pos + 1) == Some(&Token::Eq)
+        {
+            let name = name.clone();
+            return Err(self.error_hint(
+                "ILO-P102",
+                format!(
+                    "top-level `{name}=...` binding outside any function declaration"
+                ),
+                format!(
+                    "ilo programs need a function header. Wrap imperative chains in `main>_;` (e.g. `main>_;{name}=...;...;prnt result`) or give this binding a proper signature like `{name}>n;<expr>`"
+                ),
+            ));
+        }
         match self.peek() {
             Some(Token::Type) => self.parse_type_decl(),
             Some(Token::Tool) => self.parse_tool_decl(),
@@ -594,6 +718,19 @@ impl Parser {
                         Some("the last expression in a function body is the return value — no 'return' keyword".to_string()),
                     Token::KwIf =>
                         Some("ilo uses match for conditionals: ?expr{true:...;false:...}".to_string()),
+                    // Glued-negative-literal misparse: `a -1.5` lexes as `Number(a), Number(-1.5)`
+                    // because the lexer packs a leading `-` with no preceding space into the
+                    // number token (this is load-bearing for call-args like `mod n -2` and
+                    // list literals `[1 -2 3]`). When that negative number lands at decl
+                    // position, the user almost certainly meant subtraction with a missing
+                    // space, so spell out the spacing rule and the parenthesised-negation
+                    // workaround instead of the generic "got number `-1.5`" message.
+                    Token::Number(n) if *n < 0.0 =>
+                        Some(format!(
+                            "for subtraction, write `a - b` with spaces both sides (e.g. `0 - {}`). for a negative value as an expression, wrap in parens: `({})`. a glued `-N` (no space before) is only parsed as a negative literal when it's a call argument or inside a list.",
+                            n.abs(),
+                            n,
+                        )),
                     _ => None,
                 };
                 let mut err = self.error("ILO-P001", msg);
@@ -819,11 +956,11 @@ impl Parser {
                 ),
             ));
         }
-        self.expect(&Token::Greater)?;
+        self.expect_or_record_fail(&Token::Greater, &name)?;
         // Same check between `>` and the return type: `f2 a:n>\n` must report
         // against `f2`, not against whatever ident starts the next line.
-        self.check_fn_header_boundary(&name, start)?;
-        let return_type = self.parse_type()?;
+        self.check_fn_header_boundary_or_record(&name, start)?;
+        let return_type = self.parse_type_or_record_fail(&name)?;
         // The header/body boundary is normally a `;`, but a newline (filtered
         // out before parsing) leaves no separator. Accept either: consume a
         // `;` if present, otherwise fall straight into the body.
@@ -841,9 +978,9 @@ impl Parser {
         // Skip the brace-block path when the leading `{` is a destructure
         // pattern (`f p:pt>n;{x}=p;...`) — that's a statement, not a wrap.
         let body = if self.peek() == Some(&Token::LBrace) && !self.is_destructure_pattern() {
-            self.parse_brace_body()?
+            self.parse_brace_body_or_record(&name)?
         } else {
-            self.parse_body_with(true)?
+            self.parse_body_or_record(&name)?
         };
         let end = self.prev_span();
         Ok(Decl::Function {
@@ -853,6 +990,69 @@ impl Parser {
             body,
             span: start.merge(end),
         })
+    }
+
+    /// Record `name` as a parse-failed function so the verifier can suppress
+    /// cascading `undefined function` errors at its call sites. Only the
+    /// FIRST error per function is recorded (later ones would just be noise
+    /// from the parser recovering through the broken body).
+    fn record_parse_failure(&mut self, name: &str, err: &ParseError) {
+        self.parse_failed_fns
+            .entry(name.to_string())
+            .or_insert(ParseFailRef {
+                code: err.code,
+                span: err.span,
+            });
+    }
+
+    fn expect_or_record_fail(&mut self, tok: &Token, name: &str) -> Result<Span> {
+        match self.expect(tok) {
+            Ok(s) => Ok(s),
+            Err(e) => {
+                self.record_parse_failure(name, &e);
+                Err(e)
+            }
+        }
+    }
+
+    fn check_fn_header_boundary_or_record(&mut self, name: &str, start: Span) -> Result<()> {
+        match self.check_fn_header_boundary(name, start) {
+            Ok(()) => Ok(()),
+            Err(e) => {
+                self.record_parse_failure(name, &e);
+                Err(e)
+            }
+        }
+    }
+
+    fn parse_type_or_record_fail(&mut self, name: &str) -> Result<Type> {
+        match self.parse_type() {
+            Ok(t) => Ok(t),
+            Err(e) => {
+                self.record_parse_failure(name, &e);
+                Err(e)
+            }
+        }
+    }
+
+    fn parse_brace_body_or_record(&mut self, name: &str) -> Result<Vec<Spanned<Stmt>>> {
+        match self.parse_brace_body() {
+            Ok(b) => Ok(b),
+            Err(e) => {
+                self.record_parse_failure(name, &e);
+                Err(e)
+            }
+        }
+    }
+
+    fn parse_body_or_record(&mut self, name: &str) -> Result<Vec<Spanned<Stmt>>> {
+        match self.parse_body_with(true) {
+            Ok(b) => Ok(b),
+            Err(e) => {
+                self.record_parse_failure(name, &e);
+                Err(e)
+            }
+        }
     }
 
     /// Span of the previously consumed token.
@@ -893,6 +1093,14 @@ impl Parser {
     // ---- Types ----
 
     fn parse_type(&mut self) -> Result<Type> {
+        self.check_depth()?;
+        self.depth_inc();
+        let result = self.parse_type_body();
+        self.depth_dec();
+        result
+    }
+
+    fn parse_type_body(&mut self) -> Result<Type> {
         // Safety net: if we're about to read a type from across a top-level
         // declaration boundary or from past EOF, the source is malformed (a
         // nested type slot ran off the end of its line — e.g.
@@ -916,7 +1124,11 @@ impl Parser {
                 position: self.pos,
                 span: self.prev_span(),
                 message: msg.to_string(),
-                hint: None,
+                hint: if code == "ILO-P007" {
+                    Some("add a type annotation: n (number), t (text), b (bool), L n (list), or a type name".to_string())
+                } else {
+                    None
+                },
             });
         }
         match self.peek().cloned() {
@@ -1004,9 +1216,11 @@ impl Parser {
                     types.push(self.parse_type()?);
                 }
                 if types.is_empty() {
-                    return Err(
-                        self.error("ILO-P009", "F type requires at least a return type".into())
-                    );
+                    return Err(self.error_hint(
+                        "ILO-P009",
+                        "F type requires at least a return type".into(),
+                        "write the return type after F, e.g. `F n` (no-arg fn returning n) or `F n>t` (n->t)".to_string(),
+                    ));
                 }
                 let return_type = types.pop().expect("F type requires at least a return type");
                 Ok(Type::Fn(types, Box::new(return_type)))
@@ -1015,9 +1229,10 @@ impl Parser {
                 self.advance();
                 Ok(Type::Named(name))
             }
-            Some(tok) => Err(self.error(
+            Some(tok) => Err(self.error_hint(
                 "ILO-P007",
                 format!("expected type, got {}", tok.user_facing_name()),
+                "valid types: n, t, b, L n, R n t, F n>n, or a record type name".to_string(),
             )),
             None => Err(self.error("ILO-P008", "expected type, got EOF".into())),
         }
@@ -1050,7 +1265,7 @@ impl Parser {
     /// next function's name (`main`) as another parameter.
     fn parse_params(&mut self) -> Result<Vec<Param>> {
         let mut params = Vec::new();
-        while let Some(Token::Ident(_)) = self.peek() {
+        loop {
             // A top-level newline before the next ident means the previous
             // function's header ended without a `>type;body` — stop here and
             // let `parse_fn_decl` surface a precise ILO-P020 against the
@@ -1059,6 +1274,23 @@ impl Parser {
             if self.boundary_at_cursor().is_some() {
                 break;
             }
+            // Reserved keyword tokens (`fn`, `def`, `let`, `var`, `const`,
+            // `if`, `return`) at parameter position followed by `:` — the user
+            // is writing a normal-shaped param header `<kw>:type`. Without this
+            // guard the `while let Token::Ident` filter bails silently and the
+            // outer `expect(Greater)` surfaces a cryptic
+            // `ILO-P003 expected '>', got 'fn'` that doesn't mention the real
+            // problem (the name is reserved). Catch here with the same
+            // ILO-P011 + rename hint the binding-context guard uses.
+            if self.token_at(self.pos + 1) == Some(&Token::Colon)
+                && let Some(tok) = self.peek()
+                && let Some((msg, hint)) = reserved_keyword_binding_message(tok)
+            {
+                return Err(self.error_hint("ILO-P011", msg, hint));
+            }
+            let Some(Token::Ident(_)) = self.peek() else {
+                break;
+            };
             // Look ahead for colon to distinguish params from other constructs
             if self.pos + 1 < self.tokens.len()
                 && self.token_at(self.pos + 1) == Some(&Token::Colon)
@@ -1116,6 +1348,14 @@ impl Parser {
     }
 
     fn parse_stmt(&mut self) -> Result<Stmt> {
+        self.check_depth()?;
+        self.depth_inc();
+        let result = self.parse_stmt_body();
+        self.depth_dec();
+        result
+    }
+
+    fn parse_stmt_body(&mut self) -> Result<Stmt> {
         // Reserved-keyword binding attempts inside a function body: `var=5`,
         // `let=5`, `if=5`, ... Surface the friendly ILO-P011 message before
         // `parse_atom` cascades into a cryptic ILO-P009. Use binding-context
@@ -1388,6 +1628,33 @@ impl Parser {
         } else {
             Some(self.parse_atom()?)
         };
+        // Bare-call match scrutinee: `?name arg1 arg2 {pat:body;...}`.
+        // After `parse_atom` returns a bare `Ref(name)` for a known function
+        // of arity k>0, if exactly k atoms are sitting between us and a `{`,
+        // consume them as call args and rewrite the subject as a `Call`.
+        // This makes inline `?parse line{~v:...}` work without forcing a
+        // `r=parse line;?r{...}` rebind — same friction family as the
+        // list-literal call trap (pending #5g). The probe is shape-only so
+        // the bare-bool prefix ternary `?h a b` (no trailing `{`) keeps its
+        // existing prefix-ternary semantics: only fires when a `{` follows.
+        let subject = if let Some(Expr::Ref(name)) = &subject
+            && let Some(&arity) = self.fn_arity.get(name)
+            && arity > 0
+            && self.looks_like_call_match_subject(arity)
+        {
+            let func = name.clone();
+            let mut args = Vec::with_capacity(arity);
+            for _ in 0..arity {
+                args.push(self.parse_prefix_binop_operand()?);
+            }
+            Some(Expr::Call {
+                function: func,
+                args,
+                unwrap: UnwrapMode::None,
+            })
+        } else {
+            subject
+        };
         // Bare-bool ternary sugar: `?subj{a}{b}` → Ternary { subj, a, b }.
         // Symmetric with the existing `=cond{a}{b}` brace-brace ternary, but
         // for bool-valued conditions where no comparison operator is needed.
@@ -1420,6 +1687,20 @@ impl Parser {
             // expression-position branch above and the `?=cond a b` family in
             // `parse_prefix_ternary`.
             let first = self.parse_prefix_binop_operand()?;
+            // Before consuming the second operand, intercept a `{` to give a
+            // context-aware hint (match-on-value mis-parenthesisation, or the
+            // `?h cond{...}` vs the three canonical forms). Otherwise the
+            // bare ILO-P009 "expected expression, got `{`" surfaces with no
+            // recovery hint, costing a re-prompt or worse (cron-explainer
+            // burned 167k tokens partly on this shape; the date/time persona
+            // cluster all tripped on the `?h cond{...}` variant).
+            let subj_src = subject_source(subj);
+            let first_src = subject_source(&first);
+            if let Some(err) =
+                self.prefix_ternary_brace_hint(subj_src.as_deref(), first_src.as_deref())
+            {
+                return Err(err);
+            }
             let second = self.parse_prefix_binop_operand()?;
             // `?h` general prefix-ternary: when the subject ident is literally
             // `h` and a third operand follows, reinterpret `?h` as a fixed
@@ -1467,6 +1748,63 @@ impl Parser {
         let arms = self.parse_match_arms()?;
         self.expect(&Token::RBrace)?;
         Ok(Stmt::Match { subject, arms })
+    }
+
+    /// Shape check for bare-call match scrutinee: does the cursor sit at
+    /// exactly `arity` atoms followed by `{`? Pure lookahead — does not
+    /// consume any tokens. Used by `parse_match_stmt` to detect
+    /// `?fn arg1 arg2 {pat:body;...}` so the function call can become the
+    /// match subject without the agent having to wrap in parens or rebind.
+    ///
+    /// "Atom" here is approximated by scanning a single token for the simple
+    /// terminals (Number/Text/True/False/Nil/Underscore/Ident) and walking
+    /// balanced (...)/[...] for the grouping forms. We deliberately reject
+    /// any operator token before the `{` — a leading prefix-op like `+a b`
+    /// is an operand but not an "atom" in this probe, and we'd rather
+    /// fall through to the existing prefix-ternary logic in those cases.
+    fn looks_like_call_match_subject(&self, arity: usize) -> bool {
+        let mut pos = self.pos;
+        for _ in 0..arity {
+            match self.token_at(pos) {
+                Some(Token::Number(_))
+                | Some(Token::Text(_))
+                | Some(Token::True)
+                | Some(Token::False)
+                | Some(Token::Nil)
+                | Some(Token::Underscore)
+                | Some(Token::Ident(_)) => {
+                    pos += 1;
+                }
+                Some(Token::LParen) => {
+                    let mut depth: usize = 1;
+                    pos += 1;
+                    while depth > 0 {
+                        match self.token_at(pos) {
+                            Some(Token::LParen) => depth += 1,
+                            Some(Token::RParen) => depth -= 1,
+                            None => return false,
+                            _ => {}
+                        }
+                        pos += 1;
+                    }
+                }
+                Some(Token::LBracket) => {
+                    let mut depth: usize = 1;
+                    pos += 1;
+                    while depth > 0 {
+                        match self.token_at(pos) {
+                            Some(Token::LBracket) => depth += 1,
+                            Some(Token::RBracket) => depth -= 1,
+                            None => return false,
+                            _ => {}
+                        }
+                        pos += 1;
+                    }
+                }
+                _ => return false,
+            }
+        }
+        self.token_at(pos) == Some(&Token::LBrace)
     }
 
     /// Shape check for the bare-bool ternary sugar `?subj{a}{b}`.
@@ -1526,6 +1864,74 @@ impl Parser {
             pos += 1;
         }
         false
+    }
+
+    /// When parsing a prefix-ternary operand and the next token is `{`,
+    /// produce a context-aware ILO-P009 instead of the bare "expected
+    /// expression, got `{`". Two shapes are common:
+    ///
+    /// 1. `?<subj> <oper>{<lit>:body; ...}` — agent reached for a Rust-style
+    ///    match on a value but used a leading prefix-ternary keyword shape
+    ///    instead of the canonical `?<subj>{...}` (single-token subject) or
+    ///    `?(<expr>){...}` (multi-token). Hint at the parenthesised form using
+    ///    the parsed operand as the most-likely-intended subject.
+    /// 2. `?h cond{body}` (non-arm brace) — agent reached for braced-
+    ///    conditional / brace-ternary execution but used the `?h cond a b`
+    ///    prefix-ternary keyword. Point at the right shape for each intent
+    ///    (drop the braces for `?h cond a b`; drop the `?h` prefix for
+    ///    `cond{body}` braced-conditional).
+    ///
+    /// Returns `None` if peek isn't `{`, leaving the caller to fall through
+    /// to the normal operand parse (and its own ILO-P009 if the token is
+    /// invalid in a different way).
+    fn prefix_ternary_brace_hint(
+        &self,
+        subj_src: Option<&str>,
+        first_operand_src: Option<&str>,
+    ) -> Option<ParseError> {
+        if self.peek() != Some(&Token::LBrace) {
+            return None;
+        }
+        let is_match_arm_shape = self.brace_starts_with_literal_arm();
+        let cond_display = first_operand_src.unwrap_or("cond");
+        let (msg, hint) = if is_match_arm_shape {
+            // For `?h x{0:1; _:2}` the agent likely wanted to match on `x`.
+            // For multi-token operands (where first_operand_src is None
+            // because it wasn't a bare Ref), recommend the parens form on a
+            // placeholder so the agent fills in their own expression.
+            let body = match first_operand_src {
+                Some(name) => format!(
+                    "match arms need a single bracketed subject. Drop `?{}` and write `?{name}{{<lit>:body; _:fallback}}`; for a multi-token subject use `?(<expr>){{...}}`",
+                    subj_src.unwrap_or("h")
+                ),
+                None => "match arms need a single bracketed subject. Wrap a multi-token match expression in parens: `?(<expr>){<lit>:body; _:fallback}`".to_string(),
+            };
+            (
+                "expected ternary operand, got `{` (looks like match-on-value arms)".to_string(),
+                body,
+            )
+        } else {
+            (
+                "expected ternary operand, got `{`".to_string(),
+                format!(
+                    "three conditional shapes: prefix-ternary `?h {cond_display} a b` (no braces), brace-ternary `{cond_display}{{a}}{{b}}` (no `?h`), braced-conditional `{cond_display}{{body}}` (no `?h`, single brace). Pick one"
+                ),
+            )
+        };
+        Some(self.error_hint("ILO-P009", msg, hint))
+    }
+
+    /// Peek into the `{...}` block at the cursor and decide whether the first
+    /// non-trivial token looks like a match-arm literal (`<num>:` or
+    /// `"text":`). Pure lookahead. Assumes peek is `{`.
+    fn brace_starts_with_literal_arm(&self) -> bool {
+        debug_assert!(self.peek() == Some(&Token::LBrace));
+        match self.token_at(self.pos + 1) {
+            Some(Token::Number(_)) | Some(Token::Text(_)) => {
+                self.token_at(self.pos + 2) == Some(&Token::Colon)
+            }
+            _ => false,
+        }
     }
 
     /// Parse `?subj{a}{b}` ternary after the subject has been consumed and
@@ -1703,6 +2109,14 @@ impl Parser {
     }
 
     fn parse_pattern(&mut self) -> Result<Pattern> {
+        self.check_depth()?;
+        self.depth_inc();
+        let result = self.parse_pattern_body();
+        self.depth_dec();
+        result
+    }
+
+    fn parse_pattern_body(&mut self) -> Result<Pattern> {
         match self.peek() {
             Some(Token::Caret) => {
                 self.advance();
@@ -1981,6 +2395,14 @@ impl Parser {
     // ---- Expressions ----
 
     fn parse_expr(&mut self) -> Result<Expr> {
+        self.check_depth()?;
+        self.depth_inc();
+        let result = self.parse_expr_body();
+        self.depth_dec();
+        result
+    }
+
+    fn parse_expr_body(&mut self) -> Result<Expr> {
         let expr = match self.peek() {
             Some(Token::Tilde) => {
                 self.advance();
@@ -2350,6 +2772,31 @@ impl Parser {
         } else {
             Some(Box::new(self.parse_atom()?))
         };
+        // Bare-call match scrutinee in expr position. Mirror of the same
+        // rewrite in `parse_match_stmt`: if the atom resolved to a known
+        // user/builtin fn ref of arity k>0 and exactly k atoms sit between
+        // the cursor and a `{`, consume them as call args and rewrite the
+        // subject as `Expr::Call`. Lets `s=?fn args{~v:...;^e:...}` parse
+        // inline without forcing the agent to rebind `r=fn args` first.
+        let subject = if let Some(boxed) = &subject
+            && let Expr::Ref(name) = boxed.as_ref()
+            && let Some(&arity) = self.fn_arity.get(name)
+            && arity > 0
+            && self.looks_like_call_match_subject(arity)
+        {
+            let func = name.clone();
+            let mut args = Vec::with_capacity(arity);
+            for _ in 0..arity {
+                args.push(self.parse_prefix_binop_operand()?);
+            }
+            Some(Box::new(Expr::Call {
+                function: func,
+                args,
+                unwrap: UnwrapMode::None,
+            }))
+        } else {
+            subject
+        };
         // Bare-bool ternary sugar in expr position. See `parse_match_stmt`
         // for the rationale and shape detection.
         if let Some(subj) = &subject
@@ -2369,6 +2816,17 @@ impl Parser {
             // chokes on `sc "NONE"`. See `parse_prefix_ternary` for the
             // same swap on the `?=cond a b` family.
             let first = self.parse_prefix_binop_operand()?;
+            // Mirror the stmt-position hint in `parse_match_stmt`: intercept
+            // a `{` before the second operand so `?h cond{...}` and
+            // `?subj{<lit>:body;...}` get actionable hints instead of the
+            // bare ILO-P009.
+            let subj_src = subject_source(subj.as_ref());
+            let first_src = subject_source(&first);
+            if let Some(err) =
+                self.prefix_ternary_brace_hint(subj_src.as_deref(), first_src.as_deref())
+            {
+                return Err(err);
+            }
             let second = self.parse_prefix_binop_operand()?;
             // `?h` general prefix-ternary in expr position. See the matching
             // block in `parse_match_stmt` for the rationale: literal subject
@@ -3562,6 +4020,21 @@ results first: `r={first_op}a b;…r` keeps each step explicit."
         if self.is_fn_decl_start(self.pos) {
             return false;
         }
+        // A top-level (un-indented) newline before the next token ends any
+        // ongoing call-arg / operand chain. Without this, a bare `cs` at the
+        // end of one function's body greedily eats the first identifier on the
+        // next (un-indented) line as a call argument - the k-means /
+        // linear-regression "top-level chain without `main>_;` wrapper"
+        // misparse, where `cs\npts=gen-pts;...` parses as `(cs pts) = gen-pts`
+        // and slurps the whole chain into the previous fn's body. Stopping at
+        // a decl boundary lets the outer decl loop see the orphaned chain and
+        // surface a single ILO-P102 hint instead of a cascade of ILO-T005s.
+        if self.boundary_at_cursor().is_some()
+            && matches!(self.peek(), Some(Token::Ident(_)))
+            && self.token_at(self.pos + 1) == Some(&Token::Eq)
+        {
+            return false;
+        }
         self.can_start_atom()
             || matches!(
                 self.peek(),
@@ -3669,6 +4142,14 @@ results first: `r={first_op}a b;…r` keeps each step explicit."
 
     /// Parse an atom — the smallest expression unit
     fn parse_atom(&mut self) -> Result<Expr> {
+        self.check_depth()?;
+        self.depth_inc();
+        let result = self.parse_atom_body();
+        self.depth_dec();
+        result
+    }
+
+    fn parse_atom_body(&mut self) -> Result<Expr> {
         match self.peek().cloned() {
             Some(Token::Number(n)) => {
                 self.advance();
@@ -3676,7 +4157,7 @@ results first: `r={first_op}a b;…r` keeps each step explicit."
             }
             Some(Token::Text(s)) => {
                 self.advance();
-                Ok(Expr::Literal(Literal::Text(s)))
+                Ok(desugar_string_interpolation(&s))
             }
             Some(Token::True) => {
                 self.advance();
@@ -3828,9 +4309,10 @@ results first: `r={first_op}a b;…r` keeps each step explicit."
                 if let Some((msg, hint)) = lambda_keyword_message(&tok) {
                     return Err(self.error_hint("ILO-P009", msg, hint));
                 }
-                Err(self.error(
+                Err(self.error_hint(
                     "ILO-P009",
                     format!("expected expression, got {}", tok.user_facing_name()),
+                    "a value or expression is required here: a literal, variable name, or function call".to_string(),
                 ))
             }
             None => Err(ParseError {
@@ -4330,14 +4812,29 @@ fn builtin_arity_tables() -> (HashMap<String, usize>, HashMap<String, Vec<bool>>
         ("rou", 1, &[]),
         ("sqrt", 1, &[]),
         ("log", 1, &[]),
+        ("log10", 1, &[]),
+        ("log2", 1, &[]),
         ("exp", 1, &[]),
         ("sin", 1, &[]),
         ("cos", 1, &[]),
+        ("tan", 1, &[]),
+        ("asin", 1, &[]),
+        ("acos", 1, &[]),
+        ("atan", 1, &[]),
         // Math (binary)
         ("min", 2, &[]),
         ("max", 2, &[]),
         ("mod", 2, &[]),
         ("pow", 2, &[]),
+        ("fmod", 2, &[]),
+        ("atan2", 2, &[]),
+        // Math (ternary)
+        ("clamp", 3, &[]),
+        // Random sampling. `rnd` (zero-arg) handled separately in the
+        // operand-position fallback; the named-distribution forms have
+        // declared arities so chained calls (`abs rndn 0 1`) parse
+        // without forcing parens on the inner call.
+        ("rndn", 2, &[]),
         // Aggregates
         ("sum", 1, &[]),
         ("prod", 1, &[]),
@@ -4414,6 +4911,11 @@ fn builtin_arity_tables() -> (HashMap<String, usize>, HashMap<String, Vec<bool>>
         // as Ref and the alias resolver — which only touches Call sites —
         // leaves it as `Ref("rng")`, surfacing as ILO-T004 at verify time.
         ("range", 2, &[]),
+        // Numeric prelude: eager-parse the fixed-arity forms so call sites
+        // like `sum (linspace 0 1 n)` work without parens at the inner call.
+        ("linspace", 3, &[]),
+        ("ones", 1, &[]),
+        ("rep", 2, &[]),
         // Map (associative)
         ("mget", 2, &[]),
         ("mset", 3, &[]),
@@ -4433,6 +4935,15 @@ fn builtin_arity_tables() -> (HashMap<String, usize>, HashMap<String, Vec<bool>>
         // Duration parse / format. Single fixed-arity args, no FnRef slots.
         ("dur-parse", 1, &[]),
         ("dur-fmt", 1, &[]),
+        // HTTP timeout variants: fixed arity so eager parsing works correctly.
+        // get-to url timeout-ms (2-arg), pst-to url body timeout-ms (3-arg).
+        ("get-to", 2, &[]),
+        ("pst-to", 3, &[]),
+        // URL + base64url encoding cluster. All 1-arg text → text (or R t t).
+        ("urlenc", 1, &[]),
+        ("urldec", 1, &[]),
+        ("b64u", 1, &[]),
+        ("b64u-dec", 1, &[]),
         // Note: omitted by design — these have overloads or zero-arg forms
         // best left to the existing greedy/zero-arg paths:
         //   rnd, now, mmap (0-arg, special-cased above)
@@ -4463,6 +4974,193 @@ fn builtin_arity_tables() -> (HashMap<String, usize>, HashMap<String, Vec<bool>>
         }
     }
     (arity, fn_flags)
+}
+
+/// Desugar `{name}` string interpolation into a `fmt` call.
+///
+/// Manifesto principle 1 (token-conservative): `"hello {name}"` is cheaper
+/// for an agent to write than `fmt "hello {}" name`. The lexer hands us the
+/// raw literal text (already unescaped per the string-escape table). Here we
+/// scan it for `{ident}` slots, `{{` / `}}` literal-brace escapes, and bare
+/// `{}` positional placeholders (which keep their current meaning - filled
+/// by trailing args of the surrounding `fmt` call, but here they pass
+/// through verbatim and are an error if the string is used outside a
+/// `fmt`).
+///
+/// Returns:
+/// - `Expr::Literal(Literal::Text(...))` if there are no `{ident}` slots
+///   (and `{{`/`}}` are collapsed to literal `{`/`}`). This preserves the
+///   existing behaviour for any string that does not look interpolated.
+/// - `Expr::Call { function: "fmt", args: [Literal::Text(template), Ref(n1), ...] }`
+///   if at least one `{ident}` slot is found. Each `{ident}` becomes a bare
+///   `{}` in the template and an `Expr::Ref(ident)` arg appended in order.
+///
+/// Scope: only single-identifier slots (`{name}` matching the lexer's ident
+/// regex `[a-z][a-z0-9]*(-[a-z0-9]+)*`). Anything inside braces that does
+/// not match that shape (e.g. `{x + 1}`, `{Foo}`, empty `{}`) is left
+/// untouched so existing fmt positional semantics keep working and we don't
+/// claim more surface area than the spec promises.
+fn desugar_string_interpolation(s: &str) -> Expr {
+    // Fast path: no `{` at all means no work to do.
+    if !s.contains('{') {
+        return Expr::Literal(Literal::Text(s.to_string()));
+    }
+
+    // First pass: classify what the string contains. We desugar only if we
+    // find at least one `{ident}` slot AND no bare `{}` positional
+    // placeholder. Mixing styles in a single string is disallowed - bare
+    // `{}` is filled by trailing args of an enclosing `fmt` call (verbose
+    // form), `{ident}` is filled inline by the desugar (terse form). If
+    // both shapes appear we keep the string verbatim and let the agent's
+    // existing `fmt "..." args` call (or a verifier diagnostic) handle it;
+    // any other policy would silently rewrite agent-visible semantics.
+    let bytes = s.as_bytes();
+    let mut has_ident_slot = false;
+    let mut has_bare_slot = false;
+    let mut i = 0;
+    while i < bytes.len() {
+        let c = bytes[i];
+        if c == b'{' {
+            if i + 1 < bytes.len() && bytes[i + 1] == b'{' {
+                i += 2;
+                continue;
+            }
+            if let Some(close_rel) = s[i + 1..].find('}') {
+                let close = i + 1 + close_rel;
+                let inner = &s[i + 1..close];
+                if inner.is_empty() {
+                    has_bare_slot = true;
+                } else if is_ident_for_interp(inner) {
+                    has_ident_slot = true;
+                }
+                // Other shapes (printf spec, expression, etc.) are left for
+                // the verifier or runtime to handle as today.
+                i = close + 1;
+                continue;
+            }
+        }
+        i += 1;
+    }
+
+    if !has_ident_slot || has_bare_slot {
+        return Expr::Literal(Literal::Text(s.to_string()));
+    }
+
+    // Second pass: build the desugared template + args. Here we collapse
+    // `{{` -> `{` and `}}` -> `}` (rust-style brace escapes) because we
+    // are inside an interpolated string and the agent needs a way to write
+    // a literal brace. The escape is scoped to interpolated strings only;
+    // non-interpolated string literals keep `{{` / `}}` verbatim so we
+    // don't retroactively change semantics for existing programs.
+    let mut template = String::with_capacity(s.len());
+    let mut args: Vec<Expr> = Vec::new();
+    let mut i = 0;
+    while i < bytes.len() {
+        let c = bytes[i];
+        if c == b'{' {
+            if i + 1 < bytes.len() && bytes[i + 1] == b'{' {
+                template.push('{');
+                i += 2;
+                continue;
+            }
+            if let Some(close_rel) = s[i + 1..].find('}') {
+                let close = i + 1 + close_rel;
+                let inner = &s[i + 1..close];
+                if !inner.is_empty() && is_ident_for_interp(inner) {
+                    template.push_str("{}");
+                    args.push(Expr::Ref(inner.to_string()));
+                    i = close + 1;
+                    continue;
+                }
+                // Pass other `{...}` shapes through verbatim. (`{}` itself
+                // can't appear here because has_bare_slot would be true and
+                // we'd have bailed.)
+                template.push_str(&s[i..close + 1]);
+                i = close + 1;
+                continue;
+            }
+            template.push('{');
+            i += 1;
+            continue;
+        }
+        if c == b'}' {
+            if i + 1 < bytes.len() && bytes[i + 1] == b'}' {
+                template.push('}');
+                i += 2;
+                continue;
+            }
+            template.push('}');
+            i += 1;
+            continue;
+        }
+        let ch_len = utf8_char_len(c).min(bytes.len() - i);
+        template.push_str(&s[i..i + ch_len]);
+        i += ch_len;
+    }
+
+    let mut call_args = Vec::with_capacity(args.len() + 1);
+    call_args.push(Expr::Literal(Literal::Text(template)));
+    call_args.extend(args);
+    Expr::Call {
+        function: "fmt".to_string(),
+        args: call_args,
+        unwrap: UnwrapMode::None,
+    }
+}
+
+/// Length of the UTF-8 sequence starting with the given lead byte.
+/// Used by `desugar_string_interpolation` to walk multi-byte chars safely.
+fn utf8_char_len(lead: u8) -> usize {
+    // ASCII or stray continuation byte (shouldn't happen in valid UTF-8,
+    // but be defensive: advance by one).
+    if lead < 0xC0 {
+        1
+    } else if lead < 0xE0 {
+        2
+    } else if lead < 0xF0 {
+        3
+    } else {
+        4
+    }
+}
+
+/// Does `s` match the ilo ident regex `[a-z][a-z0-9]*(-[a-z0-9]+)*`?
+/// Used to decide whether `{...}` is a `{name}` interpolation slot or
+/// should pass through to `fmt` verbatim (positional `{}` or future
+/// expression form).
+fn is_ident_for_interp(s: &str) -> bool {
+    if s.is_empty() {
+        return false;
+    }
+    let bytes = s.as_bytes();
+    if !(bytes[0].is_ascii_lowercase()) {
+        return false;
+    }
+    // Walk: lowercase/digit run, optional `-` then another lowercase/digit run.
+    let mut i = 0;
+    let n = bytes.len();
+    // First run: [a-z][a-z0-9]*
+    while i < n && (bytes[i].is_ascii_lowercase() || bytes[i].is_ascii_digit()) {
+        i += 1;
+    }
+    if i == n {
+        return true;
+    }
+    // Subsequent: (-[a-z0-9]+)*
+    while i < n {
+        if bytes[i] != b'-' {
+            return false;
+        }
+        i += 1;
+        let seg_start = i;
+        while i < n && (bytes[i].is_ascii_lowercase() || bytes[i].is_ascii_digit()) {
+            i += 1;
+        }
+        if i == seg_start {
+            return false; // trailing or doubled `-`
+        }
+    }
+    true
 }
 
 /// Extract the last expression from a body, falling back to Nil.
@@ -4756,7 +5454,18 @@ fn is_guard_eligible_condition(expr: &Expr) -> bool {
 /// the program for execution — error nodes are skipped by the verifier but not
 /// by the backends.
 pub fn parse(tokens: Vec<(Token, Span)>) -> (Program, Vec<ParseError>) {
-    let mut parser = Parser::new(tokens);
+    parse_with_max_depth(tokens, effective_max_ast_depth())
+}
+
+/// Same as `parse` but with a custom AST-depth cap. CLI entry points
+/// (`ilo run`, `ilo check`, `ilo build`, `ilo serv`) plumb `--max-ast-depth`
+/// here so an operator can override the default `DEFAULT_MAX_AST_DEPTH` when a
+/// legitimate program needs deeper nesting.
+pub fn parse_with_max_depth(
+    tokens: Vec<(Token, Span)>,
+    max_depth: usize,
+) -> (Program, Vec<ParseError>) {
+    let mut parser = Parser::new_with_max_depth(tokens, max_depth);
     parser.parse_program()
 }
 
@@ -7823,6 +8532,62 @@ mod tests {
             hint.contains("name=expr") || hint.contains("bindings"),
             "hint: {}",
             hint
+        );
+    }
+
+    // ---- Reserved-keyword tokens at parameter position (P2#14) ----
+
+    #[test]
+    fn reserved_word_fn_as_param_name_errors_with_p011() {
+        // `g fn:n>n;fn` — the param name is `fn`. Without the param-position
+        // guard the `while let Token::Ident` filter bails silently and the
+        // outer `expect(Greater)` surfaces a cryptic ILO-P003 against the
+        // missing `>`. The fix emits ILO-P011 with the same rename hint the
+        // binding-context guard uses (P2#14, 2026-05-21).
+        let (_, errors) = parse_str_errors("g fn:n>n;fn");
+        let e = errors
+            .iter()
+            .find(|e| e.code == "ILO-P011")
+            .expect("expected ILO-P011 for `fn` as param name");
+        assert!(
+            e.message.contains("`fn` is a reserved word"),
+            "message: {}",
+            e.message
+        );
+        let hint = e.hint.as_ref().expect("expected hint");
+        assert!(
+            hint.contains("rename") && hint.contains("fv"),
+            "hint should suggest rename to e.g. `fv`/`func`/`callback`: {}",
+            hint
+        );
+    }
+
+    #[test]
+    fn reserved_word_def_as_second_param_name_errors_with_p011() {
+        // `g a:n def:n>n;+a def` — `def` is the second param name.
+        let (_, errors) = parse_str_errors("g a:n def:n>n;+a def");
+        let e = errors
+            .iter()
+            .find(|e| e.code == "ILO-P011")
+            .expect("expected ILO-P011 for `def` as second param name");
+        assert!(
+            e.message.contains("`def` is a reserved word"),
+            "message: {}",
+            e.message
+        );
+    }
+
+    #[test]
+    fn reserved_word_let_as_param_name_errors_with_p011() {
+        let (_, errors) = parse_str_errors("g let:n>n;let");
+        let e = errors
+            .iter()
+            .find(|e| e.code == "ILO-P011")
+            .expect("expected ILO-P011 for `let` as param name");
+        assert!(
+            e.message.contains("`let` is a reserved word"),
+            "message: {}",
+            e.message
         );
     }
 

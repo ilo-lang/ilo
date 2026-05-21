@@ -11,7 +11,7 @@
 basic>L (L n);chunks 2 [1, 2, 3, 4, 5]
 exact>L (L n);chunks 3 [1, 2, 3, 4, 5, 6]
 big>L (L n);chunks 10 [1, 2, 3]
-ones>L (L n);chunks 1 [1, 2, 3]
+singles>L (L n);chunks 1 [1, 2, 3]
 empty>L (L n);chunks 2 []
 
 -- run: basic
@@ -20,7 +20,7 @@ empty>L (L n);chunks 2 []
 -- out: [[1, 2, 3], [4, 5, 6]]
 -- run: big
 -- out: [[1, 2, 3]]
--- run: ones
+-- run: singles
 -- out: [[1], [2], [3]]
 -- run: empty
 -- out: []

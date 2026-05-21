@@ -418,11 +418,26 @@ fn aot_cov_fmt2_with_padl() {
     expect_codegen_ok("fmt2_padl", r#"f v:n>t;padl (fmt2 v 2) 8 "0""#);
 }
 
-// -- jpath / jdmp / jpar chain -------------------------------------------
+// -- jpath / jdmp / jpar / jpar-list chain -------------------------------------------
 
 #[test]
 fn aot_cov_jpth_jdmp_jpar_chain() {
     expect_codegen_ok("jchain", r#"f s:t>R t t;r=jpar! s;~jdmp r"#);
+}
+
+#[test]
+fn aot_cov_jpar_list_codegen() {
+    // P0b/5f: OP_JPAR_LIST must be handled by Cranelift codegen.
+    expect_codegen_ok("jparlist", r#"f s:t>R n t;xs=jpar-list! s;~len xs"#);
+}
+
+#[test]
+fn aot_cov_jpar_list_foreach_codegen() {
+    // @x (jpar-list! s) must compile through every backend.
+    expect_codegen_ok(
+        "jparlist_foreach",
+        r#"f s:t>R n t;total=0;@x (jpar-list! s){total=+total x};~total"#,
+    );
 }
 
 // -- Map ops (MAPNEW/MGET/MSET/MHAS/MKEYS/MVALS/MDEL) -------------------

@@ -1,21 +1,23 @@
-// Regression tests for `fmt` rejecting printf-style `{:...}` format specs.
+// Regression tests for `fmt` printf-style placeholder specs (#16c).
 //
-// Before this fix, `fmt "{:06d}" 42` silently returned the literal string
-// `"{:06d}"` because the placeholder scanner only matched the exact pair
-// `{}` and let everything else through. Personas reaching for Python-style
-// padding/precision (e.g. for sort-key construction) got silent wrong
-// output and minutes of "where did my data go" debugging. See the
-// pdf-analyst rerun3 entry in ilo_assessment_feedback.md.
+// `fmt` supports a small, deliberate subset of printf-style specs so agents
+// don't have to compose `fmt2` + `padl` for the common cases:
 //
-// Fix: bare `{}` placeholders only. `{:...}` is now a hard error.
-//   - Verify time (ILO-T013): when the template is a string literal we
-//     reject it before the program ever runs.
-//   - Runtime (ILO-R009): when the template is computed at runtime we
-//     still catch it inside the `fmt` interpreter (single source of truth
-//     for tree / VM / Cranelift via the tree-bridge).
+//   {}         — bare placeholder, Display
+//   {.Nf}      — N decimal places (no colon)
+//   {:.Nf}     — N decimal places (with colon)
+//   {:N}       — right-align Display to width N (space-pad)
+//   {:Nd}      — integer right-align to width N (truncate toward zero)
+//   {:<N}      — left-align Display to width N
 //
-// The error message points at idiomatic substitutes (`fmt2` for decimal
-// precision, `padl` for padding).
+// Zero-padded widths (`{:06d}`), sign-prefix (`{:+}`), hex (`{:x}`) and
+// other shapes are deliberately out of scope and must surface as errors:
+//   - Verify-time (ILO-T013) when the template is a literal,
+//   - Runtime (ILO-R009) when the template is computed.
+//
+// Each spec is exercised on tree, VM, and Cranelift to keep all three
+// engines in lockstep (the interpreter is the single source of truth via
+// the tree-bridge, but the cross-engine guard catches future drift).
 
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -68,113 +70,7 @@ fn run_err(engine: &str, src: &str, entry: &str) -> String {
     s
 }
 
-// ── 1) Verify-time rejection for literal templates ─────────────────────────
-//
-// The template is a string literal so the verifier catches the bad spec
-// before any engine runs. Same error on every engine.
-
-const LITERAL_06D: &str = "f>t;fmt \"{:06d}\" 42";
-
-fn check_literal_06d(engine: &str) {
-    let s = run_err(engine, LITERAL_06D, "f");
-    assert!(
-        s.contains("ILO-T013"),
-        "engine={engine}: expected ILO-T013, got: {s}"
-    );
-    assert!(
-        s.contains("{:06d}"),
-        "engine={engine}: expected offending spec in message, got: {s}"
-    );
-    assert!(
-        s.contains("fmt2") && s.contains("padl"),
-        "engine={engine}: expected fmt2+padl hint, got: {s}"
-    );
-}
-
-#[test]
-fn literal_06d_tree() {
-    check_literal_06d("--vm");
-}
-
-#[test]
-fn literal_06d_vm() {
-    check_literal_06d("--vm");
-}
-
-#[test]
-#[cfg(feature = "cranelift")]
-fn literal_06d_cranelift() {
-    check_literal_06d("--jit");
-}
-
-// ── 2) Verify-time rejection for `{:.3f}` precision spec ───────────────────
-
-const LITERAL_3F: &str = "f>t;fmt \"pi={:.3f}\" 3.14159";
-
-fn check_literal_3f(engine: &str) {
-    let s = run_err(engine, LITERAL_3F, "f");
-    assert!(
-        s.contains("ILO-T013") && s.contains("{:.3f}"),
-        "engine={engine}: expected ILO-T013 mentioning {{:.3f}}, got: {s}"
-    );
-}
-
-#[test]
-fn literal_3f_tree() {
-    check_literal_3f("--vm");
-}
-
-#[test]
-fn literal_3f_vm() {
-    check_literal_3f("--vm");
-}
-
-#[test]
-#[cfg(feature = "cranelift")]
-fn literal_3f_cranelift() {
-    check_literal_3f("--jit");
-}
-
-// ── 3) Runtime rejection when the template is computed ─────────────────────
-//
-// Verifier can't see inside `cat`/variables, so the bad spec only surfaces
-// at runtime. The interpreter must still reject it (ILO-R009) rather than
-// silently emit the literal `{:06d}` like the pre-fix behaviour.
-
-const COMPUTED_06D: &str = "f>t;t=cat [\"x=\" \"{:06d}\"] \"\";fmt t 42";
-
-fn check_computed_06d(engine: &str) {
-    let s = run_err(engine, COMPUTED_06D, "f");
-    assert!(
-        s.contains("ILO-R009"),
-        "engine={engine}: expected ILO-R009 from runtime fmt, got: {s}"
-    );
-    assert!(
-        s.contains("{:06d}") && s.contains("fmt2"),
-        "engine={engine}: expected offending spec + fmt2 hint, got: {s}"
-    );
-}
-
-#[test]
-fn computed_06d_tree() {
-    check_computed_06d("--vm");
-}
-
-#[test]
-fn computed_06d_vm() {
-    check_computed_06d("--vm");
-}
-
-#[test]
-#[cfg(feature = "cranelift")]
-fn computed_06d_cranelift() {
-    check_computed_06d("--jit");
-}
-
-// ── 4) Bare `{}` still works on every engine ───────────────────────────────
-//
-// Regression guard: the new branch must not break the supported
-// placeholder. `fmt "x={}" 42` → `"x=42"` on tree, VM, and Cranelift.
+// ── 1) Bare `{}` still works on every engine ───────────────────────────────
 
 const BARE_OK: &str = "f>t;fmt \"x={}\" 42";
 
@@ -198,10 +94,282 @@ fn bare_ok_cranelift() {
     check_bare_ok("--jit");
 }
 
-// ── 5) A lone `{` followed by non-`:` non-`}` still passes through ────────
+// ── 2) `{.Nf}` precision shorthand ────────────────────────────────────────
+
+const PREC_SHORT: &str = "f>t;fmt \"{.2f}\" 3.14159";
+
+fn check_prec_short(engine: &str) {
+    assert_eq!(run_ok(engine, PREC_SHORT, "f"), "3.14", "engine={engine}");
+}
+
+#[test]
+fn prec_short_tree() {
+    check_prec_short("--vm");
+}
+
+#[test]
+fn prec_short_vm() {
+    check_prec_short("--vm");
+}
+
+#[test]
+#[cfg(feature = "cranelift")]
+fn prec_short_cranelift() {
+    check_prec_short("--jit");
+}
+
+// ── 3) `{:.Nf}` precision long-form ───────────────────────────────────────
+
+const PREC_LONG: &str = "f>t;fmt \"pi={:.3f}\" 3.14159";
+
+fn check_prec_long(engine: &str) {
+    assert_eq!(
+        run_ok(engine, PREC_LONG, "f"),
+        "pi=3.142",
+        "engine={engine}"
+    );
+}
+
+#[test]
+fn prec_long_tree() {
+    check_prec_long("--vm");
+}
+
+#[test]
+fn prec_long_vm() {
+    check_prec_long("--vm");
+}
+
+#[test]
+#[cfg(feature = "cranelift")]
+fn prec_long_cranelift() {
+    check_prec_long("--jit");
+}
+
+// ── 4) `{:N}` right-align width for strings ───────────────────────────────
+
+const WIDTH_RIGHT_STR: &str = "f>t;fmt \"[{:5}]\" \"hi\"";
+
+fn check_width_right_str(engine: &str) {
+    assert_eq!(
+        run_ok(engine, WIDTH_RIGHT_STR, "f"),
+        "[   hi]",
+        "engine={engine}"
+    );
+}
+
+#[test]
+fn width_right_str_tree() {
+    check_width_right_str("--vm");
+}
+
+#[test]
+fn width_right_str_vm() {
+    check_width_right_str("--vm");
+}
+
+#[test]
+#[cfg(feature = "cranelift")]
+fn width_right_str_cranelift() {
+    check_width_right_str("--jit");
+}
+
+// ── 5) `{:Nd}` integer width ──────────────────────────────────────────────
+
+const INT_WIDTH: &str = "f>t;fmt \"[{:5d}]\" 42";
+
+fn check_int_width(engine: &str) {
+    assert_eq!(run_ok(engine, INT_WIDTH, "f"), "[   42]", "engine={engine}");
+}
+
+#[test]
+fn int_width_tree() {
+    check_int_width("--vm");
+}
+
+#[test]
+fn int_width_vm() {
+    check_int_width("--vm");
+}
+
+#[test]
+#[cfg(feature = "cranelift")]
+fn int_width_cranelift() {
+    check_int_width("--jit");
+}
+
+// ── 6) `{:<N}` left-align width ───────────────────────────────────────────
+
+const WIDTH_LEFT: &str = "f>t;fmt \"[{:<5}]\" \"hi\"";
+
+fn check_width_left(engine: &str) {
+    assert_eq!(
+        run_ok(engine, WIDTH_LEFT, "f"),
+        "[hi   ]",
+        "engine={engine}"
+    );
+}
+
+#[test]
+fn width_left_tree() {
+    check_width_left("--vm");
+}
+
+#[test]
+fn width_left_vm() {
+    check_width_left("--vm");
+}
+
+#[test]
+#[cfg(feature = "cranelift")]
+fn width_left_cranelift() {
+    check_width_left("--jit");
+}
+
+// ── 7) Multiple mixed specs in one template ───────────────────────────────
 //
-// Not every `{` is a placeholder — e.g. JSON-like text. Only `{:` and `{}`
-// are reserved; everything else stays a literal.
+// Cross-cuts the slot-counting path in the verifier: 3 placeholders need 3
+// value args, with each spec applied to its own arg.
+
+const MIXED: &str = "f>t;fmt \"{} {:.2f} [{:<3}]\" 1 3.14159 \"x\"";
+
+fn check_mixed(engine: &str) {
+    assert_eq!(
+        run_ok(engine, MIXED, "f"),
+        "1 3.14 [x  ]",
+        "engine={engine}"
+    );
+}
+
+#[test]
+fn mixed_tree() {
+    check_mixed("--vm");
+}
+
+#[test]
+fn mixed_vm() {
+    check_mixed("--vm");
+}
+
+#[test]
+#[cfg(feature = "cranelift")]
+fn mixed_cranelift() {
+    check_mixed("--jit");
+}
+
+// ── 8) Verify-time rejection of zero-padded width `{:06d}` ────────────────
+//
+// Out of scope — we promise we won't grow the spec without a deliberate
+// design pass, and the rejection error must point agents at the supported
+// composition pattern (`padl`).
+
+const LITERAL_06D: &str = "f>t;fmt \"{:06d}\" 42";
+
+fn check_literal_06d(engine: &str) {
+    let s = run_err(engine, LITERAL_06D, "f");
+    assert!(
+        s.contains("ILO-T013"),
+        "engine={engine}: expected ILO-T013, got: {s}"
+    );
+    assert!(
+        s.contains("{:06d}"),
+        "engine={engine}: expected offending spec in message, got: {s}"
+    );
+    assert!(
+        s.contains("padl") || s.contains("fmt2"),
+        "engine={engine}: expected composition hint, got: {s}"
+    );
+}
+
+#[test]
+fn literal_06d_tree() {
+    check_literal_06d("--vm");
+}
+
+#[test]
+fn literal_06d_vm() {
+    check_literal_06d("--vm");
+}
+
+#[test]
+#[cfg(feature = "cranelift")]
+fn literal_06d_cranelift() {
+    check_literal_06d("--jit");
+}
+
+// ── 9) Verify-time rejection of `{:.N}` without the `f` ───────────────────
+//
+// Pre-fix this was "all `{:` is bad"; post-fix we accept `{:.3f}` but still
+// reject `{:.3}` because there's no obvious default conversion (int? float?
+// string?) and silent ambiguity is exactly the trap the spec is here to
+// avoid.
+
+const LITERAL_PREC_NO_F: &str = "f>t;fmt \"{:.3}\" 3.14159";
+
+fn check_literal_prec_no_f(engine: &str) {
+    let s = run_err(engine, LITERAL_PREC_NO_F, "f");
+    assert!(
+        s.contains("ILO-T013") && s.contains("{:.3}"),
+        "engine={engine}: expected ILO-T013 mentioning {{:.3}}, got: {s}"
+    );
+}
+
+#[test]
+fn literal_prec_no_f_tree() {
+    check_literal_prec_no_f("--vm");
+}
+
+#[test]
+fn literal_prec_no_f_vm() {
+    check_literal_prec_no_f("--vm");
+}
+
+#[test]
+#[cfg(feature = "cranelift")]
+fn literal_prec_no_f_cranelift() {
+    check_literal_prec_no_f("--jit");
+}
+
+// ── 10) Runtime rejection when the template is computed ───────────────────
+//
+// Verifier can't see inside `cat`/variables, so the bad spec only surfaces
+// at runtime. The interpreter must still reject it (ILO-R009).
+
+const COMPUTED_06D: &str = "f>t;t=cat [\"{:06d}\"] \"\";fmt t 42";
+
+fn check_computed_06d(engine: &str) {
+    let s = run_err(engine, COMPUTED_06D, "f");
+    assert!(
+        s.contains("ILO-R009"),
+        "engine={engine}: expected ILO-R009 from runtime fmt, got: {s}"
+    );
+    assert!(
+        s.contains("{:06d}"),
+        "engine={engine}: expected offending spec in message, got: {s}"
+    );
+}
+
+#[test]
+fn computed_06d_tree() {
+    check_computed_06d("--vm");
+}
+
+#[test]
+fn computed_06d_vm() {
+    check_computed_06d("--vm");
+}
+
+#[test]
+#[cfg(feature = "cranelift")]
+fn computed_06d_cranelift() {
+    check_computed_06d("--jit");
+}
+
+// ── 11) A lone `{` followed by non-spec text still passes through ─────────
+//
+// `fmt "{a:1}"` is JSON-ish text, not a placeholder — the leading `{` is
+// followed by an identifier, not `}` / `:` / `.`. Must round-trip
+// unchanged.
 
 const LONE_BRACE_OK: &str = "f>t;fmt \"{a:1}\"";
 
@@ -227,4 +395,35 @@ fn lone_brace_ok_vm() {
 #[cfg(feature = "cranelift")]
 fn lone_brace_ok_cranelift() {
     check_lone_brace_ok("--jit");
+}
+
+// ── 12) Width shorter than content leaves content untouched ───────────────
+//
+// Padding only adds space when the rendered length is shorter than N; it
+// never truncates. This matches `padl`/`padr` semantics.
+
+const WIDTH_NO_PAD: &str = "f>t;fmt \"[{:3}]\" \"hello\"";
+
+fn check_width_no_pad(engine: &str) {
+    assert_eq!(
+        run_ok(engine, WIDTH_NO_PAD, "f"),
+        "[hello]",
+        "engine={engine}"
+    );
+}
+
+#[test]
+fn width_no_pad_tree() {
+    check_width_no_pad("--vm");
+}
+
+#[test]
+fn width_no_pad_vm() {
+    check_width_no_pad("--vm");
+}
+
+#[test]
+#[cfg(feature = "cranelift")]
+fn width_no_pad_cranelift() {
+    check_width_no_pad("--jit");
 }
