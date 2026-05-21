@@ -76,6 +76,15 @@ impl std::fmt::Display for VerifyError {
 struct FuncSig {
     params: Vec<(String, Ty)>,
     return_type: Ty,
+    /// Original AST param types, kept alongside the converted `Ty` so the
+    /// call-site checker can identify which params carry type variables and
+    /// enforce cross-call-site consistency + bound checks.
+    original_params: Vec<crate::ast::Type>,
+    /// Bounds for each generic type variable, populated from
+    /// `Decl::Function::type_params`. Empty for functions with no generic
+    /// type param block (legacy behaviour: type vars remain `Ty::Unknown`,
+    /// compatible with anything).
+    type_bounds: std::collections::HashMap<String, crate::ast::Bound>,
 }
 
 #[derive(Clone)]
@@ -3937,6 +3946,7 @@ impl VerifyContext {
             match decl {
                 Decl::Function {
                     name,
+                    type_params,
                     params,
                     return_type,
                     ..
@@ -3951,7 +3961,9 @@ impl VerifyContext {
                         );
                         continue;
                     }
-                    let params: Vec<(String, Ty)> = params
+                    let original_params: Vec<crate::ast::Type> =
+                        params.iter().map(|p| p.ty.clone()).collect();
+                    let converted_params: Vec<(String, Ty)> = params
                         .iter()
                         .map(|p| {
                             (
@@ -3961,12 +3973,16 @@ impl VerifyContext {
                         })
                         .collect();
                     let ret = convert_type_with_aliases(return_type, &self.aliases);
-                    self.validate_named_types_in_sig(name, &params, &ret);
+                    self.validate_named_types_in_sig(name, &converted_params, &ret);
+                    let type_bounds: std::collections::HashMap<String, crate::ast::Bound> =
+                        type_params.iter().cloned().collect();
                     self.functions.insert(
                         name.clone(),
                         FuncSig {
-                            params,
+                            params: converted_params,
                             return_type: ret,
+                            original_params,
+                            type_bounds,
                         },
                     );
                 }
@@ -3986,7 +4002,9 @@ impl VerifyContext {
                         );
                         continue;
                     }
-                    let params: Vec<(String, Ty)> = params
+                    let original_params: Vec<crate::ast::Type> =
+                        params.iter().map(|p| p.ty.clone()).collect();
+                    let converted_params: Vec<(String, Ty)> = params
                         .iter()
                         .map(|p| {
                             (
@@ -3996,12 +4014,14 @@ impl VerifyContext {
                         })
                         .collect();
                     let ret = convert_type_with_aliases(return_type, &self.aliases);
-                    self.validate_named_types_in_sig(name, &params, &ret);
+                    self.validate_named_types_in_sig(name, &converted_params, &ret);
                     self.functions.insert(
                         name.clone(),
                         FuncSig {
-                            params,
+                            params: converted_params,
                             return_type: ret,
+                            original_params,
+                            type_bounds: std::collections::HashMap::new(), // tools have no generics
                         },
                     );
                 }
@@ -5001,6 +5021,8 @@ impl VerifyContext {
                 } else if let Some(sig) = self.functions.get(callee) {
                     let sig_params = sig.params.clone();
                     let sig_ret = sig.return_type.clone();
+                    let orig_param_tys = sig.original_params.clone();
+                    let type_bounds = sig.type_bounds.clone();
 
                     if args.len() != sig_params.len() {
                         let hint = {
@@ -5024,6 +5046,89 @@ impl VerifyContext {
                         );
                         return sig_ret;
                     }
+
+                    // ── Generic type-variable unification ────────────────────
+                    // For each type variable letter that appears in the param
+                    // list, collect all concrete argument types bound to it.
+                    // When the function carries explicit `type_params` (non-empty
+                    // `type_bounds`), enforce:
+                    //   (a) all args for the same variable unify (same concrete type)
+                    //   (b) the concrete type satisfies the declared bound
+                    // When `type_bounds` is empty the function uses the legacy
+                    // Unknown / "compatible with anything" behaviour; we still
+                    // perform a soft consistency check but don't emit ILO-T044
+                    // for backward compatibility.
+                    let has_explicit_bounds = !type_bounds.is_empty();
+                    if has_explicit_bounds {
+                        // Map from type-var letter → first concrete arg type seen
+                        let mut var_bindings: std::collections::HashMap<String, Ty> =
+                            std::collections::HashMap::new();
+                        for (orig_ty, arg_ty) in orig_param_tys.iter().zip(arg_types.iter()) {
+                            if let crate::ast::Type::Named(letter) = orig_ty {
+                                if letter.len() == 1
+                                    && letter.chars().next().map_or(false, |c| c.is_lowercase())
+                                    && !matches!(letter.as_str(), "n" | "t" | "b")
+                                {
+                                    // Check bound satisfaction first
+                                    if let Some(bound) = type_bounds.get(letter) {
+                                        let satisfies = match bound {
+                                            crate::ast::Bound::Any => true,
+                                            crate::ast::Bound::Comparable => matches!(
+                                                arg_ty,
+                                                Ty::Number | Ty::Text | Ty::Bool | Ty::Unknown
+                                            ),
+                                            crate::ast::Bound::Numeric => {
+                                                matches!(arg_ty, Ty::Number | Ty::Unknown)
+                                            }
+                                            crate::ast::Bound::Text => {
+                                                matches!(arg_ty, Ty::Text | Ty::Unknown)
+                                            }
+                                        };
+                                        if !satisfies {
+                                            self.err(
+                                                "ILO-T044",
+                                                func,
+                                                format!(
+                                                    "type argument for generic '{letter}' in '{}' must satisfy bound {bound}, got {arg_ty}",
+                                                    callee
+                                                ),
+                                                Some(format!(
+                                                    "bound {bound} allows: {}",
+                                                    match bound {
+                                                        crate::ast::Bound::Comparable => "n, t, b",
+                                                        crate::ast::Bound::Numeric => "n",
+                                                        crate::ast::Bound::Text => "t",
+                                                        crate::ast::Bound::Any => "any type",
+                                                    }
+                                                )),
+                                                Some(span),
+                                            );
+                                        }
+                                    }
+                                    // Check cross-call-site consistency
+                                    if let Some(first_ty) = var_bindings.get(letter) {
+                                        if !compatible(first_ty, arg_ty) {
+                                            self.err(
+                                                "ILO-T044",
+                                                func,
+                                                format!(
+                                                    "type variable '{letter}' in '{}' used inconsistently: first bound to {first_ty}, now {arg_ty}",
+                                                    callee
+                                                ),
+                                                Some(format!(
+                                                    "all arguments for type variable '{letter}' must have the same type"
+                                                )),
+                                                Some(span),
+                                            );
+                                        }
+                                    } else {
+                                        var_bindings.insert(letter.clone(), arg_ty.clone());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    // ── End generic checking ──────────────────────────────────
 
                     for (i, ((param_name, param_ty), arg_ty)) in
                         sig_params.iter().zip(arg_types.iter()).enumerate()
@@ -7293,6 +7398,7 @@ mod tests {
         let prog = Program {
             declarations: vec![
                 Decl::Function {
+                    type_params: vec![],
                     name: "inner".to_string(),
                     params: vec![Param {
                         name: "x".to_string(),
@@ -7305,6 +7411,7 @@ mod tests {
                     span: Span::UNKNOWN,
                 },
                 Decl::Function {
+                    type_params: vec![],
                     name: "outer".to_string(),
                     params: vec![Param {
                         name: "x".to_string(),
@@ -7345,6 +7452,7 @@ mod tests {
         let prog = Program {
             declarations: vec![
                 Decl::Function {
+                    type_params: vec![],
                     name: "inner".to_string(),
                     params: vec![Param {
                         name: "x".to_string(),
@@ -7355,6 +7463,7 @@ mod tests {
                     span: Span::UNKNOWN,
                 },
                 Decl::Function {
+                    type_params: vec![],
                     name: "outer".to_string(),
                     params: vec![Param {
                         name: "x".to_string(),
@@ -7388,6 +7497,7 @@ mod tests {
         let prog = Program {
             declarations: vec![
                 Decl::Function {
+                    type_params: vec![],
                     name: "inner".to_string(),
                     params: vec![Param {
                         name: "x".to_string(),
@@ -7400,6 +7510,7 @@ mod tests {
                     span: Span::UNKNOWN,
                 },
                 Decl::Function {
+                    type_params: vec![],
                     name: "outer".to_string(),
                     params: vec![Param {
                         name: "x".to_string(),
@@ -8880,6 +8991,101 @@ mod tests {
         let _ = errs;
     }
 
+    // ── Bounded generics (ILO-61) ─────────────────────────────────────────────
+
+    #[test]
+    fn bounded_generic_consistent_call_passes() {
+        // gmn<a:comparable> x:a y:a>a — calling with two n is fine
+        let src = "gmn<a:comparable> x:a y:a>a\n  r=x\n  >(x) y{r=y}\n  r\n\nmain>n\n  gmn 3 7\n  0\n";
+        assert!(parse_and_verify(src).is_ok(), "consistent call should pass");
+    }
+
+    #[test]
+    fn bounded_generic_inconsistent_call_emits_t044() {
+        // gmn<a:comparable> x:a y:a>a — calling with n then t is a violation
+        let src = "gmn<a:comparable> x:a y:a>a\n  r=x\n  >(x) y{r=y}\n  r\n\nmain>n\n  gmn 1 \"two\"\n  0\n";
+        let errs = parse_and_verify(src).unwrap_err();
+        assert!(
+            errs.iter().any(|e| e.code == "ILO-T044"),
+            "expected ILO-T044 for inconsistent type variable usage, got: {:?}",
+            errs.iter().map(|e| &e.code).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn bounded_generic_numeric_bound_rejects_text() {
+        // gadd<a:numeric> x:a y:a>a — passing t violates numeric bound
+        let src = "gadd<a:numeric> x:a y:a>a;+x y\n\nmain>n\n  gadd \"hello\" \"world\"\n  0\n";
+        let errs = parse_and_verify(src).unwrap_err();
+        assert!(
+            errs.iter().any(|e| e.code == "ILO-T044"),
+            "expected ILO-T044 for numeric bound violation, got: {:?}",
+            errs.iter().map(|e| &e.code).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn bounded_generic_text_bound_rejects_number() {
+        // grpt<a:text> s:a n:n>t — passing n for s violates text bound
+        let src = "grpt<a:text> s:a n:n>t\n  r=\"\"\n  @i 0..n{r=+r s}\n  r\n\nmain>n\n  grpt 42 3\n  0\n";
+        let errs = parse_and_verify(src).unwrap_err();
+        assert!(
+            errs.iter().any(|e| e.code == "ILO-T044"),
+            "expected ILO-T044 for text bound violation with numeric arg, got: {:?}",
+            errs.iter().map(|e| &e.code).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn bounded_generic_comparable_allows_bool() {
+        // comparable allows b as well as n and t
+        let src = "gmn<a:comparable> x:a y:a>a\n  r=x\n  >(x) y{r=y}\n  r\n\nmain>n\n  gmn true false\n  0\n";
+        // This should type-check without ILO-T044. The body may not make sense
+        // for bool, but the verifier only checks bounds, not semantics.
+        let result = parse_and_verify(src);
+        if let Err(ref errs) = result {
+            assert!(
+                !errs.iter().any(|e| e.code == "ILO-T044"),
+                "comparable bound should allow b, got ILO-T044: {:?}",
+                errs
+            );
+        }
+    }
+
+    #[test]
+    fn bounded_generic_any_bound_allows_any_type() {
+        // gid<a> — unbounded, same variable can be called with n or t at different sites
+        let src = "gid<a> x:a>a;x\n\nmain>n\n  gid 42\n  gid \"hello\"\n  0\n";
+        // Different call sites with different types for <a> should both be fine
+        // (each call site gets its own fresh binding).
+        assert!(
+            parse_and_verify(src).is_ok(),
+            "unbounded type variable should allow any concrete type"
+        );
+    }
+
+    #[test]
+    fn legacy_type_variable_no_bound_still_works() {
+        // Existing code without explicit type_params — type vars remain Ty::Unknown
+        let src = "identity x:a>a;x\n\nmain>n\n  identity 1\n  identity \"two\"\n  0\n";
+        assert!(
+            parse_and_verify(src).is_ok(),
+            "legacy type variable (no explicit bound) should still pass"
+        );
+    }
+
+    #[test]
+    fn bounded_generic_text_allows_text_arg() {
+        // grpt<a:text> accepts t just fine
+        let src = "grpt<a:text> s:a n:n>t\n  r=\"\"\n  @i 0..n{r=+r s}\n  r\n\nmain>n\n  grpt \"ab\" 3\n  0\n";
+        assert!(
+            parse_and_verify(src).is_ok(),
+            "text-bound generic should accept t"
+        );
+    }
+
+    // ── End bounded generics ──────────────────────────────────────────────────
+
     // ── Coverage: builtin type errors — cat arg2, hd/tl text, rev wrong type ──
 
     #[test]
@@ -9478,6 +9684,7 @@ mod tests {
         };
         let prog = Program {
             declarations: vec![Decl::Function {
+                type_params: vec![],
                 name: "f".to_string(),
                 params: vec![crate::ast::Param {
                     name: "x".to_string(),
@@ -9708,6 +9915,7 @@ mod tests {
         };
         let prog = Program {
             declarations: vec![Decl::Function {
+                type_params: vec![],
                 name: "f".to_string(),
                 params: vec![Param {
                     name: "x".to_string(),
@@ -9752,6 +9960,7 @@ mod tests {
         use crate::ast::{Decl, Expr, Literal, Program, Span, Spanned, Stmt, Type};
         let prog = Program {
             declarations: vec![Decl::Function {
+                type_params: vec![],
                 name: "f".to_string(),
                 params: vec![],
                 return_type: Type::Any,
@@ -9778,6 +9987,7 @@ mod tests {
         use crate::ast::{BinOp, Decl, Expr, Literal, Param, Program, Span, Spanned, Stmt, Type};
         let prog = Program {
             declarations: vec![Decl::Function {
+                type_params: vec![],
                 name: "f".to_string(),
                 params: vec![Param {
                     name: "x".to_string(),

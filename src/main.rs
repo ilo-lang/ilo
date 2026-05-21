@@ -6210,6 +6210,7 @@ mod tests {
     #[test]
     fn decl_name_function_returns_name() {
         let d = ast::Decl::Function {
+            type_params: vec![],
             name: "myfunc".into(),
             params: vec![],
             return_type: ast::Type::Number,
@@ -6582,6 +6583,7 @@ mod tests {
     #[test]
     fn resolve_imports_non_use_decl_passes_through() {
         let func_decl = ast::Decl::Function {
+            type_params: vec![],
             name: "f".into(),
             params: vec![],
             return_type: ast::Type::Number,
@@ -7970,6 +7972,7 @@ mod tests {
         use ast::{Decl, Param, Span, Type};
         let decls = vec![
             Decl::Function {
+                type_params: vec![],
                 name: "helper".into(),
                 params: vec![Param {
                     name: "x".into(),

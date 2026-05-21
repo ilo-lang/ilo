@@ -69,6 +69,36 @@ impl<'de, T: Deserialize<'de>> Deserialize<'de> for Spanned<T> {
 
 // ---- Core AST types ----
 
+/// Bound on a generic type variable.
+///
+/// A small fixed set — enough for `sort`/`cmp`/`min`/`max` and numeric ops
+/// without shipping a full typeclass system.
+///
+/// | Bound        | Permitted concrete types                  |
+/// |--------------|-------------------------------------------|
+/// | `Any`        | anything (default when no bound given)    |
+/// | `Comparable` | `n`, `t`, `b`                             |
+/// | `Numeric`    | `n`                                       |
+/// | `Text`       | `t`                                       |
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Bound {
+    Any,
+    Comparable,
+    Numeric,
+    Text,
+}
+
+impl std::fmt::Display for Bound {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Bound::Any => write!(f, "any"),
+            Bound::Comparable => write!(f, "comparable"),
+            Bound::Numeric => write!(f, "numeric"),
+            Bound::Text => write!(f, "text"),
+        }
+    }
+}
+
 /// Types in idea9 — single-char base types, composable
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Type {
@@ -95,9 +125,17 @@ pub struct Param {
 /// Top-level declarations
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Decl {
-    /// `name params>return;body`
+    /// `name<a:Comparable b> params>return;body`
+    /// `type_params` holds bounded generic type-variable declarations.
+    /// Syntax: `<letter>` or `<letter:Bound>`, space-separated inside `<...>`.
+    /// When absent the vec is empty and existing `a`/`b`/etc. type-variable
+    /// behaviour (treat as Unknown / accept any type) is preserved.
     Function {
         name: String,
+        /// Generic type-variable declarations: `<a:Comparable b:Numeric c>`.
+        /// Empty means no explicit generic params (legacy behaviour).
+        #[serde(skip)]
+        type_params: Vec<(String, Bound)>,
         params: Vec<Param>,
         return_type: Type,
         body: Vec<Spanned<Stmt>>,
@@ -1078,6 +1116,7 @@ mod tests {
     #[test]
     fn decl_span_not_serialized() {
         let decl = Decl::Function {
+            type_params: vec![],
             name: "f".to_string(),
             params: vec![],
             return_type: Type::Number,
@@ -1109,6 +1148,7 @@ mod tests {
         // L440-442: While variant in resolve_aliases_stmt
         let mut prog = Program {
             declarations: vec![Decl::Function {
+                type_params: vec![],
                 name: "f".to_string(),
                 params: vec![],
                 return_type: Type::Number,
@@ -1155,6 +1195,7 @@ mod tests {
         // L444: Return variant in resolve_aliases_stmt
         let mut prog = Program {
             declarations: vec![Decl::Function {
+                type_params: vec![],
                 name: "f".to_string(),
                 params: vec![],
                 return_type: Type::Number,
@@ -1183,6 +1224,7 @@ mod tests {
         // L445: Destructure variant in resolve_aliases_stmt
         let mut prog = Program {
             declarations: vec![Decl::Function {
+                type_params: vec![],
                 name: "f".to_string(),
                 params: vec![],
                 return_type: Type::Number,
@@ -1218,6 +1260,7 @@ mod tests {
         // L446: Break(Some(expr)) variant in resolve_aliases_stmt
         let mut prog = Program {
             declarations: vec![Decl::Function {
+                type_params: vec![],
                 name: "f".to_string(),
                 params: vec![],
                 return_type: Type::Number,
@@ -1246,6 +1289,7 @@ mod tests {
         // L447: Break(None) | Continue — no-op, just ensure no panic
         let mut prog = Program {
             declarations: vec![Decl::Function {
+                type_params: vec![],
                 name: "f".to_string(),
                 params: vec![],
                 return_type: Type::Number,
@@ -1267,6 +1311,7 @@ mod tests {
         // L465-467: NilCoalesce variant in resolve_aliases_expr
         let mut prog = Program {
             declarations: vec![Decl::Function {
+                type_params: vec![],
                 name: "f".to_string(),
                 params: vec![],
                 return_type: Type::Number,
@@ -1309,6 +1354,7 @@ mod tests {
         // L472-473: Record variant in resolve_aliases_expr
         let mut prog = Program {
             declarations: vec![Decl::Function {
+                type_params: vec![],
                 name: "f".to_string(),
                 params: vec![],
                 return_type: Type::Number,
@@ -1346,6 +1392,7 @@ mod tests {
         // L475-478: Match variant (as expression) in resolve_aliases_expr
         let mut prog = Program {
             declarations: vec![Decl::Function {
+                type_params: vec![],
                 name: "f".to_string(),
                 params: vec![],
                 return_type: Type::Number,
@@ -1394,6 +1441,7 @@ mod tests {
         // L481-483: With variant in resolve_aliases_expr
         let mut prog = Program {
             declarations: vec![Decl::Function {
+                type_params: vec![],
                 name: "f".to_string(),
                 params: vec![],
                 return_type: Type::Number,
@@ -1439,6 +1487,7 @@ mod tests {
         // Ensure existing JSON AST shape is preserved
         let prog = Program {
             declarations: vec![Decl::Function {
+                type_params: vec![],
                 name: "f".to_string(),
                 params: vec![Param {
                     name: "x".to_string(),
@@ -1464,6 +1513,7 @@ mod tests {
     fn resolve_aliases_stmt_match_no_subject() {
         let mut prog = Program {
             declarations: vec![Decl::Function {
+                type_params: vec![],
                 name: "f".to_string(),
                 params: vec![],
                 return_type: Type::Number,
@@ -1501,6 +1551,7 @@ mod tests {
     fn resolve_aliases_expr_match_no_subject() {
         let mut prog = Program {
             declarations: vec![Decl::Function {
+                type_params: vec![],
                 name: "f".to_string(),
                 params: vec![],
                 return_type: Type::Number,

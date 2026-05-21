@@ -2107,6 +2107,7 @@ mod tests {
         use crate::ast::*;
         let prog = Program {
             declarations: vec![Decl::Function {
+                type_params: vec![],
                 name: "f".into(),
                 params: vec![Param {
                     name: "s".into(),

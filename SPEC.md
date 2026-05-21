@@ -124,14 +124,50 @@ scores>M t n
 
 ### Type variables
 
-A single lowercase letter (other than `n`, `t`, `b`) in type position is a type variable, treated as `unknown` during verification. Used for higher-order function signatures:
+A single lowercase letter (other than `n`, `t`, `b`) in type position is a type variable. Used for higher-order function signatures:
 
 ```
 identity x:a>a;x
 apply f:F a a x:a>a;f x
 ```
 
-Type variables provide weak generics - the verifier accepts any type for `a` without consistency checking across call sites.
+**Without a bound declaration** type variables are treated as `unknown` during verification — the verifier accepts any type for `a` without consistency checking across call sites (legacy behaviour; backward compatible).
+
+### Bounded generics
+
+Explicit generic type parameters allow the verifier to enforce two properties at call sites:
+
+1. All arguments bound to the same type variable have the same concrete type.
+2. The concrete type satisfies the declared bound.
+
+**Syntax:** `name<a:bound b:bound ...>` before the parameter list. Bounds are optional per variable; omitting `:bound` defaults to `any`.
+
+```
+gmn<a:comparable> x:a y:a>a   -- min of two comparable values
+gadd<a:numeric> x:a y:a>a     -- addition, numeric values only
+grep<a:text> s:a n:n>t         -- repeat text
+gid<a> x:a>a                  -- identity, any type
+```
+
+**Bound set** (small and fixed):
+
+| Bound        | Permitted concrete types              |
+|--------------|---------------------------------------|
+| `any`        | any type (default when bound omitted) |
+| `comparable` | `n`, `t`, `b`                         |
+| `numeric`    | `n`                                   |
+| `text`       | `t`                                   |
+
+**Call-site checking:**
+
+```
+gmn 3 7          -- ok: both n
+gmn "a" "b"      -- ok: both t
+gmn 1 "two"      -- ILO-T044: 'a' bound to n then t (inconsistent)
+gadd "x" "y"     -- ILO-T044: 't' does not satisfy numeric bound
+```
+
+Unbounded legacy type-variable usage (`identity x:a>a;x`) continues to work without changes.
 
 ### Inline lambdas
 

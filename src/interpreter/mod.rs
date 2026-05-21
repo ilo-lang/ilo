@@ -10921,6 +10921,7 @@ mod tests {
         Program {
             declarations: vec![
                 Decl::Function {
+                    type_params: vec![],
                     name: "inner".to_string(),
                     params: vec![Param {
                         name: "x".to_string(),
@@ -10931,6 +10932,7 @@ mod tests {
                     span: Span::UNKNOWN,
                 },
                 Decl::Function {
+                    type_params: vec![],
                     name: "outer".to_string(),
                     params: vec![Param {
                         name: "x".to_string(),
@@ -10999,6 +11001,7 @@ mod tests {
         let prog = Program {
             declarations: vec![
                 Decl::Function {
+                    type_params: vec![],
                     name: "c".to_string(),
                     params: vec![Param {
                         name: "x".to_string(),
@@ -11011,6 +11014,7 @@ mod tests {
                     span: Span::UNKNOWN,
                 },
                 Decl::Function {
+                    type_params: vec![],
                     name: "b".to_string(),
                     params: vec![Param {
                         name: "x".to_string(),
@@ -11021,6 +11025,7 @@ mod tests {
                     span: Span::UNKNOWN,
                 },
                 Decl::Function {
+                    type_params: vec![],
                     name: "a".to_string(),
                     params: vec![Param {
                         name: "x".to_string(),

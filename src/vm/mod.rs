@@ -22450,6 +22450,7 @@ mod tests {
             .collect();
         let prog = Program {
             declarations: vec![Decl::Function {
+                type_params: vec![],
                 name: "f".to_string(),
                 params,
                 body: vec![],

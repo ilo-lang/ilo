@@ -453,6 +453,23 @@ impl Parser {
             Some(Token::Greater) => true,
             // name param:type ... — has params
             Some(Token::Ident(_)) => matches!(self.token_at(pos + 2), Some(Token::Colon)),
+            // name<a:bound> ... — generic type-parameter block
+            // Recognise `name <` when `<` is followed by a single-char lowercase
+            // ident (the type variable) so we don't misfire on `x < y` in expression
+            // position where `y` would be longer or be a param name (multi-char).
+            Some(Token::Less) => {
+                match self.token_at(pos + 2) {
+                    Some(Token::Ident(v))
+                        if v.len() == 1
+                            && v.chars().next().map_or(false, |c| {
+                                c.is_lowercase() && !matches!(c, 'n' | 't' | 'b')
+                            }) =>
+                    {
+                        true
+                    }
+                    _ => false,
+                }
+            }
             _ => false,
         }
     }
@@ -917,6 +934,10 @@ impl Parser {
                 format!("rename to something like `my{name}` or `{name}of`. Aliases shadow user functions in calls, so reusing the name silently breaks dispatch to `{canonical}`."),
             ));
         }
+        // Optional generic type-parameter block: `<a:Comparable b>` or `<a b c>`.
+        // The `<` token is unambiguous here (function-header position has no
+        // left-hand operand for the less-than binary operator).
+        let type_params = self.parse_type_params()?;
         let params = self.parse_params()?;
         // After params, before we touch `>` and the return type, make sure we
         // haven't crossed a top-level decl boundary. If we have, the header
@@ -977,6 +998,7 @@ impl Parser {
         let end = self.prev_span();
         Ok(Decl::Function {
             name,
+            type_params,
             params,
             return_type,
             body,
@@ -1308,6 +1330,83 @@ impl Parser {
             Some(Token::LParen) => true,
             _ => false,
         }
+    }
+
+    /// Parse optional generic type-parameter block: `<a:Comparable b:Numeric c>`.
+    ///
+    /// Syntax: `<` ( letter ( `:` bound )? )+ `>` where `letter` is a single
+    /// lowercase ASCII letter (the type-variable name) and `bound` is one of
+    /// `Comparable`, `Numeric`, `Text`, or `Any`.
+    ///
+    /// Returns an empty vec if the next token is not `<`.
+    /// Emits `ILO-P022` for malformed type-param blocks and returns the empty vec
+    /// on error (the declaration continues; the type checker will treat all vars
+    /// as `Any`-bounded).
+    fn parse_type_params(&mut self) -> Result<Vec<(String, crate::ast::Bound)>> {
+        use crate::ast::Bound;
+        if self.peek() != Some(&Token::Less) {
+            return Ok(vec![]);
+        }
+        self.advance(); // consume `<`
+        let mut params = Vec::new();
+        loop {
+            if self.peek() == Some(&Token::Greater) {
+                self.advance(); // consume `>`
+                break;
+            }
+            // Expect a single lowercase letter ident
+            match self.peek().cloned() {
+                Some(Token::Ident(ref name)) if name.len() == 1 && name.chars().next().map_or(false, |c| c.is_lowercase()) => {
+                    let var_name = name.clone();
+                    self.advance();
+                    let bound = if self.peek() == Some(&Token::Colon) {
+                        self.advance(); // consume `:`
+                        match self.peek().cloned() {
+                            Some(Token::Ident(ref b)) => {
+                                let bound = match b.as_str() {
+                                    "comparable" => Bound::Comparable,
+                                    "numeric" => Bound::Numeric,
+                                    "text" => Bound::Text,
+                                    "any" => Bound::Any,
+                                    other => {
+                                        return Err(self.error_hint(
+                                            "ILO-P022",
+                                            format!("unknown bound '{other}' — expected comparable, numeric, text, or any"),
+                                            "write `<a:comparable>` or `<a:numeric>` etc.".to_string(),
+                                        ));
+                                    }
+                                };
+                                self.advance();
+                                bound
+                            }
+                            _ => {
+                                return Err(self.error_hint(
+                                    "ILO-P022",
+                                    "expected bound name after ':'".to_string(),
+                                    "valid bounds: comparable, numeric, text, any".to_string(),
+                                ));
+                            }
+                        }
+                    } else {
+                        Bound::Any
+                    };
+                    params.push((var_name, bound));
+                }
+                Some(Token::Greater) => {
+                    // handled by loop condition; shouldn't reach here
+                    self.advance();
+                    break;
+                }
+                _ => {
+                    return Err(self.error_hint(
+                        "ILO-P022",
+                        "expected single-letter type variable in generic param list".to_string(),
+                        "write `<a>` or `<a:Comparable>` — type variables must be single lowercase letters".to_string(),
+                    ));
+                }
+            }
+        }
+        Ok(params)
     }
 
     /// Parse parameter list: `name:type name:type ...`
@@ -4381,6 +4480,7 @@ For variable-position list indexing bind the head first: \
         let span = start.merge(end);
         self.lifted_decls.push(Decl::Function {
             name: name.clone(),
+            type_params: vec![],
             params: lifted_params,
             return_type,
             body,
