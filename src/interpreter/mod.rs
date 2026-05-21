@@ -387,6 +387,17 @@ enum BodyResult {
     Break(Value),
     /// Continue to next loop iteration
     Continue,
+    /// Tail call: the body's final value would be the result of calling
+    /// `callee` with `args`. The trampoline in `call_function` picks this up
+    /// and rebinds parameters instead of recursing into Rust, so deep tail
+    /// recursion runs in constant host-stack space.
+    ///
+    /// Only synthesised in tail position (last stmt of a body that is itself
+    /// in tail position of its enclosing call). Only synthesised when the
+    /// callee resolves to a user-defined function with no auto-unwrap (`!` /
+    /// `!!`) on the call site, because both unwrap forms need to inspect the
+    /// callee's return value before deciding whether to propagate.
+    TailCall { callee: String, args: Vec<Value> },
 }
 
 pub fn run(program: &Program, func_name: Option<&str>, args: Vec<Value>) -> Result<Value> {
@@ -6325,6 +6336,13 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             name: func_name,
             ..
         } => {
+            // Trampoline: tail-position user-fn calls inside the body surface
+            // as `BodyResult::TailCall { callee, args }`. We pick those up
+            // here and rebind parameters in place instead of recursing into
+            // Rust. Effect: a function that recurses only in tail position
+            // runs to arbitrary depth on the tree interpreter without
+            // touching the host call stack. VM and Cranelift backends gain
+            // matching support in subsequent PRs.
             if args.len() != params.len() {
                 return Err(RuntimeError::new(
                     "ILO-R004",
@@ -6336,21 +6354,71 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                     ),
                 ));
             }
-            // Isolate the callee's scope from the caller's variables.
             let saved_vars = std::mem::take(&mut env.vars);
             let saved_marks = std::mem::replace(&mut env.scope_marks, vec![0]);
-            for (param, arg) in params.iter().zip(args) {
-                env.define(&param.name, arg);
-            }
-            env.call_stack.push(func_name.clone());
-            let result = eval_body(env, &body);
-            env.call_stack.pop();
+
+            let mut cur_params = params;
+            let mut cur_body = body;
+            let mut cur_args = args;
+            let mut cur_func_name = func_name;
+
+            let final_result = loop {
+                env.vars.clear();
+                env.scope_marks.clear();
+                env.scope_marks.push(0);
+                for (param, arg) in cur_params.iter().zip(cur_args) {
+                    env.define(&param.name, arg);
+                }
+                env.call_stack.push(cur_func_name.clone());
+                let result = eval_body(env, &cur_body, true);
+                env.call_stack.pop();
+
+                match result {
+                    Err(e) => break Err(e),
+                    Ok(BodyResult::Value(v))
+                    | Ok(BodyResult::Return(v))
+                    | Ok(BodyResult::Break(v)) => break Ok(v),
+                    Ok(BodyResult::Continue) => break Ok(Value::Nil),
+                    Ok(BodyResult::TailCall {
+                        callee,
+                        args: ta_args,
+                    }) => match env.function(&callee) {
+                        Ok(Decl::Function {
+                            params: np,
+                            body: nb,
+                            name: nn,
+                            ..
+                        }) => {
+                            if ta_args.len() != np.len() {
+                                break Err(RuntimeError::new(
+                                    "ILO-R004",
+                                    format!(
+                                        "{}: expected {} args, got {}",
+                                        callee,
+                                        np.len(),
+                                        ta_args.len()
+                                    ),
+                                ));
+                            }
+                            cur_params = np;
+                            cur_body = nb;
+                            cur_args = ta_args;
+                            cur_func_name = nn;
+                            continue;
+                        }
+                        _ => {
+                            // Fallback: callee isn't a Decl::Function (e.g.
+                            // a tool). try_synthesize_tail_call should have
+                            // ruled this out at synth time, but defending
+                            // against drift between synth and resolve.
+                            break call_function(env, &callee, ta_args);
+                        }
+                    },
+                }
+            };
             env.vars = saved_vars;
             env.scope_marks = saved_marks;
-            match result? {
-                BodyResult::Value(v) | BodyResult::Return(v) | BodyResult::Break(v) => Ok(v),
-                BodyResult::Continue => Ok(Value::Nil),
-            }
+            final_result
         }
         Decl::Tool { name, .. } => {
             if let Some(ref _provider) = env.tool_provider {
@@ -6453,13 +6521,86 @@ fn serde_json_to_value(v: serde_json::Value) -> Value {
     }
 }
 
-fn eval_body(env: &mut Env, stmts: &[Spanned<Stmt>]) -> Result<BodyResult> {
+/// If `expr` is a direct `Expr::Call name args` with no auto-unwrap, the args
+/// evaluate successfully, and `name` resolves to a user-defined function in
+/// `env`, evaluate the args and return `(name, arg_values)` so the caller can
+/// synthesise a `BodyResult::TailCall`.
+///
+/// Returns `None` when the expression isn't shaped like a TCO-eligible call,
+/// in which case the caller falls back to regular `eval_expr`. Returns
+/// `Some(Err(_))` if arg evaluation itself fails (e.g. nested call errored or
+/// propagated via `!`); propagating that error rather than swallowing it
+/// preserves the no-TCO semantics for failure paths.
+///
+/// Constraints (intentionally narrow for the tree-interpreter trampoline):
+/// - `unwrap` must be `None` — `!`/`!!` inspect the call result before
+///   propagating, so they can't be TCO'd without re-checking inside the
+///   trampoline (left for a follow-up).
+/// - `function` must be a direct user-fn name, not a scope-bound FnRef or
+///   Closure. FnRef-via-scope tail calls remain on the host stack (rare in
+///   practice; the common `fac n=...fac -n 1` pattern hits the direct path).
+/// - Tools (`Decl::Tool`) intentionally do not TCO — they're an effect
+///   boundary, not a recursive computation.
+///
+/// `#[inline(never)]` so the helper's frame stays separate from
+/// `eval_stmt`'s. `eval_stmt` is on the hot path for every statement; if
+/// this helper inlined, its `Vec<Value>` arg-buffer would bloat every
+/// `eval_stmt` frame and tip moderately-deep non-tail recursion (e.g.
+/// `fib 10`'s 177 nested frames) into stack overflow on tight-limit CI
+/// builds.
+#[inline(never)]
+fn try_synthesize_tail_call(env: &mut Env, expr: &Expr) -> Option<Result<(String, Vec<Value>)>> {
+    let Expr::Call {
+        function,
+        args,
+        unwrap,
+    } = expr
+    else {
+        return None;
+    };
+    if unwrap.is_any() {
+        return None;
+    }
+    // Reject if the callee name is shadowed in local scope by a non-fn
+    // binding, or by a FnRef/Closure (those use the dynamic-dispatch path
+    // in eval_expr and aren't worth duplicating here).
+    if env.vars.iter().rev().any(|(k, _)| k == function.as_str()) {
+        return None;
+    }
+    // Resolve callee as a user-fn. Builtins, tools, type defs etc. fall back
+    // to the normal call path. Builtin shadowing of a user fn name isn't a
+    // thing in ilo (verifier rejects it), but we still check function() first
+    // — the trampoline only handles Decl::Function payloads.
+    let decl = env.functions.get(function.as_str())?;
+    if !matches!(decl, Decl::Function { .. }) {
+        return None;
+    }
+    // Evaluate args. Any error here is surfaced as Some(Err(_)) so the
+    // caller propagates it the same way eval_expr would.
+    let mut arg_vals = Vec::with_capacity(args.len());
+    for arg in args {
+        match eval_expr(env, arg) {
+            Ok(v) => arg_vals.push(v),
+            Err(e) => return Some(Err(e)),
+        }
+    }
+    Some(Ok((function.clone(), arg_vals)))
+}
+
+fn eval_body(env: &mut Env, stmts: &[Spanned<Stmt>], is_tail: bool) -> Result<BodyResult> {
     let mut last = Value::Nil;
-    for spanned in stmts.iter() {
-        match eval_stmt(env, &spanned.node) {
+    let n = stmts.len();
+    for (i, spanned) in stmts.iter().enumerate() {
+        // Tail position only propagates to the LAST statement. Earlier
+        // statements are not in tail position by definition.
+        let stmt_is_tail = is_tail && i + 1 == n;
+        match eval_stmt(env, &spanned.node, stmt_is_tail) {
             Ok(Some(BodyResult::Return(v))) => return Ok(BodyResult::Return(v)),
             Ok(Some(BodyResult::Break(v))) => return Ok(BodyResult::Break(v)),
             Ok(Some(BodyResult::Continue)) => return Ok(BodyResult::Continue),
+            Ok(Some(BodyResult::TailCall { callee, args })) => {
+                return Ok(BodyResult::TailCall { callee, args });
+            }
             Ok(Some(BodyResult::Value(v))) => last = v,
             Ok(None) => {}
             Err(mut e) => {
@@ -6649,7 +6790,7 @@ fn eval_self_rebind_concat(env: &mut Env, rhs_expr: &Expr, prev: Value) -> Resul
     }
 }
 
-fn eval_stmt(env: &mut Env, stmt: &Stmt) -> Result<Option<BodyResult>> {
+fn eval_stmt(env: &mut Env, stmt: &Stmt, is_tail: bool) -> Result<Option<BodyResult>> {
     match stmt {
         Stmt::Let { name, value } => {
             // Peephole: `m = mset m k v` self-rebind. Drop env's binding to Nil
@@ -6735,25 +6876,36 @@ fn eval_stmt(env: &mut Env, stmt: &Stmt) -> Result<Option<BodyResult>> {
             let truth = is_truthy(&cond);
             let should_run = if *negated { !truth } else { truth };
             if let Some(else_b) = else_body {
-                // Ternary: cond{then}{else} — produces value, no early return
+                // Ternary: cond{then}{else} — produces value, no early
+                // return. The chosen branch inherits the outer tail
+                // position: if the ternary is the last stmt of a function
+                // body, both branches are in tail position.
                 let chosen = if should_run { body } else { else_b };
                 env.push_scope();
-                let result = eval_body(env, chosen);
+                let result = eval_body(env, chosen, is_tail);
                 env.pop_scope();
                 match result? {
                     BodyResult::Break(v) => Ok(Some(BodyResult::Break(v))),
                     BodyResult::Continue => Ok(Some(BodyResult::Continue)),
+                    BodyResult::TailCall { callee, args } => {
+                        Ok(Some(BodyResult::TailCall { callee, args }))
+                    }
                     BodyResult::Value(v) | BodyResult::Return(v) => Ok(Some(BodyResult::Value(v))),
                 }
             } else if should_run && *braceless {
                 // Braceless guard `cond expr`: early return from the
-                // enclosing function.
+                // enclosing function. The body is always in tail position
+                // relative to the function — the value it produces becomes
+                // the function's return, so a tail call inside trampolines.
                 env.push_scope();
-                let result = eval_body(env, body);
+                let result = eval_body(env, body, true);
                 env.pop_scope();
                 match result? {
                     BodyResult::Break(v) => Ok(Some(BodyResult::Break(v))),
                     BodyResult::Continue => Ok(Some(BodyResult::Continue)),
+                    BodyResult::TailCall { callee, args } => {
+                        Ok(Some(BodyResult::TailCall { callee, args }))
+                    }
                     BodyResult::Value(v) | BodyResult::Return(v) => Ok(Some(BodyResult::Return(v))),
                 }
             } else if should_run {
@@ -6764,12 +6916,20 @@ fn eval_stmt(env: &mut Env, stmt: &Stmt) -> Result<Option<BodyResult>> {
                 // its body value), but execution continues to subsequent
                 // statements. `ret` inside the body still propagates as
                 // Return; brk/cnt still propagate to the enclosing loop.
+                //
+                // Inheriting `is_tail`: if the braced guard is the last stmt
+                // of a function body AND its branch is taken, the branch's
+                // tail call is the function's tail call. Safe to pass
+                // through.
                 env.push_scope();
-                let result = eval_body(env, body);
+                let result = eval_body(env, body, is_tail);
                 env.pop_scope();
                 match result? {
                     BodyResult::Break(v) => Ok(Some(BodyResult::Break(v))),
                     BodyResult::Continue => Ok(Some(BodyResult::Continue)),
+                    BodyResult::TailCall { callee, args } => {
+                        Ok(Some(BodyResult::TailCall { callee, args }))
+                    }
                     BodyResult::Return(v) => Ok(Some(BodyResult::Return(v))),
                     BodyResult::Value(v) => Ok(Some(BodyResult::Value(v))),
                 }
@@ -6788,12 +6948,18 @@ fn eval_stmt(env: &mut Env, stmt: &Stmt) -> Result<Option<BodyResult>> {
                     for (name, val) in bindings {
                         env.define(&name, val);
                     }
-                    let result = eval_body(env, &arm.body);
+                    // Arm body inherits the match's tail position: a tail
+                    // call in the taken arm of a tail-position match
+                    // trampolines through.
+                    let result = eval_body(env, &arm.body, is_tail);
                     env.pop_scope();
                     match result? {
                         BodyResult::Return(v) => return Ok(Some(BodyResult::Return(v))),
                         BodyResult::Break(v) => return Ok(Some(BodyResult::Break(v))),
                         BodyResult::Continue => return Ok(Some(BodyResult::Continue)),
+                        BodyResult::TailCall { callee, args } => {
+                            return Ok(Some(BodyResult::TailCall { callee, args }));
+                        }
                         BodyResult::Value(v) => return Ok(Some(BodyResult::Value(v))),
                     }
                 }
@@ -6812,7 +6978,11 @@ fn eval_stmt(env: &mut Env, stmt: &Stmt) -> Result<Option<BodyResult>> {
                     for item in items.iter().cloned() {
                         env.push_scope();
                         env.define(binding, item);
-                        let result = eval_body(env, body);
+                        // Loop bodies are never in tail position: control
+                        // returns to the loop header after each iteration,
+                        // so a "tail call" inside a loop must materialise as
+                        // a normal call. Pass `false`.
+                        let result = eval_body(env, body, false);
                         env.pop_scope();
                         match result? {
                             BodyResult::Return(v) => {
@@ -6823,6 +6993,13 @@ fn eval_stmt(env: &mut Env, stmt: &Stmt) -> Result<Option<BodyResult>> {
                                 break;
                             }
                             BodyResult::Continue => continue,
+                            BodyResult::TailCall { .. } => {
+                                // Unreachable: loop body is_tail = false, so
+                                // try_synthesize_tail_call is never invoked
+                                // in this branch. Fall through with Nil to
+                                // keep the match exhaustive without panic.
+                                unreachable!("TailCall escaping non-tail loop body");
+                            }
                             BodyResult::Value(v) => last = v,
                         }
                     }
@@ -6856,7 +7033,8 @@ fn eval_stmt(env: &mut Env, stmt: &Stmt) -> Result<Option<BodyResult>> {
             for i in s..e {
                 env.push_scope();
                 env.define(binding, Value::Number(i as f64));
-                let result = eval_body(env, body);
+                // Range body is not in tail position; see ForEach above.
+                let result = eval_body(env, body, false);
                 env.pop_scope();
                 match result? {
                     BodyResult::Return(v) => {
@@ -6867,6 +7045,9 @@ fn eval_stmt(env: &mut Env, stmt: &Stmt) -> Result<Option<BodyResult>> {
                         break;
                     }
                     BodyResult::Continue => continue,
+                    BodyResult::TailCall { .. } => {
+                        unreachable!("TailCall escaping non-tail range body");
+                    }
                     BodyResult::Value(v) => last = v,
                 }
             }
@@ -6879,7 +7060,8 @@ fn eval_stmt(env: &mut Env, stmt: &Stmt) -> Result<Option<BodyResult>> {
                 if !is_truthy(&cond) {
                     break;
                 }
-                let result = eval_body(env, body);
+                // While body is not in tail position; see ForEach above.
+                let result = eval_body(env, body, false);
                 match result? {
                     BodyResult::Return(v) => {
                         return Ok(Some(BodyResult::Return(v)));
@@ -6889,15 +7071,15 @@ fn eval_stmt(env: &mut Env, stmt: &Stmt) -> Result<Option<BodyResult>> {
                         break;
                     }
                     BodyResult::Continue => continue,
+                    BodyResult::TailCall { .. } => {
+                        unreachable!("TailCall escaping non-tail while body");
+                    }
                     BodyResult::Value(v) => last = v,
                 }
             }
             Ok(Some(BodyResult::Value(last)))
         }
-        Stmt::Return(expr) => {
-            let val = eval_expr(env, expr)?;
-            Ok(Some(BodyResult::Return(val)))
-        }
+        Stmt::Return(expr) => eval_return_stmt(env, expr),
         Stmt::Break(expr) => {
             let val = match expr {
                 Some(e) => eval_expr(env, e)?,
@@ -6907,10 +7089,46 @@ fn eval_stmt(env: &mut Env, stmt: &Stmt) -> Result<Option<BodyResult>> {
         }
         Stmt::Continue => Ok(Some(BodyResult::Continue)),
         Stmt::Expr(expr) => {
-            let val = eval_expr(env, expr)?;
-            Ok(Some(BodyResult::Value(val)))
+            // Tail context: dispatch via the helper so the TailCall
+            // synthesis locals (Option<Result<(String, Vec<Value>)>>) stay
+            // out of eval_stmt's frame on the non-tail hot path.
+            if is_tail {
+                eval_tail_expr_stmt(env, expr)
+            } else {
+                let val = eval_expr(env, expr)?;
+                Ok(Some(BodyResult::Value(val)))
+            }
         }
     }
+}
+
+/// Tail-position `ret expr` handler. Extracted from `eval_stmt`'s match
+/// arm so the TailCall synth's locals (Option<Result<(String, Vec<Value>)>>,
+/// ~56 bytes) stay out of `eval_stmt`'s frame on the non-tail hot path.
+/// Matters for moderately-deep non-tail recursion on debug builds with
+/// tight test-thread stacks (~2MB): every saved byte per eval_stmt frame
+/// multiplies across hundreds of nested frames.
+#[inline(never)]
+fn eval_return_stmt(env: &mut Env, expr: &Expr) -> Result<Option<BodyResult>> {
+    if let Some(result) = try_synthesize_tail_call(env, expr) {
+        let (callee, args) = result?;
+        return Ok(Some(BodyResult::TailCall { callee, args }));
+    }
+    let val = eval_expr(env, expr)?;
+    Ok(Some(BodyResult::Return(val)))
+}
+
+/// Tail-position bare-expression-statement handler. Same frame-isolation
+/// rationale as `eval_return_stmt`. Only reached when `eval_stmt`'s
+/// `is_tail` arg is true (last stmt of a body in tail position).
+#[inline(never)]
+fn eval_tail_expr_stmt(env: &mut Env, expr: &Expr) -> Result<Option<BodyResult>> {
+    if let Some(result) = try_synthesize_tail_call(env, expr) {
+        let (callee, args) = result?;
+        return Ok(Some(BodyResult::TailCall { callee, args }));
+    }
+    let val = eval_expr(env, expr)?;
+    Ok(Some(BodyResult::Value(val)))
 }
 
 fn eval_expr(env: &mut Env, expr: &Expr) -> Result<Value> {
@@ -7097,13 +7315,20 @@ fn eval_expr(env: &mut Env, expr: &Expr) -> Result<Value> {
                     for (name, val) in bindings {
                         env.define(&name, val);
                     }
-                    let result = eval_body(env, &arm.body);
+                    // Value-producing match: the arm body is mid-expression,
+                    // not in tail position of any function. Pass false so no
+                    // TailCall is synthesised — the resulting Value flows
+                    // back into the surrounding expression normally.
+                    let result = eval_body(env, &arm.body, false);
                     env.pop_scope();
                     return match result? {
                         BodyResult::Value(v) | BodyResult::Return(v) | BodyResult::Break(v) => {
                             Ok(v)
                         }
                         BodyResult::Continue => Ok(Value::Nil),
+                        BodyResult::TailCall { .. } => {
+                            unreachable!("TailCall escaping value-producing Match arm")
+                        }
                     };
                 }
             }

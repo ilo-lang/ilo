@@ -9,7 +9,7 @@ Prefix-notation, strongly-typed, verified pre-run. Bodies `;`-separated or newli
 
 ## fn
 
-`tot p:n q:n r:n>n;s=*p q;t=*s r;+s t`. No param parens. `>` returns. `;` separates. Last expr returns. Zero-arg: `make-id()`.
+`tot p:n q:n r:n>n;s=*p q;t=*s r;+s t`. No param parens. `>` returns, `;` separates, last expr returns. Zero-arg: `make-id()`.
 
 ## types
 
@@ -25,7 +25,7 @@ Binary `+ - * / % < > <= >= = !=`, bool `& | !`, append `+=`. Nest `+*a b c`=`(a
 
 ## guards
 
-Flat early returns at statement: `cls sp:n>t;>=sp 1000 "gold";>=sp 500 "silver";"bronze"`. Braceless `cond expr` cheaper than `cond{expr}`. Bare comparison at statement IS a guard; bind to return otherwise: `r=>a b;r`.
+Flat early returns: `cls sp:n>t;>=sp 1000 "gold";>=sp 500 "silver";"bronze"`. Braceless `cond expr` cheaper than `cond{expr}`. Bare comparison IS a guard; bind to return: `r=>a b;r`.
 
 ## match
 
@@ -33,11 +33,11 @@ Flat early returns at statement: `cls sp:n>t;>=sp 1000 "gold";>=sp 500 "silver";
 
 ## results
 
-`div a:n b:n>R n t;=b 0 ^"divide by zero";~/a b`. `!` auto-unwraps in `R`-fns (`d=get! url`). `!!` panic-unwraps on `^e`/`nil`. `default-on-err r d` unwraps `R T E` to `T` with `d` on Err (Result mirror of `??`; use when the error payload is unused).
+`div a:n b:n>R n t;=b 0 ^"divide by zero";~/a b`. `!` auto-unwraps in `R`-fns. `!!` panics on `^e`/`nil`. `default-on-err r d` unwraps `R T E` to `T` with `d` on Err (Result `??`).
 
 ## loops
 
-`@x xs{body}` foreach, `@i 0..5{body}` range half-open, `wh <i 10{...}` while. `brk`, `cnt`, `ret v`.
+`@x xs{body}` foreach, `@i 0..5{body}` range, `wh <i 10{...}` while. `brk`, `cnt`, `ret v`. Tail user-fn calls trampoline (no stack growth); deep iter: `cd n:n>n;=n 0 0;cd -n 1`. Direct name, no `!`/`!!`.
 
 ## pipes
 
@@ -45,11 +45,11 @@ Flat early returns at statement: `cls sp:n>t;>=sp 1000 "gold";>=sp 500 "silver";
 
 ## lambdas
 
-Parenthesised: `map (x:n>n;+x 1) xs`. Captures tree-only; VM/JIT/AOT auto-fall-back.
+Parens: `map (x:n>n;+x 1) xs`. Captures tree-only; VM/JIT auto-fallback.
 
 ## multi-fn files
 
-Non-last fns end with safe expr (op, index, match, literal, parens). Last fn: anything.
+Non-last fns end with safe expr (op, index, match, literal, parens); last fn: anything.
 
 ## strings
 
@@ -57,7 +57,7 @@ Non-last fns end with safe expr (op, index, match, literal, parens). Last fn: an
 
 ## reserved names
 
-Fn/binding shadowing builtin or alias fires `ILO-P011`; aliases reserved like canonicals. 2-char safe; 4+ safe except `take drop mget mset flat range`; 3-char safe.
+Fn/binding shadowing builtin/alias fires `ILO-P011`. 2-char safe; 4+ safe except `take drop mget mset flat range`; 3-char safe.
 
 `e` `at hd pi tl rd wr ct` `abs avg cap cat cel chr cos det dot env exp fft fld flr flt fmt frq get grp has inv len log lsd lst lwr map max min mod now num ord pow pst rdb rdl rev rgx rng rnd rou run sin slc spl srt str sum tan tau trm unq upr wrl zip`
 
