@@ -162,12 +162,19 @@ impl std::fmt::Display for Value {
                 write!(f, "]")
             }
             Value::Record { type_name, fields } => {
+                // Sort keys lexicographically so Display is deterministic
+                // across engines (tree/VM/Cranelift). The underlying field
+                // storage is a HashMap, whose iteration order varies; agents
+                // diffing `prnt`/`fmt` output across engines need a stable
+                // canonical order. See ilo_assessment_feedback #5bg.
                 write!(f, "{} {{", type_name)?;
-                for (i, (k, v)) in fields.iter().enumerate() {
+                let mut keys: Vec<&String> = fields.keys().collect();
+                keys.sort();
+                for (i, k) in keys.iter().enumerate() {
                     if i > 0 {
                         write!(f, ", ")?;
                     }
-                    write!(f, "{}: {}", k, v)?;
+                    write!(f, "{}: {}", k, fields[*k])?;
                 }
                 write!(f, "}}")
             }
