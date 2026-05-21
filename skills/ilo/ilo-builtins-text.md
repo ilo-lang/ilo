@@ -15,6 +15,8 @@ Prefix-call: `name arg1 arg2 ...`. Cross-engine unless noted.
 
 `upr lwr cap padl padr chars ord chr`. `cap` capitalises first letter.
 
+`padr "" n c` is the **repeat-character idiom** - use it for histogram bars, divider lines, indentation. `padr "" 10 "#"` -> `"##########"`. Cheaper than a loop.
+
 ## Regex
 
 Signatures (pat first, string last):

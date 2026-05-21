@@ -1,0 +1,22 @@
+-- Record Display sorts fields lexicographically across all engines
+-- (tree / VM / Cranelift JIT). The underlying storage is a HashMap
+-- whose iteration order is nondeterministic, but `prnt` and `fmt "{}"`
+-- need a stable canonical order so agents can diff output between
+-- engines and across runs. Lex-sort matches what `jdmp` already does
+-- for JSON output of records.
+--
+-- Declared field order is b, a, c; literal order below is also b, a, c.
+-- After the fix, Display prints `a, b, c` regardless.
+--
+-- See ilo_assessment_feedback #5bg.
+
+type r{b:n;a:n;c:n}
+
+print-record>_;v=r b:1 a:2 c:3;prnt v
+
+fmt-record>t;v=r b:1 a:2 c:3;fmt "{}" v
+
+-- run: print-record
+-- out: r {a: 2, b: 1, c: 3}
+-- run: fmt-record
+-- out: r {a: 2, b: 1, c: 3}

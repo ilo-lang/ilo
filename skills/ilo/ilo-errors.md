@@ -24,7 +24,7 @@ description: Use this when reading ILO-XXXX error codes or fixing failures. List
 
 - **T001 unknown identifier** - declare, import, or check spelling.
 - **T004 type mismatch** - return/param doesn't match. Change expression or declaration.
-- **T005 wrong operand type** - convert with `num s` / `str n`, or use the right op.
+- **T005 undefined function / call-vs-binop trap** - calling something not callable. Often the shape `dx=xj 0-xi` (parses as `dx=(xj 0)-xi`, a call). Use prefix op: `-xj xi`, or pre-bind: `nxi=0-xi;+xj nxi`.
 - **T006 arity mismatch** - add/remove args to match signature.
 - **T007 not a function** - calling a value. Rename or rebind.
 - **T010 non-result error-propagate** - `!` in a non-`R` fn. Declare `>R t t` or use `??` / match.

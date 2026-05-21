@@ -15,9 +15,18 @@ Prefix-call: `name arg1 arg2 ...`. Cross-engine unless noted.
 
 `default-on-err r d` - unwrap `R T E` to `T`, returning `d` if Err. Mirror of `??` for Result (`??` is nil-coalesce for `O T` only). `default-on-err (num s) 0` replaces `?r{~v:v;^_:0}`. Verifier enforces `d` matches Ok type (ILO-T040). Using `??` on a Result triggers ILO-T041 pointing here.
 
+Use when the error payload is discardable and you want a one-liner instead of a `?r{~v:v;^_:d}` match. Works inside any fn (no `R`-return requirement, unlike `!`).
+
+```
+port = default-on-err (num "8080") 0                -- text→num with fallback
+name = default-on-err (jpth body "user.name") "anon" -- missing/typed path → fallback
+```
+
+See `examples/default-on-err.ilo` for the full pattern set.
+
 ## List
 
-`len hd tl at lst take drop slc`; `rev srt rsrt unq uniqby flat grp zip enumerate range`; `chunks window flatmap partition`; `setunion setinter setdiff`. `at xs i` floors floats; negative indexes from end (same for `slc take drop`). Bounds clamp. `lst xs i v` = set index (alias `lset`); last element = `at xs -1`.
+`len hd tl at lst take drop slc`; `rev srt rsrt unq uniqby flat grp zip enumerate range`; `chunks window flatmap partition`; `setunion setinter setdiff`. `at xs i` floors floats; negative indexes from end (same for `slc take drop`). Bounds clamp. **`lst xs i v` IS the list-set / `lset` / `setat` builtin** — returns a new list with index `i` replaced by `v` (alias `lset`; reach for `lst` whenever you'd write `xs[i] = v` in Python). Last element = `at xs -1`.
 
 ## HOFs
 
