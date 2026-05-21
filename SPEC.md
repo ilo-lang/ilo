@@ -616,6 +616,7 @@ Called like functions, compiled to dedicated opcodes.
 | `e` | 2.718281828459045 (Euler's number, `f64::consts::E`) | `n` |
 | `transpose m` | transpose row-major matrix | `L (L n)` |
 | `matmul a b` | matrix product | `L (L n)` |
+| `matvec xm ys` | matrix-vector product (`r[i] = sum_j xm[i][j] * ys[j]`); skips the wrap-as-column + flatten ceremony around `matmul` | `L n` |
 | `dot a b` | vector dot product | `n` |
 | `solve a b` | solve `Ax = b` via LU with partial pivoting; errors on singular/non-square | `L n` |
 | `inv a` | matrix inverse; errors on singular/non-square | `L (L n)` |
@@ -720,7 +721,7 @@ are decomposed into smaller units before formatting.
 
 ### Linear algebra
 
-`transpose`, `matmul`, `dot`, `solve`, `inv`, `det` operate on row-major matrices (`L (L n)`) and flat vectors (`L n`). `solve`, `inv`, `det` use LU decomposition with partial pivoting and raise on singular or non-square inputs. These ship as host-vetted builtins because hand-rolled implementations risk silent precision loss.
+`transpose`, `matmul`, `matvec`, `dot`, `solve`, `inv`, `det` operate on row-major matrices (`L (L n)`) and flat vectors (`L n`). `solve`, `inv`, `det` use LU decomposition with partial pivoting and raise on singular or non-square inputs. `matvec xm ys` is matrix-vector product as a flat vector; it skips the `flatten matmul xm (map (y:n>L n;[y]) ys)` ceremony needed to coerce a vector into a column matrix. These ship as host-vetted builtins because hand-rolled implementations risk silent precision loss.
 
 ### FFT
 

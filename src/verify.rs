@@ -447,6 +447,7 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("ifft", &["list"], "list"),
     ("transpose", &["L (L n)"], "L (L n)"),
     ("matmul", &["L (L n)", "L (L n)"], "L (L n)"),
+    ("matvec", &["L (L n)", "L n"], "L n"),
     ("dot", &["L n", "L n"], "n"),
     ("rgx", &["t", "t"], "L t"),
     ("rgxall", &["t", "t"], "L (L t)"),
@@ -2941,6 +2942,44 @@ fn builtin_check_args(
                 }
             }
             (Ty::List(Box::new(Ty::List(Box::new(Ty::Number)))), errors)
+        }
+        "matvec" => {
+            // matvec xm:L (L n) ys:L n → L n
+            if let Some(arg) = arg_types.first() {
+                let ok = match arg {
+                    Ty::List(inner) => matches!(inner.as_ref(), Ty::List(_) | Ty::Unknown),
+                    Ty::Unknown => true,
+                    _ => false,
+                };
+                if !ok {
+                    errors.push(VerifyError {
+                        code: "ILO-T013",
+                        function: func_ctx.to_string(),
+                        message: format!("'matvec' first arg must be L (L n), got {arg}"),
+                        hint: None,
+                        span,
+                        is_warning: false,
+                    });
+                }
+            }
+            if let Some(arg) = arg_types.get(1) {
+                let ok = match arg {
+                    Ty::List(inner) => compatible(inner, &Ty::Number),
+                    Ty::Unknown => true,
+                    _ => false,
+                };
+                if !ok {
+                    errors.push(VerifyError {
+                        code: "ILO-T013",
+                        function: func_ctx.to_string(),
+                        message: format!("'matvec' second arg must be L n, got {arg}"),
+                        hint: None,
+                        span,
+                        is_warning: false,
+                    });
+                }
+            }
+            (Ty::List(Box::new(Ty::Number)), errors)
         }
         "dot" => {
             // dot xs:L n ys:L n → n

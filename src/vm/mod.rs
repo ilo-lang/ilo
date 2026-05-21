@@ -704,6 +704,12 @@ pub(crate) fn is_tree_bridge_eligible(b: crate::builtins::Builtin, argc: usize) 
         // JIT/AOT pick them up at zero opcode cost.
         (Builtin::GetTo, 2) => true,
         (Builtin::PstTo, 3) => true,
+        // matvec xm ys -> L n. Pure (no FnRef, no I/O), 2-arg, returns a
+        // flat vector. Tree-bridge keeps cross-engine parity with the
+        // tree interpreter at the same cost tier as `transpose`/`matmul`
+        // without burning a dedicated opcode — the row-by-row dot
+        // product is dominated by the f64 work, not dispatch.
+        (Builtin::Matvec, 2) => true,
         _ => false,
     }
 }
