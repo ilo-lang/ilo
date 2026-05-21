@@ -204,13 +204,30 @@ pub fn deserialize_program(bytes: &[u8]) -> Result<CompiledProgram, String> {
     }
     let ast: Program = serde_json::from_str(&blob.ast_json)
         .map_err(|e| format!("serde_json deserialize ast: {}", e))?;
+    // Reconstruct is_defer_fn from the AST (parallel to compile_program logic).
+    let n_fns = blob.func_names.len();
+    let mut is_defer_fn = vec![false; n_fns];
+    for (i, decl) in ast
+        .declarations
+        .iter()
+        .filter(|d| matches!(d, crate::ast::Decl::Function { .. } | crate::ast::Decl::Tool { .. }))
+        .enumerate()
+    {
+        if let crate::ast::Decl::Function { body, .. } = decl {
+            if i < n_fns {
+                is_defer_fn[i] = crate::vm::body_has_defer(body);
+            }
+        }
+    }
     Ok(CompiledProgram {
         chunks,
         func_names: blob.func_names,
         nan_constants,
         type_registry,
         is_tool: blob.is_tool,
+        is_defer_fn,
         ast: Some(Arc::new(ast)),
+        defer_fns: std::collections::HashSet::new(),
     })
 }
 
@@ -300,7 +317,9 @@ mod tests {
             nan_constants: vec![],
             type_registry: tr,
             is_tool: vec![],
+            is_defer_fn: vec![],
             ast: None,
+            defer_fns: std::collections::HashSet::new(),
         };
         let bytes = serialize_program(&prog).expect("serialize");
         let r = deserialize_program(&bytes).expect("deserialize");

@@ -1482,6 +1482,30 @@ impl Parser {
                 self.expect(&Token::RBrace)?;
                 Ok(Stmt::While { condition, body })
             }
+            Some(Token::Ident(name)) if name == "defer" => {
+                if self.token_at(self.pos + 1) == Some(&Token::Eq) {
+                    return Err(self.error_hint(
+                        "ILO-P011",
+                        "`defer` is reserved for guaranteed cleanup and cannot be used as an identifier".into(),
+                        "pick a different name like `deferred` or `d`".into(),
+                    ));
+                }
+                self.advance(); // consume "defer"
+                let expr = self.parse_expr()?;
+                Ok(Stmt::Defer { expr, kind: DeferKind::Always })
+            }
+            Some(Token::Ident(name)) if name == "errdefer" => {
+                if self.token_at(self.pos + 1) == Some(&Token::Eq) {
+                    return Err(self.error_hint(
+                        "ILO-P011",
+                        "`errdefer` is reserved for error-path cleanup and cannot be used as an identifier".into(),
+                        "pick a different name like `errhandler` or `e`".into(),
+                    ));
+                }
+                self.advance(); // consume "errdefer"
+                let expr = self.parse_expr()?;
+                Ok(Stmt::Defer { expr, kind: DeferKind::OnError })
+            }
             Some(Token::LBrace) if self.is_destructure_pattern() => self.parse_destructure(),
             Some(Token::Ident(_)) => {
                 // Check for let binding: ident '='
@@ -4525,6 +4549,7 @@ For variable-position list indexing bind the head first: \
                     local.push(b.clone());
                 }
             }
+            Stmt::Defer { expr, .. } => self.collect_free_in_expr(expr, params, local, free),
         }
     }
 
@@ -5135,7 +5160,7 @@ fn prefix_binop_token_glyph(tok: &Token) -> &'static str {
 /// gets mis-parsed as a fn decl named `wh` returning `v` (see the gis-analyst
 /// and routing-tsp persona reports).
 fn is_reserved_stmt_keyword(name: &str) -> bool {
-    matches!(name, "wh" | "ret" | "brk" | "cnt")
+    matches!(name, "wh" | "ret" | "brk" | "cnt" | "defer" | "errdefer")
 }
 
 /// Map a reserved-keyword token to a binding-context `(message, hint)` pair
