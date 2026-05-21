@@ -4434,14 +4434,62 @@ fn program_result_should_suppress(program: &ast::Program, func_name: Option<&str
         last.node,
         ast::Stmt::ForEach { .. } | ast::Stmt::ForRange { .. } | ast::Stmt::While { .. }
     );
-    if !ends_with_loop {
-        return false;
+    if ends_with_loop {
+        // Only suppress when the entry body has no early-return path. With an
+        // early-return present (`ret`, braceless guard) we can't tell at print
+        // time whether the value came from the loop tail or from an explicit
+        // return, so we err on the side of printing.
+        return !body_has_early_return(body);
     }
-    // Only suppress when the entry body has no early-return path. With an
-    // early-return present (`ret`, braceless guard) we can't tell at print
-    // time whether the value came from the loop tail or from an explicit
-    // return, so we err on the side of printing.
-    !body_has_early_return(body)
+
+    // Case 3: tail is a bare `~"text"` or `^"text"` (Result-wrapped string
+    // literal) AND the entry body has at least one unconditional top-level
+    // `prnt` call. This is the "explicit status sentinel" pattern: the
+    // function writes its real output via `prnt`, then returns `~"ok"` (or
+    // similar) as a clean status marker. Without suppression the auto-echo
+    // appends a trailing `ok` line that callers piping stdout have to strip.
+    //
+    // Surfaced by the `log-timeline-merger` persona (logs.md 2026-05-20):
+    // > "`prnt` on a wrapped result prints both the prnt output and the
+    // > return value. `main` returning `~"ok"` prints `ok` after all
+    // > `prnt` lines. ... if the caller captures stdout for further
+    // > processing, they get a trailing `ok` to strip."
+    //
+    // Scoping rules:
+    //  - The tail expression must be a literal string under `~`/`^`. A
+    //    `~v` where `v` is a binding/call is a real return value the
+    //    caller likely wants — don't swallow it.
+    //  - The `prnt` must be a top-level statement of the entry function.
+    //    `prnt` calls inside guards, loops, or match arms are conditional
+    //    and don't reliably indicate "this function writes its own output".
+    //    See `examples/cond-multi-stmt-guard-return.ilo` where `prnt` is
+    //    inside a guard body and the auto-echo of `~"done"` must still
+    //    fire on the non-firing path.
+    //  - `Value::Err` always prints to stderr regardless of the suppress
+    //    flag (see `print_value`), so the `^"err"` symmetry is benign.
+    let tail_is_wrapped_string_literal = matches!(
+        &last.node,
+        ast::Stmt::Expr(ast::Expr::Ok(inner) | ast::Expr::Err(inner))
+            if matches!(inner.as_ref(), ast::Expr::Literal(ast::Literal::Text(_)))
+    );
+    if tail_is_wrapped_string_literal && body_has_top_level_prnt(body) {
+        return true;
+    }
+
+    false
+}
+
+/// True when at least one *unconditional* top-level statement of the entry
+/// function body is a bare `prnt ...` call. Statements nested inside guards,
+/// loops, or match arms don't count because they're conditional — the
+/// auto-echo suppression has to be safe on the path where they don't fire.
+fn body_has_top_level_prnt(body: &[ast::Spanned<ast::Stmt>]) -> bool {
+    body.iter().any(|s| {
+        matches!(
+            &s.node,
+            ast::Stmt::Expr(ast::Expr::Call { function, .. }) if function == "prnt"
+        )
+    })
 }
 
 /// Print a program result value. When `as_json` is true (explicit -j/--json), wraps it as

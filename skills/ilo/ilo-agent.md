@@ -44,6 +44,8 @@ First positional dispatches to a fn when it has ident shape. Otherwise (paths, n
 
 AOT-compiled binaries (`ilo compile`) follow the same contract byte-for-byte.
 
+**Auto-echo suppression.** An entry-fn ending in a bare `prnt` call, a tail loop with no early return, or — when the body has an unconditional top-level `prnt` — a wrapped string-literal tail `~"text"` / `^"text"` (status sentinel) does NOT auto-echo its return value. The collision-avoidance rules let you write `m>R t t;prnt "report";~"ok"` and get clean `report\n` on stdout instead of `report\nok\n`. A no-prnt function returning `~"ok"` (e.g. `addtask`) still emits `ok` — the wrapped literal IS the output. `~v` where `v` is a binding or call always auto-echoes; only string LITERAL sentinels are dropped.
+
 ## Serv mode
 
 `ilo serv [--mcp m.json] [--tools http.json]` is a long-lived JSON request/response loop on stdin/stdout. Send `{"program":"fn p:n>n;*p 2","func":"fn","args":[21]}`, get `{"ok": 42}` or `{"error":{...}}`. Cuts process-spawn overhead to zero.
