@@ -1852,6 +1852,9 @@ fires on the pathological wide-capture case.
         phase: Phase::Verify,
         short: "generic type variable used inconsistently or bound violated",
         long: r#"## ILO-T045: generic type variable inconsistency / bound violation
+        code: "ILO-T044",
+        short: "generic type variable used inconsistently or bound violated",
+        long: r#"## ILO-T044: generic type variable inconsistency / bound violation
 
 A function with explicit generic type parameters (`<a:comparable>`,
 `<a:numeric>`, etc.) was called with arguments that either:
