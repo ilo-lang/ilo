@@ -22,6 +22,8 @@ Prefix-call: `name arg1 arg2 ...`. Cross-engine unless noted.
 `get-many urls` (parallel fan-out, `L (R t t)`).
 Timeout variants round up to the nearest second. Err on timeout or connection failure.
 
+`!` auto-unwraps on all HTTP builtins (`get!`, `pst!`, `get-to!`, `pst-to!`): Ok→body, Err propagates out of the enclosing `R`-returning fn. `!!` panics on Err instead (script-style). Prefer `pst!` over `?r{~v:v;^e:^e}` boilerplate when the caller already returns `R`; saves ~30 tokens per call site.
+
 ## JSON
 
 `jpar s` parse (`R _ t`), `jpar-list s` parse and assert array (`R (L _) t` — use when you know the response is an array: `@x (jpar-list! body){...}`), `jpth s path` dot-path (typed), `jkeys s path` sorted object keys, `jdmp v` serialize. Numeric keys stringified in `jdmp`.
