@@ -3467,10 +3467,20 @@ or write `({fmt_name} \"...\" ...)` so its args are grouped."
             // `Expr::Call`. The verifier and every backend see exactly the
             // same AST as the positional form.
             //
-            // Detection: `( Ident :` immediately after the name. This is
-            // unambiguous at this point because:
-            //   * inline lambdas only appear as bare atoms in `parse_atom`,
-            //     not as callees, so the same shape can't trigger here;
+            // Detection: `( Ident :` immediately after the name, AND `name`
+            // is a known user-defined function (we have its declared param
+            // names). The user-fn gate is load-bearing: without it, an
+            // inline lambda passed as the first positional argument to a
+            // builtin HOF (`flt (x:n>b;x > 0) xs`) gets cannibalised here
+            // because `( Ident :` also opens an inline lambda atom.
+            //
+            // For unknown idents (typo of a user fn) we deliberately fall
+            // through to positional parsing — the natural ILO-T004
+            // "undefined function" at verify time is the same diagnostic
+            // we'd get on a positional call, and is more valuable than
+            // breaking inline-lambda parsing.
+            //
+            // Other ambiguity sources are already ruled out:
             //   * zero-arg `name()` is matched above;
             //   * `(expr)` as a grouped first arg of a positional call never
             //     starts with `Ident :` (the `:` is exclusive to record
@@ -3479,6 +3489,7 @@ or write `({fmt_name} \"...\" ...)` so its args are grouped."
             if self.peek() == Some(&Token::LParen)
                 && matches!(self.token_at(self.pos + 1), Some(Token::Ident(_)))
                 && self.token_at(self.pos + 2) == Some(&Token::Colon)
+                && self.fn_param_names.contains_key(&name)
             {
                 return self.parse_named_args_call(name, unwrap);
             }
