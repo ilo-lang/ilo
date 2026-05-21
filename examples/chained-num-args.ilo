@@ -1,0 +1,42 @@
+-- A 2-arg numeric builtin can be passed directly as the argument to a
+-- unary builtin without parens. The parser knows the inner builtin's
+-- arity and consumes exactly that many operands, so the outer call
+-- receives one nested expression rather than the operands flattening
+-- into its own arg list.
+--
+-- Idiomatic ilo:   abs atan2 1 1       -- abs(atan2(1, 1))
+-- Older idiom:     abs (atan2 1 1)     -- parens were a workaround
+--
+-- Works for every 2-arg numeric builtin (`atan2`, `fmod`, `min`, `max`,
+-- `mod`, `pow`, `rndn`) and the 3-arg `clamp`, plus the unary trig
+-- forms (`log10`, `log2`, `tan`, `asin`, `acos`, `atan`). The pattern
+-- composes — `pow atan2 1 1 2` parses as `pow(atan2(1, 1), 2)`.
+--
+-- Hit by linear-regression persona (pending #5ao). Before the fix,
+-- chained shapes like `abs rndn 0 0.1` raised "arity mismatch: abs
+-- expects 1 args, got 3" because `rndn` wasn't in the parser arity
+-- table and got peeled off as a bare ref.
+--
+-- These functions assert the fix end-to-end through the test harness.
+
+abs-atan2>n;abs atan2 1 1
+abs-fmod>n;abs fmod 10 3
+sqrt-atan2>n;sqrt atan2 1 1
+abs-clamp>n;abs clamp 5 0 10
+pow-atan2>n;pow atan2 1 1 2
+
+-- Stochastic — sanity-check the parse without pinning a value.
+abs-rndn-runs>b;x=abs rndn 0 0.1;>=x 0
+
+-- run: abs-atan2
+-- out: 0.7853981633974483
+-- run: abs-fmod
+-- out: 1
+-- run: sqrt-atan2
+-- out: 0.8862269254527579
+-- run: abs-clamp
+-- out: 5
+-- run: pow-atan2
+-- out: 0.6168502750680849
+-- run: abs-rndn-runs
+-- out: true

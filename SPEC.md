@@ -1261,6 +1261,17 @@ Use parentheses when you need a full expression (including another call) as an a
 f (g x)        -- Call(f, [Call(g, [x])])
 ```
 
+Known-arity calls can also chain directly without parens — the parser consumes exactly the inner call's arity when an ident with a registered arity follows the outer call:
+
+```
+abs atan2 1 1      -- Call(abs, [Call(atan2, [1, 1])])
+abs rndn 0 0.1     -- Call(abs, [Call(rndn, [0, 0.1])])
+abs clamp 5 0 10   -- Call(abs, [Call(clamp, [5, 0, 10])])
+pow atan2 1 1 2    -- Call(pow, [Call(atan2, [1, 1]), 2])
+```
+
+This works for every builtin and user fn whose arity is known at parse time. If the inner call is variadic or unknown-arity (e.g. `fmt`, custom name with no signature on this side of the file), wrap it in parens to disambiguate.
+
 ---
 
 ## Records
