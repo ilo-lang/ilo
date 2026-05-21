@@ -51,6 +51,20 @@ pub struct Global {
     /// program needs deeper nesting.
     #[arg(long = "max-ast-depth", global = true)]
     pub max_ast_depth: Option<usize>,
+
+    /// Wall-clock budget for `ilo run` in seconds. Default 60. Set to 0 to
+    /// disable. A runaway loop (missing increment, recursion with no base
+    /// case) aborts with `ILO-R016` once the budget is hit instead of
+    /// burning CPU and producing megabytes of useless stdout.
+    #[arg(long = "max-runtime", global = true)]
+    pub max_runtime: Option<u64>,
+
+    /// Maximum stdout bytes for `ilo run`. Default ~100 MB. Set to 0 to
+    /// disable. A loop calling `prnt` without termination aborts with
+    /// `ILO-R017` once the budget is hit, instead of filling the agent
+    /// transcript with garbage.
+    #[arg(long = "max-output-bytes", global = true)]
+    pub max_output_bytes: Option<u64>,
 }
 
 #[derive(Subcommand, Debug)]
@@ -905,6 +919,8 @@ mod tests {
             json: false,
             no_hints: false,
             max_ast_depth: None,
+            max_runtime: None,
+            max_output_bytes: None,
         };
         // In test environment stderr is typically not a TTY → should return Json.
         // We can't reliably test the TTY branch, but we can test that explicit_json
@@ -928,6 +944,8 @@ mod tests {
             json: true,
             no_hints: false,
             max_ast_depth: None,
+            max_runtime: None,
+            max_output_bytes: None,
         };
         assert!(g.explicit_json());
         assert_eq!(g.output_mode(), OutputMode::Json);
@@ -941,6 +959,8 @@ mod tests {
             json: false,
             no_hints: false,
             max_ast_depth: None,
+            max_runtime: None,
+            max_output_bytes: None,
         };
         assert!(!g.explicit_json());
         assert_eq!(g.output_mode(), OutputMode::Text);
@@ -954,6 +974,8 @@ mod tests {
             json: false,
             no_hints: false,
             max_ast_depth: None,
+            max_runtime: None,
+            max_output_bytes: None,
         };
         assert!(!g.explicit_json());
         assert_eq!(g.output_mode(), OutputMode::Ansi);
