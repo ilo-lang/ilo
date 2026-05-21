@@ -17,6 +17,13 @@ mix>L t;best=10;d=3;best-d=99;[str best-d, str best, str d]
 -- Multi-segment kebab works the same way.
 chain>n;a-b-c=42;a-b-c
 
+-- Subtraction between two hyphenated names: the spaces are load-bearing.
+-- The mandelbrot pattern `zr-sq - zi-sq` works because the lexer sees
+-- three tokens (Ident `zr-sq`, Minus, Ident `zi-sq`). Without spaces it
+-- would collapse to one 4-segment ident `zr-sq-zi-sq` and ILO-T004 would
+-- fire with a hint pointing at the bound `zr-sq` / `zi-sq` split.
+mandel zr-sq:n zi-sq:n>n;- zr-sq zi-sq
+
 -- run: sub-explicit 10 3
 -- out: 7
 -- run: look 10 3 99
@@ -25,3 +32,5 @@ chain>n;a-b-c=42;a-b-c
 -- out: [99, 10, 3]
 -- run: chain
 -- out: 42
+-- run: mandel 25 9
+-- out: 16
