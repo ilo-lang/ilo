@@ -499,6 +499,10 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("cumsum", &["L n"], "L n"),
     ("cprod", &["L n"], "L n"),
     ("ewm", &["L n", "n"], "L n"),
+    // where cond:L b xs:L a ys:L a > L a — parallel-list conditional select.
+    // Element type of xs/ys is preserved in the output (handled in the
+    // per-builtin arm below; this entry feeds arity + suggestion paths).
+    ("where", &["L b", "list", "list"], "list"),
     ("avg", &["list"], "n"),
     ("median", &["list"], "n"),
     ("quantile", &["list", "n"], "n"),
@@ -2692,6 +2696,90 @@ fn builtin_check_args(
                 });
             }
             (Ty::List(Box::new(Ty::Number)), errors)
+        }
+        "where" => {
+            // where cond:L b xs:L a ys:L a > L a — parallel-list conditional
+            // select. Element type of xs/ys is preserved in the output. xs and
+            // ys element types must unify; length mismatch is a runtime check.
+            let cond_inner = match arg_types.first() {
+                Some(Ty::List(inner)) => Some((**inner).clone()),
+                Some(Ty::Unknown) | None => None,
+                Some(other) => {
+                    errors.push(VerifyError {
+                        code: "ILO-T013",
+                        function: func_ctx.to_string(),
+                        message: format!("'where' arg 1 (cond) expects L b, got {other}"),
+                        hint: None,
+                        span,
+                        is_warning: false,
+                    });
+                    None
+                }
+            };
+            if let Some(inner) = &cond_inner
+                && !compatible(inner, &Ty::Bool)
+            {
+                errors.push(VerifyError {
+                    code: "ILO-T013",
+                    function: func_ctx.to_string(),
+                    message: format!("'where' arg 1 (cond) expects L b, got L {inner}"),
+                    hint: None,
+                    span,
+                    is_warning: false,
+                });
+            }
+            let elem_a = match arg_types.get(1) {
+                Some(Ty::List(inner)) => Some((**inner).clone()),
+                Some(Ty::Unknown) | None => None,
+                Some(other) => {
+                    errors.push(VerifyError {
+                        code: "ILO-T013",
+                        function: func_ctx.to_string(),
+                        message: format!("'where' arg 2 (xs) expects a list, got {other}"),
+                        hint: None,
+                        span,
+                        is_warning: false,
+                    });
+                    None
+                }
+            };
+            let elem_b = match arg_types.get(2) {
+                Some(Ty::List(inner)) => Some((**inner).clone()),
+                Some(Ty::Unknown) | None => None,
+                Some(other) => {
+                    errors.push(VerifyError {
+                        code: "ILO-T013",
+                        function: func_ctx.to_string(),
+                        message: format!("'where' arg 3 (ys) expects a list, got {other}"),
+                        hint: None,
+                        span,
+                        is_warning: false,
+                    });
+                    None
+                }
+            };
+            // Element types must unify (xs and ys must carry the same payload).
+            if let (Some(a), Some(b)) = (&elem_a, &elem_b)
+                && !compatible(a, b)
+            {
+                errors.push(VerifyError {
+                    code: "ILO-T013",
+                    function: func_ctx.to_string(),
+                    message: format!(
+                        "'where' xs and ys element types must match, got L {a} and L {b}"
+                    ),
+                    hint: None,
+                    span,
+                    is_warning: false,
+                });
+            }
+            let inner = match (elem_a, elem_b) {
+                (Some(a), Some(b)) if compatible(&a, &b) => a,
+                (Some(a), None) => a,
+                (None, Some(b)) => b,
+                _ => Ty::Unknown,
+            };
+            (Ty::List(Box::new(inner)), errors)
         }
         "flat" => {
             // flat xs:L (L a) → L a — flatten one level
