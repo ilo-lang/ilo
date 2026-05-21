@@ -35,6 +35,7 @@ Tooling: `ilo --version-of <file>` reads the pragma (returns nothing when absent
 - `;` separates statements - no newlines required
 - Last expression is the return value (no `return` keyword)
 - Zero-arg call: `make-id()`
+- Paren-form call (ILO-51): `spl(row, ",")` is sugar for `spl row ","` — same AST, postfix is canonical
 
 ```
 tot p:n q:n r:n>n;s=*p q;t=*s r;+s t
@@ -1535,6 +1536,25 @@ get-user uid
 send-email d.email "Notification" msg
 charge pid amt
 ```
+
+### Paren-form call syntax (ILO-51)
+
+Agents trained on Python/JS/Rust/TS often reach for parentheses by reflex. ilo accepts paren-form calls as sugar — both forms produce identical AST nodes:
+
+```
+spl(row, ",")     -- same as: spl row ","
+abs(x)            -- same as: abs x
+f(a, b, c)        -- same as: f a b c
+f(g(x), h(y))     -- nested paren-calls also work
+```
+
+**Disambiguation rule** — adjacency determines whether `(` starts a paren-call or a grouped-expr argument:
+- `f(x)` — `(` immediately adjacent to ident → paren-call: `Call { function: f, args: [x] }`
+- `f (x)` — space before `(` → postfix call with `(x)` as a grouped-expr argument (same AST for single-arg; differs for multi-arg where `f (a, b)` would be a parse error)
+
+**Trailing commas are accepted:** `f(a, b,)` is valid (Rust/JS convention).
+
+**Postfix stays canonical.** `ilo fmt` does not rewrite paren-form to postfix; both styles are accepted everywhere.
 
 ### Call Arguments
 
