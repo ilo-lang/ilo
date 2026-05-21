@@ -42,15 +42,22 @@ SKILL_NAMES = [
     "ilo-edit-loop",
 ]
 
-PER_MODULE_LIMIT = 1000
+PER_MODULE_LIMIT = 1200
 # `ilo-language` is the foundational module every agent loads first; it
 # carries a higher cap because core syntax doesn't split cleanly into
 # smaller files. `ilo-builtins-io` is the next most-touched module —
 # HTTP, JSON, env, time, and process all live there; agent dogfooding
 # hits this cap on every other doc PR. Bumped to match its density.
+#
+# Caps temporarily relaxed by the main→next catch-up sync (PR #574),
+# which folded ~25 new builtins' doc content (crypto, HTTP verbs,
+# calendar, linspace/ones/rep, lstsq, matvec, ewm, where, tz-offset)
+# into the modular skills. Follow-up: tighten back toward 1000 once
+# the modules re-absorb the new entries (likely by hoisting cluster
+# summaries to ilo-language and trimming per-builtin prose).
 PER_MODULE_OVERRIDES = {
-    "ilo-language": 1500,
-    "ilo-builtins-io": 1500,
+    "ilo-language": 1700,
+    "ilo-builtins-io": 1700,
 }
 TOTAL_LIMIT = 15000
 
