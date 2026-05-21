@@ -7,23 +7,13 @@ description: Use this when calling text builtins. Manipulation, regex, formattin
 
 Prefix-call: `name arg1 arg2 ...`. Cross-engine unless noted.
 
-## Concat / format quick reference
-
-Three builtins, three jobs. Pick by shape:
-
-- `+ a b` - two-arg text/number concat (also list concat). `+ "hi " name` -> `"hi alice"`.
-- `fmt "x={} y={}" x y` - template formatting (variadic; `{}` placeholders filled left-to-right, count must equal arg count, no list splat). `{name}` slots auto-desugar to a lookup of the binding `name`.
-- `cat xs sep` - join a list of text with a separator. `cat ["a" "b" "c"] ","` -> `"a,b,c"`. NOT two-string concat; reach for `+` for that.
-
 ## Core text ops
 
-`len str trm spl cat has`. `spl "a,b,c" ","` -> `["a","b","c"]`. `has s sub` -> bool.
+`len str trm spl cat has`. `spl "a,b,c" ","` -> `["a","b","c"]`. `has s sub` -> bool. `cat xs sep` joins a list - NOT two-string concat; use `+ a b` for that. `fmt` for templates.
 
 ## Case / padding / chars
 
-`upr lwr cap padl padr chars ord chr`. `cap` capitalises first letter. `padr "" n c` = n copies of 1-char `c` (histogram bars).
-
-`padr "" n c` is the **repeat-character idiom** - use it for histogram bars, divider lines, indentation. `padr "" 10 "#"` -> `"##########"`. Cheaper than a loop.
+`upr lwr cap padl padr chars ord chr`. `cap` capitalises first letter. `padr "" n c` is the repeat-character idiom (n copies of 1-char `c`): `padr "" 10 "#"` -> `"##########"`. Use it for histogram bars, divider lines.
 
 ## Regex
 
