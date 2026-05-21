@@ -238,6 +238,52 @@ fn ct_eq_empty_strings() {
     }
 }
 
+// ── Tree-bridge auto-unwrap invariant for b64-dec! ───────────────────────────
+
+#[test]
+fn b64_dec_bang_auto_unwrap_does_not_panic_vm() {
+    // Regression for the 0.12.x crypto-cluster panic where `b64-dec!`
+    // crashed the VM with "auto-unwrap on a non-Result tree-bridge builtin
+    // slipped past verify" at src/vm/mod.rs:1887. `b64-dec` returns R t t
+    // and is tree-bridge eligible, so it must also appear in
+    // `tree_bridge_returns_result` for the VM's `!` compiler arm to wire
+    // up OP_ISOK/OP_UNWRAP correctly. The matching tree-bridge / verifier
+    // pair for B64uDec was already correct; B64Dec was the regression.
+    //
+    // This test specifically pins the VM `!` path so a future drop of
+    // B64Dec from `tree_bridge_returns_result` is caught immediately
+    // instead of waiting for the `examples` harness to hit it.
+    let src = "f>t;b64-dec! \"Zm9vYmFy\"";
+    for e in ENGINES {
+        assert_eq!(run_ok(e, src, "f"), "foobar", "engine={e}");
+    }
+}
+
+#[test]
+fn b64_dec_bang_propagates_err() {
+    // Companion to the panic-regression test above: the `!` operator
+    // propagates Err out to the caller (which we trigger as a non-zero
+    // exit), so an invalid input must still take the propagate path
+    // cleanly across engines, not panic.
+    let src = "f>t;b64-dec! \"!!!!\"";
+    for e in ENGINES {
+        let out = ilo()
+            .args([src, e, "f"])
+            .output()
+            .expect("failed to run ilo");
+        assert!(
+            !out.status.success(),
+            "engine={e}: expected non-zero exit from b64-dec! on invalid input"
+        );
+        // Must NOT be the VM bridge-assert panic.
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            !stderr.contains("auto-unwrap on a non-Result tree-bridge builtin slipped past verify"),
+            "engine={e}: VM tree-bridge assert tripped; stderr={stderr}"
+        );
+    }
+}
+
 // ── HMAC verification flow (the canonical use case) ──────────────────────────
 
 #[test]
