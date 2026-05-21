@@ -46,6 +46,8 @@ fastrand = "2"
 getrandom = "0.2"
 regex = "1"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
+percent-encoding = "2"
+base64 = "0.22"
 
 [dev-dependencies]
 wiremock = "0.6"

@@ -486,6 +486,10 @@ Called like functions, compiled to dedicated opcodes.
 | `pst url body` | HTTP POST with text body (renamed from `post` in 0.12.0) | `R t t` |
 | `pst url body headers` | HTTP POST with body and custom headers (`M t t` map) | `R t t` |
 | `pst-to url body timeout-ms` | HTTP POST with explicit timeout (milliseconds); Err if deadline exceeded | `R t t` |
+| `urlenc s` | RFC 3986 percent-encode; unreserved chars (ALPHA/DIGIT/`-._~`) pass through, everything else as `%HH`. Total. | `t` |
+| `urldec s` | inverse of `urlenc`; Err on invalid percent escape or non-UTF-8 decoded bytes | `R t t` |
+| `b64u s` | base64url-encode UTF-8 bytes of `s` (RFC 4648 §5, no padding, `-`/`_` alphabet). Total. | `t` |
+| `b64u-dec s` | inverse of `b64u`; Err on invalid base64url or non-UTF-8 decoded bytes | `R t t` |
 | `run cmd argv` | spawn `cmd` with argv list — see [Process spawn](#process-spawn) for the no-shell-no-glob security model | `R (M t t) t` |
 | `env key` | read environment variable | `R t t` |
 | `env-all` | snapshot the full process environment as `M t t` | `R (M t t) t` |
@@ -916,6 +920,28 @@ xs=jpar-list! body;@i 0..len xs{prnt (at xs i)}
 ```
 
 Use `jpar` when the JSON top-level shape is unknown (object, array, scalar). Use `jpar-list` when you know the response is an array and want to iterate it immediately.
+
+### URL and base64url encoding
+
+Token-cheap primitives for OAuth, JWT, and webhook-signature workflows. All four are tree-bridge eligible: pure text-in / text-out with no I/O and no FnRef args, so the VM and Cranelift backends inherit them automatically.
+
+`urlenc s > t` percent-encodes per RFC 3986. The unreserved set (`ALPHA` / `DIGIT` / `-` / `.` / `_` / `~`) passes through literally; every other byte is emitted as `%HH`. Multi-byte UTF-8 is encoded byte-by-byte.
+
+`urldec s > R t t` is the inverse. It returns `Err` on a stray `%` not followed by two hex digits, or on decoded bytes that aren't valid UTF-8.
+
+`b64u s > t` base64url-encodes the UTF-8 bytes of `s` using the URL-safe alphabet (RFC 4648 §5: `-` and `_` substituted for `+` and `/`) with padding stripped.
+
+`b64u-dec s > R t t` is the inverse. It returns `Err` on input that contains characters outside the base64url alphabet, on `=` padding (the encode side strips padding, so the decode side rejects it for a strict round-trip), or on decoded bytes that aren't valid UTF-8.
+
+```ilo
+urlenc "a b&c=d"                  -- "a%20b%26c%3Dd"
+urldec! "a%20b%26c%3Dd"           -- "a b&c=d"
+
+b64u "{\"alg\":\"HS256\",\"typ\":\"JWT\"}"   -- "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9"
+b64u-dec! (b64u "hello, world!")             -- "hello, world!"
+```
+
+Both decoders return `Result` so malformed input surfaces typed at the boundary; both encoders are total. Use `!` to auto-unwrap inside an `R`-returning function, or pattern-match on the Result to handle the Err arm explicitly.
 
 ---
 

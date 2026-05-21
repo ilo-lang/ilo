@@ -1,0 +1,44 @@
+-- URL + base64url encoding cluster: urlenc/urldec (RFC 3986) and
+-- b64u/b64u-dec (RFC 4648 §5, no padding). Token-cheap primitives for
+-- OAuth, JWT, and webhook-signature workflows.
+
+-- urlenc s > t — percent-encode every byte outside the unreserved set.
+-- Spaces, `&`, `=` are the common query-string traps.
+enc-query>t;urlenc "a b&c=d"
+
+-- urlenc passes ALPHA / DIGIT / -._~ through unchanged.
+enc-unreserved>t;urlenc "abc-123_XYZ.~"
+
+-- urldec s > R t t — inverse. Result-returning so malformed input
+-- (stray `%`, short escape, non-UTF-8 decoded bytes) surfaces typed.
+dec-query>R t t;urldec "a%20b%26c%3Dd"
+
+-- Round-trip: urldec (urlenc s) == s.
+roundtrip-url>R t t;urldec (urlenc "hello world & friends=42")
+
+-- b64u s > t — base64url-encode the UTF-8 bytes of s, padding stripped.
+-- The JWT header {"alg":"HS256","typ":"JWT"} produces the canonical first
+-- segment of any HS256 JWT.
+enc-jwt-header>t;b64u "{\"alg\":\"HS256\",\"typ\":\"JWT\"}"
+
+-- b64u uses `-`/`_` instead of `+`/`/` (RFC 4648 §5). Bytes `??>` (0x3f 0x3f
+-- 0x3e) encode to "Pz8-" — note the trailing `-` where standard b64 emits `+`.
+enc-urlsafe>t;b64u "??>"
+
+-- b64u-dec s > R t t — inverse. Round-trip is symmetric for valid UTF-8.
+roundtrip-b64>R t t;b64u-dec (b64u "hello, world!")
+
+-- run: enc-query
+-- out: a%20b%26c%3Dd
+-- run: enc-unreserved
+-- out: abc-123_XYZ.~
+-- run: dec-query
+-- out: a b&c=d
+-- run: roundtrip-url
+-- out: hello world & friends=42
+-- run: enc-jwt-header
+-- out: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9
+-- run: enc-urlsafe
+-- out: Pz8-
+-- run: roundtrip-b64
+-- out: hello, world!

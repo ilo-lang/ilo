@@ -243,6 +243,24 @@ pub enum Builtin {
     // Mirror of `??` for Result: `?? v d` is nil-coalesce for `O T`; this is
     // the Result equivalent. Tree-bridge eligible (2-arg, pure, no FnRef).
     DefaultOnErr,
+
+    // URL + base64url encoding cluster (0.12.1). Both are token-cheap
+    // primitives for the OAuth / JWT / webhook-signature workflows that
+    // dominated the bearer-token, jwt-signer and webhook-receiver personas.
+    // All four are tree-bridge eligible — pure text-in / text-out with no
+    // I/O and no FnRef args.
+    // `urlenc s > t` — RFC 3986 percent-encode. Unreserved chars (`-._~` and
+    //   ALPHA/DIGIT) stay literal; everything else is `%HH`.
+    // `urldec s > R t t` — inverse. Err on invalid percent escapes or
+    //   non-UTF-8 decoded bytes.
+    // `b64u s > t` — base64url-encode the UTF-8 bytes of `s`, no padding
+    //   (RFC 4648 §5: `-`/`_` substituted for `+`/`/`).
+    // `b64u-dec s > R t t` — inverse. Err on invalid base64 or non-UTF-8
+    //   decoded bytes.
+    Urlenc,
+    Urldec,
+    B64u,
+    B64uDec,
 }
 
 impl Builtin {
@@ -408,6 +426,10 @@ impl Builtin {
             "dur-parse" => Some(Builtin::DurParse),
             "dur-fmt" => Some(Builtin::DurFmt),
             "default-on-err" => Some(Builtin::DefaultOnErr),
+            "urlenc" => Some(Builtin::Urlenc),
+            "urldec" => Some(Builtin::Urldec),
+            "b64u" => Some(Builtin::B64u),
+            "b64u-dec" => Some(Builtin::B64uDec),
             _ => None,
         }
     }
@@ -570,6 +592,10 @@ impl Builtin {
             Builtin::DurParse => "dur-parse",
             Builtin::DurFmt => "dur-fmt",
             Builtin::DefaultOnErr => "default-on-err",
+            Builtin::Urlenc => "urlenc",
+            Builtin::Urldec => "urldec",
+            Builtin::B64u => "b64u",
+            Builtin::B64uDec => "b64u-dec",
         }
     }
 
@@ -821,6 +847,16 @@ impl Builtin {
         // wrap). Appended last to preserve on-wire tags. Backed by `getrandom`, not
         // `fastrand` — cryptographic randomness must never be seeded.
         Builtin::RandBytes,
+        // 0.12.1: URL + base64url encoding cluster. Appended last to preserve
+        // every existing on-wire tag. Tree-bridge eligible — pure text-in /
+        // text-out, no FnRef args, no I/O. Backed by the `percent-encoding`
+        // and `base64` crates. The two decoders return Result so malformed
+        // input surfaces as a typed error at the boundary; the two encoders
+        // are total (always produce Text).
+        Builtin::Urlenc,
+        Builtin::Urldec,
+        Builtin::B64u,
+        Builtin::B64uDec,
     ];
 
     /// On-wire 8-bit tag for cross-engine builtin dispatch. See `ALL`.

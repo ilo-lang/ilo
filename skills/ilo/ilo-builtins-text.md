@@ -67,3 +67,7 @@ dur-fmt 90.5                 -- "1m 30.5s"
 dur-fmt -90                  -- "-1m 30s"
 dur-parse! "-1h 30m"         -- -5400 (sticky sign)
 ```
+
+## URL / base64url
+
+`urlenc`/`urldec` (RFC 3986), `b64u`/`b64u-dec` (no-pad). Decoders `>R t t`.

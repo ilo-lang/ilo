@@ -493,6 +493,12 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     // type check (ok-type vs default must match); this entry feeds arity +
     // suggestion paths.
     ("default-on-err", &["R any t", "any"], "any"),
+    // URL + base64url encoding cluster. Encoders are total (text → text);
+    // decoders return Result so malformed input surfaces at the boundary.
+    ("urlenc", &["t"], "t"),
+    ("urldec", &["t"], "R t t"),
+    ("b64u", &["t"], "t"),
+    ("b64u-dec", &["t"], "R t t"),
 ];
 
 fn builtin_arity(name: &str) -> Option<usize> {
