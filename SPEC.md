@@ -2067,6 +2067,7 @@ ilo program.ilo --ast            -- print parsed AST as JSON and exit
 ilo --explain ILO-T004           -- print error explanation and exit
 ilo help ai                      -- compact AI spec to stdout (= contents of ai.txt)
 ilo serv                          -- long-lived JSON request/response loop
+ilo httpd handler.ilo [--port N]  -- HTTP server: calls handler fn per request (default port 8080)
 ilo --max-ast-depth N <sub>       -- cap parser nesting at N (default 256; protects `ilo serv`
                                      and other untrusted-source paths from DoS payloads, raises ILO-P103)
 ilo --max-runtime SECS <sub>      -- cap wall-clock runtime at SECS (default 60; 0 disables; raises ILO-R016)
@@ -2080,6 +2081,38 @@ ilo --max-output-bytes BYTES <sub> -- cap stdout output at BYTES (default ~100 M
 **`ilo check`.** Standalone verifier invocation: lex, parse, resolve imports, and run the type verifier without proceeding to bytecode compilation or execution. Exit code 0 means the program is well-typed and verifier-clean; exit code 1 means at least one diagnostic was emitted on stderr. The output mode follows the global flags (`--json` for NDJSON diagnostics, `--text` for plain text, `--ansi` for coloured output; auto-detected when omitted - JSON when stderr is not a TTY, ANSI otherwise). `ilo check` works on both files and inline code; on a syntactically-broken input it still reports the parse error rather than crashing, which is important for editor and agent loops that may feed in half-written programs.
 
 **`ilo test`.** Runs the `-- run: <fn> <args>` / `-- out: <expected>` (or `-- err: <stderr>`) annotations embedded in `.ilo` source files - the same format the in-tree `tests/examples_engines.rs` integration harness already uses. A file path tests that one file; a directory walks `*.ilo` recursively. Each case runs as a subprocess (`ilo <file> --vm <args>`), output is asserted against the expected payload, and the result prints as `PASS  path::fn (line N)` / `FAIL  path::fn (line N) (got: X, want: Y)`. The final line reports `N passed, M failed`. Exit 0 if everything passed, 1 if any case failed or no annotations were found. The default engine is `--vm`; pass `--engine jit` or `--engine all` to widen the matrix. Per-file `-- engine-skip: vm jit` annotations skip the listed engines, matching the integration harness. Because every example under `examples/` uses this annotation format already, `ilo test examples/` doubles as a smoke test for the language itself and as a worked reference an agent can read when writing tests for its own programs.
+
+**`ilo httpd`.** Starts an HTTP/1.1 server that calls a user-defined ilo handler function for every incoming request. The handler receives a `Request` record and must return a `Response` record (or a bare record with at least `status` and `body` fields). One OS thread is spawned per accepted connection. The handler is loaded once at startup; re-reads require a restart.
+
+```
+ilo httpd handler.ilo               -- serve on :8080 (default)
+ilo httpd --port 3000 handler.ilo   -- serve on :3000
+ilo httpd handler.ilo myhandler     -- call function `myhandler` instead of `handler`
+```
+
+Handler signature:
+
+```
+-- Request fields injected by ilo httpd at runtime:
+--   method:t   HTTP verb (GET, POST, ...)
+--   path:t     request path including query string
+--   headers:M t t  request headers (keys lowercased)
+--   body:t     request body (empty string when absent)
+--
+-- Response fields read by ilo httpd:
+--   status:n   HTTP status code (200, 404, 500, ...)
+--   body:t     response body
+--   headers:M t t  optional response headers
+
+type rsp{status:n;body:t}
+
+handler req:_>rsp
+  p=req.path
+  msg=+"Hello! You requested: " p
+  rsp status:200 body:msg
+```
+
+Use `req:_` (wildcard) for the request param type — the `Request` record is created by the ilo httpd runtime and its field types cannot be declared in the handler source without a `type` alias that re-exports them. The dot-access `req.path`, `req.method`, `req.body`, `req.headers` work because ilo resolves record field access by name at runtime. `Content-Type` defaults to `text/plain; charset=utf-8` when not set in the response headers map. Distinct from `ilo serv` (which speaks the agent-protocol JSON-RPC loop); `httpd` is for user-facing HTTP traffic.
 
 **`ilo check --strict`.** Treats every warning-severity diagnostic (ILO-T032 bare `fmt`, ILO-T033 bare `mset` / `+=` / `mdel`, ILO-W002 `@x (jpar! …){…}` steering to `jpar-list!`, future warning codes) as a hard exit-code failure. The diagnostic stream itself is unchanged: warnings still emit with `severity: "warning"` in the JSON output, so editor integrations that route by severity stay correct. Only the exit code is elevated. CI harnesses that gate merges on `ilo check` should use `--strict` so warnings can't slip through silently; for interactive use, the default (warnings-are-advisory) is the right behaviour.
 
