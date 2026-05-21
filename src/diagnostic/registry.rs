@@ -695,6 +695,28 @@ A function was called that is not defined in this file or as a builtin.
     f x:n>n;double x   -- 'double' is not defined
 
 **Fix:** define the function, or correct the spelling.
+
+### Gotcha: call vs binary-op in assignment-RHS
+
+Whitespace-juxtaposition is the call syntax in ilo, so a bare name
+followed by another token in an expression is parsed as a call, not as
+"name then operator". The classic case:
+
+    f xi:n xj:n>n;dx=xj 0-xi;dx
+
+This parses as `dx = (xj 0) - xi` — a call to `xj` with argument `0`,
+whose result is then subtracted from `xi`. Verification fails with
+ILO-T005 because `xj` is a number, not a function.
+
+The agent almost certainly meant one of:
+
+- `dx=-xj xi`              -- subtract: prefix `-`
+- `dx=+xj -0 xi`           -- xj + (0-xi)
+- `nxi=0-xi;dx=+xj nxi`    -- pre-bind the operand
+
+In ilo's prefix-operator world there is no ambiguity once the operator
+leads the expression. The "looks like infix" shape `name expr` is
+always a call.
 "#,
     },
     ErrorEntry {
