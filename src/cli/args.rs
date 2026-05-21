@@ -116,6 +116,9 @@ pub enum Cmd {
     /// Run `-- run:` / `-- out:` / `-- err:` assertions in `.ilo` files.
     Test(TestArgs),
 
+    /// Serve HTTP requests with a user-supplied ilo handler function.
+    Httpd(HttpdArgs),
+
     /// Print version.
     Version,
 
@@ -269,6 +272,21 @@ pub struct ServArgs {
     /// HTTP tool provider config (JSON).
     #[arg(long = "tools")]
     pub tools_path: Option<String>,
+}
+
+// ── Httpd ──────────────────────────────────────────────────────────────────────
+
+#[derive(Args, Debug)]
+pub struct HttpdArgs {
+    /// Port to listen on.
+    #[arg(long, short = 'p', default_value = "8080")]
+    pub port: u16,
+
+    /// Source file containing the handler function.
+    pub handler: String,
+
+    /// Name of the handler function (default: `handler`).
+    pub func: Option<String>,
 }
 
 // ── Tools ──────────────────────────────────────────────────────────────────────
