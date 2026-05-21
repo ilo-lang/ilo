@@ -1,5 +1,25 @@
-use super::{Diagnostic, Severity};
+use super::{Diagnostic, FixEdit, FixPlan, Severity};
 use crate::ast::SourceMap;
+
+fn serialize_fix_plan(plan: &FixPlan) -> serde_json::Value {
+    let edits: Vec<serde_json::Value> = plan
+        .edits
+        .iter()
+        .map(|e| {
+            serde_json::json!({
+                "line_range": [e.line_start, e.line_end],
+                "before": e.before,
+                "after": e.after,
+            })
+        })
+        .collect();
+
+    let mut obj = serde_json::json!({ "edits": edits });
+    if let Some(p) = &plan.path {
+        obj["path"] = serde_json::Value::String(p.clone());
+    }
+    obj
+}
 
 pub fn render(d: &Diagnostic) -> String {
     let severity = match d.severity {
@@ -42,6 +62,10 @@ pub fn render(d: &Diagnostic) -> String {
 
     if let Some(s) = &d.suggestion {
         obj["suggestion"] = serde_json::Value::String(s.clone());
+    }
+
+    if let Some(plan) = &d.fix_plan {
+        obj["fix_plan"] = serialize_fix_plan(plan);
     }
 
     serde_json::to_string(&obj).unwrap_or_else(|_| {
