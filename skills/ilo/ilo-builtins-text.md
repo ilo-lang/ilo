@@ -28,7 +28,15 @@ Signatures (pat first, string last):
 
 ## Formatting
 
-`fmt template args...` (no list splat); `fmt2 template list` splat form.
+`fmt template args...` (no list splat; lists are formatted as a single value).
+
+`fmt2 x:n digits:n > t` — format a number to `digits` decimal places (half-to-even rounding; `digits` clamped to `0..=20`). Not a `fmt` variant: `fmt2` is a **decimal formatter**, not a list-splat form of `fmt`.
+
+```
+fmt2 3.14159 2          -- "3.14"
+fmt2 1.0 0              -- "1"
+fmt "x={}" (fmt2 v 2)   -- compose for template + precision
+```
 
 ## CSV / TSV
 
