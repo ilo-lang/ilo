@@ -135,7 +135,9 @@ fn expr_uses_rd(expr: &Expr) -> bool {
         Expr::Ok(e) | Expr::Err(e) => expr_uses_rd(e),
         Expr::Field { object, .. } | Expr::Index { object, .. } => expr_uses_rd(object),
         Expr::List(items) => items.iter().any(expr_uses_rd),
-        Expr::Record { fields, .. } => fields.iter().any(|(_, e)| expr_uses_rd(e)),
+        Expr::Record { fields, .. } | Expr::AnonRecord { fields } => {
+            fields.iter().any(|(_, e)| expr_uses_rd(e))
+        }
         Expr::Match { subject, arms } => {
             subject.as_ref().is_some_and(|s| expr_uses_rd(s))
                 || arms
@@ -201,7 +203,9 @@ fn expr_uses_unwrap(expr: &Expr) -> bool {
         Expr::Ok(e) | Expr::Err(e) => expr_uses_unwrap(e),
         Expr::Field { object, .. } | Expr::Index { object, .. } => expr_uses_unwrap(object),
         Expr::List(items) => items.iter().any(expr_uses_unwrap),
-        Expr::Record { fields, .. } => fields.iter().any(|(_, e)| expr_uses_unwrap(e)),
+        Expr::Record { fields, .. } | Expr::AnonRecord { fields } => {
+            fields.iter().any(|(_, e)| expr_uses_unwrap(e))
+        }
         Expr::Match { subject, arms } => {
             subject.as_ref().is_some_and(|s| expr_uses_unwrap(s))
                 || arms
@@ -993,6 +997,13 @@ fn emit_expr(out: &mut String, level: usize, expr: &Expr) -> String {
         Expr::List(items) => {
             let items_str: Vec<String> = items.iter().map(|i| emit_expr(out, level, i)).collect();
             format!("[{}]", items_str.join(", "))
+        }
+        Expr::AnonRecord { fields } => {
+            let mut parts = Vec::new();
+            for (name, val) in fields {
+                parts.push(format!("\"{}\": {}", name, emit_expr(out, level, val)));
+            }
+            format!("{{{}}}", parts.join(", "))
         }
         Expr::Record { type_name, fields } => {
             let mut parts = vec![format!("\"_type\": \"{}\"", type_name)];
