@@ -503,7 +503,19 @@ const BUILTIN_ALIASES: &[(&str, &str)] = &[
     // call `ct` directly when they want the builtin.
     ("flatten", "flat"),
     ("concat", "cat"),
+    // `join` mirrors Python str.join / JS Array.join muscle memory. Canonical
+    // name `cat` (2-arg: list + separator) is unchanged in bytecode and fmt
+    // output; `concat` already aliases `cat` for list-concat mental models, and
+    // `join` covers the string-join mental model from Python/JS. (ILO-266)
+    ("join", "cat"),
     ("contains", "has"),
+    // `keys` and `values` mirror universal map-accessor names (Python
+    // dict.keys()/.values(), JS Object.keys(), Go maps.Keys, Rust
+    // HashMap::keys). Canonical m-prefixed names `mkeys`/`mvals` stay
+    // unchanged in bytecode and fmt output; these aliases close the
+    // discoverability gap for newcomers. (ILO-265)
+    ("keys", "mkeys"),
+    ("values", "mvals"),
     // `upper`/`lower` mirror the Python/JS/Go/Rust method names for case
     // conversion. Canonical 3-char names `upr`/`lwr` stay unchanged in
     // bytecode and fmt output; these aliases only rewrite the parse-time
@@ -523,6 +535,12 @@ const BUILTIN_ALIASES: &[(&str, &str)] = &[
     // without widening the canonical surface (bytecode, fmt, docs all stay
     // on `pst`).
     ("post", "pst"),
+    // `delete` and `patch` mirror the HTTP-verb names agents from Python/JS/Rust
+    // reach for first. Canonical 3-char short forms are `del` and `pat`; these
+    // long-form aliases give discoverability without changing bytecode or fmt
+    // output. (ILO-264)
+    ("delete", "del"),
+    ("patch", "pat"),
     ("print", "prnt"),
     ("trim", "trm"),
     ("split", "spl"),
