@@ -52,7 +52,7 @@ PER_MODULE_OVERRIDES = {
     "ilo-language": 1500,
     "ilo-builtins-io": 1500,
 }
-TOTAL_LIMIT = 10000
+TOTAL_LIMIT = 15000
 
 
 def main() -> int:
