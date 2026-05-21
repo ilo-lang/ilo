@@ -137,6 +137,144 @@ impl Diagnostic {
         self.fix_plan = Some(plan);
         self
     }
+
+    /// Derive a structured fix_plan from the diagnostic's code, span, and
+    /// source text.  Must be called *after* `with_source()` has populated
+    /// `self.source`.  Idempotent: a pre-existing `fix_plan` is not replaced.
+    ///
+    /// Covered codes (MVP):
+    /// * `ILO-T004` — undefined variable; hint `"did you mean 'X'?"` → rename span
+    /// * `ILO-T003` — undefined type; same hint pattern
+    /// * `ILO-T032` — bare `fmt`/`fmt2` discarded → prefix `prnt ` before the call
+    /// * `ILO-L002` — underscore identifier; suggestion contains the hyphenated form
+    pub fn derive_fix_plan(mut self) -> Self {
+        if self.fix_plan.is_some() {
+            return self;
+        }
+        let Some(code) = self.code else {
+            return self;
+        };
+        let Some(source) = &self.source else {
+            return self;
+        };
+
+        let plan = match code {
+            "ILO-T004" | "ILO-T003" => derive_typo_rename(&self, source),
+            "ILO-T032" => derive_fmt_prefix(&self, source),
+            "ILO-L002" => derive_underscore_hyphen(&self, source),
+            _ => None,
+        };
+        self.fix_plan = plan;
+        self
+    }
+}
+
+// ---- Fix-plan derivation helpers ----
+
+use crate::ast::SourceMap;
+
+/// Extract the suggested name from `"did you mean 'X'?"` and build an edit
+/// that replaces the primary span with X.
+fn derive_typo_rename(d: &Diagnostic, source: &str) -> Option<FixPlan> {
+    let hint = d.suggestion.as_deref()?;
+    // Match: did you mean 'X'?
+    let after = hint
+        .strip_prefix("did you mean '")?
+        .strip_suffix("'?")?
+        .to_string();
+
+    let span = d.labels.iter().find(|l| l.is_primary).map(|l| l.span)?;
+    if span.start >= source.len() || span.end > source.len() || span.start >= span.end {
+        return None;
+    }
+    let before = source[span.start..span.end].to_string();
+    if before.is_empty() || after.is_empty() {
+        return None;
+    }
+
+    let sm = SourceMap::new(source);
+    let (line_start, _) = sm.lookup(span.start);
+    let (line_end, _) = sm.lookup(span.end.saturating_sub(1));
+
+    Some(FixPlan {
+        path: d.path.clone(),
+        edits: vec![FixEdit {
+            line_start,
+            line_end,
+            before,
+            after,
+        }],
+    })
+}
+
+/// Build a fix that prepends `prnt ` before the bare `fmt`/`fmt2` call.
+/// The span covers the entire call expression; we replace `fmt args` with
+/// `prnt fmt args`.
+fn derive_fmt_prefix(d: &Diagnostic, source: &str) -> Option<FixPlan> {
+    let span = d.labels.iter().find(|l| l.is_primary).map(|l| l.span)?;
+    if span.start >= source.len() || span.end > source.len() || span.start >= span.end {
+        return None;
+    }
+    let before = source[span.start..span.end].to_string();
+
+    // Identify which name is used (fmt / fmt2).
+    let prefix = if before.starts_with("fmt2") {
+        "fmt2"
+    } else if before.starts_with("fmt") {
+        "fmt"
+    } else {
+        return None;
+    };
+    let _ = prefix; // used implicitly via before
+
+    let after = format!("prnt {before}");
+    let sm = SourceMap::new(source);
+    let (line_start, _) = sm.lookup(span.start);
+    let (line_end, _) = sm.lookup(span.end.saturating_sub(1));
+
+    Some(FixPlan {
+        path: d.path.clone(),
+        edits: vec![FixEdit {
+            line_start,
+            line_end,
+            before,
+            after,
+        }],
+    })
+}
+
+/// L002: suggestion text contains the corrected hyphenated form.
+/// Pattern: `"underscores are not allowed in identifiers; use hyphens (e.g. \`X\`)"`.
+fn derive_underscore_hyphen(d: &Diagnostic, source: &str) -> Option<FixPlan> {
+    let suggestion = d.suggestion.as_deref()?;
+    // Extract the backtick-quoted corrected form.
+    let after = suggestion
+        .rsplit('`')
+        .nth(1)?
+        .to_string();
+    if after.is_empty() {
+        return None;
+    }
+
+    let span = d.labels.iter().find(|l| l.is_primary).map(|l| l.span)?;
+    if span.start >= source.len() || span.end > source.len() || span.start >= span.end {
+        return None;
+    }
+    let before = source[span.start..span.end].to_string();
+
+    let sm = SourceMap::new(source);
+    let (line_start, _) = sm.lookup(span.start);
+    let (line_end, _) = sm.lookup(span.end.saturating_sub(1));
+
+    Some(FixPlan {
+        path: d.path.clone(),
+        edits: vec![FixEdit {
+            line_start,
+            line_end,
+            before,
+            after,
+        }],
+    })
 }
 
 // ---- From impls for existing error types ----
