@@ -249,11 +249,16 @@ fn body_is_thin_bootstrap() {
             "SKILL.md bootstrap missing required marker: {required}"
         );
     }
-    // Bootstrap cap: the file must stay short. The old monolith was ~50 KB;
-    // a healthy bootstrap is well under 5 KB. Trip if it bloats past 8 KB.
+    // Bootstrap cap: the file must stay short. The old monolith was ~50 KB.
+    // 0.12.x growth (HTTP verb cluster, getx/pstx, crypto primitives, calendar
+    // arithmetic, headers + jpth quick-references) has pushed the bootstrap
+    // pointer past the original 8 KB ceiling. The cap is the guardrail against
+    // re-monolithisation, not a hard token budget, so it gets bumped in step
+    // with deliberate doc additions — 12 KB keeps a healthy margin under the
+    // ~50 KB pre-split monolith.
     assert!(
-        body.len() < 8_000,
-        "SKILL.md body is {} bytes; bootstrap shape should stay well under 8 KB",
+        body.len() < 12_000,
+        "SKILL.md body is {} bytes; bootstrap shape should stay well under 12 KB",
         body.len()
     );
 }
