@@ -27,9 +27,19 @@ Binary `+ - * / % < > <= >= = !=`, bool `& | !`, append `+=`. Nest: `+*a b c` = 
 
 Flat early returns at statement: `cls sp:n>t;>=sp 1000 "gold";>=sp 500 "silver";"bronze"`. Braceless `cond expr` cheaper than `cond{expr}`. Bare comparison at statement IS a guard; bind to return otherwise: `r=>a b;r`.
 
+## if / else
+
+`if cond { a } else { b }` produces a value. `if cond { body }` (no else) returns nil; use at statement position. `else` is mandatory at expression position (e.g. `v = if c { a } else { b }`).
+
+```
+myabs n:n>n;if >=n 0 { n } else { -0 n }
+```
+
+Equivalent legacy forms `?h cond a b`, `cond{a}{b}`, `?=cond a b` still parse on this branch and produce the same AST.
+
 ## match
 
-`?r{~v:v;^e:^+"failed: "e;_:"unknown"}`. Arms: `"lit":body`, `42:body`, `~v:body` ok-bind, `^e:body` err-bind, `_:body` else.
+`?r{~v:v;^e:^+"failed: "e;_:"unknown"}`. Arms: `"lit":body`, `42:body`, `~v:body` ok-bind, `^e:body` err-bind, `_:body` else. Arm bodies accept brace blocks: `~v:{d=*v 2;+d 1}`. Final stmt of the block is the arm value.
 
 ## results
 
@@ -37,7 +47,7 @@ Flat early returns at statement: `cls sp:n>t;>=sp 1000 "gold";>=sp 500 "silver";
 
 ## loops
 
-`@x xs{body}` foreach, `@i 0..5{body}` range half-open, `wh <i 10{...}` while. `brk`, `cnt`, `ret v`.
+`for x in xs { body }` foreach, `for i in 0..5 { body }` range half-open, `while cond { body }` while. `brk`, `cnt`, `ret v`. Legacy short forms `@x xs{body}`, `@i 0..5{body}`, `wh cond{body}` still parse on this branch and produce the same AST.
 
 ## pipes
 

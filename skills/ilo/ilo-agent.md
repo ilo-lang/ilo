@@ -44,6 +44,16 @@ AOT-compiled binaries (`ilo compile`) follow the same contract byte-for-byte.
 
 `ilo serv [--mcp m.json] [--tools http.json]` is a long-lived JSON request/response loop on stdin/stdout. Send `{"program":"fn p:n>n;*p 2","func":"fn","args":[21]}`, get `{"ok": 42}` or `{"error":{...}}`. Cuts process-spawn overhead to zero.
 
+## Agent-natural surface (experimental, compat/agent-natural branch)
+
+On this branch and in 0.13.0-natural mode, lead with the agent-natural forms in generated code:
+
+- `if cond { a } else { b }` for value-producing conditionals; `if cond { body }` for the no-else statement form.
+- `for x in xs { body }` and `for i in a..b { body }` for loops; `while cond { body }` for while.
+- Match arms accept brace-block bodies: `?r{~v:{d=*v 2;+d 1};^e:body}`.
+
+The prefix/`?h`/`@`/`wh` forms still parse for backwards compatibility. See `SPEC-AGENT-NATURAL.md` for the falsification criterion this experiment is being measured against.
+
 ## Branching
 
 Failures / repair: `ilo-edit-loop`. Runnable patterns: `ilo-examples`. Tools: `ilo-tools`. Engine pick: `ilo-engines`.
