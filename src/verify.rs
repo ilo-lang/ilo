@@ -267,10 +267,7 @@ fn kebab_subtract_hint<'a>(
 /// Hint for the `name expr` shape when `name` is non-callable and the single
 /// argument is a simple value (literal number / bool / text, or a bare ref).
 ///
-/// Triggers on the classic ambiguity in assignment-RHS:
-///
-///     dx=xj 0-xi
-///
+/// Triggers on the classic ambiguity in assignment-RHS: `dx=xj 0-xi`
 /// which parses as `dx=(xj 0) - xi` — a call `xj(0)` whose result is then
 /// fed into the outer Subtract. The agent almost certainly meant
 /// `dx=xj - xi` (= `-xj xi` in ilo's prefix form) or
