@@ -130,6 +130,27 @@ fn fld_inline_sum_of_squares() {
     run_all(src, "f", &["[1,2,3,4]"], "30");
 }
 
+// ── fld: multi-statement body (let + final expression) — ILO-50 regression ─
+// Reported: `fld (m:_ a:n>_;b=*a 2;+m b) xs init` allegedly dropped the let
+// statement from the lambda body. Verified cannot reproduce; this test locks
+// the correct behaviour so any future parser regression is caught immediately.
+
+#[test]
+fn fld_multi_stmt_lambda_body_preserves_let() {
+    // Both `b=*a 2` (let) and `+m b` (expr) must survive in the lifted decl.
+    // If the let is dropped, doubling is skipped and the result is 6 (not 12).
+    let src = "f xs:L n>n;fld (m:_ a:n>_;b=*a 2;+m b) xs 0";
+    run_all(src, "f", &["[1,2,3]"], "12");
+}
+
+#[test]
+fn fld_multi_stmt_lambda_three_stmts() {
+    // Three-statement body: two lets + final expr. Ensures the `;` loop in
+    // `parse_lambda_body` iterates past the first let without stopping early.
+    let src = "f xs:L n>n;fld (m:_ a:n>_;x=a;y=*x 2;+m y) xs 0";
+    run_all(src, "f", &["[1,2,3]"], "12");
+}
+
 // ── multi-statement body (let + final expression) ──────────────────────────
 
 #[test]
