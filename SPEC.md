@@ -359,6 +359,37 @@ There is no separate `push` builtin. `+=` covers every use case and is shorter; 
 | `a??b` | nil-coalesce (if a is nil, return b) | any |
 | `a>>f` | pipe (desugar to `f(a)`) | any |
 
+**`??` precedence.** Infix `??` is parsed by `maybe_nil_coalesce` after
+the primary expression — it binds **looser than every arithmetic,
+comparison, and boolean operator**, and tighter than `>>` (pipe). So
+`c??0+1` is `c ?? (0+1)`, not `(c??0) + 1`. Prefix `??x default` mirrors
+the infix form: the default slot is a full expression, exactly like the
+right operand of any other prefix binop.
+
+This means **`??` inside a prefix-binop chain follows the standard
+prefix-binop rule**: the outer op consumes its left atom, and `??` then
+binds the next atom as its value and the rest as its default. To get
+`(a ?? d) + b` you must bind first or wrap in parens:
+
+```
++a ??d b     -- = a + (d ?? b)        ← parses as prefix `??d b`
++(a??d) b    -- = (a ?? d) + b        ← parens force the grouping
+x=a??d;+x b  -- = (a ?? d) + b        ← bind-first, manifesto-preferred
+```
+
+The same shape applies to every prefix binop (`-a ??d b`, `*x ??y z`,
+`>p ??d r`, etc.). The grouping is consistent with `+a *b c` = `a + (b*c)`
+— a prefix op in the right-operand slot consumes its own operands greedily.
+The trap is that `??` reads visually like it should be sticky to the
+preceding atom; it isn't. When the LHS of `??` is the value being
+defaulted, bind first or wrap in parens.
+
+The analogous shape with the boolean operators (`+a |0 b`, `*a &1 b`)
+parses the same way, but those produce a type error at verify time
+(`+` / `*` on a bool result), so they fail loudly rather than silently
+miscompiling. The `??` shape is the dangerous one: both sides of `??`
+can be `n`, so the parse silently produces the wrong arithmetic.
+
 ### Prefix nesting (no parens needed)
 
 ```
@@ -366,6 +397,8 @@ There is no separate `push` builtin. `+=` covers every use case and is shorter; 
 *a +b c     -- a * (b + c)
 >=+x y 100  -- (x + y) >= 100
 -*a b *c d  -- (a * b) - (c * d)
++a ??c 0    -- a + (c ?? 0)   ← not (a ?? 0) + c
+*x ??y 1    -- x * (y ?? 1)   ← not (x ?? y) * 1
 ```
 
 The outer prefix op binds the inner prefix subexpression as its **left** operand, regardless of operator precedence. With two same-precedence ops side by side this is easy to misread:
@@ -397,6 +430,7 @@ Standard mathematical precedence (higher binds tighter):
 | 3 | `=` `!=` |
 | 2 | `&` |
 | 1 | `\|` |
+| 0 | `??` (binds looser than every arithmetic/boolean op; tighter than `>>`) |
 
 Function application binds tighter than all infix operators:
 

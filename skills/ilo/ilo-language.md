@@ -19,7 +19,7 @@ Single-line: `f x:n>n;+x 1`. Multi-line: `f x:n>n` then indented body, newline =
 
 ## operators
 
-Binary `+ - * / % < > <= >= = !=`, bool `& | !`, append `+=`. Nest `+*a b c`=`(a*b)+c`; outer binds inner LEFT. Atoms/nested-ops not calls; bind first: `r=fac -n 1;*n r`. No compound `<=a b`. Glued `-n` = neg literal; bare `0 -1` errs ILO-P001.
+Binary `+ - * / % < > <= >= = !=`, bool `& | !`, append `+=`. Nest `+*a b c`=`(a*b)+c`; outer binds inner LEFT. Atoms/nested-ops not calls; bind first: `r=fac -n 1;*n r`. No compound `<=a b`. Glued `-n` = neg literal; bare `0 -1` errs ILO-P001. **`??` precedence**: `+a ??d b`=`a + (d ?? b)`, NOT `(a??d)+b`. For `(a??d)+b` bind first (`x=a??d;+x b`) or wrap (`+(a??d) b`).
 
 ## idents
 
