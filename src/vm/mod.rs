@@ -789,6 +789,14 @@ pub(crate) fn is_tree_bridge_eligible(b: crate::builtins::Builtin, argc: usize) 
         (Builtin::LastDom, 1) => true,
         (Builtin::NextBusinessDay, 1) => true,
         (Builtin::DayOfWeek, 1) => true,
+        // Numeric prelude (0.12.1). linspace / ones / rep — pure list
+        // constructors, no FnRef args, no I/O, no Result wrapper. Saves
+        // ~5-10 LoC per call site for the linear-regression / distance-
+        // matrix / monte-carlo persona class. Tree-bridge keeps VM and
+        // Cranelift in lockstep with the tree interpreter at zero opcode cost.
+        (Builtin::Linspace, 3) => true,
+        (Builtin::Ones, 1) => true,
+        (Builtin::Rep, 2) => true,
         _ => false,
     }
 }
@@ -16938,6 +16946,13 @@ pub(crate) fn tree_bridge_propagates_error(b: crate::builtins::Builtin) -> bool 
             | Builtin::LastDom
             | Builtin::NextBusinessDay
             | Builtin::DayOfWeek
+            // Numeric prelude: linspace/ones/rep raise ILO-R009 on a
+            // negative or non-integer count. Tree and VM both surface this;
+            // without the allow-list Cranelift would degenerate to nil and
+            // mask the input bug. Matches chunks/window's error parity.
+            | Builtin::Linspace
+            | Builtin::Ones
+            | Builtin::Rep
     )
 }
 

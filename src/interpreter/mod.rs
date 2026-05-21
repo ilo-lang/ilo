@@ -3132,6 +3132,102 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             )),
         };
     }
+    if builtin == Some(Builtin::Linspace) && args.len() == 3 {
+        // linspace a b n — n evenly-spaced floats from a to b inclusive
+        // (numpy endpoint=True). n=0 returns []; n=1 returns [a]; n>=2 includes
+        // both endpoints; equal endpoints repeat the value.
+        let (a, b, n_raw) = match (&args[0], &args[1], &args[2]) {
+            (Value::Number(a), Value::Number(b), Value::Number(n)) => (*a, *b, *n),
+            _ => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    "linspace requires three numbers (a b n)".to_string(),
+                ));
+            }
+        };
+        if n_raw.fract() != 0.0 || n_raw < 0.0 {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!("linspace: n must be a non-negative integer, got {n_raw}"),
+            ));
+        }
+        let n = n_raw as u64;
+        if n > 1_000_000 {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!("linspace too large: {n} elements (max 1000000)"),
+            ));
+        }
+        if n == 0 {
+            return Ok(Value::List(Arc::new(Vec::new())));
+        }
+        if n == 1 {
+            return Ok(Value::List(Arc::new(vec![Value::Number(a)])));
+        }
+        let mut out = Vec::with_capacity(n as usize);
+        let step = (b - a) / ((n - 1) as f64);
+        for i in 0..n {
+            out.push(Value::Number(a + step * (i as f64)));
+        }
+        // Pin the final element exactly to b to avoid float-accumulated drift.
+        if let Some(last) = out.last_mut() {
+            *last = Value::Number(b);
+        }
+        return Ok(Value::List(Arc::new(out)));
+    }
+    if builtin == Some(Builtin::Ones) && args.len() == 1 {
+        let n_raw = match &args[0] {
+            Value::Number(n) => *n,
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("ones: count must be a number, got {:?}", other),
+                ));
+            }
+        };
+        if n_raw.fract() != 0.0 || n_raw < 0.0 {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!("ones: count must be a non-negative integer, got {n_raw}"),
+            ));
+        }
+        let n = n_raw as u64;
+        if n > 1_000_000 {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!("ones too large: {n} elements (max 1000000)"),
+            ));
+        }
+        let out = vec![Value::Number(1.0); n as usize];
+        return Ok(Value::List(Arc::new(out)));
+    }
+    if builtin == Some(Builtin::Rep) && args.len() == 2 {
+        let n_raw = match &args[0] {
+            Value::Number(n) => *n,
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("rep: count must be a number, got {:?}", other),
+                ));
+            }
+        };
+        if n_raw.fract() != 0.0 || n_raw < 0.0 {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!("rep: count must be a non-negative integer, got {n_raw}"),
+            ));
+        }
+        let n = n_raw as u64;
+        if n > 1_000_000 {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!("rep too large: {n} elements (max 1000000)"),
+            ));
+        }
+        let v = &args[1];
+        let out = vec![v.clone(); n as usize];
+        return Ok(Value::List(Arc::new(out)));
+    }
     if builtin == Some(Builtin::Chunks) && args.len() == 2 {
         let n_raw = match &args[0] {
             Value::Number(n) => *n,

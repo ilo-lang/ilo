@@ -4528,6 +4528,11 @@ fn builtin_arity_tables() -> (HashMap<String, usize>, HashMap<String, Vec<bool>>
         // as Ref and the alias resolver — which only touches Call sites —
         // leaves it as `Ref("rng")`, surfacing as ILO-T004 at verify time.
         ("range", 2, &[]),
+        // Numeric prelude: eager-parse the fixed-arity forms so call sites
+        // like `sum (linspace 0 1 n)` work without parens at the inner call.
+        ("linspace", 3, &[]),
+        ("ones", 1, &[]),
+        ("rep", 2, &[]),
         // Map (associative)
         ("mget", 2, &[]),
         ("mset", 3, &[]),

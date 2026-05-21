@@ -227,12 +227,16 @@ Short builtin names are precious surface and ilo reserves a stable subset of the
 3-char  abs avg cap cat cel chr cos det dot env ewm exp fft fld flr flt
         fmt frq get grp has inv len log lsd lst lwr map max min mod now
         num ord pow pst rdb rdl rev rgx rng rnd rou run sin slc spl srt
+3-char  abs avg cap cat cel chr cos det dot env exp fft fld flr flt fmt
+        frq get grp has inv len log lsd lst lwr map max min mod now num
+        ord pow pst rdb rdl rep rev rgx rng rnd rou run sin slc spl srt
         str sum tan tau trm unq upr wra wrl zip
 ```
 
 All builtin aliases (`head`, `length`, `filter`, `concat`, `tail`, `sort`, `reverse`, `flatten`, `contains`, `group`, `average`, `print`, `trim`, `split`, `format`, `regex`, `read`, `readlines`, `readbuf`, `write`, `writelines`, `lset`, `floor`, `ceil`, `round`, `rand`, `random`, `rng`, `string`, `number`, `slice`, `unique`, `fold`) are reserved with the same shadow-prevention semantics as canonical builtin names. Binding an alias name or using it as a user-function name fires `ILO-P011` at parse time with the canonical form in the diagnostic, since the call-site rewrite to the canonical builtin silently bypasses any user binding of the same name. Previously only `rng` and `rand` had individual guards; as of 0.12.1 every alias in the table above is covered by a single `resolve_alias` check, so new aliases automatically inherit the protection when added to the table.
 
 Longer builtin names (`acos`, `asin`, `atan`, `flat`, `take`, `drop`, `mget`, `mset`, `mmap`, `prnt`, `mapr`, `solve`, `lstsq`, `clamp`, `cumsum`, `cprod`, `median`, `matmul`, `range`, `window`, `chunks`, `walk`, `glob`, `prod`, `fsize`, `mtime`, `isfile`, `isdir`, …) are also reserved and rejected by `ILO-P011`, but the short-name namespace above is where carry-forward scripts most often collide, so it gets explicit enumeration.
+Longer builtin names (`acos`, `asin`, `atan`, `flat`, `take`, `drop`, `mget`, `mset`, `mmap`, `prnt`, `mapr`, `solve`, `clamp`, `cumsum`, `cprod`, `median`, `matmul`, `range`, `window`, `chunks`, `walk`, `glob`, `prod`, `fsize`, `mtime`, `isfile`, `isdir`, `ones`, `linspace`, …) are also reserved and rejected by `ILO-P011`, but the short-name namespace above is where carry-forward scripts most often collide, so it gets explicit enumeration.
 
 **Forward-compatibility rule.** Future ilo releases add new builtins under names **4 characters or longer**. A 2-character name that is not on this list today is safe to use as a binding or function name and stays safe across releases. A 3-character name that is not on this list is _highly likely_ to stay safe but is not a hard promise - the 3-char surface is already dense, and a rare ergonomic win may justify an addition, called out in the changelog.
 
@@ -571,6 +575,9 @@ Called like functions, compiled to dedicated opcodes.
 | `zip xs ys` | pairwise pairs of two lists; truncates to shorter input | `L (L _)` |
 | `enumerate xs` | pair each element with its index → `[[i, v], ...]` | `L (L _)` |
 | `range a b` | half-open numeric range `[a, a+1, ..., b-1]`; empty when `a >= b` | `L n` |
+| `linspace a b n` | `n` evenly-spaced floats from `a` to `b` inclusive (numpy `endpoint=True`). `n=0` returns `[]`; `n=1` returns `[a]`; `n>=2` includes both endpoints (last element pinned to `b` to avoid float drift) | `L n` |
+| `ones n` | `n` copies of `1.0`; `n=0` returns `[]`. Saves `map (i:n>n;1) (range 0 n)` for design-matrix columns | `L n` |
+| `rep n v` | `n` copies of `v`; element type follows `v`. `n=0` returns `[]`. Saves `map (i:n>T;v) (range 0 n)` for accumulator seeding and constant tables | `L T` |
 | `map fn xs` | apply `fn` to each element | `L b` |
 | `flt fn xs` | keep elements where `fn x` is true | `L a` |
 | `ct fn xs` | count elements where `fn x` is true (avoids `len (flt fn xs)`'s intermediate list alloc) | `n` |

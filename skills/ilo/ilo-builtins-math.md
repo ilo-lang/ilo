@@ -45,3 +45,13 @@ xm = map (x:n>L n;[1, x]) xs
 b = lstsq xm ys                  -- [3, 2]
 ```
 `ewm xs a > L n` = exponential moving average. `ewm[0] = xs[0]`, `ewm[i] = a*xs[i] + (1-a)*ewm[i-1]`. `a` in `[0, 1]` (out-of-range errors `ILO-R009`). Replaces the fold-with-state pattern in one call.
+
+## Numeric prelude (list constructors)
+
+`linspace a b n` = n evenly-spaced floats from a to b inclusive (numpy `endpoint=True`); `linspace 0 10 5` → `[0, 2.5, 5, 7.5, 10]`. `n=0` returns `[]`; `n=1` returns `[a]`. Last element pinned to `b` to avoid float drift.
+
+`ones n` = n copies of `1.0`. Useful for design-matrix columns (`sum (ones n) = n`).
+
+`rep n v` = n copies of any value `v`; element type follows `v`. Useful for accumulator seeds (`rep 8 0`) and constant lookup tables (`rep 7 "x"`).
+
+All three reject negative `n` with ILO-R009 and cap at 1M elements.
