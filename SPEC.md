@@ -1405,6 +1405,8 @@ Each of the three operand slots accepts the same shapes as a prefix-binop operan
 
 **Condition must be `b`.** The verifier rejects (`ILO-T038`) any ternary whose cond doesn't type-check to `b` - number, text, function-ref, `R T E` without unwrap, etc. This catches the silent-truthy family of bugs where a non-bool cond would otherwise always take the then-branch at runtime. If the cond is more complex than a single ref or comparison, bind it first (`c=<expr>;?h c a b`) or use the brace-delimited ternary `?cond{then}{else}`. The original 0.12.0 bug that motivated this check: `?h (> p 0.5) 1 0` parsed the paren-grouped prefix-comparison as a zero-param inline lambda, lifted it into a synthetic decl, and silently always took the then-branch - both layers (parser disambiguator + verifier type-check) are now hardened against the family.
 
+**Branches must share a type.** ILO-T003 fires when the then- and else-branches have different known types. The hint is targeted: for `n` vs `t` it surfaces both directions (`str <num-branch>` to make both text, or `default-on-err (num <text-branch>) <fallback>` to make both number, since `num` returns `R n t`); for any other mismatch (bool vs text, list vs map, two named records, `R T E` vs `n`, …) it suggests restructuring rather than offering a coercion that would just trip ILO-T013. Common restructure shapes: wrap each branch in `[...]`, a record with a tagged field, or `O T` / `R T E` to model the two-shape case explicitly.
+
 ### Early Return
 
 `ret expr` explicitly returns from the current function:
