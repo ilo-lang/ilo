@@ -1,0 +1,20 @@
+-- Match arm bodies accept brace blocks already (predates this branch).
+-- Including the example under examples/agent-natural/ groups it with the
+-- other agent-natural surface forms for the persona re-run.
+--
+-- Spec: SPEC-AGENT-NATURAL.md §2.3.
+
+-- Brace block with local bindings inside an Ok arm
+parse-ok>n
+  r=num "10"
+  ?r{~v:{d=*v 2;+d 1};^_:0}
+
+-- Brace block on the Err arm — multi-stmt body builds a tagged message
+parse-bad>t
+  r=num "oops"
+  ?r{~v:str v;^er:{tag="err: ";+tag er}}
+
+-- run: parse-ok
+-- out: 21
+-- run: parse-bad
+-- out: err: oops
