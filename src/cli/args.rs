@@ -118,6 +118,12 @@ pub enum Cmd {
 
     /// Print version.
     Version,
+
+    /// Fetch a GitHub-hosted ilo package into the local cache (~/.ilo/pkgs/).
+    Add(AddArgs),
+
+    /// Re-fetch a cached package to its latest commit on the default branch.
+    Update(UpdateArgs),
 }
 
 // ── Run ────────────────────────────────────────────────────────────────────────
@@ -419,6 +425,24 @@ pub enum SkillCmd {
     Path { name: String },
     /// Print a skill with a formatted header.
     Show { name: String },
+}
+
+// ── Add ────────────────────────────────────────────────────────────────────────
+
+#[derive(Args, Debug)]
+pub struct AddArgs {
+    /// Package to fetch, in `<owner>/<repo>` or `<owner>/<repo>@<ref>` form.
+    /// Example: `ilo add myorg/helpers` or `ilo add myorg/helpers@v1.2`.
+    pub package: String,
+}
+
+// ── Update ─────────────────────────────────────────────────────────────────────
+
+#[derive(Args, Debug)]
+pub struct UpdateArgs {
+    /// Package to update, in `<owner>/<repo>` form.
+    /// Omit to update all packages recorded in `ilo.lock`.
+    pub package: Option<String>,
 }
 
 // ── OutputMode resolution ──────────────────────────────────────────────────────

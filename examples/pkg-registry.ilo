@@ -1,0 +1,21 @@
+-- pkg-registry.ilo
+-- Demonstrates `use "owner/repo"` package import syntax.
+--
+-- Before running:
+--   ilo add ilo-lang/ilo-std
+--
+-- Then:
+--   ilo run examples/pkg-registry.ilo
+--
+-- This file won't run standalone (the package won't exist on your machine
+-- unless you `ilo add` it), but it serves as a usage reference.
+--
+-- use "ilo-lang/ilo-std"         -- import index.ilo from cached package
+-- use "ilo-lang/ilo-std" [greet] -- selective import
+--
+-- main>_;
+--   prnt greet "agent"
+
+-- Minimal standalone demo that works without a network package:
+main>_;
+  prnt "run `ilo add owner/repo` to install a package, then `use \"owner/repo\"` to import it"

@@ -2250,6 +2250,41 @@ fn decl_name(decl: &ast::Decl) -> Option<&str> {
     }
 }
 
+/// Apply the `only [name1 name2]` filter from a `use` statement.
+/// Pushes `ILO-P019` diagnostics for names not found.
+fn apply_only_filter(
+    decls: Vec<ast::Decl>,
+    only: &Option<Vec<String>>,
+    path: &str,
+    span: ast::Span,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> Vec<ast::Decl> {
+    let Some(names) = only else {
+        return decls;
+    };
+    for name in names {
+        let found = decls.iter().any(|d| decl_name(d) == Some(name.as_str()));
+        if !found {
+            diagnostics.push(
+                Diagnostic::error(format!(
+                    "use \"{}\": name '{}' not found in imported file",
+                    path, name
+                ))
+                .with_code("ILO-P019")
+                .with_span(span, "imported here"),
+            );
+        }
+    }
+    decls
+        .into_iter()
+        .filter(|d| {
+            decl_name(d)
+                .map(|n| names.iter().any(|s| s == n))
+                .unwrap_or(false)
+        })
+        .collect()
+}
+
 /// Resolve all `Decl::Use` nodes in `decls` recursively, returning a flat
 /// merged list with imported declarations prepended and `Use` nodes stripped.
 ///
@@ -2267,7 +2302,117 @@ fn resolve_imports(
 
     for decl in decls {
         if let ast::Decl::Use { path, only, span } = decl {
+            // ── Package registry resolution ───────────────────────────────────
+            // `use "owner/repo"` (first component has no `.`) resolves through
+            // the local package cache at ~/.ilo/pkgs/<owner>/<repo>/index.ilo.
+            if ilo::pkg::is_pkg_path(&path) {
+                let resolved = ilo::pkg::resolve_pkg_path(&path);
+                match resolved {
+                    Err(msg) => {
+                        diagnostics.push(
+                            Diagnostic::error(format!("use \"{path}\": {msg}"))
+                                .with_code("ILO-P017")
+                                .with_span(span, "imported here"),
+                        );
+                        continue;
+                    }
+                    Ok(pkg_file) => {
+                        // Synthesise a Use decl for the resolved file path and
+                        // re-use the same local-file resolution path below by
+                        // substituting the resolved path into a local Use node.
+                        let abs = pkg_file.to_string_lossy().into_owned();
+                        let synthetic = ast::Decl::Use {
+                            path: abs,
+                            only: only.clone(),
+                            span,
+                        };
+                        let mut sub = resolve_imports(
+                            vec![synthetic],
+                            None, // abs path, base_dir not needed
+                            visited,
+                            diagnostics,
+                        );
+                        result.append(&mut sub);
+                        continue;
+                    }
+                }
+            }
+
+            // ── Local file resolution ─────────────────────────────────────────
             let Some(dir) = base_dir else {
+                // Package paths are handled above; inline code cannot use local files.
+                // Absolute paths (synthesised by package resolution) are also handled above.
+                if path.starts_with('/') {
+                    // Absolute path synthesised by package resolution — resolve directly.
+                    let canonical = match std::path::PathBuf::from(&path).canonicalize() {
+                        Ok(c) => c,
+                        Err(_) => {
+                            diagnostics.push(
+                                Diagnostic::error(format!("use \"{}\": file not found", path))
+                                    .with_code("ILO-P017")
+                                    .with_span(span, "imported here"),
+                            );
+                            continue;
+                        }
+                    };
+                    // Proceed with the canonical path as if base_dir were its parent.
+                    let imported_dir = canonical.parent().map(|p| p.to_path_buf());
+                    let source = match std::fs::read_to_string(&canonical) {
+                        Ok(s) => s,
+                        Err(e) => {
+                            diagnostics.push(
+                                Diagnostic::error(format!("use \"{}\": {}", path, e))
+                                    .with_code("ILO-P017")
+                                    .with_span(span, "imported here"),
+                            );
+                            continue;
+                        }
+                    };
+                    if visited.contains(&canonical) {
+                        diagnostics.push(
+                            Diagnostic::error(format!("use \"{}\": circular import", path))
+                                .with_code("ILO-P018")
+                                .with_span(span, "imported here"),
+                        );
+                        continue;
+                    }
+                    let tokens = match lexer::lex(&source) {
+                        Ok(t) => t,
+                        Err(e) => {
+                            diagnostics.push(Diagnostic::from(&e));
+                            continue;
+                        }
+                    };
+                    let token_spans: Vec<(lexer::Token, ast::Span)> = tokens
+                        .into_iter()
+                        .map(|(t, r)| {
+                            (
+                                t,
+                                ast::Span {
+                                    start: r.start,
+                                    end: r.end,
+                                },
+                            )
+                        })
+                        .collect();
+                    let (mut imported_prog, parse_errors) = parser::parse(token_spans);
+                    ast::resolve_aliases(&mut imported_prog);
+                    ast::desugar_dot_var_index(&mut imported_prog);
+                    for e in &parse_errors {
+                        diagnostics.push(Diagnostic::from(e));
+                    }
+                    visited.insert(canonical.clone());
+                    let imported_decls = resolve_imports(
+                        imported_prog.declarations,
+                        imported_dir.as_deref(),
+                        visited,
+                        diagnostics,
+                    );
+                    visited.remove(&canonical);
+                    let filtered = apply_only_filter(imported_decls, &only, &path, span, diagnostics);
+                    result.extend(filtered);
+                    continue;
+                }
                 diagnostics.push(
                     Diagnostic::error(
                         "`use` requires a file path context — not supported in inline code",
@@ -2748,6 +2893,10 @@ fn dispatch_cli(cli: cli::Cli, bare_has_bin: bool) -> i32 {
         }
         Some(cli::Cmd::Test(t)) => cli::test_runner::run(t),
         Some(cli::Cmd::Version) => version_cmd(cli.global.explicit_json()),
+        Some(cli::Cmd::Add(a)) => std::process::exit(ilo::pkg::cmd_add(&a.package)),
+        Some(cli::Cmd::Update(u)) => {
+            std::process::exit(ilo::pkg::cmd_update(u.package.as_deref()))
+        }
         Some(cli::Cmd::Run(r)) => {
             let mode = cli.global.output_mode();
             let explicit_json = cli.global.explicit_json();
