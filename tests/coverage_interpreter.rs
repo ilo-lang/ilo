@@ -1181,7 +1181,9 @@ fn jpar_list_non_array_returns_err() {
 
 #[test]
 fn jpar_list_invalid_json_returns_err() {
-    let src = "main>t;r=jpar-list \"{bad}\";?r{~_:\"ok\";^_:\"err\"}";
+    // `{{bad}}` escapes to literal `{bad}` JSON-malformed input; bare
+    // `{bad}` would now trigger `{name}` string interpolation (PR #?).
+    let src = "main>t;r=jpar-list \"{{bad}}\";?r{~_:\"ok\";^_:\"err\"}";
     assert_eq!(ok_out(src, "main", &[]), "err");
 }
 
@@ -1195,7 +1197,8 @@ fn jpar_jdmp_roundtrip() {
 
 #[test]
 fn jpar_invalid_returns_err() {
-    let src = "main>t;r=jpar \"{bad}\";?r{~_:\"ok\";^_:\"err\"}";
+    // See jpar_list_invalid_json_returns_err for `{{...}}` rationale.
+    let src = "main>t;r=jpar \"{{bad}}\";?r{~_:\"ok\";^_:\"err\"}";
     assert_eq!(ok_out(src, "main", &[]), "err");
 }
 
