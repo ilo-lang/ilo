@@ -224,10 +224,10 @@ Short builtin names are precious surface and ilo reserves a stable subset of the
 ```
 1-char  e
 2-char  at hd pi tl rd wr ct
-3-char  abs avg cap cat cel chr cos del det dot env ewm exp fft fld flr flt
-        fmt frq get grp has hed inv len log lsd lst lwr map max min mod now
-        num opt ord pat pow pst put rdb rdl rep rev rgx rng rnd rou run sin
-        slc spl srt str sum tan tau trm unq upr wra wrl zip
+3-char  abs avg b64 cap cat cel chr cos del det dot env ewm exp fft fld flr
+        flt fmt frq get grp has hed hex inv len log lsd lst lwr map max min
+        mod now num opt ord pat pow pst put rdb rdl rep rev rgx rng rnd rou
+        run sin slc spl srt str sum tan tau trm unq upr wra wrl zip
 ```
 
 All builtin aliases (`head`, `length`, `filter`, `concat`, `tail`, `sort`, `reverse`, `flatten`, `contains`, `group`, `average`, `print`, `trim`, `split`, `format`, `regex`, `read`, `readlines`, `readbuf`, `write`, `writelines`, `lset`, `floor`, `ceil`, `round`, `rand`, `random`, `rng`, `string`, `number`, `slice`, `unique`, `fold`) are reserved with the same shadow-prevention semantics as canonical builtin names. Binding an alias name or using it as a user-function name fires `ILO-P011` at parse time with the canonical form in the diagnostic, since the call-site rewrite to the canonical builtin silently bypasses any user binding of the same name. Previously only `rng` and `rand` had individual guards; as of 0.12.1 every alias in the table above is covered by a single `resolve_alias` check, so new aliases automatically inherit the protection when added to the table.
