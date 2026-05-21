@@ -1,0 +1,32 @@
+-- File-backed token cache: state survives the program.
+--
+-- OAuth refresh tokens have multi-hour TTLs and outlive a single
+-- ilo run. ilo has no globals; the canonical pattern is `wr`/`rd`
+-- a state file. Read cached token, attempt the request, write back
+-- the (possibly refreshed) token.
+--
+-- The shape generalises to any cross-run cache: rate-limit windows,
+-- ETags for conditional GETs, session cookies. The HTTP call here is
+-- omitted so the example runs offline; the cache lifecycle is what
+-- agents copy.
+
+-- Read cached token from disk; default sentinel when the file is absent.
+load tok-path:t>t;?h (isfile tok-path) (rd!! tok-path) "NO-TOKEN"
+
+-- Write the (refreshed) token back to disk for the next run.
+save tok-path:t tok:t>t;wr!! tok-path tok;tok
+
+-- Simulated refresh: in a real flow this would `pst!` to the IdP's
+-- token endpoint with the refresh_token grant. Here we just produce
+-- a new value so the test is hermetic.
+refresh old:t>t;+"refreshed:" old
+
+-- One cache cycle: load, refresh, save. Returns the new token.
+cycle tok-path:t>t;cur=load tok-path;new=refresh cur;save tok-path new
+
+-- Each run uses a unique tmp path so the example is hermetic across
+-- re-invocations and engines (tree/VM/Cranelift run sequentially).
+main>t;p=fmt "/tmp/ilo-oauth-cache-{}.txt" now-ms;cycle p
+
+-- run: main
+-- out: refreshed:NO-TOKEN
