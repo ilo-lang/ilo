@@ -145,3 +145,82 @@ fn utc_zero_offset_cross_engine() {
         check_offset(engine, "UTC", 1_719_835_200, 0);
     }
 }
+
+// --- Year boundary: DST status pins to the local rule at that instant ---
+
+#[test]
+fn london_year_boundary_gmt_cross_engine() {
+    // 2023-12-31 23:59:59 UTC and 2024-01-01 00:00:00 UTC are both GMT.
+    for engine in ENGINES {
+        check_offset(engine, "Europe/London", 1_704_067_199, 0);
+        check_offset(engine, "Europe/London", 1_704_067_200, 0);
+    }
+}
+
+// --- DST boundary days: the literal spring-forward / fall-back instants ---
+
+#[test]
+fn london_dst_spring_forward_cross_engine() {
+    // 2024-03-31 00:59:59 UTC is GMT; one second later, 01:00:00 UTC, BST kicks in.
+    for engine in ENGINES {
+        check_offset(engine, "Europe/London", 1_711_846_799, 0);
+        check_offset(engine, "Europe/London", 1_711_846_800, 3600);
+    }
+}
+
+#[test]
+fn london_dst_fall_back_cross_engine() {
+    // 2024-10-27 00:59:59 UTC is BST; one second later, 01:00:00 UTC, back to GMT.
+    for engine in ENGINES {
+        check_offset(engine, "Europe/London", 1_729_990_799, 3600);
+        check_offset(engine, "Europe/London", 1_729_990_800, 0);
+    }
+}
+
+// --- Verifier rejects type-wrong arguments before any engine runs (ILO-T013) ---
+//
+// Pins the hand-written verify arm for tz-offset: non-text first arg and
+// non-number second arg must both surface ILO-T013 at verify time, not
+// runtime, so the agent gets the signal in-context.
+
+fn run_verify_err(src: &str) -> String {
+    let out = ilo()
+        .arg(src)
+        .arg("--vm")
+        .output()
+        .expect("failed to run ilo");
+    assert!(
+        !out.status.success(),
+        "expected verify failure, got success. stdout={}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+    String::from_utf8_lossy(&out.stderr).to_string()
+}
+
+#[test]
+fn tz_offset_wrong_tz_arg_type_rejected() {
+    // First arg must be t (text); passing a number must fail verify (ILO-T013).
+    let stderr = run_verify_err(r#"f>R n t;tz-offset 1 0"#);
+    assert!(
+        stderr.contains("ILO-T013"),
+        "expected ILO-T013 for tz-offset non-text tz arg, got: {stderr}"
+    );
+    assert!(
+        stderr.contains("tz-offset"),
+        "expected message to mention tz-offset, got: {stderr}"
+    );
+}
+
+#[test]
+fn tz_offset_wrong_epoch_arg_type_rejected() {
+    // Second arg must be n (number); passing text must fail verify (ILO-T013).
+    let stderr = run_verify_err(r#"f>R n t;tz-offset "UTC" "now""#);
+    assert!(
+        stderr.contains("ILO-T013"),
+        "expected ILO-T013 for tz-offset non-number epoch arg, got: {stderr}"
+    );
+    assert!(
+        stderr.contains("tz-offset"),
+        "expected message to mention tz-offset, got: {stderr}"
+    );
+}
