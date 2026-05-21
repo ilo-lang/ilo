@@ -2096,6 +2096,14 @@ fn compile_function_body(
                 if nv.is_string() {
                     // AOT: string constants can't embed compile-time pointers.
                     // Extract the string, store as data section, call jit_string_const at runtime.
+                    // SAFETY: `nv.is_string()` was just checked true, so
+                    // the NanVal is a heap-pointer-tagged value whose pointer
+                    // field refers to a live `HeapObj::Str` owned by the
+                    // `CompiledProgram`'s constant pool.  The pool outlives
+                    // this compile pass.  Potential violation: if a NanVal
+                    // with a stale/freed heap pointer were placed in the
+                    // constant pool (e.g. after a future GC integration),
+                    // `as_heap_ref` would produce a dangling reference.
                     let s = unsafe { nv.as_heap_ref() };
                     let string_bytes = match s {
                         HeapObj::Str(st) => {
