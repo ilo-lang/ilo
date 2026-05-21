@@ -66,7 +66,7 @@ Non-last fns end with safe expr (op, index, match, literal, parens); last fn: an
 
 ## strings
 
-`"text"` with `\n \t \" \\`. Multi-line `"""..."""`. Interp `"hello {name}"` desugars to `fmt "hello {}" name` at parse time. Single-ident slots only (`{a-b}` OK, `{x + 1}` passes through). `{{` / `}}` escape to literal `{` / `}` inside interpolated strings. Bare `{}` keeps positional meaning. Don't mix `{ident}` and `{}` in the same string - pick one form.
+`"text"` with `\n \t \" \\`. Multi-line `"""..."""`. Interp `"hi {name}"` => `fmt "hi {}" name`. Single-ident slots only. `{{`/`}}` escape inside interpolated strings. Bare `{}` still positional; don't mix `{ident}` + `{}` in one string.
 
 ## reserved names
 
