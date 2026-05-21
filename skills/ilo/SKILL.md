@@ -61,7 +61,7 @@ Every builtin name, builtin alias, and control-flow keyword is reserved. Using a
 
 **3-char builtins**: `abs` `avg` `cap` `cat` `cel` `chr` `cos` `det` `dot` `env` `exp` `fft` `fld` `flt` `fmt` `frq` `get` `grp` `has` `inv` `log` `lsd` `lst` `lwr` `map` `max` `min` `mod` `now` `ord` `pi` `pow` `pst` `rdb` `rdl` `rev` `rgx` `rnd` `rou` `run` `sin` `slc` `spl` `srt` `sum` `tan` `tau` `trm` `unq` `upr` `wra` `wrl` `zip`
 
-**3-char control-flow**: `brk` (break) `cnt` (continue) `ret` (return)
+**3-char control-flow**: `brk` (break) `cnt` (continue) `ret` (return). `ret` from inside any loop body (`@x xs`, `@i a..b`, `wh`) returns from the enclosing fn directly - no sentinel-flag pattern needed.
 
 **4-char+**: `acos` `asin` `atan` `argmax` `argmin` `argsort` `basename` `chars` `chunks` `clamp` `cprod` `cumsum` `dirname` `dot` `drop` `dtfmt` `dtparse` `dtparse-rel` `enumerate` `flat` `flatmap` `fmod` `fmt2` `fsize` `glob` `ifft` `inv` `isdir` `isfile` `jdmp` `jkeys` `jpar` `jpth` `len` `mapr` `matmul` `matvec` `mdel` `median` `mget` `mhas` `mkeys` `mmap` `mpairs` `mset` `mtime` `mvals` `padl` `padr` `partition` `pathjoin` `prnt` `prod` `quantile` `rand-bytes` `range` `rdb` `rdin` `rdinl` `rdjl` `rdl` `rndn` `rsrt` `setdiff` `setinter` `setunion` `sleep` `solve` `sqrt` `stdev` `take` `transpose` `uniqby` `variance` `walk` `where` `window` `wra` `wrl`
 
