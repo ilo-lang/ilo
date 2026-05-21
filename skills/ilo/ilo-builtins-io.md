@@ -22,15 +22,7 @@ Prefix-call: `name arg1 arg2 ...`. Cross-engine unless noted.
 `get-many urls` (parallel fan-out, `L (R t t)`).
 Timeout variants round up to the nearest second. Err on timeout or connection failure.
 
-`!` auto-unwraps the Result on all HTTP builtins. Two forms, same rule as the rest of the `!` family:
-
-```
-get url       -> R t t   (handle Err yourself: ?r{~v:...;^e:...})
-get! url      -> t       (Ok→body; Err propagates out of the enclosing R-returning function)
-get!! url     -> t       (Ok→body; Err panics — use in agent scripts where retry is upstream)
-```
-
-Same applies to `pst!` / `pst!!`, `get-to!` / `get-to!!`, `pst-to!` / `pst-to!!`. Prefer `pst!` over the `?r{~v:v;^e:^e}` boilerplate in any function that already returns `R`; saves ~30 tokens per call site. Reach for `pst!!` only when an Err means the run is doomed anyway (script-style agent code, one-shot probes).
+`!` auto-unwraps on all HTTP builtins (`get!`, `pst!`, `get-to!`, `pst-to!`): Ok→body, Err propagates out of the enclosing `R`-returning fn. `!!` panics on Err instead (script-style). Prefer `pst!` over `?r{~v:v;^e:^e}` boilerplate when the caller already returns `R`; saves ~30 tokens per call site.
 
 ## JSON
 
