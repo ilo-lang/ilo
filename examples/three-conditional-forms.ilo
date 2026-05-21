@@ -1,0 +1,44 @@
+-- Three syntactically distinct conditional shapes in ilo. Agents
+-- regularly mix them up because they look similar, so this file pins
+-- each one as a runnable engine-harness example. Backed by the
+-- side-by-side table in skills/ilo/ilo-language.md and the ILO-P009
+-- "three conditional shapes" parser hint in src/parser/mod.rs.
+
+-- Form 1: braceless guard — EARLY RETURN from the fn when the cond is
+-- true, otherwise fall through to the next statement. The cheapest
+-- shape when you want to exit early on a single-expression result.
+classify x:n>t;>x 0 "pos";<x 0 "neg";"zero"
+
+-- Form 2: braced conditional `cond{body}` — runs the body if cond is
+-- true, then execution CONTINUES to the next statement. No early
+-- return. Useful for side-effects (e.g. prnt) mid-fn, or when you want
+-- to `ret` explicitly inside a loop body.
+bumped x:n>n;n=x;>x 0{n=+n 100};n
+
+-- Form 3: brace ternary `cond{then}{else}` — produces a VALUE with no
+-- early return. Cheap when both arms are bare expressions and you want
+-- to bind or return the result.
+label x:n>t;>x 0{"pos"}{"nonpos"}
+
+-- Bonus form: prefix-ternary keyword `?h cond a b` — same semantics as
+-- brace ternary but cheaper when the cond is bound or complex.
+plabel x:n>t;c=>x 0;?h c "pos" "nonpos"
+
+-- run: classify 5
+-- out: pos
+-- run: classify -3
+-- out: neg
+-- run: classify 0
+-- out: zero
+-- run: bumped 5
+-- out: 105
+-- run: bumped -3
+-- out: -3
+-- run: label 5
+-- out: pos
+-- run: label -1
+-- out: nonpos
+-- run: plabel 5
+-- out: pos
+-- run: plabel -1
+-- out: nonpos
