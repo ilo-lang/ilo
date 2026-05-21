@@ -1,0 +1,17 @@
+-- runtime-guard: `ilo run` caps wall-clock at 60 s (default) and stdout at
+-- ~100 MB (default). Override with `--max-runtime SECS` and
+-- `--max-output-bytes BYTES`. Set either to 0 to disable.
+--
+-- Hitting the runtime cap aborts with ILO-R016; hitting the output cap
+-- aborts with ILO-R017. Both are pure safety nets — a well-behaved program
+-- never sees them. The mandelbrot persona run that surfaced this guard
+-- missed a loop increment and produced 165 MB of stdout in an infinite
+-- loop before the harness killed it; the cap turns that into a structured
+-- error the agent can learn from instead.
+
+triangle n:n>n;s=0;i=0;wh <i n{s=+s i;i=+i 1};s
+
+main>n;triangle 10
+
+-- run: main
+-- out: 45
