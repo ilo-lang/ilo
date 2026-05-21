@@ -1569,7 +1569,7 @@ Constraints on the tail-call peephole:
 
 These constraints leave the common shapes (recursive accumulators, state machines, mutual recursion via direct names) covered. Other shapes still recurse the host stack as before; for deep recursion through non-tail-eligible shapes, restructure into an accumulator.
 
-Tree interpreter support shipped in 0.12.x. Bytecode VM (`--vm`) and Cranelift (`--jit`, AOT) gain matching support in subsequent PRs; until then, deep recursion via those engines uses each engine's own stack model (the VM's software stack tolerates much deeper recursion than host-stack recursion; the JIT recurses the host stack and is bounded by it).
+Tree interpreter and bytecode VM (`--vm`) support shipped in 0.12.x; the VM emits `OP_TAILCALL` for tail-position user-fn calls and reuses the current call frame instead of pushing a new one, so depth is bounded only by available heap. Cranelift (`--jit`, AOT) gains matching `return_call` lowering in a subsequent PR; until then, deep tail-recursion under the JIT/AOT path recurses the host stack and is bounded by it.
 
 ### Multi-statement bodies
 
