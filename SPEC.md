@@ -477,6 +477,7 @@ Called like functions, compiled to dedicated opcodes.
 | `cel n` | ceiling (round toward positive infinity) | `n` |
 | `rnd` | random float in [0, 1). NOT round - for round use `rou` (alias: `round`). Aliases: `rand`, `random`. | `n` |
 | `rnd a b` | random integer in [a, b] (inclusive) | `n` |
+| `rand-bytes n` | cryptographically random bytes from the platform CSPRNG (via `getrandom`), encoded as base64url-no-pad text. Distinct from `rnd` (seedable uniform float for simulations): this is the path for JWT `jti`, CSRF tokens, session IDs, nonces. Output is URL-safe so it drops straight into headers / cookies / query strings. Capped at 1 MiB; non-negative `n` only. | `t` |
 | `now` | current Unix timestamp (seconds) | `n` |
 | `now-ms` | current Unix timestamp (milliseconds) | `n` |
 | `get url` | HTTP GET | `R t t` |

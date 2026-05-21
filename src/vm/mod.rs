@@ -717,6 +717,12 @@ pub(crate) fn is_tree_bridge_eligible(b: crate::builtins::Builtin, argc: usize) 
         // `solve` (singular, dimension mismatch, empty) propagate as
         // ILO-R009 through the standard bridge path.
         (Builtin::Lstsq, 2) => true,
+        // rand-bytes n > t — CSPRNG bytes, base64url-no-pad encoded. Pure single-arg
+        // builtin from the VM's perspective (no FnRef, no Result wrap); the tree
+        // interpreter handles getrandom + encoding. VM and Cranelift inherit at zero
+        // opcode cost. NOT eligible for any constant-folding / common-subexpression
+        // pass: the whole point is that two calls return different bytes.
+        (Builtin::RandBytes, 1) => true,
         _ => false,
     }
 }

@@ -920,6 +920,7 @@ dependencies = [
  "cranelift-native",
  "cranelift-object",
  "fastrand",
+ "getrandom 0.2.17",
  "inkwell",
  "libc",
  "logos",

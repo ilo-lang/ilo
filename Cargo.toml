@@ -43,6 +43,7 @@ tokio = { version = "1", features = ["rt", "macros", "process", "io-util", "sync
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"], optional = true }
 clap = { version = "4", features = ["derive"] }
 fastrand = "2"
+getrandom = "0.2"
 regex = "1"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 
