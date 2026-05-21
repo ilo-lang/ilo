@@ -25,14 +25,18 @@ Timeout variants round up to the nearest second. Err on timeout or connection fa
 `!` auto-unwraps on all HTTP builtins (`get!`, `pst!`, `get-to!`, `pst-to!`): Ok→body, Err propagates. `!!` panics on Err. Prefer `pst!` over `?r{~v:v;^e:^e}` boilerplate in `R`-returning callers (~30 tokens/site).
 
 Parsing `;`-delimited headers (Content-Type, Cache-Control, Cookie): no `ct-parse` builtin, use `spl ";"` then `trm`/`lwr`, then `spl "="` per param. `ps=spl raw ";";media=lwr (trm (at ps 0));kv=spl (trm (at ps 1)) "="`. Don't bind to `ct` (shadows builtin).
+`!` auto-unwraps on HTTP builtins (`get!`, `pst!`, `get-to!`, `pst-to!`): Ok→body, Err propagates. `!!` panics on Err. Prefer `pst!` over `?r{~v:v;^e:^e}` when the caller returns `R` (~30 tokens saved).
 
 ## JSON
 
-`jpar s` parse (`R _ t`), `jpar-list s` parse and assert array (`R (L _) t` — use when you know the response is an array: `@x (jpar-list! body){...}`), `jpth s path` dot-path (typed), `jkeys s path` sorted object keys, `jdmp v` serialize. Numeric keys stringified in `jdmp`.
+`jpar s` parse (`R _ t`), `jpar-list s` parse and assert array (`R (L _) t` — use when you know the response is an array: `@x (jpar-list! body){...}`), `jpth s path` dot-path lookup, `jkeys s path` sorted object keys, `jdmp v` serialize. Numeric keys stringified in `jdmp`.
+
+`jpth`/`jpth!` returns the leaf **already typed**: numbers as `n`, text as `t`, bools as `b`, arrays as `L _`, objects as record. Don't wrap in `num`/`str` or re-`jpar`: `age=jpth! body "user.age"` is already `n`. `num (str (jpth! body "x"))` is pure waste (~30 tokens).
 
 `!` auto-unwraps on all of these. Common shape inside `R`-returning fn: `r=jpar! body;r.x`. `jpar!` propagates errors; `jpar!!` panics. Same for `jpar-list!`, `jpth!`, `jkeys!`. Non-`R` callers: use `default-on-err` (in `ilo-builtins-core`): `name=default-on-err (jpth body "user.name") "anon"`.
 `!` auto-unwraps the Result on any of these. Inside an `R`-returning function `r=jpar! body;r.x` is the common shape — saves the `?r{~v:v;^e:^e}` boilerplate per call site. `jpar! body` propagates parse errors out of the enclosing function; `jpar!! body` panics on parse error instead. Same for `jpar-list!`, `jpth!`, `jkeys!`.
 `jpth` Ok variant is the actual leaf type: JSON number → `n`, string → `t`, bool → `b`, array → `L _` (iterable), object → record. No re-parse needed. Don't write `num (str (jpth! body "x"))` — `jpth! body "x"` is already `n` when the leaf is numeric.
+`!` auto-unwraps the Result. Inside an `R`-returning fn, `r=jpar! body;r.x` saves `?r{~v:v;^e:^e}` boilerplate; `jpar! body` propagates parse errors, `jpar!!` panics. Same for `jpar-list!`, `jpth!`, `jkeys!`.
 
 ## Environment / process
 
