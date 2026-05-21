@@ -405,10 +405,38 @@ fn add_mo_epoch_out_of_range() {
 fn add_mo_result_out_of_calendar_range() {
     // Max i32 months from epoch 0 pushes far past chrono's max year (262143).
     // Exercises the `None` arm of `match add_months_snap(date, months)`.
+    // Regression: the year-as-months arithmetic used to be i32 and silently
+    // wrapped in release / panicked in debug at i32::MAX; it now widens to
+    // i64 and surfaces a clean ILO-R009.
     check_err(
         "f>n;add-mo 0 2147483647",
         &["f"],
         "add-mo: result out of calendar range",
+    );
+}
+
+#[test]
+fn add_mo_result_out_of_calendar_range_negative() {
+    // Symmetric negative case: i32::MIN months from epoch 0 pushes far before
+    // chrono's min year. Guards against an asymmetric overflow fix that only
+    // handles the positive side.
+    check_err(
+        "f>n;add-mo 0 -2147483648",
+        &["f"],
+        "add-mo: result out of calendar range",
+    );
+}
+
+#[test]
+fn add_mo_large_but_valid_offset() {
+    // 1000 years forward of 1970-01-01 lands on 2970-01-01, well within
+    // chrono's representable range. Guards against the overflow fix being
+    // too aggressive and rejecting plausible long offsets.
+    // 2970-01-01 00:00 UTC = 31556995200
+    check_num(
+        "f dt:n n:n>n;add-mo dt n",
+        &["f", "0", "12000"],
+        31556995200.0,
     );
 }
 

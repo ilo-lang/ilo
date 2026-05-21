@@ -2006,12 +2006,20 @@ fn add_mo_impl(epoch_arg: &Value, months_arg: &Value) -> Result<Value> {
     };
     let date = dt.date_naive();
     fn add_months_snap(date: NaiveDate, months: i32) -> Option<NaiveDate> {
-        let total = date.year() * 12 + (date.month() as i32 - 1) + months;
-        let y = total.div_euclid(12);
+        // Compute total months since year-0 in i64 so adding i32::MAX (or
+        // i32::MIN) months to any chrono-representable year cannot wrap.
+        // Pre-fix this was i32 arithmetic: `date.year() * 12 + months`
+        // overflowed at i32::MAX months, panicking in debug and silently
+        // wrapping to a valid date in release. The widened path now either
+        // produces a valid NaiveDate or returns None, which the caller
+        // surfaces as a clean ILO-R009 "result out of calendar range".
+        let total: i64 = (date.year() as i64) * 12 + (date.month() as i64 - 1) + (months as i64);
+        let y_i64 = total.div_euclid(12);
         let m = (total.rem_euclid(12) + 1) as u32;
+        let y: i32 = i32::try_from(y_i64).ok()?;
         let max_day = {
             let next = if m == 12 {
-                NaiveDate::from_ymd_opt(y + 1, 1, 1)
+                NaiveDate::from_ymd_opt(y.checked_add(1)?, 1, 1)
             } else {
                 NaiveDate::from_ymd_opt(y, m + 1, 1)
             };
