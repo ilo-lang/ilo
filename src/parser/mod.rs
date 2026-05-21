@@ -1186,7 +1186,7 @@ impl Parser {
     /// next function's name (`main`) as another parameter.
     fn parse_params(&mut self) -> Result<Vec<Param>> {
         let mut params = Vec::new();
-        while let Some(Token::Ident(_)) = self.peek() {
+        loop {
             // A top-level newline before the next ident means the previous
             // function's header ended without a `>type;body` — stop here and
             // let `parse_fn_decl` surface a precise ILO-P020 against the
@@ -1195,6 +1195,23 @@ impl Parser {
             if self.boundary_at_cursor().is_some() {
                 break;
             }
+            // Reserved keyword tokens (`fn`, `def`, `let`, `var`, `const`,
+            // `if`, `return`) at parameter position followed by `:` — the user
+            // is writing a normal-shaped param header `<kw>:type`. Without this
+            // guard the `while let Token::Ident` filter bails silently and the
+            // outer `expect(Greater)` surfaces a cryptic
+            // `ILO-P003 expected '>', got 'fn'` that doesn't mention the real
+            // problem (the name is reserved). Catch here with the same
+            // ILO-P011 + rename hint the binding-context guard uses.
+            if self.token_at(self.pos + 1) == Some(&Token::Colon)
+                && let Some(tok) = self.peek()
+                && let Some((msg, hint)) = reserved_keyword_binding_message(tok)
+            {
+                return Err(self.error_hint("ILO-P011", msg, hint));
+            }
+            let Some(Token::Ident(_)) = self.peek() else {
+                break;
+            };
             // Look ahead for colon to distinguish params from other constructs
             if self.pos + 1 < self.tokens.len()
                 && self.token_at(self.pos + 1) == Some(&Token::Colon)
@@ -7807,6 +7824,62 @@ mod tests {
             hint.contains("name=expr") || hint.contains("bindings"),
             "hint: {}",
             hint
+        );
+    }
+
+    // ---- Reserved-keyword tokens at parameter position (P2#14) ----
+
+    #[test]
+    fn reserved_word_fn_as_param_name_errors_with_p011() {
+        // `g fn:n>n;fn` — the param name is `fn`. Without the param-position
+        // guard the `while let Token::Ident` filter bails silently and the
+        // outer `expect(Greater)` surfaces a cryptic ILO-P003 against the
+        // missing `>`. The fix emits ILO-P011 with the same rename hint the
+        // binding-context guard uses (P2#14, 2026-05-21).
+        let (_, errors) = parse_str_errors("g fn:n>n;fn");
+        let e = errors
+            .iter()
+            .find(|e| e.code == "ILO-P011")
+            .expect("expected ILO-P011 for `fn` as param name");
+        assert!(
+            e.message.contains("`fn` is a reserved word"),
+            "message: {}",
+            e.message
+        );
+        let hint = e.hint.as_ref().expect("expected hint");
+        assert!(
+            hint.contains("rename") && hint.contains("fv"),
+            "hint should suggest rename to e.g. `fv`/`func`/`callback`: {}",
+            hint
+        );
+    }
+
+    #[test]
+    fn reserved_word_def_as_second_param_name_errors_with_p011() {
+        // `g a:n def:n>n;+a def` — `def` is the second param name.
+        let (_, errors) = parse_str_errors("g a:n def:n>n;+a def");
+        let e = errors
+            .iter()
+            .find(|e| e.code == "ILO-P011")
+            .expect("expected ILO-P011 for `def` as second param name");
+        assert!(
+            e.message.contains("`def` is a reserved word"),
+            "message: {}",
+            e.message
+        );
+    }
+
+    #[test]
+    fn reserved_word_let_as_param_name_errors_with_p011() {
+        let (_, errors) = parse_str_errors("g let:n>n;let");
+        let e = errors
+            .iter()
+            .find(|e| e.code == "ILO-P011")
+            .expect("expected ILO-P011 for `let` as param name");
+        assert!(
+            e.message.contains("`let` is a reserved word"),
+            "message: {}",
+            e.message
         );
     }
 
