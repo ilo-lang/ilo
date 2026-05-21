@@ -1173,9 +1173,20 @@ Each of the three operand slots accepts the same shapes as a prefix-binop operan
 ```
 f x:n>n;>x 0{ret x};0         -- return x early if positive, else 0
 f xs:L n>n;@x xs{>=x 10{ret x}};0  -- return first element >= 10
+g xs:L n tgt:n>n;@i 0..(len xs){=(at xs i) tgt{ret i}};-1  -- index of first match, else -1
 ```
 
 Braceless guards provide early return for simple cases. Use `ret` inside braced conditionals when you need early return with more complex logic or inside loops.
+
+**`ret` works from any loop body.** `ret` from inside `@x xs{...}`, `@i a..b{...}`, or `wh cond{...}` returns from the enclosing function directly - no sentinel-flag pattern needed. Use `brk` only when you want to stop the loop and let execution fall through to a post-loop expression (e.g. accumulating a partial result, then computing a final value from it). Example contrast:
+
+```
+-- ret: stop and return from the function
+find xs:L n tgt:n>n;@x xs{=x tgt{ret x}};-1
+
+-- brk: stop the loop, keep going in the function
+count-until xs:L n tgt:n>n;c=0;@x xs{=x tgt{brk};c=+c 1};c
+```
 
 ### Range Iteration
 
