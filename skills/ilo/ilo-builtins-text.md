@@ -28,15 +28,7 @@ Signatures (pat first, string last):
 
 ## Formatting
 
-`fmt template args...` (no list splat; lists are formatted as a single value).
-
-`fmt2 x:n digits:n > t` — format a number to `digits` decimal places (half-to-even rounding; `digits` clamped to `0..=20`). Not a `fmt` variant: `fmt2` is a **decimal formatter**, not a list-splat form of `fmt`.
-
-```
-fmt2 3.14159 2          -- "3.14"
-fmt2 1.0 0              -- "1"
-fmt "x={}" (fmt2 v 2)   -- compose for template + precision
-```
+`fmt template args...` (no list splat). `fmt2 x digits > t` is a **decimal formatter**, not a fmt variant: `fmt2 3.14159 2` -> `"3.14"`. Compose: `fmt "x={}" (fmt2 v 2)`.
 
 ## CSV / TSV
 
@@ -62,9 +54,9 @@ last-week-start nw:n>n;dtparse-rel!! "last monday" nw
 
 ## Duration
 
-`dur-parse s > R n t` — parse human duration string into seconds. Accepts `s/m/h/d/w` abbreviations, full names (week/day/hour/minute/second, singular + plural), decimal quantities, mixed sequences ("3h 30m", "1.5 hours", "1 week 2 days", "90s"). Months are **not** supported ("3mo", "3 months" both error — a month is not a fixed number of seconds; use day counts instead). A leading `-` is sticky: it applies to every following token until an explicit `+` resets it, so `"-1m 30s"` = `-90`. Err if empty or no unit found.
+`dur-parse s > R n t` parse human duration to seconds. Accepts `s/m/h/d/w` and full names (singular/plural), decimals, mixed sequences ("3h 30m", "1.5 hours", "1 week 2 days"). Months are **not** supported. Leading `-` is sticky until `+` resets it, so `"-1m 30s"` = `-90`. Err if empty or no unit.
 
-`dur-fmt n > t` — format seconds as human-readable duration. Drops zero parts; uses largest units ("2h 42m", "1 day", "30s"). Zero returns "0s". Negative values emit a single leading minus (`-90` → `"-1m 30s"`) which round-trips back through `dur-parse`. Fractional seconds are preserved with up to 3 decimal places, trailing zeros stripped (`90.5` → `"1m 30.5s"`, `0.5` → `"0.5s"`).
+`dur-fmt n > t` format seconds as human-readable. Drops zero parts; largest units ("2h 42m", "1 day", "30s"). Zero -> "0s". Negative emits one leading minus and round-trips. Fractional preserved to 3dp, trailing zeros stripped.
 
 ```
 secs = dur-parse! "3h 30m"  -- 12600
