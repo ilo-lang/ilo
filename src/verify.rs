@@ -4582,35 +4582,53 @@ impl VerifyContext {
                     if callee == "fmt"
                         && let Some(Expr::Literal(Literal::Text(tmpl))) = args.first()
                     {
+                        // Tokenize placeholders the same way the interpreter
+                        // does — anything that opens with `{` followed by `}`
+                        // / `:` / `.` is a placeholder candidate; everything
+                        // else stays a literal (so `{a:1}` survives).
                         let mut iter = tmpl.chars().peekable();
                         let mut bad: Option<String> = None;
                         let mut slot_count: usize = 0;
                         while let Some(c) = iter.next() {
-                            if c == '{' && iter.peek() == Some(&'}') {
-                                iter.next();
-                                slot_count += 1;
-                            } else if c == '{' && iter.peek() == Some(&':') {
+                            if c == '{'
+                                && (iter.peek() == Some(&'}')
+                                    || iter.peek() == Some(&':')
+                                    || iter.peek() == Some(&'.'))
+                            {
                                 let mut spec = String::from("{");
+                                let mut terminated = false;
                                 for sc in iter.by_ref() {
                                     spec.push(sc);
                                     if sc == '}' {
+                                        terminated = true;
                                         break;
                                     }
                                 }
-                                bad = Some(spec);
-                                break;
+                                if !terminated {
+                                    // Unterminated — interpreter treats as
+                                    // literal, so we say nothing here.
+                                    continue;
+                                }
+                                match crate::interpreter::parse_fmt_spec(&spec) {
+                                    Some(_) => slot_count += 1,
+                                    None => {
+                                        bad = Some(spec);
+                                        break;
+                                    }
+                                }
                             }
                         }
                         if let Some(spec) = bad {
                             self.err(
                                 "ILO-T013",
                                 func,
-                                format!(
-                                    "'fmt' only supports bare `{{}}` placeholders, got `{spec}`"
-                                ),
+                                format!("'fmt' unsupported placeholder spec `{spec}`"),
                                 Some(
-                                    "for decimal precision use `fmt \"...{}\" (fmt2 v 2)`; \
-                                     for width / padding use `padl (str n) 6` (space-pad)"
+                                    "supported specs: `{}`, `{.Nf}` / `{:.Nf}` (decimal places), \
+                                     `{:N}` (right-align width), `{:Nd}` (integer width), \
+                                     `{:<N}` (left-align width). For zero-padded widths use \
+                                     `padl (str n) 6` with a custom char; compose `fmt2` for \
+                                     fancier number formatting."
                                         .to_string(),
                                 ),
                                 Some(span),

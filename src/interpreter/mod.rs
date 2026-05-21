@@ -798,6 +798,134 @@ pub(crate) fn pathjoin_posix(parts: &[&str]) -> String {
 /// | `m`          | min, mins, minute, minutes    | 60                   |
 /// | `s`          | sec, secs, second, seconds    | 1                    |
 ///
+/// Parsed `fmt` placeholder spec. Lean by design — agents compose `fmt2`
+/// / `padl` / `padr` for anything off the spec.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum FmtSpec {
+    /// `{}` — default `Display`.
+    Bare,
+    /// `{.Nf}` or `{:.Nf}` — N decimal places. Number arg required.
+    Precision(usize),
+    /// `{:N}` — right-align Display to width N (space-pad). Any arg type.
+    WidthRight(usize),
+    /// `{:Nd}` — integer right-align to width N. Number arg required.
+    IntWidth(usize),
+    /// `{:<N}` — left-align Display to width N (space-pad). Any arg type.
+    WidthLeft(usize),
+}
+
+/// Parse a `{...}` spec body. Returns None for syntactically valid braces
+/// that aren't one of the four supported shapes — callers raise ILO-R009
+/// / ILO-T013 with the offending literal so agents see what they wrote.
+///
+/// Accepts the literal placeholder text including the outer braces:
+///   "{}", "{.2f}", "{:.3f}", "{:5}", "{:5d}", "{:<5}".
+pub(crate) fn parse_fmt_spec(spec: &str) -> Option<FmtSpec> {
+    let inner = spec.strip_prefix('{')?.strip_suffix('}')?;
+    if inner.is_empty() {
+        return Some(FmtSpec::Bare);
+    }
+    // `{.Nf}` — no colon, precision shorthand.
+    if let Some(rest) = inner.strip_prefix('.')
+        && let Some(digits) = rest.strip_suffix('f')
+        && !digits.is_empty()
+        && digits.chars().all(|c| c.is_ascii_digit())
+    {
+        return digits.parse::<usize>().ok().map(FmtSpec::Precision);
+    }
+    // The remaining specs all start with `:`.
+    let body = inner.strip_prefix(':')?;
+    // `:.Nf`
+    if let Some(rest) = body.strip_prefix('.')
+        && let Some(digits) = rest.strip_suffix('f')
+        && !digits.is_empty()
+        && digits.chars().all(|c| c.is_ascii_digit())
+    {
+        return digits.parse::<usize>().ok().map(FmtSpec::Precision);
+    }
+    // Width digits are space-pad only — zero-padded widths (`{:06d}`) are
+    // deliberately out of scope. Reject any leading `0` on a multi-digit
+    // width so agents see a clear error instead of silently getting a
+    // space-padded value.
+    let is_plain_width = |s: &str| {
+        !s.is_empty()
+            && s.chars().all(|c| c.is_ascii_digit())
+            && !(s.len() > 1 && s.starts_with('0'))
+    };
+    // `:<N` — left-align width.
+    if let Some(digits) = body.strip_prefix('<')
+        && is_plain_width(digits)
+    {
+        return digits.parse::<usize>().ok().map(FmtSpec::WidthLeft);
+    }
+    // `:Nd` — integer width.
+    if let Some(digits) = body.strip_suffix('d')
+        && is_plain_width(digits)
+    {
+        return digits.parse::<usize>().ok().map(FmtSpec::IntWidth);
+    }
+    // `:N` — width (string or stringified value).
+    if is_plain_width(body) {
+        return body.parse::<usize>().ok().map(FmtSpec::WidthRight);
+    }
+    None
+}
+
+/// Apply a parsed spec to a single arg. Returns Err with a short hint when
+/// the arg type doesn't fit the spec (e.g. `{:Nd}` with a non-number).
+pub(crate) fn apply_fmt_spec(spec: &FmtSpec, arg: &Value) -> std::result::Result<String, String> {
+    match spec {
+        FmtSpec::Bare => Ok(format!("{}", arg)),
+        FmtSpec::Precision(n) => match arg {
+            Value::Number(x) => Ok(format!("{:.*}", *n, x)),
+            other => Err(format!(
+                "decimal-precision spec requires a number, got {:?}",
+                other
+            )),
+        },
+        FmtSpec::IntWidth(w) => match arg {
+            Value::Number(x) => {
+                // Truncate toward zero — matches `str` for integer-valued
+                // doubles and keeps `{:5d}` predictable for floats like
+                // 42.9 (renders `42`, not `43`). Round explicitly via `rou`
+                // if you want rounding.
+                let n = *x as i64;
+                let s = n.to_string();
+                Ok(pad_left(&s, *w))
+            }
+            other => Err(format!("`d` width spec requires a number, got {:?}", other)),
+        },
+        FmtSpec::WidthRight(w) => {
+            let s = format!("{}", arg);
+            Ok(pad_left(&s, *w))
+        }
+        FmtSpec::WidthLeft(w) => {
+            let s = format!("{}", arg);
+            Ok(pad_right(&s, *w))
+        }
+    }
+}
+
+fn pad_left(s: &str, width: usize) -> String {
+    let n = s.chars().count();
+    if n >= width {
+        s.to_string()
+    } else {
+        let pad = " ".repeat(width - n);
+        format!("{pad}{s}")
+    }
+}
+
+fn pad_right(s: &str, width: usize) -> String {
+    let n = s.chars().count();
+    if n >= width {
+        s.to_string()
+    } else {
+        let pad = " ".repeat(width - n);
+        format!("{s}{pad}")
+    }
+}
+
 /// Examples: `"3 weeks 2 days 5 hours"`, `"4h 32m"`, `"1d"`, `"1.5 hours"`,
 /// `"90s"`, `"2w3d"`.
 ///
@@ -4344,35 +4472,63 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         let mut arg_idx = 1;
         let mut chars = template.chars().peekable();
         while let Some(c) = chars.next() {
-            if c == '{' && chars.peek() == Some(&'}') {
-                chars.next();
-                if arg_idx < args.len() {
-                    result.push_str(&format!("{}", args[arg_idx]));
-                    arg_idx += 1;
-                } else {
-                    result.push_str("{}");
-                }
-            } else if c == '{' && chars.peek() == Some(&':') {
-                // Reject printf-style format specs explicitly so callers don't
-                // silently get the literal template back. `fmt` only supports
-                // bare `{}` placeholders; richer formatting composes from
-                // smaller builtins instead.
+            if c == '{'
+                && (chars.peek() == Some(&'}')
+                    || chars.peek() == Some(&':')
+                    || chars.peek() == Some(&'.'))
+            {
+                // Collect spec body up to '}'.
                 let mut spec = String::from("{");
+                let mut terminated = false;
                 for sc in chars.by_ref() {
                     spec.push(sc);
                     if sc == '}' {
+                        terminated = true;
                         break;
                     }
                 }
-                return Err(RuntimeError::new(
-                    "ILO-R009",
-                    format!(
-                        "fmt only supports bare `{{}}` placeholders, got `{}`. \
-                         For decimal precision use `fmt \"...{{}}\" (fmt2 v 2)`; \
-                         for width / padding use `padl (str n) 6` (space-pad).",
-                        spec
-                    ),
-                ));
+                if !terminated {
+                    // Unterminated brace — leave as literal (matches the old
+                    // permissive behaviour for `{a:1}` style non-placeholder
+                    // text that just happens to start with `{`).
+                    result.push_str(&spec);
+                    continue;
+                }
+                match parse_fmt_spec(&spec) {
+                    Some(FmtSpec::Bare) => {
+                        if arg_idx < args.len() {
+                            result.push_str(&format!("{}", args[arg_idx]));
+                            arg_idx += 1;
+                        } else {
+                            result.push_str("{}");
+                        }
+                    }
+                    Some(spec_kind) => {
+                        if arg_idx >= args.len() {
+                            return Err(RuntimeError::new(
+                                "ILO-R009",
+                                format!("fmt template spec `{spec}` has no matching value arg"),
+                            ));
+                        }
+                        let rendered = apply_fmt_spec(&spec_kind, &args[arg_idx]).map_err(|e| {
+                            RuntimeError::new("ILO-R009", format!("fmt spec `{spec}`: {e}"))
+                        })?;
+                        result.push_str(&rendered);
+                        arg_idx += 1;
+                    }
+                    None => {
+                        return Err(RuntimeError::new(
+                            "ILO-R009",
+                            format!(
+                                "fmt: unsupported placeholder spec `{spec}`. \
+                                 Supported: `{{}}`, `{{.Nf}}` / `{{:.Nf}}` (decimal places), \
+                                 `{{:N}}` (right-align width), `{{:Nd}}` (integer width), \
+                                 `{{:<N}}` (left-align width). Zero-padded widths and hex/sign \
+                                 are out of scope; compose via `fmt2` / `padl` / `padr`."
+                            ),
+                        ));
+                    }
+                }
             } else {
                 result.push(c);
             }
