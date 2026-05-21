@@ -467,6 +467,116 @@ pub(crate) fn box_muller_normal(mu: f64, sigma: f64) -> f64 {
     mu + sigma * z
 }
 
+/// Base64url-no-pad encoder. Alphabet per RFC 4648 §5 (URL-safe: `-` / `_`),
+/// no `=` padding. Total — never fails — and allocation-free apart from the
+/// returned `String`.
+///
+/// Kept as a small in-file helper rather than pulling the `base64` crate so
+/// the cryptographic-random path stays additive against current main, which
+/// does not yet have the crypto primitives family (those land in a separate
+/// branch). When the crypto branch merges, this helper can be folded into the
+/// shared base64url encoder without changing `rand-bytes` semantics.
+#[inline]
+fn b64url_no_pad_encode(bytes: &[u8]) -> String {
+    const ALPHA: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+    // Output length: ceil(n * 4 / 3) with the trailing `=` chars stripped.
+    let n = bytes.len();
+    let cap = n.div_ceil(3) * 4;
+    let mut out = Vec::with_capacity(cap);
+    let mut chunks = bytes.chunks_exact(3);
+    for chunk in chunks.by_ref() {
+        let b0 = chunk[0];
+        let b1 = chunk[1];
+        let b2 = chunk[2];
+        out.push(ALPHA[(b0 >> 2) as usize]);
+        out.push(ALPHA[(((b0 & 0b11) << 4) | (b1 >> 4)) as usize]);
+        out.push(ALPHA[(((b1 & 0b1111) << 2) | (b2 >> 6)) as usize]);
+        out.push(ALPHA[(b2 & 0b111111) as usize]);
+    }
+    let rem = chunks.remainder();
+    match rem.len() {
+        1 => {
+            let b0 = rem[0];
+            out.push(ALPHA[(b0 >> 2) as usize]);
+            out.push(ALPHA[((b0 & 0b11) << 4) as usize]);
+        }
+        2 => {
+            let b0 = rem[0];
+            let b1 = rem[1];
+            out.push(ALPHA[(b0 >> 2) as usize]);
+            out.push(ALPHA[(((b0 & 0b11) << 4) | (b1 >> 4)) as usize]);
+            out.push(ALPHA[((b1 & 0b1111) << 2) as usize]);
+        }
+        _ => {}
+    }
+    // SAFETY: every byte pushed is from ALPHA, which is ASCII-only.
+    debug_assert!(out.iter().all(|b| b.is_ascii()));
+    String::from_utf8(out).expect("base64url alphabet is ASCII-only")
+}
+
+/// `rand-bytes n > t` — generate `n` cryptographically random bytes from the
+/// platform CSPRNG (via the `getrandom` crate), return as a base64url-no-pad
+/// text. Distinct from `rnd` (seedable uniform float for simulations) and
+/// `rndn` (seedable Normal float): this is the path agents need for JWT `jti`,
+/// CSRF tokens, session IDs, and nonces.
+///
+/// Output is base64url with no padding so the result drops straight into
+/// HTTP headers, cookies, and query strings without further encoding. Callers
+/// that need raw bytes can decode with `b64u-dec` once that lands; in the
+/// meantime the encoded form is what every realistic use case wants.
+///
+/// `#[inline(never)]` matches the recurring stack-overflow guard pattern
+/// used by other tree-bridge implementations — keeps the dispatch site small
+/// even in release builds, where this is invoked from the hot path.
+#[inline(never)]
+pub(crate) fn eval_rand_bytes(arg: &Value) -> Result<Value> {
+    let n_f = match arg {
+        Value::Number(n) => *n,
+        other => {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!("rand-bytes requires a number, got {other:?}"),
+            ));
+        }
+    };
+    if !n_f.is_finite() {
+        return Err(RuntimeError::new(
+            "ILO-R009",
+            format!("rand-bytes: n is not finite ({n_f})"),
+        ));
+    }
+    if n_f < 0.0 {
+        return Err(RuntimeError::new(
+            "ILO-R009",
+            format!("rand-bytes: n must be non-negative, got {n_f}"),
+        ));
+    }
+    // Cap at 1 MiB. Larger CSPRNG draws are almost certainly a bug (typo in
+    // the byte count, mismatched units); cheaper to surface as ILO-R009 than
+    // to allocate gigabytes of base64 output. 1 MiB raw → ~1.4 MB encoded.
+    const MAX_BYTES: f64 = 1024.0 * 1024.0;
+    if n_f > MAX_BYTES {
+        return Err(RuntimeError::new(
+            "ILO-R009",
+            format!(
+                "rand-bytes: n={n_f} exceeds 1 MiB cap; if you really need this much CSPRNG output, call rand-bytes in a loop"
+            ),
+        ));
+    }
+    let n = n_f as usize;
+    if n == 0 {
+        return Ok(Value::Text(Arc::new(String::new())));
+    }
+    let mut buf = vec![0u8; n];
+    if let Err(e) = getrandom::getrandom(&mut buf) {
+        return Err(RuntimeError::new(
+            "ILO-R009",
+            format!("rand-bytes: CSPRNG read failed: {e}"),
+        ));
+    }
+    Ok(Value::Text(Arc::new(b64url_no_pad_encode(&buf))))
+}
+
 /// POSIX `dirname` on a forward-slash path string. See `Builtin::Dirname`
 /// in the builtin dispatch above for the full semantics + edge-case table.
 ///
@@ -2250,6 +2360,9 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 )),
             };
         }
+    }
+    if builtin == Some(Builtin::RandBytes) && args.len() == 1 {
+        return eval_rand_bytes(&args[0]);
     }
     if builtin == Some(Builtin::Spl) && args.len() == 2 {
         return match (&args[0], &args[1]) {
@@ -12986,6 +13099,120 @@ mod tests {
                 Ok(secs),
                 "round-trip failed for {secs}"
             );
+        }
+    }
+
+    // ── rand-bytes / base64url-no-pad encoder ────────────────────────────────
+    //
+    // The encoder is internal to the interpreter (no third-party base64
+    // dep yet on main), so we pin it against known RFC 4648 §5 vectors here.
+    // If anyone tweaks the byte-shuffle these break immediately.
+
+    #[test]
+    fn b64url_no_pad_empty() {
+        assert_eq!(super::b64url_no_pad_encode(b""), "");
+    }
+
+    #[test]
+    fn b64url_no_pad_one_byte() {
+        // "f" -> "Zg" (single trailing-byte branch, rem.len() == 1)
+        assert_eq!(super::b64url_no_pad_encode(b"f"), "Zg");
+    }
+
+    #[test]
+    fn b64url_no_pad_two_bytes() {
+        // "fo" -> "Zm8" (two trailing-bytes branch, rem.len() == 2)
+        assert_eq!(super::b64url_no_pad_encode(b"fo"), "Zm8");
+    }
+
+    #[test]
+    fn b64url_no_pad_three_bytes() {
+        // "foo" -> "Zm9v" (exact 3-byte multiple, no remainder)
+        assert_eq!(super::b64url_no_pad_encode(b"foo"), "Zm9v");
+    }
+
+    #[test]
+    fn b64url_no_pad_canonical_hello() {
+        // Standard b64 of "hello" is "aGVsbG8=" — strip the `=` for no-pad.
+        assert_eq!(super::b64url_no_pad_encode(b"hello"), "aGVsbG8");
+    }
+
+    #[test]
+    fn b64url_no_pad_url_safe_chars() {
+        // Input chosen so the standard b64 output contains `+` and `/`,
+        // which the url-safe alphabet must rewrite to `-` and `_`.
+        // Bytes [0xfb, 0xff, 0xbf] -> std b64 "+/+/" -> url-safe "-_-_".
+        assert_eq!(super::b64url_no_pad_encode(&[0xfb, 0xff, 0xbf]), "-_-_");
+    }
+
+    #[test]
+    fn b64url_no_pad_length_formula() {
+        // Output length = ceil(n * 4 / 3) for non-zero n, with the trailing
+        // `=` chars dropped. Pins the length contract that callers rely on
+        // (e.g. `len (rand-bytes 16) == 22` for a jti token).
+        for n in 0..=64 {
+            let bytes = vec![0xa5u8; n];
+            let encoded = super::b64url_no_pad_encode(&bytes);
+            let expected = if n == 0 {
+                0
+            } else {
+                // ceil(n/3)*4 minus padding chars
+                let pad = match n % 3 {
+                    1 => 2,
+                    2 => 1,
+                    _ => 0,
+                };
+                n.div_ceil(3) * 4 - pad
+            };
+            assert_eq!(encoded.len(), expected, "n={n}: encoded={encoded:?}");
+        }
+    }
+
+    #[test]
+    fn rand_bytes_negative_returns_err() {
+        let r = super::eval_rand_bytes(&Value::Number(-1.0));
+        assert!(matches!(&r, Err(e) if e.code == "ILO-R009"), "got {r:?}");
+    }
+
+    #[test]
+    fn rand_bytes_non_finite_returns_err() {
+        for n in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            let r = super::eval_rand_bytes(&Value::Number(n));
+            assert!(
+                matches!(&r, Err(e) if e.code == "ILO-R009"),
+                "n={n} got {r:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn rand_bytes_over_cap_returns_err() {
+        let r = super::eval_rand_bytes(&Value::Number(2.0 * 1024.0 * 1024.0));
+        assert!(matches!(&r, Err(e) if e.code == "ILO-R009"), "got {r:?}");
+    }
+
+    #[test]
+    fn rand_bytes_zero_returns_empty_text() {
+        let r = super::eval_rand_bytes(&Value::Number(0.0)).expect("Ok");
+        match r {
+            Value::Text(s) => assert_eq!(s.as_str(), ""),
+            other => panic!("expected Text(\"\"), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn rand_bytes_16_returns_22_char_text() {
+        let r = super::eval_rand_bytes(&Value::Number(16.0)).expect("Ok");
+        match r {
+            Value::Text(s) => {
+                assert_eq!(s.len(), 22, "got {s:?}");
+                assert!(
+                    s.chars()
+                        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'),
+                    "non-b64url char in {s:?}"
+                );
+            }
+            other => panic!("expected Text, got {other:?}"),
         }
     }
 }

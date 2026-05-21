@@ -401,6 +401,8 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("drop", &["n", "list_or_text"], "list_or_text"),
     ("rnd", &[], "n"),
     ("rndn", &["n", "n"], "n"),
+    // rand-bytes n > t — cryptographically random bytes, base64url-no-pad encoded.
+    ("rand-bytes", &["n"], "t"),
     ("now", &[], "n"),
     ("now-ms", &[], "n"),
     // Math constants (0.12.1). Zero-arg builtins returning f64 constants.

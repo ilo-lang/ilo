@@ -99,6 +99,7 @@ pub enum Builtin {
     // Random / time
     Rnd,
     Rndn,
+    RandBytes,
     Now,
     NowMs,
     Dtfmt,
@@ -324,6 +325,7 @@ impl Builtin {
             "mapr" => Some(Builtin::Mapr),
             "rnd" => Some(Builtin::Rnd),
             "rndn" => Some(Builtin::Rndn),
+            "rand-bytes" => Some(Builtin::RandBytes),
             "now" => Some(Builtin::Now),
             "now-ms" => Some(Builtin::NowMs),
             "dtfmt" => Some(Builtin::Dtfmt),
@@ -489,6 +491,7 @@ impl Builtin {
             Builtin::Mapr => "mapr",
             Builtin::Rnd => "rnd",
             Builtin::Rndn => "rndn",
+            Builtin::RandBytes => "rand-bytes",
             Builtin::Now => "now",
             Builtin::NowMs => "now-ms",
             Builtin::Dtfmt => "dtfmt",
@@ -810,6 +813,14 @@ impl Builtin {
         // matmul / solve so VM and Cranelift inherit through the bridge
         // without new opcodes. Appended to preserve every existing tag.
         Builtin::Lstsq,
+        // `rand-bytes n > t` — cryptographically random bytes, base64url-no-pad encoded.
+        // Distinct from `rnd` (uniform float) and `rndn` (Normal float): this is the
+        // CSPRNG path agents need for jti / CSRF tokens / session IDs / nonces. Output
+        // is base64url-no-pad so it drops straight into headers, cookies, query strings
+        // without further encoding. Tree-bridge eligible (arity 1, no FnRef, no I/O
+        // wrap). Appended last to preserve on-wire tags. Backed by `getrandom`, not
+        // `fastrand` — cryptographic randomness must never be seeded.
+        Builtin::RandBytes,
     ];
 
     /// On-wire 8-bit tag for cross-engine builtin dispatch. See `ALL`.
@@ -1119,6 +1130,7 @@ mod tests {
             "e",
             "dur-parse",
             "dur-fmt",
+            "rand-bytes",
         ];
         for name in &all {
             let b = Builtin::from_name(name).unwrap_or_else(|| panic!("missing builtin: {name}"));
@@ -1358,6 +1370,7 @@ mod tests {
             "e",
             "dur-parse",
             "dur-fmt",
+            "rand-bytes",
         ] {
             let b = Builtin::from_name(name).unwrap_or_else(|| panic!("no builtin: {name}"));
             let t = b.tag();

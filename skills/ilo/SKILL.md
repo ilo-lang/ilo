@@ -61,7 +61,7 @@ Every builtin name and control-flow keyword is reserved. Using any as a binding 
 
 **3-char control-flow**: `brk` (break) `cnt` (continue) `ret` (return)
 
-**4-char+**: `acos` `asin` `atan` `argmax` `argmin` `argsort` `basename` `chars` `chunks` `clamp` `cprod` `cumsum` `dirname` `dot` `drop` `dtfmt` `dtparse` `dtparse-rel` `enumerate` `flat` `flatmap` `fmod` `fmt2` `fsize` `glob` `ifft` `inv` `isdir` `isfile` `jdmp` `jkeys` `jpar` `jpth` `len` `mapr` `matmul` `matvec` `mdel` `median` `mget` `mhas` `mkeys` `mmap` `mpairs` `mset` `mtime` `mvals` `padl` `padr` `partition` `pathjoin` `prnt` `prod` `quantile` `range` `rdb` `rdin` `rdinl` `rdjl` `rdl` `rndn` `rsrt` `setdiff` `setinter` `setunion` `sleep` `solve` `sqrt` `stdev` `take` `transpose` `uniqby` `variance` `walk` `window` `wra` `wrl`
+**4-char+**: `acos` `asin` `atan` `argmax` `argmin` `argsort` `basename` `chars` `chunks` `clamp` `cprod` `cumsum` `dirname` `dot` `drop` `dtfmt` `dtparse` `dtparse-rel` `enumerate` `flat` `flatmap` `fmod` `fmt2` `fsize` `glob` `ifft` `inv` `isdir` `isfile` `jdmp` `jkeys` `jpar` `jpth` `len` `mapr` `matmul` `matvec` `mdel` `median` `mget` `mhas` `mkeys` `mmap` `mpairs` `mset` `mtime` `mvals` `padl` `padr` `partition` `pathjoin` `prnt` `prod` `quantile` `rand-bytes` `range` `rdb` `rdin` `rdinl` `rdjl` `rdl` `rndn` `rsrt` `setdiff` `setinter` `setunion` `sleep` `solve` `sqrt` `stdev` `take` `transpose` `uniqby` `variance` `walk` `window` `wra` `wrl`
 
 ## Compatibility note
 

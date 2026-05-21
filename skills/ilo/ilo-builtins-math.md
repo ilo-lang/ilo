@@ -23,7 +23,7 @@ Prefix-call: `name arg1 arg2 ...`. Cross-engine unless noted.
 
 ## Random
 
-`rnd` = random float [0,1) (aliases `rand`, `random`); `rndn` = random integer in range.
+`rnd` = random float [0,1) (aliases `rand`, `random`); `rndn` = sample from Normal `N(mu, sigma)` (Box-Muller). For cryptographic randomness (jti, CSRF tokens, session IDs, nonces) use `rand-bytes n > t` — CSPRNG bytes encoded as base64url-no-pad; URL-safe drop-in for headers / cookies / query strings.
 
 ## Statistics
 
