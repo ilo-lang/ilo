@@ -983,7 +983,7 @@ jpar-list text              -- R (L _) t: Ok=list of parsed values, Err=parse or
 xs=jpar-list! body;@i 0..len xs{prnt (at xs i)}
 ```
 
-Use `jpar` when the JSON top-level shape is unknown (object, array, scalar). Use `jpar-list` when you know the response is an array and want to iterate it immediately.
+Use `jpar` when the JSON top-level shape is unknown (object, array, scalar). Use `jpar-list` when you know the response is an array and want to iterate it immediately. Writing `@x (jpar! body){...}` directly triggers `ILO-W002` steering you at `jpar-list!`: the `jpar` Ok type is polymorphic so it threads `?` through wrapping functions, and runtime iteration only succeeds when the JSON happens to be an array.
 
 ### URL and base64url encoding
 
@@ -1854,7 +1854,7 @@ ilo --max-ast-depth N <sub>       -- cap parser nesting at N (default 256; prote
 
 **`ilo check`.** Standalone verifier invocation: lex, parse, resolve imports, and run the type verifier without proceeding to bytecode compilation or execution. Exit code 0 means the program is well-typed and verifier-clean; exit code 1 means at least one diagnostic was emitted on stderr. The output mode follows the global flags (`--json` for NDJSON diagnostics, `--text` for plain text, `--ansi` for coloured output; auto-detected when omitted - JSON when stderr is not a TTY, ANSI otherwise). `ilo check` works on both files and inline code; on a syntactically-broken input it still reports the parse error rather than crashing, which is important for editor and agent loops that may feed in half-written programs.
 
-**`ilo check --strict`.** Treats every warning-severity diagnostic (ILO-T032 bare `fmt`, ILO-T033 bare `mset` / `+=` / `mdel`, future warning codes) as a hard exit-code failure. The diagnostic stream itself is unchanged: warnings still emit with `severity: "warning"` in the JSON output, so editor integrations that route by severity stay correct. Only the exit code is elevated. CI harnesses that gate merges on `ilo check` should use `--strict` so warnings can't slip through silently; for interactive use, the default (warnings-are-advisory) is the right behaviour.
+**`ilo check --strict`.** Treats every warning-severity diagnostic (ILO-T032 bare `fmt`, ILO-T033 bare `mset` / `+=` / `mdel`, ILO-W002 `@x (jpar! …){…}` steering to `jpar-list!`, future warning codes) as a hard exit-code failure. The diagnostic stream itself is unchanged: warnings still emit with `severity: "warning"` in the JSON output, so editor integrations that route by severity stay correct. Only the exit code is elevated. CI harnesses that gate merges on `ilo check` should use `--strict` so warnings can't slip through silently; for interactive use, the default (warnings-are-advisory) is the right behaviour.
 
 **Default-run.** Inline programs (`ilo 'code'`) and single-function files run their entry function with the remaining CLI args; no explicit function name needed. Multi-function files auto-pick a function called `main` when no positional func arg is supplied. The same heuristic applies to the explicit engine flags - `--vm` and `--jit` both auto-pick `main` on multi-fn files, matching the default-engine behaviour. With no `main` declared, supply a function-name argument.
 

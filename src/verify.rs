@@ -4146,6 +4146,36 @@ impl VerifyContext {
                 body,
             } => {
                 let coll_ty = self.infer_expr(func, scope, collection, span);
+                // ILO-W002: `@x (jpar! body){...}` is a common pattern that
+                // typechecks (jpar's Ok type is `?` / Unknown so foreach lets
+                // it through) but is almost always wrong: at runtime the
+                // top-level JSON value has to be a list for iteration to
+                // succeed, and even then `jpar!`'s polymorphic return is
+                // awkward to thread through wrapping functions. `jpar-list!`
+                // asserts list-ness at parse time and returns `L ?`, which
+                // composes cleanly. Surface the hint at the @ site so the
+                // agent doesn't have to discover `jpar-list` by accident.
+                if let Expr::Call {
+                    function: callee,
+                    unwrap,
+                    ..
+                } = collection
+                    && callee == "jpar"
+                    && unwrap.is_any()
+                {
+                    let op = if unwrap.is_panic() { "!!" } else { "!" };
+                    self.warn(
+                        "ILO-W002",
+                        func,
+                        format!(
+                            "iterating `jpar{op}` result: the parsed JSON may not be a list at runtime"
+                        ),
+                        Some(format!(
+                            "use `jpar-list{op}` instead: it asserts the top-level JSON is an array and returns a list ready to iterate"
+                        )),
+                        Some(span),
+                    );
+                }
                 let elem_ty = match &coll_ty {
                     Ty::List(inner) => *inner.clone(),
                     Ty::Unknown => Ty::Unknown,
@@ -8164,6 +8194,87 @@ mod tests {
     fn jpar_list_foreach_inline_ok() {
         // P0b/5f: inline form — @x (jpar-list! body) — also type-checks.
         assert!(parse_and_verify("f body:t>R t t;@x (jpar-list! body){prnt x};~\"ok\"").is_ok());
+    }
+
+    #[test]
+    fn jpar_bang_in_foreach_warns() {
+        // Pending 5f: `@x (jpar! body){...}` typechecks (jpar's Ok is `?`),
+        // but at runtime the parsed JSON has to be a list, and the polymorphic
+        // return is awkward to thread. Verifier should emit ILO-W002 steering
+        // the agent at `jpar-list!`.
+        let result = parse_and_verify_full("f body:t>R t t;@x (jpar! body){prnt x};~\"ok\"");
+        assert!(
+            result.errors.is_empty(),
+            "should not be an error: {:?}",
+            result.errors
+        );
+        let w002: Vec<_> = result
+            .warnings
+            .iter()
+            .filter(|w| w.code == "ILO-W002")
+            .collect();
+        assert_eq!(
+            w002.len(),
+            1,
+            "expected one ILO-W002, got {:?}",
+            result.warnings
+        );
+        assert!(
+            w002[0].message.contains("jpar!"),
+            "warning message should mention jpar!: {}",
+            w002[0].message
+        );
+        assert!(
+            w002[0]
+                .hint
+                .as_deref()
+                .is_some_and(|h| h.contains("jpar-list!")),
+            "hint should point at jpar-list!: {:?}",
+            w002[0].hint
+        );
+    }
+
+    #[test]
+    fn jpar_bang_bang_in_foreach_warns() {
+        // Same hint should fire for the panic variant `jpar!!`.
+        let result = parse_and_verify_full("f body:t>t;@x (jpar!! body){prnt x};~\"ok\"");
+        let w002: Vec<_> = result
+            .warnings
+            .iter()
+            .filter(|w| w.code == "ILO-W002")
+            .collect();
+        assert_eq!(w002.len(), 1);
+        assert!(w002[0].message.contains("jpar!!"));
+        assert!(
+            w002[0]
+                .hint
+                .as_deref()
+                .is_some_and(|h| h.contains("jpar-list!!"))
+        );
+    }
+
+    #[test]
+    fn jpar_list_in_foreach_no_warn() {
+        // jpar-list! is the recommended form: must NOT trigger ILO-W002.
+        let result = parse_and_verify_full("f body:t>R t t;@x (jpar-list! body){prnt x};~\"ok\"");
+        assert!(result.errors.is_empty());
+        assert!(
+            result.warnings.iter().all(|w| w.code != "ILO-W002"),
+            "jpar-list! should not warn: {:?}",
+            result.warnings
+        );
+    }
+
+    #[test]
+    fn jpar_no_bang_in_foreach_no_warn() {
+        // Bare `jpar` (no unwrap) returns R, which fails the foreach with
+        // ILO-T014 — that's a separate, fine error path. The W002 hint is
+        // specific to the `jpar!` / `jpar!!` pattern.
+        let result = parse_and_verify_full("f body:t>t;@x (jpar body){prnt x};~\"ok\"");
+        assert!(
+            result.warnings.iter().all(|w| w.code != "ILO-W002"),
+            "bare jpar should not trigger W002"
+        );
     }
 
     #[test]
