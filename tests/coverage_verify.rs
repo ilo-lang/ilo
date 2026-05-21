@@ -54,7 +54,9 @@ fn str_wrong_type() {
 
 #[test]
 fn num_wrong_type() {
-    assert_err("main>R n t;num 5", "ILO-T013", "main");
+    // num is polymorphic across text and number, so `num 5` is valid post-fix.
+    // Bool is the smallest case the verifier still rejects.
+    assert_err("main x:b>R n t;num x", "ILO-T013", "main");
 }
 
 #[test]

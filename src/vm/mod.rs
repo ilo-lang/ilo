@@ -10261,8 +10261,13 @@ impl<'a> VM<'a> {
                     let a = ((inst >> 16) & 0xFF) as usize + base;
                     let b = ((inst >> 8) & 0xFF) as usize + base;
                     let v = reg!(b);
+                    // num is polymorphic: number → Ok(n) identity; string → parse.
+                    if v.is_number() {
+                        reg_set!(a, NanVal::heap_ok(v));
+                        continue;
+                    }
                     if !v.is_string() {
-                        vm_err!(VmError::Type("num requires a string"));
+                        vm_err!(VmError::Type("num requires text or number"));
                     }
                     // SAFETY: is_string() confirmed heap-tagged string with live RC.
                     let s = unsafe {
@@ -14169,8 +14174,13 @@ pub(crate) extern "C" fn jit_str(a: u64, span_bits: u64) -> u64 {
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn jit_num(a: u64, span_bits: u64) -> u64 {
     let v = NanVal(a);
+    // num is polymorphic: numeric input becomes Ok(n) identity-wrapped, so the
+    // result type stays R n t and call sites that pattern-match keep working.
+    if v.is_number() {
+        return NanVal::heap_ok(v).0;
+    }
     if !v.is_string() {
-        jit_set_runtime_error_with_span(VmError::Type("num requires a string"), span_bits);
+        jit_set_runtime_error_with_span(VmError::Type("num requires text or number"), span_bits);
         return TAG_NIL;
     }
     let s = unsafe {
@@ -21783,11 +21793,12 @@ mod tests {
     }
 
     #[test]
-    fn vm_num_non_string_type_error() {
-        // OP_NUM on number → L1918 ("num requires a string")
-        let source = "f x:n>n;num x";
-        let err = vm_run_err(source, Some("f"), vec![Value::Number(42.0)]);
-        assert!(err.contains("num"), "got: {err}");
+    fn vm_num_polymorphic_on_number() {
+        // Post-polymorphism, OP_NUM on a Number identity-wraps to Ok(n).
+        // The function returns `n` via `num! x` to exercise unwrap.
+        let source = "f x:n>n;num! x";
+        let result = vm_run(source, Some("f"), vec![Value::Number(42.0)]);
+        assert_eq!(result, Value::Number(42.0));
     }
 
     #[test]
@@ -29279,9 +29290,19 @@ mod tests {
 
     #[test]
     fn vm_err_num_wrong_type() {
-        let err = vm_run_err("f x:n>R n t;num x", Some("f"), vec![Value::Number(1.0)]);
+        // Post-polymorphism, num accepts text and number; bool is the
+        // smallest case that still errors. Verifier rejects this at compile
+        // time, so we exercise the runtime path via the parser's `_` (any).
+        // `?{}` arm forces the bool through num at runtime, but for VM the
+        // verifier guards the bool path. Instead, hand-craft a Result Err
+        // expectation through a no-op transformation that the verifier
+        // can't statically rule out.
+        let err = vm_run_err("f x:b>R n t;num x", Some("f"), vec![Value::Bool(true)]);
         assert!(
-            err.contains("num") || err.contains("text") || err.contains("type"),
+            err.contains("num")
+                || err.contains("text")
+                || err.contains("number")
+                || err.contains("type"),
             "got: {err}"
         );
     }

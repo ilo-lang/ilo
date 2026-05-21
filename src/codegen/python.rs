@@ -517,8 +517,9 @@ fn emit_expr(out: &mut String, level: usize, expr: &Expr) -> String {
         } => {
             if function == "num" && args.len() == 1 {
                 let arg = emit_expr(out, level, &args[0]);
+                // num is polymorphic: numeric input is identity; text input parses.
                 let call = format!(
-                    "(lambda s: (\"ok\", float(s)) if s.replace('.','',1).replace('-','',1).isdigit() else (\"err\", s))({})",
+                    "((lambda v: (\"ok\", float(v)) if isinstance(v, (int, float)) and not isinstance(v, bool) else (lambda s: (\"ok\", float(s)) if s.strip().replace('.','',1).replace('-','',1).isdigit() else (\"err\", s))(v))({}))",
                     arg
                 );
                 return if unwrap.is_any() {

@@ -2022,9 +2022,13 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                     Err(_) => Ok(Value::Err(Box::new(Value::Text(s.clone())))),
                 }
             }
+            // num is polymorphic: numeric input is identity-wrapped Ok(n).
+            // Closes the `num (jpar! body)` pattern where JSON bodies that
+            // are bare numbers used to need the str→num roundtrip.
+            Value::Number(n) => Ok(Value::Ok(Box::new(Value::Number(*n)))),
             other => Err(RuntimeError::new(
                 "ILO-R009",
-                format!("num requires text, got {:?}", other),
+                format!("num requires text or number, got {:?}", other),
             )),
         };
     }
@@ -8505,8 +8509,20 @@ mod tests {
 
     #[test]
     fn err_num_wrong_type() {
-        let err = run_str_err("f x:n>R n t;num x", Some("f"), vec![Value::Number(1.0)]);
-        assert!(err.contains("num requires text"));
+        // Post-polymorphism, only non-text-non-number args still error at
+        // runtime. Bool is the canonical "neither" case.
+        let err = run_str_err("f x:b>R n t;num x", Some("f"), vec![Value::Bool(true)]);
+        assert!(
+            err.contains("num requires text or number"),
+            "expected polymorphic num error, got: {err}"
+        );
+    }
+
+    #[test]
+    fn num_on_number_is_identity() {
+        // Polymorphic widening: numeric input is identity-wrapped Ok.
+        let result = run_str("f x:n>R n t;num x", Some("f"), vec![Value::Number(42.0)]);
+        assert_eq!(result, Value::Ok(Box::new(Value::Number(42.0))));
     }
 
     #[test]

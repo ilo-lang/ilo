@@ -9,7 +9,7 @@ Prefix-call: `name arg1 arg2 ...`. Cross-engine unless noted.
 
 ## Type / shape
 
-`len str num trm`. `num` returns `R n t`. `str v` coerces any value to text.
+`len str num trm`. `num x` is polymorphic — text parses (trims whitespace; Err if unparseable), number is identity-wrapped Ok. Saves the `num (str x)` roundtrip when `x` may already be numeric (e.g. from `jpar!` on a JSON number). Always returns `R n t`. `str v` coerces any value to text.
 
 ## Result unwrap
 
