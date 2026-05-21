@@ -5065,6 +5065,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires libilo.a; build with: cargo build --release --features cranelift"]
     fn aot_compile_simple_multiply() {
         let compiled = compile_program("f x:n>n;*x 2");
         let tmp = aot_tmp_path("mul");
@@ -5081,6 +5082,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires libilo.a; build with: cargo build --release --features cranelift"]
     fn aot_compile_add_two_args() {
         let compiled = compile_program("f a:n b:n>n;+a b");
         let tmp = aot_tmp_path("add");
@@ -5097,6 +5099,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires libilo.a; build with: cargo build --release --features cranelift"]
     fn aot_compile_conditional() {
         // if x > 0 then x * 2 else neg(x)
         let compiled = compile_program("f x:n>n;?>x 0 *x 2 *x -1");
@@ -5121,6 +5124,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires libilo.a; build with: cargo build --release --features cranelift"]
     fn aot_compile_recursive() {
         // Recursive factorial — now supported via direct calls
         let compiled = compile_program("fac n:n>n;<=n 1 1;r=fac -n 1;*n r");
@@ -5138,6 +5142,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires libilo.a; build with: cargo build --release --features cranelift"]
     fn aot_no_args_function() {
         let compiled = compile_program("f >n;42");
         let tmp = aot_tmp_path("noargs");
@@ -5153,6 +5158,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires libilo.a; build with: cargo build --release --features cranelift"]
     fn aot_sequential_cross_function_calls() {
         // Two sequential calls: a=dbl(n), then triple(a)
         let compiled =
@@ -5171,6 +5177,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires libilo.a; build with: cargo build --release --features cranelift"]
     fn aot_pipe_chain() {
         // Pipe chain: i>>dbl>>inc>>dbl>>inc = inc(dbl(inc(dbl(i)))) = 4i+3
         let compiled =
