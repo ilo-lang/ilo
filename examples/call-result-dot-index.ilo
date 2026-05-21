@@ -1,0 +1,55 @@
+-- Postfix `.N` / `.field` access works on a multi-token call result
+-- without needing parentheses around the call. `spl "a.b.c" "." .0`
+-- reads the first piece directly; `at rows i .2` reads column 2 of
+-- row i in one line.
+--
+-- Before this landed, the parser's greedy call-args loop stopped at
+-- the leading `.` (Dot isn't an operand-start token) and the trailing
+-- `.N` was left dangling for the infix parser, surfacing as
+-- ILO-P001 "expected declaration, got `.`". Agents had to wrap the
+-- call in parens (`(spl ... ".").0`) or bind first, costing 2-3
+-- tokens per access. The fix routes every Call return site in
+-- `parse_call_or_atom` / `parse_call_arg` through `parse_field_chain`,
+-- the same helper the parenthesised and bare-ident branches use, so
+-- all three head shapes accept the same postfix chain.
+--
+-- The shapes that matter most are list-element pick-off after a
+-- `spl` / `at` / `slc` call and second-field pick-off after a custom
+-- accessor that returns a record or tuple-shaped list.
+
+-- spl "a.b.c" "." .0 — first piece of a dotted name without parens.
+first-segment s:t>t
+  spl s "." .0
+
+-- spl "k=v" "=" .1 — second piece of a kv pair, the most common
+-- shape after `splitn`-style parsing.
+second-segment s:t>t
+  spl s "=" .1
+
+-- at rows 0 .1 — pick column 1 off the first row. Saves a token vs
+-- `(at rows 0).1` and reads naturally left-to-right. The trailing
+-- `.N` reattaches to the `at` call result rather than dangling.
+--
+-- Heads-up: the `.N` only reattaches when it follows a literal arg
+-- (number / string / list literal) at the call's last slot. If the
+-- last arg is a bare ident like `i`, the lexer-parser glues `.N` to
+-- the ident as field access on the variable, not on the call result.
+-- Bind the call result or wrap in parens in that case:
+--   r=at rows i;r.1     -- bind first
+--   (at rows i).1        -- parens force the grouping
+col-from-row rows:L L n>n
+  at rows 0 .1
+
+-- The safe form `.?N` works through the same helper. nil on out-of-
+-- range instead of raising.
+safe-first s:t>O t
+  spl s "." .?0
+
+-- run: first-segment "a.b.c"
+-- out: a
+-- run: second-segment "name=jane"
+-- out: jane
+-- run: col-from-row [[10,20,30],[40,50,60],[70,80,90]]
+-- out: 20
+-- run: safe-first "x.y"
+-- out: x
