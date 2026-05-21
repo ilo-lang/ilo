@@ -1592,6 +1592,14 @@ The `.field` / `.N` chain also applies to any parenthesised expression, so a cal
 map (i:n>n;(at rs i).2) ixs   -- inside an inline lambda body
 ```
 
+The chain also reattaches to a **multi-token call result without parens** when the trailing `.N` follows a literal arg at the call's last slot. The args loop stops at the leading `.` (Dot doesn't start an operand), and the trailing `.N` is reattached to the call expression rather than dangling:
+```
+spl "a.b.c" "." .0       -- (spl "a.b.c" ".").0 → "a"
+num spl "1.2.3" ".".1    -- num ((spl "1.2.3" ".").1) → 2 (wrapped)
+at rows 0 .1             -- (at rows 0).1
+```
+This is a pure syntax convenience — the runtime sees the same `Expr::Field` shape as the parenthesised form. Caveat: when the call's last arg is a bare ident, the `.N` glues to the ident (field access on the variable, the older shape) rather than the call result. Bind first or wrap in parens in that case: `r=at rows i;r.1` or `(at rows i).1`.
+
 Destructure:
 ```
 {x;y}=p
