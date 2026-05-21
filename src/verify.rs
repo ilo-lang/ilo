@@ -473,6 +473,9 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("solve", &["L (L n)", "L n"], "L n"),
     ("inv", &["L (L n)"], "L (L n)"),
     ("det", &["L (L n)"], "n"),
+    // lstsq xm ys > L n — ordinary least squares (normal equations).
+    // Closed-form OLS over a design matrix and observed values.
+    ("lstsq", &["L (L n)", "L n"], "L n"),
     // Index-returning aggregates. numpy convention: argmax/argmin return
     // the index of the max/min element; argsort returns the sorted-index
     // permutation (ascending).
@@ -3046,6 +3049,35 @@ fn builtin_check_args(
                 });
             }
             (matrix_ty, errors)
+        }
+        "lstsq" => {
+            let matrix_ty = Ty::List(Box::new(Ty::List(Box::new(Ty::Number))));
+            let vec_ty = Ty::List(Box::new(Ty::Number));
+            if let Some(arg) = arg_types.first()
+                && !compatible(arg, &matrix_ty)
+            {
+                errors.push(VerifyError {
+                    code: "ILO-T013",
+                    function: func_ctx.to_string(),
+                    message: format!("'lstsq' first arg expects L (L n), got {arg}"),
+                    hint: None,
+                    span,
+                    is_warning: false,
+                });
+            }
+            if let Some(arg) = arg_types.get(1)
+                && !compatible(arg, &vec_ty)
+            {
+                errors.push(VerifyError {
+                    code: "ILO-T013",
+                    function: func_ctx.to_string(),
+                    message: format!("'lstsq' second arg expects L n, got {arg}"),
+                    hint: None,
+                    span,
+                    is_warning: false,
+                });
+            }
+            (vec_ty, errors)
         }
         "det" => {
             let matrix_ty = Ty::List(Box::new(Ty::List(Box::new(Ty::Number))));

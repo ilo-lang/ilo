@@ -197,6 +197,14 @@ pub enum Builtin {
     Solve,
     Inv,
     Det,
+    // `lstsq xm ys > L n` — ordinary least squares via the normal equations:
+    // `b = solve (matmul (transpose xm) xm) (matmul (transpose xm) ys)`.
+    // Collapses the 5-line OLS recipe into a single call. Same precision
+    // tier as `solve`/`inv`/`det` (LU with partial pivoting); ill-conditioned
+    // designs surface as `ILO-R009` from the inner `solve`. Tree-bridge
+    // eligible — no new opcodes, VM and Cranelift inherit semantics through
+    // the bridge. Added in 0.12.1.
+    Lstsq,
     // Index-returning aggregates (numpy convention).
     // argmax xs:L n > n — index of max element.
     // argmin xs:L n > n — index of min element.
@@ -385,6 +393,7 @@ impl Builtin {
             "solve" => Some(Builtin::Solve),
             "inv" => Some(Builtin::Inv),
             "det" => Some(Builtin::Det),
+            "lstsq" => Some(Builtin::Lstsq),
             "argmax" => Some(Builtin::Argmax),
             "argmin" => Some(Builtin::Argmin),
             "argsort" => Some(Builtin::Argsort),
@@ -545,6 +554,7 @@ impl Builtin {
             Builtin::Solve => "solve",
             Builtin::Inv => "inv",
             Builtin::Det => "det",
+            Builtin::Lstsq => "lstsq",
             Builtin::Argmax => "argmax",
             Builtin::Argmin => "argmin",
             Builtin::Argsort => "argsort",
@@ -795,6 +805,11 @@ impl Builtin {
         // and Cranelift inherit through the bridge without new opcodes.
         // Appended to preserve every existing tag.
         Builtin::Matvec,
+        // `lstsq xm ys > L n` — ordinary least squares via the normal
+        // equations. Tree-bridge eligible: composes existing transpose /
+        // matmul / solve so VM and Cranelift inherit through the bridge
+        // without new opcodes. Appended to preserve every existing tag.
+        Builtin::Lstsq,
     ];
 
     /// On-wire 8-bit tag for cross-engine builtin dispatch. See `ALL`.
@@ -1081,6 +1096,7 @@ mod tests {
             "solve",
             "inv",
             "det",
+            "lstsq",
             "rdjl",
             "dtfmt",
             "dtparse",
@@ -1327,6 +1343,7 @@ mod tests {
             "solve",
             "inv",
             "det",
+            "lstsq",
             "run",
             "lsd",
             "walk",

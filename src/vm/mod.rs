@@ -710,6 +710,13 @@ pub(crate) fn is_tree_bridge_eligible(b: crate::builtins::Builtin, argc: usize) 
         // without burning a dedicated opcode — the row-by-row dot
         // product is dominated by the f64 work, not dispatch.
         (Builtin::Matvec, 2) => true,
+        // `lstsq xm ys` — ordinary least squares via the normal equations.
+        // Pure (no FnRef, no I/O); the tree interpreter composes existing
+        // transpose / matmul / solve helpers. Bridge keeps VM and Cranelift
+        // in lockstep without dedicated opcodes. Errors from the inner
+        // `solve` (singular, dimension mismatch, empty) propagate as
+        // ILO-R009 through the standard bridge path.
+        (Builtin::Lstsq, 2) => true,
         _ => false,
     }
 }
