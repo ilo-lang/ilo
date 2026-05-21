@@ -20,7 +20,7 @@ Prefix-call: `name arg1 arg2 ...`. Cross-engine unless noted.
 **Every verb takes an optional trailing `M t t` headers map** for Authorization, Accept, X-API-Key. No wrapper needed - pass the map as the last arg (`get url hs`, `pst url body hs`).
 
 `get url` (`R t t`), `get url headers` (with `M t t` custom headers), `get-to url timeout-ms` (explicit ms timeout).
-`pst url body` (`R t t`), `pst url body headers`, `pst-to url body timeout-ms`.
+`pst url body` (`R t t`), `pst url body headers`, `pst-to url body timeout-ms`. (`pst` is the canonical name since 0.12.0; the old name `post` is not accepted.)
 `put url body` / `pat url body` mirror `pst` (PUT / PATCH); accept optional headers map.
 `del url` / `hed url` / `opt url` mirror `get` (DELETE / HEAD / OPTIONS); accept optional headers map.
 `get-many urls` (parallel fan-out, `L (R t t)`).
