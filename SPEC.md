@@ -597,7 +597,7 @@ Called like functions, compiled to dedicated opcodes.
 | `padl s w` | left-pad to width `w` with spaces (no-op if already wider) | `t` |
 | `padr s w` | right-pad to width `w` with spaces (no-op if already wider) | `t` |
 | `padl s w pc` | left-pad to width `w` with 1-character string `pc` (e.g. `"0"` for sortable zero-padded keys) | `t` |
-| `padr s w pc` | right-pad to width `w` with 1-character string `pc` (e.g. `"."` for dot-leader alignment) | `t` |
+| `padr s w pc` | right-pad to width `w` with 1-character string `pc` (e.g. `"."` for dot-leader alignment). Idiom: `padr "" w pc` repeats `pc` w times (histogram bars, divider lines) | `t` |
 | `rgxall pat s` | every regex match as `L (L t)` (no-group: each match in a 1-elem list) | `L (L t)` |
 | `rgxall1 pat s` | flat first-capture-group convenience: 0 groups → `L t` of whole matches; 1 group → `L t` of capture-1 strings; 2+ groups errors | `L t` |
 | `rgxall-multi pats s` | multi-pattern flat-match: apply each pattern in `pats:L t` to `s`, concat all hits in pattern order; per-pattern semantics follow `rgxall1` (0 groups → whole matches; 1 group → capture-1 strings; 2+ groups errors) | `L t` |
