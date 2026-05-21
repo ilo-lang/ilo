@@ -23,7 +23,7 @@ Prefix-call: `name arg1 arg2 ...`. Cross-engine unless noted.
 
 ## Random
 
-`rnd` = random float [0,1) (aliases `rand`, `random`); `rndn` = sample from Normal `N(mu, sigma)` (Box-Muller). For cryptographic randomness (jti, CSRF tokens, session IDs, nonces) use `rand-bytes n > t` — CSPRNG bytes encoded as base64url-no-pad; URL-safe drop-in for headers / cookies / query strings.
+`rnd > n` = uniform float `[0,1)` (aliases `rand`, `random`); `rnd a b > n` = uniform integer in `[a,b]` inclusive (use this for dice / bucket IDs, NOT `rndn 0 n`); `rndn mu sigma > n` = ONE sample from Normal `N(mu, sigma)` (Box-Muller, can be negative / unbounded). `rndn 0 n` is Gaussian noise, not a uniform int. For cryptographic randomness (jti, CSRF tokens, session IDs, nonces) use `rand-bytes n > t` — CSPRNG bytes encoded as base64url-no-pad; URL-safe drop-in for headers / cookies / query strings.
 
 ## Statistics
 
