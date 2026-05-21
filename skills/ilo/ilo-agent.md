@@ -46,6 +46,18 @@ AOT-compiled binaries (`ilo compile`) follow the same contract byte-for-byte.
 
 **Auto-echo suppression.** An entry-fn ending in a bare `prnt` call, a tail loop with no early return, or — when the body has an unconditional top-level `prnt` — a wrapped string-literal tail `~"text"` / `^"text"` (status sentinel) does NOT auto-echo its return value. The collision-avoidance rules let you write `m>R t t;prnt "report";~"ok"` and get clean `report\n` on stdout instead of `report\nok\n`. A no-prnt function returning `~"ok"` (e.g. `addtask`) still emits `ok` — the wrapped literal IS the output. `~v` where `v` is a binding or call always auto-echoes; only string LITERAL sentinels are dropped.
 
+## Testing
+
+`ilo test <path>` runs `-- run: <fn> <args>` / `-- out: <expected>` (and `-- err:` for `^reason` shapes) annotations embedded in `.ilo` files. Same format the in-tree integration harness uses, surfaced as a user-facing command so end-user programs and test suites can assert behaviour the same way examples do.
+
+```
+ilo test program.ilo          single file
+ilo test tests/               walk a directory recursively
+ilo test program.ilo --engine all   run every engine, tag PASS/FAIL with [vm]/[jit]
+```
+
+Exit 0 on all-pass, 1 on any failure. Default engine is `vm`; `--engine jit` / `--engine all` widen the matrix. `-- engine-skip: vm jit` annotations in the file source skip the listed engines for that file. Same `-- run:` / `-- out:` / `-- err:` format every example in the repo uses, so an agent writing tests can copy from any nearby example file.
+
 ## Serv mode
 
 `ilo serv [--mcp m.json] [--tools http.json]` is a long-lived JSON request/response loop on stdin/stdout. Send `{"program":"fn p:n>n;*p 2","func":"fn","args":[21]}`, get `{"ok": 42}` or `{"error":{...}}`. Cuts process-spawn overhead to zero.
