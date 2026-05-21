@@ -41,7 +41,12 @@ else
   exit 1
 fi
 
-if [ -w /usr/local/bin ]; then
+# Allow callers (and tests) to override the install location. Otherwise
+# prefer /usr/local/bin if it's writable, else fall back to ~/.local/bin.
+if [ -n "${ILO_INSTALL_DIR:-}" ]; then
+  INSTALL_DIR="$ILO_INSTALL_DIR"
+  mkdir -p "$INSTALL_DIR"
+elif [ -w /usr/local/bin ]; then
   INSTALL_DIR="/usr/local/bin"
 else
   INSTALL_DIR="${HOME}/.local/bin"

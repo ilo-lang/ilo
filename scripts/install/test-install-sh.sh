@@ -80,11 +80,12 @@ run_case() {
   local name="$1"; shift
   local expected_exit="$1"; shift
   local fixture_dir="$1"; shift
-  local home_dir="$WORKROOT/home-$name"
-  mkdir -p "$home_dir/.local/bin"
+  local install_dir="$WORKROOT/install-$name"
   set +e
+  # Pin install destination via ILO_INSTALL_DIR so the test result doesn't
+  # depend on whether /usr/local/bin happens to be writable on the host.
   PATH="$WORKROOT/bin:$PATH" \
-    HOME="$home_dir" \
+    ILO_INSTALL_DIR="$install_dir" \
     FIXTURE_DIR="$fixture_dir" \
     sh "$INSTALL_SH" > "$WORKROOT/$name.out" 2> "$WORKROOT/$name.err"
   local code=$?
@@ -108,7 +109,7 @@ run_case happy 0 "$HAPPY"
 
 # Verify the binary actually landed (in $HOME/.local/bin since /usr/local/bin
 # probably isn't writable in the test sandbox).
-if ! [ -x "$WORKROOT/home-happy/.local/bin/ilo" ]; then
+if ! [ -x "$WORKROOT/install-happy/ilo" ]; then
   echo "FAIL: happy path didn't install the binary" >&2
   exit 1
 fi
@@ -122,7 +123,7 @@ printf 'fake-binary-contents' > "$TAMPER/$ASSET"
 bad=$(printf 'something-else' | $sha256_cmd | awk '{print $1}')
 printf '%s  %s\n' "$bad" "$ASSET" > "$TAMPER/checksums-sha256.txt"
 run_case tamper 1 "$TAMPER"
-if [ -e "$WORKROOT/home-tamper/.local/bin/ilo" ]; then
+if [ -e "$WORKROOT/install-tamper/ilo" ]; then
   echo "FAIL: tamper path installed the binary anyway" >&2
   exit 1
 fi
@@ -140,7 +141,7 @@ printf 'fake-binary-contents' > "$MISSING/$ASSET"
 # Checksum file references a different asset name, so the grep returns empty.
 printf '%s  %s\n' "$sum" "ilo-some-other-target" > "$MISSING/checksums-sha256.txt"
 run_case missing 1 "$MISSING"
-if [ -e "$WORKROOT/home-missing/.local/bin/ilo" ]; then
+if [ -e "$WORKROOT/install-missing/ilo" ]; then
   echo "FAIL: missing-asset path installed the binary anyway" >&2
   exit 1
 fi
