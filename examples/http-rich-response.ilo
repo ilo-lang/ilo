@@ -1,0 +1,38 @@
+-- `getx url > R (M t _) t` and `pstx url body > R (M t _) t`
+-- Rich-response HTTP variants. Returned Ok-map has three keys:
+--   status  (n) — HTTP status code (e.g. 200, 304, 404)
+--   headers (M t t) — response headers, keyed by lowercased header name
+--   body    (t) — response body as text
+--
+-- Use these when you need response metadata: conditional requests (ETag /
+-- If-None-Match → check status 304), cache control, redirect following,
+-- pagination Link headers, cookie capture, rate-limit headers, status-code
+-- branching. For body-only fire-and-forget GETs, prefer `get url` (cheaper).
+--
+-- Existing `get url > R t t` and `pst url body > R t t` are untouched —
+-- this is additive surface area, not a breaking change.
+--
+-- Both accept an optional trailing M t t request-headers map (same shape
+-- as `get`/`pst`).
+--
+-- Errors: connection refused on a closed loopback port is a stable Err
+-- across OS/CI. The Ok branch never fires; we match on the Result tag to
+-- keep the assertion OS-portable.
+
+probe-getx>t;r=getx "http://127.0.0.1:1";?r{~_:"unexpected ok";^_:"err as expected"}
+
+probe-pstx>t;r=pstx "http://127.0.0.1:1" "body";?r{~_:"unexpected ok";^_:"err as expected"}
+
+-- With request headers (verifies the 2-arg / 3-arg forms parse and route).
+probe-getx-hdrs>t;h=mset mmap "x-trace" "demo";r=getx "http://127.0.0.1:1" h;?r{~_:"unexpected ok";^_:"err as expected"}
+
+probe-pstx-hdrs>t;h=mset mmap "x-trace" "demo";r=pstx "http://127.0.0.1:1" "body" h;?r{~_:"unexpected ok";^_:"err as expected"}
+
+-- run: probe-getx
+-- out: err as expected
+-- run: probe-pstx
+-- out: err as expected
+-- run: probe-getx-hdrs
+-- out: err as expected
+-- run: probe-pstx-hdrs
+-- out: err as expected
