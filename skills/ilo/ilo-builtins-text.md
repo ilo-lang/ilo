@@ -13,7 +13,7 @@ Prefix-call: `name arg1 arg2 ...`. Cross-engine unless noted.
 
 ## Case / padding / chars
 
-`upr lwr cap padl padr chars ord chr`. `cap` capitalises first letter.
+`upr lwr cap padl padr chars ord chr`. `cap` capitalises first letter. `padr "" n c` = n copies of 1-char `c` (histogram bars).
 
 `padr "" n c` is the **repeat-character idiom** - use it for histogram bars, divider lines, indentation. `padr "" 10 "#"` -> `"##########"`. Cheaper than a loop.
 
