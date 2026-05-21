@@ -564,6 +564,12 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("cumsum", &["L n"], "L n"),
     ("cprod", &["L n"], "L n"),
     ("ewm", &["L n", "n"], "L n"),
+    // Rolling-window reducers (#5bq). All three take a window size `n:n`
+    // first, then the numeric list `xs:L n`. Output is `L n` of length
+    // `len xs - n + 1`.
+    ("rsum", &["n", "L n"], "L n"),
+    ("ravg", &["n", "L n"], "L n"),
+    ("rmin", &["n", "L n"], "L n"),
     // where cond:L b xs:L a ys:L a > L a — parallel-list conditional select.
     // Element type of xs/ys is preserved in the output (handled in the
     // per-builtin arm below; this entry feeds arity + suggestion paths).
@@ -2964,6 +2970,48 @@ fn builtin_check_args(
                     span,
                     is_warning: false,
                 });
+            }
+            (Ty::List(Box::new(Ty::Number)), errors)
+        }
+        "rsum" | "ravg" | "rmin" => {
+            // r{sum,avg,min} n:n xs:L n > L n — rolling-window reducers.
+            // Window-size arg checked first, then the numeric list.
+            if let Some(arg) = arg_types.first()
+                && !compatible(arg, &Ty::Number)
+            {
+                errors.push(VerifyError {
+                    code: "ILO-T013",
+                    function: func_ctx.to_string(),
+                    message: format!("'{name}' first arg n must be n, got {arg}"),
+                    hint: None,
+                    span,
+                    is_warning: false,
+                });
+            }
+            if let Some(arg) = arg_types.get(1) {
+                match arg {
+                    Ty::List(inner) => {
+                        if !compatible(inner, &Ty::Number) {
+                            errors.push(VerifyError {
+                                code: "ILO-T013",
+                                function: func_ctx.to_string(),
+                                message: format!("'{name}' expects L n, got L {inner}"),
+                                hint: None,
+                                span,
+                                is_warning: false,
+                            });
+                        }
+                    }
+                    Ty::Unknown => {}
+                    other => errors.push(VerifyError {
+                        code: "ILO-T013",
+                        function: func_ctx.to_string(),
+                        message: format!("'{name}' expects L n, got {other}"),
+                        hint: None,
+                        span,
+                        is_warning: false,
+                    }),
+                }
             }
             (Ty::List(Box::new(Ty::Number)), errors)
         }

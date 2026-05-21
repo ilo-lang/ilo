@@ -676,6 +676,93 @@ pub(crate) fn ewm_compute(xs: &[f64], a: f64) -> Vec<f64> {
     out
 }
 
+/// Rolling-sum over a window of size `n`. Output length = `xs.len() - n + 1`;
+/// empty when `n > xs.len()`. O(n) total via running-sum: one add and one
+/// subtract per step, not the O(n*w) `sum (slc xs i (i+n))` recipe.
+///
+/// `#[inline(never)]` for the same reason as `ewm_compute` — keep the loop
+/// out of the dispatcher's stack frame under deep persona workloads.
+#[inline(never)]
+pub(crate) fn rsum_compute(n: usize, xs: &[f64]) -> Vec<f64> {
+    let len = xs.len();
+    if n == 0 || n > len {
+        return Vec::new();
+    }
+    let out_len = len - n + 1;
+    let mut out: Vec<f64> = Vec::with_capacity(out_len);
+    // Seed the running sum from the first window.
+    let mut s: f64 = xs[..n].iter().sum();
+    out.push(s);
+    for i in n..len {
+        s += xs[i];
+        s -= xs[i - n];
+        out.push(s);
+    }
+    out
+}
+
+/// Rolling-average over a window of size `n`. Same shape as `rsum_compute`;
+/// each output is the running sum divided by `n`. O(n) total.
+#[inline(never)]
+pub(crate) fn ravg_compute(n: usize, xs: &[f64]) -> Vec<f64> {
+    let sums = rsum_compute(n, xs);
+    if sums.is_empty() {
+        return sums;
+    }
+    let denom = n as f64;
+    sums.into_iter().map(|s| s / denom).collect()
+}
+
+/// Rolling-min over a window of size `n` via the monotonic-deque idiom.
+/// Output length = `xs.len() - n + 1`; empty when `n > xs.len()`. Each
+/// element is pushed and popped at most once across the whole pass, so
+/// total work is O(xs.len()), not O(xs.len() * n) like a naive per-window
+/// `min` scan. NaN inputs sort as ">" everything else (consistent with
+/// `min xs`/`max xs`) so a single NaN in a window does not poison the
+/// output the way it does for `rsum`/`ravg`.
+#[inline(never)]
+pub(crate) fn rmin_compute(n: usize, xs: &[f64]) -> Vec<f64> {
+    let len = xs.len();
+    if n == 0 || n > len {
+        return Vec::new();
+    }
+    let out_len = len - n + 1;
+    let mut out: Vec<f64> = Vec::with_capacity(out_len);
+    // Deque stores indices into `xs`; values are strictly increasing
+    // along the deque (front is the current window's min). `partial_cmp`
+    // treats NaN as incomparable; we fall back to `Greater` so NaNs sink
+    // toward the back of the deque rather than masquerading as the min.
+    let mut dq: std::collections::VecDeque<usize> = std::collections::VecDeque::with_capacity(n);
+    for i in 0..len {
+        // Drop indices that have fallen out of the window.
+        while let Some(&front) = dq.front() {
+            if front + n <= i {
+                dq.pop_front();
+            } else {
+                break;
+            }
+        }
+        // Maintain monotonicity: pop any tail whose value is >= the new value.
+        while let Some(&back) = dq.back() {
+            let cmp = xs[back]
+                .partial_cmp(&xs[i])
+                .unwrap_or(std::cmp::Ordering::Greater);
+            if cmp != std::cmp::Ordering::Less {
+                dq.pop_back();
+            } else {
+                break;
+            }
+        }
+        dq.push_back(i);
+        if i + 1 >= n {
+            // Front of the deque is the index of the min in the current window.
+            let &front = dq.front().expect("deque non-empty after push");
+            out.push(xs[front]);
+        }
+    }
+    out
+}
+
 /// POSIX `dirname` on a forward-slash path string. See `Builtin::Dirname`
 /// in the builtin dispatch above for the full semantics + edge-case table.
 ///
@@ -6149,6 +6236,67 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             .into_iter()
             .map(Value::Number)
             .collect();
+        return Ok(Value::List(Arc::new(out)));
+    }
+    // Rolling-window reducers — rsum / ravg / rmin (n, xs).
+    if let Some(b) = builtin
+        && matches!(b, Builtin::Rsum | Builtin::Ravg | Builtin::Rmin)
+        && args.len() == 2
+    {
+        let name = b.name();
+        let n_f = match &args[0] {
+            Value::Number(n) => *n,
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("{name}: first arg n must be a number, got {:?}", other),
+                ));
+            }
+        };
+        if !n_f.is_finite() || n_f.fract() != 0.0 {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!(
+                    "{name}: window size n must be a non-negative integer, got {}",
+                    n_f
+                ),
+            ));
+        }
+        if n_f <= 0.0 {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!("{name}: window size n must be >= 1, got {}", n_f),
+            ));
+        }
+        let n = n_f as usize;
+        let items = match &args[1] {
+            Value::List(l) => l,
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("{name}: second arg must be a list, got {:?}", other),
+                ));
+            }
+        };
+        let mut nums: Vec<f64> = Vec::with_capacity(items.len());
+        for item in items.iter() {
+            match item {
+                Value::Number(v) => nums.push(*v),
+                other => {
+                    return Err(RuntimeError::new(
+                        "ILO-R009",
+                        format!("{name}: list elements must be numbers, got {:?}", other),
+                    ));
+                }
+            }
+        }
+        let computed = match b {
+            Builtin::Rsum => rsum_compute(n, &nums),
+            Builtin::Ravg => ravg_compute(n, &nums),
+            Builtin::Rmin => rmin_compute(n, &nums),
+            _ => unreachable!(),
+        };
+        let out: Vec<Value> = computed.into_iter().map(Value::Number).collect();
         return Ok(Value::List(Arc::new(out)));
     }
     if builtin == Some(Builtin::Where) && args.len() == 3 {
