@@ -1,11 +1,11 @@
 /// Integration tests for CLI capability flags (`--allow-net`, `--allow-read`,
 /// `--allow-write`, `--allow-run`).
 ///
-/// Each test runs programs through `interpreter::run_with_caps` and
+/// Each test runs programs through `runtime::run_with_caps` and
 /// `vm::run_with_caps` to verify enforcement at both backends, then also
 /// exercises the `Caps` unit helpers directly for clarity.
 use ilo::caps::{Caps, Policy};
-use ilo::interpreter::{self, Value};
+use ilo::runtime::{self, Value};
 use ilo::{lexer, parser, vm};
 use std::sync::Arc;
 
@@ -37,7 +37,7 @@ fn run_both(src: &str, caps: Caps) -> (Value, Value) {
     let caps = Arc::new(caps);
     let program = make_program(src);
     let tree_result =
-        interpreter::run_with_caps(&program, None, vec![], Arc::clone(&caps)).unwrap();
+        runtime::run_with_caps(&program, None, vec![], Arc::clone(&caps)).unwrap();
     let compiled = vm::compile(&program).unwrap();
     let vm_result = vm::run_with_caps(&compiled, None, vec![], caps).unwrap();
     (tree_result, vm_result)
@@ -233,7 +233,7 @@ fn allow_run_empty_blocks_run() {
     let src = "f>R (M t t) t;run \"echo\" [\"hello\"]";
     // Only test via tree interpreter (run goes through tree-bridge in VM).
     let program = make_program(src);
-    let result = interpreter::run_with_caps(&program, None, vec![], Arc::new(caps)).unwrap();
+    let result = runtime::run_with_caps(&program, None, vec![], Arc::new(caps)).unwrap();
     assert!(
         is_err_value(&result),
         "expected Err when run allowlist is empty, got {result:?}"
@@ -255,7 +255,7 @@ fn allow_run_permits_allowlisted_cmd() {
     };
     let src = "f>R (M t t) t;run \"echo\" [\"hello\"]";
     let program = make_program(src);
-    let result = interpreter::run_with_caps(&program, None, vec![], Arc::new(caps)).unwrap();
+    let result = runtime::run_with_caps(&program, None, vec![], Arc::new(caps)).unwrap();
     // echo is in the allowlist — should return Ok(...), not Err.
     assert!(
         !is_err_value(&result),

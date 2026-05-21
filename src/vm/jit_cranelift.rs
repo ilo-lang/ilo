@@ -3296,7 +3296,7 @@ fn compile_function_body(
                 let bv = builder.use_var(vars[b_idx]);
                 // Get field name from chunk constants as a null-terminated C string
                 let cstring = match &chunk.constants[c_idx] {
-                    crate::interpreter::Value::Text(s) => {
+                    crate::runtime::Value::Text(s) => {
                         std::ffi::CString::new(s.as_bytes()).ok()?
                     }
                     _ => return None,
@@ -3342,7 +3342,7 @@ fn compile_function_body(
                 let c_idx = (inst & 0xFF) as usize;
                 let bv = builder.use_var(vars[b_idx]);
                 let cstring = match &chunk.constants[c_idx] {
-                    crate::interpreter::Value::Text(s) => {
+                    crate::runtime::Value::Text(s) => {
                         std::ffi::CString::new(s.as_bytes()).ok()?
                     }
                     _ => return None,

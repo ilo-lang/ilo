@@ -3126,7 +3126,7 @@ fn compile_function_body(
                 let bv = builder.use_var(vars[b_idx]);
                 // Get field name from chunk constants, store as data section
                 let mut name_bytes = match &chunk.constants[c_idx] {
-                    crate::interpreter::Value::Text(s) => s.as_bytes().to_vec(),
+                    crate::runtime::Value::Text(s) => s.as_bytes().to_vec(),
                     _ => return Err(format!("OP_RECFLD_NAME expects string constant at {}", ip)),
                 };
                 name_bytes.push(0); // null-terminate
@@ -3162,7 +3162,7 @@ fn compile_function_body(
                 let c_idx = (inst & 0xFF) as usize;
                 let bv = builder.use_var(vars[b_idx]);
                 let mut name_bytes = match &chunk.constants[c_idx] {
-                    crate::interpreter::Value::Text(s) => s.as_bytes().to_vec(),
+                    crate::runtime::Value::Text(s) => s.as_bytes().to_vec(),
                     _ => {
                         return Err(format!(
                             "OP_RECFLD_NAME_SAFE expects string constant at {}",

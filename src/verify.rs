@@ -4668,7 +4668,7 @@ impl VerifyContext {
                                     // literal, so we say nothing here.
                                     continue;
                                 }
-                                match crate::interpreter::parse_fmt_spec(&spec) {
+                                match crate::runtime::parse_fmt_spec(&spec) {
                                     Some(_) => slot_count += 1,
                                     None => {
                                         bad = Some(spec);

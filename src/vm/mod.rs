@@ -1,7 +1,7 @@
 use crate::ast::*;
 use crate::builtins::{Builtin, CharAtResult, char_at_signed};
 use crate::caps::Caps;
-use crate::interpreter::{MapKey, Value};
+use crate::runtime::{MapKey, Value};
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -9844,7 +9844,7 @@ impl<'a> VM<'a> {
                                         .push(v.to_value_with_program(&self.program.func_names));
                                 }
                             }
-                            let result = match crate::interpreter::call_builtin_for_bridge(
+                            let result = match crate::runtime::call_builtin_for_bridge(
                                 builtin.name(),
                                 value_args,
                             ) {
@@ -10843,7 +10843,7 @@ impl<'a> VM<'a> {
                             vm_err!(VmError::Type("det: matrix must be square"));
                         }
                     }
-                    let (_lu, _piv, det, _singular) = crate::interpreter::lu_decompose(mat);
+                    let (_lu, _piv, det, _singular) = crate::runtime::lu_decompose(mat);
                     reg_set!(a, NanVal::number(det));
                 }
                 OP_INV => {
@@ -10863,7 +10863,7 @@ impl<'a> VM<'a> {
                             vm_err!(VmError::Type("inv: matrix must be square"));
                         }
                     }
-                    let (lu, piv, _det, singular) = crate::interpreter::lu_decompose(mat);
+                    let (lu, piv, _det, singular) = crate::runtime::lu_decompose(mat);
                     if singular {
                         vm_err!(VmError::Type("inv: matrix is singular"));
                     }
@@ -10871,7 +10871,7 @@ impl<'a> VM<'a> {
                     for j in 0..n {
                         let mut e = vec![0.0; n];
                         e[j] = 1.0;
-                        cols.push(crate::interpreter::lu_solve(&lu, &piv, &e));
+                        cols.push(crate::runtime::lu_solve(&lu, &piv, &e));
                     }
                     let rows: Vec<NanVal> = (0..n)
                         .map(|i| {
@@ -10908,11 +10908,11 @@ impl<'a> VM<'a> {
                     if vec_b.len() != n {
                         vm_err!(VmError::Type("solve: vector length must match matrix size"));
                     }
-                    let (lu, piv, _det, singular) = crate::interpreter::lu_decompose(mat);
+                    let (lu, piv, _det, singular) = crate::runtime::lu_decompose(mat);
                     if singular {
                         vm_err!(VmError::Type("solve: matrix is singular"));
                     }
-                    let x = crate::interpreter::lu_solve(&lu, &piv, &vec_b);
+                    let x = crate::runtime::lu_solve(&lu, &piv, &vec_b);
                     let list: Vec<NanVal> = x.into_iter().map(NanVal::number).collect();
                     reg_set!(a, NanVal::heap_list(list));
                 }
@@ -11244,7 +11244,7 @@ impl<'a> VM<'a> {
                     if cap_blocked {
                         continue;
                     }
-                    let values = crate::interpreter::get_many_fetch(&urls);
+                    let values = crate::runtime::get_many_fetch(&urls);
                     let nan_items: Vec<NanVal> = values.iter().map(NanVal::from_value).collect();
                     let result = NanVal::heap_list(nan_items);
                     reg_set!(a, result);
@@ -11405,7 +11405,7 @@ impl<'a> VM<'a> {
                             vm_err!(VmError::Type("wr csv/tsv: data must be a list of rows"));
                         }
                     };
-                    match crate::interpreter::write_csv_tsv(&rows, sep) {
+                    match crate::runtime::write_csv_tsv(&rows, sep) {
                         Ok(s) => reg_set!(a, NanVal::heap_string(s)),
                         Err(_e) => {
                             vm_err!(VmError::Type("wr csv/tsv: row shape mismatch"));
@@ -12780,7 +12780,7 @@ impl<'a> VM<'a> {
                     let result = {
                         let ast_ptr = ACTIVE_AST_PROGRAM.with(|c| c.get());
                         let res = if ast_ptr.is_null() {
-                            crate::interpreter::call_builtin_for_bridge(builtin.name(), value_args)
+                            crate::runtime::call_builtin_for_bridge(builtin.name(), value_args)
                         } else {
                             // SAFETY: ast_ptr was set by VM::execute() to a
                             // borrow of program.ast (an Arc<Program> owned by
@@ -12788,7 +12788,7 @@ impl<'a> VM<'a> {
                             // iteration and is cleared by ActiveAstProgramGuard
                             // before that borrow ends.
                             let program: &Program = unsafe { &*ast_ptr };
-                            crate::interpreter::call_builtin_for_bridge_with_program(
+                            crate::runtime::call_builtin_for_bridge_with_program(
                                 builtin.name(),
                                 value_args,
                                 program,
@@ -15120,7 +15120,7 @@ pub(crate) extern "C" fn jit_det(a: u64, span_bits: u64) -> u64 {
             return TAG_NIL;
         }
     }
-    let (_lu, _piv, det, _singular) = crate::interpreter::lu_decompose(mat);
+    let (_lu, _piv, det, _singular) = crate::runtime::lu_decompose(mat);
     NanVal::number(det).0
 }
 
@@ -15146,7 +15146,7 @@ pub(crate) extern "C" fn jit_inv(a: u64, span_bits: u64) -> u64 {
             return TAG_NIL;
         }
     }
-    let (lu, piv, _det, singular) = crate::interpreter::lu_decompose(mat);
+    let (lu, piv, _det, singular) = crate::runtime::lu_decompose(mat);
     if singular {
         jit_set_runtime_error_with_span(VmError::Type("inv: matrix is singular"), span_bits);
         return TAG_NIL;
@@ -15155,7 +15155,7 @@ pub(crate) extern "C" fn jit_inv(a: u64, span_bits: u64) -> u64 {
     for j in 0..n {
         let mut e = vec![0.0; n];
         e[j] = 1.0;
-        cols.push(crate::interpreter::lu_solve(&lu, &piv, &e));
+        cols.push(crate::runtime::lu_solve(&lu, &piv, &e));
     }
     let rows: Vec<NanVal> = (0..n)
         .map(|i| {
@@ -15206,12 +15206,12 @@ pub(crate) extern "C" fn jit_solve(a: u64, b: u64, span_bits: u64) -> u64 {
         );
         return TAG_NIL;
     }
-    let (lu, piv, _det, singular) = crate::interpreter::lu_decompose(mat);
+    let (lu, piv, _det, singular) = crate::runtime::lu_decompose(mat);
     if singular {
         jit_set_runtime_error_with_span(VmError::Type("solve: matrix is singular"), span_bits);
         return TAG_NIL;
     }
-    let x = crate::interpreter::lu_solve(&lu, &piv, &vec_b);
+    let x = crate::runtime::lu_solve(&lu, &piv, &vec_b);
     let list: Vec<NanVal> = x.into_iter().map(NanVal::number).collect();
     NanVal::heap_list(list).0
 }
@@ -15363,7 +15363,7 @@ pub(crate) extern "C" fn jit_getmany(a: u64) -> u64 {
         }
         _ => return TAG_NIL,
     };
-    let values = crate::interpreter::get_many_fetch(&urls);
+    let values = crate::runtime::get_many_fetch(&urls);
     let nan_items: Vec<NanVal> = values.iter().map(NanVal::from_value).collect();
     NanVal::heap_list(nan_items).0
 }
@@ -16911,12 +16911,12 @@ pub(crate) extern "C" fn jit_call_builtin_tree(
     }
     let ast_ptr = ACTIVE_AST_PROGRAM.with(|c| c.get());
     let res = if ast_ptr.is_null() {
-        crate::interpreter::call_builtin_for_bridge(builtin.name(), value_args)
+        crate::runtime::call_builtin_for_bridge(builtin.name(), value_args)
     } else {
         // SAFETY: published by `with_active_registry`, cleared by its drop
         // guard. Lives for the duration of the Cranelift entry call.
         let program: &Program = unsafe { &*ast_ptr };
-        crate::interpreter::call_builtin_for_bridge_with_program(
+        crate::runtime::call_builtin_for_bridge_with_program(
             builtin.name(),
             value_args,
             program,
@@ -17157,7 +17157,7 @@ pub(crate) extern "C" fn jit_call_dyn(
                 });
                 value_args.extend(v_caps);
             }
-            match crate::interpreter::call_builtin_for_bridge(builtin.name(), value_args) {
+            match crate::runtime::call_builtin_for_bridge(builtin.name(), value_args) {
                 Ok(v) => NanVal::from_value(&v).0,
                 Err(e) => {
                     // Match `jit_call_builtin_tree`'s allow-list so callback
@@ -22548,7 +22548,7 @@ mod tests {
         let src = r#"f url:t hdrs:M t t>R t t;get url hdrs"#;
         let mut headers = std::collections::HashMap::new();
         headers.insert(
-            crate::interpreter::MapKey::Text("x-api-key".to_string()),
+            crate::runtime::MapKey::Text("x-api-key".to_string()),
             Value::Text(Arc::new("tok".to_string())),
         );
         let result = vm_run(
@@ -22570,7 +22570,7 @@ mod tests {
         let src = r#"f url:t body:t hdrs:M t t>R t t;pst url body hdrs"#;
         let mut headers = std::collections::HashMap::new();
         headers.insert(
-            crate::interpreter::MapKey::Text("x-api-key".to_string()),
+            crate::runtime::MapKey::Text("x-api-key".to_string()),
             Value::Text(Arc::new("tok".to_string())),
         );
         let result = vm_run(
@@ -24963,7 +24963,7 @@ mod tests {
                 Value::Map(std::sync::Arc::new({
                     let mut m = std::collections::HashMap::new();
                     m.insert(
-                        crate::interpreter::MapKey::Text("x".to_string()),
+                        crate::runtime::MapKey::Text("x".to_string()),
                         Value::Text(Arc::new("1".to_string())),
                     );
                     m
@@ -27103,7 +27103,7 @@ mod tests {
     // L2329-L2341: run_with_tools with undefined function
     #[test]
     fn vm_run_with_tools_undefined_function() {
-        use crate::interpreter::Value;
+        use crate::runtime::Value;
         use crate::tools::{ToolError, ToolProvider};
         use crate::vm::{compile, run_with_tools};
         use std::future::Future;
@@ -27360,7 +27360,7 @@ mod tests {
     #[test]
     fn vm_run_with_tools_no_functions_defined() {
         use crate::ast::{Decl, Param, Program, Span, Type};
-        use crate::interpreter::Value;
+        use crate::runtime::Value;
         use crate::tools::{ToolError, ToolProvider};
         use crate::vm::{compile, run_with_tools};
         use std::future::Future;
@@ -27410,7 +27410,7 @@ mod tests {
     // VM::new_with_tools constructor path (L2416-2432)
     #[test]
     fn vm_run_with_tools_calls_function_successfully() {
-        use crate::interpreter::Value;
+        use crate::runtime::Value;
         use crate::tools::{ToolError, ToolProvider};
         use crate::vm::{compile, run_with_tools};
         use std::future::Future;
@@ -27821,7 +27821,7 @@ mod tests {
     // Check that run_with_tools correctly invokes VM::new_with_tools (exercises L2416-2432)
     #[test]
     fn vm_run_with_tools_with_tool_declaration() {
-        use crate::interpreter::Value;
+        use crate::runtime::Value;
         use crate::tools::{ToolError, ToolProvider};
         use crate::vm::{compile, run_with_tools};
         use std::future::Future;
@@ -30124,7 +30124,7 @@ mod tests {
         let Value::Map(m) = result else {
             panic!("expected Map")
         };
-        use crate::interpreter::MapKey;
+        use crate::runtime::MapKey;
         assert_eq!(
             m.get(&MapKey::Text("small".to_string())).unwrap(),
             &Value::List(Arc::new(
@@ -30155,7 +30155,7 @@ mod tests {
         let Value::Map(m) = result else {
             panic!("expected Map")
         };
-        use crate::interpreter::MapKey;
+        use crate::runtime::MapKey;
         assert_eq!(
             m.get(&MapKey::Text("1".to_string())).unwrap(),
             &Value::List(Arc::new(
@@ -30232,7 +30232,7 @@ mod tests {
         let Value::Map(m) = result else {
             panic!("expected map")
         };
-        use crate::interpreter::MapKey;
+        use crate::runtime::MapKey;
         assert!(m.contains_key(&MapKey::Text("true".to_string())));
         assert!(m.contains_key(&MapKey::Text("false".to_string())));
     }
@@ -30252,7 +30252,7 @@ mod tests {
         let Value::Map(m) = result else {
             panic!("expected Map")
         };
-        use crate::interpreter::MapKey;
+        use crate::runtime::MapKey;
         // Floats floor to i64 at MapKey boundary: 0.5 → 0, 1.5 → 1.
         assert!(
             m.contains_key(&MapKey::Int(0)) || m.contains_key(&MapKey::Int(1)),
@@ -33665,7 +33665,7 @@ f>n;r=mk 10 20;+r.x r.y";
     //   Inst 5: OP_RET R[2]
     #[test]
     fn vm_op_listget_in_bounds() {
-        use crate::interpreter::Value;
+        use crate::runtime::Value;
         use crate::vm::{Chunk, CompiledProgram, OP_JMP, OP_LISTGET, OP_RET, TypeRegistry, run};
 
         fn make_abc(op: u8, a: u8, b: u8, c: u8) -> u32 {
@@ -33721,7 +33721,7 @@ f>n;r=mk 10 20;+r.x r.y";
     #[test]
     fn vm_op_listget_out_of_bounds() {
         // OP_LISTGET where index is beyond list length → falls through to JMP exit
-        use crate::interpreter::Value;
+        use crate::runtime::Value;
         use crate::vm::{Chunk, CompiledProgram, OP_JMP, OP_LISTGET, OP_RET, TypeRegistry, run};
 
         fn make_abc(op: u8, a: u8, b: u8, c: u8) -> u32 {
@@ -33774,7 +33774,7 @@ f>n;r=mk 10 20;+r.x r.y";
     #[test]
     fn vm_op_listget_non_list_error() {
         // OP_LISTGET where the collection is not a heap value → vm_err!
-        use crate::interpreter::Value;
+        use crate::runtime::Value;
         use crate::vm::{Chunk, CompiledProgram, OP_JMP, OP_LISTGET, OP_RET, TypeRegistry, run};
 
         fn make_abc(op: u8, a: u8, b: u8, c: u8) -> u32 {
@@ -33825,7 +33825,7 @@ f>n;r=mk 10 20;+r.x r.y";
     // Line 2975: .clone() in first().ok_or_else(...)?.clone() when func_name=None
     #[test]
     fn vm_run_with_tools_none_funcname_uses_first() {
-        use crate::interpreter::Value;
+        use crate::runtime::Value;
         use crate::tools::{ToolError, ToolProvider};
         use crate::vm::{compile, run_with_tools};
         use std::future::Future;
@@ -34016,7 +34016,7 @@ f>n;r=mk 10 20;+r.x r.y";
     // "list index must be a number". Construct bytecode with R[1] uninitialized (nil).
     #[test]
     fn vm_op_listget_non_number_idx_error() {
-        use crate::interpreter::Value;
+        use crate::runtime::Value;
         use crate::vm::{Chunk, CompiledProgram, OP_JMP, OP_LISTGET, OP_RET, TypeRegistry, run};
 
         fn make_abc(op: u8, a: u8, b: u8, c: u8) -> u32 {
@@ -34095,7 +34095,7 @@ f>n;r=mk 10 20;+r.x r.y";
     // Let's also test OP_LISTGET when collection IS heap but NOT a list (e.g. a string):
     #[test]
     fn vm_op_listget_heap_non_list_error() {
-        use crate::interpreter::Value;
+        use crate::runtime::Value;
         use crate::vm::{Chunk, CompiledProgram, OP_JMP, OP_LISTGET, OP_RET, TypeRegistry, run};
 
         fn make_abc(op: u8, a: u8, b: u8, c: u8) -> u32 {
@@ -34176,7 +34176,7 @@ f>n;r=mk 10 20;+r.x r.y";
         // Path B: OP_SQRT / OP_POW on a non-number register must store
         // NaN rather than raising a runtime error. We hand-craft bytecode
         // because the verifier rejects this at compile time for typed code.
-        use crate::interpreter::Value;
+        use crate::runtime::Value;
 
         fn make_abc(op: u8, a: u8, b: u8, c: u8) -> u32 {
             ((op as u32) << 24) | ((a as u32) << 16) | ((b as u32) << 8) | (c as u32)
@@ -34277,7 +34277,7 @@ f>n;r=mk 10 20;+r.x r.y";
 
     #[cfg(test)]
     fn run_unary_math_op(op: u8, input: f64) -> f64 {
-        use crate::interpreter::Value;
+        use crate::runtime::Value;
         fn make_abc(op: u8, a: u8, b: u8, c: u8) -> u32 {
             ((op as u32) << 24) | ((a as u32) << 16) | ((b as u32) << 8) | (c as u32)
         }
@@ -34313,7 +34313,7 @@ f>n;r=mk 10 20;+r.x r.y";
 
     #[test]
     fn vm_op_pow_happy() {
-        use crate::interpreter::Value;
+        use crate::runtime::Value;
         fn make_abc(op: u8, a: u8, b: u8, c: u8) -> u32 {
             ((op as u32) << 24) | ((a as u32) << 16) | ((b as u32) << 8) | (c as u32)
         }
@@ -34452,7 +34452,7 @@ f>n;r=mk 10 20;+r.x r.y";
 
     #[test]
     fn vm_op_atan2_happy() {
-        use crate::interpreter::Value;
+        use crate::runtime::Value;
         fn make_abc(op: u8, a: u8, b: u8, c: u8) -> u32 {
             ((op as u32) << 24) | ((a as u32) << 16) | ((b as u32) << 8) | (c as u32)
         }
@@ -34493,7 +34493,7 @@ f>n;r=mk 10 20;+r.x r.y";
 
     #[test]
     fn vm_op_atan2_non_number_is_nan() {
-        use crate::interpreter::Value;
+        use crate::runtime::Value;
         fn make_abc(op: u8, a: u8, b: u8, c: u8) -> u32 {
             ((op as u32) << 24) | ((a as u32) << 16) | ((b as u32) << 8) | (c as u32)
         }
@@ -34719,7 +34719,7 @@ f>n;r=mk 10 20;+r.x r.y";
 
     #[test]
     fn vm_op_lst_happy() {
-        use crate::interpreter::Value;
+        use crate::runtime::Value;
         let prog = parse_for_vm_lst("f>L n;lst [10,20,30] 1 99");
         let compiled = compile(&prog).expect("compile lst");
         let result = run(&compiled, Some("f"), vec![]).expect("run lst");
@@ -34875,7 +34875,7 @@ f>n;r=mk 10 20;+r.x r.y";
 
     #[test]
     fn vm_op_rndn_sigma_zero_returns_mu() {
-        use crate::interpreter::Value;
+        use crate::runtime::Value;
         fn make_abc(op: u8, a: u8, b: u8, c: u8) -> u32 {
             ((op as u32) << 24) | ((a as u32) << 16) | ((b as u32) << 8) | (c as u32)
         }
@@ -34912,7 +34912,7 @@ f>n;r=mk 10 20;+r.x r.y";
 
     #[test]
     fn vm_op_rndn_finite_for_nonzero_sigma() {
-        use crate::interpreter::Value;
+        use crate::runtime::Value;
         fn make_abc(op: u8, a: u8, b: u8, c: u8) -> u32 {
             ((op as u32) << 24) | ((a as u32) << 16) | ((b as u32) << 8) | (c as u32)
         }
@@ -34950,7 +34950,7 @@ f>n;r=mk 10 20;+r.x r.y";
 
     #[test]
     fn vm_op_rndn_non_number_errors() {
-        use crate::interpreter::Value;
+        use crate::runtime::Value;
         fn make_abc(op: u8, a: u8, b: u8, c: u8) -> u32 {
             ((op as u32) << 24) | ((a as u32) << 16) | ((b as u32) << 8) | (c as u32)
         }

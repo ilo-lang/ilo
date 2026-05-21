@@ -8,7 +8,7 @@ use ilo::caps::{Caps, Policy};
 use ilo::codegen;
 use ilo::diagnostic;
 use ilo::graph;
-use ilo::interpreter;
+use ilo::runtime;
 use ilo::lexer;
 use ilo::parser;
 use ilo::tools;
@@ -1026,26 +1026,26 @@ fn process_serv_request(
 
     #[cfg(feature = "tools")]
     let result = if let Some(p) = provider {
-        interpreter::run_with_tools(&program, func_name, run_args, p, rt)
+        runtime::run_with_tools(&program, func_name, run_args, p, rt)
     } else if let Some(cfg) = http_config {
         let p = std::sync::Arc::new(tools::http_provider::HttpProvider::new(cfg.clone()));
-        interpreter::run_with_tools(&program, func_name, run_args, p, rt)
+        runtime::run_with_tools(&program, func_name, run_args, p, rt)
     } else {
-        interpreter::run(&program, func_name, run_args)
+        runtime::run(&program, func_name, run_args)
     };
 
     #[cfg(not(feature = "tools"))]
-    let result = interpreter::run(&program, func_name, run_args);
+    let result = runtime::run(&program, func_name, run_args);
 
     let ms = start.elapsed().as_millis() as u64;
 
     match result {
         Ok(value) => match value {
-            interpreter::Value::Ok(inner) => {
+            runtime::Value::Ok(inner) => {
                 let v = inner.to_json().unwrap_or(serde_json::Value::Null);
                 serde_json::json!({"schemaVersion": 1, "ok": v, "ms": ms})
             }
-            interpreter::Value::Err(inner) => {
+            runtime::Value::Err(inner) => {
                 let v = inner
                     .to_json()
                     .unwrap_or_else(|_| serde_json::Value::String(inner.to_string()));
@@ -1367,7 +1367,7 @@ fn repl_cmd() {
 
         // Skip type checking for the repl wrapper — just run it
         // This allows expressions of any type to be evaluated
-        match interpreter::run(&full_program, Some("repleval"), vec![]) {
+        match runtime::run(&full_program, Some("repleval"), vec![]) {
             Ok(value) => println!("{value}"),
             Err(e) => {
                 let d = Diagnostic::from(&e).with_source(full_source);
@@ -4407,7 +4407,7 @@ fn print_help() {
 fn run_vm_with_provider(
     compiled: &vm::CompiledProgram,
     func_name: Option<&str>,
-    args: Vec<interpreter::Value>,
+    args: Vec<runtime::Value>,
     tools_config_path: Option<&str>,
     #[cfg(feature = "tools")] mcp_provider: Option<&tools::mcp_provider::McpProvider>,
     #[cfg(feature = "tools")] mcp_rt: Option<&tokio::runtime::Runtime>,
@@ -4483,7 +4483,7 @@ fn run_vm_with_provider(
 fn run_interp_with_provider(
     program: &ast::Program,
     func_name: Option<&str>,
-    args: Vec<interpreter::Value>,
+    args: Vec<runtime::Value>,
     tools_config_path: Option<&str>,
     #[cfg(feature = "tools")] mcp_provider: Option<tools::mcp_provider::McpProvider>,
     #[cfg(feature = "tools")] mcp_rt: Option<tokio::runtime::Runtime>,
@@ -4496,7 +4496,7 @@ fn run_interp_with_provider(
     #[cfg(feature = "tools")]
     if let Some(provider) = mcp_provider {
         let rt = std::sync::Arc::new(mcp_rt.expect("runtime present with mcp_provider"));
-        match interpreter::run_with_tools_and_caps(
+        match runtime::run_with_tools_and_caps(
             program,
             func_name,
             args,
@@ -4531,7 +4531,7 @@ fn run_interp_with_provider(
                 .build()
                 .expect("tokio runtime"),
         );
-        return match interpreter::run_with_tools_and_caps(
+        return match runtime::run_with_tools_and_caps(
             program,
             func_name,
             args,
@@ -4551,7 +4551,7 @@ fn run_interp_with_provider(
         };
     }
 
-    match interpreter::run_with_caps(program, func_name, args, caps) {
+    match runtime::run_with_caps(program, func_name, args, caps) {
         Ok(val) => {
             print_value(&val, explicit_json, suppress);
             program_exit_code(&val)
@@ -4599,7 +4599,7 @@ fn dump_ast_json(program: &ast::Program) -> i32 {
 fn run_default(
     program: &ast::Program,
     func_name: Option<&str>,
-    args: Vec<interpreter::Value>,
+    args: Vec<runtime::Value>,
     source: &str,
     mode: OutputMode,
     explicit_json: bool,
@@ -4643,7 +4643,7 @@ fn run_default(
     }
 
     // Fall back to interpreter
-    match interpreter::run_with_caps(program, func_name, args, caps) {
+    match runtime::run_with_caps(program, func_name, args, caps) {
         Ok(val) => {
             print_value(&val, explicit_json, suppress);
             program_exit_code(&val)
@@ -4818,7 +4818,7 @@ fn body_has_top_level_prnt(body: &[ast::Spanned<ast::Stmt>]) -> bool {
 /// stream convention for failures). In JSON mode the `{"error": ...}` envelope is
 /// still written to stdout, so machine consumers can keep parsing stdout uniformly
 /// and discriminate on the top-level key.
-fn print_value(val: &interpreter::Value, as_json: bool, suppress_loop_tail: bool) {
+fn print_value(val: &runtime::Value, as_json: bool, suppress_loop_tail: bool) {
     if !as_json {
         // Value::Err always prints to stderr — even when suppress_loop_tail
         // is on. The loop-tail suppression rule exists to avoid duplicating
@@ -4827,7 +4827,7 @@ fn print_value(val: &interpreter::Value, as_json: bool, suppress_loop_tail: bool
         // companion exit-code surfacing happens in `program_exit_code`, so
         // skipping the err here would leave the operator with `exit 1` and
         // zero diagnostic context.
-        if matches!(val, interpreter::Value::Err(_)) {
+        if matches!(val, runtime::Value::Err(_)) {
             eprintln!("{}", val);
             return;
         }
@@ -4844,7 +4844,7 @@ fn print_value(val: &interpreter::Value, as_json: bool, suppress_loop_tail: bool
         // `Value::Ok` still renders `~v` everywhere else (nested values,
         // `prnt ~"x"`, REPL prompts, error messages, debug formatting) — those
         // contexts genuinely want the wrapper visible.
-        if let interpreter::Value::Ok(inner) = val {
+        if let runtime::Value::Ok(inner) = val {
             println!("{}", inner);
             return;
         }
@@ -4852,11 +4852,11 @@ fn print_value(val: &interpreter::Value, as_json: bool, suppress_loop_tail: bool
         return;
     }
     let json = match val {
-        interpreter::Value::Ok(inner) => {
+        runtime::Value::Ok(inner) => {
             let v = inner.to_json().unwrap_or(serde_json::Value::Null);
             serde_json::json!({"schemaVersion": 1, "ok": v})
         }
-        interpreter::Value::Err(inner) => {
+        runtime::Value::Err(inner) => {
             let v = inner
                 .to_json()
                 .unwrap_or_else(|_| serde_json::Value::String(inner.to_string()));
@@ -4877,8 +4877,8 @@ fn print_value(val: &interpreter::Value, as_json: bool, suppress_loop_tail: bool
 /// detect failure — this is the companion to [#248]'s `!!` panic-unwrap fix, which
 /// addressed the explicit-crash path. Returning the error variant from the `~`/`^`
 /// arm without `!!` is the same kind of failure semantically, just with a value.
-fn program_exit_code(val: &interpreter::Value) -> i32 {
-    if matches!(val, interpreter::Value::Err(_)) {
+fn program_exit_code(val: &runtime::Value) -> i32 {
+    if matches!(val, runtime::Value::Err(_)) {
         1
     } else {
         0
@@ -5042,7 +5042,7 @@ fn emit_bench_json(
 fn run_bench(
     program: &ast::Program,
     func_name: Option<&str>,
-    args: &[interpreter::Value],
+    args: &[runtime::Value],
     json: bool,
     silent: bool,
 ) {
@@ -5062,13 +5062,13 @@ fn run_bench(
     // -- Rust interpreter benchmark --
     // Warmup
     for _ in 0..100 {
-        let _ = interpreter::run(program, func_name, args.to_vec());
+        let _ = runtime::run(program, func_name, args.to_vec());
     }
 
     let start = Instant::now();
-    let mut result = interpreter::Value::Nil;
+    let mut result = runtime::Value::Nil;
     for _ in 0..iterations {
-        result = interpreter::run(program, func_name, args.to_vec())
+        result = runtime::run(program, func_name, args.to_vec())
             .expect("interpreter error during benchmark");
     }
     let interp_dur = start.elapsed();
@@ -5104,7 +5104,7 @@ fn run_bench(
     }
 
     let start = Instant::now();
-    let mut vm_result = interpreter::Value::Nil;
+    let mut vm_result = runtime::Value::Nil;
     for _ in 0..iterations {
         vm_result =
             vm::run(&compiled, func_name, args.to_vec()).expect("VM error during benchmark");
@@ -5198,7 +5198,7 @@ fn run_bench(
     let jit_args: Vec<f64> = args
         .iter()
         .filter_map(|a| match a {
-            interpreter::Value::Number(n) => Some(*n),
+            runtime::Value::Number(n) => Some(*n),
             _ => None,
         })
         .collect();
@@ -5321,15 +5321,15 @@ fn run_bench(
     let call_args: Vec<String> = args
         .iter()
         .map(|a| match a {
-            interpreter::Value::Number(n) => {
+            runtime::Value::Number(n) => {
                 if *n == (*n as i64) as f64 {
                     format!("{}", *n as i64)
                 } else {
                     format!("{}", n)
                 }
             }
-            interpreter::Value::Text(s) => format!("\"{}\"", s),
-            interpreter::Value::Bool(b) => {
+            runtime::Value::Text(s) => format!("\"{}\"", s),
+            runtime::Value::Bool(b) => {
                 if *b {
                     "True".to_string()
                 } else {
@@ -5613,7 +5613,7 @@ fn lookup_param_types<'a>(
 ///
 /// Mirrors the resolution every engine entry uses internally: if the caller
 /// supplied `func_name`, use it; otherwise pick the first declared function
-/// (matching `vm::run` / `interpreter::run_with_env` / `run_default`).
+/// (matching `vm::run` / `runtime::run_with_env` / `run_default`).
 ///
 /// Returned name is the canonical target so the CLI-boundary arity check can
 /// report a faithful function name in the diagnostic, regardless of whether
@@ -5664,7 +5664,7 @@ fn check_cli_arity(
     if args_len == params.len() {
         return Ok(());
     }
-    let err = interpreter::RuntimeError {
+    let err = runtime::RuntimeError {
         code: "ILO-R004",
         message: format!(
             "{}: expected {} args, got {}",
@@ -5695,7 +5695,7 @@ fn parse_cli_args_typed(
     program: &ast::Program,
     func_name: Option<&str>,
     raw: &[String],
-) -> Vec<interpreter::Value> {
+) -> Vec<runtime::Value> {
     let params = lookup_param_types(program, func_name);
     raw.iter()
         .enumerate()
@@ -5703,9 +5703,9 @@ fn parse_cli_args_typed(
             let expected = params.and_then(|ps| ps.get(i)).map(|p| &p.ty);
             let mut v = parse_cli_arg_for_param(s, expected);
             if matches!(expected, Some(ast::Type::List(_)))
-                && !matches!(&v, interpreter::Value::List(_))
+                && !matches!(&v, runtime::Value::List(_))
             {
-                v = interpreter::Value::List(std::sync::Arc::new(vec![v]));
+                v = runtime::Value::List(std::sync::Arc::new(vec![v]));
             }
             v
         })
@@ -5724,8 +5724,8 @@ fn parse_cli_args_typed(
 fn coerce_cli_args(
     program: &ast::Program,
     func_name: Option<&str>,
-    mut args: Vec<interpreter::Value>,
-) -> Vec<interpreter::Value> {
+    mut args: Vec<runtime::Value>,
+) -> Vec<runtime::Value> {
     let Some(params) = lookup_param_types(program, func_name) else {
         return args;
     };
@@ -5734,9 +5734,9 @@ fn coerce_cli_args(
             break;
         }
         if matches!(&param.ty, ast::Type::List(_))
-            && !matches!(&args[i], interpreter::Value::List(_))
+            && !matches!(&args[i], runtime::Value::List(_))
         {
-            args[i] = interpreter::Value::List(std::sync::Arc::new(vec![args[i].clone()]));
+            args[i] = runtime::Value::List(std::sync::Arc::new(vec![args[i].clone()]));
         }
     }
     args
@@ -5868,31 +5868,31 @@ mod tests {
 
     #[test]
     fn cli_arg_integer() {
-        assert_eq!(parse_cli_arg("42"), interpreter::Value::Number(42.0));
+        assert_eq!(parse_cli_arg("42"), runtime::Value::Number(42.0));
     }
 
     #[test]
     fn cli_arg_float() {
         #[allow(clippy::approx_constant)]
-        let expected = interpreter::Value::Number(3.14);
+        let expected = runtime::Value::Number(3.14);
         assert_eq!(parse_cli_arg("3.14"), expected);
     }
 
     #[test]
     fn cli_arg_bool_true() {
-        assert_eq!(parse_cli_arg("true"), interpreter::Value::Bool(true));
+        assert_eq!(parse_cli_arg("true"), runtime::Value::Bool(true));
     }
 
     #[test]
     fn cli_arg_bool_false() {
-        assert_eq!(parse_cli_arg("false"), interpreter::Value::Bool(false));
+        assert_eq!(parse_cli_arg("false"), runtime::Value::Bool(false));
     }
 
     #[test]
     fn cli_arg_text() {
         assert_eq!(
             parse_cli_arg("hello"),
-            interpreter::Value::Text(Arc::new("hello".to_string()))
+            runtime::Value::Text(Arc::new("hello".to_string()))
         );
     }
 
@@ -5900,10 +5900,10 @@ mod tests {
     fn cli_arg_bracketed_list() {
         assert_eq!(
             parse_cli_arg("[1,2,3]"),
-            interpreter::Value::List(Arc::new(vec![
-                interpreter::Value::Number(1.0),
-                interpreter::Value::Number(2.0),
-                interpreter::Value::Number(3.0),
+            runtime::Value::List(Arc::new(vec![
+                runtime::Value::Number(1.0),
+                runtime::Value::Number(2.0),
+                runtime::Value::Number(3.0),
             ]))
         );
     }
@@ -5912,7 +5912,7 @@ mod tests {
     fn cli_arg_empty_bracketed_list() {
         assert_eq!(
             parse_cli_arg("[]"),
-            interpreter::Value::List(Arc::new(vec![]))
+            runtime::Value::List(Arc::new(vec![]))
         );
     }
 
@@ -5920,10 +5920,10 @@ mod tests {
     fn cli_arg_comma_list() {
         assert_eq!(
             parse_cli_arg("1,2,3"),
-            interpreter::Value::List(Arc::new(vec![
-                interpreter::Value::Number(1.0),
-                interpreter::Value::Number(2.0),
-                interpreter::Value::Number(3.0),
+            runtime::Value::List(Arc::new(vec![
+                runtime::Value::Number(1.0),
+                runtime::Value::Number(2.0),
+                runtime::Value::Number(3.0),
             ]))
         );
     }
@@ -5932,10 +5932,10 @@ mod tests {
     fn cli_arg_mixed_comma_list() {
         assert_eq!(
             parse_cli_arg("1,hello,true"),
-            interpreter::Value::List(Arc::new(vec![
-                interpreter::Value::Number(1.0),
-                interpreter::Value::Text(Arc::new("hello".to_string())),
-                interpreter::Value::Bool(true),
+            runtime::Value::List(Arc::new(vec![
+                runtime::Value::Number(1.0),
+                runtime::Value::Text(Arc::new("hello".to_string())),
+                runtime::Value::Bool(true),
             ]))
         );
     }
@@ -5945,7 +5945,7 @@ mod tests {
         // inf is not finite so it should fall through to text
         assert_eq!(
             parse_cli_arg("inf"),
-            interpreter::Value::Text(Arc::new("inf".to_string()))
+            runtime::Value::Text(Arc::new("inf".to_string()))
         );
     }
 
@@ -6690,7 +6690,7 @@ mod tests {
         run_vm_with_provider(
             &compiled,
             Some("f"),
-            vec![interpreter::Value::Number(5.0)],
+            vec![runtime::Value::Number(5.0)],
             None,
             #[cfg(feature = "tools")]
             None,
@@ -6710,7 +6710,7 @@ mod tests {
         run_vm_with_provider(
             &compiled,
             Some("f"),
-            vec![interpreter::Value::Number(4.0)],
+            vec![runtime::Value::Number(4.0)],
             None,
             #[cfg(feature = "tools")]
             None,
@@ -6732,7 +6732,7 @@ mod tests {
         run_interp_with_provider(
             &program,
             Some("f"),
-            vec![interpreter::Value::Number(7.0)],
+            vec![runtime::Value::Number(7.0)],
             None,
             #[cfg(feature = "tools")]
             None,
@@ -6751,7 +6751,7 @@ mod tests {
         run_interp_with_provider(
             &program,
             Some("f"),
-            vec![interpreter::Value::Number(10.0)],
+            vec![runtime::Value::Number(10.0)],
             None,
             #[cfg(feature = "tools")]
             None,
@@ -6772,7 +6772,7 @@ mod tests {
         run_default(
             &program,
             Some("f"),
-            vec![interpreter::Value::Number(3.0)],
+            vec![runtime::Value::Number(3.0)],
             "f x:n>n;*x 2",
             OutputMode::Text,
             false,
@@ -6786,7 +6786,7 @@ mod tests {
         run_default(
             &program,
             Some("greet"),
-            vec![interpreter::Value::Text(Arc::new("world".to_string()))],
+            vec![runtime::Value::Text(Arc::new("world".to_string()))],
             "greet name:t>t;cat \"hi \" name",
             OutputMode::Text,
             false,
@@ -6800,7 +6800,7 @@ mod tests {
         run_default(
             &program,
             None,
-            vec![interpreter::Value::Number(4.0)],
+            vec![runtime::Value::Number(4.0)],
             "double x:n>n;*x 2",
             OutputMode::Text,
             false,
@@ -6868,18 +6868,18 @@ mod tests {
 
     #[test]
     fn print_value_plain_number_no_json() {
-        print_value(&interpreter::Value::Number(42.0), false, false);
+        print_value(&runtime::Value::Number(42.0), false, false);
     }
 
     #[test]
     fn print_value_ok_as_json() {
-        let val = interpreter::Value::Ok(Box::new(interpreter::Value::Number(42.0)));
+        let val = runtime::Value::Ok(Box::new(runtime::Value::Number(42.0)));
         print_value(&val, true, false);
     }
 
     #[test]
     fn print_value_err_as_json() {
-        let val = interpreter::Value::Err(Box::new(interpreter::Value::Text(Arc::new(
+        let val = runtime::Value::Err(Box::new(runtime::Value::Text(Arc::new(
             "oops".to_string(),
         ))));
         print_value(&val, true, false);
@@ -6887,7 +6887,7 @@ mod tests {
 
     #[test]
     fn print_value_err_no_json() {
-        let val = interpreter::Value::Err(Box::new(interpreter::Value::Text(Arc::new(
+        let val = runtime::Value::Err(Box::new(runtime::Value::Text(Arc::new(
             "fail".to_string(),
         ))));
         print_value(&val, false, false);
@@ -6896,7 +6896,7 @@ mod tests {
     #[test]
     fn print_value_text_as_json() {
         print_value(
-            &interpreter::Value::Text(Arc::new("hello".to_string())),
+            &runtime::Value::Text(Arc::new("hello".to_string())),
             true,
             false,
         );
@@ -6904,19 +6904,19 @@ mod tests {
 
     #[test]
     fn print_value_bool_as_json() {
-        print_value(&interpreter::Value::Bool(true), true, false);
+        print_value(&runtime::Value::Bool(true), true, false);
     }
 
     #[test]
     fn print_value_nil_as_json() {
-        print_value(&interpreter::Value::Nil, true, false);
+        print_value(&runtime::Value::Nil, true, false);
     }
 
     #[test]
     fn print_value_list_as_json() {
-        let val = interpreter::Value::List(Arc::new(vec![
-            interpreter::Value::Number(1.0),
-            interpreter::Value::Number(2.0),
+        let val = runtime::Value::List(Arc::new(vec![
+            runtime::Value::Number(1.0),
+            runtime::Value::Number(2.0),
         ]));
         print_value(&val, true, false);
     }
@@ -7099,18 +7099,18 @@ mod tests {
         // NaN is not finite, so it should fall through to text
         assert_eq!(
             parse_cli_arg("NaN"),
-            interpreter::Value::Text(Arc::new("NaN".to_string()))
+            runtime::Value::Text(Arc::new("NaN".to_string()))
         );
     }
 
     #[test]
     fn cli_arg_negative_number() {
-        assert_eq!(parse_cli_arg("-5"), interpreter::Value::Number(-5.0));
+        assert_eq!(parse_cli_arg("-5"), runtime::Value::Number(-5.0));
     }
 
     #[test]
     fn cli_arg_nil() {
-        assert_eq!(parse_cli_arg("nil"), interpreter::Value::Nil);
+        assert_eq!(parse_cli_arg("nil"), runtime::Value::Nil);
     }
 
     #[test]
@@ -7118,7 +7118,7 @@ mod tests {
         // "nil" should parse as Nil, not Text("nil")
         assert_ne!(
             parse_cli_arg("nil"),
-            interpreter::Value::Text(Arc::new("nil".to_string()))
+            runtime::Value::Text(Arc::new("nil".to_string()))
         );
     }
 
@@ -7141,12 +7141,12 @@ mod tests {
             })
             .collect();
         let (program, _) = crate::parser::parse(spans);
-        let args = vec![interpreter::Value::Number(10.0)];
+        let args = vec![runtime::Value::Number(10.0)];
         let coerced = coerce_cli_args(&program, Some("f"), args);
         assert_eq!(
             coerced,
-            vec![interpreter::Value::List(Arc::new(vec![
-                interpreter::Value::Number(10.0)
+            vec![runtime::Value::List(Arc::new(vec![
+                runtime::Value::Number(10.0)
             ]))]
         );
     }
@@ -7168,9 +7168,9 @@ mod tests {
             })
             .collect();
         let (program, _) = crate::parser::parse(spans);
-        let args = vec![interpreter::Value::List(Arc::new(vec![
-            interpreter::Value::Number(1.0),
-            interpreter::Value::Number(2.0),
+        let args = vec![runtime::Value::List(Arc::new(vec![
+            runtime::Value::Number(1.0),
+            runtime::Value::Number(2.0),
         ]))];
         let coerced = coerce_cli_args(&program, Some("f"), args.clone());
         assert_eq!(coerced, args);
@@ -7193,7 +7193,7 @@ mod tests {
             })
             .collect();
         let (program, _) = crate::parser::parse(spans);
-        let args = vec![interpreter::Value::Number(10.0)];
+        let args = vec![runtime::Value::Number(10.0)];
         let coerced = coerce_cli_args(&program, Some("f"), args.clone());
         assert_eq!(coerced, args);
     }
@@ -7216,16 +7216,16 @@ mod tests {
             .collect();
         let (program, _) = crate::parser::parse(spans);
         let args = vec![
-            interpreter::Value::Number(5.0),
-            interpreter::Value::Number(3.0),
+            runtime::Value::Number(5.0),
+            runtime::Value::Number(3.0),
         ];
         let coerced = coerce_cli_args(&program, Some("f"), args);
         // xs should be wrapped, v should stay
         assert_eq!(
             coerced,
             vec![
-                interpreter::Value::List(Arc::new(vec![interpreter::Value::Number(5.0)])),
-                interpreter::Value::Number(3.0),
+                runtime::Value::List(Arc::new(vec![runtime::Value::Number(5.0)])),
+                runtime::Value::Number(3.0),
             ]
         );
     }
@@ -7243,7 +7243,7 @@ mod tests {
         let parsed = parse_cli_args_typed(&program, Some("f"), &raw);
         assert_eq!(
             parsed,
-            vec![interpreter::Value::Text(Arc::new("2".to_string()))]
+            vec![runtime::Value::Text(Arc::new("2".to_string()))]
         );
     }
 
@@ -7254,7 +7254,7 @@ mod tests {
         let parsed = parse_cli_args_typed(&program, Some("f"), &raw);
         assert_eq!(
             parsed,
-            vec![interpreter::Value::Text(Arc::new("true".to_string()))]
+            vec![runtime::Value::Text(Arc::new("true".to_string()))]
         );
     }
 
@@ -7265,7 +7265,7 @@ mod tests {
         let parsed = parse_cli_args_typed(&program, Some("f"), &raw);
         assert_eq!(
             parsed,
-            vec![interpreter::Value::Text(Arc::new("nil".to_string()))]
+            vec![runtime::Value::Text(Arc::new("nil".to_string()))]
         );
     }
 
@@ -7277,7 +7277,7 @@ mod tests {
         let parsed = parse_cli_args_typed(&program, Some("f"), &raw);
         assert_eq!(
             parsed,
-            vec![interpreter::Value::Text(Arc::new("[1,2]".to_string()))]
+            vec![runtime::Value::Text(Arc::new("[1,2]".to_string()))]
         );
     }
 
@@ -7287,7 +7287,7 @@ mod tests {
         let program = make_program("f x:n>n;x");
         let raw = vec!["42".to_string()];
         let parsed = parse_cli_args_typed(&program, Some("f"), &raw);
-        assert_eq!(parsed, vec![interpreter::Value::Number(42.0)]);
+        assert_eq!(parsed, vec![runtime::Value::Number(42.0)]);
     }
 
     #[test]
@@ -7298,8 +7298,8 @@ mod tests {
         let parsed = parse_cli_args_typed(&program, Some("f"), &raw);
         assert_eq!(
             parsed,
-            vec![interpreter::Value::List(Arc::new(vec![
-                interpreter::Value::Number(10.0)
+            vec![runtime::Value::List(Arc::new(vec![
+                runtime::Value::Number(10.0)
             ]))]
         );
     }
@@ -7314,8 +7314,8 @@ mod tests {
         assert_eq!(
             parsed,
             vec![
-                interpreter::Value::Text(Arc::new("2".to_string())),
-                interpreter::Value::Number(3.0),
+                runtime::Value::Text(Arc::new("2".to_string())),
+                runtime::Value::Number(3.0),
             ]
         );
     }
@@ -7327,7 +7327,7 @@ mod tests {
         let program = make_program("f arg:t>t;arg");
         let raw = vec!["2".to_string()];
         let parsed = parse_cli_args_typed(&program, None, &raw);
-        assert_eq!(parsed, vec![interpreter::Value::Number(2.0)]);
+        assert_eq!(parsed, vec![runtime::Value::Number(2.0)]);
     }
 
     #[test]
@@ -7347,7 +7347,7 @@ mod tests {
             })
             .collect();
         let (program, _) = crate::parser::parse(spans);
-        let args = vec![interpreter::Value::Number(10.0)];
+        let args = vec![runtime::Value::Number(10.0)];
         let coerced = coerce_cli_args(&program, None, args.clone());
         assert_eq!(coerced, args);
     }
@@ -7479,9 +7479,9 @@ mod tests {
 
     #[test]
     fn print_value_list_plain_not_json() {
-        let val = interpreter::Value::List(Arc::new(vec![
-            interpreter::Value::Number(1.0),
-            interpreter::Value::Text(Arc::new("x".to_string())),
+        let val = runtime::Value::List(Arc::new(vec![
+            runtime::Value::Number(1.0),
+            runtime::Value::Text(Arc::new("x".to_string())),
         ]));
         print_value(&val, false, false);
     }
@@ -7490,10 +7490,10 @@ mod tests {
     fn print_value_map_as_json() {
         let mut m = std::collections::HashMap::new();
         m.insert(
-            interpreter::MapKey::Text("k".to_string()),
-            interpreter::Value::Number(7.0),
+            runtime::MapKey::Text("k".to_string()),
+            runtime::Value::Number(7.0),
         );
-        let val = interpreter::Value::Map(std::sync::Arc::new(m));
+        let val = runtime::Value::Map(std::sync::Arc::new(m));
         print_value(&val, true, false);
     }
 
@@ -7501,10 +7501,10 @@ mod tests {
     fn print_value_map_plain_not_json() {
         let mut m = std::collections::HashMap::new();
         m.insert(
-            interpreter::MapKey::Text("key".to_string()),
-            interpreter::Value::Bool(true),
+            runtime::MapKey::Text("key".to_string()),
+            runtime::Value::Bool(true),
         );
-        let val = interpreter::Value::Map(std::sync::Arc::new(m));
+        let val = runtime::Value::Map(std::sync::Arc::new(m));
         print_value(&val, false, false);
     }
 
@@ -10268,7 +10268,7 @@ mod tests {
         let code = run_default(
             &program,
             Some("f"),
-            vec![interpreter::Value::Number(5.0)],
+            vec![runtime::Value::Number(5.0)],
             "",
             OutputMode::Text,
             false,
