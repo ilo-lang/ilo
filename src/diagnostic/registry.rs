@@ -1298,6 +1298,35 @@ Use braceless guards `cond expr` for early return, or `ret` inside
 braced guards for explicit early return from loops.
 "#,
     },
+    ErrorEntry {
+        code: "ILO-W002",
+        short: "iterating jpar! result, use jpar-list! instead",
+        long: r#"## ILO-W002: iterating jpar! result
+
+You wrote something like `@x (jpar! body){...}`. `jpar` parses any JSON
+value (object, array, scalar) and returns `R ? t`; after `!` the
+inner value is polymorphic (`?` / Unknown), so the verifier cannot
+prove it is a list. At runtime iteration only succeeds when the JSON
+top-level happens to be an array, and even when it is, the
+polymorphic return type forces you to thread `?` through any wrapping
+function.
+
+**Fix:** use `jpar-list!` instead:
+
+```ilo
+@x (jpar-list! body){prnt x}
+```
+
+`jpar-list` asserts the top-level value is an array, returns
+`R (L _) t`, and after `!` you get `L _`, a list ready to iterate.
+The intent ("this JSON is an array") is captured at parse time, and
+the surrounding function's return type stays clean.
+
+Use plain `jpar` when the JSON shape is unknown and you want to
+inspect it with `?`; use `jpar-list` when you know (or expect) the
+response to be an array.
+"#,
+    },
     // ── Runtime ──────────────────────────────────────────────────────────────
     ErrorEntry {
         code: "ILO-R001",
