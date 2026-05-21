@@ -201,6 +201,8 @@ The following identifiers are reserved and cannot be used as names: `if`, `retur
 -- ERROR: `fn`/`def` is a reserved word. Use: name param:type > rettype; body
 ```
 
+These checks fire at parse time across every context the keyword can appear in: top-level declaration head (`fn>n;...`), binding LHS (`fn=5`), and **parameter position** (`g fn:n>n;fn` rejects with ILO-P011 against the param name, not a cryptic ILO-P003 against the missing `>`).
+
 Builtin names (`flat`, `frq`, `map`, `flt`, `cat`, `len`, `srt`, `hd`, `tl`, `ord`, `fld`, `lst`, ...) are also rejected as user-function names and as local-binding LHS. Without this, calls to the user fn or use sites of the local binding silently mis-dispatch to the builtin and surface as a confusing `ILO-T006` arity mismatch. The parser intercepts at the declaration site with ILO-P011 and a rename hint:
 
 ```
