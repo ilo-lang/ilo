@@ -1,0 +1,26 @@
+-- Paginated fetch via closure-threading: state lives one run.
+--
+-- ilo has no globals. Multi-request flows thread state as a function
+-- argument: pass the cursor in, return the accumulated result out.
+-- Each recursive call advances the cursor; the base case is "no more
+-- pages" (empty cursor).
+--
+-- Real-world: each page would be a `get!` returning a JSON body with
+-- `items` + `next` cursor. Here we use a deterministic fake page so the
+-- example runs offline cross-engine without hitting the network. The
+-- shape of `fetch-loop` is the part agents copy.
+
+-- Fake server: page 0 -> two items + cursor "1"; page 1 -> two items +
+-- cursor "2"; page 2 -> two items, no next.
+fake-page cur:t>L t;?h (=cur "0") ["a","b"] (?h (=cur "1") ["c","d"] ["e","f"])
+
+next-cur cur:t>t;?h (=cur "0") "1" (?h (=cur "1") "2" "")
+
+-- Closure-threading loop: cur is the per-call state, acc is the carry.
+-- The recursive call passes both forward; the base case returns acc.
+fetch-loop cur:t acc:L t>L t;page=fake-page cur;acc=+acc page;nxt=next-cur cur;?h (=nxt "") acc (fetch-loop nxt acc)
+
+main>L t;fetch-loop "0" []
+
+-- run: main
+-- out: [a, b, c, d, e, f]
