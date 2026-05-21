@@ -26,12 +26,13 @@ pub struct TraceEvent {
 // Thread-local trace sink. When `Some`, `eval_body` fires it after each
 // statement. Set to `Some` by `run_with_trace` and cleared on return.
 std::thread_local! {
+    #[allow(clippy::type_complexity)]
     static TRACE_HOOK: std::cell::RefCell<Option<Box<dyn FnMut(TraceEvent)>>> =
-        std::cell::RefCell::new(None);
+        const { std::cell::RefCell::new(None) };
 
     // Source text used to look up statement spans; set alongside TRACE_HOOK.
     static TRACE_SOURCE: std::cell::RefCell<Option<String>> =
-        std::cell::RefCell::new(None);
+        const { std::cell::RefCell::new(None) };
 }
 
 /// Run `program` with a per-statement trace callback.
@@ -40,14 +41,14 @@ pub fn run_with_trace<F>(
     program: &Program,
     func_name: Option<&str>,
     args: Vec<Value>,
-    mut on_event: F,
+    on_event: F,
 ) -> Result<Value>
 where
     F: FnMut(TraceEvent) + 'static,
 {
     // Install the hook.
     TRACE_HOOK.with(|h| {
-        *h.borrow_mut() = Some(Box::new(move |e| on_event(e)));
+        *h.borrow_mut() = Some(Box::new(on_event));
     });
     TRACE_SOURCE.with(|s| {
         *s.borrow_mut() = program.source.clone();
