@@ -2428,7 +2428,52 @@ fn load_dotenv() {
 fn main() {
     load_dotenv();
 
-    let raw_args: Vec<String> = std::env::args().collect();
+    let mut raw_args: Vec<String> = std::env::args().collect();
+
+    // `--max-ast-depth N` is a global flag (see ILO-P103). Strip it from
+    // `raw_args` here, before either the clap or the bare-positional dispatch
+    // sees the value, and install it on the parser as a process-wide override.
+    // Threading the cap through every `parser::parse` call site would touch 30+
+    // sites for no behavioural win — every parse in the process is started
+    // from the same `fn main`, so a single atomic is enough.
+    let mut i = 1;
+    while i < raw_args.len() {
+        // Stop scanning at `--` so a literal positional `--max-ast-depth` arg
+        // to a user program isn't intercepted.
+        if raw_args[i] == "--" {
+            break;
+        }
+        if raw_args[i] == "--max-ast-depth" {
+            if i + 1 >= raw_args.len() {
+                eprintln!("error: --max-ast-depth requires a value");
+                std::process::exit(1);
+            }
+            match raw_args[i + 1].parse::<usize>() {
+                Ok(n) if n >= 1 => parser::set_max_ast_depth_override(n),
+                _ => {
+                    eprintln!(
+                        "error: --max-ast-depth requires a positive integer, got '{}'",
+                        raw_args[i + 1]
+                    );
+                    std::process::exit(1);
+                }
+            }
+            raw_args.drain(i..i + 2);
+            continue;
+        }
+        if let Some(rest) = raw_args[i].strip_prefix("--max-ast-depth=") {
+            match rest.parse::<usize>() {
+                Ok(n) if n >= 1 => parser::set_max_ast_depth_override(n),
+                _ => {
+                    eprintln!("error: --max-ast-depth requires a positive integer, got '{rest}'");
+                    std::process::exit(1);
+                }
+            }
+            raw_args.remove(i);
+            continue;
+        }
+        i += 1;
+    }
 
     // Global deprecation nudge: if any arg is the old `--run-vm` spelling,
     // emit the one-shot hint here so it fires uniformly across every
@@ -2503,6 +2548,7 @@ fn main() {
                         text: false,
                         json: false,
                         no_hints: false,
+                        max_ast_depth: None,
                     },
                     args: raw_args,
                 },
@@ -7847,6 +7893,7 @@ mod tests {
                 text: false,
                 json: false,
                 no_hints: false,
+                max_ast_depth: None,
             },
             args: vec!["f>n;1".to_string()],
         };
@@ -7864,6 +7911,7 @@ mod tests {
             text: false,
             json: false,
             no_hints: false,
+            max_ast_depth: None,
         };
         let code = dispatch_bare_args(vec!["ilo".to_string(), "-ai".to_string()], &global);
         assert_eq!(code, 0);
@@ -7878,6 +7926,7 @@ mod tests {
             text: false,
             json: false,
             no_hints: false,
+            max_ast_depth: None,
         };
         let code = dispatch_bare_args(
             vec!["ilo".to_string(), "help".to_string(), "lang".to_string()],
@@ -7893,6 +7942,7 @@ mod tests {
             text: false,
             json: false,
             no_hints: false,
+            max_ast_depth: None,
         };
         let code = dispatch_bare_args(
             vec!["ilo".to_string(), "help".to_string(), "ai".to_string()],
@@ -7908,6 +7958,7 @@ mod tests {
             text: false,
             json: false,
             no_hints: false,
+            max_ast_depth: None,
         };
         let code = dispatch_bare_args(vec!["ilo".to_string(), "-h".to_string()], &global);
         assert_eq!(code, 0);
@@ -7922,6 +7973,7 @@ mod tests {
             text: false,
             json: false,
             no_hints: false,
+            max_ast_depth: None,
         };
         // ILO-T001 is a known error code
         let code = dispatch_bare_args(
@@ -7942,6 +7994,7 @@ mod tests {
             text: false,
             json: false,
             no_hints: false,
+            max_ast_depth: None,
         };
         let code = dispatch_bare_args(
             vec![
@@ -7961,6 +8014,7 @@ mod tests {
             text: false,
             json: false,
             no_hints: false,
+            max_ast_depth: None,
         };
         // --explain without a code argument → error exit
         let code = dispatch_bare_args(vec!["ilo".to_string(), "--explain".to_string()], &global);
@@ -7976,6 +8030,7 @@ mod tests {
             text: false,
             json: false,
             no_hints: false,
+            max_ast_depth: None,
         };
         let code = dispatch_bare_args(vec!["ilo".to_string(), "--version".to_string()], &global);
         assert_eq!(code, 0);
@@ -7988,6 +8043,7 @@ mod tests {
             text: false,
             json: false,
             no_hints: false,
+            max_ast_depth: None,
         };
         let code = dispatch_bare_args(vec!["ilo".to_string(), "-V".to_string()], &global);
         assert_eq!(code, 0);
@@ -8000,6 +8056,7 @@ mod tests {
             text: false,
             json: false,
             no_hints: false,
+            max_ast_depth: None,
         };
         let code = dispatch_bare_args(vec!["ilo".to_string(), "-v".to_string()], &global);
         assert_eq!(code, 0);
@@ -8014,6 +8071,7 @@ mod tests {
             text: false,
             json: false,
             no_hints: false,
+            max_ast_depth: None,
         };
         let code = dispatch_bare_args(
             vec![
@@ -8033,6 +8091,7 @@ mod tests {
             text: false,
             json: false,
             no_hints: false,
+            max_ast_depth: None,
         };
         let code = dispatch_bare_args(
             vec![
@@ -8061,6 +8120,7 @@ mod tests {
             text: false,
             json: false,
             no_hints: false,
+            max_ast_depth: None,
         };
         let code = dispatch_bare_args(
             vec!["ilo".to_string(), "-e".to_string(), "f>n;42".to_string()],
@@ -8076,6 +8136,7 @@ mod tests {
             text: false,
             json: false,
             no_hints: false,
+            max_ast_depth: None,
         };
         // -e with empty code string should fail
         let code = dispatch_bare_args(
@@ -8094,6 +8155,7 @@ mod tests {
             text: false,
             json: false,
             no_hints: false,
+            max_ast_depth: None,
         };
         // bench mode: requires a func name in rest
         let code = dispatch_bare_args(
@@ -8118,6 +8180,7 @@ mod tests {
             text: false,
             json: false,
             no_hints: false,
+            max_ast_depth: None,
         };
         let code = dispatch_bare_args(
             vec![
@@ -8138,6 +8201,7 @@ mod tests {
             text: false,
             json: false,
             no_hints: false,
+            max_ast_depth: None,
         };
         let code = dispatch_bare_args(
             vec![
@@ -8162,6 +8226,7 @@ mod tests {
             text: false,
             json: false,
             no_hints: false,
+            max_ast_depth: None,
         };
         let code = dispatch_bare_args(
             vec![
@@ -8183,6 +8248,7 @@ mod tests {
             text: false,
             json: false,
             no_hints: false,
+            max_ast_depth: None,
         };
         let code = dispatch_bare_args(
             vec![
@@ -8202,6 +8268,7 @@ mod tests {
             text: false,
             json: false,
             no_hints: false,
+            max_ast_depth: None,
         };
         let code = dispatch_bare_args(
             vec![
@@ -8223,6 +8290,7 @@ mod tests {
             text: false,
             json: false,
             no_hints: false,
+            max_ast_depth: None,
         };
         let code = dispatch_bare_args(
             vec![
@@ -8242,6 +8310,7 @@ mod tests {
             text: false,
             json: false,
             no_hints: false,
+            max_ast_depth: None,
         };
         let code = dispatch_bare_args(
             vec![
@@ -8263,6 +8332,7 @@ mod tests {
             text: false,
             json: false,
             no_hints: false,
+            max_ast_depth: None,
         };
         let code = dispatch_bare_args(
             vec![
@@ -8286,6 +8356,7 @@ mod tests {
             text: false,
             json: false,
             no_hints: false,
+            max_ast_depth: None,
         };
         let code = dispatch_bare_args(
             vec![
@@ -8307,6 +8378,7 @@ mod tests {
             text: false,
             json: false,
             no_hints: false,
+            max_ast_depth: None,
         };
         let code = dispatch_bare_args(
             vec![
@@ -8330,6 +8402,7 @@ mod tests {
             text: false,
             json: false,
             no_hints: false,
+            max_ast_depth: None,
         };
         // Just runs a simple program; tests that global.ansi overrides detected mode
         let code = dispatch_bare_args(vec!["ilo".to_string(), "f>n;42".to_string()], &global);
@@ -8343,6 +8416,7 @@ mod tests {
             text: true,
             json: false,
             no_hints: false,
+            max_ast_depth: None,
         };
         let code = dispatch_bare_args(vec!["ilo".to_string(), "f>n;42".to_string()], &global);
         assert_eq!(code, 0);
@@ -8355,6 +8429,7 @@ mod tests {
             text: false,
             json: true,
             no_hints: false,
+            max_ast_depth: None,
         };
         let code = dispatch_bare_args(vec!["ilo".to_string(), "f>n;42".to_string()], &global);
         assert_eq!(code, 0);
@@ -9134,6 +9209,7 @@ mod tests {
                 text: false,
                 json: false,
                 no_hints: false,
+                max_ast_depth: None,
             },
             args: vec![],
         };
@@ -9150,6 +9226,7 @@ mod tests {
                 text: false,
                 json: false,
                 no_hints: false,
+                max_ast_depth: None,
             },
             args: vec![],
         };
@@ -9169,6 +9246,7 @@ mod tests {
                 text: false,
                 json: false,
                 no_hints: false,
+                max_ast_depth: None,
             },
             args: vec![],
         };
@@ -9187,6 +9265,7 @@ mod tests {
                 text: false,
                 json: false,
                 no_hints: false,
+                max_ast_depth: None,
             },
             args: vec![],
         };
@@ -9213,6 +9292,7 @@ mod tests {
                 text: false,
                 json: false,
                 no_hints: false,
+                max_ast_depth: None,
             },
             args: vec![],
         };
@@ -9555,6 +9635,7 @@ mod tests {
             text: false,
             json: false,
             no_hints: false,
+            max_ast_depth: None,
         };
         // rest has first arg = "double" which matches a function name
         let code = dispatch_bare_args(

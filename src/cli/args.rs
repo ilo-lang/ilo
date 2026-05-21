@@ -43,6 +43,14 @@ pub struct Global {
     /// Suppress idiomatic hints after execution.
     #[arg(long = "no-hints", short = 'n', global = true)]
     pub no_hints: bool,
+
+    /// Cap on AST nesting depth. Applies to every subcommand that parses source
+    /// (`run`, `check`, `build`, `serv`). Default 256 — far above anything
+    /// hand-written, low enough to keep `ilo serv` safe from `((((...))))`
+    /// DoS payloads against the parser stack. Raise only if a legitimate
+    /// program needs deeper nesting.
+    #[arg(long = "max-ast-depth", global = true)]
+    pub max_ast_depth: Option<usize>,
 }
 
 #[derive(Subcommand, Debug)]
@@ -874,6 +882,7 @@ mod tests {
             text: false,
             json: false,
             no_hints: false,
+            max_ast_depth: None,
         };
         // In test environment stderr is typically not a TTY → should return Json.
         // We can't reliably test the TTY branch, but we can test that explicit_json
@@ -896,6 +905,7 @@ mod tests {
             text: false,
             json: true,
             no_hints: false,
+            max_ast_depth: None,
         };
         assert!(g.explicit_json());
         assert_eq!(g.output_mode(), OutputMode::Json);
@@ -908,6 +918,7 @@ mod tests {
             text: true,
             json: false,
             no_hints: false,
+            max_ast_depth: None,
         };
         assert!(!g.explicit_json());
         assert_eq!(g.output_mode(), OutputMode::Text);
@@ -920,6 +931,7 @@ mod tests {
             text: false,
             json: false,
             no_hints: false,
+            max_ast_depth: None,
         };
         assert!(!g.explicit_json());
         assert_eq!(g.output_mode(), OutputMode::Ansi);

@@ -607,6 +607,30 @@ single-atom variants like `- -a b` (negate of subtract over atoms) are
 unambiguous and remain accepted.
 "#,
     },
+    ErrorEntry {
+        code: "ILO-P103",
+        short: "AST nesting depth exceeded",
+        long: r#"## ILO-P103: AST nesting depth exceeded
+
+The parser refused a program whose expression or statement tree nests more
+deeply than the configured cap (default 256). A deeply nested input is
+almost always a denial-of-service payload aimed at `ilo serv` or any other
+context that compiles untrusted source — `((((...((1 + 1))))...))` recurses
+straight through the OS thread stack on a tree-walker parser, and pathological
+verifier complexity follows from there.
+
+The default cap of 256 is far above anything hand-written: the deepest
+expression in the in-tree examples is under 20 levels. If a legitimate program
+genuinely needs more, raise the cap with `--max-ast-depth N` on `ilo`,
+`ilo run`, `ilo check`, `ilo build`, or `ilo serv`:
+
+    ilo --max-ast-depth 1024 run prog.ilo
+    ilo serv --max-ast-depth 1024
+
+**Fix:** flatten the expression by binding intermediates, or override the cap
+deliberately if the depth is real.
+"#,
+    },
     // ── Type / Verifier ──────────────────────────────────────────────────────
     ErrorEntry {
         code: "ILO-T001",

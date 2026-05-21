@@ -1,0 +1,12 @@
+-- ast-depth-cap: ilo caps parser nesting at 256 by default. Untrusted source
+-- (think `ilo serv`) can otherwise blow the parser stack with
+-- `((((...((1+1))))...))`. Override with `--max-ast-depth N` on `ilo`,
+-- `ilo run`, `ilo check`, `ilo build`, or `ilo serv` when a legitimate
+-- program needs deeper nesting. Hand-written ilo rarely exceeds depth 10.
+
+shallow>n;((((1))))
+
+main>n;shallow
+
+-- run: main
+-- out: 1
