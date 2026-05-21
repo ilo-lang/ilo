@@ -1236,7 +1236,14 @@ fn compile_function_body(
                 // OP_CALL_OWN1 has the identical encoding and result-write
                 // shape (move-not-clone on first arg only changes RC
                 // bookkeeping, not the result Variable type).
-                OP_CALL | OP_CALL_OWN1 => {
+                OP_CALL | OP_CALL_OWN1 | OP_TAILCALL => {
+                    // OP_TAILCALL has the same encoding + result-write
+                    // shape as OP_CALL (the result slot is irrelevant at
+                    // runtime since we never return to the caller frame,
+                    // but the type-inference pass still tracks A so that
+                    // a misclassified TAILCALL emitted in a non-tail
+                    // position would surface as a type mismatch instead
+                    // of silent corruption).
                     let bx = (inst & 0xFFFF) as usize;
                     let func_idx = bx >> 8;
                     if func_idx < program.chunks.len()
@@ -4396,7 +4403,7 @@ fn compile_function_body(
                 }
                 // else: blocks not found → JIT bails (should not happen in practice)
             }
-            OP_CALL | OP_CALL_OWN1 => {
+            OP_CALL | OP_CALL_OWN1 | OP_TAILCALL => {
                 // OP_CALL_OWN1 is the move-not-clone first-arg variant of
                 // OP_CALL used by the let-stmt peephole. In the Cranelift
                 // JIT/AOT model args are passed as SSA Variable values
@@ -4408,6 +4415,15 @@ fn compile_function_body(
                 // the source-register clear on the caller side is a
                 // no-op under SSA: the moved-out Variable just isn't
                 // referenced again.
+                //
+                // OP_TAILCALL: bytecode-VM tail-call elimination opcode.
+                // For Cranelift we lower it identically to OP_CALL for
+                // now — semantically correct (the callee's return value
+                // flows back to be returned by the next OP_RET), but the
+                // host stack still grows by one frame per call. PR3 of
+                // the TCO series will switch this to Cranelift's
+                // `return_call` for true tail-call elimination, lifting
+                // the JIT/AOT host-stack bound to match the VM.
                 let a = ((inst >> 16) & 0xFF) as u8;
                 let bx = (inst & 0xFFFF) as usize;
                 let func_idx = bx >> 8;

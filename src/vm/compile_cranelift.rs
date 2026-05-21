@@ -1264,7 +1264,11 @@ fn compile_function_body(
                 // OP_CALL_OWN1 has the identical encoding and result-write
                 // shape; the move-not-clone first-arg semantics are an
                 // RC bookkeeping detail that doesn't change classification.
-                OP_CALL | OP_CALL_OWN1 => {
+                OP_CALL | OP_CALL_OWN1 | OP_TAILCALL => {
+                    // OP_TAILCALL has the same encoding and result-write
+                    // shape as OP_CALL (see jit_cranelift prepass for the
+                    // matching note); the AOT codegen lowers it as a
+                    // regular call until PR3 swaps in `return_call`.
                     if let Some(prog) = program {
                         let bx = (inst & 0xFFFF) as usize;
                         let func_idx = bx >> 8;
@@ -3772,7 +3776,7 @@ fn compile_function_body(
                 }
             }
             // ── Function call with inlining + F64 shadow support ──
-            OP_CALL | OP_CALL_OWN1 => {
+            OP_CALL | OP_CALL_OWN1 | OP_TAILCALL => {
                 // OP_CALL_OWN1: move-not-clone first-arg variant of OP_CALL,
                 // emitted by the let-stmt peephole for `name = fn(name, ...)`.
                 // Under Cranelift's SSA Variable model, args are passed as
@@ -3781,6 +3785,15 @@ fn compile_function_body(
                 // from the compiler's tail-position rewrite of `mset m k v`
                 // inside the helper, which fires the existing in-place
                 // fast path in the OP_MSET handler.
+                //
+                // OP_TAILCALL: emitted by the VM compiler when a call sits
+                // in tail position. The bytecode VM reuses the current call
+                // frame (no stack growth); the Cranelift backend lowers it
+                // as a regular call here — semantically equivalent (same
+                // return value flows back through the next OP_RET) but the
+                // host stack grows by one frame per tail call. PR3 of the
+                // TCO series will switch this to Cranelift's `return_call`
+                // for true tail-call elimination under the JIT/AOT path.
                 let a = ((inst >> 16) & 0xFF) as u8;
                 let bx = (inst & 0xFFFF) as usize;
                 let func_idx = bx >> 8;
