@@ -17,7 +17,7 @@ jobs:
           ref: next
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
-      - name: Try fast-forward
+      - name: Try fast-forward, then 3-way merge
         id: ff
         run: |
           git config user.name "github-actions[bot]"
@@ -25,7 +25,13 @@ jobs:
           if git merge --ff-only origin/main; then
             echo "result=ff" >> "$GITHUB_OUTPUT"
             git push origin next
+          elif git merge --no-ff origin/main -m "chore(sync): merge main into next [automated]"; then
+            # Non-ff but clean 3-way merge: push the merge commit to next.
+            # Only falls through to the PR step on true conflict.
+            echo "result=merged" >> "$GITHUB_OUTPUT"
+            git push origin next
           else
+            git merge --abort || true
             echo "result=diverged" >> "$GITHUB_OUTPUT"
           fi
       - name: Open sync PR if diverged
