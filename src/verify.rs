@@ -440,6 +440,7 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("prod", &["L n"], "n"),
     ("cumsum", &["L n"], "L n"),
     ("cprod", &["L n"], "L n"),
+    ("ewm", &["L n", "n"], "L n"),
     ("avg", &["list"], "n"),
     ("median", &["list"], "n"),
     ("quantile", &["list", "n"], "n"),
@@ -2590,6 +2591,47 @@ fn builtin_check_args(
                         is_warning: false,
                     }),
                 }
+            }
+            (Ty::List(Box::new(Ty::Number)), errors)
+        }
+        "ewm" => {
+            // ewm xs:L n a:n > L n — exponential moving average.
+            if let Some(arg) = arg_types.first() {
+                match arg {
+                    Ty::List(inner) => {
+                        if !compatible(inner, &Ty::Number) {
+                            errors.push(VerifyError {
+                                code: "ILO-T013",
+                                function: func_ctx.to_string(),
+                                message: format!("'ewm' expects L n, got L {inner}"),
+                                hint: None,
+                                span,
+                                is_warning: false,
+                            });
+                        }
+                    }
+                    Ty::Unknown => {}
+                    other => errors.push(VerifyError {
+                        code: "ILO-T013",
+                        function: func_ctx.to_string(),
+                        message: format!("'ewm' expects L n, got {other}"),
+                        hint: None,
+                        span,
+                        is_warning: false,
+                    }),
+                }
+            }
+            if let Some(arg) = arg_types.get(1)
+                && !compatible(arg, &Ty::Number)
+            {
+                errors.push(VerifyError {
+                    code: "ILO-T013",
+                    function: func_ctx.to_string(),
+                    message: format!("'ewm' second arg a must be n, got {arg}"),
+                    hint: None,
+                    span,
+                    is_warning: false,
+                });
             }
             (Ty::List(Box::new(Ty::Number)), errors)
         }

@@ -37,6 +37,7 @@ pub enum Builtin {
     Prod,
     Cumsum,
     Cprod,
+    Ewm,
     Avg,
     Median,
     Quantile,
@@ -296,6 +297,7 @@ impl Builtin {
             "prod" => Some(Builtin::Prod),
             "cumsum" => Some(Builtin::Cumsum),
             "cprod" => Some(Builtin::Cprod),
+            "ewm" => Some(Builtin::Ewm),
             "avg" => Some(Builtin::Avg),
             "median" => Some(Builtin::Median),
             "quantile" => Some(Builtin::Quantile),
@@ -466,6 +468,7 @@ impl Builtin {
             Builtin::Prod => "prod",
             Builtin::Cumsum => "cumsum",
             Builtin::Cprod => "cprod",
+            Builtin::Ewm => "ewm",
             Builtin::Avg => "avg",
             Builtin::Median => "median",
             Builtin::Quantile => "quantile",
@@ -847,6 +850,7 @@ impl Builtin {
         // wrap). Appended last to preserve on-wire tags. Backed by `getrandom`, not
         // `fastrand` — cryptographic randomness must never be seeded.
         Builtin::RandBytes,
+<<<<<<< HEAD
         // 0.12.1: URL + base64url encoding cluster. Appended last to preserve
         // every existing on-wire tag. Tree-bridge eligible — pure text-in /
         // text-out, no FnRef args, no I/O. Backed by the `percent-encoding`
@@ -857,6 +861,13 @@ impl Builtin {
         Builtin::Urldec,
         Builtin::B64u,
         Builtin::B64uDec,
+=======
+        // ewm xs a > L n — exponential moving average with smoothing factor a
+        // in [0, 1]. Pure number-list reducer; tree-bridge eligible alongside
+        // the cumsum/cprod aggregate family. Appended last to preserve every
+        // existing on-wire tag.
+        Builtin::Ewm,
+>>>>>>> 0d9d3570 (add ewm builtin for exponential moving average)
     ];
 
     /// On-wire 8-bit tag for cross-engine builtin dispatch. See `ALL`.
@@ -1048,6 +1059,7 @@ mod tests {
             "prod",
             "cumsum",
             "cprod",
+            "ewm",
             "avg",
             "median",
             "quantile",
@@ -1291,6 +1303,7 @@ mod tests {
             "prod",
             "cumsum",
             "cprod",
+            "ewm",
             "avg",
             "median",
             "quantile",
