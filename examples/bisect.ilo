@@ -1,0 +1,38 @@
+-- bisect xs target: leftmost insertion point in a sorted numeric list.
+-- Python `bisect.bisect_left` semantics: returns i such that
+-- xs[0..i] < target <= xs[i..]. Empty list returns 0; target greater than
+-- every element returns len xs; on ties the leftmost index wins.
+-- Caller owns the sortedness precondition - bisect does not validate it.
+-- O(log N), so it replaces the O(N) `flt fn xs` + len cascade on sorted
+-- input.
+
+-- In-range: 4 lands between 3 and 5.
+mid>n;bisect [1,3,5,7] 4
+
+-- Before-first: 0 inserts at index 0.
+before>n;bisect [1,3,5,7] 0
+
+-- After-last: 9 inserts at the end.
+after>n;bisect [1,3,5,7] 9
+
+-- Duplicates: bisect_left returns the leftmost match (not the rightmost).
+dup>n;bisect [1,2,2,2,3] 2
+
+-- Empty list: insertion point is always 0.
+empty>n;bisect [] 5
+
+-- Exact-match in single-element list lands left of the equal element.
+single-hit>n;bisect [5] 5
+
+-- run: mid
+-- out: 2
+-- run: before
+-- out: 0
+-- run: after
+-- out: 4
+-- run: dup
+-- out: 1
+-- run: empty
+-- out: 0
+-- run: single-hit
+-- out: 0
