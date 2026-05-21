@@ -16924,6 +16924,14 @@ pub(crate) fn tree_bridge_propagates_error(b: crate::builtins::Builtin) -> bool 
             // cond elements aren't bools. Surface on Cranelift in lockstep
             // rather than degenerating silently to nil.
             | Builtin::Where
+            // Calendar arithmetic (0.12.2). All four raise ILO-R009 on
+            // out-of-range epochs; add-mo additionally raises on month
+            // overflow. Without propagation, Cranelift would silently
+            // return nil where tree/VM raise — diverging error parity.
+            | Builtin::AddMo
+            | Builtin::LastDom
+            | Builtin::NextBusinessDay
+            | Builtin::DayOfWeek
     )
 }
 
