@@ -39,7 +39,7 @@ Flat early returns: `cls sp:n>t;>=sp 1000 "gold";>=sp 500 "silver";"bronze"`. Br
 
 ## optional vs result
 
-Two distinct types, two distinct unwraps. `O T` = maybe-value (`nil` or `T`), no error payload; unwrap with `?? x d`. `R T E` = ok-or-err with payload; unwrap with `~`/`^` match arms, `!`, `!!`, or `default-on-err r d`. Using `??` on `R T E` is ILO-T041; using `default-on-err` on `O T` is ILO-T040.
+`O T` = maybe-value (`nil` or `T`), no error payload; unwrap `?? x d`. `R T E` = ok-or-err; unwrap `~`/`^` arms, `!`, `!!`, or `default-on-err r d`. `??` on `R T E` is ILO-T041; `default-on-err` on `O T` is ILO-T040.
 
 `O t`: `name = ?? name-opt "default"` — nil-coalesce, `O t -> t`.
 `R t t`: `name = default-on-err r "fallback"`, or `?r{~v:v;^_:"fallback"}` — Result unwrap, `R t e -> t`.
@@ -50,7 +50,7 @@ Two distinct types, two distinct unwraps. `O T` = maybe-value (`nil` or `T`), no
 
 ## tail-call optimisation
 
-Tail calls do not consume host-stack frames. A function that recurses in tail position runs to arbitrary depth — use tail-recursive accumulators for iteration beyond what `@` covers. No `loop` keyword by design. Tail position = last stmt of body, `ret` expr, an arm of a tail-position `?` match, body of a braceless guard. Peephole fires on direct user-fn name calls with no `!`/`!!`. Tree + VM trampoline today; JIT/AOT pending. Example: `count-down n:n>n;=n 0 0;count-down -n 1`.
+Tail calls don't consume host-stack frames; tail-recursive fns run to arbitrary depth, so use accumulators for iteration beyond `@`. No `loop` keyword. Tail position = last stmt, `ret` expr, tail-position `?` arm, braceless-guard body. Peephole fires on direct user-fn calls with no `!`/`!!`. Tree + VM trampoline today; JIT/AOT pending. `count-down n:n>n;=n 0 0;count-down -n 1`.
 
 ## pipes
 
