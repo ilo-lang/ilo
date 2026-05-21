@@ -1,0 +1,40 @@
+-- `!` auto-unwrap on HTTP builtins: `get!`, `pst!`, `get-to!`, `pst-to!`.
+-- Mirrors the existing `!` family (`rd!`, `num!`, `jpar!`, `mget!`, ...).
+--
+-- Two forms:
+--   r=get url       R t t     -- handle Err yourself with `?r{~v:...;^e:...}`
+--   v=get! url      t         -- Ok→body; Err propagates out of enclosing R-fn
+--   v=get!! url     t         -- Ok→body; Err panics (agent-script style)
+--
+-- Same rule for `pst!`/`pst!!`, `get-to!`/`get-to!!`, `pst-to!`/`pst-to!!`.
+-- Saves the per-call-site `?r{~v:v;^e:^e}` boilerplate when the enclosing
+-- function already returns `R`.
+--
+-- Runtime check: connection refused on a closed loopback port is a stable
+-- Err across OS/CI. The bang form propagates the Err out of the function,
+-- and we match on the Result tag to avoid depending on the exact OS-level
+-- error text (which differs between Linux and macOS).
+
+-- Wrapper around `get!` so the bang form is exercised at runtime. The
+-- inner `inner` returns R t t and propagates the Err; the outer `probe`
+-- catches it and produces a stable string regardless of OS.
+inner-get>R t t;v=get! "http://127.0.0.1:1";~v
+probe-get>t;r=inner-get;?r{~_:"unexpected ok";^_:"err propagated"}
+
+inner-pst>R t t;v=pst! "http://127.0.0.1:1" "body";~v
+probe-pst>t;r=inner-pst;?r{~_:"unexpected ok";^_:"err propagated"}
+
+inner-get-to>R t t;v=get-to! "http://127.0.0.1:1" 1000;~v
+probe-get-to>t;r=inner-get-to;?r{~_:"unexpected ok";^_:"err propagated"}
+
+inner-pst-to>R t t;v=pst-to! "http://127.0.0.1:1" "body" 1000;~v
+probe-pst-to>t;r=inner-pst-to;?r{~_:"unexpected ok";^_:"err propagated"}
+
+-- run: probe-get
+-- out: err propagated
+-- run: probe-pst
+-- out: err propagated
+-- run: probe-get-to
+-- out: err propagated
+-- run: probe-pst-to
+-- out: err propagated
