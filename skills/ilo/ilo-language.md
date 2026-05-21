@@ -11,6 +11,8 @@ Prefix-notation, strongly-typed, verified pre-run. Bodies `;`-separated or newli
 
 `tot p:n q:n r:n>n;s=*p q;t=*s r;+s t`. No param parens. `>` returns, `;` separates, last expr returns. Zero-arg: `make-id()`.
 
+Single-line: `f x:n>n;+x 1`. Multi-line: `f x:n>n` then indented body, newline = `;` (PR #501 also normalises CRLF). Trailing `;` on header (`f x:n>n;\n  a=+x 1\n  *a 2`) is optional; both forms parse.
+
 ## types
 
 `n` num, `t` text, `b` bool, `_` nil/any. `L n` list, `M t n` map, `R n t` result, `O n` optional, `S a b c` sum (closed, runtime `t`), `F n t` fn-type. Named: `order`. Type vars: any letter except `n t b`. `?? x d` nil-coalesce; unwraps `O T` only. For `R T E` use `default-on-err r d`.
