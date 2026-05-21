@@ -3253,8 +3253,6 @@ fn dispatch_bare_args(raw_args: Vec<String>, global: &cli::Global) -> i32 {
                 let run_args = cli::RunArgs {
                     source,
                     engine: cli::Engine::Default,
-                    run_tree: false,
-                    run: false,
                     run_vm: false,
                     jit: false,
                     run_llvm: false,
@@ -3278,8 +3276,6 @@ fn dispatch_bare_args(raw_args: Vec<String>, global: &cli::Global) -> i32 {
                 let run_args = cli::RunArgs {
                     source,
                     engine: cli::Engine::Default,
-                    run_tree: false,
-                    run: false,
                     run_vm: false,
                     jit: false,
                     run_llvm: false,
@@ -3308,8 +3304,6 @@ fn dispatch_bare_args(raw_args: Vec<String>, global: &cli::Global) -> i32 {
                 let run_args = cli::RunArgs {
                     source,
                     engine: cli::Engine::Default,
-                    run_tree: false,
-                    run: false,
                     run_vm: false,
                     jit: false,
                     run_llvm: false,
@@ -3333,8 +3327,6 @@ fn dispatch_bare_args(raw_args: Vec<String>, global: &cli::Global) -> i32 {
                 let run_args = cli::RunArgs {
                     source,
                     engine: cli::Engine::Default,
-                    run_tree: false,
-                    run: false,
                     run_vm: false,
                     jit: false,
                     run_llvm: false,
@@ -3358,8 +3350,6 @@ fn dispatch_bare_args(raw_args: Vec<String>, global: &cli::Global) -> i32 {
                 let run_args = cli::RunArgs {
                     source,
                     engine: cli::Engine::Default,
-                    run_tree: false,
-                    run: false,
                     run_vm: false,
                     jit: false,
                     run_llvm: false,
@@ -3395,8 +3385,6 @@ fn dispatch_bare_args(raw_args: Vec<String>, global: &cli::Global) -> i32 {
     let run_args = cli::RunArgs {
         source,
         engine,
-        run_tree: false,
-        run: false,
         run_vm: false,
         jit: false,
         run_llvm: false,
@@ -3948,36 +3936,6 @@ fn dispatch_run(
                     caps,
                 )
             }
-            cli::Engine::Tree => {
-                let (func_name, raw) = resolve_engine_func_name(&program, rest);
-                let run_args = parse_cli_args_typed(&program, func_name, raw);
-                // CLI-boundary arity guard. The tree interpreter already
-                // enforces this at dispatch (interpreter/mod.rs:4152), but
-                // running it here keeps the diagnostic shape consistent
-                // across every engine and avoids a one-off code path
-                // where the engine surfaces an ILO-R012 ("undefined
-                // function") for inline programs with a typoed entry
-                // while the others use ILO-R004.
-                if let Err(code) =
-                    check_cli_arity(&program, func_name, run_args.len(), &source, mode)
-                {
-                    return code;
-                }
-                run_interp_with_provider(
-                    &program,
-                    func_name,
-                    run_args,
-                    tools_config_path.as_deref(),
-                    #[cfg(feature = "tools")]
-                    mcp_provider_holder,
-                    #[cfg(feature = "tools")]
-                    mcp_rt,
-                    &source,
-                    mode,
-                    explicit_json,
-                    caps,
-                )
-            }
             cli::Engine::Default => {
                 // Default: func-name heuristic + bytecode register VM (closure-aware,
                 // all opcodes supported). Cranelift JIT is opt-in via --jit /
@@ -4477,92 +4435,6 @@ fn run_vm_with_provider(
     }
 }
 
-/// Dispatch --run-tree, routing to MCP / HTTP / plain run based on available providers.
-/// Returns exit code.
-#[allow(clippy::too_many_arguments)]
-fn run_interp_with_provider(
-    program: &ast::Program,
-    func_name: Option<&str>,
-    args: Vec<runtime::Value>,
-    tools_config_path: Option<&str>,
-    #[cfg(feature = "tools")] mcp_provider: Option<tools::mcp_provider::McpProvider>,
-    #[cfg(feature = "tools")] mcp_rt: Option<tokio::runtime::Runtime>,
-    source: &str,
-    mode: OutputMode,
-    explicit_json: bool,
-    caps: Arc<Caps>,
-) -> i32 {
-    let suppress = program_result_should_suppress(program, func_name);
-    #[cfg(feature = "tools")]
-    if let Some(provider) = mcp_provider {
-        let rt = std::sync::Arc::new(mcp_rt.expect("runtime present with mcp_provider"));
-        match runtime::run_with_tools_and_caps(
-            program,
-            func_name,
-            args,
-            std::sync::Arc::new(provider),
-            rt,
-            caps,
-        ) {
-            Ok(val) => {
-                print_value(&val, explicit_json, suppress);
-                return program_exit_code(&val);
-            }
-            Err(e) => {
-                report_diagnostic(&Diagnostic::from(&e).with_source(source.to_string()), mode);
-                return 1;
-            }
-        }
-    }
-
-    if let Some(tools_path) = tools_config_path {
-        let config = match tools::http_provider::ToolsConfig::from_file(tools_path) {
-            Ok(c) => c,
-            Err(e) => {
-                eprintln!("{}", e);
-                return 1;
-            }
-        };
-        let provider = std::sync::Arc::new(tools::http_provider::HttpProvider::new(config));
-        #[cfg(feature = "tools")]
-        let runtime = std::sync::Arc::new(
-            tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .expect("tokio runtime"),
-        );
-        return match runtime::run_with_tools_and_caps(
-            program,
-            func_name,
-            args,
-            provider,
-            #[cfg(feature = "tools")]
-            runtime,
-            caps,
-        ) {
-            Ok(val) => {
-                print_value(&val, explicit_json, suppress);
-                program_exit_code(&val)
-            }
-            Err(e) => {
-                report_diagnostic(&Diagnostic::from(&e).with_source(source.to_string()), mode);
-                1
-            }
-        };
-    }
-
-    match runtime::run_with_caps(program, func_name, args, caps) {
-        Ok(val) => {
-            print_value(&val, explicit_json, suppress);
-            program_exit_code(&val)
-        }
-        Err(e) => {
-            report_diagnostic(&Diagnostic::from(&e).with_source(source.to_string()), mode);
-            1
-        }
-    }
-}
-
 /// Serialize the program as pretty JSON to stdout. Used by the explicit
 /// `--ast` flag and by the legacy inline-no-func default path.
 ///
@@ -4621,11 +4493,13 @@ fn run_default(
     // Default engine is the bytecode register VM: it supports every opcode
     // (closures, listview, len-has-k-count, every modern shape), and avoids
     // the JIT compile-and-bail cost the old Cranelift-first default paid on
-    // any program touching opcodes the JIT can't yet handle. Cranelift
-    // remains opt-in for hot numeric workloads via `--jit`; the tree
-    // interpreter remains the canonical
-    // reference semantics and the last-resort fallback for any program the
-    // VM compile/run rejects (e.g. shapes the VM doesn't yet support).
+    // any program touching opcodes the JIT can't yet handle. Cranelift is
+    // opt-in for hot numeric workloads via `--jit`. The tree-walker is no
+    // longer user-selectable as of 0.13.0; the runtime module survives only
+    // as the callback runner for HOF builtins dispatched through the
+    // VM/Cranelift tree-bridge (see `runtime::call_builtin_for_bridge`),
+    // plus the last-resort fallback when VM compilation rejects a program
+    // shape it doesn't yet support.
     if let Ok(compiled) = vm::compile(program) {
         match vm::run_with_caps(&compiled, func_name, args.clone(), caps.clone()) {
             Ok(val) => {
@@ -4633,16 +4507,15 @@ fn run_default(
                 return program_exit_code(&val);
             }
             Err(_e) => {
-                // Fall through to the tree interpreter — the VM's error
-                // reporting may not match the interpreter's diagnostics,
-                // and the interpreter is the canonical reference
+                // Fall through to the internal runtime — the VM's error
+                // reporting may not match the canonical reference
                 // semantics. Preserves prior behaviour for any program the
                 // bytecode VM rejects.
             }
         }
     }
 
-    // Fall back to interpreter
+    // Fall back to the internal runtime (canonical reference semantics).
     match runtime::run_with_caps(program, func_name, args, caps) {
         Ok(val) => {
             print_value(&val, explicit_json, suppress);
@@ -6724,47 +6597,7 @@ mod tests {
         );
     }
 
-    // ── run_interp_with_provider: success path ────────────────────────────────
-
-    #[test]
-    fn run_interp_with_provider_success_no_tools() {
-        let program = make_program("f x:n>n;*x 2");
-        run_interp_with_provider(
-            &program,
-            Some("f"),
-            vec![runtime::Value::Number(7.0)],
-            None,
-            #[cfg(feature = "tools")]
-            None,
-            #[cfg(feature = "tools")]
-            None,
-            "f x:n>n;*x 2",
-            OutputMode::Text,
-            false,
-            Arc::new(Caps::default()),
-        );
-    }
-
-    #[test]
-    fn run_interp_with_provider_explicit_json() {
-        let program = make_program("f x:n>n;+x 1");
-        run_interp_with_provider(
-            &program,
-            Some("f"),
-            vec![runtime::Value::Number(10.0)],
-            None,
-            #[cfg(feature = "tools")]
-            None,
-            #[cfg(feature = "tools")]
-            None,
-            "f x:n>n;+x 1",
-            OutputMode::Json,
-            true,
-            Arc::new(Caps::default()),
-        );
-    }
-
-    // ── run_default: cranelift-then-interpreter dispatch ──────────────────────
+    // ── run_default: VM-then-runtime-fallback dispatch ────────────────────────
 
     #[test]
     fn run_default_simple_numeric() {
@@ -9770,8 +9603,6 @@ mod tests {
         let run_args = cli::RunArgs {
             source: "".to_string(),
             engine: cli::Engine::Default,
-            run_tree: false,
-            run: false,
             run_vm: false,
             jit: false,
             run_llvm: false,
@@ -9800,8 +9631,6 @@ mod tests {
         let run_args = cli::RunArgs {
             source: "f>n;1".to_string(),
             engine: cli::Engine::Default,
-            run_tree: false,
-            run: false,
             run_vm: false,
             jit: false,
             run_llvm: false,
@@ -9834,8 +9663,6 @@ mod tests {
         let run_args = cli::RunArgs {
             source: "f>n;42".to_string(),
             engine: cli::Engine::Default,
-            run_tree: false,
-            run: false,
             run_vm: false,
             jit: false,
             run_llvm: false,
@@ -9865,8 +9692,6 @@ mod tests {
         let run_args = cli::RunArgs {
             source: "f x:n>b;==x 1".to_string(),
             engine: cli::Engine::Default,
-            run_tree: false,
-            run: false,
             run_vm: false,
             jit: false,
             run_llvm: false,
@@ -9894,8 +9719,6 @@ mod tests {
         let run_args = cli::RunArgs {
             source: "f x:n>b;==x 1".to_string(),
             engine: cli::Engine::Default,
-            run_tree: false,
-            run: false,
             run_vm: false,
             jit: false,
             run_llvm: false,
@@ -9925,8 +9748,6 @@ mod tests {
         let run_args = cli::RunArgs {
             source: "MyFunc INVALID_UPPER".to_string(),
             engine: cli::Engine::Default,
-            run_tree: false,
-            run: false,
             run_vm: false,
             jit: false,
             run_llvm: false,
@@ -9956,8 +9777,6 @@ mod tests {
         let run_args = cli::RunArgs {
             source: "f x:n>t;x".to_string(),
             engine: cli::Engine::Default,
-            run_tree: false,
-            run: false,
             run_vm: false,
             jit: false,
             run_llvm: false,
@@ -10356,29 +10175,7 @@ mod tests {
         assert_eq!(code, 1);
     }
 
-    // ── run_interp_with_provider: runtime error path ──────────────────────────
-
-    #[test]
-    fn run_interp_with_provider_runtime_error_returns_one() {
-        let program = make_program("f>n;/1 0");
-        let code = run_interp_with_provider(
-            &program,
-            Some("f"),
-            vec![],
-            None,
-            #[cfg(feature = "tools")]
-            None,
-            #[cfg(feature = "tools")]
-            None,
-            "f>n;/1 0",
-            OutputMode::Text,
-            false,
-            Arc::new(Caps::default()),
-        );
-        assert_eq!(code, 1);
-    }
-
-    // ── run_default: interpreter error path ──────────────────────────────────
+    // ── run_default: runtime error path ──────────────────────────────────────
 
     #[test]
     fn run_default_runtime_error_returns_one() {
