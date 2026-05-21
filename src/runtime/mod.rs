@@ -10494,11 +10494,22 @@ mod tests {
 
     #[test]
     fn interpret_braceless_guard_fibonacci() {
-        let source = "fib n:n>n;<=n 1 n;a=fib -n 1;b=fib -n 2;+a b";
-        assert_eq!(
-            run_str(source, Some("fib"), vec![Value::Number(10.0)]),
-            Value::Number(55.0)
-        );
+        // fib(10) recurses deeply enough to blow the 2 MiB default test-thread
+        // stack on some platforms. Run it on an explicit 8 MiB stack so the
+        // test passes independently of RUST_MIN_STACK. Mirrors the pattern used
+        // in tests/parser_depth_cap.rs.
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let source = "fib n:n>n;<=n 1 n;a=fib -n 1;b=fib -n 2;+a b";
+                assert_eq!(
+                    run_str(source, Some("fib"), vec![Value::Number(10.0)]),
+                    Value::Number(55.0)
+                );
+            })
+            .expect("spawn test thread")
+            .join()
+            .expect("thread panicked");
     }
 
     #[test]
