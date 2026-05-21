@@ -28,7 +28,9 @@ Parsing `;`-delimited headers (Content-Type, Cache-Control, Cookie): no `ct-pars
 
 ## JSON
 
-`jpar s` parse (`R _ t`), `jpar-list s` parse and assert array (`R (L _) t` — use when you know the response is an array: `@x (jpar-list! body){...}`), `jpth s path` dot-path (typed), `jkeys s path` sorted object keys, `jdmp v` serialize. Numeric keys stringified in `jdmp`.
+`jpar s` parse (`R _ t`), `jpar-list s` parse and assert array (`R (L _) t` — use when you know the response is an array: `@x (jpar-list! body){...}`), `jpth s path` dot-path lookup, `jkeys s path` sorted object keys, `jdmp v` serialize. Numeric keys stringified in `jdmp`.
+
+`jpth` (and `jpth!`) returns the leaf **already typed** — number leaves come back as `n`, text as `t`, bools as `b`, arrays as `L _`, objects as record. Do NOT wrap in `num`, `str`, or re-`jpar` to convert: `age=jpth! body "user.age"` gives an `n` directly, `name=jpth! body "user.name"` gives a `t` directly. The triple-roundtrip `num (str (jpth! body "x"))` is pure waste (~30 tokens/use).
 
 `!` auto-unwraps on all of these. Common shape inside `R`-returning fn: `r=jpar! body;r.x`. `jpar!` propagates errors; `jpar!!` panics. Same for `jpar-list!`, `jpth!`, `jkeys!`. Non-`R` callers: use `default-on-err` (in `ilo-builtins-core`): `name=default-on-err (jpth body "user.name") "anon"`.
 `!` auto-unwraps the Result on any of these. Inside an `R`-returning function `r=jpar! body;r.x` is the common shape — saves the `?r{~v:v;^e:^e}` boilerplate per call site. `jpar! body` propagates parse errors out of the enclosing function; `jpar!! body` panics on parse error instead. Same for `jpar-list!`, `jpth!`, `jkeys!`.
