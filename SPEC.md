@@ -532,7 +532,7 @@ Called like functions, compiled to dedicated opcodes.
 | `srt xs` | sort list (all-number or all-text) or text chars (stable: equal elements keep their input order) | same type |
 | `srt fn xs` | sort list by key function (returns number or text key); stable: items with equal keys keep their input order | `L` |
 | `unq xs` | remove duplicates, preserve order (list or text chars) | same type |
-| `slc xs a b` | slice list or text from index a to b (a, b accept negative indices counting from end; bounds clamp) | same type |
+| `slc xs a b` | slice list or text from index a to b (a, b accept negative indices counting from end; bounds clamp). Sugar: when `a >= 0` and `b == -1`, `b` reads as `len xs` (Python/JS "to end" shape). Other negative `b` values (e.g. `-2`) keep the relative-offset semantics; use `take -1 xs` if you want "drop last". | same type |
 | `jpth json path` | JSON dot-path lookup, dot-separated keys + numeric array indices (e.g. `"a.b.0.c"`), not JSONPath - leading `$`, `*`, or `[...]` rejected with a diagnostic. Result is typed: arrays → list, objects → record, scalars → matching primitive. | `R _ t` |
 | `jkeys json path` | sorted top-level keys of the JSON object at `path` (empty path = root). Err if the value at the path is not an object. | `R (L t) t` |
 | `jdmp value` | serialise ilo value to JSON text | `t` |
