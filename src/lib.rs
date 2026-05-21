@@ -22,6 +22,7 @@ pub mod graph;
 pub mod interpreter;
 pub mod lexer;
 pub mod parser;
+pub mod runtime_guard;
 pub mod tools;
 pub mod verify;
 pub mod vm;
