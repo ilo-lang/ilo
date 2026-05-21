@@ -504,8 +504,25 @@ const BUILTIN_ALIASES: &[(&str, &str)] = &[
     ("flatten", "flat"),
     ("concat", "cat"),
     ("contains", "has"),
+    // `upper`/`lower` mirror the Python/JS/Go/Rust method names for case
+    // conversion. Canonical 3-char names `upr`/`lwr` stay unchanged in
+    // bytecode and fmt output; these aliases only rewrite the parse-time
+    // name so newcomers from those languages don't hit an unknown-builtin
+    // error on first run.
+    ("upper", "upr"),
+    ("lower", "lwr"),
+    // `capitalize` mirrors the Python/Ruby method name. Canonical name
+    // stays `cap`; alias is long-form discoverability only.
+    ("capitalize", "cap"),
     ("group", "grp"),
     ("average", "avg"),
+    // `post` was the canonical HTTP-POST verb name before 0.12.0 when it
+    // was renamed to the 3-char `pst` to match the short-form convention.
+    // Personas that learned the language on pre-0.12.0 examples reach for
+    // `post` as muscle memory; aliasing it back to `pst` closes that gap
+    // without widening the canonical surface (bytecode, fmt, docs all stay
+    // on `pst`).
+    ("post", "pst"),
     ("print", "prnt"),
     ("trim", "trm"),
     ("split", "spl"),
