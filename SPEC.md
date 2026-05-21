@@ -576,7 +576,7 @@ Called like functions, compiled to dedicated opcodes.
 | `clamp x lo hi` | restrict `x` to `[lo, hi]` (lower bound wins when `lo > hi`) | `n` |
 | `cumsum xs` | running sum; output length matches input | `L n` |
 | `cprod xs` | running product; output length matches input | `L n` |
-| `ewm xs a` | exponential moving average: `ewm[0] = xs[0]`, `ewm[i] = a*xs[i] + (1-a)*ewm[i-1]`; `a` clamped to `[0, 1]`, out-of-range errors `ILO-R009` | `L n` |
+| `ewm xs a` | exponential moving average: `ewm[0] = xs[0]`, `ewm[i] = a*xs[i] + (1-a)*ewm[i-1]`; `a` in `[0, 1]`, out-of-range errors `ILO-R009` | `L n` |
 | `frq xs` | frequency map of elements (keys are bare stringified values) | `M t n` |
 | `median xs` | median of numeric list | `n` |
 | `quantile xs p` | sample quantile (linear interp; `p` clamped to `[0, 1]`) | `n` |
