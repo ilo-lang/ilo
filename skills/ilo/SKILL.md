@@ -51,7 +51,9 @@ The content lives in `skills/ilo/<name>.md`. The installed binary serves the sam
 
 ## Reserved names (ILO-P011)
 
-Every builtin name and control-flow keyword is reserved. Using any as a binding triggers ILO-P011. Use 4+ character descriptive names (`item`, `rows`, `accum`, `total`, `count`, `index`, `result`) to stay clear of this class of error permanently.
+Every builtin name, builtin alias, and control-flow keyword is reserved. Using any as a binding triggers ILO-P011 at parse time. Use 4+ character descriptive names (`item`, `rows`, `accum`, `total`, `count`, `index`, `result`) to stay clear of this class of error permanently.
+
+**Lexer keywords** (reserved tokens, never identifiers): `fn` `def` `let` `var` `const` `if` `return` `true` `false` `nil` `type` `tool` `use`
 
 **1-char**: `e` (Euler's number — math constant)
 
@@ -62,6 +64,29 @@ Every builtin name and control-flow keyword is reserved. Using any as a binding 
 **3-char control-flow**: `brk` (break) `cnt` (continue) `ret` (return)
 
 **4-char+**: `acos` `asin` `atan` `argmax` `argmin` `argsort` `basename` `chars` `chunks` `clamp` `cprod` `cumsum` `dirname` `dot` `drop` `dtfmt` `dtparse` `dtparse-rel` `enumerate` `flat` `flatmap` `fmod` `fmt2` `fsize` `glob` `ifft` `inv` `isdir` `isfile` `jdmp` `jkeys` `jpar` `jpth` `len` `mapr` `matmul` `matvec` `mdel` `median` `mget` `mhas` `mkeys` `mmap` `mpairs` `mset` `mtime` `mvals` `padl` `padr` `partition` `pathjoin` `prnt` `prod` `quantile` `rand-bytes` `range` `rdb` `rdin` `rdinl` `rdjl` `rdl` `rndn` `rsrt` `setdiff` `setinter` `setunion` `sleep` `solve` `sqrt` `stdev` `take` `transpose` `uniqby` `variance` `walk` `window` `wra` `wrl`
+
+**Builtin aliases** (long-form names that resolve to short builtins, also reserved): `length`→`len`, `head`→`hd`, `tail`→`tl`, `reverse`→`rev`, `sort`→`srt`, `slice`→`slc`, `unique`→`unq`, `filter`→`flt`, `fold`→`fld`, `flatten`→`flat`, `concat`→`cat`, `contains`→`has`, `group`→`grp`, `average`→`avg`, `print`→`prnt`, `trim`→`trm`, `split`→`spl`, `format`→`fmt`, `regex`→`rgx`, `read`→`rd`, `readlines`→`rdl`, `write`→`wr`, `writelines`→`wrl`, `ceil`→`cel`, `round`→`rou`, `rand`/`random`→`rnd`, `rng`→`range`, `string`→`str`, `number`→`num`.
+
+### One-liner rename suggestions
+
+Agents reach for these names constantly — pick the listed alternative and move on:
+
+- `fn` (keyword) → `f`, `fv`, `func`, or a descriptive name like `callback` / `predicate`
+- `def` (keyword) → `d`, `defn`, `defv`
+- `let` / `var` / `const` (keywords) → `l`/`lv`/`letv`, `v`/`value`, `c`/`k`/`constv`
+- `if` / `return` (keywords) → `cond`/`flag`/`iff`, `result`/`out`/`ret_val`
+- `e` (math constant) → `event`, `evt`, `entry`, `elem`, `err`
+- `env` (builtin) → `ev`, `envir`, `environ`, `envv`
+- `log` (math builtin) → `lg`, `logger`, `entry`, `record`
+- `now` (time builtin) → `tnow`, `current`, `nowts`, `timestamp`
+- `iter` (not reserved today, but agents often pair with builtins — prefer descriptive) → `i`, `idx`, `step`, `cursor`
+- `chars` (builtin) → `cs`, `glyphs`, `letters`
+- `head` / `tail` / `length` (aliases) → `hd`/`tl`/`len` directly, or `first`/`rest`/`size`
+- `filter` / `sort` / `concat` / `fold` (aliases) → `flt`/`srt`/`cat`/`fld` directly, or `keep`/`sorted`/`joined`/`reduced`
+- `fld` (fold builtin) → `field`, `folder`, `record`
+- `cnt` / `brk` (loop control) → `count`/`index`, `brake`/`stop`
+
+When in doubt: pick a 4+ char descriptive name. The token cost of an extra character is dwarfed by the cost of an ILO-P011 retry round-trip.
 
 ## Compatibility note
 
