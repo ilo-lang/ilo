@@ -17,6 +17,8 @@ Prefix-call: `name arg1 arg2 ...`. Cross-engine unless noted.
 
 ## HTTP
 
+**Every verb takes an optional trailing `M t t` headers map** for Authorization, Accept, X-API-Key. No wrapper needed - pass the map as the last arg (`get url hs`, `pst url body hs`).
+
 `get url` (`R t t`), `get url headers` (with `M t t` custom headers), `get-to url timeout-ms` (explicit ms timeout).
 `pst url body` (`R t t`), `pst url body headers`, `pst-to url body timeout-ms`.
 `put url body` / `pat url body` mirror `pst` (PUT / PATCH); accept optional headers map.
@@ -32,6 +34,8 @@ Timeout variants round up to the nearest second. Err on timeout or connection fa
 Parsing `;`-delimited headers (Content-Type, Cache-Control, Cookie): no `ct-parse` builtin, use `spl ";"` then `trm`/`lwr`, then `spl "="` per param. `ps=spl raw ";";media=lwr (trm (at ps 0));kv=spl (trm (at ps 1)) "="`. Don't bind to `ct` (shadows builtin).
 
 ## JSON
+
+**`jpth` is dot-path, not JSONPath.** `jpth body "user.addrs.0.city"`. Leading `$`, `*`, `[...]` rejected; list indices are bare numbers, not `[0]`.
 
 `jpar s` parse (`R _ t`), `jpar-list s` parse and assert array (`R (L _) t` — use when you know the response is an array: `@x (jpar-list! body){...}`), `jpth s path` dot-path lookup, `jkeys s path` sorted object keys, `jdmp v` serialize. Numeric keys stringified in `jdmp`.
 

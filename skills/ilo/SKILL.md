@@ -49,6 +49,23 @@ Twelve task-focused skills cover the surface. Load only the slices the current t
 
 The content lives in `skills/ilo/<name>.md`. The installed binary serves the same files via `include_str!`, so the bundled copy and the served copy cannot drift.
 
+## Quick reference - things agents miss
+
+**Text concatenation - three builtins, three jobs.** Pick by shape, not by habit:
+
+- `+ a b` - two-arg text/number concat (also list concat). `+ "hi " name` -> `"hi alice"`.
+- `fmt "x={} y={}" x y` - template formatting (variadic; `{}` placeholders filled left-to-right, count must equal arg count, no list splat). `{name}` slots auto-desugar to a lookup of the binding `name`.
+- `cat xs sep` - join a list of text with a separator. `cat ["a" "b" "c"] ","` -> `"a,b,c"`. NOT two-string concat; reach for `+` for that.
+
+**HTTP custom headers.** Every verb in the cluster (`get pst put pat del hed opt`) accepts an optional trailing `M t t` headers map. The two-arg `get url headers` and three-arg `pst url body headers` forms are real, not workarounds. Build the map with `mmap` + `mset`:
+
+```
+hs=mset (mset mmap "Authorization" tok) "Accept" "application/json"
+r=get! "https://api.example.com/v1/users" hs
+```
+
+**`jpth` is dot-path, not JSONPath.** `jpth body "user.addresses.0.city"` works. Leading `$`, `*`, and `[...]` are rejected with a diagnostic - don't reach for JSONPath wildcards. Numeric list indices are bare numbers in the path, segment-separated by `.`.
+
 ## Reserved names (ILO-P011)
 
 Every builtin name, builtin alias, and control-flow keyword is reserved. Using any as a binding triggers ILO-P011 at parse time. Use 4+ character descriptive names (`item`, `rows`, `accum`, `total`, `count`, `index`, `result`) to stay clear of this class of error permanently.
