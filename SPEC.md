@@ -1501,6 +1501,8 @@ g>L n
 
 Statement separation reverts to standard rules once brackets close. A blank line ends the current declaration.
 
+Windows CRLF (`\r\n`) is normalised to `\n` before lexing, so files edited on Windows parse identically to Unix-line-ending files.
+
 ### Multi-function files
 
 Functions in a file are separated by **newlines**. The parser strips all newlines, so the token stream is flat. After parsing each function body, the parser uses the next newline-delimited boundary to start the next declaration.

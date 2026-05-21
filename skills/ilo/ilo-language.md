@@ -5,7 +5,7 @@ description: Use this when writing or reviewing .ilo source. Prefix notation, ty
 
 # ilo language
 
-Prefix-notation, strongly-typed, verified pre-run. Bodies single-line, `;`-separated. RC-managed; type checker enforces shape only.
+Prefix-notation, strongly-typed, verified pre-run. Bodies `;`-separated or newline-indented. RC-managed; type checker enforces shape only.
 
 ## fn
 
