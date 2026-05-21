@@ -911,6 +911,318 @@ fn collect_mcp_tool_decls(path: Option<&str>) -> Result<Vec<ast::Decl>, String> 
     Ok(vec![])
 }
 
+// ── `ilo httpd` subcommand ────────────────────────────────────────────────────
+//
+// Serves HTTP requests by calling a user-defined ilo handler function.
+//
+// Handler signature (ilo source):
+//   type Request{method:t;path:t;headers:M t t;body:t}
+//   type Response{status:n;headers:M t t;body:t}
+//   handler req:Request>Response; ...
+//
+// One thread is spawned per accepted connection (minimal thread-per-request
+// pool). No async runtime is required — the ilo interpreter is synchronous.
+//
+// TODO(ILO-59): add --allow-net cap check once the cap-flags PR lands.
+
+fn httpd_cmd(port: u16, handler_file: &str, func_name: &str) -> i32 {
+    use std::net::TcpListener;
+    use std::sync::Arc;
+
+    // ── Load and compile the handler program once ─────────────────────────────
+    let source = match std::fs::read_to_string(handler_file) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("error: cannot read handler file '{}': {}", handler_file, e);
+            return 1;
+        }
+    };
+
+    let tokens = match lexer::lex(&source) {
+        Ok(t) => t,
+        Err(e) => {
+            let d = Diagnostic::from(&e).with_source(source.clone());
+            eprint!("{}", AnsiRenderer { use_color: true }.render(&d));
+            return 1;
+        }
+    };
+    let token_spans: Vec<_> = tokens
+        .into_iter()
+        .map(|(t, r)| {
+            (
+                t,
+                ast::Span {
+                    start: r.start,
+                    end: r.end,
+                },
+            )
+        })
+        .collect();
+
+    let (mut program, parse_errors) = parser::parse(token_spans);
+    ast::resolve_aliases(&mut program);
+    ast::desugar_dot_var_index(&mut program);
+    program.source = Some(source.clone());
+
+    if !parse_errors.is_empty() {
+        for e in &parse_errors {
+            let d = Diagnostic::from(e).with_source(source.clone());
+            eprint!("{}", AnsiRenderer { use_color: true }.render(&d));
+        }
+        return 1;
+    }
+
+    let vr = verify::verify(&program);
+    for w in &vr.warnings {
+        eprint!(
+            "{}",
+            AnsiRenderer { use_color: true }.render(&Diagnostic::from(w).with_source(source.clone()))
+        );
+    }
+    if !vr.errors.is_empty() {
+        for e in &vr.errors {
+            eprint!(
+                "{}",
+                AnsiRenderer { use_color: true }
+                    .render(&Diagnostic::from(e).with_source(source.clone()))
+            );
+        }
+        return 1;
+    }
+
+    let program = Arc::new(program);
+    let func = func_name.to_string();
+
+    // ── Bind the TCP listener ─────────────────────────────────────────────────
+    let addr = format!("0.0.0.0:{}", port);
+    let listener = match TcpListener::bind(&addr) {
+        Ok(l) => l,
+        Err(e) => {
+            eprintln!("error: cannot bind to {}: {}", addr, e);
+            return 1;
+        }
+    };
+    eprintln!("ilo httpd listening on http://0.0.0.0:{}", port);
+
+    // ── Accept loop: one thread per connection ────────────────────────────────
+    for stream in listener.incoming() {
+        let stream = match stream {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("accept error: {}", e);
+                continue;
+            }
+        };
+        let program = Arc::clone(&program);
+        let func = func.clone();
+
+        std::thread::spawn(move || {
+            if let Err(e) = handle_http_connection(stream, &program, &func) {
+                eprintln!("connection error: {}", e);
+            }
+        });
+    }
+    0
+}
+
+/// Parse one HTTP/1.1 request from `stream`, call the ilo handler, write the response.
+fn handle_http_connection(
+    stream: std::net::TcpStream,
+    program: &ast::Program,
+    func_name: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use std::collections::HashMap;
+    use std::io::{BufRead, BufReader, Write};
+
+    let peer = stream
+        .peer_addr()
+        .map(|a| a.to_string())
+        .unwrap_or_default();
+    let mut reader = BufReader::new(stream.try_clone()?);
+    let mut writer = stream;
+
+    // ── Parse request line ────────────────────────────────────────────────────
+    let mut request_line = String::new();
+    reader.read_line(&mut request_line)?;
+    let request_line = request_line.trim_end();
+
+    let mut parts = request_line.splitn(3, ' ');
+    let method = parts.next().unwrap_or("GET").to_string();
+    let path = parts.next().unwrap_or("/").to_string();
+    // HTTP version ignored for simplicity.
+
+    // ── Parse headers ─────────────────────────────────────────────────────────
+    let mut raw_headers: Vec<(String, String)> = Vec::new();
+    let mut content_length: usize = 0;
+    loop {
+        let mut line = String::new();
+        reader.read_line(&mut line)?;
+        let line = line.trim_end();
+        if line.is_empty() {
+            break;
+        }
+        if let Some((k, v)) = line.split_once(':') {
+            let key = k.trim().to_lowercase();
+            let val = v.trim().to_string();
+            if key == "content-length" {
+                content_length = val.parse().unwrap_or(0);
+            }
+            raw_headers.push((key, val));
+        }
+    }
+
+    // ── Read body ─────────────────────────────────────────────────────────────
+    let body = if content_length > 0 {
+        let mut buf = vec![0u8; content_length];
+        use std::io::Read;
+        reader.read_exact(&mut buf)?;
+        String::from_utf8_lossy(&buf).into_owned()
+    } else {
+        String::new()
+    };
+
+    // ── Build ilo Request record ───────────────────────────────────────────────
+    use interpreter::Value;
+    use interpreter::MapKey;
+
+    let mut hdr_map: HashMap<interpreter::MapKey, Value> = HashMap::new();
+    for (k, v) in &raw_headers {
+        hdr_map.insert(
+            MapKey::Text(k.clone()),
+            Value::Text(std::sync::Arc::new(v.clone())),
+        );
+    }
+
+    let mut req_fields: HashMap<String, Value> = HashMap::new();
+    req_fields.insert(
+        "method".to_string(),
+        Value::Text(std::sync::Arc::new(method.clone())),
+    );
+    req_fields.insert(
+        "path".to_string(),
+        Value::Text(std::sync::Arc::new(path.clone())),
+    );
+    req_fields.insert(
+        "headers".to_string(),
+        Value::Map(std::sync::Arc::new(hdr_map)),
+    );
+    req_fields.insert(
+        "body".to_string(),
+        Value::Text(std::sync::Arc::new(body)),
+    );
+
+    let req_val = Value::Record {
+        type_name: "Request".to_string(),
+        fields: req_fields,
+    };
+
+    // ── Call handler ──────────────────────────────────────────────────────────
+    let result = interpreter::run(program, Some(func_name), vec![req_val]);
+
+    // ── Extract Response record ───────────────────────────────────────────────
+    let resp = match result {
+        Ok(v) => v,
+        Err(e) => {
+            let msg = format!("handler error: {}", e);
+            eprintln!("{}", msg);
+            let body = format!("Internal Server Error: {}\n", e);
+            let resp_bytes = format!(
+                "HTTP/1.1 500 Internal Server Error\r\nContent-Type: text/plain\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            writer.write_all(resp_bytes.as_bytes())?;
+            eprintln!("{} {} {} -> 500", peer, method, path);
+            return Ok(());
+        }
+    };
+
+    // Unwrap Result wrappers (handler may return R Response t)
+    let resp = match resp {
+        Value::Ok(inner) => *inner,
+        Value::Err(e) => {
+            let body = format!("Handler returned Err: {}\n", e);
+            let resp_bytes = format!(
+                "HTTP/1.1 500 Internal Server Error\r\nContent-Type: text/plain\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            writer.write_all(resp_bytes.as_bytes())?;
+            eprintln!("{} {} {} -> 500 (Err)", peer, method, path);
+            return Ok(());
+        }
+        other => other,
+    };
+
+    let (status, resp_headers, resp_body) = match &resp {
+        Value::Record { fields, .. } => {
+            let status = match fields.get("status") {
+                Some(Value::Number(n)) => *n as u16,
+                _ => 200,
+            };
+            let resp_body = match fields.get("body") {
+                Some(Value::Text(s)) => (**s).clone(),
+                Some(other) => other.to_string(),
+                None => String::new(),
+            };
+            let resp_headers: Vec<(String, String)> = match fields.get("headers") {
+                Some(Value::Map(m)) => m
+                    .iter()
+                    .map(|(k, v)| {
+                        let ks = match k {
+                            MapKey::Text(s) => s.clone(),
+                            MapKey::Int(n) => n.to_string(),
+                        };
+                        let vs = match v {
+                            Value::Text(s) => (**s).clone(),
+                            other => other.to_string(),
+                        };
+                        (ks, vs)
+                    })
+                    .collect(),
+                _ => vec![],
+            };
+            (status, resp_headers, resp_body)
+        }
+        // Handler returned bare text — wrap as 200 OK text/plain
+        Value::Text(s) => (200u16, vec![], (**s).clone()),
+        other => (200u16, vec![], other.to_string()),
+    };
+
+    let status_text = match status {
+        200 => "OK",
+        201 => "Created",
+        204 => "No Content",
+        400 => "Bad Request",
+        401 => "Unauthorized",
+        403 => "Forbidden",
+        404 => "Not Found",
+        500 => "Internal Server Error",
+        _ => "OK",
+    };
+
+    let has_content_type = resp_headers
+        .iter()
+        .any(|(k, _)| k.to_lowercase() == "content-type");
+
+    let mut header_block = format!("HTTP/1.1 {} {}\r\n", status, status_text);
+    if !has_content_type {
+        header_block.push_str("Content-Type: text/plain; charset=utf-8\r\n");
+    }
+    for (k, v) in &resp_headers {
+        header_block.push_str(&format!("{}: {}\r\n", k, v));
+    }
+    header_block.push_str(&format!("Content-Length: {}\r\n", resp_body.len()));
+    header_block.push_str("Connection: close\r\n");
+    header_block.push_str("\r\n");
+
+    writer.write_all(header_block.as_bytes())?;
+    writer.write_all(resp_body.as_bytes())?;
+
+    eprintln!("{} {} {} -> {}", peer, method, path, status);
+    Ok(())
+}
+
 // ── `ilo serv` subcommand ──────────────────────────────────────────────────
 
 /// Render a `Diagnostic` as a `serde_json::Value` for inclusion in serve responses.
@@ -2745,6 +3057,10 @@ fn dispatch_cli(cli: cli::Cli, bare_has_bin: bool) -> i32 {
                 cli::args::SkillCmd::Path { name } => skill_path_cmd(&name, as_json),
                 cli::args::SkillCmd::Show { name } => skill_show_cmd(&name, as_json),
             }
+        }
+        Some(cli::Cmd::Httpd(h)) => {
+            let func = h.func.as_deref().unwrap_or("handler");
+            httpd_cmd(h.port, &h.handler, func)
         }
         Some(cli::Cmd::Test(t)) => cli::test_runner::run(t),
         Some(cli::Cmd::Version) => version_cmd(cli.global.explicit_json()),
