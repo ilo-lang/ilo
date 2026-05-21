@@ -2,9 +2,9 @@
 
 ## Unreleased
 
-### Fixed
+### Added
 
-- `prod xs` on the Cranelift JIT no longer falls back to the bytecode VM. The `jit_prod` extern-C helper existed and the JIT codegen emitted a call to it, but `register_helpers` in `src/vm/jit_cranelift.rs` was missing the `("jit_prod", jit_prod as *const u8)` symbol entry, so the JIT panicked with `can't resolve symbol jit_prod` and silently bailed. Output was still correct but acceleration was defeated. `sum`, `avg`, `min`, `max` were unaffected — only `prod` got missed when it was added. Surfaced by the monte-carlo persona.
+- `ILO-P102` diagnostic for top-level `name=expr` bindings outside any function declaration. Catches the "forgot the `main>_;` wrapper" misparse that k-means and linear-regression personas hit when chaining imperative bindings at the top level. Without the wrapper the parser used to either die on the bare `=` (a bare `ILO-P003`) or, when a prior `name>type;body` decl was in scope, slurp the whole chain into that fn's body and emit a wall of misleading `ILO-T005` cascades anchored on the wrong line. `ILO-P102` collapses both shapes into a single diagnostic that names the offending binding and suggests the `main>_;` wrapper. Parser-only change; identical output across VM and JIT.
 
 ### Changed
 

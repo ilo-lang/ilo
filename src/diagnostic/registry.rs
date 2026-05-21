@@ -519,6 +519,51 @@ inline form gets unreadable.
 "#,
     },
     ErrorEntry {
+        code: "ILO-P102",
+        short: "top-level binding outside a function declaration",
+        long: r#"## ILO-P102: top-level binding outside a function declaration
+
+ilo programs are made of declarations: functions (`name>type;body`), type
+declarations (`type T = ...`), tools (`tool name ...`), or `use` imports.
+A bare `name=expr` is a **binding statement**, not a declaration - it has
+to live inside a function body.
+
+This diagnostic fires when a file starts with (or contains) a top-level
+chain like:
+
+    pts=gen-pts
+    cs0=[[4.8 4.9][6.2 7.1]]
+    cs1=iter cs0 pts
+    cs2=iter cs1 pts
+    prnt cs2
+
+Without a function header to anchor those bindings, the parser either
+fails on the bare `=` (ILO-P003) or - when a prior `name>type;body`
+declaration sits above - slurps the whole chain into that function's
+body, producing a wall of misleading ILO-T005 cascades that point at
+the wrong line.
+
+**Fix: wrap the chain in a `main>_;` entry point.**
+
+    main>_;
+    pts=gen-pts
+    cs0=[[4.8 4.9][6.2 7.1]]
+    cs1=iter cs0 pts
+    cs2=iter cs1 pts
+    prnt cs2
+
+`main>_;` is the conventional entry-point header - the underscore means
+"infer the return type from the body". The bindings inside the body are
+now real let-bindings inside `main`'s scope.
+
+**Why this matters:** ilo is a token-minimal language for agents. The
+manifesto target is that a wrong program produces *one* actionable
+diagnostic, not a cascade. ILO-P102 collapses what used to be 5-50
+ILO-T005 lines (one per slurped binding) into a single pointer at the
+shape fix.
+"#,
+    },
+    ErrorEntry {
         code: "ILO-P021",
         short: "ambiguous double-minus prefix-binop chain",
         long: r#"## ILO-P021: ambiguous double-minus prefix-binop chain

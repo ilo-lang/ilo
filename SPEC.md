@@ -256,10 +256,13 @@ Common shapes reached for from other languages. The parser and lexer surface eac
 | `cond{^"err"}` braced-cond       | Braceless `cond ^"err"` for early return | hint only   |
 | `- -*a b *c d` (double-minus)    | `- 0 +*a b *c d` (negate the sum)        | `ILO-P021`  |
 | `[k fmt2 v 2]` (call in list)    | `[k (fmt2 v 2)]` or bind-first           | `ILO-P101`  |
+| `pts=gen-pts;cs0=[...];prnt cs0` at top level | `main>_;pts=gen-pts;cs0=[...];prnt cs0` (wrap in `main>_;`) | `ILO-P102` |
 
 Each case fires a hint pointing at the canonical form; the agent's first retry should be the right one. Identifier-shaped collisions with builtin names (`len=...`, `sin=...`) are rejected with `ILO-P011` plus a rename suggestion.
 
 The list-literal call trap (`ILO-P101`) catches the case where a variadic builtin (`fmt`, `fmt2`) appears bare inside `[...]`. Fixed-arity builtins (`str`, `at`, `map`, ...) auto-expand to a call as one element, but variadic ones can't (the parser doesn't know where their args end), so the bare form would silently fall through as multiple elements with the builtin name as an undefined Ref. Fix by wrapping the call in parens (`[k (fmt2 v 2)]`) or binding first.
+
+The top-level chain trap (`ILO-P102`) catches a bare `name=expr` at the top level. ilo requires every binding to live inside a function body; a top-level `pts=gen-pts;cs0=[[...]]; ...; prnt cs2` without a `main>_;` (or any) header used to either die on the `=` (a bare `ILO-P003`) or get slurped into a previous function's body and emit a wall of misleading `ILO-T005` cascades on the wrong line. `ILO-P102` collapses both shapes into a single diagnostic that names the offending binding and suggests the canonical `main>_;` wrapper.
 
 The double-minus trap (`ILO-P021`) catches the silent-miscompile shape `- -<op> a b <op> c d` for `<op>` in `{+,*,/}`. Read intuitively as `-(a*b) - (c*d)` but parses as `-((a*b) - (c*d)) = -(a*b) + (c*d)` because the inner `-` greedily consumes both prefix-binop groups as binary subtract and the outer `-` falls back to unary negate. Fix by negating the sum (`- 0 +*a b *c d`) or binding first (`p=*a b;q=*c d;- 0 +p q`). Single-atom variants like `- -a b` remain accepted since they're unambiguous.
 
