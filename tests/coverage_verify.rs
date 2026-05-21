@@ -594,6 +594,69 @@ fn getmany_wrong() {
     assert_err("main>L (R t t);get-many 5", "ILO-T013", "main");
 }
 
+// HTTP verb cluster (#5z) — verifier arms for put/pat/del/hed/opt.
+// Mirror the pst/get verifier-error tests above.
+
+#[test]
+fn put_wrong_url() {
+    assert_err("main>R t t;put 5 \"body\"", "ILO-T013", "main");
+}
+
+#[test]
+fn put_wrong_body() {
+    assert_err("main>R t t;put \"http://x\" 5", "ILO-T013", "main");
+}
+
+#[test]
+fn put_wrong_headers() {
+    assert_err("main>R t t;put \"http://x\" \"b\" 5", "ILO-T013", "main");
+}
+
+#[test]
+fn pat_wrong_url() {
+    assert_err("main>R t t;pat 5 \"body\"", "ILO-T013", "main");
+}
+
+#[test]
+fn pat_wrong_body() {
+    assert_err("main>R t t;pat \"http://x\" 5", "ILO-T013", "main");
+}
+
+#[test]
+fn pat_wrong_headers() {
+    assert_err("main>R t t;pat \"http://x\" \"b\" 5", "ILO-T013", "main");
+}
+
+#[test]
+fn del_wrong_url() {
+    assert_err("main>R t t;del 5", "ILO-T013", "main");
+}
+
+#[test]
+fn del_wrong_headers() {
+    assert_err("main>R t t;del \"http://x\" 5", "ILO-T013", "main");
+}
+
+#[test]
+fn hed_wrong_url() {
+    assert_err("main>R t t;hed 5", "ILO-T013", "main");
+}
+
+#[test]
+fn hed_wrong_headers() {
+    assert_err("main>R t t;hed \"http://x\" 5", "ILO-T013", "main");
+}
+
+#[test]
+fn opt_wrong_url() {
+    assert_err("main>R t t;opt 5", "ILO-T013", "main");
+}
+
+#[test]
+fn opt_wrong_headers() {
+    assert_err("main>R t t;opt \"http://x\" 5", "ILO-T013", "main");
+}
+
 #[test]
 fn rd_wrong() {
     assert_err("main>R _ t;rd 5", "ILO-T013", "main");
