@@ -4,6 +4,33 @@ pub mod registry;
 
 use crate::ast::Span;
 
+// ---- Fix-plan types (Zero-style structured edit previews) ----
+
+/// A single text replacement within a file.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FixEdit {
+    /// Line number (1-based) where the replacement starts.
+    pub line_start: usize,
+    /// Line number (1-based) where the replacement ends (inclusive).
+    pub line_end: usize,
+    /// The text that currently appears at this location (before-snippet).
+    pub before: String,
+    /// The replacement text (after-snippet).
+    pub after: String,
+}
+
+/// A structured fix plan attached to a diagnostic.
+///
+/// Agents can apply the edit mechanically without re-parsing prose suggestions.
+/// Schema mirrors Zero PR #137: `{ path, line_range, before, after }`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FixPlan {
+    /// File path, if known (absent for inline code snippets).
+    pub path: Option<String>,
+    /// The edits to apply (MVP: always a single edit).
+    pub edits: Vec<FixEdit>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Severity {
     Error,
@@ -26,6 +53,11 @@ pub struct Diagnostic {
     pub notes: Vec<String>,
     pub suggestion: Option<String>,
     pub source: Option<String>,
+    /// File path for fix-plan `path` field; absent for inline code.
+    pub path: Option<String>,
+    /// Structured fix plan (Zero-style).  Present on diagnostics where the
+    /// fix is a mechanical text replacement that an agent can apply blindly.
+    pub fix_plan: Option<FixPlan>,
 }
 
 impl Diagnostic {
@@ -38,6 +70,8 @@ impl Diagnostic {
             notes: Vec::new(),
             suggestion: None,
             source: None,
+            path: None,
+            fix_plan: None,
         }
     }
 
@@ -50,6 +84,8 @@ impl Diagnostic {
             notes: Vec::new(),
             suggestion: None,
             source: None,
+            path: None,
+            fix_plan: None,
         }
     }
 
@@ -89,6 +125,16 @@ impl Diagnostic {
 
     pub fn with_source(mut self, source: impl Into<String>) -> Self {
         self.source = Some(source.into());
+        self
+    }
+
+    pub fn with_path(mut self, path: impl Into<String>) -> Self {
+        self.path = Some(path.into());
+        self
+    }
+
+    pub fn with_fix_plan(mut self, plan: FixPlan) -> Self {
+        self.fix_plan = Some(plan);
         self
     }
 }
