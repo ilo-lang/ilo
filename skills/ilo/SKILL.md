@@ -56,6 +56,7 @@ The content lives in `skills/ilo/<name>.md`. The installed binary serves the sam
 - `+ a b` - two-arg text/number concat (also list concat). `+ "hi " name` -> `"hi alice"`.
 - `fmt "x={} y={}" x y` - template formatting (variadic; `{}` placeholders filled left-to-right, count must equal arg count, no list splat). `{name}` slots auto-desugar to a lookup of the binding `name`.
 - `cat xs sep` - join a list of text with a separator. `cat ["a" "b" "c"] ","` -> `"a,b,c"`. NOT two-string concat; reach for `+` for that.
+- **Labelled args (ILO-71):** any callable with declared parameter names accepts `label:value` form. `dtfmt epoch:e fmt:"%Y"` ≡ `dtfmt e "%Y"`. Order is free; mix positional + labelled freely (positional fill from left, labels fill remaining slots by name). Works in postfix and paren form. Unknown label → `ILO-P019` with known-params list.
 
 **HTTP custom headers.** Every verb in the cluster (`get pst put pat del hed opt`) accepts an optional trailing `M t t` headers map. The two-arg `get url headers` and three-arg `pst url body headers` forms are real, not workarounds. Build the map with `mmap` + `mset`:
 
