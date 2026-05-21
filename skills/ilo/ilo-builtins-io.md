@@ -24,6 +24,7 @@ Prefix-call: `name arg1 arg2 ...`. Cross-engine unless noted.
 `put url body` / `pat url body` mirror `pst` (PUT / PATCH); accept optional headers map.
 `del url` / `hed url` / `opt url` mirror `get` (DELETE / HEAD / OPTIONS); accept optional headers map.
 `get-many urls` (parallel fan-out, `L (R t t)`).
+`par-map fn xs` / `par-map fn xs n` — general parallel fan-out (`L (R b t)`): apply `fn` to every element of `xs` up to `n` at a time (default n = num_cpus; override with `ILO_PAR_MAP_CONCURRENCY`). Order-preserving; per-item errors surface as `Err` in the list without short-circuiting. Works for any fn (CPU, I/O, HTTP); preferred over `get-many` for everything except simple URL fan-out. See `examples/par-map.ilo`.
 Verb cluster is limited to the seven safe methods (GET/POST/PUT/PATCH/DELETE/HEAD/OPTIONS); TRACE and CONNECT are deliberately out of scope.
 Timeout variants round up to the nearest second. Err on timeout or connection failure.
 
