@@ -470,6 +470,14 @@ const BUILTIN_ALIASES: &[(&str, &str)] = &[
     ("floor", "flr"),
     ("ceil", "cel"),
     ("round", "rou"),
+    // `rand` is the universal short-form for random across C, Python (`random.random`
+    // shortened in muscle memory), Rust (`rand` crate), Go (`math/rand`), JS
+    // (`Math.random`), etc. Aliasing to canonical `rnd` cuts the round-vs-random
+    // confusion event-trace-analyser rerun11 surfaced: agents read `rnd` as
+    // "round" (drop-vowels of `round`) and reach for it when they want rounding.
+    // With `rand` available, the unambiguous choice for random is `rand` and
+    // for rounding is `rou`/`round`; `rnd` stays as the canonical for backward
+    // compat. Costs 1 extra char vs `rnd`, accepted for trap-avoidance.
     ("rand", "rnd"),
     ("random", "rnd"),
     // `rng` is a short-form alias for the canonical `range` builtin. Personas
