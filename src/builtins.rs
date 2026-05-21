@@ -340,6 +340,23 @@ pub enum Builtin {
     LastDom,
     NextBusinessDay,
     DayOfWeek,
+    // Rolling-window reducers (0.12.x). Numeric-list inputs, fixed window
+    // size `n`. Output length = `len xs - n + 1` (empty when `n > len`).
+    //
+    // `rsum n:n xs:L n > L n` — rolling sum via running-window: O(n) total,
+    // not O(n*w) like the naive `map (i:n>n;sum (slc xs i (+ i n))) ...`
+    // recipe.
+    // `ravg n:n xs:L n > L n` — rolling mean, same running-window strategy.
+    // `rmin n:n xs:L n > L n` — rolling minimum, O(n) amortised via a
+    // monotonic-deque idiom.
+    //
+    // `n=0` errors `ILO-R009`; `n > len xs` returns `[]` (Python/numpy
+    // convention). Tree-bridge eligible — pure number-list reducers, no
+    // FnRef args, no Result wrapper. Appended last to preserve every
+    // existing on-wire tag.
+    Rsum,
+    Ravg,
+    Rmin,
 }
 
 impl Builtin {
@@ -534,6 +551,9 @@ impl Builtin {
             "last-dom" => Some(Builtin::LastDom),
             "next-business-day" => Some(Builtin::NextBusinessDay),
             "day-of-week" => Some(Builtin::DayOfWeek),
+            "rsum" => Some(Builtin::Rsum),
+            "ravg" => Some(Builtin::Ravg),
+            "rmin" => Some(Builtin::Rmin),
             _ => None,
         }
     }
@@ -725,6 +745,9 @@ impl Builtin {
             Builtin::LastDom => "last-dom",
             Builtin::NextBusinessDay => "next-business-day",
             Builtin::DayOfWeek => "day-of-week",
+            Builtin::Rsum => "rsum",
+            Builtin::Ravg => "ravg",
+            Builtin::Rmin => "rmin",
         }
     }
 
@@ -1058,6 +1081,15 @@ impl Builtin {
         // opcodes. Appended last to preserve every prior on-wire tag.
         Builtin::Getx,
         Builtin::Pstx,
+        // Rolling-window reducers (#5bq). Pure number-list reducers with a
+        // fixed window size; output length = `len xs - n + 1`. O(n)
+        // amortised via running-sum (rsum/ravg) and monotonic-deque (rmin),
+        // not O(n*w) like the naive `slc + sum` recipe. Tree-bridge eligible:
+        // VM and Cranelift inherit through OP_CALL_BUILTIN_TREE at zero
+        // opcode cost. Appended last to preserve every existing on-wire tag.
+        Builtin::Rsum,
+        Builtin::Ravg,
+        Builtin::Rmin,
     ];
 
     /// On-wire 8-bit tag for cross-engine builtin dispatch. See `ALL`.
@@ -1413,6 +1445,9 @@ mod tests {
             "b64-dec",
             "hex",
             "ct-eq",
+            "rsum",
+            "ravg",
+            "rmin",
         ];
         for name in &all {
             let b = Builtin::from_name(name).unwrap_or_else(|| panic!("missing builtin: {name}"));
@@ -1675,6 +1710,9 @@ mod tests {
             "b64-dec",
             "hex",
             "ct-eq",
+            "rsum",
+            "ravg",
+            "rmin",
         ] {
             let b = Builtin::from_name(name).unwrap_or_else(|| panic!("no builtin: {name}"));
             let t = b.tag();
