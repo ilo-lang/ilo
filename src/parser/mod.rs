@@ -3,9 +3,51 @@ use crate::builtins::Builtin;
 use crate::lexer::Token;
 use std::collections::HashMap;
 
+/// Default cap on AST nesting depth. Borrowed from Zero (rocicorp/mono#6000)
+/// after the same "untrusted source can blow the parser stack" attack surface
+/// surfaced for ilo: `ilo serv` and the bare-positional dispatch both compile
+/// arbitrary text, and a 1 MB blob of `((((...((1+1))))...))` will recurse
+/// straight through the OS thread stack on tree-walker parsers.
+///
+/// 256 is far above anything a human or agent writes by hand (the deepest
+/// expression in the in-tree examples is under 20) and small enough that even
+/// the worst-case stack frame in `parse_atom`/`parse_expr` stays inside the
+/// default 8 MB main-thread stack with plenty of headroom. Override via
+/// `--max-ast-depth N` on `ilo`, `ilo run`, `ilo check`, `ilo build`, and
+/// `ilo serv`.
+pub const DEFAULT_MAX_AST_DEPTH: usize = 256;
+
+/// Process-wide override for the AST-depth cap, set once by CLI entry points
+/// when `--max-ast-depth N` is parsed. A `0` value means "use the default".
+/// Every call into `parser::parse` (or `Parser::new`) reads this so dozens of
+/// internal call sites don't have to thread the value through. Tests can clear
+/// it back to 0 if they care; in practice it's only written by `fn main`.
+static MAX_AST_DEPTH_OVERRIDE: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+
+/// Install a process-wide AST-depth cap. Called by CLI entry points after
+/// parsing `--max-ast-depth N`. Subsequent calls to `parser::parse` /
+/// `Parser::new` pick this up automatically.
+pub fn set_max_ast_depth_override(cap: usize) {
+    MAX_AST_DEPTH_OVERRIDE.store(cap, std::sync::atomic::Ordering::Relaxed);
+}
+
+fn effective_max_ast_depth() -> usize {
+    let v = MAX_AST_DEPTH_OVERRIDE.load(std::sync::atomic::Ordering::Relaxed);
+    if v == 0 { DEFAULT_MAX_AST_DEPTH } else { v }
+}
+
 pub struct Parser {
     tokens: Vec<(Token, Span)>,
     pos: usize,
+    /// Current nesting depth across recursive parse helpers. Incremented at
+    /// the entry of `parse_expr`, `parse_stmt`, `parse_decl`, `parse_atom`,
+    /// `parse_pattern`, and `parse_type` via `DepthGuard`. When `depth >=
+    /// max_depth` the next entry returns `ILO-P103` instead of recursing.
+    depth: usize,
+    /// Cap on `depth`. Default `DEFAULT_MAX_AST_DEPTH`; overridable from the
+    /// CLI for both `ilo` and `ilo serv` via `--max-ast-depth`.
+    max_depth: usize,
     /// Parallel to `tokens` with length `tokens.len() + 1`. Entry `i` is
     /// `Some(span)` iff at least one unindented `Token::Newline` (a top-level
     /// declaration boundary, as produced by `lexer::normalize_newlines`) sat
@@ -51,6 +93,12 @@ type Result<T> = std::result::Result<T, ParseError>;
 
 impl Parser {
     pub fn new(tokens: Vec<(Token, Span)>) -> Self {
+        Self::new_with_max_depth(tokens, effective_max_ast_depth())
+    }
+
+    /// Construct a parser with a custom AST-depth cap. See `DEFAULT_MAX_AST_DEPTH`
+    /// for the rationale on the default; the CLI plumbs `--max-ast-depth` here.
+    pub fn new_with_max_depth(tokens: Vec<(Token, Span)>, max_depth: usize) -> Self {
         // Filter out newlines — idea9 uses ; as separator. Each surviving
         // `Token::Newline` came out of `lexer::normalize_newlines`, which
         // converts indented continuations into `;` and only keeps a literal
@@ -83,12 +131,45 @@ impl Parser {
         Parser {
             tokens: filtered,
             pos: 0,
+            depth: 0,
+            max_depth: max_depth.max(1),
             decl_boundary,
             fn_arity,
             fn_param_is_fn,
             no_whitespace_call: false,
             lifted_decls: Vec::new(),
             lambda_counter: 0,
+        }
+    }
+
+    /// Check that incrementing `depth` would stay within `max_depth`. Returns
+    /// `ILO-P103` otherwise. Call this at the very top of every recursive
+    /// parse entry point — paired with `depth_inc()` / `depth_dec()` (or the
+    /// `DepthGuard` RAII helper) so an early-return via `?` still decrements.
+    fn check_depth(&self) -> Result<()> {
+        if self.depth >= self.max_depth {
+            let cap = self.max_depth;
+            Err(self.error_hint(
+                "ILO-P103",
+                format!("AST nesting depth exceeded {cap}"),
+                format!(
+                    "deeply nested input is almost always a DoS vector against `ilo serv` or a generated payload, not real source. raise the cap with `--max-ast-depth N` if a legitimate program needs more than {cap} levels of nesting."
+                ),
+            ))
+        } else {
+            Ok(())
+        }
+    }
+
+    fn depth_inc(&mut self) {
+        self.depth += 1;
+    }
+
+    fn depth_dec(&mut self) {
+        // Saturating: depth invariants in tests/asserts catch bugs without
+        // panicking a real CLI run.
+        if self.depth > 0 {
+            self.depth -= 1;
         }
     }
 
@@ -459,6 +540,14 @@ impl Parser {
     }
 
     fn parse_decl(&mut self) -> Result<Decl> {
+        self.check_depth()?;
+        self.depth_inc();
+        let result = self.parse_decl_body();
+        self.depth_dec();
+        result
+    }
+
+    fn parse_decl_body(&mut self) -> Result<Decl> {
         // Reserved-keyword binding attempts: `var=5`, `let=5`, `if=5`, ...
         // Surface the friendly ILO-P011 message before any expression-level
         // cascade fires. Use the binding-context hint (rename to a non-reserved
@@ -925,6 +1014,14 @@ impl Parser {
     // ---- Types ----
 
     fn parse_type(&mut self) -> Result<Type> {
+        self.check_depth()?;
+        self.depth_inc();
+        let result = self.parse_type_body();
+        self.depth_dec();
+        result
+    }
+
+    fn parse_type_body(&mut self) -> Result<Type> {
         // Safety net: if we're about to read a type from across a top-level
         // declaration boundary or from past EOF, the source is malformed (a
         // nested type slot ran off the end of its line — e.g.
@@ -1155,6 +1252,14 @@ impl Parser {
     }
 
     fn parse_stmt(&mut self) -> Result<Stmt> {
+        self.check_depth()?;
+        self.depth_inc();
+        let result = self.parse_stmt_body();
+        self.depth_dec();
+        result
+    }
+
+    fn parse_stmt_body(&mut self) -> Result<Stmt> {
         // Reserved-keyword binding attempts inside a function body: `var=5`,
         // `let=5`, `if=5`, ... Surface the friendly ILO-P011 message before
         // `parse_atom` cascades into a cryptic ILO-P009. Use binding-context
@@ -1817,6 +1922,14 @@ impl Parser {
     }
 
     fn parse_pattern(&mut self) -> Result<Pattern> {
+        self.check_depth()?;
+        self.depth_inc();
+        let result = self.parse_pattern_body();
+        self.depth_dec();
+        result
+    }
+
+    fn parse_pattern_body(&mut self) -> Result<Pattern> {
         match self.peek() {
             Some(Token::Caret) => {
                 self.advance();
@@ -2034,6 +2147,14 @@ impl Parser {
     // ---- Expressions ----
 
     fn parse_expr(&mut self) -> Result<Expr> {
+        self.check_depth()?;
+        self.depth_inc();
+        let result = self.parse_expr_body();
+        self.depth_dec();
+        result
+    }
+
+    fn parse_expr_body(&mut self) -> Result<Expr> {
         let expr = match self.peek() {
             Some(Token::Tilde) => {
                 self.advance();
@@ -3550,6 +3671,14 @@ results first: `r={first_op}a b;…r` keeps each step explicit."
 
     /// Parse an atom — the smallest expression unit
     fn parse_atom(&mut self) -> Result<Expr> {
+        self.check_depth()?;
+        self.depth_inc();
+        let result = self.parse_atom_body();
+        self.depth_dec();
+        result
+    }
+
+    fn parse_atom_body(&mut self) -> Result<Expr> {
         match self.peek().cloned() {
             Some(Token::Number(n)) => {
                 self.advance();
@@ -4595,7 +4724,18 @@ fn is_guard_eligible_condition(expr: &Expr) -> bool {
 /// the program for execution — error nodes are skipped by the verifier but not
 /// by the backends.
 pub fn parse(tokens: Vec<(Token, Span)>) -> (Program, Vec<ParseError>) {
-    let mut parser = Parser::new(tokens);
+    parse_with_max_depth(tokens, effective_max_ast_depth())
+}
+
+/// Same as `parse` but with a custom AST-depth cap. CLI entry points
+/// (`ilo run`, `ilo check`, `ilo build`, `ilo serv`) plumb `--max-ast-depth`
+/// here so an operator can override the default `DEFAULT_MAX_AST_DEPTH` when a
+/// legitimate program needs deeper nesting.
+pub fn parse_with_max_depth(
+    tokens: Vec<(Token, Span)>,
+    max_depth: usize,
+) -> (Program, Vec<ParseError>) {
+    let mut parser = Parser::new_with_max_depth(tokens, max_depth);
     parser.parse_program()
 }
 
