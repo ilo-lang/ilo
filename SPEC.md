@@ -1769,6 +1769,8 @@ In `--json` mode the value is always wrapped (`{"schemaVersion": 1, "ok": v}` / 
 
 The contract applies uniformly to in-process runners (`ilo prog.ilo`, `--vm`, `--jit`) and to AOT-compiled standalone binaries from `ilo compile`. Both strip the top-level `~`/`^` wrapper on stdout, route `^e` to stderr, and use the same exit codes - output is byte-for-byte identical across every backend.
 
+**Auto-echo suppression for `prnt` + status sentinel.** When the entry function has at least one *unconditional top-level* `prnt` call AND the tail expression is a bare wrapped string literal (`~"text"` or `^"text"`), the top-level auto-echo is suppressed. The wrapped literal is treated as a status sentinel rather than a value the caller wants captured. Without this rule, a function shaped like `m>R t t;prnt "report";~"ok"` emits `report\nok\n` on stdout and shell callers piping the output have to strip the trailing `ok`. The rule does NOT fire when (a) there is no `prnt` in the body — `m>R t t;~"ok"` still prints `ok` because the wrapped literal IS the program's output (the `cli-tasks-save-ok.ilo` pattern); (b) the `prnt` is nested inside a guard, loop, or match arm — those are conditional and the `prnt` may never run; (c) the tail is `~v` where `v` is a binding or call — that's a real return value. `^"text"` errors still go to stderr with exit 1; the suppression rule never silently swallows an Err. Pinned by `tests/regression_tilde_str_noecho.rs` and `examples/tilde-str-noecho.ilo`.
+
 ### Idiomatic hints
 
 After successful execution, ilo scans the source for non-canonical forms and emits hints to stderr:
