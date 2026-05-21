@@ -649,6 +649,11 @@ pub(crate) fn is_tree_bridge_eligible(b: crate::builtins::Builtin, argc: usize) 
         // "Process spawn" for the security framing (no shell, no glob, no
         // interpolation).
         (Builtin::Run, 2) => true,
+        // `run2 cmd argv` — structured process spawn. Same bridge contract as
+        // `run`: tree interpreter handles spawn + capture, VM/Cranelift get
+        // parity for free. Returns R RunResult t; auto-unwrap (`run2!`)
+        // supported via `tree_bridge_returns_result`.
+        (Builtin::Run2, 2) => true,
         // HOFs that take a FnRef + list. The bridge routes them through the
         // tree interpreter, which dispatches user-fn callbacks via the
         // Env populated from the ACTIVE_AST_PROGRAM TLS.
@@ -804,6 +809,7 @@ pub(crate) fn tree_bridge_returns_result(b: crate::builtins::Builtin) -> bool {
             | Builtin::Mtime
             | Builtin::EnvAll
             | Builtin::Run
+            | Builtin::Run2
             | Builtin::Jkeys
             | Builtin::Rdin
             | Builtin::Rdinl

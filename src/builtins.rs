@@ -179,6 +179,11 @@ pub enum Builtin {
     // Process spawn (argv-list only — no shell, no interpolation, no glob).
     // See SPEC.md "Process spawn" section for the security framing.
     Run,
+    // `run2 cmd:t args:L t > R RunResult t` — structured process spawn.
+    // Like `run` but returns a typed Record instead of a loose Map, giving
+    // clean dot-access: r.stdout, r.stderr, r.exit (n, not t). Non-zero
+    // exit is NOT an error; Err only on spawn failure. Tree-bridge eligible.
+    Run2,
 
     // Map (associative array)
     Mmap,
@@ -420,6 +425,7 @@ impl Builtin {
             "jpar-list" => Some(Builtin::JparList),
             "rdjl" => Some(Builtin::Rdjl),
             "run" => Some(Builtin::Run),
+            "run2" => Some(Builtin::Run2),
             "get" => Some(Builtin::Get),
             // 0.12.0 rename: `post` → `pst`. Brings post into line with the
             // I/O compression family (rd, wr, srt, flt, fld, fmt). Clean
@@ -597,6 +603,7 @@ impl Builtin {
             Builtin::JparList => "jpar-list",
             Builtin::Rdjl => "rdjl",
             Builtin::Run => "run",
+            Builtin::Run2 => "run2",
             Builtin::Get => "get",
             Builtin::Post => "pst",
             Builtin::GetMany => "get-many",
@@ -920,6 +927,11 @@ impl Builtin {
         // Returns Err on unknown timezone name. Tree-bridge eligible (2-arg,
         // no FnRef). Appended to preserve all prior on-wire tags.
         Builtin::TzOffset,
+        // `run2 cmd:t args:L t > R RunResult t` - structured process spawn.
+        // Returns a typed Record{stdout:t; stderr:t; exit:n} rather than the
+        // loose M t t that `run` returns, giving clean dot-access. Appended
+        // last to preserve every existing on-wire tag; tree-bridge eligible.
+        Builtin::Run2,
     ];
 
     /// On-wire 8-bit tag for cross-engine builtin dispatch. See `ALL`.

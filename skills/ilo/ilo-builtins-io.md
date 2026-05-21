@@ -37,6 +37,17 @@ Parsing `;`-delimited headers (Content-Type, Cache-Control, Cookie): no `ct-pars
 `!` auto-unwraps the Result on any of these. Inside an `R`-returning function `r=jpar! body;r.x` is the common shape — saves the `?r{~v:v;^e:^e}` boilerplate per call site. `jpar! body` propagates parse errors out of the enclosing function; `jpar!! body` panics on parse error instead. Same for `jpar-list!`, `jpth!`, `jkeys!`.
 `jpth` Ok variant is the actual leaf type: JSON number → `n`, string → `t`, bool → `b`, array → `L _` (iterable), object → record. No re-parse needed. Don't write `num (str (jpth! body "x"))` — `jpth! body "x"` is already `n` when the leaf is numeric.
 `!` auto-unwraps the Result. Inside an `R`-returning fn, `r=jpar! body;r.x` saves `?r{~v:v;^e:^e}` boilerplate; `jpar! body` propagates parse errors, `jpar!!` panics. Same for `jpar-list!`, `jpth!`, `jkeys!`.
+## Process spawn
+
+`run cmd argv` (`R (M t t) t`) - argv-list spawn; loose Map with text fields `stdout`, `stderr`, `code` (exit as text). `$cmd argv` is the sigil shortcut.
+
+`run2 cmd argv` (`R RunResult t`) - typed record: `r.stdout` (t), `r.stderr` (t), `r.exit` (n, not text). Prefer `run2` for new code. Non-zero exit is NOT an error; Err only on spawn failure.
+
+```
+r=run2!! "git" ["status" "--short"]
+r.stdout  -- text
+r.exit    -- number (0 = success)
+```
 
 ## Environment / process
 
