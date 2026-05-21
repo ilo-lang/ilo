@@ -845,6 +845,12 @@ pub(crate) fn is_tree_bridge_eligible(b: crate::builtins::Builtin, argc: usize) 
         (Builtin::Linspace, 3) => true,
         (Builtin::Ones, 1) => true,
         (Builtin::Rep, 2) => true,
+        // par-map fn xs / par-map fn xs n — general parallel fan-out.
+        // Takes a FnRef arg, so the tree interpreter handles the worker-thread
+        // dispatch and user-fn callbacks. VM and Cranelift bail to the tree
+        // bridge at zero opcode cost; native dispatch is a follow-up.
+        (Builtin::ParMap, 2) => true,
+        (Builtin::ParMap, 3) => true,
         _ => false,
     }
 }

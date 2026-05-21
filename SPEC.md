@@ -764,6 +764,8 @@ Called like functions, compiled to dedicated opcodes.
 | `day-of-week dt` | day of week for epoch `dt`: 0=Sun, 1=Mon, 2=Tue, 3=Wed, 4=Thu, 5=Fri, 6=Sat | `n` |
 | `rdjl path` | read JSONL file as `L (R _ t)`: one parse result per non-empty line | `L (R _ t)` |
 | `get-many urls` | concurrent HTTP GET fan-out (max 10 parallel), preserves order | `L (R t t)` |
+| `par-map fn xs` | apply `fn` to each element of `xs` in parallel (default concurrency = num_cpus; override with `ILO_PAR_MAP_CONCURRENCY`), order-preserving; per-item errors surface as `Err` in result list | `L (R b t)` |
+| `par-map fn xs n` | like `par-map fn xs` with explicit concurrency `n`; `n=0` falls back to num_cpus | `L (R b t)` |
 | `sleep ms` | pause current engine for `ms` milliseconds; returns nil | `_` |
 | `tz-offset tz epoch` | UTC offset in seconds for the named IANA timezone at the given Unix epoch. DST-aware (chrono-tz). Positive = east of UTC. `Err` on unknown timezone name | `R n t` |
 | `rou n` | round to nearest integer (banker's rounding) | `n` |

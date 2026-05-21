@@ -263,6 +263,15 @@ pub enum Builtin {
     // (k-sorted-search, schedule-merge, range-bucket). Tree-bridge eligible:
     // pure 2-arg, no FnRef, no Result wrapper. NaN target propagates as NaN.
     Bisect,
+    // `par-map fn xs n > L (R b t)` — general parallel fan-out. Applies `fn`
+    // to each element of `xs` with up to `n` concurrent threads. Results are
+    // returned in input order. Per-item errors are surfaced as `Err(msg)` in
+    // the list so a single failure does not abort the whole operation. When `n`
+    // is 0 (or the 2-arg form is used), concurrency defaults to the number of
+    // logical CPUs. VM/Cranelift bail to tree (tree-bridge eligible).
+    // The inner function may use any builtin (including I/O builtins that check
+    // caps); capability checks run inside the worker threads as usual.
+    ParMap,
 
     // Path manipulation (pure text ops, Unix forward-slash only).
     // POSIX dirname/basename semantics; pathjoin takes a list to avoid
@@ -539,6 +548,7 @@ impl Builtin {
             "argmin" => Some(Builtin::Argmin),
             "argsort" => Some(Builtin::Argsort),
             "bisect" => Some(Builtin::Bisect),
+            "par-map" => Some(Builtin::ParMap),
             "dirname" => Some(Builtin::Dirname),
             "basename" => Some(Builtin::Basename),
             "pathjoin" => Some(Builtin::Pathjoin),
@@ -734,6 +744,7 @@ impl Builtin {
             Builtin::Argmin => "argmin",
             Builtin::Argsort => "argsort",
             Builtin::Bisect => "bisect",
+            Builtin::ParMap => "par-map",
             Builtin::Dirname => "dirname",
             Builtin::Basename => "basename",
             Builtin::Pathjoin => "pathjoin",
@@ -1108,6 +1119,14 @@ impl Builtin {
         // eligible: pure 2-arg, no FnRef, no Result wrapper. Appended last
         // to preserve every existing on-wire tag.
         Builtin::Bisect,
+        // `par-map fn xs n > L (R b t)` — general parallel fan-out: apply `fn`
+        // to each element of `xs`, up to `n` items in parallel, order-preserving.
+        // Per-item Ok/Err are surfaced in the result list so a single worker
+        // failure does not short-circuit the whole operation. `n` defaults to
+        // num_cpus when zero or omitted. VM and Cranelift bail out to the tree
+        // interpreter (tree-bridge eligible via is_tree_bridge_eligible). Added
+        // in 0.12.2 as the recommended general concurrency primitive.
+        Builtin::ParMap,
     ];
 
     /// On-wire 8-bit tag for cross-engine builtin dispatch. See `ALL`.
@@ -1467,6 +1486,7 @@ mod tests {
             "ravg",
             "rmin",
             "bisect",
+            "par-map",
         ];
         for name in &all {
             let b = Builtin::from_name(name).unwrap_or_else(|| panic!("missing builtin: {name}"));
@@ -1733,6 +1753,7 @@ mod tests {
             "ravg",
             "rmin",
             "bisect",
+            "par-map",
         ] {
             let b = Builtin::from_name(name).unwrap_or_else(|| panic!("no builtin: {name}"));
             let t = b.tag();

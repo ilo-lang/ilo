@@ -488,6 +488,11 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("opt", &["t"], "R t t"),
     ("opt", &["t", "M t t"], "R t t"),
     ("get-many", &["L t"], "L (R t t)"),
+    // par-map fn xs [n] — general parallel fan-out (ILO-67).
+    // 2-arg form omits concurrency (defaults to num_cpus).
+    // 3-arg form has explicit concurrency n.
+    // Returns L (R b t) — one Result per input element, order-preserving.
+    ("par-map", &["fn", "list"], "list"),
     ("run", &["t", "L t"], "R (M t t) t"),
     // run2: structured spawn — typed Record instead of loose Map.
     ("run2", &["t", "L t"], "R RunResult t"),
@@ -2495,6 +2500,36 @@ fn builtin_check_args(
                 });
             }
             (Ty::Result(Box::new(Ty::Number), Box::new(Ty::Text)), errors)
+        }
+        "par-map" => {
+            // par-map fn:F a b xs:L a → L (R b t)
+            // par-map fn:F a b xs:L a n:num → L (R b t)   (explicit concurrency)
+            // Parallel fan-out: applies fn to each element; returns one Result
+            // per element in input order. No short-circuit (unlike mapr).
+            if let Some(fn_ty) = arg_types.first()
+                && !matches!(fn_ty, Ty::Fn(_, _) | Ty::Unknown)
+            {
+                errors.push(VerifyError {
+                    code: "ILO-T013",
+                    function: func_ctx.to_string(),
+                    message: format!(
+                        "'par-map' first arg must be a function (F ...), got {fn_ty}"
+                    ),
+                    hint: Some(
+                        "pass a function name or lambda: par-map double xs 4".to_string(),
+                    ),
+                    span,
+                    is_warning: false,
+                });
+            }
+            // Return type: L (R b t) where b is the fn's return type
+            let ret_elem = match arg_types.first() {
+                Some(Ty::Fn(_, ret)) => {
+                    Ty::Result(Box::new(*ret.clone()), Box::new(Ty::Text))
+                }
+                _ => Ty::Result(Box::new(Ty::Unknown), Box::new(Ty::Text)),
+            };
+            (Ty::List(Box::new(ret_elem)), errors)
         }
         "map" => {
             // map fn:F a b xs:L a → L b
@@ -4791,6 +4826,9 @@ impl VerifyContext {
                     } else if callee == "min" || callee == "max" {
                         // min xs (list form, returns min element) / min a b (number pair)
                         args.len() == 1 || args.len() == 2
+                    } else if callee == "par-map" {
+                        // par-map fn xs / par-map fn xs n
+                        args.len() == 2 || args.len() == 3
                     } else if callee == "map" || callee == "flt" || callee == "ct" {
                         // map fn xs / map fn ctx xs   (closure-bind variant)
                         // ct mirrors flt: 2-arg standard plus 3-arg closure-
@@ -4820,7 +4858,7 @@ impl VerifyContext {
                             "0 or 2".to_string()
                         } else if callee == "srt" || callee == "rsrt" {
                             "1, 2, or 3".to_string()
-                        } else if callee == "map" || callee == "flt" || callee == "ct" {
+                        } else if callee == "par-map" || callee == "map" || callee == "flt" || callee == "ct" {
                             "2 or 3".to_string()
                         } else if callee == "fld" {
                             "3 or 4".to_string()

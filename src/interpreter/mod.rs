@@ -6051,6 +6051,73 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         }
         return Ok(Value::List(Arc::new(result)));
     }
+    // par-map fn xs [n] — general parallel fan-out.
+    //
+    // Applies `fn` to each element of `xs` up to `n` items in parallel
+    // (default: num_cpus). Returns `L (R b t)` — per-item Ok/Err so a single
+    // worker failure does not abort the rest. Order-preserving.
+    //
+    // The inner function may use any builtin (including I/O builtins that
+    // check caps); capability checks run inside the worker threads as usual.
+    //
+    // The large body is extracted into `par_map_run` (marked `#[inline(never)]`)
+    // following the dispatch-arm-size convention from #5ze / ILO-289.
+    if builtin == Some(Builtin::ParMap) && (args.len() == 2 || args.len() == 3) {
+        let fn_name = resolve_fn_ref(&args[0]).ok_or_else(|| {
+            RuntimeError::new(
+                "ILO-R009",
+                format!(
+                    "par-map: first arg must be a function reference, got {:?}",
+                    args[0]
+                ),
+            )
+        })?;
+        let captures = closure_captures(&args[0]);
+        let items = match &args[1] {
+            Value::List(l) => l.clone(),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("par-map: second arg must be a list, got {:?}", other),
+                ));
+            }
+        };
+        let concurrency: usize = if args.len() == 3 {
+            match &args[2] {
+                Value::Number(n) => {
+                    let n = *n as usize;
+                    if n == 0 {
+                        par_map_default_concurrency()
+                    } else {
+                        n
+                    }
+                }
+                other => {
+                    return Err(RuntimeError::new(
+                        "ILO-R009",
+                        format!(
+                            "par-map: third arg must be a number (concurrency), got {:?}",
+                            other
+                        ),
+                    ));
+                }
+            }
+        } else {
+            par_map_default_concurrency()
+        };
+        // Snapshot the function table and caps so worker threads can build
+        // their own Env without holding a reference to the caller's Env.
+        let fns_snapshot = env.functions.clone();
+        let caps_snapshot = env.caps.clone();
+        return Ok(Value::List(Arc::new(par_map_run(
+            &fn_name,
+            captures,
+            &items,
+            concurrency,
+            fns_snapshot,
+            caps_snapshot,
+        ))));
+    }
     // mapr fn xs: short-circuiting Result-aware map.
     //
     // The callee must return R b e. On each item:
@@ -9350,6 +9417,81 @@ pub(crate) fn get_many_fetch(urls: &[String]) -> Vec<Value> {
                 "http feature not enabled".to_string().into(),
             )));
         }
+    }
+    results
+}
+
+/// Default concurrency for `par-map` when no explicit `n` is given.
+///
+/// Reads the `ILO_PAR_MAP_CONCURRENCY` environment variable first; falls back
+/// to the number of logical CPUs reported by the OS (via `std::thread::available_parallelism`).
+/// A zero or invalid env value is ignored in favour of the CPU count.
+fn par_map_default_concurrency() -> usize {
+    if let Ok(s) = std::env::var("ILO_PAR_MAP_CONCURRENCY") {
+        if let Ok(n) = s.trim().parse::<usize>() {
+            if n > 0 {
+                return n;
+            }
+        }
+    }
+    std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(4)
+}
+
+/// Apply `fn_name` to each element of `items` up to `concurrency` items in
+/// parallel, collecting results in input order as `Value::Ok(_)` / `Value::Err(_)`.
+///
+/// Worker threads each get a fresh `Env` built from the function-table snapshot
+/// (`fns`) and the capability policy (`caps`) captured from the caller's `Env`.
+/// The inner function may invoke any builtin (including I/O builtins); capability
+/// checks run inside the worker threads as usual.
+///
+/// `#[inline(never)]` keeps this body out of `call_function`'s already-huge
+/// frame, following the dispatch-arm-size convention from #494 / ILO-289.
+#[inline(never)]
+fn par_map_run(
+    fn_name: &str,
+    captures: Vec<Value>,
+    items: &[Value],
+    concurrency: usize,
+    fns: HashMap<String, Decl>,
+    caps: Arc<Caps>,
+) -> Vec<Value> {
+    if items.is_empty() {
+        return Vec::new();
+    }
+    let concurrency = concurrency.max(1);
+    let mut results: Vec<Value> = (0..items.len()).map(|_| Value::Nil).collect();
+    // Process in chunks of `concurrency`, preserving order.
+    for (chunk_base, chunk) in items.chunks(concurrency).enumerate().map(|(i, c)| (i * concurrency, c)) {
+        std::thread::scope(|s| {
+            let mut handles = Vec::with_capacity(chunk.len());
+            for item in chunk.iter() {
+                let item = item.clone();
+                let fn_name = fn_name.to_string();
+                let captures = captures.clone();
+                let fns = fns.clone();
+                let caps = caps.clone();
+                handles.push(s.spawn(move || {
+                    let mut worker_env = Env::with_caps(caps);
+                    worker_env.functions = fns;
+                    let mut call_args = vec![item];
+                    call_args.extend(captures.iter().cloned());
+                    match call_function(&mut worker_env, &fn_name, call_args) {
+                        Ok(v) => Value::Ok(Box::new(v)),
+                        Err(e) => Value::Err(Box::new(Value::Text(Arc::new(e.message.clone())))),
+                    }
+                }));
+            }
+            for (i, h) in handles.into_iter().enumerate() {
+                results[chunk_base + i] = h.join().unwrap_or_else(|_| {
+                    Value::Err(Box::new(Value::Text(Arc::new(
+                        "par-map worker thread panicked".to_string(),
+                    ))))
+                });
+            }
+        });
     }
     results
 }
@@ -15312,5 +15454,45 @@ mod tests {
         // Regression: exit must be Number, not Text (run uses Text for code).
         let src = r#"f>b;r=run2!! "true" [];?r.exit{0:true;_:false}"#;
         assert_eq!(run_str(src, Some("f"), vec![]), Value::Bool(true));
+    }
+
+    // par-map tests (ILO-67)
+
+    #[test]
+    fn par_map_applies_fn_to_each_element_in_order() {
+        // double x = x * 2; par-map over [1,2,3] with concurrency 2 => [2,4,6]
+        let src = r#"dbl x:n>n;*x 2  main>L n;xs=[1 2 3];ys=par-map dbl xs 2;map (y:_>n;?y{~v:v;^_:0}) ys"#;
+        let result = run_str(src, Some("main"), vec![]);
+        assert_eq!(
+            result,
+            Value::List(Arc::new(vec![
+                Value::Number(2.0),
+                Value::Number(4.0),
+                Value::Number(6.0),
+            ]))
+        );
+    }
+
+    #[test]
+    fn par_map_empty_list_returns_empty() {
+        let src = r#"dbl x:n>n;*x 2  main>L n;par-map dbl [] 4"#;
+        let result = run_str(src, Some("main"), vec![]);
+        assert_eq!(result, Value::List(Arc::new(vec![])));
+    }
+
+    #[test]
+    fn par_map_default_concurrency_two_arg_form() {
+        // 2-arg form (no explicit n): should still work
+        let src = r#"sq x:n>n;*x x  main>L n;xs=[1 2 3 4];ys=par-map sq xs;map (y:_>n;?y{~v:v;^_:0}) ys"#;
+        let result = run_str(src, Some("main"), vec![]);
+        assert_eq!(
+            result,
+            Value::List(Arc::new(vec![
+                Value::Number(1.0),
+                Value::Number(4.0),
+                Value::Number(9.0),
+                Value::Number(16.0),
+            ]))
+        );
     }
 }

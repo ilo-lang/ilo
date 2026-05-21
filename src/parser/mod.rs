@@ -4742,6 +4742,12 @@ fn builtin_arity_tables() -> (HashMap<String, usize>, HashMap<String, Vec<bool>>
         ("partition", 2, &[0]),
         ("flatmap", 2, &[0]),
         ("mapr", 2, &[0]),
+        // par-map fn xs [n] — general parallel fan-out (ILO-67).
+        // Arity 2 is the default form (fn + list); the 3-arg form with
+        // explicit concurrency n is handled the same way as `srt fn ctx xs`
+        // or `map fn ctx xs`: the verifier accepts 2 or 3 args and the
+        // parser's greedy expansion of slot 1 picks up `n` when present.
+        ("par-map", 2, &[0]),
         // I/O
         ("prnt", 1, &[]),
         ("wr", 2, &[]),
