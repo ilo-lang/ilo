@@ -28,9 +28,9 @@ Timeout variants round up to the nearest second. Err on timeout or connection fa
 
 `jpar s` parse (`R _ t`), `jpar-list s` parse and assert array (`R (L _) t` — use when you know the response is an array: `@x (jpar-list! body){...}`), `jpth s path` dot-path (typed), `jkeys s path` sorted object keys, `jdmp v` serialize. Numeric keys stringified in `jdmp`.
 
-`!` auto-unwraps the Result on any of these. Inside an `R`-returning function `r=jpar! body;r.x` is the common shape — saves the `?r{~v:v;^e:^e}` boilerplate per call site. `jpar! body` propagates parse errors out of the enclosing function; `jpar!! body` panics on parse error instead. Same for `jpar-list!`, `jpth!`, `jkeys!`.
+`!` auto-unwraps the Result on any of these. Inside an `R`-returning function `r=jpar! body;r.x` is the common shape — saves the `?r{~v:v;^e:^e}` boilerplate per call site. `jpar! body` propagates parse errors out of the enclosing function; `jpar!! body` panics instead. Same for `jpar-list!`, `jpth!`, `jkeys!`.
 
-When the caller is **not** `R`-returning (so `!` is unavailable) and the error payload is discardable, use `default-on-err` (see `ilo-builtins-core`): `name=default-on-err (jpth body "user.name") "anon"`.
+Non-`R` callers can't use `!`; reach for `default-on-err` (in `ilo-builtins-core`) when the error is discardable: `name=default-on-err (jpth body "user.name") "anon"`.
 
 ## Environment / process
 
