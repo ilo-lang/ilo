@@ -1,0 +1,34 @@
+-- ewm xs:L n a:n > L n — exponential moving average with smoothing factor a.
+--
+-- Recurrence: ewm[0] = xs[0]; ewm[i] = a*xs[i] + (1-a)*ewm[i-1].
+-- The classic IIR smoother. Higher a tracks the input more closely;
+-- lower a gives heavier smoothing. Boundary cases: a=0 freezes at xs[0];
+-- a=1 reproduces the input exactly.
+--
+-- Replaces the fold-with-state pattern (~25 tokens) with one call.
+
+-- Standard mid-alpha case
+half>L n;ewm [1, 2, 3, 4, 5] 0.5
+
+-- Empty input → empty output
+empty>L n;ewm [] 0.5
+
+-- Single element seeds verbatim, regardless of alpha
+single>L n;ewm [42] 0.3
+
+-- a=0 freezes at the first value
+freeze>L n;ewm [1, 2, 3, 4, 5] 0
+
+-- a=1 is identity (full reaction to each new input)
+identity>L n;ewm [1, 2, 3, 4, 5] 1
+
+-- run: half
+-- out: [1, 1.5, 2.25, 3.125, 4.0625]
+-- run: empty
+-- out: []
+-- run: single
+-- out: [42]
+-- run: freeze
+-- out: [1, 1, 1, 1, 1]
+-- run: identity
+-- out: [1, 2, 3, 4, 5]

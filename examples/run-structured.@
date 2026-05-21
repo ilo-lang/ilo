@@ -1,0 +1,29 @@
+-- `run2 cmd argv > R RunResult t` — structured process spawn.
+-- Returns a typed Record{stdout:t; stderr:t; exit:n} wrapped in Ok.
+-- exit is a number (not text), so callers can do arithmetic comparisons.
+-- Err only on spawn failure (cmd not found, permission denied, etc.);
+-- non-zero exit is NOT an error — check r.exit.
+
+echo-stdout>t;r=run2!! "echo" ["hello"];r.stdout
+
+false-exit>n;r=run2!! "false" [];r.exit
+
+true-exit>n;r=run2!! "true" [];r.exit
+
+-- exit is a number: pattern match works without str conversion
+exit-is-zero>b;r=run2!! "true" [];?r.exit{0:true;_:false}
+
+-- nonexistent command returns Err, not Ok
+nonexistent-is-err>b;r=run2 "no-such-command-xyz" [];?r{~v:false;^e:true}
+
+-- engine-skip: jit
+-- run: echo-stdout
+-- out: hello
+-- run: false-exit
+-- out: 1
+-- run: true-exit
+-- out: 0
+-- run: exit-is-zero
+-- out: true
+-- run: nonexistent-is-err
+-- out: true

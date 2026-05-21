@@ -201,6 +201,8 @@ The following identifiers are reserved and cannot be used as names: `if`, `retur
 -- ERROR: `fn`/`def` is a reserved word. Use: name param:type > rettype; body
 ```
 
+These checks fire at parse time across every context the keyword can appear in: top-level declaration head (`fn>n;...`), binding LHS (`fn=5`), and **parameter position** (`g fn:n>n;fn` rejects with ILO-P011 against the param name, not a cryptic ILO-P003 against the missing `>`).
+
 Builtin names (`flat`, `frq`, `map`, `flt`, `cat`, `len`, `srt`, `hd`, `tl`, `ord`, `fld`, `lst`, ...) are also rejected as user-function names and as local-binding LHS. Without this, calls to the user fn or use sites of the local binding silently mis-dispatch to the builtin and surface as a confusing `ILO-T006` arity mismatch. The parser intercepts at the declaration site with ILO-P011 and a rename hint:
 
 ```
@@ -222,15 +224,15 @@ Short builtin names are precious surface and ilo reserves a stable subset of the
 ```
 1-char  e
 2-char  at hd pi tl rd wr ct
-3-char  abs avg cap cat cel chr cos det dot env exp fft fld flr flt fmt
-        frq get grp has inv len log lsd lst lwr map max min mod now num
-        ord pow pst rdb rdl rev rgx rng rnd rou run sin slc spl srt str
-        sum tan tau trm unq upr wra wrl zip
+3-char  abs avg b64 cap cat cel chr cos del det dot env ewm exp fft fld flr
+        flt fmt frq get grp has hed hex inv len log lsd lst lwr map max min
+        mod now num opt ord pat pow pst put rdb rdl rep rev rgx rng rnd rou
+        run sin slc spl srt str sum tan tau trm unq upr wra wrl zip
 ```
 
 All builtin aliases (`head`, `length`, `filter`, `concat`, `tail`, `sort`, `reverse`, `flatten`, `contains`, `group`, `average`, `print`, `trim`, `split`, `format`, `regex`, `read`, `readlines`, `readbuf`, `write`, `writelines`, `lset`, `floor`, `ceil`, `round`, `rand`, `random`, `rng`, `string`, `number`, `slice`, `unique`, `fold`) are reserved with the same shadow-prevention semantics as canonical builtin names. Binding an alias name or using it as a user-function name fires `ILO-P011` at parse time with the canonical form in the diagnostic, since the call-site rewrite to the canonical builtin silently bypasses any user binding of the same name. Previously only `rng` and `rand` had individual guards; as of 0.12.1 every alias in the table above is covered by a single `resolve_alias` check, so new aliases automatically inherit the protection when added to the table.
 
-Longer builtin names (`acos`, `asin`, `atan`, `flat`, `take`, `drop`, `mget`, `mset`, `mmap`, `prnt`, `mapr`, `solve`, `clamp`, `cumsum`, `cprod`, `median`, `matmul`, `range`, `window`, `chunks`, `walk`, `glob`, `prod`, …) are also reserved and rejected by `ILO-P011`, but the short-name namespace above is where carry-forward scripts most often collide, so it gets explicit enumeration.
+Longer builtin names (`acos`, `asin`, `atan`, `flat`, `take`, `drop`, `mget`, `mset`, `mmap`, `prnt`, `mapr`, `solve`, `lstsq`, `clamp`, `cumsum`, `cprod`, `median`, `matmul`, `matvec`, `range`, `window`, `chunks`, `walk`, `glob`, `prod`, `fsize`, `mtime`, `isfile`, `isdir`, `ones`, `linspace`, …) are also reserved and rejected by `ILO-P011`, but the short-name namespace above is where carry-forward scripts most often collide, so it gets explicit enumeration.
 
 **Forward-compatibility rule.** Future ilo releases add new builtins under names **4 characters or longer**. A 2-character name that is not on this list today is safe to use as a binding or function name and stays safe across releases. A 3-character name that is not on this list is _highly likely_ to stay safe but is not a hard promise - the 3-char surface is already dense, and a rare ergonomic win may justify an addition, called out in the changelog.
 
@@ -256,12 +258,23 @@ Common shapes reached for from other languages. The parser and lexer surface eac
 | `cond{^"err"}` braced-cond       | Braceless `cond ^"err"` for early return | hint only   |
 | `- -*a b *c d` (double-minus)    | `- 0 +*a b *c d` (negate the sum)        | `ILO-P021`  |
 | `[k fmt2 v 2]` (call in list)    | `[k (fmt2 v 2)]` or bind-first           | `ILO-P101`  |
+| `pts=gen-pts;cs0=[...];prnt cs0` at top level | `main>_;pts=gen-pts;cs0=[...];prnt cs0` (wrap in `main>_;`) | `ILO-P102` |
+| `((((...((1+1))))...))` 1000 deep | bind intermediates, or pass `--max-ast-depth N` | `ILO-P103` |
+| `dx=xj 0-xi` (call vs binop)     | `-xj xi` or pre-bind: `nxi=0-xi;+xj nxi` | `ILO-T005`  |
+| `tup.0` / `pair.0` (tuple access) | bind from `zip`-pair, then `at pair 0` (no tuple type) | `ILO-T004` |
 
 Each case fires a hint pointing at the canonical form; the agent's first retry should be the right one. Identifier-shaped collisions with builtin names (`len=...`, `sin=...`) are rejected with `ILO-P011` plus a rename suggestion.
 
 The list-literal call trap (`ILO-P101`) catches the case where a variadic builtin (`fmt`, `fmt2`) appears bare inside `[...]`. Fixed-arity builtins (`str`, `at`, `map`, ...) auto-expand to a call as one element, but variadic ones can't (the parser doesn't know where their args end), so the bare form would silently fall through as multiple elements with the builtin name as an undefined Ref. Fix by wrapping the call in parens (`[k (fmt2 v 2)]`) or binding first.
 
+The top-level chain trap (`ILO-P102`) catches a bare `name=expr` at the top level. ilo requires every binding to live inside a function body; a top-level `pts=gen-pts;cs0=[[...]]; ...; prnt cs2` without a `main>_;` (or any) header used to either die on the `=` (a bare `ILO-P003`) or get slurped into a previous function's body and emit a wall of misleading `ILO-T005` cascades on the wrong line. `ILO-P102` collapses both shapes into a single diagnostic that names the offending binding and suggests the canonical `main>_;` wrapper.
+
 The double-minus trap (`ILO-P021`) catches the silent-miscompile shape `- -<op> a b <op> c d` for `<op>` in `{+,*,/}`. Read intuitively as `-(a*b) - (c*d)` but parses as `-((a*b) - (c*d)) = -(a*b) + (c*d)` because the inner `-` greedily consumes both prefix-binop groups as binary subtract and the outer `-` falls back to unary negate. Fix by negating the sum (`- 0 +*a b *c d`) or binding first (`p=*a b;q=*c d;- 0 +p q`). Single-atom variants like `- -a b` remain accepted since they're unambiguous.
+
+The call-vs-binop trap (`ILO-T005` with tailored hint) catches the assignment-RHS shape `name expr` where `name` is a bound non-fn value (typically a parameter). Whitespace-juxtaposition is the call syntax in ilo, so `dx=xj 0-xi` parses as `dx=(xj 0)-xi` — a call to `xj` with argument `0`. Verification fails because `xj` isn't a function. The hint surfaces the prefix-operator alternatives (`-xj xi`, `+xj <operand>`) and the pre-bind workaround. The misparse is most common when an agent reaches for infix arithmetic between a parameter and a subexpression; pre-binding the operand always resolves the ambiguity. `ilo --explain ILO-T005` includes the full gotcha walkthrough.
+The tuple-access trap (`ILO-T004` with the `at <name> <N>` hint) catches `tup.0` / `pair.0` shapes where `tup` / `pair` was never bound. ilo has no tuple type. `zip xs ys` returns `L (L n)` — a list of two-element lists — so destructuring a pair is `at pair 0` / `at pair 1`, not `pair.0` / `pair.1`. The hint names the exact `at` call to write. (`pair.0` itself is still valid sugar for list indexing once `pair` is bound to an `L T`; the diagnostic only fires when the identifier is unbound.)
+
+The AST depth cap (`ILO-P103`) catches deeply nested source that would otherwise blow the parser stack. Any context that compiles untrusted text - `ilo serv`, the bare-positional dispatch, the `--ast` dump - is exposed to a payload of the shape `((((...((1+1))))...))` 1000 levels deep that recurses straight through the OS thread stack. The default cap of 256 is far above anything hand-written (the in-tree examples top out under 20) and low enough to keep the worst-case stack frame in `parse_atom`/`parse_expr` inside the default 8 MB main-thread stack. Override with `--max-ast-depth N` on `ilo`, `ilo run`, `ilo check`, `ilo build`, and `ilo serv` when a legitimate program needs deeper nesting.
 
 ---
 
@@ -342,6 +355,37 @@ There is no separate `push` builtin. `+=` covers every use case and is shorter; 
 | `a??b` | nil-coalesce (if a is nil, return b) | any |
 | `a>>f` | pipe (desugar to `f(a)`) | any |
 
+**`??` precedence.** Infix `??` is parsed by `maybe_nil_coalesce` after
+the primary expression — it binds **looser than every arithmetic,
+comparison, and boolean operator**, and tighter than `>>` (pipe). So
+`c??0+1` is `c ?? (0+1)`, not `(c??0) + 1`. Prefix `??x default` mirrors
+the infix form: the default slot is a full expression, exactly like the
+right operand of any other prefix binop.
+
+This means **`??` inside a prefix-binop chain follows the standard
+prefix-binop rule**: the outer op consumes its left atom, and `??` then
+binds the next atom as its value and the rest as its default. To get
+`(a ?? d) + b` you must bind first or wrap in parens:
+
+```
++a ??d b     -- = a + (d ?? b)        ← parses as prefix `??d b`
++(a??d) b    -- = (a ?? d) + b        ← parens force the grouping
+x=a??d;+x b  -- = (a ?? d) + b        ← bind-first, manifesto-preferred
+```
+
+The same shape applies to every prefix binop (`-a ??d b`, `*x ??y z`,
+`>p ??d r`, etc.). The grouping is consistent with `+a *b c` = `a + (b*c)`
+— a prefix op in the right-operand slot consumes its own operands greedily.
+The trap is that `??` reads visually like it should be sticky to the
+preceding atom; it isn't. When the LHS of `??` is the value being
+defaulted, bind first or wrap in parens.
+
+The analogous shape with the boolean operators (`+a |0 b`, `*a &1 b`)
+parses the same way, but those produce a type error at verify time
+(`+` / `*` on a bool result), so they fail loudly rather than silently
+miscompiling. The `??` shape is the dangerous one: both sides of `??`
+can be `n`, so the parse silently produces the wrong arithmetic.
+
 ### Prefix nesting (no parens needed)
 
 ```
@@ -349,6 +393,8 @@ There is no separate `push` builtin. `+=` covers every use case and is shorter; 
 *a +b c     -- a * (b + c)
 >=+x y 100  -- (x + y) >= 100
 -*a b *c d  -- (a * b) - (c * d)
++a ??c 0    -- a + (c ?? 0)   ← not (a ?? 0) + c
+*x ??y 1    -- x * (y ?? 1)   ← not (x ?? y) * 1
 ```
 
 The outer prefix op binds the inner prefix subexpression as its **left** operand, regardless of operator precedence. With two same-precedence ops side by side this is easy to misread:
@@ -380,6 +426,7 @@ Standard mathematical precedence (higher binds tighter):
 | 3 | `=` `!=` |
 | 2 | `&` |
 | 1 | `\|` |
+| 0 | `??` (binds looser than every arithmetic/boolean op; tighter than `>>`) |
 
 Function application binds tighter than all infix operators:
 
@@ -421,6 +468,8 @@ f v:n>n;- 0 v  -- OK: binary subtract: 0 - v = -v
 
 The lexer splits a glued negative literal back into `Minus + Number` when the previous token is one of `;`, `\n`, `=`, `{`, `(`, or `-`. The `-` context covers the operand slot of an outer prefix-minus, so `- -0 a b` lexes as `-, -, 0, a, b` and parses as `Subtract(Subtract(0, a), b)` = `-a - b` rather than tripping `ILO-P020`. Negative literals after an Ident, `[`, or another prefix binop (`+`, `*`, `/`) stay glued so call args (`at xs -1`), list literals (`[-2 1 3]`), and binary operands (`+a -3`) read naturally.
 
+**Subtraction spacing convention**: for general subtraction at statement position, write `a - b` with spaces on **both** sides. `a -b` (glued, no space before the `-`) is not a binary subtract: the lexer packs `-b` into a negative-literal token because the previous token (`a`, an Ident) is one of the keep-glued contexts above. That's deliberate so call args and list elements read naturally, but it means `0 -1.5` is a parse error (`ILO-P001: expected declaration, got number `-1.5`` with a tailored hint pointing at this rule). For a bare negative value as an expression, wrap in parens: `(-1.5)`.
+
 ---
 
 ## String Literals
@@ -450,6 +499,80 @@ spl text "\n"       -- split file content into lines
 spl pdf  "\f"       -- split pdftotext output into pages
 ```
 
+### Triple-quoted strings: `"""..."""`
+
+Same surface as `"..."` (same escape decoding, same `{name}` interpolation)
+with two extra affordances:
+
+1. Raw newlines are allowed inside the literal, so multi-line content
+   does not need `cat`-concatenation or `\n` escapes.
+2. When the closing `"""` sits on its own line, the leading newline is
+   dropped and the common leading whitespace (matching the indent of
+   the closing-`"""` line) is stripped from every content line. The
+   terminating `\n` of the last content line is preserved. This is the
+   Python PEP 257 / Rust `indoc!` convention, so indented source produces
+   clean output.
+
+```
+banner>t
+  """
+  line one
+  line two
+  """              -- value is "line one\nline two\n"
+
+inline>t
+  """foo
+  bar"""           -- value is "foo\n  bar" (no dedent: closing inline)
+
+len """hello"""    -- 5 (single-line form, no newline)
+len """"""         -- 0 (empty body)
+```
+
+Inside `"""..."""` a single `"` is literal: only `"""` ends the literal.
+Escapes (`\n`, `\t`, ...) and `{name}` interpolation decode identically
+to the single-quoted form, so triple-quoted is a drop-in upgrade rather
+than a parallel surface.
+
+### Interpolation: `{name}`
+
+A bare `{name}` slot inside a double-quoted string desugars at parse time
+to a `fmt` call with the binding looked up by name. Manifesto principle 1:
+`"hello {name}"` is cheaper for an agent to write than the verbose
+`fmt "hello {}" name`, and both produce the same AST so they cost
+nothing extra at verify or run time.
+
+```
+greet name:t>t
+  fmt "hello {name}"        -- desugars to: fmt "hello {}" name
+
+pair a:t b:t>t
+  fmt "{a} and {b}"         -- multiple slots, resolved left-to-right
+
+with-braces name:t>t
+  fmt "{{json}} {name}"     -- {{ / }} escape to literal { / }
+```
+
+Scope (deliberately tight to keep the surface predictable):
+
+- Only single-identifier slots matching the ident regex
+  (`[a-z][a-z0-9]*(-[a-z0-9]+)*`). `{a-b}` works; `{Foo}`, `{x + 1}`,
+  `{ }` pass through verbatim.
+- `{{` / `}}` escape to literal `{` / `}`, but only inside strings that
+  actually contain at least one `{ident}` slot. Strings with no
+  interpolation slot keep `{{` / `}}` verbatim so existing programs
+  (e.g. JSON templates) are not silently rewritten.
+- Bare `{}` keeps its existing meaning as a positional placeholder filled
+  by trailing args of the enclosing `fmt` call.
+- Mixing `{ident}` and bare `{}` in the same string is left verbatim:
+  pick one style per string. Use `fmt "{name} {} done" other` and the
+  parser keeps the `{name}` literal so the bare `{}` resolves to `other`,
+  or write `"{name} {other} done"` and drop the trailing arg.
+- Undefined `{name}` slots surface as a normal ILO-T004 undefined-variable
+  diagnostic against the desugared `fmt` arg, not a silent empty
+  substitution.
+- Interpolation does not apply in pattern literals (`"foo":` arm of a
+  match) - literal patterns stay literal.
+
 ---
 
 ## Builtins
@@ -460,7 +583,7 @@ Called like functions, compiled to dedicated opcodes.
 |------|---------|---------|
 | `len x` | length of string (bytes) or list (elements) | `n` |
 | `str n` | number to text (integers format without `.0`) | `t` |
-| `num t` | text to number; trims leading/trailing ASCII whitespace before parsing (Err if unparseable) | `R n t` |
+| `num x` | polymorphic: text → parsed number (trims leading/trailing ASCII whitespace; Err if unparseable). number → identity-wrapped Ok. Accepting both saves the `num (str x)` roundtrip when `x` already came back numeric (e.g. from `jpar!` on a JSON number). | `R n t` |
 | `abs n` | absolute value | `n` |
 | `min a b` | minimum of two numbers | `n` |
 | `min xs` | minimum element of a numeric list (error if empty) | `n` |
@@ -472,13 +595,39 @@ Called like functions, compiled to dedicated opcodes.
 | `cel n` | ceiling (round toward positive infinity) | `n` |
 | `rnd` | random float in [0, 1). NOT round - for round use `rou` (alias: `round`). Aliases: `rand`, `random`. | `n` |
 | `rnd a b` | random integer in [a, b] (inclusive) | `n` |
+| `rand-bytes n` | cryptographically random bytes from the platform CSPRNG (via `getrandom`), encoded as base64url-no-pad text. Distinct from `rnd` (seedable uniform float for simulations): this is the path for JWT `jti`, CSRF tokens, session IDs, nonces. Output is URL-safe so it drops straight into headers / cookies / query strings. Capped at 1 MiB; non-negative `n` only. | `t` |
+| `rndn mu sigma` | one sample from N(mu, sigma) (Box-Muller) | `n` |
+| `seed n` | set the shared PRNG state to `n` (SplitMix64); all subsequent `rnd`/`rndn` calls in every engine use this state. Default seed is deterministic (no wall-clock). Returns `_`. | `_` |
 | `now` | current Unix timestamp (seconds) | `n` |
 | `now-ms` | current Unix timestamp (milliseconds) | `n` |
 | `get url` | HTTP GET | `R t t` |
 | `get url headers` | HTTP GET with custom headers (`M t t` map) | `R t t` |
+| `get-to url timeout-ms` | HTTP GET with explicit timeout (milliseconds); Err if deadline exceeded | `R t t` |
 | `pst url body` | HTTP POST with text body (renamed from `post` in 0.12.0) | `R t t` |
 | `pst url body headers` | HTTP POST with body and custom headers (`M t t` map) | `R t t` |
+| `pst-to url body timeout-ms` | HTTP POST with explicit timeout (milliseconds); Err if deadline exceeded | `R t t` |
+| `put url body` | HTTP PUT with text body | `R t t` |
+| `put url body headers` | HTTP PUT with body and custom headers (`M t t` map) | `R t t` |
+| `pat url body` | HTTP PATCH with text body | `R t t` |
+| `pat url body headers` | HTTP PATCH with body and custom headers (`M t t` map) | `R t t` |
+| `del url` | HTTP DELETE | `R t t` |
+| `del url headers` | HTTP DELETE with custom headers (`M t t` map) | `R t t` |
+| `hed url` | HTTP HEAD (response body typically empty; success via Ok/Err) | `R t t` |
+| `hed url headers` | HTTP HEAD with custom headers (`M t t` map) | `R t t` |
+| `opt url` | HTTP OPTIONS | `R t t` |
+| `opt url headers` | HTTP OPTIONS with custom headers (`M t t` map) | `R t t` |
+| `urlenc s` | RFC 3986 percent-encode; unreserved chars (ALPHA/DIGIT/`-._~`) pass through, everything else as `%HH`. Total. | `t` |
+| `urldec s` | inverse of `urlenc`; Err on invalid percent escape or non-UTF-8 decoded bytes | `R t t` |
+| `b64u s` | base64url-encode UTF-8 bytes of `s` (RFC 4648 §5, no padding, `-`/`_` alphabet). Total. | `t` |
+| `b64u-dec s` | inverse of `b64u`; Err on invalid base64url or non-UTF-8 decoded bytes | `R t t` |
+| `sha256 s` | SHA-256 digest of the UTF-8 bytes of `s`, lowercase hex (64 chars). Total. | `t` |
+| `hmac-sha256 key msg` | HMAC-SHA256 of `msg` under `key`; lowercase hex (64 chars). Pair with `ct-eq` to verify signatures without timing leaks. | `t` |
+| `b64 s` | standard base64 encode of UTF-8 bytes of `s` (RFC 4648 §4, with `=` padding). Distinct from `b64u` which is URL-safe + no padding. Total. | `t` |
+| `b64-dec s` | inverse of `b64`; Err on invalid base64 input or non-UTF-8 decoded bytes | `R t t` |
+| `hex s` | lowercase hex encode of UTF-8 bytes of `s` (every byte → 2 hex chars). Total. | `t` |
+| `ct-eq a b` | constant-time text equality. Returns true iff `a == b` without short-circuiting on the first differing byte. Use when comparing secrets (HMAC digests, tokens). | `b` |
 | `run cmd argv` | spawn `cmd` with argv list — see [Process spawn](#process-spawn) for the no-shell-no-glob security model | `R (M t t) t` |
+| `run2 cmd argv` | like `run` but returns a typed `RunResult` record (`r.stdout`, `r.stderr`, `r.exit` as `n`) instead of a loose map; Err only on spawn failure | `R RunResult t` |
 | `env key` | read environment variable | `R t t` |
 | `env-all` | snapshot the full process environment as `M t t` | `R (M t t) t` |
 | `rd path` | read file; format auto-detected from extension (`.csv`/`.tsv`→grid, `.json`→graph, else text) | `R _ t` |
@@ -492,6 +641,10 @@ Called like functions, compiled to dedicated opcodes.
 | `dirname path` | POSIX-style parent directory. `dirname "/a/b/c.txt"` → `"/a/b"`, `dirname "/"` → `"/"`, `dirname "foo.txt"` → `""` (POSIX returns `"."` here; ilo returns `""` so `pathjoin [dirname p basename p]` round-trips a plain filename without a phantom `./` prefix), `dirname "foo/"` → `""` (trailing slash stripped, then no directory component remains), `dirname "/a"` → `"/"`. Pure text op, no I/O, no Result. Unix forward-slash semantics; Windows separator handling is a 0.13.0 concern | `t` |
 | `basename path` | POSIX-style final path segment. `basename "/a/b/c.txt"` → `"c.txt"`, `basename "/"` → `"/"`, `basename "foo/"` → `"foo"` (trailing slash stripped), `basename ""` → `""`. Pure text op, total | `t` |
 | `pathjoin parts` | join a list of path segments with `/`, collapsing duplicate separators at joints and dropping empty segments. `pathjoin ["a" "b" "c.txt"]` → `"a/b/c.txt"`, `pathjoin ["a/" "/b/" "c.txt"]` → `"a/b/c.txt"`, `pathjoin []` → `""`, `pathjoin ["/" "a"]` → `"/a"` (leading absolute root preserved). List form (not variadic) so arity inference stays predictable; matches `cat xs sep`'s shape | `t` |
+| `fsize path` | file size in bytes (follows symlinks); `Err` on missing, permission-denied, or path-is-directory. Paired predicate `isfile` collapses the error tier into `false` for one-token branches | `R n t` |
+| `mtime path` | last modification time as Unix epoch seconds (`f64`, fractional preserved; follows symlinks); `Err` on missing or permission-denied. Pairs with `now` for "is this file older than N seconds" checks | `R n t` |
+| `isfile path` | `true` iff `path` resolves to a regular file (follows symlinks). Missing, permission-denied, or non-file all collapse to `false` — natural shape for `?isfile p{…}`. Asymmetric vs `fsize`/`mtime` (which return `R n t`) by design: predicates want a one-token branch, size/mtime callers want to distinguish missing from perm-denied | `b` |
+| `isdir path` | `true` iff `path` resolves to a directory (follows symlinks). Same `false`-on-failure collapse as `isfile` | `b` |
 | `rdb s fmt` | parse string/buffer in given format - for data from HTTP, env vars, etc. | `R _ t` |
 | `wr path s` | write text to file (overwrite) | `R t t` |
 | `wr path data "csv"` | write list-of-lists as CSV (with proper quoting) | `R t t` |
@@ -501,21 +654,22 @@ Called like functions, compiled to dedicated opcodes.
 | `wrl path xs` | write list of lines to file (joins with `\n`) | `R t t` |
 | `trm s` | trim leading and trailing whitespace | `t` |
 | `spl t sep` | split text by separator | `L t` |
-| `fmt tmpl args…` | format string - bare `{}` placeholders only, filled left-to-right. Printf-style specs (`{:06d}`, `{:.3f}`) are rejected; compose `fmt2` for decimal precision and `padl` for width/padding. Literal templates require `{}`-count == arg-count (verifier rejects mismatches with `ILO-T013`). Lists are formatted as a single value, not splatted: `fmt "{} {}" [a, b]` is an error - use `fmt "{} {}" a b` instead | `t` |
+| `fmt tmpl args…` | format string - supports `{}` (Display), `{.Nf}` / `{:.Nf}` (N decimals), `{:N}` (right-align width), `{:Nd}` (integer width), `{:<N}` (left-align width). Filled left-to-right; placeholder count must equal arg count. Out-of-scope specs (zero-pad `{:06d}`, sign `{:+}`, hex `{:x}`) are rejected; compose `fmt2` / `padl` / `padr` for those. Literal-template mismatches surface at verify-time (`ILO-T013`); computed-template errors surface at runtime (`ILO-R009`). Lists are formatted as a single value, not splatted: `fmt "{} {}" [a, b]` is an error - use `fmt "{} {}" a b` instead | `t` |
 | `cat xs sep` | join list of text with separator | `t` |
 | `has xs v` | membership test (list: element, text: substring) | `b` |
 | `hd xs` | head (first element/char) of list or text | element / `t` |
 | `tl xs` | tail (all but first) of list or text | `L` / `t` |
 | `rev xs` | reverse list or text | same type |
-| `srt xs` | sort list (all-number or all-text) or text chars | same type |
-| `srt fn xs` | sort list by key function (returns number or text key) | `L` |
+| `srt xs` | sort list (all-number or all-text) or text chars (stable: equal elements keep their input order) | same type |
+| `srt fn xs` | sort list by key function (returns number or text key); stable: items with equal keys keep their input order | `L` |
 | `unq xs` | remove duplicates, preserve order (list or text chars) | same type |
-| `slc xs a b` | slice list or text from index a to b (a, b accept negative indices counting from end; bounds clamp) | same type |
+| `slc xs a b` | slice list or text from index a to b (a, b accept negative indices counting from end; bounds clamp). Sugar: when `a >= 0` and `b == -1`, `b` reads as `len xs` (Python/JS "to end" shape). Other negative `b` values (e.g. `-2`) keep the relative-offset semantics; use `take -1 xs` if you want "drop last". | same type |
 | `jpth json path` | JSON dot-path lookup, dot-separated keys + numeric array indices (e.g. `"a.b.0.c"`), not JSONPath - leading `$`, `*`, or `[...]` rejected with a diagnostic. Result is typed: arrays → list, objects → record, scalars → matching primitive. | `R _ t` |
 | `jkeys json path` | sorted top-level keys of the JSON object at `path` (empty path = root). Err if the value at the path is not an object. | `R (L t) t` |
 | `jdmp value` | serialise ilo value to JSON text | `t` |
 | `prnt value` | print value to stdout, return it unchanged (passthrough) | same type |
 | `jpar text` | parse JSON text into ilo values | `R _ t` |
+| `jpar-list text` | parse JSON text, assert top-level is array, return typed list | `R (L _) t` |
 | `grp fn xs` | group list by key function | `M t (L a)` |
 | `flat xs` | flatten one level of nesting | `L a` |
 | `sum xs` | sum of numeric list (0 for empty) | `n` |
@@ -533,7 +687,7 @@ Called like functions, compiled to dedicated opcodes.
 | `mget-or m k default` | value at key k, or `default` if missing (never nil; default type must match value type) | `v` |
 | `at xs i` | i-th element of list or text (0-indexed; negative counts from end; float `i` auto-floors) | element |
 | `lget-or xs i default` | element at index `i`, or `default` if OOB (negative indices like `at`; never errors on OOB) | `a` |
-| `lst xs i v` | new list with index `i` set to `v` (list update; alias: `lset`) | `L a` |
+| `lst xs i v` | list-set: returns a new list with index `i` replaced by `v` (the canonical list-update builtin; same role as `lset`/`setat`/`set-at` in other languages — `lset` is the long-form alias) | `L a` |
 | `take n xs` | first `n` elements/chars of list or text (n>=0 truncates if n>len; n<0 keeps all but the last `abs n`, Python `xs[:n]`) | same type |
 | `drop n xs` | skip first `n` elements/chars (n>=0 returns the rest; n<0 keeps only the last `abs n`, Python `xs[n:]`) | same type |
 | `rsrt xs` | sort descending (list or text chars) | same type |
@@ -543,6 +697,9 @@ Called like functions, compiled to dedicated opcodes.
 | `zip xs ys` | pairwise pairs of two lists; truncates to shorter input | `L (L _)` |
 | `enumerate xs` | pair each element with its index → `[[i, v], ...]` | `L (L _)` |
 | `range a b` | half-open numeric range `[a, a+1, ..., b-1]`; empty when `a >= b` | `L n` |
+| `linspace a b n` | `n` evenly-spaced floats from `a` to `b` inclusive (numpy `endpoint=True`). `n=0` returns `[]`; `n=1` returns `[a]`; `n>=2` includes both endpoints (last element pinned to `b` to avoid float drift) | `L n` |
+| `ones n` | `n` copies of `1.0`; `n=0` returns `[]`. Saves `map (i:n>n;1) (range 0 n)` for design-matrix columns | `L n` |
+| `rep n v` | `n` copies of `v`; element type follows `v`. `n=0` returns `[]`. Saves `map (i:n>T;v) (range 0 n)` for accumulator seeding and constant tables | `L T` |
 | `map fn xs` | apply `fn` to each element | `L b` |
 | `flt fn xs` | keep elements where `fn x` is true | `L a` |
 | `ct fn xs` | count elements where `fn x` is true (avoids `len (flt fn xs)`'s intermediate list alloc) | `n` |
@@ -556,6 +713,8 @@ Called like functions, compiled to dedicated opcodes.
 | `clamp x lo hi` | restrict `x` to `[lo, hi]` (lower bound wins when `lo > hi`) | `n` |
 | `cumsum xs` | running sum; output length matches input | `L n` |
 | `cprod xs` | running product; output length matches input | `L n` |
+| `ewm xs a` | exponential moving average: `ewm[0] = xs[0]`, `ewm[i] = a*xs[i] + (1-a)*ewm[i-1]`; `a` in `[0, 1]`, out-of-range errors `ILO-R009` | `L n` |
+| `where cond xs ys` | parallel-list conditional select (NumPy `np.where`): `output[i] = xs[i] if cond[i] else ys[i]`; all three lists same length (mismatch errors `ILO-R009`); element type of `xs`/`ys` preserved | `L a` |
 | `frq xs` | frequency map of elements (keys are bare stringified values) | `M t n` |
 | `median xs` | median of numeric list | `n` |
 | `quantile xs p` | sample quantile (linear interp; `p` clamped to `[0, 1]`) | `n` |
@@ -576,7 +735,8 @@ Called like functions, compiled to dedicated opcodes.
 | `padl s w` | left-pad to width `w` with spaces (no-op if already wider) | `t` |
 | `padr s w` | right-pad to width `w` with spaces (no-op if already wider) | `t` |
 | `padl s w pc` | left-pad to width `w` with 1-character string `pc` (e.g. `"0"` for sortable zero-padded keys) | `t` |
-| `padr s w pc` | right-pad to width `w` with 1-character string `pc` (e.g. `"."` for dot-leader alignment) | `t` |
+| `padr s w pc` | right-pad to width `w` with 1-character string `pc` (e.g. `"."` for dot-leader alignment). Idiom: `padr "" w pc` repeats `pc` w times (histogram bars, divider lines) | `t` |
+| `padr s w pc` | right-pad to width `w` with 1-character string `pc` (e.g. `"."` for dot-leader alignment; `padr "" n "#"` repeats `n` copies of `#`) | `t` |
 | `rgxall pat s` | every regex match as `L (L t)` (no-group: each match in a 1-elem list) | `L (L t)` |
 | `rgxall1 pat s` | flat first-capture-group convenience: 0 groups → `L t` of whole matches; 1 group → `L t` of capture-1 strings; 2+ groups errors | `L t` |
 | `rgxall-multi pats s` | multi-pattern flat-match: apply each pattern in `pats:L t` to `s`, concat all hits in pattern order; per-pattern semantics follow `rgxall1` (0 groups → whole matches; 1 group → capture-1 strings; 2+ groups errors) | `L t` |
@@ -586,9 +746,14 @@ Called like functions, compiled to dedicated opcodes.
 | `dtparse-rel s now` | parse relative-date phrase to epoch; `now` is the anchor epoch | `R n t` |
 | `dur-parse s` | parse human duration string ("3h 30m", "1 week 2 days", "1.5 hours", "90s") into seconds. Lenient: accepts abbreviations `s`/`m`/`h`/`d`/`w`, full names (singular + plural), decimal quantities, mixed sequences. Err if empty or no unit found | `R n t` |
 | `dur-fmt n` | format seconds as human-readable duration ("2h 42m", "1 day", "30s"). Drops zero parts; uses largest applicable units. Zero returns "0s". Negative values format with a leading "-" | `t` |
+| `add-mo dt n` | add N calendar months to epoch `dt`, snapping to last day of month when needed (e.g. Jan 31 + 1 = Feb 28/29). N may be negative. Returns epoch at 00:00 UTC | `n` |
+| `last-dom dt` | epoch of the last day of the month containing `dt`, at 00:00 UTC (e.g. any Feb 2024 epoch → 2024-02-29 00:00 UTC) | `n` |
+| `next-business-day dt` | next weekday after `dt` (skips Sat/Sun). Fri→Mon, Sat→Mon, Sun→Mon, Mon-Thu→next day. Returns epoch at 00:00 UTC | `n` |
+| `day-of-week dt` | day of week for epoch `dt`: 0=Sun, 1=Mon, 2=Tue, 3=Wed, 4=Thu, 5=Fri, 6=Sat | `n` |
 | `rdjl path` | read JSONL file as `L (R _ t)`: one parse result per non-empty line | `L (R _ t)` |
 | `get-many urls` | concurrent HTTP GET fan-out (max 10 parallel), preserves order | `L (R t t)` |
 | `sleep ms` | pause current engine for `ms` milliseconds; returns nil | `_` |
+| `tz-offset tz epoch` | UTC offset in seconds for the named IANA timezone at the given Unix epoch. DST-aware (chrono-tz). Positive = east of UTC. `Err` on unknown timezone name | `R n t` |
 | `rou n` | round to nearest integer (banker's rounding) | `n` |
 | `rndn mu sigma` | one sample from normal distribution `N(mu, sigma)` (Box-Muller) | `n` |
 | `pow b e` | `b` raised to power `e` | `n` |
@@ -609,10 +774,12 @@ Called like functions, compiled to dedicated opcodes.
 | `e` | 2.718281828459045 (Euler's number, `f64::consts::E`) | `n` |
 | `transpose m` | transpose row-major matrix | `L (L n)` |
 | `matmul a b` | matrix product | `L (L n)` |
+| `matvec xm ys` | matrix-vector product (`r[i] = sum_j xm[i][j] * ys[j]`); skips the wrap-as-column + flatten ceremony around `matmul` | `L n` |
 | `dot a b` | vector dot product | `n` |
 | `solve a b` | solve `Ax = b` via LU with partial pivoting; errors on singular/non-square | `L n` |
 | `inv a` | matrix inverse; errors on singular/non-square | `L (L n)` |
 | `det a` | determinant; errors on non-square | `n` |
+| `lstsq xm ys` | ordinary least squares: returns coefficients `b` minimising `\|xm·b - ys\|²` via the normal equations (`solve (Xᵀ X) (Xᵀ y)`). Errors on rank-deficient design, underdetermined system (cols > rows), or row/length mismatch | `L n` |
 | `fft xs` | discrete FFT: real samples → `L [re, im]`; zero-padded to next power of 2 | `L (L n)` |
 | `ifft pairs` | inverse FFT; imaginary part dropped on return | `L n` |
 | `fmt2 x digits` | format number `x` to `digits` decimal places (half-to-even rounding; `digits` clamped to `0..=20`). Compose with `fmt` for template + precision: `fmt "x={}" (fmt2 v 2)` | `t` |
@@ -707,13 +874,44 @@ emits a single leading minus rather than signing each part.
 a fraction (`90.5 -> "1m 30.5s"`). Fractional minutes / hours / days / weeks
 are decomposed into smaller units before formatting.
 
+### Calendar arithmetic (`add-mo`, `last-dom`, `next-business-day`, `day-of-week`)
+
+Four builtins for month-level and business-day date arithmetic. All take Unix epoch seconds (as returned by `now`, `dtparse`, etc.) and return epoch seconds at 00:00 UTC. All are tree-bridge eligible: VM and Cranelift dispatch through the same interpreter arm without extra opcodes.
+
+`add-mo dt:n n:n > n` — add N calendar months to epoch `dt`. N may be negative. End-of-month snap: if the resulting month is shorter than the source day, the day is clamped to the last valid day (e.g. Jan 31 + 1 mo = Feb 28/29).
+
+`last-dom dt:n > n` — epoch of the last day of the month that contains `dt`, at 00:00 UTC. Uses the first-of-next-minus-one algorithm so it handles Dec correctly.
+
+`next-business-day dt:n > n` — the next weekday after `dt` (i.e. `dt + 1` for Mon-Thu, `dt + 3` for Fri, `dt + 2` for Sat, `dt + 1` for Sun). Returns 00:00 UTC on the result date.
+
+`day-of-week dt:n > n` — 0=Sun, 1=Mon, 2=Tue, 3=Wed, 4=Thu, 5=Fri, 6=Sat. Zero-based with Sunday=0 (JS/POSIX convention), giving a direct index into 7-element arrays.
+
+```
+-- Epoch anchors used below
+jan31_2024 = 1706659200    -- 2024-01-31 00:00 UTC
+
+add-mo jan31_2024 1        -- 1709164800  (2024-02-29, leap year snap)
+add-mo jan31_2024 -1       -- 1703980800  (2023-12-31)
+add-mo jan31_2024 12       -- 1738281600  (2025-01-31, same day next year)
+
+last-dom jan31_2024        -- 1706659200  (already the last day, returns itself)
+last-dom 1707955200        -- 1709164800  (2024-02-15 -> last day of Feb 2024 = Feb 29)
+
+next-business-day 1705622400   -- 1705881600  (Fri 2024-01-19 -> Mon 2024-01-22)
+next-business-day 1705795200   -- 1705881600  (Sun 2024-01-21 -> Mon 2024-01-22)
+
+day-of-week jan31_2024     -- 3  (Wednesday)
+day-of-week 1705276800     -- 1  (2024-01-15, Monday)
+day-of-week 0              -- 4  (1970-01-01, Thursday)
+```
+
 ### Set operations
 
 `setunion`, `setinter`, `setdiff` operate on lists of `t`, `n`, or `b` (same constraint as `uniqby`). Output is deduped and sorted by a type-prefixed string key, so results are deterministic across runs and engines. Sort is lexicographic on the key, not numeric - re-sort with `srt` afterwards if you need numeric order.
 
 ### Linear algebra
 
-`transpose`, `matmul`, `dot`, `solve`, `inv`, `det` operate on row-major matrices (`L (L n)`) and flat vectors (`L n`). `solve`, `inv`, `det` use LU decomposition with partial pivoting and raise on singular or non-square inputs. These ship as host-vetted builtins because hand-rolled implementations risk silent precision loss.
+`transpose`, `matmul`, `matvec`, `dot`, `solve`, `inv`, `det`, `lstsq` operate on row-major matrices (`L (L n)`) and flat vectors (`L n`). `solve`, `inv`, `det` use LU decomposition with partial pivoting and raise on singular or non-square inputs. `matvec xm ys` is matrix-vector product as a flat vector; it skips the `flatten matmul xm (map (y:n>L n;[y]) ys)` ceremony needed to coerce a vector into a column matrix. `lstsq` is a thin wrapper around the normal equations (`solve (Xᵀ X) (Xᵀ y)`) — closed-form OLS at the same precision tier as `solve`; numerically inferior to QR/SVD for ill-conditioned designs. These ship as host-vetted builtins because hand-rolled implementations risk silent precision loss.
 
 ### FFT
 
@@ -787,32 +985,63 @@ h=mmap
 h=mset h "x-api-key" "secret"
 r=get url h      -- GET with x-api-key header
 r=pst url body h -- POST with x-api-key header
+
+-- Explicit timeouts (milliseconds; rounds up to nearest second internally)
+r=get-to url 5000       -- GET with 5 s timeout; Err if exceeded
+r=pst-to url body 3000  -- POST with 3 s timeout
 ```
 
-Behind the `http` feature flag (on by default). Without the feature, `get`/`pst` return `Err("http feature not enabled")`.
+Behind the `http` feature flag (on by default). Without the feature, `get`/`pst`/`get-to`/`pst-to` return `Err("http feature not enabled")`.
 
 ### Process spawn
 
-ilo provides one process-spawn primitive: `run cmd argv > R (M t t) t`. The signature is deliberately narrow: the first argument is the program (text), the second is the argv list (`L t`), and the result is a `Result` whose `Ok` carries a three-key Map of stdout / stderr / code as text.
+ilo provides two process-spawn primitives: `run` and `run2`. Both share the same no-shell-no-glob security model and the same concurrency / cap / UTF-8 policy; they differ only in what the `Ok` payload looks like.
+
+**`run cmd argv > R (M t t) t`** — loose Map with text fields `stdout`, `stderr`, `code` (exit code as text):
+
+**Output map schema.** On `Ok`, the map has exactly these three keys, all `t`-valued:
+
+| key      | type | meaning                                                       |
+|----------|------|---------------------------------------------------------------|
+| `stdout` | `t`  | captured stdout bytes decoded as UTF-8 (lossy), as written    |
+| `stderr` | `t`  | captured stderr bytes decoded as UTF-8 (lossy), as written    |
+| `code`   | `t`  | exit code as decimal text (`"0"`, `"1"`, …); on unix a signal-terminated child reports `"signal:<n>"` (e.g. `"signal:9"`), and an unknown status reports `"unknown"` |
+
+The map is always shaped this way on success: callers can rely on `mget m "stdout"`, `mget m "stderr"`, and `mget m "code"` all being non-nil text. Trailing newlines from the child are preserved verbatim, so use `trm` if you want to compare against a stripped value.
 
 ```
 r=run "echo" ["hi"]              -- Ok({"stdout":"hi\n","stderr":"","code":"0"})
 out=mget r.! "stdout"            -- "hi\n"
+code=mget r.! "code"             -- "0"
+err=mget r.! "stderr"            -- ""
 
 $"git" ["status", "--short"]     -- equivalent: $ is the sigil shortcut for run
 ```
 
-**No shell, no interpolation, no glob.** The argv list is passed directly to `std::process::Command::args`. There is no `sh -c`, no string concatenation between `cmd` and `argv`, and no glob expansion. This is the principled defence against shell injection: ilo refuses to provide an injection vector while still providing controlled exec. Compared to bash + `jq`, the argv-list discipline and the typed Result + Map handle make `run` materially safer for agent orchestration.
+**`run2 cmd argv > R RunResult t`** — typed Record with dot-access (`r.stdout`, `r.stderr`, `r.exit`). `exit` is a number (`n`), not text, so numeric comparisons work directly:
 
-**Non-zero exit is NOT an error.** `Err` is reserved for spawn failures (command not found, permission denied, kernel-level pipe failure, output cap exceeded). A child that returns a non-zero exit code surfaces as `Ok({"stdout":..., "stderr":..., "code":"<n>"})`; the caller inspects `code` and branches as needed. This matches Python's `subprocess.run` semantics.
+```
+r=run2!! "echo" ["hi"]           -- RunResult{stdout:"hi\n"; stderr:""; exit:0}
+r.stdout                         -- "hi\n"
+r.exit                           -- 0  (number, not "0")
+?{<0 r.exit : "signal-killed" ; =0 r.exit : "ok" ; "failed"}
+```
 
-**Inherits parent env + cwd.** The first version provides no env or cwd override. Set the parent env / cwd before invoking ilo if you need a different shape.
+Prefer `run2` for new code. `run` is kept for compatibility.
+
+**No shell, no interpolation, no glob.** The argv list is passed directly to `std::process::Command::args`. There is no `sh -c`, no string concatenation between `cmd` and `argv`, and no glob expansion. This is the principled defence against shell injection: ilo refuses to provide an injection vector while still providing controlled exec. Compared to bash + `jq`, the argv-list discipline and the typed Result + Record/Map handle make `run`/`run2` materially safer for agent orchestration.
+
+**Non-zero exit is NOT an error.** `Err` is reserved for spawn failures (command not found, permission denied, kernel-level pipe failure, output cap exceeded). A child that returns a non-zero exit code surfaces as `Ok`; the caller inspects `exit` (or `code` for `run`) and branches as needed. This matches Python's `subprocess.run` semantics.
+
+**`run2` exit on signal.** On Unix, a signal-killed process has no exit code. `run2` surfaces this as `exit: -1` so the caller can branch on `<0 r.exit`. `run` uses the string `"signal:<n>"` for the same case.
+
+**Inherits parent env + cwd.** Neither primitive provides env or cwd override. Set the parent env / cwd before invoking ilo if you need a different shape.
 
 **Captured output is capped at 10 MiB per stream.** Either stream exceeding the cap returns an `Err` rather than partial capture so downstream JSON pipelines never see a truncated payload.
 
-**Stdin for child processes.** `run` spawns children with stdin closed (previously `/dev/null`). Use `rdin` / `rdinl` to read the **parent** program's own stdin from the shell pipeline. `rdin` reads all of stdin as text; `rdinl` reads it line by line.
+**Stdin for child processes.** Both primitives spawn children with stdin closed. Use `rdin` / `rdinl` to read the **parent** program's own stdin from the shell pipeline. `rdin` reads all of stdin as text; `rdinl` reads it line by line.
 
-Behind the same default build profile as `get`/`pst`; on `wasm32` targets, `run` returns `Err("run: process spawn not available on wasm")`.
+Behind the same default build profile as `get`/`pst`; on `wasm32` targets, both return `Err("run: process spawn not available on wasm")`.
 
 `env` reads an environment variable by name, returning `Ok(value)` or `Err("env var 'KEY' not set")`:
 
@@ -873,6 +1102,71 @@ jpar text                   -- R _ t: Ok=parsed value, Err=parse error
 r=jpar! "{\"x\":1}"        -- r is a json record, access with r.x
 ```
 
+`jpar-list` is a typed companion: it parses the JSON string and **asserts the top-level value is an array**. The result is `R (L _) t`, so `jpar-list! body` unwraps directly to a list that `@` can iterate — no intermediate binding or type annotation needed:
+
+```
+jpar-list text              -- R (L _) t: Ok=list of parsed values, Err=parse or type error
+-- iterate a JSON array response body:
+@x (jpar-list! body){prnt x}
+-- or bind first:
+xs=jpar-list! body;@i 0..len xs{prnt (at xs i)}
+```
+
+Use `jpar` when the JSON top-level shape is unknown (object, array, scalar). Use `jpar-list` when you know the response is an array and want to iterate it immediately. Writing `@x (jpar! body){...}` directly triggers `ILO-W002` steering you at `jpar-list!`: the `jpar` Ok type is polymorphic so it threads `?` through wrapping functions, and runtime iteration only succeeds when the JSON happens to be an array.
+
+### URL and base64url encoding
+
+Token-cheap primitives for OAuth, JWT, and webhook-signature workflows. All four are tree-bridge eligible: pure text-in / text-out with no I/O and no FnRef args, so the VM and Cranelift backends inherit them automatically.
+
+`urlenc s > t` percent-encodes per RFC 3986. The unreserved set (`ALPHA` / `DIGIT` / `-` / `.` / `_` / `~`) passes through literally; every other byte is emitted as `%HH`. Multi-byte UTF-8 is encoded byte-by-byte.
+
+`urldec s > R t t` is the inverse. It returns `Err` on a stray `%` not followed by two hex digits, or on decoded bytes that aren't valid UTF-8.
+
+`b64u s > t` base64url-encodes the UTF-8 bytes of `s` using the URL-safe alphabet (RFC 4648 §5: `-` and `_` substituted for `+` and `/`) with padding stripped.
+
+`b64u-dec s > R t t` is the inverse. It returns `Err` on input that contains characters outside the base64url alphabet, on `=` padding (the encode side strips padding, so the decode side rejects it for a strict round-trip), or on decoded bytes that aren't valid UTF-8.
+
+```ilo
+urlenc "a b&c=d"                  -- "a%20b%26c%3Dd"
+urldec! "a%20b%26c%3Dd"           -- "a b&c=d"
+
+b64u "{\"alg\":\"HS256\",\"typ\":\"JWT\"}"   -- "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9"
+b64u-dec! (b64u "hello, world!")             -- "hello, world!"
+```
+
+Both decoders return `Result` so malformed input surfaces typed at the boundary; both encoders are total. Use `!` to auto-unwrap inside an `R`-returning function, or pattern-match on the Result to handle the Err arm explicitly.
+
+### Crypto primitives
+
+`sha256`, `hmac-sha256`, `b64`, `b64-dec`, `hex`, `ct-eq` form the crypto-primitives cluster — the path agents need for webhook signature verification, JWT signing, and any time a secret is compared to a known value. All six are tree-bridge eligible so VM and Cranelift share the tree interpreter's semantics.
+
+`sha256 s > t` returns the SHA-256 digest of the UTF-8 bytes of `s` as a lowercase hex string (64 chars). Total — no error path. NIST FIPS-180 anchor: `sha256 ""` = `e3b0c4...b855`.
+
+`hmac-sha256 key:t msg:t > t` returns the HMAC-SHA256 of `msg` under `key`, lowercase hex (64 chars). Any key length is accepted (HMAC handles padding internally). Pair with `ct-eq` to verify signatures without leaking timing info through `=`.
+
+`b64 s > t` encodes the UTF-8 bytes of `s` as standard base64 with `=` padding (RFC 4648 §4). Distinct from `b64u`: standard alphabet (`+`/`/`) and padded vs URL-safe (`-`/`_`) and stripped. `b64-dec s > R t t` is the inverse and returns `Err` on input outside the standard alphabet or on decoded bytes that aren't valid UTF-8.
+
+`hex s > t` encodes the UTF-8 bytes of `s` as a lowercase hex string. Every byte becomes exactly two chars, so `len (hex s)` is `2 * len s` for ASCII input.
+
+`ct-eq a:t b:t > b` is constant-time text equality. A naive `=` short-circuits on the first differing byte, leaking the prefix length through timing; `ct-eq` always scans the full byte range when lengths match, so a timing attacker can't binary-search the secret one byte at a time. Use it whenever you're comparing HMAC digests, session tokens, or API keys. Different-length inputs short-circuit to `false` — length isn't secret in any realistic protocol (HMAC digests are fixed-size).
+
+```ilo
+-- HMAC verification (the canonical use case)
+sig=hmac-sha256 secret payload         -- compute expected MAC
+ct-eq sig signature-from-request        -- true iff request was signed with secret
+
+-- SHA-256 fingerprint of a file's contents
+fp=sha256 (rd "config.json")!           -- 64 hex chars
+
+-- Base64 round-trip
+b64 "Ma"                                 -- "TWE=" (1 padding char)
+b64-dec! "TWE="                          -- "Ma"
+
+-- Hex encode
+hex "abc"                                -- "616263"
+```
+
+`b64-dec` returns `Result` so malformed input surfaces typed at the boundary; the encoders and `ct-eq` are total.
 
 ---
 
@@ -940,6 +1234,7 @@ Match replaces `switch`. There is no fall-through - each arm is independent. The
 | `!cond expr` | braceless negated guard (early return) |
 | `!cond{then}{else}` | negated ternary |
 | `?x{arms}` | match named value |
+| `?fn args{arms}` | match the result of a call inline: `?safe-div a b{~v:...;^e:...}` (parens optional - `?(fn args){arms}` equivalent) |
 | `?{arms}` | match last result |
 | `@v list{body}` | iterate list |
 | `@i a..b{body}` | range iteration: i from a (inclusive) to b (exclusive) |
@@ -1095,9 +1390,20 @@ Each of the three operand slots accepts the same shapes as a prefix-binop operan
 ```
 f x:n>n;>x 0{ret x};0         -- return x early if positive, else 0
 f xs:L n>n;@x xs{>=x 10{ret x}};0  -- return first element >= 10
+g xs:L n tgt:n>n;@i 0..(len xs){=(at xs i) tgt{ret i}};-1  -- index of first match, else -1
 ```
 
 Braceless guards provide early return for simple cases. Use `ret` inside braced conditionals when you need early return with more complex logic or inside loops.
+
+**`ret` works from any loop body.** `ret` from inside `@x xs{...}`, `@i a..b{...}`, or `wh cond{...}` returns from the enclosing function directly - no sentinel-flag pattern needed. Use `brk` only when you want to stop the loop and let execution fall through to a post-loop expression (e.g. accumulating a partial result, then computing a final value from it). Example contrast:
+
+```
+-- ret: stop and return from the function
+find xs:L n tgt:n>n;@x xs{=x tgt{ret x}};-1
+
+-- brk: stop the loop, keep going in the function
+count-until xs:L n tgt:n>n;c=0;@x xs{=x tgt{brk};c=+c 1};c
+```
 
 ### Range Iteration
 
@@ -1219,6 +1525,17 @@ Use parentheses when you need a full expression (including another call) as an a
 f (g x)        -- Call(f, [Call(g, [x])])
 ```
 
+Known-arity calls can also chain directly without parens — the parser consumes exactly the inner call's arity when an ident with a registered arity follows the outer call:
+
+```
+abs atan2 1 1      -- Call(abs, [Call(atan2, [1, 1])])
+abs rndn 0 0.1     -- Call(abs, [Call(rndn, [0, 0.1])])
+abs clamp 5 0 10   -- Call(abs, [Call(clamp, [5, 0, 10])])
+pow atan2 1 1 2    -- Call(pow, [Call(atan2, [1, 1]), 2])
+```
+
+This works for every builtin and user fn whose arity is known at parse time. If the inner call is variadic or unknown-arity (e.g. `fmt`, custom name with no signature on this side of the file), wrap it in parens to disambiguate.
+
 ---
 
 ## Records
@@ -1263,6 +1580,10 @@ Update:
 ```
 ord with total:fin cost:sh
 ```
+
+### Display order
+
+`prnt` and `fmt "{}"` render records with fields sorted lexicographically by name, regardless of declared or insertion order. The same rule applies on every engine (tree, VM, Cranelift JIT), so `diff` of stdout across engines is stable and safe for agent self-verification. `jdmp` JSON output already canonicalises keys the same way.
 
 ### Field names at dot-access
 
@@ -1473,6 +1794,30 @@ fib n:n>n;<=n 1 n;a=fib -n 1;b=fib -n 2;+a b
 - `a=fib -n 1;b=fib -n 2` - two recursive calls, each with prefix arg
 - `+a b` - add results
 
+### Tail-call optimisation
+
+ilo guarantees that **tail calls do not consume host-stack frames**. A function that recurses only in tail position can run to arbitrary depth — the runtime trampolines the call by rebinding parameters in place rather than pushing a frame.
+
+The manifesto's "Constrained" rule (every feature must pay for itself in tokens) vetoed adding a `loop` keyword. Instead, tail-recursive accumulator patterns are the canonical idiom for iteration beyond what `@` foreach covers, and the TCO guarantee makes them safe at any depth.
+
+A call is in **tail position** when its return value is the function's return value: the last statement of the body, the expression of a `ret` statement, an arm of a tail-position `?` match, or the body of a braceless guard. Calls inside `@` foreach, `@` range, `wh` loops, or as operands of further computation are NOT in tail position.
+
+```
+-- Tail-recursive countdown — runs to arbitrary depth.
+count-down n:n>n;=n 0 0;count-down -n 1
+
+-- Tail-recursive accumulator — sums a list without growing the host stack.
+sum-acc xs:L n acc:n>n;empty=len xs;=empty 0 acc;sum-acc tl xs +acc hd xs
+```
+
+Constraints on the tail-call peephole:
+- The callee must be a direct user-defined function name (not a FnRef in scope, not a closure, not a builtin, not a tool).
+- The call must have no auto-unwrap (`!` / `!!`) — those forms inspect the result before deciding whether to propagate.
+
+These constraints leave the common shapes (recursive accumulators, state machines, mutual recursion via direct names) covered. Other shapes still recurse the host stack as before; for deep recursion through non-tail-eligible shapes, restructure into an accumulator.
+
+Tree interpreter and bytecode VM (`--vm`) support shipped in 0.12.x; the VM emits `OP_TAILCALL` for tail-position user-fn calls and reuses the current call frame instead of pushing a new one, so depth is bounded only by available heap. Cranelift (`--jit`, AOT) gains matching `return_call` lowering in a subsequent PR; until then, deep tail-recursion under the JIT/AOT path recurses the host stack and is bounded by it.
+
 ### Multi-statement bodies
 
 Semicolons separate statements. Last expression is the return value.
@@ -1495,6 +1840,8 @@ g>L n
 ```
 
 Statement separation reverts to standard rules once brackets close. A blank line ends the current declaration.
+
+Windows CRLF (`\r\n`) is normalised to `\n` before lexing, so files edited on Windows parse identically to Unix-line-ending files.
 
 ### Multi-function files
 
@@ -1623,8 +1970,11 @@ The verifier provides context-aware hints:
 --text / -t     Plain text (no colour)
 --json / -j     JSON (default for piped output)
 --no-hints / -nh  Suppress idiomatic hints
+--silent / -s   Suppress program stdout (mainly for --bench; see below)
 NO_COLOR=1      Disable colour (same as --text)
 ```
+
+**`--silent` / `-s`.** Suppresses the program's own stdout (`prnt`, `prnv`, `jprn`, etc.) for the duration of execution. Designed for `ilo <file> --bench`: combined with `--json` it lets agent harnesses (e.g. persona cost rollup) consume the bench JSON envelope on stdout without it being drowned in the benchmarked function's own output. Stderr is never silenced, so genuine errors still surface. Diagnostic output (including the bench JSON envelope and the human-readable bench summary block) is always emitted on stdout regardless of `--silent` — the flag only redirects program-level prints. Unix only (no-op on Windows for the program-stdout half; bench output still reaches stdout there).
 
 JSON error output follows a structured schema with `severity`, `code`, `message`, `labels` (with spans), `notes`, and `suggestion` fields.
 
@@ -1650,6 +2000,8 @@ In `--json` mode the value is always wrapped (`{"schemaVersion": 1, "ok": v}` / 
 
 The contract applies uniformly to in-process runners (`ilo prog.@`, `--vm`, `--jit`) and to AOT-compiled standalone binaries from `ilo compile`. Both strip the top-level `~`/`^` wrapper on stdout, route `^e` to stderr, and use the same exit codes - output is byte-for-byte identical across every backend.
 
+**Auto-echo suppression for `prnt` + status sentinel.** When the entry function has at least one *unconditional top-level* `prnt` call AND the tail expression is a bare wrapped string literal (`~"text"` or `^"text"`), the top-level auto-echo is suppressed. The wrapped literal is treated as a status sentinel rather than a value the caller wants captured. Without this rule, a function shaped like `m>R t t;prnt "report";~"ok"` emits `report\nok\n` on stdout and shell callers piping the output have to strip the trailing `ok`. The rule does NOT fire when (a) there is no `prnt` in the body — `m>R t t;~"ok"` still prints `ok` because the wrapped literal IS the program's output (the `cli-tasks-save-ok.ilo` pattern); (b) the `prnt` is nested inside a guard, loop, or match arm — those are conditional and the `prnt` may never run; (c) the tail is `~v` where `v` is a binding or call — that's a real return value. `^"text"` errors still go to stderr with exit 1; the suppression rule never silently swallows an Err. Pinned by `tests/regression_tilde_str_noecho.rs` and `examples/tilde-str-noecho.ilo`.
+
 ### Idiomatic hints
 
 After successful execution, ilo scans the source for non-canonical forms and emits hints to stderr:
@@ -1674,13 +2026,19 @@ ilo program.@ --ast              -- print parsed AST as JSON and exit
 ilo --explain ILO-T004           -- print error explanation and exit
 ilo help ai                      -- compact AI spec to stdout (= contents of ai.txt)
 ilo serv                          -- long-lived JSON request/response loop
+ilo --max-ast-depth N <sub>       -- cap parser nesting at N (default 256; protects `ilo serv`
+                                     and other untrusted-source paths from DoS payloads, raises ILO-P103)
+ilo --max-runtime SECS <sub>      -- cap wall-clock runtime at SECS (default 60; 0 disables; raises ILO-R016)
+ilo --max-output-bytes BYTES <sub> -- cap stdout output at BYTES (default ~100 MB; 0 disables; raises ILO-R017)
 ```
+
+**Production-safety guards (`ILO-R016`, `ILO-R017`).** `ilo run` caps wall-clock runtime at 60 s and stdout output at ~100 MB by default. A runaway loop (missing increment, recursion with no base case) aborts with `ILO-R016` once the time budget hits, instead of burning CPU forever; a `prnt` loop without termination aborts with `ILO-R017` once the byte budget hits, instead of filling the agent transcript with megabytes of garbage. Both guards write a structured diagnostic to stderr and exit 1. Defaults are well above any legitimate program (real agent tasks finish under 10 s and produce kilobytes); raise with `--max-runtime SECS` / `--max-output-bytes BYTES`, set either to `0` to disable. The guards were installed by the mandelbrot persona report (2026-05-20) which spun in an infinite loop and wrote 165 MB of stdout before the harness intervened.
 
 **Verb-noun aliases.** `ilo run <file>` is an exact alias for the bare positional `ilo <file>` - same dispatch, same engine selection, same arg handling. `ilo build <file> -o <out>` is an alias for `ilo compile <file> -o <out>`. Both exist to match the toolchain conventions used by `cargo`, `go`, and `zero` so agents and humans can guess the command name without consulting the help text. The bare positional forms remain fully supported for backwards compatibility; nothing has been removed.
 
 **`ilo check`.** Standalone verifier invocation: lex, parse, resolve imports, and run the type verifier without proceeding to bytecode compilation or execution. Exit code 0 means the program is well-typed and verifier-clean; exit code 1 means at least one diagnostic was emitted on stderr. The output mode follows the global flags (`--json` for NDJSON diagnostics, `--text` for plain text, `--ansi` for coloured output; auto-detected when omitted - JSON when stderr is not a TTY, ANSI otherwise). `ilo check` works on both files and inline code; on a syntactically-broken input it still reports the parse error rather than crashing, which is important for editor and agent loops that may feed in half-written programs.
 
-**`ilo check --strict`.** Treats every warning-severity diagnostic (ILO-T032 bare `fmt`, ILO-T033 bare `mset` / `+=` / `mdel`, future warning codes) as a hard exit-code failure. The diagnostic stream itself is unchanged: warnings still emit with `severity: "warning"` in the JSON output, so editor integrations that route by severity stay correct. Only the exit code is elevated. CI harnesses that gate merges on `ilo check` should use `--strict` so warnings can't slip through silently; for interactive use, the default (warnings-are-advisory) is the right behaviour.
+**`ilo check --strict`.** Treats every warning-severity diagnostic (ILO-T032 bare `fmt`, ILO-T033 bare `mset` / `+=` / `mdel`, ILO-W002 `@x (jpar! …){…}` steering to `jpar-list!`, future warning codes) as a hard exit-code failure. The diagnostic stream itself is unchanged: warnings still emit with `severity: "warning"` in the JSON output, so editor integrations that route by severity stay correct. Only the exit code is elevated. CI harnesses that gate merges on `ilo check` should use `--strict` so warnings can't slip through silently; for interactive use, the default (warnings-are-advisory) is the right behaviour.
 
 **Default-run.** Inline programs (`ilo 'code'`) and single-function files run their entry function with the remaining CLI args; no explicit function name needed. Multi-function files auto-pick a function called `main` when no positional func arg is supplied. The same heuristic applies to the explicit engine flags - `--vm` and `--jit` both auto-pick `main` on multi-fn files, matching the default-engine behaviour. With no `main` declared, supply a function-name argument.
 
@@ -1688,7 +2046,7 @@ ilo serv                          -- long-lived JSON request/response loop
 
 **Default engine.** The bytecode register VM is the default execution path. It supports every opcode (closures with Phase 2 capture, listview windows, fused len-of-filter, every modern shape), and avoids the JIT compile-and-bail cost paid by the pre-v0.11.9 Cranelift-first default whenever a program touched an opcode the JIT couldn't handle. Cranelift JIT is opt-in via `--jit`; on opt-in, the JIT runs hot numeric loops and falls back to the VM on bailout. Phase 2 captures run natively on every public backend - VM, JIT, and AOT (`ilo compile`); AOT embeds the postcard `CompiledProgram` blob into the binary's `.rodata` so dispatch helpers can re-enter the VM on user-fn callbacks the same way the in-process runners do. For long-running workloads where the JIT pays for itself, opt in explicitly; for most agent workloads the VM is the right default.
 
-**Tree-walker is internal-only.** The tree-walking interpreter is no longer user-selectable: `--run-tree` and its `--run` alias were removed from the public CLI in 0.12.1 (they now error with the unknown-flag guard). The interpreter stays in-tree as the dispatch target for HOF / regex / fmt-variadic / IO / sleep / ct / rsrt / closure-bind-ctx shapes the VM and Cranelift haven't lifted natively yet - the VM bails to it transparently for the ops listed by `is_tree_bridge_eligible` (`rgx`, `rgxall`, `rgxall1`, `rgxall-multi`, `rgxsub`, `fmt`, `fmt2`, `rd`, `rdb`, `rdjl`, `rdin`, `rdinl`, `sleep`, `lsd`, `walk`, `glob`, `dirname`, `basename`, `pathjoin`, `run`, `env-all`, `jkeys`, `ct` 2-arg and 3-arg, `rsrt` 2-arg and 3-arg, `dur-parse`, `dur-fmt`, and the closure-bind ctx variants of `map`/`flt`/`fld`/`srt`). Cross-engine parity for those shapes is pinned by `tests/regression_builtin_bridge.rs` and `tests/regression_tree_bridge_invariants.rs`. 0.13.0+ is on track for a hard drop once the bridge consumers are lifted natively and the shared runtime types (`Value`, `MapKey`, `RuntimeError`, math helpers) are extracted from `src/interpreter/` to a non-engine module.
+**Tree-walker is internal-only.** The tree-walking interpreter is no longer user-selectable: `--run-tree` and its `--run` alias were removed from the public CLI in 0.12.1 (they now error with the unknown-flag guard). The interpreter stays in-tree as the dispatch target for HOF / regex / fmt-variadic / IO / sleep / ct / rsrt / closure-bind-ctx shapes the VM and Cranelift haven't lifted natively yet - the VM bails to it transparently for the ops listed by `is_tree_bridge_eligible` (`rgx`, `rgxall`, `rgxall1`, `rgxall-multi`, `rgxsub`, `fmt`, `fmt2`, `rd`, `rdb`, `rdjl`, `rdin`, `rdinl`, `sleep`, `lsd`, `walk`, `glob`, `dirname`, `basename`, `pathjoin`, `fsize`, `mtime`, `isfile`, `isdir`, `run`, `env-all`, `jkeys`, `tz-offset`, `ct` 2-arg and 3-arg, `rsrt` 2-arg and 3-arg, `dur-parse`, `dur-fmt`, and the closure-bind ctx variants of `map`/`flt`/`fld`/`srt`). Cross-engine parity for those shapes is pinned by `tests/regression_builtin_bridge.rs` and `tests/regression_tree_bridge_invariants.rs`. 0.13.0+ is on track for a hard drop once the bridge consumers are lifted natively and the shared runtime types (`Value`, `MapKey`, `RuntimeError`, math helpers) are extracted from `src/interpreter/` to a non-engine module.
 
 **Subcommand dispatch.** The first positional argument is interpreted as a function name when it has the shape of an ilo identifier - `[a-z][a-z0-9]*(-[a-z0-9]+)*` - so `ilo file.@ list-orders` routes to the `list-orders` function. Args that don't match the ident shape (file paths like `/tmp/data.json`, numbers, sigils, bracketed lists, anything with a `.` or `/`) route to `main` (or the entry function) as a positional CLI arg instead. Trailing dashes (`foo-`), doubled dashes (`foo--bar`), and negative numbers (`-1`) are not idents and pass through as data.
 

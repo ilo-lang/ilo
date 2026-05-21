@@ -1,0 +1,40 @@
+-- where cond xs ys > L a — parallel-list conditional select.
+--
+-- NumPy `np.where` equivalent: for each i, output[i] = xs[i] if cond[i] else ys[i].
+-- All three lists must be the same length (runtime guard, ILO-R009 on mismatch).
+-- The element type of xs / ys is preserved in the output.
+--
+-- Replaces the 50-token recipe:
+--   map (i:n>n;?h (at cond i) (at xs i) (at ys i)) (range 0 (len xs))
+-- with a 5-token call.
+
+-- Standard mixed case: pick from xs where cond is true, ys otherwise
+mixed>L n;where [true, false, true, false] [1, 2, 3, 4] [10, 20, 30, 40]
+
+-- All true picks xs every time
+all-true>L n;where [true, true, true] [1, 2, 3] [10, 20, 30]
+
+-- All false picks ys every time
+all-false>L n;where [false, false, false] [1, 2, 3] [10, 20, 30]
+
+-- Empty input yields empty output
+empty>L n;where [] [] []
+
+-- Element type carries through — text lists in, text list out
+text>L t;where [true, false, true] ["a", "b", "c"] ["x", "y", "z"]
+
+-- Composed with map / a comparison — clip negatives to zero (ReLU)
+relu>L n;where (map (x:n>b;>=x 0) [0 - 3, 4, 0 - 1, 7, 0]) [0 - 3, 4, 0 - 1, 7, 0] [0, 0, 0, 0, 0]
+
+-- run: mixed
+-- out: [1, 20, 3, 40]
+-- run: all-true
+-- out: [1, 2, 3]
+-- run: all-false
+-- out: [10, 20, 30]
+-- run: empty
+-- out: []
+-- run: text
+-- out: [a, y, c]
+-- run: relu
+-- out: [0, 4, 0, 7, 0]

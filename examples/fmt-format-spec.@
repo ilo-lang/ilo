@@ -1,19 +1,32 @@
--- `fmt` only supports bare `{}` placeholders. Printf-style format specs
--- inside the braces (`{:06d}`, `{:.3f}`, etc.) used to silently emit the
--- literal template (e.g. `fmt "{:06d}" 42` → `"{:06d}"`), which was a
--- silent-wrong-output footgun. Both verify and runtime now reject them.
+-- `fmt` supports a small set of printf-style placeholder specs so simple
+-- formatting doesn't need a `fmt2`/`padl` composition:
 --
--- Idiomatic substitutes:
---   precision   →  fmt "...{}" (fmt2 v 2)
---   padding     →  padl (str n) 6   (space-pad; today)
+--   {}        bare placeholder (Display)
+--   {.Nf}     N decimal places, no colon
+--   {:.Nf}    N decimal places, long form
+--   {:N}      right-align Display to width N
+--   {:Nd}     integer right-align to width N
+--   {:<N}     left-align Display to width N
+--
+-- Out of scope (still rejected): zero-pad `{:06d}`, signed `{:+}`,
+-- hex `{:x}`. Compose `fmt2` / `padl` / `padr` for those.
 
--- decimal precision via fmt2 composed inside the {} slot
-pct r:n>t;fmt "{}%" (fmt2 (* r 100) 1)
-
--- width / padding via padl
-sort-key n:n>t;padl (str n) 6
+pct r:n>t;fmt "{.1f}%" (* r 100)
+pi-fixed>t;fmt "pi={:.3f}" 3.14159
+sort-key n:n>t;fmt "{:5d}" n
+tag-cell s:t>t;fmt "[{:<5}]" s
+right-cell s:t>t;fmt "[{:5}]" s
+row a:n b:n c:t>t;fmt "{:3d} | {:.2f} | [{:<4}]" a b c
 
 -- run: pct 0.12345
 -- out: 12.3%
+-- run: pi-fixed
+-- out: pi=3.142
 -- run: sort-key 42
--- out:     42
+-- out:    42
+-- run: tag-cell "hi"
+-- out: [hi   ]
+-- run: right-cell "hi"
+-- out: [   hi]
+-- run: row 7 3.14159 "x"
+-- out:   7 | 3.14 | [x   ]

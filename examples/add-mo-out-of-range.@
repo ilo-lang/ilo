@@ -1,0 +1,12 @@
+-- add-mo handles large but representable month offsets without
+-- panicking or wrapping. Pre-fix, the internal arithmetic used i32
+-- and overflowed for big offsets (panic in debug, silent wrap in
+-- release). Post-fix it widens to i64 and either returns a sensible
+-- epoch or surfaces a clean ILO-R009 "result out of calendar range".
+-- run: thousand-years
+-- out: 31556995200
+
+-- 1000 years forward of 1970-01-01 = 12000 calendar months.
+-- 2970-01-01 00:00 UTC = 31556995200.
+thousand-years > n
+  add-mo 0 12000

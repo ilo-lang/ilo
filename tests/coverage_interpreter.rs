@@ -1154,8 +1154,38 @@ fn solve_vector_length_mismatch() {
 }
 
 // ---------------------------------------------------------------------------
-// JSON: jpar / jdmp / jpth
+// JSON: jpar / jpar-list / jdmp / jpth
 // ---------------------------------------------------------------------------
+
+#[test]
+fn jpar_list_array_ok() {
+    // jpar-list on a JSON array returns R (L _) t; unwrap and count elements.
+    let src = "main>R n t;xs=jpar-list! \"[1,2,3]\";~len xs";
+    assert_eq!(ok_out(src, "main", &[]), "3");
+}
+
+#[test]
+fn jpar_list_foreach_ok() {
+    // P0b/5f: @x (jpar-list! body) type-checks because jpar-list! -> L _.
+    // Sum numeric array to verify iteration works.
+    let src = "main>R n t;total=0;@x (jpar-list! \"[1,2,3]\"){total=+total x};~total";
+    assert_eq!(ok_out(src, "main", &[]), "6");
+}
+
+#[test]
+fn jpar_list_non_array_returns_err() {
+    // jpar-list on a JSON object returns Err (not an array).
+    let src = "main>t;r=jpar-list \"{\\\"x\\\":1}\";?r{~_:\"ok\";^_:\"err\"}";
+    assert_eq!(ok_out(src, "main", &[]), "err");
+}
+
+#[test]
+fn jpar_list_invalid_json_returns_err() {
+    // `{{bad}}` escapes to literal `{bad}` JSON-malformed input; bare
+    // `{bad}` would now trigger `{name}` string interpolation (PR #?).
+    let src = "main>t;r=jpar-list \"{{bad}}\";?r{~_:\"ok\";^_:\"err\"}";
+    assert_eq!(ok_out(src, "main", &[]), "err");
+}
 
 #[test]
 fn jpar_jdmp_roundtrip() {
@@ -1167,7 +1197,8 @@ fn jpar_jdmp_roundtrip() {
 
 #[test]
 fn jpar_invalid_returns_err() {
-    let src = "main>t;r=jpar \"{bad}\";?r{~_:\"ok\";^_:\"err\"}";
+    // See jpar_list_invalid_json_returns_err for `{{...}}` rationale.
+    let src = "main>t;r=jpar \"{{bad}}\";?r{~_:\"ok\";^_:\"err\"}";
     assert_eq!(ok_out(src, "main", &[]), "err");
 }
 
@@ -1495,6 +1526,29 @@ fn num_ok() {
 fn num_err() {
     let src = "main>n;r=num \"nope\";?r{~v:v;^_:99}";
     assert_eq!(ok_out(src, "main", &[]), "99");
+}
+
+// Polymorphic `num`: numeric input is identity-wrapped Ok. Pre-fix this
+// failed verification with "'num' expects t, got n". Exercises the
+// tree-walker path that the public CLI no longer dispatches to but that
+// HOF callbacks still bail to for VM/Cranelift.
+#[test]
+fn num_identity_on_number() {
+    let src = "main>n;r=num 42;?r{~v:v;^_:0}";
+    assert_eq!(ok_out(src, "main", &[]), "42");
+}
+
+#[test]
+fn num_identity_on_float() {
+    let src = "main>n;r=num 3.14;?r{~v:v;^_:0}";
+    assert_eq!(ok_out(src, "main", &[]), "3.14");
+}
+
+#[test]
+fn num_static_number_param() {
+    // Verifier now accepts `num` on a statically-typed Number argument.
+    let src = "main x:n>n;r=num x;?r{~v:v;^_:0}";
+    assert_eq!(ok_out(src, "main", &["42"]), "42");
 }
 
 // ---------------------------------------------------------------------------

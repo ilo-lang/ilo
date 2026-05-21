@@ -1,0 +1,25 @@
+-- `fn`, `def`, `let`, `var`, `const`, `if`, `return` are lexer keywords.
+-- Using them as parameter names used to surface a cryptic
+-- `ILO-P003 expected '>', got 'fn'` because the param loop bailed silently
+-- and the outer `expect(Greater)` landed on the keyword. Personas hit this
+-- when porting Python/JS code where `fn` is a natural callback name.
+--
+-- After P2#14, the parser catches every reserved-keyword token at parameter
+-- position with ILO-P011 + a rename hint, mirroring the binding-context
+-- guard. The same hint shape now fires across decl-head, binding-LHS, and
+-- param-name contexts.
+--
+-- Correct shape below: rename `fn` to `fv` (or `func`, `callback`, or any
+-- descriptive 4+ char name like `mapper`).
+
+apply mapper:F n n x:n>n
+  mapper x
+
+double x:n>n
+  *x 2
+
+main>n
+  apply double 7
+
+-- run: main
+-- out: 14

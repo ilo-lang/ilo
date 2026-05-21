@@ -1,0 +1,21 @@
+-- prnt-no-double: `prnt` as the last statement in `main>_` no longer double-prints.
+-- Previously `prnt "hello"` at function tail would print "hello" (from prnt)
+-- and then "hello" again (from the runtime auto-printing the return value).
+-- Now: when the entry function body ends with a `prnt` call, the top-level
+-- auto-echo is suppressed. The value is printed exactly once.
+
+-- Bare `prnt` at tail: prints "hello" once. Pre-fix this printed "hello\nhello".
+say-hello>_;prnt "hello"
+
+-- `prnt` with a numeric arg: prints "42" once. Pre-fix printed "42\n42".
+say-num>_;prnt 42
+
+-- `prnt` in non-tail position: the final string "done" still auto-echoes.
+-- prnt "hi" fires, then "done" auto-echoes. Total: two lines.
+-- This function is tested via the say-num + say-hello cases above;
+-- the multi-line output is not assertable via single -- out: annotations.
+
+-- run: say-hello
+-- out: hello
+-- run: say-num
+-- out: 42

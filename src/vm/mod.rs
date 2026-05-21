@@ -1,5 +1,6 @@
 use crate::ast::*;
 use crate::builtins::{Builtin, CharAtResult, char_at_signed};
+use crate::caps::Caps;
 use crate::interpreter::{MapKey, Value};
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -172,12 +173,14 @@ pub(crate) const OP_SRT: u8 = 54; // R[A] = srt(R[B])  (sort list or text)
 pub(crate) const OP_SLC: u8 = 55; // R[A] = slc(R[B], R[C], R[D])  (slice; D in data word A field)
 pub(crate) const OP_RND0: u8 = 57; // R[A] = random float in [0,1)
 pub(crate) const OP_RND2: u8 = 58; // R[A] = random int in [R[B], R[C]]
+pub(crate) const OP_SEED: u8 = 190; // seed(R[B]) — set shared PRNG state; R[A] = Nil
 pub(crate) const OP_NOW: u8 = 59; // R[A] = current unix timestamp (seconds, float)
 pub(crate) const OP_NOWMS: u8 = 177; // R[A] = current unix timestamp (milliseconds, float)
 pub(crate) const OP_ENV: u8 = 60; // R[A] = env(R[B])  (returns R t t)
 pub(crate) const OP_JPTH: u8 = 61; // R[A] = jpth(R[B], R[C])  (JSON path lookup → R t t)
 pub(crate) const OP_JDMP: u8 = 62; // R[A] = jdmp(R[B])  (value to JSON string → t)
 pub(crate) const OP_JPAR: u8 = 63; // R[A] = jpar(R[B])  (parse JSON string → R ? t)
+pub(crate) const OP_JPAR_LIST: u8 = 188; // R[A] = jpar-list(R[B])  (parse JSON array string → R (L ?) t)
 pub(crate) const OP_RECFLD_NAME: u8 = 64; // R[A] = R[B].field where C = constant pool index of field name (dynamic/fallback)
 pub(crate) const OP_JMPNN: u8 = 56; // if R[A] is not nil, jump by signed Bx (ABx mode)
 pub(crate) const OP_ISNUM: u8 = 65; // R[A] = R[B] is Number
@@ -477,6 +480,37 @@ pub(crate) const OP_MPAIRS: u8 = 186; // R[A] = pairs(R[B])  → L (L _)
 //   C = argc
 pub(crate) const OP_CALL_OWN1: u8 = 183;
 
+// Tail-call: reuse the current CallFrame instead of pushing a new one. The
+// VM compiler emits this when a static user-fn call sits in tail position
+// (last statement of a body that itself sits in tail position, propagated
+// via `in_tail_position`). Encoding mirrors OP_CALL exactly so the only
+// compiler change is the opcode byte; runtime semantics differ:
+//
+//   1. Save the args from R[A+1..=A+argc] (caller side) into a small stash.
+//      We zero each source slot as we go so the upcoming drop_rc loop does
+//      not double-drop the RC the args carry.
+//   2. drop_rc every remaining slot in the current frame (everything except
+//      the just-zeroed arg sources). For all-numeric chunks this is a no-op.
+//   3. Switch chunk_idx to the callee (cross-fn tail calls work too — the
+//      typical self-recursion case is just `func_idx == current ci`).
+//   4. Truncate stack back to `stack_base + callee.reg_count`, writing args
+//      into R[0..argc] and Nil-filling the rest.
+//   5. Reset ip = 0; keep stack_base and result_reg unchanged so the
+//      eventual OP_RET in the (possibly cross-) callee returns through the
+//      original caller's result register.
+//
+// No new native stack frame, no new CallFrame entry, so a function that
+// only recurses in tail position runs in O(1) frame memory.
+//
+// Encoding (ABx, identical to OP_CALL):
+//   A  = result register (preserved across the tail-call so the eventual
+//        OP_RET in the callee lands in the same caller-side slot — used
+//        only by the compiler to keep the args window consistent at
+//        emit-time; the runtime ignores it because we reuse the current
+//        frame's result_reg).
+//   Bx = (func_idx << 8) | argc
+pub(crate) const OP_TAILCALL: u8 = 189;
+
 // Dynamic call by function reference. The callee is a FnRef NanVal sitting
 // in a register; we decode its (kind, id), then either push a VM frame
 // (user fn) or invoke the builtin dispatch path (builtin).
@@ -592,6 +626,19 @@ pub(crate) fn is_tree_bridge_eligible(b: crate::builtins::Builtin, argc: usize) 
         (Builtin::Dirname, 1) => true,
         (Builtin::Basename, 1) => true,
         (Builtin::Pathjoin, 1) => true,
+        // 0.12.1 filesystem metadata primitives. Same shape as ls/walk/glob:
+        // no FnRef args, single text path in, atomic value out. Size/mtime
+        // return Result (auto-unwrap eligible — see tree_bridge_returns_result
+        // below). Predicates return bool, no Result wrap, so they fall through
+        // the standard non-Result bridge path.
+        (Builtin::Fsize, 1) => true,
+        (Builtin::Mtime, 1) => true,
+        (Builtin::Isfile, 1) => true,
+        (Builtin::Isdir, 1) => true,
+        // `tz-offset tz epoch` — 2-arg, no FnRef, returns R n t. Tree-bridge
+        // routes VM and Cranelift through the chrono-tz impl in the interpreter
+        // without needing a dedicated opcode.
+        (Builtin::TzOffset, 2) => true,
         // `sleep ms` has no FnRef args and returns Nil; the bridge round-trip
         // is lossless, so VM/Cranelift get it for free. The actual sleep is
         // delegated to `std::thread::sleep` inside the tree interpreter.
@@ -603,6 +650,11 @@ pub(crate) fn is_tree_bridge_eligible(b: crate::builtins::Builtin, argc: usize) 
         // "Process spawn" for the security framing (no shell, no glob, no
         // interpolation).
         (Builtin::Run, 2) => true,
+        // `run2 cmd argv` — structured process spawn. Same bridge contract as
+        // `run`: tree interpreter handles spawn + capture, VM/Cranelift get
+        // parity for free. Returns R RunResult t; auto-unwrap (`run2!`)
+        // supported via `tree_bridge_returns_result`.
+        (Builtin::Run2, 2) => true,
         // HOFs that take a FnRef + list. The bridge routes them through the
         // tree interpreter, which dispatches user-fn callbacks via the
         // Env populated from the ACTIVE_AST_PROGRAM TLS.
@@ -688,6 +740,90 @@ pub(crate) fn is_tree_bridge_eligible(b: crate::builtins::Builtin, argc: usize) 
         // 2-arg, returns T unwrapped from R T E or the default d. Tree-bridge
         // keeps cross-engine parity without a new opcode.
         (Builtin::DefaultOnErr, 2) => true,
+        // get-to url ms / pst-to url body ms — HTTP with explicit timeout.
+        // Same bridge contract as `run`: returns Result, no FnRef args, the
+        // tree interpreter handles the actual minreq call. VM and Cranelift
+        // JIT/AOT pick them up at zero opcode cost.
+        (Builtin::GetTo, 2) => true,
+        (Builtin::PstTo, 3) => true,
+        // HTTP verb cluster (#5z). Same bridge contract as `pst-to`/`get-to` —
+        // returns Result, no FnRef args, the tree interpreter handles the
+        // actual minreq call. VM and Cranelift inherit at zero opcode cost.
+        // PUT / PAT: url body (+optional headers map).
+        (Builtin::Put, 2) => true,
+        (Builtin::Put, 3) => true,
+        (Builtin::Pat, 2) => true,
+        (Builtin::Pat, 3) => true,
+        // DEL / HD / OPT: url (+optional headers map).
+        (Builtin::Del, 1) => true,
+        (Builtin::Del, 2) => true,
+        (Builtin::Hed, 1) => true,
+        (Builtin::Hed, 2) => true,
+        (Builtin::Opt, 1) => true,
+        (Builtin::Opt, 2) => true,
+        // matvec xm ys -> L n. Pure (no FnRef, no I/O), 2-arg, returns a
+        // flat vector. Tree-bridge keeps cross-engine parity with the
+        // tree interpreter at the same cost tier as `transpose`/`matmul`
+        // without burning a dedicated opcode — the row-by-row dot
+        // product is dominated by the f64 work, not dispatch.
+        (Builtin::Matvec, 2) => true,
+        // `lstsq xm ys` — ordinary least squares via the normal equations.
+        // Pure (no FnRef, no I/O); the tree interpreter composes existing
+        // transpose / matmul / solve helpers. Bridge keeps VM and Cranelift
+        // in lockstep without dedicated opcodes. Errors from the inner
+        // `solve` (singular, dimension mismatch, empty) propagate as
+        // ILO-R009 through the standard bridge path.
+        (Builtin::Lstsq, 2) => true,
+        // rand-bytes n > t — CSPRNG bytes, base64url-no-pad encoded. Pure single-arg
+        // builtin from the VM's perspective (no FnRef, no Result wrap); the tree
+        // interpreter handles getrandom + encoding. VM and Cranelift inherit at zero
+        // opcode cost. NOT eligible for any constant-folding / common-subexpression
+        // pass: the whole point is that two calls return different bytes.
+        (Builtin::RandBytes, 1) => true,
+        // URL + base64url encoding cluster. All pure text-in / text-out,
+        // no FnRef args, no I/O. Tree-bridge keeps VM + Cranelift in
+        // lockstep without new opcodes. Decoders return R t t; encoders
+        // are total.
+        (Builtin::Urlenc, 1) => true,
+        (Builtin::Urldec, 1) => true,
+        (Builtin::B64u, 1) => true,
+        (Builtin::B64uDec, 1) => true,
+        // Crypto primitives cluster (0.12.x). All pure text-in / text-or-bool
+        // -out, no FnRef args, no I/O. Tree-bridge keeps VM + Cranelift in
+        // lockstep without new opcodes. b64-dec returns R t t (Result wrap
+        // handled by the standard bridge path); sha256, hmac-sha256, b64, hex
+        // are total text → text; ct-eq is total text+text → bool.
+        (Builtin::Sha256, 1) => true,
+        (Builtin::HmacSha256, 2) => true,
+        (Builtin::B64, 1) => true,
+        (Builtin::B64Dec, 1) => true,
+        (Builtin::HexEnc, 1) => true,
+        (Builtin::CtEq, 2) => true,
+        // ewm xs a — exponential moving average. Pure number-list reducer, no
+        // FnRef args, no Result wrapper. Same bridge contract as the
+        // cumsum/cprod aggregate family; tree interpreter handles the actual
+        // recurrence. VM and Cranelift inherit cross-engine parity at zero
+        // opcode cost.
+        (Builtin::Ewm, 2) => true,
+        // where cond xs ys — parallel-list conditional select. 3-arg, no FnRef
+        // args, no Result wrapper. Tree interpreter performs the element-wise
+        // select; VM and Cranelift inherit through the bridge at zero opcode
+        // cost. Length-mismatch errors propagate via tree_bridge_propagates_error.
+        (Builtin::Where, 3) => true,
+        // Calendar arithmetic (0.12.2). Pure epoch->epoch/n ops, no FnRef, no I/O.
+        // Tree-bridge gives VM + Cranelift cross-engine parity at zero opcode cost.
+        (Builtin::AddMo, 2) => true,
+        (Builtin::LastDom, 1) => true,
+        (Builtin::NextBusinessDay, 1) => true,
+        (Builtin::DayOfWeek, 1) => true,
+        // Numeric prelude (0.12.1). linspace / ones / rep — pure list
+        // constructors, no FnRef args, no I/O, no Result wrapper. Saves
+        // ~5-10 LoC per call site for the linear-regression / distance-
+        // matrix / monte-carlo persona class. Tree-bridge keeps VM and
+        // Cranelift in lockstep with the tree interpreter at zero opcode cost.
+        (Builtin::Linspace, 3) => true,
+        (Builtin::Ones, 1) => true,
+        (Builtin::Rep, 2) => true,
         _ => false,
     }
 }
@@ -704,14 +840,28 @@ pub(crate) fn tree_bridge_returns_result(b: crate::builtins::Builtin) -> bool {
             | Builtin::Ls
             | Builtin::Walk
             | Builtin::Glob
+            | Builtin::Fsize
+            | Builtin::Mtime
             | Builtin::EnvAll
             | Builtin::Run
+            | Builtin::Run2
             | Builtin::Jkeys
             | Builtin::Rdin
             | Builtin::Rdinl
             | Builtin::Wra
             | Builtin::DtparseRel
             | Builtin::DurParse
+            | Builtin::GetTo
+            | Builtin::PstTo
+            | Builtin::Put
+            | Builtin::Pat
+            | Builtin::Del
+            | Builtin::Hed
+            | Builtin::Opt
+            | Builtin::Urldec
+            | Builtin::B64uDec
+            | Builtin::B64Dec
+            | Builtin::TzOffset
     )
 }
 
@@ -2103,6 +2253,16 @@ impl RegCompiler {
     }
 
     fn compile_stmt(&mut self, stmt: &Stmt) -> Option<u8> {
+        // Tail-position propagation per statement kind. Only Stmt::Expr
+        // and Stmt::Return preserve the body-root tail flag onto their
+        // contained expression (their value IS the function's return).
+        // Stmt::Let / Stmt::Break / Stmt::Continue bind or jump rather
+        // than return, so their contained value expression is NOT in
+        // tail position even if the statement itself sits at the last
+        // body slot.
+        if !matches!(stmt, Stmt::Expr(_) | Stmt::Return(_)) {
+            self.in_tail_position = false;
+        }
         match stmt {
             Stmt::Let { name, value } => {
                 if let Some(existing_reg) = self.resolve_local(name) {
@@ -3371,6 +3531,21 @@ impl RegCompiler {
             return reg;
         }
 
+        // Tail-position propagation rule. `in_tail_position` is a
+        // single-use flag set by `Stmt::Expr` / `Stmt::Return` at the
+        // body-root entry to `compile_expr`. Only the static-user-fn
+        // arm of `Expr::Call` consumes it (to emit OP_TAILCALL instead
+        // of OP_CALL); every other arm — operators, builtins, list
+        // literals, args of an outer call — must descend with the
+        // flag cleared so a nested `Expr::Call` deep inside their
+        // operand tree doesn't accidentally pick up the outer tail
+        // bit. We unconditionally clear the flag at the top of every
+        // non-Call dispatch arm and let `Expr::Call` capture+restore
+        // it locally before its emit-site read (see the saved_tail
+        // block in the Call arm below).
+        let outer_tail = self.in_tail_position;
+        self.in_tail_position = false;
+
         match expr {
             Expr::Literal(lit) => {
                 let is_num = matches!(lit, Literal::Number(_));
@@ -4037,6 +4212,12 @@ impl RegCompiler {
                             self.reg_is_num[ra as usize] = true;
                             return ra;
                         }
+                        (Builtin::Seed, 1) => {
+                            let rb = self.compile_expr(&args[0]);
+                            let ra = self.alloc_reg();
+                            self.emit_abc(OP_SEED, ra, rb, 0);
+                            return ra;
+                        }
                         (Builtin::Now, 0) => {
                             let ra = self.alloc_reg();
                             self.emit_abc(OP_NOW, ra, 0, 0);
@@ -4354,6 +4535,16 @@ impl RegCompiler {
                             }
                             return ra;
                         }
+                        (Builtin::JparList, 1) => {
+                            let rb = self.compile_expr(&args[0]);
+                            let ra = self.alloc_reg();
+                            self.emit_abc(OP_JPAR_LIST, ra, rb, 0);
+                            if unwrap.is_any() {
+                                self.emit_result_unwrap(ra, *unwrap);
+                                self.next_reg = ra + 1;
+                            }
+                            return ra;
+                        }
                         (Builtin::Rdjl, 1) => {
                             // rdjl path → L (R _ t). Not a Result-returning op, so `!`
                             // is unsupported here; the verifier rejects it via the
@@ -4402,10 +4593,18 @@ impl RegCompiler {
                             // OP_CALL_OWN1). Stays a no-op when RC > 1 (a
                             // captured/aliased map), since the runtime
                             // still gates on rc_count.
-                            let tail_save = self.in_tail_position;
-                            self.in_tail_position = false;
+                            // Note: `in_tail_position` was cleared by the
+                            // compile_expr entry guard above; use the
+                            // outer_tail snapshot captured at the top of
+                            // this function call to drive the mset
+                            // in-place fast path. Without this snapshot
+                            // mset would never see the tail flag again
+                            // after the compile_expr-level clear, and
+                            // the OP_MSET RC=1 mutation peephole would
+                            // stop firing for tail-position `mset m k v`
+                            // inside helper fns.
                             let tail_local_reg: Option<u8> =
-                                if tail_save && let Expr::Ref(ref_name) = &args[0] {
+                                if outer_tail && let Expr::Ref(ref_name) = &args[0] {
                                     self.resolve_local(ref_name)
                                 } else {
                                     None
@@ -5229,6 +5428,14 @@ impl RegCompiler {
                     return a;
                 }
 
+                // Compiling args of this call: each arg is NOT in tail
+                // position, even if the outer call itself is. The
+                // top-of-compile_expr clear already zeroed
+                // `in_tail_position`, so the inner `compile_expr`
+                // calls for args see it as false. `outer_tail` (saved
+                // before the clear) is the value the Call site will
+                // consult below to decide between OP_CALL and
+                // OP_TAILCALL.
                 let arg_regs: Vec<u8> = args.iter().map(|a| self.compile_expr(a)).collect();
                 let func_idx = self
                     .func_names
@@ -5282,7 +5489,19 @@ impl RegCompiler {
                     func_idx
                 );
                 let bx = ((func_idx as u16) << 8) | args.len() as u16;
-                self.emit_abx(OP_CALL, a, bx);
+                // Tail-call elimination: when the call is in tail position
+                // and not wrapped by an unwrap (`!` / `!!`), emit
+                // OP_TAILCALL instead of OP_CALL. The runtime reuses the
+                // current frame so a function that recurses only in tail
+                // position runs in O(1) frame memory. Auto-unwrap stays on
+                // the normal OP_CALL path — the post-call result probe
+                // wants to inspect the value before returning.
+                let emit_tail = outer_tail && !unwrap.is_any();
+                if emit_tail {
+                    self.emit_abx(OP_TAILCALL, a, bx);
+                } else {
+                    self.emit_abx(OP_CALL, a, bx);
+                }
 
                 // Track return type for record type propagation
                 if func_idx < self.func_return_types.len() {
@@ -5869,10 +6088,10 @@ fn chunk_is_all_numeric(chunk: &Chunk) -> bool {
             OP_RECNEW | OP_LISTNEW | OP_RECWITH | OP_RECNEW_EMPTY | OP_RECCOPY | OP_RECSETFIELD
             | OP_WRAPOK | OP_WRAPERR | OP_STR | OP_CAT | OP_SPL | OP_REV | OP_SRT | OP_SRTDESC
             | OP_SLC | OP_TAKE | OP_DROP | OP_UNQ | OP_UNIQBY | OP_FRQ | OP_PARTITION
-            | OP_LISTAPPEND | OP_JPAR | OP_JDMP | OP_CSVDMP | OP_ENV | OP_GET | OP_GETH
-            | OP_GETMANY | OP_POST | OP_POSTH | OP_RD | OP_RDL | OP_RDJL | OP_WR | OP_WRL
-            | OP_MAPNEW | OP_MGET | OP_MSET | OP_MKEYS | OP_MVALS | OP_MPAIRS | OP_HD | OP_AT
-            | OP_LST | OP_TL | OP_FMT2 | OP_RGXSUB | OP_ZIP | OP_ENUMERATE | OP_WINDOW
+            | OP_LISTAPPEND | OP_JPAR | OP_JPAR_LIST | OP_JDMP | OP_CSVDMP | OP_ENV | OP_GET
+            | OP_GETH | OP_GETMANY | OP_POST | OP_POSTH | OP_RD | OP_RDL | OP_RDJL | OP_WR
+            | OP_WRL | OP_MAPNEW | OP_MGET | OP_MSET | OP_MKEYS | OP_MVALS | OP_MPAIRS | OP_HD
+            | OP_AT | OP_LST | OP_TL | OP_FMT2 | OP_RGXSUB | OP_ZIP | OP_ENUMERATE | OP_WINDOW
             | OP_WINDOW_VIEW | OP_FFT | OP_IFFT | OP_RANGE | OP_CHUNKS | OP_CUMSUM | OP_CPROD
             | OP_SETUNION | OP_SETINTER | OP_SETDIFF | OP_TRANSPOSE | OP_MATMUL | OP_INV
             | OP_SOLVE | OP_DTFMT | OP_DTPARSE | OP_FLAT | OP_CALL_BUILTIN_TREE | OP_LOADFN
@@ -7434,6 +7653,37 @@ pub fn compile(program: &Program) -> Result<CompiledProgram, CompileError> {
     Ok(prog)
 }
 
+/// Run the VM with a capability policy applied. IO ops that violate the policy
+/// return `Value::Err(...)` rather than executing.
+pub fn run_with_caps(
+    compiled: &CompiledProgram,
+    func_name: Option<&str>,
+    args: Vec<Value>,
+    caps: Arc<Caps>,
+) -> Result<Value, VmRuntimeError> {
+    let target = match func_name {
+        Some(name) => name.to_string(),
+        None => compiled
+            .func_names
+            .first()
+            .ok_or_else(|| VmRuntimeError {
+                error: VmError::NoFunctionsDefined,
+                span: None,
+                call_stack: Vec::new(),
+            })?
+            .clone(),
+    };
+    let func_idx = compiled.func_index(&target).ok_or_else(|| VmRuntimeError {
+        error: VmError::UndefinedFunction {
+            name: target.clone(),
+        },
+        span: None,
+        call_stack: Vec::new(),
+    })?;
+    check_entry_arity(compiled, func_idx, &target, args.len())?;
+    VM::new_with_caps(compiled, caps).call(func_idx, args)
+}
+
 pub fn run(
     compiled: &CompiledProgram,
     func_name: Option<&str>,
@@ -7599,6 +7849,8 @@ struct VM<'a> {
     tool_provider: Option<&'a dyn crate::tools::ToolProvider>,
     #[cfg(feature = "tools")]
     tokio_runtime: Option<&'a tokio::runtime::Runtime>,
+    /// CLI capability policy.
+    caps: Arc<Caps>,
 }
 
 impl<'a> Drop for VM<'a> {
@@ -7621,6 +7873,22 @@ impl<'a> VM<'a> {
             tool_provider: None,
             #[cfg(feature = "tools")]
             tokio_runtime: None,
+            caps: Arc::new(Caps::default()),
+        }
+    }
+
+    fn new_with_caps(program: &'a CompiledProgram, caps: Arc<Caps>) -> Self {
+        VM {
+            program,
+            stack: Vec::with_capacity(4096),
+            frames: Vec::with_capacity(64),
+            arena: BumpArena::new(),
+            last_ci: 0,
+            last_ip: 0,
+            tool_provider: None,
+            #[cfg(feature = "tools")]
+            tokio_runtime: None,
+            caps,
         }
     }
 
@@ -7639,6 +7907,7 @@ impl<'a> VM<'a> {
             tool_provider: Some(provider),
             #[cfg(feature = "tools")]
             tokio_runtime: Some(runtime),
+            caps: Arc::new(Caps::default()),
         }
     }
 
@@ -8333,7 +8602,11 @@ impl<'a> VM<'a> {
                     let a = ((inst >> 16) & 0xFF) as usize + base;
                     let b = ((inst >> 8) & 0xFF) as usize + base;
                     let v = reg!(b);
-                    println!("{}", v.to_value());
+                    let s = format!("{}", v.to_value());
+                    // +1 for the newline. Keeps the --max-output-bytes budget
+                    // honest against a runaway `wh true{prnt 0}` loop.
+                    crate::runtime_guard::record_output(s.len() + 1);
+                    println!("{s}");
                     // passthrough: same heap value now lives in two regs, bump RC
                     v.clone_rc();
                     reg_set!(a, v);
@@ -8352,6 +8625,10 @@ impl<'a> VM<'a> {
                             _ => unreachable!(),
                         }
                     };
+                    if let Err(msg) = self.caps.check_read(&path) {
+                        reg_set!(a, NanVal::heap_err(NanVal::heap_string(msg)));
+                        continue;
+                    }
                     let fmt = std::path::Path::new(&path)
                         .extension()
                         .and_then(|e| e.to_str())
@@ -8380,6 +8657,10 @@ impl<'a> VM<'a> {
                             _ => unreachable!(),
                         }
                     };
+                    if let Err(msg) = self.caps.check_read(&path) {
+                        reg_set!(a, NanVal::heap_err(NanVal::heap_string(msg)));
+                        continue;
+                    }
                     let result = match std::fs::read_to_string(&path) {
                         Ok(content) => {
                             let lines: Vec<NanVal> = content
@@ -8416,6 +8697,10 @@ impl<'a> VM<'a> {
                         };
                         (p, c)
                     };
+                    if let Err(msg) = self.caps.check_write(&path) {
+                        reg_set!(a, NanVal::heap_err(NanVal::heap_string(msg)));
+                        continue;
+                    }
                     let result = match std::fs::write(&path, &content) {
                         Ok(()) => NanVal::heap_ok(NanVal::heap_string(path)),
                         Err(e) => NanVal::heap_err(NanVal::heap_string(e.to_string())),
@@ -8438,6 +8723,10 @@ impl<'a> VM<'a> {
                             _ => unreachable!(),
                         }
                     };
+                    if let Err(msg) = self.caps.check_write(&path) {
+                        reg_set!(a, NanVal::heap_err(NanVal::heap_string(msg)));
+                        continue;
+                    }
                     let result = if (vc.0 & TAG_MASK) == TAG_LIST && vc.is_heap() {
                         // SAFETY: TAG_LIST + is_heap() → live List/View Rc.
                         let lines: &[NanVal] = slice_of(unsafe { vc.as_heap_ref() });
@@ -10202,8 +10491,13 @@ impl<'a> VM<'a> {
                     let a = ((inst >> 16) & 0xFF) as usize + base;
                     let b = ((inst >> 8) & 0xFF) as usize + base;
                     let v = reg!(b);
+                    // num is polymorphic: number → Ok(n) identity; string → parse.
+                    if v.is_number() {
+                        reg_set!(a, NanVal::heap_ok(v));
+                        continue;
+                    }
                     if !v.is_string() {
-                        vm_err!(VmError::Type("num requires a string"));
+                        vm_err!(VmError::Type("num requires text or number"));
                     }
                     // SAFETY: is_string() confirmed heap-tagged string with live RC.
                     let s = unsafe {
@@ -10624,7 +10918,7 @@ impl<'a> VM<'a> {
                 }
                 OP_RND0 => {
                     let a = ((inst >> 16) & 0xFF) as usize + base;
-                    reg_set!(a, NanVal::number(fastrand::f64()));
+                    reg_set!(a, NanVal::number(crate::rng::f64()));
                 }
                 OP_RND2 => {
                     let a = ((inst >> 16) & 0xFF) as usize + base;
@@ -10640,7 +10934,7 @@ impl<'a> VM<'a> {
                     if lo > hi {
                         vm_err!(VmError::Type("rnd: lower bound > upper bound"));
                     }
-                    reg_set!(a, NanVal::number(fastrand::i64(lo..=hi) as f64));
+                    reg_set!(a, NanVal::number(crate::rng::i64_range(lo, hi) as f64));
                 }
                 OP_RNDN => {
                     let a = ((inst >> 16) & 0xFF) as usize + base;
@@ -10653,10 +10947,17 @@ impl<'a> VM<'a> {
                     }
                     let mu = vb.as_number();
                     let sigma = vc.as_number();
-                    reg_set!(
-                        a,
-                        NanVal::number(crate::interpreter::box_muller_normal(mu, sigma))
-                    );
+                    reg_set!(a, NanVal::number(crate::rng::normal(mu, sigma)));
+                }
+                OP_SEED => {
+                    let b = ((inst >> 8) & 0xFF) as usize + base;
+                    let vb = reg!(b);
+                    if !vb.is_number() {
+                        vm_err!(VmError::Type("seed requires a number"));
+                    }
+                    crate::rng::seed(vb.as_number() as u64);
+                    let a = ((inst >> 16) & 0xFF) as usize + base;
+                    reg_set!(a, NanVal(TAG_NIL));
                 }
                 OP_NOW => {
                     let a = ((inst >> 16) & 0xFF) as usize + base;
@@ -10781,16 +11082,20 @@ impl<'a> VM<'a> {
                     if !v.is_string() {
                         vm_err!(VmError::Type("get requires a string"));
                     }
+                    // SAFETY: is_string() confirmed heap-tagged string with live RC.
+                    let url_str: String = unsafe {
+                        match v.as_heap_ref() {
+                            HeapObj::Str(s) => s.as_str().to_owned(),
+                            _ => unreachable!(),
+                        }
+                    };
+                    if let Err(msg) = self.caps.check_net(&url_str) {
+                        reg_set!(a, NanVal::heap_err(NanVal::heap_string(msg)));
+                        continue;
+                    }
                     #[cfg(feature = "http")]
                     let result = {
-                        // SAFETY: is_string() confirmed heap-tagged string with live RC.
-                        let url = unsafe {
-                            match v.as_heap_ref() {
-                                HeapObj::Str(s) => s,
-                                _ => unreachable!(),
-                            }
-                        };
-                        match minreq::get(url.as_str()).send() {
+                        match minreq::get(&url_str).send() {
                             Ok(resp) => match resp.as_str() {
                                 Ok(body) => NanVal::heap_ok(NanVal::heap_string(body.to_string())),
                                 Err(e) => NanVal::heap_err(NanVal::heap_string(format!(
@@ -10815,22 +11120,25 @@ impl<'a> VM<'a> {
                     if !vb.is_string() || !vc.is_string() {
                         vm_err!(VmError::Type("pst requires two strings (url, body)"));
                     }
+                    // SAFETY: is_string() confirmed heap-tagged string with live RC.
+                    let (url_str, body_str) = unsafe {
+                        let u = match vb.as_heap_ref() {
+                            HeapObj::Str(s) => s.as_str().to_owned(),
+                            _ => unreachable!(),
+                        };
+                        let b = match vc.as_heap_ref() {
+                            HeapObj::Str(s) => s.as_str().to_owned(),
+                            _ => unreachable!(),
+                        };
+                        (u, b)
+                    };
+                    if let Err(msg) = self.caps.check_net(&url_str) {
+                        reg_set!(a, NanVal::heap_err(NanVal::heap_string(msg)));
+                        continue;
+                    }
                     #[cfg(feature = "http")]
                     let result = {
-                        // SAFETY: is_string() confirmed heap-tagged string with live RC.
-                        let url = unsafe {
-                            match vb.as_heap_ref() {
-                                HeapObj::Str(s) => s,
-                                _ => unreachable!(),
-                            }
-                        };
-                        let body = unsafe {
-                            match vc.as_heap_ref() {
-                                HeapObj::Str(s) => s,
-                                _ => unreachable!(),
-                            }
-                        };
-                        match minreq::post(url.as_str()).with_body(body.as_str()).send() {
+                        match minreq::post(&url_str).with_body(body_str.as_str()).send() {
                             Ok(resp) => match resp.as_str() {
                                 Ok(b) => NanVal::heap_ok(NanVal::heap_string(b.to_string())),
                                 Err(e) => NanVal::heap_err(NanVal::heap_string(format!(
@@ -10864,6 +11172,10 @@ impl<'a> VM<'a> {
                                 _ => unreachable!(),
                             }
                         };
+                        if let Err(msg) = self.caps.check_net(&url) {
+                            reg_set!(a, NanVal::heap_err(NanVal::heap_string(msg)));
+                            continue;
+                        }
                         let mut req = minreq::get(url.as_str());
                         if vc.is_heap()
                             && let HeapObj::Map(m) = unsafe { vc.as_heap_ref() }
@@ -10920,6 +11232,18 @@ impl<'a> VM<'a> {
                         };
                         urls.push(s);
                     }
+                    // Cap check: block if any URL violates the net policy.
+                    let mut cap_blocked = false;
+                    for url in &urls {
+                        if let Err(msg) = self.caps.check_net(url) {
+                            reg_set!(a, NanVal::heap_err(NanVal::heap_string(msg)));
+                            cap_blocked = true;
+                            break;
+                        }
+                    }
+                    if cap_blocked {
+                        continue;
+                    }
                     let values = crate::interpreter::get_many_fetch(&urls);
                     let nan_items: Vec<NanVal> = values.iter().map(NanVal::from_value).collect();
                     let result = NanVal::heap_list(nan_items);
@@ -10948,6 +11272,10 @@ impl<'a> VM<'a> {
                                 _ => unreachable!(),
                             }
                         };
+                        if let Err(msg) = self.caps.check_net(&url) {
+                            reg_set!(a, NanVal::heap_err(NanVal::heap_string(msg)));
+                            continue;
+                        }
                         let body_str = unsafe {
                             match vc.as_heap_ref() {
                                 HeapObj::Str(s) => s.as_str().to_owned(),
@@ -11100,6 +11428,43 @@ impl<'a> VM<'a> {
                     };
                     let result = match serde_json::from_str::<serde_json::Value>(text) {
                         Ok(parsed) => NanVal::heap_ok(serde_json_to_nanval(parsed)),
+                        Err(e) => NanVal::heap_err(NanVal::heap_string(e.to_string())),
+                    };
+                    reg_set!(a, result);
+                }
+                OP_JPAR_LIST => {
+                    let a = ((inst >> 16) & 0xFF) as usize + base;
+                    let b = ((inst >> 8) & 0xFF) as usize + base;
+                    let v = reg!(b);
+                    if !v.is_string() {
+                        vm_err!(VmError::Type("jpar-list requires a string"));
+                    }
+                    // SAFETY: is_string() confirmed heap-tagged string with live RC.
+                    let text = unsafe {
+                        match v.as_heap_ref() {
+                            HeapObj::Str(s) => s,
+                            _ => unreachable!(),
+                        }
+                    };
+                    let result = match serde_json::from_str::<serde_json::Value>(text) {
+                        Ok(serde_json::Value::Array(arr)) => {
+                            let items: Vec<NanVal> =
+                                arr.into_iter().map(serde_json_to_nanval).collect();
+                            NanVal::heap_ok(NanVal::heap_list(items))
+                        }
+                        Ok(other) => {
+                            let kind = match &other {
+                                serde_json::Value::Object(_) => "object",
+                                serde_json::Value::Null => "null",
+                                serde_json::Value::Bool(_) => "bool",
+                                serde_json::Value::Number(_) => "number",
+                                serde_json::Value::String(_) => "string",
+                                serde_json::Value::Array(_) => unreachable!(),
+                            };
+                            NanVal::heap_err(NanVal::heap_string(format!(
+                                "jpar-list: expected JSON array, got {kind}"
+                            )))
+                        }
                         Err(e) => NanVal::heap_err(NanVal::heap_string(e.to_string())),
                     };
                     reg_set!(a, result);
@@ -12217,7 +12582,10 @@ impl<'a> VM<'a> {
                 }
                 OP_SLC => {
                     // Two-instruction sequence: OP_SLC A=result B=list C=start; data word A=end_reg
-                    // Bounds accept negative integers Python-style (`-1` = last element).
+                    // Bounds accept negative integers Python-style (`-1` = last element),
+                    // with one ergonomic exception: when start is non-negative and end is
+                    // exactly `-1`, end is treated as `len` (to-end sugar). See
+                    // `crate::builtins::resolve_slc_end` for the full rule.
                     let a = ((inst >> 16) & 0xFF) as usize + base;
                     let b = ((inst >> 8) & 0xFF) as usize + base;
                     let c = (inst & 0xFF) as usize + base;
@@ -12247,7 +12615,7 @@ impl<'a> VM<'a> {
                         };
                         let chars: Vec<char> = s.chars().collect();
                         let len = chars.len();
-                        let end = crate::builtins::resolve_slice_bound(end_raw, len);
+                        let end = crate::builtins::resolve_slc_end(start_raw, end_raw, len);
                         let start = crate::builtins::resolve_slice_bound(start_raw, len).min(end);
                         let result: String = chars[start..end].iter().collect();
                         reg_set!(a, NanVal::heap_string(result));
@@ -12256,7 +12624,7 @@ impl<'a> VM<'a> {
                             h @ (HeapObj::List(_) | HeapObj::ListView { .. }) => {
                                 let items = slice_of(h);
                                 let len = items.len();
-                                let end = crate::builtins::resolve_slice_bound(end_raw, len);
+                                let end = crate::builtins::resolve_slc_end(start_raw, end_raw, len);
                                 let start =
                                     crate::builtins::resolve_slice_bound(start_raw, len).min(end);
                                 let mut sliced = Vec::with_capacity(end - start);
@@ -12905,6 +13273,120 @@ impl<'a> VM<'a> {
                     ci = func_idx as usize;
                     ip = 0;
                     base = new_base;
+                }
+                OP_TAILCALL => {
+                    // Tail-call: reuse the current frame. Args live in
+                    // R[A+1..=A+argc] caller-side. We:
+                    //   1. Stash the args into `tail_args` and zero each
+                    //      source slot so the drop_rc loop below skips
+                    //      them (their RC moves into the new arg slots).
+                    //   2. drop_rc the rest of the frame's slots.
+                    //   3. Switch chunk_idx (cross-fn) and Nil-fill /
+                    //      install args into R[0..argc].
+                    //   4. Reset ip = 0, keep stack_base and
+                    //      frame.result_reg unchanged.
+                    let a = ((inst >> 16) & 0xFF) as usize;
+                    let bx = (inst & 0xFFFF) as usize;
+                    let func_idx = (bx >> 8) as u16;
+                    let n_args = bx & 0xFF;
+
+                    // Save current frame metadata (result_reg + stack_base
+                    // survive across the tail-call; ip is reset to 0).
+                    // SAFETY: frames is non-empty while execute() runs.
+                    let frame = unsafe { self.frames.last_mut().unwrap_unchecked() };
+                    let saved_stack_base = frame.stack_base;
+                    let saved_result_reg = frame.result_reg;
+
+                    // Stash args. We zero each source slot before dropping
+                    // the rest of the frame so a tail call like `f x y` —
+                    // where x/y are locals — doesn't double-drop their RC.
+                    // Cap at 16 inline to avoid heap alloc on the hot path;
+                    // wider arities fall back to Vec. The bytecode argc
+                    // field is 8-bit so 256 is the hard ceiling.
+                    let mut tail_args_inline: [NanVal; 16] = [NanVal::nil(); 16];
+                    let mut tail_args_heap: Vec<NanVal> = Vec::new();
+                    let use_heap = n_args > 16;
+                    if use_heap {
+                        tail_args_heap.reserve_exact(n_args);
+                    }
+                    // SAFETY: arg source slots are inside the current
+                    // frame (base + a + 1 + i, i < n_args, all < reg_count).
+                    // The range-loop shape is the clearest spelling for
+                    // the parallel source-slot / dest-slot index pattern
+                    // (we need `src_idx = base + a + 1 + i` and the
+                    // matching `tail_args_inline[i]` slot on every step,
+                    // plus a branch on `use_heap`); enumerate/iter_mut
+                    // would not improve readability.
+                    #[allow(clippy::needless_range_loop)]
+                    unsafe {
+                        let stack_ptr = self.stack.as_mut_ptr();
+                        for i in 0..n_args {
+                            let src_idx = base + a + 1 + i;
+                            let v = *stack_ptr.add(src_idx);
+                            *stack_ptr.add(src_idx) = NanVal::nil();
+                            if use_heap {
+                                tail_args_heap.push(v);
+                            } else {
+                                tail_args_inline[i] = v;
+                            }
+                        }
+                    }
+
+                    // Drop the rest of the frame's slots. Numeric-only
+                    // chunks need no RC ops — skip the loop entirely.
+                    let caller_all_numeric =
+                        unsafe { self.program.chunks.get_unchecked(ci) }.all_regs_numeric;
+                    if !caller_all_numeric {
+                        for i in base..self.stack.len() {
+                            // SAFETY: i in range; arg sources were zeroed
+                            // above so drop_rc on Nil is a no-op there.
+                            unsafe { self.stack.get_unchecked(i) }.drop_rc();
+                        }
+                    }
+
+                    // Switch chunk and re-shape stack to callee size.
+                    let new_reg_count = self.program.chunks[func_idx as usize].reg_count as usize;
+                    let new_len = saved_stack_base + new_reg_count;
+                    let old_len = self.stack.len();
+                    if new_len > old_len {
+                        self.stack.reserve(new_len - old_len);
+                    }
+                    // SAFETY: NanVal is Copy (plain u64). Reset all slots
+                    // to Nil first; then install args. We always set_len
+                    // to new_len exactly.
+                    unsafe {
+                        let nil = NanVal::nil();
+                        let ptr = self.stack.as_mut_ptr();
+                        for i in saved_stack_base..new_len {
+                            ptr.add(i).write(nil);
+                        }
+                        self.stack.set_len(new_len);
+                        // Install args at R[0..argc] (callee-side slots
+                        // saved_stack_base..saved_stack_base+argc). RC has
+                        // moved with them — no clone_rc, no drop_rc.
+                        for i in 0..n_args {
+                            let v = if use_heap {
+                                tail_args_heap[i]
+                            } else {
+                                tail_args_inline[i]
+                            };
+                            ptr.add(saved_stack_base + i).write(v);
+                        }
+                    }
+
+                    // Reuse the current frame entry — no push/pop on
+                    // self.frames. ip resets to 0, chunk_idx switches,
+                    // stack_base + result_reg preserved.
+                    // SAFETY: frames non-empty (verified above).
+                    let frame = unsafe { self.frames.last_mut().unwrap_unchecked() };
+                    frame.chunk_idx = func_idx;
+                    frame.ip = 0;
+                    frame.stack_base = saved_stack_base;
+                    frame.result_reg = saved_result_reg;
+
+                    ci = func_idx as usize;
+                    ip = 0;
+                    base = saved_stack_base;
                 }
                 _ => vm_err!(VmError::UnknownOpcode { op }),
             }
@@ -14073,8 +14555,13 @@ pub(crate) extern "C" fn jit_str(a: u64, span_bits: u64) -> u64 {
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn jit_num(a: u64, span_bits: u64) -> u64 {
     let v = NanVal(a);
+    // num is polymorphic: numeric input becomes Ok(n) identity-wrapped, so the
+    // result type stays R n t and call sites that pattern-match keep working.
+    if v.is_number() {
+        return NanVal::heap_ok(v).0;
+    }
     if !v.is_string() {
-        jit_set_runtime_error_with_span(VmError::Type("num requires a string"), span_bits);
+        jit_set_runtime_error_with_span(VmError::Type("num requires text or number"), span_bits);
         return TAG_NIL;
     }
     let s = unsafe {
@@ -14732,7 +15219,7 @@ pub(crate) extern "C" fn jit_solve(a: u64, b: u64, span_bits: u64) -> u64 {
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn jit_rnd0() -> u64 {
-    NanVal::number(fastrand::f64()).0
+    NanVal::number(crate::rng::f64()).0
 }
 
 #[cfg(feature = "cranelift")]
@@ -14746,7 +15233,7 @@ pub(crate) extern "C" fn jit_rnd2(a: u64, b: u64) -> u64 {
         if lo > hi {
             return TAG_NIL;
         }
-        NanVal::number(fastrand::i64(lo..=hi) as f64).0
+        NanVal::number(crate::rng::i64_range(lo, hi) as f64).0
     } else {
         TAG_NIL
     }
@@ -14760,10 +15247,20 @@ pub(crate) extern "C" fn jit_rndn(a: u64, b: u64) -> u64 {
     if av.is_number() && bv.is_number() {
         let mu = av.as_number();
         let sigma = bv.as_number();
-        NanVal::number(crate::interpreter::box_muller_normal(mu, sigma)).0
+        NanVal::number(crate::rng::normal(mu, sigma)).0
     } else {
         TAG_NIL
     }
+}
+
+#[cfg(feature = "cranelift")]
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn jit_seed(s: u64) -> u64 {
+    let sv = NanVal(s);
+    if sv.is_number() {
+        crate::rng::seed(sv.as_number() as u64);
+    }
+    TAG_NIL
 }
 
 #[cfg(feature = "cranelift")]
@@ -16322,7 +16819,9 @@ pub(crate) extern "C" fn jit_rsrt(a: u64, span_bits: u64) -> u64 {
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn jit_slc(a: u64, start: u64, end: u64, span_bits: u64) -> u64 {
     // Bounds accept negative integers Python-style; kept in lockstep with the
-    // tree-walker and OP_SLC by delegating to `resolve_slice_bound`.
+    // tree-walker and OP_SLC by delegating to `resolve_slice_bound`. End uses
+    // `resolve_slc_end` so the `-1 = to end` sugar fires for non-negative
+    // starts (e.g. `slc xs 0 -1` is the full list).
     let vb = NanVal(a);
     let vc = NanVal(start);
     let vd = NanVal(end);
@@ -16346,7 +16845,7 @@ pub(crate) extern "C" fn jit_slc(a: u64, start: u64, end: u64, span_bits: u64) -
         };
         let chars: Vec<char> = s.chars().collect();
         let len = chars.len();
-        let e = crate::builtins::resolve_slice_bound(e_raw, len);
+        let e = crate::builtins::resolve_slc_end(s_raw, e_raw, len);
         let s = crate::builtins::resolve_slice_bound(s_raw, len).min(e);
         return NanVal::heap_string(chars[s..e].iter().collect()).0;
     }
@@ -16354,7 +16853,7 @@ pub(crate) extern "C" fn jit_slc(a: u64, start: u64, end: u64, span_bits: u64) -
         && let HeapObj::List(items) = unsafe { vb.as_heap_ref() }
     {
         let len = items.len();
-        let e = crate::builtins::resolve_slice_bound(e_raw, len);
+        let e = crate::builtins::resolve_slc_end(s_raw, e_raw, len);
         let s = crate::builtins::resolve_slice_bound(s_raw, len).min(e);
         let mut sliced = Vec::with_capacity(e - s);
         for v in &items[s..e] {
@@ -16490,6 +16989,30 @@ pub(crate) fn tree_bridge_propagates_error(b: crate::builtins::Builtin) -> bool 
             | Builtin::Argmax
             | Builtin::Argmin
             | Builtin::Argsort
+            // ewm raises ILO-R009 when the smoothing factor `a` falls outside
+            // [0, 1] or when list elements aren't numbers. Same class as the
+            // arg* family above — surface it on Cranelift in lockstep rather
+            // than degenerating silently to nil.
+            | Builtin::Ewm
+            // where cond xs ys raises ILO-R009 on length mismatch or when
+            // cond elements aren't bools. Surface on Cranelift in lockstep
+            // rather than degenerating silently to nil.
+            | Builtin::Where
+            // Calendar arithmetic (0.12.2). All four raise ILO-R009 on
+            // out-of-range epochs; add-mo additionally raises on month
+            // overflow. Without propagation, Cranelift would silently
+            // return nil where tree/VM raise — diverging error parity.
+            | Builtin::AddMo
+            | Builtin::LastDom
+            | Builtin::NextBusinessDay
+            | Builtin::DayOfWeek
+            // Numeric prelude: linspace/ones/rep raise ILO-R009 on a
+            // negative or non-integer count. Tree and VM both surface this;
+            // without the allow-list Cranelift would degenerate to nil and
+            // mask the input bug. Matches chunks/window's error parity.
+            | Builtin::Linspace
+            | Builtin::Ones
+            | Builtin::Rep
     )
 }
 
@@ -17723,6 +18246,43 @@ pub(crate) extern "C" fn jit_jpar(a: u64, span_bits: u64) -> u64 {
 
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
+pub(crate) extern "C" fn jit_jpar_list(a: u64, span_bits: u64) -> u64 {
+    let v = NanVal(a);
+    if !v.is_string() {
+        jit_set_runtime_error_with_span(VmError::Type("jpar-list requires a string"), span_bits);
+        return TAG_NIL;
+    }
+    let text = unsafe {
+        match v.as_heap_ref() {
+            HeapObj::Str(s) => s,
+            _ => unreachable!(),
+        }
+    };
+    match serde_json::from_str::<serde_json::Value>(text) {
+        Ok(serde_json::Value::Array(arr)) => {
+            let items: Vec<NanVal> = arr.into_iter().map(serde_json_to_nanval).collect();
+            NanVal::heap_ok(NanVal::heap_list(items)).0
+        }
+        Ok(other) => {
+            let kind = match &other {
+                serde_json::Value::Object(_) => "object",
+                serde_json::Value::Null => "null",
+                serde_json::Value::Bool(_) => "bool",
+                serde_json::Value::Number(_) => "number",
+                serde_json::Value::String(_) => "string",
+                serde_json::Value::Array(_) => unreachable!(),
+            };
+            NanVal::heap_err(NanVal::heap_string(format!(
+                "jpar-list: expected JSON array, got {kind}"
+            )))
+            .0
+        }
+        Err(e) => NanVal::heap_err(NanVal::heap_string(e.to_string())).0,
+    }
+}
+
+#[cfg(feature = "cranelift")]
+#[unsafe(no_mangle)]
 pub(crate) extern "C" fn jit_rdjl(a: u64, span_bits: u64) -> u64 {
     let v = NanVal(a);
     if !v.is_string() {
@@ -18185,7 +18745,10 @@ pub(crate) extern "C" fn jit_mdel(map: u64, key: u64) -> u64 {
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn jit_prt(v: u64) -> u64 {
     let nv = NanVal(v);
-    println!("{}", nv.to_value());
+    let s = format!("{}", nv.to_value());
+    // +1 for the newline. Keeps --max-output-bytes honest for JIT'd loops.
+    crate::runtime_guard::record_output(s.len() + 1);
+    println!("{s}");
     // passthrough — clone_rc for heap values
     nv.clone_rc();
     v
@@ -18229,6 +18792,31 @@ pub(crate) extern "C" fn jit_prt_main_result(v: u64) -> u64 {
         return 0;
     }
     println!("{}", nv.to_value());
+    nv.clone_rc();
+    0
+}
+
+/// AOT entry-point print, suppression variant. Same as `jit_prt_main_result`
+/// except that the Ok/plain stdout-print arms are suppressed — used when the
+/// entry function's body ends with a `prnt` call (or a loop containing
+/// `prnt`) so the AOT binary does not double-print. The Err arm is
+/// preserved: a top-level `^e` still prints to stderr with exit 1 because
+/// suppression is purely about avoiding duplicated happy-path output, not
+/// about swallowing program failure (matches `print_value`'s plain-mode
+/// behaviour at `src/main.rs`'s `suppress_loop_tail` branch).
+#[cfg(feature = "cranelift")]
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn jit_prt_main_result_suppress(v: u64) -> u64 {
+    let nv = NanVal(v);
+    let tag = v & TAG_MASK;
+    if tag == TAG_ERR {
+        // Err must always print to stderr — see `print_value` comment.
+        eprintln!("{}", nv.to_value());
+        nv.clone_rc();
+        return 1;
+    }
+    // Ok / Number / Bool / Nil / heap-value: suppress the print but still
+    // own the rc-bump so the value is dropped cleanly by `aot_fini`.
     nv.clone_rc();
     0
 }
@@ -21625,11 +22213,12 @@ mod tests {
     }
 
     #[test]
-    fn vm_num_non_string_type_error() {
-        // OP_NUM on number → L1918 ("num requires a string")
-        let source = "f x:n>n;num x";
-        let err = vm_run_err(source, Some("f"), vec![Value::Number(42.0)]);
-        assert!(err.contains("num"), "got: {err}");
+    fn vm_num_polymorphic_on_number() {
+        // Post-polymorphism, OP_NUM on a Number identity-wraps to Ok(n).
+        // The function returns `n` via `num! x` to exercise unwrap.
+        let source = "f x:n>n;num! x";
+        let result = vm_run(source, Some("f"), vec![Value::Number(42.0)]);
+        assert_eq!(result, Value::Number(42.0));
     }
 
     #[test]
@@ -21839,6 +22428,7 @@ mod tests {
                 span: Span::UNKNOWN,
             }],
             source: None,
+            parse_failed_fns: Default::default(),
         };
         let _ = compile(&prog);
     }
@@ -25550,6 +26140,47 @@ mod tests {
             assert!(matches!(err.0, VmError::Type(msg) if msg.contains("jpar")));
         }
 
+        // ── jit_jpar_list (P0b/5f) ─────────────────────────────────────────
+
+        #[test]
+        fn jit_jpar_list_valid_array() {
+            let r = jit_jpar_list(str_val("[1,2,3]"), 0);
+            let rv = NanVal(r);
+            assert!(rv.is_heap());
+            let HeapObj::OkVal(_) = (unsafe { rv.as_heap_ref() }) else {
+                panic!("expected OkVal")
+            };
+        }
+
+        #[test]
+        fn jit_jpar_list_non_array_returns_err() {
+            let r = jit_jpar_list(str_val(r#"{"x":1}"#), 0);
+            let rv = NanVal(r);
+            assert!(rv.is_heap());
+            let HeapObj::ErrVal(_) = (unsafe { rv.as_heap_ref() }) else {
+                panic!("expected ErrVal for non-array JSON")
+            };
+        }
+
+        #[test]
+        fn jit_jpar_list_invalid_json_returns_err() {
+            let r = jit_jpar_list(str_val("not json"), 0);
+            let rv = NanVal(r);
+            assert!(rv.is_heap());
+            let HeapObj::ErrVal(_) = (unsafe { rv.as_heap_ref() }) else {
+                panic!("expected ErrVal for invalid JSON")
+            };
+        }
+
+        #[test]
+        fn jit_jpar_list_non_string_signals_runtime_error() {
+            let _ = jit_take_runtime_error();
+            let r = jit_jpar_list(TAG_NIL, 0);
+            assert!(is_nil(r));
+            let err = jit_take_runtime_error().expect("expected pending error");
+            assert!(matches!(err.0, VmError::Type(msg) if msg.contains("jpar-list")));
+        }
+
         // ── jit_rdjl (batch 7) ─────────────────────────────────────────────
 
         #[test]
@@ -26713,6 +27344,7 @@ mod tests {
                 span: Span::UNKNOWN,
             }],
             source: None,
+            parse_failed_fns: Default::default(),
         };
         let compiled = compile(&prog).unwrap();
         let result = run(&compiled, None, vec![]);
@@ -26755,6 +27387,7 @@ mod tests {
                 span: Span::UNKNOWN,
             }],
             source: None,
+            parse_failed_fns: Default::default(),
         };
         let compiled = compile(&prog).unwrap();
         let provider = DummyProvider;
@@ -28045,8 +28678,15 @@ mod tests {
 
     #[test]
     fn vm_error_call_stack_includes_caller_and_callee() {
-        // f calls g, g divides by zero → ensure call_stack lists [f, g]
-        let prog = parse_program("g x:n>n;/x 0 f>n;g 1");
+        // f calls g, g divides by zero → ensure call_stack lists [f, g].
+        // The `r=g 1;+r 0` shape keeps the call to g out of tail position
+        // (it's bound to a local, and the function's tail expression is
+        // `+r 0`), so OP_CALL is emitted instead of OP_TAILCALL and f's
+        // frame is preserved when g raises. The dedicated TCO behaviour
+        // — that a tail-called callee replaces the caller's frame and
+        // therefore drops the caller from the error stack — is asserted
+        // by `vm_error_call_stack_drops_tail_caller` below.
+        let prog = parse_program("g x:n>n;/x 0 f>n;r=g 1;+r 0");
         let compiled = compile(&prog).unwrap();
         let err = run(&compiled, Some("f"), vec![]).unwrap_err();
         assert!(err.call_stack.contains(&"f".to_string()));
@@ -28057,6 +28697,29 @@ mod tests {
         assert!(
             f_pos < g_pos,
             "expected f before g in call stack: {:?}",
+            err.call_stack
+        );
+    }
+
+    #[test]
+    fn vm_error_call_stack_drops_tail_caller() {
+        // Pins the documented TCO trade-off: when `g` is tail-called from
+        // `f`, OP_TAILCALL replaces f's frame with g's. A runtime error
+        // raised inside g lists only g (and any non-tail-called frames
+        // above f), not f itself. This is the expected, standard TCO
+        // semantics — Scheme, Erlang, and the ilo tree-interpreter
+        // trampoline all behave the same way.
+        let prog = parse_program("g x:n>n;/x 0 f>n;g 1");
+        let compiled = compile(&prog).unwrap();
+        let err = run(&compiled, Some("f"), vec![]).unwrap_err();
+        assert!(
+            err.call_stack.contains(&"g".to_string()),
+            "expected g in call stack: {:?}",
+            err.call_stack
+        );
+        assert!(
+            !err.call_stack.contains(&"f".to_string()),
+            "f should have been replaced by its tail call to g: {:?}",
             err.call_stack
         );
     }
@@ -28213,6 +28876,7 @@ mod tests {
                 },
             ],
             source: None,
+            parse_failed_fns: Default::default(),
         };
         let compiled = compile(&prog).expect("compile ok");
         // Type "pt" should exist exactly once in the registry
@@ -29080,9 +29744,19 @@ mod tests {
 
     #[test]
     fn vm_err_num_wrong_type() {
-        let err = vm_run_err("f x:n>R n t;num x", Some("f"), vec![Value::Number(1.0)]);
+        // Post-polymorphism, num accepts text and number; bool is the
+        // smallest case that still errors. Verifier rejects this at compile
+        // time, so we exercise the runtime path via the parser's `_` (any).
+        // `?{}` arm forces the bool through num at runtime, but for VM the
+        // verifier guards the bool path. Instead, hand-craft a Result Err
+        // expectation through a no-op transformation that the verifier
+        // can't statically rule out.
+        let err = vm_run_err("f x:b>R n t;num x", Some("f"), vec![Value::Bool(true)]);
         assert!(
-            err.contains("num") || err.contains("text") || err.contains("type"),
+            err.contains("num")
+                || err.contains("text")
+                || err.contains("number")
+                || err.contains("type"),
             "got: {err}"
         );
     }
@@ -34267,7 +34941,7 @@ f>n;r=mk 10 20;+r.x r.y";
             is_tool: vec![false],
             ast: None,
         };
-        fastrand::seed(7);
+        crate::rng::seed(7);
         match run(&program, Some("f"), vec![]).expect("rndn should not error") {
             Value::Number(n) => assert!(n.is_finite(), "got non-finite {n}"),
             other => panic!("expected number, got {:?}", other),
@@ -34320,7 +34994,7 @@ f>n;r=mk 10 20;+r.x r.y";
     #[cfg(feature = "cranelift")]
     #[test]
     fn jit_rndn_finite_for_nonzero_sigma() {
-        fastrand::seed(11);
+        crate::rng::seed(11);
         let v = NanVal(jit_rndn(NanVal::number(0.0).0, NanVal::number(1.0).0));
         assert!(v.is_number());
         assert!(v.as_number().is_finite());

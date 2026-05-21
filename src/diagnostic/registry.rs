@@ -519,6 +519,51 @@ inline form gets unreadable.
 "#,
     },
     ErrorEntry {
+        code: "ILO-P102",
+        short: "top-level binding outside a function declaration",
+        long: r#"## ILO-P102: top-level binding outside a function declaration
+
+ilo programs are made of declarations: functions (`name>type;body`), type
+declarations (`type T = ...`), tools (`tool name ...`), or `use` imports.
+A bare `name=expr` is a **binding statement**, not a declaration - it has
+to live inside a function body.
+
+This diagnostic fires when a file starts with (or contains) a top-level
+chain like:
+
+    pts=gen-pts
+    cs0=[[4.8 4.9][6.2 7.1]]
+    cs1=iter cs0 pts
+    cs2=iter cs1 pts
+    prnt cs2
+
+Without a function header to anchor those bindings, the parser either
+fails on the bare `=` (ILO-P003) or - when a prior `name>type;body`
+declaration sits above - slurps the whole chain into that function's
+body, producing a wall of misleading ILO-T005 cascades that point at
+the wrong line.
+
+**Fix: wrap the chain in a `main>_;` entry point.**
+
+    main>_;
+    pts=gen-pts
+    cs0=[[4.8 4.9][6.2 7.1]]
+    cs1=iter cs0 pts
+    cs2=iter cs1 pts
+    prnt cs2
+
+`main>_;` is the conventional entry-point header - the underscore means
+"infer the return type from the body". The bindings inside the body are
+now real let-bindings inside `main`'s scope.
+
+**Why this matters:** ilo is a token-minimal language for agents. The
+manifesto target is that a wrong program produces *one* actionable
+diagnostic, not a cascade. ILO-P102 collapses what used to be 5-50
+ILO-T005 lines (one per slurped binding) into a single pointer at the
+shape fix.
+"#,
+    },
+    ErrorEntry {
         code: "ILO-P021",
         short: "ambiguous double-minus prefix-binop chain",
         long: r#"## ILO-P021: ambiguous double-minus prefix-binop chain
@@ -560,6 +605,30 @@ subtract and negate it explicitly:
 This diagnostic exists to catch a specific silent-miscompile shape;
 single-atom variants like `- -a b` (negate of subtract over atoms) are
 unambiguous and remain accepted.
+"#,
+    },
+    ErrorEntry {
+        code: "ILO-P103",
+        short: "AST nesting depth exceeded",
+        long: r#"## ILO-P103: AST nesting depth exceeded
+
+The parser refused a program whose expression or statement tree nests more
+deeply than the configured cap (default 256). A deeply nested input is
+almost always a denial-of-service payload aimed at `ilo serv` or any other
+context that compiles untrusted source — `((((...((1 + 1))))...))` recurses
+straight through the OS thread stack on a tree-walker parser, and pathological
+verifier complexity follows from there.
+
+The default cap of 256 is far above anything hand-written: the deepest
+expression in the in-tree examples is under 20 levels. If a legitimate program
+genuinely needs more, raise the cap with `--max-ast-depth N` on `ilo`,
+`ilo run`, `ilo check`, `ilo build`, or `ilo serv`:
+
+    ilo --max-ast-depth 1024 run prog.ilo
+    ilo serv --max-ast-depth 1024
+
+**Fix:** flatten the expression by binding intermediates, or override the cap
+deliberately if the depth is real.
 "#,
     },
     // ── Type / Verifier ──────────────────────────────────────────────────────
@@ -612,6 +681,24 @@ Variables are bound by `let` statements or function parameters.
 **Fix:** bind the variable before use, or pass it as a parameter:
 
     f x:n y:n>n;+x y
+
+### Common pitfall: `name.N` after `zip`
+
+ilo has no tuple type. `zip xs ys` returns `L (L n)` — a list of
+two-element lists, not a list of tuples. Agents reaching for
+`tup.0` / `pair.0` tuple-access syntax will see ILO-T004 on the
+unbound `tup` / `pair` name.
+
+**Wrong:**
+
+    g pair:L n>n;+pair.0 pair.1   -- pair.0 works only once pair is bound
+
+If `pair` is unbound (e.g. you wrote `tup.0` without binding `tup`),
+the fix is to bind it from the outer list and index with `at`:
+
+    f>L n;
+      xs=[1 2 3];ys=[10 20 30];zs=zip xs ys;
+      map (pair:L n>n;+at pair 0 at pair 1) zs
 "#,
     },
     ErrorEntry {
@@ -626,6 +713,28 @@ A function was called that is not defined in this file or as a builtin.
     f x:n>n;double x   -- 'double' is not defined
 
 **Fix:** define the function, or correct the spelling.
+
+### Gotcha: call vs binary-op in assignment-RHS
+
+Whitespace-juxtaposition is the call syntax in ilo, so a bare name
+followed by another token in an expression is parsed as a call, not as
+"name then operator". The classic case:
+
+    f xi:n xj:n>n;dx=xj 0-xi;dx
+
+This parses as `dx = (xj 0) - xi` — a call to `xj` with argument `0`,
+whose result is then subtracted from `xi`. Verification fails with
+ILO-T005 because `xj` is a number, not a function.
+
+The agent almost certainly meant one of:
+
+- `dx=-xj xi`              -- subtract: prefix `-`
+- `dx=+xj -0 xi`           -- xj + (0-xi)
+- `nxi=0-xi;dx=+xj nxi`    -- pre-bind the operand
+
+In ilo's prefix-operator world there is no ambiguity once the operator
+leads the expression. The "looks like infix" shape `name expr` is
+always a call.
 "#,
     },
     ErrorEntry {
@@ -1189,6 +1298,35 @@ Use braceless guards `cond expr` for early return, or `ret` inside
 braced guards for explicit early return from loops.
 "#,
     },
+    ErrorEntry {
+        code: "ILO-W002",
+        short: "iterating jpar! result, use jpar-list! instead",
+        long: r#"## ILO-W002: iterating jpar! result
+
+You wrote something like `@x (jpar! body){...}`. `jpar` parses any JSON
+value (object, array, scalar) and returns `R ? t`; after `!` the
+inner value is polymorphic (`?` / Unknown), so the verifier cannot
+prove it is a list. At runtime iteration only succeeds when the JSON
+top-level happens to be an array, and even when it is, the
+polymorphic return type forces you to thread `?` through any wrapping
+function.
+
+**Fix:** use `jpar-list!` instead:
+
+```ilo
+@x (jpar-list! body){prnt x}
+```
+
+`jpar-list` asserts the top-level value is an array, returns
+`R (L _) t`, and after `!` you get `L _`, a list ready to iterate.
+The intent ("this JSON is an array") is captured at parse time, and
+the surrounding function's return type stays clean.
+
+Use plain `jpar` when the JSON shape is unknown and you want to
+inspect it with `?`; use `jpar-list` when you know (or expect) the
+response to be an array.
+"#,
+    },
     // ── Runtime ──────────────────────────────────────────────────────────────
     ErrorEntry {
         code: "ILO-R001",
@@ -1353,6 +1491,59 @@ A hard fault from an AOT binary is always a bug in ilo itself —
 either a codegen issue in the Cranelift AOT backend, or a missing
 runtime check that the other engines apply. Please file an issue
 with the source program and the JSON diagnostic.
+"#,
+    },
+    ErrorEntry {
+        code: "ILO-R016",
+        short: "wall-clock runtime budget exceeded",
+        long: r#"## ILO-R016: wall-clock runtime budget exceeded
+
+`ilo run` aborted because the program ran for longer than the
+configured wall-clock budget (default 60 s). The watchdog thread
+fires this when `elapsed > --max-runtime SECS`, writes a structured
+diagnostic to stderr, and exits with code 1.
+
+By far the most common cause is an infinite loop: a `wh` body that
+doesn't update its loop variable, or a recursion with no base case.
+The mandelbrot persona run that surfaced this guard missed a
+`col=col+1` increment and would have spun forever - the cap turns
+that into a clear signal the agent can act on.
+
+Override with `--max-runtime N` (seconds; 0 disables) when a
+legitimate program needs longer. Long-running batch jobs and
+training loops are the normal reason to bump or disable it.
+
+```
+ilo --max-runtime 300 main.ilo    -- allow 5 minutes
+ilo --max-runtime 0   main.ilo    -- disable the cap
+```
+"#,
+    },
+    ErrorEntry {
+        code: "ILO-R017",
+        short: "stdout output budget exceeded",
+        long: r#"## ILO-R017: stdout output budget exceeded
+
+`ilo run` aborted because the program wrote more bytes to stdout
+than the configured budget (default ~100 MB). Every `prnt` call in
+every engine (tree, VM, Cranelift JIT) charges its output against
+the budget; when the total exceeds `--max-output-bytes`, the next
+write triggers a structured diagnostic to stderr and exits 1.
+
+The most common cause is a loop calling `prnt` without termination
+or without backing off: an unbounded `wh` body, a recursion with
+no base case, or a missing increment on the loop variable. The
+budget keeps a runaway from filling disk or the agent transcript
+with megabytes of useless output before anyone notices.
+
+Override with `--max-output-bytes N` (bytes; 0 disables) when a
+legitimate program produces a lot of output - typically structured
+data dumps, log replay, or a code-generation pipeline.
+
+```
+ilo --max-output-bytes 1073741824 main.ilo    -- raise to 1 GB
+ilo --max-output-bytes 0 main.ilo              -- disable the cap
+```
 "#,
     },
     ErrorEntry {

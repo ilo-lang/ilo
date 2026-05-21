@@ -167,3 +167,79 @@ fn multiline_fn_body_vm() {
 fn multiline_fn_body_cranelift() {
     check_all("--jit");
 }
+
+// CRLF line-ending parity. Windows editors produce \r\n; the normaliser
+// must strip the \r silently so the source tokenises identically to \n.
+// Construct the source with literal \r\n sequences so this test is
+// cross-platform (the file itself always uses \n here on disk).
+fn crlf(lf_src: &str) -> String {
+    lf_src.replace('\n', "\r\n")
+}
+
+#[test]
+fn crlf_two_statement_body_vm() {
+    // Two-statement body with CRLF — must run identically to the LF version.
+    let src = crlf(ML_INDENTED);
+    assert_eq!(
+        run_file("--vm", &src, "f"),
+        "hello",
+        "CRLF two-statement body (vm)"
+    );
+}
+
+#[test]
+fn crlf_five_statement_body_vm() {
+    // Five-statement body, CRLF line endings.
+    let src = crlf(ML_LIST_LITERAL);
+    assert_eq!(
+        run_file("--vm", &src, "nums"),
+        "[1, 2, 3]",
+        "CRLF five-statement body (vm)"
+    );
+}
+
+#[test]
+fn crlf_list_literal_no_split_vm() {
+    // Multi-line list literal with CRLF — items must NOT be treated as
+    // separate statements. bracket_depth suppresses the newline-to-semi
+    // rule inside [...] regardless of whether the newline is \n or \r\n.
+    let src = crlf(ML_LIST_LEADING_COMMA);
+    assert_eq!(
+        run_file("--vm", &src, "nums"),
+        "[1, 2, 3]",
+        "CRLF list literal not split (vm)"
+    );
+}
+
+#[test]
+fn crlf_paren_continuation_vm() {
+    // Multi-line paren expression with CRLF.
+    let src = crlf(ML_PAREN);
+    assert_eq!(
+        run_file("--vm", &src, "gp 5"),
+        "6",
+        "CRLF paren continuation (vm)"
+    );
+}
+
+#[test]
+#[cfg(feature = "cranelift")]
+fn crlf_two_statement_body_jit() {
+    let src = crlf(ML_INDENTED);
+    assert_eq!(
+        run_file("--jit", &src, "f"),
+        "hello",
+        "CRLF two-statement body (jit)"
+    );
+}
+
+#[test]
+#[cfg(feature = "cranelift")]
+fn crlf_list_literal_no_split_jit() {
+    let src = crlf(ML_LIST_LEADING_COMMA);
+    assert_eq!(
+        run_file("--jit", &src, "nums"),
+        "[1, 2, 3]",
+        "CRLF list literal not split (jit)"
+    );
+}

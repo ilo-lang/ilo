@@ -547,8 +547,9 @@ fn emit_expr(out: &mut String, level: usize, expr: &Expr) -> String {
         } => {
             if function == "num" && args.len() == 1 {
                 let arg = emit_expr(out, level, &args[0]);
+                // num is polymorphic: numeric input is identity; text input parses.
                 let call = format!(
-                    "(lambda s: (\"ok\", float(s)) if s.replace('.','',1).replace('-','',1).isdigit() else (\"err\", s))({})",
+                    "((lambda v: (\"ok\", float(v)) if isinstance(v, (int, float)) and not isinstance(v, bool) else (lambda s: (\"ok\", float(s)) if s.strip().replace('.','',1).replace('-','',1).isdigit() else (\"err\", s))(v))({}))",
                     arg
                 );
                 return if unwrap.is_any() {
@@ -744,6 +745,21 @@ fn emit_expr(out: &mut String, level: usize, expr: &Expr) -> String {
                     call
                 };
             }
+            if function == "jpar-list" && args.len() == 1 {
+                let arg = emit_expr(out, level, &args[0]);
+                // Map Python json types to the same names the tree/VM/JIT
+                // backends use (object/null/bool/number/string), so error
+                // text is identical across backends.
+                let call = format!(
+                    "(lambda s: (lambda v: (\"ok\", v) if isinstance(v, list) else (\"err\", \"jpar-list: expected JSON array, got \" + ({{dict: \"object\", type(None): \"null\", bool: \"bool\", int: \"number\", float: \"number\", str: \"string\"}}.get(type(v), type(v).__name__))))(__import__('json').loads(s)))({})",
+                    arg
+                );
+                return if unwrap.is_any() {
+                    format!("_ilo_unwrap({})", call)
+                } else {
+                    call
+                };
+            }
 
             // Path manipulation builtins — pure-text Unix forward-slash
             // semantics. POSIX dirname/basename + list-form pathjoin. See
@@ -788,6 +804,41 @@ fn emit_expr(out: &mut String, level: usize, expr: &Expr) -> String {
                 } else {
                     call
                 };
+            }
+            // Filesystem metadata primitives (0.12.1). Same Result tier as
+            // `rd` — emit a tagged tuple and route through `_ilo_unwrap` if
+            // the call site uses `!`. Predicates return bare bool.
+            if function == "fsize" && args.len() == 1 {
+                let arg = emit_expr(out, level, &args[0]);
+                let call = format!(
+                    "(lambda p: (\"err\", f\"{{p}}: is a directory\") if __import__('os.path', fromlist=['']).isdir(p) else ((\"ok\", float(__import__('os').stat(p).st_size)) if __import__('os.path', fromlist=['']).exists(p) else (\"err\", f\"{{p}}: no such file\")))({})",
+                    arg
+                );
+                return if unwrap.is_any() {
+                    format!("_ilo_unwrap({})", call)
+                } else {
+                    call
+                };
+            }
+            if function == "mtime" && args.len() == 1 {
+                let arg = emit_expr(out, level, &args[0]);
+                let call = format!(
+                    "(lambda p: (\"ok\", float(__import__('os').stat(p).st_mtime)) if __import__('os.path', fromlist=['']).exists(p) else (\"err\", f\"{{p}}: no such file\"))({})",
+                    arg
+                );
+                return if unwrap.is_any() {
+                    format!("_ilo_unwrap({})", call)
+                } else {
+                    call
+                };
+            }
+            if function == "isfile" && args.len() == 1 {
+                let arg = emit_expr(out, level, &args[0]);
+                return format!("__import__('os.path', fromlist=['']).isfile({})", arg);
+            }
+            if function == "isdir" && args.len() == 1 {
+                let arg = emit_expr(out, level, &args[0]);
+                return format!("__import__('os.path', fromlist=['']).isdir({})", arg);
             }
             if function == "rnd" && args.is_empty() {
                 return "(__import__('random').random())".to_string();
@@ -2108,6 +2159,7 @@ mod tests {
                 span: Span::UNKNOWN,
             }],
             source: None,
+            parse_failed_fns: Default::default(),
         };
         let py = emit(&prog);
         assert!(
@@ -2187,6 +2239,7 @@ mod tests {
         let mut prog = Program {
             declarations: vec![],
             source: None,
+            parse_failed_fns: Default::default(),
         };
         prog.declarations.push(Decl::Use {
             path: "x.@".into(),

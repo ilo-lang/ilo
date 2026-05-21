@@ -1,0 +1,43 @@
+-- Multi-line function bodies: newlines inside an indented function body
+-- act as statement separators, identical to `;`. Write each statement on
+-- its own line instead of cramming everything onto one `;`-delimited line.
+
+-- Two-statement body: equivalent to `double-add x:n>n;a=x+x;+a 1`
+double-add x:n>n
+  a = x + x
+  + a 1
+
+-- Five-statement body with multiple bindings.
+compute x:n y:n>n
+  total = x + y
+  product = x * y
+  half = / total 2
+  diff = product - half
+  diff
+
+-- Multi-line list literal inside a function body. Newlines inside `[...]`
+-- are treated as whitespace, NOT statement separators, so the list is
+-- parsed as a single expression.
+make-list a:n b:n c:n>L n
+  xs = [
+    a
+    b
+    c
+  ]
+  xs
+
+-- Pipe chain across continuation lines. A line starting with `>>` is
+-- never a statement start, so no `;` is injected before it.
+pipe-len x:n>n
+  x
+    >>str
+    >>len
+
+-- run: double-add 5
+-- out: 11
+-- run: compute 3 4
+-- out: 8.5
+-- run: make-list 10 20 30
+-- out: [10, 20, 30]
+-- run: pipe-len 42
+-- out: 2

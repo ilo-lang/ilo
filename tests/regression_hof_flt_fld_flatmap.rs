@@ -142,10 +142,10 @@ fn fld_text_concat() {
 
 // Repeat each number n times: 2 -> [2, 2], 3 -> [3, 3, 3].
 const FLATMAP_USER_REP: &str =
-    "rep n:n>L n;xs=[];@i 0..n{xs=+=xs n};xs\nmain xs:L n>L n;flatmap rep xs";
+    "dup n:n>L n;xs=[];@i 0..n{xs=+=xs n};xs\nmain xs:L n>L n;flatmap dup xs";
 
 #[test]
-fn flatmap_user_fn_repeat_tree_vm_cranelift() {
+fn flatmap_user_fn_dupeat_tree_vm_cranelift() {
     run_all(FLATMAP_USER_REP, "main", &["[1,2,3]"], "[1, 2, 2, 3, 3, 3]");
 }
 
@@ -156,7 +156,7 @@ fn flatmap_user_fn_empty_outer() {
 
 #[test]
 fn flatmap_user_fn_empty_inner_results() {
-    // rep 0 returns [], so every outer element contributes nothing.
+    // dup 0 returns [], so every outer element contributes nothing.
     // Pins that the inner FOREACHPREP correctly short-circuits on each
     // empty result without leaving the outer loop in a bad state.
     run_all(FLATMAP_USER_REP, "main", &["[0,0,0]"], "[]");

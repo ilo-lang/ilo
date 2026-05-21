@@ -43,6 +43,37 @@ pub struct Global {
     /// Suppress idiomatic hints after execution.
     #[arg(long = "no-hints", short = 'n', global = true)]
     pub no_hints: bool,
+
+    /// Suppress program stdout during execution. Primarily meant for
+    /// `ilo <file> --bench`: combined with `--json` it lets the persona
+    /// harness consume the bench JSON envelope without it being drowned in
+    /// the program's own `prnt` / `prnv` / `jprn` output. Stderr is
+    /// untouched so errors still surface. The bench JSON envelope itself
+    /// is written to stdout *outside* the silenced region.
+    #[arg(long, short = 's', global = true)]
+    pub silent: bool,
+
+    /// Cap on AST nesting depth. Applies to every subcommand that parses source
+    /// (`run`, `check`, `build`, `serv`). Default 256 — far above anything
+    /// hand-written, low enough to keep `ilo serv` safe from `((((...))))`
+    /// DoS payloads against the parser stack. Raise only if a legitimate
+    /// program needs deeper nesting.
+    #[arg(long = "max-ast-depth", global = true)]
+    pub max_ast_depth: Option<usize>,
+
+    /// Wall-clock budget for `ilo run` in seconds. Default 60. Set to 0 to
+    /// disable. A runaway loop (missing increment, recursion with no base
+    /// case) aborts with `ILO-R016` once the budget is hit instead of
+    /// burning CPU and producing megabytes of useless stdout.
+    #[arg(long = "max-runtime", global = true)]
+    pub max_runtime: Option<u64>,
+
+    /// Maximum stdout bytes for `ilo run`. Default ~100 MB. Set to 0 to
+    /// disable. A loop calling `prnt` without termination aborts with
+    /// `ILO-R017` once the budget is hit, instead of filling the agent
+    /// transcript with garbage.
+    #[arg(long = "max-output-bytes", global = true)]
+    pub max_output_bytes: Option<u64>,
 }
 
 #[derive(Subcommand, Debug)]
@@ -159,6 +190,24 @@ pub struct RunArgs {
     /// MCP server config path.
     #[arg(long = "mcp")]
     pub mcp_path: Option<String>,
+
+    /// Allow network access. Comma-separated host list, or `*` for all.
+    /// Omitting this flag leaves behaviour unchanged (permissive).
+    /// Passing the flag with an empty value (`--allow-net=`) blocks all net.
+    #[arg(long = "allow-net", value_name = "HOSTS")]
+    pub allow_net: Option<String>,
+
+    /// Allow file reads. Comma-separated path prefix list, or `*` for all.
+    #[arg(long = "allow-read", value_name = "PATHS")]
+    pub allow_read: Option<String>,
+
+    /// Allow file writes. Comma-separated path prefix list, or `*` for all.
+    #[arg(long = "allow-write", value_name = "PATHS")]
+    pub allow_write: Option<String>,
+
+    /// Allow process execution. Comma-separated command list, or `*` for all.
+    #[arg(long = "allow-run", value_name = "CMDS")]
+    pub allow_run: Option<String>,
 
     /// Remaining positional args: optional function name + call arguments.
     #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
@@ -890,6 +939,10 @@ mod tests {
             ast: false,
             tools_path: None,
             mcp_path: None,
+            allow_net: None,
+            allow_read: None,
+            allow_write: None,
+            allow_run: None,
             rest: vec![],
         };
         assert_eq!(r.effective_engine(), Engine::Default);
@@ -906,6 +959,10 @@ mod tests {
             text: false,
             json: false,
             no_hints: false,
+            silent: false,
+            max_ast_depth: None,
+            max_runtime: None,
+            max_output_bytes: None,
         };
         // In test environment stderr is typically not a TTY → should return Json.
         // We can't reliably test the TTY branch, but we can test that explicit_json
@@ -928,6 +985,10 @@ mod tests {
             text: false,
             json: true,
             no_hints: false,
+            silent: false,
+            max_ast_depth: None,
+            max_runtime: None,
+            max_output_bytes: None,
         };
         assert!(g.explicit_json());
         assert_eq!(g.output_mode(), OutputMode::Json);
@@ -940,6 +1001,10 @@ mod tests {
             text: true,
             json: false,
             no_hints: false,
+            silent: false,
+            max_ast_depth: None,
+            max_runtime: None,
+            max_output_bytes: None,
         };
         assert!(!g.explicit_json());
         assert_eq!(g.output_mode(), OutputMode::Text);
@@ -952,6 +1017,10 @@ mod tests {
             text: false,
             json: false,
             no_hints: false,
+            silent: false,
+            max_ast_depth: None,
+            max_runtime: None,
+            max_output_bytes: None,
         };
         assert!(!g.explicit_json());
         assert_eq!(g.output_mode(), OutputMode::Ansi);

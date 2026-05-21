@@ -1,0 +1,16 @@
+-- Demonstrates `ilo --bench --json --silent` (pending #5bp).
+-- The function `noisy` prints on every call. Without `--silent` the
+-- benchmark would emit 40k+ lines of stdout noise around the four bench
+-- JSON envelopes. With `--silent`, only the JSON envelopes appear on
+-- stdout, so an agent harness (e.g. the persona cost rollup) can read
+-- them line-by-line without scrubbing through program output.
+--
+-- Run human-readable:   ilo examples/bench-json-silent.ilo --bench noisy 3 --text
+-- Run JSON for harness: ilo examples/bench-json-silent.ilo --bench noisy 3 --json --silent
+
+noisy x:n>n;prnt x;*x 2
+
+main>n;*3 2
+
+-- run: main
+-- out: 6

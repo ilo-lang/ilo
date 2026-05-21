@@ -1,0 +1,29 @@
+-- jpar!: parse JSON and auto-unwrap the Result in one step.
+-- Saves the `?r{~v:v;^e:^e}` boilerplate that every JSON-parsing function
+-- would otherwise need after `jpar`. The enclosing function must return R
+-- (Propagate) — `jpar!!` panics instead, for scripts that treat parse
+-- failure as fatal.
+--
+-- Mirrors the existing `!` family (`rd!`, `get!`, `pst!`, `num!`, ...).
+-- Cross-engine: tree / VM / Cranelift produce identical output.
+
+-- Happy path: parse, extract field, wrap back as Ok.
+get-name body:t>R t t;r=jpar! body;~r.name
+
+get-age body:t>R n t;r=jpar! body;~r.age
+
+-- Err path: invalid JSON propagates out of the function before `~r.tag`
+-- runs. Same shape as `jpar body ?r{~v:v;^e:^e}` but ~15 tokens shorter.
+try-parse body:t>R t t;r=jpar! body;~r.tag
+
+-- run: get-name {"name":"alice","age":30}
+-- out: alice
+
+-- run: get-age {"name":"alice","age":30}
+-- out: 30
+
+-- run: try-parse {"tag":"ok"}
+-- out: ok
+
+-- run: try-parse not-json
+-- err: ^expected ident at line 1 column 2

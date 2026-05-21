@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 pub mod source_map;
 pub use source_map::SourceMap;
@@ -431,6 +432,26 @@ pub struct Program {
     pub declarations: Vec<Decl>,
     #[serde(skip)]
     pub source: Option<String>,
+    /// Function names whose declaration was started but failed to parse to
+    /// completion (header recognised, then header/body/return-type errored).
+    /// Populated by `parser::parse` and consumed by `verify::verify` to skip
+    /// cascading type errors against these functions: their bodies are
+    /// suppressed from type-checking, and `undefined function` diagnostics
+    /// at call sites collapse to one cross-reference rather than firing
+    /// per call. Maps name -> (code, line, col) of the originating parse
+    /// error so cross-reference hints can point back at the root cause.
+    #[serde(skip)]
+    pub parse_failed_fns: HashMap<String, ParseFailRef>,
+}
+
+/// Identity of the parse error that disabled type-checking for a function.
+/// Carried on `Program.parse_failed_fns` so verify can render hints like
+/// "definition failed to parse - see ILO-P009 at line 12" without re-reading
+/// the parse-error list.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ParseFailRef {
+    pub code: &'static str,
+    pub span: Span,
 }
 
 // Builtin aliases. Each maps (alias, canonical_name). Programs using the
@@ -1066,6 +1087,7 @@ mod tests {
         let prog = Program {
             declarations: vec![],
             source: Some("f x:n>n;x".to_string()),
+            parse_failed_fns: Default::default(),
         };
         let json = serde_json::to_string(&prog).unwrap();
         assert!(!json.contains("source"));
@@ -1097,6 +1119,7 @@ mod tests {
                 span: Span::UNKNOWN,
             }],
             source: None,
+            parse_failed_fns: Default::default(),
         };
         resolve_aliases(&mut prog);
         let Decl::Function { body, .. } = &prog.declarations[0] else {
@@ -1135,6 +1158,7 @@ mod tests {
                 span: Span::UNKNOWN,
             }],
             source: None,
+            parse_failed_fns: Default::default(),
         };
         resolve_aliases(&mut prog);
         let Decl::Function { body, .. } = &prog.declarations[0] else {
@@ -1165,6 +1189,7 @@ mod tests {
                 span: Span::UNKNOWN,
             }],
             source: None,
+            parse_failed_fns: Default::default(),
         };
         resolve_aliases(&mut prog);
         let Decl::Function { body, .. } = &prog.declarations[0] else {
@@ -1196,6 +1221,7 @@ mod tests {
                 span: Span::UNKNOWN,
             }],
             source: None,
+            parse_failed_fns: Default::default(),
         };
         resolve_aliases(&mut prog);
         let Decl::Function { body, .. } = &prog.declarations[0] else {
@@ -1222,6 +1248,7 @@ mod tests {
                 span: Span::UNKNOWN,
             }],
             source: None,
+            parse_failed_fns: Default::default(),
         };
         resolve_aliases(&mut prog);
         assert!(matches!(&prog.declarations[0], Decl::Function { body, .. } if body.len() == 2));
@@ -1250,6 +1277,7 @@ mod tests {
                 span: Span::UNKNOWN,
             }],
             source: None,
+            parse_failed_fns: Default::default(),
         };
         resolve_aliases(&mut prog);
         let Decl::Function { body, .. } = &prog.declarations[0] else {
@@ -1290,6 +1318,7 @@ mod tests {
                 span: Span::UNKNOWN,
             }],
             source: None,
+            parse_failed_fns: Default::default(),
         };
         resolve_aliases(&mut prog);
         let Decl::Function { body, .. } = &prog.declarations[0] else {
@@ -1330,6 +1359,7 @@ mod tests {
                 span: Span::UNKNOWN,
             }],
             source: None,
+            parse_failed_fns: Default::default(),
         };
         resolve_aliases(&mut prog);
         let Decl::Function { body, .. } = &prog.declarations[0] else {
@@ -1377,6 +1407,7 @@ mod tests {
                 span: Span::UNKNOWN,
             }],
             source: None,
+            parse_failed_fns: Default::default(),
         };
         resolve_aliases(&mut prog);
         let Decl::Function { body, .. } = &prog.declarations[0] else {
@@ -1410,6 +1441,7 @@ mod tests {
                 span: Span { start: 0, end: 13 },
             }],
             source: Some("f x:n>n;x".to_string()),
+            parse_failed_fns: Default::default(),
         };
         let json = serde_json::to_string_pretty(&prog).unwrap();
         let deserialized: Program = serde_json::from_str(&json).unwrap();
@@ -1441,6 +1473,7 @@ mod tests {
                 span: Span::UNKNOWN,
             }],
             source: None,
+            parse_failed_fns: Default::default(),
         };
         // resolve_aliases replaces known aliases; "len" → "length" (if aliased) or stays
         resolve_aliases(&mut prog);
@@ -1477,6 +1510,7 @@ mod tests {
                 span: Span::UNKNOWN,
             }],
             source: None,
+            parse_failed_fns: Default::default(),
         };
         resolve_aliases(&mut prog);
         let Decl::Function { body, .. } = &prog.declarations[0] else {

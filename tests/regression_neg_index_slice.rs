@@ -68,20 +68,43 @@ fn slc_list_last_two() {
     check_all_engines("f>L n;xs=[10,20,30,40,50];slc xs -2 5", "f", "[40, 50]");
 }
 
-// `slc xs 0 -1` drops the last element.
+// `slc xs 0 -1` is the `-1 = "to end"` sugar shape (start non-negative,
+// end exactly `-1`): returns the whole list. See `resolve_slc_end` for the
+// rule and the negative-start tests below for the Python-style behaviour
+// that's preserved when start is also negative.
 #[test]
-fn slc_list_neg_end_drops_last() {
+fn slc_list_pos_start_neg_one_end_is_full_list() {
     check_all_engines(
         "f>L n;xs=[10,20,30,40,50];slc xs 0 -1",
         "f",
-        "[10, 20, 30, 40]",
+        "[10, 20, 30, 40, 50]",
     );
 }
 
-// `slc xs -3 -1` middle slice from negatives.
+// `slc xs 2 -1` with non-negative start and end == -1: still "to end".
 #[test]
-fn slc_list_neg_both_bounds() {
+fn slc_list_mid_start_neg_one_end_is_to_end() {
+    check_all_engines("f>L n;xs=[10,20,30,40,50];slc xs 2 -1", "f", "[30, 40, 50]");
+}
+
+// `slc xs -3 -1` keeps Python-style semantics because start is negative:
+// end resolves to `len - 1 = 4`, so the result is the penultimate window.
+#[test]
+fn slc_list_neg_both_bounds_keeps_python_style() {
     check_all_engines("f>L n;xs=[10,20,30,40,50];slc xs -3 -1", "f", "[30, 40]");
+}
+
+// Boundary: `slc xs -1 -1` keeps Python-style (start is negative): empty.
+#[test]
+fn slc_list_neg_one_neg_one_python_style() {
+    check_all_engines("f>L n;xs=[10,20,30,40,50];slc xs -1 -1", "f", "[]");
+}
+
+// `slc xs 0 -2` is NOT sugar (end is -2, not -1): keeps Python-style,
+// drops the last two elements. Pin so the sugar stays narrow.
+#[test]
+fn slc_list_neg_two_end_keeps_python_style() {
+    check_all_engines("f>L n;xs=[10,20,30,40,50];slc xs 0 -2", "f", "[10, 20, 30]");
 }
 
 // `slc xs -len 0` is empty (start clamps to 0, end clamps to 0).
@@ -118,12 +141,25 @@ fn slc_list_pos_end_past_len_clamps() {
     check_all_engines("f>L n;xs=[10,20,30];slc xs 0 99", "f", "[10, 20, 30]");
 }
 
-// Quant-trader fencepost: previously needed `npm=- np 1;at eq npm`. Now
-// `slc eq -1 np` drops the last element cleanly.
+// Quant-trader fencepost: `slc eq 0 -1` no longer "drops the last element"
+// (post #15: `-1` end with non-negative start is "to end" sugar — see
+// `resolve_slc_end`). For the drop-last shape, use `take -1 eq` instead;
+// pinning both here keeps agents on the happy path.
 #[test]
-fn slc_quant_trader_fencepost() {
+fn slc_quant_trader_sugar_is_full_list() {
     check_all_engines(
         "f>L n;eq=[100,101,102,103,99];slc eq 0 -1",
+        "f",
+        "[100, 101, 102, 103, 99]",
+    );
+}
+
+#[test]
+fn take_neg_one_is_drop_last() {
+    // Drop-last shape now goes through `take -1`, which keeps Python-style
+    // negative semantics (see `resolve_take_count`).
+    check_all_engines(
+        "f>L n;eq=[100,101,102,103,99];take -1 eq",
         "f",
         "[100, 101, 102, 103]",
     );
@@ -131,9 +167,23 @@ fn slc_quant_trader_fencepost() {
 
 // ── slc: negative bounds on text ──────────────────────────────────────────
 
+// Text mirror of `slc_list_pos_start_neg_one_end_is_full_list`: with a
+// non-negative start, end == -1 is "to end of string" sugar.
 #[test]
-fn slc_text_neg_end_drops_last_char() {
-    check_all_engines("f>t;slc \"hello\" 0 -1", "f", "hell");
+fn slc_text_pos_start_neg_one_end_is_full_string() {
+    check_all_engines("f>t;slc \"hello\" 0 -1", "f", "hello");
+}
+
+#[test]
+fn slc_text_pos_start_neg_one_end_mid() {
+    check_all_engines("f>t;slc \"hello\" 2 -1", "f", "llo");
+}
+
+// `slc s 0 -2` keeps Python-style (drops the last two chars). Pin so the
+// sugar stays narrow on text too.
+#[test]
+fn slc_text_neg_two_end_keeps_python_style() {
+    check_all_engines("f>t;slc \"hello\" 0 -2", "f", "hel");
 }
 
 #[test]
@@ -141,8 +191,11 @@ fn slc_text_last_three() {
     check_all_engines("f>t;slc \"hello\" -3 5", "f", "llo");
 }
 
+// Negative start with end == -1: sugar does NOT fire (start is negative),
+// so Python-style applies. start clamps to 0, end resolves to 4, so we get
+// `hell`.
 #[test]
-fn slc_text_neg_beyond_len_clamps() {
+fn slc_text_neg_beyond_len_clamps_python_style() {
     check_all_engines("f>t;slc \"hello\" -99 -1", "f", "hell");
 }
 

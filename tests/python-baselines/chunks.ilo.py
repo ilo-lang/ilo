@@ -7,7 +7,7 @@ def exact() -> list[list[float]]:
 def big() -> list[list[float]]:
     return chunks(10, [1, 2, 3])
 
-def ones() -> list[list[float]]:
+def singles() -> list[list[float]]:
     return chunks(1, [1, 2, 3])
 
 def empty() -> list[list[float]]:

@@ -1,0 +1,37 @@
+-- HTTP verb cluster (#5z): `put`, `pat`, `del`, `hed`, `opt` mirror `pst`/`get`.
+-- PUT and PAT take (url, body) + optional `M t t` headers, like `pst`.
+-- DEL, HED, and OPT take (url) + optional `M t t` headers, like `get`.
+-- All return `R t t`. All accept the `!` and `!!` bang sugar.
+--
+-- The verb cluster is intentionally limited to the seven safe methods —
+-- GET / POST / PUT / PATCH / DELETE / HEAD / OPTIONS. TRACE and CONNECT
+-- are out of scope (CONNECT is for HTTP tunnelling, TRACE is footgun-grade).
+--
+-- Network unreachable on a closed loopback port is a stable Err across OS/CI,
+-- so the bang form propagates and we match on the Result tag for portability.
+
+inner-put>R t t;v=put! "http://127.0.0.1:1" "body";~v
+probe-put>t;r=inner-put;?r{~_:"unexpected ok";^_:"err propagated"}
+
+inner-pat>R t t;v=pat! "http://127.0.0.1:1" "patch";~v
+probe-pat>t;r=inner-pat;?r{~_:"unexpected ok";^_:"err propagated"}
+
+inner-del>R t t;v=del! "http://127.0.0.1:1";~v
+probe-del>t;r=inner-del;?r{~_:"unexpected ok";^_:"err propagated"}
+
+inner-hed>R t t;v=hed! "http://127.0.0.1:1";~v
+probe-hed>t;r=inner-hed;?r{~_:"unexpected ok";^_:"err propagated"}
+
+inner-opt>R t t;v=opt! "http://127.0.0.1:1";~v
+probe-opt>t;r=inner-opt;?r{~_:"unexpected ok";^_:"err propagated"}
+
+-- run: probe-put
+-- out: err propagated
+-- run: probe-pat
+-- out: err propagated
+-- run: probe-del
+-- out: err propagated
+-- run: probe-hed
+-- out: err propagated
+-- run: probe-opt
+-- out: err propagated

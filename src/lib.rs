@@ -4,11 +4,13 @@
 pub mod ast;
 pub mod backend;
 pub mod builtins;
+pub mod caps;
 pub mod cli_parse;
 pub mod codegen;
 pub mod diagnostic;
 pub mod graph;
 pub mod hir;
+pub mod rng;
 // `interpreter` is soft-deprecated as a user-selectable engine but stays as
 // the internal runtime for HOF callbacks that VM/Cranelift bail to, plus
 // shared runtime primitives (Value, MapKey, RuntimeError, math helpers).
@@ -23,6 +25,7 @@ pub mod hir;
 pub mod interpreter;
 pub mod lexer;
 pub mod parser;
+pub mod runtime_guard;
 pub mod tools;
 pub mod verify;
 pub mod vm;

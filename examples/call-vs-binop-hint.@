@@ -1,0 +1,23 @@
+-- Whitespace-juxtaposition is call syntax in ilo, so any bare name followed
+-- by another token in an expression parses as a call, not as "name then
+-- operator". The persona-induced repro:
+--
+--     dx=xj 0-xi    -- parses as `dx = (xj 0) - xi`, a call to xj
+--
+-- ILO-T005 now emits a tailored hint pointing at the prefix-operator
+-- alternatives. This example demonstrates the canonical shapes that the
+-- agent should reach for instead.
+--
+-- Pending #5au.
+
+-- Shape 1: direct subtract — `-xj xi` means `xj - xi`.
+sub-xy xi:n xj:n>n;-xj xi
+
+-- Shape 2: pre-bind the operand, then operate — most readable for agents
+-- where the operand is a non-trivial subexpression.
+sub-prebind xi:n xj:n>n;nxi=0-xi;+xj nxi
+
+-- run: sub-xy 1 5
+-- out: 4
+-- run: sub-prebind 1 5
+-- out: 4
