@@ -39,6 +39,12 @@ jobs:
       # but this step is the canonical check using the same tokeniser
       # an agent host uses to size the context window.
       run: python3 scripts/check-skill-tokens.py
+    - name: Shellcheck install.sh
+      run: shellcheck -s sh scripts/install/install.sh
+    - name: Verify install.sh sha256 verification (offline regression test)
+      # Stubs curl and exercises happy / tamper / missing-asset paths so a
+      # refactor can't silently drop the supply-chain integrity check.
+      run: bash scripts/install/test-install-sh.sh
 
   skill-validate:
     # Validate skills/ilo/SKILL.md against the agentskills.io reference
