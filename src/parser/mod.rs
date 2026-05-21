@@ -1412,6 +1412,20 @@ impl Parser {
             // expression-position branch above and the `?=cond a b` family in
             // `parse_prefix_ternary`.
             let first = self.parse_prefix_binop_operand()?;
+            // Before consuming the second operand, intercept a `{` to give a
+            // context-aware hint (match-on-value mis-parenthesisation, or the
+            // `?h cond{...}` vs the three canonical forms). Otherwise the
+            // bare ILO-P009 "expected expression, got `{`" surfaces with no
+            // recovery hint, costing a re-prompt or worse (cron-explainer
+            // burned 167k tokens partly on this shape; the date/time persona
+            // cluster all tripped on the `?h cond{...}` variant).
+            let subj_src = subject_source(subj);
+            let first_src = subject_source(&first);
+            if let Some(err) =
+                self.prefix_ternary_brace_hint(subj_src.as_deref(), first_src.as_deref())
+            {
+                return Err(err);
+            }
             let second = self.parse_prefix_binop_operand()?;
             // `?h` general prefix-ternary: when the subject ident is literally
             // `h` and a third operand follows, reinterpret `?h` as a fixed
@@ -1518,6 +1532,74 @@ impl Parser {
             pos += 1;
         }
         false
+    }
+
+    /// When parsing a prefix-ternary operand and the next token is `{`,
+    /// produce a context-aware ILO-P009 instead of the bare "expected
+    /// expression, got `{`". Two shapes are common:
+    ///
+    /// 1. `?<subj> <oper>{<lit>:body; ...}` — agent reached for a Rust-style
+    ///    match on a value but used a leading prefix-ternary keyword shape
+    ///    instead of the canonical `?<subj>{...}` (single-token subject) or
+    ///    `?(<expr>){...}` (multi-token). Hint at the parenthesised form using
+    ///    the parsed operand as the most-likely-intended subject.
+    /// 2. `?h cond{body}` (non-arm brace) — agent reached for braced-
+    ///    conditional / brace-ternary execution but used the `?h cond a b`
+    ///    prefix-ternary keyword. Point at the right shape for each intent
+    ///    (drop the braces for `?h cond a b`; drop the `?h` prefix for
+    ///    `cond{body}` braced-conditional).
+    ///
+    /// Returns `None` if peek isn't `{`, leaving the caller to fall through
+    /// to the normal operand parse (and its own ILO-P009 if the token is
+    /// invalid in a different way).
+    fn prefix_ternary_brace_hint(
+        &self,
+        subj_src: Option<&str>,
+        first_operand_src: Option<&str>,
+    ) -> Option<ParseError> {
+        if self.peek() != Some(&Token::LBrace) {
+            return None;
+        }
+        let is_match_arm_shape = self.brace_starts_with_literal_arm();
+        let cond_display = first_operand_src.unwrap_or("cond");
+        let (msg, hint) = if is_match_arm_shape {
+            // For `?h x{0:1; _:2}` the agent likely wanted to match on `x`.
+            // For multi-token operands (where first_operand_src is None
+            // because it wasn't a bare Ref), recommend the parens form on a
+            // placeholder so the agent fills in their own expression.
+            let body = match first_operand_src {
+                Some(name) => format!(
+                    "match arms need a single bracketed subject. Drop `?{}` and write `?{name}{{<lit>:body; _:fallback}}`; for a multi-token subject use `?(<expr>){{...}}`",
+                    subj_src.unwrap_or("h")
+                ),
+                None => "match arms need a single bracketed subject. Wrap a multi-token match expression in parens: `?(<expr>){<lit>:body; _:fallback}`".to_string(),
+            };
+            (
+                "expected ternary operand, got `{` (looks like match-on-value arms)".to_string(),
+                body,
+            )
+        } else {
+            (
+                "expected ternary operand, got `{`".to_string(),
+                format!(
+                    "three conditional shapes: prefix-ternary `?h {cond_display} a b` (no braces), brace-ternary `{cond_display}{{a}}{{b}}` (no `?h`), braced-conditional `{cond_display}{{body}}` (no `?h`, single brace). Pick one"
+                ),
+            )
+        };
+        Some(self.error_hint("ILO-P009", msg, hint))
+    }
+
+    /// Peek into the `{...}` block at the cursor and decide whether the first
+    /// non-trivial token looks like a match-arm literal (`<num>:` or
+    /// `"text":`). Pure lookahead. Assumes peek is `{`.
+    fn brace_starts_with_literal_arm(&self) -> bool {
+        debug_assert!(self.peek() == Some(&Token::LBrace));
+        match self.token_at(self.pos + 1) {
+            Some(Token::Number(_)) | Some(Token::Text(_)) => {
+                self.token_at(self.pos + 2) == Some(&Token::Colon)
+            }
+            _ => false,
+        }
     }
 
     /// Parse `?subj{a}{b}` ternary after the subject has been consumed and
@@ -2271,6 +2353,17 @@ impl Parser {
             // chokes on `sc "NONE"`. See `parse_prefix_ternary` for the
             // same swap on the `?=cond a b` family.
             let first = self.parse_prefix_binop_operand()?;
+            // Mirror the stmt-position hint in `parse_match_stmt`: intercept
+            // a `{` before the second operand so `?h cond{...}` and
+            // `?subj{<lit>:body;...}` get actionable hints instead of the
+            // bare ILO-P009.
+            let subj_src = subject_source(subj.as_ref());
+            let first_src = subject_source(&first);
+            if let Some(err) =
+                self.prefix_ternary_brace_hint(subj_src.as_deref(), first_src.as_deref())
+            {
+                return Err(err);
+            }
             let second = self.parse_prefix_binop_operand()?;
             // `?h` general prefix-ternary in expr position. See the matching
             // block in `parse_match_stmt` for the rationale: literal subject

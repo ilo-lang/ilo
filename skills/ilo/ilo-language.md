@@ -29,7 +29,7 @@ Flat early returns at statement: `cls sp:n>t;>=sp 1000 "gold";>=sp 500 "silver";
 
 ## match
 
-`?r{~v:v;^e:^+"failed: "e;_:"unknown"}`. Arms: `"lit":body`, `42:body`, `~v:body` ok-bind, `^e:body` err-bind, `_:body` else.
+`?r{~v:v;^e:^+"failed: "e;_:"unknown"}`. Arms: `"lit":body`, `42:body`, `~v:body` ok-bind, `^e:body` err-bind, `_:body` else. Multi-token subj wraps: `?(e){…}`.
 
 ## results
 

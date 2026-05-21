@@ -1,0 +1,34 @@
+-- Match-on-value: the ilo equivalent of Rust's `match n { 1 => ..., _ => ... }`
+-- or a C `switch`. This file pins the two canonical shapes the ILO-P009
+-- "match-on-value arms" hint funnels agents toward when they reach for the
+-- wrong syntax (e.g. `?h x{0:1;_:2}` thinking `?h` is a `match` keyword).
+--
+-- Single-token subject — drop any leading `?h` and prefix the value with `?`.
+-- Arms are `<literal>:<body>` pairs separated by `;`; `_` is the fallback.
+classify x:n>t;?x{0:"zero";1:"one";_:"other"}
+
+-- Multi-token subject — wrap the whole match expression in parens so the
+-- parser knows where the subject ends and the arms begin. Without the parens
+-- the parser reads `mod x 3` as a prefix-call sequence and never reaches the
+-- match form, which is exactly the failure the ILO-P009 hint is designed to
+-- redirect away from.
+mod3 x:n>n;?(mod x 3){0:10;1:20;_:0}
+
+-- Text-valued match subject works identically — arm literals just become
+-- text patterns rather than numbers.
+ok lvl:t>n;?lvl{"high":2;"low":1;_:0}
+
+-- run: classify 1
+-- out: one
+-- run: classify 5
+-- out: other
+-- run: mod3 6
+-- out: 10
+-- run: mod3 7
+-- out: 20
+-- run: mod3 8
+-- out: 0
+-- run: ok "high"
+-- out: 2
+-- run: ok "med"
+-- out: 0
