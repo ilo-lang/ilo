@@ -3,6 +3,7 @@
 
 pub mod ast;
 pub mod builtins;
+pub mod caps;
 pub mod cli_parse;
 pub mod codegen;
 pub mod diagnostic;

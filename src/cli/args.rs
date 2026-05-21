@@ -168,6 +168,24 @@ pub struct RunArgs {
     #[arg(long = "mcp")]
     pub mcp_path: Option<String>,
 
+    /// Allow network access. Comma-separated host list, or `*` for all.
+    /// Omitting this flag leaves behaviour unchanged (permissive).
+    /// Passing the flag with an empty value (`--allow-net=`) blocks all net.
+    #[arg(long = "allow-net", value_name = "HOSTS")]
+    pub allow_net: Option<String>,
+
+    /// Allow file reads. Comma-separated path prefix list, or `*` for all.
+    #[arg(long = "allow-read", value_name = "PATHS")]
+    pub allow_read: Option<String>,
+
+    /// Allow file writes. Comma-separated path prefix list, or `*` for all.
+    #[arg(long = "allow-write", value_name = "PATHS")]
+    pub allow_write: Option<String>,
+
+    /// Allow process execution. Comma-separated command list, or `*` for all.
+    #[arg(long = "allow-run", value_name = "CMDS")]
+    pub allow_run: Option<String>,
+
     /// Remaining positional args: optional function name + call arguments.
     #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
     pub rest: Vec<String>,
@@ -866,6 +884,10 @@ mod tests {
             ast: false,
             tools_path: None,
             mcp_path: None,
+            allow_net: None,
+            allow_read: None,
+            allow_write: None,
+            allow_run: None,
             rest: vec![],
         };
         assert_eq!(r.effective_engine(), Engine::Default);

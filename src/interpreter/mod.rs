@@ -1,5 +1,6 @@
 use crate::ast::*;
 use crate::builtins::{Builtin, CharAtResult, char_at_signed};
+use crate::caps::Caps;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -234,6 +235,8 @@ struct Env {
     tool_provider: Option<std::sync::Arc<dyn crate::tools::ToolProvider>>,
     #[cfg(feature = "tools")]
     tokio_runtime: Option<std::sync::Arc<tokio::runtime::Runtime>>,
+    /// CLI capability policy — checked at IO builtin call sites.
+    caps: Arc<Caps>,
 }
 
 impl Env {
@@ -246,6 +249,20 @@ impl Env {
             tool_provider: None,
             #[cfg(feature = "tools")]
             tokio_runtime: None,
+            caps: Arc::new(Caps::default()),
+        }
+    }
+
+    fn with_caps(caps: Arc<Caps>) -> Self {
+        Env {
+            vars: Vec::new(),
+            scope_marks: vec![0],
+            functions: HashMap::new(),
+            call_stack: Vec::new(),
+            tool_provider: None,
+            #[cfg(feature = "tools")]
+            tokio_runtime: None,
+            caps,
         }
     }
 
@@ -261,6 +278,24 @@ impl Env {
             tool_provider: Some(provider),
             #[cfg(feature = "tools")]
             tokio_runtime: Some(runtime),
+            caps: Arc::new(Caps::default()),
+        }
+    }
+
+    fn with_tools_and_caps(
+        provider: std::sync::Arc<dyn crate::tools::ToolProvider>,
+        #[cfg(feature = "tools")] runtime: std::sync::Arc<tokio::runtime::Runtime>,
+        caps: Arc<Caps>,
+    ) -> Self {
+        Env {
+            vars: Vec::new(),
+            scope_marks: vec![0],
+            functions: HashMap::new(),
+            call_stack: Vec::new(),
+            tool_provider: Some(provider),
+            #[cfg(feature = "tools")]
+            tokio_runtime: Some(runtime),
+            caps,
         }
     }
 
@@ -351,6 +386,17 @@ pub fn run(program: &Program, func_name: Option<&str>, args: Vec<Value>) -> Resu
     run_with_env(program, func_name, args, Env::new())
 }
 
+/// Run with a capability policy. Operations that violate the policy return
+/// `Value::Err(...)` rather than executing; they do NOT panic or abort.
+pub fn run_with_caps(
+    program: &Program,
+    func_name: Option<&str>,
+    args: Vec<Value>,
+    caps: Arc<Caps>,
+) -> Result<Value> {
+    run_with_env(program, func_name, args, Env::with_caps(caps))
+}
+
 /// Dispatch a builtin call from the VM/Cranelift tree-bridge (`OP_CALL_BUILTIN_TREE`).
 ///
 /// Used by `--run-vm` and `--jit` to delegate tree-only builtins
@@ -406,6 +452,24 @@ pub fn run_with_tools(
         provider,
         #[cfg(feature = "tools")]
         runtime,
+    );
+    run_with_env(program, func_name, args, env)
+}
+
+/// Run with tools AND a capability policy.
+pub fn run_with_tools_and_caps(
+    program: &Program,
+    func_name: Option<&str>,
+    args: Vec<Value>,
+    provider: std::sync::Arc<dyn crate::tools::ToolProvider>,
+    #[cfg(feature = "tools")] runtime: std::sync::Arc<tokio::runtime::Runtime>,
+    caps: Arc<Caps>,
+) -> Result<Value> {
+    let env = Env::with_tools_and_caps(
+        provider,
+        #[cfg(feature = "tools")]
+        runtime,
+        caps,
     );
     run_with_env(program, func_name, args, env)
 }
@@ -3385,6 +3449,9 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 ));
             }
         };
+        if let Err(msg) = env.caps.check_net(url.as_str()) {
+            return Ok(Value::Err(Box::new(Value::Text(Arc::new(msg)))));
+        }
         let headers = if args.len() == 2 {
             match &args[1] {
                 Value::Map(m) => m
@@ -3462,6 +3529,13 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 ));
             }
         };
+        // Cap check: verify each URL before issuing any requests.
+        for url in &urls {
+            if let Err(msg) = env.caps.check_net(url) {
+                // Return the first blocked URL as a single Err in the list's envelope.
+                return Ok(Value::Err(Box::new(Value::Text(Arc::new(msg)))));
+            }
+        }
         return Ok(Value::List(Arc::new(get_many_fetch(&urls))));
     }
     if builtin == Some(Builtin::Post) && (args.len() == 2 || args.len() == 3) {
@@ -3474,6 +3548,9 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 ));
             }
         };
+        if let Err(msg) = env.caps.check_net(url.as_str()) {
+            return Ok(Value::Err(Box::new(Value::Text(Arc::new(msg)))));
+        }
         let headers = if args.len() == 3 {
             match &args[2] {
                 Value::Map(m) => m
@@ -3666,6 +3743,9 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 ));
             }
         };
+        if let Err(msg) = env.caps.check_run(cmd.as_str()) {
+            return Ok(Value::Err(Box::new(Value::Text(Arc::new(msg)))));
+        }
         return Ok(run_spawn(cmd.as_str(), &argv));
     }
     if builtin == Some(Builtin::Trm) && args.len() == 1 {
@@ -3994,6 +4074,9 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 ));
             }
         };
+        if let Err(msg) = env.caps.check_read(dir.as_str()) {
+            return Ok(Value::Err(Box::new(Value::Text(Arc::new(msg)))));
+        }
         let root = std::path::PathBuf::from(dir.as_str());
         match walk_collect(&root) {
             Ok(out) => {
@@ -4030,6 +4113,9 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 ));
             }
         };
+        if let Err(msg) = env.caps.check_read(dir.as_str()) {
+            return Ok(Value::Err(Box::new(Value::Text(Arc::new(msg)))));
+        }
         let root = std::path::PathBuf::from(dir.as_str());
         match walk_collect(&root) {
             Ok(all) => {
@@ -4252,6 +4338,9 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 ));
             }
         };
+        if let Err(msg) = env.caps.check_read(path.as_str()) {
+            return Ok(Value::Err(Box::new(Value::Text(Arc::new(msg)))));
+        }
         let fmt = if args.len() == 2 {
             match &args[1] {
                 Value::Text(s) => s.as_str().to_owned(),
@@ -4304,16 +4393,21 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
     }
     if builtin == Some(Builtin::Rdl) && args.len() == 1 {
         return match &args[0] {
-            Value::Text(path) => match std::fs::read_to_string(path.as_str()) {
-                Ok(content) => {
-                    let lines: Vec<Value> = content
-                        .lines()
-                        .map(|l| Value::Text(Arc::new(l.to_string())))
-                        .collect();
-                    Ok(Value::Ok(Box::new(Value::List(Arc::new(lines)))))
+            Value::Text(path) => {
+                if let Err(msg) = env.caps.check_read(path.as_str()) {
+                    return Ok(Value::Err(Box::new(Value::Text(Arc::new(msg)))));
                 }
-                Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(e.to_string()))))),
-            },
+                match std::fs::read_to_string(path.as_str()) {
+                    Ok(content) => {
+                        let lines: Vec<Value> = content
+                            .lines()
+                            .map(|l| Value::Text(Arc::new(l.to_string())))
+                            .collect();
+                        Ok(Value::Ok(Box::new(Value::List(Arc::new(lines)))))
+                    }
+                    Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(e.to_string()))))),
+                }
+            }
             other => Err(RuntimeError::new(
                 "ILO-R009",
                 format!("rdl requires text path, got {:?}", other),
@@ -4340,6 +4434,9 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 ));
             }
         };
+        if let Err(msg) = env.caps.check_write(path.as_str()) {
+            return Ok(Value::Err(Box::new(Value::Text(Arc::new(msg)))));
+        }
         let content = if args.len() == 3 {
             let fmt = match &args[2] {
                 Value::Text(s) => s.clone(),
@@ -4423,6 +4520,9 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 ));
             }
         };
+        if let Err(msg) = env.caps.check_write(path.as_str()) {
+            return Ok(Value::Err(Box::new(Value::Text(Arc::new(msg)))));
+        }
         let content = match &args[1] {
             Value::Text(s) => (**s).clone(),
             other => {
@@ -4446,6 +4546,11 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         };
     }
     if builtin == Some(Builtin::Wrl) && args.len() == 2 {
+        if let Value::Text(path) = &args[0] {
+            if let Err(msg) = env.caps.check_write(path.as_str()) {
+                return Ok(Value::Err(Box::new(Value::Text(Arc::new(msg)))));
+            }
+        }
         return match (&args[0], &args[1]) {
             (Value::Text(path), Value::List(lines)) => {
                 let mut content = String::new();
