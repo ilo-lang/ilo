@@ -16,7 +16,10 @@
 // shapes (spaces-both-sides subtraction, glued call-args, list literals,
 // parenthesised negation) so a future lexer tweak that breaks any of those
 // shows up here too. The hint emission is engine-independent (parser-level),
-// but the positive shapes are exercised across all three engines.
+// and the positive shapes are exercised on every backend reachable from the
+// public CLI: VM and Cranelift JIT (cranelift feature). The tree-walker was
+// removed from the public CLI in 0.12.x but still runs in-process as the
+// HOF-callback fallback, so the VM arm transitively covers it.
 
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
