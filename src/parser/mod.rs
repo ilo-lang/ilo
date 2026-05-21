@@ -1082,6 +1082,67 @@ impl Parser {
         }
     }
 
+    /// Returns `true` if the current token is `(` and it is immediately adjacent
+    /// (no whitespace) to the previously consumed token.
+    ///
+    /// Used to distinguish paren-form calls from grouped-expression args:
+    ///   `f(x, y)` — adjacent `(`, parsed as `Call { function: f, args: [x, y] }`
+    ///   `f (x)`   — space before `(`, `(x)` is a grouped-expr arg to postfix call
+    fn is_adjacent_lparen(&self) -> bool {
+        debug_assert_eq!(self.peek(), Some(&Token::LParen));
+        let prev = self.prev_span();
+        let lparen = self.peek_span();
+        // Both spans must be real (non-zero start and non-zero end of prev)
+        // and contiguous: ident ends exactly where `(` starts.
+        prev.end > 0 && lparen.start == prev.end
+    }
+
+    /// Parse the argument list of a paren-form call, consuming `(expr, expr, ...,?)`.
+    ///
+    /// Called when the current token is `(` and adjacency has already been
+    /// confirmed. Parses comma-separated full expressions, allows a trailing
+    /// comma, and consumes the closing `)`.
+    ///
+    /// Each argument is parsed with `parse_expr_inner` so sub-expressions like
+    /// `spl(a, (b+1))` and nested paren-calls like `f(g(x), h(y))` work naturally.
+    ///
+    /// Returns a `Vec<Expr>` of the parsed arguments.
+    fn parse_paren_call_args(&mut self) -> Result<Vec<Expr>> {
+        self.expect(&Token::LParen)?;
+        // Restore normal whitespace-call mode inside the parens so that
+        // postfix calls inside args (`spl(row, ",")`) still parse correctly.
+        let prev_no_ws = self.no_whitespace_call;
+        self.no_whitespace_call = false;
+        let mut args = Vec::new();
+        loop {
+            // Allow trailing comma: `f(a, b,)` — skip the `)` check.
+            if self.peek() == Some(&Token::RParen) {
+                break;
+            }
+            // Parse one full expression as an argument.
+            let arg = self.parse_expr_inner()?;
+            args.push(arg);
+            match self.peek() {
+                Some(Token::Comma) => {
+                    self.advance(); // consume `,`, loop for next arg or trailing-comma exit
+                }
+                Some(Token::RParen) => break,
+                _ => {
+                    return Err(self.error_hint(
+                        "ILO-P009",
+                        "expected `,` or `)` in paren-form call argument list".into(),
+                        "paren-form calls use comma-separated args: `f(a, b, c)`. \
+                         For the postfix form write `f a b c` instead."
+                            .into(),
+                    ));
+                }
+            }
+        }
+        self.no_whitespace_call = prev_no_ws;
+        self.expect(&Token::RParen)?;
+        Ok(args)
+    }
+
     // ---- Types ----
 
     fn parse_type(&mut self) -> Result<Type> {
@@ -3224,6 +3285,35 @@ or write `({fmt_name} \"...\" ...)` so its args are grouped."
                 return self.parse_field_chain(call, None);
             }
 
+            // Paren-form call sugar: `f(a, b, c)` is identical to `f a b c`.
+            //
+            // Adjacency rule: `(` must immediately follow the ident (or the
+            // postfix `!`/`!!` if present) with no whitespace between them.
+            // This disambiguates:
+            //   `f(x, y)`  — adjacent → paren-call with args [x, y]
+            //   `f (x)`    — space    → postfix call with grouped-expr arg (x)
+            //   `f(x)`     — adjacent, single arg → paren-call with arg [x]
+            //
+            // An inline lambda `(p:t>r;body)` is NOT a paren-call even when
+            // adjacent; `looks_like_inline_lambda` handles that in parse_atom.
+            // We detect paren-calls here BEFORE parse_atom for the ident, so
+            // we rely on the same adjacency check: if `(` is adjacent and the
+            // inside is NOT a zero-arg form (already handled above), parse args.
+            if self.peek() == Some(&Token::LParen) && self.is_adjacent_lparen() {
+                // Don't steal a lambda: `f(p:t>r;body)` should be
+                // `f` called with an inline-lambda arg, not a paren-call. The
+                // lambda check below peeks inside without consuming tokens.
+                if !self.looks_like_inline_lambda() {
+                    let args = self.parse_paren_call_args()?;
+                    let call = Expr::Call {
+                        function: name,
+                        args,
+                        unwrap,
+                    };
+                    return self.parse_field_chain(call, None);
+                }
+            }
+
             // If we consumed `!` / `!!`, this must be a call (even with zero
             // args if nothing follows).
             if unwrap.is_any() {
@@ -4048,6 +4138,24 @@ results first: `r={first_op}a b;…r` keeps each step explicit."
                         args: vec![],
                         unwrap: UnwrapMode::None,
                     });
+                }
+                // Paren-form call in operand position (nested calls):
+                // `g(f(x), h(y))` — the inner `f(x)` and `h(y)` hit this path.
+                // Adjacency required: `f(x)` vs `f (x)` (grouped-expr arg).
+                // Inline-lambda `(p:t>r;body)` is handled by parse_atom_body's
+                // LParen branch; skip here so `f(p:t>r;body)` is NOT a paren-call
+                // but rather `f` with a lambda arg.
+                if self.peek() == Some(&Token::LParen)
+                    && self.is_adjacent_lparen()
+                    && !self.looks_like_inline_lambda()
+                {
+                    let args = self.parse_paren_call_args()?;
+                    let call = Expr::Call {
+                        function: name,
+                        args,
+                        unwrap: UnwrapMode::None,
+                    };
+                    return Ok(self.parse_field_chain(call, None)?);
                 }
                 // Check for field access chain: ident.field.field...
                 let expr = Expr::Ref(name.clone());
