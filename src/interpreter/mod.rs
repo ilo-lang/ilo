@@ -763,6 +763,69 @@ pub(crate) fn rmin_compute(n: usize, xs: &[f64]) -> Vec<f64> {
     out
 }
 
+/// Out-of-line dispatcher for the rsum/ravg/rmin arm inside `call_function`.
+/// Extracted with `#[inline(never)]` to keep the arm's validation locals off
+/// `call_function`'s already-large stack frame — same pattern used for lstsq,
+/// sha2/hmac, and calendar builtins (see comments near those helpers).
+#[inline(never)]
+fn rolling_window_run(b: &Builtin, args: &[Value]) -> Result<Value> {
+    let name = b.name();
+    let n_f = match &args[0] {
+        Value::Number(n) => *n,
+        other => {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!("{name}: first arg n must be a number, got {:?}", other),
+            ));
+        }
+    };
+    if !n_f.is_finite() || n_f.fract() != 0.0 {
+        return Err(RuntimeError::new(
+            "ILO-R009",
+            format!(
+                "{name}: window size n must be a non-negative integer, got {}",
+                n_f
+            ),
+        ));
+    }
+    if n_f <= 0.0 {
+        return Err(RuntimeError::new(
+            "ILO-R009",
+            format!("{name}: window size n must be >= 1, got {}", n_f),
+        ));
+    }
+    let n = n_f as usize;
+    let items = match &args[1] {
+        Value::List(l) => l,
+        other => {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!("{name}: second arg must be a list, got {:?}", other),
+            ));
+        }
+    };
+    let mut nums: Vec<f64> = Vec::with_capacity(items.len());
+    for item in items.iter() {
+        match item {
+            Value::Number(v) => nums.push(*v),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("{name}: list elements must be numbers, got {:?}", other),
+                ));
+            }
+        }
+    }
+    let computed = match b {
+        Builtin::Rsum => rsum_compute(n, &nums),
+        Builtin::Ravg => ravg_compute(n, &nums),
+        Builtin::Rmin => rmin_compute(n, &nums),
+        _ => unreachable!(),
+    };
+    let out: Vec<Value> = computed.into_iter().map(Value::Number).collect();
+    Ok(Value::List(Arc::new(out)))
+}
+
 /// POSIX `dirname` on a forward-slash path string. See `Builtin::Dirname`
 /// in the builtin dispatch above for the full semantics + edge-case table.
 ///
@@ -6816,65 +6879,13 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         return Ok(Value::List(Arc::new(out)));
     }
     // Rolling-window reducers — rsum / ravg / rmin (n, xs).
+    // Dispatched through an out-of-line helper to keep the validation locals
+    // off `call_function`'s stack frame (same pattern as lstsq_run et al.).
     if let Some(b) = builtin
         && matches!(b, Builtin::Rsum | Builtin::Ravg | Builtin::Rmin)
         && args.len() == 2
     {
-        let name = b.name();
-        let n_f = match &args[0] {
-            Value::Number(n) => *n,
-            other => {
-                return Err(RuntimeError::new(
-                    "ILO-R009",
-                    format!("{name}: first arg n must be a number, got {:?}", other),
-                ));
-            }
-        };
-        if !n_f.is_finite() || n_f.fract() != 0.0 {
-            return Err(RuntimeError::new(
-                "ILO-R009",
-                format!(
-                    "{name}: window size n must be a non-negative integer, got {}",
-                    n_f
-                ),
-            ));
-        }
-        if n_f <= 0.0 {
-            return Err(RuntimeError::new(
-                "ILO-R009",
-                format!("{name}: window size n must be >= 1, got {}", n_f),
-            ));
-        }
-        let n = n_f as usize;
-        let items = match &args[1] {
-            Value::List(l) => l,
-            other => {
-                return Err(RuntimeError::new(
-                    "ILO-R009",
-                    format!("{name}: second arg must be a list, got {:?}", other),
-                ));
-            }
-        };
-        let mut nums: Vec<f64> = Vec::with_capacity(items.len());
-        for item in items.iter() {
-            match item {
-                Value::Number(v) => nums.push(*v),
-                other => {
-                    return Err(RuntimeError::new(
-                        "ILO-R009",
-                        format!("{name}: list elements must be numbers, got {:?}", other),
-                    ));
-                }
-            }
-        }
-        let computed = match b {
-            Builtin::Rsum => rsum_compute(n, &nums),
-            Builtin::Ravg => ravg_compute(n, &nums),
-            Builtin::Rmin => rmin_compute(n, &nums),
-            _ => unreachable!(),
-        };
-        let out: Vec<Value> = computed.into_iter().map(Value::Number).collect();
-        return Ok(Value::List(Arc::new(out)));
+        return rolling_window_run(&b, &args);
     }
     if builtin == Some(Builtin::Where) && args.len() == 3 {
         // where cond xs ys > L a — parallel-list conditional select.
@@ -10995,11 +11006,20 @@ mod tests {
 
     #[test]
     fn interpret_braceless_guard_fibonacci() {
-        let source = "fib n:n>n;<=n 1 n;a=fib -n 1;b=fib -n 2;+a b";
-        assert_eq!(
-            run_str(source, Some("fib"), vec![Value::Number(10.0)]),
-            Value::Number(55.0)
-        );
+        // fib(10) recurses ~177 times; each call_function debug frame is
+        // large enough that the default 2 MiB test-thread stack overflows when
+        // new builtins increase the frame size.  Run on an explicit 8 MiB
+        // stack so this stays green regardless of future dispatcher growth.
+        let result = std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let source = "fib n:n>n;<=n 1 n;a=fib -n 1;b=fib -n 2;+a b";
+                run_str(source, Some("fib"), vec![Value::Number(10.0)])
+            })
+            .expect("spawn")
+            .join()
+            .expect("thread panicked");
+        assert_eq!(result, Value::Number(55.0));
     }
 
     #[test]
