@@ -1,0 +1,25 @@
+-- ILO-T043: recursive self-call return value discarded at non-tail position.
+-- The verifier warns when a recursive call appears before another statement,
+-- because ilo's functional semantics drop the return value of any non-tail
+-- expression. The fix is to put the recursive call in tail position (the
+-- last statement of the body) and short-circuit above it with a braceless
+-- guard.
+--
+-- This file pins the canonical fix shape across every engine. Without the
+-- fix, the same code with the recursive call before `-1` always returned
+-- -1, no matter what was in the list, because the recursive call's return
+-- value was silently discarded.
+
+-- Canonical recursive linear search. Braceless guards short-circuit when
+-- out-of-bounds or when the element matches; otherwise the recursive call
+-- sits in tail position and returns its value as ours.
+find-idx xs:L n target:n i:n>n;>=i len xs (-1);=target at xs i i;find-idx xs target +i 1
+
+main>n;find-idx [10 20 30 42 50] 42 0
+
+missing>n;find-idx [10 20 30] 99 0
+
+-- run: main
+-- out: 3
+-- run: missing
+-- out: -1

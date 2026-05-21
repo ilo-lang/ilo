@@ -1159,6 +1159,69 @@ value flows out as the function/branch result.
 "#,
     },
     ErrorEntry {
+        code: "ILO-T043",
+        short: "recursive call discarded at non-tail position",
+        long: r#"## ILO-T043: recursive call discarded at non-tail position
+
+A recursive self-call appears before another statement in the function
+body. Because ilo evaluates statements functionally and only the tail
+expression becomes the function's return value, any earlier expression
+statement has its result silently dropped. The recursion runs but its
+return value never reaches the caller.
+
+A call is in **tail position** when it IS the function's return value:
+- the last statement of the body
+- the expression of a `ret` statement
+- an arm of a tail-position `?` match
+- the body of a braceless guard
+
+Calls anywhere else (followed by other statements, used as an operand,
+inside `@`/`wh` loops, in a non-tail match arm) are NOT in tail position.
+
+**Example (bug):** recursive linear search with discarded recursive return
+
+    find-idx xs:L n target:n i:n>n
+      =target at xs i i
+      find-idx xs target +i 1
+      -1
+
+The recursive call is the second statement; the third statement (`-1`)
+discards its return. Every call falls through to `-1`.
+
+**Fix — put the recursive call in tail position:**
+
+    find-idx xs:L n target:n i:n>n
+      >=i len xs (-1)
+      =target at xs i i
+      find-idx xs target +i 1
+
+The out-of-bounds branch is the early exit (braceless guard, also in tail
+position). The recursive call is now the last statement, so its return
+flows out as ours.
+
+**Alternative fix — explicit `ret`:**
+
+    find-idx xs:L n target:n i:n>n
+      =target at xs i i
+      ret find-idx xs target +i 1
+      -- unreachable, kept for illustration
+      -1
+
+`ret <call>` puts the call in tail position via early return.
+
+**Alternative fix — ternary:**
+
+    find-idx xs:L n target:n i:n>n
+      ?h =target at xs i i i (find-idx xs target +i 1)
+
+`?h cond then else` consumes the branch values directly.
+
+The warning fires only when caller and callee names match (a self-call).
+Bare non-recursive user-fn calls at non-tail position do not warn — they
+may be legitimately side-effecting (logging, file I/O).
+"#,
+    },
+    ErrorEntry {
         code: "ILO-T034",
         short: "'!' / '!!' used on a non-callable value",
         long: r#"## ILO-T034: '!' / '!!' used on a non-callable value
