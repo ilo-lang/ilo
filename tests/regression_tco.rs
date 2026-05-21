@@ -12,7 +12,7 @@
 //! What this test exercises:
 //!
 //! Each test drives the tree interpreter directly via the library API
-//! (`ilo::interpreter::run`). The tree-walker is no longer reachable from
+//! (`ilo::runtime::run`). The tree-walker is no longer reachable from
 //! the public CLI (soft-deprecated in 0.12.x; CLI defaults to the VM), so a
 //! CLI-based round-trip would silently route through the VM and bypass the
 //! trampoline entirely. Going through the library API exercises the actual
@@ -27,9 +27,9 @@
 //! to hold on the default stack size that real programs run under.
 
 use ilo::ast;
-use ilo::interpreter::{self, Value};
 use ilo::lexer;
 use ilo::parser;
+use ilo::runtime::{self, Value};
 
 fn run_tree(src: &str, func: &str, args: Vec<Value>) -> Value {
     let tokens = lexer::lex(src).expect("lex");
@@ -50,7 +50,7 @@ fn run_tree(src: &str, func: &str, args: Vec<Value>) -> Value {
     ast::resolve_aliases(&mut program);
     ast::desugar_dot_var_index(&mut program);
 
-    interpreter::run(&program, Some(func), args).expect("interpreter::run failed")
+    runtime::run(&program, Some(func), args).expect("runtime::run failed")
 }
 
 /// Deep tail-recursive countdown.
@@ -136,7 +136,7 @@ fn tco_error_attribution() {
     assert!(parse_errors.is_empty(), "parse: {:?}", parse_errors);
     ast::resolve_aliases(&mut program);
     ast::desugar_dot_var_index(&mut program);
-    let result = interpreter::run(&program, Some("boom"), vec![Value::Number(1_000.0)])
+    let result = runtime::run(&program, Some("boom"), vec![Value::Number(1_000.0)])
         .expect("boom returns Err value, not interpreter error");
     // boom returns Value::Err("done"), confirming the trampoline ran
     // through 1000 recursive iterations and surfaced the base case's

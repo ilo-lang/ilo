@@ -134,19 +134,6 @@ pub struct RunArgs {
     pub engine: Engine,
 
     // ── Engine selection flags ─────────────────────────────────────────────
-    /// Tree-walking interpreter. SOFT-DEPRECATED: no longer selectable on the
-    /// CLI. The tree-walker stays in-tree as the runtime for HOF callbacks
-    /// that VM/JIT bail to, but `--run-tree` / `--run` are no longer
-    /// recognised flags - they fall through to the unknown-flag guard and
-    /// suggest `--run-vm` or `--jit`. The field is kept with `#[arg(skip)]`
-    /// so internal construction sites (REPL, tests, dispatcher) compile.
-    /// Real removal deferred to 0.13.0+ once PR3d/PR3e/runtime extraction
-    /// land.
-    #[arg(skip = false)]
-    pub run_tree: bool,
-    /// Was an alias for --run-tree; now also rejected by the unknown-flag guard.
-    #[arg(skip = false)]
-    pub run: bool,
     /// Register VM (canonical form, symmetric with --jit). `--run-vm` is
     /// retained as a hidden alias for one release; it emits a one-shot
     /// deprecation hint on stderr. Removal planned for 0.13.0.
@@ -217,7 +204,6 @@ pub struct RunArgs {
 #[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Engine {
     Default,
-    Tree,
     Vm,
     Cranelift,
     Llvm,
@@ -226,9 +212,7 @@ pub enum Engine {
 impl RunArgs {
     /// Resolve the effective engine from --engine flag and convenience bool flags.
     pub fn effective_engine(&self) -> Engine {
-        if self.run || self.run_tree {
-            Engine::Tree
-        } else if self.run_vm {
+        if self.run_vm {
             Engine::Vm
         } else if self.jit {
             Engine::Cranelift
@@ -926,8 +910,6 @@ mod tests {
         let r = RunArgs {
             source: "code".to_string(),
             engine: Engine::Default,
-            run_tree: false,
-            run: false,
             run_vm: false,
             jit: false,
             run_llvm: false,

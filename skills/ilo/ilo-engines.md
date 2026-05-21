@@ -5,7 +5,7 @@ description: Use this when choosing between VM, JIT, or AOT execution. Covers th
 
 # ilo execution engines
 
-Three public backends. Default (`ilo file.@`) is the register VM; covers ~all programs at strong speed. Pick another only with a reason.
+Two public backends. Default (`ilo file.@`) is the register VM; covers ~all programs at strong speed. Pick the JIT only with a reason.
 
 ## Engines
 
@@ -16,7 +16,7 @@ Three public backends. Default (`ilo file.@`) is the register VM; covers ~all pr
 | Cranelift AOT | `ilo compile` | 100-1000x | Standalone native (~9 MB). |
 | LLVM JIT | `--run-llvm` | ~Cranelift | Behind `llvm` feature. Rarely needed. |
 
-Tree-walker is internal-only in 0.12.1: `--run-tree` / `--run` removed (unknown-flag error). Stays in-tree as the VM's bail target for regex, fmt variadic, IO, and closure-bind-ctx HOFs.
+Tree-walker removed as a user-selectable engine in 0.13.0. The shared runtime module (`src/runtime/`) stays in-tree as the VM's bail target for ~30 builtins routed through the tree-bridge: regex, fmt variadic, IO, sleep, ct/rsrt, closure-bind-ctx HOFs, crypto, calendar arithmetic.
 
 ## When to pick which
 

@@ -4,7 +4,7 @@ pub mod mcp_client;
 #[cfg(feature = "tools")]
 pub mod mcp_provider;
 
-use crate::interpreter::Value;
+use crate::runtime::Value;
 use std::future::Future;
 use std::pin::Pin;
 
