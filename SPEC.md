@@ -190,6 +190,8 @@ run_d              -- ERROR (underscore not allowed in bindings)
 
 `runD` in the interactive CLI surfaces as `ILO-L003 unexpected token` with a suggestion to use `run-d` or `rund`. The constraint is intentional: a single lexical shape per identifier keeps the token stream predictable for agents and avoids style debates over camelCase vs snake_case vs kebab-case.
 
+**Hyphen vs subtraction.** A hyphen with no surrounding whitespace is always part of an identifier — `best-d` is one token, never `best - d`. Subtraction requires whitespace on at least the operator side: `- best d` (prefix form) or `best - d` (infix form). When an unbound kebab ident has every segment bound, `ILO-T004` adds a hint pointing at the prefix form. When an unbound kebab ident splits uniquely into two bound names (e.g. `zr-sq-zi-sq` → `zr-sq` and `zi-sq`), the hint shows both the prefix form (`- zr-sq zi-sq`) and the infix-with-spaces form (`zr-sq - zi-sq`).
+
 The only place capital letters and underscores are accepted is **after `.` or `.?`** at field-access position, so heterogeneous JSON keys from real APIs work without rewriting. See [Field names at dot-access](#field-names-at-dot-access) for the full list of post-dot relaxations (`r.URL`, `r.AccessKey`, `r.user_name`, etc.). Binding names (`AccessKey = ...`) and function names (`AccessKey x:n>n;...`) still error.
 
 ### Reserved words
