@@ -92,6 +92,17 @@ When in doubt: pick a 4+ char descriptive name. The token cost of an extra chara
 
 `now` and `now-ms` are not the whole surface. Full set: `now` (Unix seconds), `now-ms` (Unix ms), `dtfmt ts fmt` (timestamp to text), `dtparse s fmt` (text to timestamp, `R n t`), `dtparse-rel s now` (relative phrase like `"in 3 days"` / `"last monday"` anchored at `now`, `R n t`). Reach for `dtparse-rel` before hand-rolling phrase parsers. Details in `ilo skill get ilo-builtins-text`.
 
+## Common pitfalls
+
+**No tuple type.** `zip xs ys` returns `L (L n)` — a list of two-element lists, not a list of tuples. Destructure pairs with `at pair 0` / `at pair 1`, never `pair.0` / `pair.1` where `pair` is unbound. ILO-T004 on `tup.0` / `pair.0` carries a hint naming the exact `at <name> <N>` call to write.
+
+```
+-- DON'T: zs=zip xs ys; +tup.0 tup.1   -- tup is unbound; ilo has no tuple type
+-- DO:    zs=zip xs ys; map (pair:L n>n;+at pair 0 at pair 1) zs
+```
+
+(`pair.0` itself is valid sugar for list indexing once `pair` is bound to an `L T` parameter; the diagnostic only fires when the identifier is unbound.)
+
 ## Compatibility note
 
 ilo has no borrow checker, no lifetime annotations, no ownership rules. Values are RC-managed; the type checker enforces shape only. There is no `&`, no `&mut`, no `'a`. If an agent is reaching for lifetime-style reasoning in ilo, it has the wrong mental model.
