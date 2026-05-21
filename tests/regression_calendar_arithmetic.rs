@@ -48,6 +48,23 @@ fn check_num(src: &str, args: &[&str], expected: f64) {
     }
 }
 
+// Run and assert the program failed with a stderr matching `needle`. Used to
+// exercise the error arms in the calendar builtins (out-of-range epochs,
+// month overflow). These are otherwise dead lines from a coverage view.
+fn check_err(src: &str, args: &[&str], needle: &str) {
+    for engine in ENGINES {
+        let (ok, stdout, stderr) = run(engine, src, args);
+        assert!(
+            !ok,
+            "{engine}: expected failure for `{src}` args={args:?}, got stdout=`{stdout}`"
+        );
+        assert!(
+            stderr.contains(needle),
+            "{engine}: expected stderr to contain `{needle}`, got: {stderr}"
+        );
+    }
+}
+
 // Epoch anchors (all 00:00 UTC):
 //   2024-01-31 = 1706659200
 //   2024-02-29 = 1709164800  (leap year)
@@ -239,4 +256,185 @@ fn day_of_week_sunday() {
 fn day_of_week_epoch_zero() {
     // 1970-01-01 is a Thursday -> 4
     check_num("f dt:n>n;day-of-week dt", &["f", "0"], 4.0);
+}
+
+// ── day-of-week: remaining weekdays (Tue/Wed/Thu) ─────────────────────────────
+// These cover the otherwise-uncovered Weekday::Tue/Wed/Thu match arms in
+// `day-of-week`. The arms are otherwise dead from a coverage perspective.
+
+#[test]
+fn day_of_week_tuesday() {
+    // 2024-01-16 is a Tuesday -> 2
+    // 2024-01-16 00:00 UTC = 1705363200
+    check_num("f dt:n>n;day-of-week dt", &["f", "1705363200"], 2.0);
+}
+
+#[test]
+fn day_of_week_wednesday() {
+    // 2024-01-17 is a Wednesday -> 3
+    // 2024-01-17 00:00 UTC = 1705449600
+    check_num("f dt:n>n;day-of-week dt", &["f", "1705449600"], 3.0);
+}
+
+#[test]
+fn day_of_week_thursday() {
+    // 2024-01-18 is a Thursday -> 4
+    // 2024-01-18 00:00 UTC = 1705536000
+    check_num("f dt:n>n;day-of-week dt", &["f", "1705536000"], 4.0);
+}
+
+// ── next-business-day: midweek (Tue/Wed/Thu fall through `_ => 1`) ────────────
+// The single arm covers Mon/Tue/Wed/Thu but coverage gave us Mon only. Add the
+// midweek days for both explicit weekday-table coverage and confidence that
+// the catch-all advances by exactly one calendar day across the +1 branch.
+
+#[test]
+fn next_business_day_tuesday_to_wednesday() {
+    // Tue Jan 16 2024 -> Wed Jan 17 2024
+    // 2024-01-16 00:00 UTC = 1705363200
+    // 2024-01-17 00:00 UTC = 1705449600
+    check_num(
+        "f dt:n>n;next-business-day dt",
+        &["f", "1705363200"],
+        1705449600.0,
+    );
+}
+
+#[test]
+fn next_business_day_thursday_to_friday() {
+    // Thu Jan 18 2024 -> Fri Jan 19 2024
+    // 2024-01-18 00:00 UTC = 1705536000
+    // 2024-01-19 00:00 UTC = 1705622400
+    check_num(
+        "f dt:n>n;next-business-day dt",
+        &["f", "1705536000"],
+        1705622400.0,
+    );
+}
+
+// ── add-mo: year-boundary crossings + m==12 branch in add_months_snap ─────────
+// `add_months_snap` has a `if m == 12` branch (computing days-in-month by
+// asking for the first of next year). Existing tests never landed on Dec, so
+// the December arm and the y+1 NaiveDate lookup were uncovered.
+
+#[test]
+fn add_mo_nov30_to_dec() {
+    // Nov 30 2024 + 1 month = Dec 30 2024 (no snap, but exercises the m==12
+    // path inside add_months_snap when computing Dec's day count).
+    // 2024-11-30 00:00 UTC = 1732924800
+    // 2024-12-30 00:00 UTC = 1735516800
+    check_num(
+        "f dt:n n:n>n;add-mo dt n",
+        &["f", "1732924800", "1"],
+        1735516800.0,
+    );
+}
+
+#[test]
+fn add_mo_dec_to_jan_next_year() {
+    // Dec 31 2024 + 1 month = Jan 31 2025 (cross-year +1, no snap because Jan
+    // has 31 days). Also exercises the y+1 branch in add_months_snap.
+    // 2024-12-31 00:00 UTC = 1735603200
+    // 2025-01-31 00:00 UTC = 1738281600
+    check_num(
+        "f dt:n n:n>n;add-mo dt n",
+        &["f", "1735603200", "1"],
+        1738281600.0,
+    );
+}
+
+#[test]
+fn add_mo_jan_to_dec_prev_year_negative() {
+    // Jan 15 2024 + -1 month = Dec 15 2023. Negative months across the year
+    // boundary exercise total.div_euclid(12) with a negative intermediate.
+    // 2024-01-15 00:00 UTC = 1705276800
+    // 2023-12-15 00:00 UTC = 1702598400
+    check_num(
+        "f dt:n n:n>n;add-mo dt n",
+        &["f", "1705276800", "-1"],
+        1702598400.0,
+    );
+}
+
+#[test]
+fn add_mo_minus_twelve() {
+    // -12 months = same date previous year.
+    // 2024-06-15 -> 2023-06-15
+    // 2024-06-15 00:00 UTC = 1718409600
+    // 2023-06-15 00:00 UTC = 1686787200
+    check_num(
+        "f dt:n n:n>n;add-mo dt n",
+        &["f", "1718409600", "-12"],
+        1686787200.0,
+    );
+}
+
+#[test]
+fn add_mo_jan29_leap_plus13() {
+    // Jan 29 2024 + 13 months = Feb 28 2025 (snap: 2025 is non-leap, so Feb
+    // only has 28 days). Crosses a year boundary and exercises snap + the
+    // y-stride logic for multi-year shifts.
+    // 2024-01-29 00:00 UTC = 1706486400
+    // 2025-02-28 00:00 UTC = 1740700800
+    check_num(
+        "f dt:n n:n>n;add-mo dt n",
+        &["f", "1706486400", "13"],
+        1740700800.0,
+    );
+}
+
+// ── error paths: out-of-range epochs ─────────────────────────────────────────
+// `Utc.timestamp_opt(secs, 0).single()` returns `None` for epochs outside
+// chrono's representable range (~262144 BC to 262143 AD). Reaching that
+// branch via a f64 arg requires a value large enough to saturate the `as i64`
+// cast to i64::MAX, which chrono then rejects. Using a numeric literal in the
+// source lets us pass a value beyond f64-as-i64-saturation without losing the
+// "out of range" trigger. The `add-mo: result out of calendar range` path is
+// hit by a huge month offset rather than a huge epoch.
+
+#[test]
+fn add_mo_epoch_out_of_range() {
+    check_err(
+        "f>n;add-mo 99999999999999999999 0",
+        &["f"],
+        "add-mo: epoch out of range",
+    );
+}
+
+#[test]
+fn add_mo_result_out_of_calendar_range() {
+    // Max i32 months from epoch 0 pushes far past chrono's max year (262143).
+    // Exercises the `None` arm of `match add_months_snap(date, months)`.
+    check_err(
+        "f>n;add-mo 0 2147483647",
+        &["f"],
+        "add-mo: result out of calendar range",
+    );
+}
+
+#[test]
+fn last_dom_epoch_out_of_range() {
+    check_err(
+        "f>n;last-dom 99999999999999999999",
+        &["f"],
+        "last-dom: epoch out of range",
+    );
+}
+
+#[test]
+fn next_business_day_epoch_out_of_range() {
+    check_err(
+        "f>n;next-business-day 99999999999999999999",
+        &["f"],
+        "next-business-day: epoch out of range",
+    );
+}
+
+#[test]
+fn day_of_week_epoch_out_of_range() {
+    check_err(
+        "f>n;day-of-week 99999999999999999999",
+        &["f"],
+        "day-of-week: epoch out of range",
+    );
 }
