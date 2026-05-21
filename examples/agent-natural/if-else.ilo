@@ -1,0 +1,33 @@
+-- Agent-natural surface: `if cond { a } else { b }` desugars to the
+-- existing brace-ternary AST. Value-producing at let-RHS / return position,
+-- statement-form at top of a body. The original `?h cond a b` and
+-- `cond{a}{b}` forms still parse — this is a pure addition.
+--
+-- Spec: SPEC-AGENT-NATURAL.md §2.2.
+
+myabs n:n>n
+  if >=n 0 { n } else { -0 n }
+
+label n:n>t
+  if >=n 0 { "pos" } else { "neg" }
+
+-- if at statement position with no else returns nil (`Stmt::Guard`
+-- with `else_body: None`). The enclosing function's last expression
+-- is still the return value.
+guarded-greet name:t flag:b>t
+  out=name
+  if flag { out=cat ["hi" out] " " }
+  out
+
+-- run: myabs -3
+-- out: 3
+-- run: myabs 5
+-- out: 5
+-- run: label 0
+-- out: pos
+-- run: label -1
+-- out: neg
+-- run: guarded-greet dan true
+-- out: hi dan
+-- run: guarded-greet dan false
+-- out: dan

@@ -1130,6 +1130,13 @@ impl Parser {
                 }
             }
             Some(Token::At) => self.parse_foreach(),
+            // Agent-natural surface: `if cond { body }` / `if cond { a } else { b }`,
+            // `while cond { body }`, `for x in xs { body }` / `for i in a..b { body }`.
+            // Each desugars to an existing AST node so the verifier and backends
+            // see nothing new. The original `?h`/`@`/`wh` forms keep parsing.
+            Some(Token::KwIf) => self.parse_if_stmt(),
+            Some(Token::KwWhile) => self.parse_while_stmt(),
+            Some(Token::KwFor) => self.parse_for_stmt(),
             Some(Token::Ident(name)) if name == "ret" => {
                 self.advance(); // consume "ret"
                 let value = self.parse_expr()?;
@@ -1767,6 +1774,67 @@ impl Parser {
         }
     }
 
+    /// Agent-natural: `if cond { body }` or `if cond { body } else { else-body }`.
+    ///
+    /// Statement-position form. Desugars to `Stmt::Guard { condition, body, else_body }`
+    /// — the same AST that `cond{body}` / `cond{body}{else}` already produce. The
+    /// guard form is non-value-producing; for `v = if c { a } else { b }` see the
+    /// matching arm in `parse_expr_inner`, which lowers to `Expr::Ternary`.
+    fn parse_if_stmt(&mut self) -> Result<Stmt> {
+        self.expect(&Token::KwIf)?;
+        let condition = self.parse_expr()?;
+        let body = self.parse_brace_body()?;
+        let else_body = if self.peek() == Some(&Token::KwElse) {
+            self.advance(); // consume `else`
+            Some(self.parse_brace_body()?)
+        } else {
+            None
+        };
+        Ok(Stmt::Guard {
+            condition,
+            negated: false,
+            body,
+            else_body,
+            braceless: false,
+        })
+    }
+
+    /// Agent-natural: `while cond { body }`. Desugars to `Stmt::While` — identical
+    /// to the AST that `wh cond{body}` already produces.
+    fn parse_while_stmt(&mut self) -> Result<Stmt> {
+        self.expect(&Token::KwWhile)?;
+        let condition = self.parse_expr()?;
+        let body = self.parse_brace_body()?;
+        Ok(Stmt::While { condition, body })
+    }
+
+    /// Agent-natural: `for x in xs { body }` or `for i in a..b { body }`.
+    /// Desugars to `Stmt::ForEach` / `Stmt::ForRange` — identical to what
+    /// `@x xs{body}` / `@i a..b{body}` already produce.
+    fn parse_for_stmt(&mut self) -> Result<Stmt> {
+        self.expect(&Token::KwFor)?;
+        let binding = self.expect_ident()?;
+        self.expect(&Token::KwIn)?;
+        let start_expr = self.parse_expr_inner()?;
+        if self.peek() == Some(&Token::DotDot) {
+            self.advance();
+            let end_expr = self.parse_expr_inner()?;
+            let body = self.parse_brace_body()?;
+            return Ok(Stmt::ForRange {
+                binding,
+                start: start_expr,
+                end: end_expr,
+                body,
+            });
+        }
+        let body = self.parse_brace_body()?;
+        Ok(Stmt::ForEach {
+            binding,
+            collection: start_expr,
+            body,
+        })
+    }
+
     /// `@binding collection{body}` or `@binding start..end{body}`
     fn parse_foreach(&mut self) -> Result<Stmt> {
         self.expect(&Token::At)?;
@@ -2164,6 +2232,12 @@ impl Parser {
             }
             // Match expression: ?expr{...} or ?{...}, or prefix ternary: ?=x 0 10 20
             Some(Token::Question) => self.parse_question_expr(),
+            // Agent-natural value-producing if/else: `if cond { a } else { b }`.
+            // Desugars to `Expr::Ternary`. The `else` arm is mandatory in
+            // expression position — an if-without-else returns nil and can't
+            // appear inside a binop or call argument. Use the statement form
+            // for that shape.
+            Some(Token::KwIf) => self.parse_if_expr(),
             // Atoms and calls — infix operators can follow these
             _ => {
                 let primary = self.parse_call_or_atom()?;
@@ -2206,6 +2280,29 @@ impl Parser {
                     | Token::NotEq
             )
         )
+    }
+
+    /// Agent-natural value-producing if/else: `if cond { a } else { b }` →
+    /// `Expr::Ternary`. The `else` arm is mandatory at expression position.
+    /// Missing `else` is rejected with a hint pointing at the statement form.
+    fn parse_if_expr(&mut self) -> Result<Expr> {
+        self.expect(&Token::KwIf)?;
+        let condition = self.parse_expr()?;
+        let then_body = self.parse_brace_body()?;
+        if self.peek() != Some(&Token::KwElse) {
+            return Err(self.error_hint(
+                "ILO-P009",
+                "`if` at expression position requires an `else` branch".into(),
+                "either add `else { ... }`, or use the statement form `if cond { body }` (returns nil) at top of a statement.".into(),
+            ));
+        }
+        self.advance(); // consume `else`
+        let else_body = self.parse_brace_body()?;
+        Ok(Expr::Ternary {
+            condition: Box::new(condition),
+            then_expr: Box::new(body_to_expr(then_body)),
+            else_expr: Box::new(body_to_expr(else_body)),
+        })
     }
 
     /// Parse `?` as either match (`?expr{...}`) or prefix ternary (`?=x 0 10 20`).
@@ -4341,6 +4438,22 @@ fn reserved_keyword_binding_message(tok: &Token) -> Option<(String, String)> {
             "const",
             "`const` is reserved; rename the binding to e.g. `c`, `k`, or `constv`",
         ),
+        Token::KwElse => (
+            "else",
+            "`else` is reserved; rename the binding to e.g. `otherwise`, `alt`, or `elsev`",
+        ),
+        Token::KwFor => (
+            "for",
+            "`for` is reserved; rename the binding to e.g. `each`, `loopv`, or `forv`",
+        ),
+        Token::KwWhile => (
+            "while",
+            "`while` is reserved; rename the binding to e.g. `until`, `loopv`, or `whilev`",
+        ),
+        Token::KwIn => (
+            "in",
+            "`in` is reserved; rename the binding to e.g. `inside`, `member`, or `inv`",
+        ),
         _ => return None,
     };
     Some((
@@ -4359,6 +4472,16 @@ fn reserved_keyword_message(tok: &Token) -> Option<(String, String)> {
         Token::KwDef => ("def", "ilo defines functions as `name params>return;body`"),
         Token::KwVar => ("var", "ilo uses `name=expr` for bindings"),
         Token::KwConst => ("const", "ilo uses `name=expr` for bindings"),
+        Token::KwElse => (
+            "else",
+            "`else` is reserved for the if/else conditional form",
+        ),
+        Token::KwFor => ("for", "`for` is reserved for `for x in xs { body }` loops"),
+        Token::KwWhile => (
+            "while",
+            "`while` is reserved for `while cond { body }` loops",
+        ),
+        Token::KwIn => ("in", "`in` is reserved for the `for x in xs` loop form"),
         _ => return None,
     };
     Some((

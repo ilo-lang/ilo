@@ -1,0 +1,23 @@
+-- Agent-natural surface: `while cond { body }` desugars to `Stmt::While`,
+-- the same AST that `wh cond{body}` produces today. Pure parser sugar —
+-- the verifier and every backend see the same shape.
+--
+-- Spec: SPEC-AGENT-NATURAL.md §2.4.
+
+fac n:n>n
+  a=1
+  i=1
+  while <=i n { a=*a i; i=+i 1 }
+  a
+
+count-down-to-zero n:n>n
+  steps=0
+  while >n 0 { n=-n 1; steps=+steps 1 }
+  steps
+
+-- run: fac 5
+-- out: 120
+-- run: fac 6
+-- out: 720
+-- run: count-down-to-zero 10
+-- out: 10
