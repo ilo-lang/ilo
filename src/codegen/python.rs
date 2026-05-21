@@ -2121,6 +2121,7 @@ mod tests {
                 span: Span::UNKNOWN,
             }],
             source: None,
+            parse_failed_fns: Default::default(),
         };
         let py = emit(&prog);
         assert!(
@@ -2200,6 +2201,7 @@ mod tests {
         let mut prog = Program {
             declarations: vec![],
             source: None,
+            parse_failed_fns: Default::default(),
         };
         prog.declarations.push(Decl::Use {
             path: "x.ilo".into(),

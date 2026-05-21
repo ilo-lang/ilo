@@ -9496,6 +9496,7 @@ mod tests {
                 },
             ],
             source: None,
+            parse_failed_fns: Default::default(),
         }
     }
 
@@ -9573,6 +9574,7 @@ mod tests {
                 },
             ],
             source: None,
+            parse_failed_fns: Default::default(),
         };
         let result = run(&prog, Some("a"), vec![Value::Number(1.0)]).unwrap();
         assert_eq!(
