@@ -5708,6 +5708,66 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             .collect();
         return Ok(Value::List(Arc::new(out)));
     }
+    if builtin == Some(Builtin::Where) && args.len() == 3 {
+        // where cond xs ys > L a — parallel-list conditional select.
+        // For each i: output[i] = xs[i] if cond[i] else ys[i].
+        // All three lists must have the same length.
+        let cond = match &args[0] {
+            Value::List(items) => items,
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("where: first arg (cond) must be a list, got {:?}", other),
+                ));
+            }
+        };
+        let xs = match &args[1] {
+            Value::List(items) => items,
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("where: second arg (xs) must be a list, got {:?}", other),
+                ));
+            }
+        };
+        let ys = match &args[2] {
+            Value::List(items) => items,
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("where: third arg (ys) must be a list, got {:?}", other),
+                ));
+            }
+        };
+        if cond.len() != xs.len() || cond.len() != ys.len() {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!(
+                    "where: length mismatch — cond={}, xs={}, ys={}; all three lists must be the same length",
+                    cond.len(),
+                    xs.len(),
+                    ys.len()
+                ),
+            ));
+        }
+        let mut out = Vec::with_capacity(cond.len());
+        for (i, c) in cond.iter().enumerate() {
+            match c {
+                Value::Bool(true) => out.push(xs[i].clone()),
+                Value::Bool(false) => out.push(ys[i].clone()),
+                other => {
+                    return Err(RuntimeError::new(
+                        "ILO-R009",
+                        format!(
+                            "where: cond element at index {} must be a bool, got {:?}",
+                            i, other
+                        ),
+                    ));
+                }
+            }
+        }
+        return Ok(Value::List(Arc::new(out)));
+    }
     if builtin == Some(Builtin::Avg) && args.len() == 1 {
         let items = match &args[0] {
             Value::List(l) => l,

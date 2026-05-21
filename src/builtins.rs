@@ -262,6 +262,15 @@ pub enum Builtin {
     Urldec,
     B64u,
     B64uDec,
+
+    // `where cond xs ys > L a` — parallel-list conditional select.
+    // NumPy `np.where` equivalent: for each i, output[i] = xs[i] if cond[i] else ys[i].
+    // All three lists must have the same length; mismatch raises ILO-R009.
+    // The element type of `xs` and `ys` is preserved in the output. Tree-bridge
+    // eligible (no FnRef args, no I/O, no Result wrapper). Saves ~50 tokens
+    // over the `map (i:n>_;?h (at cond i) (at xs i) (at ys i)) (range 0 (len xs))`
+    // recipe; the manifesto framing for NumPy-familiar agents.
+    Where,
 }
 
 impl Builtin {
@@ -432,6 +441,7 @@ impl Builtin {
             "urldec" => Some(Builtin::Urldec),
             "b64u" => Some(Builtin::B64u),
             "b64u-dec" => Some(Builtin::B64uDec),
+            "where" => Some(Builtin::Where),
             _ => None,
         }
     }
@@ -599,6 +609,7 @@ impl Builtin {
             Builtin::Urldec => "urldec",
             Builtin::B64u => "b64u",
             Builtin::B64uDec => "b64u-dec",
+            Builtin::Where => "where",
         }
     }
 
@@ -865,6 +876,11 @@ impl Builtin {
         // the cumsum/cprod aggregate family. Appended last to preserve every
         // existing on-wire tag.
         Builtin::Ewm,
+        // where cond xs ys > L a — parallel-list conditional select (NumPy
+        // np.where equivalent). Tree-bridge eligible (3-arg, no FnRef, no I/O,
+        // no Result wrapper). Appended last to preserve every existing on-wire
+        // tag.
+        Builtin::Where,
     ];
 
     /// On-wire 8-bit tag for cross-engine builtin dispatch. See `ALL`.
@@ -1198,6 +1214,7 @@ mod tests {
             "dur-parse",
             "dur-fmt",
             "rand-bytes",
+            "where",
         ];
         for name in &all {
             let b = Builtin::from_name(name).unwrap_or_else(|| panic!("missing builtin: {name}"));
@@ -1439,6 +1456,7 @@ mod tests {
             "dur-parse",
             "dur-fmt",
             "rand-bytes",
+            "where",
         ] {
             let b = Builtin::from_name(name).unwrap_or_else(|| panic!("no builtin: {name}"));
             let t = b.tag();

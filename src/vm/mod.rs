@@ -738,6 +738,11 @@ pub(crate) fn is_tree_bridge_eligible(b: crate::builtins::Builtin, argc: usize) 
         // recurrence. VM and Cranelift inherit cross-engine parity at zero
         // opcode cost.
         (Builtin::Ewm, 2) => true,
+        // where cond xs ys — parallel-list conditional select. 3-arg, no FnRef
+        // args, no Result wrapper. Tree interpreter performs the element-wise
+        // select; VM and Cranelift inherit through the bridge at zero opcode
+        // cost. Length-mismatch errors propagate via tree_bridge_propagates_error.
+        (Builtin::Where, 3) => true,
         _ => false,
     }
 }
@@ -16706,6 +16711,10 @@ pub(crate) fn tree_bridge_propagates_error(b: crate::builtins::Builtin) -> bool 
             // arg* family above — surface it on Cranelift in lockstep rather
             // than degenerating silently to nil.
             | Builtin::Ewm
+            // where cond xs ys raises ILO-R009 on length mismatch or when
+            // cond elements aren't bools. Surface on Cranelift in lockstep
+            // rather than degenerating silently to nil.
+            | Builtin::Where
     )
 }
 

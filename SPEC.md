@@ -582,6 +582,7 @@ Called like functions, compiled to dedicated opcodes.
 | `cumsum xs` | running sum; output length matches input | `L n` |
 | `cprod xs` | running product; output length matches input | `L n` |
 | `ewm xs a` | exponential moving average: `ewm[0] = xs[0]`, `ewm[i] = a*xs[i] + (1-a)*ewm[i-1]`; `a` in `[0, 1]`, out-of-range errors `ILO-R009` | `L n` |
+| `where cond xs ys` | parallel-list conditional select (NumPy `np.where`): `output[i] = xs[i] if cond[i] else ys[i]`; all three lists same length (mismatch errors `ILO-R009`); element type of `xs`/`ys` preserved | `L a` |
 | `frq xs` | frequency map of elements (keys are bare stringified values) | `M t n` |
 | `median xs` | median of numeric list | `n` |
 | `quantile xs p` | sample quantile (linear interp; `p` clamped to `[0, 1]`) | `n` |
