@@ -4155,7 +4155,7 @@ results first: `r={first_op}a b;…r` keeps each step explicit."
                         args,
                         unwrap: UnwrapMode::None,
                     };
-                    return Ok(self.parse_field_chain(call, None)?);
+                    return self.parse_field_chain(call, None);
                 }
                 // Check for field access chain: ident.field.field...
                 let expr = Expr::Ref(name.clone());
