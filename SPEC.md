@@ -587,6 +587,12 @@ Called like functions, compiled to dedicated opcodes.
 | `urldec s` | inverse of `urlenc`; Err on invalid percent escape or non-UTF-8 decoded bytes | `R t t` |
 | `b64u s` | base64url-encode UTF-8 bytes of `s` (RFC 4648 §5, no padding, `-`/`_` alphabet). Total. | `t` |
 | `b64u-dec s` | inverse of `b64u`; Err on invalid base64url or non-UTF-8 decoded bytes | `R t t` |
+| `sha256 s` | SHA-256 digest of the UTF-8 bytes of `s`, lowercase hex (64 chars). Total. | `t` |
+| `hmac-sha256 key msg` | HMAC-SHA256 of `msg` under `key`; lowercase hex (64 chars). Pair with `ct-eq` to verify signatures without timing leaks. | `t` |
+| `b64 s` | standard base64 encode of UTF-8 bytes of `s` (RFC 4648 §4, with `=` padding). Distinct from `b64u` which is URL-safe + no padding. Total. | `t` |
+| `b64-dec s` | inverse of `b64`; Err on invalid base64 input or non-UTF-8 decoded bytes | `R t t` |
+| `hex s` | lowercase hex encode of UTF-8 bytes of `s` (every byte → 2 hex chars). Total. | `t` |
+| `ct-eq a b` | constant-time text equality. Returns true iff `a == b` without short-circuiting on the first differing byte. Use when comparing secrets (HMAC digests, tokens). | `b` |
 | `run cmd argv` | spawn `cmd` with argv list — see [Process spawn](#process-spawn) for the no-shell-no-glob security model | `R (M t t) t` |
 | `run2 cmd argv` | like `run` but returns a typed `RunResult` record (`r.stdout`, `r.stderr`, `r.exit` as `n`) instead of a loose map; Err only on spawn failure | `R RunResult t` |
 | `env key` | read environment variable | `R t t` |
@@ -1096,6 +1102,38 @@ b64u-dec! (b64u "hello, world!")             -- "hello, world!"
 ```
 
 Both decoders return `Result` so malformed input surfaces typed at the boundary; both encoders are total. Use `!` to auto-unwrap inside an `R`-returning function, or pattern-match on the Result to handle the Err arm explicitly.
+
+### Crypto primitives
+
+`sha256`, `hmac-sha256`, `b64`, `b64-dec`, `hex`, `ct-eq` form the crypto-primitives cluster — the path agents need for webhook signature verification, JWT signing, and any time a secret is compared to a known value. All six are tree-bridge eligible so VM and Cranelift share the tree interpreter's semantics.
+
+`sha256 s > t` returns the SHA-256 digest of the UTF-8 bytes of `s` as a lowercase hex string (64 chars). Total — no error path. NIST FIPS-180 anchor: `sha256 ""` = `e3b0c4...b855`.
+
+`hmac-sha256 key:t msg:t > t` returns the HMAC-SHA256 of `msg` under `key`, lowercase hex (64 chars). Any key length is accepted (HMAC handles padding internally). Pair with `ct-eq` to verify signatures without leaking timing info through `=`.
+
+`b64 s > t` encodes the UTF-8 bytes of `s` as standard base64 with `=` padding (RFC 4648 §4). Distinct from `b64u`: standard alphabet (`+`/`/`) and padded vs URL-safe (`-`/`_`) and stripped. `b64-dec s > R t t` is the inverse and returns `Err` on input outside the standard alphabet or on decoded bytes that aren't valid UTF-8.
+
+`hex s > t` encodes the UTF-8 bytes of `s` as a lowercase hex string. Every byte becomes exactly two chars, so `len (hex s)` is `2 * len s` for ASCII input.
+
+`ct-eq a:t b:t > b` is constant-time text equality. A naive `=` short-circuits on the first differing byte, leaking the prefix length through timing; `ct-eq` always scans the full byte range when lengths match, so a timing attacker can't binary-search the secret one byte at a time. Use it whenever you're comparing HMAC digests, session tokens, or API keys. Different-length inputs short-circuit to `false` — length isn't secret in any realistic protocol (HMAC digests are fixed-size).
+
+```ilo
+-- HMAC verification (the canonical use case)
+sig=hmac-sha256 secret payload         -- compute expected MAC
+ct-eq sig signature-from-request        -- true iff request was signed with secret
+
+-- SHA-256 fingerprint of a file's contents
+fp=sha256 (rd "config.json")!           -- 64 hex chars
+
+-- Base64 round-trip
+b64 "Ma"                                 -- "TWE=" (1 padding char)
+b64-dec! "TWE="                          -- "Ma"
+
+-- Hex encode
+hex "abc"                                -- "616263"
+```
+
+`b64-dec` returns `Result` so malformed input surfaces typed at the boundary; the encoders and `ct-eq` are total.
 
 ---
 

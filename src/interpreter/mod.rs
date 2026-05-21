@@ -1955,6 +1955,178 @@ fn b64u_dec_impl(arg: &Value) -> Result<Value> {
     }
 }
 
+// ── Crypto primitives cluster ───────────────────────────────────────────────
+//
+// `sha256`, `hmac-sha256`, `b64`, `b64-dec`, `hex`, `ct-eq`. All tree-bridge
+// eligible: pure text-in / text-or-bool-out, no FnRef args, no I/O. VM and
+// Cranelift inherit cross-engine parity through the existing bridge at zero
+// opcode cost.
+//
+// Each helper is `#[inline(never)]` so the call_function dispatch frame stays
+// small (same pattern as the URL + base64url cluster and the calendar
+// arithmetic helpers — inlining all of these into the dispatch switch tips
+// debug-build stack frames past the default 2 MiB pthread stack on Linux CI).
+
+#[inline(never)]
+fn sha256_impl(arg: &Value) -> Result<Value> {
+    // sha256 s > t — SHA-256 of the UTF-8 bytes of s, returned as a lowercase
+    // hex string. Total: no error path. 32 raw bytes → 64 hex chars.
+    use sha2::{Digest, Sha256};
+    let s = match arg {
+        Value::Text(s) => s.clone(),
+        other => {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!("sha256 requires text, got {:?}", other),
+            ));
+        }
+    };
+    let mut h = Sha256::new();
+    h.update(s.as_bytes());
+    let digest = h.finalize();
+    Ok(Value::Text(Arc::new(hex::encode(digest))))
+}
+
+#[inline(never)]
+fn hmac_sha256_impl(key_arg: &Value, msg_arg: &Value) -> Result<Value> {
+    // hmac-sha256 key:t msg:t > t — HMAC-SHA256 of msg under key. Returns the
+    // 32-byte MAC as a lowercase hex string. Use with `ct-eq` to verify
+    // signatures without leaking timing info.
+    use hmac::{Hmac, Mac};
+    use sha2::Sha256;
+    let key = match key_arg {
+        Value::Text(s) => s.clone(),
+        other => {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!("hmac-sha256: key must be text, got {:?}", other),
+            ));
+        }
+    };
+    let msg = match msg_arg {
+        Value::Text(s) => s.clone(),
+        other => {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!("hmac-sha256: msg must be text, got {:?}", other),
+            ));
+        }
+    };
+    // `Hmac::<Sha256>::new_from_slice` only errors on disallowed key length,
+    // which for HMAC-SHA256 is never (any byte length is allowed). The
+    // `expect` documents that invariant.
+    let mut mac =
+        <Hmac<Sha256>>::new_from_slice(key.as_bytes()).expect("HMAC-SHA256 accepts any key length");
+    mac.update(msg.as_bytes());
+    let tag = mac.finalize().into_bytes();
+    Ok(Value::Text(Arc::new(hex::encode(tag))))
+}
+
+#[inline(never)]
+fn b64_impl(arg: &Value) -> Result<Value> {
+    // b64 s > t — standard base64 (RFC 4648 §4) encode of the UTF-8 bytes of
+    // s, with `=` padding. Distinct from `b64u` which uses the URL-safe
+    // alphabet and strips padding. Total.
+    use base64::Engine;
+    use base64::engine::general_purpose::STANDARD;
+    let s = match arg {
+        Value::Text(s) => s.clone(),
+        other => {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!("b64 requires text, got {:?}", other),
+            ));
+        }
+    };
+    Ok(Value::Text(Arc::new(STANDARD.encode(s.as_bytes()))))
+}
+
+#[inline(never)]
+fn b64_dec_impl(arg: &Value) -> Result<Value> {
+    // b64-dec s > R t t — inverse of b64. Err on input outside the standard
+    // base64 alphabet, or on decoded bytes that aren't valid UTF-8. Uses the
+    // strict standard engine (requires `=` padding to match the encoder).
+    use base64::Engine;
+    use base64::engine::general_purpose::STANDARD;
+    let s = match arg {
+        Value::Text(s) => s.clone(),
+        other => {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!("b64-dec requires text, got {:?}", other),
+            ));
+        }
+    };
+    match STANDARD.decode(s.as_bytes()) {
+        Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(format!(
+            "b64-dec: invalid base64 input: {}",
+            e
+        )))))),
+        Ok(bytes) => match String::from_utf8(bytes) {
+            Ok(text) => Ok(Value::Ok(Box::new(Value::Text(Arc::new(text))))),
+            Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(format!(
+                "b64-dec: decoded bytes are not valid UTF-8: {}",
+                e
+            )))))),
+        },
+    }
+}
+
+#[inline(never)]
+fn hex_impl(arg: &Value) -> Result<Value> {
+    // hex s > t — lowercase hex encode of the UTF-8 bytes of s. Total:
+    // every byte maps to exactly 2 hex chars. Companion to sha256 / hmac-sha256
+    // which already emit hex; use `hex` when you need to encode arbitrary
+    // text bytes for transport (e.g. binary marshalling, logging escapes).
+    let s = match arg {
+        Value::Text(s) => s.clone(),
+        other => {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!("hex requires text, got {:?}", other),
+            ));
+        }
+    };
+    Ok(Value::Text(Arc::new(hex::encode(s.as_bytes()))))
+}
+
+#[inline(never)]
+fn ct_eq_impl(a_arg: &Value, b_arg: &Value) -> Result<Value> {
+    // ct-eq a:t b:t > b — constant-time text equality. Returns true iff the
+    // UTF-8 byte sequences of a and b are identical, comparing in constant
+    // time (no short-circuit on the first differing byte). Use when comparing
+    // secrets (HMAC digests, session tokens, API keys) so a timing attacker
+    // can't binary-search the secret one byte at a time.
+    //
+    // For different-length inputs we return `false` without invoking the
+    // constant-time path; length is not secret in practice (HMAC digests are
+    // fixed-length, tokens are emitted with a known size).
+    use subtle::ConstantTimeEq;
+    let a = match a_arg {
+        Value::Text(s) => s.clone(),
+        other => {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!("ct-eq: first arg must be text, got {:?}", other),
+            ));
+        }
+    };
+    let b = match b_arg {
+        Value::Text(s) => s.clone(),
+        other => {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!("ct-eq: second arg must be text, got {:?}", other),
+            ));
+        }
+    };
+    if a.len() != b.len() {
+        return Ok(Value::Bool(false));
+    }
+    let eq: bool = a.as_bytes().ct_eq(b.as_bytes()).into();
+    Ok(Value::Bool(eq))
+}
+
 // ── Calendar arithmetic cluster ─────────────────────────────────────────────
 //
 // Each builtin lives in its own #[inline(never)] helper so the call_function
@@ -3113,6 +3285,24 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
     }
     if builtin == Some(Builtin::B64uDec) && args.len() == 1 {
         return b64u_dec_impl(&args[0]);
+    }
+    if builtin == Some(Builtin::Sha256) && args.len() == 1 {
+        return sha256_impl(&args[0]);
+    }
+    if builtin == Some(Builtin::HmacSha256) && args.len() == 2 {
+        return hmac_sha256_impl(&args[0], &args[1]);
+    }
+    if builtin == Some(Builtin::B64) && args.len() == 1 {
+        return b64_impl(&args[0]);
+    }
+    if builtin == Some(Builtin::B64Dec) && args.len() == 1 {
+        return b64_dec_impl(&args[0]);
+    }
+    if builtin == Some(Builtin::HexEnc) && args.len() == 1 {
+        return hex_impl(&args[0]);
+    }
+    if builtin == Some(Builtin::CtEq) && args.len() == 2 {
+        return ct_eq_impl(&args[0], &args[1]);
     }
     if builtin == Some(Builtin::Lst) && args.len() == 3 {
         let idx = match &args[1] {

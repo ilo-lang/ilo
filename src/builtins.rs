@@ -290,6 +290,24 @@ pub enum Builtin {
     B64u,
     B64uDec,
 
+    // Crypto primitives cluster (0.12.x). All tree-bridge eligible: pure
+    // text-in / text-or-bool-out, no FnRef args, no I/O wrap. VM and Cranelift
+    // inherit cross-engine parity without new opcodes.
+    // `sha256 s > t` — SHA-256 of the UTF-8 bytes of `s`, lowercase hex.
+    // `hmac-sha256 key:t msg:t > t` — HMAC-SHA256, lowercase hex.
+    // `b64 s > t` — standard base64 encode (RFC 4648 §4, `=` padding).
+    // `b64-dec s > R t t` — standard base64 decode; Err on invalid input
+    //   or non-UTF-8 decoded bytes.
+    // `hex s > t` — lowercase hex encode of UTF-8 bytes of `s`.
+    // `ct-eq a:t b:t > b` — constant-time text equality. Use when comparing
+    //   secrets (HMAC digests, tokens) to avoid timing leaks.
+    Sha256,
+    HmacSha256,
+    B64,
+    B64Dec,
+    HexEnc,
+    CtEq,
+
     // `where cond xs ys > L a` — parallel-list conditional select.
     // NumPy `np.where` equivalent: for each i, output[i] = xs[i] if cond[i] else ys[i].
     // All three lists must have the same length; mismatch raises ILO-R009.
@@ -492,6 +510,12 @@ impl Builtin {
             "urldec" => Some(Builtin::Urldec),
             "b64u" => Some(Builtin::B64u),
             "b64u-dec" => Some(Builtin::B64uDec),
+            "sha256" => Some(Builtin::Sha256),
+            "hmac-sha256" => Some(Builtin::HmacSha256),
+            "b64" => Some(Builtin::B64),
+            "b64-dec" => Some(Builtin::B64Dec),
+            "hex" => Some(Builtin::HexEnc),
+            "ct-eq" => Some(Builtin::CtEq),
             "where" => Some(Builtin::Where),
             "add-mo" => Some(Builtin::AddMo),
             "last-dom" => Some(Builtin::LastDom),
@@ -675,6 +699,12 @@ impl Builtin {
             Builtin::Urldec => "urldec",
             Builtin::B64u => "b64u",
             Builtin::B64uDec => "b64u-dec",
+            Builtin::Sha256 => "sha256",
+            Builtin::HmacSha256 => "hmac-sha256",
+            Builtin::B64 => "b64",
+            Builtin::B64Dec => "b64-dec",
+            Builtin::HexEnc => "hex",
+            Builtin::CtEq => "ct-eq",
             Builtin::Where => "where",
             Builtin::AddMo => "add-mo",
             Builtin::LastDom => "last-dom",
@@ -986,6 +1016,25 @@ impl Builtin {
         Builtin::Del,
         Builtin::Hed,
         Builtin::Opt,
+        // Crypto primitives cluster (0.12.x). All tree-bridge eligible — pure
+        // text-in / text-or-bool-out, no FnRef args, no I/O. VM and Cranelift
+        // JIT inherit through the existing bridge at zero opcode cost. Order
+        // here is the on-wire dispatch order; appended last to preserve every
+        // existing tag.
+        //
+        // sha256 / hmac-sha256: lowercase hex digest output. Backed by `sha2`
+        // and `hmac` crates from the RustCrypto suite.
+        // b64 / b64-dec: standard base64 with `=` padding (RFC 4648 §4),
+        // distinct from b64u / b64u-dec which use the URL-safe alphabet.
+        // hex: lowercase hex encode of the UTF-8 bytes of the input text.
+        // ct-eq: constant-time text equality. Use when comparing secrets
+        // (HMAC digests, tokens) so a short-circuit `=` doesn't leak timing.
+        Builtin::Sha256,
+        Builtin::HmacSha256,
+        Builtin::B64,
+        Builtin::B64Dec,
+        Builtin::HexEnc,
+        Builtin::CtEq,
     ];
 
     /// On-wire 8-bit tag for cross-engine builtin dispatch. See `ALL`.
@@ -1333,6 +1382,12 @@ mod tests {
             "linspace",
             "ones",
             "rep",
+            "sha256",
+            "hmac-sha256",
+            "b64",
+            "b64-dec",
+            "hex",
+            "ct-eq",
         ];
         for name in &all {
             let b = Builtin::from_name(name).unwrap_or_else(|| panic!("missing builtin: {name}"));
@@ -1587,6 +1642,12 @@ mod tests {
             "linspace",
             "ones",
             "rep",
+            "sha256",
+            "hmac-sha256",
+            "b64",
+            "b64-dec",
+            "hex",
+            "ct-eq",
         ] {
             let b = Builtin::from_name(name).unwrap_or_else(|| panic!("no builtin: {name}"));
             let t = b.tag();

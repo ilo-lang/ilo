@@ -585,6 +585,16 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("urldec", &["t"], "R t t"),
     ("b64u", &["t"], "t"),
     ("b64u-dec", &["t"], "R t t"),
+    // Crypto primitives cluster (0.12.x). sha256 / hmac-sha256 return
+    // lowercase hex; b64 / b64-dec are standard base64 (with `=` padding,
+    // distinct from b64u / b64u-dec); hex encodes UTF-8 bytes as lowercase
+    // hex; ct-eq is constant-time text equality (for HMAC verification).
+    ("sha256", &["t"], "t"),
+    ("hmac-sha256", &["t", "t"], "t"),
+    ("b64", &["t"], "t"),
+    ("b64-dec", &["t"], "R t t"),
+    ("hex", &["t"], "t"),
+    ("ct-eq", &["t", "t"], "b"),
     // Calendar arithmetic (0.12.2). Pure epoch↔epoch/n ops, tree-bridge eligible.
     // add-mo: add N calendar months (N may be negative), end-of-month snap.
     // last-dom: epoch of the last day of the containing month at 00:00 UTC.
