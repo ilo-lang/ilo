@@ -50,15 +50,10 @@ code=mget m "code"               -- "0"
 
 `now` (s), `now-ms`, `sleep ms`, `clock`. Date parsing/formatting (`dtfmt`, `dtparse`, `dtparse-rel`) lives in `ilo-builtins-text`.
 
-`tz-offset tz:t epoch:n > R n t` - UTC offset in seconds for named IANA timezone at given Unix epoch. DST-aware (chrono-tz). Positive = east of UTC. Err on unknown tz name.
+`tz-offset tz:t epoch:n > R n t` - UTC offset (s) for IANA tz at epoch. DST-aware, east-positive. Err on unknown tz.
 
 ```
--- London summer (BST, UTC+1)
-tz-offset "Europe/London" 1719835200  -- Ok 3600
--- Tokyo (JST, UTC+9, no DST)
+tz-offset "Europe/London" 1719835200  -- Ok 3600    (BST)
 tz-offset "Asia/Tokyo" 0              -- Ok 32400
--- New York winter (EST, UTC-5)
-tz-offset "America/New_York" 1705320000  -- Ok -18000
--- Unknown tz
-tz-offset "Not/Real" 0               -- Err "tz-offset: unknown timezone ..."
+tz-offset "Not/Real" 0                -- Err "..."
 ```
