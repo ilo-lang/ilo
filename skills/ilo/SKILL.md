@@ -42,7 +42,7 @@ Twelve task-focused skills cover the surface. Load only the slices the current t
 - `ilo-builtins-text` text builtins: manipulation, regex, formatting (`fmt fmt2`), CSV/TSV, date parsing (`dtfmt`, `dtparse`, `dtparse-rel` for relative phrases), calendar arithmetic (`add-mo`, `last-dom`, `next-business-day`, `day-of-week`).
 - `ilo-errors` reading ILO-XXXX codes: lex / parse / type / runtime classes with one-line cause + fix.
 - `ilo-tools` declaring and using external tools: MCP servers and HTTP providers.
-- `ilo-engines` picking an execution backend: tree, VM, JIT, AOT.
+- `ilo-engines` picking an execution backend: VM, JIT, AOT.
 - `ilo-agent` integrating ilo into an agent loop: discovery, running, output contract.
 - `ilo-examples` finding a runnable pattern: curated index of `examples/*.@` by task shape.
 - `ilo-edit-loop` recovering from failures: the repair cycle, JSON diagnostics, common fixes.

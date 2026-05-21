@@ -50,7 +50,7 @@ Two distinct types, two distinct unwraps. `O T` = maybe-value (`nil` or `T`), no
 
 ## tail-call optimisation
 
-Tail calls do not consume host-stack frames. A function that recurses in tail position runs to arbitrary depth — use tail-recursive accumulators for iteration beyond what `@` covers. No `loop` keyword by design. Tail position = last stmt of body, `ret` expr, an arm of a tail-position `?` match, body of a braceless guard. Peephole fires on direct user-fn name calls with no `!`/`!!`. Tree + VM trampoline today; JIT/AOT pending. Example: `count-down n:n>n;=n 0 0;count-down -n 1`.
+Tail calls do not consume host-stack frames. A function that recurses in tail position runs to arbitrary depth — use tail-recursive accumulators for iteration beyond what `@` covers. No `loop` keyword by design. Tail position = last stmt of body, `ret` expr, an arm of a tail-position `?` match, body of a braceless guard. Peephole fires on direct user-fn name calls with no `!`/`!!`. VM trampoline today; JIT/AOT pending. Example: `count-down n:n>n;=n 0 0;count-down -n 1`.
 
 ## pipes
 
@@ -58,7 +58,7 @@ Tail calls do not consume host-stack frames. A function that recurses in tail po
 
 ## lambdas
 
-Parens: `map (x:n>n;+x 1) xs`. Captures tree-only; VM/JIT auto-fallback.
+Parens: `map (x:n>n;+x 1) xs`. Captures supported natively on VM and Cranelift JIT/AOT.
 
 ## multi-fn files
 

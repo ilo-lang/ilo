@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.13.0
+
+### Breaking
+
+- **Tree-walker removed as a user-selectable engine.** `cli::Engine::Tree`, `--run-tree`, and `--run` are gone. ilo now ships with two engines: the bytecode register VM (default) and the Cranelift JIT (opt-in via `--jit`). The shared runtime module (`src/runtime/`, formerly `src/interpreter/`) survives only as the in-process dispatch target for the ~30 builtins routed through the VM/Cranelift tree-bridge (regex, fmt-variadic, IO, sleep, ct/rsrt, closure-bind-ctx HOFs, crypto, calendar). Per ILO-234 the bridge dispatch round-trip cost is negligible, so the bridge stays. Closes ILO-45.
+
 ## Unreleased
 
 The codegen layer. A typed HIR sits between the verified AST and code
