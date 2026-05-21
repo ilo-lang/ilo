@@ -179,6 +179,17 @@ pub enum Builtin {
     // `pst-to url body timeout-ms > R t t` — like `pst` but with an explicit
     // per-request timeout. Same millisecond-to-second rounding as `get-to`.
     PstTo,
+    // `getx url > R (M t _) t` — like `get` but returns a rich Ok-map with
+    // keys `status` (n), `headers` (M t t), `body` (t). Optional 2nd arg is a
+    // request-headers map (M t t), same as `get`. Additive — does not change
+    // `get`'s shape. Unblocks conditional-request / cache-aware / cookie-
+    // following / redirect / pagination-Link workflows that need response
+    // metadata. Tree-bridge eligible: no FnRef args, returns Result.
+    Getx,
+    // `pstx url body > R (M t _) t` — like `pst` but returns the same rich
+    // Ok-map shape as `getx`. Optional 3rd arg is a request-headers map.
+    // Tree-bridge eligible.
+    Pstx,
     // HTTP verb cluster (#5z). Same shape as `pst`/`get`: optional 3rd-arg
     // `M t t` headers map; returns `R t t`. Tree-bridge eligible — no
     // dedicated VM opcodes, the tree interpreter performs the actual minreq
@@ -475,6 +486,8 @@ impl Builtin {
             "get-many" => Some(Builtin::GetMany),
             "get-to" => Some(Builtin::GetTo),
             "pst-to" => Some(Builtin::PstTo),
+            "getx" => Some(Builtin::Getx),
+            "pstx" => Some(Builtin::Pstx),
             "put" => Some(Builtin::Put),
             "pat" => Some(Builtin::Pat),
             "del" => Some(Builtin::Del),
@@ -664,6 +677,8 @@ impl Builtin {
             Builtin::GetMany => "get-many",
             Builtin::GetTo => "get-to",
             Builtin::PstTo => "pst-to",
+            Builtin::Getx => "getx",
+            Builtin::Pstx => "pstx",
             Builtin::Put => "put",
             Builtin::Pat => "pat",
             Builtin::Del => "del",
@@ -1035,6 +1050,14 @@ impl Builtin {
         Builtin::B64Dec,
         Builtin::HexEnc,
         Builtin::CtEq,
+        // getx / pstx — HTTP variants that surface response status, headers,
+        // and body as a Map[Text, _] wrapped in Ok. Additive — the existing
+        // `get` / `pst` body-only signatures stay intact for token-cheap GETs
+        // that don't care about metadata. Tree-bridge eligible (returns
+        // Result, no FnRef args), so VM and Cranelift inherit without new
+        // opcodes. Appended last to preserve every prior on-wire tag.
+        Builtin::Getx,
+        Builtin::Pstx,
     ];
 
     /// On-wire 8-bit tag for cross-engine builtin dispatch. See `ALL`.
@@ -1322,6 +1345,8 @@ mod tests {
             "pst",
             "get-to",
             "pst-to",
+            "getx",
+            "pstx",
             "put",
             "pat",
             "del",
@@ -1600,6 +1625,8 @@ mod tests {
             "get-many",
             "get-to",
             "pst-to",
+            "getx",
+            "pstx",
             "put",
             "pat",
             "del",
