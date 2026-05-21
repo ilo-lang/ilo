@@ -29,9 +29,7 @@ Prefix-call: `name arg1 arg2 ...`. Cross-engine unless noted.
 
 ## Statistics
 
-`sum avg median quantile stdev variance cumsum frq argmax argmin argsort prod cprod`.
-
-`bisect xs target > n` = O(log N) leftmost insertion point in a sorted numeric list (Python `bisect_left`). Returns `i` such that `xs[0..i] < target <= xs[i..]`. Empty list returns `0`; target above every element returns `len xs`; ties resolve leftmost. Caller owns sortedness - not validated. Replaces the O(N) `len (flt (x:n>b;< x target) xs)` cascade on sorted input.
+`sum avg median quantile stdev variance cumsum frq argmax argmin argsort prod cprod bisect`. `bisect xs target` is Python `bisect_left` (O(log N) sorted-list insertion point); caller owns sortedness.
 
 ## Linear algebra
 
