@@ -1,0 +1,84 @@
+name: Benchmark suite
+
+on:
+  schedule:
+    - cron: "0 3 * * *"   # nightly at 03:00 UTC
+  workflow_dispatch:        # manual trigger
+
+permissions:
+  contents: write           # to push results.json
+
+jobs:
+  bench:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-bench-${{ hashFiles('Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-bench-
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Run benchmark suite
+        run: bash bench/run.sh --no-rust
+
+      - name: Compile Rust baselines and re-run
+        run: |
+          mkdir -p bench/.build
+          for d in bench/*/; do
+            b=$(basename "$d")
+            rs="$d$b.rs"
+            if [ -f "$rs" ]; then
+              rustc -O -o "bench/.build/${b}_rs" "$rs" || true
+            fi
+          done
+          bash bench/run.sh
+
+      - name: Check for regression (>10% vs previous)
+        run: |
+          if [ -f bench/results-prev.json ]; then
+            python3 - bench/results.json bench/results-prev.json << 'PYEOF'
+          import sys, json
+          cur  = json.load(open(sys.argv[1]))["benchmarks"]
+          prev = json.load(open(sys.argv[2]))["benchmarks"]
+          failures = []
+          for bench, langs in cur.items():
+              for lang, ns in langs.items():
+                  prev_ns = prev.get(bench, {}).get(lang)
+                  if prev_ns and ns > prev_ns * 1.10:
+                      pct = (ns - prev_ns) / prev_ns * 100
+                      failures.append(f"  {bench}/{lang}: {prev_ns}ns -> {ns}ns (+{pct:.1f}%)")
+          if failures:
+              print("REGRESSION DETECTED (>10%):")
+              for f in failures:
+                  print(f)
+              sys.exit(1)
+          else:
+              print("No regressions detected.")
+          PYEOF
+          fi
+
+      - name: Rotate results
+        run: |
+          cp bench/results.json bench/results-prev.json 2>/dev/null || true
+
+      - name: Commit updated results
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "chore(bench): update nightly results [skip ci]"
+          file_pattern: "bench/results.json bench/results-prev.json"
+          branch: main
