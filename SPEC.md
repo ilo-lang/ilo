@@ -532,7 +532,7 @@ Called like functions, compiled to dedicated opcodes.
 | `wrl path xs` | write list of lines to file (joins with `\n`) | `R t t` |
 | `trm s` | trim leading and trailing whitespace | `t` |
 | `spl t sep` | split text by separator | `L t` |
-| `fmt tmpl args…` | format string - bare `{}` placeholders only, filled left-to-right. Printf-style specs (`{:06d}`, `{:.3f}`) are rejected; compose `fmt2` for decimal precision and `padl` for width/padding. Literal templates require `{}`-count == arg-count (verifier rejects mismatches with `ILO-T013`). Lists are formatted as a single value, not splatted: `fmt "{} {}" [a, b]` is an error - use `fmt "{} {}" a b` instead | `t` |
+| `fmt tmpl args…` | format string - supports `{}` (Display), `{.Nf}` / `{:.Nf}` (N decimals), `{:N}` (right-align width), `{:Nd}` (integer width), `{:<N}` (left-align width). Filled left-to-right; placeholder count must equal arg count. Out-of-scope specs (zero-pad `{:06d}`, sign `{:+}`, hex `{:x}`) are rejected; compose `fmt2` / `padl` / `padr` for those. Literal-template mismatches surface at verify-time (`ILO-T013`); computed-template errors surface at runtime (`ILO-R009`). Lists are formatted as a single value, not splatted: `fmt "{} {}" [a, b]` is an error - use `fmt "{} {}" a b` instead | `t` |
 | `cat xs sep` | join list of text with separator | `t` |
 | `has xs v` | membership test (list: element, text: substring) | `b` |
 | `hd xs` | head (first element/char) of list or text | element / `t` |
