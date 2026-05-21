@@ -38,9 +38,29 @@ Parsing `;`-delimited headers (Content-Type, Cache-Control, Cookie): no `ct-pars
 `jpth`/`jpth!` returns the leaf **already typed**: numbers as `n`, text as `t`, bools as `b`, arrays as `L _`, objects as record. Don't wrap in `num`/`str` or re-`jpar`: `age=jpth! body "user.age"` is already `n`. `num (str (jpth! body "x"))` is pure waste (~30 tokens).
 
 `!` auto-unwraps on all of these. Common shape inside `R`-returning fn: `r=jpar! body;r.x`. `jpar!` propagates errors; `jpar!!` panics. Same for `jpar-list!`, `jpth!`, `jkeys!`. Non-`R` callers: use `default-on-err` (in `ilo-builtins-core`): `name=default-on-err (jpth body "user.name") "anon"`.
-`!` auto-unwraps the Result on any of these. Inside an `R`-returning function `r=jpar! body;r.x` is the common shape — saves the `?r{~v:v;^e:^e}` boilerplate per call site. `jpar! body` propagates parse errors out of the enclosing function; `jpar!! body` panics on parse error instead. Same for `jpar-list!`, `jpth!`, `jkeys!`.
-`jpth` Ok variant is the actual leaf type: JSON number → `n`, string → `t`, bool → `b`, array → `L _` (iterable), object → record. No re-parse needed. Don't write `num (str (jpth! body "x"))` — `jpth! body "x"` is already `n` when the leaf is numeric.
-`!` auto-unwraps the Result. Inside an `R`-returning fn, `r=jpar! body;r.x` saves `?r{~v:v;^e:^e}` boilerplate; `jpar! body` propagates parse errors, `jpar!!` panics. Same for `jpar-list!`, `jpth!`, `jkeys!`.
+
+## Multi-request flows
+
+ilo has no globals. Thread state through function args (in-run) or persist to a file (cross-run). See `examples/paginated-fetch.ilo` and `examples/oauth-token-cache.ilo`.
+
+**Closure-threading** (in-run cache, paginated fetch, rate-limit window). Pass state in, return state out:
+
+```
+-- Paginated fetch: cursor + accumulator thread through recursion.
+fetch-page url:t cur:t acc:L _>R (L _) t;u=fmt "{}?cursor={}" url cur;b=get! u;page=jpar-list! b;acc=+acc page;nxt=default-on-err (jpth b "next") "";=nxt "" ~acc;fetch-page url nxt acc
+```
+
+**File-backed** (cross-run OAuth token, refresh on expiry). Read cached value, do work, write refreshed value back. `wr`/`rd` survive across runs; `now-ms` gives a TTL stamp.
+
+```
+load path:t>t;?h (isfile path) (rd!! path) "NO-TOKEN"
+save path:t tok:t>t;wr!! path tok;tok
+-- Per request: load, attach as bearer, on 401 refresh + save + retry.
+-- See examples/oauth-token-cache.ilo for the worked refresh loop.
+```
+
+Pick file-backed when state must outlive the program (OAuth refresh tokens, multi-hour TTLs). Pick closure-threading when state lives one run (pagination, rate-limit windows).
+
 ## Process spawn
 
 `run cmd argv` (`R (M t t) t`) - argv-list spawn; loose Map with text fields `stdout`, `stderr`, `code` (exit as text). `$cmd argv` is the sigil shortcut.
@@ -57,13 +77,7 @@ r.exit    -- number (0 = success)
 
 `env name` (var), `env-all` (`R (M t t) t`), `exit code`.
 
-`run cmd argv` (`R (M t t) t`) spawns `cmd` with `argv` (`L t`). No shell, no glob, no interpolation. `$` is the sigil shortcut. `Ok` map keys (all text): `stdout`, `stderr`, `code` (decimal; signal -> `signal:<n>`, else `unknown`). Non-zero exit is **not** `Err`; branch on `mget m "code"`. `Err` = spawn failure or 10 MiB/stream cap. Stdin closed; inherits parent env + cwd. WASM Errs.
-
-```
-m=run!! "echo" ["hi"]            -- {"stdout":"hi\n","stderr":"","code":"0"}
-out=mget m "stdout"              -- "hi\n"
-code=mget m "code"               -- "0"
-```
+`run` details: no shell, no glob, no interpolation. argv passed to `Command::args`. `code` is decimal (signal -> `signal:<n>`). Non-zero exit is not `Err`; branch on `mget m "code"`. Err = spawn failure or 10 MiB/stream cap. Stdin closed; inherits env + cwd. WASM Errs.
 
 ## Time
 
