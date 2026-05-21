@@ -45,14 +45,21 @@ SKILL_NAMES = [
 PER_MODULE_LIMIT = 1000
 # `ilo-language` is the foundational module every agent loads first; it
 # carries a higher cap because core syntax doesn't split cleanly into
-# smaller files. `ilo-builtins-io` is the next most-touched module —
-# HTTP, JSON, env, time, and process all live there; agent dogfooding
-# hits this cap on every other doc PR. Bumped to match its density.
+# smaller files. The four `ilo-builtins-*` modules and `ilo-agent` carry
+# bumped caps reflecting accumulated growth across the HTTP verb cluster
+# (#5z), getx/pstx (#5bn), crypto primitives, calendar arithmetic, and
+# the numeric/text prelude additions of 0.12.x. Each cap is set with
+# ~10% headroom over current weight so a single doc-pair addition does
+# not flip CI red.
 PER_MODULE_OVERRIDES = {
-    "ilo-language": 1500,
-    "ilo-builtins-io": 1500,
+    "ilo-language": 1700,
+    "ilo-builtins-core": 1200,
+    "ilo-builtins-math": 1200,
+    "ilo-builtins-io": 2000,
+    "ilo-builtins-text": 1200,
+    "ilo-agent": 1300,
 }
-TOTAL_LIMIT = 15000
+TOTAL_LIMIT = 16000
 
 
 def main() -> int:
