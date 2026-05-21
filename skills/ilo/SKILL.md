@@ -39,7 +39,7 @@ Twelve task-focused skills cover the surface. Load only the slices the current t
 - `ilo-builtins-core` core builtins: type coercions (`len str num trm`), list ops, HOFs, map ops.
 - `ilo-builtins-math` math builtins: arithmetic, trig, constants (`pi tau e`), random, statistics.
 - `ilo-builtins-io` I/O builtins: file read/write, HTTP, JSON, path ops, env, time, process.
-- `ilo-builtins-text` text builtins: manipulation, regex, formatting (`fmt fmt2`), CSV/TSV, date parsing (`dtfmt`, `dtparse`, `dtparse-rel` for relative phrases).
+- `ilo-builtins-text` text builtins: manipulation, regex, formatting (`fmt fmt2`), CSV/TSV, date parsing (`dtfmt`, `dtparse`, `dtparse-rel` for relative phrases), calendar arithmetic (`add-mo`, `last-dom`, `next-business-day`, `day-of-week`).
 - `ilo-errors` reading ILO-XXXX codes: lex / parse / type / runtime classes with one-line cause + fix.
 - `ilo-tools` declaring and using external tools: MCP servers and HTTP providers.
 - `ilo-engines` picking an execution backend: tree, VM, JIT, AOT.
@@ -48,6 +48,65 @@ Twelve task-focused skills cover the surface. Load only the slices the current t
 - `ilo-edit-loop` recovering from failures: the repair cycle, JSON diagnostics, common fixes.
 
 The content lives in `skills/ilo/<name>.md`. The installed binary serves the same files via `include_str!`, so the bundled copy and the served copy cannot drift.
+
+## Reserved names (ILO-P011)
+
+Every builtin name, builtin alias, and control-flow keyword is reserved. Using any as a binding triggers ILO-P011 at parse time. Use 4+ character descriptive names (`item`, `rows`, `accum`, `total`, `count`, `index`, `result`) to stay clear of this class of error permanently.
+
+**Lexer keywords** (reserved tokens, never identifiers): `fn` `def` `let` `var` `const` `if` `return` `true` `false` `nil` `type` `tool` `use`
+
+**1-char**: `e` (Euler's number — math constant)
+
+**2-char**: `at` `ct` `hd` `rd` `tl` `wr` `wh` (while-loop keyword)
+
+**3-char builtins**: `abs` `avg` `cap` `cat` `cel` `chr` `cos` `det` `dot` `env` `exp` `fft` `fld` `flt` `fmt` `frq` `get` `grp` `has` `inv` `log` `lsd` `lst` `lwr` `map` `max` `min` `mod` `now` `ord` `pi` `pow` `pst` `rdb` `rdl` `rev` `rgx` `rnd` `rou` `run` `sin` `slc` `spl` `srt` `sum` `tan` `tau` `trm` `unq` `upr` `wra` `wrl` `zip`
+
+**3-char control-flow**: `brk` (break) `cnt` (continue) `ret` (return). `ret` from inside any loop body (`@x xs`, `@i a..b`, `wh`) returns from the enclosing fn directly - no sentinel-flag pattern needed.
+
+**4-char+**: `acos` `asin` `atan` `argmax` `argmin` `argsort` `basename` `chars` `chunks` `clamp` `cprod` `cumsum` `dirname` `dot` `drop` `dtfmt` `dtparse` `dtparse-rel` `enumerate` `flat` `flatmap` `fmod` `fmt2` `fsize` `glob` `ifft` `inv` `isdir` `isfile` `jdmp` `jkeys` `jpar` `jpth` `len` `mapr` `matmul` `matvec` `mdel` `median` `mget` `mhas` `mkeys` `mmap` `mpairs` `mset` `mtime` `mvals` `padl` `padr` `partition` `pathjoin` `prnt` `prod` `quantile` `rand-bytes` `range` `rdb` `rdin` `rdinl` `rdjl` `rdl` `rndn` `rsrt` `setdiff` `setinter` `setunion` `sleep` `solve` `sqrt` `stdev` `take` `transpose` `uniqby` `variance` `walk` `where` `window` `wra` `wrl`
+**4-char+**: `acos` `asin` `atan` `argmax` `argmin` `argsort` `basename` `chars` `chunks` `clamp` `cprod` `cumsum` `dirname` `dot` `drop` `dtfmt` `dtparse` `dtparse-rel` `enumerate` `flat` `flatmap` `fmod` `fmt2` `fsize` `glob` `ifft` `inv` `isdir` `isfile` `jdmp` `jkeys` `jpar` `jpth` `len` `mapr` `matmul` `matvec` `mdel` `median` `mget` `mhas` `mkeys` `mmap` `mpairs` `mset` `mtime` `mvals` `padl` `padr` `partition` `pathjoin` `prnt` `prod` `quantile` `rand-bytes` `range` `rdb` `rdin` `rdinl` `rdjl` `rdl` `rndn` `rsrt` `setdiff` `setinter` `setunion` `sleep` `solve` `sqrt` `stdev` `take` `transpose` `uniqby` `variance` `walk` `window` `wra` `wrl`
+**4-char+**: `acos` `asin` `atan` `argmax` `argmin` `argsort` `basename` `chars` `chunks` `clamp` `cprod` `cumsum` `dirname` `dot` `drop` `dtfmt` `dtparse` `dtparse-rel` `enumerate` `flat` `flatmap` `fmod` `fmt2` `fsize` `glob` `ifft` `inv` `isdir` `isfile` `jdmp` `jkeys` `jpar` `jpth` `len` `mapr` `matmul` `mdel` `median` `mget` `mhas` `mkeys` `mmap` `mpairs` `mset` `mtime` `mvals` `padl` `padr` `partition` `pathjoin` `prnt` `prod` `quantile` `range` `rdb` `rdin` `rdinl` `rdjl` `rdl` `rndn` `rsrt` `seed` `setdiff` `setinter` `setunion` `sleep` `solve` `sqrt` `stdev` `take` `transpose` `uniqby` `variance` `walk` `window` `wra` `wrl`
+
+**Builtin aliases** (long-form names that resolve to short builtins, also reserved): `length`→`len`, `head`→`hd`, `tail`→`tl`, `reverse`→`rev`, `sort`→`srt`, `slice`→`slc`, `unique`→`unq`, `filter`→`flt`, `fold`→`fld`, `flatten`→`flat`, `concat`→`cat`, `contains`→`has`, `group`→`grp`, `average`→`avg`, `print`→`prnt`, `trim`→`trm`, `split`→`spl`, `format`→`fmt`, `regex`→`rgx`, `read`→`rd`, `readlines`→`rdl`, `write`→`wr`, `writelines`→`wrl`, `ceil`→`cel`, `round`→`rou`, `rand`/`random`→`rnd`, `rng`→`range`, `string`→`str`, `number`→`num`.
+
+### One-liner rename suggestions
+
+Agents reach for these names constantly — pick the listed alternative and move on:
+
+- `fn` (keyword) → `f`, `fv`, `func`, or a descriptive name like `callback` / `predicate`
+- `def` (keyword) → `d`, `defn`, `defv`
+- `let` / `var` / `const` (keywords) → `l`/`lv`/`letv`, `v`/`value`, `c`/`k`/`constv`
+- `if` / `return` (keywords) → `cond`/`flag`/`iff`, `result`/`out`/`ret_val`
+- `e` (math constant) → `event`, `evt`, `entry`, `elem`, `err`
+- `env` (builtin) → `ev`, `envir`, `environ`, `envv`
+- `log` (math builtin) → `lg`, `logger`, `entry`, `record`
+- `now` (time builtin) → `tnow`, `current`, `nowts`, `timestamp`
+- `iter` (not reserved today, but agents often pair with builtins — prefer descriptive) → `i`, `idx`, `step`, `cursor`
+- `chars` (builtin) → `cs`, `glyphs`, `letters`
+- `head` / `tail` / `length` (aliases) → `hd`/`tl`/`len` directly, or `first`/`rest`/`size`
+- `filter` / `sort` / `concat` / `fold` (aliases) → `flt`/`srt`/`cat`/`fld` directly, or `keep`/`sorted`/`joined`/`reduced`
+- `fld` (fold builtin) → `field`, `folder`, `record`
+- `cnt` / `brk` (loop control) → `count`/`index`, `brake`/`stop`
+
+When in doubt: pick a 4+ char descriptive name. The token cost of an extra character is dwarfed by the cost of an ILO-P011 retry round-trip.
+
+## Date/time builtins
+
+`now` and `now-ms` are not the whole surface. Full set: `now` (Unix seconds), `now-ms` (Unix ms), `dtfmt ts fmt` (timestamp to text), `dtparse s fmt` (text to timestamp, `R n t`), `dtparse-rel s now` (relative phrase like `"in 3 days"` / `"last monday"` anchored at `now`, `R n t`). Reach for `dtparse-rel` before hand-rolling phrase parsers. Details in `ilo skill get ilo-builtins-text`.
+**4-char+**: `acos` `asin` `atan` `argmax` `argmin` `argsort` `basename` `chars` `chunks` `clamp` `cprod` `cumsum` `dirname` `dot` `drop` `dtfmt` `dtparse` `dtparse-rel` `enumerate` `flat` `flatmap` `fmod` `fmt2` `fsize` `glob` `ifft` `inv` `isdir` `isfile` `jdmp` `jkeys` `jpar` `jpth` `len` `mapr` `matmul` `matvec` `mdel` `median` `mget` `mhas` `mkeys` `mmap` `mpairs` `mset` `mtime` `mvals` `padl` `padr` `partition` `pathjoin` `prnt` `prod` `quantile` `rand-bytes` `range` `rdb` `rdin` `rdinl` `rdjl` `rdl` `rndn` `rsrt` `setdiff` `setinter` `setunion` `sleep` `solve` `sqrt` `stdev` `take` `transpose` `uniqby` `variance` `walk` `window` `wra` `wrl`
+**4-char+**: `acos` `asin` `atan` `argmax` `argmin` `argsort` `basename` `chars` `chunks` `clamp` `cprod` `cumsum` `dirname` `dot` `drop` `dtfmt` `dtparse` `dtparse-rel` `enumerate` `flat` `flatmap` `fmod` `fmt2` `fsize` `glob` `ifft` `inv` `isdir` `isfile` `jdmp` `jkeys` `jpar` `jpth` `len` `mapr` `matmul` `matvec` `mdel` `median` `mget` `mhas` `mkeys` `mmap` `mpairs` `mset` `mtime` `mvals` `padl` `padr` `partition` `pathjoin` `prnt` `prod` `quantile` `range` `rdb` `rdin` `rdinl` `rdjl` `rdl` `rndn` `rsrt` `setdiff` `setinter` `setunion` `sleep` `solve` `sqrt` `stdev` `take` `transpose` `uniqby` `variance` `walk` `window` `wra` `wrl`
+**4-char+**: `acos` `asin` `atan` `argmax` `argmin` `argsort` `basename` `chars` `chunks` `clamp` `cprod` `cumsum` `dirname` `dot` `drop` `dtfmt` `dtparse` `dtparse-rel` `enumerate` `flat` `flatmap` `fmod` `fmt2` `fsize` `glob` `ifft` `inv` `isdir` `isfile` `jdmp` `jkeys` `jpar` `jpth` `len` `mapr` `matmul` `mdel` `median` `mget` `mhas` `mkeys` `mmap` `mpairs` `mset` `mtime` `mvals` `padl` `padr` `partition` `pathjoin` `prnt` `prod` `quantile` `range` `rdb` `rdin` `rdinl` `rdjl` `rdl` `rndn` `rsrt` `setdiff` `setinter` `setunion` `sleep` `solve` `sqrt` `stdev` `take` `transpose` `tz-offset` `uniqby` `variance` `walk` `window` `wra` `wrl`
+
+## Common pitfalls
+
+**No tuple type.** `zip xs ys` returns `L (L n)` — a list of two-element lists, not a list of tuples. Destructure pairs with `at pair 0` / `at pair 1`, never `pair.0` / `pair.1` where `pair` is unbound. ILO-T004 on `tup.0` / `pair.0` carries a hint naming the exact `at <name> <N>` call to write.
+
+```
+-- DON'T: zs=zip xs ys; +tup.0 tup.1   -- tup is unbound; ilo has no tuple type
+-- DO:    zs=zip xs ys; map (pair:L n>n;+at pair 0 at pair 1) zs
+```
+
+(`pair.0` itself is valid sugar for list indexing once `pair` is bound to an `L T` parameter; the diagnostic only fires when the identifier is unbound.)
 
 ## Compatibility note
 

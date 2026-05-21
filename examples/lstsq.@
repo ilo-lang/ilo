@@ -1,0 +1,43 @@
+-- lstsq xm ys > L n - ordinary least squares via the normal equations.
+-- Returns the coefficient vector b minimising ||xm.b - ys||^2.
+--
+-- Replaces the 5-line OLS recipe:
+--   xt = transpose xm
+--   a  = matmul xt xm
+--   yc = map (y:n>L n;[y]) ys
+--   bc = matmul xt yc
+--   b  = solve a (map (r:L n>n;r.0) bc)
+-- with a single call: b = lstsq xm ys.
+--
+-- Same precision tier as `solve` (LU with partial pivoting); use a
+-- dedicated QR/SVD library if the design is ill-conditioned.
+
+-- Perfect fit: y = 2x + 3 over five points. Design matrix has a column
+-- of 1s (intercept) and a column of x. Result is [3, 2].
+fit-line>L n;
+  xs=[1,2,3,4,5];
+  ys=[5,7,9,11,13];
+  xm=map (x:n>L n;[1,x]) xs;
+  lstsq xm ys
+
+-- Intercept-only fit on noisy data: best constant is the mean.
+mean-fit>n;
+  ys=[2.0,4.0,6.0,8.0,10.0];
+  xm=map (y:n>L n;[1.0]) ys;
+  b=lstsq xm ys;b.0
+
+-- Multivariate: fit z = 1 + 2x + 3y over four sample points. Pick the
+-- first coefficient (intercept) for a stable scalar check; the full
+-- vector [1, 2, 3] is what you get back when you bind the result.
+multi-fit>n;
+  xm=[[1,1,1],[1,2,1],[1,1,2],[1,2,2]];
+  ys=[6,8,9,11];
+  b=lstsq xm ys;
+  rou b.0
+
+-- run: fit-line
+-- out: [3, 2]
+-- run: mean-fit
+-- out: 6
+-- run: multi-fit
+-- out: 1

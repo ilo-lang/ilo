@@ -84,6 +84,7 @@ struct HelperFuncs {
     rnd0: FuncId,
     rnd2: FuncId,
     rndn: FuncId,
+    seed: FuncId,
     now: FuncId,
     now_ms: FuncId,
     env: FuncId,
@@ -140,6 +141,7 @@ struct HelperFuncs {
     jpth: FuncId,
     jdmp: FuncId,
     jpar: FuncId,
+    jpar_list: FuncId,
     rdjl: FuncId,
     call: FuncId,
     // Type predicates
@@ -164,6 +166,12 @@ struct HelperFuncs {
     /// `jit_prt_main_result` in `src/vm/mod.rs`. Returns a u64 exit code
     /// (0 or 1) that `generate_main` truncates to i32 for `main`.
     prt_main: FuncId,
+    /// AOT main-result printer, suppression variant. Same exit-code contract
+    /// as `prt_main` but suppresses the happy-path stdout print — used when
+    /// the entry function's body ends with a `prnt` call (which already
+    /// printed) or a loop-tail (which already printed via the loop body).
+    /// Err still goes to stderr with exit 1.
+    prt_main_suppress: FuncId,
     trm: FuncId,
     upr: FuncId,
     lwr: FuncId,
@@ -313,6 +321,7 @@ fn declare_all_helpers(module: &mut ObjectModule) -> HelperFuncs {
         rnd0: declare_helper(module, "jit_rnd0", 0, 1),
         rnd2: declare_helper(module, "jit_rnd2", 2, 1),
         rndn: declare_helper(module, "jit_rndn", 2, 1),
+        seed: declare_helper(module, "jit_seed", 1, 1),
         now: declare_helper(module, "jit_now", 0, 1),
         now_ms: declare_helper(module, "jit_now_ms", 0, 1),
         env: declare_helper(module, "jit_env", 1, 1),
@@ -369,6 +378,7 @@ fn declare_all_helpers(module: &mut ObjectModule) -> HelperFuncs {
         jpth: declare_helper(module, "jit_jpth", 3, 1),
         jdmp: declare_helper(module, "jit_jdmp", 1, 1),
         jpar: declare_helper(module, "jit_jpar", 2, 1),
+        jpar_list: declare_helper(module, "jit_jpar_list", 2, 1),
         rdjl: declare_helper(module, "jit_rdjl", 2, 1),
         call: declare_helper(module, "jit_call", 4, 1),
         // Type predicates
@@ -389,6 +399,7 @@ fn declare_all_helpers(module: &mut ObjectModule) -> HelperFuncs {
         // Print, trim, uniq
         prt: declare_helper(module, "jit_prt", 1, 1),
         prt_main: declare_helper(module, "jit_prt_main_result", 1, 1),
+        prt_main_suppress: declare_helper(module, "jit_prt_main_result_suppress", 1, 1),
         trm: declare_helper(module, "jit_trm", 2, 1),
         upr: declare_helper(module, "jit_upr", 2, 1),
         lwr: declare_helper(module, "jit_lwr", 2, 1),
@@ -443,37 +454,115 @@ fn declare_all_helpers(module: &mut ObjectModule) -> HelperFuncs {
 
 // ── Linker flags ────────────────────────────────────────────────────
 
+/// Read `build.target-dir` from a `.cargo/config.toml` file. Returns `None`
+/// if the file is absent, unreadable, or has no `target-dir` entry.
+///
+/// Ad-hoc parser: scans for a `target-dir = "..."` line inside a `[build]`
+/// section. Good enough for the worktree-isolation case we care about; we
+/// deliberately avoid pulling in a `toml` dep just for this.
+fn cargo_config_target_dir(config_path: &std::path::Path) -> Option<String> {
+    let text = std::fs::read_to_string(config_path).ok()?;
+    let mut in_build = false;
+    for raw in text.lines() {
+        let line = raw.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        if let Some(section) = line.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
+            in_build = section.trim() == "build";
+            continue;
+        }
+        if !in_build {
+            continue;
+        }
+        // Match `target-dir = "..."` (single or double quotes, with optional whitespace).
+        let rest = match line.strip_prefix("target-dir") {
+            Some(r) => r.trim_start(),
+            None => continue,
+        };
+        let rest = match rest.strip_prefix('=') {
+            Some(r) => r.trim(),
+            None => continue,
+        };
+        let value = rest
+            .strip_prefix('"')
+            .and_then(|r| r.split_once('"').map(|(v, _)| v))
+            .or_else(|| {
+                rest.strip_prefix('\'')
+                    .and_then(|r| r.split_once('\'').map(|(v, _)| v))
+            })?;
+        if !value.is_empty() {
+            return Some(value.to_string());
+        }
+    }
+    None
+}
+
+/// Probe candidate libilo.a paths for a given target directory, preferring
+/// release over debug.
+fn libilo_a_in(target_dir: &str) -> Option<String> {
+    for profile in ["release", "debug"] {
+        let p = format!("{}/{}/libilo.a", target_dir, profile);
+        if std::path::Path::new(&p).exists() {
+            return Some(p);
+        }
+    }
+    None
+}
+
 /// Find libilo.a path for linking.
+///
+/// Probes, in order:
+///   1. `CARGO_TARGET_DIR` env var (release, then debug)
+///   2. `build.target-dir` from `$CARGO_MANIFEST_DIR/.cargo/config.toml`
+///   3. `$CARGO_MANIFEST_DIR/target` (release, then debug)
+///   4. Workspace parent `target` dir (release, then debug)
+///
+/// The first two entries are what make this work inside an isolated
+/// worktree whose target dir is redirected out of the tree.
 fn find_libilo_a() -> Result<String, String> {
-    // Try target/release first, then target/debug
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
-    let release_path = format!("{}/target/release/libilo.a", manifest_dir);
-    if std::path::Path::new(&release_path).exists() {
-        return Ok(release_path);
-    }
-    let debug_path = format!("{}/target/debug/libilo.a", manifest_dir);
-    if std::path::Path::new(&debug_path).exists() {
-        return Ok(debug_path);
-    }
-    // Also try parent directory (workspace root)
-    let parent = std::path::Path::new(manifest_dir)
-        .parent()
-        .map(|p| p.to_string_lossy().to_string())
-        .unwrap_or_default();
-    if !parent.is_empty() {
-        let ws_release = format!("{}/target/release/libilo.a", parent);
-        if std::path::Path::new(&ws_release).exists() {
-            return Ok(ws_release);
-        }
-        let ws_debug = format!("{}/target/debug/libilo.a", parent);
-        if std::path::Path::new(&ws_debug).exists() {
-            return Ok(ws_debug);
+    let mut searched: Vec<String> = Vec::new();
+
+    // 1. CARGO_TARGET_DIR env var.
+    if let Ok(td) = std::env::var("CARGO_TARGET_DIR") {
+        if !td.is_empty() {
+            if let Some(p) = libilo_a_in(&td) {
+                return Ok(p);
+            }
+            searched.push(format!("{}/{{release,debug}}/libilo.a", td));
         }
     }
+
+    // 2. .cargo/config.toml -> build.target-dir.
+    let config_path = std::path::Path::new(manifest_dir).join(".cargo/config.toml");
+    if let Some(td) = cargo_config_target_dir(&config_path) {
+        if let Some(p) = libilo_a_in(&td) {
+            return Ok(p);
+        }
+        searched.push(format!("{}/{{release,debug}}/libilo.a", td));
+    }
+
+    // 3. Manifest-dir `target/`.
+    let manifest_target = format!("{}/target", manifest_dir);
+    if let Some(p) = libilo_a_in(&manifest_target) {
+        return Ok(p);
+    }
+    searched.push(format!("{}/{{release,debug}}/libilo.a", manifest_target));
+
+    // 4. Workspace parent `target/`.
+    if let Some(parent) = std::path::Path::new(manifest_dir).parent() {
+        let ws_target = format!("{}/target", parent.to_string_lossy());
+        if let Some(p) = libilo_a_in(&ws_target) {
+            return Ok(p);
+        }
+        searched.push(format!("{}/{{release,debug}}/libilo.a", ws_target));
+    }
+
     Err(format!(
         "cannot find libilo.a — build with `cargo build --release --features cranelift` first.\n\
-         Searched: {}, {}",
-        release_path, debug_path
+         Searched: {}",
+        searched.join(", ")
     ))
 }
 
@@ -586,6 +675,7 @@ pub fn compile_to_binary(
     // AST didn't survive into `CompiledProgram` (rare; mostly test paths)
     // fall back to all-false, preserving the historical scalar-parse path.
     let param_is_list = entry_param_is_list(program, entry_func, entry_chunk.param_count as usize);
+    let suppress_auto_echo = entry_should_suppress_auto_echo(program, entry_func);
 
     // Generate main()
     generate_main(
@@ -597,6 +687,7 @@ pub fn compile_to_binary(
         &program_blob,
         &param_is_list,
         entry_func,
+        suppress_auto_echo,
     )?;
 
     // Emit object file
@@ -1165,16 +1256,16 @@ fn compile_function_body(
                 | OP_LISTGET | OP_INDEX | OP_STR | OP_HD | OP_AT | OP_FMT2 | OP_TL | OP_REV
                 | OP_SRT | OP_SRTDESC | OP_SLC | OP_TAKE | OP_DROP | OP_SPL | OP_CAT | OP_GET
                 | OP_POST | OP_GETH | OP_POSTH | OP_GETMANY | OP_ENV | OP_JPTH | OP_JDMP
-                | OP_JPAR | OP_RDJL | OP_MAPNEW | OP_MGET | OP_MSET | OP_MDEL | OP_MKEYS
-                | OP_MVALS | OP_MPAIRS | OP_LISTNEW | OP_LISTAPPEND | OP_RECNEW | OP_RECWITH
-                | OP_RECNEW_EMPTY | OP_RECCOPY | OP_PRT | OP_RD | OP_RDL | OP_WR | OP_WRL
-                | OP_TRM | OP_UPR | OP_LWR | OP_CAP | OP_PADL | OP_PADR | OP_PADLC | OP_PADRC
-                | OP_CHR | OP_CHARS | OP_UNQ | OP_UNIQBY | OP_PARTITION | OP_FRQ | OP_NUM
-                | OP_SRT_BY_KEY | OP_GRP_BY_KEY | OP_UNIQ_BY_KEY | OP_RGXSUB | OP_ZIP
+                | OP_JPAR | OP_JPAR_LIST | OP_RDJL | OP_MAPNEW | OP_MGET | OP_MSET | OP_MDEL
+                | OP_MKEYS | OP_MVALS | OP_MPAIRS | OP_LISTNEW | OP_LISTAPPEND | OP_RECNEW
+                | OP_RECWITH | OP_RECNEW_EMPTY | OP_RECCOPY | OP_PRT | OP_RD | OP_RDL | OP_WR
+                | OP_WRL | OP_TRM | OP_UPR | OP_LWR | OP_CAP | OP_PADL | OP_PADR | OP_PADLC
+                | OP_PADRC | OP_CHR | OP_CHARS | OP_UNQ | OP_UNIQBY | OP_PARTITION | OP_FRQ
+                | OP_NUM | OP_SRT_BY_KEY | OP_GRP_BY_KEY | OP_UNIQ_BY_KEY | OP_RGXSUB | OP_ZIP
                 | OP_ENUMERATE | OP_RANGE | OP_WINDOW | OP_WINDOW_VIEW | OP_CHUNKS | OP_CUMSUM
                 | OP_CPROD | OP_SETUNION | OP_SETINTER | OP_SETDIFF | OP_FFT | OP_IFFT
                 | OP_TRANSPOSE | OP_MATMUL | OP_INV | OP_SOLVE | OP_DTFMT | OP_DTPARSE
-                | OP_FLAT | OP_CALL_BUILTIN_TREE | OP_LOADFN | OP_CALL_DYN => {
+                | OP_FLAT | OP_CALL_BUILTIN_TREE | OP_LOADFN | OP_CALL_DYN | OP_SEED => {
                     non_num_write[a] = true;
                     non_bool_write[a] = true;
                 }
@@ -1182,7 +1273,11 @@ fn compile_function_body(
                 // OP_CALL_OWN1 has the identical encoding and result-write
                 // shape; the move-not-clone first-arg semantics are an
                 // RC bookkeeping detail that doesn't change classification.
-                OP_CALL | OP_CALL_OWN1 => {
+                OP_CALL | OP_CALL_OWN1 | OP_TAILCALL => {
+                    // OP_TAILCALL has the same encoding and result-write
+                    // shape as OP_CALL (see jit_cranelift prepass for the
+                    // matching note); the AOT codegen lowers it as a
+                    // regular call until PR3 swaps in `return_call`.
                     if let Some(prog) = program {
                         let bx = (inst & 0xFFFF) as usize;
                         let func_idx = bx >> 8;
@@ -2495,6 +2590,13 @@ fn compile_function_body(
                     builder.def_var(f64_vars[a_idx], rf);
                 }
             }
+            OP_SEED => {
+                let bv = builder.use_var(vars[b_idx]);
+                let fref = get_func_ref(&mut builder, module, helpers.seed);
+                let call_inst = builder.ins().call(fref, &[bv]);
+                let result = builder.inst_results(call_inst)[0];
+                builder.def_var(vars[a_idx], result);
+            }
             OP_NOW => {
                 let fref = get_func_ref(&mut builder, module, helpers.now);
                 let call_inst = builder.ins().call(fref, &[]);
@@ -3690,7 +3792,7 @@ fn compile_function_body(
                 }
             }
             // ── Function call with inlining + F64 shadow support ──
-            OP_CALL | OP_CALL_OWN1 => {
+            OP_CALL | OP_CALL_OWN1 | OP_TAILCALL => {
                 // OP_CALL_OWN1: move-not-clone first-arg variant of OP_CALL,
                 // emitted by the let-stmt peephole for `name = fn(name, ...)`.
                 // Under Cranelift's SSA Variable model, args are passed as
@@ -3699,6 +3801,15 @@ fn compile_function_body(
                 // from the compiler's tail-position rewrite of `mset m k v`
                 // inside the helper, which fires the existing in-place
                 // fast path in the OP_MSET handler.
+                //
+                // OP_TAILCALL: emitted by the VM compiler when a call sits
+                // in tail position. The bytecode VM reuses the current call
+                // frame (no stack growth); the Cranelift backend lowers it
+                // as a regular call here — semantically equivalent (same
+                // return value flows back through the next OP_RET) but the
+                // host stack grows by one frame per tail call. PR3 of the
+                // TCO series will switch this to Cranelift's `return_call`
+                // for true tail-call elimination under the JIT/AOT path.
                 let a = ((inst >> 16) & 0xFF) as u8;
                 let bx = (inst & 0xFFFF) as usize;
                 let func_idx = bx >> 8;
@@ -3861,6 +3972,15 @@ fn compile_function_body(
                 let span_bits = super::jit_cranelift::pack_span_bits(chunk.spans[ip]);
                 let span_arg = builder.ins().iconst(I64, span_bits);
                 let fref = get_func_ref(&mut builder, module, helpers.jpar);
+                let call_inst = builder.ins().call(fref, &[bv, span_arg]);
+                let result = builder.inst_results(call_inst)[0];
+                builder.def_var(vars[a_idx], result);
+            }
+            OP_JPAR_LIST => {
+                let bv = builder.use_var(vars[b_idx]);
+                let span_bits = super::jit_cranelift::pack_span_bits(chunk.spans[ip]);
+                let span_arg = builder.ins().iconst(I64, span_bits);
+                let fref = get_func_ref(&mut builder, module, helpers.jpar_list);
                 let call_inst = builder.ins().call(fref, &[bv, span_arg]);
                 let result = builder.inst_results(call_inst)[0];
                 builder.def_var(vars[a_idx], result);
@@ -4374,6 +4494,99 @@ fn entry_param_is_list(
         .collect()
 }
 
+/// AOT counterpart to `program_result_should_suppress` in `src/main.rs`. The
+/// tree/VM/JIT engines route the entry-function result through `print_value`
+/// in main.rs, which consults that helper to decide whether the runtime
+/// auto-echo would duplicate a stdout line the program already wrote. AOT
+/// binaries skip main.rs entirely (they're standalone executables linking
+/// libilo.a), so the same suppression rule has to be evaluated at compile
+/// time here and threaded through to `generate_main`, which then picks
+/// between the printing and suppression helper variants.
+///
+/// Mirrors the rules in `program_result_should_suppress`:
+///   1. Last statement is a bare `prnt` call → suppress (the builtin already
+///      printed; auto-echo of the return value duplicates it).
+///   2. Last statement is `@`/`wh` loop with no early-return path → suppress
+///      (loop body's tail print would duplicate as the program tail).
+///
+/// Returns false when the AST is unavailable (e.g. some test paths that
+/// build CompiledProgram without the full AST) — printing-too-much is the
+/// safer failure mode than silently swallowing a value.
+fn entry_should_suppress_auto_echo(program: &CompiledProgram, entry_func: &str) -> bool {
+    use crate::ast;
+    let Some(ast_program) = program.ast.as_ref() else {
+        return false;
+    };
+    let body = ast_program.declarations.iter().find_map(|d| match d {
+        ast::Decl::Function { name, body, .. } if name == entry_func => Some(body),
+        _ => None,
+    });
+    let Some(body) = body else {
+        return false;
+    };
+    let Some(last) = body.last() else {
+        return false;
+    };
+
+    // Case 1: bare `prnt` call at tail whose argument is not `~`/`^`
+    // wrapped. Must match `program_result_should_suppress` in src/main.rs
+    // exactly: the Ok/Err exclusion preserves the `prnt ~"x"` two-line
+    // contract (wrapper-visible from prnt + bare from auto-echo) that
+    // programs use to surface a Result alongside the stripped value.
+    if let ast::Stmt::Expr(ast::Expr::Call { function, args, .. }) = &last.node {
+        if function == "prnt" && !matches!(args.first(), Some(ast::Expr::Ok(_) | ast::Expr::Err(_)))
+        {
+            return true;
+        }
+    }
+
+    // Case 2: loop at tail with no early-return path.
+    let ends_with_loop = matches!(
+        last.node,
+        ast::Stmt::ForEach { .. } | ast::Stmt::ForRange { .. } | ast::Stmt::While { .. }
+    );
+    if !ends_with_loop {
+        return false;
+    }
+    !body_has_early_return_ast(body)
+}
+
+/// AOT-side mirror of `body_has_early_return` in `src/main.rs`. Lifted here
+/// rather than imported so the AOT codegen path doesn't have a hard
+/// dependency on main.rs (this crate is also consumed as `libilo` by the
+/// AOT runtime build).
+fn body_has_early_return_ast(body: &[crate::ast::Spanned<crate::ast::Stmt>]) -> bool {
+    for s in body {
+        if stmt_has_early_return_ast(&s.node) {
+            return true;
+        }
+    }
+    false
+}
+
+fn stmt_has_early_return_ast(stmt: &crate::ast::Stmt) -> bool {
+    use crate::ast;
+    match stmt {
+        ast::Stmt::Return(_) => true,
+        ast::Stmt::Guard {
+            braceless: true, ..
+        } => true,
+        ast::Stmt::Guard {
+            body, else_body, ..
+        } => {
+            body_has_early_return_ast(body)
+                || else_body
+                    .as_ref()
+                    .is_some_and(|b| body_has_early_return_ast(b))
+        }
+        ast::Stmt::Match { arms, .. } => arms.iter().any(|a| body_has_early_return_ast(&a.body)),
+        ast::Stmt::ForEach { body, .. }
+        | ast::Stmt::ForRange { body, .. }
+        | ast::Stmt::While { body, .. } => body_has_early_return_ast(body),
+        _ => false,
+    }
+}
+
 /// Generate the `main(argc, argv)` entry point.
 /// Serialize a TypeRegistry to bytes for embedding in AOT binaries.
 /// Format: `type_name\0num_fields_bitmask\0field1\0field2\0...\0\n` per type.
@@ -4414,6 +4627,13 @@ fn generate_main(
     // funcname slot when it appears. Without this, `./bin main 42` binds the
     // string "main" as the first param instead of 42.
     entry_name: &str,
+    // When true, the entry function's body ends with a syntactic form that
+    // already wrote its happy-path output to stdout (a `prnt` call at the
+    // tail, or a `@`/`wh` loop with no early-return). The generated `main`
+    // routes the return value through the suppression helper instead of
+    // the printing one so the AOT binary matches the in-process runners'
+    // `print_value` behaviour. Err always surfaces to stderr with exit 1.
+    suppress_auto_echo: bool,
 ) -> Result<(), String> {
     let mut sig = module.make_signature();
     sig.params.push(AbiParam::new(I32)); // argc
@@ -4520,7 +4740,18 @@ fn generate_main(
     // a top-level `~v` prints bare on stdout (exit 0); a top-level `^e`
     // prints `^e` on stderr (exit 1). The helper returns the desired exit
     // code packed in a u64; we truncate to i32 for `main`.
-    let prt_main_fref = module.declare_func_in_func(helpers.prt_main, builder.func);
+    //
+    // When `suppress_auto_echo` is set, route through the suppression
+    // variant instead — the entry function's tail already wrote stdout
+    // (via a `prnt` call or a loop body) and re-printing the return value
+    // would double-print. Mirrors the `print_value` / `suppress_loop_tail`
+    // branch the in-process runners take in `src/main.rs`.
+    let prt_helper = if suppress_auto_echo {
+        helpers.prt_main_suppress
+    } else {
+        helpers.prt_main
+    };
+    let prt_main_fref = module.declare_func_in_func(prt_helper, builder.func);
     let call_prt = builder.ins().call(prt_main_fref, &[result]);
     let exit_u64 = builder.inst_results(call_prt)[0];
 
@@ -6958,4 +7189,105 @@ f a:t b:t>t;join a b"#,
         let flags = entry_param_is_list(&compiled, "main", 0);
         assert!(flags.is_empty());
     }
+
+    // ── find_libilo_a / cargo_config_target_dir ─────────────────────────
+
+    fn unique_tmp_dir(tag: &str) -> std::path::PathBuf {
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+        let mut p = std::env::temp_dir();
+        p.push(format!("ilo_test_libilo_{tag}_{}_{n}", std::process::id()));
+        std::fs::create_dir_all(&p).unwrap();
+        p
+    }
+
+    fn touch(path: &std::path::Path) {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        std::fs::write(path, b"").unwrap();
+    }
+
+    #[test]
+    fn cargo_config_target_dir_parses_double_quoted() {
+        let dir = unique_tmp_dir("cfg_dq");
+        let cfg = dir.join("config.toml");
+        std::fs::write(
+            &cfg,
+            "[build]\ntarget-dir = \"/tmp/somewhere\"\n# comment\n",
+        )
+        .unwrap();
+        assert_eq!(
+            cargo_config_target_dir(&cfg).as_deref(),
+            Some("/tmp/somewhere")
+        );
+    }
+
+    #[test]
+    fn cargo_config_target_dir_parses_single_quoted() {
+        let dir = unique_tmp_dir("cfg_sq");
+        let cfg = dir.join("config.toml");
+        std::fs::write(&cfg, "[build]\ntarget-dir = '/tmp/elsewhere'\n").unwrap();
+        assert_eq!(
+            cargo_config_target_dir(&cfg).as_deref(),
+            Some("/tmp/elsewhere")
+        );
+    }
+
+    #[test]
+    fn cargo_config_target_dir_ignores_other_sections() {
+        let dir = unique_tmp_dir("cfg_other");
+        let cfg = dir.join("config.toml");
+        // `target-dir` outside `[build]` must be ignored.
+        std::fs::write(
+            &cfg,
+            "[net]\ntarget-dir = \"/wrong\"\n\n[build]\nrustflags = []\n",
+        )
+        .unwrap();
+        assert_eq!(cargo_config_target_dir(&cfg), None);
+    }
+
+    #[test]
+    fn cargo_config_target_dir_missing_file() {
+        let dir = unique_tmp_dir("cfg_missing");
+        let cfg = dir.join("nonexistent.toml");
+        assert_eq!(cargo_config_target_dir(&cfg), None);
+    }
+
+    #[test]
+    fn libilo_a_in_prefers_release_over_debug() {
+        let dir = unique_tmp_dir("probe");
+        let dir_s = dir.to_string_lossy().into_owned();
+        touch(&dir.join("release/libilo.a"));
+        touch(&dir.join("debug/libilo.a"));
+        let got = libilo_a_in(&dir_s).expect("should find release");
+        assert!(
+            got.ends_with("/release/libilo.a"),
+            "expected release path, got {got}"
+        );
+    }
+
+    #[test]
+    fn libilo_a_in_falls_back_to_debug() {
+        let dir = unique_tmp_dir("probe_dbg");
+        let dir_s = dir.to_string_lossy().into_owned();
+        touch(&dir.join("debug/libilo.a"));
+        let got = libilo_a_in(&dir_s).expect("should find debug");
+        assert!(got.ends_with("/debug/libilo.a"));
+    }
+
+    #[test]
+    fn libilo_a_in_returns_none_when_absent() {
+        let dir = unique_tmp_dir("probe_none");
+        let dir_s = dir.to_string_lossy().into_owned();
+        assert_eq!(libilo_a_in(&dir_s), None);
+    }
+
+    // Note: we can't unit-test `find_libilo_a` end-to-end without mutating
+    // process-global state (CARGO_TARGET_DIR) and racing other tests. The
+    // env-var and config-file branches are exercised by `libilo_a_in` +
+    // `cargo_config_target_dir` above, and the integration happens for real
+    // every time `cargo test --release --features cranelift` runs inside an
+    // isolated worktree (the AOT tests link successfully iff the lookup
+    // honours `.cargo/config.toml`).
 }

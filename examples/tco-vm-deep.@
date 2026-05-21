@@ -1,0 +1,29 @@
+-- Deep tail-call elimination on the bytecode VM. Pre-OP_TAILCALL the VM
+-- pushed a fresh CallFrame on every user-fn call, so a 1M-deep count-down
+-- allocated 1M frame entries plus the register windows that go with them.
+-- With OP_TAILCALL the runtime reuses the current frame: a recursion that
+-- only calls in tail position runs in constant frame memory regardless of
+-- depth.
+--
+-- The Cranelift JIT/AOT path will gain matching `return_call` lowering in
+-- the next PR; until then this example skips those engines and runs on
+-- the tree interpreter (trampolined) and the VM (OP_TAILCALL).
+
+count-down n:n>n;=n 0 0;count-down -n 1
+
+-- Mutual tail recursion: ev tail-calls od tail-calls ev forever. Exercises
+-- OP_TAILCALL's chunk_idx switch, the reused frame's chunk pointer flips
+-- between the two functions every iteration.
+ev n:n>n;=n 0 1;od -n 1
+od n:n>n;=n 0 0;ev -n 1
+
+main >n;count-down 200000
+
+ev-200k >n;ev 200000
+
+-- engine-skip: jit
+-- engine-skip: cranelift
+-- run: main
+-- out: 0
+-- run: ev-200k
+-- out: 1

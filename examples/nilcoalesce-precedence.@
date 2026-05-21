@@ -1,0 +1,35 @@
+-- `??` precedence inside a prefix-binop chain. Documented in
+-- SPEC.md > Operators > Special infix and the `?? precedence trap`
+-- section of the site prefix-notation page.
+--
+-- `+a ??d b` parses as `a + (d ?? b)` — NOT `(a ?? d) + b`.
+-- The outer `+` consumes its left atom `a`, then the prefix-binop
+-- right slot greedily takes `??d b` as a single nil-coalesce
+-- expression. Same grouping rule as `+a *b c` = `a + (b*c)`.
+--
+-- To group as `(a ?? d) + b` when `a` is an O T being defaulted,
+-- bind-first or wrap in parens.
+
+-- trap shape: a=1, d=10, b=5 → 1 + (10 ?? 5) = 1 + 10 = 11
+trap a:n d:n b:n>n;+a ??d b
+
+-- bind-first form: (a ?? d) + b
+bind a:O n d:n b:n>n;x=??a d;+x b
+
+-- parens form: (a ?? d) + b
+parens a:O n d:n b:n>n;+(??a d) b
+
+-- bind-first with nil: (nil ?? 10) + 5 = 15
+bindnil d:n b:n>n;a=nil;x=??a d;+x b
+
+-- run: trap 1 10 5
+-- out: 11
+
+-- run: bind 1 10 5
+-- out: 6
+
+-- run: parens 1 10 5
+-- out: 6
+
+-- run: bindnil 10 5
+-- out: 15

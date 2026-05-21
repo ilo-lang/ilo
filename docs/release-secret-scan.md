@@ -46,6 +46,20 @@ gitleaks detect --source . --redact --verbose   # includes git history
 A clean run prints `no leaks found`. Anything else is a real finding to
 triage before the release goes out.
 
+## Install-script integrity verification
+
+The release workflow's `release` job runs `sha256sum ilo-* > checksums-sha256.txt`
+and uploads the resulting file alongside every published binary. The
+`curl ... | sh` installers shipped from `https://ilo-lang.ai/install.sh` and
+`/install.ps1` (canonical source in [`scripts/install/`](./../scripts/install/))
+fetch that checksum file together with the binary and refuse to install if
+the SHA-256 doesn't match. This closes the standard supply-chain attack
+window on the curl-pipe install path: a tampered binary on GitHub's CDN, a
+TLS-intercepted download, or a mirrored asset all fail the check before the
+binary is made executable. An offline regression test
+(`scripts/install/test-install-sh.sh`) runs on every CI push and exercises
+the happy, tamper, and missing-asset code paths.
+
 ## Why release-only, not per-PR
 
 Running gitleaks on every PR added meaningful queue time without much

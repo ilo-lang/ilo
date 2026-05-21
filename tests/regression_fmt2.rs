@@ -137,6 +137,44 @@ fn fmt2_half_even_down_cranelift() {
     check_half_even_down("--jit");
 }
 
+// Doc-pinned composed form: the canonical `fmt "x={}" (fmt2 v 2)` snippet
+// from SPEC.md and `skills/ilo/ilo-builtins-text.md`. Pending #5bk surfaced
+// that the skill doc described `fmt2` as a list-splat variant; this test
+// pins the documented decimal-formatter shape cross-engine so the doc and
+// the implementation stay in lock-step.
+const COMPOSE_SRC: &str = "f v:n>t;fmt \"x={}\" (fmt2 v 2)";
+
+fn check_compose(engine: &str) {
+    // Call entry with arg `3.14159` -> "x=3.14".
+    let out = ilo()
+        .args([COMPOSE_SRC, engine, "f", "3.14159"])
+        .output()
+        .expect("failed to run ilo");
+    assert!(
+        out.status.success(),
+        "ilo {engine} failed for compose form: stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    assert_eq!(stdout, "x=3.14", "engine={engine}");
+}
+
+#[test]
+fn fmt2_compose_tree() {
+    check_compose("--vm");
+}
+
+#[test]
+fn fmt2_compose_vm() {
+    check_compose("--vm");
+}
+
+#[test]
+#[cfg(feature = "cranelift")]
+fn fmt2_compose_cranelift() {
+    check_compose("--jit");
+}
+
 // Negative digits clamp to 0 (integer formatting). Use a literal -1.
 const NEG_DIGITS_SRC: &str = "f>t;fmt2 3.7 -1";
 

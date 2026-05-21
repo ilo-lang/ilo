@@ -36,6 +36,8 @@ AI agents pay three costs per program: generation tokens, error feedback, retrie
 curl -fsSL https://ilo-lang.ai/install.sh | sh
 ```
 
+The installer downloads the release binary plus its `checksums-sha256.txt` from the matching GitHub release and refuses to install if the SHA-256 doesn't match. Source: [`scripts/install/install.sh`](./scripts/install/install.sh).
+
 </details>
 
 <details>
@@ -44,6 +46,8 @@ curl -fsSL https://ilo-lang.ai/install.sh | sh
 ```powershell
 iwr -useb https://ilo-lang.ai/install.ps1 | iex
 ```
+
+Same checksum verification as the Unix installer. Source: [`scripts/install/install.ps1`](./scripts/install/install.ps1).
 
 </details>
 

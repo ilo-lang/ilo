@@ -60,7 +60,7 @@
       "name": "keyword.control.ilo"
     },
     "builtin": {
-      "match": "\\b(cat|len|trm|spl|has|rgx|fmt|hd|tl|rev|srt|slc|flat|unq|map|flt|fld|grp|sum|avg|mmap|mget|mset|mhas|mkeys|mvals|mdel|str|num|abs|flr|cel|rnd|get|post|rd|wr|rdb|jpth|jdmp|jpar|prnt|now|env|fac)\\b",
+      "match": "\\b(cat|len|trm|spl|has|rgx|fmt|hd|tl|rev|srt|slc|flat|unq|map|flt|fld|grp|sum|avg|mmap|mget|mset|mhas|mkeys|mvals|mdel|str|num|abs|flr|cel|rnd|get|post|rd|wr|rdb|jpth|jdmp|jpar|jpar-list|prnt|now|env|fac)\\b",
       "name": "support.function.ilo"
     },
     "function-def": {

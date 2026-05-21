@@ -13,15 +13,24 @@ Prefix-call: `name arg1 arg2 ...`. Cross-engine unless noted.
 
 ## Case / padding / chars
 
-`upr lwr cap padl padr chars ord chr`. `cap` capitalises first letter.
+`upr lwr cap padl padr chars ord chr`. `cap` capitalises first letter. `padr "" n c` = n copies of 1-char `c` (histogram bars).
+
+`padr "" n c` is the **repeat-character idiom** - use it for histogram bars, divider lines, indentation. `padr "" 10 "#"` -> `"##########"`. Cheaper than a loop.
 
 ## Regex
 
-`rgx s pat` first match, `rgxall s pat` all matches, `rgxall1 s pat` first capture group of each match, `rgxall-multi pats s` multi-pattern flat-match (each pattern follows rgxall1 semantics; results concat in pattern order), `rgxsub s pat repl` substitute.
+Signatures (pat first, string last):
+
+- `rgx pat s > L t` — first match: list of [whole, cap1, cap2, ...]
+- `rgxall pat s > L t` — all whole matches
+- `rgxall1 pat s > L t` — capture-group 1 of every match
+- `rgxsub pat repl s > t` — substitute first match
+- `rgxsuball pat repl s > t` — substitute all matches
+- `rgxall-multi pats s > L t` — multi-pattern flat-match (each pattern follows rgxall1 semantics; results concat in pattern order)
 
 ## Formatting
 
-`fmt template args...` (no list splat); `fmt2 template list` splat form.
+`fmt template args...` (no list splat). `fmt2 x digits > t` is a **decimal formatter**, not a fmt variant: `fmt2 3.14159 2` -> `"3.14"`. Compose: `fmt "x={}" (fmt2 v 2)`.
 
 ## CSV / TSV
 
@@ -47,9 +56,9 @@ last-week-start nw:n>n;dtparse-rel!! "last monday" nw
 
 ## Duration
 
-`dur-parse s > R n t` — parse human duration string into seconds. Accepts `s/m/h/d/w` abbreviations, full names (week/day/hour/minute/second, singular + plural), decimal quantities, mixed sequences ("3h 30m", "1.5 hours", "1 week 2 days", "90s"). Months are **not** supported ("3mo", "3 months" both error — a month is not a fixed number of seconds; use day counts instead). A leading `-` is sticky: it applies to every following token until an explicit `+` resets it, so `"-1m 30s"` = `-90`. Err if empty or no unit found.
+`dur-parse s > R n t` parse human duration to seconds. Accepts `s/m/h/d/w` and full names (singular/plural), decimals, mixed sequences ("3h 30m", "1.5 hours", "1 week 2 days"). Months are **not** supported. Leading `-` is sticky until `+` resets it, so `"-1m 30s"` = `-90`. Err if empty or no unit.
 
-`dur-fmt n > t` — format seconds as human-readable duration. Drops zero parts; uses largest units ("2h 42m", "1 day", "30s"). Zero returns "0s". Negative values emit a single leading minus (`-90` → `"-1m 30s"`) which round-trips back through `dur-parse`. Fractional seconds are preserved with up to 3 decimal places, trailing zeros stripped (`90.5` → `"1m 30.5s"`, `0.5` → `"0.5s"`).
+`dur-fmt n > t` format seconds as human-readable. Drops zero parts; largest units ("2h 42m", "1 day", "30s"). Zero -> "0s". Negative emits one leading minus and round-trips. Fractional preserved to 3dp, trailing zeros stripped.
 
 ```
 secs = dur-parse! "3h 30m"  -- 12600
@@ -60,3 +69,11 @@ dur-fmt 90.5                 -- "1m 30.5s"
 dur-fmt -90                  -- "-1m 30s"
 dur-parse! "-1h 30m"         -- -5400 (sticky sign)
 ```
+
+## URL / base64url
+
+`urlenc`/`urldec` (RFC 3986), `b64u`/`b64u-dec` (no-pad). Decoders `>R t t`.
+
+## Crypto
+
+`sha256 s > t` SHA-256 lowercase hex (64 chars). `hmac-sha256 key msg > t` HMAC-SHA256 lowercase hex. `b64 s > t` / `b64-dec s > R t t` standard base64 (`=` padding; distinct from `b64u`/`b64u-dec` URL-safe no-pad). `hex s > t` lowercase hex of UTF-8 bytes. `ct-eq a b > b` constant-time text equality - use this to verify HMAC signatures or compare any secret; never `=`, which short-circuits and leaks timing.

@@ -1,0 +1,15 @@
+-- `get-to url timeout-ms > R t t` and `pst-to url body timeout-ms > R t t`
+-- HTTP requests with an explicit per-request timeout in milliseconds.
+-- Rounds up to the nearest second (minreq granularity).
+-- Returns Err on timeout or connection failure.
+
+-- Connection refused on loopback is always an immediate Err; we match
+-- on the result shape so the output is stable across OS and CI environments.
+get-to-fails>t;r=get-to "http://127.0.0.1:1" 1000;?r{~_:"unexpected ok";^_:"err as expected"}
+
+pst-to-fails>t;r=pst-to "http://127.0.0.1:1" "body" 1000;?r{~_:"unexpected ok";^_:"err as expected"}
+
+-- run: get-to-fails
+-- out: err as expected
+-- run: pst-to-fails
+-- out: err as expected

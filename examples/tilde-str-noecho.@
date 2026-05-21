@@ -1,0 +1,46 @@
+-- tilde-str-noecho: `prnt` body + `~"ok"` tail no longer double-echoes.
+-- Before the fix, a function that wrote its real output via `prnt` and
+-- then returned `~"ok"` as a status sentinel would emit a trailing `ok`
+-- line on stdout. Shell callers piping the output had to strip the
+-- sentinel:
+--
+--   ilo log-merger.ilo m a.log b.log | sed '/^ok$/d'
+--
+-- The auto-echo suppression now covers this shape: when the entry-fn
+-- body has at least one *unconditional top-level* `prnt` call AND the
+-- tail expression is a bare `~"<literal>"` or `^"<literal>"`, the
+-- top-level auto-echo is suppressed. The wrapped literal is treated as
+-- a status sentinel rather than a value the caller wants captured.
+--
+-- Surfaced by the log-timeline-merger persona run (2026-05-20). See
+-- tests/regression_tilde_str_noecho.rs for the cross-engine contract.
+--
+-- What does NOT trigger the suppression:
+--
+--   * No `prnt` in the body (`m>R t t;~"ok"` still prints `ok` —
+--     this is the `cli-tasks-save-ok.ilo` pattern where the `~"ok"`
+--     IS the program's output).
+--   * `prnt` only inside a guard / loop / match arm (might not fire,
+--     so suppression based on it would be unsafe — see
+--     `cond-multi-stmt-guard-return.ilo`).
+--   * Non-string Ok (`~42`, `~xs`, `~foo()`) — those are real return
+--     values the caller asked for.
+
+-- Persona-style "do work, return status" shape. `prnt` writes the
+-- real output; `~"ok"` is just the success sentinel. The example
+-- harness only supports a single `-- out:` line per `-- run:`, so
+-- this asserts the single-prnt shape; the multi-line cross-engine
+-- contract is pinned in tests/regression_tilde_str_noecho.rs.
+m>R t t;prnt "report";~"ok"
+
+-- run: m
+-- out: report
+
+-- Counter-shape pinned for in-context learning: `cli-tasks-save-ok`
+-- style functions that do no `prnt` still emit their `~"ok"` status.
+-- The suppression is targeted at the "prnt + sentinel" collision,
+-- not at every Result-wrapped string literal.
+status>R t t;~"ok"
+
+-- run: status
+-- out: ok
