@@ -222,10 +222,10 @@ Short builtin names are precious surface and ilo reserves a stable subset of the
 ```
 1-char  e
 2-char  at hd pi tl rd wr ct
-3-char  abs avg cap cat cel chr cos det dot env exp fft fld flr flt fmt
-        frq get grp has inv len log lsd lst lwr map max min mod now num
-        ord pow pst rdb rdl rev rgx rng rnd rou run sin slc spl srt str
-        sum tan tau trm unq upr wra wrl zip
+3-char  abs avg cap cat cel chr cos det dot env ewm exp fft fld flr flt
+        fmt frq get grp has inv len log lsd lst lwr map max min mod now
+        num ord pow pst rdb rdl rev rgx rng rnd rou run sin slc spl srt
+        str sum tan tau trm unq upr wra wrl zip
 ```
 
 All builtin aliases (`head`, `length`, `filter`, `concat`, `tail`, `sort`, `reverse`, `flatten`, `contains`, `group`, `average`, `print`, `trim`, `split`, `format`, `regex`, `read`, `readlines`, `readbuf`, `write`, `writelines`, `lset`, `floor`, `ceil`, `round`, `rand`, `random`, `rng`, `string`, `number`, `slice`, `unique`, `fold`) are reserved with the same shadow-prevention semantics as canonical builtin names. Binding an alias name or using it as a user-function name fires `ILO-P011` at parse time with the canonical form in the diagnostic, since the call-site rewrite to the canonical builtin silently bypasses any user binding of the same name. Previously only `rng` and `rand` had individual guards; as of 0.12.1 every alias in the table above is covered by a single `resolve_alias` check, so new aliases automatically inherit the protection when added to the table.
@@ -576,6 +576,7 @@ Called like functions, compiled to dedicated opcodes.
 | `clamp x lo hi` | restrict `x` to `[lo, hi]` (lower bound wins when `lo > hi`) | `n` |
 | `cumsum xs` | running sum; output length matches input | `L n` |
 | `cprod xs` | running product; output length matches input | `L n` |
+| `ewm xs a` | exponential moving average: `ewm[0] = xs[0]`, `ewm[i] = a*xs[i] + (1-a)*ewm[i-1]`; `a` in `[0, 1]`, out-of-range errors `ILO-R009` | `L n` |
 | `frq xs` | frequency map of elements (keys are bare stringified values) | `M t n` |
 | `median xs` | median of numeric list | `n` |
 | `quantile xs p` | sample quantile (linear interp; `p` clamped to `[0, 1]`) | `n` |

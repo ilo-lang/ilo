@@ -42,3 +42,4 @@ ys = [5, 7, 9, 11, 13]
 xm = map (x:n>L n;[1, x]) xs
 b = lstsq xm ys                  -- [3, 2]
 ```
+`ewm xs a > L n` = exponential moving average. `ewm[0] = xs[0]`, `ewm[i] = a*xs[i] + (1-a)*ewm[i-1]`. `a` in `[0, 1]` (out-of-range errors `ILO-R009`). Replaces the fold-with-state pattern in one call.

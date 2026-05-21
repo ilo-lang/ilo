@@ -577,6 +577,33 @@ pub(crate) fn eval_rand_bytes(arg: &Value) -> Result<Value> {
     Ok(Value::Text(Arc::new(b64url_no_pad_encode(&buf))))
 }
 
+/// Exponential moving average over `xs` with smoothing factor `a` in [0, 1].
+///
+/// Recurrence: `ewm[0] = xs[0]`, `ewm[i] = a*xs[i] + (1-a)*ewm[i-1]`.
+/// Boundary cases: `a = 0` freezes at `xs[0]`; `a = 1` reproduces `xs`.
+/// Caller validates `a` and element types; this fn assumes `xs` is a list
+/// of `f64` and `0 <= a <= 1`.
+///
+/// Marked `#[inline(never)]` from the start: the tree-walker dispatch hot
+/// path inlines aggressively and stack-overflows surface there first for
+/// recursive number-list reducers under deep persona workloads. Keeping
+/// the loop in its own frame insulates the dispatcher.
+#[inline(never)]
+pub(crate) fn ewm_compute(xs: &[f64], a: f64) -> Vec<f64> {
+    if xs.is_empty() {
+        return Vec::new();
+    }
+    let one_minus_a = 1.0 - a;
+    let mut out: Vec<f64> = Vec::with_capacity(xs.len());
+    let mut prev = xs[0];
+    out.push(prev);
+    for &x in &xs[1..] {
+        prev = a * x + one_minus_a * prev;
+        out.push(prev);
+    }
+    out
+}
+
 /// POSIX `dirname` on a forward-slash path string. See `Builtin::Dirname`
 /// in the builtin dispatch above for the full semantics + edge-case table.
 ///
@@ -5508,6 +5535,49 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                 }
             }
         }
+        return Ok(Value::List(Arc::new(out)));
+    }
+    if builtin == Some(Builtin::Ewm) && args.len() == 2 {
+        let items = match &args[0] {
+            Value::List(l) => l,
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("ewm: first arg must be a list, got {:?}", other),
+                ));
+            }
+        };
+        let a = match &args[1] {
+            Value::Number(n) => *n,
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("ewm: second arg a must be a number, got {:?}", other),
+                ));
+            }
+        };
+        if !(0.0..=1.0).contains(&a) {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!("ewm: smoothing factor a must be in [0, 1], got {}", a),
+            ));
+        }
+        let mut nums: Vec<f64> = Vec::with_capacity(items.len());
+        for item in items.iter() {
+            match item {
+                Value::Number(n) => nums.push(*n),
+                other => {
+                    return Err(RuntimeError::new(
+                        "ILO-R009",
+                        format!("ewm: list elements must be numbers, got {:?}", other),
+                    ));
+                }
+            }
+        }
+        let out: Vec<Value> = ewm_compute(&nums, a)
+            .into_iter()
+            .map(Value::Number)
+            .collect();
         return Ok(Value::List(Arc::new(out)));
     }
     if builtin == Some(Builtin::Avg) && args.len() == 1 {
