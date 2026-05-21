@@ -43,6 +43,8 @@ quantile xs 0.25   -- 1.75  (linear interp between sorted[1]=1 and sorted[2]=2)
 quantile xs 0.75   -- 5.25  (linear interp between sorted[5]=5 and sorted[6]=6)
 ```
 
+`bisect xs target > n` = O(log N) leftmost insertion point in a sorted numeric list (Python `bisect_left`). Returns `i` such that `xs[0..i] < target <= xs[i..]`. Empty list returns `0`; target above every element returns `len xs`; ties resolve leftmost. Caller owns sortedness - not validated. Replaces the O(N) `len (flt (x:n>b;< x target) xs)` cascade on sorted input.
+
 ## Linear algebra
 
 `transpose matmul matvec dot solve inv det fft ifft lstsq`. Row-major matrices are `L (L n)`, flat vectors are `L n`. `matvec xm ys` is matrix-vector product, returning a flat vector - use it instead of the `flatten matmul xm (map (y:n>L n;[y]) ys)` wrap-as-column ceremony. `solve inv det` use LU decomposition with partial pivoting and error on singular / non-square inputs.
