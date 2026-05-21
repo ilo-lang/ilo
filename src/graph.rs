@@ -89,6 +89,11 @@ fn collect_calls(expr: &Expr, calls: &mut BTreeSet<String>, types: &mut BTreeSet
                 collect_calls(arg, calls, types);
             }
         }
+        Expr::AnonRecord { fields } => {
+            for (_, val) in fields {
+                collect_calls(val, calls, types);
+            }
+        }
         Expr::Record {
             type_name, fields, ..
         } => {

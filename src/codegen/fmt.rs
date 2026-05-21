@@ -578,6 +578,13 @@ fn fmt_expr(expr: &Expr, mode: FmtMode) -> String {
             let items_str: Vec<String> = items.iter().map(|i| fmt_expr(i, mode)).collect();
             format!("[{}]", items_str.join(", "))
         }
+        Expr::AnonRecord { fields } => {
+            let fields_str: Vec<String> = fields
+                .iter()
+                .map(|(n, v)| format!("{}:{}", n, fmt_expr(v, mode)))
+                .collect();
+            format!("{{{}}}", fields_str.join(" "))
+        }
         Expr::Record { type_name, fields } => {
             if fields.is_empty() {
                 return type_name.clone();

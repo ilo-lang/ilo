@@ -7983,7 +7983,9 @@ fn expr_refers_to(name: &str, expr: &Expr) -> bool {
         Expr::UnaryOp { operand, .. } => expr_refers_to(name, operand),
         Expr::Ok(inner) | Expr::Err(inner) => expr_refers_to(name, inner),
         Expr::List(items) => items.iter().any(|e| expr_refers_to(name, e)),
-        Expr::Record { fields, .. } => fields.iter().any(|(_, e)| expr_refers_to(name, e)),
+        Expr::Record { fields, .. } | Expr::AnonRecord { fields } => {
+            fields.iter().any(|(_, e)| expr_refers_to(name, e))
+        }
         // Conservative: assume Match arms might reference `name`. Falls back
         // to the general path, which is correct (just slower) in the rare
         // case where a self-rebind RHS is wrapped in a match.
@@ -8602,6 +8604,16 @@ fn eval_expr(env: &mut Env, expr: &Expr) -> Result<Value> {
                 vals.push(eval_expr(env, item)?);
             }
             Ok(Value::List(Arc::new(vals)))
+        }
+        Expr::AnonRecord { fields } => {
+            let mut field_map = HashMap::new();
+            for (name, val_expr) in fields {
+                field_map.insert(name.clone(), eval_expr(env, val_expr)?);
+            }
+            Ok(Value::Record {
+                type_name: "__anon".to_string(),
+                fields: field_map,
+            })
         }
         Expr::Record { type_name, fields } => {
             let mut field_map = HashMap::new();

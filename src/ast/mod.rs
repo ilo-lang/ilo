@@ -339,6 +339,13 @@ pub enum Expr {
         fields: Vec<(String, Expr)>,
     },
 
+    /// Anonymous record literal: `{field:val field:val}` — no typename required.
+    /// Type checker synthesises a structural type; runtime uses `"__anon"` as the
+    /// Value::Record type_name since engines only care about field names.
+    AnonRecord {
+        fields: Vec<(String, Expr)>,
+    },
+
     /// Match expression: `?expr{arms}` or `?{arms}` used as value
     Match {
         subject: Option<Box<Expr>>,
@@ -650,7 +657,7 @@ fn resolve_aliases_expr(expr: &mut Expr) {
                 resolve_aliases_expr(item);
             }
         }
-        Expr::Record { fields, .. } => {
+        Expr::Record { fields, .. } | Expr::AnonRecord { fields } => {
             for (_, val) in fields {
                 resolve_aliases_expr(val);
             }
@@ -713,6 +720,12 @@ pub fn desugar_dot_var_index(program: &mut Program) {
             for p in fields {
                 record_fields.insert(p.name.clone());
             }
+        }
+        // Also collect field names from anonymous record literals so that
+        // `r.name` where `name` happens to be a local variable is NOT
+        // rewritten to `at r name` — anonymous records are still records.
+        if let Decl::Function { body, .. } = decl {
+            collect_anon_record_fields_stmts(body, &mut record_fields);
         }
     }
 
@@ -848,7 +861,7 @@ fn desugar_expr(expr: &mut Expr, scope: &[String], rf: &std::collections::HashSe
                 desugar_expr(it, scope, rf);
             }
         }
-        Expr::Record { fields, .. } => {
+        Expr::Record { fields, .. } | Expr::AnonRecord { fields } => {
             for (_, v) in fields {
                 desugar_expr(v, scope, rf);
             }
@@ -910,6 +923,100 @@ fn desugar_expr(expr: &mut Expr, scope: &[String], rf: &std::collections::HashSe
                 unwrap: UnwrapMode::None,
             };
         }
+    }
+}
+
+/// Collect field names from all AnonRecord literals in a statement list.
+fn collect_anon_record_fields_stmts(
+    stmts: &[Spanned<Stmt>],
+    out: &mut std::collections::HashSet<String>,
+) {
+    for stmt in stmts {
+        collect_anon_record_fields_stmt(&stmt.node, out);
+    }
+}
+
+fn collect_anon_record_fields_stmt(stmt: &Stmt, out: &mut std::collections::HashSet<String>) {
+    match stmt {
+        Stmt::Let { value, .. } => collect_anon_record_fields_expr(value, out),
+        Stmt::Expr(e) | Stmt::Return(e) => collect_anon_record_fields_expr(e, out),
+        Stmt::Break(Some(e)) => collect_anon_record_fields_expr(e, out),
+        Stmt::Guard {
+            condition,
+            body,
+            else_body,
+            ..
+        } => {
+            collect_anon_record_fields_expr(condition, out);
+            collect_anon_record_fields_stmts(body, out);
+            if let Some(eb) = else_body {
+                collect_anon_record_fields_stmts(eb, out);
+            }
+        }
+        Stmt::While { condition, body } => {
+            collect_anon_record_fields_expr(condition, out);
+            collect_anon_record_fields_stmts(body, out);
+        }
+        Stmt::ForEach { collection, body, .. } => {
+            collect_anon_record_fields_expr(collection, out);
+            collect_anon_record_fields_stmts(body, out);
+        }
+        Stmt::Destructure { value, .. } => collect_anon_record_fields_expr(value, out),
+        _ => {}
+    }
+}
+
+fn collect_anon_record_fields_expr(expr: &Expr, out: &mut std::collections::HashSet<String>) {
+    match expr {
+        Expr::AnonRecord { fields } => {
+            for (name, val) in fields {
+                out.insert(name.clone());
+                collect_anon_record_fields_expr(val, out);
+            }
+        }
+        Expr::Record { fields, .. } => {
+            for (_, val) in fields {
+                collect_anon_record_fields_expr(val, out);
+            }
+        }
+        Expr::Call { args, .. } => {
+            for arg in args {
+                collect_anon_record_fields_expr(arg, out);
+            }
+        }
+        Expr::BinOp { left, right, .. } => {
+            collect_anon_record_fields_expr(left, out);
+            collect_anon_record_fields_expr(right, out);
+        }
+        Expr::UnaryOp { operand, .. } => collect_anon_record_fields_expr(operand, out),
+        Expr::Field { object, .. } => collect_anon_record_fields_expr(object, out),
+        Expr::Index { object, .. } => collect_anon_record_fields_expr(object, out),
+        Expr::With { object, updates } => {
+            collect_anon_record_fields_expr(object, out);
+            for (_, val) in updates {
+                collect_anon_record_fields_expr(val, out);
+            }
+        }
+        Expr::List(items) => {
+            for item in items {
+                collect_anon_record_fields_expr(item, out);
+            }
+        }
+        Expr::Ok(e) | Expr::Err(e) => collect_anon_record_fields_expr(e, out),
+        Expr::Ternary {
+            condition,
+            then_expr,
+            else_expr,
+        } => {
+            collect_anon_record_fields_expr(condition, out);
+            collect_anon_record_fields_expr(then_expr, out);
+            collect_anon_record_fields_expr(else_expr, out);
+        }
+        Expr::NilCoalesce { value, default } => {
+            collect_anon_record_fields_expr(value, out);
+            collect_anon_record_fields_expr(default, out);
+        }
+        _ => {}
     }
 }
 

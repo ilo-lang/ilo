@@ -969,7 +969,12 @@ impl Parser {
         //       the dense single-line workaround they've been settling for.
         // Skip the brace-block path when the leading `{` is a destructure
         // pattern (`f p:pt>n;{x}=p;...`) — that's a statement, not a wrap.
-        let body = if self.peek() == Some(&Token::LBrace) && !self.is_destructure_pattern() {
+        // Also skip when it looks like an anonymous record literal `{field:val ...}`:
+        // that's a return-expression, not a brace-wrapped body.
+        let body = if self.peek() == Some(&Token::LBrace)
+            && !self.is_destructure_pattern()
+            && !self.is_anon_record_literal()
+        {
             self.parse_brace_body_or_record(&name)?
         } else {
             self.parse_body_or_record(&name)?
@@ -3530,6 +3535,41 @@ or write `({fmt_name} \"...\" ...)` so its args are grouped."
         Ok(Expr::Record { type_name, fields })
     }
 
+    /// Lookahead: does `{` start an anonymous record literal?
+    ///
+    /// Returns true when the token stream looks like `{ ident : ...` — i.e.
+    /// the first token inside the braces is an identifier immediately followed
+    /// by a colon. This is unambiguous: a destructure pattern `{a;b}=` uses
+    /// semicolons, a match/guard body block never starts with `ident:`, and
+    /// the existing map-literal friendly-error fires only on text/number heads.
+    fn is_anon_record_literal(&self) -> bool {
+        // Current token must be `{`; pos+1 is the first field name; pos+2 is `:`.
+        self.peek() == Some(&Token::LBrace)
+            && matches!(self.token_at(self.pos + 1), Some(Token::Ident(_)))
+            && self.token_at(self.pos + 2) == Some(&Token::Colon)
+    }
+
+    /// Parse the body of an anonymous record literal (after `{` has been consumed).
+    ///
+    /// Grammar: `ident:atom (ident:atom)*` then expects `}` from caller.
+    fn parse_anon_record_body(&mut self) -> Result<Expr> {
+        let mut fields = Vec::new();
+        while self.is_named_field_ahead() {
+            let fname = self.expect_ident()?;
+            self.expect(&Token::Colon)?;
+            let value = self.parse_atom()?;
+            fields.push((fname, value));
+        }
+        if fields.is_empty() {
+            return Err(self.error_hint(
+                "ILO-P009",
+                "anonymous record literal `{...}` must have at least one field".into(),
+                "use `{field:value}` syntax, e.g. `{name:\"alice\" age:30}`".into(),
+            ));
+        }
+        Ok(Expr::AnonRecord { fields })
+    }
+
     /// Lookahead: does the token at `pos` start a prefix binary operator
     /// (operator followed by 2+ simple atoms before the next operator/terminator)?
     ///
@@ -3839,6 +3879,10 @@ results first: `r={first_op}a b;…r` keeps each step explicit."
 
     /// Can the current token start an atom?
     fn can_start_atom(&self) -> bool {
+        // Anonymous record literal `{field:val ...}` is also a valid atom start.
+        if self.is_anon_record_literal() {
+            return true;
+        }
         matches!(
             self.peek(),
             Some(Token::Ident(_))
@@ -4082,6 +4126,13 @@ results first: `r={first_op}a b;…r` keeps each step explicit."
                 }
                 self.expect(&Token::RBracket)?;
                 Ok(Expr::List(items))
+            }
+            Some(Token::LBrace) if self.is_anon_record_literal() => {
+                self.advance(); // consume `{`
+                let expr = self.parse_anon_record_body()?;
+                self.expect(&Token::RBrace)?;
+                let expr = self.parse_field_chain(expr, None)?;
+                Ok(expr)
             }
             Some(Token::Ident(name)) => {
                 self.advance();
@@ -4580,7 +4631,7 @@ For variable-position list indexing bind the head first: \
                     self.collect_free_in_expr(i, params, local, free);
                 }
             }
-            Expr::Record { fields, .. } => {
+            Expr::Record { fields, .. } | Expr::AnonRecord { fields } => {
                 for (_, v) in fields {
                     self.collect_free_in_expr(v, params, local, free);
                 }
