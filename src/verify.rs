@@ -394,6 +394,12 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     // get-to / pst-to — timeout variants. Third arg is timeout in milliseconds.
     ("get-to", &["t", "n"], "R t t"),
     ("pst-to", &["t", "t", "n"], "R t t"),
+    // getx / pstx — rich-response variants. Ok-map keys: status (n),
+    // headers (M t t), body (t). Mixed value types collapse to `M t _`.
+    ("getx", &["t"], "R (M t _) t"),
+    ("getx", &["t", "M t t"], "R (M t _) t"),
+    ("pstx", &["t", "t"], "R (M t _) t"),
+    ("pstx", &["t", "t", "M t t"], "R (M t _) t"),
     ("get-many", &["L t"], "L (R t t)"),
     ("run", &["t", "L t"], "R (M t t) t"),
     // run2: structured spawn — typed Record instead of loose Map.
@@ -1934,6 +1940,81 @@ fn builtin_check_args(
                 });
             }
             (Ty::Result(Box::new(Ty::Text), Box::new(Ty::Text)), errors)
+        }
+        "getx" => {
+            // getx url          — 1-arg
+            // getx url headers  — 2-arg: headers is M t t
+            // Ok-map shape: {status:n, headers:M t t, body:t} → M t _
+            if let Some(arg) = arg_types.first()
+                && !compatible(arg, &Ty::Text)
+            {
+                errors.push(VerifyError {
+                    code: "ILO-T013",
+                    function: func_ctx.to_string(),
+                    message: format!("'getx' expects t (url), got {arg}"),
+                    hint: None,
+                    span,
+                    is_warning: false,
+                });
+            }
+            if let Some(arg) = arg_types.get(1) {
+                let map_ty = Ty::Map(Box::new(Ty::Text), Box::new(Ty::Text));
+                if !compatible(arg, &map_ty) {
+                    errors.push(VerifyError {
+                        code: "ILO-T013",
+                        function: func_ctx.to_string(),
+                        message: format!("'getx' headers arg expects M t t, got {arg}"),
+                        hint: None,
+                        span,
+                        is_warning: false,
+                    });
+                }
+            }
+            (
+                Ty::Result(
+                    Box::new(Ty::Map(Box::new(Ty::Text), Box::new(Ty::Unknown))),
+                    Box::new(Ty::Text),
+                ),
+                errors,
+            )
+        }
+        "pstx" => {
+            // pstx url body           — 2-arg
+            // pstx url body headers   — 3-arg: headers is M t t
+            // Ok-map shape: {status:n, headers:M t t, body:t} → M t _
+            for (i, arg) in arg_types.iter().enumerate().take(2) {
+                if !compatible(arg, &Ty::Text) {
+                    let label = if i == 0 { "url" } else { "body" };
+                    errors.push(VerifyError {
+                        code: "ILO-T013",
+                        function: func_ctx.to_string(),
+                        message: format!("'pstx' expects t ({label}), got {arg}"),
+                        hint: None,
+                        span,
+                        is_warning: false,
+                    });
+                }
+            }
+            if let Some(arg) = arg_types.get(2) {
+                let map_ty = Ty::Map(Box::new(Ty::Text), Box::new(Ty::Text));
+                if !compatible(arg, &map_ty) {
+                    errors.push(VerifyError {
+                        code: "ILO-T013",
+                        function: func_ctx.to_string(),
+                        message: format!("'pstx' headers arg expects M t t, got {arg}"),
+                        hint: None,
+                        span,
+                        is_warning: false,
+                    });
+                }
+            }
+            (
+                Ty::Result(
+                    Box::new(Ty::Map(Box::new(Ty::Text), Box::new(Ty::Unknown))),
+                    Box::new(Ty::Text),
+                ),
+                errors,
+            )
         }
         "get-many" => {
             // get-many urls — urls is L t; returns L (R t t) (one Result per URL)
@@ -4500,9 +4581,9 @@ impl VerifyContext {
                         args.len() == 1 || args.len() == 2
                     } else if callee == "wr" {
                         args.len() == 2 || args.len() == 3
-                    } else if callee == "get" {
+                    } else if callee == "get" || callee == "getx" {
                         args.len() == 1 || args.len() == 2
-                    } else if callee == "pst" {
+                    } else if callee == "pst" || callee == "pstx" {
                         args.len() == 2 || args.len() == 3
                     } else if callee == "padl" || callee == "padr" {
                         // padl s w  /  padl s w padchar
@@ -4521,9 +4602,10 @@ impl VerifyContext {
                             "2 or 3".to_string()
                         } else if callee == "fld" {
                             "3 or 4".to_string()
-                        } else if callee == "rd" || callee == "get" {
+                        } else if callee == "rd" || callee == "get" || callee == "getx" {
                             "1 or 2".to_string()
-                        } else if matches!(callee.as_str(), "pst" | "wr" | "padl" | "padr") {
+                        } else if matches!(callee.as_str(), "pst" | "pstx" | "wr" | "padl" | "padr")
+                        {
                             "2 or 3".to_string()
                         } else if callee == "min" || callee == "max" {
                             "1 or 2".to_string()
