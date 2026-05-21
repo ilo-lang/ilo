@@ -1040,10 +1040,11 @@ mod tests {
     /// query_subgraph must gather types used by all transitive deps, not just root.
     #[test]
     fn test_subgraph_type_inclusion_via_dep() {
-        // getx calls mk; mk uses type pt. Subgraph from getx must include pt.
-        let prog = parse("type pt{x:n;y:n}\nmk a:n>pt;pt x:a y:0\ngetx a:n>n;p=mk a;p.x");
+        // getp calls mk; mk uses type pt. Subgraph from getp must include pt.
+        // (Renamed from `getx` after 0.12.x added `getx`/`pstx` as builtins.)
+        let prog = parse("type pt{x:n;y:n}\nmk a:n>pt;pt x:a y:0\ngetp a:n>n;p=mk a;p.x");
         let graph = build_graph(&prog);
-        let q = query_subgraph(&prog, &graph, "getx").unwrap();
+        let q = query_subgraph(&prog, &graph, "getp").unwrap();
         assert!(q.types.contains_key("pt"));
     }
 
