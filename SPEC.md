@@ -529,8 +529,8 @@ Called like functions, compiled to dedicated opcodes.
 | `hd xs` | head (first element/char) of list or text | element / `t` |
 | `tl xs` | tail (all but first) of list or text | `L` / `t` |
 | `rev xs` | reverse list or text | same type |
-| `srt xs` | sort list (all-number or all-text) or text chars | same type |
-| `srt fn xs` | sort list by key function (returns number or text key) | `L` |
+| `srt xs` | sort list (all-number or all-text) or text chars (stable: equal elements keep their input order) | same type |
+| `srt fn xs` | sort list by key function (returns number or text key); stable: items with equal keys keep their input order | `L` |
 | `unq xs` | remove duplicates, preserve order (list or text chars) | same type |
 | `slc xs a b` | slice list or text from index a to b (a, b accept negative indices counting from end; bounds clamp) | same type |
 | `jpth json path` | JSON dot-path lookup, dot-separated keys + numeric array indices (e.g. `"a.b.0.c"`), not JSONPath - leading `$`, `*`, or `[...]` rejected with a diagnostic. Result is typed: arrays → list, objects → record, scalars → matching primitive. | `R _ t` |
