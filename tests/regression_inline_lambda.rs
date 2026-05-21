@@ -69,27 +69,12 @@ fn run_all(src: &str, entry: &str, args: &[&str], expected: &str) {
     }
 }
 
-/// Tree-only runner. Use ONLY when:
-///   - the test exercises srt / grp / uniqby with a closure (PR 3c #391
-///     is the unblock — TODO comment required at call site), or
-///   - the test intentionally probes tree-walker-specific semantics
-///     (e.g. a verifier error whose wording differs per engine).
-fn run_tree_only(src: &str, entry: &str, args: &[&str], expected: &str) {
-    let actual = run_engine("--vm", src, entry, args);
-    assert_eq!(
-        actual, expected,
-        "tree produced {actual:?}, expected {expected:?} for src `{src}`"
-    );
-}
-
 // ── srt: 1-arg key fn ──────────────────────────────────────────────────────
 
 #[test]
 fn srt_inline_key_by_length() {
-    // TODO PR3c follow-up: srt closure dispatch is tree-bridged on VM /
-    // Cranelift until #391 lands. Flip to run_all once merged.
     let src = "f ws:L t>L t;srt (s:t>n;len s) ws";
-    run_tree_only(
+    run_all(
         src,
         "f",
         &["[\"banana\",\"fig\",\"apple\"]"],
@@ -100,10 +85,8 @@ fn srt_inline_key_by_length() {
 #[test]
 fn srt_inline_key_absolute_value() {
     // Body uses `abs` builtin — no captures, no helper.
-    // TODO PR3c follow-up: srt closure dispatch is tree-bridged on VM /
-    // Cranelift until #391 lands. Flip to run_all once merged.
     let src = "f xs:L n>L n;srt (x:n>n;abs x) xs";
-    run_tree_only(src, "f", &["[-3,1,-5,2]"], "[1, 2, -3, -5]");
+    run_all(src, "f", &["[-3,1,-5,2]"], "[1, 2, -3, -5]");
 }
 
 // ── flt: 1-arg predicate ───────────────────────────────────────────────────
@@ -134,10 +117,8 @@ fn fld_inline_sum_of_squares() {
 
 #[test]
 fn lambda_multi_statement_body() {
-    // TODO PR3c follow-up: srt closure dispatch is tree-bridged on VM /
-    // Cranelift until #391 lands. Flip to run_all once merged.
     let src = "f xs:L n>L n;srt (x:n>n;sq=*x x;sq) xs";
-    run_tree_only(src, "f", &["[-3,1,-5,2]"], "[1, 2, -3, -5]");
+    run_all(src, "f", &["[-3,1,-5,2]"], "[1, 2, -3, -5]");
 }
 
 // ── lambda calling a top-level helper (HOF inside HOF) ─────────────────────
@@ -152,10 +133,8 @@ fn lambda_can_call_top_level_helper() {
 
 #[test]
 fn lambda_can_call_builtin() {
-    // TODO PR3c follow-up: srt closure dispatch is tree-bridged on VM /
-    // Cranelift until #391 lands. Flip to run_all once merged.
     let src = "f xs:L n>L n;srt (x:n>n;abs x) xs";
-    run_tree_only(src, "f", &["[-3,1,-5,2]"], "[1, 2, -3, -5]");
+    run_all(src, "f", &["[-3,1,-5,2]"], "[1, 2, -3, -5]");
 }
 
 // ── Multiple lambdas in one function (counter increments) ──────────────────
@@ -170,13 +149,11 @@ fn multiple_lambdas_in_one_function() {
 
 #[test]
 fn lambda_inside_helper() {
-    // TODO PR3c follow-up: srt closure dispatch is tree-bridged on VM /
-    // Cranelift until #391 lands. Flip to run_all once merged.
     let src = "
 sorted xs:L n>L n;srt (x:n>n;abs x) xs
 f xs:L n>L n;sorted xs
 ";
-    run_tree_only(src, "f", &["[-3,1,-5,2]"], "[1, 2, -3, -5]");
+    run_all(src, "f", &["[-3,1,-5,2]"], "[1, 2, -3, -5]");
 }
 
 // ── Phase 2: closure capture works ─────────────────────────────────────────
@@ -193,10 +170,8 @@ fn closure_capture_single_var_filter() {
 #[test]
 fn closure_capture_in_sort_key() {
     // `srt` with an inline key that closes over `target`.
-    // TODO PR3c follow-up: srt closure dispatch is tree-bridged on VM /
-    // Cranelift until #391 lands. Flip to run_all once merged.
     let src = "f xs:L n target:n>L n;srt (x:n>n;abs -x target) xs";
-    run_tree_only(src, "f", &["[1,5,10,20]", "8"], "[10, 5, 1, 20]");
+    run_all(src, "f", &["[1,5,10,20]", "8"], "[10, 5, 1, 20]");
 }
 
 #[test]
@@ -240,10 +215,8 @@ fn closure_capture_by_value_snapshot() {
     // (well — srt has already completed by then). This just exercises that
     // mutating the capture's source name post-construction is irrelevant
     // because srt already consumed it. The real check is value-equality.
-    // TODO PR3c follow-up: srt closure dispatch is tree-bridged on VM /
-    // Cranelift until #391 lands. Flip to run_all once merged.
     let src = "f xs:L n bias:n>L n;ys=srt (x:n>n;+x bias) xs;ys";
-    run_tree_only(src, "f", &["[3,1,2]", "0"], "[1, 2, 3]");
+    run_all(src, "f", &["[3,1,2]", "0"], "[1, 2, 3]");
 }
 
 // ── Phase 1 ctx-arg form is still supported alongside captures ─────────────
@@ -270,10 +243,8 @@ fn grouped_expression_still_parses() {
 
 #[test]
 fn named_helper_hof_unaffected() {
-    // TODO PR3c follow-up: srt named-helper dispatch is tree-bridged on
-    // VM / Cranelift until #391 lands. Flip to run_all once merged.
     let src = "k x:n>n;abs x\nf xs:L n>L n;srt k xs";
-    run_tree_only(src, "f", &["[-3,1,-5,2]"], "[1, 2, -3, -5]");
+    run_all(src, "f", &["[-3,1,-5,2]"], "[1, 2, -3, -5]");
 }
 
 // ── Lambda inside foreach body shadowing is honored ────────────────────────
@@ -283,10 +254,8 @@ fn lambda_local_binding_shadows_nothing_outside() {
     // The `s` inside the lambda is a param, not a capture of any outer name.
     // Even though there's no outer `s`, this exercises the param/local
     // resolution path explicitly.
-    // TODO PR3c follow-up: srt closure dispatch is tree-bridged on VM /
-    // Cranelift until #391 lands. Flip to run_all once merged.
     let src = "f ws:L t>L t;srt (s:t>n;n=len s;n) ws";
-    run_tree_only(
+    run_all(
         src,
         "f",
         &["[\"banana\",\"fig\",\"apple\"]"],
