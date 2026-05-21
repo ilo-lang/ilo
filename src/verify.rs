@@ -260,23 +260,57 @@ fn kebab_subtract_hint<'a>(
     if parts.len() < 2 || parts.iter().any(|p| p.is_empty()) {
         return None;
     }
-    let all_resolved = parts.iter().all(|p| {
-        candidates.clone().any(|c| c == p) || is_builtin(p) || builtin_as_fn_ty(p).is_some()
-    });
-    if !all_resolved {
+    let resolves = |s: &str| -> bool {
+        candidates.clone().any(|c| c == s) || is_builtin(s) || builtin_as_fn_ty(s).is_some()
+    };
+    // 2-segment case: `best-d` where both halves are bound. Classic
+    // single-hyphen ambiguity — recommend the explicit prefix form.
+    if parts.len() == 2 {
+        if resolves(parts[0]) && resolves(parts[1]) {
+            return Some(format!(
+                "'{name}' is a single identifier (kebab-case); for subtraction write '- {a} {b}'",
+                a = parts[0],
+                b = parts[1],
+            ));
+        }
         return None;
     }
-    if parts.len() == 2 {
-        Some(format!(
-            "'{name}' is a single identifier (kebab-case); for subtraction write '- {a} {b}'",
-            a = parts[0],
-            b = parts[1],
-        ))
-    } else {
-        Some(format!(
-            "'{name}' is a single identifier (kebab-case); '-' inside an identifier never means subtraction"
-        ))
+    // 3+ segments. Two distinct confusions to disambiguate:
+    //
+    //   (a) every individual segment is bound — old behaviour, plain atomic
+    //       clarification. Rare in real code; firing the binop hint here
+    //       would be noisy (many split points, none clearly intended).
+    //
+    //   (b) a single split-point yields two kebab halves that ARE bound
+    //       (e.g. `zr-sq-zi-sq` → `zr-sq` and `zi-sq` from mandelbrot).
+    //       This is the high-signal "subtraction between two hyphenated
+    //       names with no spaces" case. If exactly one split produces a
+    //       bound pair, point at it; otherwise fall back to (a).
+    let mut pair_splits: Vec<(String, String)> = Vec::new();
+    for i in 1..parts.len() {
+        let lhs = parts[..i].join("-");
+        let rhs = parts[i..].join("-");
+        if resolves(&lhs) && resolves(&rhs) {
+            pair_splits.push((lhs, rhs));
+        }
     }
+    if pair_splits.len() == 1 {
+        let (lhs, rhs) = &pair_splits[0];
+        return Some(format!(
+            "'{name}' is a single identifier (kebab-case); '-' between bound names never means subtraction unless surrounded by spaces. For subtraction write '- {lhs} {rhs}' (prefix form) or '{lhs} - {rhs}' (infix with spaces)"
+        ));
+    }
+    // Either no clean split, or several. Use atomic clarification when at
+    // least every segment is bound (the legacy criterion); otherwise the
+    // kebab-confusion theory doesn't apply and we let the closest-match
+    // fallback take over.
+    let all_segments_resolved = parts.iter().all(|p| resolves(p));
+    if all_segments_resolved {
+        return Some(format!(
+            "'{name}' is a single identifier (kebab-case); '-' inside an identifier never means subtraction"
+        ));
+    }
+    None
 }
 
 /// Hint for the `name expr` shape when `name` is non-callable and the single
