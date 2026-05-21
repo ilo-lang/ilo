@@ -8449,7 +8449,11 @@ impl<'a> VM<'a> {
                     let a = ((inst >> 16) & 0xFF) as usize + base;
                     let b = ((inst >> 8) & 0xFF) as usize + base;
                     let v = reg!(b);
-                    println!("{}", v.to_value());
+                    let s = format!("{}", v.to_value());
+                    // +1 for the newline. Keeps the --max-output-bytes budget
+                    // honest against a runaway `wh true{prnt 0}` loop.
+                    crate::runtime_guard::record_output(s.len() + 1);
+                    println!("{s}");
                     // passthrough: same heap value now lives in two regs, bump RC
                     v.clone_rc();
                     reg_set!(a, v);
@@ -18433,7 +18437,10 @@ pub(crate) extern "C" fn jit_mdel(map: u64, key: u64) -> u64 {
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn jit_prt(v: u64) -> u64 {
     let nv = NanVal(v);
-    println!("{}", nv.to_value());
+    let s = format!("{}", nv.to_value());
+    // +1 for the newline. Keeps --max-output-bytes honest for JIT'd loops.
+    crate::runtime_guard::record_output(s.len() + 1);
+    println!("{s}");
     // passthrough — clone_rc for heap values
     nv.clone_rc();
     v
