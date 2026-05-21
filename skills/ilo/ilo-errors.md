@@ -37,6 +37,8 @@ description: Use this when reading ILO-XXXX error codes or fixing failures. List
 - **R001 div-by-zero** - guard with `=b 0 ^"..."`.
 - **R004 wrong main arity** - CLI args don't match signature.
 - **R012 no functions defined** - typo'd flag swallowed as positional.
+- **R016 wall-clock runtime exceeded** - `ilo run` killed the program at the 60 s (default) budget. Almost always an infinite loop - check loop variables increment and recursion has a base case. Raise with `--max-runtime SECS` if legitimate.
+- **R017 stdout output exceeded** - `ilo run` killed the program at the ~100 MB (default) stdout budget. Usually a `prnt` call inside an unbounded loop. Raise with `--max-output-bytes BYTES` if legitimate.
 - **R020 file not found** - check path or `env "HOME"`.
 - **R030 http error** - non-2xx or network. Match `^e`.
 - **R040 json parse error** - bad `jpar` input. Match `^e`.
