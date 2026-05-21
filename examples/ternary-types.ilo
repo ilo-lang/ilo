@@ -1,0 +1,46 @@
+-- Ternary branches must produce the same type. ILO-T003 now
+-- points at the cheapest fix when the branches mismatch: for
+-- number-vs-text, `str <num-branch>` to make both text, or
+-- `default-on-err (num <text-branch>) <fallback>` to make both
+-- number (since `num` returns `R n t` and needs a fallback for
+-- bad input). For other mismatches (bool vs text, list vs map,
+-- two named records, …) the hint falls back to restructuring.
+-- This file shows the canonical correct shapes after applying
+-- each hint.
+
+-- 1. Number vs text → convert one direction. `str` on the
+--    number side is the common fix when the function returns
+--    text and the number side is just a code/id.
+label c:b n:n>t;?h c (str n) "n/a"
+
+-- 2. Number vs text → the other direction. `num` returns `R n t`,
+--    so wrap with `default-on-err ... 0` to coerce the parse-error
+--    case into a plain number. Use when the function returns `n`
+--    and one branch happens to be a literal-looking text.
+parse-or c:b t:t>n;?h c (default-on-err (num t) 0) 0
+
+-- 3. Bool vs text → no scalar coercion exists for bool, so the
+--    hint suggests restructuring. The clean shape is to map
+--    each branch into the same target type explicitly.
+flag-label c:b f:b>t;?h c (?h f "on" "off") "n/a"
+
+-- run: label true 42
+-- out: 42
+
+-- run: label false 42
+-- out: n/a
+
+-- run: parse-or true "7"
+-- out: 7
+
+-- run: parse-or false "7"
+-- out: 0
+
+-- run: flag-label true true
+-- out: on
+
+-- run: flag-label true false
+-- out: off
+
+-- run: flag-label false true
+-- out: n/a
