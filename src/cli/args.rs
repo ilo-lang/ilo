@@ -113,6 +113,9 @@ pub enum Cmd {
     /// Modular agent skills (ilo-language, ilo-builtins, ...).
     Skill(SkillArgs),
 
+    /// Run `-- run:` / `-- out:` / `-- err:` assertions in `.ilo` files.
+    Test(TestArgs),
+
     /// Print version.
     Version,
 }
@@ -358,6 +361,28 @@ pub struct CheckArgs {
     /// exit-code decision is elevated.
     #[arg(long)]
     pub strict: bool,
+}
+
+// ── Test ───────────────────────────────────────────────────────────────────────
+
+#[derive(Args, Debug)]
+pub struct TestArgs {
+    /// File or directory to test. Directories are walked recursively for `*.ilo`.
+    /// Defaults to `examples/` when omitted, so `ilo test` on a freshly-cloned
+    /// repo does something useful without an explicit path argument.
+    pub path: Option<String>,
+
+    /// Engine to run each assertion on. `all` runs every engine and reports
+    /// per-engine PASS/FAIL. Defaults to `vm` (matches the in-tree harness).
+    #[arg(long, value_enum, default_value = "vm")]
+    pub engine: TestEngine,
+}
+
+#[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TestEngine {
+    Vm,
+    Jit,
+    All,
 }
 
 // ── Spec ───────────────────────────────────────────────────────────────────────
