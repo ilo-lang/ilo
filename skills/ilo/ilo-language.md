@@ -35,6 +35,13 @@ Flat early returns: `cls sp:n>t;>=sp 1000 "gold";>=sp 500 "silver";"bronze"`. Br
 
 `div a:n b:n>R n t;=b 0 ^"divide by zero";~/a b`. `!` auto-unwraps in `R`-fns. `!!` panics on `^e`/`nil`. `default-on-err r d` unwraps `R T E` to `T` with `d` on Err (Result `??`).
 
+## optional vs result
+
+Two distinct types, two distinct unwraps. `O T` = maybe-value (`nil` or `T`), no error payload; unwrap with `?? x d`. `R T E` = ok-or-err with payload; unwrap with `~`/`^` match arms, `!`, `!!`, or `default-on-err r d`. Using `??` on `R T E` is ILO-T041; using `default-on-err` on `O T` is ILO-T040.
+
+`O t`: `name = ?? name-opt "default"` — nil-coalesce, `O t -> t`.
+`R t t`: `name = default-on-err r "fallback"`, or `?r{~v:v;^_:"fallback"}` — Result unwrap, `R t e -> t`.
+
 ## loops
 
 `@x xs{body}` foreach, `@i 0..5{body}` range, `wh <i 10{...}` while. `brk`, `cnt`, `ret v`. Tail user-fn calls trampoline (no stack growth); deep iter: `cd n:n>n;=n 0 0;cd -n 1`. Direct name, no `!`/`!!`.
