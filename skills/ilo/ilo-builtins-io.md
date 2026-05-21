@@ -19,13 +19,15 @@ Prefix-call: `name arg1 arg2 ...`. Cross-engine unless noted.
 
 `get url` (`R t t`), `get url headers` (with `M t t` custom headers), `get-to url timeout-ms` (explicit ms timeout).
 `pst url body` (`R t t`), `pst url body headers`, `pst-to url body timeout-ms`.
+`put url body` / `pat url body` mirror `pst` (PUT / PATCH); accept optional headers map.
+`del url` / `hed url` / `opt url` mirror `get` (DELETE / HEAD / OPTIONS); accept optional headers map.
 `get-many urls` (parallel fan-out, `L (R t t)`).
+Verb cluster is limited to the seven safe methods (GET/POST/PUT/PATCH/DELETE/HEAD/OPTIONS); TRACE and CONNECT are deliberately out of scope.
 Timeout variants round up to the nearest second. Err on timeout or connection failure.
 
-`!` auto-unwraps on all HTTP builtins (`get!`, `pst!`, `get-to!`, `pst-to!`): Ok→body, Err propagates. `!!` panics on Err. Prefer `pst!` over `?r{~v:v;^e:^e}` boilerplate in `R`-returning callers (~30 tokens/site).
+`!` auto-unwraps on all HTTP builtins (`get!`, `pst!`, `get-to!`, `pst-to!`, `put!`, `pat!`, `del!`, `hed!`, `opt!`): Ok→body, Err propagates. `!!` panics on Err. Prefer `pst!`/`put!`/`del!` over `?r{~v:v;^e:^e}` boilerplate in `R`-returning callers (~30 tokens/site).
 
 Parsing `;`-delimited headers (Content-Type, Cache-Control, Cookie): no `ct-parse` builtin, use `spl ";"` then `trm`/`lwr`, then `spl "="` per param. `ps=spl raw ";";media=lwr (trm (at ps 0));kv=spl (trm (at ps 1)) "="`. Don't bind to `ct` (shadows builtin).
-`!` auto-unwraps on HTTP builtins (`get!`, `pst!`, `get-to!`, `pst-to!`): Ok→body, Err propagates. `!!` panics on Err. Prefer `pst!` over `?r{~v:v;^e:^e}` when the caller returns `R` (~30 tokens saved).
 
 ## JSON
 

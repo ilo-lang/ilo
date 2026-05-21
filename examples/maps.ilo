@@ -10,8 +10,9 @@ check>b;m=mset mmap "x" "1";mhas m "x"
 -- Get all keys from a map (sorted)
 keys>L t;m=mset (mset mmap "b" "2") "a" "1";mkeys m
 
--- Delete a key
-del>b;m=mset mmap "x" "1";m=mdel m "x";mhas m "x"
+-- Delete a key. Named `rmk` (remove key) because `del` is now reserved as
+-- the HTTP DELETE builtin (#5z).
+rmk>b;m=mset mmap "x" "1";m=mdel m "x";mhas m "x"
 
 -- run: lookup
 -- out: alice
@@ -19,5 +20,5 @@ del>b;m=mset mmap "x" "1";m=mdel m "x";mhas m "x"
 -- out: true
 -- run: keys
 -- out: [a, b]
--- run: del
+-- run: rmk
 -- out: false
