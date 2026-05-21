@@ -92,6 +92,10 @@ fn allow_net_empty_blocks_get() {
     assert!(is_err_value(&vm_val), "vm: expected Err, got {vm_val:?}");
     let msg = err_text(&tree);
     assert!(
+        msg.contains("ILO-CAP-001"),
+        "err should include ILO-CAP-001 code, got: {msg}"
+    );
+    assert!(
         msg.contains("--allow-net"),
         "err should mention --allow-net, got: {msg}"
     );
@@ -165,6 +169,10 @@ fn allow_read_blocks_outside_prefix() {
     );
     let msg = err_text(&tree);
     assert!(
+        msg.contains("ILO-CAP-001"),
+        "err should include ILO-CAP-001 code, got: {msg}"
+    );
+    assert!(
         msg.contains("--allow-read"),
         "err should mention --allow-read, got: {msg}"
     );
@@ -215,6 +223,10 @@ fn allow_write_blocks_outside_prefix() {
     );
     let msg = err_text(&tree);
     assert!(
+        msg.contains("ILO-CAP-001"),
+        "err should include ILO-CAP-001 code, got: {msg}"
+    );
+    assert!(
         msg.contains("--allow-write"),
         "err should mention --allow-write, got: {msg}"
     );
@@ -239,6 +251,10 @@ fn allow_run_empty_blocks_run() {
         "expected Err when run allowlist is empty, got {result:?}"
     );
     let msg = err_text(&result);
+    assert!(
+        msg.contains("ILO-CAP-001"),
+        "err should include ILO-CAP-001 code, got: {msg}"
+    );
     assert!(
         msg.contains("--allow-run"),
         "err should mention --allow-run, got: {msg}"
