@@ -29,7 +29,7 @@ Prefix-call: `name arg1 arg2 ...`. Cross-engine unless noted.
 
 ## Statistics
 
-`sum avg median quantile stdev variance cumsum frq argmax argmin argsort prod cprod`.
+`sum avg median quantile stdev variance cumsum frq argmax argmin argsort prod cprod bisect`. `bisect xs target` is Python `bisect_left` (O(log N) sorted-list insertion point); caller owns sortedness.
 
 ## Linear algebra
 

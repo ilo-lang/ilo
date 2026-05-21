@@ -252,6 +252,17 @@ pub enum Builtin {
     Argmax,
     Argmin,
     Argsort,
+    // `bisect xs:L n target:n > n` — insertion point in a sorted list.
+    // Python `bisect.bisect_left` semantics: returns the leftmost index `i`
+    // such that `xs[0..i] < target <= xs[i..]`. Returns `0` for empty list,
+    // `len(xs)` when target is greater than every element, and the index of
+    // the first equal element when duplicates are present (leftmost wins on
+    // ties). Caller is responsible for the sortedness precondition - we do
+    // NOT validate it. O(log N) binary search; closes the verbose
+    // `flt fn xs` + len pattern that three sorted-array personas reached for
+    // (k-sorted-search, schedule-merge, range-bucket). Tree-bridge eligible:
+    // pure 2-arg, no FnRef, no Result wrapper. NaN target propagates as NaN.
+    Bisect,
 
     // Path manipulation (pure text ops, Unix forward-slash only).
     // POSIX dirname/basename semantics; pathjoin takes a list to avoid
@@ -527,6 +538,7 @@ impl Builtin {
             "argmax" => Some(Builtin::Argmax),
             "argmin" => Some(Builtin::Argmin),
             "argsort" => Some(Builtin::Argsort),
+            "bisect" => Some(Builtin::Bisect),
             "dirname" => Some(Builtin::Dirname),
             "basename" => Some(Builtin::Basename),
             "pathjoin" => Some(Builtin::Pathjoin),
@@ -721,6 +733,7 @@ impl Builtin {
             Builtin::Argmax => "argmax",
             Builtin::Argmin => "argmin",
             Builtin::Argsort => "argsort",
+            Builtin::Bisect => "bisect",
             Builtin::Dirname => "dirname",
             Builtin::Basename => "basename",
             Builtin::Pathjoin => "pathjoin",
@@ -1090,6 +1103,11 @@ impl Builtin {
         Builtin::Rsum,
         Builtin::Ravg,
         Builtin::Rmin,
+        // `bisect xs target > n` — O(log N) insertion point in a sorted
+        // numeric list (Python `bisect_left` semantics). Tree-bridge
+        // eligible: pure 2-arg, no FnRef, no Result wrapper. Appended last
+        // to preserve every existing on-wire tag.
+        Builtin::Bisect,
     ];
 
     /// On-wire 8-bit tag for cross-engine builtin dispatch. See `ALL`.
@@ -1448,6 +1466,7 @@ mod tests {
             "rsum",
             "ravg",
             "rmin",
+            "bisect",
         ];
         for name in &all {
             let b = Builtin::from_name(name).unwrap_or_else(|| panic!("missing builtin: {name}"));
@@ -1713,6 +1732,7 @@ mod tests {
             "rsum",
             "ravg",
             "rmin",
+            "bisect",
         ] {
             let b = Builtin::from_name(name).unwrap_or_else(|| panic!("no builtin: {name}"));
             let t = b.tag();

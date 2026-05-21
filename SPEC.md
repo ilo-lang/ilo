@@ -733,6 +733,7 @@ Called like functions, compiled to dedicated opcodes.
 | `argmax xs` | index of the maximum element (first occurrence wins on ties; errors on empty list) | `n` |
 | `argmin xs` | index of the minimum element (first occurrence wins on ties; errors on empty list) | `n` |
 | `argsort xs` | sorted-index permutation ascending - stable sort, indices of smallest to largest (empty list returns `[]`) | `L n` |
+| `bisect xs target` | O(log N) leftmost insertion point in a sorted numeric list (Python `bisect_left`): returns `i` such that `xs[0..i] < target <= xs[i..]`. Empty list returns `0`; target greater than every element returns `len xs`; ties resolve leftmost. Caller owns sortedness precondition - not validated. NaN target propagates as NaN. | `n` |
 | `setunion a b` | set union of two lists (deduped, sorted output) | `L a` |
 | `setinter a b` | set intersection (deduped, sorted) | `L a` |
 | `setdiff a b` | set difference `a - b` (deduped, sorted) | `L a` |
