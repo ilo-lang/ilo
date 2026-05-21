@@ -1,0 +1,36 @@
+-- paren-calls.ilo: Demonstrating paren-form call syntax (ILO-51)
+--
+-- `f(a, b)` is sugar for `f a b`. Both produce identical AST nodes.
+-- Postfix (whitespace-separated) stays the canonical idiom; paren-form
+-- is accepted everywhere for agents trained on Python/JS/Rust/TS who
+-- reach for parentheses by reflex.
+--
+-- Disambiguation rule:
+--   f(x)   -- `(` immediately adjacent to ident -> paren-call
+--   f (x)  -- space before `(` -> postfix call with grouped-expr arg
+--   Both forms produce `Call { function: f, args: [x] }`.
+--
+-- Non-goal: `ilo fmt` does NOT rewrite paren-form to postfix.
+
+-- Basic 2-arg: spl(s, ",") same as spl s ","
+split-csv s:t > L t
+  spl(s, ",")
+
+split-csv-postfix s:t > L t
+  spl s ","
+
+-- 1-arg adjacent paren: abs(x) same as abs x
+absolute x:n > n
+  abs(x)
+
+-- Nested paren-calls: sqrt(abs(x))
+sqrt-abs x:n > n
+  sqrt(abs(x))
+
+-- Paren-call inside a prefix binary expression: + 1 (sqrt x)
+shifted x:n > n
+  + 1 sqrt(x)
+
+-- main entry: demonstrate paren-calls at runtime
+main > L t
+  spl("hello,world,foo", ",")
