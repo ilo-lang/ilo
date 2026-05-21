@@ -4267,6 +4267,47 @@ impl VerifyContext {
                     );
                 }
             }
+            // ILO-T043: recursive self-call at a discarded (non-tail) position is
+            // almost always a bug. The agent expects the recursive call to short-
+            // circuit, but ilo's functional semantics discard the return value of
+            // any non-tail expression statement. Per SPEC tail-call rules
+            // (~line 1805), a call is in tail position only when its return value
+            // IS the function's return value: last statement of the body, expr of
+            // `ret`, tail-position match arm, or braceless-guard body. Anywhere
+            // else, the return is silently dropped.
+            //
+            // Surfaced by the interp1d persona: `find-idx xs t i:n>n; =t i i;
+            // find-idx xs t +i 1; -1` always returns -1 because the recursive
+            // call is followed by `-1`, putting it at a non-tail position. The
+            // persona then mis-diagnosed the bug as "braceless guard broken"
+            // because no diagnostic fired. T043 fixes the signal gap.
+            //
+            // Narrowly scoped to recursive self-calls (caller == callee): bare
+            // calls to OTHER user fns at non-tail position are legitimate when
+            // the callee is side-effecting (logging, file I/O). We only have
+            // strong-enough confidence to warn when an agent recurses into the
+            // SAME function and throws away the value the recursion produced.
+            if !is_tail
+                && let Stmt::Expr(Expr::Call {
+                    function: callee, ..
+                }) = &spanned.node
+                && callee == func
+                && let Some(sig) = self.functions.get(callee)
+                && !matches!(sig.return_type, Ty::Nil)
+            {
+                self.warn(
+                    "ILO-T043",
+                    func,
+                    format!(
+                        "recursive call to '{callee}' is at a non-tail position and its return value is discarded"
+                    ),
+                    Some(
+                        "a call is only in tail position when it's the last statement of the body, an arm of a tail match, or the body of a braceless guard. To use the recursive result, restructure as `?h cond {result} {fallback}` or `=cond {recursive-call}`. To return early, write `ret <call>`."
+                            .to_string(),
+                    ),
+                    Some(spanned.span),
+                );
+            }
             last_ty = self.verify_stmt(func, scope, &spanned.node, spanned.span);
             if matches!(spanned.node, Stmt::Return(_) | Stmt::Break(_)) && i + 1 < stmts.len() {
                 let first_unreachable = stmts[i + 1].span;
