@@ -23,6 +23,12 @@ Prefix-call: `name arg1 arg2 ...`. Cross-engine unless noted.
 `pst url body` (`R t t`), `pst url body headers`, `pst-to url body timeout-ms`. (`pst` is the canonical name since 0.12.0; the old name `post` is not accepted.)
 `put url body` / `pat url body` mirror `pst` (PUT / PATCH); accept optional headers map.
 `del url` / `hed url` / `opt url` mirror `get` (DELETE / HEAD / OPTIONS); accept optional headers map.
+
+```
+hs=mset (mset mmap "Authorization" tok) "Accept" "application/json"
+r=get! "https://api.example.com/v1/users" hs   -- two-arg GET with headers
+p=pst! "https://api.example.com/v1/users" body hs   -- three-arg POST with headers
+```
 `get-many urls` (parallel fan-out, `L (R t t)`).
 Verb cluster is limited to the seven safe methods (GET/POST/PUT/PATCH/DELETE/HEAD/OPTIONS); TRACE and CONNECT are deliberately out of scope.
 Timeout variants round up to the nearest second. Err on timeout or connection failure.
