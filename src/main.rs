@@ -2815,6 +2815,8 @@ fn main() {
                 print_build_help();
                 std::process::exit(1);
             }
+            // `ilo test` with no path arg is valid (defaults to `examples/`)
+            // and is handled in the runner; no usage stub needed here.
             _ => {}
         }
     }
@@ -3007,6 +3009,7 @@ fn dispatch_cli(cli: cli::Cli, bare_has_bin: bool) -> i32 {
                 cli::args::SkillCmd::Show { name } => skill_show_cmd(&name, as_json),
             }
         }
+        Some(cli::Cmd::Test(t)) => cli::test_runner::run(t),
         Some(cli::Cmd::Version) => version_cmd(cli.global.explicit_json()),
         Some(cli::Cmd::Run(r)) => {
             let mode = cli.global.output_mode();
