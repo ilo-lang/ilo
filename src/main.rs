@@ -2990,6 +2990,13 @@ fn dispatch_cli(cli: cli::Cli, bare_has_bin: bool) -> i32 {
                             "schemaVersion": 1,
                             "format": "ai-txt",
                             "content": compact_spec(),
+                            "stability": {
+                                "doc": "STABILITY.md",
+                                "tiers": ["stable", "provisional", "experimental"],
+                                "stable": ["schemaVersion:1", "ILO-error-codes", "serv-protocol-phases", "file-version-pragma", "manifesto-principles", "reserved-name-policy"],
+                                "provisional": ["builtin-signatures", "cli-flag-names", "error-message-prose", "examples-corpus", "ilo-test-surface"],
+                                "experimental": ["0.13-in-flight-features", "aot-artifact-format", "cranelift-jit-internals", "extensions-dir", "cargo-feature-flags"],
+                            },
                         });
                         println!("{}", v);
                     } else {
