@@ -173,7 +173,7 @@ pub(crate) const OP_SRT: u8 = 54; // R[A] = srt(R[B])  (sort list or text)
 pub(crate) const OP_SLC: u8 = 55; // R[A] = slc(R[B], R[C], R[D])  (slice; D in data word A field)
 pub(crate) const OP_RND0: u8 = 57; // R[A] = random float in [0,1)
 pub(crate) const OP_RND2: u8 = 58; // R[A] = random int in [R[B], R[C]]
-pub(crate) const OP_SEED: u8 = 189; // seed(R[B]) — set shared PRNG state; R[A] = Nil
+pub(crate) const OP_SEED: u8 = 190; // seed(R[B]) — set shared PRNG state; R[A] = Nil
 pub(crate) const OP_NOW: u8 = 59; // R[A] = current unix timestamp (seconds, float)
 pub(crate) const OP_NOWMS: u8 = 177; // R[A] = current unix timestamp (milliseconds, float)
 pub(crate) const OP_ENV: u8 = 60; // R[A] = env(R[B])  (returns R t t)
