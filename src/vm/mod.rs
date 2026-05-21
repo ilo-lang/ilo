@@ -788,6 +788,17 @@ pub(crate) fn is_tree_bridge_eligible(b: crate::builtins::Builtin, argc: usize) 
         (Builtin::Urldec, 1) => true,
         (Builtin::B64u, 1) => true,
         (Builtin::B64uDec, 1) => true,
+        // Crypto primitives cluster (0.12.x). All pure text-in / text-or-bool
+        // -out, no FnRef args, no I/O. Tree-bridge keeps VM + Cranelift in
+        // lockstep without new opcodes. b64-dec returns R t t (Result wrap
+        // handled by the standard bridge path); sha256, hmac-sha256, b64, hex
+        // are total text → text; ct-eq is total text+text → bool.
+        (Builtin::Sha256, 1) => true,
+        (Builtin::HmacSha256, 2) => true,
+        (Builtin::B64, 1) => true,
+        (Builtin::B64Dec, 1) => true,
+        (Builtin::HexEnc, 1) => true,
+        (Builtin::CtEq, 2) => true,
         // ewm xs a — exponential moving average. Pure number-list reducer, no
         // FnRef args, no Result wrapper. Same bridge contract as the
         // cumsum/cprod aggregate family; tree interpreter handles the actual
