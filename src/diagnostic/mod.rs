@@ -674,4 +674,129 @@ mod tests {
         let d = Diagnostic::error("bad").with_source("f x:n>n;x".to_string());
         assert_eq!(d.source.as_deref(), Some("f x:n>n;x"));
     }
+
+    // ---- fix_plan derivation ----
+
+    #[test]
+    fn derive_fix_plan_t004_typo_rename() {
+        // ILO-T004: undefined variable with "did you mean 'X'?" hint
+        let source = "f x:n>n;xyzz";
+        let d = Diagnostic::error("undefined variable 'xyzz'")
+            .with_code("ILO-T004")
+            .with_span(Span { start: 8, end: 12 }, "")
+            .with_suggestion("did you mean 'x'?")
+            .with_source(source.to_string())
+            .derive_fix_plan();
+        let plan = d.fix_plan.expect("fix_plan should be derived for T004");
+        assert_eq!(plan.edits.len(), 1);
+        assert_eq!(plan.edits[0].before, "xyzz");
+        assert_eq!(plan.edits[0].after, "x");
+        assert_eq!(plan.edits[0].line_start, 1);
+    }
+
+    #[test]
+    fn derive_fix_plan_t003_type_rename() {
+        // ILO-T003: undefined type with "did you mean 'X'?" hint
+        let source = "f x:Numbr>n;x";
+        let d = Diagnostic::error("undefined type 'Numbr'")
+            .with_code("ILO-T003")
+            .with_span(Span { start: 4, end: 9 }, "")
+            .with_suggestion("did you mean 'Number'?")
+            .with_source(source.to_string())
+            .derive_fix_plan();
+        let plan = d.fix_plan.expect("fix_plan should be derived for T003");
+        assert_eq!(plan.edits[0].before, "Numbr");
+        assert_eq!(plan.edits[0].after, "Number");
+    }
+
+    #[test]
+    fn derive_fix_plan_t032_fmt_prefix() {
+        // ILO-T032: bare fmt call → prnt fmt
+        let source = r#"f x:n>n;fmt "{}" x;x"#;
+        let fmt_start = source.find("fmt").unwrap();
+        let fmt_end = source.find(";x").unwrap(); // up to next statement
+        let d = Diagnostic::warning("bare 'fmt' result is discarded")
+            .with_code("ILO-T032")
+            .with_span(Span { start: fmt_start, end: fmt_end }, "")
+            .with_suggestion("did you mean `prnt fmt ...` to print?")
+            .with_source(source.to_string())
+            .derive_fix_plan();
+        let plan = d.fix_plan.expect("fix_plan should be derived for T032");
+        assert!(plan.edits[0].after.starts_with("prnt fmt"));
+        assert_eq!(plan.edits[0].before, &source[fmt_start..fmt_end]);
+    }
+
+    #[test]
+    fn derive_fix_plan_l002_hyphen() {
+        // ILO-L002: underscore ident → hyphenated
+        let source = "my_var=5;my_var";
+        let d = Diagnostic::error("unexpected token 'my_var'")
+            .with_code("ILO-L002")
+            .with_span(Span { start: 0, end: 6 }, "here")
+            .with_suggestion("underscores are not allowed in identifiers; use hyphens (e.g. `my-var`)")
+            .with_source(source.to_string())
+            .derive_fix_plan();
+        let plan = d.fix_plan.expect("fix_plan should be derived for L002");
+        assert_eq!(plan.edits[0].before, "my_var");
+        assert_eq!(plan.edits[0].after, "my-var");
+    }
+
+    #[test]
+    fn derive_fix_plan_absent_without_hint() {
+        // T004 with no hint → no fix_plan
+        let d = Diagnostic::error("undefined variable 'foo'")
+            .with_code("ILO-T004")
+            .with_span(Span { start: 0, end: 3 }, "")
+            .with_source("foo".to_string())
+            .derive_fix_plan();
+        assert!(d.fix_plan.is_none());
+    }
+
+    #[test]
+    fn derive_fix_plan_absent_without_source() {
+        // No source → no fix_plan even with hint
+        let d = Diagnostic::error("undefined variable 'xyzz'")
+            .with_code("ILO-T004")
+            .with_span(Span { start: 0, end: 4 }, "")
+            .with_suggestion("did you mean 'x'?")
+            .derive_fix_plan();
+        assert!(d.fix_plan.is_none());
+    }
+
+    #[test]
+    fn derive_fix_plan_json_shape() {
+        // Verify fix_plan appears in JSON output with correct keys
+        let source = "f x:n>n;xyzz";
+        let d = Diagnostic::error("undefined variable 'xyzz'")
+            .with_code("ILO-T004")
+            .with_span(Span { start: 8, end: 12 }, "")
+            .with_suggestion("did you mean 'x'?")
+            .with_source(source.to_string())
+            .derive_fix_plan();
+        let json_str = super::json::render(&d);
+        let v: serde_json::Value = serde_json::from_str(&json_str).unwrap();
+        let plan = &v["fix_plan"];
+        assert!(!plan.is_null());
+        let edits = plan["edits"].as_array().unwrap();
+        assert_eq!(edits.len(), 1);
+        assert_eq!(edits[0]["before"], "xyzz");
+        assert_eq!(edits[0]["after"], "x");
+        assert!(edits[0]["line_range"].is_array());
+    }
+
+    #[test]
+    fn fix_plan_with_path_in_json() {
+        let source = "f x:n>n;xyzz";
+        let d = Diagnostic::error("undefined variable 'xyzz'")
+            .with_code("ILO-T004")
+            .with_span(Span { start: 8, end: 12 }, "")
+            .with_suggestion("did you mean 'x'?")
+            .with_source(source.to_string())
+            .with_path("/tmp/test.ilo")
+            .derive_fix_plan();
+        let json_str = super::json::render(&d);
+        let v: serde_json::Value = serde_json::from_str(&json_str).unwrap();
+        assert_eq!(v["fix_plan"]["path"], "/tmp/test.ilo");
+    }
+
 }
