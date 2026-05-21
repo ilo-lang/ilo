@@ -3317,9 +3317,14 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         )));
     }
     if builtin == Some(Builtin::Slc) && args.len() == 3 {
-        // Both bounds accept negative integers Python-style:
-        // `slc xs -1 0` is empty, `slc xs 0 -1` drops the last element,
-        // `slc xs -2 (len xs)` returns the last two elements.
+        // Bounds accept negative integers Python-style, with one ergonomic
+        // exception on the end bound:
+        //   `slc xs -1 (len xs)` returns the last element
+        //   `slc xs -2 (len xs)` returns the last two elements
+        //   `slc xs -3 -1`       returns the penultimate window (Python-style)
+        //   `slc xs 0 -1`        returns the WHOLE list (-1 = "to end" sugar
+        //                        when start is non-negative; see
+        //                        `resolve_slc_end` in builtins.rs)
         let start_raw = match &args[1] {
             Value::Number(n) => {
                 if n.fract() != 0.0 {
@@ -3357,14 +3362,14 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         return match &args[0] {
             Value::List(items) => {
                 let len = items.len();
-                let end = crate::builtins::resolve_slice_bound(end_raw, len);
+                let end = crate::builtins::resolve_slc_end(start_raw, end_raw, len);
                 let start = crate::builtins::resolve_slice_bound(start_raw, len).min(end);
                 Ok(Value::List(Arc::new(items[start..end].to_vec())))
             }
             Value::Text(s) => {
                 let chars: Vec<char> = s.chars().collect();
                 let len = chars.len();
-                let end = crate::builtins::resolve_slice_bound(end_raw, len);
+                let end = crate::builtins::resolve_slc_end(start_raw, end_raw, len);
                 let start = crate::builtins::resolve_slice_bound(start_raw, len).min(end);
                 Ok(Value::Text(Arc::new(chars[start..end].iter().collect())))
             }

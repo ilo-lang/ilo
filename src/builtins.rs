@@ -949,6 +949,28 @@ pub(crate) fn resolve_slice_bound(raw: i64, len: usize) -> usize {
     adjusted.clamp(0, len_i) as usize
 }
 
+/// Resolve `slc`'s `end` bound with the `-1 = to end` sugar.
+///
+/// `slc` historically treated negative end indices as Python-style relative
+/// offsets, so `slc s 0 -1` dropped the last element. Agents trained on
+/// Python/JS keep reaching for `-1` to mean "to end of string/list" instead,
+/// so we add a narrow ergonomic exception: when `start_raw >= 0` and
+/// `end_raw == -1`, treat the end as `len`. All other shapes (negative
+/// start, or end < -1) keep the Python-style relative-offset behaviour via
+/// [`resolve_slice_bound`].
+///
+/// This is intentionally `-1` only, not "any negative end". Treating every
+/// negative end as "to end" would silently break the existing
+/// `slc xs -3 -1` / `slc "hello" -99 -1` shapes that already rely on the
+/// Python semantics.
+#[inline]
+pub(crate) fn resolve_slc_end(start_raw: i64, end_raw: i64, len: usize) -> usize {
+    if start_raw >= 0 && end_raw == -1 {
+        return len;
+    }
+    resolve_slice_bound(end_raw, len)
+}
+
 /// Resolve `take n xs` against `len`, returning the prefix length to retain.
 ///
 /// - `n >= 0`: take the first `min(n, len)` elements.

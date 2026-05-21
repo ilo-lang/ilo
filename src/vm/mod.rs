@@ -12418,7 +12418,10 @@ impl<'a> VM<'a> {
                 }
                 OP_SLC => {
                     // Two-instruction sequence: OP_SLC A=result B=list C=start; data word A=end_reg
-                    // Bounds accept negative integers Python-style (`-1` = last element).
+                    // Bounds accept negative integers Python-style (`-1` = last element),
+                    // with one ergonomic exception: when start is non-negative and end is
+                    // exactly `-1`, end is treated as `len` (to-end sugar). See
+                    // `crate::builtins::resolve_slc_end` for the full rule.
                     let a = ((inst >> 16) & 0xFF) as usize + base;
                     let b = ((inst >> 8) & 0xFF) as usize + base;
                     let c = (inst & 0xFF) as usize + base;
@@ -12448,7 +12451,7 @@ impl<'a> VM<'a> {
                         };
                         let chars: Vec<char> = s.chars().collect();
                         let len = chars.len();
-                        let end = crate::builtins::resolve_slice_bound(end_raw, len);
+                        let end = crate::builtins::resolve_slc_end(start_raw, end_raw, len);
                         let start = crate::builtins::resolve_slice_bound(start_raw, len).min(end);
                         let result: String = chars[start..end].iter().collect();
                         reg_set!(a, NanVal::heap_string(result));
@@ -12457,7 +12460,7 @@ impl<'a> VM<'a> {
                             h @ (HeapObj::List(_) | HeapObj::ListView { .. }) => {
                                 let items = slice_of(h);
                                 let len = items.len();
-                                let end = crate::builtins::resolve_slice_bound(end_raw, len);
+                                let end = crate::builtins::resolve_slc_end(start_raw, end_raw, len);
                                 let start =
                                     crate::builtins::resolve_slice_bound(start_raw, len).min(end);
                                 let mut sliced = Vec::with_capacity(end - start);
@@ -16528,7 +16531,9 @@ pub(crate) extern "C" fn jit_rsrt(a: u64, span_bits: u64) -> u64 {
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn jit_slc(a: u64, start: u64, end: u64, span_bits: u64) -> u64 {
     // Bounds accept negative integers Python-style; kept in lockstep with the
-    // tree-walker and OP_SLC by delegating to `resolve_slice_bound`.
+    // tree-walker and OP_SLC by delegating to `resolve_slice_bound`. End uses
+    // `resolve_slc_end` so the `-1 = to end` sugar fires for non-negative
+    // starts (e.g. `slc xs 0 -1` is the full list).
     let vb = NanVal(a);
     let vc = NanVal(start);
     let vd = NanVal(end);
@@ -16552,7 +16557,7 @@ pub(crate) extern "C" fn jit_slc(a: u64, start: u64, end: u64, span_bits: u64) -
         };
         let chars: Vec<char> = s.chars().collect();
         let len = chars.len();
-        let e = crate::builtins::resolve_slice_bound(e_raw, len);
+        let e = crate::builtins::resolve_slc_end(s_raw, e_raw, len);
         let s = crate::builtins::resolve_slice_bound(s_raw, len).min(e);
         return NanVal::heap_string(chars[s..e].iter().collect()).0;
     }
@@ -16560,7 +16565,7 @@ pub(crate) extern "C" fn jit_slc(a: u64, start: u64, end: u64, span_bits: u64) -
         && let HeapObj::List(items) = unsafe { vb.as_heap_ref() }
     {
         let len = items.len();
-        let e = crate::builtins::resolve_slice_bound(e_raw, len);
+        let e = crate::builtins::resolve_slc_end(s_raw, e_raw, len);
         let s = crate::builtins::resolve_slice_bound(s_raw, len).min(e);
         let mut sliced = Vec::with_capacity(e - s);
         for v in &items[s..e] {
