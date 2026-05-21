@@ -29,7 +29,11 @@ fn find_examples() -> Vec<PathBuf> {
         .unwrap_or_else(|e| panic!("cannot read examples/ at {}: {e}", dir.display()))
         .filter_map(|e| e.ok())
         .map(|e| e.path())
-        .filter(|p| p.extension().map(|e| e == "ilo").unwrap_or(false))
+        .filter(|p| {
+            p.extension()
+                .map(|e| e == "@" || e == "ilo")
+                .unwrap_or(false)
+        })
         .collect();
     paths.sort();
     paths
