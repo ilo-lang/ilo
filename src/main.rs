@@ -8,9 +8,9 @@ use ilo::caps::{Caps, Policy};
 use ilo::codegen;
 use ilo::diagnostic;
 use ilo::graph;
-use ilo::runtime;
 use ilo::lexer;
 use ilo::parser;
+use ilo::runtime;
 use ilo::tools;
 use ilo::verify;
 use ilo::vm;
@@ -5606,9 +5606,7 @@ fn coerce_cli_args(
         if i >= args.len() {
             break;
         }
-        if matches!(&param.ty, ast::Type::List(_))
-            && !matches!(&args[i], runtime::Value::List(_))
-        {
+        if matches!(&param.ty, ast::Type::List(_)) && !matches!(&args[i], runtime::Value::List(_)) {
             args[i] = runtime::Value::List(std::sync::Arc::new(vec![args[i].clone()]));
         }
     }
@@ -5783,10 +5781,7 @@ mod tests {
 
     #[test]
     fn cli_arg_empty_bracketed_list() {
-        assert_eq!(
-            parse_cli_arg("[]"),
-            runtime::Value::List(Arc::new(vec![]))
-        );
+        assert_eq!(parse_cli_arg("[]"), runtime::Value::List(Arc::new(vec![])));
     }
 
     #[test]
@@ -6712,17 +6707,13 @@ mod tests {
 
     #[test]
     fn print_value_err_as_json() {
-        let val = runtime::Value::Err(Box::new(runtime::Value::Text(Arc::new(
-            "oops".to_string(),
-        ))));
+        let val = runtime::Value::Err(Box::new(runtime::Value::Text(Arc::new("oops".to_string()))));
         print_value(&val, true, false);
     }
 
     #[test]
     fn print_value_err_no_json() {
-        let val = runtime::Value::Err(Box::new(runtime::Value::Text(Arc::new(
-            "fail".to_string(),
-        ))));
+        let val = runtime::Value::Err(Box::new(runtime::Value::Text(Arc::new("fail".to_string()))));
         print_value(&val, false, false);
     }
 
@@ -7048,10 +7039,7 @@ mod tests {
             })
             .collect();
         let (program, _) = crate::parser::parse(spans);
-        let args = vec![
-            runtime::Value::Number(5.0),
-            runtime::Value::Number(3.0),
-        ];
+        let args = vec![runtime::Value::Number(5.0), runtime::Value::Number(3.0)];
         let coerced = coerce_cli_args(&program, Some("f"), args);
         // xs should be wrapped, v should stay
         assert_eq!(

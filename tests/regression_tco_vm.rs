@@ -18,9 +18,9 @@
 //! mask a regression that re-routes through a different backend.
 
 use ilo::ast;
-use ilo::runtime::Value;
 use ilo::lexer;
 use ilo::parser;
+use ilo::runtime::Value;
 use ilo::vm;
 
 fn run_vm(src: &str, func: &str, args: Vec<Value>) -> Value {

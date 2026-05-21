@@ -16916,11 +16916,7 @@ pub(crate) extern "C" fn jit_call_builtin_tree(
         // SAFETY: published by `with_active_registry`, cleared by its drop
         // guard. Lives for the duration of the Cranelift entry call.
         let program: &Program = unsafe { &*ast_ptr };
-        crate::runtime::call_builtin_for_bridge_with_program(
-            builtin.name(),
-            value_args,
-            program,
-        )
+        crate::runtime::call_builtin_for_bridge_with_program(builtin.name(), value_args, program)
     };
     match res {
         Ok(v) => NanVal::from_value(&v).0,

@@ -36,8 +36,7 @@ fn make_program(src: &str) -> ilo::ast::Program {
 fn run_both(src: &str, caps: Caps) -> (Value, Value) {
     let caps = Arc::new(caps);
     let program = make_program(src);
-    let tree_result =
-        runtime::run_with_caps(&program, None, vec![], Arc::clone(&caps)).unwrap();
+    let tree_result = runtime::run_with_caps(&program, None, vec![], Arc::clone(&caps)).unwrap();
     let compiled = vm::compile(&program).unwrap();
     let vm_result = vm::run_with_caps(&compiled, None, vec![], caps).unwrap();
     (tree_result, vm_result)

@@ -27,9 +27,9 @@
 //! to hold on the default stack size that real programs run under.
 
 use ilo::ast;
-use ilo::runtime::{self, Value};
 use ilo::lexer;
 use ilo::parser;
+use ilo::runtime::{self, Value};
 
 fn run_tree(src: &str, func: &str, args: Vec<Value>) -> Value {
     let tokens = lexer::lex(src).expect("lex");
