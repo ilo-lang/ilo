@@ -860,6 +860,7 @@ pub(crate) fn tree_bridge_returns_result(b: crate::builtins::Builtin) -> bool {
             | Builtin::Opt
             | Builtin::Urldec
             | Builtin::B64uDec
+            | Builtin::B64Dec
             | Builtin::TzOffset
     )
 }
