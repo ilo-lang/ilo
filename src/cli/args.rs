@@ -293,6 +293,38 @@ pub struct CompileArgs {
     /// Benchmark binary mode.
     #[arg(long)]
     pub bench: bool,
+
+    /// Transpile to Python source (`.py`) via the Python backend.
+    ///
+    /// Manifesto-strict: this is the canonical replacement for the removed
+    /// `--emit python` flag. Use `ilo build file.ilo --py [-o out.py]`.
+    #[arg(long)]
+    pub py: bool,
+
+    /// Compile to WebAssembly via the WASM backend (Phase 5 Stage 5d).
+    ///
+    /// Default target is `wasm32-component`. Pick a different target with
+    /// `--target` (e.g. `--target wasm32-wasip1` for plain WASI preview1).
+    #[arg(long)]
+    pub wasm: bool,
+
+    /// WASM target triple (only meaningful with `--wasm`). Accepts
+    /// `wasm32-wasip1`, `wasm32-wasip2`, `wasm32-component`,
+    /// `wasm32-unknown-unknown`, plus the aliases `wasm32-wasi` and
+    /// `wasm32-web`.
+    #[arg(long)]
+    pub target: Option<String>,
+
+    /// Transpile to Zero source (`.0`) via the Zero backend
+    /// (Phase 5 Stage 5e). Pinned to `zero 0.1.2`.
+    #[arg(long = "0")]
+    pub zero: bool,
+
+    /// Transpile to Zero source then chain through the pinned `zero`
+    /// compiler to produce a native binary. Requires `zero` on PATH or
+    /// at `~/.zero/bin/zero`.
+    #[arg(long = "0bin")]
+    pub zero_bin: bool,
 }
 
 // ── Check ──────────────────────────────────────────────────────────────────────

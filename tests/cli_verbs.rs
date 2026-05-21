@@ -333,14 +333,17 @@ fn build_verb_produces_binary() {
     assert!(out_path.exists(), "binary should exist at {out_path:?}");
 }
 
-/// `ilo build` with no source arg prints friendly usage.
+/// `ilo build` with no source arg prints the manifesto-strict five-form help
+/// and exits non-zero (since the user asked for `build` without a target).
+/// Stage 5f: the help text lives on stdout; we accept it on either stream.
 #[test]
 fn build_verb_no_args_prints_usage() {
-    let (ok, _stdout, stderr) = run_args(&["build"]);
+    let (ok, stdout, stderr) = run_args(&["build"]);
     assert!(!ok);
+    let combined = format!("{stdout}{stderr}");
     assert!(
-        stderr.contains("Usage: ilo build"),
-        "stderr should contain usage line; got: {stderr}"
+        combined.contains("ilo build") && combined.contains("--wasm"),
+        "build help should mention `ilo build` and the five forms; got stdout={stdout:?} stderr={stderr:?}"
     );
 }
 

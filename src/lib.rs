@@ -2,11 +2,13 @@
 #![deny(rust_2018_idioms)]
 
 pub mod ast;
+pub mod backend;
 pub mod builtins;
 pub mod cli_parse;
 pub mod codegen;
 pub mod diagnostic;
 pub mod graph;
+pub mod hir;
 // `interpreter` is soft-deprecated as a user-selectable engine but stays as
 // the internal runtime for HOF callbacks that VM/Cranelift bail to, plus
 // shared runtime primitives (Value, MapKey, RuntimeError, math helpers).

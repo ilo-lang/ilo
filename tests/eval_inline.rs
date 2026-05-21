@@ -138,17 +138,18 @@ fn inline_multi_func_first_by_default() {
 // --- Inline code: emit ---
 
 #[test]
-fn inline_emit_python() {
+fn inline_emit_python_migration_hint() {
+    // Stage 5c: `--emit python` is removed. The legacy form now exits 2 with
+    // a migration hint pointing at `ilo build <file> --py`.
     let out = ilo()
         .args(["tot p:n q:n r:n>n;s=*p q;t=*s r;+s t", "--emit", "python"])
         .output()
         .expect("failed to run ilo");
-    assert!(out.status.success());
-    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(out.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
-        stdout.contains("def tot"),
-        "expected 'def tot', got: {}",
-        stdout
+        stderr.contains("ilo build") && stderr.contains("--py"),
+        "expected migration hint pointing at `ilo build --py`, got: {stderr}"
     );
 }
 
@@ -290,17 +291,17 @@ fn inline_run_with_func_name() {
 }
 
 #[test]
-fn inline_emit_unknown_target() {
+fn inline_emit_unknown_target_migration_hint() {
+    // Stage 5c: any `--emit <target>` form exits 2 with a migration hint.
     let out = ilo()
         .args(["f x:n>n;*x 2", "--emit", "javascript"])
         .output()
         .expect("failed to run ilo");
-    assert!(!out.status.success());
+    assert_eq!(out.status.code(), Some(2));
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
-        stderr.contains("Unknown emit target"),
-        "expected emit error, got: {}",
-        stderr
+        stderr.contains("ilo build") && stderr.contains("--py"),
+        "expected migration hint, got: {stderr}"
     );
 }
 
@@ -390,9 +391,11 @@ fn help_flag_shows_usage() {
     let out = ilo().args(["--help"]).output().expect("failed to run ilo");
     assert!(out.status.success());
     let stdout = String::from_utf8_lossy(&out.stdout);
+    // Stage 5f renamed "Backends:" to the manifesto-strict
+    // "Compilation (`ilo build`):" section.
     assert!(
-        stdout.contains("Backends:"),
-        "expected backends section, got: {}",
+        stdout.contains("Compilation (`ilo build`):"),
+        "expected compilation section, got: {}",
         stdout
     );
 }
@@ -403,8 +406,8 @@ fn help_short_flag_shows_usage() {
     assert!(out.status.success());
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(
-        stdout.contains("Backends:"),
-        "expected backends section, got: {}",
+        stdout.contains("Compilation (`ilo build`):"),
+        "expected compilation section, got: {}",
         stdout
     );
 }
@@ -472,12 +475,19 @@ fn help_shows_usage() {
     let out = ilo().args(["help"]).output().expect("failed to run ilo");
     assert!(out.status.success());
     let stdout = String::from_utf8_lossy(&out.stdout);
+    // Stage 5f: manifesto-strict help drops the engine-selector listings
+    // from the top-level surface. Engine selectors still work on `ilo run`
+    // but aren't user-facing in `ilo --help`.
     assert!(
-        stdout.contains("Backends:"),
-        "expected backends section, got: {}",
+        stdout.contains("Compilation (`ilo build`):"),
+        "expected compilation section, got: {}",
         stdout
     );
-    assert!(stdout.contains("--vm"), "expected --vm, got: {}", stdout);
+    assert!(
+        stdout.contains("ilo build <file.ilo> --wasm"),
+        "expected --wasm form in build help, got: {}",
+        stdout
+    );
 }
 
 #[test]

@@ -1,0 +1,14 @@
+# Cloudflare Workers config for the Stage 5d hello-world component.
+#
+# After `ilo build hello.ilo --wasm` (default target = wasm32-component)
+# produces hello.wasm + hello.wit, run:
+#
+#   wrangler deploy --compatibility-flags=experimental_wasm_components
+#
+# Cloudflare's component support is gated behind a compatibility flag at
+# time of writing (May 2026); check the current docs for the canonical
+# flag name.
+
+name = "ilo-hello-edge"
+main = "hello.wasm"
+compatibility_date = "2026-05-01"
