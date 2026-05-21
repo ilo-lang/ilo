@@ -28,6 +28,8 @@ See `examples/default-on-err.ilo` for the full pattern set.
 
 `len hd tl at lst take drop slc`; `rev srt rsrt unq uniqby flat grp zip enumerate range`; `chunks window flatmap partition`; `setunion setinter setdiff`. `at xs i` floors floats; negative indexes from end (same for `slc take drop`). Bounds clamp. **`lst xs i v` IS the list-set / `lset` / `setat` builtin** — returns a new list with index `i` replaced by `v` (alias `lset`; reach for `lst` whenever you'd write `xs[i] = v` in Python). Last element = `at xs -1`. **`slc xs s -1` with `s>=0` means "to end of list/text"** (Python/JS sugar): `slc xs 2 -1` is everything from index 2 onward; `slc "hello" 0 -1` is `"hello"`. Other negative ends keep relative-offset semantics (`slc xs 0 -2` drops the last two). To "drop the last element" use `take -1 xs`, not `slc xs 0 -1`. `srt` and `srt fn xs` are stable: equal elements (or equal keys) keep their input order, so merging parallel records sorted by a shared timestamp keeps the per-source ordering inside each tie group.
 
+`where cond xs ys > L a` = NumPy `np.where`: element-wise conditional select across three parallel lists. `output[i] = xs[i] if cond[i] else ys[i]`. All three lists must be the same length (mismatch raises `ILO-R009`). Element type of `xs`/`ys` is preserved. Replaces the `map (i:n>_;?h (at cond i) (at xs i) (at ys i)) (range 0 (len xs))` recipe in one call.
+
 ## HOFs
 
 `map f xs`, `flt f xs`, `ct f xs`, `fld f xs init`. Inline lambdas: `map (x:n>n;+x 1) xs`.
