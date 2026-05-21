@@ -1,0 +1,36 @@
+-- Postfix `.N` / `.field` access correctly reattaches to the call
+-- result even when the last argument is a bare variable reference.
+--
+-- Before ILO-52 was fixed, `spl s d .1` parsed as
+-- `Call(spl, [Ref(s), Index(Ref(d), 1)])` — the `.1` was stolen by
+-- the bare-ident arm of `parse_atom` before the outer call could
+-- claim it.  The fix adds an `in_call_args` context flag that
+-- suppresses field-chain consumption on bare Refs while the greedy
+-- arg loops are running, leaving `.N` for the outer
+-- `parse_field_chain` call that wraps the assembled call result.
+--
+-- `spl s d .1`    → Index(Call(spl, [s, d]), 1)       ✓
+-- `at xs i .1`    → Index(Call(at,  [xs, i]), 1)      ✓
+-- `num spl s d .1`→ Call(num, [Index(Call(spl,[s,d]),1)]) ✓
+
+-- Split on delimiter and return the second piece.
+-- `spl s d .1` — both args are bare idents; `.1` attaches to the
+-- call result, not to `d`.
+second-part s:t d:t>t
+  spl s d .1
+
+-- Pick a single element out of a nested list.
+-- `at xs i .1` — same pattern with `at`.
+pick-col xs:L L i:n>n
+  at xs i .1
+
+-- `num (spl s d .1)` — nested: spl result indexed, then converted.
+second-as-num s:t d:t>n
+  num spl s d .1
+
+-- run: second-part "hello/world" "/"
+-- out: world
+-- run: pick-col [[1,2,3],[4,5,6]] 0
+-- out: 2
+-- run: second-as-num "price=42" "="
+-- out: 42

@@ -30,13 +30,8 @@ second-segment s:t>t
 -- `(at rows 0).1` and reads naturally left-to-right. The trailing
 -- `.N` reattaches to the `at` call result rather than dangling.
 --
--- Heads-up: the `.N` only reattaches when it follows a literal arg
--- (number / string / list literal) at the call's last slot. If the
--- last arg is a bare ident like `i`, the lexer-parser glues `.N` to
--- the ident as field access on the variable, not on the call result.
--- Bind the call result or wrap in parens in that case:
---   r=at rows i;r.1     -- bind first
---   (at rows i).1        -- parens force the grouping
+-- This works regardless of whether the last argument is a literal or
+-- a bare ident. `at rows i .1` is equivalent to `(at rows i).1`.
 col-from-row rows:L L n>n
   at rows 0 .1
 

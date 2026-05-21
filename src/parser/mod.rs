@@ -69,6 +69,14 @@ pub struct Parser {
     /// parsed as a bare Ref (list element) rather than a function call.
     /// Set only inside list-literal element parsing.
     no_whitespace_call: bool,
+    /// When true, `parse_atom_body` suppresses the automatic `.field`/`.N`
+    /// chain on a bare Ref ident. Set while collecting call arguments inside
+    /// the greedy arg loops of `parse_call_or_atom` and `parse_call_arg` so
+    /// that `spl s d .1` parses as `Index(Call(spl,[s,d]),1)` rather than
+    /// `Call(spl,[s,Index(d,1)])`.  The outer `parse_field_chain` call that
+    /// follows every greedy-call loop is responsible for consuming the chain
+    /// once the full call is assembled.
+    in_call_args: bool,
     /// Synthetic top-level decls emitted by inline-lambda lifting. Appended to
     /// `Program.declarations` after the main parse. Each inline lambda
     /// `(p:t>r;body)` becomes a `Decl::Function { name: "__lit_N", ... }` here
@@ -143,6 +151,7 @@ impl Parser {
             fn_arity,
             fn_param_is_fn,
             no_whitespace_call: false,
+            in_call_args: false,
             lifted_decls: Vec::new(),
             lambda_counter: 0,
             parse_failed_fns: HashMap::new(),
@@ -3109,6 +3118,8 @@ or write `({fmt_name} \"...\" ...)` so its args are grouped."
                 // fmt requires a template (its declared arity 1); if no
                 // operand follows, leave the underfilled call for the
                 // verifier to flag with its usual ILO-T013 error.
+                let prev_in_call_args = self.in_call_args;
+                self.in_call_args = true;
                 while self.can_start_operand() {
                     // fmt's own slots are all value positions (no fn-refs),
                     // and nested fmt-in-fmt is the same trailing slot of its
@@ -3125,6 +3136,7 @@ or write `({fmt_name} \"...\" ...)` so its args are grouped."
                         break;
                     }
                 }
+                self.in_call_args = prev_in_call_args;
                 let call = Expr::Call {
                     function: fmt_name,
                     args: fmt_args,
@@ -3166,6 +3178,8 @@ or write `({fmt_name} \"...\" ...)` so its args are grouped."
                 let inner_name = name.clone();
                 self.advance(); // consume the inner function ident
                 let mut inner_args = Vec::with_capacity(arity);
+                let prev_in_call_args = self.in_call_args;
+                self.in_call_args = true;
                 for i in 0..arity {
                     if !self.can_start_operand() {
                         // Underfilled — let the verifier report arity mismatch.
@@ -3175,6 +3189,7 @@ or write `({fmt_name} \"...\" ...)` so its args are grouped."
                     inner_args
                         .push(self.parse_call_arg(inner_fn_pos, Some((&inner_name, arity, i)))?);
                 }
+                self.in_call_args = prev_in_call_args;
                 let call = Expr::Call {
                     function: inner_name,
                     args: inner_args,
@@ -3240,6 +3255,8 @@ or write `({fmt_name} \"...\" ...)` so its args are grouped."
                 }
                 let mut args = Vec::new();
                 let outer_arity_known = self.fn_arity.get(&name).copied();
+                let prev_in_call_args = self.in_call_args;
+                self.in_call_args = true;
                 while self.can_start_operand() {
                     let arg_idx = args.len();
                     let in_fn_pos = self.is_fn_ref_position(&name, arg_idx);
@@ -3248,6 +3265,7 @@ or write `({fmt_name} \"...\" ...)` so its args are grouped."
                         .map(|k| (name.as_str(), k, arg_idx));
                     args.push(self.parse_call_arg(in_fn_pos, outer_ctx)?);
                 }
+                self.in_call_args = prev_in_call_args;
                 let call = Expr::Call {
                     function: name,
                     args,
@@ -3341,6 +3359,8 @@ or write `({fmt_name} \"...\" ...)` so its args are grouped."
                     return Ok(atom);
                 }
                 let mut args = Vec::with_capacity(arity);
+                let prev_in_call_args = self.in_call_args;
+                self.in_call_args = true;
                 for i in 0..arity {
                     if !self.can_start_operand() {
                         // Underfilled - let the verifier report arity
@@ -3350,6 +3370,7 @@ or write `({fmt_name} \"...\" ...)` so its args are grouped."
                     let inner_fn_pos = self.is_fn_ref_position(&name, i);
                     args.push(self.parse_call_arg(inner_fn_pos, Some((&name, arity, i)))?);
                 }
+                self.in_call_args = prev_in_call_args;
                 let call = Expr::Call {
                     function: name,
                     args,
@@ -3378,6 +3399,12 @@ or write `({fmt_name} \"...\" ...)` so its args are grouped."
                 }
                 let mut args = Vec::new();
                 let outer_arity_known = self.fn_arity.get(&name).copied();
+                // Suppress bare-ident field-chain consumption inside the arg
+                // loop so that the trailing `.N` in `spl s d .1` is left for
+                // the outer `parse_field_chain` call below to attach to the
+                // assembled call result.  Save/restore around the loop.
+                let prev_in_call_args = self.in_call_args;
+                self.in_call_args = true;
                 while self.can_start_operand() {
                     let arg_idx = args.len();
                     let in_fn_pos = self.is_fn_ref_position(&name, arg_idx);
@@ -3399,6 +3426,7 @@ or write `({fmt_name} \"...\" ...)` so its args are grouped."
                         break;
                     }
                 }
+                self.in_call_args = prev_in_call_args;
                 let call = Expr::Call {
                     function: name,
                     args,
@@ -4050,7 +4078,21 @@ results first: `r={first_op}a b;…r` keeps each step explicit."
                     });
                 }
                 // Check for field access chain: ident.field.field...
+                // When inside a call-argument context (`in_call_args`), suppress
+                // the greedy `.N`/`.field` consumption here.  The outer
+                // `parse_field_chain` call that follows every greedy-call loop in
+                // `parse_call_or_atom` will pick up the chain on the assembled
+                // call result instead.  Without this suppression `spl s d .1`
+                // parses as `Call(spl,[s,Index(d,1)])` because the bare-ident arm
+                // for `d` greedily steals `.1` before the outer loop can see it.
+                //
+                // Standalone `x.1` (not inside call args) and chained
+                // `x.field.1` are unaffected because `in_call_args` is false
+                // outside call-arg contexts.
                 let expr = Expr::Ref(name.clone());
+                if self.in_call_args {
+                    return Ok(expr);
+                }
                 let expr = self.parse_field_chain(expr, Some(&name))?;
                 Ok(expr)
             }
