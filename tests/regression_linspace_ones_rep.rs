@@ -131,6 +131,34 @@ fn linspace_rejects_negative_n() {
     }
 }
 
+#[test]
+fn linspace_rejects_fractional_n() {
+    // n must be an integer: fract != 0 hits the same ILO-R009 path as negative-n.
+    let src = "f>L n;linspace 0 10 2.5";
+    for e in engines() {
+        let err = run_err(e, src, "f");
+        assert!(
+            err.contains("non-negative integer"),
+            "engine={e} err missing 'non-negative integer': {err}"
+        );
+    }
+}
+
+#[test]
+fn linspace_rejects_over_cap() {
+    // Cap is 1_000_000 elements. 1_000_001 must reject; we exercise this
+    // instead of the boundary itself because cargo test on linspace 0 1 1000000
+    // would allocate a 1M-element list per engine just to throw it away.
+    let src = "f>L n;linspace 0 1 1000001";
+    for e in engines() {
+        let err = run_err(e, src, "f");
+        assert!(
+            err.contains("too large"),
+            "engine={e} err missing 'too large': {err}"
+        );
+    }
+}
+
 // ---------- ones ----------
 
 #[test]
@@ -172,6 +200,30 @@ fn ones_rejects_negative() {
     for e in engines() {
         let err = run_err(e, src, "f");
         assert!(err.contains("ones"), "engine={e} err missing 'ones': {err}");
+    }
+}
+
+#[test]
+fn ones_rejects_fractional() {
+    let src = "f>L n;ones 2.5";
+    for e in engines() {
+        let err = run_err(e, src, "f");
+        assert!(
+            err.contains("non-negative integer"),
+            "engine={e} err missing 'non-negative integer': {err}"
+        );
+    }
+}
+
+#[test]
+fn ones_rejects_over_cap() {
+    let src = "f>L n;ones 1000001";
+    for e in engines() {
+        let err = run_err(e, src, "f");
+        assert!(
+            err.contains("too large"),
+            "engine={e} err missing 'too large': {err}"
+        );
     }
 }
 
@@ -235,5 +287,44 @@ fn rep_length_matches_count() {
     let src = "f>n;len (rep 12 0)";
     for e in engines() {
         assert_eq!(run_ok(e, src, "f"), "12", "engine={e}");
+    }
+}
+
+#[test]
+fn rep_rejects_fractional() {
+    let src = "f>L n;rep 2.5 1";
+    for e in engines() {
+        let err = run_err(e, src, "f");
+        assert!(
+            err.contains("non-negative integer"),
+            "engine={e} err missing 'non-negative integer': {err}"
+        );
+    }
+}
+
+#[test]
+fn rep_rejects_over_cap() {
+    let src = "f>L n;rep 1000001 0";
+    for e in engines() {
+        let err = run_err(e, src, "f");
+        assert!(
+            err.contains("too large"),
+            "engine={e} err missing 'too large': {err}"
+        );
+    }
+}
+
+#[test]
+fn rep_value_semantics_with_list_element() {
+    // Manifesto promise: lists are value-typed. `rep` with a list element must
+    // give n logically-independent copies — reading one back must return the
+    // original value, not anything stamped by reading or destructuring siblings.
+    // (ilo lists are persistent / Arc-shared internally, but never observable
+    // as aliasing from the user's perspective.) This is the smoke test that
+    // would scream if rep ever switched to a shallow Vec::clone of a Vec<Arc>
+    // and lost the value-equal-but-independent guarantee.
+    let src = "f>L n;xs=rep 3 [1,2,3];at xs 1";
+    for e in engines() {
+        assert_eq!(run_ok(e, src, "f"), "[1, 2, 3]", "engine={e}");
     }
 }
