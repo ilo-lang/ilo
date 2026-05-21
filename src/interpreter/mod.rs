@@ -5604,7 +5604,11 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             .into_iter()
             .next()
             .expect("prnt: arity=1 guaranteed by caller");
-        println!("{v}");
+        let s = format!("{v}");
+        // +1 for the trailing newline `println!` adds. Charging it keeps the
+        // byte budget honest against a `wh true{prnt 0}` runaway.
+        crate::runtime_guard::record_output(s.len() + 1);
+        println!("{s}");
         return Ok(v);
     }
     if builtin == Some(Builtin::Jdmp) && args.len() == 1 {

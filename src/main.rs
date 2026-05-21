@@ -2431,6 +2431,32 @@ fn load_dotenv() {
     load_env_file(".env");
 }
 
+/// Install the production-safety guards for an `ilo run`. Reads
+/// `--max-runtime` / `--max-output-bytes` off the global flags (with the
+/// defaults from `runtime_guard`) and arms the watchdog plus the output
+/// counter. Called from both the explicit `Cmd::Run` arm and the bare
+/// positional dispatch — both ultimately execute user code.
+///
+/// A mandelbrot persona run (2026-05-20) missed a `col=col+1` loop
+/// increment, produced 165 MB of stdout in an infinite loop before the
+/// harness killed it, and the agent had no useful signal to learn from.
+/// This installs the cap so the next runaway aborts with `ILO-R016` /
+/// `ILO-R017` and a hint pointing at the cause.
+fn install_runtime_guard(global: &cli::Global, mode: OutputMode) {
+    let secs = global
+        .max_runtime
+        .unwrap_or(ilo::runtime_guard::DEFAULT_MAX_RUNTIME_SECS);
+    let bytes = global
+        .max_output_bytes
+        .unwrap_or(ilo::runtime_guard::DEFAULT_MAX_OUTPUT_BYTES);
+    let abort_mode = if matches!(mode, OutputMode::Json) {
+        ilo::runtime_guard::AbortMode::Json
+    } else {
+        ilo::runtime_guard::AbortMode::Text
+    };
+    ilo::runtime_guard::install(std::time::Duration::from_secs(secs), bytes, abort_mode);
+}
+
 fn main() {
     load_dotenv();
 
@@ -2556,6 +2582,8 @@ fn main() {
                         no_hints: false,
                         silent: false,
                         max_ast_depth: None,
+                        max_runtime: None,
+                        max_output_bytes: None,
                     },
                     args: raw_args,
                 },
@@ -2715,6 +2743,7 @@ fn dispatch_cli(cli: cli::Cli, bare_has_bin: bool) -> i32 {
             let explicit_json = cli.global.explicit_json();
             let no_hints = cli.global.no_hints;
             let silent = cli.global.silent;
+            install_runtime_guard(&cli.global, mode);
             dispatch_run(r, mode, explicit_json, no_hints, silent)
         }
         None => {
@@ -2727,6 +2756,10 @@ fn dispatch_cli(cli: cli::Cli, bare_has_bin: bool) -> i32 {
                 full.extend(cli.args);
                 full
             };
+            // Bare-positional dispatch also executes programs (the legacy
+            // `ilo '<code>'` and `ilo file.ilo` shapes), so install the guard
+            // here too.
+            install_runtime_guard(&cli.global, cli.global.output_mode());
             dispatch_bare_args(args, &cli.global)
         }
     }
@@ -8246,6 +8279,8 @@ mod tests {
                 no_hints: false,
                 silent: false,
                 max_ast_depth: None,
+                max_runtime: None,
+                max_output_bytes: None,
             },
             args: vec!["f>n;1".to_string()],
         };
@@ -8265,6 +8300,8 @@ mod tests {
             no_hints: false,
             silent: false,
             max_ast_depth: None,
+            max_runtime: None,
+            max_output_bytes: None,
         };
         let code = dispatch_bare_args(vec!["ilo".to_string(), "-ai".to_string()], &global);
         assert_eq!(code, 0);
@@ -8281,6 +8318,8 @@ mod tests {
             no_hints: false,
             silent: false,
             max_ast_depth: None,
+            max_runtime: None,
+            max_output_bytes: None,
         };
         let code = dispatch_bare_args(
             vec!["ilo".to_string(), "help".to_string(), "lang".to_string()],
@@ -8298,6 +8337,8 @@ mod tests {
             no_hints: false,
             silent: false,
             max_ast_depth: None,
+            max_runtime: None,
+            max_output_bytes: None,
         };
         let code = dispatch_bare_args(
             vec!["ilo".to_string(), "help".to_string(), "ai".to_string()],
@@ -8315,6 +8356,8 @@ mod tests {
             no_hints: false,
             silent: false,
             max_ast_depth: None,
+            max_runtime: None,
+            max_output_bytes: None,
         };
         let code = dispatch_bare_args(vec!["ilo".to_string(), "-h".to_string()], &global);
         assert_eq!(code, 0);
@@ -8331,6 +8374,8 @@ mod tests {
             no_hints: false,
             silent: false,
             max_ast_depth: None,
+            max_runtime: None,
+            max_output_bytes: None,
         };
         // ILO-T001 is a known error code
         let code = dispatch_bare_args(
@@ -8353,6 +8398,8 @@ mod tests {
             no_hints: false,
             silent: false,
             max_ast_depth: None,
+            max_runtime: None,
+            max_output_bytes: None,
         };
         let code = dispatch_bare_args(
             vec![
@@ -8374,6 +8421,8 @@ mod tests {
             no_hints: false,
             silent: false,
             max_ast_depth: None,
+            max_runtime: None,
+            max_output_bytes: None,
         };
         // --explain without a code argument → error exit
         let code = dispatch_bare_args(vec!["ilo".to_string(), "--explain".to_string()], &global);
@@ -8391,6 +8440,8 @@ mod tests {
             no_hints: false,
             silent: false,
             max_ast_depth: None,
+            max_runtime: None,
+            max_output_bytes: None,
         };
         let code = dispatch_bare_args(vec!["ilo".to_string(), "--version".to_string()], &global);
         assert_eq!(code, 0);
@@ -8405,6 +8456,8 @@ mod tests {
             no_hints: false,
             silent: false,
             max_ast_depth: None,
+            max_runtime: None,
+            max_output_bytes: None,
         };
         let code = dispatch_bare_args(vec!["ilo".to_string(), "-V".to_string()], &global);
         assert_eq!(code, 0);
@@ -8419,6 +8472,8 @@ mod tests {
             no_hints: false,
             silent: false,
             max_ast_depth: None,
+            max_runtime: None,
+            max_output_bytes: None,
         };
         let code = dispatch_bare_args(vec!["ilo".to_string(), "-v".to_string()], &global);
         assert_eq!(code, 0);
@@ -8435,6 +8490,8 @@ mod tests {
             no_hints: false,
             silent: false,
             max_ast_depth: None,
+            max_runtime: None,
+            max_output_bytes: None,
         };
         let code = dispatch_bare_args(
             vec![
@@ -8456,6 +8513,8 @@ mod tests {
             no_hints: false,
             silent: false,
             max_ast_depth: None,
+            max_runtime: None,
+            max_output_bytes: None,
         };
         let code = dispatch_bare_args(
             vec![
@@ -8486,6 +8545,8 @@ mod tests {
             no_hints: false,
             silent: false,
             max_ast_depth: None,
+            max_runtime: None,
+            max_output_bytes: None,
         };
         let code = dispatch_bare_args(
             vec!["ilo".to_string(), "-e".to_string(), "f>n;42".to_string()],
@@ -8503,6 +8564,8 @@ mod tests {
             no_hints: false,
             silent: false,
             max_ast_depth: None,
+            max_runtime: None,
+            max_output_bytes: None,
         };
         // -e with empty code string should fail
         let code = dispatch_bare_args(
@@ -8523,6 +8586,8 @@ mod tests {
             no_hints: false,
             silent: false,
             max_ast_depth: None,
+            max_runtime: None,
+            max_output_bytes: None,
         };
         // bench mode: requires a func name in rest
         let code = dispatch_bare_args(
@@ -8549,6 +8614,8 @@ mod tests {
             no_hints: false,
             silent: false,
             max_ast_depth: None,
+            max_runtime: None,
+            max_output_bytes: None,
         };
         let code = dispatch_bare_args(
             vec![
@@ -8571,6 +8638,8 @@ mod tests {
             no_hints: false,
             silent: false,
             max_ast_depth: None,
+            max_runtime: None,
+            max_output_bytes: None,
         };
         let code = dispatch_bare_args(
             vec![
@@ -8597,6 +8666,8 @@ mod tests {
             no_hints: false,
             silent: false,
             max_ast_depth: None,
+            max_runtime: None,
+            max_output_bytes: None,
         };
         let code = dispatch_bare_args(
             vec![
@@ -8620,6 +8691,8 @@ mod tests {
             no_hints: false,
             silent: false,
             max_ast_depth: None,
+            max_runtime: None,
+            max_output_bytes: None,
         };
         let code = dispatch_bare_args(
             vec![
@@ -8641,6 +8714,8 @@ mod tests {
             no_hints: false,
             silent: false,
             max_ast_depth: None,
+            max_runtime: None,
+            max_output_bytes: None,
         };
         let code = dispatch_bare_args(
             vec![
@@ -8664,6 +8739,8 @@ mod tests {
             no_hints: false,
             silent: false,
             max_ast_depth: None,
+            max_runtime: None,
+            max_output_bytes: None,
         };
         let code = dispatch_bare_args(
             vec![
@@ -8685,6 +8762,8 @@ mod tests {
             no_hints: false,
             silent: false,
             max_ast_depth: None,
+            max_runtime: None,
+            max_output_bytes: None,
         };
         let code = dispatch_bare_args(
             vec![
@@ -8708,6 +8787,8 @@ mod tests {
             no_hints: false,
             silent: false,
             max_ast_depth: None,
+            max_runtime: None,
+            max_output_bytes: None,
         };
         let code = dispatch_bare_args(
             vec![
@@ -8733,6 +8814,8 @@ mod tests {
             no_hints: false,
             silent: false,
             max_ast_depth: None,
+            max_runtime: None,
+            max_output_bytes: None,
         };
         let code = dispatch_bare_args(
             vec![
@@ -8756,6 +8839,8 @@ mod tests {
             no_hints: false,
             silent: false,
             max_ast_depth: None,
+            max_runtime: None,
+            max_output_bytes: None,
         };
         let code = dispatch_bare_args(
             vec![
@@ -8781,6 +8866,8 @@ mod tests {
             no_hints: false,
             silent: false,
             max_ast_depth: None,
+            max_runtime: None,
+            max_output_bytes: None,
         };
         // Just runs a simple program; tests that global.ansi overrides detected mode
         let code = dispatch_bare_args(vec!["ilo".to_string(), "f>n;42".to_string()], &global);
@@ -8796,6 +8883,8 @@ mod tests {
             no_hints: false,
             silent: false,
             max_ast_depth: None,
+            max_runtime: None,
+            max_output_bytes: None,
         };
         let code = dispatch_bare_args(vec!["ilo".to_string(), "f>n;42".to_string()], &global);
         assert_eq!(code, 0);
@@ -8810,6 +8899,8 @@ mod tests {
             no_hints: false,
             silent: false,
             max_ast_depth: None,
+            max_runtime: None,
+            max_output_bytes: None,
         };
         let code = dispatch_bare_args(vec!["ilo".to_string(), "f>n;42".to_string()], &global);
         assert_eq!(code, 0);
@@ -9619,6 +9710,8 @@ mod tests {
                 no_hints: false,
                 silent: false,
                 max_ast_depth: None,
+                max_runtime: None,
+                max_output_bytes: None,
             },
             args: vec![],
         };
@@ -9637,6 +9730,8 @@ mod tests {
                 no_hints: false,
                 silent: false,
                 max_ast_depth: None,
+                max_runtime: None,
+                max_output_bytes: None,
             },
             args: vec![],
         };
@@ -9658,6 +9753,8 @@ mod tests {
                 no_hints: false,
                 silent: false,
                 max_ast_depth: None,
+                max_runtime: None,
+                max_output_bytes: None,
             },
             args: vec![],
         };
@@ -9678,6 +9775,8 @@ mod tests {
                 no_hints: false,
                 silent: false,
                 max_ast_depth: None,
+                max_runtime: None,
+                max_output_bytes: None,
             },
             args: vec![],
         };
@@ -9706,6 +9805,8 @@ mod tests {
                 no_hints: false,
                 silent: false,
                 max_ast_depth: None,
+                max_runtime: None,
+                max_output_bytes: None,
             },
             args: vec![],
         };
@@ -10054,6 +10155,8 @@ mod tests {
             no_hints: false,
             silent: false,
             max_ast_depth: None,
+            max_runtime: None,
+            max_output_bytes: None,
         };
         // rest has first arg = "double" which matches a function name
         let code = dispatch_bare_args(

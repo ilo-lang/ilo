@@ -1494,6 +1494,59 @@ with the source program and the JSON diagnostic.
 "#,
     },
     ErrorEntry {
+        code: "ILO-R016",
+        short: "wall-clock runtime budget exceeded",
+        long: r#"## ILO-R016: wall-clock runtime budget exceeded
+
+`ilo run` aborted because the program ran for longer than the
+configured wall-clock budget (default 60 s). The watchdog thread
+fires this when `elapsed > --max-runtime SECS`, writes a structured
+diagnostic to stderr, and exits with code 1.
+
+By far the most common cause is an infinite loop: a `wh` body that
+doesn't update its loop variable, or a recursion with no base case.
+The mandelbrot persona run that surfaced this guard missed a
+`col=col+1` increment and would have spun forever - the cap turns
+that into a clear signal the agent can act on.
+
+Override with `--max-runtime N` (seconds; 0 disables) when a
+legitimate program needs longer. Long-running batch jobs and
+training loops are the normal reason to bump or disable it.
+
+```
+ilo --max-runtime 300 main.ilo    -- allow 5 minutes
+ilo --max-runtime 0   main.ilo    -- disable the cap
+```
+"#,
+    },
+    ErrorEntry {
+        code: "ILO-R017",
+        short: "stdout output budget exceeded",
+        long: r#"## ILO-R017: stdout output budget exceeded
+
+`ilo run` aborted because the program wrote more bytes to stdout
+than the configured budget (default ~100 MB). Every `prnt` call in
+every engine (tree, VM, Cranelift JIT) charges its output against
+the budget; when the total exceeds `--max-output-bytes`, the next
+write triggers a structured diagnostic to stderr and exits 1.
+
+The most common cause is a loop calling `prnt` without termination
+or without backing off: an unbounded `wh` body, a recursion with
+no base case, or a missing increment on the loop variable. The
+budget keeps a runaway from filling disk or the agent transcript
+with megabytes of useless output before anyone notices.
+
+Override with `--max-output-bytes N` (bytes; 0 disables) when a
+legitimate program produces a lot of output - typically structured
+data dumps, log replay, or a code-generation pipeline.
+
+```
+ilo --max-output-bytes 1073741824 main.ilo    -- raise to 1 GB
+ilo --max-output-bytes 0 main.ilo              -- disable the cap
+```
+"#,
+    },
+    ErrorEntry {
         code: "ILO-R026",
         short: "panic-unwrap on Err / nil",
         long: r#"## ILO-R026: panic-unwrap on Err / nil

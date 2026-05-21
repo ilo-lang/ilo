@@ -54,6 +54,10 @@ AOT-compiled binaries (`ilo compile`) follow the same contract byte-for-byte.
 
 Parser nesting is capped at 256 by default — guards `ilo serv` and any other context that compiles untrusted source against `((((...((1+1))))...))` DoS payloads that would otherwise blow the parser stack. Hand-written ilo rarely exceeds depth 10. Override with `--max-ast-depth N` on `ilo`, `ilo run`, `ilo check`, `ilo build`, or `ilo serv` when a real program needs more. Hitting the cap surfaces as `ILO-P103`.
 
+## Runtime + output caps
+
+`ilo run` caps wall-clock runtime at 60 s and stdout output at ~100 MB by default. A runaway loop aborts with `ILO-R016` (time) or `ILO-R017` (output) instead of spinning forever or filling the transcript with megabytes of garbage. Override with `--max-runtime SECS` and `--max-output-bytes BYTES`; set either to `0` to disable. If you hit either code, check loop variables increment and recursion has a base case — that's the cause 95% of the time.
+
 ## Branching
 
 Failures / repair: `ilo-edit-loop`. Runnable patterns: `ilo-examples`. Tools: `ilo-tools`. Engine pick: `ilo-engines`.
