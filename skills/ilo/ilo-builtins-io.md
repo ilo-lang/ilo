@@ -31,6 +31,8 @@ Parsing `;`-delimited headers (Content-Type, Cache-Control, Cookie): no `ct-pars
 `jpar s` parse (`R _ t`), `jpar-list s` parse and assert array (`R (L _) t` — use when you know the response is an array: `@x (jpar-list! body){...}`), `jpth s path` dot-path (typed), `jkeys s path` sorted object keys, `jdmp v` serialize. Numeric keys stringified in `jdmp`.
 
 `!` auto-unwraps on all of these. Common shape inside `R`-returning fn: `r=jpar! body;r.x`. `jpar!` propagates errors; `jpar!!` panics. Same for `jpar-list!`, `jpth!`, `jkeys!`. Non-`R` callers: use `default-on-err` (in `ilo-builtins-core`): `name=default-on-err (jpth body "user.name") "anon"`.
+`!` auto-unwraps the Result on any of these. Inside an `R`-returning function `r=jpar! body;r.x` is the common shape — saves the `?r{~v:v;^e:^e}` boilerplate per call site. `jpar! body` propagates parse errors out of the enclosing function; `jpar!! body` panics on parse error instead. Same for `jpar-list!`, `jpth!`, `jkeys!`.
+`jpth` Ok variant is the actual leaf type: JSON number → `n`, string → `t`, bool → `b`, array → `L _` (iterable), object → record. No re-parse needed. Don't write `num (str (jpth! body "x"))` — `jpth! body "x"` is already `n` when the leaf is numeric.
 
 ## Environment / process
 
