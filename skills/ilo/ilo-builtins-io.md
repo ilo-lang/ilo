@@ -22,7 +22,9 @@ Prefix-call: `name arg1 arg2 ...`. Cross-engine unless noted.
 `get-many urls` (parallel fan-out, `L (R t t)`).
 Timeout variants round up to the nearest second. Err on timeout or connection failure.
 
-`!` auto-unwraps on all HTTP builtins (`get!`, `pst!`, `get-to!`, `pst-to!`): Ok→body, Err propagates. `!!` panics on Err. Prefer `pst!` over `?r{~v:v;^e:^e}` boilerplate in `R`-returning callers (~30 tokens/site).
+`getx url` / `pstx url body` (rich response, `R (M t _) t`): Ok-map with `status` (n), `headers` (M t t), `body` (t). Non-2xx still Ok (status surfaces on the map); only transport failure is Err. Optional trailing request-headers map (M t t), same as `get`/`pst`. Use these when you need conditional requests (304), status-code branching (429), response-header reads (ETag, Link, X-RateLimit-*), or redirect following. Body-only `get`/`pst` stay cheaper for fire-and-forget; `getx`/`pstx` are the heavier variant. Response header names are lowercased on the Ok-map.
+
+`!` auto-unwraps on all HTTP builtins (`get!`, `pst!`, `get-to!`, `pst-to!`, `getx!`, `pstx!`): Ok→body (or Ok-map for getx/pstx), Err propagates. `!!` panics on Err. Prefer `pst!` over `?r{~v:v;^e:^e}` boilerplate in `R`-returning callers (~30 tokens/site).
 
 Parsing `;`-delimited headers (Content-Type, Cache-Control, Cookie): no `ct-parse` builtin, use `spl ";"` then `trm`/`lwr`, then `spl "="` per param. `ps=spl raw ";";media=lwr (trm (at ps 0));kv=spl (trm (at ps 1)) "="`. Don't bind to `ct` (shadows builtin).
 `!` auto-unwraps on HTTP builtins (`get!`, `pst!`, `get-to!`, `pst-to!`): Ok→body, Err propagates. `!!` panics on Err. Prefer `pst!` over `?r{~v:v;^e:^e}` when the caller returns `R` (~30 tokens saved).

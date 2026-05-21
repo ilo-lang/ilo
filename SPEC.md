@@ -500,6 +500,10 @@ Called like functions, compiled to dedicated opcodes.
 | `pst url body` | HTTP POST with text body (renamed from `post` in 0.12.0) | `R t t` |
 | `pst url body headers` | HTTP POST with body and custom headers (`M t t` map) | `R t t` |
 | `pst-to url body timeout-ms` | HTTP POST with explicit timeout (milliseconds); Err if deadline exceeded | `R t t` |
+| `getx url` | HTTP GET, rich response: Ok-map with `status` (n), `headers` (M t t), `body` (t). Non-2xx is still Ok with the status code surfaced — only transport failure is Err. Use for conditional requests, redirect following, pagination Link headers, rate-limit headers. | `R (M t _) t` |
+| `getx url headers` | as `getx`, with request headers (`M t t` map) | `R (M t _) t` |
+| `pstx url body` | HTTP POST with rich response. Same Ok-map shape as `getx`. | `R (M t _) t` |
+| `pstx url body headers` | as `pstx`, with request headers (`M t t` map) | `R (M t _) t` |
 | `urlenc s` | RFC 3986 percent-encode; unreserved chars (ALPHA/DIGIT/`-._~`) pass through, everything else as `%HH`. Total. | `t` |
 | `urldec s` | inverse of `urlenc`; Err on invalid percent escape or non-UTF-8 decoded bytes | `R t t` |
 | `b64u s` | base64url-encode UTF-8 bytes of `s` (RFC 4648 §5, no padding, `-`/`_` alphabet). Total. | `t` |
@@ -867,9 +871,24 @@ r=pst url body h -- POST with x-api-key header
 -- Explicit timeouts (milliseconds; rounds up to nearest second internally)
 r=get-to url 5000       -- GET with 5 s timeout; Err if exceeded
 r=pst-to url body 3000  -- POST with 3 s timeout
+
+-- Rich-response variants: getx / pstx return an Ok-map with status, headers,
+-- and body. Use these when you need status-code branching (304 Not Modified,
+-- 429 Too Many Requests), response-header access (ETag, Link, X-RateLimit-*),
+-- or redirect following. Existing `get` / `pst` body-only shapes are untouched.
+r=getx url                  -- R (M t _) t: Ok={status:n, headers:M t t, body:t}
+r=getx url h                -- with request headers (h is M t t)
+r=pstx url body             -- R (M t _) t: POST with rich response
+r=pstx url body h           -- with request headers
+
+-- Status-code branching: non-2xx surfaces as a status, not Err
+?r{~m:?(=(mget!! m "status") 304){"not modified"};^_:"transport err"}
+
+-- Header read: response header names are lowercased
+etag=mget!! (mget!! m "headers") "etag"
 ```
 
-Behind the `http` feature flag (on by default). Without the feature, `get`/`pst`/`get-to`/`pst-to` return `Err("http feature not enabled")`.
+Behind the `http` feature flag (on by default). Without the feature, `get`/`pst`/`get-to`/`pst-to`/`getx`/`pstx` return `Err("http feature not enabled")`.
 
 ### Process spawn
 
