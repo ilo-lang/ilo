@@ -30,6 +30,8 @@ Timeout variants round up to the nearest second. Err on timeout or connection fa
 
 `!` auto-unwraps the Result on any of these. Inside an `R`-returning function `r=jpar! body;r.x` is the common shape — saves the `?r{~v:v;^e:^e}` boilerplate per call site. `jpar! body` propagates parse errors out of the enclosing function; `jpar!! body` panics on parse error instead. Same for `jpar-list!`, `jpth!`, `jkeys!`.
 
+When the caller is **not** `R`-returning (so `!` is unavailable) and the error payload is discardable, use `default-on-err` (see `ilo-builtins-core`): `name=default-on-err (jpth body "user.name") "anon"`.
+
 ## Environment / process
 
 `env name` (var), `env-all` (`R (M t t) t`), `exit code`.
