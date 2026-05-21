@@ -1723,8 +1723,11 @@ The verifier provides context-aware hints:
 --text / -t     Plain text (no colour)
 --json / -j     JSON (default for piped output)
 --no-hints / -nh  Suppress idiomatic hints
+--silent / -s   Suppress program stdout (mainly for --bench; see below)
 NO_COLOR=1      Disable colour (same as --text)
 ```
+
+**`--silent` / `-s`.** Suppresses the program's own stdout (`prnt`, `prnv`, `jprn`, etc.) for the duration of execution. Designed for `ilo <file> --bench`: combined with `--json` it lets agent harnesses (e.g. persona cost rollup) consume the bench JSON envelope on stdout without it being drowned in the benchmarked function's own output. Stderr is never silenced, so genuine errors still surface. Diagnostic output (including the bench JSON envelope and the human-readable bench summary block) is always emitted on stdout regardless of `--silent` — the flag only redirects program-level prints. Unix only (no-op on Windows for the program-stdout half; bench output still reaches stdout there).
 
 JSON error output follows a structured schema with `severity`, `code`, `message`, `labels` (with spans), `notes`, and `suggestion` fields.
 

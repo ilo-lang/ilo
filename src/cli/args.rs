@@ -44,6 +44,15 @@ pub struct Global {
     #[arg(long = "no-hints", short = 'n', global = true)]
     pub no_hints: bool,
 
+    /// Suppress program stdout during execution. Primarily meant for
+    /// `ilo <file> --bench`: combined with `--json` it lets the persona
+    /// harness consume the bench JSON envelope without it being drowned in
+    /// the program's own `prnt` / `prnv` / `jprn` output. Stderr is
+    /// untouched so errors still surface. The bench JSON envelope itself
+    /// is written to stdout *outside* the silenced region.
+    #[arg(long, short = 's', global = true)]
+    pub silent: bool,
+
     /// Cap on AST nesting depth. Applies to every subcommand that parses source
     /// (`run`, `check`, `build`, `serv`). Default 256 — far above anything
     /// hand-written, low enough to keep `ilo serv` safe from `((((...))))`
@@ -904,6 +913,7 @@ mod tests {
             text: false,
             json: false,
             no_hints: false,
+            silent: false,
             max_ast_depth: None,
         };
         // In test environment stderr is typically not a TTY → should return Json.
@@ -927,6 +937,7 @@ mod tests {
             text: false,
             json: true,
             no_hints: false,
+            silent: false,
             max_ast_depth: None,
         };
         assert!(g.explicit_json());
@@ -940,6 +951,7 @@ mod tests {
             text: true,
             json: false,
             no_hints: false,
+            silent: false,
             max_ast_depth: None,
         };
         assert!(!g.explicit_json());
@@ -953,6 +965,7 @@ mod tests {
             text: false,
             json: false,
             no_hints: false,
+            silent: false,
             max_ast_depth: None,
         };
         assert!(!g.explicit_json());

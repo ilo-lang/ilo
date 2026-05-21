@@ -1823,15 +1823,16 @@ fn emit_run_vm_alias_hint() {
     );
 }
 
-/// Scan args for --json/-j, --text/-t, --ansi/-a, --no-hints/-nh.
-/// Return (mode, explicit_json, no_hints, remaining_args).
+/// Scan args for --json/-j, --text/-t, --ansi/-a, --no-hints/-nh, --silent/-s.
+/// Return (mode, explicit_json, no_hints, silent, remaining_args).
 /// Multiple format flags -> error + exit(1).
 /// `explicit_json` is true only when the user passed --json/-j; auto-detection never sets it.
-fn detect_output_mode(args: Vec<String>) -> (OutputMode, bool, bool, Vec<String>) {
+fn detect_output_mode(args: Vec<String>) -> (OutputMode, bool, bool, bool, Vec<String>) {
     let mut mode: Option<OutputMode> = None;
     let mut remaining = Vec::with_capacity(args.len());
     let mut conflict = false;
     let mut no_hints = false;
+    let mut silent = false;
 
     for arg in args {
         match arg.as_str() {
@@ -1859,6 +1860,9 @@ fn detect_output_mode(args: Vec<String>) -> (OutputMode, bool, bool, Vec<String>
             "--no-hints" | "-nh" => {
                 no_hints = true;
             }
+            "--silent" | "-s" => {
+                silent = true;
+            }
             _ => remaining.push(arg),
         }
     }
@@ -1884,7 +1888,7 @@ fn detect_output_mode(args: Vec<String>) -> (OutputMode, bool, bool, Vec<String>
         }
     });
 
-    (resolved, explicit_json, no_hints, remaining)
+    (resolved, explicit_json, no_hints, silent, remaining)
 }
 
 /// Replace the contents of string literals with spaces, preserving length.
@@ -2550,6 +2554,7 @@ fn main() {
                         text: false,
                         json: false,
                         no_hints: false,
+                        silent: false,
                         max_ast_depth: None,
                     },
                     args: raw_args,
@@ -2709,7 +2714,8 @@ fn dispatch_cli(cli: cli::Cli, bare_has_bin: bool) -> i32 {
             let mode = cli.global.output_mode();
             let explicit_json = cli.global.explicit_json();
             let no_hints = cli.global.no_hints;
-            dispatch_run(r, mode, explicit_json, no_hints)
+            let silent = cli.global.silent;
+            dispatch_run(r, mode, explicit_json, no_hints, silent)
         }
         None => {
             // No subcommand — bare positional args (e.g. `ilo 'fn x:n>n;*x 2' 5`)
@@ -2733,7 +2739,7 @@ fn dispatch_cli(cli: cli::Cli, bare_has_bin: bool) -> i32 {
 /// and all `--run-*` / `--emit` / `--bench` / `--dense` / `--expanded` flags.
 fn dispatch_bare_args(raw_args: Vec<String>, global: &cli::Global) -> i32 {
     // Strip output mode flags from raw_args (--json/-j, --text/-t, --ansi/-a, --no-hints/-n)
-    let (mode, explicit_json, no_hints, args) = detect_output_mode(raw_args);
+    let (mode, explicit_json, no_hints, silent, args) = detect_output_mode(raw_args);
 
     // Extract --run-* engine flags from anywhere in the arg list so users can
     // pass them before or after positional args. Examples that should be
@@ -2782,6 +2788,7 @@ fn dispatch_bare_args(raw_args: Vec<String>, global: &cli::Global) -> i32 {
     };
     let explicit_json = explicit_json || global.explicit_json();
     let no_hints = no_hints || global.no_hints;
+    let silent = silent || global.silent;
 
     if args.len() < 2 {
         eprintln!(
@@ -2962,7 +2969,7 @@ fn dispatch_bare_args(raw_args: Vec<String>, global: &cli::Global) -> i32 {
                     allow_run: None,
                     rest: args[m + 1..].to_vec(),
                 };
-                return dispatch_run(run_args, mode, explicit_json, no_hints);
+                return dispatch_run(run_args, mode, explicit_json, no_hints, silent);
             }
             "--explain" | "-x" if engine_flag.is_none() => {
                 let run_args = cli::RunArgs {
@@ -2987,7 +2994,7 @@ fn dispatch_bare_args(raw_args: Vec<String>, global: &cli::Global) -> i32 {
                     allow_run: None,
                     rest: vec![],
                 };
-                return dispatch_run(run_args, mode, explicit_json, no_hints);
+                return dispatch_run(run_args, mode, explicit_json, no_hints, silent);
             }
             "--emit" if engine_flag.is_none() => {
                 let target = if args.len() > m + 1 {
@@ -3017,7 +3024,7 @@ fn dispatch_bare_args(raw_args: Vec<String>, global: &cli::Global) -> i32 {
                     allow_run: None,
                     rest: vec![],
                 };
-                return dispatch_run(run_args, mode, explicit_json, no_hints);
+                return dispatch_run(run_args, mode, explicit_json, no_hints, silent);
             }
             "--dense" | "-d" | "--fmt" if engine_flag.is_none() => {
                 let run_args = cli::RunArgs {
@@ -3042,7 +3049,7 @@ fn dispatch_bare_args(raw_args: Vec<String>, global: &cli::Global) -> i32 {
                     allow_run: None,
                     rest: vec![],
                 };
-                return dispatch_run(run_args, mode, explicit_json, no_hints);
+                return dispatch_run(run_args, mode, explicit_json, no_hints, silent);
             }
             "--expanded" | "-e" | "--fmt-expanded" if engine_flag.is_none() => {
                 let run_args = cli::RunArgs {
@@ -3067,7 +3074,7 @@ fn dispatch_bare_args(raw_args: Vec<String>, global: &cli::Global) -> i32 {
                     allow_run: None,
                     rest: vec![],
                 };
-                return dispatch_run(run_args, mode, explicit_json, no_hints);
+                return dispatch_run(run_args, mode, explicit_json, no_hints, silent);
             }
             _ => {}
         }
@@ -3104,7 +3111,7 @@ fn dispatch_bare_args(raw_args: Vec<String>, global: &cli::Global) -> i32 {
         allow_run: None,
         rest,
     };
-    dispatch_run(run_args, mode, explicit_json, no_hints)
+    dispatch_run(run_args, mode, explicit_json, no_hints, silent)
 }
 
 /// Resolve the function name + remaining args for an explicit engine flag
@@ -3326,7 +3333,13 @@ fn build_caps(r: &cli::RunArgs) -> Arc<Caps> {
 }
 
 /// Dispatch the `run` subcommand via parsed RunArgs.  Returns exit code.
-fn dispatch_run(r: cli::RunArgs, mode: OutputMode, explicit_json: bool, no_hints: bool) -> i32 {
+fn dispatch_run(
+    r: cli::RunArgs,
+    mode: OutputMode,
+    explicit_json: bool,
+    no_hints: bool,
+    silent: bool,
+) -> i32 {
     // Reject unknown `--flag` tokens in the positional tail. `RunArgs::rest`
     // uses trailing_var_arg + allow_hyphen_values so clap collects any
     // unrecognised long flag as positional; without this guard
@@ -3545,7 +3558,7 @@ fn dispatch_run(r: cli::RunArgs, mode: OutputMode, explicit_json: bool, no_hints
         };
         let run_args = parse_cli_args_typed(&program, func_name, raw);
         let json = matches!(mode, OutputMode::Json);
-        run_bench(&program, func_name, &run_args, json);
+        run_bench(&program, func_name, &run_args, json, silent);
         0
     } else if r.explain {
         let filename = if is_file {
@@ -4512,6 +4525,115 @@ fn program_exit_code(val: &interpreter::Value) -> i32 {
     }
 }
 
+/// RAII guard that redirects file descriptor 1 (stdout) to `/dev/null`
+/// for the lifetime of the guard, then restores it on drop. Used by
+/// `--silent` in `run_bench` so that programs which call `prnt`/`jprn`/
+/// `jit_prt` inside their hot loop don't flood the terminal across 10k
+/// iterations. Stderr is untouched so genuine errors still surface.
+///
+/// Unix-only. On Windows the guard is a no-op and `--silent` simply
+/// has no effect on bench iterations (the JSON envelope still suppresses
+/// the human-readable summary block, which is the persona-harness use
+/// case). Acceptable until ilo grows a Windows agent surface.
+#[cfg(unix)]
+struct StdoutSilencer {
+    saved_fd: libc::c_int,
+}
+
+#[cfg(unix)]
+impl StdoutSilencer {
+    fn new() -> Option<Self> {
+        use std::io::Write;
+        // Flush our own buffered stdout so any pending text lands BEFORE
+        // we swap the underlying fd. Otherwise lines emitted before the
+        // bench iterations would land in /dev/null too.
+        let _ = std::io::stdout().flush();
+        unsafe {
+            let saved = libc::dup(1);
+            if saved < 0 {
+                return None;
+            }
+            let devnull = std::ffi::CString::new("/dev/null").ok()?;
+            let null_fd = libc::open(devnull.as_ptr(), libc::O_WRONLY);
+            if null_fd < 0 {
+                libc::close(saved);
+                return None;
+            }
+            if libc::dup2(null_fd, 1) < 0 {
+                libc::close(null_fd);
+                libc::close(saved);
+                return None;
+            }
+            libc::close(null_fd);
+            Some(StdoutSilencer { saved_fd: saved })
+        }
+    }
+
+    /// Write a line to the original (pre-silencing) stdout. The bench
+    /// loops call this for their per-engine JSON envelope and the
+    /// human-readable summary block so the persona harness still
+    /// receives bench numbers even while program output is silenced.
+    fn emit(&self, s: &str) {
+        use std::io::Write;
+        let _ = std::io::stdout().flush();
+        unsafe {
+            // Best-effort write — if it fails we have nowhere useful to
+            // surface the error mid-bench, so swallow.
+            let bytes = s.as_bytes();
+            let _ = libc::write(self.saved_fd, bytes.as_ptr() as *const _, bytes.len());
+            if !s.ends_with('\n') {
+                let nl = b"\n";
+                let _ = libc::write(self.saved_fd, nl.as_ptr() as *const _, 1);
+            }
+        }
+    }
+}
+
+#[cfg(unix)]
+impl Drop for StdoutSilencer {
+    fn drop(&mut self) {
+        use std::io::Write;
+        let _ = std::io::stdout().flush();
+        unsafe {
+            libc::dup2(self.saved_fd, 1);
+            libc::close(self.saved_fd);
+        }
+    }
+}
+
+#[cfg(not(unix))]
+struct StdoutSilencer;
+
+#[cfg(not(unix))]
+impl StdoutSilencer {
+    fn new() -> Option<Self> {
+        // No-op on non-unix: program stdout cannot be silenced this way.
+        // The bench JSON envelope is still emitted via the normal stdout
+        // path so persona-harness consumers on Windows still get numbers.
+        Some(StdoutSilencer)
+    }
+
+    fn emit(&self, s: &str) {
+        if s.ends_with('\n') {
+            print!("{s}");
+        } else {
+            println!("{s}");
+        }
+    }
+}
+
+/// Write a bench output line. When `--silent` is active the program's own
+/// stdout (fd 1) is pointed at `/dev/null`, so going through `println!` here
+/// would swallow the bench numbers too. The silencer keeps a dup of the
+/// original fd and exposes `emit` to write through that — use it when
+/// present, else fall back to a normal `println!`.
+fn bench_println(silencer: Option<&StdoutSilencer>, s: &str) {
+    match silencer {
+        Some(g) => g.emit(s),
+        None => println!("{s}"),
+    }
+}
+
 #[allow(unused_variables, unused_mut)]
 /// Emit one machine-readable JSON envelope for a single bench measurement.
 ///
@@ -4529,6 +4651,7 @@ fn emit_bench_json(
     iterations: u32,
     total_ms: f64,
     per_call_ns: u128,
+    silencer: Option<&StdoutSilencer>,
 ) {
     // Escape the result string for JSON. Bench results are values rendered by
     // `Display` so they can contain `"` and `\` (rare but possible — `Text`
@@ -4550,9 +4673,10 @@ fn emit_bench_json(
         Some(v) => format!(",\"variant\":\"{}\"", v),
         None => String::new(),
     };
-    println!(
+    let line = format!(
         "{{\"schemaVersion\":1,\"engine\":\"{engine}\"{variant_field},\"result\":\"{esc}\",\"iterations\":{iterations},\"totalMs\":{total_ms:.4},\"perCallNs\":{per_call_ns}}}"
     );
+    bench_println(silencer, &line);
 }
 
 fn run_bench(
@@ -4560,12 +4684,20 @@ fn run_bench(
     func_name: Option<&str>,
     args: &[interpreter::Value],
     json: bool,
+    silent: bool,
 ) {
     use std::io::Write;
     use std::process::Command;
     use std::time::Instant;
 
     let iterations: u32 = 10_000;
+
+    // `--silent` redirects fd 1 to /dev/null for the duration of the
+    // benchmark loops. Held until after the final Python bench so every
+    // engine's `prnt` / `jprn` / `jit_prt` lands in the bit-bucket.
+    // Dropped before any JSON envelopes are written, so the persona
+    // harness still receives the bench numbers on stdout.
+    let silencer = if silent { StdoutSilencer::new() } else { None };
 
     // -- Rust interpreter benchmark --
     // Warmup
@@ -4590,14 +4722,18 @@ fn run_bench(
             iterations,
             interp_dur.as_nanos() as f64 / 1e6,
             interp_ns,
+            silencer.as_ref(),
         );
     } else {
-        println!("Rust interpreter");
-        println!("  result:     {}", result);
-        println!("  iterations: {}", iterations);
-        println!("  total:      {:.2}ms", interp_dur.as_nanos() as f64 / 1e6);
-        println!("  per call:   {}ns", interp_ns);
-        println!();
+        bench_println(silencer.as_ref(), "Rust interpreter");
+        bench_println(silencer.as_ref(), &format!("  result:     {}", result));
+        bench_println(silencer.as_ref(), &format!("  iterations: {}", iterations));
+        bench_println(
+            silencer.as_ref(),
+            &format!("  total:      {:.2}ms", interp_dur.as_nanos() as f64 / 1e6),
+        );
+        bench_println(silencer.as_ref(), &format!("  per call:   {}ns", interp_ns));
+        bench_println(silencer.as_ref(), "");
     }
 
     // -- Register VM benchmark --
@@ -4624,14 +4760,18 @@ fn run_bench(
             iterations,
             vm_dur.as_nanos() as f64 / 1e6,
             vm_ns,
+            silencer.as_ref(),
         );
     } else {
-        println!("Register VM");
-        println!("  result:     {}", vm_result);
-        println!("  iterations: {}", iterations);
-        println!("  total:      {:.2}ms", vm_dur.as_nanos() as f64 / 1e6);
-        println!("  per call:   {}ns", vm_ns);
-        println!();
+        bench_println(silencer.as_ref(), "Register VM");
+        bench_println(silencer.as_ref(), &format!("  result:     {}", vm_result));
+        bench_println(silencer.as_ref(), &format!("  iterations: {}", iterations));
+        bench_println(
+            silencer.as_ref(),
+            &format!("  total:      {:.2}ms", vm_dur.as_nanos() as f64 / 1e6),
+        );
+        bench_println(silencer.as_ref(), &format!("  per call:   {}ns", vm_ns));
+        bench_println(silencer.as_ref(), "");
     }
 
     // -- Register VM (reusable) benchmark --
@@ -4664,17 +4804,24 @@ fn run_bench(
             iterations,
             vm_reuse_dur.as_nanos() as f64 / 1e6,
             vm_reuse_ns,
+            silencer.as_ref(),
         );
     } else {
-        println!("Register VM (reusable)");
-        println!("  result:     {}", vm_result);
-        println!("  iterations: {}", iterations);
-        println!(
-            "  total:      {:.2}ms",
-            vm_reuse_dur.as_nanos() as f64 / 1e6
+        bench_println(silencer.as_ref(), "Register VM (reusable)");
+        bench_println(silencer.as_ref(), &format!("  result:     {}", vm_result));
+        bench_println(silencer.as_ref(), &format!("  iterations: {}", iterations));
+        bench_println(
+            silencer.as_ref(),
+            &format!(
+                "  total:      {:.2}ms",
+                vm_reuse_dur.as_nanos() as f64 / 1e6
+            ),
         );
-        println!("  per call:   {}ns", vm_reuse_ns);
-        println!();
+        bench_println(
+            silencer.as_ref(),
+            &format!("  per call:   {}ns", vm_reuse_ns),
+        );
+        bench_println(silencer.as_ref(), "");
     }
 
     // -- JIT benchmarks --
@@ -4733,14 +4880,18 @@ fn run_bench(
                         iterations,
                         jit_dur.as_nanos() as f64 / 1e6,
                         ns,
+                        silencer.as_ref(),
                     );
                 } else {
-                    println!("Cranelift JIT");
-                    println!("  result:     {}", jit_result);
-                    println!("  iterations: {}", iterations);
-                    println!("  total:      {:.2}ms", jit_dur.as_nanos() as f64 / 1e6);
-                    println!("  per call:   {}ns", ns);
-                    println!();
+                    bench_println(silencer.as_ref(), "Cranelift JIT");
+                    bench_println(silencer.as_ref(), &format!("  result:     {}", jit_result));
+                    bench_println(silencer.as_ref(), &format!("  iterations: {}", iterations));
+                    bench_println(
+                        silencer.as_ref(),
+                        &format!("  total:      {:.2}ms", jit_dur.as_nanos() as f64 / 1e6),
+                    );
+                    bench_println(silencer.as_ref(), &format!("  per call:   {}ns", ns));
+                    bench_println(silencer.as_ref(), "");
                 }
             }
         });
@@ -4781,14 +4932,18 @@ fn run_bench(
                         iterations,
                         jit_dur.as_nanos() as f64 / 1e6,
                         ns,
+                        silencer.as_ref(),
                     );
                 } else {
-                    println!("LLVM JIT");
-                    println!("  result:     {}", result_str);
-                    println!("  iterations: {}", iterations);
-                    println!("  total:      {:.2}ms", jit_dur.as_nanos() as f64 / 1e6);
-                    println!("  per call:   {}ns", ns);
-                    println!();
+                    bench_println(silencer.as_ref(), "LLVM JIT");
+                    bench_println(silencer.as_ref(), &format!("  result:     {}", result_str));
+                    bench_println(silencer.as_ref(), &format!("  iterations: {}", iterations));
+                    bench_println(
+                        silencer.as_ref(),
+                        &format!("  total:      {:.2}ms", jit_dur.as_nanos() as f64 / 1e6),
+                    );
+                    bench_println(silencer.as_ref(), &format!("  per call:   {}ns", ns));
+                    bench_println(silencer.as_ref(), "");
                 }
             }
         }
@@ -4849,7 +5004,7 @@ print(f"__NS__={{_per}}")
         args = call_args.join(", ")
     );
 
-    println!("Python transpiled");
+    bench_println(silencer.as_ref(), "Python transpiled");
     let output = Command::new("python3").arg("-c").arg(&py_script).output();
 
     let mut py_ns: Option<u128> = None;
@@ -4860,7 +5015,7 @@ print(f"__NS__={{_per}}")
                 if let Some(val) = line.strip_prefix("__NS__=") {
                     py_ns = val.parse().ok();
                 } else {
-                    println!("  {}", line);
+                    bench_println(silencer.as_ref(), &format!("  {}", line));
                 }
             }
             std::io::stderr()
@@ -4870,20 +5025,26 @@ print(f"__NS__={{_per}}")
         Err(e) => eprintln!("  failed to run python3: {}", e),
     }
 
-    println!();
+    bench_println(silencer.as_ref(), "");
 
     // -- Summary --
-    println!("Summary");
+    bench_println(silencer.as_ref(), "Summary");
     if vm_ns > 0 && interp_ns > 0 {
         if vm_ns < interp_ns {
-            println!(
-                "  Register VM is {:.1}x faster than interpreter",
-                interp_ns as f64 / vm_ns as f64
+            bench_println(
+                silencer.as_ref(),
+                &format!(
+                    "  Register VM is {:.1}x faster than interpreter",
+                    interp_ns as f64 / vm_ns as f64
+                ),
             );
         } else {
-            println!(
-                "  Interpreter is {:.1}x faster than bytecode VM",
-                vm_ns as f64 / interp_ns as f64
+            bench_println(
+                silencer.as_ref(),
+                &format!(
+                    "  Interpreter is {:.1}x faster than bytecode VM",
+                    vm_ns as f64 / interp_ns as f64
+                ),
             );
         }
     }
@@ -4891,57 +5052,81 @@ print(f"__NS__={{_per}}")
         && jit_ns > 0
         && vm_reuse_ns > 0
     {
-        println!(
-            "  Cranelift JIT is {:.1}x faster than VM (reusable)",
-            vm_reuse_ns as f64 / jit_ns as f64
+        bench_println(
+            silencer.as_ref(),
+            &format!(
+                "  Cranelift JIT is {:.1}x faster than VM (reusable)",
+                vm_reuse_ns as f64 / jit_ns as f64
+            ),
         );
     }
     if let Some(jit_ns) = jit_llvm_ns
         && jit_ns > 0
         && vm_reuse_ns > 0
     {
-        println!(
-            "  LLVM JIT is {:.1}x faster than VM (reusable)",
-            vm_reuse_ns as f64 / jit_ns as f64
+        bench_println(
+            silencer.as_ref(),
+            &format!(
+                "  LLVM JIT is {:.1}x faster than VM (reusable)",
+                vm_reuse_ns as f64 / jit_ns as f64
+            ),
         );
     }
     if let Some(py) = py_ns {
         if interp_ns > 0 && py > 0 {
             if interp_ns < py {
-                println!(
-                    "  Rust interpreter is {:.1}x faster than Python",
-                    py as f64 / interp_ns as f64
+                bench_println(
+                    silencer.as_ref(),
+                    &format!(
+                        "  Rust interpreter is {:.1}x faster than Python",
+                        py as f64 / interp_ns as f64
+                    ),
                 );
             } else {
-                println!(
-                    "  Python is {:.1}x faster than Rust interpreter",
-                    interp_ns as f64 / py as f64
+                bench_println(
+                    silencer.as_ref(),
+                    &format!(
+                        "  Python is {:.1}x faster than Rust interpreter",
+                        interp_ns as f64 / py as f64
+                    ),
                 );
             }
         }
         if vm_ns > 0 && py > 0 {
             if vm_ns < py {
-                println!(
-                    "  Register VM is {:.1}x faster than Python",
-                    py as f64 / vm_ns as f64
+                bench_println(
+                    silencer.as_ref(),
+                    &format!(
+                        "  Register VM is {:.1}x faster than Python",
+                        py as f64 / vm_ns as f64
+                    ),
                 );
             } else {
-                println!(
-                    "  Python is {:.1}x faster than Register VM",
-                    vm_ns as f64 / py as f64
+                bench_println(
+                    silencer.as_ref(),
+                    &format!(
+                        "  Python is {:.1}x faster than Register VM",
+                        vm_ns as f64 / py as f64
+                    ),
                 );
             }
         }
         if vm_reuse_ns > 0 && py > 0 {
             if vm_reuse_ns < py {
-                println!(
-                    "  VM (reusable) is {:.1}x faster than Python",
-                    py as f64 / vm_reuse_ns as f64
+                bench_println(
+                    silencer.as_ref(),
+                    &format!(
+                        "  VM (reusable) is {:.1}x faster than Python",
+                        py as f64 / vm_reuse_ns as f64
+                    ),
                 );
             } else {
-                println!(
-                    "  Python is {:.1}x faster than VM (reusable)",
-                    vm_reuse_ns as f64 / py as f64
+                bench_println(
+                    silencer.as_ref(),
+                    &format!(
+                        "  Python is {:.1}x faster than VM (reusable)",
+                        vm_reuse_ns as f64 / py as f64
+                    ),
                 );
             }
         }
@@ -4949,18 +5134,24 @@ print(f"__NS__={{_per}}")
             && jit_ns > 0
             && py > 0
         {
-            println!(
-                "  Cranelift JIT is {:.1}x faster than Python",
-                py as f64 / jit_ns as f64
+            bench_println(
+                silencer.as_ref(),
+                &format!(
+                    "  Cranelift JIT is {:.1}x faster than Python",
+                    py as f64 / jit_ns as f64
+                ),
             );
         }
         if let Some(jit_ns) = jit_llvm_ns
             && jit_ns > 0
             && py > 0
         {
-            println!(
-                "  LLVM JIT is {:.1}x faster than Python",
-                py as f64 / jit_ns as f64
+            bench_println(
+                silencer.as_ref(),
+                &format!(
+                    "  LLVM JIT is {:.1}x faster than Python",
+                    py as f64 / jit_ns as f64
+                ),
             );
         }
     }
@@ -5402,7 +5593,7 @@ mod tests {
 
     #[test]
     fn detect_mode_json_long_flag() {
-        let (mode, explicit, _, remaining) =
+        let (mode, explicit, _, _, remaining) =
             detect_output_mode(vec!["--json".into(), "foo".into()]);
         assert!(matches!(mode, OutputMode::Json));
         assert!(explicit);
@@ -5411,69 +5602,92 @@ mod tests {
 
     #[test]
     fn detect_mode_json_short_flag() {
-        let (mode, explicit, _, _) = detect_output_mode(vec!["-j".into()]);
+        let (mode, explicit, _, _, _) = detect_output_mode(vec!["-j".into()]);
         assert!(matches!(mode, OutputMode::Json));
         assert!(explicit);
     }
 
     #[test]
     fn detect_mode_text_long_flag() {
-        let (mode, explicit, _, _) = detect_output_mode(vec!["--text".into()]);
+        let (mode, explicit, _, _, _) = detect_output_mode(vec!["--text".into()]);
         assert!(matches!(mode, OutputMode::Text));
         assert!(!explicit);
     }
 
     #[test]
     fn detect_mode_text_short_flag() {
-        let (mode, _, _, _) = detect_output_mode(vec!["-t".into()]);
+        let (mode, _, _, _, _) = detect_output_mode(vec!["-t".into()]);
         assert!(matches!(mode, OutputMode::Text));
     }
 
     #[test]
     fn detect_mode_ansi_long_flag() {
-        let (mode, explicit, _, _) = detect_output_mode(vec!["--ansi".into()]);
+        let (mode, explicit, _, _, _) = detect_output_mode(vec!["--ansi".into()]);
         assert!(matches!(mode, OutputMode::Ansi));
         assert!(!explicit);
     }
 
     #[test]
     fn detect_mode_ansi_short_flag() {
-        let (mode, _, _, _) = detect_output_mode(vec!["-a".into()]);
+        let (mode, _, _, _, _) = detect_output_mode(vec!["-a".into()]);
         assert!(matches!(mode, OutputMode::Ansi));
     }
 
     #[test]
     fn detect_mode_non_flag_args_pass_through() {
-        let (_, _, _, remaining) =
+        let (_, _, _, _, remaining) =
             detect_output_mode(vec!["ilo".into(), "f>n;1".into(), "42".into()]);
         assert_eq!(remaining, vec!["ilo", "f>n;1", "42"]);
     }
 
     #[test]
     fn detect_mode_format_flag_stripped_from_remaining() {
-        let (_, _, _, remaining) =
+        let (_, _, _, _, remaining) =
             detect_output_mode(vec!["--json".into(), "code".into(), "arg".into()]);
         assert_eq!(remaining, vec!["code", "arg"]);
     }
 
     #[test]
     fn detect_mode_no_hints_flag() {
-        let (_, _, no_hints, _) = detect_output_mode(vec!["--no-hints".into(), "code".into()]);
+        let (_, _, no_hints, _, _) = detect_output_mode(vec!["--no-hints".into(), "code".into()]);
         assert!(no_hints);
     }
 
     #[test]
     fn detect_mode_no_hints_short_flag() {
-        let (_, _, no_hints, _) = detect_output_mode(vec!["-nh".into(), "code".into()]);
+        let (_, _, no_hints, _, _) = detect_output_mode(vec!["-nh".into(), "code".into()]);
         assert!(no_hints);
     }
 
     #[test]
     fn detect_mode_no_hints_not_stripped() {
-        let (_, _, no_hints, remaining) =
+        let (_, _, no_hints, _, remaining) =
             detect_output_mode(vec!["--no-hints".into(), "code".into()]);
         assert!(no_hints);
         assert_eq!(remaining, vec!["code"]);
+    }
+
+    #[test]
+    fn detect_mode_silent_long_flag() {
+        let (_, _, _, silent, remaining) =
+            detect_output_mode(vec!["--silent".into(), "code".into()]);
+        assert!(silent);
+        assert_eq!(remaining, vec!["code"]);
+    }
+
+    #[test]
+    fn detect_mode_silent_short_flag() {
+        let (_, _, _, silent, _) = detect_output_mode(vec!["-s".into(), "code".into()]);
+        assert!(silent);
+    }
+
+    #[test]
+    fn detect_mode_silent_composes_with_json() {
+        let (mode, explicit, _, silent, _) =
+            detect_output_mode(vec!["--json".into(), "--silent".into(), "code".into()]);
+        assert!(matches!(mode, OutputMode::Json));
+        assert!(explicit);
+        assert!(silent);
     }
 
     // ── collect_hints ─────────────────────────────────────────────────────────
@@ -7982,6 +8196,7 @@ mod tests {
                 text: false,
                 json: false,
                 no_hints: false,
+                silent: false,
                 max_ast_depth: None,
             },
             args: vec!["f>n;1".to_string()],
@@ -8000,6 +8215,7 @@ mod tests {
             text: false,
             json: false,
             no_hints: false,
+            silent: false,
             max_ast_depth: None,
         };
         let code = dispatch_bare_args(vec!["ilo".to_string(), "-ai".to_string()], &global);
@@ -8015,6 +8231,7 @@ mod tests {
             text: false,
             json: false,
             no_hints: false,
+            silent: false,
             max_ast_depth: None,
         };
         let code = dispatch_bare_args(
@@ -8031,6 +8248,7 @@ mod tests {
             text: false,
             json: false,
             no_hints: false,
+            silent: false,
             max_ast_depth: None,
         };
         let code = dispatch_bare_args(
@@ -8047,6 +8265,7 @@ mod tests {
             text: false,
             json: false,
             no_hints: false,
+            silent: false,
             max_ast_depth: None,
         };
         let code = dispatch_bare_args(vec!["ilo".to_string(), "-h".to_string()], &global);
@@ -8062,6 +8281,7 @@ mod tests {
             text: false,
             json: false,
             no_hints: false,
+            silent: false,
             max_ast_depth: None,
         };
         // ILO-T001 is a known error code
@@ -8083,6 +8303,7 @@ mod tests {
             text: false,
             json: false,
             no_hints: false,
+            silent: false,
             max_ast_depth: None,
         };
         let code = dispatch_bare_args(
@@ -8103,6 +8324,7 @@ mod tests {
             text: false,
             json: false,
             no_hints: false,
+            silent: false,
             max_ast_depth: None,
         };
         // --explain without a code argument → error exit
@@ -8119,6 +8341,7 @@ mod tests {
             text: false,
             json: false,
             no_hints: false,
+            silent: false,
             max_ast_depth: None,
         };
         let code = dispatch_bare_args(vec!["ilo".to_string(), "--version".to_string()], &global);
@@ -8132,6 +8355,7 @@ mod tests {
             text: false,
             json: false,
             no_hints: false,
+            silent: false,
             max_ast_depth: None,
         };
         let code = dispatch_bare_args(vec!["ilo".to_string(), "-V".to_string()], &global);
@@ -8145,6 +8369,7 @@ mod tests {
             text: false,
             json: false,
             no_hints: false,
+            silent: false,
             max_ast_depth: None,
         };
         let code = dispatch_bare_args(vec!["ilo".to_string(), "-v".to_string()], &global);
@@ -8160,6 +8385,7 @@ mod tests {
             text: false,
             json: false,
             no_hints: false,
+            silent: false,
             max_ast_depth: None,
         };
         let code = dispatch_bare_args(
@@ -8180,6 +8406,7 @@ mod tests {
             text: false,
             json: false,
             no_hints: false,
+            silent: false,
             max_ast_depth: None,
         };
         let code = dispatch_bare_args(
@@ -8209,6 +8436,7 @@ mod tests {
             text: false,
             json: false,
             no_hints: false,
+            silent: false,
             max_ast_depth: None,
         };
         let code = dispatch_bare_args(
@@ -8225,6 +8453,7 @@ mod tests {
             text: false,
             json: false,
             no_hints: false,
+            silent: false,
             max_ast_depth: None,
         };
         // -e with empty code string should fail
@@ -8244,6 +8473,7 @@ mod tests {
             text: false,
             json: false,
             no_hints: false,
+            silent: false,
             max_ast_depth: None,
         };
         // bench mode: requires a func name in rest
@@ -8269,6 +8499,7 @@ mod tests {
             text: false,
             json: false,
             no_hints: false,
+            silent: false,
             max_ast_depth: None,
         };
         let code = dispatch_bare_args(
@@ -8290,6 +8521,7 @@ mod tests {
             text: false,
             json: false,
             no_hints: false,
+            silent: false,
             max_ast_depth: None,
         };
         let code = dispatch_bare_args(
@@ -8315,6 +8547,7 @@ mod tests {
             text: false,
             json: false,
             no_hints: false,
+            silent: false,
             max_ast_depth: None,
         };
         let code = dispatch_bare_args(
@@ -8337,6 +8570,7 @@ mod tests {
             text: false,
             json: false,
             no_hints: false,
+            silent: false,
             max_ast_depth: None,
         };
         let code = dispatch_bare_args(
@@ -8357,6 +8591,7 @@ mod tests {
             text: false,
             json: false,
             no_hints: false,
+            silent: false,
             max_ast_depth: None,
         };
         let code = dispatch_bare_args(
@@ -8379,6 +8614,7 @@ mod tests {
             text: false,
             json: false,
             no_hints: false,
+            silent: false,
             max_ast_depth: None,
         };
         let code = dispatch_bare_args(
@@ -8399,6 +8635,7 @@ mod tests {
             text: false,
             json: false,
             no_hints: false,
+            silent: false,
             max_ast_depth: None,
         };
         let code = dispatch_bare_args(
@@ -8421,6 +8658,7 @@ mod tests {
             text: false,
             json: false,
             no_hints: false,
+            silent: false,
             max_ast_depth: None,
         };
         let code = dispatch_bare_args(
@@ -8445,6 +8683,7 @@ mod tests {
             text: false,
             json: false,
             no_hints: false,
+            silent: false,
             max_ast_depth: None,
         };
         let code = dispatch_bare_args(
@@ -8467,6 +8706,7 @@ mod tests {
             text: false,
             json: false,
             no_hints: false,
+            silent: false,
             max_ast_depth: None,
         };
         let code = dispatch_bare_args(
@@ -8491,6 +8731,7 @@ mod tests {
             text: false,
             json: false,
             no_hints: false,
+            silent: false,
             max_ast_depth: None,
         };
         // Just runs a simple program; tests that global.ansi overrides detected mode
@@ -8505,6 +8746,7 @@ mod tests {
             text: true,
             json: false,
             no_hints: false,
+            silent: false,
             max_ast_depth: None,
         };
         let code = dispatch_bare_args(vec!["ilo".to_string(), "f>n;42".to_string()], &global);
@@ -8518,6 +8760,7 @@ mod tests {
             text: false,
             json: true,
             no_hints: false,
+            silent: false,
             max_ast_depth: None,
         };
         let code = dispatch_bare_args(vec!["ilo".to_string(), "f>n;42".to_string()], &global);
@@ -9123,7 +9366,7 @@ mod tests {
             allow_run: None,
             rest: vec![],
         };
-        let code = dispatch_run(run_args, OutputMode::Text, false, false);
+        let code = dispatch_run(run_args, OutputMode::Text, false, false, false);
         assert_eq!(code, 1);
     }
 
@@ -9153,7 +9396,7 @@ mod tests {
             allow_run: None,
             rest: vec![],
         };
-        let code = dispatch_run(run_args, OutputMode::Text, false, false);
+        let code = dispatch_run(run_args, OutputMode::Text, false, false, false);
         assert_eq!(code, 1);
     }
 
@@ -9187,7 +9430,7 @@ mod tests {
             allow_run: None,
             rest: vec![],
         };
-        let code = dispatch_run(run_args, OutputMode::Text, false, false);
+        let code = dispatch_run(run_args, OutputMode::Text, false, false, false);
         assert_eq!(code, 0);
     }
 
@@ -9219,7 +9462,7 @@ mod tests {
             rest: vec!["f".to_string(), "1".to_string()],
         };
         // no_hints = false → hints emitted (to stderr, so just verify no panic)
-        let code = dispatch_run(run_args, OutputMode::Text, false, false);
+        let code = dispatch_run(run_args, OutputMode::Text, false, false, false);
         assert_eq!(code, 0);
     }
 
@@ -9248,7 +9491,7 @@ mod tests {
             rest: vec!["f".to_string(), "1".to_string()],
         };
         // no_hints = true → hints suppressed
-        let code = dispatch_run(run_args, OutputMode::Text, false, true);
+        let code = dispatch_run(run_args, OutputMode::Text, false, true, false);
         assert_eq!(code, 0);
     }
 
@@ -9278,7 +9521,7 @@ mod tests {
             allow_run: None,
             rest: vec![],
         };
-        let code = dispatch_run(run_args, OutputMode::Text, false, false);
+        let code = dispatch_run(run_args, OutputMode::Text, false, false, false);
         assert_eq!(code, 1);
     }
 
@@ -9309,7 +9552,7 @@ mod tests {
             allow_run: None,
             rest: vec!["f".to_string(), "1".to_string()],
         };
-        let code = dispatch_run(run_args, OutputMode::Text, false, false);
+        let code = dispatch_run(run_args, OutputMode::Text, false, false, false);
         assert_eq!(code, 1);
     }
 
@@ -9326,6 +9569,7 @@ mod tests {
                 text: false,
                 json: false,
                 no_hints: false,
+                silent: false,
                 max_ast_depth: None,
             },
             args: vec![],
@@ -9343,6 +9587,7 @@ mod tests {
                 text: false,
                 json: false,
                 no_hints: false,
+                silent: false,
                 max_ast_depth: None,
             },
             args: vec![],
@@ -9363,6 +9608,7 @@ mod tests {
                 text: false,
                 json: false,
                 no_hints: false,
+                silent: false,
                 max_ast_depth: None,
             },
             args: vec![],
@@ -9382,6 +9628,7 @@ mod tests {
                 text: false,
                 json: false,
                 no_hints: false,
+                silent: false,
                 max_ast_depth: None,
             },
             args: vec![],
@@ -9409,6 +9656,7 @@ mod tests {
                 text: false,
                 json: false,
                 no_hints: false,
+                silent: false,
                 max_ast_depth: None,
             },
             args: vec![],
@@ -9756,6 +10004,7 @@ mod tests {
             text: false,
             json: false,
             no_hints: false,
+            silent: false,
             max_ast_depth: None,
         };
         // rest has first arg = "double" which matches a function name
