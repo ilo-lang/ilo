@@ -464,6 +464,16 @@ fn matmul_arg2_wrong() {
 }
 
 #[test]
+fn matvec_arg1_wrong() {
+    assert_err("main>L n;matvec 5 [1 2]", "ILO-T013", "main");
+}
+
+#[test]
+fn matvec_arg2_wrong() {
+    assert_err("main>L n;matvec [[1 2] [3 4]] 5", "ILO-T013", "main");
+}
+
+#[test]
 fn dot_arg1_wrong() {
     assert_err("main>n;dot 5 [1 2]", "ILO-T013", "main");
 }
