@@ -4381,6 +4381,123 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             }
         };
     }
+    if builtin == Some(Builtin::Getx) && (args.len() == 1 || args.len() == 2) {
+        // getx url           — 1-arg, returns R (M t _) t
+        // getx url headers   — 2-arg, headers is M t t
+        // Ok-map keys: status (n), headers (M t t), body (t).
+        let url = match &args[0] {
+            Value::Text(u) => u.clone(),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("getx requires text (url), got {:?}", other),
+                ));
+            }
+        };
+        if let Err(msg) = env.caps.check_net(url.as_str()) {
+            return Ok(Value::Err(Box::new(Value::Text(Arc::new(msg)))));
+        }
+        let headers = if args.len() == 2 {
+            match &args[1] {
+                Value::Map(m) => m
+                    .iter()
+                    .map(|(k, v)| {
+                        let vs: String = match v {
+                            Value::Text(s) => (**s).clone(),
+                            other => format!("{other:?}"),
+                        };
+                        (k.to_display_string(), vs)
+                    })
+                    .collect::<Vec<_>>(),
+                other => {
+                    return Err(RuntimeError::new(
+                        "ILO-R009",
+                        format!("getx headers must be M t t, got {:?}", other),
+                    ));
+                }
+            }
+        } else {
+            vec![]
+        };
+        return {
+            #[cfg(feature = "http")]
+            {
+                let mut req = minreq::get(url.as_str());
+                for (k, v) in &headers {
+                    req = req.with_header(k.as_str(), v.as_str());
+                }
+                match req.send() {
+                    Ok(resp) => Ok(http_response_to_ok_map(&resp)),
+                    Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(e.to_string()))))),
+                }
+            }
+            #[cfg(not(feature = "http"))]
+            {
+                let _ = (url, headers);
+                Ok(Value::Err(Box::new(Value::Text(
+                    "http feature not enabled".to_string().into(),
+                ))))
+            }
+        };
+    }
+    if builtin == Some(Builtin::Pstx) && (args.len() == 2 || args.len() == 3) {
+        // pstx url body            — 2-arg, returns R (M t _) t
+        // pstx url body headers    — 3-arg, headers is M t t
+        let (url, body) = match (&args[0], &args[1]) {
+            (Value::Text(u), Value::Text(b)) => (u.clone(), b.clone()),
+            _ => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("pstx requires (t, t), got ({:?}, {:?})", args[0], args[1]),
+                ));
+            }
+        };
+        if let Err(msg) = env.caps.check_net(url.as_str()) {
+            return Ok(Value::Err(Box::new(Value::Text(Arc::new(msg)))));
+        }
+        let headers = if args.len() == 3 {
+            match &args[2] {
+                Value::Map(m) => m
+                    .iter()
+                    .map(|(k, v)| {
+                        let vs: String = match v {
+                            Value::Text(s) => (**s).clone(),
+                            other => format!("{other:?}"),
+                        };
+                        (k.to_display_string(), vs)
+                    })
+                    .collect::<Vec<_>>(),
+                other => {
+                    return Err(RuntimeError::new(
+                        "ILO-R009",
+                        format!("pstx headers must be M t t, got {:?}", other),
+                    ));
+                }
+            }
+        } else {
+            vec![]
+        };
+        return {
+            #[cfg(feature = "http")]
+            {
+                let mut req = minreq::post(url.as_str()).with_body(body.as_str());
+                for (k, v) in &headers {
+                    req = req.with_header(k.as_str(), v.as_str());
+                }
+                match req.send() {
+                    Ok(resp) => Ok(http_response_to_ok_map(&resp)),
+                    Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(e.to_string()))))),
+                }
+            }
+            #[cfg(not(feature = "http"))]
+            {
+                let _ = (url, body, headers);
+                Ok(Value::Err(Box::new(Value::Text(
+                    "http feature not enabled".to_string().into(),
+                ))))
+            }
+        };
+    }
     if builtin == Some(Builtin::Run) && args.len() == 2 {
         // run cmd:t args:L t  >  R (M t t) t
         //
@@ -8350,6 +8467,39 @@ fn read_capped<R: std::io::Read>(
             Err(e) => return Err(format!("read error: {e}")),
         }
     }
+}
+
+/// Convert a `minreq::Response` to an ilo Ok-map with `status`, `headers`,
+/// and `body` keys. Body decoded as UTF-8; non-UTF-8 surfaces as Err.
+/// Shape: `R (M t _) t` — status:n, headers:M t t, body:t.
+#[cfg(feature = "http")]
+pub(crate) fn http_response_to_ok_map(resp: &minreq::Response) -> Value {
+    let body = match resp.as_str() {
+        Ok(b) => b.to_string(),
+        Err(e) => {
+            return Value::Err(Box::new(Value::Text(Arc::new(format!(
+                "response is not valid UTF-8: {e}"
+            )))));
+        }
+    };
+    let mut headers_map: HashMap<MapKey, Value> = HashMap::with_capacity(resp.headers.len());
+    for (k, v) in resp.headers.iter() {
+        headers_map.insert(MapKey::Text(k.clone()), Value::Text(Arc::new(v.clone())));
+    }
+    let mut m: HashMap<MapKey, Value> = HashMap::with_capacity(3);
+    m.insert(
+        MapKey::Text("status".to_string()),
+        Value::Number(resp.status_code as f64),
+    );
+    m.insert(
+        MapKey::Text("headers".to_string()),
+        Value::Map(Arc::new(headers_map)),
+    );
+    m.insert(
+        MapKey::Text("body".to_string()),
+        Value::Text(Arc::new(body)),
+    );
+    Value::Ok(Box::new(Value::Map(Arc::new(m))))
 }
 
 pub(crate) fn get_many_fetch(urls: &[String]) -> Vec<Value> {
