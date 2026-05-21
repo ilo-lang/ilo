@@ -1858,6 +1858,8 @@ The manifesto's "Constrained" rule (every feature must pay for itself in tokens)
 
 A call is in **tail position** when its return value is the function's return value: the last statement of the body, the expression of a `ret` statement, an arm of a tail-position `?` match, or the body of a braceless guard. Calls inside `@` foreach, `@` range, `wh` loops, or as operands of further computation are NOT in tail position.
 
+> **Recursive self-call discarded at non-tail position fires `ILO-T043`.** When a function calls itself before another statement runs, the recursive return is silently dropped — every call falls through to the later statements. The verifier emits `ILO-T043` with a hint pointing at the tail-position fix (move the recursive call to the body's last statement, wrap it in `ret`, or restructure via `?h cond then else`). The warning is narrowly scoped to self-calls (caller name == callee name); bare non-recursive user-fn calls at non-tail position may be side-effecting and do not warn. Surfaced 2026-05-21 by the interp1d persona: see `examples/recursive-tail-position.ilo` for the canonical fix shape.
+
 ```
 -- Tail-recursive countdown — runs to arbitrary depth.
 count-down n:n>n;=n 0 0;count-down -n 1
