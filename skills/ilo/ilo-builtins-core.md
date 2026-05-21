@@ -26,7 +26,7 @@ See `examples/default-on-err.ilo` for the full pattern set.
 
 ## List
 
-`len hd tl at lst take drop slc`; `rev srt rsrt unq uniqby flat grp zip enumerate range`; `chunks window flatmap partition`; `setunion setinter setdiff`. `at xs i` floors floats; negative indexes from end (same for `slc take drop`). Bounds clamp. **`lst xs i v` IS the list-set / `lset` / `setat` builtin** — returns a new list with index `i` replaced by `v` (alias `lset`; reach for `lst` whenever you'd write `xs[i] = v` in Python). Last element = `at xs -1`.
+`len hd tl at lst take drop slc`; `rev srt rsrt unq uniqby flat grp zip enumerate range`; `chunks window flatmap partition`; `setunion setinter setdiff`. `at xs i` floors floats; negative indexes from end (same for `slc take drop`). Bounds clamp. **`lst xs i v` IS the list-set / `lset` / `setat` builtin** — returns a new list with index `i` replaced by `v` (alias `lset`; reach for `lst` whenever you'd write `xs[i] = v` in Python). Last element = `at xs -1`. `srt` and `srt fn xs` are stable: equal elements (or equal keys) keep their input order, so merging parallel records sorted by a shared timestamp keeps the per-source ordering inside each tie group.
 
 ## HOFs
 
