@@ -49,3 +49,5 @@ code=mget m "code"               -- "0"
 ## Time
 
 `now` (s), `now-ms`, `sleep ms`, `clock`. Date parsing/formatting (`dtfmt`, `dtparse`, `dtparse-rel`) lives in `ilo-builtins-text`.
+
+`tz-offset tz:t epoch:n > R n t` - DST-aware UTC offset (s) for IANA tz; east-positive.

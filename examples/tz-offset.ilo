@@ -1,0 +1,34 @@
+-- tz-offset tz:t epoch:n > R n t
+-- Returns the UTC offset in seconds for a named IANA timezone at a
+-- given Unix epoch. Positive = east of UTC. DST-aware via chrono-tz.
+-- Returns Err on unknown timezone name.
+
+-- London in winter (GMT, UTC+0): 2024-01-01 12:00:00 UTC
+london-winter-offset n:n>R n t;tz-offset "Europe/London" n
+
+-- London in summer (BST, UTC+1 = 3600s): 2024-07-01 12:00:00 UTC
+london-summer-offset n:n>R n t;tz-offset "Europe/London" n
+
+-- Tokyo (JST, UTC+9 = 32400s, no DST): any epoch
+tokyo-offset n:n>R n t;tz-offset "Asia/Tokyo" n
+
+-- New York in winter (EST, UTC-5 = -18000s): 2024-01-15 12:00:00 UTC
+nyc-winter-offset n:n>R n t;tz-offset "America/New_York" n
+
+-- New York in summer (EDT, UTC-4 = -14400s): 2024-07-15 12:00:00 UTC
+nyc-summer-offset n:n>R n t;tz-offset "America/New_York" n
+
+-- run: london-winter-offset 1704110400
+-- out: 0
+
+-- run: london-summer-offset 1719835200
+-- out: 3600
+
+-- run: tokyo-offset 0
+-- out: 32400
+
+-- run: nyc-winter-offset 1705320000
+-- out: -18000
+
+-- run: nyc-summer-offset 1721044800
+-- out: -14400
