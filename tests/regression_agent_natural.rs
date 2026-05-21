@@ -25,6 +25,19 @@ fn run(engine: &str, src: &str, entry: &str, arg: &str) -> String {
     String::from_utf8_lossy(&out.stdout).trim().to_string()
 }
 
+fn run0(engine: &str, src: &str, entry: &str) -> String {
+    let out = ilo()
+        .args([src, engine, entry])
+        .output()
+        .expect("failed to run ilo");
+    assert!(
+        out.status.success(),
+        "ilo {engine} failed for `{src}`: stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    String::from_utf8_lossy(&out.stdout).trim().to_string()
+}
+
 // ── match arm block bodies ──────────────────────────────────────────────────
 //
 // Multi-statement match arm bodies via `pat:{stmt;stmt;expr}` already live in
@@ -233,4 +246,77 @@ fn for_range_matches_at_jit() {
 fn hyphen_ident_with_keyword_prefix_vm() {
     let src = "for-each xs:Lt>t;cat xs \"|\"\ngo s:t>t;ws=spl s \",\";for-each ws\n";
     assert_eq!(run("--vm", src, "go", "a,b,c"), "a|b|c");
+}
+
+// ── named-args desugar must not eat inline lambdas ──────────────────────────
+//
+// Regression for the parser dispatch added in c7b8f8a6. Detection of
+// `name( ident :` for named-args calls also matches the shape of an inline
+// lambda passed as the first positional arg to a builtin HOF
+// (`flt (x:n>b;x > 0) xs`). The fix gates named-args on the callee being a
+// known user-defined function. Builtins and unknown idents fall through to
+// positional parsing.
+//
+// Cross-engine to confirm the parser change produces the same AST every
+// backend already handles for inline lambdas.
+//
+// `(n)>n` etc. is the inline lambda return type. Sources keep the original
+// repro shape (`flt (x:n>b;x > 0) xs`) plus map/fld variants.
+
+const LAMBDA_AS_FIRST_ARG_FLT: &str = "main>L n;flt (x:n>b;>x 0) [-1, 2, -3, 4]\n";
+
+#[test]
+fn lambda_as_first_arg_flt_vm() {
+    assert_eq!(run0("--vm", LAMBDA_AS_FIRST_ARG_FLT, "main"), "[2, 4]");
+}
+
+#[test]
+#[cfg(feature = "cranelift")]
+fn lambda_as_first_arg_flt_jit() {
+    assert_eq!(run0("--jit", LAMBDA_AS_FIRST_ARG_FLT, "main"), "[2, 4]");
+}
+
+const LAMBDA_AS_FIRST_ARG_MAP: &str = "main>L n;map (x:n>n;*x 2) [1, 2, 3]\n";
+
+#[test]
+fn lambda_as_first_arg_map_vm() {
+    assert_eq!(run0("--vm", LAMBDA_AS_FIRST_ARG_MAP, "main"), "[2, 4, 6]");
+}
+
+#[test]
+#[cfg(feature = "cranelift")]
+fn lambda_as_first_arg_map_jit() {
+    assert_eq!(run0("--jit", LAMBDA_AS_FIRST_ARG_MAP, "main"), "[2, 4, 6]");
+}
+
+const LAMBDA_AS_FIRST_ARG_FLD: &str = "main>n;fld (a:n b:n>n;+a b) [1, 2, 3] 0\n";
+
+#[test]
+fn lambda_as_first_arg_fld_vm() {
+    assert_eq!(run0("--vm", LAMBDA_AS_FIRST_ARG_FLD, "main"), "6");
+}
+
+#[test]
+#[cfg(feature = "cranelift")]
+fn lambda_as_first_arg_fld_jit() {
+    assert_eq!(run0("--jit", LAMBDA_AS_FIRST_ARG_FLD, "main"), "6");
+}
+
+// Named-args on a user-defined function must still desugar correctly,
+// AND co-exist with an inline-lambda call to a builtin in the same module.
+
+const NAMED_ARGS_AND_LAMBDA: &str = concat!(
+    "scale factor:n xs:L n>L n;map (x:n c:n>n;*x c) factor xs\n",
+    "main>L n;scale(xs: [1, 2, 3], factor: 10)\n",
+);
+
+#[test]
+fn named_args_coexists_with_lambda_vm() {
+    assert_eq!(run0("--vm", NAMED_ARGS_AND_LAMBDA, "main"), "[10, 20, 30]");
+}
+
+#[test]
+#[cfg(feature = "cranelift")]
+fn named_args_coexists_with_lambda_jit() {
+    assert_eq!(run0("--jit", NAMED_ARGS_AND_LAMBDA, "main"), "[10, 20, 30]");
 }

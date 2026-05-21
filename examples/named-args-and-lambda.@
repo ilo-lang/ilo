@@ -1,0 +1,25 @@
+-- Inline lambdas as the first positional argument to a builtin HOF
+-- (`flt (x:n>b; > x 0) xs`) must still parse, even on the agent-natural
+-- surface where user-fn calls can use named-args (`scale(xs:..., factor:...)`).
+--
+-- The two shapes overlap textually after the callee name (both start
+-- `( Ident :`). The parser disambiguates by checking whether the callee
+-- is a known user-defined function — only then is it a named-args call.
+-- Builtins fall through to positional parsing, so the inline lambda is
+-- parsed as a bare-atom argument.
+--
+-- This file exercises BOTH shapes side by side, so a future parser
+-- refactor can't regress one without the other.
+
+scale factor:n xs:L n>L n
+  map (x:n c:n>n; *x c) factor xs
+
+posnums xs:L n>L n
+  flt (x:n>b; >x 0) xs
+
+main>L n
+  doubled = scale(xs: [1, 2, 3], factor: 2)
+  posnums doubled
+
+-- run: main
+-- out: [2, 4, 6]
