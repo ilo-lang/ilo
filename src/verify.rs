@@ -227,6 +227,46 @@ fn compatible(a: &Ty, b: &Ty) -> bool {
     }
 }
 
+/// Build a targeted hint for a ternary whose branches have mismatched
+/// types. The verifier emits ILO-T003 with this hint to nudge agents
+/// toward the cheapest fix rather than the generic
+/// "both branches must return the same type" advice.
+///
+/// Strategy:
+/// - number vs text → surface both conversion directions (`str` on
+///   the number side, `default-on-err (num …) <fallback>` on the
+///   text side, since `num` returns `R n t` and the agent needs to
+///   pick which intent matches the surrounding function);
+/// - everything else (bool/nil vs text, list vs map, two named
+///   records, `R T E` vs `n`, …) → fall back to restructure advice,
+///   because the only builtin scalar coercions in ilo are `str`
+///   (n→t) and `num` (t→R n t). Suggesting a coercion outside that
+///   pair would just trip ILO-T013 and mislead the agent.
+fn ternary_mismatch_hint(then_ty: &Ty, else_ty: &Ty) -> String {
+    // The available scalar coercions in ilo are intentionally narrow:
+    // - `str x:n>t` converts a number to text;
+    // - `num x:t|n>R n t` parses text into a Result number (needs `!`
+    //   or pattern-match to unwrap, errors on bad input).
+    // Bools and nil don't have a builtin scalar→text conversion, so
+    // the hint must not suggest `str` for those — it would just trip
+    // ILO-T013.
+
+    // number vs text — both directions are reachable. Surface both so
+    // the agent picks the direction matching intent.
+    if matches!(
+        (then_ty, else_ty),
+        (Ty::Number, Ty::Text) | (Ty::Text, Ty::Number)
+    ) {
+        return "both directions are available: `str <num-branch>` makes both text (cheapest if the function returns `t`), or parse the text side with `default-on-err (num <text-branch>) <fallback>` to make both number (since `num` returns `R n t`). Pick whichever matches intent, or restructure to wrap each branch in a list/record/`O T` to keep both shapes".to_string();
+    }
+
+    // Fallback covers everything else: bool/nil vs text (no scalar
+    // conversion), `L n` vs `M t n`, `R t e` vs `n`, two different
+    // `Named` records, etc. Suggest restructuring rather than offering
+    // a coercion that would just produce a follow-on type error.
+    "no scalar coercion bridges these types - restructure so both branches share a shape: wrap each in `[...]` (list of one), a record with a tagged field, or `O T` / `R T E` to model the two-shape case explicitly".to_string()
+}
+
 /// Validate a value being passed as a map key against the map's declared
 /// key type. Allowed scalar key types are `Text` and `Number`; both may be
 /// passed where the declared key type is `Unknown` (uninferred). Otherwise
@@ -5553,6 +5593,7 @@ ilo has no tuple type."
                 } else if compatible(&else_ty, &then_ty) {
                     else_ty
                 } else {
+                    let hint = ternary_mismatch_hint(&then_ty, &else_ty);
                     self.err(
                         "ILO-T003",
                         func,
@@ -5560,7 +5601,7 @@ ilo has no tuple type."
                             "ternary branches have different types: {} vs {}",
                             then_ty, else_ty
                         ),
-                        Some("both branches of a ternary must return the same type".to_string()),
+                        Some(hint),
                         Some(span),
                     );
                     then_ty
