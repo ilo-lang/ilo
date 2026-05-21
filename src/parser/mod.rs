@@ -1613,6 +1613,33 @@ impl Parser {
         } else {
             Some(self.parse_atom()?)
         };
+        // Bare-call match scrutinee: `?name arg1 arg2 {pat:body;...}`.
+        // After `parse_atom` returns a bare `Ref(name)` for a known function
+        // of arity k>0, if exactly k atoms are sitting between us and a `{`,
+        // consume them as call args and rewrite the subject as a `Call`.
+        // This makes inline `?parse line{~v:...}` work without forcing a
+        // `r=parse line;?r{...}` rebind — same friction family as the
+        // list-literal call trap (pending #5g). The probe is shape-only so
+        // the bare-bool prefix ternary `?h a b` (no trailing `{`) keeps its
+        // existing prefix-ternary semantics: only fires when a `{` follows.
+        let subject = if let Some(Expr::Ref(name)) = &subject
+            && let Some(&arity) = self.fn_arity.get(name)
+            && arity > 0
+            && self.looks_like_call_match_subject(arity)
+        {
+            let func = name.clone();
+            let mut args = Vec::with_capacity(arity);
+            for _ in 0..arity {
+                args.push(self.parse_prefix_binop_operand()?);
+            }
+            Some(Expr::Call {
+                function: func,
+                args,
+                unwrap: UnwrapMode::None,
+            })
+        } else {
+            subject
+        };
         // Bare-bool ternary sugar: `?subj{a}{b}` → Ternary { subj, a, b }.
         // Symmetric with the existing `=cond{a}{b}` brace-brace ternary, but
         // for bool-valued conditions where no comparison operator is needed.
@@ -1706,6 +1733,63 @@ impl Parser {
         let arms = self.parse_match_arms()?;
         self.expect(&Token::RBrace)?;
         Ok(Stmt::Match { subject, arms })
+    }
+
+    /// Shape check for bare-call match scrutinee: does the cursor sit at
+    /// exactly `arity` atoms followed by `{`? Pure lookahead — does not
+    /// consume any tokens. Used by `parse_match_stmt` to detect
+    /// `?fn arg1 arg2 {pat:body;...}` so the function call can become the
+    /// match subject without the agent having to wrap in parens or rebind.
+    ///
+    /// "Atom" here is approximated by scanning a single token for the simple
+    /// terminals (Number/Text/True/False/Nil/Underscore/Ident) and walking
+    /// balanced (...)/[...] for the grouping forms. We deliberately reject
+    /// any operator token before the `{` — a leading prefix-op like `+a b`
+    /// is an operand but not an "atom" in this probe, and we'd rather
+    /// fall through to the existing prefix-ternary logic in those cases.
+    fn looks_like_call_match_subject(&self, arity: usize) -> bool {
+        let mut pos = self.pos;
+        for _ in 0..arity {
+            match self.token_at(pos) {
+                Some(Token::Number(_))
+                | Some(Token::Text(_))
+                | Some(Token::True)
+                | Some(Token::False)
+                | Some(Token::Nil)
+                | Some(Token::Underscore)
+                | Some(Token::Ident(_)) => {
+                    pos += 1;
+                }
+                Some(Token::LParen) => {
+                    let mut depth: usize = 1;
+                    pos += 1;
+                    while depth > 0 {
+                        match self.token_at(pos) {
+                            Some(Token::LParen) => depth += 1,
+                            Some(Token::RParen) => depth -= 1,
+                            None => return false,
+                            _ => {}
+                        }
+                        pos += 1;
+                    }
+                }
+                Some(Token::LBracket) => {
+                    let mut depth: usize = 1;
+                    pos += 1;
+                    while depth > 0 {
+                        match self.token_at(pos) {
+                            Some(Token::LBracket) => depth += 1,
+                            Some(Token::RBracket) => depth -= 1,
+                            None => return false,
+                            _ => {}
+                        }
+                        pos += 1;
+                    }
+                }
+                _ => return false,
+            }
+        }
+        self.token_at(pos) == Some(&Token::LBrace)
     }
 
     /// Shape check for the bare-bool ternary sugar `?subj{a}{b}`.
@@ -2582,6 +2666,31 @@ impl Parser {
             None
         } else {
             Some(Box::new(self.parse_atom()?))
+        };
+        // Bare-call match scrutinee in expr position. Mirror of the same
+        // rewrite in `parse_match_stmt`: if the atom resolved to a known
+        // user/builtin fn ref of arity k>0 and exactly k atoms sit between
+        // the cursor and a `{`, consume them as call args and rewrite the
+        // subject as `Expr::Call`. Lets `s=?fn args{~v:...;^e:...}` parse
+        // inline without forcing the agent to rebind `r=fn args` first.
+        let subject = if let Some(boxed) = &subject
+            && let Expr::Ref(name) = boxed.as_ref()
+            && let Some(&arity) = self.fn_arity.get(name)
+            && arity > 0
+            && self.looks_like_call_match_subject(arity)
+        {
+            let func = name.clone();
+            let mut args = Vec::with_capacity(arity);
+            for _ in 0..arity {
+                args.push(self.parse_prefix_binop_operand()?);
+            }
+            Some(Box::new(Expr::Call {
+                function: func,
+                args,
+                unwrap: UnwrapMode::None,
+            }))
+        } else {
+            subject
         };
         // Bare-bool ternary sugar in expr position. See `parse_match_stmt`
         // for the rationale and shape detection.

@@ -1163,6 +1163,7 @@ Match replaces `switch`. There is no fall-through - each arm is independent. The
 | `!cond expr` | braceless negated guard (early return) |
 | `!cond{then}{else}` | negated ternary |
 | `?x{arms}` | match named value |
+| `?fn args{arms}` | match the result of a call inline: `?safe-div a b{~v:...;^e:...}` (parens optional - `?(fn args){arms}` equivalent) |
 | `?{arms}` | match last result |
 | `@v list{body}` | iterate list |
 | `@i a..b{body}` | range iteration: i from a (inclusive) to b (exclusive) |
