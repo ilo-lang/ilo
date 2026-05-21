@@ -807,9 +807,21 @@ Behind the `http` feature flag (on by default). Without the feature, `get`/`pst`
 
 ilo provides one process-spawn primitive: `run cmd argv > R (M t t) t`. The signature is deliberately narrow: the first argument is the program (text), the second is the argv list (`L t`), and the result is a `Result` whose `Ok` carries a three-key Map of stdout / stderr / code as text.
 
+**Output map schema.** On `Ok`, the map has exactly these three keys, all `t`-valued:
+
+| key      | type | meaning                                                       |
+|----------|------|---------------------------------------------------------------|
+| `stdout` | `t`  | captured stdout bytes decoded as UTF-8 (lossy), as written    |
+| `stderr` | `t`  | captured stderr bytes decoded as UTF-8 (lossy), as written    |
+| `code`   | `t`  | exit code as decimal text (`"0"`, `"1"`, …); on unix a signal-terminated child reports `"signal:<n>"` (e.g. `"signal:9"`), and an unknown status reports `"unknown"` |
+
+The map is always shaped this way on success: callers can rely on `mget m "stdout"`, `mget m "stderr"`, and `mget m "code"` all being non-nil text. Trailing newlines from the child are preserved verbatim, so use `trm` if you want to compare against a stripped value.
+
 ```
 r=run "echo" ["hi"]              -- Ok({"stdout":"hi\n","stderr":"","code":"0"})
 out=mget r.! "stdout"            -- "hi\n"
+code=mget r.! "code"             -- "0"
+err=mget r.! "stderr"            -- ""
 
 $"git" ["status", "--short"]     -- equivalent: $ is the sigil shortcut for run
 ```

@@ -32,6 +32,14 @@ Timeout variants round up to the nearest second. Err on timeout or connection fa
 
 `env name` (var), `env-all` (`R (M t t) t`), `exit code`.
 
+`run cmd argv` (`R (M t t) t`) spawns `cmd` with `argv` (`L t`). No shell, no glob, no interpolation. `$` is the sigil shortcut. On `Ok`, the map has three keys, all text: `stdout` (captured stdout, lossy utf-8), `stderr` (captured stderr), `code` (decimal exit code; signalled child reports `signal:<n>`, unknown status reports `unknown`). Non-zero exit is **not** an `Err`, branch on `mget m "code"`. `Err` is reserved for spawn failure or output cap (10 MiB/stream). Stdin is closed; child inherits parent env + cwd. WASM Errs.
+
+```
+m=run!! "echo" ["hi"]            -- {"stdout":"hi\n","stderr":"","code":"0"}
+out=mget m "stdout"              -- "hi\n"
+code=mget m "code"               -- "0"
+```
+
 ## Time
 
 `now` (s), `now-ms`, `sleep ms`, `clock`. Date parsing/formatting (`dtfmt`, `dtparse`, `dtparse-rel`) lives in `ilo-builtins-text`.
