@@ -1,0 +1,31 @@
+-- Rich HTTP response variants: `getx` / `pstx` return `R (M t _) t` —
+-- an Ok-map with keys `status` (n), `headers` (M t t), and `body` (t).
+-- Use these when you need status-code branching (304 Not Modified, 429
+-- Too Many Requests), response-header reads (ETag, Link, X-RateLimit-*),
+-- or redirect following. Existing `get`/`pst` body-only shapes stay intact
+-- for token-cheap GETs that don't care about metadata.
+--
+-- Both accept an optional trailing M t t request-headers map (same shape
+-- as `get`/`pst`).
+--
+-- Errors: connection refused on a closed loopback port is a stable Err
+-- across OS/CI. The Ok branch never fires; we match on the Result tag to
+-- keep the assertion OS-portable.
+
+probe-getx>t;r=getx "http://127.0.0.1:1";?r{~_:"unexpected ok";^_:"err as expected"}
+
+probe-pstx>t;r=pstx "http://127.0.0.1:1" "body";?r{~_:"unexpected ok";^_:"err as expected"}
+
+-- With request headers (verifies the 2-arg / 3-arg forms parse and route).
+probe-getx-hdrs>t;h=mset mmap "x-trace" "demo";r=getx "http://127.0.0.1:1" h;?r{~_:"unexpected ok";^_:"err as expected"}
+
+probe-pstx-hdrs>t;h=mset mmap "x-trace" "demo";r=pstx "http://127.0.0.1:1" "body" h;?r{~_:"unexpected ok";^_:"err as expected"}
+
+-- run: probe-getx
+-- out: err as expected
+-- run: probe-pstx
+-- out: err as expected
+-- run: probe-getx-hdrs
+-- out: err as expected
+-- run: probe-pstx-hdrs
+-- out: err as expected
