@@ -469,6 +469,46 @@ spl text "\n"       -- split file content into lines
 spl pdf  "\f"       -- split pdftotext output into pages
 ```
 
+### Interpolation: `{name}`
+
+A bare `{name}` slot inside a double-quoted string desugars at parse time
+to a `fmt` call with the binding looked up by name. Manifesto principle 1:
+`"hello {name}"` is cheaper for an agent to write than the verbose
+`fmt "hello {}" name`, and both produce the same AST so they cost
+nothing extra at verify or run time.
+
+```
+greet name:t>t
+  fmt "hello {name}"        -- desugars to: fmt "hello {}" name
+
+pair a:t b:t>t
+  fmt "{a} and {b}"         -- multiple slots, resolved left-to-right
+
+with-braces name:t>t
+  fmt "{{json}} {name}"     -- {{ / }} escape to literal { / }
+```
+
+Scope (deliberately tight to keep the surface predictable):
+
+- Only single-identifier slots matching the ident regex
+  (`[a-z][a-z0-9]*(-[a-z0-9]+)*`). `{a-b}` works; `{Foo}`, `{x + 1}`,
+  `{ }` pass through verbatim.
+- `{{` / `}}` escape to literal `{` / `}`, but only inside strings that
+  actually contain at least one `{ident}` slot. Strings with no
+  interpolation slot keep `{{` / `}}` verbatim so existing programs
+  (e.g. JSON templates) are not silently rewritten.
+- Bare `{}` keeps its existing meaning as a positional placeholder filled
+  by trailing args of the enclosing `fmt` call.
+- Mixing `{ident}` and bare `{}` in the same string is left verbatim:
+  pick one style per string. Use `fmt "{name} {} done" other` and the
+  parser keeps the `{name}` literal so the bare `{}` resolves to `other`,
+  or write `"{name} {other} done"` and drop the trailing arg.
+- Undefined `{name}` slots surface as a normal ILO-T004 undefined-variable
+  diagnostic against the desugared `fmt` arg, not a silent empty
+  substitution.
+- Interpolation does not apply in pattern literals (`"foo":` arm of a
+  match) - literal patterns stay literal.
+
 ---
 
 ## Builtins

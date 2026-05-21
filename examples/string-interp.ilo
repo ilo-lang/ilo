@@ -1,0 +1,32 @@
+-- `{name}` string interpolation: write the binding name inline rather
+-- than positional `{}` + trailing args. Manifesto principle 1
+-- (token-conservative). `"hello {name}"` desugars at parse time to
+-- `fmt "hello {}" name`, so it costs nothing extra at runtime and
+-- type-checks the same way.
+--
+-- Scope:
+--   - Only single-ident slots: `{name}`, `{a-b}` (lexer ident regex).
+--   - Not expressions: `{x + 1}` passes through verbatim.
+--   - `{{` / `}}` escape to literal `{` / `}` inside interpolated strings.
+--   - Bare `{}` still works as today's positional placeholder.
+--   - Mixing `{ident}` and `{}` in the same string is left verbatim:
+--     pick one style per string.
+
+greet name:t>t
+  fmt "hello {name}"
+
+pair a:t b:t>t
+  fmt "{a} and {b}"
+
+with-braces name:t>t
+  fmt "{{json}} {name}"
+
+main>t
+  cat [
+    greet "world"
+    pair "hi" "there"
+    with-braces "ok"
+  ] "; "
+
+-- run: main
+-- out: hello world; hi and there; {json} ok
