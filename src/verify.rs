@@ -616,6 +616,11 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("argmax", &["L n"], "n"),
     ("argmin", &["L n"], "n"),
     ("argsort", &["L n"], "L n"),
+    // bisect xs target > n — leftmost insertion point in a sorted numeric
+    // list (Python `bisect_left`). Returns `0` for empty list and `len xs`
+    // when target exceeds every element. Caller owns the sortedness
+    // precondition; bisect does not validate it.
+    ("bisect", &["L n", "n"], "n"),
     // Duration parse / format. Tree-bridge eligible, no FnRef args.
     // dur-parse returns R n t so malformed input surfaces as a typed error.
     // dur-fmt is total — always produces Text.
