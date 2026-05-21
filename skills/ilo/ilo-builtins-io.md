@@ -24,6 +24,25 @@ Timeout variants round up to the nearest second. Err on timeout or connection fa
 
 `!` auto-unwraps on all HTTP builtins (`get!`, `pst!`, `get-to!`, `pst-to!`): Ok→body, Err propagates out of the enclosing `R`-returning fn. `!!` panics on Err instead (script-style). Prefer `pst!` over `?r{~v:v;^e:^e}` boilerplate when the caller already returns `R`; saves ~30 tokens per call site.
 
+### Parsing Content-Type
+
+No `ct-parse` builtin. Split on `;`, trim, lowercase. For `application/json; charset=utf-8`:
+
+```
+raw = "application/json; charset=utf-8"
+parts = spl raw ";"
+m0 = at parts 0
+media = lwr (trm m0)                          -- "application/json"
+n = len parts
+cs = ?(>=n 2){at parts 1}{""}
+kv = spl (trm cs) "="
+charset = ?(=(len kv) 2){lwr (at kv 1)}{""}   -- "utf-8" or ""
+```
+
+Note: don't bind to `ct`, it shadows a builtin name and the verifier rejects it. Use `raw`, `ctype`, or similar.
+
+Same `spl ";"` + `trm` + `spl "="` recipe handles any `;`-delimited header (`Cache-Control`, `Cookie`, `Set-Cookie` attrs). For `,`-joined values (`Accept: a, b, c`), `spl ","` first then loop.
+
 ## JSON
 
 `jpar s` parse (`R _ t`), `jpar-list s` parse and assert array (`R (L _) t` — use when you know the response is an array: `@x (jpar-list! body){...}`), `jpth s path` dot-path (typed), `jkeys s path` sorted object keys, `jdmp v` serialize. Numeric keys stringified in `jdmp`.
