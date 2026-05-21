@@ -17,10 +17,18 @@ Prefix-call: `name arg1 arg2 ...`. Cross-engine unless noted.
 
 ## HTTP
 
+**Every verb accepts an optional trailing headers map (`M t t`)** - this is the canonical path for Authorization, Accept, X-API-Key, etc. Don't write a wrapper; just pass the map as the last arg.
+
 `get url` (`R t t`), `get url headers` (with `M t t` custom headers), `get-to url timeout-ms` (explicit ms timeout).
 `pst url body` (`R t t`), `pst url body headers`, `pst-to url body timeout-ms`.
 `put url body` / `pat url body` mirror `pst` (PUT / PATCH); accept optional headers map.
 `del url` / `hed url` / `opt url` mirror `get` (DELETE / HEAD / OPTIONS); accept optional headers map.
+
+```
+hs=mset (mset mmap "Authorization" tok) "Accept" "application/json"
+r=get! "https://api.example.com/v1/users" hs   -- two-arg GET with headers
+p=pst! "https://api.example.com/v1/users" body hs   -- three-arg POST with headers
+```
 `get-many urls` (parallel fan-out, `L (R t t)`).
 Verb cluster is limited to the seven safe methods (GET/POST/PUT/PATCH/DELETE/HEAD/OPTIONS); TRACE and CONNECT are deliberately out of scope.
 Timeout variants round up to the nearest second. Err on timeout or connection failure.
@@ -30,6 +38,8 @@ Timeout variants round up to the nearest second. Err on timeout or connection fa
 Parsing `;`-delimited headers (Content-Type, Cache-Control, Cookie): no `ct-parse` builtin, use `spl ";"` then `trm`/`lwr`, then `spl "="` per param. `ps=spl raw ";";media=lwr (trm (at ps 0));kv=spl (trm (at ps 1)) "="`. Don't bind to `ct` (shadows builtin).
 
 ## JSON
+
+**`jpth` paths are dot-path only - no JSONPath wildcards.** `jpth body "user.addresses.0.city"` is right. Leading `$`, `*`, or `[...]` (JSONPath/JMESPath syntax) are rejected with a diagnostic. Numeric list indices are bare numbers between dots, not `[0]`.
 
 `jpar s` parse (`R _ t`), `jpar-list s` parse and assert array (`R (L _) t` — use when you know the response is an array: `@x (jpar-list! body){...}`), `jpth s path` dot-path lookup, `jkeys s path` sorted object keys, `jdmp v` serialize. Numeric keys stringified in `jdmp`.
 
