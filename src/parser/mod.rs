@@ -65,6 +65,13 @@ pub struct Parser {
     /// For each known function, which parameter positions take a function
     /// reference (HOF positions).
     fn_param_is_fn: HashMap<String, Vec<bool>>,
+    /// For each known USER function, the declared parameter names in order.
+    /// Builtins are intentionally absent: builtins don't have stable
+    /// user-facing param names, so named-args calls are rejected for them.
+    /// Populated by `register_user_fn`; consulted by named-args desugar in
+    /// `parse_call_or_atom` to reorder `f(a: x, b: y)` to positional.
+    /// See SPEC-AGENT-NATURAL.md §2.7.
+    fn_param_names: HashMap<String, Vec<String>>,
     /// When true, an Ident followed by another whitespace-separated atom is
     /// parsed as a bare Ref (list element) rather than a function call.
     /// Set only inside list-literal element parsing.
@@ -142,6 +149,7 @@ impl Parser {
             decl_boundary,
             fn_arity,
             fn_param_is_fn,
+            fn_param_names: HashMap::new(),
             no_whitespace_call: false,
             lifted_decls: Vec::new(),
             lambda_counter: 0,
@@ -1370,6 +1378,13 @@ impl Parser {
                 }
             }
             Some(Token::At) => self.parse_foreach(),
+            // Agent-natural surface: `if cond { body }` / `if cond { a } else { b }`,
+            // `while cond { body }`, `for x in xs { body }` / `for i in a..b { body }`.
+            // Each desugars to an existing AST node so the verifier and backends
+            // see nothing new. The original `?h`/`@`/`wh` forms keep parsing.
+            Some(Token::KwIf) => self.parse_if_stmt(),
+            Some(Token::KwWhile) => self.parse_while_stmt(),
+            Some(Token::KwFor) => self.parse_for_stmt(),
             Some(Token::Ident(name)) if name == "ret" => {
                 self.advance(); // consume "ret"
                 let value = self.parse_expr()?;
@@ -2181,6 +2196,67 @@ impl Parser {
         }
     }
 
+    /// Agent-natural: `if cond { body }` or `if cond { body } else { else-body }`.
+    ///
+    /// Statement-position form. Desugars to `Stmt::Guard { condition, body, else_body }`
+    /// — the same AST that `cond{body}` / `cond{body}{else}` already produce. The
+    /// guard form is non-value-producing; for `v = if c { a } else { b }` see the
+    /// matching arm in `parse_expr_inner`, which lowers to `Expr::Ternary`.
+    fn parse_if_stmt(&mut self) -> Result<Stmt> {
+        self.expect(&Token::KwIf)?;
+        let condition = self.parse_expr()?;
+        let body = self.parse_brace_body()?;
+        let else_body = if self.peek() == Some(&Token::KwElse) {
+            self.advance(); // consume `else`
+            Some(self.parse_brace_body()?)
+        } else {
+            None
+        };
+        Ok(Stmt::Guard {
+            condition,
+            negated: false,
+            body,
+            else_body,
+            braceless: false,
+        })
+    }
+
+    /// Agent-natural: `while cond { body }`. Desugars to `Stmt::While` — identical
+    /// to the AST that `wh cond{body}` already produces.
+    fn parse_while_stmt(&mut self) -> Result<Stmt> {
+        self.expect(&Token::KwWhile)?;
+        let condition = self.parse_expr()?;
+        let body = self.parse_brace_body()?;
+        Ok(Stmt::While { condition, body })
+    }
+
+    /// Agent-natural: `for x in xs { body }` or `for i in a..b { body }`.
+    /// Desugars to `Stmt::ForEach` / `Stmt::ForRange` — identical to what
+    /// `@x xs{body}` / `@i a..b{body}` already produce.
+    fn parse_for_stmt(&mut self) -> Result<Stmt> {
+        self.expect(&Token::KwFor)?;
+        let binding = self.expect_ident()?;
+        self.expect(&Token::KwIn)?;
+        let start_expr = self.parse_expr_inner()?;
+        if self.peek() == Some(&Token::DotDot) {
+            self.advance();
+            let end_expr = self.parse_expr_inner()?;
+            let body = self.parse_brace_body()?;
+            return Ok(Stmt::ForRange {
+                binding,
+                start: start_expr,
+                end: end_expr,
+                body,
+            });
+        }
+        let body = self.parse_brace_body()?;
+        Ok(Stmt::ForEach {
+            binding,
+            collection: start_expr,
+            body,
+        })
+    }
+
     /// `@binding collection{body}` or `@binding start..end{body}`
     fn parse_foreach(&mut self) -> Result<Stmt> {
         self.expect(&Token::At)?;
@@ -2586,6 +2662,12 @@ impl Parser {
             }
             // Match expression: ?expr{...} or ?{...}, or prefix ternary: ?=x 0 10 20
             Some(Token::Question) => self.parse_question_expr(),
+            // Agent-natural value-producing if/else: `if cond { a } else { b }`.
+            // Desugars to `Expr::Ternary`. The `else` arm is mandatory in
+            // expression position — an if-without-else returns nil and can't
+            // appear inside a binop or call argument. Use the statement form
+            // for that shape.
+            Some(Token::KwIf) => self.parse_if_expr(),
             // Atoms and calls — infix operators can follow these
             _ => {
                 let primary = self.parse_call_or_atom()?;
@@ -2628,6 +2710,29 @@ impl Parser {
                     | Token::NotEq
             )
         )
+    }
+
+    /// Agent-natural value-producing if/else: `if cond { a } else { b }` →
+    /// `Expr::Ternary`. The `else` arm is mandatory at expression position.
+    /// Missing `else` is rejected with a hint pointing at the statement form.
+    fn parse_if_expr(&mut self) -> Result<Expr> {
+        self.expect(&Token::KwIf)?;
+        let condition = self.parse_expr()?;
+        let then_body = self.parse_brace_body()?;
+        if self.peek() != Some(&Token::KwElse) {
+            return Err(self.error_hint(
+                "ILO-P009",
+                "`if` at expression position requires an `else` branch".into(),
+                "either add `else { ... }`, or use the statement form `if cond { body }` (returns nil) at top of a statement.".into(),
+            ));
+        }
+        self.advance(); // consume `else`
+        let else_body = self.parse_brace_body()?;
+        Ok(Expr::Ternary {
+            condition: Box::new(condition),
+            then_expr: Box::new(body_to_expr(then_body)),
+            else_expr: Box::new(body_to_expr(else_body)),
+        })
     }
 
     /// Parse `?` as either match (`?expr{...}`) or prefix ternary (`?=x 0 10 20`).
@@ -3019,6 +3124,152 @@ impl Parser {
             .map(|p| matches!(p.ty, Type::Fn(_, _)))
             .collect();
         self.fn_param_is_fn.insert(name.to_string(), flags);
+        // Track declared param names so the named-args desugar can reorder
+        // `f(a: x, b: y)` back to positional. User fns only (builtins absent).
+        let names: Vec<String> = params.iter().map(|p| p.name.clone()).collect();
+        self.fn_param_names.insert(name.to_string(), names);
+    }
+
+    /// Parse a named-arguments call: `f(p1: expr, p2: expr [,])`.
+    ///
+    /// Spec: SPEC-AGENT-NATURAL.md §2.7. The function name has already been
+    /// consumed (in `parse_call_or_atom`); the cursor is at the opening `(`.
+    /// We tokenize each `name: expr` pair, then reorder against the declared
+    /// param-name list (from `fn_param_names`) and emit a positional
+    /// `Expr::Call`. The verifier and every backend see the same AST as the
+    /// positional form — zero runtime/verifier changes.
+    ///
+    /// Errors (all ILO-P023):
+    ///   * function has no declared param names (e.g. it's a builtin or an
+    ///     unknown ident) — named-args is user-fn only in v0.
+    ///   * label doesn't match any declared param — with `did you mean` hint.
+    ///   * label repeated — same arg supplied twice.
+    ///   * missing labels surface as the existing arity error at verify time,
+    ///     intentionally reusing the established diagnostic path.
+    /// Mixing positional and named is rejected in v0 by construction: this
+    /// path is only entered when the call site is `name( ident :` form, and
+    /// once entered every pair must be `name: expr`.
+    fn parse_named_args_call(&mut self, name: String, unwrap: UnwrapMode) -> Result<Expr> {
+        // Resolve declared param names BEFORE consuming the `(` so error
+        // spans land on the function name / opening paren rather than mid-
+        // way through the arg list.
+        let param_names: Vec<String> = match self.fn_param_names.get(&name) {
+            Some(ns) => ns.clone(),
+            None => {
+                return Err(self.error_hint(
+                    "ILO-P023",
+                    format!(
+                        "named-args call on `{name}` but no declared parameter names are known"
+                    ),
+                    if Builtin::is_builtin(&name) || resolve_alias(&name).is_some() {
+                        format!(
+                            "`{name}` is a builtin; named-args only works on user-defined functions. \
+Call it positionally instead: `{name} <args>`."
+                        )
+                    } else {
+                        format!(
+                            "`{name}` isn't a known function at this point. Declare `{name}` above \
+the call site or check the spelling."
+                        )
+                    },
+                ));
+            }
+        };
+        self.expect(&Token::LParen)?;
+        let mut provided: Vec<(String, Expr)> = Vec::new();
+        // Empty `f()` is handled by the zero-arg call branch upstream; here
+        // we always parse at least one `name: expr` pair.
+        loop {
+            // Each pair: Ident `:` expr
+            let label = match self.peek() {
+                Some(Token::Ident(s)) => s.clone(),
+                _ => {
+                    return Err(self.error_hint(
+                        "ILO-P023",
+                        format!(
+                            "expected named-arg label inside `{name}(...)`, got {:?}",
+                            self.peek()
+                        ),
+                        "named-args call form is `f(p1: expr, p2: expr)` — each item must start \
+with a declared parameter name."
+                            .to_string(),
+                    ));
+                }
+            };
+            self.advance(); // ident
+            self.expect(&Token::Colon)?;
+            // Validate label against the declared param list.
+            if !param_names.iter().any(|p| p == &label) {
+                let hint = closest_param(&label, &param_names)
+                    .map(|s| format!("did you mean `{s}`?"))
+                    .unwrap_or_else(|| {
+                        format!(
+                            "`{name}` declares params: {}",
+                            param_names
+                                .iter()
+                                .map(|p| format!("`{p}`"))
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        )
+                    });
+                return Err(self.error_hint(
+                    "ILO-P023",
+                    format!("unknown named arg `{label}` for `{name}`"),
+                    hint,
+                ));
+            }
+            // Duplicate-label guard. Same arg supplied twice is always a bug;
+            // surfacing it here (not at the verifier) keeps the error close
+            // to the offending source.
+            if provided.iter().any(|(k, _)| k == &label) {
+                return Err(self.error_hint(
+                    "ILO-P023",
+                    format!("named arg `{label}` supplied twice in call to `{name}`"),
+                    "remove the duplicate; each declared parameter accepts at most one named \
+binding per call site."
+                        .to_string(),
+                ));
+            }
+            let value = self.parse_expr()?;
+            provided.push((label, value));
+            match self.peek() {
+                Some(Token::Comma) => {
+                    self.advance();
+                    // Trailing comma before `)` is allowed.
+                    if self.peek() == Some(&Token::RParen) {
+                        break;
+                    }
+                }
+                Some(Token::RParen) => break,
+                _ => {
+                    return Err(self.error_hint(
+                        "ILO-P023",
+                        format!(
+                            "expected `,` or `)` after named arg in `{name}(...)`, got {:?}",
+                            self.peek()
+                        ),
+                        "separate named args with `,` and close the call with `)`.".to_string(),
+                    ));
+                }
+            }
+        }
+        self.expect(&Token::RParen)?;
+        // Reorder to positional. Any missing param is left out of the args
+        // vec — the verifier's arity check (ILO-T006/T013) then fires with
+        // its established message, keeping diagnostics consistent with the
+        // positional path.
+        let mut args: Vec<Expr> = Vec::with_capacity(provided.len());
+        for p in &param_names {
+            if let Some(idx) = provided.iter().position(|(k, _)| k == p) {
+                args.push(provided.remove(idx).1);
+            }
+            // missing — let the verifier handle arity reporting.
+        }
+        Ok(Expr::Call {
+            function: name,
+            args,
+            unwrap,
+        })
     }
 
     /// Is arg position `arg_idx` of function `outer_name` a fn-ref position
@@ -3207,6 +3458,40 @@ or write `({fmt_name} \"...\" ...)` so its args are grouped."
                     args: vec![],
                     unwrap,
                 });
+            }
+
+            // Agent-natural named-args call: `f(name: expr, name: expr)`.
+            // Spec: SPEC-AGENT-NATURAL.md §2.7. Parse-time desugar — we
+            // reorder named args to positional based on the declared param
+            // order tracked in `fn_param_names`, then emit an ordinary
+            // `Expr::Call`. The verifier and every backend see exactly the
+            // same AST as the positional form.
+            //
+            // Detection: `( Ident :` immediately after the name, AND `name`
+            // is a known user-defined function (we have its declared param
+            // names). The user-fn gate is load-bearing: without it, an
+            // inline lambda passed as the first positional argument to a
+            // builtin HOF (`flt (x:n>b;x > 0) xs`) gets cannibalised here
+            // because `( Ident :` also opens an inline lambda atom.
+            //
+            // For unknown idents (typo of a user fn) we deliberately fall
+            // through to positional parsing — the natural ILO-T004
+            // "undefined function" at verify time is the same diagnostic
+            // we'd get on a positional call, and is more valuable than
+            // breaking inline-lambda parsing.
+            //
+            // Other ambiguity sources are already ruled out:
+            //   * zero-arg `name()` is matched above;
+            //   * `(expr)` as a grouped first arg of a positional call never
+            //     starts with `Ident :` (the `:` is exclusive to record
+            //     fields and param patterns, neither of which a paren-grouped
+            //     expression can produce).
+            if self.peek() == Some(&Token::LParen)
+                && matches!(self.token_at(self.pos + 1), Some(Token::Ident(_)))
+                && self.token_at(self.pos + 2) == Some(&Token::Colon)
+                && self.fn_param_names.contains_key(&name)
+            {
+                return self.parse_named_args_call(name, unwrap);
             }
 
             // If we consumed `!` / `!!`, this must be a call (even with zero
@@ -4890,6 +5175,42 @@ fn is_ident_for_interp(s: &str) -> bool {
 }
 
 /// Extract the last expression from a body, falling back to Nil.
+/// Find the closest declared param name to a misspelled named-arg label.
+/// Used by the named-args desugar to render "did you mean" hints inside
+/// ILO-P023. Returns `None` when nothing is within edit distance 3.
+fn closest_param(name: &str, candidates: &[String]) -> Option<String> {
+    let mut best: Option<(String, usize)> = None;
+    for c in candidates {
+        let d = levenshtein_p(name, c);
+        if d <= 3 && best.as_ref().is_none_or(|(_, bd)| d < *bd) {
+            best = Some((c.clone(), d));
+        }
+    }
+    best.map(|(s, _)| s)
+}
+
+fn levenshtein_p(a: &str, b: &str) -> usize {
+    let a: Vec<char> = a.chars().collect();
+    let b: Vec<char> = b.chars().collect();
+    let (m, n) = (a.len(), b.len());
+    let mut dp = vec![vec![0usize; n + 1]; m + 1];
+    for (i, row) in dp.iter_mut().enumerate().take(m + 1) {
+        row[0] = i;
+    }
+    for (j, val) in dp[0].iter_mut().enumerate().take(n + 1) {
+        *val = j;
+    }
+    for i in 1..=m {
+        for j in 1..=n {
+            let cost = if a[i - 1] == b[j - 1] { 0 } else { 1 };
+            dp[i][j] = (dp[i - 1][j] + 1)
+                .min(dp[i][j - 1] + 1)
+                .min(dp[i - 1][j - 1] + cost);
+        }
+    }
+    dp[m][n]
+}
+
 fn body_to_expr(body: Vec<Spanned<Stmt>>) -> Expr {
     if body.is_empty() {
         return Expr::Literal(Literal::Nil);
@@ -5039,6 +5360,22 @@ fn reserved_keyword_binding_message(tok: &Token) -> Option<(String, String)> {
             "const",
             "`const` is reserved; rename the binding to e.g. `c`, `k`, or `constv`",
         ),
+        Token::KwElse => (
+            "else",
+            "`else` is reserved; rename the binding to e.g. `otherwise`, `alt`, or `elsev`",
+        ),
+        Token::KwFor => (
+            "for",
+            "`for` is reserved; rename the binding to e.g. `each`, `loopv`, or `forv`",
+        ),
+        Token::KwWhile => (
+            "while",
+            "`while` is reserved; rename the binding to e.g. `until`, `loopv`, or `whilev`",
+        ),
+        Token::KwIn => (
+            "in",
+            "`in` is reserved; rename the binding to e.g. `inside`, `member`, or `inv`",
+        ),
         _ => return None,
     };
     Some((
@@ -5057,6 +5394,16 @@ fn reserved_keyword_message(tok: &Token) -> Option<(String, String)> {
         Token::KwDef => ("def", "ilo defines functions as `name params>return;body`"),
         Token::KwVar => ("var", "ilo uses `name=expr` for bindings"),
         Token::KwConst => ("const", "ilo uses `name=expr` for bindings"),
+        Token::KwElse => (
+            "else",
+            "`else` is reserved for the if/else conditional form",
+        ),
+        Token::KwFor => ("for", "`for` is reserved for `for x in xs { body }` loops"),
+        Token::KwWhile => (
+            "while",
+            "`while` is reserved for `while cond { body }` loops",
+        ),
+        Token::KwIn => ("in", "`in` is reserved for the `for x in xs` loop form"),
         _ => return None,
     };
     Some((

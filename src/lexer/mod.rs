@@ -48,6 +48,23 @@ pub enum Token {
     #[token("const")]
     KwConst,
 
+    // Agent-natural surface keywords (compat/agent-natural branch).
+    // These desugar at parse time to existing AST nodes — the verifier
+    // and every backend see the same AST as today.
+    //
+    // Identifier regex `[a-z][a-z0-9]*(-[a-z0-9]+)*` would also match these
+    // bare words; logos resolves the tie by preferring the explicit `#[token]`
+    // over the regex. Hyphenated identifiers (`in-window`, `for-each`,
+    // `else-clause`) keep parsing as `Ident` because logos picks longest match.
+    #[token("else")]
+    KwElse,
+    #[token("for")]
+    KwFor,
+    #[token("while")]
+    KwWhile,
+    #[token("in")]
+    KwIn,
+
     // Boolean literals
     #[token("true")]
     True,
@@ -217,6 +234,10 @@ impl Token {
             Token::KwDef => "`def`".into(),
             Token::KwVar => "`var`".into(),
             Token::KwConst => "`const`".into(),
+            Token::KwElse => "`else`".into(),
+            Token::KwFor => "`for`".into(),
+            Token::KwWhile => "`while`".into(),
+            Token::KwIn => "`in`".into(),
 
             // Boolean / nil
             Token::True => "`true`".into(),

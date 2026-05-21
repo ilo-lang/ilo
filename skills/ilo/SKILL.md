@@ -30,6 +30,19 @@ This file is a thin bootstrap. The rich, version-matched ilo skill content is se
 
 Every skill subcommand accepts `--json`. The envelope is `{schemaVersion: 1, ...}`, matching the rest of ilo's CLI JSON contract.
 
+## Surface (this branch is `compat/agent-natural`)
+
+This binary is built off the `compat/agent-natural` experiment branch. The canonical surface here leads with what most agents reach for; the prefix-Polish forms keep parsing.
+
+- **Infix arithmetic / comparison / boolean.** `a + b * c`, `x >= 0 & x <= 100`. Standard precedence. Prefix (`+a b`, `*a b`) still works.
+- **`if cond { a } else { b }`** is the canonical conditional. Value-producing. `else` optional (absent `else` yields `nil`). `if cond { ret v }` for early return inside fn bodies.
+- **`for x in xs { ... }`, `for i in 0..n { ... }`, `while cond { ... }`.** The `@x xs{...}` / `wh cond{...}` aliases still parse.
+- **Match arm bodies accept `{ stmt; stmt; expr }` blocks.** No more pulling multi-statement bodies into helper fns.
+- **Result match stays `?r{~v: body; ^e: body}`.** Distinct operation from `if`.
+- **`??` is infix-only.** `name = x ?? "default"`. Never start a statement with `??`.
+
+Everything else from `main` continues to apply: builtin names and signatures, function declaration shape (`f x:n>n;body`), records, pipes, lambdas, types, error codes.
+
 ## Available skills
 
 Twelve task-focused skills cover the surface. Load only the slices the current task needs (typical: 1-2 modules):

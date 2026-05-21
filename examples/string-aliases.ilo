@@ -1,0 +1,21 @@
+-- string-aliases.ilo: demonstrates muscle-memory long-form aliases for
+-- string case-conversion builtins, added in 0.12.1 (ILO-79, ILO-81).
+--
+-- Canonical names:  upr  lwr  cap
+-- Alias names:      upper  lower  capitalize
+--
+-- On first run with an alias the runtime emits a one-time hint pointing to
+-- the canonical short form. Subsequent runs are silent.
+--
+-- run: demo "> demo"
+--
+-- Expected output (modulo hint lines on first run):
+--   HELLO
+--   hello
+--   Hello
+
+demo > t
+s = "hello"
+prnt upper s    -- alias for upr: "HELLO"
+prnt lower (upr s)  -- alias for lwr: back to "hello"
+capitalize s    -- alias for cap: "Hello"

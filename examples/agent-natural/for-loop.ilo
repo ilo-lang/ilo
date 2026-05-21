@@ -1,0 +1,33 @@
+-- Agent-natural surface: `for x in xs { body }` and `for i in a..b { body }`
+-- desugar to `Stmt::ForEach` / `Stmt::ForRange` — identical to what
+-- `@x xs{body}` / `@i a..b{body}` produce today.
+--
+-- Spec: SPEC-AGENT-NATURAL.md §2.4.
+
+sum-to n:n>n
+  t=0
+  for i in 1..+n 1 { t=+t i }
+  t
+
+cat-words s:t>t
+  ws=spl s ","
+  out=""
+  for w in ws { out=+out w }
+  out
+
+count-nonempty s:t>n
+  ws=spl s ","
+  k=0
+  for w in ws {
+    if !=w "" { k=+k 1 }
+  }
+  k
+
+-- run: sum-to 10
+-- out: 55
+-- run: sum-to 100
+-- out: 5050
+-- run: cat-words a,b,c,d
+-- out: abcd
+-- run: count-nonempty a,,b,,c
+-- out: 3
