@@ -4048,6 +4048,152 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             }
         };
     }
+    // HTTP verb cluster (#5z). Same shape as `pst` (PUT, PATCH) or `get`
+    // (DELETE, HEAD, OPTIONS) — optional 3rd-arg (PUT/PAT) or 2nd-arg
+    // (DEL/HD/OPT) `M t t` headers map. Returns `R t t`.
+    if matches!(builtin, Some(Builtin::Put) | Some(Builtin::Pat))
+        && (args.len() == 2 || args.len() == 3)
+    {
+        let name = builtin.unwrap().name();
+        let (url, body) = match (&args[0], &args[1]) {
+            (Value::Text(u), Value::Text(b)) => (u.clone(), b.clone()),
+            _ => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("{name} requires (t, t), got ({:?}, {:?})", args[0], args[1]),
+                ));
+            }
+        };
+        if let Err(msg) = env.caps.check_net(url.as_str()) {
+            return Ok(Value::Err(Box::new(Value::Text(Arc::new(msg)))));
+        }
+        let headers = if args.len() == 3 {
+            match &args[2] {
+                Value::Map(m) => m
+                    .iter()
+                    .map(|(k, v)| {
+                        let vs: String = match v {
+                            Value::Text(s) => (**s).clone(),
+                            other => format!("{other:?}"),
+                        };
+                        (k.to_display_string(), vs)
+                    })
+                    .collect::<Vec<_>>(),
+                other => {
+                    return Err(RuntimeError::new(
+                        "ILO-R009",
+                        format!("{name} headers must be M t t, got {:?}", other),
+                    ));
+                }
+            }
+        } else {
+            vec![]
+        };
+        return {
+            #[cfg(feature = "http")]
+            {
+                let mut req = match builtin {
+                    Some(Builtin::Put) => minreq::put(url.as_str()),
+                    Some(Builtin::Pat) => minreq::patch(url.as_str()),
+                    _ => unreachable!(),
+                }
+                .with_body(body.as_str());
+                for (k, v) in &headers {
+                    req = req.with_header(k.as_str(), v.as_str());
+                }
+                match req.send() {
+                    Ok(resp) => match resp.as_str() {
+                        Ok(b) => Ok(Value::Ok(Box::new(Value::Text(Arc::new(b.to_string()))))),
+                        Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(format!(
+                            "response is not valid UTF-8: {e}"
+                        )))))),
+                    },
+                    Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(e.to_string()))))),
+                }
+            }
+            #[cfg(not(feature = "http"))]
+            {
+                let _ = (url, body, headers);
+                Ok(Value::Err(Box::new(Value::Text(
+                    "http feature not enabled".to_string().into(),
+                ))))
+            }
+        };
+    }
+    if matches!(
+        builtin,
+        Some(Builtin::Del) | Some(Builtin::Hed) | Some(Builtin::Opt)
+    ) && (args.len() == 1 || args.len() == 2)
+    {
+        let name = builtin.unwrap().name();
+        let url = match &args[0] {
+            Value::Text(u) => u.clone(),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("{name} requires text (url), got {:?}", other),
+                ));
+            }
+        };
+        if let Err(msg) = env.caps.check_net(url.as_str()) {
+            return Ok(Value::Err(Box::new(Value::Text(Arc::new(msg)))));
+        }
+        let headers = if args.len() == 2 {
+            match &args[1] {
+                Value::Map(m) => m
+                    .iter()
+                    .map(|(k, v)| {
+                        let vs: String = match v {
+                            Value::Text(s) => (**s).clone(),
+                            other => format!("{other:?}"),
+                        };
+                        (k.to_display_string(), vs)
+                    })
+                    .collect::<Vec<_>>(),
+                other => {
+                    return Err(RuntimeError::new(
+                        "ILO-R009",
+                        format!("{name} headers must be M t t, got {:?}", other),
+                    ));
+                }
+            }
+        } else {
+            vec![]
+        };
+        return {
+            #[cfg(feature = "http")]
+            {
+                let mut req = match builtin {
+                    Some(Builtin::Del) => minreq::delete(url.as_str()),
+                    Some(Builtin::Hed) => minreq::head(url.as_str()),
+                    Some(Builtin::Opt) => minreq::options(url.as_str()),
+
+                    _ => unreachable!(),
+                };
+                for (k, v) in &headers {
+                    req = req.with_header(k.as_str(), v.as_str());
+                }
+                match req.send() {
+                    Ok(resp) => match resp.as_str() {
+                        Ok(body) => {
+                            Ok(Value::Ok(Box::new(Value::Text(Arc::new(body.to_string())))))
+                        }
+                        Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(format!(
+                            "response is not valid UTF-8: {e}"
+                        )))))),
+                    },
+                    Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(e.to_string()))))),
+                }
+            }
+            #[cfg(not(feature = "http"))]
+            {
+                let _ = (url, headers);
+                Ok(Value::Err(Box::new(Value::Text(
+                    "http feature not enabled".to_string().into(),
+                ))))
+            }
+        };
+    }
     if builtin == Some(Builtin::GetTo) && args.len() == 2 {
         let url = match &args[0] {
             Value::Text(u) => u.clone(),

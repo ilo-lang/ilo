@@ -179,6 +179,20 @@ pub enum Builtin {
     // `pst-to url body timeout-ms > R t t` — like `pst` but with an explicit
     // per-request timeout. Same millisecond-to-second rounding as `get-to`.
     PstTo,
+    // HTTP verb cluster (#5z). Same shape as `pst`/`get`: optional 3rd-arg
+    // `M t t` headers map; returns `R t t`. Tree-bridge eligible — no
+    // dedicated VM opcodes, the tree interpreter performs the actual minreq
+    // call. Verb cluster intentionally limited to the seven safe methods
+    // (GET/POST/PUT/PATCH/DELETE/HEAD/OPTIONS); TRACE/CONNECT are excluded
+    // (CONNECT is for tunnelling, TRACE is footgun-grade — both unsafe to
+    // expose without proxy framing). `del` takes only the URL — DELETE bodies
+    // exist in the RFC but no major API honours them, so we keep the surface
+    // tight and add the headers variant only.
+    Put,
+    Pat,
+    Del,
+    Hed,
+    Opt,
 
     // Process spawn (argv-list only — no shell, no interpolation, no glob).
     // See SPEC.md "Process spawn" section for the security framing.
@@ -443,6 +457,11 @@ impl Builtin {
             "get-many" => Some(Builtin::GetMany),
             "get-to" => Some(Builtin::GetTo),
             "pst-to" => Some(Builtin::PstTo),
+            "put" => Some(Builtin::Put),
+            "pat" => Some(Builtin::Pat),
+            "del" => Some(Builtin::Del),
+            "hed" => Some(Builtin::Hed),
+            "opt" => Some(Builtin::Opt),
             "mmap" => Some(Builtin::Mmap),
             "mget" => Some(Builtin::Mget),
             "mset" => Some(Builtin::Mset),
@@ -621,6 +640,11 @@ impl Builtin {
             Builtin::GetMany => "get-many",
             Builtin::GetTo => "get-to",
             Builtin::PstTo => "pst-to",
+            Builtin::Put => "put",
+            Builtin::Pat => "pat",
+            Builtin::Del => "del",
+            Builtin::Hed => "hed",
+            Builtin::Opt => "opt",
             Builtin::Mmap => "mmap",
             Builtin::Mget => "mget",
             Builtin::Mset => "mset",
@@ -954,6 +978,14 @@ impl Builtin {
         Builtin::Linspace,
         Builtin::Ones,
         Builtin::Rep,
+        // HTTP verb cluster (#5z). Tree-bridge eligible — same shape as `pst`
+        // (optional headers, R t t return). Appended last to preserve every
+        // existing on-wire tag.
+        Builtin::Put,
+        Builtin::Pat,
+        Builtin::Del,
+        Builtin::Hed,
+        Builtin::Opt,
     ];
 
     /// On-wire 8-bit tag for cross-engine builtin dispatch. See `ALL`.
@@ -1241,6 +1273,11 @@ mod tests {
             "pst",
             "get-to",
             "pst-to",
+            "put",
+            "pat",
+            "del",
+            "hed",
+            "opt",
             "mmap",
             "mget",
             "mset",
@@ -1508,6 +1545,11 @@ mod tests {
             "get-many",
             "get-to",
             "pst-to",
+            "put",
+            "pat",
+            "del",
+            "hed",
+            "opt",
             "mmap",
             "mget",
             "mset",
