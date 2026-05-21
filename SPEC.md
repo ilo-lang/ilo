@@ -1350,6 +1350,10 @@ Update:
 ord with total:fin cost:sh
 ```
 
+### Display order
+
+`prnt` and `fmt "{}"` render records with fields sorted lexicographically by name, regardless of declared or insertion order. The same rule applies on every engine (tree, VM, Cranelift JIT), so `diff` of stdout across engines is stable and safe for agent self-verification. `jdmp` JSON output already canonicalises keys the same way.
+
 ### Field names at dot-access
 
 After `.` or `.?`, the parser accepts any identifier-shaped token as a field name, including:
