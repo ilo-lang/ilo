@@ -56,7 +56,7 @@ Parser nesting is capped at 256 by default — guards `ilo serv` and any other c
 
 ## Runtime + output caps
 
-`ilo run` caps wall-clock runtime at 60 s and stdout output at ~100 MB by default. A runaway loop aborts with `ILO-R016` (time) or `ILO-R017` (output) instead of spinning forever or filling the transcript with megabytes of garbage. Override with `--max-runtime SECS` and `--max-output-bytes BYTES`; set either to `0` to disable. If you hit either code, check loop variables increment and recursion has a base case — that's the cause 95% of the time.
+`ilo run`: wall-clock 60 s (`ILO-R016`), stdout ~100 MB (`ILO-R017`). Override: `--max-runtime SECS` / `--max-output-bytes BYTES` (0 disables). Hitting either = missing loop increment or no base case.
 
 ## Branching
 
