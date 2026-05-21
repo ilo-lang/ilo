@@ -2422,6 +2422,79 @@ fn day_of_week_impl(arg: &Value) -> Result<Value> {
     Ok(Value::Number(dow as f64))
 }
 
+/// `bisect xs:L n target:n > n` — Python `bisect_left` insertion point in
+/// a sorted numeric list. Returns the leftmost index `i` such that
+/// `xs[0..i] < target <= xs[i..]`. Empty list returns `0`; target greater
+/// than every element returns `len(xs)`; on ties the leftmost matching
+/// index wins. NaN target propagates as NaN (matches `argmax`/`argmin`).
+///
+/// Caller is responsible for the sortedness precondition; we do NOT
+/// validate it. The contract is that on a sorted input the result
+/// satisfies the inequality above; on an unsorted input the result is
+/// well-defined-but-meaningless rather than an error. Matches Python's
+/// `bisect` module which also documents but does not enforce sortedness.
+///
+/// `#[inline(never)]` matches the established per-builtin helper pattern
+/// (see `day_of_week_impl` above and the `vm_*` family) so the
+/// call_function dispatch frame stays compact.
+#[inline(never)]
+fn run_bisect(list_arg: &Value, target_arg: &Value) -> Result<Value> {
+    let items = match list_arg {
+        Value::List(l) => l,
+        other => {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!("bisect: first arg must be a list, got {:?}", other),
+            ));
+        }
+    };
+    let target = match target_arg {
+        Value::Number(n) => *n,
+        other => {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!("bisect: target must be a number, got {:?}", other),
+            ));
+        }
+    };
+    // NaN target: propagate. No total order against NaN means every branch
+    // of the comparison is false; returning NaN matches the policy used by
+    // `argmax`/`argmin` and avoids an arbitrary lo/hi result.
+    if target.is_nan() {
+        return Ok(Value::Number(f64::NAN));
+    }
+    // Empty list: insertion point is always 0.
+    if items.is_empty() {
+        return Ok(Value::Number(0.0));
+    }
+    // Validate element types up-front so type errors surface before the
+    // search loop touches them — same shape as `argsort` above.
+    for item in items.iter() {
+        if !matches!(item, Value::Number(_)) {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!("bisect: list elements must be numbers, got {:?}", item),
+            ));
+        }
+    }
+    // Classic bisect_left: half-open `[lo, hi)` window narrowed by strict
+    // `<` so equal elements land to the right of the inserted target.
+    let mut lo: usize = 0;
+    let mut hi: usize = items.len();
+    while lo < hi {
+        let mid = lo + (hi - lo) / 2;
+        let Value::Number(m) = items[mid] else {
+            unreachable!("validated above")
+        };
+        if m < target {
+            lo = mid + 1;
+        } else {
+            hi = mid;
+        }
+    }
+    Ok(Value::Number(lo as f64))
+}
+
 fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
     // Builtins — resolve name to enum once, then dispatch via match
     let builtin = Builtin::from_name(name);
@@ -2900,6 +2973,9 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         });
         let out: Vec<Value> = idxs.into_iter().map(|i| Value::Number(i as f64)).collect();
         return Ok(Value::List(Arc::new(out)));
+    }
+    if builtin == Some(Builtin::Bisect) && args.len() == 2 {
+        return run_bisect(&args[0], &args[1]);
     }
     if matches!(builtin, Some(Builtin::Min | Builtin::Max)) && args.len() == 1 {
         // 1-arg list form: returns the min/max element of a list of numbers.

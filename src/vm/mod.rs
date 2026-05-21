@@ -718,6 +718,12 @@ pub(crate) fn is_tree_bridge_eligible(b: crate::builtins::Builtin, argc: usize) 
         (Builtin::Argmax, 1) => true,
         (Builtin::Argmin, 1) => true,
         (Builtin::Argsort, 1) => true,
+        // bisect xs target > n — O(log N) sorted-list insertion point.
+        // Pure 2-arg (no FnRef, no I/O), returns a plain number (not Result).
+        // Tree-bridge keeps VM + Cranelift in lockstep with the tree
+        // interpreter at zero opcode cost. The body is a tight integer loop;
+        // dispatch overhead is dominated by the f64 comparisons.
+        (Builtin::Bisect, 2) => true,
         // rdin / rdinl — 0-arg stdin read primitives. No FnRef args. The
         // bridge lets VM + Cranelift inherit stdin reads without new opcodes.
         // On WASM targets the interpreter arm returns Err immediately, so the
