@@ -23,6 +23,13 @@ pub struct Parser {
     /// For each known function, which parameter positions take a function
     /// reference (HOF positions).
     fn_param_is_fn: HashMap<String, Vec<bool>>,
+    /// For each known USER function, the declared parameter names in order.
+    /// Builtins are intentionally absent: builtins don't have stable
+    /// user-facing param names, so named-args calls are rejected for them.
+    /// Populated by `register_user_fn`; consulted by named-args desugar in
+    /// `parse_call_or_atom` to reorder `f(a: x, b: y)` to positional.
+    /// See SPEC-AGENT-NATURAL.md §2.7.
+    fn_param_names: HashMap<String, Vec<String>>,
     /// When true, an Ident followed by another whitespace-separated atom is
     /// parsed as a bare Ref (list element) rather than a function call.
     /// Set only inside list-literal element parsing.
@@ -86,6 +93,7 @@ impl Parser {
             decl_boundary,
             fn_arity,
             fn_param_is_fn,
+            fn_param_names: HashMap::new(),
             no_whitespace_call: false,
             lifted_decls: Vec::new(),
             lambda_counter: 0,
@@ -2658,6 +2666,152 @@ impl Parser {
             .map(|p| matches!(p.ty, Type::Fn(_, _)))
             .collect();
         self.fn_param_is_fn.insert(name.to_string(), flags);
+        // Track declared param names so the named-args desugar can reorder
+        // `f(a: x, b: y)` back to positional. User fns only (builtins absent).
+        let names: Vec<String> = params.iter().map(|p| p.name.clone()).collect();
+        self.fn_param_names.insert(name.to_string(), names);
+    }
+
+    /// Parse a named-arguments call: `f(p1: expr, p2: expr [,])`.
+    ///
+    /// Spec: SPEC-AGENT-NATURAL.md §2.7. The function name has already been
+    /// consumed (in `parse_call_or_atom`); the cursor is at the opening `(`.
+    /// We tokenize each `name: expr` pair, then reorder against the declared
+    /// param-name list (from `fn_param_names`) and emit a positional
+    /// `Expr::Call`. The verifier and every backend see the same AST as the
+    /// positional form — zero runtime/verifier changes.
+    ///
+    /// Errors (all ILO-P023):
+    ///   * function has no declared param names (e.g. it's a builtin or an
+    ///     unknown ident) — named-args is user-fn only in v0.
+    ///   * label doesn't match any declared param — with `did you mean` hint.
+    ///   * label repeated — same arg supplied twice.
+    ///   * missing labels surface as the existing arity error at verify time,
+    ///     intentionally reusing the established diagnostic path.
+    /// Mixing positional and named is rejected in v0 by construction: this
+    /// path is only entered when the call site is `name( ident :` form, and
+    /// once entered every pair must be `name: expr`.
+    fn parse_named_args_call(&mut self, name: String, unwrap: UnwrapMode) -> Result<Expr> {
+        // Resolve declared param names BEFORE consuming the `(` so error
+        // spans land on the function name / opening paren rather than mid-
+        // way through the arg list.
+        let param_names: Vec<String> = match self.fn_param_names.get(&name) {
+            Some(ns) => ns.clone(),
+            None => {
+                return Err(self.error_hint(
+                    "ILO-P023",
+                    format!(
+                        "named-args call on `{name}` but no declared parameter names are known"
+                    ),
+                    if Builtin::is_builtin(&name) || resolve_alias(&name).is_some() {
+                        format!(
+                            "`{name}` is a builtin; named-args only works on user-defined functions. \
+Call it positionally instead: `{name} <args>`."
+                        )
+                    } else {
+                        format!(
+                            "`{name}` isn't a known function at this point. Declare `{name}` above \
+the call site or check the spelling."
+                        )
+                    },
+                ));
+            }
+        };
+        self.expect(&Token::LParen)?;
+        let mut provided: Vec<(String, Expr)> = Vec::new();
+        // Empty `f()` is handled by the zero-arg call branch upstream; here
+        // we always parse at least one `name: expr` pair.
+        loop {
+            // Each pair: Ident `:` expr
+            let label = match self.peek() {
+                Some(Token::Ident(s)) => s.clone(),
+                _ => {
+                    return Err(self.error_hint(
+                        "ILO-P023",
+                        format!(
+                            "expected named-arg label inside `{name}(...)`, got {:?}",
+                            self.peek()
+                        ),
+                        "named-args call form is `f(p1: expr, p2: expr)` — each item must start \
+with a declared parameter name."
+                            .to_string(),
+                    ));
+                }
+            };
+            self.advance(); // ident
+            self.expect(&Token::Colon)?;
+            // Validate label against the declared param list.
+            if !param_names.iter().any(|p| p == &label) {
+                let hint = closest_param(&label, &param_names)
+                    .map(|s| format!("did you mean `{s}`?"))
+                    .unwrap_or_else(|| {
+                        format!(
+                            "`{name}` declares params: {}",
+                            param_names
+                                .iter()
+                                .map(|p| format!("`{p}`"))
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        )
+                    });
+                return Err(self.error_hint(
+                    "ILO-P023",
+                    format!("unknown named arg `{label}` for `{name}`"),
+                    hint,
+                ));
+            }
+            // Duplicate-label guard. Same arg supplied twice is always a bug;
+            // surfacing it here (not at the verifier) keeps the error close
+            // to the offending source.
+            if provided.iter().any(|(k, _)| k == &label) {
+                return Err(self.error_hint(
+                    "ILO-P023",
+                    format!("named arg `{label}` supplied twice in call to `{name}`"),
+                    "remove the duplicate; each declared parameter accepts at most one named \
+binding per call site."
+                        .to_string(),
+                ));
+            }
+            let value = self.parse_expr()?;
+            provided.push((label, value));
+            match self.peek() {
+                Some(Token::Comma) => {
+                    self.advance();
+                    // Trailing comma before `)` is allowed.
+                    if self.peek() == Some(&Token::RParen) {
+                        break;
+                    }
+                }
+                Some(Token::RParen) => break,
+                _ => {
+                    return Err(self.error_hint(
+                        "ILO-P023",
+                        format!(
+                            "expected `,` or `)` after named arg in `{name}(...)`, got {:?}",
+                            self.peek()
+                        ),
+                        "separate named args with `,` and close the call with `)`.".to_string(),
+                    ));
+                }
+            }
+        }
+        self.expect(&Token::RParen)?;
+        // Reorder to positional. Any missing param is left out of the args
+        // vec — the verifier's arity check (ILO-T006/T013) then fires with
+        // its established message, keeping diagnostics consistent with the
+        // positional path.
+        let mut args: Vec<Expr> = Vec::with_capacity(provided.len());
+        for p in &param_names {
+            if let Some(idx) = provided.iter().position(|(k, _)| k == p) {
+                args.push(provided.remove(idx).1);
+            }
+            // missing — let the verifier handle arity reporting.
+        }
+        Ok(Expr::Call {
+            function: name,
+            args,
+            unwrap,
+        })
     }
 
     /// Is arg position `arg_idx` of function `outer_name` a fn-ref position
@@ -2846,6 +3000,29 @@ or write `({fmt_name} \"...\" ...)` so its args are grouped."
                     args: vec![],
                     unwrap,
                 });
+            }
+
+            // Agent-natural named-args call: `f(name: expr, name: expr)`.
+            // Spec: SPEC-AGENT-NATURAL.md §2.7. Parse-time desugar — we
+            // reorder named args to positional based on the declared param
+            // order tracked in `fn_param_names`, then emit an ordinary
+            // `Expr::Call`. The verifier and every backend see exactly the
+            // same AST as the positional form.
+            //
+            // Detection: `( Ident :` immediately after the name. This is
+            // unambiguous at this point because:
+            //   * inline lambdas only appear as bare atoms in `parse_atom`,
+            //     not as callees, so the same shape can't trigger here;
+            //   * zero-arg `name()` is matched above;
+            //   * `(expr)` as a grouped first arg of a positional call never
+            //     starts with `Ident :` (the `:` is exclusive to record
+            //     fields and param patterns, neither of which a paren-grouped
+            //     expression can produce).
+            if self.peek() == Some(&Token::LParen)
+                && matches!(self.token_at(self.pos + 1), Some(Token::Ident(_)))
+                && self.token_at(self.pos + 2) == Some(&Token::Colon)
+            {
+                return self.parse_named_args_call(name, unwrap);
             }
 
             // If we consumed `!` / `!!`, this must be a call (even with zero
@@ -4289,6 +4466,42 @@ fn builtin_arity_tables() -> (HashMap<String, usize>, HashMap<String, Vec<bool>>
 }
 
 /// Extract the last expression from a body, falling back to Nil.
+/// Find the closest declared param name to a misspelled named-arg label.
+/// Used by the named-args desugar to render "did you mean" hints inside
+/// ILO-P023. Returns `None` when nothing is within edit distance 3.
+fn closest_param(name: &str, candidates: &[String]) -> Option<String> {
+    let mut best: Option<(String, usize)> = None;
+    for c in candidates {
+        let d = levenshtein_p(name, c);
+        if d <= 3 && best.as_ref().is_none_or(|(_, bd)| d < *bd) {
+            best = Some((c.clone(), d));
+        }
+    }
+    best.map(|(s, _)| s)
+}
+
+fn levenshtein_p(a: &str, b: &str) -> usize {
+    let a: Vec<char> = a.chars().collect();
+    let b: Vec<char> = b.chars().collect();
+    let (m, n) = (a.len(), b.len());
+    let mut dp = vec![vec![0usize; n + 1]; m + 1];
+    for (i, row) in dp.iter_mut().enumerate().take(m + 1) {
+        row[0] = i;
+    }
+    for (j, val) in dp[0].iter_mut().enumerate().take(n + 1) {
+        *val = j;
+    }
+    for i in 1..=m {
+        for j in 1..=n {
+            let cost = if a[i - 1] == b[j - 1] { 0 } else { 1 };
+            dp[i][j] = (dp[i - 1][j] + 1)
+                .min(dp[i][j - 1] + 1)
+                .min(dp[i - 1][j - 1] + cost);
+        }
+    }
+    dp[m][n]
+}
+
 fn body_to_expr(body: Vec<Spanned<Stmt>>) -> Expr {
     if body.is_empty() {
         return Expr::Literal(Literal::Nil);
