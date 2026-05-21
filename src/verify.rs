@@ -284,7 +284,9 @@ fn kebab_subtract_hint<'a>(
 ///
 /// Triggers on the classic ambiguity in assignment-RHS:
 ///
-///     dx=xj 0-xi
+/// ```text
+/// dx=xj 0-xi
+/// ```
 ///
 /// which parses as `dx=(xj 0) - xi` — a call `xj(0)` whose result is then
 /// fed into the outer Subtract. The agent almost certainly meant

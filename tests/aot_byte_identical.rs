@@ -116,11 +116,18 @@ fn cranelift_aot_object_file_byte_identical_to_baselines() {
     let mut ok = 0;
 
     for entry in &entries {
-        let example = format!("examples/{}.ilo", entry.name);
-        if !Path::new(&example).exists() {
+        // Source files were renamed from `.ilo` to `.@` in 0.13.0. Prefer
+        // the new extension; fall back to legacy for any stragglers.
+        let example_at = format!("examples/{}.@", entry.name);
+        let example_ilo = format!("examples/{}.ilo", entry.name);
+        let example = if Path::new(&example_at).exists() {
+            example_at
+        } else if Path::new(&example_ilo).exists() {
+            example_ilo
+        } else {
             missing.push(entry.name.clone());
             continue;
-        }
+        };
 
         let bin = tmp_path(&entry.name);
         let obj = bin.with_extension("o");
