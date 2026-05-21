@@ -88,6 +88,10 @@ Agents reach for these names constantly — pick the listed alternative and move
 
 When in doubt: pick a 4+ char descriptive name. The token cost of an extra character is dwarfed by the cost of an ILO-P011 retry round-trip.
 
+## Date/time builtins
+
+`now` and `now-ms` are not the whole surface. Full set: `now` (Unix seconds), `now-ms` (Unix ms), `dtfmt ts fmt` (timestamp to text), `dtparse s fmt` (text to timestamp, `R n t`), `dtparse-rel s now` (relative phrase like `"in 3 days"` / `"last monday"` anchored at `now`, `R n t`). Reach for `dtparse-rel` before hand-rolling phrase parsers. Details in `ilo skill get ilo-builtins-text`.
+
 ## Compatibility note
 
 ilo has no borrow checker, no lifetime annotations, no ownership rules. Values are RC-managed; the type checker enforces shape only. There is no `&`, no `&mut`, no `'a`. If an agent is reaching for lifetime-style reasoning in ilo, it has the wrong mental model.
