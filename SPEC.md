@@ -1776,7 +1776,11 @@ ilo help ai                      -- compact AI spec to stdout (= contents of ai.
 ilo serv                          -- long-lived JSON request/response loop
 ilo --max-ast-depth N <sub>       -- cap parser nesting at N (default 256; protects `ilo serv`
                                      and other untrusted-source paths from DoS payloads, raises ILO-P103)
+ilo --max-runtime SECS <sub>      -- cap wall-clock runtime at SECS (default 60; 0 disables; raises ILO-R016)
+ilo --max-output-bytes BYTES <sub> -- cap stdout output at BYTES (default ~100 MB; 0 disables; raises ILO-R017)
 ```
+
+**Production-safety guards (`ILO-R016`, `ILO-R017`).** `ilo run` caps wall-clock runtime at 60 s and stdout output at ~100 MB by default. A runaway loop (missing increment, recursion with no base case) aborts with `ILO-R016` once the time budget hits, instead of burning CPU forever; a `prnt` loop without termination aborts with `ILO-R017` once the byte budget hits, instead of filling the agent transcript with megabytes of garbage. Both guards write a structured diagnostic to stderr and exit 1. Defaults are well above any legitimate program (real agent tasks finish under 10 s and produce kilobytes); raise with `--max-runtime SECS` / `--max-output-bytes BYTES`, set either to `0` to disable. The guards installed by the mandelbrot persona report (2026-05-20) which spun in an infinite loop and wrote 165 MB of stdout before the harness intervened.
 
 **Verb-noun aliases.** `ilo run <file>` is an exact alias for the bare positional `ilo <file>` - same dispatch, same engine selection, same arg handling. `ilo build <file> -o <out>` is an alias for `ilo compile <file> -o <out>`. Both exist to match the toolchain conventions used by `cargo`, `go`, and `zero` so agents and humans can guess the command name without consulting the help text. The bare positional forms remain fully supported for backwards compatibility; nothing has been removed.
 
