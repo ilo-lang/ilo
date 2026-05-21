@@ -1,0 +1,27 @@
+-- Recursive linear search: return index of `target` in `xs`, or -1 if absent.
+-- Idiom: base cases as braceless guards FIRST, then the recursive call as the
+-- last statement (tail position). A trailing fallthrough literal would put the
+-- recursive call out of tail position and silently discard its return value.
+--
+-- The common footgun is writing
+--   find-idx xs target i; =target (at xs i) i; find-idx xs target +i 1; -1
+-- The `-1` tail means the recursive call is NOT in tail position (SPEC tail-
+-- call rules), so its return is discarded; the function always falls through
+-- to -1 unless the very first call's guard fires. Fix by making the bounds
+-- check the base case so the recursive call is the tail.
+
+find-idx xs:L n target:n i:n>n
+  ln=len xs
+  >=i ln{ret -1}
+  v=at xs i
+  =v target i
+  find-idx xs target +i 1
+
+-- run: find-idx [10,20,30,40,50] 30 0
+-- out: 2
+-- run: find-idx [10,20,30,40,50] 99 0
+-- out: -1
+-- run: find-idx [10,20,30,40,50] 10 0
+-- out: 0
+-- run: find-idx [] 5 0
+-- out: -1
