@@ -394,6 +394,19 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     // get-to / pst-to — timeout variants. Third arg is timeout in milliseconds.
     ("get-to", &["t", "n"], "R t t"),
     ("pst-to", &["t", "t", "n"], "R t t"),
+    // HTTP verb cluster (#5z). Same shape as `pst` / `get` — optional `M t t`
+    // headers map, returns `R t t`. `del`/`hd`/`opt` mirror `get`; `put`/`pat`
+    // mirror `pst`.
+    ("put", &["t", "t"], "R t t"),
+    ("put", &["t", "t", "M t t"], "R t t"),
+    ("pat", &["t", "t"], "R t t"),
+    ("pat", &["t", "t", "M t t"], "R t t"),
+    ("del", &["t"], "R t t"),
+    ("del", &["t", "M t t"], "R t t"),
+    ("hed", &["t"], "R t t"),
+    ("hed", &["t", "M t t"], "R t t"),
+    ("opt", &["t"], "R t t"),
+    ("opt", &["t", "M t t"], "R t t"),
     ("get-many", &["L t"], "L (R t t)"),
     ("run", &["t", "L t"], "R (M t t) t"),
     // run2: structured spawn — typed Record instead of loose Map.
@@ -1848,16 +1861,16 @@ fn builtin_check_args(
             }
             (Ty::Result(Box::new(Ty::Text), Box::new(Ty::Text)), errors)
         }
-        "pst" => {
-            // pst url body          — 2-arg (HTTP POST; renamed from `post` in 0.12.0)
-            // pst url body headers  — 3-arg: headers is M t t
+        "pst" | "put" | "pat" => {
+            // pst|put|pat url body          — 2-arg
+            // pst|put|pat url body headers  — 3-arg: headers is M t t
             for (i, arg) in arg_types.iter().enumerate().take(2) {
                 if !compatible(arg, &Ty::Text) {
                     let label = if i == 0 { "url" } else { "body" };
                     errors.push(VerifyError {
                         code: "ILO-T013",
                         function: func_ctx.to_string(),
-                        message: format!("'pst' expects t ({label}), got {arg}"),
+                        message: format!("'{name}' expects t ({label}), got {arg}"),
                         hint: None,
                         span,
                         is_warning: false,
@@ -1870,7 +1883,37 @@ fn builtin_check_args(
                     errors.push(VerifyError {
                         code: "ILO-T013",
                         function: func_ctx.to_string(),
-                        message: format!("'pst' headers arg expects M t t, got {arg}"),
+                        message: format!("'{name}' headers arg expects M t t, got {arg}"),
+                        hint: None,
+                        span,
+                        is_warning: false,
+                    });
+                }
+            }
+            (Ty::Result(Box::new(Ty::Text), Box::new(Ty::Text)), errors)
+        }
+        "del" | "hed" | "opt" => {
+            // del|hed|opt url          — 1-arg
+            // del|hed|opt url headers  — 2-arg: headers is M t t
+            if let Some(arg) = arg_types.first()
+                && !compatible(arg, &Ty::Text)
+            {
+                errors.push(VerifyError {
+                    code: "ILO-T013",
+                    function: func_ctx.to_string(),
+                    message: format!("'{name}' expects t (url), got {arg}"),
+                    hint: None,
+                    span,
+                    is_warning: false,
+                });
+            }
+            if let Some(arg) = arg_types.get(1) {
+                let map_ty = Ty::Map(Box::new(Ty::Text), Box::new(Ty::Text));
+                if !compatible(arg, &map_ty) {
+                    errors.push(VerifyError {
+                        code: "ILO-T013",
+                        function: func_ctx.to_string(),
+                        message: format!("'{name}' headers arg expects M t t, got {arg}"),
                         hint: None,
                         span,
                         is_warning: false,
@@ -4501,9 +4544,9 @@ impl VerifyContext {
                         args.len() == 1 || args.len() == 2
                     } else if callee == "wr" {
                         args.len() == 2 || args.len() == 3
-                    } else if callee == "get" {
+                    } else if matches!(callee.as_str(), "get" | "del" | "hed" | "opt") {
                         args.len() == 1 || args.len() == 2
-                    } else if callee == "pst" {
+                    } else if matches!(callee.as_str(), "pst" | "put" | "pat") {
                         args.len() == 2 || args.len() == 3
                     } else if callee == "padl" || callee == "padr" {
                         // padl s w  /  padl s w padchar
@@ -4522,9 +4565,12 @@ impl VerifyContext {
                             "2 or 3".to_string()
                         } else if callee == "fld" {
                             "3 or 4".to_string()
-                        } else if callee == "rd" || callee == "get" {
+                        } else if matches!(callee.as_str(), "rd" | "get" | "del" | "hed" | "opt") {
                             "1 or 2".to_string()
-                        } else if matches!(callee.as_str(), "pst" | "wr" | "padl" | "padr") {
+                        } else if matches!(
+                            callee.as_str(),
+                            "pst" | "put" | "pat" | "wr" | "padl" | "padr"
+                        ) {
                             "2 or 3".to_string()
                         } else if callee == "min" || callee == "max" {
                             "1 or 2".to_string()

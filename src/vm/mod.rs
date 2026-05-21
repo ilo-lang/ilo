@@ -746,6 +746,21 @@ pub(crate) fn is_tree_bridge_eligible(b: crate::builtins::Builtin, argc: usize) 
         // JIT/AOT pick them up at zero opcode cost.
         (Builtin::GetTo, 2) => true,
         (Builtin::PstTo, 3) => true,
+        // HTTP verb cluster (#5z). Same bridge contract as `pst-to`/`get-to` —
+        // returns Result, no FnRef args, the tree interpreter handles the
+        // actual minreq call. VM and Cranelift inherit at zero opcode cost.
+        // PUT / PAT: url body (+optional headers map).
+        (Builtin::Put, 2) => true,
+        (Builtin::Put, 3) => true,
+        (Builtin::Pat, 2) => true,
+        (Builtin::Pat, 3) => true,
+        // DEL / HD / OPT: url (+optional headers map).
+        (Builtin::Del, 1) => true,
+        (Builtin::Del, 2) => true,
+        (Builtin::Hed, 1) => true,
+        (Builtin::Hed, 2) => true,
+        (Builtin::Opt, 1) => true,
+        (Builtin::Opt, 2) => true,
         // matvec xm ys -> L n. Pure (no FnRef, no I/O), 2-arg, returns a
         // flat vector. Tree-bridge keeps cross-engine parity with the
         // tree interpreter at the same cost tier as `transpose`/`matmul`
@@ -827,6 +842,11 @@ pub(crate) fn tree_bridge_returns_result(b: crate::builtins::Builtin) -> bool {
             | Builtin::DurParse
             | Builtin::GetTo
             | Builtin::PstTo
+            | Builtin::Put
+            | Builtin::Pat
+            | Builtin::Del
+            | Builtin::Hed
+            | Builtin::Opt
             | Builtin::Urldec
             | Builtin::B64uDec
             | Builtin::TzOffset
