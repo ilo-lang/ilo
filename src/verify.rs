@@ -264,6 +264,49 @@ fn kebab_subtract_hint<'a>(
     }
 }
 
+/// Hint for the `name expr` shape when `name` is non-callable and the single
+/// argument is a simple value (literal number / bool / text, or a bare ref).
+///
+/// Triggers on the classic ambiguity in assignment-RHS:
+///
+///     dx=xj 0-xi
+///
+/// which parses as `dx=(xj 0) - xi` — a call `xj(0)` whose result is then
+/// fed into the outer Subtract. The agent almost certainly meant
+/// `dx=xj - xi` (= `-xj xi` in ilo's prefix form) or
+/// `dx=xj + (0-xi)` (= `+xj -0 xi`). Either way the misparse happens
+/// because whitespace-juxtaposition is the call syntax in ilo, and any
+/// bare token following a bound name is greedily eaten as its argument.
+///
+/// Detection at the inner call site (rather than the outer BinOp) is
+/// intentional: this is where the type-check first notices that the
+/// bound name isn't callable, so the diagnostic anchors exactly on the
+/// offending span. The shape `<bound-name> <literal-or-ref>` with a
+/// single arg is the high-precision signal — real call sites of a
+/// not-actually-callable value are rare.
+///
+/// Returns `None` when the shape doesn't match, so callers can fall
+/// through to the standard hint.
+fn call_vs_binop_hint(callee: &str, args: &[Expr]) -> Option<String> {
+    if args.len() != 1 {
+        return None;
+    }
+    // Only fire when the single arg is something that could plausibly
+    // be the LHS of an intended binop: a numeric literal or a bare ref.
+    // Bool/text literals don't trigger the confusion in practice.
+    let arg_src = match &args[0] {
+        Expr::Literal(Literal::Number(n)) => format!("{n}"),
+        Expr::Ref(n) => n.clone(),
+        _ => return None,
+    };
+    Some(format!(
+        "this parsed as a call `{callee} {arg_src}` (whitespace-juxtaposition is call syntax in ilo). \
+        If you meant a binary operation between `{callee}` and `{arg_src}`, ilo uses prefix operators: \
+        write `+{callee} {arg_src}` (add), `-{callee} {arg_src}` (subtract), `*{callee} {arg_src}` (multiply), or `/{callee} {arg_src}` (divide). \
+        See ILO-T005 `--explain` for the call-vs-binop gotcha."
+    ))
+}
+
 fn closest_match<'a>(name: &str, candidates: impl Iterator<Item = &'a String>) -> Option<String> {
     let mut best: Option<(String, usize)> = None;
     for candidate in candidates {
@@ -4431,6 +4474,11 @@ impl VerifyContext {
                             Some(span),
                         );
                     } else {
+                        let suggestion = call_vs_binop_hint(callee, args).unwrap_or_else(|| {
+                            format!(
+                                "'{callee}' is bound as {bound_ty} in this scope; only functions can be called"
+                            )
+                        });
                         self.err(
                             "ILO-T005",
                             func,
@@ -4438,9 +4486,7 @@ impl VerifyContext {
                                 "'{callee}' is a {bound_ty}, not a function (called with {} args)",
                                 args.len()
                             ),
-                            Some(format!(
-                                "'{callee}' is bound as {bound_ty} in this scope; only functions can be called"
-                            )),
+                            Some(suggestion),
                             Some(span),
                         );
                     }
@@ -4462,7 +4508,8 @@ impl VerifyContext {
                         candidates.push(n.to_string());
                     }
                     let hint = closest_match(callee, candidates.iter())
-                        .map(|s| format!("did you mean '{s}'?"));
+                        .map(|s| format!("did you mean '{s}'?"))
+                        .or_else(|| call_vs_binop_hint(callee, args));
                     self.err(
                         "ILO-T005",
                         func,
