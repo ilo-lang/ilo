@@ -90,7 +90,7 @@ impl Caps {
                     Ok(())
                 } else {
                     Err(format!(
-                        "blocked by --allow-net policy: host={host} is not in the allowlist"
+                        "ILO-CAP-001 blocked by --allow-net policy: host={host} is not in the allowlist"
                     ))
                 }
             }
@@ -109,7 +109,7 @@ impl Caps {
                     Ok(())
                 } else {
                     Err(format!(
-                        "blocked by --allow-read policy: path={path} is not in the allowlist"
+                        "ILO-CAP-001 blocked by --allow-read policy: path={path} is not in the allowlist"
                     ))
                 }
             }
@@ -128,7 +128,7 @@ impl Caps {
                     Ok(())
                 } else {
                     Err(format!(
-                        "blocked by --allow-write policy: path={path} is not in the allowlist"
+                        "ILO-CAP-001 blocked by --allow-write policy: path={path} is not in the allowlist"
                     ))
                 }
             }
@@ -149,7 +149,7 @@ impl Caps {
                     Ok(())
                 } else {
                     Err(format!(
-                        "blocked by --allow-run policy: cmd={cmd} is not in the allowlist"
+                        "ILO-CAP-001 blocked by --allow-run policy: cmd={cmd} is not in the allowlist"
                     ))
                 }
             }
