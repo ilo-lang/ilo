@@ -173,6 +173,7 @@ pub(crate) const OP_SRT: u8 = 54; // R[A] = srt(R[B])  (sort list or text)
 pub(crate) const OP_SLC: u8 = 55; // R[A] = slc(R[B], R[C], R[D])  (slice; D in data word A field)
 pub(crate) const OP_RND0: u8 = 57; // R[A] = random float in [0,1)
 pub(crate) const OP_RND2: u8 = 58; // R[A] = random int in [R[B], R[C]]
+pub(crate) const OP_SEED: u8 = 189; // seed(R[B]) — set shared PRNG state; R[A] = Nil
 pub(crate) const OP_NOW: u8 = 59; // R[A] = current unix timestamp (seconds, float)
 pub(crate) const OP_NOWMS: u8 = 177; // R[A] = current unix timestamp (milliseconds, float)
 pub(crate) const OP_ENV: u8 = 60; // R[A] = env(R[B])  (returns R t t)
@@ -4177,6 +4178,12 @@ impl RegCompiler {
                             let ra = self.alloc_reg();
                             self.emit_abc(OP_RND0, ra, 0, 0);
                             self.reg_is_num[ra as usize] = true;
+                            return ra;
+                        }
+                        (Builtin::Seed, 1) => {
+                            let rb = self.compile_expr(&args[0]);
+                            let ra = self.alloc_reg();
+                            self.emit_abc(OP_SEED, ra, rb, 0);
                             return ra;
                         }
                         (Builtin::Now, 0) => {
@@ -10875,7 +10882,7 @@ impl<'a> VM<'a> {
                 }
                 OP_RND0 => {
                     let a = ((inst >> 16) & 0xFF) as usize + base;
-                    reg_set!(a, NanVal::number(fastrand::f64()));
+                    reg_set!(a, NanVal::number(crate::rng::f64()));
                 }
                 OP_RND2 => {
                     let a = ((inst >> 16) & 0xFF) as usize + base;
@@ -10891,7 +10898,7 @@ impl<'a> VM<'a> {
                     if lo > hi {
                         vm_err!(VmError::Type("rnd: lower bound > upper bound"));
                     }
-                    reg_set!(a, NanVal::number(fastrand::i64(lo..=hi) as f64));
+                    reg_set!(a, NanVal::number(crate::rng::i64_range(lo, hi) as f64));
                 }
                 OP_RNDN => {
                     let a = ((inst >> 16) & 0xFF) as usize + base;
@@ -10904,10 +10911,17 @@ impl<'a> VM<'a> {
                     }
                     let mu = vb.as_number();
                     let sigma = vc.as_number();
-                    reg_set!(
-                        a,
-                        NanVal::number(crate::interpreter::box_muller_normal(mu, sigma))
-                    );
+                    reg_set!(a, NanVal::number(crate::rng::normal(mu, sigma)));
+                }
+                OP_SEED => {
+                    let b = ((inst >> 8) & 0xFF) as usize + base;
+                    let vb = reg!(b);
+                    if !vb.is_number() {
+                        vm_err!(VmError::Type("seed requires a number"));
+                    }
+                    crate::rng::seed(vb.as_number() as u64);
+                    let a = ((inst >> 16) & 0xFF) as usize + base;
+                    reg_set!(a, NanVal(TAG_NIL));
                 }
                 OP_NOW => {
                     let a = ((inst >> 16) & 0xFF) as usize + base;
@@ -15169,7 +15183,7 @@ pub(crate) extern "C" fn jit_solve(a: u64, b: u64, span_bits: u64) -> u64 {
 #[cfg(feature = "cranelift")]
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn jit_rnd0() -> u64 {
-    NanVal::number(fastrand::f64()).0
+    NanVal::number(crate::rng::f64()).0
 }
 
 #[cfg(feature = "cranelift")]
@@ -15183,7 +15197,7 @@ pub(crate) extern "C" fn jit_rnd2(a: u64, b: u64) -> u64 {
         if lo > hi {
             return TAG_NIL;
         }
-        NanVal::number(fastrand::i64(lo..=hi) as f64).0
+        NanVal::number(crate::rng::i64_range(lo, hi) as f64).0
     } else {
         TAG_NIL
     }
@@ -15197,10 +15211,20 @@ pub(crate) extern "C" fn jit_rndn(a: u64, b: u64) -> u64 {
     if av.is_number() && bv.is_number() {
         let mu = av.as_number();
         let sigma = bv.as_number();
-        NanVal::number(crate::interpreter::box_muller_normal(mu, sigma)).0
+        NanVal::number(crate::rng::normal(mu, sigma)).0
     } else {
         TAG_NIL
     }
+}
+
+#[cfg(feature = "cranelift")]
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn jit_seed(s: u64) -> u64 {
+    let sv = NanVal(s);
+    if sv.is_number() {
+        crate::rng::seed(sv.as_number() as u64);
+    }
+    TAG_NIL
 }
 
 #[cfg(feature = "cranelift")]
@@ -34878,7 +34902,7 @@ f>n;r=mk 10 20;+r.x r.y";
             is_tool: vec![false],
             ast: None,
         };
-        fastrand::seed(7);
+        crate::rng::seed(7);
         match run(&program, Some("f"), vec![]).expect("rndn should not error") {
             Value::Number(n) => assert!(n.is_finite(), "got non-finite {n}"),
             other => panic!("expected number, got {:?}", other),
@@ -34931,7 +34955,7 @@ f>n;r=mk 10 20;+r.x r.y";
     #[cfg(feature = "cranelift")]
     #[test]
     fn jit_rndn_finite_for_nonzero_sigma() {
-        fastrand::seed(11);
+        crate::rng::seed(11);
         let v = NanVal(jit_rndn(NanVal::number(0.0).0, NanVal::number(1.0).0));
         assert!(v.is_number());
         assert!(v.as_number().is_finite());

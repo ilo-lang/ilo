@@ -1,0 +1,24 @@
+-- `seed n` pins the shared SplitMix64 PRNG state so every subsequent
+-- `rnd` / `rndn` call produces the same sequence regardless of which
+-- engine (tree, VM, JIT, AOT) runs the program.
+--
+-- Before 0.12.1, `fastrand` was initialised from OS entropy per-process
+-- and advanced differently inside `map` across engines, making stochastic
+-- workloads (Monte Carlo, ML training, A/B simulation) non-reproducible.
+--
+-- Now all engines share one AtomicU64 state; calling `seed n` resets it.
+-- The default seed is 0xCAFEBABEDEADBEEF — deterministic, no wall-clock.
+-- To opt in to entropy: `seed (now-ms)`.
+
+-- Helper: ignores the loop index, draws one rnd sample.
+rndv x:n>n;rnd
+
+f>t
+  seed 42
+  r1=rnd
+  r2=rnd
+  r3=rnd
+  cat [str r1 str r2 str r3] " "
+
+-- run: f
+-- out: 0.7415648787718233 0.1599103928769201 0.27860113025513866

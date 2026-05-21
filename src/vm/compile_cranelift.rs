@@ -84,6 +84,7 @@ struct HelperFuncs {
     rnd0: FuncId,
     rnd2: FuncId,
     rndn: FuncId,
+    seed: FuncId,
     now: FuncId,
     now_ms: FuncId,
     env: FuncId,
@@ -320,6 +321,7 @@ fn declare_all_helpers(module: &mut ObjectModule) -> HelperFuncs {
         rnd0: declare_helper(module, "jit_rnd0", 0, 1),
         rnd2: declare_helper(module, "jit_rnd2", 2, 1),
         rndn: declare_helper(module, "jit_rndn", 2, 1),
+        seed: declare_helper(module, "jit_seed", 1, 1),
         now: declare_helper(module, "jit_now", 0, 1),
         now_ms: declare_helper(module, "jit_now_ms", 0, 1),
         env: declare_helper(module, "jit_env", 1, 1),
@@ -1256,7 +1258,7 @@ fn compile_function_body(
                 | OP_ENUMERATE | OP_RANGE | OP_WINDOW | OP_WINDOW_VIEW | OP_CHUNKS | OP_CUMSUM
                 | OP_CPROD | OP_SETUNION | OP_SETINTER | OP_SETDIFF | OP_FFT | OP_IFFT
                 | OP_TRANSPOSE | OP_MATMUL | OP_INV | OP_SOLVE | OP_DTFMT | OP_DTPARSE
-                | OP_FLAT | OP_CALL_BUILTIN_TREE | OP_LOADFN | OP_CALL_DYN => {
+                | OP_FLAT | OP_CALL_BUILTIN_TREE | OP_LOADFN | OP_CALL_DYN | OP_SEED => {
                     non_num_write[a] = true;
                     non_bool_write[a] = true;
                 }
@@ -2580,6 +2582,13 @@ fn compile_function_body(
                     let rf = builder.ins().bitcast(F64, mf, result);
                     builder.def_var(f64_vars[a_idx], rf);
                 }
+            }
+            OP_SEED => {
+                let bv = builder.use_var(vars[b_idx]);
+                let fref = get_func_ref(&mut builder, module, helpers.seed);
+                let call_inst = builder.ins().call(fref, &[bv]);
+                let result = builder.inst_results(call_inst)[0];
+                builder.def_var(vars[a_idx], result);
             }
             OP_NOW => {
                 let fref = get_func_ref(&mut builder, module, helpers.now);
