@@ -95,6 +95,17 @@ When in doubt: pick a 4+ char descriptive name. The token cost of an extra chara
 **4-char+**: `acos` `asin` `atan` `argmax` `argmin` `argsort` `basename` `chars` `chunks` `clamp` `cprod` `cumsum` `dirname` `dot` `drop` `dtfmt` `dtparse` `dtparse-rel` `enumerate` `flat` `flatmap` `fmod` `fmt2` `fsize` `glob` `ifft` `inv` `isdir` `isfile` `jdmp` `jkeys` `jpar` `jpth` `len` `mapr` `matmul` `matvec` `mdel` `median` `mget` `mhas` `mkeys` `mmap` `mpairs` `mset` `mtime` `mvals` `padl` `padr` `partition` `pathjoin` `prnt` `prod` `quantile` `range` `rdb` `rdin` `rdinl` `rdjl` `rdl` `rndn` `rsrt` `setdiff` `setinter` `setunion` `sleep` `solve` `sqrt` `stdev` `take` `transpose` `uniqby` `variance` `walk` `window` `wra` `wrl`
 **4-char+**: `acos` `asin` `atan` `argmax` `argmin` `argsort` `basename` `chars` `chunks` `clamp` `cprod` `cumsum` `dirname` `dot` `drop` `dtfmt` `dtparse` `dtparse-rel` `enumerate` `flat` `flatmap` `fmod` `fmt2` `fsize` `glob` `ifft` `inv` `isdir` `isfile` `jdmp` `jkeys` `jpar` `jpth` `len` `mapr` `matmul` `mdel` `median` `mget` `mhas` `mkeys` `mmap` `mpairs` `mset` `mtime` `mvals` `padl` `padr` `partition` `pathjoin` `prnt` `prod` `quantile` `range` `rdb` `rdin` `rdinl` `rdjl` `rdl` `rndn` `rsrt` `setdiff` `setinter` `setunion` `sleep` `solve` `sqrt` `stdev` `take` `transpose` `tz-offset` `uniqby` `variance` `walk` `window` `wra` `wrl`
 
+## Common pitfalls
+
+**No tuple type.** `zip xs ys` returns `L (L n)` — a list of two-element lists, not a list of tuples. Destructure pairs with `at pair 0` / `at pair 1`, never `pair.0` / `pair.1` where `pair` is unbound. ILO-T004 on `tup.0` / `pair.0` carries a hint naming the exact `at <name> <N>` call to write.
+
+```
+-- DON'T: zs=zip xs ys; +tup.0 tup.1   -- tup is unbound; ilo has no tuple type
+-- DO:    zs=zip xs ys; map (pair:L n>n;+at pair 0 at pair 1) zs
+```
+
+(`pair.0` itself is valid sugar for list indexing once `pair` is bound to an `L T` parameter; the diagnostic only fires when the identifier is unbound.)
+
 ## Compatibility note
 
 ilo has no borrow checker, no lifetime annotations, no ownership rules. Values are RC-managed; the type checker enforces shape only. There is no `&`, no `&mut`, no `'a`. If an agent is reaching for lifetime-style reasoning in ilo, it has the wrong mental model.

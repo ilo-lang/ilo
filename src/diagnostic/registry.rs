@@ -681,6 +681,24 @@ Variables are bound by `let` statements or function parameters.
 **Fix:** bind the variable before use, or pass it as a parameter:
 
     f x:n y:n>n;+x y
+
+### Common pitfall: `name.N` after `zip`
+
+ilo has no tuple type. `zip xs ys` returns `L (L n)` — a list of
+two-element lists, not a list of tuples. Agents reaching for
+`tup.0` / `pair.0` tuple-access syntax will see ILO-T004 on the
+unbound `tup` / `pair` name.
+
+**Wrong:**
+
+    g pair:L n>n;+pair.0 pair.1   -- pair.0 works only once pair is bound
+
+If `pair` is unbound (e.g. you wrote `tup.0` without binding `tup`),
+the fix is to bind it from the outer list and index with `at`:
+
+    f>L n;
+      xs=[1 2 3];ys=[10 20 30];zs=zip xs ys;
+      map (pair:L n>n;+at pair 0 at pair 1) zs
 "#,
     },
     ErrorEntry {

@@ -4976,7 +4976,52 @@ impl VerifyContext {
                 }
             }
 
-            Expr::Index { object, safe, .. } => {
+            Expr::Index {
+                object,
+                index,
+                safe,
+            } => {
+                // Special-case: `name.N` where `name` is an unbound identifier.
+                // Without this, the generic ILO-T004 fires with a closest-match
+                // hint that's actively misleading for the most common cause —
+                // agents reaching for `tup.0` / `pair.0` tuple syntax after a
+                // `zip xs ys`, which returns `L (L n)` (list of lists), not
+                // tuples. ilo has no tuple type; the correct shape is
+                // `at <name> <N>`. Detect the pattern at the Index site so we
+                // can name a concrete `at` call in the hint and short-circuit
+                // before the generic Ref diagnostic fires.
+                if let Expr::Ref(name) = object.as_ref() {
+                    let bound = scope_lookup(scope, name).is_some()
+                        || self.functions.contains_key(name)
+                        || is_builtin(name)
+                        || builtin_as_fn_ty(name).is_some();
+                    if !bound {
+                        let mut candidates: Vec<String> = scope
+                            .iter()
+                            .flat_map(|frame| frame.keys().cloned())
+                            .collect();
+                        candidates.extend(self.functions.keys().cloned());
+                        let did_you_mean = closest_match(name, candidates.iter());
+                        let at_hint = format!(
+                            "if `{name}` is meant to be a pair from `zip xs ys`, \
+note that `zip` returns `L (L n)` (list of lists), not tuples. \
+Index with `at {name} {index}` after binding `{name}` from the outer list. \
+ilo has no tuple type."
+                        );
+                        let hint = match did_you_mean {
+                            Some(s) => Some(format!("did you mean '{s}'? Otherwise: {at_hint}")),
+                            None => Some(at_hint),
+                        };
+                        self.err(
+                            "ILO-T004",
+                            func,
+                            format!("undefined variable '{name}'"),
+                            hint,
+                            Some(span),
+                        );
+                        return Ty::Unknown;
+                    }
+                }
                 let obj_ty = self.infer_expr(func, scope, object, span);
                 if *safe && obj_ty == Ty::Nil {
                     return Ty::Nil;
