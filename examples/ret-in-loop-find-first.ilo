@@ -1,0 +1,33 @@
+-- `ret` from inside ANY loop body returns from the enclosing function.
+-- No sentinel-flag pattern is required for `@x xs`, `@i a..b`, or `wh`.
+--
+-- This file pins the cross-engine behaviour so future personas don't
+-- conclude that "ret in a loop body" is broken (it isn't).
+
+-- foreach loop: ret returns from fn directly
+find-val xs:L n tgt:n>n;@x xs{=x tgt{ret x}};-1
+
+-- range loop: ret returns the matching index
+find-idx xs:L n tgt:n>n;@i 0..(len xs){=(at xs i) tgt{ret i}};-1
+
+-- while loop: ret out of an unbounded loop
+first-gte-thr thr:n>n;i=0;wh <i 100{=i thr{ret i};i=+i 1};-1
+
+-- Contrast: `brk` stops the loop and lets post-loop code run.
+-- Use brk when you want a partial-result + finaliser shape.
+count-until xs:L n tgt:n>n;c=0;@x xs{=x tgt{brk};c=+c 1};c
+
+-- run: find-val [5,10,15,20] 15
+-- out: 15
+-- run: find-val [5,10,15,20] 99
+-- out: -1
+-- run: find-idx [5,10,15,20] 15
+-- out: 2
+-- run: find-idx [5,10,15,20] 99
+-- out: -1
+-- run: first-gte-thr 7
+-- out: 7
+-- run: count-until [1,2,3,4,5] 3
+-- out: 2
+-- run: count-until [1,2,3,4,5] 99
+-- out: 5
