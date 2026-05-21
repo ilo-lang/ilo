@@ -3125,11 +3125,17 @@ or write `({fmt_name} \"...\" ...)` so its args are grouped."
                         break;
                     }
                 }
-                return Ok(Expr::Call {
+                let call = Expr::Call {
                     function: fmt_name,
                     args: fmt_args,
                     unwrap: UnwrapMode::None,
-                });
+                };
+                // Postfix `.N` / `.field` chain on a multi-token call result:
+                // `prnt fmt "{}" 1 .0` → `(fmt "{}" 1).0`. Mirrors the
+                // parenthesised-expression branch in `parse_atom` so agents
+                // don't have to wrap eagerly-consumed inner calls in parens to
+                // pick a field/index off the result.
+                return self.parse_field_chain(call, None);
             }
         }
 
@@ -3169,11 +3175,18 @@ or write `({fmt_name} \"...\" ...)` so its args are grouped."
                     inner_args
                         .push(self.parse_call_arg(inner_fn_pos, Some((&inner_name, arity, i)))?);
                 }
-                return Ok(Expr::Call {
+                let call = Expr::Call {
                     function: inner_name,
                     args: inner_args,
                     unwrap: UnwrapMode::None,
-                });
+                };
+                // Postfix `.N` / `.field` chain on a nested call result:
+                // `num spl "1.2.3" "." .1` → `num ((spl "1.2.3" ".").1)`. The
+                // inner call ate the trailing operand, so any remaining `.N`
+                // belongs to that call result, not the outer expression.
+                // Without this the `.N` is left dangling and the parser errors
+                // with ILO-P001 (or the outer infix scanner misreads it).
+                return self.parse_field_chain(call, None);
             }
         }
         self.parse_operand()
@@ -3202,11 +3215,13 @@ or write `({fmt_name} \"...\" ...)` so its args are grouped."
             {
                 self.advance(); // (
                 self.advance(); // )
-                return Ok(Expr::Call {
+                let call = Expr::Call {
                     function: name,
                     args: vec![],
                     unwrap,
-                });
+                };
+                // Allow `.N` / `.field` after a zero-arg call: `mk().0`.
+                return self.parse_field_chain(call, None);
             }
 
             // If we consumed `!` / `!!`, this must be a call (even with zero
@@ -3233,11 +3248,14 @@ or write `({fmt_name} \"...\" ...)` so its args are grouped."
                         .map(|k| (name.as_str(), k, arg_idx));
                     args.push(self.parse_call_arg(in_fn_pos, outer_ctx)?);
                 }
-                return Ok(Expr::Call {
+                let call = Expr::Call {
                     function: name,
                     args,
                     unwrap,
-                });
+                };
+                // Allow `.N` / `.field` after the greedy-call result:
+                // `mk!().0`, `f! a b .1`.
+                return self.parse_field_chain(call, None);
             }
 
             // Check for record construction: name field:value
@@ -3332,11 +3350,14 @@ or write `({fmt_name} \"...\" ...)` so its args are grouped."
                     let inner_fn_pos = self.is_fn_ref_position(&name, i);
                     args.push(self.parse_call_arg(inner_fn_pos, Some((&name, arity, i)))?);
                 }
-                return Ok(Expr::Call {
+                let call = Expr::Call {
                     function: name,
                     args,
                     unwrap: UnwrapMode::None,
-                });
+                };
+                // Allow `.N` / `.field` after an arity-capped call inside a
+                // list literal: `[at xs 0 .1]` reads as `[(at xs 0).1]`.
+                return self.parse_field_chain(call, None);
             }
 
             // Check for function call: name followed by args
@@ -3378,11 +3399,17 @@ or write `({fmt_name} \"...\" ...)` so its args are grouped."
                         break;
                     }
                 }
-                return Ok(Expr::Call {
+                let call = Expr::Call {
                     function: name,
                     args,
                     unwrap: UnwrapMode::None,
-                });
+                };
+                // Allow `.N` / `.field` after a multi-token call result:
+                // `spl "a.b" "." .0` → `(spl "a.b" ".").0`. Without this the
+                // call's args loop stops at the leading `.` (Dot isn't an
+                // operand start) and the trailing `.N` is left dangling for
+                // the infix parser to choke on (ILO-P001).
+                return self.parse_field_chain(call, None);
             }
         }
 
