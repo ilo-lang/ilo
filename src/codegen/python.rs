@@ -91,6 +91,7 @@ fn stmt_uses_rd(stmt: &Stmt) -> bool {
         Stmt::Break(Some(e)) => expr_uses_rd(e),
         Stmt::Break(None) | Stmt::Continue => false,
         Stmt::Destructure { value, .. } => expr_uses_rd(value),
+        Stmt::Defer { expr, .. } => expr_uses_rd(expr),
         Stmt::Expr(e) => expr_uses_rd(e),
     }
 }
@@ -156,6 +157,7 @@ fn stmt_uses_unwrap(stmt: &Stmt) -> bool {
         Stmt::Break(None) => false,
         Stmt::Continue => false,
         Stmt::Destructure { value, .. } => expr_uses_unwrap(value),
+        Stmt::Defer { expr, .. } => expr_uses_unwrap(expr),
         Stmt::Expr(e) => expr_uses_unwrap(e),
     }
 }
@@ -407,6 +409,13 @@ fn emit_stmt(out: &mut String, stmt: &Stmt, level: usize, implicit_return: bool)
             } else {
                 out.push_str(&format!("{}\n", val));
             }
+        }
+        Stmt::Defer { expr, .. } => {
+            // Python codegen: emit as a comment placeholder.
+            // Python transpilation does not implement defer semantics.
+            let _val = emit_expr(out, level, expr);
+            indent(out, level);
+            out.push_str("pass  # defer (not implemented in Python codegen)\n");
         }
     }
 }

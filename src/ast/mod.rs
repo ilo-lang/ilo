@@ -193,6 +193,16 @@ pub enum Decl {
     },
 }
 
+/// Whether a `defer` fires on all exits or only on error exits.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DeferKind {
+    /// `defer expr` — runs on any function exit (normal or error).
+    Always,
+    /// `errdefer expr` — runs only when the function exits via an error
+    /// (Result `Err` propagation, panic-unwrap, or runtime error).
+    OnError,
+}
+
 /// Statements
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Stmt {
@@ -253,6 +263,13 @@ pub enum Stmt {
 
     /// `{a;b;c}=expr` — destructure record fields into local bindings
     Destructure { bindings: Vec<String>, value: Expr },
+
+    /// `defer expr` / `errdefer expr` — register a cleanup expression to run
+    /// at function-scope exit.  `Always` fires on both normal and error exit;
+    /// `OnError` fires only when the function exits via an error path.
+    /// Multiple defers in one function body execute in LIFO order.
+    /// v1 scope: function-level only (not block-level).
+    Defer { expr: Expr, kind: DeferKind },
 
     /// Expression as statement (last expr is return value)
     Expr(Expr),
@@ -688,6 +705,7 @@ fn resolve_aliases_stmt(stmt: &mut Stmt) {
         Stmt::Destructure { value, .. } => resolve_aliases_expr(value),
         Stmt::Break(Some(expr)) => resolve_aliases_expr(expr),
         Stmt::Break(None) | Stmt::Continue => {}
+        Stmt::Defer { expr, .. } => resolve_aliases_expr(expr),
     }
 }
 
@@ -907,6 +925,7 @@ fn desugar_stmt(stmt: &mut Stmt, scope: &mut Vec<String>, rf: &std::collections:
                 scope.push(b.clone());
             }
         }
+        Stmt::Defer { expr, .. } => desugar_expr(expr, scope, rf),
     }
 }
 

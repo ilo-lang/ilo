@@ -344,6 +344,13 @@ fn fmt_stmt_dense(stmt: &Stmt) -> String {
         Stmt::Break(Some(e)) => format!("brk {}", fmt_expr(e, FmtMode::Dense)),
         Stmt::Break(None) => "brk".to_string(),
         Stmt::Continue => "cnt".to_string(),
+        Stmt::Defer { expr, kind } => {
+            let kw = match kind {
+                DeferKind::Always => "defer",
+                DeferKind::OnError => "errdefer",
+            };
+            format!("{} {}", kw, fmt_expr(expr, FmtMode::Dense))
+        }
         Stmt::Expr(e) => fmt_expr(e, FmtMode::Dense),
     }
 }
@@ -493,6 +500,17 @@ fn fmt_stmt_expanded(out: &mut String, stmt: &Stmt, indent_level: usize) {
         Stmt::Continue => {
             out.push_str(&ind);
             out.push_str("cnt\n");
+        }
+        Stmt::Defer { expr, kind } => {
+            let kw = match kind {
+                DeferKind::Always => "defer",
+                DeferKind::OnError => "errdefer",
+            };
+            out.push_str(&ind);
+            out.push_str(kw);
+            out.push(' ');
+            out.push_str(&fmt_expr(expr, FmtMode::Expanded));
+            out.push('\n');
         }
         Stmt::Expr(e) => {
             out.push_str(&ind);

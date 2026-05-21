@@ -437,6 +437,10 @@ struct Env {
     tokio_runtime: Option<std::sync::Arc<tokio::runtime::Runtime>>,
     /// CLI capability policy — checked at IO builtin call sites.
     caps: Arc<Caps>,
+    /// Per-call-frame defer stack.  Each entry is `(expr_clone, kind)`.
+    /// Pushed when a `Stmt::Defer` is executed; drained LIFO at function exit.
+    /// Outer frames are saved/restored by `call_function`.
+    defer_stack: Vec<(crate::ast::Expr, crate::ast::DeferKind)>,
 }
 
 impl Env {
@@ -450,6 +454,7 @@ impl Env {
             #[cfg(feature = "tools")]
             tokio_runtime: None,
             caps: Arc::new(Caps::default()),
+            defer_stack: Vec::new(),
         }
     }
 
@@ -463,6 +468,7 @@ impl Env {
             #[cfg(feature = "tools")]
             tokio_runtime: None,
             caps,
+            defer_stack: Vec::new(),
         }
     }
 
@@ -479,6 +485,7 @@ impl Env {
             #[cfg(feature = "tools")]
             tokio_runtime: Some(runtime),
             caps: Arc::new(Caps::default()),
+            defer_stack: Vec::new(),
         }
     }
 
@@ -496,6 +503,7 @@ impl Env {
             #[cfg(feature = "tools")]
             tokio_runtime: Some(runtime),
             caps,
+            defer_stack: Vec::new(),
         }
     }
 
@@ -8145,13 +8153,15 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             }
             let saved_vars = std::mem::take(&mut env.vars);
             let saved_marks = std::mem::replace(&mut env.scope_marks, vec![0]);
+            // Save and reset the defer stack for this call frame.
+            let saved_defers = std::mem::take(&mut env.defer_stack);
 
             let mut cur_params = params;
             let mut cur_body = body;
             let mut cur_args = args;
             let mut cur_func_name = func_name;
 
-            let final_result = loop {
+            let body_result = loop {
                 env.vars.clear();
                 env.scope_marks.clear();
                 env.scope_marks.push(0);
@@ -8205,9 +8215,34 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
                     },
                 }
             };
+
+            // Run deferred expressions LIFO.  `defer` always fires; `errdefer`
+            // fires only on the error path.  The error path covers both:
+            //   1. A Rust-level RuntimeError (e.g. ILO-R004 arity mismatch).
+            //   2. The function returning a `Value::Err(...)` ilo error value
+            //      (e.g. `ret ^"msg"` or a `!`-propagated error).
+            // Defer errors are silently ignored so a failing defer doesn't
+            // hide the original error.
+            let is_error = match &body_result {
+                Err(_) => true,
+                Ok(Value::Err(_)) => true,
+                _ => false,
+            };
+            let frame_defers = std::mem::take(&mut env.defer_stack);
+            for (defer_expr, defer_kind) in frame_defers.into_iter().rev() {
+                let should_run = match defer_kind {
+                    crate::ast::DeferKind::Always => true,
+                    crate::ast::DeferKind::OnError => is_error,
+                };
+                if should_run {
+                    let _ = eval_expr(env, &defer_expr);
+                }
+            }
+
             env.vars = saved_vars;
             env.scope_marks = saved_marks;
-            final_result
+            env.defer_stack = saved_defers;
+            body_result
         }
         Decl::Tool { name, .. } => {
             if let Some(ref _provider) = env.tool_provider {
@@ -9079,6 +9114,12 @@ fn eval_stmt(env: &mut Env, stmt: &Stmt, is_tail: bool) -> Result<Option<BodyRes
             Ok(Some(BodyResult::Break(val)))
         }
         Stmt::Continue => Ok(Some(BodyResult::Continue)),
+        Stmt::Defer { expr, kind } => {
+            // Register the cleanup expression onto the per-frame defer stack.
+            // Execution happens at function exit (LIFO), handled by call_function.
+            env.defer_stack.push((expr.clone(), *kind));
+            Ok(None)
+        }
         Stmt::Expr(expr) => {
             // Tail context: dispatch via the helper so the TailCall
             // synthesis locals (Option<Result<(String, Vec<Value>)>>) stay

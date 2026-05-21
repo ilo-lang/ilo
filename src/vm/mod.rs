@@ -1072,11 +1072,18 @@ pub struct CompiledProgram {
     pub type_registry: TypeRegistry,
     /// Parallel to `func_names`/`chunks`: true if the function slot is a `tool` declaration.
     pub is_tool: Vec<bool>,
+    /// Parallel to `func_names`/`chunks`: true if the function contains `defer`/`errdefer`
+    /// and must be delegated to the tree-walker at runtime (OP_CALL bridge for internal calls).
+    pub is_defer_fn: Vec<bool>,
     /// Retained AST kept alive for the tree-bridge so it can resolve
     /// user-fn callbacks when HOFs (grp/uniqby/partition/srt-2arg) are
     /// dispatched via the bridge. Populated by `compile()`. Cheap clone
     /// behind an `Arc`; the bridge only needs a read-only view.
     pub ast: Option<std::sync::Arc<Program>>,
+    /// Functions that contain `defer`/`errdefer` statements are compiled to
+    /// stubs and delegated to the tree-walker at runtime. The VM does not yet
+    /// have native defer support (JIT bailout — v1 MVP).
+    pub defer_fns: std::collections::HashSet<String>,
 }
 
 impl CompiledProgram {
@@ -2157,17 +2164,19 @@ impl RegCompiler {
             }
         }
 
-        // Track which function indices are tool declarations.
+        // Track which function indices are tool declarations or defer-containing functions.
         let mut is_tool: Vec<bool> = Vec::new();
+        let mut is_defer_fn: Vec<bool> = Vec::new();
 
         for decl in &program.declarations {
             match decl {
                 Decl::Function {
-                    name, return_type, ..
+                    name, return_type, body, ..
                 } => {
                     self.func_names.push(name.clone());
                     self.func_return_types.push(return_type.clone());
                     is_tool.push(false);
+                    is_defer_fn.push(body_has_defer(body));
                 }
                 Decl::Tool {
                     name, return_type, ..
@@ -2175,6 +2184,7 @@ impl RegCompiler {
                     self.func_names.push(name.clone());
                     self.func_return_types.push(return_type.clone());
                     is_tool.push(true);
+                    is_defer_fn.push(false);
                 }
                 Decl::TypeDef { .. }
                 | Decl::Alias { .. }
@@ -2275,13 +2285,27 @@ impl RegCompiler {
         if let Some(e) = self.first_error {
             return Err(e);
         }
+
+        // Collect the names of functions that contain defer/errdefer.
+        // These are delegated to the tree-walker at runtime.
+        let mut defer_fns = std::collections::HashSet::new();
+        for decl in &program.declarations {
+            if let Decl::Function { name, body, .. } = decl {
+                if body_has_defer(body) {
+                    defer_fns.insert(name.clone());
+                }
+            }
+        }
+
         Ok(CompiledProgram {
             chunks: self.chunks,
             func_names: self.func_names,
             nan_constants: Vec::new(),
             type_registry: self.type_registry,
             is_tool,
+            is_defer_fn,
             ast: None,
+            defer_fns,
         })
     }
 
@@ -2986,6 +3010,13 @@ impl RegCompiler {
             Stmt::Expr(expr) => {
                 let reg = self.compile_expr(expr);
                 Some(reg)
+            }
+            Stmt::Defer { .. } => {
+                // defer/errdefer are not yet compiled to bytecode.
+                // The VM falls back to the tree-walker for any function
+                // containing a Stmt::Defer (handled at compile time by
+                // `has_defer_stmt`). This arm is a safety net.
+                None
             }
         }
     }
@@ -7886,6 +7917,26 @@ impl NanVal {
 
 // ── VM ───────────────────────────────────────────────────────────────
 
+/// Returns true if any statement in `body` (recursively) is a `Stmt::Defer`.
+/// Used to identify functions that must be delegated to the tree-walker.
+fn body_has_defer(body: &[crate::ast::Spanned<Stmt>]) -> bool {
+    body.iter().any(|s| stmt_has_defer(&s.node))
+}
+
+fn stmt_has_defer(stmt: &Stmt) -> bool {
+    match stmt {
+        Stmt::Defer { .. } => true,
+        Stmt::Guard { body, else_body, .. } => {
+            body_has_defer(body) || else_body.as_deref().map(body_has_defer).unwrap_or(false)
+        }
+        Stmt::Match { arms, .. } => arms.iter().any(|a| body_has_defer(&a.body)),
+        Stmt::ForEach { body, .. } | Stmt::ForRange { body, .. } | Stmt::While { body, .. } => {
+            body_has_defer(body)
+        }
+        _ => false,
+    }
+}
+
 pub fn compile(program: &Program) -> Result<CompiledProgram, CompileError> {
     let mut prog = RegCompiler::new().compile_program(program)?;
     prog.nan_constants = prog
@@ -7928,6 +7979,22 @@ pub fn run_with_caps(
         call_stack: Vec::new(),
     })?;
     check_entry_arity(compiled, func_idx, &target, args.len())?;
+
+    // Program-wide bridge: if any function in the program contains defer/errdefer,
+    // delegate the entire execution to the tree-walker. This is the correct V1
+    // approach because defer functions may be called in tail position (OP_TAILCALL)
+    // from non-defer callers, and the OP_CALL bridge alone cannot intercept tailcalls.
+    // The tree interpreter has full native defer support.
+    if !compiled.defer_fns.is_empty() {
+        if let Some(ast) = &compiled.ast {
+            return crate::interpreter::run(ast, Some(&target), args).map_err(|e| VmRuntimeError {
+                error: VmError::Runtime(e.message),
+                span: e.span,
+                call_stack: e.call_stack,
+            });
+        }
+    }
+
     VM::new_with_caps(compiled, caps).call(func_idx, args)
 }
 
@@ -7948,6 +8015,20 @@ pub fn run(
             })?
             .clone(),
     };
+
+    // Program-wide bridge: if any function contains defer/errdefer, delegate
+    // the entire execution to the tree-walker (which has native defer support).
+    // This covers direct calls AND tail-call-optimised calls from non-defer callers.
+    if !compiled.defer_fns.is_empty() {
+        if let Some(ast) = &compiled.ast {
+            return crate::interpreter::run(ast, Some(&target), args).map_err(|e| VmRuntimeError {
+                error: VmError::Runtime(e.message),
+                span: e.span,
+                call_stack: e.call_stack,
+            });
+        }
+    }
+
     let func_idx = compiled.func_index(&target).ok_or_else(|| VmRuntimeError {
         error: VmError::UndefinedFunction {
             name: target.clone(),
@@ -9926,6 +10007,34 @@ impl<'a> VM<'a> {
                         reg_set!(base + a as usize, nan_result);
                         // ip was already saved above; continue to next instruction
                         continue;
+                    }
+
+                    // If this function contains defer/errdefer, bridge to the tree-walker.
+                    // The tree interpreter has native defer support; the VM does not (v1 MVP).
+                    let is_defer_call = self
+                        .program
+                        .is_defer_fn
+                        .get(func_idx as usize)
+                        .copied()
+                        .unwrap_or(false);
+                    if is_defer_call {
+                        if let Some(ast) = &self.program.ast {
+                            let callee_name =
+                                &self.program.func_names[func_idx as usize].clone();
+                            let mut value_args = Vec::with_capacity(n_args);
+                            for i in 0..n_args {
+                                value_args.push(reg!(base + a as usize + 1 + i).to_value());
+                            }
+                            let tree_result =
+                                crate::interpreter::run(ast, Some(callee_name), value_args)
+                                    .map_err(|e| VmError::Runtime(e.message))?;
+                            let nan_result = NanVal::from_value(&tree_result);
+                            reg_set!(base + a as usize, nan_result);
+                            continue;
+                        }
+                        // AST not available — fall through to normal VM dispatch
+                        // (defer semantics will be silently absent, but this path
+                        // is not reachable in practice since compile() always sets ast).
                     }
 
                     // Push args directly onto the stack (no intermediate Vec).
@@ -13598,6 +13707,7 @@ impl<'a> VM<'a> {
                     let bx = (inst & 0xFFFF) as usize;
                     let func_idx = (bx >> 8) as u16;
                     let n_args = bx & 0xFF;
+
 
                     // Save current frame metadata (result_reg + stack_base
                     // survive across the tail-call; ip is reset to 0).
@@ -29010,7 +29120,9 @@ mod tests {
             nan_constants: vec![vec![]],
             type_registry: TypeRegistry::default(),
             is_tool: vec![false],
+                    is_defer_fn: vec![false],
             ast: None,
+            defer_fns: std::collections::HashSet::new(),
         };
         let result = run(&program, Some("f"), vec![]).expect("fallthrough should succeed");
         assert_eq!(result, Value::Nil);
@@ -29034,7 +29146,9 @@ mod tests {
             nan_constants: vec![vec![]],
             type_registry: TypeRegistry::default(),
             is_tool: vec![false],
+                    is_defer_fn: vec![false],
             ast: None,
+            defer_fns: std::collections::HashSet::new(),
         };
         let err = run(&program, Some("f"), vec![]).unwrap_err();
         // Error kind should be UnknownOpcode and span should be captured.
@@ -34128,7 +34242,9 @@ f>n;r=mk 10 20;+r.x r.y";
             ]],
             type_registry: TypeRegistry::default(),
             is_tool: vec![false],
+                    is_defer_fn: vec![false],
             ast: None,
+            defer_fns: std::collections::HashSet::new(),
         };
 
         let list_arg = Value::List(Arc::new(vec![
@@ -34181,7 +34297,9 @@ f>n;r=mk 10 20;+r.x r.y";
             nan_constants: vec![vec![NanVal::number(99.0), NanVal::nil()]],
             type_registry: TypeRegistry::default(),
             is_tool: vec![false],
+                    is_defer_fn: vec![false],
             ast: None,
+            defer_fns: std::collections::HashSet::new(),
         };
 
         let list_arg = Value::List(Arc::new(vec![
@@ -34230,7 +34348,9 @@ f>n;r=mk 10 20;+r.x r.y";
             nan_constants: vec![vec![NanVal::number(0.0), NanVal::nil()]],
             type_registry: TypeRegistry::default(),
             is_tool: vec![false],
+                    is_defer_fn: vec![false],
             ast: None,
+            defer_fns: std::collections::HashSet::new(),
         };
 
         // Pass a number as the collection arg → triggers "foreach requires a list"
@@ -34334,7 +34454,9 @@ f>n;r=mk 10 20;+r.x r.y";
             nan_constants: vec![vec![], vec![]],
             type_registry: TypeRegistry::default(),
             is_tool: vec![false, false],
+                    is_defer_fn: vec![false, false],
             ast: None,
+            defer_fns: std::collections::HashSet::new(),
         };
 
         // g falls through with no RET → returns nil; f returns that nil
@@ -34474,7 +34596,9 @@ f>n;r=mk 10 20;+r.x r.y";
             nan_constants: vec![vec![NanVal::nil()]],
             type_registry: TypeRegistry::default(),
             is_tool: vec![false],
+                    is_defer_fn: vec![false],
             ast: None,
+            defer_fns: std::collections::HashSet::new(),
         };
 
         let list_arg = Value::List(Arc::new(vec![Value::Number(1.0), Value::Number(2.0)]));
@@ -34551,7 +34675,9 @@ f>n;r=mk 10 20;+r.x r.y";
             nan_constants: vec![vec![NanVal::number(0.0), NanVal::nil()]],
             type_registry: TypeRegistry::default(),
             is_tool: vec![false],
+                    is_defer_fn: vec![false],
             ast: None,
+            defer_fns: std::collections::HashSet::new(),
         };
 
         // Pass a string as the collection → is_heap()=true but not a list → error
@@ -34628,7 +34754,9 @@ f>n;r=mk 10 20;+r.x r.y";
             nan_constants: vec![vec![NanVal::nil()]],
             type_registry: TypeRegistry::default(),
             is_tool: vec![false],
+                    is_defer_fn: vec![false],
             ast: None,
+            defer_fns: std::collections::HashSet::new(),
         };
         let result = run(&program, Some("f"), vec![]).expect("sqrt nil should not error");
         match result {
@@ -34656,7 +34784,9 @@ f>n;r=mk 10 20;+r.x r.y";
             nan_constants: vec![vec![NanVal::nil()]],
             type_registry: TypeRegistry::default(),
             is_tool: vec![false],
+                    is_defer_fn: vec![false],
             ast: None,
+            defer_fns: std::collections::HashSet::new(),
         };
         let result = run(&program, Some("f"), vec![]).expect("pow nil should not error");
         match result {
@@ -34685,7 +34815,9 @@ f>n;r=mk 10 20;+r.x r.y";
                 nan_constants: vec![vec![NanVal::nil()]],
                 type_registry: TypeRegistry::default(),
                 is_tool: vec![false],
+                is_defer_fn: vec![false],
                 ast: None,
+                defer_fns: std::collections::HashSet::new(),
             };
             let result = run(&program, Some("f"), vec![]).expect("math op on nil should not error");
             match result {
@@ -34725,7 +34857,9 @@ f>n;r=mk 10 20;+r.x r.y";
             nan_constants: vec![vec![NanVal::number(input)]],
             type_registry: TypeRegistry::default(),
             is_tool: vec![false],
+                    is_defer_fn: vec![false],
             ast: None,
+            defer_fns: std::collections::HashSet::new(),
         };
         match run(&program, Some("f"), vec![]).expect("unary math op should not error") {
             Value::Number(n) => n,
@@ -34763,7 +34897,9 @@ f>n;r=mk 10 20;+r.x r.y";
             nan_constants: vec![vec![NanVal::number(2.0), NanVal::number(10.0)]],
             type_registry: TypeRegistry::default(),
             is_tool: vec![false],
+                    is_defer_fn: vec![false],
             ast: None,
+            defer_fns: std::collections::HashSet::new(),
         };
         match run(&program, Some("f"), vec![]).expect("pow should not error") {
             Value::Number(n) => assert!((n - 1024.0).abs() < 1e-10, "got {n}"),
@@ -34903,7 +35039,9 @@ f>n;r=mk 10 20;+r.x r.y";
             nan_constants: vec![vec![NanVal::number(1.0), NanVal::number(0.0)]],
             type_registry: TypeRegistry::default(),
             is_tool: vec![false],
+                    is_defer_fn: vec![false],
             ast: None,
+            defer_fns: std::collections::HashSet::new(),
         };
         match run(&program, Some("f"), vec![]).expect("atan2 should not error") {
             Value::Number(n) => {
@@ -34942,7 +35080,9 @@ f>n;r=mk 10 20;+r.x r.y";
             nan_constants: vec![vec![NanVal::boolean(true), NanVal::number(0.0)]],
             type_registry: TypeRegistry::default(),
             is_tool: vec![false],
+                    is_defer_fn: vec![false],
             ast: None,
+            defer_fns: std::collections::HashSet::new(),
         };
         match run(&program, Some("f"), vec![]).expect("atan2 nan path") {
             Value::Number(n) => assert!(n.is_nan(), "expected NaN, got {n}"),
@@ -35324,7 +35464,9 @@ f>n;r=mk 10 20;+r.x r.y";
             nan_constants: vec![vec![NanVal::number(5.0), NanVal::number(0.0)]],
             type_registry: TypeRegistry::default(),
             is_tool: vec![false],
+                    is_defer_fn: vec![false],
             ast: None,
+            defer_fns: std::collections::HashSet::new(),
         };
         match run(&program, Some("f"), vec![]).expect("rndn should not error") {
             Value::Number(n) => assert_eq!(n, 5.0),
@@ -35361,7 +35503,9 @@ f>n;r=mk 10 20;+r.x r.y";
             nan_constants: vec![vec![NanVal::number(0.0), NanVal::number(1.0)]],
             type_registry: TypeRegistry::default(),
             is_tool: vec![false],
+                    is_defer_fn: vec![false],
             ast: None,
+            defer_fns: std::collections::HashSet::new(),
         };
         crate::rng::seed(7);
         match run(&program, Some("f"), vec![]).expect("rndn should not error") {
@@ -35399,7 +35543,9 @@ f>n;r=mk 10 20;+r.x r.y";
             nan_constants: vec![vec![NanVal::boolean(true), NanVal::number(0.0)]],
             type_registry: TypeRegistry::default(),
             is_tool: vec![false],
+                    is_defer_fn: vec![false],
             ast: None,
+            defer_fns: std::collections::HashSet::new(),
         };
         let res = run(&program, Some("f"), vec![]);
         assert!(res.is_err(), "expected type error, got {res:?}");
