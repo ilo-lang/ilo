@@ -586,6 +586,19 @@ impl Parser {
                         Some("the last expression in a function body is the return value — no 'return' keyword".to_string()),
                     Token::KwIf =>
                         Some("ilo uses match for conditionals: ?expr{true:...;false:...}".to_string()),
+                    // Glued-negative-literal misparse: `a -1.5` lexes as `Number(a), Number(-1.5)`
+                    // because the lexer packs a leading `-` with no preceding space into the
+                    // number token (this is load-bearing for call-args like `mod n -2` and
+                    // list literals `[1 -2 3]`). When that negative number lands at decl
+                    // position, the user almost certainly meant subtraction with a missing
+                    // space, so spell out the spacing rule and the parenthesised-negation
+                    // workaround instead of the generic "got number `-1.5`" message.
+                    Token::Number(n) if *n < 0.0 =>
+                        Some(format!(
+                            "for subtraction, write `a - b` with spaces both sides (e.g. `0 - {}`). for a negative value as an expression, wrap in parens: `({})`. a glued `-N` (no space before) is only parsed as a negative literal when it's a call argument or inside a list.",
+                            n.abs(),
+                            n,
+                        )),
                     _ => None,
                 };
                 let mut err = self.error("ILO-P001", msg);

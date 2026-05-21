@@ -17,7 +17,7 @@ Prefix-notation, strongly-typed, verified pre-run. Bodies `;`-separated or newli
 
 ## operators
 
-Binary `+ - * / % < > <= >= = !=`, bool `& | !`, append `+=`. Nest: `+*a b c` = `(a*b)+c`; outer binds inner LEFT. Take atoms/nested-ops, NOT calls; bind first: `r=fac -n 1;*n r`. No compound: `<=a b`, not `=<a b`.
+Binary `+ - * / % < > <= >= = !=`, bool `& | !`, append `+=`. Nest `+*a b c`=`(a*b)+c`; outer binds inner LEFT. Atoms/nested-ops not calls; bind first: `r=fac -n 1;*n r`. No compound `<=a b`. Glued `-n` = neg literal; bare `0 -1` errs ILO-P001.
 
 ## idents
 

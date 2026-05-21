@@ -421,6 +421,8 @@ f v:n>n;- 0 v  -- OK: binary subtract: 0 - v = -v
 
 The lexer splits a glued negative literal back into `Minus + Number` when the previous token is one of `;`, `\n`, `=`, `{`, `(`, or `-`. The `-` context covers the operand slot of an outer prefix-minus, so `- -0 a b` lexes as `-, -, 0, a, b` and parses as `Subtract(Subtract(0, a), b)` = `-a - b` rather than tripping `ILO-P020`. Negative literals after an Ident, `[`, or another prefix binop (`+`, `*`, `/`) stay glued so call args (`at xs -1`), list literals (`[-2 1 3]`), and binary operands (`+a -3`) read naturally.
 
+**Subtraction spacing convention**: for general subtraction at statement position, write `a - b` with spaces on **both** sides. `a -b` (glued, no space before the `-`) is not a binary subtract: the lexer packs `-b` into a negative-literal token because the previous token (`a`, an Ident) is one of the keep-glued contexts above. That's deliberate so call args and list elements read naturally, but it means `0 -1.5` is a parse error (`ILO-P001: expected declaration, got number `-1.5`` with a tailored hint pointing at this rule). For a bare negative value as an expression, wrap in parens: `(-1.5)`.
+
 ---
 
 ## String Literals
