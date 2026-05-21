@@ -4212,14 +4212,29 @@ fn builtin_arity_tables() -> (HashMap<String, usize>, HashMap<String, Vec<bool>>
         ("rou", 1, &[]),
         ("sqrt", 1, &[]),
         ("log", 1, &[]),
+        ("log10", 1, &[]),
+        ("log2", 1, &[]),
         ("exp", 1, &[]),
         ("sin", 1, &[]),
         ("cos", 1, &[]),
+        ("tan", 1, &[]),
+        ("asin", 1, &[]),
+        ("acos", 1, &[]),
+        ("atan", 1, &[]),
         // Math (binary)
         ("min", 2, &[]),
         ("max", 2, &[]),
         ("mod", 2, &[]),
         ("pow", 2, &[]),
+        ("fmod", 2, &[]),
+        ("atan2", 2, &[]),
+        // Math (ternary)
+        ("clamp", 3, &[]),
+        // Random sampling. `rnd` (zero-arg) handled separately in the
+        // operand-position fallback; the named-distribution forms have
+        // declared arities so chained calls (`abs rndn 0 1`) parse
+        // without forcing parens on the inner call.
+        ("rndn", 2, &[]),
         // Aggregates
         ("sum", 1, &[]),
         ("prod", 1, &[]),
