@@ -50,10 +50,4 @@ code=mget m "code"               -- "0"
 
 `now` (s), `now-ms`, `sleep ms`, `clock`. Date parsing/formatting (`dtfmt`, `dtparse`, `dtparse-rel`) lives in `ilo-builtins-text`.
 
-`tz-offset tz:t epoch:n > R n t` - UTC offset (s) for IANA tz at epoch. DST-aware, east-positive. Err on unknown tz.
-
-```
-tz-offset "Europe/London" 1719835200  -- Ok 3600    (BST)
-tz-offset "Asia/Tokyo" 0              -- Ok 32400
-tz-offset "Not/Real" 0                -- Err "..."
-```
+`tz-offset tz:t epoch:n > R n t` - DST-aware UTC offset (s) for IANA tz; east-positive.
