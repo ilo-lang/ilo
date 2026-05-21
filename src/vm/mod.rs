@@ -479,6 +479,37 @@ pub(crate) const OP_MPAIRS: u8 = 186; // R[A] = pairs(R[B])  → L (L _)
 //   C = argc
 pub(crate) const OP_CALL_OWN1: u8 = 183;
 
+// Tail-call: reuse the current CallFrame instead of pushing a new one. The
+// VM compiler emits this when a static user-fn call sits in tail position
+// (last statement of a body that itself sits in tail position, propagated
+// via `in_tail_position`). Encoding mirrors OP_CALL exactly so the only
+// compiler change is the opcode byte; runtime semantics differ:
+//
+//   1. Save the args from R[A+1..=A+argc] (caller side) into a small stash.
+//      We zero each source slot as we go so the upcoming drop_rc loop does
+//      not double-drop the RC the args carry.
+//   2. drop_rc every remaining slot in the current frame (everything except
+//      the just-zeroed arg sources). For all-numeric chunks this is a no-op.
+//   3. Switch chunk_idx to the callee (cross-fn tail calls work too — the
+//      typical self-recursion case is just `func_idx == current ci`).
+//   4. Truncate stack back to `stack_base + callee.reg_count`, writing args
+//      into R[0..argc] and Nil-filling the rest.
+//   5. Reset ip = 0; keep stack_base and result_reg unchanged so the
+//      eventual OP_RET in the (possibly cross-) callee returns through the
+//      original caller's result register.
+//
+// No new native stack frame, no new CallFrame entry, so a function that
+// only recurses in tail position runs in O(1) frame memory.
+//
+// Encoding (ABx, identical to OP_CALL):
+//   A  = result register (preserved across the tail-call so the eventual
+//        OP_RET in the callee lands in the same caller-side slot — used
+//        only by the compiler to keep the args window consistent at
+//        emit-time; the runtime ignores it because we reuse the current
+//        frame's result_reg).
+//   Bx = (func_idx << 8) | argc
+pub(crate) const OP_TAILCALL: u8 = 189;
+
 // Dynamic call by function reference. The callee is a FnRef NanVal sitting
 // in a register; we decode its (kind, id), then either push a VM frame
 // (user fn) or invoke the builtin dispatch path (builtin).
@@ -2164,6 +2195,16 @@ impl RegCompiler {
     }
 
     fn compile_stmt(&mut self, stmt: &Stmt) -> Option<u8> {
+        // Tail-position propagation per statement kind. Only Stmt::Expr
+        // and Stmt::Return preserve the body-root tail flag onto their
+        // contained expression (their value IS the function's return).
+        // Stmt::Let / Stmt::Break / Stmt::Continue bind or jump rather
+        // than return, so their contained value expression is NOT in
+        // tail position even if the statement itself sits at the last
+        // body slot.
+        if !matches!(stmt, Stmt::Expr(_) | Stmt::Return(_)) {
+            self.in_tail_position = false;
+        }
         match stmt {
             Stmt::Let { name, value } => {
                 if let Some(existing_reg) = self.resolve_local(name) {
@@ -3432,6 +3473,21 @@ impl RegCompiler {
             return reg;
         }
 
+        // Tail-position propagation rule. `in_tail_position` is a
+        // single-use flag set by `Stmt::Expr` / `Stmt::Return` at the
+        // body-root entry to `compile_expr`. Only the static-user-fn
+        // arm of `Expr::Call` consumes it (to emit OP_TAILCALL instead
+        // of OP_CALL); every other arm — operators, builtins, list
+        // literals, args of an outer call — must descend with the
+        // flag cleared so a nested `Expr::Call` deep inside their
+        // operand tree doesn't accidentally pick up the outer tail
+        // bit. We unconditionally clear the flag at the top of every
+        // non-Call dispatch arm and let `Expr::Call` capture+restore
+        // it locally before its emit-site read (see the saved_tail
+        // block in the Call arm below).
+        let outer_tail = self.in_tail_position;
+        self.in_tail_position = false;
+
         match expr {
             Expr::Literal(lit) => {
                 let is_num = matches!(lit, Literal::Number(_));
@@ -4473,10 +4529,18 @@ impl RegCompiler {
                             // OP_CALL_OWN1). Stays a no-op when RC > 1 (a
                             // captured/aliased map), since the runtime
                             // still gates on rc_count.
-                            let tail_save = self.in_tail_position;
-                            self.in_tail_position = false;
+                            // Note: `in_tail_position` was cleared by the
+                            // compile_expr entry guard above; use the
+                            // outer_tail snapshot captured at the top of
+                            // this function call to drive the mset
+                            // in-place fast path. Without this snapshot
+                            // mset would never see the tail flag again
+                            // after the compile_expr-level clear, and
+                            // the OP_MSET RC=1 mutation peephole would
+                            // stop firing for tail-position `mset m k v`
+                            // inside helper fns.
                             let tail_local_reg: Option<u8> =
-                                if tail_save && let Expr::Ref(ref_name) = &args[0] {
+                                if outer_tail && let Expr::Ref(ref_name) = &args[0] {
                                     self.resolve_local(ref_name)
                                 } else {
                                     None
@@ -5300,6 +5364,14 @@ impl RegCompiler {
                     return a;
                 }
 
+                // Compiling args of this call: each arg is NOT in tail
+                // position, even if the outer call itself is. The
+                // top-of-compile_expr clear already zeroed
+                // `in_tail_position`, so the inner `compile_expr`
+                // calls for args see it as false. `outer_tail` (saved
+                // before the clear) is the value the Call site will
+                // consult below to decide between OP_CALL and
+                // OP_TAILCALL.
                 let arg_regs: Vec<u8> = args.iter().map(|a| self.compile_expr(a)).collect();
                 let func_idx = self
                     .func_names
@@ -5353,7 +5425,19 @@ impl RegCompiler {
                     func_idx
                 );
                 let bx = ((func_idx as u16) << 8) | args.len() as u16;
-                self.emit_abx(OP_CALL, a, bx);
+                // Tail-call elimination: when the call is in tail position
+                // and not wrapped by an unwrap (`!` / `!!`), emit
+                // OP_TAILCALL instead of OP_CALL. The runtime reuses the
+                // current frame so a function that recurses only in tail
+                // position runs in O(1) frame memory. Auto-unwrap stays on
+                // the normal OP_CALL path — the post-call result probe
+                // wants to inspect the value before returning.
+                let emit_tail = outer_tail && !unwrap.is_any();
+                if emit_tail {
+                    self.emit_abx(OP_TAILCALL, a, bx);
+                } else {
+                    self.emit_abx(OP_CALL, a, bx);
+                }
 
                 // Track return type for record type propagation
                 if func_idx < self.func_return_types.len() {
@@ -13114,6 +13198,120 @@ impl<'a> VM<'a> {
                     ci = func_idx as usize;
                     ip = 0;
                     base = new_base;
+                }
+                OP_TAILCALL => {
+                    // Tail-call: reuse the current frame. Args live in
+                    // R[A+1..=A+argc] caller-side. We:
+                    //   1. Stash the args into `tail_args` and zero each
+                    //      source slot so the drop_rc loop below skips
+                    //      them (their RC moves into the new arg slots).
+                    //   2. drop_rc the rest of the frame's slots.
+                    //   3. Switch chunk_idx (cross-fn) and Nil-fill /
+                    //      install args into R[0..argc].
+                    //   4. Reset ip = 0, keep stack_base and
+                    //      frame.result_reg unchanged.
+                    let a = ((inst >> 16) & 0xFF) as usize;
+                    let bx = (inst & 0xFFFF) as usize;
+                    let func_idx = (bx >> 8) as u16;
+                    let n_args = bx & 0xFF;
+
+                    // Save current frame metadata (result_reg + stack_base
+                    // survive across the tail-call; ip is reset to 0).
+                    // SAFETY: frames is non-empty while execute() runs.
+                    let frame = unsafe { self.frames.last_mut().unwrap_unchecked() };
+                    let saved_stack_base = frame.stack_base;
+                    let saved_result_reg = frame.result_reg;
+
+                    // Stash args. We zero each source slot before dropping
+                    // the rest of the frame so a tail call like `f x y` —
+                    // where x/y are locals — doesn't double-drop their RC.
+                    // Cap at 16 inline to avoid heap alloc on the hot path;
+                    // wider arities fall back to Vec. The bytecode argc
+                    // field is 8-bit so 256 is the hard ceiling.
+                    let mut tail_args_inline: [NanVal; 16] = [NanVal::nil(); 16];
+                    let mut tail_args_heap: Vec<NanVal> = Vec::new();
+                    let use_heap = n_args > 16;
+                    if use_heap {
+                        tail_args_heap.reserve_exact(n_args);
+                    }
+                    // SAFETY: arg source slots are inside the current
+                    // frame (base + a + 1 + i, i < n_args, all < reg_count).
+                    // The range-loop shape is the clearest spelling for
+                    // the parallel source-slot / dest-slot index pattern
+                    // (we need `src_idx = base + a + 1 + i` and the
+                    // matching `tail_args_inline[i]` slot on every step,
+                    // plus a branch on `use_heap`); enumerate/iter_mut
+                    // would not improve readability.
+                    #[allow(clippy::needless_range_loop)]
+                    unsafe {
+                        let stack_ptr = self.stack.as_mut_ptr();
+                        for i in 0..n_args {
+                            let src_idx = base + a + 1 + i;
+                            let v = *stack_ptr.add(src_idx);
+                            *stack_ptr.add(src_idx) = NanVal::nil();
+                            if use_heap {
+                                tail_args_heap.push(v);
+                            } else {
+                                tail_args_inline[i] = v;
+                            }
+                        }
+                    }
+
+                    // Drop the rest of the frame's slots. Numeric-only
+                    // chunks need no RC ops — skip the loop entirely.
+                    let caller_all_numeric =
+                        unsafe { self.program.chunks.get_unchecked(ci) }.all_regs_numeric;
+                    if !caller_all_numeric {
+                        for i in base..self.stack.len() {
+                            // SAFETY: i in range; arg sources were zeroed
+                            // above so drop_rc on Nil is a no-op there.
+                            unsafe { self.stack.get_unchecked(i) }.drop_rc();
+                        }
+                    }
+
+                    // Switch chunk and re-shape stack to callee size.
+                    let new_reg_count = self.program.chunks[func_idx as usize].reg_count as usize;
+                    let new_len = saved_stack_base + new_reg_count;
+                    let old_len = self.stack.len();
+                    if new_len > old_len {
+                        self.stack.reserve(new_len - old_len);
+                    }
+                    // SAFETY: NanVal is Copy (plain u64). Reset all slots
+                    // to Nil first; then install args. We always set_len
+                    // to new_len exactly.
+                    unsafe {
+                        let nil = NanVal::nil();
+                        let ptr = self.stack.as_mut_ptr();
+                        for i in saved_stack_base..new_len {
+                            ptr.add(i).write(nil);
+                        }
+                        self.stack.set_len(new_len);
+                        // Install args at R[0..argc] (callee-side slots
+                        // saved_stack_base..saved_stack_base+argc). RC has
+                        // moved with them — no clone_rc, no drop_rc.
+                        for i in 0..n_args {
+                            let v = if use_heap {
+                                tail_args_heap[i]
+                            } else {
+                                tail_args_inline[i]
+                            };
+                            ptr.add(saved_stack_base + i).write(v);
+                        }
+                    }
+
+                    // Reuse the current frame entry — no push/pop on
+                    // self.frames. ip resets to 0, chunk_idx switches,
+                    // stack_base + result_reg preserved.
+                    // SAFETY: frames non-empty (verified above).
+                    let frame = unsafe { self.frames.last_mut().unwrap_unchecked() };
+                    frame.chunk_idx = func_idx;
+                    frame.ip = 0;
+                    frame.stack_base = saved_stack_base;
+                    frame.result_reg = saved_result_reg;
+
+                    ci = func_idx as usize;
+                    ip = 0;
+                    base = saved_stack_base;
                 }
                 _ => vm_err!(VmError::UnknownOpcode { op }),
             }
@@ -28377,8 +28575,15 @@ mod tests {
 
     #[test]
     fn vm_error_call_stack_includes_caller_and_callee() {
-        // f calls g, g divides by zero → ensure call_stack lists [f, g]
-        let prog = parse_program("g x:n>n;/x 0 f>n;g 1");
+        // f calls g, g divides by zero → ensure call_stack lists [f, g].
+        // The `r=g 1;+r 0` shape keeps the call to g out of tail position
+        // (it's bound to a local, and the function's tail expression is
+        // `+r 0`), so OP_CALL is emitted instead of OP_TAILCALL and f's
+        // frame is preserved when g raises. The dedicated TCO behaviour
+        // — that a tail-called callee replaces the caller's frame and
+        // therefore drops the caller from the error stack — is asserted
+        // by `vm_error_call_stack_drops_tail_caller` below.
+        let prog = parse_program("g x:n>n;/x 0 f>n;r=g 1;+r 0");
         let compiled = compile(&prog).unwrap();
         let err = run(&compiled, Some("f"), vec![]).unwrap_err();
         assert!(err.call_stack.contains(&"f".to_string()));
@@ -28389,6 +28594,29 @@ mod tests {
         assert!(
             f_pos < g_pos,
             "expected f before g in call stack: {:?}",
+            err.call_stack
+        );
+    }
+
+    #[test]
+    fn vm_error_call_stack_drops_tail_caller() {
+        // Pins the documented TCO trade-off: when `g` is tail-called from
+        // `f`, OP_TAILCALL replaces f's frame with g's. A runtime error
+        // raised inside g lists only g (and any non-tail-called frames
+        // above f), not f itself. This is the expected, standard TCO
+        // semantics — Scheme, Erlang, and the ilo tree-interpreter
+        // trampoline all behave the same way.
+        let prog = parse_program("g x:n>n;/x 0 f>n;g 1");
+        let compiled = compile(&prog).unwrap();
+        let err = run(&compiled, Some("f"), vec![]).unwrap_err();
+        assert!(
+            err.call_stack.contains(&"g".to_string()),
+            "expected g in call stack: {:?}",
+            err.call_stack
+        );
+        assert!(
+            !err.call_stack.contains(&"f".to_string()),
+            "f should have been replaced by its tail call to g: {:?}",
             err.call_stack
         );
     }

@@ -48,6 +48,10 @@ Two distinct types, two distinct unwraps. `O T` = maybe-value (`nil` or `T`), no
 
 `@x xs{body}` foreach, `@i 0..5{body}` range, `wh <i 10{...}` while. `brk`, `cnt`, `ret v`. Tail user-fn calls trampoline (no stack growth); deep iter: `cd n:n>n;=n 0 0;cd -n 1`. Direct name, no `!`/`!!`.
 
+## tail-call optimisation
+
+Tail calls do not consume host-stack frames. A function that recurses in tail position runs to arbitrary depth — use tail-recursive accumulators for iteration beyond what `@` covers. No `loop` keyword by design. Tail position = last stmt of body, `ret` expr, an arm of a tail-position `?` match, body of a braceless guard. Peephole only fires on direct user-fn name calls with no `!`/`!!`. Example: `count-down n:n>n;=n 0 0;count-down -n 1`, `sum-acc xs:L n acc:n>n;empty=len xs;=empty 0 acc;sum-acc tl xs +acc hd xs`. Tree interpreter trampolines today; VM/JIT/AOT support lands in follow-up PRs.
+
 ## pipes
 
 `xs >> flt pos >> map sq` desugars left-to-right. Wrap `()` for non-last fns.
