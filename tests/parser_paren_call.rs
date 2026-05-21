@@ -12,7 +12,15 @@ fn lex_to_pairs(src: &str) -> Vec<(lexer::Token, Span)> {
     let tokens = lexer::lex(src).expect("lex failed");
     tokens
         .into_iter()
-        .map(|(t, r)| (t, Span { start: r.start, end: r.end }))
+        .map(|(t, r)| {
+            (
+                t,
+                Span {
+                    start: r.start,
+                    end: r.end,
+                },
+            )
+        })
         .collect()
 }
 
@@ -20,7 +28,10 @@ fn lex_to_pairs(src: &str) -> Vec<(lexer::Token, Span)> {
 fn parse_ok(src: &str) -> ilo::ast::Program {
     let pairs = lex_to_pairs(src);
     let (prog, errs) = parser::parse(pairs);
-    assert!(errs.is_empty(), "unexpected parse errors for {src:?}: {errs:?}");
+    assert!(
+        errs.is_empty(),
+        "unexpected parse errors for {src:?}: {errs:?}"
+    );
     prog
 }
 
@@ -119,7 +130,10 @@ fn nested_paren_calls() {
     };
     assert_eq!(function, "abs");
     assert_eq!(args.len(), 1);
-    let Expr::Call { function: inner_fn, .. } = &args[0] else {
+    let Expr::Call {
+        function: inner_fn, ..
+    } = &args[0]
+    else {
         panic!("expected inner Call, got {:?}", args[0]);
     };
     assert_eq!(inner_fn, "sqrt");
@@ -198,5 +212,9 @@ fn fld_space_lambda_not_paren_call() {
     };
     assert_eq!(function, "fld");
     // fld should have 3 args: (lambda), xs, init
-    assert_eq!(args.len(), 3, "fld must have 3 args: lambda, collection, init");
+    assert_eq!(
+        args.len(),
+        3,
+        "fld must have 3 args: lambda, collection, init"
+    );
 }
