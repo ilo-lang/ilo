@@ -66,7 +66,7 @@ Non-last fns end with safe expr (op, index, match, literal, parens); last fn: an
 
 ## strings
 
-`"text"` with `\n \t \" \\`. Multi-line `"""..."""`. Interp `"{x}"`.
+`"text"` with `\n \t \" \\`. Multi-line `"""..."""`. Interp `"hi {name}"` => `fmt "hi {}" name`. Single-ident slots only. `{{`/`}}` escape inside interpolated strings. Bare `{}` still positional; don't mix `{ident}` + `{}` in one string.
 
 ## reserved names
 

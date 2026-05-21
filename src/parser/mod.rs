@@ -3774,7 +3774,7 @@ results first: `r={first_op}a b;…r` keeps each step explicit."
             }
             Some(Token::Text(s)) => {
                 self.advance();
-                Ok(Expr::Literal(Literal::Text(s)))
+                Ok(desugar_string_interpolation(&s))
             }
             Some(Token::True) => {
                 self.advance();
@@ -4591,6 +4591,193 @@ fn builtin_arity_tables() -> (HashMap<String, usize>, HashMap<String, Vec<bool>>
         }
     }
     (arity, fn_flags)
+}
+
+/// Desugar `{name}` string interpolation into a `fmt` call.
+///
+/// Manifesto principle 1 (token-conservative): `"hello {name}"` is cheaper
+/// for an agent to write than `fmt "hello {}" name`. The lexer hands us the
+/// raw literal text (already unescaped per the string-escape table). Here we
+/// scan it for `{ident}` slots, `{{` / `}}` literal-brace escapes, and bare
+/// `{}` positional placeholders (which keep their current meaning - filled
+/// by trailing args of the surrounding `fmt` call, but here they pass
+/// through verbatim and are an error if the string is used outside a
+/// `fmt`).
+///
+/// Returns:
+/// - `Expr::Literal(Literal::Text(...))` if there are no `{ident}` slots
+///   (and `{{`/`}}` are collapsed to literal `{`/`}`). This preserves the
+///   existing behaviour for any string that does not look interpolated.
+/// - `Expr::Call { function: "fmt", args: [Literal::Text(template), Ref(n1), ...] }`
+///   if at least one `{ident}` slot is found. Each `{ident}` becomes a bare
+///   `{}` in the template and an `Expr::Ref(ident)` arg appended in order.
+///
+/// Scope: only single-identifier slots (`{name}` matching the lexer's ident
+/// regex `[a-z][a-z0-9]*(-[a-z0-9]+)*`). Anything inside braces that does
+/// not match that shape (e.g. `{x + 1}`, `{Foo}`, empty `{}`) is left
+/// untouched so existing fmt positional semantics keep working and we don't
+/// claim more surface area than the spec promises.
+fn desugar_string_interpolation(s: &str) -> Expr {
+    // Fast path: no `{` at all means no work to do.
+    if !s.contains('{') {
+        return Expr::Literal(Literal::Text(s.to_string()));
+    }
+
+    // First pass: classify what the string contains. We desugar only if we
+    // find at least one `{ident}` slot AND no bare `{}` positional
+    // placeholder. Mixing styles in a single string is disallowed - bare
+    // `{}` is filled by trailing args of an enclosing `fmt` call (verbose
+    // form), `{ident}` is filled inline by the desugar (terse form). If
+    // both shapes appear we keep the string verbatim and let the agent's
+    // existing `fmt "..." args` call (or a verifier diagnostic) handle it;
+    // any other policy would silently rewrite agent-visible semantics.
+    let bytes = s.as_bytes();
+    let mut has_ident_slot = false;
+    let mut has_bare_slot = false;
+    let mut i = 0;
+    while i < bytes.len() {
+        let c = bytes[i];
+        if c == b'{' {
+            if i + 1 < bytes.len() && bytes[i + 1] == b'{' {
+                i += 2;
+                continue;
+            }
+            if let Some(close_rel) = s[i + 1..].find('}') {
+                let close = i + 1 + close_rel;
+                let inner = &s[i + 1..close];
+                if inner.is_empty() {
+                    has_bare_slot = true;
+                } else if is_ident_for_interp(inner) {
+                    has_ident_slot = true;
+                }
+                // Other shapes (printf spec, expression, etc.) are left for
+                // the verifier or runtime to handle as today.
+                i = close + 1;
+                continue;
+            }
+        }
+        i += 1;
+    }
+
+    if !has_ident_slot || has_bare_slot {
+        return Expr::Literal(Literal::Text(s.to_string()));
+    }
+
+    // Second pass: build the desugared template + args. Here we collapse
+    // `{{` -> `{` and `}}` -> `}` (rust-style brace escapes) because we
+    // are inside an interpolated string and the agent needs a way to write
+    // a literal brace. The escape is scoped to interpolated strings only;
+    // non-interpolated string literals keep `{{` / `}}` verbatim so we
+    // don't retroactively change semantics for existing programs.
+    let mut template = String::with_capacity(s.len());
+    let mut args: Vec<Expr> = Vec::new();
+    let mut i = 0;
+    while i < bytes.len() {
+        let c = bytes[i];
+        if c == b'{' {
+            if i + 1 < bytes.len() && bytes[i + 1] == b'{' {
+                template.push('{');
+                i += 2;
+                continue;
+            }
+            if let Some(close_rel) = s[i + 1..].find('}') {
+                let close = i + 1 + close_rel;
+                let inner = &s[i + 1..close];
+                if !inner.is_empty() && is_ident_for_interp(inner) {
+                    template.push_str("{}");
+                    args.push(Expr::Ref(inner.to_string()));
+                    i = close + 1;
+                    continue;
+                }
+                // Pass other `{...}` shapes through verbatim. (`{}` itself
+                // can't appear here because has_bare_slot would be true and
+                // we'd have bailed.)
+                template.push_str(&s[i..close + 1]);
+                i = close + 1;
+                continue;
+            }
+            template.push('{');
+            i += 1;
+            continue;
+        }
+        if c == b'}' {
+            if i + 1 < bytes.len() && bytes[i + 1] == b'}' {
+                template.push('}');
+                i += 2;
+                continue;
+            }
+            template.push('}');
+            i += 1;
+            continue;
+        }
+        let ch_len = utf8_char_len(c).min(bytes.len() - i);
+        template.push_str(&s[i..i + ch_len]);
+        i += ch_len;
+    }
+
+    let mut call_args = Vec::with_capacity(args.len() + 1);
+    call_args.push(Expr::Literal(Literal::Text(template)));
+    call_args.extend(args);
+    Expr::Call {
+        function: "fmt".to_string(),
+        args: call_args,
+        unwrap: UnwrapMode::None,
+    }
+}
+
+/// Length of the UTF-8 sequence starting with the given lead byte.
+/// Used by `desugar_string_interpolation` to walk multi-byte chars safely.
+fn utf8_char_len(lead: u8) -> usize {
+    // ASCII or stray continuation byte (shouldn't happen in valid UTF-8,
+    // but be defensive: advance by one).
+    if lead < 0xC0 {
+        1
+    } else if lead < 0xE0 {
+        2
+    } else if lead < 0xF0 {
+        3
+    } else {
+        4
+    }
+}
+
+/// Does `s` match the ilo ident regex `[a-z][a-z0-9]*(-[a-z0-9]+)*`?
+/// Used to decide whether `{...}` is a `{name}` interpolation slot or
+/// should pass through to `fmt` verbatim (positional `{}` or future
+/// expression form).
+fn is_ident_for_interp(s: &str) -> bool {
+    if s.is_empty() {
+        return false;
+    }
+    let bytes = s.as_bytes();
+    if !(bytes[0].is_ascii_lowercase()) {
+        return false;
+    }
+    // Walk: lowercase/digit run, optional `-` then another lowercase/digit run.
+    let mut i = 0;
+    let n = bytes.len();
+    // First run: [a-z][a-z0-9]*
+    while i < n && (bytes[i].is_ascii_lowercase() || bytes[i].is_ascii_digit()) {
+        i += 1;
+    }
+    if i == n {
+        return true;
+    }
+    // Subsequent: (-[a-z0-9]+)*
+    while i < n {
+        if bytes[i] != b'-' {
+            return false;
+        }
+        i += 1;
+        let seg_start = i;
+        while i < n && (bytes[i].is_ascii_lowercase() || bytes[i].is_ascii_digit()) {
+            i += 1;
+        }
+        if i == seg_start {
+            return false; // trailing or doubled `-`
+        }
+    }
+    true
 }
 
 /// Extract the last expression from a body, falling back to Nil.
