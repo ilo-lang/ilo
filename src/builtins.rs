@@ -49,6 +49,14 @@ pub enum Builtin {
     Transpose,
     Matmul,
     Dot,
+    // `matvec xm ys > L n` — native matrix-vector multiply. Returns the
+    // dot product of each row of `xm` with `ys`. Skips the
+    // wrap-as-column-matrix + flatten ceremony required to use `matmul`
+    // for this case (`flatten matmul xm (map (y:n>L n;[y]) ys)`).
+    // Tree-bridge eligible: composes existing matrix/vector helpers so
+    // VM and Cranelift inherit through the bridge without new opcodes.
+    // Added in 0.12.1.
+    Matvec,
 
     // Collections
     Len,
@@ -270,6 +278,7 @@ impl Builtin {
             "ifft" => Some(Builtin::Ifft),
             "transpose" => Some(Builtin::Transpose),
             "matmul" => Some(Builtin::Matmul),
+            "matvec" => Some(Builtin::Matvec),
             "dot" => Some(Builtin::Dot),
             "len" => Some(Builtin::Len),
             "hd" => Some(Builtin::Hd),
@@ -433,6 +442,7 @@ impl Builtin {
             Builtin::Ifft => "ifft",
             Builtin::Transpose => "transpose",
             Builtin::Matmul => "matmul",
+            Builtin::Matvec => "matvec",
             Builtin::Dot => "dot",
             Builtin::Len => "len",
             Builtin::Hd => "hd",
@@ -780,6 +790,11 @@ impl Builtin {
         // rounded up (ceil(ms / 1000)) so 1 ms => 1 s, 1001 ms => 2 s.
         Builtin::GetTo,
         Builtin::PstTo,
+        // `matvec xm ys > L n` — native matrix-vector multiply. Tree-bridge
+        // eligible: composes the same row/vector helpers as `matmul`, so VM
+        // and Cranelift inherit through the bridge without new opcodes.
+        // Appended to preserve every existing tag.
+        Builtin::Matvec,
     ];
 
     /// On-wire 8-bit tag for cross-engine builtin dispatch. See `ALL`.
@@ -1059,6 +1074,7 @@ mod tests {
             "chunks",
             "transpose",
             "matmul",
+            "matvec",
             "dot",
             "rndn",
             "get-many",
@@ -1220,6 +1236,7 @@ mod tests {
             "ifft",
             "transpose",
             "matmul",
+            "matvec",
             "dot",
             "len",
             "hd",

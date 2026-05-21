@@ -1070,6 +1070,69 @@ fn parse_csv_content(content: &str, sep: char) -> Vec<Vec<String>> {
 // ── Linear algebra helpers ──────────────────────────────────────────
 
 /// Coerce a `Value` into a row-major matrix `Vec<Vec<f64>>`.
+/// Native matrix-vector multiply: row-by-row dot product.
+///
+/// `matvec xm ys` returns the flat vector `r` where
+/// `r[i] = sum_j xm[i][j] * ys[j]`. Skips the wrap-as-column-matrix +
+/// `flatten` ceremony required to use `matmul` for this case — the
+/// common shape `flatten matmul xm (map (y:n>L n;[y]) ys)` collapses
+/// to a single `matvec xm ys` call.
+///
+/// `#[inline(never)]` keeps this body out of `call_function`'s already-
+/// huge frame, same pattern as the recurring stack-overflow band-aid in
+/// #494 / #506 / lstsq (#515 / #5am). `cargo nextest` runs with a tighter
+/// stack budget than `cargo test`, so an inlined arm trips the deep
+/// braceless-guard fibonacci recursion test in CI even when local
+/// tests pass.
+#[inline(never)]
+fn matvec_run(xm_val: &Value, ys_val: &Value) -> Result<Value> {
+    let xm = matrix_from_value(xm_val, "matvec")?;
+    let ys = vec_from_value(ys_val, "matvec")?;
+    let n_rows = xm.len();
+    if n_rows == 0 {
+        return Err(RuntimeError::new(
+            "ILO-R009",
+            "matvec: empty matrix".to_string(),
+        ));
+    }
+    let n_cols = xm[0].len();
+    if n_cols == 0 {
+        return Err(RuntimeError::new(
+            "ILO-R009",
+            "matvec: matrix has zero columns".to_string(),
+        ));
+    }
+    for row in &xm {
+        if row.len() != n_cols {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!(
+                    "matvec: ragged rows (expected {n_cols} cols, got {})",
+                    row.len()
+                ),
+            ));
+        }
+    }
+    if ys.len() != n_cols {
+        return Err(RuntimeError::new(
+            "ILO-R009",
+            format!(
+                "matvec: dim mismatch (matrix has {n_cols} cols, ys has {})",
+                ys.len()
+            ),
+        ));
+    }
+    let mut out: Vec<Value> = Vec::with_capacity(n_rows);
+    for row in &xm {
+        let mut s = 0.0_f64;
+        for (k, &v) in row.iter().enumerate() {
+            s += v * ys[k];
+        }
+        out.push(Value::Number(s));
+    }
+    Ok(Value::List(Arc::new(out)))
+}
+
 fn matrix_from_value(v: &Value, name: &str) -> Result<Vec<Vec<f64>>> {
     let rows = match v {
         Value::List(rs) => rs,
@@ -4932,6 +4995,14 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             out.push(Value::List(Arc::new(row)));
         }
         return Ok(Value::List(Arc::new(out)));
+    }
+    if builtin == Some(Builtin::Matvec) && args.len() == 2 {
+        // Out-of-line helper to keep this arm's frame off the giant
+        // `call_function` stack frame. Same pattern as #506 (sha2/hmac),
+        // #494 (caps fields), and the lstsq extraction in #515: each
+        // additional inline arm grows the dispatch frame and trips
+        // `cargo nextest`'s tighter stack budget on deep recursion tests.
+        return matvec_run(&args[0], &args[1]);
     }
     if builtin == Some(Builtin::Dot) && args.len() == 2 {
         let xs = match &args[0] {

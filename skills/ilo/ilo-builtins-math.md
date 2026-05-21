@@ -28,3 +28,7 @@ Prefix-call: `name arg1 arg2 ...`. Cross-engine unless noted.
 ## Statistics
 
 `sum avg median quantile stdev variance cumsum frq argmax argmin argsort prod cprod`.
+
+## Linear algebra
+
+`transpose matmul matvec dot solve inv det fft ifft`. Row-major matrices are `L (L n)`, flat vectors are `L n`. `matvec xm ys` is matrix-vector product, returning a flat vector - use it instead of the `flatten matmul xm (map (y:n>L n;[y]) ys)` wrap-as-column ceremony. `solve inv det` use LU decomposition with partial pivoting and error on singular / non-square inputs.

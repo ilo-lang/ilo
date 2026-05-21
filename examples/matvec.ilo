@@ -1,0 +1,25 @@
+-- matvec xm ys > L n: native matrix-vector product.
+-- Skips the wrap-as-column-matrix + flatten ceremony every persona
+-- was paying when applying a matrix to a flat vector.
+
+-- Identity case: I * [4,5,6] = [4,5,6].
+id>L n;matvec [[1,0,0],[0,1,0],[0,0,1]] [4,5,6]
+
+-- 2x2 case: [[1,2],[3,4]] * [5,6] = [17, 39].
+m22>L n;matvec [[1,2],[3,4]] [5,6]
+
+-- 2x3 case: [[1,2,3],[4,5,6]] * [7,8,9] = [50, 122].
+m23>L n;matvec [[1,2,3],[4,5,6]] [7,8,9]
+
+-- The recipe matvec replaces. Both forms are equivalent; matvec is
+-- one call where the ceremony is three (wrap, multiply, flatten).
+ceremony>L n;flat (matmul [[1,2,3],[4,5,6]] (map (y:n>L n;[y]) [7,8,9]))
+
+-- run: id
+-- out: [4, 5, 6]
+-- run: m22
+-- out: [17, 39]
+-- run: m23
+-- out: [50, 122]
+-- run: ceremony
+-- out: [50, 122]
