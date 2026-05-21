@@ -695,6 +695,15 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("last-dom", &["n"], "n"),
     ("next-business-day", &["n"], "n"),
     ("day-of-week", &["n"], "n"),
+    // Bitwise ops (ILO-58 MVP). All operate on f64 values interpreted as u32
+    // (mod 2^32). 2-arg variants: `n n>n`; bnot is 1-arg `n>n`.
+    ("band", &["n", "n"], "n"),
+    ("bor", &["n", "n"], "n"),
+    ("bxor", &["n", "n"], "n"),
+    ("bnot", &["n"], "n"),
+    ("bshl", &["n", "n"], "n"),
+    ("bshr", &["n", "n"], "n"),
+    ("brot", &["n", "n"], "n"),
 ];
 
 fn builtin_arity(name: &str) -> Option<usize> {

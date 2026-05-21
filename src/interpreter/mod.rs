@@ -2434,6 +2434,63 @@ fn day_of_week_impl(arg: &Value) -> Result<Value> {
 /// well-defined-but-meaningless rather than an error. Matches Python's
 /// `bisect` module which also documents but does not enforce sortedness.
 ///
+/// Bitwise op helpers (ILO-58 MVP). Each operand is converted to `u32` by
+/// truncating to `u64` and masking to 32 bits (mod 2^32). The result is
+/// cast back to `f64`. Shift/rotate amounts are taken mod 32 so out-of-
+/// range values don't panic or saturate — consistent with Lua, Java, and
+/// JavaScript's unsigned right-shift semantics.
+///
+/// `#[inline(never)]` keeps the call_function dispatch frame compact,
+/// matching the established per-builtin helper pattern.
+#[inline(never)]
+fn run_bitwise(b: crate::builtins::Builtin, args: &[Value]) -> Result<Value> {
+    use crate::builtins::Builtin;
+
+    /// Extract a u32 from a Value::Number (mod 2^32).
+    fn to_u32(v: &Value, pos: &str, name: &str) -> Result<u32> {
+        match v {
+            Value::Number(n) => {
+                if !n.is_finite() {
+                    return Err(RuntimeError::new(
+                        "ILO-R009",
+                        format!("{name}: {pos} must be a finite number, got {n}"),
+                    ));
+                }
+                Ok((*n as i64) as u32)
+            }
+            other => Err(RuntimeError::new(
+                "ILO-R009",
+                format!("{name}: {pos} must be a number, got {other:?}"),
+            )),
+        }
+    }
+
+    let name = b.name();
+    let result: u32 = match b {
+        Builtin::Band => to_u32(&args[0], "first arg", name)? & to_u32(&args[1], "second arg", name)?,
+        Builtin::Bor  => to_u32(&args[0], "first arg", name)? | to_u32(&args[1], "second arg", name)?,
+        Builtin::Bxor => to_u32(&args[0], "first arg", name)? ^ to_u32(&args[1], "second arg", name)?,
+        Builtin::Bnot => !to_u32(&args[0], "arg", name)?,
+        Builtin::Bshl => {
+            let x = to_u32(&args[0], "first arg", name)?;
+            let n = to_u32(&args[1], "second arg", name)? % 32;
+            x << n
+        }
+        Builtin::Bshr => {
+            let x = to_u32(&args[0], "first arg", name)?;
+            let n = to_u32(&args[1], "second arg", name)? % 32;
+            x >> n
+        }
+        Builtin::Brot => {
+            let x = to_u32(&args[0], "first arg", name)?;
+            let n = to_u32(&args[1], "second arg", name)? % 32;
+            x.rotate_left(n)
+        }
+        _ => unreachable!(),
+    };
+    Ok(Value::Number(result as f64))
+}
+
 /// `#[inline(never)]` matches the established per-builtin helper pattern
 /// (see `day_of_week_impl` above and the `vm_*` family) so the
 /// call_function dispatch frame stays compact.
@@ -2976,6 +3033,25 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
     }
     if builtin == Some(Builtin::Bisect) && args.len() == 2 {
         return run_bisect(&args[0], &args[1]);
+    }
+    // Bitwise ops (ILO-58 MVP). All operate on f64 → u32 (mod 2^32) → f64.
+    if matches!(
+        builtin,
+        Some(
+            Builtin::Band
+                | Builtin::Bor
+                | Builtin::Bxor
+                | Builtin::Bnot
+                | Builtin::Bshl
+                | Builtin::Bshr
+                | Builtin::Brot
+        )
+    ) {
+        let b = builtin.unwrap();
+        let expected_argc = if b == Builtin::Bnot { 1 } else { 2 };
+        if args.len() == expected_argc {
+            return run_bitwise(b, &args);
+        }
     }
     if matches!(builtin, Some(Builtin::Min | Builtin::Max)) && args.len() == 1 {
         // 1-arg list form: returns the min/max element of a list of numbers.

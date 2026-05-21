@@ -368,6 +368,27 @@ pub enum Builtin {
     Rsum,
     Ravg,
     Rmin,
+
+    // Bitwise ops (f64-only, mod 2^32 semantics). All tree-bridge eligible:
+    // pure numeric-in / numeric-out, no FnRef args, no I/O, no Result wrapper.
+    // Inputs are truncated to u32 via `as u64 & 0xFFFF_FFFF`; output is
+    // returned as f64. Closes the crypto-track gap without a new integer type.
+    // Added in 0.12.x (ILO-58 MVP).
+    //
+    // band x y  — bitwise AND  (x & y)
+    // bor  x y  — bitwise OR   (x | y)
+    // bxor x y  — bitwise XOR  (x ^ y)
+    // bnot x    — bitwise NOT  (^x, 32-bit)
+    // bshl x n  — logical shift left  (x << n, mod 32)
+    // bshr x n  — logical shift right (x >> n, mod 32)
+    // brot x n  — rotate left 32-bit  (x.rotate_left(n))
+    Band,
+    Bor,
+    Bxor,
+    Bnot,
+    Bshl,
+    Bshr,
+    Brot,
 }
 
 impl Builtin {
@@ -566,6 +587,13 @@ impl Builtin {
             "rsum" => Some(Builtin::Rsum),
             "ravg" => Some(Builtin::Ravg),
             "rmin" => Some(Builtin::Rmin),
+            "band" => Some(Builtin::Band),
+            "bor" => Some(Builtin::Bor),
+            "bxor" => Some(Builtin::Bxor),
+            "bnot" => Some(Builtin::Bnot),
+            "bshl" => Some(Builtin::Bshl),
+            "bshr" => Some(Builtin::Bshr),
+            "brot" => Some(Builtin::Brot),
             _ => None,
         }
     }
@@ -761,6 +789,13 @@ impl Builtin {
             Builtin::Rsum => "rsum",
             Builtin::Ravg => "ravg",
             Builtin::Rmin => "rmin",
+            Builtin::Band => "band",
+            Builtin::Bor => "bor",
+            Builtin::Bxor => "bxor",
+            Builtin::Bnot => "bnot",
+            Builtin::Bshl => "bshl",
+            Builtin::Bshr => "bshr",
+            Builtin::Brot => "brot",
         }
     }
 
@@ -1108,6 +1143,17 @@ impl Builtin {
         // eligible: pure 2-arg, no FnRef, no Result wrapper. Appended last
         // to preserve every existing on-wire tag.
         Builtin::Bisect,
+        // Bitwise ops (ILO-58 MVP). All tree-bridge eligible: pure numeric-in /
+        // numeric-out, no FnRef args, no I/O, no Result wrapper. Inputs
+        // truncated to u32 mod 2^32; output returned as f64. Appended last
+        // to preserve every existing on-wire tag.
+        Builtin::Band,
+        Builtin::Bor,
+        Builtin::Bxor,
+        Builtin::Bnot,
+        Builtin::Bshl,
+        Builtin::Bshr,
+        Builtin::Brot,
     ];
 
     /// On-wire 8-bit tag for cross-engine builtin dispatch. See `ALL`.
@@ -1467,6 +1513,13 @@ mod tests {
             "ravg",
             "rmin",
             "bisect",
+            "band",
+            "bor",
+            "bxor",
+            "bnot",
+            "bshl",
+            "bshr",
+            "brot",
         ];
         for name in &all {
             let b = Builtin::from_name(name).unwrap_or_else(|| panic!("missing builtin: {name}"));
