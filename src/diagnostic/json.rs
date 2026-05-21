@@ -1,4 +1,4 @@
-use super::{Diagnostic, FixEdit, FixPlan, Severity};
+use super::{Diagnostic, FixPlan, Severity};
 use crate::ast::SourceMap;
 
 fn serialize_fix_plan(plan: &FixPlan) -> serde_json::Value {
