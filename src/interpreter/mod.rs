@@ -1837,6 +1837,206 @@ fn b64u_dec_impl(arg: &Value) -> Result<Value> {
     }
 }
 
+// ── Calendar arithmetic cluster ─────────────────────────────────────────────
+//
+// Each builtin lives in its own #[inline(never)] helper so the call_function
+// dispatch frame stays small. Four chrono-heavy arms inlined into the
+// dispatch switch pushed call_function's debug-build stack frame past the
+// default 2 MiB pthread stack on Linux CI, tripping the fib(10) recursion
+// in `interpret_braceless_guard_fibonacci`. Same pattern as the URL +
+// base64url cluster above and lstsq (#515).
+
+#[inline(never)]
+fn add_mo_impl(epoch_arg: &Value, months_arg: &Value) -> Result<Value> {
+    // add-mo dt:n n:n > n — add N calendar months to epoch, snapping
+    // end-of-month. N may be negative. Jan 31 + 1 mo = Feb 28/29.
+    // Returns the resulting epoch at 00:00 UTC.
+    use chrono::{Datelike, NaiveDate, TimeZone, Utc};
+    let epoch = match epoch_arg {
+        Value::Number(n) => *n,
+        other => {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!(
+                    "add-mo: first arg must be a number (epoch), got {:?}",
+                    other
+                ),
+            ));
+        }
+    };
+    let months = match months_arg {
+        Value::Number(n) => *n as i32,
+        other => {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!(
+                    "add-mo: second arg must be a number (months), got {:?}",
+                    other
+                ),
+            ));
+        }
+    };
+    let secs = epoch as i64;
+    let dt = match Utc.timestamp_opt(secs, 0).single() {
+        Some(d) => d,
+        None => {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!("add-mo: epoch out of range: {epoch}"),
+            ));
+        }
+    };
+    let date = dt.date_naive();
+    fn add_months_snap(date: NaiveDate, months: i32) -> Option<NaiveDate> {
+        let total = date.year() * 12 + (date.month() as i32 - 1) + months;
+        let y = total.div_euclid(12);
+        let m = (total.rem_euclid(12) + 1) as u32;
+        let max_day = {
+            let next = if m == 12 {
+                NaiveDate::from_ymd_opt(y + 1, 1, 1)
+            } else {
+                NaiveDate::from_ymd_opt(y, m + 1, 1)
+            };
+            (next? - NaiveDate::from_ymd_opt(y, m, 1)?).num_days() as u32
+        };
+        NaiveDate::from_ymd_opt(y, m, date.day().min(max_day))
+    }
+    match add_months_snap(date, months) {
+        Some(d) => {
+            let ts = d.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp();
+            Ok(Value::Number(ts as f64))
+        }
+        None => Err(RuntimeError::new(
+            "ILO-R009",
+            "add-mo: result out of calendar range".to_string(),
+        )),
+    }
+}
+
+#[inline(never)]
+fn last_dom_impl(arg: &Value) -> Result<Value> {
+    // last-dom dt:n > n — epoch of the last day of the month containing dt
+    // at 00:00 UTC. E.g. any Feb 2024 epoch -> 2024-02-29 00:00 UTC.
+    use chrono::{Datelike, NaiveDate, TimeZone, Utc};
+    let epoch = match arg {
+        Value::Number(n) => *n,
+        other => {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!("last-dom: arg must be a number (epoch), got {:?}", other),
+            ));
+        }
+    };
+    let secs = epoch as i64;
+    let dt = match Utc.timestamp_opt(secs, 0).single() {
+        Some(d) => d,
+        None => {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!("last-dom: epoch out of range: {epoch}"),
+            ));
+        }
+    };
+    let date = dt.date_naive();
+    let y = date.year();
+    let m = date.month();
+    // First day of next month minus one day = last day of this month.
+    let first_next = if m == 12 {
+        NaiveDate::from_ymd_opt(y + 1, 1, 1)
+    } else {
+        NaiveDate::from_ymd_opt(y, m + 1, 1)
+    };
+    match first_next {
+        Some(next) => {
+            let last = next.pred_opt().unwrap();
+            let ts = last.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp();
+            Ok(Value::Number(ts as f64))
+        }
+        None => Err(RuntimeError::new(
+            "ILO-R009",
+            "last-dom: month arithmetic out of range".to_string(),
+        )),
+    }
+}
+
+#[inline(never)]
+fn next_business_day_impl(arg: &Value) -> Result<Value> {
+    // next-business-day dt:n > n — next weekday after dt (skip Sat/Sun).
+    // If dt is Mon-Thu the result is the next day.
+    // If dt is Fri the result is the following Mon.
+    // If dt is Sat the result is Mon (+2). If dt is Sun the result is Mon (+1).
+    // Returns the resulting epoch at 00:00 UTC.
+    use chrono::{Datelike, Duration, NaiveDate, TimeZone, Utc, Weekday};
+    let epoch = match arg {
+        Value::Number(n) => *n,
+        other => {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!(
+                    "next-business-day: arg must be a number (epoch), got {:?}",
+                    other
+                ),
+            ));
+        }
+    };
+    let secs = epoch as i64;
+    let dt = match Utc.timestamp_opt(secs, 0).single() {
+        Some(d) => d,
+        None => {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!("next-business-day: epoch out of range: {epoch}"),
+            ));
+        }
+    };
+    let date: NaiveDate = dt.date_naive();
+    let days_ahead: i64 = match date.weekday() {
+        Weekday::Fri => 3,
+        Weekday::Sat => 2,
+        _ => 1,
+    };
+    let next = date + Duration::days(days_ahead);
+    let ts = next.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp();
+    Ok(Value::Number(ts as f64))
+}
+
+#[inline(never)]
+fn day_of_week_impl(arg: &Value) -> Result<Value> {
+    // day-of-week dt:n > n — 0=Sun, 1=Mon, 2=Tue, 3=Wed, 4=Thu, 5=Fri, 6=Sat.
+    // Follows the JS/ISO convention where Sunday=0 (not 7), giving agents a
+    // zero-based index usable directly with range-based dispatch.
+    use chrono::{Datelike, TimeZone, Utc, Weekday};
+    let epoch = match arg {
+        Value::Number(n) => *n,
+        other => {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!("day-of-week: arg must be a number (epoch), got {:?}", other),
+            ));
+        }
+    };
+    let secs = epoch as i64;
+    let dt = match Utc.timestamp_opt(secs, 0).single() {
+        Some(d) => d,
+        None => {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!("day-of-week: epoch out of range: {epoch}"),
+            ));
+        }
+    };
+    let dow: u32 = match dt.date_naive().weekday() {
+        Weekday::Sun => 0,
+        Weekday::Mon => 1,
+        Weekday::Tue => 2,
+        Weekday::Wed => 3,
+        Weekday::Thu => 4,
+        Weekday::Fri => 5,
+        Weekday::Sat => 6,
+    };
+    Ok(Value::Number(dow as f64))
+}
+
 fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
     // Builtins — resolve name to enum once, then dispatch via match
     let builtin = Builtin::from_name(name);
@@ -4266,191 +4466,16 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         return Ok(Value::Text(Arc::new(dur_fmt(secs))));
     }
     if builtin == Some(Builtin::AddMo) && args.len() == 2 {
-        // add-mo dt:n n:n > n — add N calendar months to epoch, snapping
-        // end-of-month. N may be negative. Jan 31 + 1 mo = Feb 28/29.
-        // Returns the resulting epoch at 00:00 UTC.
-        use chrono::{Datelike, NaiveDate, TimeZone, Utc};
-        let epoch = match &args[0] {
-            Value::Number(n) => *n,
-            other => {
-                return Err(RuntimeError::new(
-                    "ILO-R009",
-                    format!(
-                        "add-mo: first arg must be a number (epoch), got {:?}",
-                        other
-                    ),
-                ));
-            }
-        };
-        let months = match &args[1] {
-            Value::Number(n) => *n as i32,
-            other => {
-                return Err(RuntimeError::new(
-                    "ILO-R009",
-                    format!(
-                        "add-mo: second arg must be a number (months), got {:?}",
-                        other
-                    ),
-                ));
-            }
-        };
-        let secs = epoch as i64;
-        let dt = match Utc.timestamp_opt(secs, 0).single() {
-            Some(d) => d,
-            None => {
-                return Err(RuntimeError::new(
-                    "ILO-R009",
-                    format!("add-mo: epoch out of range: {epoch}"),
-                ));
-            }
-        };
-        let date = dt.date_naive();
-        fn add_months_snap(date: NaiveDate, months: i32) -> Option<NaiveDate> {
-            let total = date.year() * 12 + (date.month() as i32 - 1) + months;
-            let y = total.div_euclid(12);
-            let m = (total.rem_euclid(12) + 1) as u32;
-            let max_day = {
-                let next = if m == 12 {
-                    NaiveDate::from_ymd_opt(y + 1, 1, 1)
-                } else {
-                    NaiveDate::from_ymd_opt(y, m + 1, 1)
-                };
-                (next? - NaiveDate::from_ymd_opt(y, m, 1)?).num_days() as u32
-            };
-            NaiveDate::from_ymd_opt(y, m, date.day().min(max_day))
-        }
-        match add_months_snap(date, months) {
-            Some(d) => {
-                let ts = d.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp();
-                return Ok(Value::Number(ts as f64));
-            }
-            None => {
-                return Err(RuntimeError::new(
-                    "ILO-R009",
-                    "add-mo: result out of calendar range".to_string(),
-                ));
-            }
-        }
+        return add_mo_impl(&args[0], &args[1]);
     }
     if builtin == Some(Builtin::LastDom) && args.len() == 1 {
-        // last-dom dt:n > n — epoch of the last day of the month containing dt
-        // at 00:00 UTC. E.g. any Feb 2024 epoch -> 2024-02-29 00:00 UTC.
-        use chrono::{Datelike, NaiveDate, TimeZone, Utc};
-        let epoch = match &args[0] {
-            Value::Number(n) => *n,
-            other => {
-                return Err(RuntimeError::new(
-                    "ILO-R009",
-                    format!("last-dom: arg must be a number (epoch), got {:?}", other),
-                ));
-            }
-        };
-        let secs = epoch as i64;
-        let dt = match Utc.timestamp_opt(secs, 0).single() {
-            Some(d) => d,
-            None => {
-                return Err(RuntimeError::new(
-                    "ILO-R009",
-                    format!("last-dom: epoch out of range: {epoch}"),
-                ));
-            }
-        };
-        let date = dt.date_naive();
-        let y = date.year();
-        let m = date.month();
-        // First day of next month minus one day = last day of this month.
-        let first_next = if m == 12 {
-            NaiveDate::from_ymd_opt(y + 1, 1, 1)
-        } else {
-            NaiveDate::from_ymd_opt(y, m + 1, 1)
-        };
-        match first_next {
-            Some(next) => {
-                let last = next.pred_opt().unwrap();
-                let ts = last.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp();
-                return Ok(Value::Number(ts as f64));
-            }
-            None => {
-                return Err(RuntimeError::new(
-                    "ILO-R009",
-                    "last-dom: month arithmetic out of range".to_string(),
-                ));
-            }
-        }
+        return last_dom_impl(&args[0]);
     }
     if builtin == Some(Builtin::NextBusinessDay) && args.len() == 1 {
-        // next-business-day dt:n > n — next weekday after dt (skip Sat/Sun).
-        // If dt is Mon-Thu the result is the next day.
-        // If dt is Fri the result is the following Mon.
-        // If dt is Sat the result is Mon (+2). If dt is Sun the result is Mon (+1).
-        // Returns the resulting epoch at 00:00 UTC.
-        use chrono::{Datelike, Duration, NaiveDate, TimeZone, Utc, Weekday};
-        let epoch = match &args[0] {
-            Value::Number(n) => *n,
-            other => {
-                return Err(RuntimeError::new(
-                    "ILO-R009",
-                    format!(
-                        "next-business-day: arg must be a number (epoch), got {:?}",
-                        other
-                    ),
-                ));
-            }
-        };
-        let secs = epoch as i64;
-        let dt = match Utc.timestamp_opt(secs, 0).single() {
-            Some(d) => d,
-            None => {
-                return Err(RuntimeError::new(
-                    "ILO-R009",
-                    format!("next-business-day: epoch out of range: {epoch}"),
-                ));
-            }
-        };
-        let date: NaiveDate = dt.date_naive();
-        let days_ahead: i64 = match date.weekday() {
-            Weekday::Fri => 3,
-            Weekday::Sat => 2,
-            _ => 1,
-        };
-        let next = date + Duration::days(days_ahead);
-        let ts = next.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp();
-        return Ok(Value::Number(ts as f64));
+        return next_business_day_impl(&args[0]);
     }
     if builtin == Some(Builtin::DayOfWeek) && args.len() == 1 {
-        // day-of-week dt:n > n — 0=Sun, 1=Mon, 2=Tue, 3=Wed, 4=Thu, 5=Fri, 6=Sat.
-        // Follows the JS/ISO convention where Sunday=0 (not 7), giving agents a
-        // zero-based index usable directly with range-based dispatch.
-        use chrono::{Datelike, TimeZone, Utc, Weekday};
-        let epoch = match &args[0] {
-            Value::Number(n) => *n,
-            other => {
-                return Err(RuntimeError::new(
-                    "ILO-R009",
-                    format!("day-of-week: arg must be a number (epoch), got {:?}", other),
-                ));
-            }
-        };
-        let secs = epoch as i64;
-        let dt = match Utc.timestamp_opt(secs, 0).single() {
-            Some(d) => d,
-            None => {
-                return Err(RuntimeError::new(
-                    "ILO-R009",
-                    format!("day-of-week: epoch out of range: {epoch}"),
-                ));
-            }
-        };
-        let dow: u32 = match dt.date_naive().weekday() {
-            Weekday::Sun => 0,
-            Weekday::Mon => 1,
-            Weekday::Tue => 2,
-            Weekday::Wed => 3,
-            Weekday::Thu => 4,
-            Weekday::Fri => 5,
-            Weekday::Sat => 6,
-        };
-        return Ok(Value::Number(dow as f64));
+        return day_of_week_impl(&args[0]);
     }
     if builtin == Some(Builtin::Fsize) && args.len() == 1 {
         // fsize path > R n t — file size in bytes. Err on missing,
