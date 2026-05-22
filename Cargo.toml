@@ -22,6 +22,10 @@ http = ["dep:minreq"]
 cranelift = ["dep:cranelift-codegen", "dep:cranelift-frontend", "dep:cranelift-jit", "dep:cranelift-module", "dep:cranelift-native", "dep:cranelift-object", "dep:target-lexicon", "dep:postcard"]
 llvm = ["dep:inkwell"]
 tools = ["dep:tokio", "dep:reqwest"]
+# golden — enable golden-file diagnostic snapshot tests.
+# Run:  cargo test --features golden
+# Bless: cargo test --features golden -- --bless  (see CONTRIBUTING.md)
+golden = []
 
 [dependencies]
 logos = "0.16.1"

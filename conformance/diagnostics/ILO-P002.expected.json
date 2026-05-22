@@ -1,0 +1,7 @@
+{
+  "code": "ILO-P002",
+  "long": "## ILO-P002: unexpected end of file\n\nThe file ended while the parser was expecting another declaration.\nAn incomplete function definition is a common cause.\n\n**Example:**\n\n    f x:n>n;    -- body missing\n",
+  "phase": "parse",
+  "schemaVersion": 1,
+  "short": "unexpected end of file at top level"
+}

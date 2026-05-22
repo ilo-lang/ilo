@@ -2186,6 +2186,54 @@ fn sha256_impl(arg: &Value) -> Result<Value> {
     Ok(Value::Text(Arc::new(hex::encode(digest))))
 }
 
+/// Shared helper: validate and hex-decode a text value for sha256-hex / sha256d.
+/// Returns ILO-T013 on odd-length or non-hex input.
+fn hex_decode_arg(arg: &Value, caller: &str) -> Result<Vec<u8>> {
+    let s = match arg {
+        Value::Text(s) => s.clone(),
+        other => {
+            return Err(RuntimeError::new(
+                "ILO-R009",
+                format!("{caller} requires text, got {:?}", other),
+            ));
+        }
+    };
+    if s.len() % 2 != 0 {
+        return Err(RuntimeError::new(
+            "ILO-R009",
+            format!(
+                "{caller}: hex input must have even length, got {} chars",
+                s.len()
+            ),
+        ));
+    }
+    hex::decode(s.as_ref())
+        .map_err(|e| RuntimeError::new("ILO-R009", format!("{caller}: invalid hex input: {e}")))
+}
+
+#[inline(never)]
+fn sha256_hex_impl(arg: &Value) -> Result<Value> {
+    // sha256-hex hex:t > t — SHA-256 of hex-decoded bytes, returned as a
+    // lowercase hex string. Errors (ILO-T013) on odd-length or non-hex input.
+    use sha2::{Digest, Sha256};
+    let bytes = hex_decode_arg(arg, "sha256-hex")?;
+    let mut h = Sha256::new();
+    h.update(&bytes);
+    Ok(Value::Text(Arc::new(hex::encode(h.finalize()))))
+}
+
+#[inline(never)]
+fn sha256d_impl(arg: &Value) -> Result<Value> {
+    // sha256d hex:t > t — double-SHA256 of hex-decoded bytes (Bitcoin Merkle
+    // protocol: sha256(sha256(x))). Returns lowercase hex of the outer digest.
+    // Errors (ILO-T013) on odd-length or non-hex input.
+    use sha2::{Digest, Sha256};
+    let bytes = hex_decode_arg(arg, "sha256d")?;
+    let inner = Sha256::digest(&bytes);
+    let outer = Sha256::digest(inner);
+    Ok(Value::Text(Arc::new(hex::encode(outer))))
+}
+
 #[inline(never)]
 fn hmac_sha256_impl(key_arg: &Value, msg_arg: &Value) -> Result<Value> {
     // hmac-sha256 key:t msg:t > t — HMAC-SHA256 of msg under key. Returns the
@@ -3578,6 +3626,12 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
     }
     if builtin == Some(Builtin::CtEq) && args.len() == 2 {
         return ct_eq_impl(&args[0], &args[1]);
+    }
+    if builtin == Some(Builtin::Sha256Hex) && args.len() == 1 {
+        return sha256_hex_impl(&args[0]);
+    }
+    if builtin == Some(Builtin::Sha256d) && args.len() == 1 {
+        return sha256d_impl(&args[0]);
     }
     if builtin == Some(Builtin::Lst) && args.len() == 3 {
         let idx = match &args[1] {
@@ -5859,6 +5913,33 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
             Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(e.to_string()))))),
         };
     }
+    if builtin == Some(Builtin::Wro) && args.len() == 2 {
+        let path = match &args[0] {
+            Value::Text(s) => s.clone(),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("wro: first arg must be a text path, got {:?}", other),
+                ));
+            }
+        };
+        if let Err(msg) = env.caps.check_write(path.as_str()) {
+            return Ok(Value::Err(Box::new(Value::Text(Arc::new(msg)))));
+        }
+        let content = match &args[1] {
+            Value::Text(s) => (**s).clone(),
+            other => {
+                return Err(RuntimeError::new(
+                    "ILO-R009",
+                    format!("wro: second arg must be text content, got {:?}", other),
+                ));
+            }
+        };
+        return match std::fs::write(path.as_str(), content.as_bytes()) {
+            Ok(()) => Ok(Value::Ok(Box::new(Value::Text(path)))),
+            Err(e) => Ok(Value::Err(Box::new(Value::Text(Arc::new(e.to_string()))))),
+        };
+    }
     if builtin == Some(Builtin::Wrl) && args.len() == 2 {
         if let Value::Text(path) = &args[0] {
             if let Err(msg) = env.caps.check_write(path.as_str()) {
@@ -6078,13 +6159,18 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
 
     if builtin == Some(Builtin::Env) && args.len() == 1 {
         return match &args[0] {
-            Value::Text(key) => match std::env::var(key.as_str()) {
-                Ok(val) => Ok(Value::Ok(Box::new(Value::Text(Arc::new(val))))),
-                Err(_) => Ok(Value::Err(Box::new(Value::Text(Arc::new(format!(
-                    "env var '{}' not set",
-                    key
-                )))))),
-            },
+            Value::Text(key) => {
+                if let Err(msg) = env.caps.check_env(key.as_str()) {
+                    return Ok(Value::Err(Box::new(Value::Text(Arc::new(msg)))));
+                }
+                match std::env::var(key.as_str()) {
+                    Ok(val) => Ok(Value::Ok(Box::new(Value::Text(Arc::new(val))))),
+                    Err(_) => Ok(Value::Err(Box::new(Value::Text(Arc::new(format!(
+                        "env var '{}' not set",
+                        key
+                    )))))),
+                }
+            }
             other => Err(RuntimeError::new(
                 "ILO-R009",
                 format!("env requires text, got {:?}", other),
@@ -6098,6 +6184,10 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
     // for future failure modes (non-UTF-8 vars, sandboxed envs). std::env::vars()
     // silently skips non-UTF-8 entries today, so the snapshot is always Ok.
     if builtin == Some(Builtin::EnvAll) && args.is_empty() {
+        // env-all reads the entire environment; check capability using "*" sentinel.
+        if let Err(msg) = env.caps.check_env("*") {
+            return Ok(Value::Err(Box::new(Value::Text(Arc::new(msg)))));
+        }
         let map: std::collections::HashMap<MapKey, Value> = std::env::vars()
             .map(|(k, v)| (MapKey::Text(k), Value::Text(Arc::new(v))))
             .collect();
@@ -8232,7 +8322,9 @@ fn expr_refers_to(name: &str, expr: &Expr) -> bool {
         Expr::UnaryOp { operand, .. } => expr_refers_to(name, operand),
         Expr::Ok(inner) | Expr::Err(inner) => expr_refers_to(name, inner),
         Expr::List(items) => items.iter().any(|e| expr_refers_to(name, e)),
-        Expr::Record { fields, .. } => fields.iter().any(|(_, e)| expr_refers_to(name, e)),
+        Expr::Record { fields, .. } | Expr::AnonRecord { fields } => {
+            fields.iter().any(|(_, e)| expr_refers_to(name, e))
+        }
         // Conservative: assume Match arms might reference `name`. Falls back
         // to the general path, which is correct (just slower) in the rare
         // case where a self-rebind RHS is wrapped in a match.
@@ -8570,6 +8662,7 @@ fn eval_stmt(env: &mut Env, stmt: &Stmt, is_tail: bool) -> Result<Option<BodyRes
             binding,
             start,
             end,
+            step,
             body,
         } => {
             let start_val = eval_expr(env, start)?;
@@ -8587,8 +8680,17 @@ fn eval_stmt(env: &mut Env, stmt: &Stmt, is_tail: bool) -> Result<Option<BodyRes
                 Value::Number(n) => n as i64,
                 _ => return Err(RuntimeError::new("ILO-R007", "range end must be a number")),
             };
+            let st: i64 = if let Some(step_expr) = step {
+                match eval_expr(env, step_expr)? {
+                    Value::Number(n) => n as i64,
+                    _ => return Err(RuntimeError::new("ILO-R007", "range step must be a number")),
+                }
+            } else {
+                1
+            };
             let mut last = Value::Nil;
-            for i in s..e {
+            let mut i = s;
+            while i < e {
                 env.push_scope();
                 env.define(binding, Value::Number(i as f64));
                 // Range body is not in tail position; see ForEach above.
@@ -8602,12 +8704,16 @@ fn eval_stmt(env: &mut Env, stmt: &Stmt, is_tail: bool) -> Result<Option<BodyRes
                         last = v;
                         break;
                     }
-                    BodyResult::Continue => continue,
+                    BodyResult::Continue => {
+                        i += st;
+                        continue;
+                    }
                     BodyResult::TailCall { .. } => {
                         unreachable!("TailCall escaping non-tail range body");
                     }
                     BodyResult::Value(v) => last = v,
                 }
+                i += st;
             }
             Ok(Some(BodyResult::Value(last)))
         }
@@ -8862,6 +8968,16 @@ fn eval_expr(env: &mut Env, expr: &Expr) -> Result<Value> {
                 vals.push(eval_expr(env, item)?);
             }
             Ok(Value::List(Arc::new(vals)))
+        }
+        Expr::AnonRecord { fields } => {
+            let mut field_map = HashMap::new();
+            for (name, val_expr) in fields {
+                field_map.insert(name.clone(), eval_expr(env, val_expr)?);
+            }
+            Ok(Value::Record {
+                type_name: "__anon".to_string(),
+                fields: field_map,
+            })
         }
         Expr::Record { type_name, fields } => {
             let mut field_map = HashMap::new();
@@ -14037,6 +14153,7 @@ mod tests {
             Decl::Use {
                 path: "x.ilo".to_string(),
                 only: None,
+                alias: None,
                 span: Span { start: 0, end: 0 },
             },
         );

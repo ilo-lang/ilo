@@ -36,6 +36,7 @@ Tooling: `ilo --version-of <file>` reads the pragma (returns nothing when absent
 - Last expression is the return value (no `return` keyword)
 - Zero-arg call: `make-id()`
 - Paren-form call (ILO-51): `spl(row, ",")` is sugar for `spl row ","` — same AST, postfix is canonical
+- Labelled args (ILO-71): `dtfmt epoch:e fmt:"%Y"` — optional `label:value` form for any callable with declared parameter names. Labels resolve to positional by name; order is free. Mixed positional + labelled is allowed (positional fill from left; labels fill remaining slots by name). Unknown or duplicate labels surface `ILO-P019` at parse time. Works in both postfix and paren form: `f(b:2, a:1)` ≡ `f a:1 b:2`.
 
 ```
 tot p:n q:n r:n>n;s=*p q;t=*s r;+s t
@@ -230,7 +231,7 @@ Short builtin names are precious surface and ilo reserves a stable subset of the
 3-char  abs avg b64 cap cat cel chr cos del det dot env ewm exp fft fld flr
         flt fmt frq get grp has hed hex inv len log lsd lst lwr map max min
         mod now num opt ord pat pow pst put rdb rdl rep rev rgx rng rnd rou
-        run sin slc spl srt str sum tan tau trm unq upr wra wrl zip
+        run sin slc spl srt str sum tan tau trm unq upr wra wrl wro zip
 ```
 
 All builtin aliases (`head`, `length`, `filter`, `concat`, `tail`, `sort`, `reverse`, `flatten`, `contains`, `group`, `average`, `print`, `trim`, `split`, `format`, `regex`, `read`, `readlines`, `readbuf`, `write`, `writelines`, `lset`, `floor`, `ceil`, `round`, `rand`, `random`, `rng`, `string`, `number`, `slice`, `unique`, `fold`) are reserved with the same shadow-prevention semantics as canonical builtin names. Binding an alias name or using it as a user-function name fires `ILO-P011` at parse time with the canonical form in the diagnostic, since the call-site rewrite to the canonical builtin silently bypasses any user binding of the same name. Previously only `rng` and `rand` had individual guards; as of 0.12.1 every alias in the table above is covered by a single `resolve_alias` check, so new aliases automatically inherit the protection when added to the table.
@@ -629,6 +630,8 @@ Called like functions, compiled to dedicated opcodes.
 | `b64u s` | base64url-encode UTF-8 bytes of `s` (RFC 4648 §5, no padding, `-`/`_` alphabet). Total. | `t` |
 | `b64u-dec s` | inverse of `b64u`; Err on invalid base64url or non-UTF-8 decoded bytes | `R t t` |
 | `sha256 s` | SHA-256 digest of the UTF-8 bytes of `s`, lowercase hex (64 chars). Total. | `t` |
+| `sha256-hex h` | SHA-256 of hex-decoded bytes of `h`, lowercase hex (64 chars). Errors (ILO-R009) on odd-length or non-hex input. Use for raw-binary hashing (wire formats, key material, Bitcoin scripts). | `t` |
+| `sha256d h` | double-SHA256 of hex-decoded bytes (`sha256(sha256(h))`), lowercase hex. Bitcoin Merkle protocol shape. Errors (ILO-R009) on odd-length or non-hex input. | `t` |
 | `hmac-sha256 key msg` | HMAC-SHA256 of `msg` under `key`; lowercase hex (64 chars). Pair with `ct-eq` to verify signatures without timing leaks. | `t` |
 | `b64 s` | standard base64 encode of UTF-8 bytes of `s` (RFC 4648 §4, with `=` padding). Distinct from `b64u` which is URL-safe + no padding. Total. | `t` |
 | `b64-dec s` | inverse of `b64`; Err on invalid base64 input or non-UTF-8 decoded bytes | `R t t` |
@@ -658,7 +661,8 @@ Called like functions, compiled to dedicated opcodes.
 | `wr path data "csv"` | write list-of-lists as CSV (with proper quoting) | `R t t` |
 | `wr path data "tsv"` | write list-of-lists as TSV | `R t t` |
 | `wr path data "json"` | write any value as pretty JSON | `R t t` |
-| `wra path s` | append text to file (create if missing) | `R t t` |
+| `wra path s` | append text to file (create if missing); see also `wro` for overwrite | `R t t` |
+| `wro path s` | truncate file at path and write s (create if missing); see also `wra` for append | `R t t` |
 | `wrl path xs` | write list of lines to file (joins with `\n`) | `R t t` |
 | `trm s` | trim leading and trailing whitespace | `t` |
 | `spl t sep` | split text by separator | `L t` |
@@ -1165,9 +1169,13 @@ Both decoders return `Result` so malformed input surfaces typed at the boundary;
 
 ### Crypto primitives
 
-`sha256`, `hmac-sha256`, `b64`, `b64-dec`, `hex`, `ct-eq` form the crypto-primitives cluster — the path agents need for webhook signature verification, JWT signing, and any time a secret is compared to a known value. All six are tree-bridge eligible so VM and Cranelift share the tree interpreter's semantics.
+`sha256`, `sha256-hex`, `sha256d`, `hmac-sha256`, `b64`, `b64-dec`, `hex`, `ct-eq` form the crypto-primitives cluster — the path agents need for webhook signature verification, JWT signing, Bitcoin Merkle tree computation, and any time a secret is compared to a known value. All are tree-bridge eligible so VM and Cranelift share the tree interpreter's semantics.
 
 `sha256 s > t` returns the SHA-256 digest of the UTF-8 bytes of `s` as a lowercase hex string (64 chars). Total — no error path. NIST FIPS-180 anchor: `sha256 ""` = `e3b0c4...b855`.
+
+`sha256-hex h > t` decodes `h` as a hex string and returns the SHA-256 digest of the raw bytes as lowercase hex (64 chars). Use when you need to hash binary data that is represented in hex — wire format keys, Bitcoin script pushdata, arbitrary byte sequences. Errors (ILO-R009) on odd-length or non-hex input. For ASCII input, `sha256-hex (hex s)` agrees with `sha256 s`.
+
+`sha256d h > t` applies double-SHA256 (`sha256(sha256(h))`) over the hex-decoded bytes of `h`, returning lowercase hex. This is the Bitcoin Merkle tree protocol shape: pairs of 32-byte txids are concatenated and double-hashed to produce each parent node. Errors (ILO-R009) on odd-length or non-hex input. `sha256d h` is exactly `sha256-hex (sha256-hex h)` but provided as a named builtin because the double-hash pattern is idiomatic in crypto protocols and the composition is easy to transpose incorrectly.
 
 `hmac-sha256 key:t msg:t > t` returns the HMAC-SHA256 of `msg` under `key`, lowercase hex (64 chars). Any key length is accepted (HMAC handles padding internally). Pair with `ct-eq` to verify signatures without leaking timing info through `=`.
 
@@ -1191,9 +1199,15 @@ b64-dec! "TWE="                          -- "Ma"
 
 -- Hex encode
 hex "abc"                                -- "616263"
+
+-- Raw-bytes SHA-256 (same result as sha256 for ASCII input)
+sha256-hex "616263"                      -- ba7816...15ad (= sha256 "abc")
+
+-- Bitcoin Merkle root of two txids (internal byte order, concatenated)
+sha256d (+ tx1 tx2)                      -- double-SHA256 of the 64-byte pair
 ```
 
-`b64-dec` returns `Result` so malformed input surfaces typed at the boundary; the encoders and `ct-eq` are total.
+`b64-dec` returns `Result` so malformed input surfaces typed at the boundary; `sha256-hex` and `sha256d` raise ILO-R009 on invalid hex; the remaining encoders and `ct-eq` are total.
 
 ---
 
@@ -1704,28 +1718,46 @@ Tool return type `>t` is the escape hatch - any JSON response is coerced to a te
 Split programs across files with `use`:
 
 ```
-use "path/to/file.ilo"         -- import all declarations
-use "path/to/file.ilo" [name1 name2]  -- import only named declarations
+use "path/to/file.ilo"              -- flat import: all declarations (including _-private ones by convention)
+use "path/to/file.ilo" [name1 name2] -- selective import: only named public declarations
+use alias:"path/to/file.ilo"        -- named-module import: public declarations prefixed with alias-
 ```
 
-All imported declarations merge into a flat shared namespace - no qualification, no `mod::fn` syntax. The verifier catches name collisions.
+**Flat import** merges everything into a shared namespace. Private (`_`-prefixed) declarations come through but are not part of the public interface.
+
+**Selective import** (`[name1 name2]`) imports only the listed names. Requesting a `_`-prefixed name is an error (ILO-P019). Cannot be combined with the `alias:` form.
+
+**Named-module import** (`alias:"path"`) renames all public symbols: a function `dbl` from `use math:"./math-lib"` becomes `math-dbl`. Private (`_`-prefixed) declarations are silently excluded.
 
 ```
--- math.ilo
+-- math-lib.ilo
+_internal-helper n:n>n; +n 0   -- private — excluded from alias imports
 dbl n:n>n; *n 2
 half n:n>n; /n 2
 
 -- main.ilo
-use "math.ilo"
-run n:n>n; dbl! half n
+use "math-lib.ilo"              -- flat: dbl, half (and _internal-helper) in scope
+use m:"math-lib.ilo"            -- named: m-dbl, m-half in scope; _internal-helper excluded
+run n:n>n; m-dbl! half n
 ```
+
+### Module privacy
+
+Declarations whose name starts with `_` (underscore, immediately adjacent, e.g. `_helper`) are module-private:
+
+- **Excluded** from named-module imports (`use alias:"path"`) — not prefixed and not available to the importer.
+- **Blocked** in selective imports (`use "path" [_name]`) — requesting a private name is ILO-P019.
+- **Visible** in flat imports (`use "path"`) — they merge into the shared namespace as a convention; the importer can call them, but they are not considered part of the public API.
+
+Declaring a private function: `_helper-name params:type > return-type; body`
 
 ### Rules
 
 - Path is relative to the importing file's directory
 - Transitive: if `a.ilo` uses `b.ilo`, `b.ilo`'s declarations are visible to `main.ilo` when it uses `a.ilo`
 - Circular imports are an error (`ILO-P018`)
-- Scoped import with unknown name: `ILO-P019`
+- Named-module form (`alias:"path"`) and selective import (`[...]`) cannot be combined
+- Scoped import with unknown or private name: `ILO-P019`
 - `use` in inline code (no file context): `ILO-P017`
 
 ### Error codes
@@ -2071,7 +2103,13 @@ ilo --max-ast-depth N <sub>       -- cap parser nesting at N (default 256; prote
                                      and other untrusted-source paths from DoS payloads, raises ILO-P103)
 ilo --max-runtime SECS <sub>      -- cap wall-clock runtime at SECS (default 60; 0 disables; raises ILO-R016)
 ilo --max-output-bytes BYTES <sub> -- cap stdout output at BYTES (default ~100 MB; 0 disables; raises ILO-R017)
+ilo run --allow-net[=HOSTS] <file>   -- restrict outbound net to comma-separated hosts (* = all, empty = none)
+ilo run --allow-read[=PATHS] <file>  -- restrict file reads to comma-separated path prefixes
+ilo run --allow-write[=PATHS] <file> -- restrict file writes to comma-separated path prefixes
+ilo run --allow-run[=CMDS] <file>    -- restrict subprocess spawning to comma-separated command names
 ```
+
+**Capability flags (`ILO-CAP-001`).** `ilo run --allow-net=HOSTS --allow-read=PATHS --allow-write=PATHS --allow-run=CMDS` gates IO builtins at the process level. Any `--allow-*` flag present switches the runtime from **permissive** (default — no restrictions, full backwards compatibility) to **restricted** (only listed targets are permitted). Denial returns a normal `R` Err value with code `ILO-CAP-001`; programs can pattern-match it. Capability matrix: `get`/`post`/`put`/`patch`/`del`/`fetch` → `--allow-net`; `rd`/`rd-lines`/`ls`/`lsr` → `--allow-read`; `wr`/`wr-lines`/`wr-app` → `--allow-write`; `run`/`run2` → `--allow-run`. Value syntax: omit = unrestricted; `*` = all permitted; empty (`--allow-net=`) = all blocked; comma list = only those targets. Matching: net = hostname extracted from URL, exact or `*.domain` wildcard; read/write = path-prefix with separator boundary; run = basename or full-path match. See `SANDBOX.md` for the operator guide and `examples/capability-sandbox.ilo` for a runnable demo.
 
 **Production-safety guards (`ILO-R016`, `ILO-R017`).** `ilo run` caps wall-clock runtime at 60 s and stdout output at ~100 MB by default. A runaway loop (missing increment, recursion with no base case) aborts with `ILO-R016` once the time budget hits, instead of burning CPU forever; a `prnt` loop without termination aborts with `ILO-R017` once the byte budget hits, instead of filling the agent transcript with megabytes of garbage. Both guards write a structured diagnostic to stderr and exit 1. Defaults are well above any legitimate program (real agent tasks finish under 10 s and produce kilobytes); raise with `--max-runtime SECS` / `--max-output-bytes BYTES`, set either to `0` to disable. The guards were installed by the mandelbrot persona report (2026-05-20) which spun in an infinite loop and wrote 165 MB of stdout before the harness intervened.
 
@@ -2160,3 +2198,8 @@ fac n:n>n;<=n 1 1;r=fac -n 1;*n r
 ```
 fib n:n>n;<=n 1 n;a=fib -n 1;b=fib -n 2;+a b
 ```
+
+
+## Stability
+
+See STABILITY.md at repo root for the per-surface stability matrix. Three tiers: stable (schemaVersion:1 envelope, ILO-error-codes, serv-protocol-phases, file-version-pragma, manifesto-principles, reserved-name-policy), provisional (builtin-signatures, cli-flag-names, error-message-prose, examples-corpus, ilo-test-surface), experimental (0.13-in-flight-features, aot-artifact-format, cranelift-jit-internals, extensions-dir, cargo-feature-flags). Stable surfaces are safe to pin across releases. Provisional surfaces carry a deprecation-window guarantee. Experimental surfaces may disappear without notice. `ilo spec --json ai` surfaces this matrix in the `stability` field of the JSON envelope, and per-item stability annotations on every builtin in the `builtins` array.

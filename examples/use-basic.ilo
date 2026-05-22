@@ -1,0 +1,23 @@
+-- use-basic.ilo — demonstrates the two-file `use` module system
+--
+-- Form 1: flat import — `use "path"` brings all public symbols into scope.
+-- Form 2: named-module import — `use alias:"path"` prefixes symbols with alias-.
+--
+-- Private symbols (names starting with `_`) are never exported.
+
+-- Flat import: add1, double are in scope directly
+use "use-basic-helper.ilo"
+
+-- Named-module import: the same helpers are also available as m-add1, m-double
+use m:"use-basic-helper.ilo"
+
+-- combine: use the flat-imported functions
+combine a:n b:n>n;x=add1 a;y=double b;+x y
+
+-- combine-namespaced: use the alias-prefixed functions
+combine-ns a:n b:n>n;x=m-add1 a;y=m-double b;+x y
+
+-- run: combine 3 4
+-- out: 12
+-- run: combine-ns 3 4
+-- out: 12

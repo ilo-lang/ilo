@@ -1,0 +1,7 @@
+{
+  "code": "ILO-T002",
+  "long": "## ILO-T002: duplicate function or tool definition\n\nA function or tool uses a name that was already defined in this file.\n\n**Fix:** rename one of the functions or remove the duplicate.\n",
+  "phase": "verify",
+  "schemaVersion": 1,
+  "short": "duplicate function/tool definition"
+}

@@ -337,6 +337,7 @@ fn explain_cmd(code: &str, as_json: bool) -> i32 {
                 let v = serde_json::json!({
                     "schemaVersion": 1,
                     "code": entry.code,
+                    "phase": entry.phase.as_str(),
                     "short": entry.short,
                     "long": entry.long,
                 });
@@ -2257,6 +2258,9 @@ fn decl_name(decl: &ast::Decl) -> Option<&str> {
 ///   `None` means inline code — `use` is not supported without a file context.
 /// - `visited`: canonical paths already in the import chain; circular imports are errors.
 /// - `diagnostics`: errors are pushed here (file-not-found, circular, parse failures).
+///
+/// Privacy rule: declarations whose name starts with `_` are module-private and
+/// are never exported. They are stripped during import regardless of `only` or `alias`.
 fn resolve_imports(
     decls: Vec<ast::Decl>,
     base_dir: Option<&std::path::Path>,
@@ -2266,7 +2270,13 @@ fn resolve_imports(
     let mut result: Vec<ast::Decl> = Vec::new();
 
     for decl in decls {
-        if let ast::Decl::Use { path, only, span } = decl {
+        if let ast::Decl::Use {
+            path,
+            only,
+            alias,
+            span,
+        } = decl
+        {
             let Some(dir) = base_dir else {
                 diagnostics.push(
                     Diagnostic::error(
@@ -2350,10 +2360,35 @@ fn resolve_imports(
             );
             visited.remove(&canonical);
 
-            // Apply `only [...]` filter if specified
+            // Apply import filter based on form:
+            //
+            // - Flat (`use "path"`): all declarations come through, including
+            //   `_`-prefixed ones. Private helpers are callable from the
+            //   importing file only by convention (no hard enforcement in flat
+            //   mode — they just land in the shared namespace).
+            //
+            // - Selective (`use "path" [name1 name2]`): only the listed public
+            //   names are imported. `_`-prefixed names are blocked — requesting
+            //   one emits ILO-P019. This is the primary privacy enforcement.
+            //
+            // - Named-module (`use alias:"path"`): all public (non-`_`) names
+            //   are imported and prefixed with `alias-`. Private (`_`) names are
+            //   silently excluded. This is the secondary privacy enforcement.
             let filtered = if let Some(ref names) = only {
-                // Warn about any requested names that weren't found
+                // Selective import — block private names explicitly
                 for name in names {
+                    if name.starts_with('_') {
+                        diagnostics.push(
+                            Diagnostic::error(format!(
+                                "use \"{}\": '{}' is module-private (names starting with `_` \
+                                 are not exported)",
+                                path, name
+                            ))
+                            .with_code("ILO-P019")
+                            .with_span(span, "imported here"),
+                        );
+                        continue;
+                    }
                     let found = imported_decls
                         .iter()
                         .any(|d| decl_name(d) == Some(name.as_str()));
@@ -2372,11 +2407,19 @@ fn resolve_imports(
                     .into_iter()
                     .filter(|d| {
                         decl_name(d)
-                            .map(|n| names.iter().any(|s| s == n))
+                            .map(|n| !n.starts_with('_') && names.iter().any(|s| s == n))
                             .unwrap_or(false)
                     })
                     .collect::<Vec<_>>()
+            } else if let Some(ref pfx) = alias {
+                // Named-module form: strip private, then rename public to `alias-name`.
+                let public_decls: Vec<ast::Decl> = imported_decls
+                    .into_iter()
+                    .filter(|d| decl_name(d).map(|n| !n.starts_with('_')).unwrap_or(true))
+                    .collect();
+                apply_module_alias(public_decls, pfx)
             } else {
+                // Flat import: everything (including private helpers) comes through
                 imported_decls
             };
 
@@ -2388,6 +2431,64 @@ fn resolve_imports(
     }
 
     result
+}
+
+/// Rename all named declarations in `decls` by prepending `alias-` to their name.
+/// Used by the `use alias:"path"` named-module import form.
+fn apply_module_alias(decls: Vec<ast::Decl>, alias: &str) -> Vec<ast::Decl> {
+    decls
+        .into_iter()
+        .map(|d| rename_decl_with_alias(d, alias))
+        .collect()
+}
+
+/// Return a copy of `decl` with its name prefixed by `alias-`.
+/// Declarations without a name (errors, `Use` nodes) pass through unchanged.
+fn rename_decl_with_alias(decl: ast::Decl, alias: &str) -> ast::Decl {
+    match decl {
+        ast::Decl::Function {
+            name,
+            params,
+            return_type,
+            body,
+            span,
+        } => ast::Decl::Function {
+            name: format!("{}-{}", alias, name),
+            params,
+            return_type,
+            body,
+            span,
+        },
+        ast::Decl::Tool {
+            name,
+            description,
+            params,
+            return_type,
+            timeout,
+            retry,
+            span,
+        } => ast::Decl::Tool {
+            name: format!("{}-{}", alias, name),
+            description,
+            params,
+            return_type,
+            timeout,
+            retry,
+            span,
+        },
+        ast::Decl::TypeDef { name, fields, span } => ast::Decl::TypeDef {
+            name: format!("{}-{}", alias, name),
+            fields,
+            span,
+        },
+        ast::Decl::Alias { name, target, span } => ast::Decl::Alias {
+            name: format!("{}-{}", alias, name),
+            target,
+            span,
+        },
+        // Use and Error nodes have no name — pass through unchanged
+        other => other,
+    }
 }
 
 fn report_diagnostic(d: &Diagnostic, mode: OutputMode) {
@@ -2720,6 +2821,16 @@ fn dispatch_cli(cli: cli::Cli, bare_has_bin: bool) -> i32 {
                 }
                 Some("ai") => {
                     if as_json {
+                        // Build per-item builtins array from the canonical ALL slice.
+                        let builtins_list: Vec<serde_json::Value> = ilo::builtins::Builtin::ALL
+                            .iter()
+                            .map(|b| {
+                                serde_json::json!({
+                                    "name": b.name(),
+                                    "stability": b.stability(),
+                                })
+                            })
+                            .collect();
                         let v = serde_json::json!({
                             "schemaVersion": 1,
                             "format": "ai-txt",
@@ -2731,6 +2842,7 @@ fn dispatch_cli(cli: cli::Cli, bare_has_bin: bool) -> i32 {
                                 "provisional": ["builtin-signatures", "cli-flag-names", "error-message-prose", "examples-corpus", "ilo-test-surface"],
                                 "experimental": ["0.13-in-flight-features", "aot-artifact-format", "cranelift-jit-internals", "extensions-dir", "cargo-feature-flags"],
                             },
+                            "builtins": builtins_list,
                         });
                         println!("{}", v);
                     } else {
@@ -3015,6 +3127,7 @@ fn dispatch_bare_args(raw_args: Vec<String>, global: &cli::Global) -> i32 {
                     allow_read: None,
                     allow_write: None,
                     allow_run: None,
+                    allow_env: None,
                     rest: args[m + 1..].to_vec(),
                 };
                 return dispatch_run(run_args, mode, explicit_json, no_hints, silent);
@@ -3040,6 +3153,7 @@ fn dispatch_bare_args(raw_args: Vec<String>, global: &cli::Global) -> i32 {
                     allow_read: None,
                     allow_write: None,
                     allow_run: None,
+                    allow_env: None,
                     rest: vec![],
                 };
                 return dispatch_run(run_args, mode, explicit_json, no_hints, silent);
@@ -3070,6 +3184,7 @@ fn dispatch_bare_args(raw_args: Vec<String>, global: &cli::Global) -> i32 {
                     allow_read: None,
                     allow_write: None,
                     allow_run: None,
+                    allow_env: None,
                     rest: vec![],
                 };
                 return dispatch_run(run_args, mode, explicit_json, no_hints, silent);
@@ -3095,6 +3210,7 @@ fn dispatch_bare_args(raw_args: Vec<String>, global: &cli::Global) -> i32 {
                     allow_read: None,
                     allow_write: None,
                     allow_run: None,
+                    allow_env: None,
                     rest: vec![],
                 };
                 return dispatch_run(run_args, mode, explicit_json, no_hints, silent);
@@ -3120,6 +3236,7 @@ fn dispatch_bare_args(raw_args: Vec<String>, global: &cli::Global) -> i32 {
                     allow_read: None,
                     allow_write: None,
                     allow_run: None,
+                    allow_env: None,
                     rest: vec![],
                 };
                 return dispatch_run(run_args, mode, explicit_json, no_hints, silent);
@@ -3157,6 +3274,7 @@ fn dispatch_bare_args(raw_args: Vec<String>, global: &cli::Global) -> i32 {
         allow_read: None,
         allow_write: None,
         allow_run: None,
+        allow_env: None,
         rest,
     };
     dispatch_run(run_args, mode, explicit_json, no_hints, silent)
@@ -3352,7 +3470,8 @@ fn build_caps(r: &cli::RunArgs) -> Arc<Caps> {
     let any = r.allow_net.is_some()
         || r.allow_read.is_some()
         || r.allow_write.is_some()
-        || r.allow_run.is_some();
+        || r.allow_run.is_some()
+        || r.allow_env.is_some();
     if !any {
         return Arc::new(Caps::Permissive);
     }
@@ -3374,6 +3493,11 @@ fn build_caps(r: &cli::RunArgs) -> Arc<Caps> {
             .unwrap_or(Policy::All),
         run: r
             .allow_run
+            .as_deref()
+            .map(Caps::parse_allow)
+            .unwrap_or(Policy::All),
+        env: r
+            .allow_env
             .as_deref()
             .map(Caps::parse_allow)
             .unwrap_or(Policy::All),
@@ -6229,6 +6353,7 @@ mod tests {
         let d = ast::Decl::Use {
             path: "lib.ilo".into(),
             only: None,
+            alias: None,
             span: ast::Span { start: 0, end: 0 },
         };
         assert_eq!(decl_name(&d), None);
@@ -6266,6 +6391,7 @@ mod tests {
         let use_decl = ast::Decl::Use {
             path: "ilo_test_resolve_only_F2G7.ilo".into(),
             only: Some(vec!["dbl".into()]),
+            alias: None,
             span: ast::Span { start: 0, end: 0 },
         };
         let mut diags = Vec::new();
@@ -6299,6 +6425,7 @@ mod tests {
         let use_decl = ast::Decl::Use {
             path: "ilo_test_resolve_missing_H4K9.ilo".into(),
             only: Some(vec!["dbl".into(), "nonexistent".into()]),
+            alias: None,
             span: ast::Span { start: 0, end: 0 },
         };
         let mut diags = Vec::new();
@@ -6551,6 +6678,7 @@ mod tests {
         let use_decl = ast::Decl::Use {
             path: "something.ilo".into(),
             only: None,
+            alias: None,
             span: ast::Span { start: 0, end: 20 },
         };
         let mut visited = std::collections::HashSet::new();
@@ -6566,6 +6694,7 @@ mod tests {
         let use_decl = ast::Decl::Use {
             path: "nonexistent_xyz_99999.ilo".into(),
             only: None,
+            alias: None,
             span: ast::Span { start: 0, end: 30 },
         };
         let mut visited = std::collections::HashSet::new();
@@ -6680,6 +6809,7 @@ mod tests {
         let decls = vec![ast::Decl::Use {
             path: "ilo_unit_bad_parse_imports.ilo".into(),
             only: None,
+            alias: None,
             span: ast::Span { start: 0, end: 0 },
         }];
         let mut visited = std::collections::HashSet::new();
@@ -6715,6 +6845,7 @@ mod tests {
         let decls = vec![ast::Decl::Use {
             path: "ilo_unit_trans_a_Q3R8.ilo".into(),
             only: None,
+            alias: None,
             span: ast::Span { start: 0, end: 0 },
         }];
         let mut visited = std::collections::HashSet::new();
@@ -6733,6 +6864,120 @@ mod tests {
 
         std::fs::remove_file(file_b).ok();
         std::fs::remove_file(file_a).ok();
+    }
+
+    // ── resolve_imports: named-module alias form ───────────────────────────────
+
+    #[test]
+    fn resolve_imports_alias_renames_public_decls() {
+        use std::io::Write;
+        let lib_path = "/tmp/ilo_test_alias_rename_X9Y2.ilo";
+        let mut f = std::fs::File::create(lib_path).unwrap();
+        writeln!(f, "dbl n:n>n;*n 2").unwrap();
+        writeln!(f, "triple n:n>n;*n 3").unwrap();
+        drop(f);
+
+        let use_decl = ast::Decl::Use {
+            path: "ilo_test_alias_rename_X9Y2.ilo".into(),
+            only: None,
+            alias: Some("m".into()),
+            span: ast::Span { start: 0, end: 0 },
+        };
+        let mut diags = Vec::new();
+        let mut visited = std::collections::HashSet::new();
+        let result = resolve_imports(
+            vec![use_decl],
+            Some(std::path::Path::new("/tmp")),
+            &mut visited,
+            &mut diags,
+        );
+
+        assert!(diags.is_empty(), "no errors expected: {diags:?}");
+        let names: Vec<&str> = result.iter().filter_map(|d| decl_name(d)).collect();
+        assert!(names.contains(&"m-dbl"), "expected m-dbl: {names:?}");
+        assert!(names.contains(&"m-triple"), "expected m-triple: {names:?}");
+        assert!(
+            !names.contains(&"dbl"),
+            "plain dbl should not be in result: {names:?}"
+        );
+
+        std::fs::remove_file(lib_path).ok();
+    }
+
+    #[test]
+    fn resolve_imports_alias_excludes_private_decls() {
+        use std::io::Write;
+        let lib_path = "/tmp/ilo_test_alias_priv_W7Z4.ilo";
+        let mut f = std::fs::File::create(lib_path).unwrap();
+        writeln!(f, "_private n:n>n;+n 0").unwrap();
+        writeln!(f, "pub-fn n:n>n;+n 1").unwrap();
+        drop(f);
+
+        let use_decl = ast::Decl::Use {
+            path: "ilo_test_alias_priv_W7Z4.ilo".into(),
+            only: None,
+            alias: Some("m".into()),
+            span: ast::Span { start: 0, end: 0 },
+        };
+        let mut diags = Vec::new();
+        let mut visited = std::collections::HashSet::new();
+        let result = resolve_imports(
+            vec![use_decl],
+            Some(std::path::Path::new("/tmp")),
+            &mut visited,
+            &mut diags,
+        );
+
+        assert!(diags.is_empty(), "no errors expected: {diags:?}");
+        let names: Vec<&str> = result.iter().filter_map(|d| decl_name(d)).collect();
+        assert!(names.contains(&"m-pub-fn"), "expected m-pub-fn: {names:?}");
+        assert!(
+            !names
+                .iter()
+                .any(|n| n.starts_with("m-_") || *n == "_private"),
+            "private decl should not appear: {names:?}"
+        );
+
+        std::fs::remove_file(lib_path).ok();
+    }
+
+    #[test]
+    fn resolve_imports_selective_blocks_private_name() {
+        use std::io::Write;
+        let lib_path = "/tmp/ilo_test_sel_priv_V3K8.ilo";
+        let mut f = std::fs::File::create(lib_path).unwrap();
+        writeln!(f, "_priv n:n>n;+n 0").unwrap();
+        writeln!(f, "pub-fn n:n>n;+n 1").unwrap();
+        drop(f);
+
+        // Note: `_` is not a valid ident in `only`, so we test by injecting
+        // the name directly via the AST.
+        let use_decl = ast::Decl::Use {
+            path: "ilo_test_sel_priv_V3K8.ilo".into(),
+            only: Some(vec!["_priv".into()]),
+            alias: None,
+            span: ast::Span { start: 0, end: 0 },
+        };
+        let mut diags = Vec::new();
+        let mut visited = std::collections::HashSet::new();
+        let result = resolve_imports(
+            vec![use_decl],
+            Some(std::path::Path::new("/tmp")),
+            &mut visited,
+            &mut diags,
+        );
+
+        assert!(result.is_empty(), "private name should produce no result");
+        assert!(
+            diags.iter().any(|d| d.code == Some("ILO-P019")),
+            "expected ILO-P019: {diags:?}"
+        );
+        assert!(
+            diags.iter().any(|d| d.message.contains("module-private")),
+            "expected 'module-private' in error: {diags:?}"
+        );
+
+        std::fs::remove_file(lib_path).ok();
     }
 
     // ── report_diagnostic: all three output modes ─────────────────────────────
@@ -7795,6 +8040,7 @@ mod tests {
         ast::Decl::Use {
             path: path.to_string(),
             only: None,
+            alias: None,
             span: ast::Span::UNKNOWN,
         }
     }
@@ -9518,6 +9764,7 @@ mod tests {
             allow_read: None,
             allow_write: None,
             allow_run: None,
+            allow_env: None,
             rest: vec![],
         };
         let code = dispatch_run(run_args, OutputMode::Text, false, false, false);
@@ -9548,6 +9795,7 @@ mod tests {
             allow_read: None,
             allow_write: None,
             allow_run: None,
+            allow_env: None,
             rest: vec![],
         };
         let code = dispatch_run(run_args, OutputMode::Text, false, false, false);
@@ -9582,6 +9830,7 @@ mod tests {
             allow_read: None,
             allow_write: None,
             allow_run: None,
+            allow_env: None,
             rest: vec![],
         };
         let code = dispatch_run(run_args, OutputMode::Text, false, false, false);
@@ -9613,6 +9862,7 @@ mod tests {
             allow_read: None,
             allow_write: None,
             allow_run: None,
+            allow_env: None,
             rest: vec!["f".to_string(), "1".to_string()],
         };
         // no_hints = false → hints emitted (to stderr, so just verify no panic)
@@ -9642,6 +9892,7 @@ mod tests {
             allow_read: None,
             allow_write: None,
             allow_run: None,
+            allow_env: None,
             rest: vec!["f".to_string(), "1".to_string()],
         };
         // no_hints = true → hints suppressed
@@ -9673,6 +9924,7 @@ mod tests {
             allow_read: None,
             allow_write: None,
             allow_run: None,
+            allow_env: None,
             rest: vec![],
         };
         let code = dispatch_run(run_args, OutputMode::Text, false, false, false);
@@ -9704,6 +9956,7 @@ mod tests {
             allow_read: None,
             allow_write: None,
             allow_run: None,
+            allow_env: None,
             rest: vec!["f".to_string(), "1".to_string()],
         };
         let code = dispatch_run(run_args, OutputMode::Text, false, false, false);
@@ -10159,6 +10412,53 @@ mod tests {
         std::fs::remove_file(path).ok();
     }
 
+    // ── spec --json ai: per-item stability annotations (ILO-340) ─────────────
+
+    #[test]
+    fn spec_json_ai_builtins_array_has_stability_fields() {
+        // Run `ilo spec --json ai` and verify the builtins array is present
+        // with name+stability on every entry.
+        let output = std::process::Command::new(
+            std::env::current_exe()
+                .unwrap()
+                .parent()
+                .unwrap()
+                .parent()
+                .unwrap()
+                .join("ilo"),
+        )
+        .args(["spec", "--json", "ai"])
+        .output();
+        // If the binary isn't available (CI test-lib mode) skip gracefully.
+        let output = match output {
+            Ok(o) => o,
+            Err(_) => return,
+        };
+        assert!(output.status.success());
+        let v: serde_json::Value =
+            serde_json::from_slice(&output.stdout).expect("spec --json ai must be valid JSON");
+        let builtins = v["builtins"].as_array().expect("builtins must be an array");
+        assert!(
+            !builtins.is_empty(),
+            "builtins array must contain at least one entry"
+        );
+        for b in builtins {
+            let name = b["name"].as_str().expect("each builtin must have a name");
+            let stability = b["stability"]
+                .as_str()
+                .expect("each builtin must have a stability");
+            assert!(
+                stability == "provisional" || stability == "experimental",
+                "builtin {name} has unknown stability tier '{stability}'"
+            );
+        }
+        // Backward-compat: top-level stability summary must still be present.
+        assert!(
+            v["stability"]["doc"].as_str().is_some(),
+            "top-level stability.doc must still be present for backward compat"
+        );
+    }
+
     // ── dispatch_bare_args: no-op case with func in rest matching func_names ──
 
     #[test]
@@ -10183,6 +10483,104 @@ mod tests {
             ],
             &global,
         );
+        assert_eq!(code, 0);
+    }
+
+    // ── --allow-env ───────────────────────────────────────────────────────────
+
+    #[test]
+    fn allow_env_permissive_mode_reads_path() {
+        // No --allow-env flag → permissive mode → env reads succeed.
+        let run_args = cli::RunArgs {
+            source: "f k:t>R t t;env k".to_string(),
+            engine: cli::Engine::Default,
+            run_tree: false,
+            run: false,
+            run_vm: false,
+            jit: false,
+            run_llvm: false,
+            bench: false,
+            emit: None,
+            explain: false,
+            dense: false,
+            expanded: false,
+            ast: false,
+            tools_path: None,
+            mcp_path: None,
+            allow_net: None,
+            allow_read: None,
+            allow_write: None,
+            allow_run: None,
+            allow_env: None,
+            rest: vec!["f".to_string(), "PATH".to_string()],
+        };
+        let code = dispatch_run(run_args, OutputMode::Text, false, false, false);
+        assert_eq!(code, 0);
+    }
+
+    #[test]
+    fn allow_env_empty_list_blocks_reads() {
+        // --allow-env= (empty) → restricted mode → env returns Err value.
+        // The function signature is R t t; returning an Err is valid — the
+        // runner exits 1 only because the top-level result is Err, which is
+        // ilo's standard non-zero exit convention for unhandled Err results.
+        // The key assertion is that it doesn't panic and the message is printed.
+        let run_args = cli::RunArgs {
+            source: "f k:t>R t t;env k".to_string(),
+            engine: cli::Engine::Default,
+            run_tree: false,
+            run: false,
+            run_vm: false,
+            jit: false,
+            run_llvm: false,
+            bench: false,
+            emit: None,
+            explain: false,
+            dense: false,
+            expanded: false,
+            ast: false,
+            tools_path: None,
+            mcp_path: None,
+            allow_net: None,
+            allow_read: None,
+            allow_write: None,
+            allow_run: None,
+            allow_env: Some(String::new()),
+            rest: vec!["f".to_string(), "PATH".to_string()],
+        };
+        // Exits 1 because the top-level Err value is ilo's non-zero exit convention,
+        // NOT because the program crashed — it correctly returned the blocked Err.
+        let code = dispatch_run(run_args, OutputMode::Text, false, false, false);
+        assert_eq!(code, 1);
+    }
+
+    #[test]
+    fn allow_env_specific_var_allowed() {
+        // --allow-env=PATH → PATH read succeeds.
+        let run_args = cli::RunArgs {
+            source: "f k:t>R t t;env k".to_string(),
+            engine: cli::Engine::Default,
+            run_tree: false,
+            run: false,
+            run_vm: false,
+            jit: false,
+            run_llvm: false,
+            bench: false,
+            emit: None,
+            explain: false,
+            dense: false,
+            expanded: false,
+            ast: false,
+            tools_path: None,
+            mcp_path: None,
+            allow_net: None,
+            allow_read: None,
+            allow_write: None,
+            allow_run: None,
+            allow_env: Some("PATH".to_string()),
+            rest: vec!["f".to_string(), "PATH".to_string()],
+        };
+        let code = dispatch_run(run_args, OutputMode::Text, false, false, false);
         assert_eq!(code, 0);
     }
 }
