@@ -29480,7 +29480,11 @@ mod tests {
         // `?x{"a"|"b":"found";_:"miss"}` — subject matches first alternative
         let source = r#"f x:t>t;?x{"a"|"b":"found";_:"miss"}"#;
         assert_eq!(
-            vm_run(source, Some("f"), vec![Value::Text(Arc::new("a".to_string()))]),
+            vm_run(
+                source,
+                Some("f"),
+                vec![Value::Text(Arc::new("a".to_string()))]
+            ),
             Value::Text(Arc::new("found".to_string()))
         );
     }
@@ -29490,7 +29494,11 @@ mod tests {
         // subject matches second alternative
         let source = r#"f x:t>t;?x{"a"|"b":"found";_:"miss"}"#;
         assert_eq!(
-            vm_run(source, Some("f"), vec![Value::Text(Arc::new("b".to_string()))]),
+            vm_run(
+                source,
+                Some("f"),
+                vec![Value::Text(Arc::new("b".to_string()))]
+            ),
             Value::Text(Arc::new("found".to_string()))
         );
     }
@@ -29500,7 +29508,11 @@ mod tests {
         // subject matches neither alternative — falls to wildcard
         let source = r#"f x:t>t;?x{"a"|"b":"found";_:"miss"}"#;
         assert_eq!(
-            vm_run(source, Some("f"), vec![Value::Text(Arc::new("c".to_string()))]),
+            vm_run(
+                source,
+                Some("f"),
+                vec![Value::Text(Arc::new("c".to_string()))]
+            ),
             Value::Text(Arc::new("miss".to_string()))
         );
     }
