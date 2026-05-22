@@ -116,6 +116,9 @@ pub enum Cmd {
     /// Run `-- run:` / `-- out:` / `-- err:` assertions in `.ilo` files.
     Test(TestArgs),
 
+    /// Apply fix_plan edits from `ilo check --json` to a source file.
+    Apply(ApplyArgs),
+
     /// Print version.
     Version,
 }
@@ -383,6 +386,18 @@ pub enum TestEngine {
     Vm,
     Jit,
     All,
+}
+
+// ── Apply ──────────────────────────────────────────────────────────────────────
+
+#[derive(Args, Debug)]
+pub struct ApplyArgs {
+    /// Source file to apply fixes to.
+    pub file: String,
+
+    /// Preview edits without writing to disk.
+    #[arg(long)]
+    pub dry_run: bool,
 }
 
 // ── Spec ───────────────────────────────────────────────────────────────────────

@@ -1,0 +1,16 @@
+-- apply-demo.ilo: file with deliberate fixable diagnostics for `ilo apply`.
+--
+-- Run `ilo apply examples/apply-demo.ilo` to auto-fix the issues below.
+-- Use `ilo apply --dry-run examples/apply-demo.ilo` to preview without writing.
+--
+-- Fixable diagnostic exercised:
+--   ILO-L002  underscore in identifier → hyphen  (word_count → word-count)
+
+-- ILO-L002: underscore identifiers should use hyphens in ilo.
+-- `ilo apply` will rename word_count → word-count.
+word_count xs:L t>n;len xs
+
+main>n;len ["hello" "world"]
+
+-- run: main
+-- out: 2
