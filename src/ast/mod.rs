@@ -187,11 +187,13 @@ pub enum Stmt {
         body: Vec<Spanned<Stmt>>,
     },
 
-    /// `@binding start..end{body}` — range iteration
+    /// `@binding start..end{body}` or `@binding start..end by step{body}` — range iteration
     ForRange {
         binding: String,
         start: Expr,
         end: Expr,
+        /// Optional step size (`by <expr>`). `None` means step of 1.
+        step: Option<Expr>,
         body: Vec<Spanned<Stmt>>,
     },
 
@@ -600,10 +602,17 @@ fn resolve_aliases_stmt(stmt: &mut Stmt) {
             }
         }
         Stmt::ForRange {
-            start, end, body, ..
+            start,
+            end,
+            step,
+            body,
+            ..
         } => {
             resolve_aliases_expr(start);
             resolve_aliases_expr(end);
+            if let Some(s) = step {
+                resolve_aliases_expr(s);
+            }
             for s in body {
                 resolve_aliases_stmt(&mut s.node);
             }
@@ -807,10 +816,14 @@ fn desugar_stmt(stmt: &mut Stmt, scope: &mut Vec<String>, rf: &std::collections:
             binding,
             start,
             end,
+            step,
             body,
         } => {
             desugar_expr(start, scope, rf);
             desugar_expr(end, scope, rf);
+            if let Some(st) = step {
+                desugar_expr(st, scope, rf);
+            }
             let depth = scope.len();
             scope.push(binding.clone());
             for s in body {

@@ -2424,11 +2424,19 @@ statement boundary; bind the chain to a local first. For example, split \
         if self.peek() == Some(&Token::DotDot) {
             self.advance(); // consume ..
             let end_expr = self.parse_expr_inner()?;
+            // Optional `by <step>` clause: `@i 0..n by 2{...}`
+            let step_expr = if self.peek() == Some(&Token::By) {
+                self.advance(); // consume `by`
+                Some(self.parse_expr_inner()?)
+            } else {
+                None
+            };
             let body = self.parse_brace_body()?;
             return Ok(Stmt::ForRange {
                 binding,
                 start: start_expr,
                 end: end_expr,
+                step: step_expr,
                 body,
             });
         }
@@ -4880,10 +4888,14 @@ For variable-position list indexing bind the head first: \
                 binding,
                 start,
                 end,
+                step,
                 body,
             } => {
                 self.collect_free_in_expr(start, params, local, free);
                 self.collect_free_in_expr(end, params, local, free);
+                if let Some(st) = step {
+                    self.collect_free_in_expr(st, params, local, free);
+                }
                 let depth = local.len();
                 local.push(binding.clone());
                 for s in body {

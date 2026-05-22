@@ -8534,6 +8534,7 @@ fn eval_stmt(env: &mut Env, stmt: &Stmt, is_tail: bool) -> Result<Option<BodyRes
             binding,
             start,
             end,
+            step,
             body,
         } => {
             let start_val = eval_expr(env, start)?;
@@ -8551,8 +8552,17 @@ fn eval_stmt(env: &mut Env, stmt: &Stmt, is_tail: bool) -> Result<Option<BodyRes
                 Value::Number(n) => n as i64,
                 _ => return Err(RuntimeError::new("ILO-R007", "range end must be a number")),
             };
+            let st: i64 = if let Some(step_expr) = step {
+                match eval_expr(env, step_expr)? {
+                    Value::Number(n) => n as i64,
+                    _ => return Err(RuntimeError::new("ILO-R007", "range step must be a number")),
+                }
+            } else {
+                1
+            };
             let mut last = Value::Nil;
-            for i in s..e {
+            let mut i = s;
+            while i < e {
                 env.push_scope();
                 env.define(binding, Value::Number(i as f64));
                 // Range body is not in tail position; see ForEach above.
@@ -8566,12 +8576,16 @@ fn eval_stmt(env: &mut Env, stmt: &Stmt, is_tail: bool) -> Result<Option<BodyRes
                         last = v;
                         break;
                     }
-                    BodyResult::Continue => continue,
+                    BodyResult::Continue => {
+                        i += st;
+                        continue;
+                    }
                     BodyResult::TailCall { .. } => {
                         unreachable!("TailCall escaping non-tail range body");
                     }
                     BodyResult::Value(v) => last = v,
                 }
+                i += st;
             }
             Ok(Some(BodyResult::Value(last)))
         }
