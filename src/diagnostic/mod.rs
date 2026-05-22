@@ -162,6 +162,9 @@ impl Diagnostic {
             "ILO-T004" | "ILO-T003" => derive_typo_rename(&self, source),
             "ILO-T032" => derive_fmt_prefix(&self, source),
             "ILO-L002" => derive_underscore_hyphen(&self, source),
+            "ILO-T008" => derive_return_type_cast(&self, source),
+            "ILO-P011" => derive_reserved_rename(&self, source),
+            "ILO-T041" => derive_nil_coalesce_result(&self, source),
             _ => None,
         };
         self.fix_plan = plan;
@@ -261,6 +264,131 @@ fn derive_underscore_hyphen(d: &Diagnostic, source: &str) -> Option<FixPlan> {
         return None;
     }
     let before = source[span.start..span.end].to_string();
+
+    let sm = SourceMap::new(source);
+    let (line_start, _) = sm.lookup(span.start);
+    let (line_end, _) = sm.lookup(span.end.saturating_sub(1));
+
+    Some(FixPlan {
+        path: d.path.clone(),
+        edits: vec![FixEdit {
+            line_start,
+            line_end,
+            before,
+            after,
+        }],
+    })
+}
+
+/// T008: return type mismatch.
+///
+/// When the hint is `"use 'str' to convert: str <expr>"` or `"use 'num' to
+/// parse text …"` we wrap the offending expression with the cast function.
+/// For the generic `"change the return expression to T, or …"` pattern we
+/// extract T and do the same.
+fn derive_return_type_cast(d: &Diagnostic, source: &str) -> Option<FixPlan> {
+    let hint = d.suggestion.as_deref()?;
+    let span = d.labels.iter().find(|l| l.is_primary).map(|l| l.span)?;
+    if span.start >= source.len() || span.end > source.len() || span.start >= span.end {
+        return None;
+    }
+    let before = source[span.start..span.end].to_string();
+    if before.is_empty() {
+        return None;
+    }
+
+    // Determine the cast function from the hint text.
+    let cast_fn: Option<&str> = if hint.starts_with("use 'str' to convert") {
+        Some("str")
+    } else if hint.starts_with("use 'num' to parse text") {
+        Some("num")
+    } else if let Some(rest) = hint.strip_prefix("change the return expression to ") {
+        // Extract the type token before the first comma or space.
+        let ty = rest.split([',', ' ']).next().unwrap_or("").trim();
+        match ty {
+            "n" | "num" | "number" => Some("num"),
+            "t" | "str" | "text" => Some("str"),
+            _ => None,
+        }
+    } else {
+        None
+    };
+
+    let cast_fn = cast_fn?;
+    let after = format!("{cast_fn} {before}");
+
+    let sm = SourceMap::new(source);
+    let (line_start, _) = sm.lookup(span.start);
+    let (line_end, _) = sm.lookup(span.end.saturating_sub(1));
+
+    Some(FixPlan {
+        path: d.path.clone(),
+        edits: vec![FixEdit {
+            line_start,
+            line_end,
+            before,
+            after,
+        }],
+    })
+}
+
+/// P011: reserved keyword used as identifier.
+///
+/// Extracts the offending name from the primary span and offers `<name>2`
+/// as the replacement (safe, mechanical rename).
+fn derive_reserved_rename(d: &Diagnostic, source: &str) -> Option<FixPlan> {
+    let span = d.labels.iter().find(|l| l.is_primary).map(|l| l.span)?;
+    if span.start >= source.len() || span.end > source.len() || span.start >= span.end {
+        return None;
+    }
+    let before = source[span.start..span.end].to_string();
+    if before.is_empty() {
+        return None;
+    }
+    // Only offer the mechanical rename when the span looks like a plain
+    // identifier / keyword (no whitespace or operators).
+    if before.contains(|c: char| c.is_whitespace()) {
+        return None;
+    }
+    let after = format!("{before}2");
+
+    let sm = SourceMap::new(source);
+    let (line_start, _) = sm.lookup(span.start);
+    let (line_end, _) = sm.lookup(span.end.saturating_sub(1));
+
+    Some(FixPlan {
+        path: d.path.clone(),
+        edits: vec![FixEdit {
+            line_start,
+            line_end,
+            before,
+            after,
+        }],
+    })
+}
+
+/// T041: `??` nil-coalesce applied to a `R T E` (Result) type.
+///
+/// The primary span covers the full `<value> ?? <default>` expression.
+/// We rewrite it to `?val{~v:v;^_:<default>}` which is the idiomatic
+/// full-control pattern, splitting on ` ?? ` to recover the two operands.
+fn derive_nil_coalesce_result(d: &Diagnostic, source: &str) -> Option<FixPlan> {
+    let span = d.labels.iter().find(|l| l.is_primary).map(|l| l.span)?;
+    if span.start >= source.len() || span.end > source.len() || span.start >= span.end {
+        return None;
+    }
+    let before = source[span.start..span.end].to_string();
+    if before.is_empty() {
+        return None;
+    }
+
+    // Split on the nil-coalesce operator to recover value and default.
+    // Use the first occurrence to handle nested `??`.
+    let (val_part, default_part) = before.split_once(" ?? ")?;
+    let val_part = val_part.trim();
+    let default_part = default_part.trim();
+
+    let after = format!("?{val_part}{{~v:v;^_:{default_part}}}");
 
     let sm = SourceMap::new(source);
     let (line_start, _) = sm.lookup(span.start);
@@ -782,6 +910,111 @@ mod tests {
         assert_eq!(edits[0]["before"], "xyzz");
         assert_eq!(edits[0]["after"], "x");
         assert!(edits[0]["line_range"].is_array());
+    }
+
+    // ---- ILO-T008 fix_plan derivation ----
+
+    #[test]
+    fn derive_fix_plan_t008_str_cast() {
+        // Hint: "use 'str' to convert: str <expr>" → wrap span with `str`
+        let source = "f x:n>t;x";
+        let d = Diagnostic::error("return type mismatch: expected t, got n")
+            .with_code("ILO-T008")
+            .with_span(Span { start: 8, end: 9 }, "")
+            .with_suggestion("use 'str' to convert: str <expr>")
+            .with_source(source.to_string())
+            .derive_fix_plan();
+        let plan = d.fix_plan.expect("fix_plan for T008 str cast");
+        assert_eq!(plan.edits[0].before, "x");
+        assert_eq!(plan.edits[0].after, "str x");
+    }
+
+    #[test]
+    fn derive_fix_plan_t008_num_cast() {
+        // Hint: "use 'num' to parse text …" → wrap span with `num`
+        let source = "f x:t>n;x";
+        let d = Diagnostic::error("return type mismatch: expected n, got t")
+            .with_code("ILO-T008")
+            .with_span(Span { start: 8, end: 9 }, "")
+            .with_suggestion("use 'num' to parse text (returns R n t)")
+            .with_source(source.to_string())
+            .derive_fix_plan();
+        let plan = d.fix_plan.expect("fix_plan for T008 num cast");
+        assert_eq!(plan.edits[0].before, "x");
+        assert_eq!(plan.edits[0].after, "num x");
+    }
+
+    #[test]
+    fn derive_fix_plan_t008_generic_no_match() {
+        // Generic hint where type is not num/str → no fix_plan
+        let source = "f x:n>b;x";
+        let d = Diagnostic::error("return type mismatch: expected b, got n")
+            .with_code("ILO-T008")
+            .with_span(Span { start: 8, end: 9 }, "")
+            .with_suggestion("change the return expression to b, or update the return type annotation")
+            .with_source(source.to_string())
+            .derive_fix_plan();
+        assert!(d.fix_plan.is_none(), "no fix_plan for non-cast generic type");
+    }
+
+    // ---- ILO-P011 fix_plan derivation ----
+
+    #[test]
+    fn derive_fix_plan_p011_reserved_rename() {
+        // Reserved keyword `var` used as binding name → rename to `var2`
+        let source = "var=5;var";
+        let d = Diagnostic::error("`var` is a reserved word and cannot be used as an identifier")
+            .with_code("ILO-P011")
+            .with_span(Span { start: 0, end: 3 }, "here")
+            .with_suggestion("`var` is reserved; rename to e.g. `v`, `value`, or `varv`")
+            .with_source(source.to_string())
+            .derive_fix_plan();
+        let plan = d.fix_plan.expect("fix_plan for P011");
+        assert_eq!(plan.edits[0].before, "var");
+        assert_eq!(plan.edits[0].after, "var2");
+    }
+
+    #[test]
+    fn derive_fix_plan_p011_no_plan_for_whitespace_span() {
+        // If the span somehow covers whitespace, don't emit a plan
+        let source = "  fn=5";
+        let d = Diagnostic::error("`fn` is a reserved word")
+            .with_code("ILO-P011")
+            .with_span(Span { start: 0, end: 4 }, "here") // covers "  fn"
+            .with_source(source.to_string())
+            .derive_fix_plan();
+        assert!(d.fix_plan.is_none(), "no plan when span has whitespace");
+    }
+
+    // ---- ILO-T041 fix_plan derivation ----
+
+    #[test]
+    fn derive_fix_plan_t041_nil_coalesce_result() {
+        // `num s ?? 0` on a Result → `?num s{~v:v;^_:0}`
+        let source = "f s:t>n;num s ?? 0";
+        let expr_start = source.find("num s").unwrap();
+        let expr_end = source.len();
+        let d = Diagnostic::error("`??` is nil-coalesce for `O T`, not `R T E`")
+            .with_code("ILO-T041")
+            .with_span(Span { start: expr_start, end: expr_end }, "")
+            .with_suggestion("use `default-on-err r d` or `?r{~v:v ^_:default}` for full control")
+            .with_source(source.to_string())
+            .derive_fix_plan();
+        let plan = d.fix_plan.expect("fix_plan for T041");
+        assert_eq!(plan.edits[0].before, "num s ?? 0");
+        assert_eq!(plan.edits[0].after, "?num s{~v:v;^_:0}");
+    }
+
+    #[test]
+    fn derive_fix_plan_t041_no_plan_when_no_double_question() {
+        // If somehow the span text lacks ' ?? ', no plan emitted
+        let source = "f s:t>n;num s";
+        let d = Diagnostic::error("`??` is nil-coalesce for `O T`, not `R T E`")
+            .with_code("ILO-T041")
+            .with_span(Span { start: 8, end: 13 }, "")
+            .with_source(source.to_string())
+            .derive_fix_plan();
+        assert!(d.fix_plan.is_none(), "no plan when span lacks ' ?? '");
     }
 
     #[test]
