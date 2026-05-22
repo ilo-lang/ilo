@@ -637,6 +637,7 @@ Called like functions, compiled to dedicated opcodes.
 | `b64-dec s` | inverse of `b64`; Err on invalid base64 input or non-UTF-8 decoded bytes | `R t t` |
 | `hex s` | lowercase hex encode of UTF-8 bytes of `s` (every byte → 2 hex chars). Total. | `t` |
 | `ct-eq a b` | constant-time text equality. Returns true iff `a == b` without short-circuiting on the first differing byte. Use when comparing secrets (HMAC digests, tokens). | `b` |
+| `tokcount s` | approximate cl100k_base token count of string `s` (bytes/3.4 stub; within ~5% for English prose). Pure text-in / number-out; tree-bridge eligible. ILO-47 tracks replacing the stub with a real BPE tokeniser. *Experimental.* | `n` |
 | `run cmd argv` | spawn `cmd` with argv list — see [Process spawn](#process-spawn) for the no-shell-no-glob security model | `R (M t t) t` |
 | `run2 cmd argv` | like `run` but returns a typed `RunResult` record (`r.stdout`, `r.stderr`, `r.exit` as `n`) instead of a loose map; Err only on spawn failure | `R RunResult t` |
 | `env key` | read environment variable | `R t t` |

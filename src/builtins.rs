@@ -339,6 +339,15 @@ pub enum Builtin {
     Sha256Hex,
     Sha256d,
 
+    // `tokcount s > n` — approximate cl100k_base token count of string `s`.
+    // Uses a bytes/3.4 approximation (mean bytes-per-token for English prose
+    // under cl100k_base). Fast, allocation-minimal, and correct within ~5%
+    // for natural-language skill files. A follow-up (ILO-47) will replace
+    // this with the full tiktoken-rs BPE tokeniser once the crate's WASM
+    // and licence story is confirmed. Pure text-in / number-out; tree-bridge
+    // eligible. Added in 0.12.2 (experimental).
+    Tokcount,
+
     // `where cond xs ys > L a` — parallel-list conditional select.
     // NumPy `np.where` equivalent: for each i, output[i] = xs[i] if cond[i] else ys[i].
     // All three lists must have the same length; mismatch raises ILO-R009.
@@ -570,6 +579,7 @@ impl Builtin {
             "ct-eq" => Some(Builtin::CtEq),
             "sha256-hex" => Some(Builtin::Sha256Hex),
             "sha256d" => Some(Builtin::Sha256d),
+            "tokcount" => Some(Builtin::Tokcount),
             "where" => Some(Builtin::Where),
             "add-mo" => Some(Builtin::AddMo),
             "last-dom" => Some(Builtin::LastDom),
@@ -768,6 +778,7 @@ impl Builtin {
             Builtin::CtEq => "ct-eq",
             Builtin::Sha256Hex => "sha256-hex",
             Builtin::Sha256d => "sha256d",
+            Builtin::Tokcount => "tokcount",
             Builtin::Where => "where",
             Builtin::AddMo => "add-mo",
             Builtin::LastDom => "last-dom",
@@ -1131,6 +1142,11 @@ impl Builtin {
         // Appended last to preserve every existing on-wire tag.
         Builtin::Sha256Hex,
         Builtin::Sha256d,
+        // tokcount: approximate cl100k_base token count (bytes/3.4 stub).
+        // Appended last to preserve every existing on-wire tag. A follow-up
+        // (ILO-47) will replace this stub with the full tiktoken-rs BPE
+        // tokeniser once the crate's WASM and licence story is confirmed.
+        Builtin::Tokcount,
     ];
 
     /// Stability tier for this builtin, sourced from `STABILITY.md`.
@@ -1155,7 +1171,8 @@ impl Builtin {
             | Builtin::Fmod
             | Builtin::DtparseRel
             | Builtin::DurParse
-            | Builtin::DurFmt => "experimental",
+            | Builtin::DurFmt
+            | Builtin::Tokcount => "experimental",
 
             // Everything else shipped in 0.12.1 or earlier → provisional.
             _ => "provisional",
@@ -1520,6 +1537,7 @@ mod tests {
             "ravg",
             "rmin",
             "bisect",
+            "tokcount",
         ];
         for name in &all {
             let b = Builtin::from_name(name).unwrap_or_else(|| panic!("missing builtin: {name}"));
@@ -1787,6 +1805,7 @@ mod tests {
             "ravg",
             "rmin",
             "bisect",
+            "tokcount",
         ] {
             let b = Builtin::from_name(name).unwrap_or_else(|| panic!("no builtin: {name}"));
             let t = b.tag();

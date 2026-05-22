@@ -712,6 +712,11 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     // non-hex input.
     ("sha256-hex", &["t"], "t"),
     ("sha256d", &["t"], "t"),
+    // tokcount s > n — approximate cl100k_base token count (bytes/3.4 stub).
+    // Pure text-in / number-out, no Result wrapper, tree-bridge eligible.
+    // Added in 0.12.2 (experimental); see ILO-47 for the planned upgrade to
+    // a real BPE tokeniser.
+    ("tokcount", &["t"], "n"),
     // Calendar arithmetic (0.12.2). Pure epoch↔epoch/n ops, tree-bridge eligible.
     // add-mo: add N calendar months (N may be negative), end-of-month snap.
     // last-dom: epoch of the last day of the containing month at 00:00 UTC.

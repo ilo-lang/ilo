@@ -75,3 +75,7 @@ dur-parse! "-1h 30m"         -- -5400 (sticky sign)
 ## Crypto
 
 `sha256 s > t` SHA-256 lowercase hex (64 chars). `hmac-sha256 key msg > t` HMAC-SHA256 lowercase hex. `b64 s > t` / `b64-dec s > R t t` standard base64 (`=` padding; distinct from `b64u`/`b64u-dec` URL-safe no-pad). `hex s > t` lowercase hex of UTF-8 bytes. `ct-eq a b > b` constant-time text equality - use this to verify HMAC signatures or compare any secret; never `=`, which short-circuits and leaks timing.
+
+## Token counting
+
+`tokcount s > n` approximate cl100k_base token count of `s` (bytes/3.4; within ~5% for English prose). Use for skill-file budget checks and prompt-sizing estimates. *Experimental* — ILO-47 tracks upgrading to a real BPE tokeniser.

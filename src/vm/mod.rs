@@ -822,6 +822,10 @@ pub(crate) fn is_tree_bridge_eligible(b: crate::builtins::Builtin, argc: usize) 
         // inherit cross-engine parity at zero opcode cost.
         (Builtin::Sha256Hex, 1) => true,
         (Builtin::Sha256d, 1) => true,
+        // tokcount s — bytes/3.4 token-count stub. Pure text-in / number-out,
+        // no FnRef args, no Result wrapper. Tree-bridge eligible; VM and
+        // Cranelift inherit cross-engine parity at zero opcode cost.
+        (Builtin::Tokcount, 1) => true,
         // ewm xs a — exponential moving average. Pure number-list reducer, no
         // FnRef args, no Result wrapper. Same bridge contract as the
         // cumsum/cprod aggregate family; tree interpreter handles the actual
@@ -17139,6 +17143,9 @@ pub(crate) fn tree_bridge_propagates_error(b: crate::builtins::Builtin) -> bool 
             // rather than degenerating silently to nil.
             | Builtin::Sha256Hex
             | Builtin::Sha256d
+            // tokcount: raises ILO-R009 on non-text input. Surface on
+            // Cranelift in lockstep rather than degenerating silently to nil.
+            | Builtin::Tokcount
     )
 }
 
