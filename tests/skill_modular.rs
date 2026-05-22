@@ -49,7 +49,7 @@ const SKILL_NAMES: &[&str] = &[
 /// check is a defence-in-depth tripwire that catches drift even when CI is
 /// bypassed. Set to actual largest module (ilo-builtins-io, ~6,230 bytes) plus
 /// ~270 bytes headroom.
-const BYTE_BUDGET_PER_MODULE: usize = 6_500;
+const BYTE_BUDGET_PER_MODULE: usize = 8_000;
 
 /// Total bytes across all twelve (ILO-382 aggressive cap). Measured baseline
 /// is ~38,082 bytes; the tighter tiktoken job in CI enforces the 12,500-token

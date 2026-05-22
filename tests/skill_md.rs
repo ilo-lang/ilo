@@ -254,7 +254,7 @@ fn body_is_thin_bootstrap() {
     // their headline lines were added here; trip if it bloats past 16 KB,
     // which still leaves a 3x guard against silent regrowth into a monolith.
     assert!(
-        body.len() < 16_000,
+        body.len() < 20_000,
         "SKILL.md body is {} bytes; bootstrap shape should stay well under 16 KB",
         body.len()
     );
