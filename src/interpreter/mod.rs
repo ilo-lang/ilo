@@ -2602,9 +2602,15 @@ fn run_bitwise_64(b: crate::builtins::Builtin, args: &[Value]) -> Result<Value> 
 
     let name = b.name();
     let result: u64 = match b {
-        Builtin::Band64 => to_u64(&args[0], "first arg", name)? & to_u64(&args[1], "second arg", name)?,
-        Builtin::Bor64  => to_u64(&args[0], "first arg", name)? | to_u64(&args[1], "second arg", name)?,
-        Builtin::Bxor64 => to_u64(&args[0], "first arg", name)? ^ to_u64(&args[1], "second arg", name)?,
+        Builtin::Band64 => {
+            to_u64(&args[0], "first arg", name)? & to_u64(&args[1], "second arg", name)?
+        }
+        Builtin::Bor64 => {
+            to_u64(&args[0], "first arg", name)? | to_u64(&args[1], "second arg", name)?
+        }
+        Builtin::Bxor64 => {
+            to_u64(&args[0], "first arg", name)? ^ to_u64(&args[1], "second arg", name)?
+        }
         Builtin::Bnot64 => !to_u64(&args[0], "arg", name)?,
         Builtin::Bshl64 => {
             let x = to_u64(&args[0], "first arg", name)?;
