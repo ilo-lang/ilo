@@ -722,7 +722,8 @@ function header — it looks like a prefix-binop chain consumed one too few oper
                         ),
                         "this looks like a prefix-binop chain whose right operand is at \
 statement boundary; bind the chain to a local first. For example, split \
-`*/a b c d` into `t=/a b c;*t d`.".to_string(),
+`*/a b c d` into `t=/a b c;*t d`."
+                            .to_string(),
                     ));
                 }
                 self.parse_fn_decl()
