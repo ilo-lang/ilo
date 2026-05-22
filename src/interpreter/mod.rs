@@ -6206,6 +6206,76 @@ fn call_function(env: &mut Env, name: &str, args: Vec<Value>) -> Result<Value> {
         };
     }
 
+    // world-and w1:W w2:W > W — intersection: each cap is w1.cap AND w2.cap.
+    // The resulting World is at most as permissive as the more-restricted input.
+    // ILO-393 multi-world composition.
+    if builtin == Some(Builtin::WorldAnd) && args.len() == 2 {
+        return match (&args[0], &args[1]) {
+            (
+                Value::World {
+                    net: n1,
+                    read: r1,
+                    write: w1,
+                    run: u1,
+                },
+                Value::World {
+                    net: n2,
+                    read: r2,
+                    write: w2,
+                    run: u2,
+                },
+            ) => Ok(Value::World {
+                net: *n1 && *n2,
+                read: *r1 && *r2,
+                write: *w1 && *w2,
+                run: *u1 && *u2,
+            }),
+            (Value::World { .. }, other) => Err(RuntimeError::new(
+                "ILO-R009",
+                format!("world-and: second argument must be World, got {:?}", other),
+            )),
+            (other, _) => Err(RuntimeError::new(
+                "ILO-R009",
+                format!("world-and: first argument must be World, got {:?}", other),
+            )),
+        };
+    }
+
+    // world-or w1:W w2:W > W — union: each cap is w1.cap OR w2.cap.
+    // The resulting World is at least as permissive as the more-permissive input.
+    // ILO-393 multi-world composition.
+    if builtin == Some(Builtin::WorldOr) && args.len() == 2 {
+        return match (&args[0], &args[1]) {
+            (
+                Value::World {
+                    net: n1,
+                    read: r1,
+                    write: w1,
+                    run: u1,
+                },
+                Value::World {
+                    net: n2,
+                    read: r2,
+                    write: w2,
+                    run: u2,
+                },
+            ) => Ok(Value::World {
+                net: *n1 || *n2,
+                read: *r1 || *r2,
+                write: *w1 || *w2,
+                run: *u1 || *u2,
+            }),
+            (Value::World { .. }, other) => Err(RuntimeError::new(
+                "ILO-R009",
+                format!("world-or: second argument must be World, got {:?}", other),
+            )),
+            (other, _) => Err(RuntimeError::new(
+                "ILO-R009",
+                format!("world-or: first argument must be World, got {:?}", other),
+            )),
+        };
+    }
+
     // env-all -> R M t t: snapshot the full process environment as a
     // Map[Text, Text] wrapped in Ok. The Result wrapper mirrors `env key`
     // so callers can use `env-all!` to auto-unwrap; the Err arm is reserved

@@ -645,6 +645,8 @@ Called like functions, compiled to dedicated opcodes.
 | `read-only w` | derive a `W` from `w` with `net=false`, `write=false`, `run=false`; read kept | `W` |
 | `net-only w` | derive a `W` from `w` with `read=false`, `write=false`, `run=false`; net kept | `W` |
 | `no-net w` | derive a `W` from `w` with `net=false`; read/write/run kept | `W` |
+| `world-and w1 w2` | intersection of two `W` values — each cap is `w1.cap AND w2.cap` | `W` |
+| `world-or w1 w2` | union of two `W` values — each cap is `w1.cap OR w2.cap` | `W` |
 | `rd path` | read file; format auto-detected from extension (`.csv`/`.tsv`→grid, `.json`→graph, else text) | `R _ t` |
 | `rd path fmt` | read file with explicit format override (`"csv"`, `"tsv"`, `"json"`, `"raw"`) | `R _ t` |
 | `rdl path` | read file as list of lines | `R (L t) t` |
@@ -1155,7 +1157,24 @@ fetch-only w:W url:t>R t t;get (no-net w) url  -- ERROR ILO-T044: no-net w has n
 
 `read-only` and `no-net` statically deny net access, so the verifier emits **ILO-T044** if any net builtin is called in a scope where such a World is bound. `read-only` and `net-only` also statically deny write/run — ILO-T044 fires for `wr`/`wra`/`wro`/`wrl` and `run` calls respectively.
 
-See `examples/capability-world.ilo` and `examples/world-static-enforce.ilo` for working examples.
+**Multi-world composition (ILO-393).** Two builtins combine a pair of `W` values into one:
+
+| Builtin | semantics |
+|---------|-----------|
+| `world-and w1 w2` | intersection — each cap is `w1.cap AND w2.cap`; result ≤ min(w1, w2) |
+| `world-or w1 w2` | union — each cap is `w1.cap OR w2.cap`; result ≥ max(w1, w2) |
+
+```
+-- Intersect two worlds (callee gets only caps both callers allow):
+combined = world-and (read-only world) (no-net world)
+-- combined.read = true, combined.net = false, combined.write = false, combined.run = false
+
+-- Union two worlds (callee gets caps from either source):
+merged = world-or (net-only world) (read-only world)
+-- merged.net = true, merged.read = true, merged.write = false, merged.run = false
+```
+
+See `examples/capability-world.ilo`, `examples/world-static-enforce.ilo`, and `examples/world-compose.ilo` for working examples.
 
 ### JSON builtins
 

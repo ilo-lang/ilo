@@ -607,6 +607,8 @@ const BUILTINS: &[(&str, &[&str], &str)] = &[
     ("read-only", &["World"], "World"),
     ("net-only", &["World"], "World"),
     ("no-net", &["World"], "World"),
+    ("world-and", &["World", "World"], "World"),
+    ("world-or", &["World", "World"], "World"),
     ("jpth", &["t", "t"], "R ? t"),
     ("jkeys", &["t", "t"], "R (L t) t"),
     ("jdmp", &["any"], "t"),
@@ -3742,6 +3744,51 @@ fn builtin_check_args(
             // no-net w:W > W — derive a World with net=false; read/write/run kept.
             // Like world-no-net but operates on an existing World token. ILO-392.
             (Ty::World { net_known: Some(false), write_known: None, run_known: None }, errors)
+        }
+        "world-and" => {
+            // world-and w1:W w2:W > W — intersection: each cap is w1 AND w2.
+            // For static enforcement: if either input statically denies a cap,
+            // the result also statically denies it (AND is pessimistic/safe).
+            // ILO-393 multi-world composition.
+            let (net_known, write_known, run_known) = match (arg_types.get(0), arg_types.get(1)) {
+                (
+                    Some(Ty::World { net_known: n1, write_known: w1, run_known: r1 }),
+                    Some(Ty::World { net_known: n2, write_known: w2, run_known: r2 }),
+                ) => {
+                    let and_known = |a: Option<bool>, b: Option<bool>| -> Option<bool> {
+                        match (a, b) {
+                            (Some(false), _) | (_, Some(false)) => Some(false),
+                            (Some(true), Some(true)) => Some(true),
+                            _ => None,
+                        }
+                    };
+                    (and_known(*n1, *n2), and_known(*w1, *w2), and_known(*r1, *r2))
+                }
+                _ => (None, None, None),
+            };
+            (Ty::World { net_known, write_known, run_known }, errors)
+        }
+        "world-or" => {
+            // world-or w1:W w2:W > W — union: each cap is w1 OR w2.
+            // For static enforcement: only statically deny a cap if BOTH inputs
+            // statically deny it (OR is optimistic). ILO-393 multi-world composition.
+            let (net_known, write_known, run_known) = match (arg_types.get(0), arg_types.get(1)) {
+                (
+                    Some(Ty::World { net_known: n1, write_known: w1, run_known: r1 }),
+                    Some(Ty::World { net_known: n2, write_known: w2, run_known: r2 }),
+                ) => {
+                    let or_known = |a: Option<bool>, b: Option<bool>| -> Option<bool> {
+                        match (a, b) {
+                            (Some(true), _) | (_, Some(true)) => Some(true),
+                            (Some(false), Some(false)) => Some(false),
+                            _ => None,
+                        }
+                    };
+                    (or_known(*n1, *n2), or_known(*w1, *w2), or_known(*r1, *r2))
+                }
+                _ => (None, None, None),
+            };
+            (Ty::World { net_known, write_known, run_known }, errors)
         }
         "run" => {
             // run cmd:t args:L t  >  R (M t t) t

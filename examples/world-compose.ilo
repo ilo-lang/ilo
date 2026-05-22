@@ -1,0 +1,42 @@
+-- ILO-393: Multi-world composition — world-and / world-or
+--
+-- `world-and w1 w2` produces the intersection of two World tokens:
+--   each capability is true iff BOTH inputs grant it.
+--   Result is at most as permissive as the more-restricted input.
+--
+-- `world-or w1 w2` produces the union of two World tokens:
+--   each capability is true iff EITHER input grants it.
+--   Result is at least as permissive as the more-permissive input.
+--
+-- Common use: threading combined constraints through functions that
+-- receive Worlds from multiple callers.
+
+-- Summarise a World as text for easy inspection.
+show-world w:W>t;
+  fmt "net={} read={} write={} run={}" w.net w.read w.write w.run
+
+main>b;
+  w = world
+
+  -- Build two restricted views of the current world.
+  ro = read-only w        -- net=false, read=true,  write=false, run=false
+  nn = no-net w           -- net=false, read=true,  write=true,  run=true
+
+  -- Intersection: only capabilities allowed by BOTH worlds survive.
+  both = world-and ro nn  -- net=false, read=true, write=false, run=false
+  prnt fmt "ro:   {}" (show-world ro)
+  prnt fmt "nn:   {}" (show-world nn)
+  prnt fmt "and:  {}" (show-world both)
+
+  -- Union: capabilities allowed by EITHER world survive.
+  nto = net-only w        -- net=true, read=false, write=false, run=false
+  either = world-or nto ro  -- net=true, read=true, write=false, run=false
+  prnt fmt "nto:  {}" (show-world nto)
+  prnt fmt "or:   {}" (show-world either)
+
+  -- Idempotence: and/or of a world with itself is itself.
+  same = world-and w w
+  prnt fmt "w:    {}" (show-world w)
+  prnt fmt "w&&w: {}" (show-world same)
+
+  true

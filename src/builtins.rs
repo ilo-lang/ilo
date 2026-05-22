@@ -149,6 +149,13 @@ pub enum Builtin {
     /// `no-net w:W > W` — derive a World with net=false; read/write/run kept.
     /// Like `world-no-net` but takes an existing World token as input.
     WorldNoNetMask,
+    /// `world-and w1:W w2:W > W` — intersection: each cap is `w1.cap AND w2.cap`.
+    /// Useful when threading worlds through functions that combine constraints;
+    /// the result is at most as permissive as the more-restricted input. ILO-393.
+    WorldAnd,
+    /// `world-or w1:W w2:W > W` — union: each cap is `w1.cap OR w2.cap`.
+    /// The result is at least as permissive as the more-permissive input. ILO-393.
+    WorldOr,
     Ls,
     Walk,
     Glob,
@@ -497,6 +504,8 @@ impl Builtin {
             "read-only" => Some(Builtin::WorldReadOnly),
             "net-only" => Some(Builtin::WorldNetOnly),
             "no-net" => Some(Builtin::WorldNoNetMask),
+            "world-and" => Some(Builtin::WorldAnd),
+            "world-or" => Some(Builtin::WorldOr),
             "lsd" => Some(Builtin::Ls),
             "walk" => Some(Builtin::Walk),
             "glob" => Some(Builtin::Glob),
@@ -702,6 +711,8 @@ impl Builtin {
             Builtin::WorldReadOnly => "read-only",
             Builtin::WorldNetOnly => "net-only",
             Builtin::WorldNoNetMask => "no-net",
+            Builtin::WorldAnd => "world-and",
+            Builtin::WorldOr => "world-or",
             Builtin::Ls => "lsd",
             Builtin::Walk => "walk",
             Builtin::Glob => "glob",
@@ -897,6 +908,8 @@ impl Builtin {
         Builtin::WorldReadOnly,
         Builtin::WorldNetOnly,
         Builtin::WorldNoNetMask,
+        Builtin::WorldAnd,
+        Builtin::WorldOr,
         Builtin::Trm,
         Builtin::Upr,
         Builtin::Lwr,
